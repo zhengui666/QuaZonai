@@ -1,9 +1,8 @@
-"""Loopback-only HTTP client for the local human CLI."""
+"""Loopback-only HTTP client used by the local CLI."""
 
 from __future__ import annotations
 
-import ipaddress
-import socket
+import json
 from pathlib import Path
 from typing import Any, BinaryIO
 from urllib.parse import urlparse
@@ -12,82 +11,61 @@ import httpx
 
 
 class CliClientError(RuntimeError):
-    def __init__(self, message: str, *, status_code: int | None = None) -> None:
-        super().__init__(message)
-        self.status_code = status_code
+    pass
 
 
 def validate_loopback_endpoint(endpoint: str) -> str:
     parsed = urlparse(endpoint)
-    if parsed.scheme != "http" or not parsed.hostname:
-        raise CliClientError("Core endpoint must be an absolute http:// loopback URL")
+    if parsed.scheme not in {"http", "https"}:
+        raise CliClientError("Core API endpoint must use http or https")
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
-        raise CliClientError("Core endpoint must not contain credentials, query, or fragment")
+        raise CliClientError("Core API endpoint cannot contain credentials, query, or fragment")
     if parsed.path not in {"", "/"}:
-        raise CliClientError("Core endpoint must not contain a path")
-    try:
-        addresses = {
-            ipaddress.ip_address(item[4][0])
-            for item in socket.getaddrinfo(parsed.hostname, parsed.port or 80)
-        }
-    except socket.gaierror as exc:
-        raise CliClientError("Core endpoint hostname cannot be resolved") from exc
-    if not addresses or any(not address.is_loopback for address in addresses):
-        raise CliClientError("REMOTE_API_ENDPOINT_FORBIDDEN")
+        raise CliClientError("Core API endpoint cannot contain a path")
+    if parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+        raise CliClientError("Core API endpoint must resolve to the local loopback host")
     return endpoint.rstrip("/")
 
 
 class ApiClient:
     def __init__(self, endpoint: str, *, timeout: float = 30.0) -> None:
         self.endpoint = validate_loopback_endpoint(endpoint)
-        self.client = httpx.Client(base_url=self.endpoint, timeout=timeout)
-
-    def close(self) -> None:
-        self.client.close()
-
-    def __enter__(self) -> ApiClient:
-        return self
-
-    def __exit__(self, *_: object) -> None:
-        self.close()
+        self.timeout = timeout
 
     def request(
         self,
         method: str,
         path: str,
         *,
-        json_body: dict[str, Any] | None = None,
-        params: dict[str, Any] | None = None,
+        json_body: Any | None = None,
         data: dict[str, str] | None = None,
         files: list[tuple[str, tuple[str, BinaryIO, str]]] | None = None,
+        params: dict[str, Any] | None = None,
     ) -> Any:
+        if not path.startswith("/api/v1/"):
+            raise CliClientError("CLI requests must target a fixed /api/v1 operation")
         try:
-            response = self.client.request(
+            response = httpx.request(
                 method,
-                path,
+                f"{self.endpoint}{path}",
                 json=json_body,
-                params=params,
                 data=data,
                 files=files,
+                params=params,
+                timeout=self.timeout,
             )
         except httpx.HTTPError as exc:
-            raise CliClientError(f"Core request failed: {exc}") from exc
+            raise CliClientError(str(exc)) from exc
         if response.status_code >= 400:
             try:
                 payload = response.json()
-                error = payload.get("error", {}) if isinstance(payload, dict) else {}
-                code = error.get("code", "REQUEST_FAILED")
-                message = error.get("message", response.text)
-                details = error.get("details") or {}
-                suffix = f" details={details}" if details else ""
+                error = payload.get("error") or {}
+                code = error.get("code") or f"HTTP_{response.status_code}"
+                message = error.get("message") or response.text
+                raise CliClientError(f"{code}: {message}")
+            except (ValueError, AttributeError) as exc:
                 raise CliClientError(
-                    f"{code}: {message}{suffix}",
-                    status_code=response.status_code,
-                )
-            except ValueError as exc:
-                raise CliClientError(
-                    f"HTTP {response.status_code}: {response.text}",
-                    status_code=response.status_code,
+                    f"HTTP_{response.status_code}: {response.text}",
                 ) from exc
         if not response.content:
             return None
@@ -102,19 +80,20 @@ class ApiClient:
             files: list[tuple[str, tuple[str, BinaryIO, str]]] = []
             primary_handle = primary.open("rb")
             opened.append(primary_handle)
-            files.append(
-                ("primary", (primary.name, primary_handle, "application/octet-stream"))
-            )
+            files.append(("primary", (primary.name, primary_handle, "application/octet-stream")))
             for dependency in dependencies:
-                handle = dependency.open("rb")
-                opened.append(handle)
+                dependency_handle = dependency.open("rb")
+                opened.append(dependency_handle)
                 files.append(
-                    ("dependencies", (dependency.name, handle, "application/octet-stream"))
+                    (
+                        "dependencies",
+                        (dependency.name, dependency_handle, "application/octet-stream"),
+                    )
                 )
             return self.request("POST", "/api/v1/plugin-releases", files=files)
         finally:
-            for handle in opened:
-                handle.close()
+            for opened_handle in opened:
+                opened_handle.close()
 
     def upload_strategy(
         self,
