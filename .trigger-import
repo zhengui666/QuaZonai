@@ -1,1 +1,1 @@
-Trigger the one-time clean snapshot import workflow.
+Retry the one-time clean snapshot import workflow after excluding the CI workflow file.
