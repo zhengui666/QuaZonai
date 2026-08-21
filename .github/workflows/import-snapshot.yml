@@ -1,0 +1,38 @@
+name: Import clean source snapshot
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the source snapshot
+        uses: actions/checkout@v4
+        with:
+          repository: zhengui666/QuantFoundry
+          ref: 0333d77306d7a6075ede47c9a65e834b023812f3
+          path: source
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Create a history-free root commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir snapshot
+          cp -a source/. snapshot/
+          rm -rf snapshot/.git
+          cd snapshot
+          git init -b main
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Initial import"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push --force origin main
