@@ -45,7 +45,7 @@ dev = [
 quazonai = "cli.main:main"
 quazonai-finite-worker = "runners.finite_worker:main"
 quazonai-live-supervisor = "runners.live_supervisor:main"
-quazonai-mcp-gateway = "mcp.main:main"
+quazonai-mcp-gateway = "mcp_gateway.main:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

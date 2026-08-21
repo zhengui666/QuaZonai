@@ -11,7 +11,7 @@ Never use or propose:
 ```text
 SSH
 arbitrary shell
-raw QF core HTTP API
+raw QZ core HTTP API
 PostgreSQL
 Docker socket
 server file paths
@@ -178,7 +178,7 @@ Never submit raw orders through MCP.
 - Human-only Tool names should not appear in `tools/list`; direct invocation must be hard-denied.
 - Notifications do not replace current Resource reads.
 - MCP session IDs are not authentication.
-- Gateway disconnect or restart does not imply QF Run/Deployment cancellation.
+- Gateway disconnect or restart does not imply QZ Run/Deployment cancellation.
 
 ## Idempotency and preconditions
 
@@ -191,11 +191,11 @@ Never submit raw orders through MCP.
 
 ## MCP Tasks
 
-- A Task is an observation/control wrapper around an existing QF Job, Run or Deployment operation.
-- The underlying QF object remains the business fact.
+- A Task is an observation/control wrapper around an existing QZ Job, Run or Deployment operation.
+- The underlying QZ object remains the business fact.
 - A Task is bound to the OAuth principal that created it.
 - A timeout, expired stream or disconnected client does not cancel the underlying operation.
-- Task cancellation may report success only when the underlying QF operation supports and confirms cancellation.
+- Task cancellation may report success only when the underlying QZ operation supports and confirms cancellation.
 
 ## Human handoff contents
 
@@ -292,7 +292,7 @@ Artifact safety:
 - use only the returned short-lived HTTPS upload URL through the approved companion client;
 - stream and resume from the server-reported offset;
 - finalize explicitly;
-- do not claim readiness until QF reports `READY`;
+- do not claim readiness until QZ reports `READY`;
 - do not infer a server path;
 - do not create or require an application-level checksum/hash/fingerprint.
 

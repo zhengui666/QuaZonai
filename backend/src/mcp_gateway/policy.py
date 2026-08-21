@@ -8,8 +8,8 @@ from typing import Any
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.mcpserver import MCPServer
 
-from mcp.client import AgentIdentity, CoreClient
-from mcp.config import McpGatewaySettings
+from mcp_gateway.client import AgentIdentity, CoreClient
+from mcp_gateway.config import McpGatewaySettings
 
 TOOL_SCOPES: dict[str, str] = {}
 

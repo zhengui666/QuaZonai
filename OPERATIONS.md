@@ -78,7 +78,7 @@
 - 处理 `RECOVERY_BLOCKED`、bundle 不可用、credential 失效和 venue 异常；
 - 配合插件 drain、switch 或 force remove；
 - 处理已结算但尚未 redemption 的 instrument；
-- 必要时在 QF 外核对 Polymarket 钱包和交易场所状态。
+- 必要时在 QZ 外核对 Polymarket 钱包和交易场所状态。
 
 ### 1.6 系统自动化
 
@@ -212,7 +212,7 @@
 
 **角色：数据与连接管理员 + 资金与风险审批人。**
 
-用户在 QF 内：
+用户在 QZ 内：
 
 1. 选择具有 `EXECUTION` capability 的 release；
 2. 选择 credential set；
@@ -220,7 +220,7 @@
 4. 创建 execution connection；
 5. 运行 production read-only preflight。
 
-用户在 QF 外：
+用户在 QZ 外：
 
 - 创建和管理 Polymarket wallet/funder；
 - 准备 CLOB credentials；
@@ -232,7 +232,7 @@
 
 - 只允许官方 Nautilus execution adapter；
 - 校验 data/execution `compatibility_key`；
-- 验证 QF/Python/Nautilus 版本约束；
+- 验证 QZ/Python/Nautilus 版本约束；
 - 不替用户划转资金或配置 allowance。
 
 ### N5：导入历史数据
@@ -453,7 +453,7 @@
 
 - 发起 Stop；
 - 观察从 `STOPPING` 到 `STOPPED`；
-- 在 QF 外核对仍持有的仓位或待结算资产。
+- 在 QZ 外核对仍持有的仓位或待结算资产。
 
 系统自动：
 
@@ -510,13 +510,13 @@
 - 将 instrument 标记为 `resolved_unredeemed`；
 - 阻止不再允许的新交易。
 
-用户在 QF 外：
+用户在 QZ 外：
 
 - 使用官方 Polymarket 流程 redemption；
 - 核对钱包到账；
 - 必要时记录外部处理结果。
 
-QF 不代替钱包 redemption，也不建立资金划转账本。
+QZ 不代替钱包 redemption，也不建立资金划转账本。
 
 ---
 
@@ -537,7 +537,7 @@ QF 不代替钱包 redemption，也不建立资金划转账本。
 | 人工 Stop | 实盘运维员 | 改变运行状态且不会强平 |
 | Force plugin remove | 工作台管理员 + 实盘运维员 | 可能使 Deployment 无法恢复 |
 | 真实资金 canary | 资金所有者/审批人 | 使用生产环境和真实资金 |
-| Redemption | 钱包操作者 | QF 外的资产处置 |
+| Redemption | 钱包操作者 | QZ 外的资产处置 |
 
 ---
 
@@ -580,7 +580,7 @@ QF 不代替钱包 redemption，也不建立资金划转账本。
 | `RECOVERY_BLOCKED` | 实盘运维员 | 查看精确阻断原因，修复 bundle/credential/venue/投影 | 持续退避重试，不加载 Strategy |
 | `PLUGIN_IN_USE` | 工作台管理员 | 先迁移/停止引用，或明确执行 force remove | 普通删除不破坏活动资源 |
 | `BLOCKED_PLUGIN_REMOVED` | 工作台管理员 + 实盘运维员 | 安装新兼容 release 或重新绑定连接，并重新审批 | 不自动漂移到其他版本 |
-| `resolved_unredeemed` | 钱包操作者 | 在 QF 外 redemption | 保留控制状态，不代替钱包操作 |
+| `resolved_unredeemed` | 钱包操作者 | 在 QZ 外 redemption | 保留控制状态，不代替钱包操作 |
 
 ---
 

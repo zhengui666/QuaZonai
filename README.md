@@ -50,9 +50,9 @@ Runtime Plugin Install / Activate
 ```text
 Local operator
   → quazonai CLI
-  → QF API 127.0.0.1:8000
+  → QZ API 127.0.0.1:8000
 
-QF API
+QZ API
   ├── PostgreSQL
   ├── finite-worker
   └── live-supervisor
@@ -60,7 +60,7 @@ QF API
 Optional remote AI edge（尚未实现）
   → HTTPS MCP
   → quazonai-mcp-gateway
-  → internal QF API
+  → internal QZ API
 ```
 
 Core Compose 只包含：

@@ -9,7 +9,7 @@ from uuid import UUID
 import httpx
 from mcp.server.auth.provider import AccessToken
 
-from mcp.config import McpGatewaySettings
+from mcp_gateway.config import McpGatewaySettings
 
 
 @dataclass(slots=True)
@@ -56,11 +56,11 @@ class CoreClient:
 
     def headers(self) -> dict[str, str]:
         return {
-            "X-QF-Internal-Token": self.settings.internal_token,
-            "X-QF-Agent-Issuer": self.identity.issuer,
-            "X-QF-Agent-Subject": self.identity.subject,
-            "X-QF-Agent-Client-Id": self.identity.client_id,
-            "X-QF-Agent-Scopes": " ".join(self.identity.scopes),
+            "X-QZ-Internal-Token": self.settings.internal_token,
+            "X-QZ-Agent-Issuer": self.identity.issuer,
+            "X-QZ-Agent-Subject": self.identity.subject,
+            "X-QZ-Agent-Client-Id": self.identity.client_id,
+            "X-QZ-Agent-Scopes": " ".join(self.identity.scopes),
         }
 
     async def request(
@@ -139,6 +139,6 @@ class CoreClient:
         return await self.request(
             "PUT",
             f"/api/v1/agent/artifacts/{artifact_id}/content",
-            extra_headers={"X-QF-Upload-Offset": str(offset)},
+            extra_headers={"X-QZ-Upload-Offset": str(offset)},
             content=content,
         )

@@ -1,7 +1,7 @@
 # QuaZonai CLI、MCP Gateway 与远程 AI Agent Skill 技术设计
 
 > 文档状态：目标方案，尚未实现。  
-> 适用分支：`codex/quazonai-nautilus-redesign`。  
+> 适用分支：`main`。  
 > 上位事实源：[`DESIGN.md`](DESIGN.md)。本文件展开本地 CLI、可选 MCP 边缘适配器和外部 Agent Skill；不得修改 `DESIGN.md` 已确定的 Research、Approval、Deployment、风险、Recovery 或交易事实。
 
 ## 1. 结论
@@ -11,13 +11,13 @@ QuaZonai 使用两条正式操作通道：
 ```text
 本地人类操作者
   → quazonai CLI
-  → loopback QF API
+  → loopback QZ API
 
 远程 AI Agent
   → MCP client
   → HTTPS MCP Streamable HTTP
   → optional quazonai-mcp-gateway
-  → internal QF API
+  → internal QZ API
 ```
 
 **远程 Agent 不使用 SSH。** 不提供 SSH forced command、普通 Shell、端口转发、自定义 JSONL 隧道或远程终端包装器。
@@ -81,11 +81,11 @@ https://<operator-domain>/mcp
 - 从 `tools/list` 和 `quazonai://manifest` 获取运行时能力；
 - 读取当前 Resource 后再 mutation；
 - 生成 idempotency key 和 optimistic precondition；
-- 跟踪 Task 或 QF operation；
+- 跟踪 Task 或 QZ operation；
 - 在 human-only 节点停止并生成 handoff；
 - 不处理 OAuth token、Secret 或 Wallet material。
 
-Skill 是外部工作流，不是 QF 内置 Agent runtime，也不构成权限事实源。
+Skill 是外部工作流，不是 QZ 内置 Agent runtime，也不构成权限事实源。
 
 ## 3. 非目标
 
@@ -93,7 +93,7 @@ Skill 是外部工作流，不是 QF 内置 Agent runtime，也不构成权限�
 
 - SSH transport、任意 Shell、远程命令执行器；
 - 公网 Core API 或通用 HTTP proxy；
-- QF 内置 LLM、Agent scheduler、模型 provider；
+- QZ 内置 LLM、Agent scheduler、模型 provider；
 - 业务用户、workspace、RBAC 或 SaaS 控制面；
 - Agent Secret 输入/读取；
 - Agent Approval approve/reject；
@@ -113,7 +113,7 @@ Skill 是外部工作流，不是 QF 内置 Agent runtime，也不构成权限�
 ```mermaid
 flowchart LR
     H[Local human] --> CLI[qf CLI]
-    CLI -->|loopback HTTP| API[QF API]
+    CLI -->|loopback HTTP| API[QZ API]
 
     A[Remote MCP Host / Agent] -->|HTTPS MCP Streamable HTTP| GW[quazonai-mcp-gateway]
     AS[External OAuth 2.1 Authorization Server] --> A
@@ -132,7 +132,7 @@ flowchart LR
 - Gateway 只公开 `/mcp`、OAuth protected-resource metadata 和 Artifact upload endpoint；
 - Gateway 不暴露 `/api/v1`；
 - Gateway 无 DB credential、Docker socket、Plugin/Catalog/Report/Wallet Volume；
-- Gateway 只调用固定 QF API operation；
+- Gateway 只调用固定 QZ API operation；
 - OAuth access token 不传给 Core API、Polymarket 或其他下游；
 - CLI 与 MCP Tool 映射到相同领域动作和 Pydantic wire model。
 
@@ -178,7 +178,7 @@ python -m quazonai.mcp.main
 https://<operator-domain>/mcp
 ```
 
-TLS 可由 Gateway 直接终止，或由操作者已有的托管 TLS endpoint 终止。仓库不恢复 Nginx，不把通用 Reverse Proxy 作为 QF Core 组件。
+TLS 可由 Gateway 直接终止，或由操作者已有的托管 TLS endpoint 终止。仓库不恢复 Nginx，不把通用 Reverse Proxy 作为 QZ Core 组件。
 
 允许公开路径：
 
@@ -203,8 +203,8 @@ Gateway 容器：
 - read-only root filesystem；
 - drop all capabilities；
 - 无持久业务卷；
-- 只访问内部 QF API 与 OAuth metadata/JWKS；
-- 上传内容流式转发到 QF Artifact staging，不永久落盘。
+- 只访问内部 QZ API 与 OAuth metadata/JWKS；
+- 上传内容流式转发到 QZ Artifact staging，不永久落盘。
 
 ## 6. MCP 协议
 
@@ -224,7 +224,7 @@ DELETE /mcp     # optional session close
 - 支持 JSON 和按协议协商的 SSE；
 - access token 每个 HTTP 请求重新校验；
 - session ID 不是认证；
-- 断线、超时或 Gateway 重启不等于取消底层 QF 操作；
+- 断线、超时或 Gateway 重启不等于取消底层 QZ 操作；
 - 客户端不支持 server stream 时仍可通过 Tool/Resource polling 完成全部流程。
 
 ### 6.2 状态
@@ -233,7 +233,7 @@ V1 默认：
 
 ```text
 stateless MCP request handling
-+ QF durable Job / Run / Event / Deployment
++ QZ durable Job / Run / Event / Deployment
 ```
 
 业务事实不得只保存在 MCP session 或 Task store。只有需要 subscription、server request 或 resumable notification 时才启用 stateful session。
@@ -259,7 +259,7 @@ Gateway       = protected resource / resource server
 External IdP  = Authorization Server
 ```
 
-QF 不自行实现通用 Authorization Server。操作者配置现有、受信任的 OAuth/OIDC 服务。
+QZ 不自行实现通用 Authorization Server。操作者配置现有、受信任的 OAuth/OIDC 服务。
 
 ### 7.2 Discovery
 
@@ -372,7 +372,7 @@ Tool Result：
 - `structuredContent` 为正式机器结果；
 - 同时提供短 TextContent；
 - 不含 Secret；
-- 业务失败使用 `isError=true` 和稳定 QF code；
+- 业务失败使用 `isError=true` 和稳定 QZ code；
 - malformed MCP request 使用 JSON-RPC protocol error。
 
 Annotations：
@@ -406,11 +406,11 @@ quazonai://deployments/{id}/risk
 quazonai://deployments/{id}/universe
 ```
 
-Resource 是当前 QF API 快照。Agent mutation 前必须重新读取；历史缓存和 notification 不是事实源。
+Resource 是当前 QZ API 快照。Agent mutation 前必须重新读取；历史缓存和 notification 不是事实源。
 
 ### 8.3 Subscription
 
-客户端支持时，可订阅 Run、Plugin Job、Approval、Deployment、Risk 和 Universe Resource。Gateway 从 QF durable event stream 映射 `notifications/resources/updated`。断线后仍需重新读取 Resource。
+客户端支持时，可订阅 Run、Plugin Job、Approval、Deployment、Risk 和 Universe Resource。Gateway 从 QZ durable event stream 映射 `notifications/resources/updated`。断线后仍需重新读取 Resource。
 
 ### 8.4 Prompts 与 Elicitation
 
@@ -545,11 +545,11 @@ Agent 通过 Resource 轮询或 subscription 观察。
 
 - 长 Tool 声明 `taskSupport=optional`；
 - Task 绑定 OAuth principal；
-- Task 映射 QF job/run/deployment；
-- `tasks/get`、`tasks/result` 从当前 QF 状态生成；
-- Task cancellation 只有底层 QF 确认取消时才成功；
+- Task 映射 QZ job/run/deployment；
+- `tasks/get`、`tasks/result` 从当前 QZ 状态生成；
+- Task cancellation 只有底层 QZ 确认取消时才成功；
 - 跨 principal 不可读取；
-- QF 业务事实仍保留在自身表中。
+- QZ 业务事实仍保留在自身表中。
 
 ## 12. Artifact 上传
 
@@ -843,7 +843,7 @@ Begin/finalize Tools、resumable HTTPS upload、Companion CLI、Strategy/Wheel/P
 
 ### M4：Tasks/Notifications
 
-可选 Tasks、QF operation 映射、Resource subscription、reconnect 和 Gateway restart。
+可选 Tasks、QZ operation 映射、Resource subscription、reconnect 和 Gateway restart。
 
 ### M5：Skill Coverage
 

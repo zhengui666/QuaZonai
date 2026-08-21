@@ -8,7 +8,7 @@ from typing import Any
 import jwt
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 
-from mcp.config import McpGatewaySettings
+from mcp_gateway.config import McpGatewaySettings
 
 
 class JwksTokenVerifier(TokenVerifier):

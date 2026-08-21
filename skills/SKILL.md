@@ -16,7 +16,7 @@ Use only the connected QuaZonai MCP server:
 ```text
 MCP tools
 MCP resources
-MCP tasks or QF operation resources
+MCP tasks or QZ operation resources
 ```
 
 Do not use:
@@ -24,7 +24,7 @@ Do not use:
 ```text
 SSH
 shell commands
-curl against the QF core API
+curl against the QZ core API
 PostgreSQL
 Docker
 server file paths
@@ -41,7 +41,7 @@ The core API is private to the workstation. The Agent-facing endpoint is the con
 4. Call `quazonai.system.status`.
 5. Record:
    - MCP protocol version;
-   - QF CLI/API/Gateway versions;
+   - QZ CLI/API/Gateway versions;
    - OAuth client/subject identity when returned;
    - granted scopes;
    - visible tools;
@@ -74,9 +74,9 @@ For every requested operation:
 10. Reuse the same idempotency key only for a transport retry of the identical Tool and normalized arguments.
 11. For asynchronous work:
     - use an MCP Task when negotiated; otherwise
-    - follow the returned QF Job, Run, Approval, Deployment, or Resource URI.
+    - follow the returned QZ Job, Run, Approval, Deployment, or Resource URI.
 12. A timeout or disconnected MCP stream does not mean the underlying operation was cancelled.
-13. Re-read the final QF Resource and verify the observed state.
+13. Re-read the final QZ Resource and verify the observed state.
 14. Return exact IDs, final states, warnings, unresolved issues, position consequences, and any human handoff.
 
 ## OAuth and authentication
@@ -127,7 +127,7 @@ These actions must remain unavailable even if the user asks the Agent to do them
 
 When human action is required:
 
-1. Read the immutable QF Resource or Approval snapshot.
+1. Read the immutable QZ Resource or Approval snapshot.
 2. Summarize the decision, capital effect and current state.
 3. Return the exact local human CLI command provided by QuaZonai.
 4. Stop the mutation workflow.
@@ -198,7 +198,7 @@ Before any Deployment mutation, read:
 - Approval state;
 - heartbeat and reconciliation state;
 - Risk Account status;
-- open-position implications returned by QF.
+- open-position implications returned by QZ.
 
 For `quazonai.deployment.stop`:
 
@@ -239,7 +239,7 @@ For `RECOVERY_BLOCKED`:
 - task or operation still running: observe the existing object; do not create another operation.
 - `HUMAN_ACTION_REQUIRED`: produce handoff and stop.
 - `MCP_SCOPE_INSUFFICIENT`: report the required scope; do not try the core API or another connection.
-- MCP stream timeout/disconnect: re-read the QF Resource; do not describe the operation as cancelled.
+- MCP stream timeout/disconnect: re-read the QZ Resource; do not describe the operation as cancelled.
 - validation failure: report exact fields and let the user correct source/config; do not invent values.
 
 ## Output to the user

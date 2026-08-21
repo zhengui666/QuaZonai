@@ -4,7 +4,7 @@ The process accepts one JSON configuration on stdin, performs Recovery without a
 Strategy heartbeat, emits a reconciled projection, accepts a structured ARM command
 containing the exact instrument limits, reports STRATEGY_READY, and starts trading
 only after a separate START command. The plugin remains responsible for constructing
-the official Nautilus adapter and TradingNode; QF does not duplicate venue protocol
+the official Nautilus adapter and TradingNode; QZ does not duplicate venue protocol
 logic.
 """
 

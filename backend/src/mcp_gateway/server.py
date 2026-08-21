@@ -16,10 +16,10 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from mcp.auth import JwksTokenVerifier
-from mcp.client import CoreApiError, CoreClient
-from mcp.config import McpGatewaySettings
-from mcp.policy import (
+from mcp_gateway.auth import JwksTokenVerifier
+from mcp_gateway.client import CoreApiError, CoreClient
+from mcp_gateway.config import McpGatewaySettings
+from mcp_gateway.policy import (
     ScopedMCPServer,
     current_client,
     register_scope,
@@ -1065,9 +1065,9 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
             return Response(
                 status_code=204,
                 headers={
-                    "X-QF-Upload-Offset": str(value["size_received"]),
-                    "X-QF-Upload-Length": str(value["size_declared"]),
-                    "X-QF-Artifact-State": value["state"],
+                    "X-QZ-Upload-Offset": str(value["size_received"]),
+                    "X-QZ-Upload-Length": str(value["size_declared"]),
+                    "X-QZ-Artifact-State": value["state"],
                 },
             )
         try:
@@ -1084,7 +1084,7 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
                 yield chunk
 
         headers = client.headers()
-        headers["X-QF-Upload-Offset"] = str(offset)
+        headers["X-QZ-Upload-Offset"] = str(offset)
         try:
             async with httpx.AsyncClient(
                 base_url=settings.core_url,

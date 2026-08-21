@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from starlette.applications import Starlette
 
-from mcp.config import McpGatewaySettings
-from mcp.server import create_server
+from mcp_gateway.config import McpGatewaySettings
+from mcp_gateway.server import create_server
 
 
 def create_app(settings: McpGatewaySettings | None = None) -> Starlette:

@@ -12,11 +12,11 @@ from settings import Settings
 
 def _headers(*, subject: str = "operator") -> dict[str, str]:
     return {
-        "X-QF-Internal-Token": "gateway-secret",
-        "X-QF-Agent-Issuer": "https://issuer.example",
-        "X-QF-Agent-Subject": subject,
-        "X-QF-Agent-Client-Id": "agent-client",
-        "X-QF-Agent-Scopes": "qf:read qf:research:write qf:artifact:upload",
+        "X-QZ-Internal-Token": "gateway-secret",
+        "X-QZ-Agent-Issuer": "https://issuer.example",
+        "X-QZ-Agent-Subject": subject,
+        "X-QZ-Agent-Client-Id": "agent-client",
+        "X-QZ-Agent-Scopes": "qf:read qf:research:write qf:artifact:upload",
     }
 
 
@@ -89,7 +89,7 @@ def test_artifact_upload_is_offset_bound_and_principal_isolated(
 
     wrong_offset = client.put(
         f"/api/v1/agent/artifacts/{artifact_id}/content",
-        headers={**_headers(), "X-QF-Upload-Offset": "1"},
+        headers={**_headers(), "X-QZ-Upload-Offset": "1"},
         content=b"abc",
     )
     assert wrong_offset.status_code == 409
@@ -97,7 +97,7 @@ def test_artifact_upload_is_offset_bound_and_principal_isolated(
 
     first = client.put(
         f"/api/v1/agent/artifacts/{artifact_id}/content",
-        headers={**_headers(), "X-QF-Upload-Offset": "0"},
+        headers={**_headers(), "X-QZ-Upload-Offset": "0"},
         content=b"abc",
     )
     assert first.status_code == 200
@@ -105,7 +105,7 @@ def test_artifact_upload_is_offset_bound_and_principal_isolated(
 
     second = client.put(
         f"/api/v1/agent/artifacts/{artifact_id}/content",
-        headers={**_headers(), "X-QF-Upload-Offset": "3"},
+        headers={**_headers(), "X-QZ-Upload-Offset": "3"},
         content=b"def",
     )
     assert second.status_code == 200

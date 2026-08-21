@@ -1,7 +1,7 @@
 # QuaZonai 产品与技术架构设计
 
 > 架构基线：2026-08-20  
-> 目标分支：`codex/quazonai-nautilus-redesign`  
+> 目标分支：`main`  
 > 文档地位：QuaZonai 唯一完整的产品与技术事实源  
 > 当前状态：**目标架构已锁定，现有实现不符合本设计，尚未 release-ready / live-ready**
 
@@ -16,7 +16,7 @@
 | 区域 | 当前证据 | 本设计要求 | 结论 |
 |---|---|---|---|
 | 产品文档 | 已建立单一 `DESIGN.md` | 单一产品与架构事实源 | 已完成 |
-| Backend | 仍有旧 `app`、`scheduler`、Agent、generated model、自研 engine | 精简的 QF 控制平面 + Nautilus runner | 必须替换 |
+| Backend | 仍有旧 `app`、`scheduler`、Agent、generated model、自研 engine | 精简的 QZ 控制平面 + Nautilus runner | 必须替换 |
 | 数据库 | 仍有旧 17 段 migration 和历史 schema 快照 | 单一 fresh-schema `0001_initial.py` | 必须重建 |
 | 依赖 | 仍包含 LangGraph、YAML contract、DuckDB 等旧依赖，缺少 Nautilus/Optuna | 只保留目标运行依赖 | 必须重锁 |
 | Compose | 仍有 local-provider、agent-worker、scheduler、frontend、8080 | PostgreSQL、migrate、API、finite worker、live supervisor | 必须重写 |
@@ -31,11 +31,11 @@
 
 ### 1.1 定位
 
-QuaZonai（QF）是 **API-only、单机、单操作员** 的量化研究与实盘工作台。第一阶段提供 Polymarket 和固定 L2 Parquet 插件；后续数据源、导入器和执行连接通过运行时插件管理器动态安装、激活、停用、升级和卸载，控制面不需要重启。
+QuaZonai（QZ）是 **API-only、单机、单操作员** 的量化研究与实盘工作台。第一阶段提供 Polymarket 和固定 L2 Parquet 插件；后续数据源、导入器和执行连接通过运行时插件管理器动态安装、激活、停用、升级和卸载，控制面不需要重启。
 
-QF 是控制平面和产品层；NautilusTrader 是唯一交易内核。
+QZ 是控制平面和产品层；NautilusTrader 是唯一交易内核。
 
-QF 负责：
+QZ 负责：
 
 - Research、研究章节和状态生命周期；
 - Strategy 源码、配置和版本；
@@ -92,14 +92,14 @@ NautilusTrader 负责：
 - 浏览器前端、移动端、Nginx、Swagger UI、Redoc；
 - 用户、workspace、session、Bearer auth、登录或多租户；
 - AI、Agent、Tool、模型 provider 或 LangGraph；
-- QF 自研回测、Paper scheduler、撮合、收益、费用、仓位或 NAV 引擎；
-- QF 自研券商 REST/WebSocket/签名/订单协议；
+- QZ 自研回测、Paper scheduler、撮合、收益、费用、仓位或 NAV 引擎；
+- QZ 自研券商 REST/WebSocket/签名/订单协议；
 - 没有官方 Nautilus adapter 的执行场所；
 - 公共插件市场、自动更新、后台静默升级、任意 Git URL 安装；
 - 运行时构建 sdist、editable package 或本机编译第三方 native extension；
 - 进程内 `reload()`、修改 `sys.modules` 或热补丁式插件卸载；
 - 独立 factor engine；因子直接写入 Strategy；
-- QF 内部 funding、allowance、redemption 或交易所外人工交易账本；
+- QZ 内部 funding、allowance、redemption 或交易所外人工交易账本；
 - 应用级 SHA、hash、checksum、digest、fingerprint 文件或状态判定；
 - 为未来场景预埋的 feature flag、兼容层、HA、Redis、消息中间件、密钥轮换体系或旧业务数据迁移框架。
 
@@ -110,7 +110,7 @@ NautilusTrader 负责：
 以下边界不可通过实现细节突破：
 
 1. **单一交易事实源**：订单、成交、仓位、账户、NAV 和费用只属于 Nautilus/交易场所。
-2. **控制面不镜像账本**：QF 只存研究、编排、引用和中央风险所需的最小投影。
+2. **控制面不镜像账本**：QZ 只存研究、编排、引用和中央风险所需的最小投影。
 3. **交易节点进程隔离**：API 进程不运行 BacktestNode 或 TradingNode。
 4. **官方 execution adapter**：执行插件只构造官方 Nautilus adapter；不得复制协议客户端。
 5. **插件进程隔离**：第三方插件不得导入 API、finite worker 或 live supervisor 长生命周期进程。
@@ -125,12 +125,12 @@ Ownership 固定为：
 | 层 | 拥有的行为 |
 |---|---|
 | API | HTTP 校验、资源状态、统一错误 envelope、SSE 输出 |
-| QF control plane | Research、Strategy version、Experiment、Run、Approval、Deployment、Universe revision |
+| QZ control plane | Research、Strategy version、Experiment、Run、Approval、Deployment、Universe revision |
 | Plugin manager | plugin release 生命周期、descriptor snapshot、activation/drain/remove、runtime bundle 编排 |
 | Plugin validator | 在隔离进程中安装和加载 entry point、生成 schema、验证兼容性 |
 | Finite worker | 插件安装/删除、Parquet import、Backtest、Optimization、Holdout 有限作业 |
 | Live supervisor/runner | deployment owner、generation、TradingNode 生命周期、插件 bundle 固定和 recovery |
-| QF native risk | 提交前中央 reservation、最小 projection、reconciliation 接口 |
+| QZ native risk | 提交前中央 reservation、最小 projection、reconciliation 接口 |
 | Nautilus | 交易内核、Catalog、回测、订单、成交、仓位、账户、原生风险和 adapter |
 | PostgreSQL | 控制面、插件状态、作业队列、事件 outbox、Optuna schema、中央风险投影 |
 | 持久卷 | plugin artifacts/bundles、Catalog、reports、import staging |
@@ -157,7 +157,7 @@ flowchart TB
     LS --> LR[One live runner per deployment]
     LR --> RB[Immutable runtime bundle]
     RB --> NT[Nautilus TradingNode]
-    NT --> QR[QF Rust risk decorator]
+    NT --> QR[QZ Rust risk decorator]
     QR --> PMX[Official Nautilus Polymarket execution client]
 
     PI --> PV[(Plugin volume)]
@@ -172,7 +172,7 @@ flowchart TB
 
 | 组件 | 数量 | 职责 |
 |---|---:|---|
-| `postgres` | 1 | QF schema、plugin/risk state、Optuna schema、job/event storage |
+| `postgres` | 1 | QZ schema、plugin/risk state、Optuna schema、job/event storage |
 | `migrate` | one-shot | 旧 schema 预检、运行单一 Alembic baseline |
 | `api` | 1 | FastAPI，无插件代码和交易节点 |
 | `finite-worker` | 1 | claim 插件管理和研究有限作业，启动独立子进程 |
@@ -416,7 +416,7 @@ Deployment 固定 `runtime_bundle_id`、data plugin release 和 execution plugin
 | 表 | 关键字段 | 约束/用途 |
 |---|---|---|
 | `plugin_releases` | `id`, `plugin_id`, `distribution_name`, `version`, `api_version`, `state`, `is_default`, `descriptor_snapshot`, `last_error`, `created_at`, `activated_at`, `removed_at` | `(plugin_id, version)` 永久唯一；同一 `plugin_id` 最多一个 default active release |
-| `plugin_artifacts` | `id`, `plugin_release_id`, `role`, `filename`, `relative_path`, `package_name`, `package_version`, `created_at` | `role=PRIMARY|DEPENDENCY`；只接受 wheel；不保存 QF checksum |
+| `plugin_artifacts` | `id`, `plugin_release_id`, `role`, `filename`, `relative_path`, `package_name`, `package_version`, `created_at` | `role=PRIMARY|DEPENDENCY`；只接受 wheel；不保存 QZ checksum |
 | `plugin_runtime_bundles` | `id`, `state`, `python_version`, `qf_version`, `nautilus_version`, `environment_path`, `last_error`, `created_at`, `ready_at`, `removed_at` | `BUILDING|READY|FAILED|STALE|REMOVED`；目录完成后不可原地修改 |
 | `plugin_runtime_bundle_members` | `runtime_bundle_id`, `plugin_release_id`, `member_role` | 明确记录 bundle 内 release；不使用组合 hash |
 
@@ -554,10 +554,10 @@ build_catalog_importer(...)
 约束：
 
 - 不具备的 capability 对应 builder 必须为 `None`；
-- `EXECUTION` builder 只能返回官方 Nautilus adapter config/factory 或设计批准的 QF decorator factory；
+- `EXECUTION` builder 只能返回官方 Nautilus adapter config/factory 或设计批准的 QZ decorator factory；
 - schema 必须能稳定生成 JSON Schema；
 - descriptor import 不得启动网络连接、后台线程或交易节点；
-- plugin package 不定义 QF 自己的 Instrument、Order DTO、symbol normalization 或 broker client interface；
+- plugin package 不定义 QZ 自己的 Instrument、Order DTO、symbol normalization 或 broker client interface；
 - schema 和 capability snapshot 在 validation 成功时持久化，后续不得原地修改该 release。
 
 ### 7.3 安装与验证流程
@@ -569,7 +569,7 @@ RECEIVED
   → 将 wheel 集写入 imports/plugin-install/{release_id}/
   → 解析 wheel METADATA 和 entry point 声明（不执行插件）
   → 创建一次性 validation venv
-  → 从 core wheelhouse 安装固定 QF plugin contract、Nautilus 和约束依赖
+  → 从 core wheelhouse 安装固定 QZ plugin contract、Nautilus 和约束依赖
   → uv 离线安装 PRIMARY + DEPENDENCY wheels
   → uv pip check
   → validator 子进程加载唯一 entry point
@@ -583,22 +583,22 @@ RECEIVED
 
 - 使用 backend image 内固定的 `uv`；
 - `--offline --no-index --only-binary :all:`；
-- 使用 core lock 生成的精确 constraints，插件不得替换 QF/Nautilus/core dependency 版本；
+- 使用 core lock 生成的精确 constraints，插件不得替换 QZ/Nautilus/core dependency 版本；
 - 禁止 Python 自动下载；
 - 不执行 sdist build；
 - validation venv 和失败 staging 在 `finally` 清理；
 - 安装失败只影响该 release，不能使 API 或其他 active release 不可用；
-- QF 不创建 artifact checksum、digest 或 fingerprint。
+- QZ 不创建 artifact checksum、digest 或 fingerprint。
 
 插件 wheel 的 import 本身是可信代码执行。隔离进程用于生命周期隔离和故障收口，不构成恶意代码沙箱。
 
 ### 7.4 Immutable runtime bundle
 
-插件 release 不直接修改 backend image 或长生命周期进程的 site-packages。使用插件前，QF 为所需 release 组合构建 immutable runtime bundle：
+插件 release 不直接修改 backend image 或长生命周期进程的 site-packages。使用插件前，QZ 为所需 release 组合构建 immutable runtime bundle：
 
 ```text
 runtime bundle
-  = pinned QF runner wheel
+  = pinned QZ runner wheel
   + pinned Nautilus wheel
   + pinned quazonai_nautilus_risk wheel
   + selected plugin PRIMARY/DEPENDENCY wheels
@@ -611,7 +611,7 @@ runtime bundle
 3. 从 image 内 core wheelhouse 和 plugin artifact 目录按 core constraints 离线安装；
 4. 执行 `uv pip check`；
 5. 在 bundle Python 中重新发现和加载所有指定 entry points；
-6. 校验 release 组合、`compatibility_key`、QF/Nautilus/Python 版本；
+6. 校验 release 组合、`compatibility_key`、QZ/Nautilus/Python 版本；
 7. 校验 descriptor/builder 可调用性和 Nautilus factory 注册；不伪造业务配置，也不连接真实 venue；
 8. 原子 rename 到 `/var/lib/quazonai/plugins/bundles/{bundle_id}`；
 9. 状态变为 `READY`，目录只读。
@@ -622,7 +622,7 @@ Bundle 完成后不得原地 `pip install`、`pip uninstall` 或修改文件。�
 
 Bundle 身份由 UUID 和 `plugin_runtime_bundle_members` 显式关系决定，不计算组合 hash。相同 core version 和相同 release 组合可以复用已有 `READY` bundle；查重使用关系查询，不使用 fingerprint。
 
-backend image 的 Python、QF 或 Nautilus 版本变化后，旧 bundle 标记为 `STALE`。任何新 Run 或新 runner generation 使用前必须从原 artifacts 重建；正在运行的旧进程可以完成，但不得在旧 bundle 上启动新的 generation。
+backend image 的 Python、QZ 或 Nautilus 版本变化后，旧 bundle 标记为 `STALE`。任何新 Run 或新 runner generation 使用前必须从原 artifacts 重建；正在运行的旧进程可以完成，但不得在旧 bundle 上启动新的 generation。
 
 ### 7.5 激活、升级、停用与拔出
 
@@ -674,7 +674,7 @@ backend image 的 Python、QF 或 Nautilus 版本变化后，旧 bundle 标记�
 
 Python reload 不会重新绑定插件外部持有的旧对象引用，既有 class instance 也继续使用旧 class；动态加载的 extension module 也可能无法安全重复初始化。Nautilus adapter、PyO3/Rust extension、线程、socket 和事件订阅进一步放大该问题。
 
-因此 QF 的动态插拔边界固定为：
+因此 QZ 的动态插拔边界固定为：
 
 ```text
 插件包和版本在系统运行时动态变化
@@ -700,7 +700,7 @@ Data source 和 execution connection 可以独立配置，但用于同一 deploy
 
 | `plugin_id` | 能力 | 责任 |
 |---|---|---|
-| `polymarket` | `LIVE_DATA`, `EXECUTION` | 构造官方 Nautilus Polymarket CLOB V2 data client 和 QF risk-wrapped execution factory |
+| `polymarket` | `LIVE_DATA`, `EXECUTION` | 构造官方 Nautilus Polymarket CLOB V2 data client 和 QZ risk-wrapped execution factory |
 | `parquet_l2` | `HISTORICAL_IMPORT` | 固定 L2 Parquet → Nautilus ParquetDataCatalog |
 
 它们可以随初始部署作为 STAGED release 导入数据库，但后续与第三方插件使用同一 lifecycle，不在 API 中硬编码第二套 registry。
@@ -740,7 +740,7 @@ objectives(result: BacktestResult) -> tuple[float, ...]
 
 - `Config` 满足 Nautilus `ImportableStrategyConfig` 语义；
 - BacktestNode 与 TradingNode 使用相同 Strategy/Config；
-- QF 不安装源码声明的额外依赖；策略依赖必须属于固定 core runtime 或已批准 plugin bundle，不从源码动态解析；
+- QZ 不安装源码声明的额外依赖；策略依赖必须属于固定 core runtime 或已批准 plugin bundle，不从源码动态解析；
 - 不接受外部 module path 或压缩包；
 - contract validation 在独立短生命周期进程中运行；
 - 源码以 PostgreSQL text 保存，以数据库 `strategy_version.id` 和 `version_no` 引用；不计算源码 hash/fingerprint。
@@ -788,7 +788,7 @@ ts_init_ns     uint64
 Nautilus BacktestNode + ParquetDataCatalog
 ```
 
-QF 保存 `BacktestResult` 的标准 summary、PnL/return/general stats、returns series、counts 和 timestamps。orders/fills/positions/account 报告使用 Nautilus 官方 report 生成函数写入 reports volume；QF 只保存文件引用。
+QZ 保存 `BacktestResult` 的标准 summary、PnL/return/general stats、returns series、counts 和 timestamps。orders/fills/positions/account 报告使用 Nautilus 官方 report 生成函数写入 reports volume；QZ 只保存文件引用。
 
 每个 Run 在入队前固定 `runtime_bundle_id`。若只需要 core Nautilus，则使用零插件成员的 core bundle；若 Strategy 或数据路径需要 plugin release，则使用包含确切 release 的 bundle。Bundle 成员 release 后续进入 `DRAINING` 不影响已经入队或运行的 Run。若固定 bundle 在子进程启动前变成 `STALE` 或 `REMOVED`，Run 以 `PLUGIN_RUNTIME_UNAVAILABLE` 失败；重试必须创建新 Run 并显式选择新构建的 bundle，不得原地改写旧 Run 或漂移到其他 release。
 
@@ -814,7 +814,7 @@ NSGAIISampler(population_size=20, seed=stored_seed)
 
 子进程基础设施失败可以用相同 trial number、参数和 runtime bundle 重跑一次；不得创建额外 Optuna trial。重试仍失败则整个 optimization Run 失败，不伪造完整 100-trial 结果。
 
-Optuna 使用 PostgreSQL 独立 `optuna` schema，由 Optuna 管理表和锁；QF Alembic 不接管其内部表。
+Optuna 使用 PostgreSQL 独立 `optuna` schema，由 Optuna 管理表和锁；QZ Alembic 不接管其内部表。
 
 ### 11.3 Pareto 自动选择
 
@@ -913,7 +913,7 @@ GET      /api/v1/system/health
 GET      /api/v1/openapi.json
 ```
 
-Plugin install/remove 是异步操作，响应返回 release、job 和当前状态。`restart` 返回新建的 pending approval，不直接启动。QF 不提供 order/fill/position/NAV CRUD。
+Plugin install/remove 是异步操作，响应返回 release、job 和当前状态。`restart` 返回新建的 pending approval，不直接启动。QZ 不提供 order/fill/position/NAV CRUD。
 
 统一错误：
 
@@ -976,19 +976,19 @@ signature_type = 3
 wallet_type = Poly1271
 ```
 
-signer private key、funder/deposit wallet、CLOB API key/secret/passphrase 分字段加密保存。Funding、allowance、钱包准备和 redemption 在 QF 外完成。
+signer private key、funder/deposit wallet、CLOB API key/secret/passphrase 分字段加密保存。Funding、allowance、钱包准备和 redemption 在 QZ 外完成。
 
 每个 active deployment 使用独立 CLOB credential set，并启用 dedicated Polymarket heartbeat。Polymarket 不被假定存在本系统可用的 testnet；真实验证必须走 production read-only preflight 和最小金额 canary。
 
-`polymarket` plugin release 只负责构造官方 adapter 与 QF risk decorator。升级该 plugin 或 Nautilus 版本必须产生新 release/bundle，并重新执行 factory、risk、recovery 和 canary 回归。
+`polymarket` plugin release 只负责构造官方 adapter 与 QZ risk decorator。升级该 plugin 或 Nautilus 版本必须产生新 release/bundle，并重新执行 factory、risk、recovery 和 canary 回归。
 
 ### 14.2 订单语义
 
 - 只允许官方 adapter 支持的 MARKET/LIMIT 和 GTC/GTD/IOC/FOK；
-- 不增加 stop、trailing、OCO 等 QF 自定义订单；
+- 不增加 stop、trailing、OCO 等 QZ 自定义订单；
 - market buy 使用 pUSD quote quantity，必须设置 `quote_quantity=True`；
 - `MATCHED` 不是最终状态，继续等待 adapter 的链上状态推进；
-- QF 不负责 redemption；结算后只记录 `resolved_unredeemed` 控制状态。
+- QZ 不负责 redemption；结算后只记录 `resolved_unredeemed` 控制状态。
 
 ## 15. 中央逐单风险
 
@@ -1023,9 +1023,9 @@ Strategy
 | 限制 | 归属 | 语义 |
 |---|---|---|
 | 25 pUSD / order | Nautilus RiskEngine | 每个具体 `InstrumentId` 的原生 `max_notional_per_order` |
-| 100 pUSD / funder | QF reservation | position entry cost + 增加暴露的 open order debit + pending reservations |
+| 100 pUSD / funder | QZ reservation | position entry cost + 增加暴露的 open order debit + pending reservations |
 
-100 pUSD 使用 gross worst-case，不做 YES/NO 净额抵消。无法证明为减仓的订单按全部 debit 计入。该限制只覆盖 QF execution path；QF 外人工订单和余额不在保证范围内。
+100 pUSD 使用 gross worst-case，不做 YES/NO 净额抵消。无法证明为减仓的订单按全部 debit 计入。该限制只覆盖 QZ execution path；QZ 外人工订单和余额不在保证范围内。
 
 ### 15.3 Reservation 事务
 
@@ -1053,7 +1053,7 @@ Strategy
 
 ### 15.4 Projection 与 observer
 
-runner 中的 execution observer 订阅 Nautilus 订单/成交/取消/拒绝事件，并调用 native risk module 更新最小 projection。它不创建 QF Order/Fill/Position 领域对象。
+runner 中的 execution observer 订阅 Nautilus 订单/成交/取消/拒绝事件，并调用 native risk module 更新最小 projection。它不创建 QZ Order/Fill/Position 领域对象。
 
 指定的 funder observer 提交 position snapshot，各 credential runner 提交自己的 open-order snapshot。Recovery reconciliation 以 venue/Nautilus 报告替换最小投影。
 
@@ -1100,7 +1100,7 @@ runner 中的 execution observer 订阅 Nautilus 订单/成交/取消/拒绝事�
 - 进程崩溃：自动启动原 bundle 的 recovery generation，可沿用原审批；
 - universe 变化：通过受控 restart，不在运行节点内热改 config；
 - plugin switch：先更新绑定并构建新 bundle，再创建新的 start approval；批准后用新 bundle 从 recovery 开始，不在旧 TradingNode 内 reload；
-- core/QF/Nautilus 升级使原 bundle `STALE` 时，不允许自动 recovery 使用替代 bundle；操作者必须构建新 bundle并重新审批启动。
+- core/QZ/Nautilus 升级使原 bundle `STALE` 时，不允许自动 recovery 使用替代 bundle；操作者必须构建新 bundle并重新审批启动。
 
 ## 17. 部署、配置与依赖
 
@@ -1146,9 +1146,9 @@ Optuna `optuna` schema 由 Optuna 自己初始化和管理。
 | FastAPI / Pydantic / SQLAlchemy / Alembic / psycopg | 由 core `uv.lock` 精确锁定 |
 | Rust | 使用与所选 Nautilus upstream 相同 toolchain/MSRV；`Cargo.lock` 提交 |
 
-Core runtime 依赖仅保留：FastAPI、Uvicorn、Pydantic、SQLAlchemy、Alembic、psycopg、cryptography、PyArrow、Optuna、Nautilus/QF native wheel、uv 和 multipart upload 所需包。
+Core runtime 依赖仅保留：FastAPI、Uvicorn、Pydantic、SQLAlchemy、Alembic、psycopg、cryptography、PyArrow、Optuna、Nautilus/QZ native wheel、uv 和 multipart upload 所需包。
 
-Backend image 提供只读 core wheelhouse，包含构建 validation venv/runtime bundle 所需的精确 QF plugin contract/runner、Nautilus、risk wheel 和 core dependencies。插件必须随上传提供 core wheelhouse 未包含的依赖 wheels。
+Backend image 提供只读 core wheelhouse，包含构建 validation venv/runtime bundle 所需的精确 QZ plugin contract/runner、Nautilus、risk wheel 和 core dependencies。插件必须随上传提供 core wheelhouse 未包含的依赖 wheels。
 
 删除 LangGraph、LangGraph checkpointer、PyYAML、jsonschema、DuckDB、datamodel-code-generator、前端 Node 依赖及其运行路径，除非后续设计变更证明存在真实需求。
 
@@ -1196,7 +1196,7 @@ Mock 只能证明本地分支逻辑；wheel 安装、entry point 加载、native
 
 - [ ] API 运行期间可以上传 wheel 集并完成 `RECEIVED → STAGED → ACTIVE`，无需重启任何 control-plane service。
 - [ ] API/finite-worker/live-supervisor 主进程不导入第三方 plugin module。
-- [ ] 非 wheel、sdist、editable、远程 URL、重复 distribution version、依赖冲突和不兼容 Python/QF/Nautilus 被拒绝。
+- [ ] 非 wheel、sdist、editable、远程 URL、重复 distribution version、依赖冲突和不兼容 Python/QZ/Nautilus 被拒绝。
 - [ ] descriptor import 崩溃或超时只使该 release `FAILED`，其他插件和 API 保持可用。
 - [ ] 同一 plugin_id 新版本 side-by-side 激活，旧版本进入 `DRAINING`，已有资源不被偷换版本。
 - [ ] runtime bundle 离线构建、core constraints、`uv pip check`、entry point load、descriptor/builder callable check 和 factory registration 通过。
@@ -1206,7 +1206,7 @@ Mock 只能证明本地分支逻辑；wheel 安装、entry point 加载、native
 - [ ] 非强制 remove 在仍被使用时返回 `PLUGIN_IN_USE`。
 - [ ] 强制 remove 先停止受影响 runner、取消未启动 job，再删除 artifacts/bundles；不强平仓位。
 - [ ] control-plane/core 升级后旧 bundle 变为 `STALE`，不会用于新 Run/generation，且不会被静默替换。
-- [ ] release、artifact 和 bundle 身份不依赖 QF 应用级 hash/checksum/fingerprint。
+- [ ] release、artifact 和 bundle 身份不依赖 QZ 应用级 hash/checksum/fingerprint。
 
 #### 产品与控制面
 
@@ -1235,7 +1235,7 @@ Mock 只能证明本地分支逻辑；wheel 安装、entry point 加载、native
 
 #### 风险与实盘
 
-- [ ] QF native factory 能在 runtime bundle 中注册并包装官方 Polymarket client。
+- [ ] QZ native factory 能在 runtime bundle 中注册并包装官方 Polymarket client。
 - [ ] decorator 对非风险方法完整委托；cancel 在 risk DB 或 plugin manager 不可用时仍可执行。
 - [ ] 每个 active instrument 有精确 25 pUSD native limit。
 - [ ] 同一 funder 并发 submit 在 100 pUSD gross 下原子批准/拒绝。
@@ -1248,7 +1248,7 @@ Mock 只能证明本地分支逻辑；wheel 安装、entry point 加载、native
 
 #### 部署与仓库
 
-- [ ] 单一 `0001_initial.py` 可在空数据库创建全部 QF/plugin/risk schema。
+- [ ] 单一 `0001_initial.py` 可在空数据库创建全部 QZ/plugin/risk schema。
 - [ ] 旧 schema 明确拒绝且不删除旧卷。
 - [ ] 宿主只发布 `127.0.0.1:8000`。
 - [ ] frontend、8080、Agent、Paper scheduler、generated contract、旧 migrations 和旧 workflows 全部删除。
@@ -1300,7 +1300,7 @@ Mock 只能证明本地分支逻辑；wheel 安装、entry point 加载、native
 ### P3：Polymarket 与中央风险
 
 - `polymarket` runtime plugin release；
-- QF Rust decorator/factory；
+- QZ Rust decorator/factory；
 - 25/100 pUSD 风险；
 - observer、reservation、reconciliation；
 - production read-only preflight；
@@ -1342,8 +1342,8 @@ Mock 只能证明本地分支逻辑；wheel 安装、entry point 加载、native
 - 单机部署无 HA；PostgreSQL advisory lock 只解决同一 deployment 的单 owner。
 - master key 第一期无自动轮换。
 - 动态 universe 和 execution plugin switch 通过受控 restart，不能宣称零停机热更新。
-- funding、allowance 和 redemption 在 QF 外完成。
-- 100 pUSD 中央限制不覆盖 QF 外人工交易。
+- funding、allowance 和 redemption 在 QZ 外完成。
+- 100 pUSD 中央限制不覆盖 QZ 外人工交易。
 - 10 GiB importer、bundle build time、reservation latency 和 recovery 时间需要目标机器实测，不能用设计值代替。
 
 ## 22. 官方参考

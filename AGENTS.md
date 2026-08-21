@@ -7,7 +7,7 @@
 1. `DESIGN.md` 是 QuaZonai 唯一完整的产品与架构事实源。
 2. `OPERATIONS.md` 是用户运行视图，不得改写 `DESIGN.md` 的状态、风险或交易语义。
 3. `CLI.md` 是本地 CLI、MCP Gateway 和外部 Agent Skill 的实现展开，不得引入新的产品事实；冲突时先更新 `DESIGN.md`。
-4. `skills/quazonai/SKILL.md` 是外部运行 Agent 的工作流，不是 QF 内置 Agent runtime，也不是权限或风险事实源。
+4. `skills/quazonai/SKILL.md` 是外部运行 Agent 的工作流，不是 QZ 内置 Agent runtime，也不是权限或风险事实源。
 5. `README.md` 是运行入口和当前状态摘要，不是第二份设计文档。
 6. 代码、配置、测试和运行结果是实现证据；它们不能静默改写文档事实。
 7. 法律文件按各自约束处理。
@@ -27,11 +27,11 @@
 
 ### 2.1 交易与产品边界
 
-- NautilusTrader 是唯一交易内核；QF 是控制平面和产品层。
-- 订单、成交、仓位、NAV、撮合、费用、市场数据和交易场所同步不在 QF 重建第二套事实账本。
+- NautilusTrader 是唯一交易内核；QZ 是控制平面和产品层。
+- 订单、成交、仓位、NAV、撮合、费用、市场数据和交易场所同步不在 QZ 重建第二套事实账本。
 - 券商执行连接只使用官方 Nautilus adapter；没有官方 adapter 的执行场所不支持。
 - `parquet_l2` 只负责固定 L2 Parquet 到 Nautilus Catalog 的导入，不是自定义券商协议客户端。
-- QF 无前端、无业务用户/workspace/RBAC、无内置 LLM/Agent runtime/model provider、无 Paper scheduler。
+- QZ 无前端、无业务用户/workspace/RBAC、无内置 LLM/Agent runtime/model provider、无 Paper scheduler。
 - Plugin 和 Strategy 都是可信代码；独立进程是生命周期和故障边界，不得描述为恶意代码安全沙箱。
 - 跨 instrument 的中央逐单风险必须沿设计指定的 Rust execution seam 实现；不使用 C++，不复制 Polymarket 协议客户端。
 - 不新增应用级 SHA、hash、checksum、digest 或 fingerprint 字段、文件、状态判断或完整性流程。
@@ -45,7 +45,7 @@
 - 动态插拔通过 release 状态机、drain、子进程退出和新 bundle 完成；不得使用 `importlib.reload()`、修改 `sys.modules` 或在运行中的 TradingNode 内原地替换 adapter。
 - 插件升级必须 side-by-side；已有 Run、Data Source、Execution Connection 和 Deployment 不得被静默切换版本。
 - 普通停用只阻止新绑定并允许已有引用 drain；强制卸载必须先取消未启动作业、标准 Stop 受影响 Deployment、等待 Runner 退出，再删除 artifacts/bundles。
-- `READY` bundle 不得原地修改；Python/QF/Nautilus 版本变化使旧 bundle `STALE`，不得用于新的 Run 或 generation。
+- `READY` bundle 不得原地修改；Python/QZ/Nautilus 版本变化使旧 bundle `STALE`，不得用于新的 Run 或 generation。
 
 ### 2.3 CLI 与远程 MCP 边界
 
@@ -56,7 +56,7 @@
 - MCP Gateway 是独立 resource server，只公开 `/mcp`、OAuth protected-resource metadata 和受限 Artifact upload endpoint。
 - Gateway 不访问 PostgreSQL、Docker socket、Plugin/Catalog/Report/Wallet Volume。
 - Gateway 不提供通用 HTTP proxy，也不把 MCP access token 传给 Core API、Polymarket 或其他下游。
-- MCP HTTP 授权使用 OAuth 2.1、RFC 9728 discovery、精确 resource/audience 和 scopes；这不是 QF 业务用户模型。
+- MCP HTTP 授权使用 OAuth 2.1、RFC 9728 discovery、精确 resource/audience 和 scopes；这不是 QZ 业务用户模型。
 - Gateway 必须校验 token signature、issuer、expiration、audience/resource、client identity 和 scopes。
 - Gateway 必须校验 Host 和存在的 Origin；CORS 不允许 `*`。
 - Tool list 按 scope 过滤；客户端提示和 Tool annotations 不能代替服务器权限校验。
@@ -65,7 +65,7 @@
 - Skill、MCP Tool 或 Elicitation 不得请求、读取、显示或转发 OAuth token、API Key、Private Key、Wallet Secret、Password 或支付凭据。
 - Credential Secret 写入/读取、Approval approve/reject、Force Plugin Remove、Live Canary、Master Key 和数据库破坏操作永久 human-only，不能通过 scope 解锁。
 - `deployment.stop` 只有用户明确要求或设计规定的紧急风险策略触发时才可由 Agent 调用；必须明确 Stop 不强平已有仓位。
-- MCP Tasks 只能映射 QF 已持久化的 job/run/deployment；业务事实不得只存在 MCP session 或 task store。
+- MCP Tasks 只能映射 QZ 已持久化的 job/run/deployment；业务事实不得只存在 MCP session 或 task store。
 - Artifact 上传使用 HTTPS 两阶段、精确 size、offset 和生命周期；禁止把大型文件 Base64 放入 MCP JSON，也禁止服务器抓取任意远程 URL。
 
 ## 3. 文档优先
@@ -108,7 +108,7 @@
 7. CLI 是薄客户端；不复制 API 领域逻辑。
 8. MCP Gateway 只实现标准 MCP、OAuth resource server 和 Artifact bridge，不扩张为通用 API Gateway。
 9. Skill 只编排 MCP Tool，不把模型推理变成新的业务状态机。
-10. 能下沉到 Nautilus、Python packaging、uv、MCP SDK、OAuth 标准或 PostgreSQL 原语的行为，不在 QF 重写。
+10. 能下沉到 Nautilus、Python packaging、uv、MCP SDK、OAuth 标准或 PostgreSQL 原语的行为，不在 QZ 重写。
 11. 真实简化上限用一行 `ponytail:` 注释说明升级条件；普通代码不添加口号式注释。
 
 Ponytail 不得删掉真实边界的校验、错误处理、Secret 保护、数据一致性、插件 drain、OAuth audience、scope、idempotency、precondition、human handoff 或用户明确要求。
@@ -118,7 +118,7 @@ Ponytail 不得删掉真实边界的校验、错误处理、Secret 保护、数�
 修改前先画出调用和数据流，确认真正拥有者：
 
 - API：请求校验、控制面状态、统一错误、SSE、最终幂等和领域校验；
-- QF orchestration：Research、Strategy Version、Experiment、Run、Approval、Deployment、Universe 和控制事件；
+- QZ orchestration：Research、Strategy Version、Experiment、Run、Approval、Deployment、Universe 和控制事件；
 - CLI：本地 human command、输出、watch 和 Secret-safe 输入；
 - MCP Gateway：MCP protocol、OAuth token validation、scope-filtered tools、Resources、Tasks、Artifact bridge 和 audit；
 - Skill：外部 Agent 工作流、读取优先、Tool 选择和 human handoff；
@@ -126,7 +126,7 @@ Ponytail 不得删掉真实边界的校验、错误处理、Secret 保护、数�
 - Plugin Validator/Builder：短进程安装 wheel、加载 entry point、生成 schema、构建 bundle；
 - Runners/Workers：有限作业和独立 Nautilus 进程生命周期；
 - Nautilus：Catalog、回测、风险、订单、成交、仓位和 Reconciliation；
-- PostgreSQL：QF 控制面、插件、job/event、幂等、Optuna 和风险最小投影；
+- PostgreSQL：QZ 控制面、插件、job/event、幂等、Optuna 和风险最小投影；
 - 持久卷：Plugin Release/Bundle、Artifact staging、Catalog、Report 和 Import staging。
 
 任何同时修改两个 ownership 层的工作，都必须在设计中说明边界和失败路径。
@@ -145,7 +145,7 @@ Ponytail 不得删掉真实边界的校验、错误处理、Secret 保护、数�
 - 高影响 Tool 必须先获得绑定 principal/target/version 的 impact token。
 - Human-only Tool 不得出现在 tools/list；直接调用也必须 hard-deny 且无副作用。
 - Long-running Tool 无 Tasks 客户端也必须可用；支持 Tasks 时必须绑定 OAuth principal。
-- Gateway 断线、重启或 task 过期不得改变底层 QF Run/Deployment 事实。
+- Gateway 断线、重启或 task 过期不得改变底层 QZ Run/Deployment 事实。
 - Form Elicitation 不得请求敏感信息；Approval 和 Secret 返回 human handoff。
 - Artifact 上传按 offset 流式处理，不全量入内存；中断和过期清理 staging；不生成应用级 hash。
 
@@ -178,7 +178,7 @@ Ponytail 不得删掉真实边界的校验、错误处理、Secret 保护、数�
 
 ### 6.5 风险和恢复
 
-- 25 pUSD 是具体 InstrumentId 的 Nautilus 原生逐单限制；100 pUSD 是 QF funder gross reservation。
+- 25 pUSD 是具体 InstrumentId 的 Nautilus 原生逐单限制；100 pUSD 是 QZ funder gross reservation。
 - Reservation 在官方 client submit 前完成；无法证明为减仓的订单按全部 debit 计入。
 - DB、projection、owner、heartbeat、runtime bundle 或 reconciliation 不完整时，增加风险 fail-closed；cancel 仍可用。
 - Recovery generation 无 Strategy、无 heartbeat；Armed generation 再次对账并激活风险后才加载 Strategy。

@@ -432,9 +432,9 @@ def head_artifact_content(
     return Response(
         status_code=204,
         headers={
-            "X-QF-Upload-Offset": str(item.size_received),
-            "X-QF-Upload-Length": str(item.size_declared),
-            "X-QF-Artifact-State": item.state,
+            "X-QZ-Upload-Offset": str(item.size_received),
+            "X-QZ-Upload-Length": str(item.size_declared),
+            "X-QZ-Artifact-State": item.state,
         },
     )
 

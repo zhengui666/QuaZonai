@@ -150,7 +150,7 @@ CONCLUSION
 | `quazonai.run.list/show` | Inspect Run state and summaries |
 | `quazonai.run.report` | List or retrieve report reference/content |
 
-Long operations may return an MCP Task, QF `run_id`, or both. If Tasks are unsupported, poll/read `quazonai://runs/{id}`.
+Long operations may return an MCP Task, QZ `run_id`, or both. If Tasks are unsupported, poll/read `quazonai://runs/{id}`.
 
 Do not manually choose the Pareto candidate or run another candidate on the same Holdout.
 
@@ -196,7 +196,7 @@ Use impact/preflight first when exposed. Include current generation and other ex
 | `quazonai.universe.show` | Active/pending/recovery roster and predicate |
 | `quazonai.universe.revision_create` | Create narrowing or expansion revision |
 
-Expansion still needs human Approval. Narrowing can trigger cancel and controlled Restart according to QF semantics.
+Expansion still needs human Approval. Narrowing can trigger cancel and controlled Restart according to QZ semantics.
 
 ## Resources
 
