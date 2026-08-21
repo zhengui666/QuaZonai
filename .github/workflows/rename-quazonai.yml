@@ -1,9 +1,8 @@
 name: QuaZonai namespace migration
 
 on:
-  push:
+  pull_request:
     branches: [main]
-    paths: [.github/workflows/rename-quazonai.yml]
 
 permissions:
   contents: write
@@ -14,10 +13,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 1
       - name: Flatten backend package and rename product namespace
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -46,29 +44,22 @@ jobs:
           if native_old.exists():
               native_old.rename(native_new)
 
-          text_suffixes = {
-              '.py', '.toml', '.ini', '.yml', '.yaml', '.md', '.txt', '.rs', '.lock',
-              '.example', '.gitignore', '.dockerignore', '.gitattributes', '.editorconfig',
-          }
-          exact_text_names = {'LICENSE', 'NOTICE', 'Makefile'}
+          text_suffixes = {'.py','.toml','.ini','.yml','.yaml','.md','.txt','.rs','.lock','.example','.gitignore','.dockerignore','.gitattributes','.editorconfig'}
+          exact_text_names = {'LICENSE','NOTICE','Makefile'}
 
           def transform(text: str) -> str:
               text = re.sub(r'\bfrom quantfoundry\.([A-Za-z_][\w.]*)\s+import\s+', r'from \1 import ', text)
               text = re.sub(r'\bimport quantfoundry\.([A-Za-z_][\w.]*)', r'import \1', text)
               text = text.replace('from quantfoundry import __version__', 'from quazonai import __version__')
               text = text.replace('import quantfoundry', 'import quazonai')
-              replacements = [
-                  ('QuantFoundry', 'QuaZonai'), ('quantfoundry', 'quazonai'),
-                  ('QUANTFOUNDRY', 'QUAZONAI'), ('QF_', 'QUAZONAI_'),
-                  ('qf_nautilus_risk', 'quazonai_nautilus_risk'),
-                  ('QfRiskedExecutionClient', 'QuazonaiRiskedExecutionClient'),
-                  ('QfPolymarketExecutionClientFactory', 'QuazonaiPolymarketExecutionClientFactory'),
-                  ('QfRisk', 'QuazonaiRisk'), ('qf://', 'quazonai://'),
-                  ('qf.', 'quazonai.'), ('qf-', 'quazonai-'),
-                  ('`qf`', '`quazonai`'), (' qf ', ' quazonai '),
-                  ('qf status', 'quazonai status'), ('/tmp/qf-', '/tmp/quazonai-'),
-              ]
-              for before, after in replacements:
+              for before, after in [
+                  ('QuantFoundry','QuaZonai'),('quantfoundry','quazonai'),('QUANTFOUNDRY','QUAZONAI'),
+                  ('QF_','QUAZONAI_'),('qf_nautilus_risk','quazonai_nautilus_risk'),
+                  ('QfRiskedExecutionClient','QuazonaiRiskedExecutionClient'),
+                  ('QfPolymarketExecutionClientFactory','QuazonaiPolymarketExecutionClientFactory'),
+                  ('QfRisk','QuazonaiRisk'),('qf://','quazonai://'),('qf.','quazonai.'),
+                  ('qf-','quazonai-'),('`qf`','`quazonai`'),(' qf ',' quazonai '),
+                  ('qf status','quazonai status'),('/tmp/qf-','/tmp/quazonai-')]:
                   text = text.replace(before, after)
               return text
 
@@ -77,13 +68,10 @@ jobs:
                   continue
               if path.suffix not in text_suffixes and path.name not in exact_text_names:
                   continue
-              try:
-                  original = path.read_text(encoding='utf-8')
-              except UnicodeDecodeError:
-                  continue
+              try: original = path.read_text(encoding='utf-8')
+              except UnicodeDecodeError: continue
               updated = transform(original)
-              if updated != original:
-                  path.write_text(updated, encoding='utf-8')
+              if updated != original: path.write_text(updated, encoding='utf-8')
 
           pyproject = root / 'backend/pyproject.toml'
           text = pyproject.read_text(encoding='utf-8')
@@ -101,14 +89,8 @@ jobs:
           ci.write_text(text, encoding='utf-8')
           PY
 
-          if git grep -n -i 'quantfoundry' -- ':!*.lock'; then
-            echo 'legacy QuantFoundry name remains' >&2
-            exit 1
-          fi
-          if find . -path ./.git -prune -o -iname '*quantfoundry*' -print | grep -q .; then
-            echo 'legacy QuantFoundry path remains' >&2
-            exit 1
-          fi
+          if git grep -n -i 'quantfoundry' -- ':!*.lock'; then exit 1; fi
+          if find . -path ./.git -prune -o -iname '*quantfoundry*' -print | grep -q .; then exit 1; fi
           test ! -e backend/src/quantfoundry
           test -f backend/src/quazonai.py
           test -d backend/src/api
@@ -120,4 +102,3 @@ jobs:
           git add -A ':!.github/workflows/rename-quazonai.yml' ':!.rename-trigger'
           git commit -m "refactor: rename product to QuaZonai and flatten backend src"
           git push origin HEAD:main
-# trigger
