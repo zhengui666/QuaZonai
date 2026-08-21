@@ -6,8 +6,8 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 
-from quantfoundry.main import create_app
-from quantfoundry.settings import Settings
+from main import create_app
+from settings import Settings
 
 
 def _headers(*, subject: str = "operator") -> dict[str, str]:

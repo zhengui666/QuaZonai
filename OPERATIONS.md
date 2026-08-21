@@ -1,4 +1,4 @@
-# QuantFoundry 用户运行操作模型
+# QuaZonai 用户运行操作模型
 
 > 本文件是 [`DESIGN.md`](DESIGN.md) 的**用户运行视图**，用于回答系统实际运行时“谁在什么节点做什么”。
 >
@@ -126,7 +126,7 @@
 
 用户操作：
 
-1. 启动 QuantFoundry；
+1. 启动 QuaZonai；
 2. 查看 `/api/v1/system/health`；
 3. 确认 database、master key、finite worker、live supervisor 和 plugin manager ready。
 

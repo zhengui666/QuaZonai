@@ -3,8 +3,8 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 
-from quantfoundry.main import create_app
-from quantfoundry.settings import Settings
+from main import create_app
+from settings import Settings
 
 
 def test_health_reports_ready_with_database_and_master_key(
@@ -29,4 +29,4 @@ def test_openapi_is_available_only_at_explicit_path(
     assert client.get("/docs").status_code == 404
     response = client.get("/api/v1/openapi.json")
     assert response.status_code == 200
-    assert response.json()["info"]["title"] == "QuantFoundry API"
+    assert response.json()["info"]["title"] == "QuaZonai API"

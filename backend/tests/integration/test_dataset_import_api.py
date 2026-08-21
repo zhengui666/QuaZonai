@@ -4,15 +4,15 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import sessionmaker
 
-from quantfoundry.db.models import (
+from db.models import (
     DataSource,
     Job,
     PluginRelease,
     PluginRuntimeBundle,
     PluginRuntimeBundleMember,
 )
-from quantfoundry.main import create_app
-from quantfoundry.settings import Settings
+from main import create_app
+from settings import Settings
 
 
 def test_parquet_upload_creates_dataset_and_import_job(

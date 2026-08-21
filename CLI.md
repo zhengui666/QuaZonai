@@ -1,38 +1,38 @@
-# QuantFoundry CLI、MCP Gateway 与远程 AI Agent Skill 技术设计
+# QuaZonai CLI、MCP Gateway 与远程 AI Agent Skill 技术设计
 
 > 文档状态：目标方案，尚未实现。  
-> 适用分支：`codex/quantfoundry-nautilus-redesign`。  
+> 适用分支：`codex/quazonai-nautilus-redesign`。  
 > 上位事实源：[`DESIGN.md`](DESIGN.md)。本文件展开本地 CLI、可选 MCP 边缘适配器和外部 Agent Skill；不得修改 `DESIGN.md` 已确定的 Research、Approval、Deployment、风险、Recovery 或交易事实。
 
 ## 1. 结论
 
-QuantFoundry 使用两条正式操作通道：
+QuaZonai 使用两条正式操作通道：
 
 ```text
 本地人类操作者
-  → qf CLI
+  → quazonai CLI
   → loopback QF API
 
 远程 AI Agent
   → MCP client
   → HTTPS MCP Streamable HTTP
-  → optional qf-mcp-gateway
+  → optional quazonai-mcp-gateway
   → internal QF API
 ```
 
 **远程 Agent 不使用 SSH。** 不提供 SSH forced command、普通 Shell、端口转发、自定义 JSONL 隧道或远程终端包装器。
 
-`qf-mcp-gateway` 是可选边缘适配器，不是 `DESIGN.md` 核心五服务启动拓扑的必选成员：
+`quazonai-mcp-gateway` 是可选边缘适配器，不是 `DESIGN.md` 核心五服务启动拓扑的必选成员：
 
 ```text
 Core services:
 postgres / migrate / api / finite-worker / live-supervisor
 
 Optional remote-agent edge:
-qf-mcp-gateway
+quazonai-mcp-gateway
 ```
 
-未启用 MCP 时，QuantFoundry 的全部本地功能和 Core readiness 不受影响。
+未启用 MCP 时，QuaZonai 的全部本地功能和 Core readiness 不受影响。
 
 ## 2. 目标与边界
 
@@ -75,10 +75,10 @@ https://<operator-domain>/mcp
 
 ### 2.3 Skill
 
-`skills/quantfoundry/SKILL.md`：
+`skills/quazonai/SKILL.md`：
 
-- 只使用当前连接的 QuantFoundry MCP Server；
-- 从 `tools/list` 和 `qf://manifest` 获取运行时能力；
+- 只使用当前连接的 QuaZonai MCP Server；
+- 从 `tools/list` 和 `quazonai://manifest` 获取运行时能力；
 - 读取当前 Resource 后再 mutation；
 - 生成 idempotency key 和 optimistic precondition；
 - 跟踪 Task 或 QF operation；
@@ -115,7 +115,7 @@ flowchart LR
     H[Local human] --> CLI[qf CLI]
     CLI -->|loopback HTTP| API[QF API]
 
-    A[Remote MCP Host / Agent] -->|HTTPS MCP Streamable HTTP| GW[qf-mcp-gateway]
+    A[Remote MCP Host / Agent] -->|HTTPS MCP Streamable HTTP| GW[quazonai-mcp-gateway]
     AS[External OAuth 2.1 Authorization Server] --> A
     GW -->|internal HTTP| API
 
@@ -123,7 +123,7 @@ flowchart LR
     API --> FW[Finite worker]
     API --> LS[Live supervisor]
 
-    A -. follows .-> SK[QuantFoundry SKILL.md]
+    A -. follows .-> SK[QuaZonai SKILL.md]
 ```
 
 固定边界：
@@ -163,7 +163,7 @@ compose.mcp.yml
 入口：
 
 ```text
-python -m quantfoundry.mcp.main
+python -m quazonai.mcp.main
 ```
 
 内部监听示例：
@@ -350,11 +350,11 @@ Risk/Recovery/Holdout bypass
 命名：
 
 ```text
-qf.system.status
-qf.plugin.list
-qf.research.show
-qf.experiment.start
-qf.deployment.stop
+quazonai.system.status
+quazonai.plugin.list
+quazonai.research.show
+quazonai.experiment.start
+quazonai.deployment.stop
 ```
 
 每个 Tool 提供：
@@ -389,21 +389,21 @@ openWorldHint
 ### 8.2 Resources
 
 ```text
-qf://manifest
-qf://operations
-qf://system/status
-qf://plugin-releases/{id}
-qf://runtime-bundles/{id}
-qf://datasets/{id}
-qf://strategies/{id}
-qf://research/{id}
-qf://experiments/{id}
-qf://runs/{id}
-qf://runs/{run_id}/reports/{report_id}
-qf://approvals/{id}
-qf://deployments/{id}
-qf://deployments/{id}/risk
-qf://deployments/{id}/universe
+quazonai://manifest
+quazonai://operations
+quazonai://system/status
+quazonai://plugin-releases/{id}
+quazonai://runtime-bundles/{id}
+quazonai://datasets/{id}
+quazonai://strategies/{id}
+quazonai://research/{id}
+quazonai://experiments/{id}
+quazonai://runs/{id}
+quazonai://runs/{run_id}/reports/{report_id}
+quazonai://approvals/{id}
+quazonai://deployments/{id}
+quazonai://deployments/{id}/risk
+quazonai://deployments/{id}/universe
 ```
 
 Resource 是当前 QF API 快照。Agent mutation 前必须重新读取；历史缓存和 notification 不是事实源。
@@ -417,9 +417,9 @@ Resource 是当前 QF API 快照。Agent mutation 前必须重新读取；历史
 可选只读 Prompt：
 
 ```text
-qf.review.research
-qf.review.approval
-qf.diagnose.recovery
+quazonai.review.research
+quazonai.review.approval
+quazonai.diagnose.recovery
 ```
 
 Prompt 不执行 mutation。
@@ -431,39 +431,39 @@ Form Elicitation 只收集非敏感澄清。不得请求 password、API key、to
 ### 9.1 Read
 
 ```text
-qf.system.status
-qf.plugin.list/show/impact
-qf.bundle.list/show
-qf.credential.list/show
-qf.data_source.list/show
-qf.execution_connection.list/show
-qf.dataset.list/show
-qf.strategy.list/show
-qf.research.list/show
-qf.experiment.show
-qf.run.list/show/report
-qf.approval.list/show
-qf.deployment.list/show
-qf.universe.show
-qf.risk.show
-qf.event.list
-qf.artifact.show
+quazonai.system.status
+quazonai.plugin.list/show/impact
+quazonai.bundle.list/show
+quazonai.credential.list/show
+quazonai.data_source.list/show
+quazonai.execution_connection.list/show
+quazonai.dataset.list/show
+quazonai.strategy.list/show
+quazonai.research.list/show
+quazonai.experiment.show
+quazonai.run.list/show/report
+quazonai.approval.list/show
+quazonai.deployment.list/show
+quazonai.universe.show
+quazonai.risk.show
+quazonai.event.list
+quazonai.artifact.show
 ```
 
 ### 9.2 Scoped mutation
 
 ```text
-qf.plugin.stage/prewarm/activate/deactivate
-qf.data_source.create/update/preflight
-qf.execution_connection.create/update/preflight
-qf.dataset.import_parquet_l2
-qf.strategy.create/version_create
-qf.research.create/section_set/activate
-qf.experiment.create/start
-qf.approval.prepare_decision
-qf.deployment.create/stop/restart_request
-qf.universe.revision_create
-qf.artifact.begin_upload/finalize_upload/delete
+quazonai.plugin.stage/prewarm/activate/deactivate
+quazonai.data_source.create/update/preflight
+quazonai.execution_connection.create/update/preflight
+quazonai.dataset.import_parquet_l2
+quazonai.strategy.create/version_create
+quazonai.research.create/section_set/activate
+quazonai.experiment.create/start
+quazonai.approval.prepare_decision
+quazonai.deployment.create/stop/restart_request
+quazonai.universe.revision_create
+quazonai.artifact.begin_upload/finalize_upload/delete
 ```
 
 Tool description 必须明确：
@@ -534,7 +534,7 @@ Tool 立即返回：
 
 ```text
 job_id / run_id / approval_id / deployment_id
-qf:// resource link
+quazonai:// resource link
 ```
 
 Agent 通过 Resource 轮询或 subscription 观察。
@@ -565,9 +565,9 @@ Parquet 可达 10 GiB，禁止放入 MCP JSON。
 
 两阶段：
 
-1. `qf.artifact.begin_upload` 返回 `artifact_id`、短时 HTTPS URL、chunk size 和 accepted offset；
+1. `quazonai.artifact.begin_upload` 返回 `artifact_id`、短时 HTTPS URL、chunk size 和 accepted offset；
 2. 官方 `qf artifact upload` companion client 按 offset 流式 PUT；
-3. `qf.artifact.finalize_upload` 校验精确字节数；
+3. `quazonai.artifact.finalize_upload` 校验精确字节数；
 4. 消费 Tool 只引用 `artifact_id`。
 
 Upload endpoint：
@@ -592,13 +592,13 @@ PUT  /agent-artifacts/<opaque-capability>
 
 Token 由 MCP Host 或 Companion CLI 安全存储；Skill 不读取或要求粘贴 token。
 
-## 13. 本地 `qf` CLI
+## 13. 本地 `quazonai` CLI
 
 打包：
 
 ```toml
 [project.scripts]
-qf = "quantfoundry.cli.main:main"
+qf = "quazonai.cli.main:main"
 ```
 
 本地模式只接受 Core loopback endpoint：
@@ -612,7 +612,7 @@ http://127.0.0.1:8000
 示例：
 
 ```bash
-qf status
+quazonai status
 qf research show <id>
 qf run watch <id>
 qf approval approve <id>
@@ -622,10 +622,10 @@ qf deployment stop <id>
 CLI 也可作为标准 MCP Client/Artifact Companion：
 
 ```bash
-qf mcp login --server https://qf.example.com/mcp
-qf mcp tools --server https://qf.example.com/mcp
-qf mcp call qf.system.status --server https://qf.example.com/mcp --json '{}'
-qf artifact upload --mcp-server https://qf.example.com/mcp --file strategy.py --kind STRATEGY_SOURCE
+qf mcp login --server https://quazonai.example.com/mcp
+qf mcp tools --server https://quazonai.example.com/mcp
+qf mcp call quazonai.system.status --server https://quazonai.example.com/mcp --json '{}'
+qf artifact upload --mcp-server https://quazonai.example.com/mcp --file strategy.py --kind STRATEGY_SOURCE
 ```
 
 MCP 模式只使用标准 MCP/OAuth，不调用远程 `/api/v1`。
@@ -648,8 +648,8 @@ Skill 每个会话：
 
 ```text
 tools/list + resources/list
-→ qf://manifest
-→ qf.system.status
+→ quazonai://manifest
+→ quazonai.system.status
 → read current target/dependencies
 → safety/scope check
 → impact/preflight
@@ -716,7 +716,7 @@ created task/job/run/deployment
 ## 16. 目标代码树
 
 ```text
-backend/src/quantfoundry/
+backend/src/quazonai/
 ├── cli/
 │   ├── main.py
 │   ├── client.py
@@ -741,7 +741,7 @@ backend/src/quantfoundry/
     ├── models.py
     └── handlers.py
 
-skills/quantfoundry/
+skills/quazonai/
 ├── SKILL.md
 └── references/
     ├── commands.md
@@ -823,8 +823,8 @@ optional mcp-gateway
 OAuth verifier
 RFC 9728 metadata
 tools/list
-qf.system.status
-qf://manifest
+quazonai.system.status
+quazonai://manifest
 ```
 
 完成条件：远程 MCP Client 经 HTTPS/OAuth 连接；Core API 仍私有；不使用 SSH；关闭 Gateway 后 Core 不受影响。
@@ -870,4 +870,4 @@ Plugin、Data、Research、Experiment、Approval Preparation、Deployment Monito
 
 ---
 
-本文件描述目标 CLI/MCP/Skill 合同。当前仓库尚未实现 `qf` CLI、MCP Gateway、OAuth resource server、Artifact upload、Tasks 或远程 Agent E2E，因此不得宣称该通道已可用。
+本文件描述目标 CLI/MCP/Skill 合同。当前仓库尚未实现 `quazonai` CLI、MCP Gateway、OAuth resource server、Artifact upload、Tasks 或远程 Agent E2E，因此不得宣称该通道已可用。

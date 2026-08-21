@@ -3,10 +3,10 @@ requires = ["setuptools>=75"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "quantfoundry"
+name = "quazonai"
 version = "0.1.0"
 description = "API-only quantitative research and live-trading control plane"
-readme = {text = "QuantFoundry control plane.", content-type = "text/plain"}
+readme = {text = "QuaZonai control plane.", content-type = "text/plain"}
 license = "AGPL-3.0-only"
 requires-python = ">=3.14,<3.15"
 dependencies = [
@@ -42,10 +42,10 @@ dev = [
 ]
 
 [project.scripts]
-qf = "quantfoundry.cli.main:main"
-qf-finite-worker = "quantfoundry.runners.finite_worker:main"
-qf-live-supervisor = "quantfoundry.runners.live_supervisor:main"
-qf-mcp-gateway = "quantfoundry.mcp.main:main"
+qf = "quazonai.cli.main:main"
+quazonai-finite-worker = "quazonai.runners.finite_worker:main"
+quazonai-live-supervisor = "quazonai.runners.live_supervisor:main"
+quazonai-mcp-gateway = "quazonai.mcp.main:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -63,7 +63,7 @@ ignore = ["B008"]
 
 [tool.mypy]
 python_version = "3.14"
-files = ["src/quantfoundry"]
+files = ["src"]
 disallow_untyped_defs = true
 no_implicit_optional = true
 warn_unused_ignores = true
@@ -73,13 +73,13 @@ plugins = []
 
 [[tool.mypy.overrides]]
 module = [
-  "quantfoundry.runners.plugin_jobs",
-  "quantfoundry.runners.research_jobs",
+  "runners.plugin_jobs",
+  "runners.research_jobs",
 ]
 disable_error_code = ["assignment"]
 
 [[tool.mypy.overrides]]
-module = ["quantfoundry.runners.live"]
+module = ["runners.live"]
 disable_error_code = ["arg-type"]
 
 [tool.pytest.ini_options]

@@ -1,13 +1,13 @@
-# QuantFoundry Agent 治理
+# QuaZonai Agent 治理
 
 本文件是开发 Agent 的最小治理入口。它定义执行顺序、事实源指针、架构边界和完成门槛；不复制完整 API、数据表、产品背景或 Skill 内容。
 
 ## 1. 事实源与读取顺序
 
-1. `DESIGN.md` 是 QuantFoundry 唯一完整的产品与架构事实源。
+1. `DESIGN.md` 是 QuaZonai 唯一完整的产品与架构事实源。
 2. `OPERATIONS.md` 是用户运行视图，不得改写 `DESIGN.md` 的状态、风险或交易语义。
 3. `CLI.md` 是本地 CLI、MCP Gateway 和外部 Agent Skill 的实现展开，不得引入新的产品事实；冲突时先更新 `DESIGN.md`。
-4. `skills/quantfoundry/SKILL.md` 是外部运行 Agent 的工作流，不是 QF 内置 Agent runtime，也不是权限或风险事实源。
+4. `skills/quazonai/SKILL.md` 是外部运行 Agent 的工作流，不是 QF 内置 Agent runtime，也不是权限或风险事实源。
 5. `README.md` 是运行入口和当前状态摘要，不是第二份设计文档。
 6. 代码、配置、测试和运行结果是实现证据；它们不能静默改写文档事实。
 7. 法律文件按各自约束处理。
@@ -49,8 +49,8 @@
 
 ### 2.3 CLI 与远程 MCP 边界
 
-- 本地人类只通过官方 `qf` CLI 或 loopback Core API 操作。
-- 远程 AI Agent 只通过官方 MCP Streamable HTTP Gateway 和 `skills/quantfoundry/SKILL.md` 操作。
+- 本地人类只通过官方 `quazonai` CLI 或 loopback Core API 操作。
+- 远程 AI Agent 只通过官方 MCP Streamable HTTP Gateway 和 `skills/quazonai/SKILL.md` 操作。
 - **不得实现 SSH transport、普通 Shell、forced command、端口转发或自定义 JSONL 隧道。**
 - Core API 继续只通过宿主 `127.0.0.1:8000` 和内部网络可达；不得为 Agent 公开 `/api/v1` 或增加 `--allow-remote-api`。
 - MCP Gateway 是独立 resource server，只公开 `/mcp`、OAuth protected-resource metadata 和受限 Artifact upload endpoint。
@@ -151,7 +151,7 @@ Ponytail 不得删掉真实边界的校验、错误处理、Secret 保护、数�
 
 ### 6.2 运行时插件
 
-- 只接受 PRIMARY/DEPENDENCY wheels 和唯一 `quantfoundry.plugins` entry point。
+- 只接受 PRIMARY/DEPENDENCY wheels 和唯一 `quazonai.plugins` entry point。
 - API、worker、supervisor、Gateway 主进程不得导入第三方插件。
 - 安装只使用离线、本地 wheels 和预编译 binary；禁止远程解析、sdist build、editable install 和 Python 自动下载。
 - Descriptor import 不得启动网络、后台线程或交易节点。
@@ -187,7 +187,7 @@ Ponytail 不得删掉真实边界的校验、错误处理、Secret 保护、数�
 
 ## 7. Agent 编排
 
-QuantFoundry 开发使用主 Agent + 执行子 Agent。
+QuaZonai 开发使用主 Agent + 执行子 Agent。
 
 主 Agent：
 

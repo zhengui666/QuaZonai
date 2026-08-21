@@ -1,13 +1,13 @@
-# QuantFoundry MCP Tool Map
+# QuaZonai MCP Tool Map
 
-This reference summarizes the expected QuantFoundry MCP Tools and Resources. The connected server's current `tools/list`, Resource templates and `qf://manifest` are authoritative for availability, OAuth scopes and schemas.
+This reference summarizes the expected QuaZonai MCP Tools and Resources. The connected server's current `tools/list`, Resource templates and `quazonai://manifest` are authoritative for availability, OAuth scopes and schemas.
 
 ## Session bootstrap
 
 ```text
 inspect tools/list and resources/list
-→ read qf://manifest
-→ call qf.system.status
+→ read quazonai://manifest
+→ call quazonai.system.status
 ```
 
 Always complete this sequence before mutations.
@@ -16,10 +16,10 @@ Always complete this sequence before mutations.
 
 | Tool / Resource | Purpose | Mutation |
 |---|---|---:|
-| `qf.system.status` | Component readiness and blocking causes | No |
-| `qf://system/status` | Current status Resource | No |
-| `qf.event.list` | Durable control-plane events | No |
-| `qf.risk.show` | Funder limit, reservations and blocking state | No |
+| `quazonai.system.status` | Component readiness and blocking causes | No |
+| `quazonai://system/status` | Current status Resource | No |
+| `quazonai.event.list` | Durable control-plane events | No |
+| `quazonai.risk.show` | Funder limit, reservations and blocking state | No |
 
 For continuous observation, prefer Resource subscription when supported. Re-read the Resource after reconnect; notifications are not the source of truth.
 
@@ -27,40 +27,40 @@ For continuous observation, prefer Resource subscription when supported. Re-read
 
 | Tool | Purpose | Typical safety |
 |---|---|---|
-| `qf.plugin.list` | List active/staged/draining/failed releases | READ_ONLY |
-| `qf.plugin.show` | Release descriptor, state and references | READ_ONLY |
-| `qf.plugin.impact` | Show resources affected by activate/deactivate/remove | READ_ONLY |
-| `qf.plugin.stage` | Consume wheel Artifacts and create install Job | PLATFORM_MUTATION |
-| `qf.plugin.prewarm` | Build or reuse immutable Runtime Bundle | PLATFORM_MUTATION |
-| `qf.plugin.activate` | Make release default; old default drains | PLATFORM_MUTATION |
-| `qf.plugin.deactivate` | Prevent new bindings and begin drain | PLATFORM_MUTATION |
+| `quazonai.plugin.list` | List active/staged/draining/failed releases | READ_ONLY |
+| `quazonai.plugin.show` | Release descriptor, state and references | READ_ONLY |
+| `quazonai.plugin.impact` | Show resources affected by activate/deactivate/remove | READ_ONLY |
+| `quazonai.plugin.stage` | Consume wheel Artifacts and create install Job | PLATFORM_MUTATION |
+| `quazonai.plugin.prewarm` | Build or reuse immutable Runtime Bundle | PLATFORM_MUTATION |
+| `quazonai.plugin.activate` | Make release default; old default drains | PLATFORM_MUTATION |
+| `quazonai.plugin.deactivate` | Prevent new bindings and begin drain | PLATFORM_MUTATION |
 
 The MCP server never exposes forced plugin removal.
 
 ### Stage flow
 
 ```text
-qf.artifact.begin_upload(kind=PLUGIN_WHEEL)
+quazonai.artifact.begin_upload(kind=PLUGIN_WHEEL)
 → approved HTTPS companion upload
-→ qf.artifact.finalize_upload
-→ qf.plugin.stage
-→ qf.plugin.show / Task or Job Resource
-→ qf.plugin.impact
-→ optional qf.plugin.activate when scope permits
+→ quazonai.artifact.finalize_upload
+→ quazonai.plugin.stage
+→ quazonai.plugin.show / Task or Job Resource
+→ quazonai.plugin.impact
+→ optional quazonai.plugin.activate when scope permits
 ```
 
 ## Credentials and connections
 
 | Tool | Purpose |
 |---|---|
-| `qf.credential.list` | List Credential Sets and configured-field presence |
-| `qf.credential.show` | Show non-secret metadata only |
-| `qf.data_source.list/show` | Inspect Data Sources |
-| `qf.data_source.create/update` | Bind public config and existing Credential Set to exact release |
-| `qf.data_source.preflight` | Construct and optionally test data config |
-| `qf.execution_connection.list/show` | Inspect Execution Connections |
-| `qf.execution_connection.create/update` | Bind public config and existing Credential Set to exact release |
-| `qf.execution_connection.preflight` | Production read-only construction/connectivity preflight |
+| `quazonai.credential.list` | List Credential Sets and configured-field presence |
+| `quazonai.credential.show` | Show non-secret metadata only |
+| `quazonai.data_source.list/show` | Inspect Data Sources |
+| `quazonai.data_source.create/update` | Bind public config and existing Credential Set to exact release |
+| `quazonai.data_source.preflight` | Construct and optionally test data config |
+| `quazonai.execution_connection.list/show` | Inspect Execution Connections |
+| `quazonai.execution_connection.create/update` | Bind public config and existing Credential Set to exact release |
+| `quazonai.execution_connection.preflight` | Production read-only construction/connectivity preflight |
 
 Secret create/update/read operations are local-human-only and absent from `tools/list`.
 
@@ -77,12 +77,12 @@ PARQUET_L2
 Flow:
 
 ```text
-qf.artifact.begin_upload
+quazonai.artifact.begin_upload
 → HTTPS resumable upload outside MCP JSON
-→ qf.artifact.finalize_upload
-→ qf.artifact.show confirms READY
+→ quazonai.artifact.finalize_upload
+→ quazonai.artifact.show confirms READY
 → one intended consuming Tool
-→ qf.artifact.show confirms CONSUMED when applicable
+→ quazonai.artifact.show confirms CONSUMED when applicable
 ```
 
 Never put file bytes or Base64 in Tool arguments. Never ask the server to fetch an arbitrary URL.
@@ -91,42 +91,42 @@ Never put file bytes or Base64 in Tool arguments. Never ask the server to fetch 
 
 | Tool | Purpose |
 |---|---|
-| `qf.dataset.list/show` | Inspect imported Datasets |
-| `qf.dataset.import_parquet_l2` | Create Import Run from `PARQUET_L2` Artifact |
+| `quazonai.dataset.list/show` | Inspect imported Datasets |
+| `quazonai.dataset.import_parquet_l2` | Create Import Run from `PARQUET_L2` Artifact |
 
 Import flow:
 
 ```text
 begin/upload/finalize PARQUET_L2 Artifact
-→ qf.dataset.import_parquet_l2
-→ observe MCP Task or qf://runs/{id}
-→ qf.dataset.show
+→ quazonai.dataset.import_parquet_l2
+→ observe MCP Task or quazonai://runs/{id}
+→ quazonai.dataset.show
 ```
 
 ## Strategies
 
 | Tool | Purpose |
 |---|---|
-| `qf.strategy.list/show` | Inspect logical Strategies and versions |
-| `qf.strategy.create` | Create Strategy container |
-| `qf.strategy.version_create` | Validate and store version from `STRATEGY_SOURCE` Artifact |
+| `quazonai.strategy.list/show` | Inspect logical Strategies and versions |
+| `quazonai.strategy.create` | Create Strategy container |
+| `quazonai.strategy.version_create` | Validate and store version from `STRATEGY_SOURCE` Artifact |
 
 Version flow:
 
 ```text
 begin/upload/finalize STRATEGY_SOURCE Artifact
-→ qf.strategy.version_create
-→ qf.strategy.show
+→ quazonai.strategy.version_create
+→ quazonai.strategy.show
 ```
 
 ## Research
 
 | Tool | Purpose |
 |---|---|
-| `qf.research.list/show` | Read state, sections and revisions |
-| `qf.research.create` | Create DRAFT Research |
-| `qf.research.section_set` | Add section revision |
-| `qf.research.activate` | DRAFT → ACTIVE after prerequisites |
+| `quazonai.research.list/show` | Read state, sections and revisions |
+| `quazonai.research.create` | Create DRAFT Research |
+| `quazonai.research.section_set` | Add section revision |
+| `quazonai.research.activate` | DRAFT → ACTIVE after prerequisites |
 
 Canonical sections:
 
@@ -144,13 +144,13 @@ CONCLUSION
 
 | Tool | Purpose |
 |---|---|
-| `qf.experiment.create` | Fix Strategy, Dataset, ranges, seed and Runtime Bundle |
-| `qf.experiment.start` | Queue Optimization/Research Run |
-| `qf.experiment.show` | Inspect plan and selected result |
-| `qf.run.list/show` | Inspect Run state and summaries |
-| `qf.run.report` | List or retrieve report reference/content |
+| `quazonai.experiment.create` | Fix Strategy, Dataset, ranges, seed and Runtime Bundle |
+| `quazonai.experiment.start` | Queue Optimization/Research Run |
+| `quazonai.experiment.show` | Inspect plan and selected result |
+| `quazonai.run.list/show` | Inspect Run state and summaries |
+| `quazonai.run.report` | List or retrieve report reference/content |
 
-Long operations may return an MCP Task, QF `run_id`, or both. If Tasks are unsupported, poll/read `qf://runs/{id}`.
+Long operations may return an MCP Task, QF `run_id`, or both. If Tasks are unsupported, poll/read `quazonai://runs/{id}`.
 
 Do not manually choose the Pareto candidate or run another candidate on the same Holdout.
 
@@ -158,8 +158,8 @@ Do not manually choose the Pareto candidate or run another candidate on the same
 
 | Tool | Purpose |
 |---|---|
-| `qf.approval.list/show` | Read immutable Approval snapshot and state |
-| `qf.approval.prepare_decision` | Generate human decision summary and local CLI handoff |
+| `quazonai.approval.list/show` | Read immutable Approval snapshot and state |
+| `quazonai.approval.prepare_decision` | Generate human decision summary and local CLI handoff |
 
 Approval approve/reject are not MCP Tools.
 
@@ -167,10 +167,10 @@ Approval approve/reject are not MCP Tools.
 
 | Tool | Purpose | Notes |
 |---|---|---|
-| `qf.deployment.list/show` | Read desired/observed state, generation and bundle | Read first |
-| `qf.deployment.create` | Create Deployment and pending start Approval | Does not self-approve |
-| `qf.deployment.stop` | Request risk-reducing Stop | Does not liquidate positions |
-| `qf.deployment.restart_request` | Create new start Approval | No direct start |
+| `quazonai.deployment.list/show` | Read desired/observed state, generation and bundle | Read first |
+| `quazonai.deployment.create` | Create Deployment and pending start Approval | Does not self-approve |
+| `quazonai.deployment.stop` | Request risk-reducing Stop | Does not liquidate positions |
+| `quazonai.deployment.restart_request` | Create new start Approval | No direct start |
 
 Before mutation read:
 
@@ -193,8 +193,8 @@ Use impact/preflight first when exposed. Include current generation and other ex
 
 | Tool | Purpose |
 |---|---|
-| `qf.universe.show` | Active/pending/recovery roster and predicate |
-| `qf.universe.revision_create` | Create narrowing or expansion revision |
+| `quazonai.universe.show` | Active/pending/recovery roster and predicate |
+| `quazonai.universe.revision_create` | Create narrowing or expansion revision |
 
 Expansion still needs human Approval. Narrowing can trigger cancel and controlled Restart according to QF semantics.
 
@@ -203,21 +203,21 @@ Expansion still needs human Approval. Narrowing can trigger cancel and controlle
 Typical Resources:
 
 ```text
-qf://manifest
-qf://operations
-qf://system/status
-qf://plugin-releases/{id}
-qf://runtime-bundles/{id}
-qf://datasets/{id}
-qf://strategies/{id}
-qf://research/{id}
-qf://experiments/{id}
-qf://runs/{id}
-qf://runs/{run_id}/reports/{report_id}
-qf://approvals/{id}
-qf://deployments/{id}
-qf://deployments/{id}/risk
-qf://deployments/{id}/universe
+quazonai://manifest
+quazonai://operations
+quazonai://system/status
+quazonai://plugin-releases/{id}
+quazonai://runtime-bundles/{id}
+quazonai://datasets/{id}
+quazonai://strategies/{id}
+quazonai://research/{id}
+quazonai://experiments/{id}
+quazonai://runs/{id}
+quazonai://runs/{run_id}/reports/{report_id}
+quazonai://approvals/{id}
+quazonai://deployments/{id}
+quazonai://deployments/{id}/risk
+quazonai://deployments/{id}/universe
 ```
 
 ## Common operation sequences
@@ -225,29 +225,29 @@ qf://deployments/{id}/universe
 ### Complete research cycle
 
 ```text
-qf://manifest
-qf.system.status
-qf.dataset.list
-qf.strategy.list
-qf.research.create
-qf.research.section_set × required revisions
-qf.research.activate
-qf.experiment.create
-qf.experiment.start
-observe Task or qf://runs/{id}
-qf.run.report
-qf.research.show
-qf.approval.prepare_decision
+quazonai://manifest
+quazonai.system.status
+quazonai.dataset.list
+quazonai.strategy.list
+quazonai.research.create
+quazonai.research.section_set × required revisions
+quazonai.research.activate
+quazonai.experiment.create
+quazonai.experiment.start
+observe Task or quazonai://runs/{id}
+quazonai.run.report
+quazonai.research.show
+quazonai.approval.prepare_decision
 ```
 
 ### Diagnose Recovery Blocked
 
 ```text
-qf.deployment.show
-qf.risk.show
-qf.plugin.show for pinned releases
-qf.execution_connection.show/preflight
-qf.event.list with Deployment filter
+quazonai.deployment.show
+quazonai.risk.show
+quazonai.plugin.show for pinned releases
+quazonai.execution_connection.show/preflight
+quazonai.event.list with Deployment filter
 ```
 
 Never issue a bypass, replacement bundle, raw order or direct start.
@@ -255,11 +255,11 @@ Never issue a bypass, replacement bundle, raw order or direct start.
 ### Explicit Stop
 
 ```text
-qf.deployment.show
-qf.risk.show
-qf.deployment.stop with expected generation and impact token
-observe qf://deployments/{id}
-qf.deployment.show
+quazonai.deployment.show
+quazonai.risk.show
+quazonai.deployment.stop with expected generation and impact token
+observe quazonai://deployments/{id}
+quazonai.deployment.show
 ```
 
 Report open positions separately; Stop is not liquidation.
@@ -267,8 +267,8 @@ Report open positions separately; Stop is not liquidation.
 ### Human Approval handoff
 
 ```text
-qf.approval.show
-qf.approval.prepare_decision
+quazonai.approval.show
+quazonai.approval.prepare_decision
 → return local CLI command and effect
 → stop
 → after human action, re-read Approval and Deployment

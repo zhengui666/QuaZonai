@@ -8,8 +8,8 @@ import pytest
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.pool import StaticPool
 
-from quantfoundry.db.models import Base
-from quantfoundry.settings import Settings
+from db.models import Base
+from settings import Settings
 
 
 @pytest.fixture

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from quantfoundry.strategy_contract import validate_strategy_source
+from strategy_contract import validate_strategy_source
 
 
 def test_strategy_contract_is_checked_in_child_process(

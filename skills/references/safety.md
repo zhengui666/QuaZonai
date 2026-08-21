@@ -1,10 +1,10 @@
-# QuantFoundry MCP Agent Safety Policy
+# QuaZonai MCP Agent Safety Policy
 
 The remote AI Agent is a delegated operator through an OAuth-authorized MCP connection. It is not the capital owner and not the final approver.
 
 ## Transport rules
 
-Use only the configured QuantFoundry MCP server over HTTPS.
+Use only the configured QuaZonai MCP server over HTTPS.
 
 Never use or propose:
 
@@ -76,7 +76,7 @@ Universe narrowing request
 Execute only when:
 
 - the user explicitly asked for the exact action; or
-- QuantFoundry returns an already configured emergency policy authorizing it.
+- QuaZonai returns an already configured emergency policy authorizing it.
 
 Use current generation/state preconditions and any required impact token.
 
@@ -172,7 +172,7 @@ Never submit raw orders through MCP.
 
 ## Tool and Resource rules
 
-- Inspect current `tools/list` and `qf://manifest` at session start.
+- Inspect current `tools/list` and `quazonai://manifest` at session start.
 - Read current Resources before mutation.
 - Tool annotations are hints; server scope and state checks remain authoritative.
 - Human-only Tool names should not appear in `tools/list`; direct invocation must be hard-denied.
@@ -207,7 +207,7 @@ resource or Approval ID
 immutable current state
 reason the Agent cannot perform it
 capital and position consequence
-exact local qf CLI command supplied by QuantFoundry
+exact local quazonai CLI command supplied by QuaZonai
 what the Agent can monitor after the human acts
 ```
 
@@ -288,7 +288,7 @@ unsupported source archives
 
 Artifact safety:
 
-- create upload session with `qf.artifact.begin_upload`;
+- create upload session with `quazonai.artifact.begin_upload`;
 - use only the returned short-lived HTTPS upload URL through the approved companion client;
 - stream and resume from the server-reported offset;
 - finalize explicitly;

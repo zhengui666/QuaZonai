@@ -1,6 +1,6 @@
-# QuantFoundry
+# QuaZonai
 
-QuantFoundry 是一个 API-only、单机、单操作员的量化研究与实盘工作台。NautilusTrader 是唯一交易内核；QuantFoundry 负责研究、策略、运行时插件、优化、审批、部署、恢复编排和中央风险最小投影。
+QuaZonai 是一个 API-only、单机、单操作员的量化研究与实盘工作台。NautilusTrader 是唯一交易内核；QuaZonai 负责研究、策略、运行时插件、优化、审批、部署、恢复编排和中央风险最小投影。
 
 > **当前状态：P0/P1 Core Foundation 已建立，尚未 `conforming`、`release-ready` 或 `live-ready`。**
 >
@@ -23,8 +23,8 @@ PostgreSQL
 Runtime
   ├── finite-worker 基础 durable job claim
   ├── live-supervisor observation-only 骨架
-  ├── qf 本地 CLI：status 与 plugin read/lifecycle
-  └── qf_nautilus_risk：整数 micro-pUSD gross reservation 算术
+  ├── quazonai 本地 CLI：status 与 plugin read/lifecycle
+  └── quazonai_nautilus_risk：整数 micro-pUSD gross reservation 算术
 ```
 
 代码和配置不使用 SHA-256、内容哈希、checksum、digest 或 fingerprint 作为校验、身份、状态判断或发布门槛。
@@ -49,7 +49,7 @@ Runtime Plugin Install / Activate
 
 ```text
 Local operator
-  → qf CLI
+  → quazonai CLI
   → QF API 127.0.0.1:8000
 
 QF API
@@ -59,7 +59,7 @@ QF API
 
 Optional remote AI edge（尚未实现）
   → HTTPS MCP
-  → qf-mcp-gateway
+  → quazonai-mcp-gateway
   → internal QF API
 ```
 
@@ -81,7 +81,7 @@ live-supervisor
 python -c 'import base64,secrets; print(base64.b64encode(secrets.token_bytes(32)).decode())'
 ```
 
-复制环境文件并设置 `QF_MASTER_KEY`：
+复制环境文件并设置 `QUAZONAI_MASTER_KEY`：
 
 ```bash
 cp .env.example .env
@@ -92,7 +92,7 @@ $EDITOR .env
 
 ```bash
 docker compose --env-file .env up --build
-qf status
+quazonai status
 ```
 
 API 只发布到：
@@ -125,9 +125,9 @@ make rust-test
 - [统一产品与技术架构设计](DESIGN.md)：唯一完整事实源。
 - [用户运行操作模型](OPERATIONS.md)：运行角色、人工节点和自动化边界。
 - [CLI、MCP Gateway 与远程 Agent Skill](CLI.md)：本地 CLI 与可选远程 Agent Edge。
-- [QuantFoundry Skill](skills/quantfoundry/SKILL.md)：外部 Agent 运行工作流。
+- [QuaZonai Skill](skills/quazonai/SKILL.md)：外部 Agent 运行工作流。
 - [Agent 开发治理](AGENTS.md)：项目围栏、变更顺序和验收要求。
 
 ## 许可证
 
-QuantFoundry 使用 [AGPL-3.0-only](LICENSE)。第三方组件遵循各自许可证，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+QuaZonai 使用 [AGPL-3.0-only](LICENSE)。第三方组件遵循各自许可证，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

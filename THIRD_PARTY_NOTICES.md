@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-QuantFoundry depends on third-party packages. Their source code is not vendored or relicensed by this repository. Each package remains available under its upstream license.
+QuaZonai depends on third-party packages. Their source code is not vendored or relicensed by this repository. Each package remains available under its upstream license.
 
 ## Authoritative dependency inputs
 

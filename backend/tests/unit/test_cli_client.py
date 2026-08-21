@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantfoundry.cli.client import CliClientError, validate_loopback_endpoint
+from cli.client import CliClientError, validate_loopback_endpoint
 
 
 def test_loopback_endpoint_is_accepted() -> None:
@@ -11,4 +11,4 @@ def test_loopback_endpoint_is_accepted() -> None:
 
 def test_remote_endpoint_is_rejected() -> None:
     with pytest.raises(CliClientError, match="REMOTE_API_ENDPOINT_FORBIDDEN"):
-        validate_loopback_endpoint("https://quantfoundry.example.com")
+        validate_loopback_endpoint("https://quazonai.example.com")

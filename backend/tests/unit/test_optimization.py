@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from quantfoundry.optimization import TrialPoint, pareto_front, select_compromise
+from optimization import TrialPoint, pareto_front, select_compromise
 
 
 def test_pareto_front_respects_mixed_directions() -> None:

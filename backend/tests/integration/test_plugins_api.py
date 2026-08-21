@@ -4,9 +4,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 from sqlalchemy.orm import sessionmaker
 
-from quantfoundry.db.models import PluginRelease
-from quantfoundry.main import create_app
-from quantfoundry.settings import Settings
+from db.models import PluginRelease
+from main import create_app
+from settings import Settings
 
 
 def test_activate_release_drains_previous_default(
@@ -17,7 +17,7 @@ def test_activate_release_drains_previous_default(
     with factory.begin() as session:
         previous = PluginRelease(
             plugin_id="parquet_l2",
-            distribution_name="qf-parquet-l2",
+            distribution_name="quazonai-parquet-l2",
             version="1.0.0",
             api_version="1",
             state="ACTIVE",
@@ -26,7 +26,7 @@ def test_activate_release_drains_previous_default(
         )
         replacement = PluginRelease(
             plugin_id="parquet_l2",
-            distribution_name="qf-parquet-l2",
+            distribution_name="quazonai-parquet-l2",
             version="1.1.0",
             api_version="1",
             state="STAGED",

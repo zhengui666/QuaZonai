@@ -1,19 +1,19 @@
-name: quantfoundry
+name: quazonai
 
 x-core-env: &core-env
-  QF_ENV: ${QF_ENV:-development}
-  QF_DATABASE_URL: ${QF_DATABASE_URL:-postgresql+psycopg://quantfoundry:quantfoundry-local@postgres:5432/quantfoundry}
-  QF_ALEMBIC_URL: ${QF_ALEMBIC_URL:-postgresql+psycopg://quantfoundry:quantfoundry-local@postgres:5432/quantfoundry}
-  QF_MASTER_KEY: ${QF_MASTER_KEY:-}
-  QF_PLUGIN_ROOT: /var/lib/quantfoundry/plugins
-  QF_CATALOG_ROOT: /var/lib/quantfoundry/catalog
-  QF_REPORT_ROOT: /var/lib/quantfoundry/reports
-  QF_IMPORT_ROOT: /var/lib/quantfoundry/imports
-  QF_AGENT_ARTIFACT_ROOT: /var/lib/quantfoundry/agent-artifacts
-  QF_MAX_PARQUET_UPLOAD_BYTES: ${QF_MAX_PARQUET_UPLOAD_BYTES:-10737418240}
-  QF_JOB_POLL_SECONDS: ${QF_JOB_POLL_SECONDS:-1.0}
-  QF_JOB_LEASE_SECONDS: ${QF_JOB_LEASE_SECONDS:-60}
-  QF_SUPERVISOR_POLL_SECONDS: ${QF_SUPERVISOR_POLL_SECONDS:-1.0}
+  QUAZONAI_ENV: ${QUAZONAI_ENV:-development}
+  QUAZONAI_DATABASE_URL: ${QUAZONAI_DATABASE_URL:-postgresql+psycopg://quazonai:quazonai-local@postgres:5432/quazonai}
+  QUAZONAI_ALEMBIC_URL: ${QUAZONAI_ALEMBIC_URL:-postgresql+psycopg://quazonai:quazonai-local@postgres:5432/quazonai}
+  QUAZONAI_MASTER_KEY: ${QUAZONAI_MASTER_KEY:-}
+  QUAZONAI_PLUGIN_ROOT: /var/lib/quazonai/plugins
+  QUAZONAI_CATALOG_ROOT: /var/lib/quazonai/catalog
+  QUAZONAI_REPORT_ROOT: /var/lib/quazonai/reports
+  QUAZONAI_IMPORT_ROOT: /var/lib/quazonai/imports
+  QUAZONAI_AGENT_ARTIFACT_ROOT: /var/lib/quazonai/agent-artifacts
+  QUAZONAI_MAX_PARQUET_UPLOAD_BYTES: ${QUAZONAI_MAX_PARQUET_UPLOAD_BYTES:-10737418240}
+  QUAZONAI_JOB_POLL_SECONDS: ${QUAZONAI_JOB_POLL_SECONDS:-1.0}
+  QUAZONAI_JOB_LEASE_SECONDS: ${QUAZONAI_JOB_LEASE_SECONDS:-60}
+  QUAZONAI_SUPERVISOR_POLL_SECONDS: ${QUAZONAI_SUPERVISOR_POLL_SECONDS:-1.0}
 
 x-core-service: &core-service
   build:
@@ -22,11 +22,11 @@ x-core-service: &core-service
   environment:
     <<: *core-env
   volumes:
-    - plugin-data:/var/lib/quantfoundry/plugins
-    - catalog-data:/var/lib/quantfoundry/catalog
-    - report-data:/var/lib/quantfoundry/reports
-    - import-data:/var/lib/quantfoundry/imports
-    - agent-artifact-data:/var/lib/quantfoundry/agent-artifacts
+    - plugin-data:/var/lib/quazonai/plugins
+    - catalog-data:/var/lib/quazonai/catalog
+    - report-data:/var/lib/quazonai/reports
+    - import-data:/var/lib/quazonai/imports
+    - agent-artifact-data:/var/lib/quazonai/agent-artifacts
   restart: unless-stopped
   read_only: true
   security_opt:
@@ -40,9 +40,9 @@ services:
   postgres:
     image: postgres:18-alpine
     environment:
-      POSTGRES_DB: ${QF_POSTGRES_DB:-quantfoundry}
-      POSTGRES_USER: ${QF_POSTGRES_USER:-quantfoundry}
-      POSTGRES_PASSWORD: ${QF_POSTGRES_PASSWORD:-quantfoundry-local}
+      POSTGRES_DB: ${QUAZONAI_POSTGRES_DB:-quazonai}
+      POSTGRES_USER: ${QUAZONAI_POSTGRES_USER:-quazonai}
+      POSTGRES_PASSWORD: ${QUAZONAI_POSTGRES_PASSWORD:-quazonai-local}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -62,16 +62,16 @@ services:
     command:
       - sh
       - -ec
-      - python -m quantfoundry.db.preflight && alembic upgrade head
+      - python -m quazonai.db.preflight && alembic upgrade head
 
   api:
     <<: *core-service
     depends_on:
       migrate:
         condition: service_completed_successfully
-    command: ["uvicorn", "quantfoundry.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["uvicorn", "quazonai.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
     ports:
-      - "127.0.0.1:${QF_HTTP_PORT:-8000}:8000"
+      - "127.0.0.1:${QUAZONAI_HTTP_PORT:-8000}:8000"
     healthcheck:
       test:
         - CMD
@@ -91,9 +91,9 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
-    command: ["qf-finite-worker"]
+    command: ["quazonai-finite-worker"]
     healthcheck:
-      test: ["CMD", "qf-finite-worker", "--check"]
+      test: ["CMD", "quazonai-finite-worker", "--check"]
       interval: 15s
       timeout: 5s
       retries: 8
@@ -104,9 +104,9 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
-    command: ["qf-live-supervisor"]
+    command: ["quazonai-live-supervisor"]
     healthcheck:
-      test: ["CMD", "qf-live-supervisor", "--check"]
+      test: ["CMD", "quazonai-live-supervisor", "--check"]
       interval: 15s
       timeout: 5s
       retries: 8

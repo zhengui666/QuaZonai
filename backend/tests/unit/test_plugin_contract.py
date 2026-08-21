@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from quantfoundry.plugins.contract import Capability, DescriptorSnapshot
+from plugins.contract import Capability, DescriptorSnapshot
 
 
 def test_descriptor_snapshot_is_structural() -> None:

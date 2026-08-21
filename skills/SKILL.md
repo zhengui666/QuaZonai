@@ -1,17 +1,17 @@
 ---
-name: quantfoundry
-description: Operate a QuantFoundry quantitative research and live-trading workstation through its official MCP server. Use for plugin staging, non-secret data and connection setup, dataset import, strategy and research management, experiments, run monitoring, approval preparation, deployment monitoring, explicit Stop requests, risk inspection, universe revisions, and recovery diagnostics. Never request secrets, self-approve capital actions, force-remove plugins, call the core API directly, or bypass QuantFoundry state and risk controls.
+name: quazonai
+description: Operate a QuaZonai quantitative research and live-trading workstation through its official MCP server. Use for plugin staging, non-secret data and connection setup, dataset import, strategy and research management, experiments, run monitoring, approval preparation, deployment monitoring, explicit Stop requests, risk inspection, universe revisions, and recovery diagnostics. Never request secrets, self-approve capital actions, force-remove plugins, call the core API directly, or bypass QuaZonai state and risk controls.
 ---
 
-# QuantFoundry Operator Skill
+# QuaZonai Operator Skill
 
-Use this Skill whenever the user asks an AI Agent to inspect or operate a QuantFoundry workstation.
+Use this Skill whenever the user asks an AI Agent to inspect or operate a QuaZonai workstation.
 
-QuantFoundry is a quantitative research and live-trading control plane. This Skill is an **external MCP workflow**. It does not run a model inside QuantFoundry and it does not replace QuantFoundry state machines, NautilusTrader, Holdout, Approval, Recovery, reconciliation, heartbeat, plugin pinning, or central risk.
+QuaZonai is a quantitative research and live-trading control plane. This Skill is an **external MCP workflow**. It does not run a model inside QuaZonai and it does not replace QuaZonai state machines, NautilusTrader, Holdout, Approval, Recovery, reconciliation, heartbeat, plugin pinning, or central risk.
 
 ## Required interface
 
-Use only the connected QuantFoundry MCP server:
+Use only the connected QuaZonai MCP server:
 
 ```text
 MCP tools
@@ -37,8 +37,8 @@ The core API is private to the workstation. The Agent-facing endpoint is the con
 
 1. Inspect the server's current `tools/list` result.
 2. Inspect available Resource templates.
-3. Read `qf://manifest`.
-4. Call `qf.system.status`.
+3. Read `quazonai://manifest`.
+4. Call `quazonai.system.status`.
 5. Record:
    - MCP protocol version;
    - QF CLI/API/Gateway versions;
@@ -56,7 +56,7 @@ Do not assume an ID, state, revision, version, generation, plugin release, runti
 
 For every requested operation:
 
-1. Translate the user's objective into a currently visible `qf.*` Tool.
+1. Translate the user's objective into a currently visible `quazonai.*` Tool.
 2. Read the target and all dependencies.
 3. Determine the safety class using `references/safety.md`.
 4. Check whether the Tool is visible under the current OAuth scopes.
@@ -129,21 +129,21 @@ When human action is required:
 
 1. Read the immutable QF Resource or Approval snapshot.
 2. Summarize the decision, capital effect and current state.
-3. Return the exact local human CLI command provided by QuantFoundry.
+3. Return the exact local human CLI command provided by QuaZonai.
 4. Stop the mutation workflow.
 5. After the human acts, resume only by re-reading current state.
 
 ## Secrets
 
-Never accept Secret values in chat or Tool arguments for QuantFoundry.
+Never accept Secret values in chat or Tool arguments for QuaZonai.
 
-The Agent may reference an existing `credential_set_id` and inspect only configured-field presence. If the required Credential Set is absent or incomplete, return a handoff instructing the local operator to create or update it through human-mode `qf` CLI with protected input.
+The Agent may reference an existing `credential_set_id` and inspect only configured-field presence. If the required Credential Set is absent or incomplete, return a handoff instructing the local operator to create or update it through human-mode `quazonai` CLI with protected input.
 
 Do not use MCP Form Elicitation for passwords, API keys, access tokens, private keys, wallet credentials or payment information.
 
 ## Artifact uploads
 
-Allowed kinds are determined by `qf://manifest`, normally:
+Allowed kinds are determined by `quazonai://manifest`, normally:
 
 ```text
 STRATEGY_SOURCE
@@ -154,17 +154,17 @@ PARQUET_L2
 Use the two-stage flow:
 
 ```text
-qf.artifact.begin_upload
+quazonai.artifact.begin_upload
 → HTTPS resumable upload using the approved companion client
-→ qf.artifact.finalize_upload
-→ qf.artifact.show
+→ quazonai.artifact.finalize_upload
+→ quazonai.artifact.show
 → consuming Tool
 ```
 
 Rules:
 
 1. Do not place file bytes or Base64 content in MCP Tool arguments.
-2. Do not ask QuantFoundry to fetch an arbitrary remote URL.
+2. Do not ask QuaZonai to fetch an arbitrary remote URL.
 3. Record the returned opaque `artifact_id`.
 4. Use only the short-lived upload URL returned for that artifact and OAuth principal.
 5. Resume only from the server-reported accepted offset.
@@ -180,7 +180,7 @@ If the Agent environment cannot access the local file through an approved compan
 - Research uses the seven canonical sections.
 - Add a new Strategy version instead of mutating a completed version.
 - Use a fixed Dataset, independent training/Holdout ranges and a fixed runtime bundle.
-- Let QuantFoundry run the fixed optimization workflow.
+- Let QuaZonai run the fixed optimization workflow.
 - Do not manually select a Pareto candidate.
 - Do not run another candidate on the same Holdout after failure.
 - A successful Holdout does not authorize live trading.
@@ -200,9 +200,9 @@ Before any Deployment mutation, read:
 - Risk Account status;
 - open-position implications returned by QF.
 
-For `qf.deployment.stop`:
+For `quazonai.deployment.stop`:
 
-- execute only when explicitly requested by the user or an already configured emergency policy returned by QuantFoundry;
+- execute only when explicitly requested by the user or an already configured emergency policy returned by QuaZonai;
 - call the impact Tool first when available;
 - include current generation and impact token as preconditions;
 - follow the Deployment until the target or terminal state;

@@ -8,9 +8,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import sessionmaker
 
-from quantfoundry.db.models import Job, PluginArtifact, PluginRelease
-from quantfoundry.main import create_app
-from quantfoundry.settings import Settings
+from db.models import Job, PluginArtifact, PluginRelease
+from main import create_app
+from settings import Settings
 
 
 def wheel_bytes(*, name: str, version: str, plugin_id: str | None) -> bytes:
@@ -24,7 +24,7 @@ def wheel_bytes(*, name: str, version: str, plugin_id: str | None) -> bytes:
         if plugin_id:
             archive.writestr(
                 f"{dist_info}/entry_points.txt",
-                f"[quantfoundry.plugins]\n{plugin_id} = sample_plugin:plugin\n",
+                f"[quazonai.plugins]\n{plugin_id} = sample_plugin:plugin\n",
             )
     return buffer.getvalue()
 

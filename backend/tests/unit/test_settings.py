@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 
-from quantfoundry.settings import Settings, SettingsError
+from settings import Settings, SettingsError
 
 
 def test_master_key_requires_exactly_32_decoded_bytes(settings: Settings) -> None:
@@ -21,7 +21,7 @@ def test_database_scheme_rejects_remote_style_unknown_driver(settings: Settings)
     invalid = Settings(
         **{
             **{field: getattr(settings, field) for field in settings.__dataclass_fields__},
-            "database_url": "mysql://localhost/quantfoundry",
+            "database_url": "mysql://localhost/quazonai",
         }
     )
     try:

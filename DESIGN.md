@@ -1,8 +1,8 @@
-# QuantFoundry 产品与技术架构设计
+# QuaZonai 产品与技术架构设计
 
 > 架构基线：2026-08-20  
-> 目标分支：`codex/quantfoundry-nautilus-redesign`  
-> 文档地位：QuantFoundry 唯一完整的产品与技术事实源  
+> 目标分支：`codex/quazonai-nautilus-redesign`  
+> 文档地位：QuaZonai 唯一完整的产品与技术事实源  
 > 当前状态：**目标架构已锁定，现有实现不符合本设计，尚未 release-ready / live-ready**
 
 `README.md` 只负责项目入口、当前状态和最短运行说明；`AGENTS.md` 只负责开发治理。代码、配置、测试或运行结果不得静默改写本文。
@@ -31,7 +31,7 @@
 
 ### 1.1 定位
 
-QuantFoundry（QF）是 **API-only、单机、单操作员** 的量化研究与实盘工作台。第一阶段提供 Polymarket 和固定 L2 Parquet 插件；后续数据源、导入器和执行连接通过运行时插件管理器动态安装、激活、停用、升级和卸载，控制面不需要重启。
+QuaZonai（QF）是 **API-only、单机、单操作员** 的量化研究与实盘工作台。第一阶段提供 Polymarket 和固定 L2 Parquet 插件；后续数据源、导入器和执行连接通过运行时插件管理器动态安装、激活、停用、升级和卸载，控制面不需要重启。
 
 QF 是控制平面和产品层；NautilusTrader 是唯一交易内核。
 
@@ -199,7 +199,7 @@ ports:
 ## 4. 目标代码树
 
 ```text
-QuantFoundry/
+QuaZonai/
 ├── README.md
 ├── DESIGN.md
 ├── AGENTS.md
@@ -219,7 +219,7 @@ QuantFoundry/
 ├── deploy/
 │   └── Dockerfile.backend
 ├── native/
-│   └── qf_nautilus_risk/
+│   └── quazonai_nautilus_risk/
 │       ├── Cargo.toml
 │       └── src/
 │           ├── lib.rs
@@ -235,7 +235,7 @@ QuantFoundry/
     │   └── versions/
     │       └── 0001_initial.py
     ├── src/
-    │   └── quantfoundry/
+    │   └── quazonai/
     │       ├── __init__.py
     │       ├── main.py
     │       ├── settings.py
@@ -513,14 +513,14 @@ created_at TIMESTAMPTZ
 - 一个 PRIMARY wheel；
 - 零个或多个 DEPENDENCY wheels；
 - 同一个 wheel 集内每个 distribution name 只能出现一个 version；
-- DEPENDENCY wheel 不得声明 `quantfoundry.plugins` entry point；
+- DEPENDENCY wheel 不得声明 `quazonai.plugins` entry point；
 - 不接受 sdist、editable install、源码目录、Git URL 或任意可变远程 URL；
 - 包含 native extension 时必须提供与目标 Python/平台兼容的预编译 wheel。
 
 PRIMARY wheel 必须声明恰好一个 entry point：
 
 ```toml
-[project.entry-points."quantfoundry.plugins"]
+[project.entry-points."quazonai.plugins"]
 <plugin_id> = "<module>:<descriptor_factory>"
 ```
 
@@ -600,7 +600,7 @@ RECEIVED
 runtime bundle
   = pinned QF runner wheel
   + pinned Nautilus wheel
-  + pinned qf_nautilus_risk wheel
+  + pinned quazonai_nautilus_risk wheel
   + selected plugin PRIMARY/DEPENDENCY wheels
 ```
 
@@ -613,7 +613,7 @@ runtime bundle
 5. 在 bundle Python 中重新发现和加载所有指定 entry points；
 6. 校验 release 组合、`compatibility_key`、QF/Nautilus/Python 版本；
 7. 校验 descriptor/builder 可调用性和 Nautilus factory 注册；不伪造业务配置，也不连接真实 venue；
-8. 原子 rename 到 `/var/lib/quantfoundry/plugins/bundles/{bundle_id}`；
+8. 原子 rename 到 `/var/lib/quazonai/plugins/bundles/{bundle_id}`；
 9. 状态变为 `READY`，目录只读。
 
 实际 data source、execution connection 或 deployment 在首次使用前，必须在该 bundle 的独立 preflight 子进程中使用其真实 public config、secret presence 和资源上下文构造配置。需要真实网络的 Polymarket preflight 仍按生产只读流程单独执行，不能由 generic bundle build 冒充。
@@ -708,7 +708,7 @@ Data source 和 execution connection 可以独立配置，但用于同一 deploy
 ## 8. Credential 与 secret
 
 - 使用 AES-256-GCM；每个 secret field 使用独立随机 96-bit nonce。
-- master key 从 `QF_MASTER_KEY` 外部注入，缺失时 API/worker/supervisor 启动失败。
+- master key 从 `QUAZONAI_MASTER_KEY` 外部注入，缺失时 API/worker/supervisor 启动失败。
 - AAD 至少包含 `credential_set_id`、`plugin_release_id`、`field_name`、`key_version`，防止密文跨字段或跨 release 替换。
 - 第一期只支持一个 active key version，不实现自动轮换。
 - API 永不返回 plaintext、ciphertext、nonce 或 master key。
@@ -768,7 +768,7 @@ ts_init_ns     uint64
 导入算法：
 
 1. 确认 `parquet_l2` release 可用于该 data source，并取得 `READY` runtime bundle；
-2. 上传写入 `/var/lib/quantfoundry/imports/{run_id}/upload.parquet`；
+2. 上传写入 `/var/lib/quazonai/imports/{run_id}/upload.parquet`；
 3. 使用该 bundle 的 Python 启动 importer 子进程；
 4. PyArrow `RecordBatch` 分批读取，不使用 pandas，不全量载入内存；
 5. 校验物理 schema、十进制字符串、`event_index` 连续性和 snapshot `CLEAR` 起点；
@@ -778,7 +778,7 @@ ts_init_ns     uint64
 9. 完成后原子 rename 到最终目录，再在数据库注册 dataset；
 10. 任意失败不注册 dataset，并在 `finally` 清理 staging。
 
-默认上限 10 GiB，由 `QF_MAX_PARQUET_UPLOAD_BYTES` 调整。超限返回 413；schema/语义错误返回 422。不生成 checksum 文件。
+默认上限 10 GiB，由 `QUAZONAI_MAX_PARQUET_UPLOAD_BYTES` 调整。超限返回 413；schema/语义错误返回 422。不生成 checksum 文件。
 
 ## 11. Backtest、优化与 Holdout
 
@@ -997,14 +997,14 @@ signer private key、funder/deposit wallet、CLOB API key/secret/passphrase 分�
 Nautilus v2 暴露公开 `ExecutionClient` 与 `ExecutionClientFactory` trait，官方 Polymarket execution client 也通过公开 factory 构造。因此首选独立 native wheel：
 
 ```text
-qf_nautilus_risk
-  ├── QfPolymarketExecutionClientFactory
-  └── QfRiskedExecutionClient(inner: Box<dyn ExecutionClient>)
+quazonai_nautilus_risk
+  ├── QuazonaiPolymarketExecutionClientFactory
+  └── QuazonaiRiskedExecutionClient(inner: Box<dyn ExecutionClient>)
 ```
 
 Factory 调用官方 `PolymarketExecutionClientFactory.create(...)` 得到 inner client，再包装为 decorator，并通过 Nautilus v2 factory registry/PyO3 注册。Decorator 委托全部官方行为，只拦截增加暴露相关的 submit/modify 路径；cancel 无条件透传。
 
-`qf_nautilus_risk` wheel 是 core runtime 的固定成员，不允许第三方 execution plugin 绕过。Native crate 与 Nautilus v2 使用同一精确上游版本和 Cargo lock。禁止依赖 floating `develop`。只有可运行 spike 证明独立 factory 无法注册时，才可先修改本文重新评估最小 patch；不得静默退回 forked wheel。
+`quazonai_nautilus_risk` wheel 是 core runtime 的固定成员，不允许第三方 execution plugin 绕过。Native crate 与 Nautilus v2 使用同一精确上游版本和 Cargo lock。禁止依赖 floating `develop`。只有可运行 spike 证明独立 factory 无法注册时，才可先修改本文重新评估最小 patch；不得静默退回 forked wheel。
 
 订单路径：
 
@@ -1013,7 +1013,7 @@ Strategy
   → Nautilus RiskEngine
       (每个精确 InstrumentId 的 25 pUSD max_notional_per_order)
   → ExecutionEngine
-  → QfRiskedExecutionClient
+  → QuazonaiRiskedExecutionClient
   → PostgreSQL central reservation
   → official PolymarketExecutionClient
 ```
@@ -1107,11 +1107,11 @@ runner 中的 execution observer 订阅 Nautilus 订单/成交/取消/拒绝事�
 ### 17.1 持久卷
 
 ```text
-/var/lib/quantfoundry/plugins/releases
-/var/lib/quantfoundry/plugins/bundles
-/var/lib/quantfoundry/catalog
-/var/lib/quantfoundry/reports
-/var/lib/quantfoundry/imports
+/var/lib/quazonai/plugins/releases
+/var/lib/quazonai/plugins/bundles
+/var/lib/quazonai/catalog
+/var/lib/quazonai/reports
+/var/lib/quazonai/imports
 ```
 
 Plugin release 和 bundle 目录由 finite worker 写入，API 只读元数据，runner 只读 bundle。PostgreSQL 使用独立数据卷。旧卷不自动删除；检测到旧 schema 时启动失败并要求操作员显式创建新数据库/新卷。
@@ -1267,7 +1267,7 @@ Mock 只能证明本地分支逻辑；wheel 安装、entry point 加载、native
 ### P0：仓库清场与关键 spike
 
 - 删除所有明确非目标目录、依赖、Compose service、workflow 和 migration；
-- 建立 `src/quantfoundry`、native crate、单一 Alembic baseline 和单一 CI；
+- 建立 `src/quazonai`、native crate、单一 Alembic baseline 和单一 CI；
 - 锁定 Nautilus v2、Python、Rust、uv 和 PostgreSQL 版本；
 - 完成 native risk factory 注册 spike；
 - 完成“上传 wheel → 离线 validation venv → entry point load → immutable bundle → 子进程运行”的插件 runtime spike；

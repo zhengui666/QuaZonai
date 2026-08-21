@@ -1,4 +1,4 @@
-"""Fresh QuantFoundry control-plane baseline.
+"""Fresh QuaZonai control-plane baseline.
 
 Revision ID: 0001_initial
 Revises: None
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from alembic import op
 
-from quantfoundry.db.models import Base
+from db.models import Base
 
 revision = "0001_initial"
 down_revision = None

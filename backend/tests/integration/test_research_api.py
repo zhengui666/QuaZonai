@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import sessionmaker
 
-from quantfoundry.db.models import (
+from db.models import (
     CatalogDataset,
     DataSource,
     Job,
@@ -15,8 +15,8 @@ from quantfoundry.db.models import (
     Strategy,
     StrategyVersion,
 )
-from quantfoundry.main import create_app
-from quantfoundry.settings import Settings
+from main import create_app
+from settings import Settings
 
 SECTIONS = [
     "HYPOTHESIS",

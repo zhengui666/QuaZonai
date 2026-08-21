@@ -4,9 +4,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 from sqlalchemy.orm import sessionmaker
 
-from quantfoundry.db.models import PluginRelease
-from quantfoundry.main import create_app
-from quantfoundry.settings import Settings
+from db.models import PluginRelease
+from main import create_app
+from settings import Settings
 
 
 def test_data_source_requires_active_matching_capability(

@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import create_engine, text
 
-from quantfoundry.db.preflight import EXPECTED_REVISION, check_engine_schema
-from quantfoundry.errors import QfError
+from db.preflight import EXPECTED_REVISION, check_engine_schema
+from errors import QfError
 
 
 def test_empty_schema_is_allowed() -> None:

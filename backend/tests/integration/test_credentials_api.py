@@ -4,10 +4,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import sessionmaker
 
-from quantfoundry.api.credentials import decrypt_credential_secrets
-from quantfoundry.db.models import CredentialSet, PluginRelease
-from quantfoundry.main import create_app
-from quantfoundry.settings import Settings
+from api.credentials import decrypt_credential_secrets
+from db.models import CredentialSet, PluginRelease
+from main import create_app
+from settings import Settings
 
 
 def test_credential_api_is_write_only_and_encrypted(

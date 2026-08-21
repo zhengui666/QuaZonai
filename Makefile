@@ -22,13 +22,13 @@ install-dev:
 
 format:
 	ruff format backend/src backend/tests
-	cargo fmt --manifest-path native/qf_nautilus_risk/Cargo.toml
+	cargo fmt --manifest-path native/quazonai_nautilus_risk/Cargo.toml
 
 lint:
 	ruff check backend/src backend/tests
 
 typecheck:
-	mypy backend/src/quantfoundry
+	mypy backend/src/quazonai
 
 test:
 	pytest -q backend/tests
@@ -43,10 +43,10 @@ compile:
 	python -m compileall -q backend/src
 
 preflight:
-	python -m quantfoundry.db.preflight
+	python -m quazonai.db.preflight
 
 migrate:
-	python -m quantfoundry.db.preflight
+	python -m quazonai.db.preflight
 	alembic -c backend/alembic.ini upgrade head
 
 up:
@@ -62,18 +62,18 @@ ps:
 	docker compose --env-file .env ps
 
 build:
-	docker build -f deploy/Dockerfile.backend -t quantfoundry-backend:local .
+	docker build -f deploy/Dockerfile.backend -t quazonai-backend:local .
 
 verify-compose:
 	docker compose --env-file .env.example config --quiet
 
 rust-format:
-	cargo fmt --manifest-path native/qf_nautilus_risk/Cargo.toml --check
+	cargo fmt --manifest-path native/quazonai_nautilus_risk/Cargo.toml --check
 
 rust-lint:
-	cargo clippy --manifest-path native/qf_nautilus_risk/Cargo.toml --all-targets -- -D warnings
+	cargo clippy --manifest-path native/quazonai_nautilus_risk/Cargo.toml --all-targets -- -D warnings
 
 rust-test:
-	cargo test --manifest-path native/qf_nautilus_risk/Cargo.toml
+	cargo test --manifest-path native/quazonai_nautilus_risk/Cargo.toml
 
 ci: compile lint typecheck test rust-format rust-lint rust-test verify-compose

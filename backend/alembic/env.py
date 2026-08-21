@@ -1,4 +1,4 @@
-"""Alembic environment for the fresh QuantFoundry schema."""
+"""Alembic environment for the fresh QuaZonai schema."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from quantfoundry.db.models import Base
-from quantfoundry.settings import Settings
+from db.models import Base
+from settings import Settings
 
 config = context.config
 if config.config_file_name is not None:

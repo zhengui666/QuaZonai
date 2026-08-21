@@ -4,8 +4,8 @@ from uuid import uuid4
 
 import pytest
 
-from quantfoundry.crypto import EncryptedSecret, decrypt_secret, encrypt_secret
-from quantfoundry.errors import QfError
+from crypto import EncryptedSecret, decrypt_secret, encrypt_secret
+from errors import QfError
 
 
 def test_secret_is_bound_to_credential_release_and_field() -> None:

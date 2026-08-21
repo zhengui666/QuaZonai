@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from quantfoundry.errors import QfError
-from quantfoundry.plugins.wheel_metadata import inspect_wheel, validate_wheel_set
+from errors import QfError
+from plugins.wheel_metadata import inspect_wheel, validate_wheel_set
 
 
 def write_wheel(
@@ -25,7 +25,7 @@ def write_wheel(
         if plugin_id is not None:
             archive.writestr(
                 f"{dist_info}/entry_points.txt",
-                f"[quantfoundry.plugins]\n{plugin_id} = sample_plugin:plugin\n",
+                f"[quazonai.plugins]\n{plugin_id} = sample_plugin:plugin\n",
             )
 
 

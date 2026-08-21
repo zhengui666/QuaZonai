@@ -5,8 +5,8 @@ from uuid import uuid4
 
 from sqlalchemy.orm import sessionmaker
 
-from quantfoundry.db.models import Job
-from quantfoundry.jobs import claim_next_job, enqueue_job, release_expired_leases
+from db.models import Job
+from jobs import claim_next_job, enqueue_job, release_expired_leases
 
 
 def test_claim_and_release_expired_job(engine) -> None:  # type: ignore[no-untyped-def]
