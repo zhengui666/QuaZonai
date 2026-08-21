@@ -5,8 +5,6 @@ on:
   push:
     branches:
       - main
-      - codex/quantfoundry-nautilus-redesign
-      - codex/quantfoundry-production-closure
 
 permissions:
   contents: read
@@ -18,21 +16,21 @@ jobs:
       postgres:
         image: postgres:18-alpine
         env:
-          POSTGRES_DB: quantfoundry
-          POSTGRES_USER: quantfoundry
-          POSTGRES_PASSWORD: quantfoundry
+          POSTGRES_DB: quazonai
+          POSTGRES_USER: quazonai
+          POSTGRES_PASSWORD: quazonai
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U quantfoundry -d quantfoundry"
+          --health-cmd "pg_isready -U quazonai -d quazonai"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
     env:
-      QF_ENV: test
-      QF_DATABASE_URL: postgresql+psycopg://quantfoundry:quantfoundry@127.0.0.1:5432/quantfoundry
-      QF_ALEMBIC_URL: postgresql+psycopg://quantfoundry:quantfoundry@127.0.0.1:5432/quantfoundry
-      QF_MASTER_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      QUAZONAI_ENV: test
+      QUAZONAI_DATABASE_URL: postgresql+psycopg://quazonai:quazonai@127.0.0.1:5432/quazonai
+      QUAZONAI_ALEMBIC_URL: postgresql+psycopg://quazonai:quazonai@127.0.0.1:5432/quazonai
+      QUAZONAI_MASTER_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -45,7 +43,7 @@ jobs:
       - name: Lint
         run: ruff check --config backend/pyproject.toml backend/src backend/tests
       - name: Type check
-        run: mypy --config-file backend/pyproject.toml backend/src/quantfoundry
+        run: mypy --config-file backend/pyproject.toml backend/src
       - name: Runtime import smoke
         run: |
           python - <<'PY'
@@ -53,30 +51,30 @@ jobs:
           import nautilus_trader
           import optuna
           import pyarrow
-          import quantfoundry
-          print(quantfoundry.__version__)
+          import quazonai
+          print(quazonai.__version__)
           PY
       - name: Database preflight and migration
         run: |
-          python -m quantfoundry.db.preflight
+          python -m db.preflight
           alembic -c backend/alembic.ini upgrade head
-          python -m quantfoundry.db.preflight
+          python -m db.preflight
       - name: Tests
         run: pytest -q backend/tests
       - name: Compose configuration
         run: docker compose --env-file .env.example config --quiet
       - name: Production image build
-        run: docker build --file deploy/Dockerfile.backend --tag quantfoundry-ci .
+        run: docker build --file deploy/Dockerfile.backend --tag quazonai-ci .
       - name: Five-service smoke
         env:
-          QF_MASTER_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          QUAZONAI_MASTER_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
         run: |
           docker compose --env-file .env.example up --detach --build
           for attempt in $(seq 1 60); do
-            if curl --fail --silent http://127.0.0.1:8000/api/v1/system/health > /tmp/qf-health.json; then
+            if curl --fail --silent http://127.0.0.1:8000/api/v1/system/health > /tmp/quazonai-health.json; then
               python - <<'PY'
           import json
-          data = json.load(open('/tmp/qf-health.json', encoding='utf-8'))
+          data = json.load(open('/tmp/quazonai-health.json', encoding='utf-8'))
           if not data.get('live') or not data.get('ready'):
               raise SystemExit(1)
           PY
@@ -100,8 +98,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Format
-        run: cargo fmt --manifest-path native/qf_nautilus_risk/Cargo.toml --check
+        run: cargo fmt --manifest-path native/quazonai_nautilus_risk/Cargo.toml --check
       - name: Lint
-        run: cargo clippy --manifest-path native/qf_nautilus_risk/Cargo.toml --all-targets -- -D warnings
+        run: cargo clippy --manifest-path native/quazonai_nautilus_risk/Cargo.toml --all-targets -- -D warnings
       - name: Test
-        run: cargo test --manifest-path native/qf_nautilus_risk/Cargo.toml
+        run: cargo test --manifest-path native/quazonai_nautilus_risk/Cargo.toml
