@@ -42,16 +42,18 @@ dev = [
 ]
 
 [project.scripts]
-qf = "quazonai.cli.main:main"
-quazonai-finite-worker = "quazonai.runners.finite_worker:main"
-quazonai-live-supervisor = "quazonai.runners.live_supervisor:main"
-quazonai-mcp-gateway = "quazonai.mcp.main:main"
+quazonai = "cli.main:main"
+quazonai-finite-worker = "runners.finite_worker:main"
+quazonai-live-supervisor = "runners.live_supervisor:main"
+quazonai-mcp-gateway = "mcp.main:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+py-modules = ["quazonai", "crypto", "errors", "events", "jobs", "logging_utils", "main", "optimization", "risk", "schema_validation", "settings", "strategy_contract"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["api*", "cli*", "db*", "mcp*", "plugins*", "runners*"]
 
 [tool.ruff]
 target-version = "py314"
