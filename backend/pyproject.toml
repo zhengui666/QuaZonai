@@ -27,7 +27,7 @@ dependencies = [
 research = ["optuna==4.9.0", "pyarrow==25.0.1"]
 trading = ["nautilus-trader==2.0.0rc3"]
 mcp = ["mcp==2.0.0", "PyJWT[crypto]>=2.13,<3"]
-dev = ["mypy>=1.18,<2", "pytest>=9,<10", "ruff>=0.15,<1"]
+dev = ["mypy>=1.18,<3", "pytest>=9,<10", "ruff>=0.15,<1"]
 
 [project.scripts]
 quazonai = "cli.main:main"
