@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Build
+build/
+dist/
+*.egg-info/
+target/
+
+# Environment and runtime state
+.env
+.env.*
+!.env.example
+var/
+*.log
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/

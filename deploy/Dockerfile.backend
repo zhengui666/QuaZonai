@@ -1,0 +1,31 @@
+FROM python:3.14-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PATH=/opt/venv/bin:$PATH
+
+RUN groupadd --system quantfoundry \
+    && useradd --system --gid quantfoundry --home-dir /home/quantfoundry \
+       --create-home --shell /usr/sbin/nologin quantfoundry \
+    && apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
+       ca-certificates libpq5 \
+    && rm -rf /var/lib/apt/lists/* \
+    && python -m venv /opt/venv
+
+WORKDIR /workspace
+COPY backend/ /workspace/backend/
+RUN /opt/venv/bin/python -m pip install --no-cache-dir "/workspace/backend[research,trading,mcp]"
+
+RUN mkdir -p \
+      /var/lib/quantfoundry/plugins \
+      /var/lib/quantfoundry/catalog \
+      /var/lib/quantfoundry/reports \
+      /var/lib/quantfoundry/imports \
+      /var/lib/quantfoundry/agent-artifacts \
+    && chown -R quantfoundry:quantfoundry /var/lib/quantfoundry /workspace
+
+WORKDIR /workspace/backend
+USER quantfoundry
+EXPOSE 8000

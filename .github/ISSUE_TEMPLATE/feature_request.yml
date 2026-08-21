@@ -1,0 +1,25 @@
+name: Feature request
+description: Propose a problem to solve; do not treat an issue as a contract change.
+title: "feature: "
+labels: [enhancement, triage]
+body:
+  - type: markdown
+    attributes:
+      value: "Product and contract changes require governed documentation updates before implementation."
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Explain who is blocked and why.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

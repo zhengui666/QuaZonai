@@ -1,0 +1,33 @@
+name: Bug report
+description: Report reproducible behavior that differs from the documented contract.
+title: "bug: "
+labels: [bug, triage]
+body:
+  - type: markdown
+    attributes:
+      value: "Do not include credentials, tokens, private data, or vulnerability details in a public issue."
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: Link to the applicable governed document or contract.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      placeholder: "1. ...\n2. ...\n3. ..."
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: "Unreleased / commit SHA"

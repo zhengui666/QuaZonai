@@ -1,0 +1,121 @@
+name: quantfoundry
+
+x-core-env: &core-env
+  QF_ENV: ${QF_ENV:-development}
+  QF_DATABASE_URL: ${QF_DATABASE_URL:-postgresql+psycopg://quantfoundry:quantfoundry-local@postgres:5432/quantfoundry}
+  QF_ALEMBIC_URL: ${QF_ALEMBIC_URL:-postgresql+psycopg://quantfoundry:quantfoundry-local@postgres:5432/quantfoundry}
+  QF_MASTER_KEY: ${QF_MASTER_KEY:-}
+  QF_PLUGIN_ROOT: /var/lib/quantfoundry/plugins
+  QF_CATALOG_ROOT: /var/lib/quantfoundry/catalog
+  QF_REPORT_ROOT: /var/lib/quantfoundry/reports
+  QF_IMPORT_ROOT: /var/lib/quantfoundry/imports
+  QF_AGENT_ARTIFACT_ROOT: /var/lib/quantfoundry/agent-artifacts
+  QF_MAX_PARQUET_UPLOAD_BYTES: ${QF_MAX_PARQUET_UPLOAD_BYTES:-10737418240}
+  QF_JOB_POLL_SECONDS: ${QF_JOB_POLL_SECONDS:-1.0}
+  QF_JOB_LEASE_SECONDS: ${QF_JOB_LEASE_SECONDS:-60}
+  QF_SUPERVISOR_POLL_SECONDS: ${QF_SUPERVISOR_POLL_SECONDS:-1.0}
+
+x-core-service: &core-service
+  build:
+    context: .
+    dockerfile: deploy/Dockerfile.backend
+  environment:
+    <<: *core-env
+  volumes:
+    - plugin-data:/var/lib/quantfoundry/plugins
+    - catalog-data:/var/lib/quantfoundry/catalog
+    - report-data:/var/lib/quantfoundry/reports
+    - import-data:/var/lib/quantfoundry/imports
+    - agent-artifact-data:/var/lib/quantfoundry/agent-artifacts
+  restart: unless-stopped
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=128m
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: ${QF_POSTGRES_DB:-quantfoundry}
+      POSTGRES_USER: ${QF_POSTGRES_USER:-quantfoundry}
+      POSTGRES_PASSWORD: ${QF_POSTGRES_PASSWORD:-quantfoundry-local}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  migrate:
+    <<: *core-service
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      - sh
+      - -ec
+      - python -m quantfoundry.db.preflight && alembic upgrade head
+
+  api:
+    <<: *core-service
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: ["uvicorn", "quantfoundry.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "127.0.0.1:${QF_HTTP_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import json, urllib.request;
+          d=json.load(urllib.request.urlopen('http://127.0.0.1:8000/api/v1/system/health', timeout=2));
+          raise SystemExit(0 if d.get('live') else 1)
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  finite-worker:
+    <<: *core-service
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: ["qf-finite-worker"]
+    healthcheck:
+      test: ["CMD", "qf-finite-worker", "--check"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 10s
+
+  live-supervisor:
+    <<: *core-service
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: ["qf-live-supervisor"]
+    healthcheck:
+      test: ["CMD", "qf-live-supervisor", "--check"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 10s
+
+volumes:
+  postgres-data:
+  plugin-data:
+  catalog-data:
+  report-data:
+  import-data:
+  agent-artifact-data:

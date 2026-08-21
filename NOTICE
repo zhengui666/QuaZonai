@@ -1,0 +1,10 @@
+QuantFoundry
+Copyright (C) 2026 QuantFoundry maintainers
+
+This repository's original source code is licensed under the GNU Affero General
+Public License, version 3 only (AGPL-3.0-only). The complete license text is in
+LICENSE.
+
+This repository uses third-party software. Third-party software is not relicensed
+by this NOTICE and is not copied into this repository merely by being listed.
+See THIRD_PARTY_NOTICES.md for the dependency-license inventory entry point.
