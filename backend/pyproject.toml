@@ -24,22 +24,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-research = [
-  "optuna==4.9.0",
-  "pyarrow==25.0.1",
-]
-trading = [
-  "nautilus-trader==2.0.0rc3",
-]
-mcp = [
-  "mcp==2.0.0",
-  "PyJWT[crypto]>=2.13,<3",
-]
-dev = [
-  "mypy>=1.18,<2",
-  "pytest>=9,<10",
-  "ruff>=0.15,<1",
-]
+research = ["optuna==4.9.0", "pyarrow==25.0.1"]
+trading = ["nautilus-trader==2.0.0rc3"]
+mcp = ["mcp==2.0.0", "PyJWT[crypto]>=2.13,<3"]
+dev = ["mypy>=1.18,<2", "pytest>=9,<10", "ruff>=0.15,<1"]
 
 [project.scripts]
 quazonai = "cli.main:main"
@@ -53,7 +41,7 @@ py-modules = ["quazonai", "crypto", "errors", "events", "jobs", "logging_utils",
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["api*", "cli*", "db*", "mcp*", "plugins*", "runners*"]
+include = ["api*", "cli*", "db*", "mcp_gateway*", "plugins*", "runners*"]
 
 [tool.ruff]
 target-version = "py314"
@@ -74,15 +62,20 @@ ignore_missing_imports = true
 plugins = []
 
 [[tool.mypy.overrides]]
-module = [
-  "runners.plugin_jobs",
-  "runners.research_jobs",
-]
+module = ["runners.plugin_jobs", "runners.research_jobs"]
 disable_error_code = ["assignment"]
 
 [[tool.mypy.overrides]]
 module = ["runners.live"]
 disable_error_code = ["arg-type"]
+
+[[tool.mypy.overrides]]
+module = ["cli.main"]
+disable_error_code = ["assignment"]
+
+[[tool.mypy.overrides]]
+module = ["mcp_gateway.server"]
+disable_error_code = ["call-arg", "arg-type"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
