@@ -26,26 +26,18 @@ jobs:
           root = Path('.')
           old = root / 'backend/src/quantfoundry'
           dst = root / 'backend/src'
-          if not old.is_dir():
-              raise SystemExit('backend/src/quantfoundry is missing')
-
+          if not old.is_dir(): raise SystemExit('backend/src/quantfoundry is missing')
           init = old / '__init__.py'
-          if init.exists():
-              shutil.move(str(init), str(dst / 'quazonai.py'))
+          if init.exists(): shutil.move(str(init), str(dst / 'quazonai.py'))
           for child in list(old.iterdir()):
               target = dst / child.name
-              if target.exists():
-                  raise SystemExit(f'target already exists: {target}')
+              if target.exists(): raise SystemExit(f'target already exists: {target}')
               shutil.move(str(child), str(target))
           old.rmdir()
 
           native_old = root / 'native/qf_nautilus_risk'
           native_new = root / 'native/quazonai_nautilus_risk'
-          if native_old.exists():
-              native_old.rename(native_new)
-
-          text_suffixes = {'.py','.toml','.ini','.yml','.yaml','.md','.txt','.rs','.lock','.example','.gitignore','.dockerignore','.gitattributes','.editorconfig'}
-          exact_text_names = {'LICENSE','NOTICE','Makefile'}
+          if native_old.exists(): native_old.rename(native_new)
 
           def transform(text: str) -> str:
               text = re.sub(r'\bfrom quantfoundry\.([A-Za-z_][\w.]*)\s+import\s+', r'from \1 import ', text)
@@ -64,12 +56,9 @@ jobs:
               return text
 
           for path in root.rglob('*'):
-              if not path.is_file() or '.git' in path.parts or path.name == 'rename-quazonai.yml':
-                  continue
-              if path.suffix not in text_suffixes and path.name not in exact_text_names:
-                  continue
+              if not path.is_file() or '.git' in path.parts or path.name == 'rename-quazonai.yml': continue
               try: original = path.read_text(encoding='utf-8')
-              except UnicodeDecodeError: continue
+              except (UnicodeDecodeError, OSError): continue
               updated = transform(original)
               if updated != original: path.write_text(updated, encoding='utf-8')
 
@@ -89,8 +78,8 @@ jobs:
           ci.write_text(text, encoding='utf-8')
           PY
 
-          if git grep -n -i 'quantfoundry' -- ':!*.lock'; then exit 1; fi
-          if find . -path ./.git -prune -o -iname '*quantfoundry*' -print | grep -q .; then exit 1; fi
+          if git grep -n -i 'quantfoundry' -- ':!*.lock' ':!.github/workflows/rename-quazonai.yml'; then exit 1; fi
+          if find . -path ./.git -prune -o -path ./.github/workflows/rename-quazonai.yml -prune -o -iname '*quantfoundry*' -print | grep -q .; then exit 1; fi
           test ! -e backend/src/quantfoundry
           test -f backend/src/quazonai.py
           test -d backend/src/api
