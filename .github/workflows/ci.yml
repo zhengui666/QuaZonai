@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - codex/quantfoundry-nautilus-redesign
+      - codex/quantfoundry-production-closure
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: quantfoundry
+          POSTGRES_USER: quantfoundry
+          POSTGRES_PASSWORD: quantfoundry
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U quantfoundry -d quantfoundry"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      QF_ENV: test
+      QF_DATABASE_URL: postgresql+psycopg://quantfoundry:quantfoundry@127.0.0.1:5432/quantfoundry
+      QF_ALEMBIC_URL: postgresql+psycopg://quantfoundry:quantfoundry@127.0.0.1:5432/quantfoundry
+      QF_MASTER_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Install all product runtimes
+        run: python -m pip install -e 'backend[dev,research,trading,mcp]'
+      - name: Compile
+        run: python -m compileall -q backend/src
+      - name: Lint
+        run: ruff check --config backend/pyproject.toml backend/src backend/tests
+      - name: Type check
+        run: mypy --config-file backend/pyproject.toml backend/src/quantfoundry
+      - name: Runtime import smoke
+        run: |
+          python - <<'PY'
+          import mcp
+          import nautilus_trader
+          import optuna
+          import pyarrow
+          import quantfoundry
+          print(quantfoundry.__version__)
+          PY
+      - name: Database preflight and migration
+        run: |
+          python -m quantfoundry.db.preflight
+          alembic -c backend/alembic.ini upgrade head
+          python -m quantfoundry.db.preflight
+      - name: Tests
+        run: pytest -q backend/tests
+      - name: Compose configuration
+        run: docker compose --env-file .env.example config --quiet
+      - name: Production image build
+        run: docker build --file deploy/Dockerfile.backend --tag quantfoundry-ci .
+      - name: Five-service smoke
+        env:
+          QF_MASTER_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+        run: |
+          docker compose --env-file .env.example up --detach --build
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:8000/api/v1/system/health > /tmp/qf-health.json; then
+              python - <<'PY'
+          import json
+          data = json.load(open('/tmp/qf-health.json', encoding='utf-8'))
+          if not data.get('live') or not data.get('ready'):
+              raise SystemExit(1)
+          PY
+              break
+            fi
+            if [ "$attempt" = 60 ]; then
+              docker compose --env-file .env.example ps
+              docker compose --env-file .env.example logs --no-color
+              exit 1
+            fi
+            sleep 2
+          done
+          docker compose --env-file .env.example ps
+      - name: Stop Compose
+        if: always()
+        run: docker compose --env-file .env.example down --volumes --remove-orphans
+
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Format
+        run: cargo fmt --manifest-path native/qf_nautilus_risk/Cargo.toml --check
+      - name: Lint
+        run: cargo clippy --manifest-path native/qf_nautilus_risk/Cargo.toml --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --manifest-path native/qf_nautilus_risk/Cargo.toml
