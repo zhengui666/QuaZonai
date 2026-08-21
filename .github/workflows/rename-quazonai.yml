@@ -1,0 +1,143 @@
+name: QuaZonai namespace migration
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/rename-quazonai.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Flatten backend package and rename product namespace
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          import shutil
+
+          root = Path('.')
+          old = root / 'backend/src/quantfoundry'
+          dst = root / 'backend/src'
+          if not old.is_dir():
+              raise SystemExit('backend/src/quantfoundry is missing')
+
+          init = old / '__init__.py'
+          if init.exists():
+              shutil.move(str(init), str(dst / 'quazonai.py'))
+          for child in list(old.iterdir()):
+              target = dst / child.name
+              if target.exists():
+                  raise SystemExit(f'target already exists: {target}')
+              shutil.move(str(child), str(target))
+          old.rmdir()
+
+          native_old = root / 'native/qf_nautilus_risk'
+          native_new = root / 'native/quazonai_nautilus_risk'
+          if native_old.exists():
+              native_old.rename(native_new)
+
+          text_suffixes = {
+              '.py', '.toml', '.ini', '.yml', '.yaml', '.md', '.txt', '.rs', '.lock',
+              '.example', '.gitignore', '.dockerignore', '.gitattributes', '.editorconfig',
+          }
+          exact_text_names = {'LICENSE', 'NOTICE', 'Makefile'}
+
+          def transform(text: str) -> str:
+              # Flatten Python imports before changing the product namespace.
+              text = re.sub(r'\bfrom quantfoundry\.([A-Za-z_][\w.]*)\s+import\s+', r'from \1 import ', text)
+              text = re.sub(r'\bimport quantfoundry\.([A-Za-z_][\w.]*)', r'import \1', text)
+              text = text.replace('from quantfoundry import __version__', 'from quazonai import __version__')
+              text = text.replace('import quantfoundry', 'import quazonai')
+
+              replacements = [
+                  ('QuantFoundry', 'QuaZonai'),
+                  ('quantfoundry', 'quazonai'),
+                  ('QUANTFOUNDRY', 'QUAZONAI'),
+                  ('QF_', 'QUAZONAI_'),
+                  ('qf_nautilus_risk', 'quazonai_nautilus_risk'),
+                  ('QfRiskedExecutionClient', 'QuazonaiRiskedExecutionClient'),
+                  ('QfPolymarketExecutionClientFactory', 'QuazonaiPolymarketExecutionClientFactory'),
+                  ('QfRisk', 'QuazonaiRisk'),
+                  ('qf://', 'quazonai://'),
+                  ('qf.', 'quazonai.'),
+                  ('qf-', 'quazonai-'),
+                  ('`qf`', '`quazonai`'),
+                  (' qf ', ' quazonai '),
+                  ('qf status', 'quazonai status'),
+                  ('/tmp/qf-', '/tmp/quazonai-'),
+              ]
+              for before, after in replacements:
+                  text = text.replace(before, after)
+              return text
+
+          for path in root.rglob('*'):
+              if not path.is_file() or '.git' in path.parts:
+                  continue
+              if path.name == 'rename-quazonai.yml':
+                  continue
+              if path.suffix not in text_suffixes and path.name not in exact_text_names:
+                  continue
+              try:
+                  original = path.read_text(encoding='utf-8')
+              except UnicodeDecodeError:
+                  continue
+              updated = transform(original)
+              if updated != original:
+                  path.write_text(updated, encoding='utf-8')
+
+          # setuptools now exposes top-level packages directly from backend/src.
+          pyproject = root / 'backend/pyproject.toml'
+          text = pyproject.read_text(encoding='utf-8')
+          text = text.replace('quazonai = "cli.main:main"', 'quazonai = "cli.main:main"')
+          text = text.replace('files = ["src/quazonai"]', 'files = ["src"]')
+          text = re.sub(r'module = \[\n\s*"quazonai\.runners\.plugin_jobs",\n\s*"quazonai\.runners\.research_jobs",\n\]', 'module = [\n  "runners.plugin_jobs",\n  "runners.research_jobs",\n]', text)
+          text = text.replace('module = ["quazonai.runners.live"]', 'module = ["runners.live"]')
+          pyproject.write_text(text, encoding='utf-8')
+
+          # CI imports and module invocations follow the flattened source tree.
+          ci = root / '.github/workflows/ci.yml'
+          text = ci.read_text(encoding='utf-8')
+          text = text.replace('backend/src/quazonai', 'backend/src')
+          text = text.replace('python -m quazonai.db.preflight', 'python -m db.preflight')
+          text = text.replace('import quazonai\n          print(quazonai.__version__)', 'import quazonai\n          print(quazonai.__version__)')
+          ci.write_text(text, encoding='utf-8')
+
+          # Remove stale source-branch names from CI triggers.
+          text = ci.read_text(encoding='utf-8')
+          text = re.sub(r'\n\s*- codex/quazonai-nautilus-redesign', '', text)
+          text = re.sub(r'\n\s*- codex/quazonai-production-closure', '', text)
+          ci.write_text(text, encoding='utf-8')
+          PY
+
+          # No legacy product name may remain in tracked content or paths.
+          if git grep -n -i 'quantfoundry' -- ':!*.lock'; then
+            echo 'legacy QuantFoundry name remains' >&2
+            exit 1
+          fi
+          if find . -path ./.git -prune -o -iname '*quantfoundry*' -print | grep -q .; then
+            echo 'legacy QuantFoundry path remains' >&2
+            exit 1
+          fi
+
+          # The old package directory must be gone and direct source packages must exist.
+          test ! -e backend/src/quantfoundry
+          test -f backend/src/quazonai.py
+          test -d backend/src/api
+          test -d backend/src/db
+          test -d backend/src/runners
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A ':!.github/workflows/rename-quazonai.yml'
+          git commit -m "refactor: rename product to QuaZonai and flatten backend src"
+          git push origin HEAD:main
