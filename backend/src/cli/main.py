@@ -353,7 +353,7 @@ def _json_resources(actions: Any) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="qf", description="QuaZonai local operator CLI")
+    parser = argparse.ArgumentParser(prog="quazonai", description="QuaZonai local operator CLI")
     parser.add_argument("--endpoint", default=_endpoint(), help="Loopback Core API URL")
     parser.add_argument("--output", choices=["table", "json"], default="table")
     commands = parser.add_subparsers(dest="command", required=True)

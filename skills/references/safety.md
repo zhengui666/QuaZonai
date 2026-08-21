@@ -129,18 +129,18 @@ MCP Agents cannot execute these operations. Return a local-human handoff with im
 Typical scopes include:
 
 ```text
-qf:read
-qf:plugin:stage
-qf:plugin:activate
-qf:data:write
-qf:connection:write
-qf:research:write
-qf:experiment:run
-qf:deployment:create
-qf:deployment:stop
-qf:universe:propose
-qf:approval:prepare
-qf:artifact:upload
+quazonai:read
+quazonai:plugin:stage
+quazonai:plugin:activate
+quazonai:data:write
+quazonai:connection:write
+quazonai:research:write
+quazonai:experiment:run
+quazonai:deployment:create
+quazonai:deployment:stop
+quazonai:universe:propose
+quazonai:approval:prepare
+quazonai:artifact:upload
 ```
 
 Rules:

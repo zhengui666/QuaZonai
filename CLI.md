@@ -41,7 +41,7 @@ quazonai-mcp-gateway
 官方本地命令：
 
 ```text
-qf
+quazonai
 ```
 
 覆盖 `OPERATIONS.md` 中全部人工操作节点，包括：
@@ -112,7 +112,7 @@ Skill 是外部工作流，不是 QZ 内置 Agent runtime，也不构成权限�
 
 ```mermaid
 flowchart LR
-    H[Local human] --> CLI[qf CLI]
+    H[Local human] --> CLI[quazonai CLI]
     CLI -->|loopback HTTP| API[QZ API]
 
     A[Remote MCP Host / Agent] -->|HTTPS MCP Streamable HTTP| GW[quazonai-mcp-gateway]
@@ -314,18 +314,18 @@ scopes
 建议：
 
 ```text
-qf:read
-qf:plugin:stage
-qf:plugin:activate
-qf:data:write
-qf:connection:write
-qf:research:write
-qf:experiment:run
-qf:deployment:create
-qf:deployment:stop
-qf:universe:propose
-qf:approval:prepare
-qf:artifact:upload
+quazonai:read
+quazonai:plugin:stage
+quazonai:plugin:activate
+quazonai:data:write
+quazonai:connection:write
+quazonai:research:write
+quazonai:experiment:run
+quazonai:deployment:create
+quazonai:deployment:stop
+quazonai:universe:propose
+quazonai:approval:prepare
+quazonai:artifact:upload
 ```
 
 `tools/list` 按 scope 过滤。无权限调用返回 403/`insufficient_scope`。
@@ -566,7 +566,7 @@ Parquet 可达 10 GiB，禁止放入 MCP JSON。
 两阶段：
 
 1. `quazonai.artifact.begin_upload` 返回 `artifact_id`、短时 HTTPS URL、chunk size 和 accepted offset；
-2. 官方 `qf artifact upload` companion client 按 offset 流式 PUT；
+2. 官方 `quazonai artifact upload` companion client 按 offset 流式 PUT；
 3. `quazonai.artifact.finalize_upload` 校验精确字节数；
 4. 消费 Tool 只引用 `artifact_id`。
 
@@ -598,7 +598,7 @@ Token 由 MCP Host 或 Companion CLI 安全存储；Skill 不读取或要求粘�
 
 ```toml
 [project.scripts]
-qf = "quazonai.cli.main:main"
+quazonai = "quazonai.cli.main:main"
 ```
 
 本地模式只接受 Core loopback endpoint：
@@ -613,19 +613,19 @@ http://127.0.0.1:8000
 
 ```bash
 quazonai status
-qf research show <id>
-qf run watch <id>
-qf approval approve <id>
-qf deployment stop <id>
+quazonai research show <id>
+quazonai run watch <id>
+quazonai approval approve <id>
+quazonai deployment stop <id>
 ```
 
 CLI 也可作为标准 MCP Client/Artifact Companion：
 
 ```bash
-qf mcp login --server https://quazonai.example.com/mcp
-qf mcp tools --server https://quazonai.example.com/mcp
-qf mcp call quazonai.system.status --server https://quazonai.example.com/mcp --json '{}'
-qf artifact upload --mcp-server https://quazonai.example.com/mcp --file strategy.py --kind STRATEGY_SOURCE
+quazonai mcp login --server https://quazonai.example.com/mcp
+quazonai mcp tools --server https://quazonai.example.com/mcp
+quazonai mcp call quazonai.system.status --server https://quazonai.example.com/mcp --json '{}'
+quazonai artifact upload --mcp-server https://quazonai.example.com/mcp --file strategy.py --kind STRATEGY_SOURCE
 ```
 
 MCP 模式只使用标准 MCP/OAuth，不调用远程 `/api/v1`。
@@ -633,11 +633,11 @@ MCP 模式只使用标准 MCP/OAuth，不调用远程 `/api/v1`。
 Human-only 本地 CLI：
 
 ```text
-qf credential create/update with protected input
-qf approval approve/reject
-qf plugin remove --force
-qf canary execute
-qf system master-key ...
+quazonai credential create/update with protected input
+quazonai approval approve/reject
+quazonai plugin remove --force
+quazonai canary execute
+quazonai system master-key ...
 ```
 
 Secret 只从保护 TTY/stdin/OS credential store 输入，不通过 argv、history 或 JSON output。

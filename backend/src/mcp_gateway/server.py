@@ -196,166 +196,166 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
         json_response=True,
     )
 
-    @_tool(server, name="quazonai.system.status", scope="qf:read", annotations=READ)
+    @_tool(server, name="quazonai.system.status", scope="quazonai:read", annotations=READ)
     async def system_status() -> dict[str, Any]:
-        require_scope("qf:read")
+        require_scope("quazonai:read")
         return await current_client(settings).get("/api/v1/system/health")
 
-    @_tool(server, name="quazonai.plugin.list", scope="qf:read", annotations=READ)
+    @_tool(server, name="quazonai.plugin.list", scope="quazonai:read", annotations=READ)
     async def plugin_list() -> list[dict[str, Any]]:
-        require_scope("qf:read")
+        require_scope("quazonai:read")
         return await current_client(settings).get("/api/v1/plugins")
 
-    @_tool(server, name="quazonai.plugin.show", scope="qf:read", annotations=READ)
+    @_tool(server, name="quazonai.plugin.show", scope="quazonai:read", annotations=READ)
     async def plugin_show(release_id: UUID) -> dict[str, Any]:
-        require_scope("qf:read")
+        require_scope("quazonai:read")
         return await current_client(settings).get(f"/api/v1/plugin-releases/{release_id}")
 
-    @_tool(server, name="quazonai.bundle.show", scope="qf:read", annotations=READ)
+    @_tool(server, name="quazonai.bundle.show", scope="quazonai:read", annotations=READ)
     async def bundle_show(bundle_id: UUID) -> dict[str, Any]:
-        require_scope("qf:read")
+        require_scope("quazonai:read")
         return await current_client(settings).get(
             f"/api/v1/plugin-runtime-bundles/{bundle_id}"
         )
 
-    @_tool(server, name="quazonai.credential.list", scope="qf:read", annotations=READ)
+    @_tool(server, name="quazonai.credential.list", scope="quazonai:read", annotations=READ)
     async def credential_list() -> list[dict[str, Any]]:
-        require_scope("qf:read")
+        require_scope("quazonai:read")
         return await current_client(settings).get("/api/v1/credential-sets")
 
-    @_tool(server, name="quazonai.credential.show", scope="qf:read", annotations=READ)
+    @_tool(server, name="quazonai.credential.show", scope="quazonai:read", annotations=READ)
     async def credential_show(credential_id: UUID) -> dict[str, Any]:
-        require_scope("qf:read")
+        require_scope("quazonai:read")
         return await current_client(settings).get(f"/api/v1/credential-sets/{credential_id}")
 
-    @_tool(server, name="quazonai.data_source.list", scope="qf:read", annotations=READ)
+    @_tool(server, name="quazonai.data_source.list", scope="quazonai:read", annotations=READ)
     async def data_source_list() -> list[dict[str, Any]]:
-        require_scope("qf:read")
+        require_scope("quazonai:read")
         return await current_client(settings).get("/api/v1/data-sources")
 
-    @_tool(server, name="quazonai.data_source.show", scope="qf:read", annotations=READ)
+    @_tool(server, name="quazonai.data_source.show", scope="quazonai:read", annotations=READ)
     async def data_source_show(source_id: UUID) -> dict[str, Any]:
-        require_scope("qf:read")
+        require_scope("quazonai:read")
         return await current_client(settings).get(f"/api/v1/data-sources/{source_id}")
 
-    @_tool(server, name="quazonai.execution_connection.list", scope="qf:read", annotations=READ)
+    @_tool(server, name="quazonai.execution_connection.list", scope="quazonai:read", annotations=READ)
     async def execution_connection_list() -> list[dict[str, Any]]:
-        require_scope("qf:read")
+        require_scope("quazonai:read")
         return await current_client(settings).get("/api/v1/execution-connections")
 
-    @_tool(server, name="quazonai.execution_connection.show", scope="qf:read", annotations=READ)
+    @_tool(server, name="quazonai.execution_connection.show", scope="quazonai:read", annotations=READ)
     async def execution_connection_show(connection_id: UUID) -> dict[str, Any]:
-        require_scope("qf:read")
+        require_scope("quazonai:read")
         return await current_client(settings).get(
             f"/api/v1/execution-connections/{connection_id}"
         )
 
-    @_tool(server, name="quazonai.dataset.list", scope="qf:read", annotations=READ)
+    @_tool(server, name="quazonai.dataset.list", scope="quazonai:read", annotations=READ)
     async def dataset_list() -> list[dict[str, Any]]:
-        require_scope("qf:read")
+        require_scope("quazonai:read")
         return await current_client(settings).get("/api/v1/catalog-datasets")
 
-    @_tool(server, name="quazonai.dataset.show", scope="qf:read", annotations=READ)
+    @_tool(server, name="quazonai.dataset.show", scope="quazonai:read", annotations=READ)
     async def dataset_show(dataset_id: UUID) -> dict[str, Any]:
-        require_scope("qf:read")
+        require_scope("quazonai:read")
         return await current_client(settings).get(f"/api/v1/catalog-datasets/{dataset_id}")
 
-    @_tool(server, name="quazonai.strategy.list", scope="qf:read", annotations=READ)
+    @_tool(server, name="quazonai.strategy.list", scope="quazonai:read", annotations=READ)
     async def strategy_list() -> list[dict[str, Any]]:
-        require_scope("qf:read")
+        require_scope("quazonai:read")
         return await current_client(settings).get("/api/v1/strategies")
 
-    @_tool(server, name="quazonai.strategy.show", scope="qf:read", annotations=READ)
+    @_tool(server, name="quazonai.strategy.show", scope="quazonai:read", annotations=READ)
     async def strategy_show(strategy_id: UUID) -> dict[str, Any]:
-        require_scope("qf:read")
+        require_scope("quazonai:read")
         return await current_client(settings).get(f"/api/v1/strategies/{strategy_id}")
 
-    @_tool(server, name="quazonai.research.list", scope="qf:read", annotations=READ)
+    @_tool(server, name="quazonai.research.list", scope="quazonai:read", annotations=READ)
     async def research_list() -> list[dict[str, Any]]:
-        require_scope("qf:read")
+        require_scope("quazonai:read")
         return await current_client(settings).get("/api/v1/research-cases")
 
-    @_tool(server, name="quazonai.research.show", scope="qf:read", annotations=READ)
+    @_tool(server, name="quazonai.research.show", scope="quazonai:read", annotations=READ)
     async def research_show(research_id: UUID) -> dict[str, Any]:
-        require_scope("qf:read")
+        require_scope("quazonai:read")
         return await current_client(settings).get(f"/api/v1/research-cases/{research_id}")
 
-    @_tool(server, name="quazonai.experiment.show", scope="qf:read", annotations=READ)
+    @_tool(server, name="quazonai.experiment.show", scope="quazonai:read", annotations=READ)
     async def experiment_show(experiment_id: UUID) -> dict[str, Any]:
-        require_scope("qf:read")
+        require_scope("quazonai:read")
         return await current_client(settings).get(f"/api/v1/experiments/{experiment_id}")
 
-    @_tool(server, name="quazonai.run.list", scope="qf:read", annotations=READ)
+    @_tool(server, name="quazonai.run.list", scope="quazonai:read", annotations=READ)
     async def run_list(experiment_id: UUID | None = None) -> list[dict[str, Any]]:
-        require_scope("qf:read")
+        require_scope("quazonai:read")
         params = {"experiment_id": str(experiment_id)} if experiment_id else None
         return await current_client(settings).get("/api/v1/runs", params=params)
 
-    @_tool(server, name="quazonai.run.show", scope="qf:read", annotations=READ)
+    @_tool(server, name="quazonai.run.show", scope="quazonai:read", annotations=READ)
     async def run_show(run_id: UUID) -> dict[str, Any]:
-        require_scope("qf:read")
+        require_scope("quazonai:read")
         return await current_client(settings).get(f"/api/v1/runs/{run_id}")
 
-    @_tool(server, name="quazonai.run.report", scope="qf:read", annotations=READ)
+    @_tool(server, name="quazonai.run.report", scope="quazonai:read", annotations=READ)
     async def run_report(run_id: UUID) -> list[dict[str, Any]]:
-        require_scope("qf:read")
+        require_scope("quazonai:read")
         return await current_client(settings).get(f"/api/v1/runs/{run_id}/reports")
 
-    @_tool(server, name="quazonai.approval.list", scope="qf:read", annotations=READ)
+    @_tool(server, name="quazonai.approval.list", scope="quazonai:read", annotations=READ)
     async def approval_list() -> list[dict[str, Any]]:
-        require_scope("qf:read")
+        require_scope("quazonai:read")
         return await current_client(settings).get("/api/v1/approvals")
 
-    @_tool(server, name="quazonai.approval.show", scope="qf:read", annotations=READ)
+    @_tool(server, name="quazonai.approval.show", scope="quazonai:read", annotations=READ)
     async def approval_show(approval_id: UUID) -> dict[str, Any]:
-        require_scope("qf:read")
+        require_scope("quazonai:read")
         return await current_client(settings).get(f"/api/v1/approvals/{approval_id}")
 
-    @_tool(server, name="quazonai.deployment.list", scope="qf:read", annotations=READ)
+    @_tool(server, name="quazonai.deployment.list", scope="quazonai:read", annotations=READ)
     async def deployment_list() -> list[dict[str, Any]]:
-        require_scope("qf:read")
+        require_scope("quazonai:read")
         return await current_client(settings).get("/api/v1/deployments")
 
-    @_tool(server, name="quazonai.deployment.show", scope="qf:read", annotations=READ)
+    @_tool(server, name="quazonai.deployment.show", scope="quazonai:read", annotations=READ)
     async def deployment_show(deployment_id: UUID) -> dict[str, Any]:
-        require_scope("qf:read")
+        require_scope("quazonai:read")
         return await current_client(settings).get(f"/api/v1/deployments/{deployment_id}")
 
-    @_tool(server, name="quazonai.universe.show", scope="qf:read", annotations=READ)
+    @_tool(server, name="quazonai.universe.show", scope="quazonai:read", annotations=READ)
     async def universe_show(deployment_id: UUID) -> list[dict[str, Any]]:
-        require_scope("qf:read")
+        require_scope("quazonai:read")
         return await current_client(settings).get(
             f"/api/v1/deployments/{deployment_id}/universe-revisions"
         )
 
-    @_tool(server, name="quazonai.risk.show", scope="qf:read", annotations=READ)
+    @_tool(server, name="quazonai.risk.show", scope="quazonai:read", annotations=READ)
     async def risk_show(funder_id: str | None = None) -> Any:
-        require_scope("qf:read")
+        require_scope("quazonai:read")
         values = await current_client(settings).get("/api/v1/risk-accounts")
         if funder_id is None:
             return values
         return next((item for item in values if item["funder_id"] == funder_id), None)
 
-    @_tool(server, name="quazonai.event.list", scope="qf:read", annotations=READ)
+    @_tool(server, name="quazonai.event.list", scope="quazonai:read", annotations=READ)
     async def event_list(after_id: int = 0, limit: int = 200) -> list[dict[str, Any]]:
-        require_scope("qf:read")
+        require_scope("quazonai:read")
         return await current_client(settings).get(
             "/api/v1/events",
             params={"after_id": after_id, "limit": min(max(limit, 1), 1000)},
         )
 
-    @_tool(server, name="quazonai.artifact.show", scope="qf:read", annotations=READ)
+    @_tool(server, name="quazonai.artifact.show", scope="quazonai:read", annotations=READ)
     async def artifact_show(artifact_id: UUID) -> dict[str, Any]:
-        require_scope("qf:read")
+        require_scope("quazonai:read")
         return await current_client(settings).get(f"/api/v1/agent/artifacts/{artifact_id}")
 
-    @_tool(server, name="quazonai.artifact.begin_upload", scope="qf:artifact:upload", annotations=WRITE)
+    @_tool(server, name="quazonai.artifact.begin_upload", scope="quazonai:artifact:upload", annotations=WRITE)
     async def artifact_begin_upload(
         kind: str,
         filename: str,
         size_bytes: int,
     ) -> dict[str, Any]:
-        require_scope("qf:artifact:upload")
+        require_scope("quazonai:artifact:upload")
         result = await current_client(settings).post(
             "/api/v1/agent/artifacts",
             {"kind": kind, "filename": filename, "size_bytes": size_bytes},
@@ -363,24 +363,24 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
         result["upload_url"] = f"{_public_origin(settings.public_url)}/agent-artifacts/{result['id']}"
         return result
 
-    @_tool(server, name="quazonai.artifact.finalize_upload", scope="qf:artifact:upload", annotations=WRITE)
+    @_tool(server, name="quazonai.artifact.finalize_upload", scope="quazonai:artifact:upload", annotations=WRITE)
     async def artifact_finalize_upload(artifact_id: UUID) -> dict[str, Any]:
-        require_scope("qf:artifact:upload")
+        require_scope("quazonai:artifact:upload")
         return await current_client(settings).post(
             f"/api/v1/agent/artifacts/{artifact_id}/finalize"
         )
 
-    @_tool(server, name="quazonai.artifact.delete", scope="qf:artifact:upload", annotations=HIGH_IMPACT)
+    @_tool(server, name="quazonai.artifact.delete", scope="quazonai:artifact:upload", annotations=HIGH_IMPACT)
     async def artifact_delete(artifact_id: UUID) -> dict[str, Any]:
-        require_scope("qf:artifact:upload")
+        require_scope("quazonai:artifact:upload")
         return await current_client(settings).delete(f"/api/v1/agent/artifacts/{artifact_id}")
 
-    @_tool(server, name="quazonai.plugin.stage", scope="qf:plugin:stage", annotations=WRITE)
+    @_tool(server, name="quazonai.plugin.stage", scope="quazonai:plugin:stage", annotations=WRITE)
     async def plugin_stage(
         artifact_ids: list[UUID],
         idempotency_key: UUID,
     ) -> Any:
-        require_scope("qf:plugin:stage")
+        require_scope("quazonai:plugin:stage")
         client = current_client(settings)
         arguments = {"artifact_ids": [str(item) for item in artifact_ids]}
         return await _mutation(
@@ -394,12 +394,12 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
             ),
         )
 
-    @_tool(server, name="quazonai.plugin.prewarm", scope="qf:plugin:stage", annotations=WRITE)
+    @_tool(server, name="quazonai.plugin.prewarm", scope="quazonai:plugin:stage", annotations=WRITE)
     async def plugin_prewarm(
         members: list[dict[str, Any]],
         idempotency_key: UUID,
     ) -> Any:
-        require_scope("qf:plugin:stage")
+        require_scope("quazonai:plugin:stage")
         client = current_client(settings)
         arguments = {"members": members}
         return await _mutation(
@@ -410,9 +410,9 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
             action=lambda: client.post("/api/v1/plugin-runtime-bundles/prewarm", arguments),
         )
 
-    @_tool(server, name="quazonai.plugin.impact", scope="qf:plugin:activate", annotations=READ)
+    @_tool(server, name="quazonai.plugin.impact", scope="quazonai:plugin:activate", annotations=READ)
     async def plugin_impact(release_id: UUID, operation: str) -> dict[str, Any]:
-        require_scope("qf:plugin:activate")
+        require_scope("quazonai:plugin:activate")
         if operation not in {"plugin.activate", "plugin.deactivate"}:
             raise ValueError("operation must be plugin.activate or plugin.deactivate")
         client = current_client(settings)
@@ -466,14 +466,14 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
             action=lambda: client.post(f"/api/v1/plugin-releases/{release_id}/{verb}"),
         )
 
-    @_tool(server, name="quazonai.plugin.activate", scope="qf:plugin:activate", annotations=HIGH_IMPACT)
+    @_tool(server, name="quazonai.plugin.activate", scope="quazonai:plugin:activate", annotations=HIGH_IMPACT)
     async def plugin_activate(
         release_id: UUID,
         expected: dict[str, Any],
         impact_token_id: UUID,
         idempotency_key: UUID,
     ) -> Any:
-        require_scope("qf:plugin:activate")
+        require_scope("quazonai:plugin:activate")
         return await _plugin_lifecycle(
             release_id=release_id,
             operation="plugin.activate",
@@ -482,14 +482,14 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
             idempotency_key=idempotency_key,
         )
 
-    @_tool(server, name="quazonai.plugin.deactivate", scope="qf:plugin:activate", annotations=HIGH_IMPACT)
+    @_tool(server, name="quazonai.plugin.deactivate", scope="quazonai:plugin:activate", annotations=HIGH_IMPACT)
     async def plugin_deactivate(
         release_id: UUID,
         expected: dict[str, Any],
         impact_token_id: UUID,
         idempotency_key: UUID,
     ) -> Any:
-        require_scope("qf:plugin:activate")
+        require_scope("quazonai:plugin:activate")
         return await _plugin_lifecycle(
             release_id=release_id,
             operation="plugin.deactivate",
@@ -498,9 +498,9 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
             idempotency_key=idempotency_key,
         )
 
-    @_tool(server, name="quazonai.data_source.create", scope="qf:data:write", annotations=WRITE)
+    @_tool(server, name="quazonai.data_source.create", scope="quazonai:data:write", annotations=WRITE)
     async def data_source_create(payload: dict[str, Any], idempotency_key: UUID) -> Any:
-        require_scope("qf:data:write")
+        require_scope("quazonai:data:write")
         client = current_client(settings)
         return await _mutation(
             client,
@@ -510,14 +510,14 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
             action=lambda: client.post("/api/v1/data-sources", payload),
         )
 
-    @_tool(server, name="quazonai.data_source.update", scope="qf:data:write", annotations=WRITE)
+    @_tool(server, name="quazonai.data_source.update", scope="quazonai:data:write", annotations=WRITE)
     async def data_source_update(
         source_id: UUID,
         payload: dict[str, Any],
         expected: dict[str, Any],
         idempotency_key: UUID,
     ) -> Any:
-        require_scope("qf:data:write")
+        require_scope("quazonai:data:write")
         client = current_client(settings)
         current = await client.get(f"/api/v1/data-sources/{source_id}")
         _assert_expected(current, expected)
@@ -532,16 +532,16 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
             action=lambda: client.put(f"/api/v1/data-sources/{source_id}", payload),
         )
 
-    @_tool(server, name="quazonai.data_source.preflight", scope="qf:data:write", annotations=READ)
+    @_tool(server, name="quazonai.data_source.preflight", scope="quazonai:data:write", annotations=READ)
     async def data_source_preflight(source_id: UUID) -> dict[str, Any]:
-        require_scope("qf:data:write")
+        require_scope("quazonai:data:write")
         return await current_client(settings).post(f"/api/v1/data-sources/{source_id}/preflight")
 
-    @_tool(server, name="quazonai.execution_connection.create", scope="qf:connection:write", annotations=WRITE)
+    @_tool(server, name="quazonai.execution_connection.create", scope="quazonai:connection:write", annotations=WRITE)
     async def execution_connection_create(
         payload: dict[str, Any], idempotency_key: UUID
     ) -> Any:
-        require_scope("qf:connection:write")
+        require_scope("quazonai:connection:write")
         client = current_client(settings)
         return await _mutation(
             client,
@@ -551,14 +551,14 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
             action=lambda: client.post("/api/v1/execution-connections", payload),
         )
 
-    @_tool(server, name="quazonai.execution_connection.update", scope="qf:connection:write", annotations=WRITE)
+    @_tool(server, name="quazonai.execution_connection.update", scope="quazonai:connection:write", annotations=WRITE)
     async def execution_connection_update(
         connection_id: UUID,
         payload: dict[str, Any],
         expected: dict[str, Any],
         idempotency_key: UUID,
     ) -> Any:
-        require_scope("qf:connection:write")
+        require_scope("quazonai:connection:write")
         client = current_client(settings)
         current = await client.get(f"/api/v1/execution-connections/{connection_id}")
         _assert_expected(current, expected)
@@ -579,14 +579,14 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
             ),
         )
 
-    @_tool(server, name="quazonai.execution_connection.preflight", scope="qf:connection:write", annotations=READ)
+    @_tool(server, name="quazonai.execution_connection.preflight", scope="quazonai:connection:write", annotations=READ)
     async def execution_connection_preflight(connection_id: UUID) -> dict[str, Any]:
-        require_scope("qf:connection:write")
+        require_scope("quazonai:connection:write")
         return await current_client(settings).post(
             f"/api/v1/execution-connections/{connection_id}/preflight"
         )
 
-    @_tool(server, name="quazonai.dataset.import_parquet_l2", scope="qf:data:write", annotations=WRITE)
+    @_tool(server, name="quazonai.dataset.import_parquet_l2", scope="quazonai:data:write", annotations=WRITE)
     async def dataset_import_parquet_l2(
         source_id: UUID,
         artifact_id: UUID,
@@ -595,7 +595,7 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
         metadata: dict[str, Any],
         idempotency_key: UUID,
     ) -> Any:
-        require_scope("qf:data:write")
+        require_scope("quazonai:data:write")
         client = current_client(settings)
         arguments = {
             "source_id": str(source_id),
@@ -620,9 +620,9 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
             ),
         )
 
-    @_tool(server, name="quazonai.strategy.create", scope="qf:research:write", annotations=WRITE)
+    @_tool(server, name="quazonai.strategy.create", scope="quazonai:research:write", annotations=WRITE)
     async def strategy_create(name: str, idempotency_key: UUID) -> Any:
-        require_scope("qf:research:write")
+        require_scope("quazonai:research:write")
         client = current_client(settings)
         arguments = {"name": name}
         return await _mutation(
@@ -633,14 +633,14 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
             action=lambda: client.post("/api/v1/strategies", arguments),
         )
 
-    @_tool(server, name="quazonai.strategy.version_create", scope="qf:research:write", annotations=WRITE)
+    @_tool(server, name="quazonai.strategy.version_create", scope="quazonai:research:write", annotations=WRITE)
     async def strategy_version_create(
         strategy_id: UUID,
         artifact_id: UUID,
         default_config: dict[str, Any],
         idempotency_key: UUID,
     ) -> Any:
-        require_scope("qf:research:write")
+        require_scope("quazonai:research:write")
         client = current_client(settings)
         arguments = {
             "strategy_id": str(strategy_id),
@@ -661,13 +661,13 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
             ),
         )
 
-    @_tool(server, name="quazonai.research.create", scope="qf:research:write", annotations=WRITE)
+    @_tool(server, name="quazonai.research.create", scope="quazonai:research:write", annotations=WRITE)
     async def research_create(
         title: str,
         strategy_version_id: UUID | None,
         idempotency_key: UUID,
     ) -> Any:
-        require_scope("qf:research:write")
+        require_scope("quazonai:research:write")
         client = current_client(settings)
         arguments = {
             "title": title,
@@ -681,7 +681,7 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
             action=lambda: client.post("/api/v1/research-cases", arguments),
         )
 
-    @_tool(server, name="quazonai.research.section_set", scope="qf:research:write", annotations=WRITE)
+    @_tool(server, name="quazonai.research.section_set", scope="quazonai:research:write", annotations=WRITE)
     async def research_section_set(
         research_id: UUID,
         section: str,
@@ -689,7 +689,7 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
         expected: dict[str, Any],
         idempotency_key: UUID,
     ) -> Any:
-        require_scope("qf:research:write")
+        require_scope("quazonai:research:write")
         client = current_client(settings)
         current = await client.get(f"/api/v1/research-cases/{research_id}")
         _assert_expected(current, expected)
@@ -712,13 +712,13 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
             ),
         )
 
-    @_tool(server, name="quazonai.research.activate", scope="qf:research:write", annotations=WRITE)
+    @_tool(server, name="quazonai.research.activate", scope="quazonai:research:write", annotations=WRITE)
     async def research_activate(
         research_id: UUID,
         expected: dict[str, Any],
         idempotency_key: UUID,
     ) -> Any:
-        require_scope("qf:research:write")
+        require_scope("quazonai:research:write")
         client = current_client(settings)
         current = await client.get(f"/api/v1/research-cases/{research_id}")
         _assert_expected(current, expected)
@@ -733,13 +733,13 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
             action=lambda: client.post(f"/api/v1/research-cases/{research_id}/activate"),
         )
 
-    @_tool(server, name="quazonai.experiment.create", scope="qf:experiment:run", annotations=WRITE)
+    @_tool(server, name="quazonai.experiment.create", scope="quazonai:experiment:run", annotations=WRITE)
     async def experiment_create(
         research_id: UUID,
         payload: dict[str, Any],
         idempotency_key: UUID,
     ) -> Any:
-        require_scope("qf:experiment:run")
+        require_scope("quazonai:experiment:run")
         client = current_client(settings)
         arguments = {"research_id": str(research_id), "payload": payload}
         return await _mutation(
@@ -754,13 +754,13 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
             ),
         )
 
-    @_tool(server, name="quazonai.experiment.start", scope="qf:experiment:run", annotations=WRITE)
+    @_tool(server, name="quazonai.experiment.start", scope="quazonai:experiment:run", annotations=WRITE)
     async def experiment_start(
         experiment_id: UUID,
         expected: dict[str, Any],
         idempotency_key: UUID,
     ) -> Any:
-        require_scope("qf:experiment:run")
+        require_scope("quazonai:experiment:run")
         client = current_client(settings)
         current = await client.get(f"/api/v1/experiments/{experiment_id}")
         _assert_expected(current, expected)
@@ -775,24 +775,24 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
             action=lambda: client.post(f"/api/v1/experiments/{experiment_id}/start"),
         )
 
-    @_tool(server, name="quazonai.approval.prepare_decision", scope="qf:approval:prepare", annotations=READ)
+    @_tool(server, name="quazonai.approval.prepare_decision", scope="quazonai:approval:prepare", annotations=READ)
     async def approval_prepare_decision(approval_id: UUID) -> dict[str, Any]:
-        require_scope("qf:approval:prepare")
+        require_scope("quazonai:approval:prepare")
         approval = await current_client(settings).get(f"/api/v1/approvals/{approval_id}")
         return {
             "approval": approval,
             "human_action_required": True,
-            "local_cli": f"qf approval show {approval_id}",
+            "local_cli": f"quazonai approval show {approval_id}",
             "decision_commands": [
-                f"qf approval approve {approval_id}",
-                f"qf approval reject {approval_id}",
+                f"quazonai approval approve {approval_id}",
+                f"quazonai approval reject {approval_id}",
             ],
             "agent_may_decide": False,
         }
 
-    @_tool(server, name="quazonai.deployment.create", scope="qf:deployment:create", annotations=WRITE)
+    @_tool(server, name="quazonai.deployment.create", scope="quazonai:deployment:create", annotations=WRITE)
     async def deployment_create(payload: dict[str, Any], idempotency_key: UUID) -> Any:
-        require_scope("qf:deployment:create")
+        require_scope("quazonai:deployment:create")
         client = current_client(settings)
         return await _mutation(
             client,
@@ -802,9 +802,9 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
             action=lambda: client.post("/api/v1/deployments", payload),
         )
 
-    @_tool(server, name="quazonai.deployment.impact_stop", scope="qf:deployment:stop", annotations=READ)
+    @_tool(server, name="quazonai.deployment.impact_stop", scope="quazonai:deployment:stop", annotations=READ)
     async def deployment_impact_stop(deployment_id: UUID) -> dict[str, Any]:
-        require_scope("qf:deployment:stop")
+        require_scope("quazonai:deployment:stop")
         client = current_client(settings)
         deployment = await client.get(f"/api/v1/deployments/{deployment_id}")
         risks = await client.get("/api/v1/risk-accounts")
@@ -834,14 +834,14 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
         )
         return {"impact": impact, "expected": expected, "impact_token": token}
 
-    @_tool(server, name="quazonai.deployment.stop", scope="qf:deployment:stop", annotations=HIGH_IMPACT)
+    @_tool(server, name="quazonai.deployment.stop", scope="quazonai:deployment:stop", annotations=HIGH_IMPACT)
     async def deployment_stop(
         deployment_id: UUID,
         expected: dict[str, Any],
         impact_token_id: UUID,
         idempotency_key: UUID,
     ) -> Any:
-        require_scope("qf:deployment:stop")
+        require_scope("quazonai:deployment:stop")
         client = current_client(settings)
         current = await client.get(f"/api/v1/deployments/{deployment_id}")
         _assert_expected(current, expected)
@@ -868,13 +868,13 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
             action=lambda: client.post(f"/api/v1/deployments/{deployment_id}/stop"),
         )
 
-    @_tool(server, name="quazonai.deployment.restart_request", scope="qf:deployment:create", annotations=WRITE)
+    @_tool(server, name="quazonai.deployment.restart_request", scope="quazonai:deployment:create", annotations=WRITE)
     async def deployment_restart_request(
         deployment_id: UUID,
         expected: dict[str, Any],
         idempotency_key: UUID,
     ) -> Any:
-        require_scope("qf:deployment:create")
+        require_scope("quazonai:deployment:create")
         client = current_client(settings)
         current = await client.get(f"/api/v1/deployments/{deployment_id}")
         _assert_expected(current, expected)
@@ -889,14 +889,14 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
             action=lambda: client.post(f"/api/v1/deployments/{deployment_id}/restart"),
         )
 
-    @_tool(server, name="quazonai.universe.impact", scope="qf:universe:propose", annotations=READ)
+    @_tool(server, name="quazonai.universe.impact", scope="quazonai:universe:propose", annotations=READ)
     async def universe_impact(
         deployment_id: UUID,
         predicate: dict[str, Any],
         cap: int,
         change_kind: str,
     ) -> dict[str, Any]:
-        require_scope("qf:universe:propose")
+        require_scope("quazonai:universe:propose")
         client = current_client(settings)
         deployment = await client.get(f"/api/v1/deployments/{deployment_id}")
         revisions = await client.get(
@@ -926,7 +926,7 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
         )
         return {"impact": impact, "expected": expected, "impact_token": token}
 
-    @_tool(server, name="quazonai.universe.revision_create", scope="qf:universe:propose", annotations=HIGH_IMPACT)
+    @_tool(server, name="quazonai.universe.revision_create", scope="quazonai:universe:propose", annotations=HIGH_IMPACT)
     async def universe_revision_create(
         deployment_id: UUID,
         predicate: dict[str, Any],
@@ -936,7 +936,7 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
         impact_token_id: UUID,
         idempotency_key: UUID,
     ) -> Any:
-        require_scope("qf:universe:propose")
+        require_scope("quazonai:universe:propose")
         client = current_client(settings)
         current = await client.get(f"/api/v1/deployments/{deployment_id}")
         _assert_expected(current, expected)
@@ -969,7 +969,7 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
 
     @server.resource("quazonai://manifest")
     async def manifest_resource() -> str:
-        require_scope("qf:read")
+        require_scope("quazonai:read")
         value = await current_client(settings).get("/api/v1/agent/manifest")
         value["available_tools"] = [
             item.name for item in await server.list_tools()
@@ -1045,7 +1045,7 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
 
     @server.custom_route("/agent-artifacts/{artifact_id}", methods=["HEAD", "PUT"])
     async def artifact_upload_route(request: Request) -> Response:
-        require_scope("qf:artifact:upload")
+        require_scope("quazonai:artifact:upload")
         token = get_access_token()
         if token is None:
             return JSONResponse({"error": "unauthorized"}, status_code=401)

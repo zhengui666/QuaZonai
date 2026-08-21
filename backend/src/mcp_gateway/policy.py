@@ -24,7 +24,7 @@ class ScopedMCPServer(MCPServer):
         return [
             tool
             for tool in tools
-            if TOOL_SCOPES.get(tool.name, "qf:read") in scopes
+            if TOOL_SCOPES.get(tool.name, "quazonai:read") in scopes
         ]
 
 

@@ -16,7 +16,7 @@ def _headers(*, subject: str = "operator") -> dict[str, str]:
         "X-QZ-Agent-Issuer": "https://issuer.example",
         "X-QZ-Agent-Subject": subject,
         "X-QZ-Agent-Client-Id": "agent-client",
-        "X-QZ-Agent-Scopes": "qf:read qf:research:write qf:artifact:upload",
+        "X-QZ-Agent-Scopes": "quazonai:read quazonai:research:write quazonai:artifact:upload",
     }
 
 
