@@ -1,873 +1,583 @@
-# QuaZonai CLI、MCP Gateway 与远程 AI Agent Skill 技术设计
+# QuaZonai CLI、Codex Harness 与 Mission Tool 技术设计
 
-> 文档状态：目标方案，尚未实现。  
-> 适用分支：`main`。  
-> 上位事实源：[`DESIGN.md`](DESIGN.md)。本文件展开本地 CLI、可选 MCP 边缘适配器和外部 Agent Skill；不得修改 `DESIGN.md` 已确定的 Research、Approval、Deployment、风险、Recovery 或交易事实。
+> 上位事实源：[`DESIGN.md`](DESIGN.md)。本文件只展开实现合同，不创造新的产品事实。
 
 ## 1. 结论
 
-QuaZonai 使用两条正式操作通道：
+QuaZonai 有三条明确操作通道：
 
 ```text
-本地人类操作者
+Human Web
+  → FastAPI Core
+
+Local human / automation
   → quazonai CLI
-  → loopback QZ API
+  → loopback FastAPI Core
 
-远程 AI Agent
-  → MCP client
-  → HTTPS MCP Streamable HTTP
-  → optional quazonai-mcp-gateway
-  → internal QZ API
+Built-in Codex Runtime
+  → codex app-server (stdio)
+  → mission-scoped stdio MCP Tool Server
+  → QuaZonai Domain API / services
 ```
 
-**远程 Agent 不使用 SSH。** 不提供 SSH forced command、普通 Shell、端口转发、自定义 JSONL 隧道或远程终端包装器。
+Built-in Codex **不通过 CLI 作为 RPC**。CLI 是人类与自动化薄客户端；Mission Tool Server 才是 Codex 的结构化研究接口。
 
-`quazonai-mcp-gateway` 是可选边缘适配器，不是 `DESIGN.md` 核心五服务启动拓扑的必选成员：
+## 2. CLI 原则
 
-```text
-Core services:
-postgres / migrate / api / finite-worker / live-supervisor
+- 可执行名：`quazonai`；
+- 默认 API：`http://127.0.0.1:8000`；
+- CLI 不访问 PostgreSQL、Program repo、Dataset volume、CODEX_HOME 或 plugin runtime；
+- 所有 mutation 发送 `Idempotency-Key`；
+- 更新类操作发送 `expected_revision/state/version`；
+- Secret 只通过安全 stdin/prompt 输入，不打印；
+- `--json` 输出稳定机器可读 envelope；
+- CLI 不复制领域状态机。
 
-Optional remote-agent edge:
-quazonai-mcp-gateway
+统一输出：
+
+```json
+{
+  "ok": true,
+  "data": {},
+  "request_id": "..."
+}
 ```
 
-未启用 MCP 时，QuaZonai 的全部本地功能和 Core readiness 不受影响。
+错误：
 
-## 2. 目标与边界
-
-### 2.1 本地 CLI
-
-官方本地命令：
-
-```text
-quazonai
+```json
+{
+  "ok": false,
+  "error": {
+    "code": "APPROVAL_STALE",
+    "message": "...",
+    "details": {}
+  },
+  "request_id": "..."
+}
 ```
 
-覆盖 `OPERATIONS.md` 中全部人工操作节点，包括：
+## 3. CLI 命令面
 
-- System Status；
-- Plugin、Credential、Data Source、Execution Connection；
-- Dataset、Strategy、Research、Experiment、Run；
-- Approval；
-- Deployment、Risk、Universe、Recovery；
-- Secret 写入、Force Remove、真实资金 Canary 等 human-only 操作。
-
-CLI 是薄客户端，不直接访问 PostgreSQL、Docker、Nautilus、Plugin Volume 或 Catalog。
-
-### 2.2 远程 MCP
-
-Agent 入口：
-
-```text
-https://<operator-domain>/mcp
-```
-
-目标：
-
-- 使用标准 MCP Streamable HTTP；
-- 通过 Tools、Resources、JSON Schema 和可选 Tasks 自描述能力；
-- 通过 OAuth 2.1 scope 限制可见 Tool；
-- 对 mutation 提供幂等、前置条件和影响确认；
-- Core API 保持 loopback/internal，不公开 `/api/v1`；
-- Secret、真实资金 Approval、Force Remove 和 Live Canary 保留给本地人工；
-- Gateway 停机不影响本地 CLI、Core API、Run 或 Live Deployment。
-
-### 2.3 Skill
-
-`skills/quazonai/SKILL.md`：
-
-- 只使用当前连接的 QuaZonai MCP Server；
-- 从 `tools/list` 和 `quazonai://manifest` 获取运行时能力；
-- 读取当前 Resource 后再 mutation；
-- 生成 idempotency key 和 optimistic precondition；
-- 跟踪 Task 或 QZ operation；
-- 在 human-only 节点停止并生成 handoff；
-- 不处理 OAuth token、Secret 或 Wallet material。
-
-Skill 是外部工作流，不是 QZ 内置 Agent runtime，也不构成权限事实源。
-
-## 3. 非目标
-
-不建设：
-
-- SSH transport、任意 Shell、远程命令执行器；
-- 公网 Core API 或通用 HTTP proxy；
-- QZ 内置 LLM、Agent scheduler、模型 provider；
-- 业务用户、workspace、RBAC 或 SaaS 控制面；
-- Agent Secret 输入/读取；
-- Agent Approval approve/reject；
-- Agent Force Plugin Remove、Live Canary、Master Key 或破坏性数据库操作；
-- Agent raw order submission；
-- Holdout、Recovery、Risk 或 Reconciliation bypass；
-- MCP Sampling 驱动自治交易循环；
-- Elicitation 收集密码、API key、token、private key 或支付凭据；
-- 把大型文件 Base64 放入 MCP JSON；
-- 服务器从任意远程 URL 抓取上传文件；
-- 在 CLI/Gateway 中复制领域状态机或 Nautilus 金融事实。
-
-`DESIGN.md` 中“无用户/workspace/auth”指不建设业务身份域。MCP OAuth 是可选远程边缘的传输授权，不改变 Core 产品模型。
-
-## 4. 架构
-
-```mermaid
-flowchart LR
-    H[Local human] --> CLI[quazonai CLI]
-    CLI -->|loopback HTTP| API[QZ API]
-
-    A[Remote MCP Host / Agent] -->|HTTPS MCP Streamable HTTP| GW[quazonai-mcp-gateway]
-    AS[External OAuth 2.1 Authorization Server] --> A
-    GW -->|internal HTTP| API
-
-    API --> DB[(PostgreSQL)]
-    API --> FW[Finite worker]
-    API --> LS[Live supervisor]
-
-    A -. follows .-> SK[QuaZonai SKILL.md]
-```
-
-固定边界：
-
-- Core API 仅宿主 `127.0.0.1:8000` 和内部容器网络可达；
-- Gateway 只公开 `/mcp`、OAuth protected-resource metadata 和 Artifact upload endpoint；
-- Gateway 不暴露 `/api/v1`；
-- Gateway 无 DB credential、Docker socket、Plugin/Catalog/Report/Wallet Volume；
-- Gateway 只调用固定 QZ API operation；
-- OAuth access token 不传给 Core API、Polymarket 或其他下游；
-- CLI 与 MCP Tool 映射到相同领域动作和 Pydantic wire model。
-
-## 5. 可选部署
-
-### 5.1 Core
-
-Core Compose 继续为：
-
-```text
-postgres
-migrate
-api
-finite-worker
-live-supervisor
-```
-
-### 5.2 MCP Edge
-
-MCP 通过独立可选部署启用，例如：
-
-```text
-compose.mcp.yml
-或
-托管 ASGI edge service
-```
-
-入口：
-
-```text
-python -m quazonai.mcp.main
-```
-
-内部监听示例：
-
-```text
-0.0.0.0:8001
-```
-
-外部必须为：
-
-```text
-https://<operator-domain>/mcp
-```
-
-TLS 可由 Gateway 直接终止，或由操作者已有的托管 TLS endpoint 终止。仓库不恢复 Nginx，不把通用 Reverse Proxy 作为 QZ Core 组件。
-
-允许公开路径：
-
-```text
-/mcp
-/.well-known/oauth-protected-resource
-/.well-known/oauth-protected-resource/mcp
-/agent-artifacts/*
-```
-
-不得公开：
-
-```text
-/api/v1/*
-数据库
-容器管理
-文件系统
-```
-
-Gateway 容器：
-
-- read-only root filesystem；
-- drop all capabilities；
-- 无持久业务卷；
-- 只访问内部 QZ API 与 OAuth metadata/JWKS；
-- 上传内容流式转发到 QZ Artifact staging，不永久落盘。
-
-## 6. MCP 协议
-
-### 6.1 Transport
-
-基线：MCP `2025-11-25` Streamable HTTP。
-
-```text
-POST /mcp
-GET  /mcp       # optional SSE stream/resume
-DELETE /mcp     # optional session close
-```
-
-要求：
-
-- 每个请求携带 `MCP-Protocol-Version`；
-- 支持 JSON 和按协议协商的 SSE；
-- access token 每个 HTTP 请求重新校验；
-- session ID 不是认证；
-- 断线、超时或 Gateway 重启不等于取消底层 QZ 操作；
-- 客户端不支持 server stream 时仍可通过 Tool/Resource polling 完成全部流程。
-
-### 6.2 状态
-
-V1 默认：
-
-```text
-stateless MCP request handling
-+ QZ durable Job / Run / Event / Deployment
-```
-
-业务事实不得只保存在 MCP session 或 Task store。只有需要 subscription、server request 或 resumable notification 时才启用 stateful session。
-
-### 6.3 HTTP 校验
-
-Gateway 必须：
-
-- 校验 Host；
-- 对存在的 Origin 精确 allowlist；
-- CORS 不允许 `*`；
-- 限制 MCP JSON body，默认 1 MiB；
-- 文件走独立 Artifact endpoint；
-- 不把错误堆栈、token 或内部 URL 输出给客户端。
-
-## 7. OAuth 2.1
-
-### 7.1 角色
-
-```text
-MCP client    = OAuth client
-Gateway       = protected resource / resource server
-External IdP  = Authorization Server
-```
-
-QZ 不自行实现通用 Authorization Server。操作者配置现有、受信任的 OAuth/OIDC 服务。
-
-### 7.2 Discovery
-
-Gateway 提供 RFC 9728 Protected Resource Metadata：
-
-```text
-/.well-known/oauth-protected-resource
-/.well-known/oauth-protected-resource/mcp
-```
-
-未授权响应包含：
-
-```text
-401 WWW-Authenticate: Bearer resource_metadata="..."
-```
-
-Metadata 声明精确 MCP resource URI、Authorization Server 和 scopes。
-
-### 7.3 Flow
-
-V1 支持预注册客户端：
-
-- Human-delegated Agent：Authorization Code + PKCE S256；
-- Unattended Agent：Client Credentials，仅获得机器允许 scopes。
-
-不要求 Dynamic Client Registration。
-
-### 7.4 Token validation
-
-每次请求校验：
-
-```text
-signature
-issuer
-expiration / not-before
-audience / resource
-client_id / azp
-subject when present
-scopes
-```
-
-禁止：
-
-- query-string token；
-- ID token 代替 access token；
-- 接受签发给其他 resource 的 token；
-- token passthrough；
-- token 写日志或 Tool Result。
-
-### 7.5 Scope
-
-建议：
-
-```text
-quazonai:read
-quazonai:plugin:stage
-quazonai:plugin:activate
-quazonai:data:write
-quazonai:connection:write
-quazonai:research:write
-quazonai:experiment:run
-quazonai:deployment:create
-quazonai:deployment:stop
-quazonai:universe:propose
-quazonai:approval:prepare
-quazonai:artifact:upload
-```
-
-`tools/list` 按 scope 过滤。无权限调用返回 403/`insufficient_scope`。
-
-永久 human-only 能力不是 scope：
-
-```text
-Credential Secret create/update/read
-Approval approve/reject
-Force Plugin Remove
-Live-money Canary
-Master Key
-Destructive DB
-Raw Order
-Risk/Recovery/Holdout bypass
-```
-
-## 8. MCP Primitives
-
-### 8.1 Tools
-
-命名：
-
-```text
-quazonai.system.status
-quazonai.plugin.list
-quazonai.research.show
-quazonai.experiment.start
-quazonai.deployment.stop
-```
-
-每个 Tool 提供：
-
-```text
-name / title / description
-inputSchema
-outputSchema
-annotations
-execution.taskSupport
-```
-
-Tool Result：
-
-- `structuredContent` 为正式机器结果；
-- 同时提供短 TextContent；
-- 不含 Secret；
-- 业务失败使用 `isError=true` 和稳定 QZ code；
-- malformed MCP request 使用 JSON-RPC protocol error。
-
-Annotations：
-
-```text
-readOnlyHint
-destructiveHint
-idempotentHint
-openWorldHint
-```
-
-它们只是客户端提示，服务器仍独立执行 OAuth scope、状态机和风险校验。
-
-### 8.2 Resources
-
-```text
-quazonai://manifest
-quazonai://operations
-quazonai://system/status
-quazonai://plugin-releases/{id}
-quazonai://runtime-bundles/{id}
-quazonai://datasets/{id}
-quazonai://strategies/{id}
-quazonai://research/{id}
-quazonai://experiments/{id}
-quazonai://runs/{id}
-quazonai://runs/{run_id}/reports/{report_id}
-quazonai://approvals/{id}
-quazonai://deployments/{id}
-quazonai://deployments/{id}/risk
-quazonai://deployments/{id}/universe
-```
-
-Resource 是当前 QZ API 快照。Agent mutation 前必须重新读取；历史缓存和 notification 不是事实源。
-
-### 8.3 Subscription
-
-客户端支持时，可订阅 Run、Plugin Job、Approval、Deployment、Risk 和 Universe Resource。Gateway 从 QZ durable event stream 映射 `notifications/resources/updated`。断线后仍需重新读取 Resource。
-
-### 8.4 Prompts 与 Elicitation
-
-可选只读 Prompt：
-
-```text
-quazonai.review.research
-quazonai.review.approval
-quazonai.diagnose.recovery
-```
-
-Prompt 不执行 mutation。
-
-Form Elicitation 只收集非敏感澄清。不得请求 password、API key、token、private key、wallet/payment credential。Approval 和 Secret 直接返回 human handoff。
-
-## 9. Tool Catalog
-
-### 9.1 Read
-
-```text
-quazonai.system.status
-quazonai.plugin.list/show/impact
-quazonai.bundle.list/show
-quazonai.credential.list/show
-quazonai.data_source.list/show
-quazonai.execution_connection.list/show
-quazonai.dataset.list/show
-quazonai.strategy.list/show
-quazonai.research.list/show
-quazonai.experiment.show
-quazonai.run.list/show/report
-quazonai.approval.list/show
-quazonai.deployment.list/show
-quazonai.universe.show
-quazonai.risk.show
-quazonai.event.list
-quazonai.artifact.show
-```
-
-### 9.2 Scoped mutation
-
-```text
-quazonai.plugin.stage/prewarm/activate/deactivate
-quazonai.data_source.create/update/preflight
-quazonai.execution_connection.create/update/preflight
-quazonai.dataset.import_parquet_l2
-quazonai.strategy.create/version_create
-quazonai.research.create/section_set/activate
-quazonai.experiment.create/start
-quazonai.approval.prepare_decision
-quazonai.deployment.create/stop/restart_request
-quazonai.universe.revision_create
-quazonai.artifact.begin_upload/finalize_upload/delete
-```
-
-Tool description 必须明确：
-
-- Deployment create 不 Approval、不直接 Trading；
-- Restart Request 只创建 Approval；
-- Stop 撤单并停止新增交易，但不强平；
-- Universe expansion 仍需人工 Approval；
-- Plugin deactivate 进入 Drain，不立即杀死现有 Runner。
-
-## 10. Mutation 可靠性
-
-### 10.1 Idempotency
-
-Mutation Tool 必填 UUID `idempotency_key`：
-
-- 同 key + 同 Tool + 同 normalized arguments 返回原 receipt；
-- 同 key 用于不同请求返回 `IDEMPOTENCY_KEY_REUSED`；
-- JSON-RPC request ID 不是业务幂等键；
-- 网络结果不确定时只复用原 key，不创建重复操作。
-
-### 10.2 Preconditions
-
-更新类 Tool 携带当前读取到的：
-
-```text
-state
-content_revision
-version_no
-generation
-plugin_release_id
-runtime_bundle_id
-updated_at
-```
-
-冲突返回 `PRECONDITION_FAILED`。Agent重新读取并重新规划，不盲重放。
-
-### 10.3 Impact token
-
-高影响但允许 Agent 发起的 Tool：
-
-```text
-plugin.activate
-plugin.deactivate
-deployment.stop
-universe.revision_create
-```
-
-先调用 impact/preflight，获得短时 `impact_token`。Token 绑定：
-
-```text
-OAuth principal
-target
-operation
-current generation/version
-expires_at
-```
-
-它不是资金 Approval，不能绕过领域状态机。
-
-## 11. 长任务
-
-Plugin Install、Bundle Build、Parquet Import、Optimization、Holdout、Deployment Recovery 都是异步操作。
-
-### 11.1 无 Tasks 客户端
-
-Tool 立即返回：
-
-```text
-job_id / run_id / approval_id / deployment_id
-quazonai:// resource link
-```
-
-Agent 通过 Resource 轮询或 subscription 观察。
-
-### 11.2 MCP Tasks
-
-双方协商支持 Tasks 时：
-
-- 长 Tool 声明 `taskSupport=optional`；
-- Task 绑定 OAuth principal；
-- Task 映射 QZ job/run/deployment；
-- `tasks/get`、`tasks/result` 从当前 QZ 状态生成；
-- Task cancellation 只有底层 QZ 确认取消时才成功；
-- 跨 principal 不可读取；
-- QZ 业务事实仍保留在自身表中。
-
-## 12. Artifact 上传
-
-允许：
-
-```text
-STRATEGY_SOURCE
-PLUGIN_WHEEL
-PARQUET_L2
-```
-
-Parquet 可达 10 GiB，禁止放入 MCP JSON。
-
-两阶段：
-
-1. `quazonai.artifact.begin_upload` 返回 `artifact_id`、短时 HTTPS URL、chunk size 和 accepted offset；
-2. 官方 `quazonai artifact upload` companion client 按 offset 流式 PUT；
-3. `quazonai.artifact.finalize_upload` 校验精确字节数；
-4. 消费 Tool 只引用 `artifact_id`。
-
-Upload endpoint：
-
-```text
-HEAD /agent-artifacts/<opaque-capability>
-PUT  /agent-artifacts/<opaque-capability>
-```
-
-要求：
-
-- 与 MCP 同 origin；
-- OAuth principal 与创建者一致；
-- URL 单 artifact、短时有效；
-- `Content-Range` 只允许从 accepted offset 顺序追加；
-- 超限拒绝；
-- 中断可续传；
-- staging 过期清理；
-- Gateway/API 不全量入内存；
-- 不生成应用级 checksum/hash/fingerprint；
-- 不允许 Secret kind 或任意服务器/远程 URL。
-
-Token 由 MCP Host 或 Companion CLI 安全存储；Skill 不读取或要求粘贴 token。
-
-## 13. 本地 `quazonai` CLI
-
-打包：
-
-```toml
-[project.scripts]
-quazonai = "quazonai.cli.main:main"
-```
-
-本地模式只接受 Core loopback endpoint：
-
-```text
-http://127.0.0.1:8000
-```
-
-不提供 `--allow-remote-api`。
-
-示例：
+### 3.1 System / readiness
 
 ```bash
 quazonai status
-quazonai research show <id>
-quazonai run watch <id>
-quazonai approval approve <id>
-quazonai deployment stop <id>
+quazonai readiness
+quazonai events watch [--after EVENT_ID]
 ```
 
-CLI 也可作为标准 MCP Client/Artifact Companion：
+`status` 返回：API、DB、worker、agent-worker、evaluator、storage、Codex 摘要。
+
+### 3.2 Idea / Research
 
 ```bash
-quazonai mcp login --server https://quazonai.example.com/mcp
-quazonai mcp tools --server https://quazonai.example.com/mcp
-quazonai mcp call quazonai.system.status --server https://quazonai.example.com/mcp --json '{}'
-quazonai artifact upload --mcp-server https://quazonai.example.com/mcp --file strategy.py --kind STRATEGY_SOURCE
+quazonai idea preview --text TEXT
+quazonai research start --idea TEXT [--answer KEY=VALUE ...]
+quazonai research list [--state ACTIVE]
+quazonai research show PROGRAM_ID
+quazonai research activity PROGRAM_ID
+quazonai research missions PROGRAM_ID
+quazonai research pause PROGRAM_ID --reason TEXT
+quazonai research resume PROGRAM_ID
+quazonai research archive PROGRAM_ID --reason TEXT
+quazonai research restore PROGRAM_ID
 ```
 
-MCP 模式只使用标准 MCP/OAuth，不调用远程 `/api/v1`。
+`idea preview` 只预览 Charter/overlap，不创建正式 Program。
 
-Human-only 本地 CLI：
+`research start` 只有在 Charter 完整时才冻结并创建 Program。
+
+### 3.3 Alpha
+
+```bash
+quazonai alpha list [--role PRIMARY_ALPHA] [--state ACTIVE] [--universe ID]
+quazonai alpha show QUALIFICATION_ID
+quazonai alpha lineage QUALIFICATION_ID
+```
+
+CLI 不提供 `activate-alpha` / `restore-alpha` 人工命令。
+
+### 3.4 Portfolio
+
+```bash
+quazonai mandate list
+quazonai mandate show MANDATE_ID
+quazonai mandate enable MANDATE_ID
+quazonai mandate disable MANDATE_ID
+quazonai portfolio list [--mandate ID]
+quazonai portfolio show PORTFOLIO_PROGRAM_ID
+quazonai candidate show CANDIDATE_ID
+```
+
+不提供人工 `set-weight`、`add-alpha` 或 `patch-candidate`。
+
+### 3.5 Approval
+
+```bash
+quazonai approval list [--state PENDING]
+quazonai approval show APPROVAL_ID
+quazonai approval approve APPROVAL_ID --downstream DOWNSTREAM_ID
+quazonai approval reject APPROVAL_ID --reason REASON_CODE [--note TEXT]
+```
+
+`approve` 前 CLI 必须重新读取当前 snapshot；服务端仍做最终 freshness/precondition 校验。
+
+### 3.6 Handoff / Feedback
+
+```bash
+quazonai handoff list
+quazonai handoff show HANDOFF_ID
+quazonai handoff revoke HANDOFF_ID --reason REASON_CODE [--note TEXT]
+quazonai feedback show HANDOFF_ID
+```
+
+CLI 不提供 claimed downstream 的 stop/undeploy/cancel-live。
+
+### 3.7 Administration
+
+```bash
+quazonai codex status
+quazonai codex preflight
+
+quazonai universe list
+quazonai universe show ID
+
+quazonai data-source list
+quazonai data-source create --file CONFIG.json
+quazonai data-source test ID
+quazonai dataset list
+quazonai dataset show ID
+
+quazonai capital-context list
+quazonai capital-context create --currency USD --capital 100000 --valid-until ISO8601
+
+quazonai downstream list
+quazonai downstream create --file CONFIG.json
+quazonai downstream preflight ID
+
+quazonai plugin list
+quazonai plugin install PRIMARY.whl [DEPENDENCY.whl ...]
+quazonai plugin activate RELEASE_ID
+quazonai plugin deactivate RELEASE_ID
+quazonai plugin remove RELEASE_ID [--force]
+```
+
+Plugin command 只管理 DATA/RESEARCH/HANDOFF capability。
+
+## 4. Codex App Server 集成
+
+### 4.1 固定版本与 schema
+
+实现时固定一个经过验收的 Codex CLI/App Server 版本。CI 执行：
+
+```bash
+codex app-server generate-json-schema --out build/codex-schema
+```
+
+生成物用于协议合同测试，不作为产品业务事实。
+
+生产主传输：
+
+```bash
+codex app-server --listen stdio://
+```
+
+不得把 experimental WebSocket 作为核心依赖。
+
+### 4.2 Process lifecycle
+
+`agent-worker` 对每个 Mission：
+
+1. claim Mission lease；
+2. 创建/恢复 Mission worktree；
+3. 启动独立 `codex app-server` child；
+4. `initialize` + `initialized`；
+5. 新 Mission 调用 `thread/start`；已有 durable thread 调用 `thread/resume`；
+6. `turn/start` 提交 Mission prompt；
+7. 流式消费 item/turn notifications；
+8. 投影安全 activity；
+9. 等待 `turn/completed`；
+10. 验证 outputs；
+11. 让 Domain Validator 接受或拒绝结果；
+12. 终止 child，收口 worktree。
+
+如果 App Server 进程异常退出：
+
+- Mission attempt 标记 `INTERRUPTED`；
+- 未发生业务 side effect 的可安全重试；
+- 已通过 MCP 创建 durable operation 的，先按 idempotency key 查询结果；
+- 重新启动 child 后 `thread/resume`；
+- 不重复提交已确认完成的 Domain mutation。
+
+### 4.3 `thread/start` 基线参数
+
+概念配置：
+
+```json
+{
+  "model": "<AgentProfileVersion.model>",
+  "cwd": "/worktrees/<mission>",
+  "runtimeWorkspaceRoots": ["/worktrees/<mission>"],
+  "developerInstructions": "<mission role + contract instructions>",
+  "approvalPolicy": "never"
+}
+```
+
+V1 不依赖 experimental `dynamicTools`、project assignment、environments 或 selected capability roots。若未来使用，先更新 `DESIGN.md` 并增加版本/回退测试。
+
+### 4.4 Turn input
+
+Mission prompt 必须是结构化摘要，不把数据库 dump 直接塞进 prompt：
 
 ```text
-quazonai credential create/update with protected input
-quazonai approval approve/reject
-quazonai plugin remove --force
-quazonai canary execute
-quazonai system master-key ...
+Mission ID
+Role
+Objective
+Research Charter summary
+Allowed scope
+Input artifact references
+Required outputs
+Success criteria
+Failure conditions
+Available MCP tools
 ```
 
-Secret 只从保护 TTY/stdin/OS credential store 输入，不通过 argv、history 或 JSON output。
+## 5. Codex sandbox
 
-## 14. Skill 合同
-
-Skill 每个会话：
+默认：
 
 ```text
-tools/list + resources/list
-→ quazonai://manifest
-→ quazonai.system.status
-→ read current target/dependencies
-→ safety/scope check
-→ impact/preflight
-→ idempotency + expected preconditions
-→ Tool call once
-→ Task/Resource observation
-→ final Resource verification
-→ result or human handoff
+sandbox: workspace-write
+network: disabled
+approvalPolicy: never
+cwd: mission worktree
+runtime roots: mission worktree only
 ```
 
-Skill 不得：
+Agent 不能通过 interactive approval 请求人类开放网络/系统目录。
 
-- 使用 SSH、Shell 或 raw Core API；
-- 请求 OAuth token 或 Secret；
-- 自行 approve/reject；
-- Force Remove；
-- 选择替代 Pareto candidate；
-- 绕过 Recovery/Risk；
-- 把 Stop 描述为已平仓。
+Codex shell 可做：
 
-## 15. Error、审计与限流
+- 读写 Mission worktree；
+- 运行本地 Python/test；
+- 编译 Mission 产物；
+- 调用已连接的 stdio MCP tools。
 
-常见新增 code：
+不能直接：
+
+- curl/wget canonical data；
+- 读 QZ DB；
+- 读 Secret；
+- 读 Sealed raw data；
+- 操作 Git branch/commit/worktree；
+- 调用下游 runtime。
+
+## 6. AgentProfileVersion
+
+字段：
 
 ```text
-MCP_PROTOCOL_UNSUPPORTED
-MCP_ORIGIN_FORBIDDEN
-MCP_TOKEN_INVALID
-MCP_AUDIENCE_INVALID
-MCP_SCOPE_INSUFFICIENT
-MCP_TOOL_FORBIDDEN
-MCP_TASK_NOT_FOUND
-MCP_TASK_ACCESS_DENIED
-IDEMPOTENCY_KEY_REQUIRED
-IDEMPOTENCY_KEY_REUSED
-PRECONDITION_REQUIRED
-PRECONDITION_FAILED
-IMPACT_TOKEN_REQUIRED
-IMPACT_TOKEN_EXPIRED
-HUMAN_ACTION_REQUIRED
-AGENT_ARTIFACT_INVALID
-AGENT_ARTIFACT_INCOMPLETE
-AGENT_ARTIFACT_EXPIRED
-AGENT_ARTIFACT_ALREADY_CONSUMED
+id
+role
+version_no
+model_preference
+reasoning_effort
+developer_instructions
+allowed_capabilities[]
+allowed_output_kinds[]
+max_turn_runtime
+state
+created_at
 ```
 
-审计记录：
+默认 profiles：
+
+| Role | 主要输出 |
+|---|---|
+| `RESEARCH_DIRECTOR` | Mission Graph / replan proposal |
+| `DATA_RESEARCHER` | Data Requirement / quality analysis / feature input |
+| `ALPHA_RESEARCHER` | Feature/Alpha/Calibration candidate |
+| `VALIDATOR` | robustness report / promotion recommendation |
+| `PORTFOLIO_ARCHITECT` | portfolio candidate proposal |
+| `REVIEWER` | contract/completeness review，不能 approve |
+| `DEGRADATION_ANALYST` | degradation diagnosis / new hypothesis |
+
+角色不等于业务权限；server-side Mission Contract 才是最终 capability authority。
+
+## 7. Mission-scoped stdio MCP
+
+### 7.1 Why stdio MCP
+
+选择稳定标准接口，避免把 Codex CLI shell parsing 或 experimental `dynamicTools` 变成核心 RPC。
+
+App Server 启动的 Mission 会连接一个 QZ-owned stdio MCP server。该 server 不访问用户聊天历史，只根据 `mission_id` 从 Core 读取 Mission Contract。
+
+### 7.2 Tool envelope
+
+每个 mutation 输入：
+
+```json
+{
+  "mission_id": "uuid",
+  "idempotency_key": "uuid",
+  "expected_revision": 12,
+  "payload": {}
+}
+```
+
+Tool 返回：
+
+```json
+{
+  "operation_id": "uuid",
+  "state": "QUEUED|RUNNING|SUCCEEDED|FAILED",
+  "resource_refs": [],
+  "summary": {}
+}
+```
+
+### 7.3 Read tools
 
 ```text
-request/session ID
-OAuth issuer/subject/client_id/scopes
-Tool/safety class
-idempotency key
-resource IDs
-result/error
-latency
-created task/job/run/deployment
+mission.get_contract
+evidence.read_allowed
+artifact.describe
+dataset.list
+dataset.describe
+dataset.query_sample
+experiment.status
+alpha.library_search
+alpha.inspect
+portfolio.inspect_mandate
+portfolio.inspect_program
 ```
 
-绝不记录 token、private key、API secret、Strategy body 或 Parquet content。
+### 7.4 Mutation tools
 
-限流维度：principal、client、Tool、read/mutation、upload bytes、concurrent tasks。Stop 不能被过低限流阻断，但仍由幂等和 precondition 收口。
-
-## 16. 目标代码树
+按 Mission capability 动态过滤：
 
 ```text
-backend/src/quazonai/
-├── cli/
-│   ├── main.py
-│   ├── client.py
-│   ├── registry.py
-│   ├── output.py
-│   ├── oauth.py
-│   ├── mcp_client.py
-│   └── artifact_upload.py
-├── mcp/
-│   ├── main.py
-│   ├── server.py
-│   ├── auth.py
-│   ├── scopes.py
-│   ├── tools.py
-│   ├── resources.py
-│   ├── tasks.py
-│   ├── artifacts.py
-│   ├── errors.py
-│   └── audit.py
-└── commands/
-    ├── registry.py
-    ├── models.py
-    └── handlers.py
-
-skills/quazonai/
-├── SKILL.md
-└── references/
-    ├── commands.md
-    └── safety.md
+data.requirement_submit
+experiment.submit
+artifact.register
+feature.submit_version
+alpha.submit_model
+alpha.submit_calibration
+alpha.submit_qualification_candidate
+portfolio.submit_candidate
+mission.submit_plan
+mission.report_result
 ```
 
-`commands/registry.py` 为 CLI/MCP 提供共享映射元数据；领域行为仍由 API/service handler 拥有。
+### 7.5 Permanent hard deny
 
-## 17. 依赖
-
-- 官方 MCP Python SDK，实施时固定已验证稳定版本；
-- 现有 ASGI/FastAPI/Starlette runtime；
-- 已批准 JOSE/JWT 库，不自行实现签名算法；
-- 现有 HTTP client；
-- 不引入 SSH 库；
-- 不引入第二个 Web Framework；
-- 不实现通用 API Gateway。
-
-版本由 `uv.lock` 精确锁定。MCP SDK 升级必须跑协议、OAuth 和 Tool schema 回归。
-
-## 18. 验收矩阵
-
-### Protocol
-
-- [ ] Initialize、Tools、Resources 通过官方 Inspector/SDK；
-- [ ] Protocol version、JSON/SSE、disconnect/reconnect 正确；
-- [ ] Host/Origin allowlist 由真实 HTTP 测试证明；
-- [ ] Gateway restart 不改变 Run/Deployment；
-- [ ] 未启用 MCP 时 Core 五服务正常运行。
-
-### OAuth
-
-- [ ] RFC 9728 metadata 和 401 challenge；
-- [ ] Authorization Code + PKCE；
-- [ ] Client Credentials 受限 Agent；
-- [ ] 错误 issuer、expiry、audience/resource 被拒绝；
-- [ ] token 不传下游；
-- [ ] `tools/list` 按 scope 过滤；
-- [ ] insufficient scope 返回正确 challenge。
-
-### Tool safety
-
-- [ ] Human-only Tool 永不出现且直接调用无副作用；
-- [ ] mutation 缺 idempotency/precondition 被拒绝；
-- [ ] same-key same-request 返回同 receipt；不同请求被拒绝；
-- [ ] impact token 绑定 principal/target/version；
-- [ ] Stop 明确不强平且不产生重复操作。
-
-### Tasks
-
-- [ ] 无 Tasks 客户端可完成全部流程；
-- [ ] Tasks 客户端可创建、轮询、取结果；
-- [ ] Task principal isolation；
-- [ ] Cancellation 不伪造底层取消。
-
-### Artifact
-
-- [ ] Strategy/Wheel/Parquet 流式上传；
-- [ ] 10 GiB 不全量入内存；
-- [ ] resume、expiry、limit、filename、kind、principal 校验；
-- [ ] 不生成应用级 hash；
-- [ ] Secret upload 不可创建。
-
-### Skill E2E
-
-- [ ] Skill 只使用 MCP Tools/Resources；
-- [ ] 不读取/请求 token 或 Secret；
-- [ ] 正确处理 scope/human handoff；
-- [ ] 完成 Research → Experiment → Run → Approval preparation；
-- [ ] 诊断 Recovery Blocked 但不能绕过；
-- [ ] 明确授权时可 Stop，并准确报告未平仓。
-
-## 19. 实施路线
-
-### M0：Read-only Spike
+永不暴露：
 
 ```text
-optional mcp-gateway
-OAuth verifier
-RFC 9728 metadata
-tools/list
-quazonai.system.status
-quazonai://manifest
+approval.approve
+approval.reject
+handoff.publish
+handoff.revoke
+secret.read
+secret.write
+plugin.activate
+plugin.remove
+mandate.mutate
+universe.mutate
+sealed.read_raw
+downstream.stop
+downstream.order
 ```
 
-完成条件：远程 MCP Client 经 HTTPS/OAuth 连接；Core API 仍私有；不使用 SSH；关闭 Gateway 后 Core 不受影响。
+即使 Codex 猜到 tool name，server 也必须 hard deny 且无副作用。
 
-### M1：Shared Command Mapping
+## 8. Tool validation
 
-CLI/MCP 共用 metadata；Read Tools 覆盖系统、插件、Dataset、Research、Run、Deployment、Risk；加入 output schema、audit、rate limit。
+每个调用顺序：
 
-### M2：Reliable Mutation
+```text
+parse schema
+→ resolve mission
+→ mission RUNNING?
+→ capability allowed?
+→ resource inside scope?
+→ expected revision/state valid?
+→ idempotency check
+→ domain validation
+→ durable operation/event
+→ result
+```
 
-Scopes、idempotency、preconditions、impact token、human handoff 和 read-modify-verify。
+MCP Tool annotations/description 不替代 server-side 校验。
 
-### M3：Artifact
+## 9. Large artifacts
 
-Begin/finalize Tools、resumable HTTPS upload、Companion CLI、Strategy/Wheel/Parquet 消费和清理。
+大型 Arrow/Parquet/wheel 不放进 MCP JSON。
 
-### M4：Tasks/Notifications
+Codex 写 Mission worktree artifact 后：
 
-可选 Tasks、QZ operation 映射、Resource subscription、reconnect 和 Gateway restart。
+1. `artifact.register` 提交相对路径、kind、media type、size；
+2. Tool Server 校验路径必须位于 Mission worktree；
+3. Core 将文件移动/复制到正式 Artifact store；
+4. 生成 artifact UUID；
+5. 后续业务对象只引用 artifact ID。
 
-### M5：Skill Coverage
+不计算 QZ 应用级 content hash。
 
-Plugin、Data、Research、Experiment、Approval Preparation、Deployment Monitor、Risk、Universe 和 Recovery；不包含 human-only action。
+## 10. App Server event mapping
 
-### M6：Live Boundary Review
+至少处理：
 
-独立验证 Secret、Approval、Force Remove、Stop、Risk、Recovery、Canary、OAuth audience/scope。
+```text
+thread/started
+turn/started
+turn/completed
+item/started
+item/completed
+item/* delta needed for UI
+turn/diff/updated
+turn/plan/updated
+thread/tokenUsage/updated
+```
 
-只有 M0–M5 通过后，才能宣称远程 Agent 通道可用；只有 M6 与真实资金验收通过后，MCP 才能用于 Live Deployment mutation。
+QZ projection：
 
-## 20. 官方参考
+| App Server | QZ activity |
+|---|---|
+| Thread start/resume | `AGENT_SESSION_STARTED` |
+| Turn started | `MISSION_TURN_STARTED` |
+| command item | `COMMAND_ACTIVITY` |
+| file change | `FILE_CHANGE_ACTIVITY` |
+| MCP call | `TOOL_ACTIVITY` |
+| plan update | `PLAN_ACTIVITY` |
+| turn diff | `WORKSPACE_DIFF_UPDATED` |
+| turn complete | `MISSION_TURN_COMPLETED` |
+| runtime failure | `AGENT_RUNTIME_ERROR` |
 
-- [MCP 2025-11-25 Specification](https://modelcontextprotocol.io/specification/2025-11-25)
-- [MCP Streamable HTTP Transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
-- [MCP Authorization](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)
-- [MCP Tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)
-- [MCP Tasks](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks)
-- [MCP Elicitation](https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation)
-- [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)
-- [RFC 9728](https://www.rfc-editor.org/rfc/rfc9728)
-- [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707)
-- [RFC 9700](https://www.rfc-editor.org/rfc/rfc9700)
+Token usage只做容量/成本观测，不作为 Research Quality 或停止预算。
 
----
+## 11. Reasoning handling
 
-本文件描述目标 CLI/MCP/Skill 合同。当前仓库尚未实现 `quazonai` CLI、MCP Gateway、OAuth resource server、Artifact upload、Tasks 或远程 Agent E2E，因此不得宣称该通道已可用。
+App Server Item 可能包含 reasoning 类型。QZ：
+
+- 不把 hidden reasoning content 持久化为产品事实；
+- 不在普通 UI 展示 chain-of-thought；
+- 可以记录 `item_type=reasoning`, start/end time、是否完成等无内容 metadata；
+- Research Summary 必须来自结构化 Mission Result / Artifact / Tool evidence，而不是从隐藏推理抽取。
+
+## 12. Mission result contract
+
+Mission 完成前必须调用：
+
+```text
+mission.report_result
+```
+
+概念结构：
+
+```json
+{
+  "status": "SUCCEEDED|NO_PROGRESS|BLOCKED|FAILED",
+  "summary": "...",
+  "output_artifact_ids": [],
+  "created_resource_ids": [],
+  "new_hypotheses": [],
+  "blocking_requirements": [],
+  "recommended_next_mission_types": []
+}
+```
+
+Codex 推荐的 next mission 不自动创建；Orchestrator 根据 Domain Policy 决定。
+
+## 13. Workspace Manager
+
+Program repo 存放的是该研究的可执行研究代码/配置/说明，不是 QZ Core source。
+
+QZ 操作：
+
+```text
+create bare repo
+create branch
+create temp worktree
+lease branch
+launch Mission
+validate changes
+commit accepted revision
+increment workspace_revision_no
+remove worktree
+release lease
+```
+
+Codex 不管理 Git 元数据。
+
+Mission failure：
+
+- 业务 artifacts/events 保留；
+- 未接受 workspace changes 可以丢弃；
+- Branch 不因失败被删除；
+- retry 使用新 Mission attempt/worktree。
+
+## 14. Sealed Evaluation 与 Agent
+
+Codex Tool Surface 永远没有 raw Sealed data。
+
+Promotion 流程：
+
+```text
+Candidate request promotion
+→ Core assigns Sealed Episode
+→ evaluator executes independently
+→ full result private
+→ deterministic disclosure mapper
+→ Level 1 classification to Codex lineage
+→ Episode consumed when disclosed
+```
+
+Agent 不能选择具体 Sealed Episode。
+
+## 15. Optional external Skill
+
+`skills/quazonai/SKILL.md` 用于开发者手工让外部 Codex/Agent 理解 QuaZonai，不是 built-in Runtime 的必需组件。
+
+Skill：
+
+- 先读 `DESIGN.md` / 当前 API manifest；
+- 优先 read；
+- 不猜 tool；
+- 不处理 Secret；
+- 不批准 Candidate；
+- 不控制 downstream；
+- 遇到 human-only 节点生成 handoff 提示。
+
+外部远程 MCP OAuth Gateway 不属于 V1 Core；如未来需要公网远程 Agent，再单独设计，不复活旧 SSH/JSONL/通用 proxy 方案。
+
+## 16. Contract tests
+
+必须真实验证：
+
+- 固定 Codex version `initialize` handshake；
+- stdio message framing；
+- thread/start/resume；
+- turn lifecycle；
+- process crash + resume；
+- app-server overload/retry 分类；
+- MCP tools/list 与 schemas；
+- capability hard deny；
+- idempotency/precondition；
+- artifact path escape 拒绝；
+- Mission network disabled；
+- Sealed root 不可达；
+- event projection reconnect；
+- reasoning content 不进入产品持久化；
+- duplicate `mission.report_result` 幂等。
+
+## 17. CLI completion criteria
+
+- 所有 CLI mutation 与 Web 使用相同 Core API/Domain behavior；
+- CLI 不复制业务状态机；
+- built-in Codex 不 shell-out 到 CLI 做 RPC；
+- Agent tools 不出现 human-only mutation；
+- 所有资源引用使用业务 UUID/version/revision；
+- 不引入应用级 SHA/checksum/digest/fingerprint Gate；
+- 文档中的命令必须与实现 `--help`/OpenAPI contract tests 对齐。
