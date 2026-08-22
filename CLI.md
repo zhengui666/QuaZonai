@@ -4,7 +4,7 @@
 
 ## 1. 结论
 
-QuaZonai 有三条明确操作通道：
+QuaZonai 有三条操作通道：
 
 ```text
 Human Web
@@ -15,9 +15,9 @@ Local human / automation
   → loopback FastAPI Core
 
 Built-in Codex Runtime
-  → codex app-server (stdio)
-  → mission-scoped stdio MCP Tool Server
-  → QuaZonai Domain API / services
+  → per-Mission codex app-server (stdio)
+  → one mission-scoped stdio MCP server
+  → QuaZonai Domain/API services
 ```
 
 Built-in Codex **不通过 CLI 作为 RPC**。CLI 是人类与自动化薄客户端；Mission Tool Server 才是 Codex 的结构化研究接口。
@@ -26,20 +26,20 @@ Built-in Codex **不通过 CLI 作为 RPC**。CLI 是人类与自动化薄客户
 
 - 可执行名：`quazonai`；
 - 默认 API：`http://127.0.0.1:8000`；
-- CLI 不访问 PostgreSQL、Program repo、Dataset volume、CODEX_HOME 或 plugin runtime；
+- CLI 不直接访问 PostgreSQL、Program repo、Dataset volume、CODEX_HOME 或 plugin runtime；
 - 所有 mutation 发送 `Idempotency-Key`；
 - 更新类操作发送 `expected_revision/state/version`；
 - Secret 只通过安全 stdin/prompt 输入，不打印；
 - `--json` 输出稳定机器可读 envelope；
 - CLI 不复制领域状态机。
 
-统一输出：
+统一成功输出：
 
 ```json
 {
   "ok": true,
   "data": {},
-  "request_id": "..."
+  "request_id": "uuid"
 }
 ```
 
@@ -50,10 +50,10 @@ Built-in Codex **不通过 CLI 作为 RPC**。CLI 是人类与自动化薄客户
   "ok": false,
   "error": {
     "code": "APPROVAL_STALE",
-    "message": "...",
+    "message": "The approval snapshot is no longer current.",
     "details": {}
   },
-  "request_id": "..."
+  "request_id": "uuid"
 }
 ```
 
@@ -67,7 +67,7 @@ quazonai readiness
 quazonai events watch [--after EVENT_ID]
 ```
 
-`status` 返回：API、DB、worker、agent-worker、evaluator、storage、Codex 摘要。
+`status` 返回 API、DB、worker、agent-worker、evaluator、storage、Codex 摘要。
 
 ### 3.2 Idea / Research
 
@@ -84,9 +84,9 @@ quazonai research archive PROGRAM_ID --reason TEXT
 quazonai research restore PROGRAM_ID
 ```
 
-`idea preview` 只预览 Charter/overlap，不创建正式 Program。
+`idea preview` 只预览 Charter/overlap；不创建正式 Program。
 
-`research start` 只有在 Charter 完整时才冻结并创建 Program。
+`research start` 只有在 Charter 完整时才冻结 Charter 并创建 Program。
 
 ### 3.3 Alpha
 
@@ -96,7 +96,7 @@ quazonai alpha show QUALIFICATION_ID
 quazonai alpha lineage QUALIFICATION_ID
 ```
 
-CLI 不提供 `activate-alpha` / `restore-alpha` 人工命令。
+CLI 不提供人工 `activate-alpha` / `restore-alpha`。
 
 ### 3.4 Portfolio
 
@@ -110,7 +110,7 @@ quazonai portfolio show PORTFOLIO_PROGRAM_ID
 quazonai candidate show CANDIDATE_ID
 ```
 
-不提供人工 `set-weight`、`add-alpha` 或 `patch-candidate`。
+不提供 `set-weight`、`add-alpha`、`patch-candidate`。
 
 ### 3.5 Approval
 
@@ -121,7 +121,7 @@ quazonai approval approve APPROVAL_ID --downstream DOWNSTREAM_ID
 quazonai approval reject APPROVAL_ID --reason REASON_CODE [--note TEXT]
 ```
 
-`approve` 前 CLI 必须重新读取当前 snapshot；服务端仍做最终 freshness/precondition 校验。
+`approve` 前客户端重新读取 Snapshot；服务端仍做最终 freshness/precondition 校验。
 
 ### 3.6 Handoff / Feedback
 
@@ -132,7 +132,7 @@ quazonai handoff revoke HANDOFF_ID --reason REASON_CODE [--note TEXT]
 quazonai feedback show HANDOFF_ID
 ```
 
-CLI 不提供 claimed downstream 的 stop/undeploy/cancel-live。
+不存在 claimed downstream 的 `stop` / `undeploy` / `cancel-live` 命令。
 
 ### 3.7 Administration
 
@@ -165,115 +165,166 @@ quazonai plugin remove RELEASE_ID [--force]
 
 Plugin command 只管理 DATA/RESEARCH/HANDOFF capability。
 
-## 4. Codex App Server 集成
+---
 
-### 4.1 固定版本与 schema
+# Part I — Codex App Server Adapter
 
-实现时固定一个经过验收的 Codex CLI/App Server 版本。CI 执行：
+## 4. Version pinning and transport
+
+实现固定一个经过验收的 Codex CLI/App Server 版本。CI 由同一二进制生成协议 schema：
 
 ```bash
 codex app-server generate-json-schema --out build/codex-schema
+codex app-server generate-ts --out build/codex-ts
 ```
 
-生成物用于协议合同测试，不作为产品业务事实。
+这些 schema 是 adapter contract-test 输入，不是业务事实。
 
-生产主传输：
+V1 主传输：
 
 ```bash
 codex app-server --listen stdio://
 ```
 
-不得把 experimental WebSocket 作为核心依赖。
+WebSocket、Project API、Environment API、`dynamicTools`、`runtimeWorkspaceRoots`、`selectedCapabilityRoots` 等 experimental surface 不作为 V1 必需依赖。
 
-### 4.2 Process lifecycle
+## 5. QuaZonai-owned Codex runtime profile
 
-`agent-worker` 对每个 Mission：
+Agent Worker 不复用操作者日常 Codex CLI 的任意全局配置。QuaZonai 使用独立、受控的 Codex runtime profile：
 
-1. claim Mission lease；
+```text
+/var/lib/quazonai/codex-runtime/
+```
+
+它只承担：
+
+- QuaZonai 专用 Codex authentication；
+- Codex thread/session persistence；
+- QZ 允许的最小运行配置。
+
+不得把个人全局 MCP servers、marketplaces、plugins 或任意 Skills 自动带入自治 Research Mission。
+
+管理员通过 QuaZonai Administration 完成该专用 runtime profile 的 Codex 登录；Secret/token 不进入 QZ 数据库、Mission prompt、Mission worktree 或普通 UI。
+
+## 6. Per-Mission App Server process
+
+每个 `RUNNING` Mission 使用一个独立 App Server child：
+
+1. Agent Worker claim Mission lease；
 2. 创建/恢复 Mission worktree；
-3. 启动独立 `codex app-server` child；
-4. `initialize` + `initialized`；
-5. 新 Mission 调用 `thread/start`；已有 durable thread 调用 `thread/resume`；
-6. `turn/start` 提交 Mission prompt；
-7. 流式消费 item/turn notifications；
-8. 投影安全 activity；
-9. 等待 `turn/completed`；
-10. 验证 outputs；
-11. 让 Domain Validator 接受或拒绝结果；
-12. 终止 child，收口 worktree。
+3. 生成该 Mission 的 runtime launch spec；
+4. 启动 `codex app-server` child；
+5. `initialize` + `initialized`；
+6. 新 Mission `thread/start`；已有 durable thread `thread/resume`；
+7. `turn/start` 提交 Mission input；
+8. 流式消费 notifications；
+9. 投影允许的 Agent Activity；
+10. 等待 `turn/completed`；
+11. 验证 `mission.report_result` 和 artifacts；
+12. Domain Validator 接受/拒绝输出；
+13. 终止 App Server child；
+14. 收口 worktree / Branch lease。
 
-如果 App Server 进程异常退出：
+一个 Research Program **不**使用无限长 Codex Thread。一个 Mission 对应一个 durable Codex Thread；同 Mission retry/resume 才复用该 Thread。
 
-- Mission attempt 标记 `INTERRUPTED`；
-- 未发生业务 side effect 的可安全重试；
-- 已通过 MCP 创建 durable operation 的，先按 idempotency key 查询结果；
-- 重新启动 child 后 `thread/resume`；
-- 不重复提交已确认完成的 Domain mutation。
+## 7. Mission-specific Codex config override
 
-### 4.3 `thread/start` 基线参数
+Codex CLI 支持全局 `-c key=value` / `--config key=value`，其中 key 可为 dotted path、value 按 TOML 解析。
 
-概念配置：
+Agent Worker 必须在 App Server 启动时把有效 MCP 配置收窄为 **唯一的 QuaZonai Mission server**，不能继承任意用户 MCP：
+
+```text
+mcp_servers = {
+  quazonai_mission = {
+    command = "quazonai-mission-mcp",
+    args = ["--mission-id", "<MISSION_ID>"]
+  }
+}
+```
+
+具体 CLI quoting/serialization 由 pinned Codex version 的 config schema 驱动并有 integration test；实现不得依赖手写 shell 字符串拼接。
+
+Mission MCP 所需的短期 capability credential 只通过该 MCP server 的专用 process env/IPC 注入：
+
+- 不进入 Turn input；
+- 不进入 general shell environment；
+- 不进入 worktree；
+- scope 只覆盖一个 `mission_id`；
+- Mission 终态立即失效。
+
+即使 capability 泄漏，Core 仍按 Mission Contract、resource scope、expected revision/state 和 idempotency 做最终授权；capability 本身不能扩大权限。
+
+## 8. Thread/Turn baseline
+
+V1 不依赖 experimental `runtimeWorkspaceRoots`。Workspace hard boundary 由 QZ Workspace Manager + OS/container mount policy + Codex stable `cwd` / legacy `sandbox` policy共同实现。
+
+`thread/start` / first turn 概念输入：
 
 ```json
 {
   "model": "<AgentProfileVersion.model>",
   "cwd": "/worktrees/<mission>",
-  "runtimeWorkspaceRoots": ["/worktrees/<mission>"],
   "developerInstructions": "<mission role + contract instructions>",
+  "sandbox": "workspace-write",
   "approvalPolicy": "never"
 }
 ```
 
-V1 不依赖 experimental `dynamicTools`、project assignment、environments 或 selected capability roots。若未来使用，先更新 `DESIGN.md` 并增加版本/回退测试。
+精确字段归属（thread vs turn）以 pinned App Server schema 为准；adapter 必须通过 generated schema 生成/校验 payload，不在业务代码里散落协议 JSON。
 
-### 4.4 Turn input
+`runtimeWorkspaceRoots`、`permissions` profile、Project/Environment 等 experimental 字段只允许作为未来可替换 hardening/optimization；不能成为业务正确性的前提。
 
-Mission prompt 必须是结构化摘要，不把数据库 dump 直接塞进 prompt：
+## 9. Sandbox and OS isolation
 
-```text
-Mission ID
-Role
-Objective
-Research Charter summary
-Allowed scope
-Input artifact references
-Required outputs
-Success criteria
-Failure conditions
-Available MCP tools
-```
-
-## 5. Codex sandbox
-
-默认：
+V1 hard baseline：
 
 ```text
-sandbox: workspace-write
-network: disabled
-approvalPolicy: never
-cwd: mission worktree
-runtime roots: mission worktree only
+cwd: Mission worktree
+Codex sandbox: workspace-write
+network: restricted/disabled
+approval policy: never
+outer filesystem view: only Mission-required paths
 ```
 
-Agent 不能通过 interactive approval 请求人类开放网络/系统目录。
+QZ 外层 Mission isolation 必须保证 Codex command subprocess 无法读取：
 
-Codex shell 可做：
+- QuaZonai Core source tree；
+- other Program repos/worktrees；
+- Sealed Dataset roots；
+- provider/downstream Secret stores；
+- PostgreSQL credentials/socket；
+- Docker socket；
+- QuaZonai Codex auth material。
+
+不得只依赖 developer instruction 来保护这些路径。具体 Linux/macOS enforcement 可以随平台实现，但 `codex preflight` 必须用真实 command tool 验证 forbidden paths 不可达。
+
+Mission 默认无任意网络。Agent 不通过 interactive approval 请求用户开放网络；数据和外部能力走 QZ Tool Server。
+
+Codex command 可以：
 
 - 读写 Mission worktree；
-- 运行本地 Python/test；
-- 编译 Mission 产物；
-- 调用已连接的 stdio MCP tools。
+- 运行本地 Python / tests；
+- 构建 Mission artifact；
+- 通过 Codex MCP client 调用 `quazonai_mission` tools。
 
-不能直接：
+## 10. Crash / retry / resume
 
-- curl/wget canonical data；
-- 读 QZ DB；
-- 读 Secret；
-- 读 Sealed raw data；
-- 操作 Git branch/commit/worktree；
-- 调用下游 runtime。
+App Server 进程异常退出：
 
-## 6. AgentProfileVersion
+- 当前 Mission attempt → `INTERRUPTED`；
+- 未产生 durable domain side effect 的步骤可新 attempt 重试；
+- 已发出的 MCP mutation 先按 `idempotency_key` 查询 operation receipt；
+- 启动新 App Server child 后 `thread/resume` 同一 Mission Thread；
+- 不重复提交已完成 mutation；
+- 若 Thread store 损坏或不可 resume，创建新 Mission attempt/thread，但保留前一次 Search Ledger / Activity / durable artifacts，并由 Orchestrator决定是否继续。
+
+App Server ingress 返回 overloaded `-32001` 时按 adapter policy 指数退避 + jitter；不能把 retryable transport failure解释为 Research failure。
+
+---
+
+# Part II — Agent Profiles and Mission Contract
+
+## 11. AgentProfileVersion
 
 字段：
 
@@ -291,31 +342,82 @@ state
 created_at
 ```
 
-默认 profiles：
+Profiles：
 
 | Role | 主要输出 |
 |---|---|
 | `RESEARCH_DIRECTOR` | Mission Graph / replan proposal |
-| `DATA_RESEARCHER` | Data Requirement / quality analysis / feature input |
-| `ALPHA_RESEARCHER` | Feature/Alpha/Calibration candidate |
-| `VALIDATOR` | robustness report / promotion recommendation |
-| `PORTFOLIO_ARCHITECT` | portfolio candidate proposal |
-| `REVIEWER` | contract/completeness review，不能 approve |
+| `DATA_RESEARCHER` | Data Requirement / quality analysis / feature inputs |
+| `ALPHA_RESEARCHER` | Feature / Alpha / Calibration candidate |
+| `VALIDATOR` | robustness / completeness / promotion recommendation |
+| `PORTFOLIO_ARCHITECT` | Portfolio Candidate proposal |
+| `REVIEWER` | contract/evidence completeness review；不能 approve |
 | `DEGRADATION_ANALYST` | degradation diagnosis / new hypothesis |
 
-角色不等于业务权限；server-side Mission Contract 才是最终 capability authority。
+Role 只是执行 profile；最终权限来自 immutable Mission Contract + Tool Server 校验。
 
-## 7. Mission-scoped stdio MCP
+## 12. Mission prompt
 
-### 7.1 Why stdio MCP
+Turn input 只提供结构化、最小上下文：
 
-选择稳定标准接口，避免把 Codex CLI shell parsing 或 experimental `dynamicTools` 变成核心 RPC。
+```text
+Mission ID
+Role
+Objective
+Research Charter summary
+Universe/Horizon scope
+Input artifact references
+Allowed capabilities
+Required output kinds
+Success criteria
+Failure conditions
+Disclosure level
+```
 
-App Server 启动的 Mission 会连接一个 QZ-owned stdio MCP server。该 server 不访问用户聊天历史，只根据 `mission_id` 从 Core 读取 Mission Contract。
+不把 PostgreSQL row dump、Secret、Sealed raw result 或其他 Program history 全量塞入 prompt。
 
-### 7.2 Tool envelope
+## 13. Mission result
 
-每个 mutation 输入：
+Mission 完成前必须调用：
+
+```text
+mission.report_result
+```
+
+结构：
+
+```json
+{
+  "status": "SUCCEEDED|NO_PROGRESS|BLOCKED|FAILED",
+  "summary": "verifiable result summary",
+  "output_artifact_ids": [],
+  "created_resource_ids": [],
+  "new_hypotheses": [],
+  "blocking_requirements": [],
+  "recommended_next_mission_types": []
+}
+```
+
+`recommended_next_mission_types` 只是建议；Orchestrator/Domain Policy 决定是否真正创建节点。
+
+---
+
+# Part III — Mission-scoped MCP
+
+## 14. Why stdio MCP
+
+V1 使用稳定的 stdio MCP，而不是：
+
+- shell-out `quazonai` CLI 解析文本；
+- App Server experimental `dynamicTools`；
+- 自定义 JSONL/RPC；
+- 公网 Agent Gateway。
+
+每个 App Server 只配置一个 QZ-owned `quazonai_mission` server。
+
+## 15. Tool envelope
+
+Mutation 概念输入：
 
 ```json
 {
@@ -326,7 +428,7 @@ App Server 启动的 Mission 会连接一个 QZ-owned stdio MCP server。该 ser
 }
 ```
 
-Tool 返回：
+结果：
 
 ```json
 {
@@ -337,7 +439,11 @@ Tool 返回：
 }
 ```
 
-### 7.3 Read tools
+大型 Arrow/Parquet/wheel 不内嵌 JSON。
+
+## 16. Read tools
+
+按 Contract 暴露：
 
 ```text
 mission.get_contract
@@ -353,9 +459,9 @@ portfolio.inspect_mandate
 portfolio.inspect_program
 ```
 
-### 7.4 Mutation tools
+## 17. Mutation tools
 
-按 Mission capability 动态过滤：
+仅在当前 Mission capability 存在时进入 `tools/list`：
 
 ```text
 data.requirement_submit
@@ -370,9 +476,9 @@ mission.submit_plan
 mission.report_result
 ```
 
-### 7.5 Permanent hard deny
+## 18. Permanent hard deny
 
-永不暴露：
+永不提供：
 
 ```text
 approval.approve
@@ -390,44 +496,48 @@ downstream.stop
 downstream.order
 ```
 
-即使 Codex 猜到 tool name，server 也必须 hard deny 且无副作用。
+即使模型猜到名字，服务端也必须 hard deny 且无副作用。
 
-## 8. Tool validation
+## 19. Tool call authorization
 
-每个调用顺序：
+每次调用：
 
 ```text
-parse schema
-→ resolve mission
-→ mission RUNNING?
+validate MCP schema
+→ authenticate mission capability
+→ resolve Mission
+→ Mission RUNNING?
 → capability allowed?
-→ resource inside scope?
-→ expected revision/state valid?
-→ idempotency check
-→ domain validation
-→ durable operation/event
-→ result
+→ target resource in scope?
+→ expected revision/state/version valid?
+→ idempotency lookup
+→ Domain validation
+→ durable operation + event
+→ structured result
 ```
 
-MCP Tool annotations/description 不替代 server-side 校验。
+Tool annotation、developer instruction 和 Codex Tool UI 都不能替代 server-side authorization。
 
-## 9. Large artifacts
+## 20. Artifact registration
 
-大型 Arrow/Parquet/wheel 不放进 MCP JSON。
+Codex 写 Mission worktree 文件后：
 
-Codex 写 Mission worktree artifact 后：
+1. `artifact.register(relative_path, kind, media_type, size_bytes, ...)`；
+2. Tool Server canonicalize path；必须仍位于 Mission worktree；
+3. 拒绝 symlink/path escape 到 protected roots；
+4. QZ 将文件复制/移动到正式 Artifact Store；
+5. 创建 artifact UUID；
+6. 下游资源只引用 artifact ID/version。
 
-1. `artifact.register` 提交相对路径、kind、media type、size；
-2. Tool Server 校验路径必须位于 Mission worktree；
-3. Core 将文件移动/复制到正式 Artifact store；
-4. 生成 artifact UUID；
-5. 后续业务对象只引用 artifact ID。
+不创建应用级 content hash/checksum/fingerprint。
 
-不计算 QZ 应用级 content hash。
+---
 
-## 10. App Server event mapping
+# Part IV — Codex Event Projection
 
-至少处理：
+## 21. App Server events
+
+Adapter 至少消费稳定 lifecycle/event surface：
 
 ```text
 thread/started
@@ -435,149 +545,193 @@ turn/started
 turn/completed
 item/started
 item/completed
-item/* delta needed for UI
+item/agentMessage/delta (UI only, optional persistence policy)
 turn/diff/updated
 turn/plan/updated
 thread/tokenUsage/updated
 ```
 
-QZ projection：
+具体 method set 由 pinned schema 锁定；不对未知 experimental event 建业务依赖。
 
-| App Server | QZ activity |
+## 22. QZ activity projection
+
+| Codex event | QZ activity |
 |---|---|
-| Thread start/resume | `AGENT_SESSION_STARTED` |
-| Turn started | `MISSION_TURN_STARTED` |
+| thread start/resume | `AGENT_SESSION_STARTED` |
+| turn started | `MISSION_TURN_STARTED` |
 | command item | `COMMAND_ACTIVITY` |
 | file change | `FILE_CHANGE_ACTIVITY` |
 | MCP call | `TOOL_ACTIVITY` |
 | plan update | `PLAN_ACTIVITY` |
 | turn diff | `WORKSPACE_DIFF_UPDATED` |
-| turn complete | `MISSION_TURN_COMPLETED` |
-| runtime failure | `AGENT_RUNTIME_ERROR` |
+| turn completed | `MISSION_TURN_COMPLETED` |
+| process/protocol failure | `AGENT_RUNTIME_ERROR` |
 
-Token usage只做容量/成本观测，不作为 Research Quality 或停止预算。
+Activity 不是 Research state transition。Codex 声称“candidate ready”也必须经过 artifact/domain validation。
 
-## 11. Reasoning handling
+Token usage用于容量与成本观察，不是 Research Quality，也不触发 Program 累计预算停止。
 
-App Server Item 可能包含 reasoning 类型。QZ：
+## 23. Reasoning handling
 
-- 不把 hidden reasoning content 持久化为产品事实；
+App Server 可产生 reasoning Item。QZ：
+
+- 不持久化 hidden reasoning text 作为产品事实；
 - 不在普通 UI 展示 chain-of-thought；
-- 可以记录 `item_type=reasoning`, start/end time、是否完成等无内容 metadata；
-- Research Summary 必须来自结构化 Mission Result / Artifact / Tool evidence，而不是从隐藏推理抽取。
+- 最多记录 item type、start/end/status 等无内容 metadata；
+- Research Summary 来自 Mission Result、Artifact、Tool output 和 Domain Evidence。
 
-## 12. Mission result contract
+---
 
-Mission 完成前必须调用：
+# Part V — Workspace Manager
+
+## 24. Program / Branch / Mission Git model
 
 ```text
-mission.report_result
+Program bare repo
+  ├─ Research Branch A
+  │   ├─ Mission A1 temp worktree
+  │   └─ Mission A2 temp worktree
+  └─ Research Branch B
+      └─ Mission B1 temp worktree
 ```
 
-概念结构：
-
-```json
-{
-  "status": "SUCCEEDED|NO_PROGRESS|BLOCKED|FAILED",
-  "summary": "...",
-  "output_artifact_ids": [],
-  "created_resource_ids": [],
-  "new_hypotheses": [],
-  "blocking_requirements": [],
-  "recommended_next_mission_types": []
-}
-```
-
-Codex 推荐的 next mission 不自动创建；Orchestrator 根据 Domain Policy 决定。
-
-## 13. Workspace Manager
-
-Program repo 存放的是该研究的可执行研究代码/配置/说明，不是 QZ Core source。
-
-QZ 操作：
+QZ owns：
 
 ```text
 create bare repo
 create branch
-create temp worktree
-lease branch
-launch Mission
-validate changes
+branch lease
+create worktree
+validate accepted changes
 commit accepted revision
 increment workspace_revision_no
 remove worktree
 release lease
 ```
 
-Codex 不管理 Git 元数据。
+Codex 只编辑普通文件；不得 branch/commit/merge/rebase/worktree 管理。
 
-Mission failure：
+Git object IDs 不作为 Candidate/Approval/Artifact/Workspace 业务 identity。
 
-- 业务 artifacts/events 保留；
-- 未接受 workspace changes 可以丢弃；
-- Branch 不因失败被删除；
-- retry 使用新 Mission attempt/worktree。
+## 25. Workspace failure
 
-## 14. Sealed Evaluation 与 Agent
+Mission 失败：
 
-Codex Tool Surface 永远没有 raw Sealed data。
+- durable QZ artifacts/events/search ledger 保留；
+- 未接受 worktree changes 可丢弃；
+- Branch 不删除；
+- retry 创建新 Mission attempt/worktree；
+- 同 Branch 同时只有一个持写 lease 的 Mission，除非未来设计显式支持 merge semantics。
 
-Promotion 流程：
+---
+
+# Part VI — Sealed Evaluation and Agent Boundary
+
+## 26. Sealed flow
 
 ```text
-Candidate request promotion
-→ Core assigns Sealed Episode
-→ evaluator executes independently
-→ full result private
-→ deterministic disclosure mapper
-→ Level 1 classification to Codex lineage
-→ Episode consumed when disclosed
+Candidate requests promotion
+→ Core selects/assigns eligible Sealed Episode
+→ evaluator executes outside Codex runtime
+→ full result stored private
+→ deterministic disclosure policy
+→ Level 1 classification exposed to allowed research lineage
+→ disclosure creates Evidence Exposure
+→ Episode becomes CONSUMED for that lineage
 ```
 
-Agent 不能选择具体 Sealed Episode。
+Codex：
 
-## 15. Optional external Skill
+- 不能选 Episode；
+- 不能读 raw Sealed Dataset；
+- 不能读 Level 0 result；
+- 不能通过 MCP 反查具体 date/instrument/metric gap。
 
-`skills/quazonai/SKILL.md` 用于开发者手工让外部 Codex/Agent 理解 QuaZonai，不是 built-in Runtime 的必需组件。
+---
 
-Skill：
+# Part VII — Optional External Skill
 
-- 先读 `DESIGN.md` / 当前 API manifest；
-- 优先 read；
-- 不猜 tool；
+## 27. Skill role
+
+`skills/quazonai/SKILL.md` 只用于开发者手工调用外部 Codex/Agent 时理解 QuaZonai。
+
+它不是 built-in Runtime 的依赖，也不是权限事实源。
+
+外部 Skill：
+
+- 先读 `AGENTS.md` / `DESIGN.md`；
+- 优先 read current state；
+- 使用官方 CLI/API；
+- 不猜资源/状态；
 - 不处理 Secret；
-- 不批准 Candidate；
-- 不控制 downstream；
-- 遇到 human-only 节点生成 handoff 提示。
+- 不替用户批准资本 handoff；
+- 不控制 downstream runtime；
+- 不绕过 Evidence/Approval state。
 
-外部远程 MCP OAuth Gateway 不属于 V1 Core；如未来需要公网远程 Agent，再单独设计，不复活旧 SSH/JSONL/通用 proxy 方案。
+V1 不建设旧式远程 OAuth MCP Gateway、SSH transport、JSONL 隧道或通用 HTTP proxy。若未来产品需要远程多客户端 Agent，再以独立设计扩展。
 
-## 16. Contract tests
+---
 
-必须真实验证：
+# Part VIII — Required Contract Tests
 
-- 固定 Codex version `initialize` handshake；
-- stdio message framing；
-- thread/start/resume；
-- turn lifecycle；
+## 28. Codex protocol
+
+真实 pinned binary 必测：
+
+- `initialize` / `initialized`；
+- generated schema 与 adapter payload；
+- stdio framing；
+- `thread/start` / `thread/resume`；
+- `turn/start` / `turn/completed` / interrupt；
+- overload `-32001` retry；
 - process crash + resume；
-- app-server overload/retry 分类；
-- MCP tools/list 与 schemas；
-- capability hard deny；
-- idempotency/precondition；
-- artifact path escape 拒绝；
-- Mission network disabled；
+- unknown/experimental fields 不影响 V1 correctness。
+
+## 29. Mission isolation
+
+真实 command tool 必测：
+
+- worktree 可读写；
+- other Program 不可达；
+- QZ source 不可达；
+- Codex auth material 不可达；
+- Secret roots 不可达；
 - Sealed root 不可达；
-- event projection reconnect；
-- reasoning content 不进入产品持久化；
-- duplicate `mission.report_result` 幂等。
+- DB credential/socket 不可达；
+- Docker socket 不可达；
+- arbitrary outbound network 不可用；
+- MCP Tool 仍可通过批准路径工作。
 
-## 17. CLI completion criteria
+任何一项失败，`RESEARCH_READY=false`。
 
-- 所有 CLI mutation 与 Web 使用相同 Core API/Domain behavior；
-- CLI 不复制业务状态机；
-- built-in Codex 不 shell-out 到 CLI 做 RPC；
-- Agent tools 不出现 human-only mutation；
-- 所有资源引用使用业务 UUID/version/revision；
+## 30. MCP contract
+
+真实 MCP session 必测：
+
+- only one mission server configured；
+- `tools/list` 与 Mission Contract 一致；
+- hard-denied tool 不存在且 direct call 无副作用；
+- mission capability 过期/跨 Mission 调用拒绝；
+- expected revision/state/version；
+- mutation idempotency；
+- duplicate `mission.report_result` 幂等；
+- artifact path traversal/symlink escape 拒绝；
+- large artifact 不进入 JSON body。
+
+## 31. Event / privacy
+
+- event ordering/reconnect；
+- command/file/MCP/result projection；
+- hidden reasoning text 不进入 PostgreSQL/standard logs/UI；
+- Token usage 不影响 Research state；
+- App Server log Secret redaction。
+
+## 32. CLI completion criteria
+
+- Web/CLI mutation 使用同一 Core API/Domain logic；
+- CLI 不访问 DB/volume；
+- built-in Codex 不 shell-out CLI 做业务 RPC；
+- Agent Tool surface 不含 human-only mutation；
+- 所有身份使用 QZ UUID/version/revision；
 - 不引入应用级 SHA/checksum/digest/fingerprint Gate；
-- 文档中的命令必须与实现 `--help`/OpenAPI contract tests 对齐。
+- 文档命令与实现 `--help`/OpenAPI contract test 对齐。
