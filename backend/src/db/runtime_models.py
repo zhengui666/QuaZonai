@@ -31,6 +31,7 @@ class RuntimeConfiguration(Base, TimestampMixin):
     __tablename__ = "runtime_configurations"
     __table_args__ = (
         CheckConstraint("scope = 'SYSTEM'", name="ck_runtime_configuration_scope"),
+        CheckConstraint("revision > 0", name="ck_runtime_configuration_revision"),
         CheckConstraint("max_plugin_wheel_bytes > 0", name="ck_runtime_max_plugin_wheel_bytes"),
         CheckConstraint(
             "plugin_validation_timeout_seconds > 0",
@@ -45,13 +46,14 @@ class RuntimeConfiguration(Base, TimestampMixin):
             "mission_job_timeout_seconds > 0",
             name="ck_runtime_mission_job_timeout",
         ),
-        CheckConstraint("job_poll_seconds > 0", name="ck_runtime_job_poll_seconds"),
+        CheckConstraint("job_poll_seconds >= 0.01", name="ck_runtime_job_poll_seconds"),
         CheckConstraint("job_lease_seconds > 0", name="ck_runtime_job_lease_seconds"),
         UniqueConstraint("scope", name="uq_runtime_configuration_scope"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     scope: Mapped[str] = mapped_column(String(40), nullable=False, default="SYSTEM")
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     codex_model: Mapped[str | None] = mapped_column(String(200))
     codex_base_url: Mapped[str | None] = mapped_column(Text)
     codex_api_key_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary)
