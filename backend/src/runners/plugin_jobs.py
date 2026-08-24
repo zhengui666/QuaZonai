@@ -25,6 +25,7 @@ from events import append_event
 from plugins.contract import DescriptorSnapshot
 from plugins.runtime import build_bundle_environment, resolve_plugin_path, validate_release_environment
 from plugins.wheel_metadata import inspect_wheel, validate_wheel_set
+from runtime_config import load_effective_settings
 from settings import Settings
 
 
@@ -292,7 +293,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    settings = Settings.from_env()
+    settings = load_effective_settings(Settings.from_env())
     settings.ensure_worker_directories()
     job_id = UUID(args.job_id)
     if args.action == "install":
