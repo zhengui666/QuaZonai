@@ -150,6 +150,9 @@ def create_credential(
                 public_config=payload.public_config,
             )
             session.add(item)
+            # No ORM relationship is declared between the credential parent and
+            # encrypted child rows, so flush the parent explicitly for PostgreSQL FK order.
+            session.flush()
             for field_name, value in payload.secrets.items():
                 encrypted = encrypt_secret(
                     value,
