@@ -55,12 +55,13 @@ describe('API hooks', () => {
     });
   });
 
-  it('updates Codex and worker runtime configuration through the system API', async () => {
+  it('updates Codex and worker runtime configuration with revision and idempotency', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     const invalidate = vi.spyOn(client, 'invalidateQueries');
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(() => jsonResponse({ codex_model: 'gpt-5.6-sol', codex_base_url: 'https://gateway.example/v1', codex_api_key_configured: true }));
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(() => jsonResponse({ revision: 8, codex_model: 'gpt-5.6-sol', codex_base_url: 'https://gateway.example/v1', codex_api_key_configured: true }));
     const { result } = renderHook(() => useUpdateRuntimeConfiguration(), { wrapper: createWrapper(client) });
     const payload = {
+      expected_revision: 7,
       codex_model: 'gpt-5.6-sol',
       codex_base_url: 'https://gateway.example/v1',
       codex_api_key: 'secret-value',
@@ -81,6 +82,8 @@ describe('API hooks', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/system/runtime-configuration', expect.objectContaining({ method: 'PUT' }));
     const options = fetchMock.mock.calls[0][1] as RequestInit;
     expect(JSON.parse(String(options.body))).toEqual(payload);
+    const headers = options.headers as Headers;
+    expect(headers.get('Idempotency-Key')).toBeTruthy();
     await waitFor(() => {
       expect(invalidate).toHaveBeenCalledWith({ queryKey: ['runtime-configuration'] });
       expect(invalidate).toHaveBeenCalledWith({ queryKey: ['health'] });
