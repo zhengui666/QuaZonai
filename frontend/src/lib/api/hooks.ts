@@ -17,6 +17,8 @@ import type {
   Readiness,
   ResearchMission,
   ResearchProgram,
+  RuntimeConfiguration,
+  RuntimeConfigurationUpdate,
   SystemHealth,
   UUID,
 } from './types';
@@ -24,6 +26,7 @@ import type {
 const keys = {
   readiness: ['readiness'] as const,
   health: ['health'] as const,
+  runtimeConfiguration: ['runtime-configuration'] as const,
   programs: ['programs'] as const,
   program: (id: UUID) => ['program', id] as const,
   missions: (id: UUID) => ['missions', id] as const,
@@ -44,6 +47,7 @@ const keys = {
 
 export const useReadiness = () => useQuery({ queryKey: keys.readiness, queryFn: () => apiRequest<Readiness>('/api/v1/readiness'), refetchInterval: 15_000 });
 export const useHealth = () => useQuery({ queryKey: keys.health, queryFn: () => apiRequest<SystemHealth>('/api/v1/system/health'), refetchInterval: 15_000 });
+export const useRuntimeConfiguration = () => useQuery({ queryKey: keys.runtimeConfiguration, queryFn: () => apiRequest<RuntimeConfiguration>('/api/v1/system/runtime-configuration') });
 export const usePrograms = () => useQuery({ queryKey: keys.programs, queryFn: async () => normalizeList(await apiRequest<ResearchProgram[] | { items: ResearchProgram[] }>('/api/v1/research-programs')) });
 export const useProgram = (id?: UUID) => useQuery({ queryKey: id ? keys.program(id) : ['program', 'none'], queryFn: () => apiRequest<ResearchProgram>(`/api/v1/research-programs/${id}`), enabled: Boolean(id) });
 export const useProgramMissions = (id?: UUID) => useQuery({ queryKey: id ? keys.missions(id) : ['missions', 'none'], queryFn: async () => normalizeList(await apiRequest<ResearchMission[] | { items: ResearchMission[] }>(`/api/v1/research-programs/${id}/missions`)), enabled: Boolean(id) });
@@ -126,4 +130,18 @@ export function useCreateDataSource() {
 export function useCreateDownstream() {
   const client = useQueryClient();
   return useMutation({ mutationFn: (payload: Partial<DownstreamSystem> & Record<string, unknown>) => apiRequest<DownstreamSystem>('/api/v1/downstream-systems', { method: 'POST', body: jsonBody(payload), idempotent: true }), onSuccess: async () => { await Promise.all([client.invalidateQueries({ queryKey: keys.downstreams }), client.invalidateQueries({ queryKey: keys.readiness })]); } });
+}
+
+export function useUpdateRuntimeConfiguration() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: RuntimeConfigurationUpdate) => apiRequest<RuntimeConfiguration>('/api/v1/system/runtime-configuration', { method: 'PUT', body: jsonBody(payload) }),
+    onSuccess: async () => {
+      await Promise.all([
+        client.invalidateQueries({ queryKey: keys.runtimeConfiguration }),
+        client.invalidateQueries({ queryKey: keys.health }),
+        client.invalidateQueries({ queryKey: keys.readiness }),
+      ]);
+    },
+  });
 }
