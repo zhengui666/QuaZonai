@@ -46,7 +46,10 @@ class RuntimeConfiguration(Base, TimestampMixin):
             "mission_job_timeout_seconds > 0",
             name="ck_runtime_mission_job_timeout",
         ),
-        CheckConstraint("job_poll_seconds >= 0.01", name="ck_runtime_job_poll_seconds"),
+        CheckConstraint(
+            "job_poll_seconds >= 0.01 AND job_poll_seconds <= 3600",
+            name="ck_runtime_job_poll_seconds",
+        ),
         CheckConstraint("job_lease_seconds > 0", name="ck_runtime_job_lease_seconds"),
         UniqueConstraint("scope", name="uq_runtime_configuration_scope"),
     )
