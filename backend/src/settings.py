@@ -47,33 +47,15 @@ class Settings:
     alembic_url: str
     master_key: str | None
     plugin_root: Path
-    catalog_root: Path
-    report_root: Path
-    import_root: Path
-    agent_artifact_root: Path
-    max_parquet_upload_bytes: int
     max_plugin_wheel_bytes: int
     plugin_validation_timeout_seconds: int
     bundle_build_timeout_seconds: int
     plugin_job_timeout_seconds: int
-    integration_preflight_timeout_seconds: int
-    strategy_validation_timeout_seconds: int
-    parquet_import_timeout_seconds: int
-    backtest_timeout_seconds: int
-    research_job_timeout_seconds: int
     job_poll_seconds: float
     job_lease_seconds: int
-    supervisor_poll_seconds: float
-    live_runner_start_timeout_seconds: int = 120
-    live_runner_stop_timeout_seconds: int = 30
-    live_heartbeat_seconds: float = 5.0
-    live_recovery_retry_seconds: float = 5.0
-    mcp_internal_token: str | None = None
-    agent_artifact_ttl_seconds: int = 3600
-    max_strategy_source_bytes: int = 1024 * 1024
 
     @classmethod
-    def from_env(cls) -> Settings:
+    def from_env(cls) -> "Settings":
         database_url = os.environ.get(
             "QUAZONAI_DATABASE_URL",
             "postgresql+psycopg://quazonai:quazonai-local@127.0.0.1:5432/quazonai",
@@ -87,24 +69,6 @@ class Settings:
             plugin_root=Path(
                 os.environ.get("QUAZONAI_PLUGIN_ROOT", "/var/lib/quazonai/plugins")
             ),
-            catalog_root=Path(
-                os.environ.get("QUAZONAI_CATALOG_ROOT", "/var/lib/quazonai/catalog")
-            ),
-            report_root=Path(
-                os.environ.get("QUAZONAI_REPORT_ROOT", "/var/lib/quazonai/reports")
-            ),
-            import_root=Path(
-                os.environ.get("QUAZONAI_IMPORT_ROOT", "/var/lib/quazonai/imports")
-            ),
-            agent_artifact_root=Path(
-                os.environ.get(
-                    "QUAZONAI_AGENT_ARTIFACT_ROOT",
-                    "/var/lib/quazonai/agent-artifacts",
-                )
-            ),
-            max_parquet_upload_bytes=_positive_int(
-                "QUAZONAI_MAX_PARQUET_UPLOAD_BYTES", 10 * 1024 * 1024 * 1024
-            ),
             max_plugin_wheel_bytes=_positive_int(
                 "QUAZONAI_MAX_PLUGIN_WHEEL_BYTES", 256 * 1024 * 1024
             ),
@@ -117,41 +81,8 @@ class Settings:
             plugin_job_timeout_seconds=_positive_int(
                 "QUAZONAI_PLUGIN_JOB_TIMEOUT_SECONDS", 900
             ),
-            integration_preflight_timeout_seconds=_positive_int(
-                "QUAZONAI_INTEGRATION_PREFLIGHT_TIMEOUT_SECONDS", 120
-            ),
-            strategy_validation_timeout_seconds=_positive_int(
-                "QUAZONAI_STRATEGY_VALIDATION_TIMEOUT_SECONDS", 60
-            ),
-            parquet_import_timeout_seconds=_positive_int(
-                "QUAZONAI_PARQUET_IMPORT_TIMEOUT_SECONDS", 3600
-            ),
-            backtest_timeout_seconds=_positive_int("QUAZONAI_BACKTEST_TIMEOUT_SECONDS", 3600),
-            research_job_timeout_seconds=_positive_int(
-                "QUAZONAI_RESEARCH_JOB_TIMEOUT_SECONDS", 43_200
-            ),
             job_poll_seconds=_positive_float("QUAZONAI_JOB_POLL_SECONDS", 1.0),
             job_lease_seconds=_positive_int("QUAZONAI_JOB_LEASE_SECONDS", 60),
-            supervisor_poll_seconds=_positive_float(
-                "QUAZONAI_SUPERVISOR_POLL_SECONDS", 1.0
-            ),
-            live_runner_start_timeout_seconds=_positive_int(
-                "QUAZONAI_LIVE_RUNNER_START_TIMEOUT_SECONDS", 120
-            ),
-            live_runner_stop_timeout_seconds=_positive_int(
-                "QUAZONAI_LIVE_RUNNER_STOP_TIMEOUT_SECONDS", 30
-            ),
-            live_heartbeat_seconds=_positive_float("QUAZONAI_LIVE_HEARTBEAT_SECONDS", 5.0),
-            live_recovery_retry_seconds=_positive_float(
-                "QUAZONAI_LIVE_RECOVERY_RETRY_SECONDS", 5.0
-            ),
-            mcp_internal_token=os.environ.get("QUAZONAI_MCP_INTERNAL_TOKEN") or None,
-            agent_artifact_ttl_seconds=_positive_int(
-                "QUAZONAI_AGENT_ARTIFACT_TTL_SECONDS", 3600
-            ),
-            max_strategy_source_bytes=_positive_int(
-                "QUAZONAI_MAX_STRATEGY_SOURCE_BYTES", 1024 * 1024
-            ),
         )
 
     @property
@@ -184,9 +115,5 @@ class Settings:
             self.plugin_root / "releases",
             self.plugin_root / "bundle-staging",
             self.plugin_root / "bundles",
-            self.catalog_root,
-            self.report_root,
-            self.import_root,
-            self.agent_artifact_root,
         ):
             path.mkdir(parents=True, exist_ok=True)
