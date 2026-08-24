@@ -9,7 +9,8 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Header, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from db.models import PublicMutationReceipt, RuntimeConfiguration
 from db.session import ping_database
@@ -25,6 +26,7 @@ from settings import Settings, SettingsError
 
 router = APIRouter(prefix="/api/v1/system", tags=["system"])
 RUNTIME_CONFIGURATION_OPERATION = "system.runtime_configuration.replace"
+MAX_JOB_POLL_SECONDS = 3600.0
 
 
 class HealthResponse(BaseModel):
@@ -71,7 +73,7 @@ class RuntimeConfigurationInput(BaseModel):
     bundle_build_timeout_seconds: int = Field(gt=0)
     plugin_job_timeout_seconds: int = Field(gt=0)
     mission_job_timeout_seconds: int = Field(gt=0)
-    job_poll_seconds: float = Field(ge=0.01)
+    job_poll_seconds: float = Field(ge=0.01, le=MAX_JOB_POLL_SECONDS)
     job_lease_seconds: int = Field(gt=0)
 
     @field_validator("codex_model")
@@ -190,6 +192,48 @@ def _receipt_matches(
     return current_key is not None and secrets.compare_digest(current_key, payload.codex_api_key)
 
 
+def _claim_idempotency_receipt(
+    session: Session,
+    key: str,
+    payload: RuntimeConfigurationInput,
+) -> tuple[PublicMutationReceipt, bool]:
+    """Atomically claim one public mutation key before touching runtime state.
+
+    The unique primary key is the serialization point. On PostgreSQL, a concurrent
+    insert for the same key waits for the first transaction to commit or roll back.
+    The loser then reads the committed receipt and returns that original response.
+    """
+    existing = session.get(PublicMutationReceipt, key)
+    if existing is not None:
+        return existing, False
+
+    receipt = PublicMutationReceipt(
+        idempotency_key=key,
+        operation_name=RUNTIME_CONFIGURATION_OPERATION,
+        normalized_request=_idempotency_shape(payload),
+        response_json={},
+        status_code=0,
+        created_at=datetime.now(UTC),
+    )
+    try:
+        with session.begin_nested():
+            session.add(receipt)
+            session.flush()
+    except IntegrityError:
+        if receipt in session:
+            session.expunge(receipt)
+        session.expire_all()
+        existing = session.get(PublicMutationReceipt, key)
+        if existing is None:
+            raise QfError(
+                "IDEMPOTENCY_RECEIPT_CONFLICT",
+                "The idempotency receipt could not be resolved after a concurrent request.",
+                409,
+            )
+        return existing, False
+    return receipt, True
+
+
 @router.get("/runtime-configuration", response_model=RuntimeConfigurationView)
 def runtime_configuration(request: Request) -> RuntimeConfigurationView:
     return _runtime_view(request)
@@ -210,16 +254,18 @@ def replace_runtime_configuration(
     key = idempotency_key.strip() if idempotency_key and idempotency_key.strip() else None
     try:
         with factory.begin() as session:
+            claimed_receipt: PublicMutationReceipt | None = None
             if key is not None:
-                existing = session.get(PublicMutationReceipt, key)
-                if existing is not None:
-                    if not _receipt_matches(existing, payload, settings, session):
+                receipt, claimed = _claim_idempotency_receipt(session, key, payload)
+                if not claimed:
+                    if not _receipt_matches(receipt, payload, settings, session):
                         raise QfError(
                             "IDEMPOTENCY_KEY_REUSED",
                             "The idempotency key belongs to a different request.",
                             409,
                         )
-                    return RuntimeConfigurationView.model_validate(existing.response_json)
+                    return RuntimeConfigurationView.model_validate(receipt.response_json)
+                claimed_receipt = receipt
 
             item = update_runtime_configuration(
                 session,
@@ -260,17 +306,9 @@ def replace_runtime_configuration(
             session.flush()
             session.refresh(item)
             view = _runtime_view_from_item(settings, item)
-            if key is not None:
-                session.add(
-                    PublicMutationReceipt(
-                        idempotency_key=key,
-                        operation_name=RUNTIME_CONFIGURATION_OPERATION,
-                        normalized_request=_idempotency_shape(payload),
-                        response_json=view.model_dump(mode="json"),
-                        status_code=200,
-                        created_at=datetime.now(UTC),
-                    )
-                )
+            if claimed_receipt is not None:
+                claimed_receipt.response_json = view.model_dump(mode="json")
+                claimed_receipt.status_code = 200
             return view
     except SettingsError as exc:
         raise QfError(
