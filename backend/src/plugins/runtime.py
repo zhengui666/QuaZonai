@@ -1,8 +1,7 @@
-"""Runtime environment construction for validated plugin releases."""
+"""Runtime environment construction for validated research/data plugin releases."""
 
 from __future__ import annotations
 
-import importlib.metadata
 import os
 import shutil
 import stat
@@ -27,7 +26,6 @@ class BundleBuildResult:
     environment_path: Path
     python_version: str
     qf_version: str
-    nautilus_version: str | None
 
 
 def resolve_plugin_path(plugin_root: Path, relative_path: str) -> Path:
@@ -51,13 +49,6 @@ def _remove_write_permissions(root: Path) -> None:
             continue
     current = stat.S_IMODE(root.stat().st_mode)
     root.chmod(current & ~0o222)
-
-
-def _nautilus_version() -> str | None:
-    try:
-        return importlib.metadata.version("nautilus-trader")
-    except importlib.metadata.PackageNotFoundError:
-        return None
 
 
 def validate_release_environment(
@@ -143,7 +134,6 @@ def build_bundle_environment(
                 f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
             ),
             qf_version=__version__,
-            nautilus_version=_nautilus_version(),
         )
     except OSError as exc:
         raise QfError(
