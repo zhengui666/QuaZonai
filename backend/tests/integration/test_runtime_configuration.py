@@ -1,17 +1,23 @@
 from __future__ import annotations
 
+import socket
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, func, select
 
+from api.system import RuntimeConfigurationInput, _claim_idempotency_receipt
 from db.models import Event, PublicMutationReceipt, RuntimeConfiguration
 from db.session import create_session_factory
 from main import create_app
 from runtime_config import effective_settings
 from runners.codex_provider_auth import fetch_token
 from runners.research_missions import (
+    BROKER_ACCEPT_POLL_SECONDS,
     CUSTOM_CODEX_PROVIDER_ID,
     _codex_launch_configuration,
     _provider_credential_broker,
@@ -195,16 +201,61 @@ def test_runtime_configuration_deduplicates_idempotent_retry_without_storing_sec
         assert receipt.normalized_request["codex_api_key_action"] == "set"
 
 
-def test_runtime_configuration_rejects_poll_interval_below_floor(
+def test_idempotency_receipt_claim_serializes_same_key(
+    engine: Engine,
+) -> None:
+    if engine.dialect.name != "postgresql":
+        pytest.skip("Concurrent receipt serialization is verified on PostgreSQL")
+
+    factory = create_session_factory(engine)
+    payload = RuntimeConfigurationInput.model_validate(_payload())
+
+    with factory() as first_session:
+        first_transaction = first_session.begin()
+        first_receipt, first_claimed = _claim_idempotency_receipt(
+            first_session,
+            "runtime-config-concurrent",
+            payload,
+        )
+        assert first_claimed is True
+
+        def claim_again() -> tuple[str, bool]:
+            with factory.begin() as second_session:
+                receipt, claimed = _claim_idempotency_receipt(
+                    second_session,
+                    "runtime-config-concurrent",
+                    payload,
+                )
+                return receipt.idempotency_key, claimed
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            second = pool.submit(claim_again)
+            time.sleep(0.25)
+            assert second.done() is False
+            first_receipt.response_json = {"revision": 1}
+            first_receipt.status_code = 200
+            first_transaction.commit()
+            key, claimed = second.result(timeout=5)
+
+    assert key == "runtime-config-concurrent"
+    assert claimed is False
+
+
+def test_runtime_configuration_rejects_poll_interval_outside_bounds(
     engine: Engine,
     settings: Settings,
 ) -> None:
     client = TestClient(create_app(settings=settings, engine=engine))
-    response = client.put(
+    below = client.put(
         "/api/v1/system/runtime-configuration",
         json=_payload(job_poll_seconds=0.001),
     )
-    assert response.status_code == 422
+    above = client.put(
+        "/api/v1/system/runtime-configuration",
+        json=_payload(job_poll_seconds=3600.01),
+    )
+    assert below.status_code == 422
+    assert above.status_code == 422
 
 
 def test_runtime_configuration_rejects_credential_bearing_base_url(
@@ -279,4 +330,24 @@ def test_provider_credential_broker_is_one_shot() -> None:
     with _provider_credential_broker("sk-one-shot") as socket_path:
         assert socket_path is not None
         assert fetch_token(socket_path) == "sk-one-shot"
+    assert not socket_path.exists()
+
+
+def test_provider_credential_broker_waits_and_reads_fragmented_request() -> None:
+    with _provider_credential_broker("sk-fragmented") as socket_path:
+        assert socket_path is not None
+        time.sleep(BROKER_ACCEPT_POLL_SECONDS * 3)
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(5.0)
+            client.connect(str(socket_path))
+            client.sendall(b"TOK")
+            time.sleep(0.05)
+            client.sendall(b"EN\n")
+            chunks: list[bytes] = []
+            while True:
+                chunk = client.recv(4096)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+        assert b"".join(chunks).decode("utf-8") == "sk-fragmented"
     assert not socket_path.exists()
