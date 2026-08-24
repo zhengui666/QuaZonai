@@ -11,6 +11,10 @@ function positiveNumber(value: string): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
+function normalizeBaseUrl(value: string): string {
+  return value.trim().replace(/\/+$/, '');
+}
+
 export function RuntimeConfigurationPanel({ configuration }: { configuration: RuntimeConfiguration }) {
   const update = useUpdateRuntimeConfiguration();
   const [model, setModel] = useState(configuration.codex_model ?? '');
@@ -47,7 +51,9 @@ export function RuntimeConfigurationPanel({ configuration }: { configuration: Ru
     job_lease_seconds: positiveNumber(jobLeaseSeconds),
   }), [maxWheelBytes, pluginValidationTimeout, bundleBuildTimeout, pluginJobTimeout, missionJobTimeout, jobPollSeconds, jobLeaseSeconds]);
 
-  const invalid = Object.values(numericValues).some((value) => value <= 0);
+  const providerUrlChanged = normalizeBaseUrl(baseUrl) !== normalizeBaseUrl(configuration.codex_base_url ?? '');
+  const requiresKeyDecision = providerUrlChanged && configuration.codex_api_key_configured && !apiKey.trim() && !clearApiKey;
+  const invalid = Object.values(numericValues).some((value) => value <= 0) || requiresKeyDecision;
   const authState = configuration.codex_api_key_configured
     ? 'API KEY CONFIGURED'
     : configuration.codex_login_configured
@@ -80,7 +86,7 @@ export function RuntimeConfigurationPanel({ configuration }: { configuration: Ru
         </div>
 
         <div className="qz-resource-note" style={{ marginBottom: 16 }}>
-          Codex model, provider endpoint, API key and worker limits are runtime configuration, not bootstrap environment variables. API keys are encrypted at rest and never read back to the browser. A blank API-key field keeps the stored key unchanged.
+          Codex model, provider endpoint, API key and worker limits are runtime configuration, not bootstrap environment variables. API keys are encrypted at rest and never read back to the browser. A blank API-key field keeps the stored key unchanged unless the provider endpoint changes.
         </div>
 
         <div className="qz-form-grid">
@@ -96,6 +102,7 @@ export function RuntimeConfigurationPanel({ configuration }: { configuration: Ru
           <label className="qz-field">
             <span className="qz-label">Codex API key</span>
             <TextField.Root type="password" value={apiKey} disabled={clearApiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={configuration.codex_api_key_configured ? 'Configured — enter a new key to replace' : 'Optional when using Codex login or an unauthenticated gateway'} />
+            {requiresKeyDecision ? <span className="qz-list-subtitle">Changing the Base URL cannot reuse the stored key. Re-enter the key for the new endpoint or clear it.</span> : null}
           </label>
           <label className="qz-field" style={{ alignSelf: 'end' }}>
             <span className="qz-label">Clear stored API key</span>
