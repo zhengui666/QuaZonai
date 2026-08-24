@@ -24,21 +24,24 @@ def _api_key_aad(configuration_id: UUID, key_version: int) -> bytes:
     ).encode("utf-8")
 
 
-def get_runtime_configuration(session: Session) -> RuntimeConfiguration | None:
-    return session.scalar(
-        select(RuntimeConfiguration).where(RuntimeConfiguration.scope == RUNTIME_SCOPE)
-    )
+def get_runtime_configuration(
+    session: Session,
+    *,
+    for_update: bool = False,
+) -> RuntimeConfiguration | None:
+    statement = select(RuntimeConfiguration).where(RuntimeConfiguration.scope == RUNTIME_SCOPE)
+    if for_update:
+        statement = statement.with_for_update()
+    return session.scalar(statement)
 
 
-def ensure_runtime_configuration(
+def _new_runtime_configuration(
     session: Session,
     base_settings: Settings,
 ) -> RuntimeConfiguration:
-    item = get_runtime_configuration(session)
-    if item is not None:
-        return item
     item = RuntimeConfiguration(
         scope=RUNTIME_SCOPE,
+        revision=1,
         codex_model=None,
         codex_base_url=None,
         max_plugin_wheel_bytes=base_settings.max_plugin_wheel_bytes,
@@ -129,6 +132,7 @@ def update_runtime_configuration(
     session: Session,
     base_settings: Settings,
     *,
+    expected_revision: int,
     codex_model: str | None,
     codex_base_url: str | None,
     codex_api_key: str | None,
@@ -141,7 +145,26 @@ def update_runtime_configuration(
     job_poll_seconds: float,
     job_lease_seconds: int,
 ) -> RuntimeConfiguration:
-    item = ensure_runtime_configuration(session, base_settings)
+    item = get_runtime_configuration(session, for_update=True)
+    if item is None:
+        if expected_revision != 0:
+            raise QfError(
+                "RUNTIME_CONFIGURATION_STALE",
+                "Runtime configuration has changed since it was loaded.",
+                409,
+                {"expected_revision": expected_revision, "actual_revision": 0},
+            )
+        item = _new_runtime_configuration(session, base_settings)
+    else:
+        if expected_revision != item.revision:
+            raise QfError(
+                "RUNTIME_CONFIGURATION_STALE",
+                "Runtime configuration has changed since it was loaded.",
+                409,
+                {"expected_revision": expected_revision, "actual_revision": item.revision},
+            )
+        item.revision += 1
+
     next_base_url = (
         codex_base_url.strip() if codex_base_url and codex_base_url.strip() else None
     )
