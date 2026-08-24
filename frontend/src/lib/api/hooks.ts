@@ -64,6 +64,13 @@ export const useAlpha = (id?: UUID) => useQuery({ queryKey: id ? keys.alpha(id) 
 export const useMandates = () => useQuery({ queryKey: keys.mandates, queryFn: async () => normalizeList(await apiRequest<PortfolioMandate[] | { items: PortfolioMandate[] }>('/api/v1/portfolio-mandates')) });
 export const usePortfolioPrograms = () => useQuery({ queryKey: keys.portfolioPrograms, queryFn: async () => normalizeList(await apiRequest<PortfolioProgram[] | { items: PortfolioProgram[] }>('/api/v1/portfolio-programs')) });
 export const useCandidate = (id?: UUID) => useQuery({ queryKey: id ? keys.candidate(id) : ['candidate', 'none'], queryFn: () => apiRequest<PortfolioCandidate>(`/api/v1/portfolio-candidates/${id}`), enabled: Boolean(id) });
+
+export function useCandidates(ids: UUID[]) {
+  return useQueries({
+    queries: ids.map((id) => ({ queryKey: keys.candidate(id), queryFn: () => apiRequest<PortfolioCandidate>(`/api/v1/portfolio-candidates/${id}`), staleTime: 5_000 })),
+  });
+}
+
 export const useApprovals = () => useQuery({ queryKey: keys.approvals, queryFn: async () => normalizeList(await apiRequest<ApprovalSnapshot[] | { items: ApprovalSnapshot[] }>('/api/v1/approvals')), refetchInterval: 10_000 });
 export const useHandoffs = () => useQuery({ queryKey: keys.handoffs, queryFn: async () => normalizeList(await apiRequest<HandoffOffer[] | { items: HandoffOffer[] }>('/api/v1/handoffs')), refetchInterval: 10_000 });
 export const useUniverses = () => useQuery({ queryKey: keys.universes, queryFn: async () => normalizeList(await apiRequest<MarketUniverse[] | { items: MarketUniverse[] }>('/api/v1/universes')) });
@@ -75,12 +82,8 @@ export function usePluginReleases() {
   return useQuery({
     queryKey: keys.plugins,
     queryFn: async () => {
-      try {
-        return normalizeList(await apiRequest<PluginRelease[] | { items: PluginRelease[] }>('/api/v1/plugin-releases'));
-      } catch (error) {
-        if ((error as { status?: number }).status === 404) return [];
-        throw error;
-      }
+      try { return normalizeList(await apiRequest<PluginRelease[] | { items: PluginRelease[] }>('/api/v1/plugin-releases')); }
+      catch (error) { if ((error as { status?: number }).status === 404) return []; throw error; }
     },
   });
 }
@@ -89,31 +92,19 @@ export const useIdeaPreview = () => useMutation({ mutationFn: (idea: string) => 
 
 export function useStartResearch() {
   const client = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: { idea: string; answers?: Record<string, string>; overlap_action?: string }) => apiRequest<ResearchProgram>('/api/v1/research-programs', { method: 'POST', body: jsonBody(payload), idempotent: true }),
-    onSuccess: () => client.invalidateQueries({ queryKey: keys.programs }),
-  });
+  return useMutation({ mutationFn: (payload: { idea: string; answers?: Record<string, string>; overlap_action?: string }) => apiRequest<ResearchProgram>('/api/v1/research-programs', { method: 'POST', body: jsonBody(payload), idempotent: true }), onSuccess: () => client.invalidateQueries({ queryKey: keys.programs }) });
 }
 
 export function useProgramAction(id: UUID, action: 'pause' | 'resume' | 'archive' | 'restore') {
   const client = useQueryClient();
-  return useMutation({
-    mutationFn: (reason?: string) => apiRequest(`/api/v1/research-programs/${id}/${action}`, { method: 'POST', body: jsonBody(reason ? { reason } : {}), idempotent: true }),
-    onSuccess: async () => { await Promise.all([client.invalidateQueries({ queryKey: keys.program(id) }), client.invalidateQueries({ queryKey: keys.programs })]); },
-  });
+  return useMutation({ mutationFn: (reason?: string) => apiRequest(`/api/v1/research-programs/${id}/${action}`, { method: 'POST', body: jsonBody(reason ? { reason } : {}), idempotent: true }), onSuccess: async () => { await Promise.all([client.invalidateQueries({ queryKey: keys.program(id) }), client.invalidateQueries({ queryKey: keys.programs })]); } });
 }
 
 export function useApprovalDecision(id: UUID) {
   const client = useQueryClient();
   return {
-    approve: useMutation({
-      mutationFn: (downstream_system_id: UUID) => apiRequest(`/api/v1/approvals/${id}/approve`, { method: 'POST', body: jsonBody({ downstream_system_id, expected_state: 'PENDING' }), idempotent: true }),
-      onSuccess: async () => { await Promise.all([client.invalidateQueries({ queryKey: keys.approvals }), client.invalidateQueries({ queryKey: keys.handoffs })]); },
-    }),
-    reject: useMutation({
-      mutationFn: (payload: { reason_code: string; note?: string }) => apiRequest(`/api/v1/approvals/${id}/reject`, { method: 'POST', body: jsonBody({ ...payload, expected_state: 'PENDING' }), idempotent: true }),
-      onSuccess: () => client.invalidateQueries({ queryKey: keys.approvals }),
-    }),
+    approve: useMutation({ mutationFn: (downstream_system_id: UUID) => apiRequest(`/api/v1/approvals/${id}/approve`, { method: 'POST', body: jsonBody({ downstream_system_id, expected_state: 'PENDING' }), idempotent: true }), onSuccess: async () => { await Promise.all([client.invalidateQueries({ queryKey: keys.approvals }), client.invalidateQueries({ queryKey: keys.handoffs })]); } }),
+    reject: useMutation({ mutationFn: (payload: { reason_code: string; note?: string }) => apiRequest(`/api/v1/approvals/${id}/reject`, { method: 'POST', body: jsonBody({ ...payload, expected_state: 'PENDING' }), idempotent: true }), onSuccess: () => client.invalidateQueries({ queryKey: keys.approvals }) }),
   };
 }
 
@@ -124,24 +115,15 @@ export function useRevokeHandoff(id: UUID) {
 
 export function useMandateToggle(id: UUID, enabled: boolean) {
   const client = useQueryClient();
-  return useMutation({
-    mutationFn: () => apiRequest(`/api/v1/portfolio-mandates/${id}/${enabled ? 'disable' : 'enable'}`, { method: 'POST', body: jsonBody({}), idempotent: true }),
-    onSuccess: async () => { await Promise.all([client.invalidateQueries({ queryKey: keys.mandates }), client.invalidateQueries({ queryKey: keys.portfolioPrograms }), client.invalidateQueries({ queryKey: keys.readiness })]); },
-  });
+  return useMutation({ mutationFn: () => apiRequest(`/api/v1/portfolio-mandates/${id}/${enabled ? 'disable' : 'enable'}`, { method: 'POST', body: jsonBody({}), idempotent: true }), onSuccess: async () => { await Promise.all([client.invalidateQueries({ queryKey: keys.mandates }), client.invalidateQueries({ queryKey: keys.portfolioPrograms }), client.invalidateQueries({ queryKey: keys.readiness })]); } });
 }
 
 export function useCreateDataSource() {
   const client = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: Partial<DataSource> & Record<string, unknown>) => apiRequest<DataSource>('/api/v1/data-sources', { method: 'POST', body: jsonBody(payload), idempotent: true }),
-    onSuccess: async () => { await Promise.all([client.invalidateQueries({ queryKey: keys.dataSources }), client.invalidateQueries({ queryKey: keys.readiness }), client.invalidateQueries({ queryKey: keys.health })]); },
-  });
+  return useMutation({ mutationFn: (payload: Partial<DataSource> & Record<string, unknown>) => apiRequest<DataSource>('/api/v1/data-sources', { method: 'POST', body: jsonBody(payload), idempotent: true }), onSuccess: async () => { await Promise.all([client.invalidateQueries({ queryKey: keys.dataSources }), client.invalidateQueries({ queryKey: keys.readiness }), client.invalidateQueries({ queryKey: keys.health })]); } });
 }
 
 export function useCreateDownstream() {
   const client = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: Partial<DownstreamSystem> & Record<string, unknown>) => apiRequest<DownstreamSystem>('/api/v1/downstream-systems', { method: 'POST', body: jsonBody(payload), idempotent: true }),
-    onSuccess: async () => { await Promise.all([client.invalidateQueries({ queryKey: keys.downstreams }), client.invalidateQueries({ queryKey: keys.readiness })]); },
-  });
+  return useMutation({ mutationFn: (payload: Partial<DownstreamSystem> & Record<string, unknown>) => apiRequest<DownstreamSystem>('/api/v1/downstream-systems', { method: 'POST', body: jsonBody(payload), idempotent: true }), onSuccess: async () => { await Promise.all([client.invalidateQueries({ queryKey: keys.downstreams }), client.invalidateQueries({ queryKey: keys.readiness })]); } });
 }

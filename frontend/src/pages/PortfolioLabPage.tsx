@@ -1,2 +1,64 @@
-import { Button } from '@radix-ui/themes';import { ArrowRightIcon } from '@phosphor-icons/react';import { Link } from 'react-router-dom';import type { ColumnDef } from '@tanstack/react-table';import { DataTable } from '../components/ui/DataTable';import { ErrorPanel } from '../components/ui/ErrorPanel';import { PageHeader } from '../components/ui/PageHeader';import { PageSkeleton } from '../components/ui/Skeleton';import { StateBadge } from '../components/ui/StateBadge';import { Section } from '../components/ui/Section';import { useMandates,usePortfolioPrograms } from '../lib/api/hooks';import type { PortfolioProgram } from '../lib/api/types';import { formatDateTime } from '../lib/format';
-const programColumns:ColumnDef<PortfolioProgram,unknown>[]=[{accessorKey:'mandate_name',header:'Mandate',cell:({row})=><div><div className="qz-list-title">{row.original.mandate_name??row.original.mandate_version_id.slice(0,8)}</div><div className="qz-list-subtitle qz-mono">{row.original.id}</div></div>},{accessorKey:'state',header:'State',cell:({getValue})=><StateBadge state={String(getValue())}/>},{accessorKey:'candidate_count',header:'Candidates',cell:({getValue})=><span className="qz-number">{String(getValue()??'—')}</span>},{accessorKey:'updated_at',header:'Updated',cell:({getValue})=>formatDateTime(getValue() as string|undefined)},{id:'candidate',header:'',cell:({row})=>row.original.current_candidate_id?<Button asChild size="1" variant="ghost"><Link to={`/portfolio/candidates/${row.original.current_candidate_id}`}>Candidate <ArrowRightIcon size={12}/></Link></Button>:<span className="qz-section-meta">Researching</span>}];export function PortfolioLabPage(){const mandates=useMandates(),programs=usePortfolioPrograms();if(mandates.isLoading||programs.isLoading)return<PageSkeleton/>;if(mandates.error||programs.error)return<ErrorPanel error={mandates.error??programs.error}/>;return <><PageHeader title="Portfolio Lab" description="Research assets are mapped into immutable Mandates through staged, role-constrained assembly. This surface is observational: users do not drag Alpha components or patch weights."/><Section title="Mandates" meta="Capital objectives are versioned separately from Alpha research"><div className="qz-grid-3">{(mandates.data??[]).map(m=><div className="qz-panel qz-panel-pad" key={m.id}><div style={{display:'flex',justifyContent:'space-between',gap:10}}><strong style={{fontSize:13}}>{m.name}</strong><StateBadge state={m.enabled?'ENABLED':'DISABLED'}/></div><div className="qz-list-subtitle" style={{marginTop:8}}>{String(m.spec_json?.objective??m.spec_json?.description??'Versioned portfolio mandate')}</div><div className="qz-section-meta qz-mono" style={{marginTop:12}}>{m.latest_version_id?.slice(0,12)??m.id.slice(0,12)}</div></div>)}</div></Section><Section title="Portfolio Programs" meta="Automatically created only when there is a real portfolio opportunity"><DataTable data={programs.data??[]} columns={programColumns} searchPlaceholder="Filter portfolio programs…" emptyTitle="No portfolio programs" emptyDescription="Programs are created automatically after a Mandate is enabled and qualified Alpha assets provide a real assembly opportunity." getRowId={r=>r.id}/></Section></>}
+import { ArrowRightIcon } from '@phosphor-icons/react';
+import { Button } from '@radix-ui/themes';
+import type { ColumnDef } from '@tanstack/react-table';
+import { useMemo } from 'react';
+import { Link } from 'react-router-dom';
+import { EChart } from '../components/charts/EChart';
+import { FinancialSeriesChart } from '../components/charts/FinancialSeriesChart';
+import { DataTable } from '../components/ui/DataTable';
+import { EmptyState } from '../components/ui/EmptyState';
+import { ErrorPanel } from '../components/ui/ErrorPanel';
+import { PageHeader } from '../components/ui/PageHeader';
+import { PageSkeleton } from '../components/ui/Skeleton';
+import { StateBadge } from '../components/ui/StateBadge';
+import { Section } from '../components/ui/Section';
+import { useCandidates, useMandates, usePortfolioPrograms } from '../lib/api/hooks';
+import type { PortfolioProgram } from '../lib/api/types';
+import { formatDateTime } from '../lib/format';
+import { findMatrix, findNamedValues, findTimeSeries } from '../lib/metrics';
+
+const programColumns: ColumnDef<PortfolioProgram, unknown>[] = [
+  { accessorKey: 'mandate_name', header: 'Mandate', cell: ({ row }) => <div><div className="qz-list-title">{row.original.mandate_name ?? row.original.mandate_version_id.slice(0, 8)}</div><div className="qz-list-subtitle qz-mono">{row.original.id}</div></div> },
+  { accessorKey: 'state', header: 'State', cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
+  { accessorKey: 'candidate_count', header: 'Candidates', cell: ({ getValue }) => <span className="qz-number">{String(getValue() ?? '—')}</span> },
+  { accessorKey: 'updated_at', header: 'Updated', cell: ({ getValue }) => formatDateTime(getValue() as string | undefined) },
+  { id: 'candidate', header: '', cell: ({ row }) => row.original.current_candidate_id ? <Button asChild size="1" variant="ghost"><Link to={`/portfolio/candidates/${row.original.current_candidate_id}`}>Candidate <ArrowRightIcon size={12} /></Link></Button> : <span className="qz-section-meta">Researching</span> },
+];
+
+export function PortfolioLabPage() {
+  const mandates = useMandates();
+  const programs = usePortfolioPrograms();
+  const candidateIds = (programs.data ?? []).flatMap((item) => item.current_candidate_id ? [item.current_candidate_id] : []);
+  const candidates = useCandidates(candidateIds);
+  const current = candidates.find((query) => query.data)?.data;
+  const allocation = current?.members?.map((member) => ({ name: member.alpha_name ?? member.alpha_qualification_id.slice(0, 8), value: member.target_weight ?? member.target_contribution ?? 0 })) ?? [];
+  const risk = findNamedValues(current?.metrics, ['risk_exposure', 'factor_exposure', 'universe_exposure']);
+  const matrix = findMatrix(current?.metrics, ['correlation_matrix', 'correlation']);
+  const equity = findTimeSeries(current?.metrics, ['equity_curve', 'performance', 'portfolio_equity']);
+  const benchmark = findTimeSeries(current?.metrics, ['benchmark_curve', 'benchmark']);
+  const allocationOption = useMemo(() => ({ grid: { left: 130, right: 20, top: 10, bottom: 24 }, xAxis: { type: 'value' }, yAxis: { type: 'category', data: allocation.map((item) => item.name) }, tooltip: { trigger: 'axis' }, series: [{ type: 'bar', data: allocation.map((item) => item.value), itemStyle: { color: '#4f9b82' } }] }), [allocation]);
+  const riskOption = useMemo(() => ({ grid: { left: 110, right: 20, top: 10, bottom: 24 }, xAxis: { type: 'value' }, yAxis: { type: 'category', data: risk.map((item) => item.name) }, tooltip: { trigger: 'axis' }, series: [{ type: 'bar', data: risk.map((item) => item.value), itemStyle: { color: '#4f9b82' } }] }), [risk]);
+  const correlationOption = useMemo(() => {
+    const data = matrix ? matrix.values.flatMap((row, y) => row.map((value, x) => [x, y, value])) : [];
+    return { grid: { left: 80, right: 32, top: 16, bottom: 52 }, tooltip: {}, xAxis: { type: 'category', data: matrix?.labels ?? [] }, yAxis: { type: 'category', data: matrix?.labels ?? [] }, visualMap: { min: -1, max: 1, calculable: false, orient: 'horizontal', left: 'center', bottom: 0 }, series: [{ type: 'heatmap', data }] };
+  }, [matrix]);
+
+  if (mandates.isLoading || programs.isLoading) return <PageSkeleton />;
+  if (mandates.error || programs.error) return <ErrorPanel error={mandates.error ?? programs.error} />;
+
+  return (
+    <>
+      <PageHeader title="Portfolio Lab" description="Qualified Alpha assets are assembled under immutable Mandates and current Capital Context. The workbench visualizes allocation, risk and evidence but never exposes manual weighting or trading controls." />
+      <Section title="Mandates" meta="Capital objectives are versioned separately from Alpha research"><div className="qz-grid-3">{(mandates.data ?? []).map((mandate) => <div className="qz-panel qz-panel-pad" key={mandate.id}><div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}><strong style={{ fontSize: 13 }}>{mandate.name}</strong><StateBadge state={mandate.enabled ? 'ENABLED' : 'DISABLED'} /></div><div className="qz-list-subtitle" style={{ marginTop: 8 }}>{String(mandate.spec_json?.objective ?? mandate.spec_json?.description ?? 'Versioned portfolio mandate')}</div><div className="qz-section-meta qz-mono" style={{ marginTop: 12 }}>{mandate.latest_version_id?.slice(0, 12) ?? mandate.id.slice(0, 12)}</div></div>)}</div></Section>
+      <Section title="Portfolio Programs" meta="Automatically created when qualified assets create a real assembly opportunity"><DataTable data={programs.data ?? []} columns={programColumns} searchPlaceholder="Filter portfolio programs…" emptyTitle="No portfolio programs" emptyDescription="Programs appear after a Mandate is enabled and qualified Alpha assets support portfolio research." getRowId={(row) => row.id} /></Section>
+      <div className="qz-grid-2">
+        <Section title="Portfolio equity" meta="Lightweight Charts · latest API candidate">{equity.length ? <div className="qz-panel qz-panel-pad"><FinancialSeriesChart ariaLabel="Portfolio equity and benchmark chart" series={[{ name: 'Portfolio', data: equity, kind: 'area' }, { name: 'Benchmark', data: benchmark }]} /></div> : <EmptyState title="No equity curve" description="The latest candidate has not returned a portfolio performance series." />}</Section>
+        <Section title="Alpha allocation" meta="Read-only candidate composition">{allocation.length ? <div className="qz-panel qz-panel-pad"><EChart ariaLabel="Portfolio alpha allocation chart" option={allocationOption} /></div> : <EmptyState title="No allocation vector" description="No current candidate member weights or contribution targets were returned." />}</Section>
+      </div>
+      <div className="qz-grid-2">
+        <Section title="Risk exposure" meta="Factor / universe exposure">{risk.length ? <div className="qz-panel qz-panel-pad"><EChart ariaLabel="Portfolio risk exposure chart" option={riskOption} /></div> : <EmptyState title="No exposure vector" description="Risk exposure remains unavailable until returned by the candidate evidence API." />}</Section>
+        <Section title="Correlation matrix" meta="Cross-alpha / cross-universe dependence">{matrix ? <div className="qz-panel qz-panel-pad"><EChart ariaLabel="Portfolio correlation matrix" option={correlationOption} /></div> : <EmptyState title="No correlation matrix" description="The current candidate did not return matrix evidence." />}</Section>
+      </div>
+    </>
+  );
+}
