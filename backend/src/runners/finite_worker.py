@@ -13,11 +13,11 @@ import time
 from collections.abc import Callable, Sequence
 
 from db.models import Job
-from db.session import create_database_engine, create_session_factory, ping_database
+from db.session import SessionFactory, create_database_engine, create_session_factory, ping_database
 from events import append_event
 from jobs import claim_next_job, complete_job, fail_job, release_expired_leases
 from logging_utils import configure_logging
-from runtime_config import load_effective_settings
+from runtime_config import effective_settings
 from settings import Settings
 
 LOGGER = logging.getLogger("quazonai.finite_worker")
@@ -76,15 +76,24 @@ class StopFlag:
         self.requested = True
 
 
-def run_once(settings: Settings, *, owner: str) -> bool:
-    engine = create_database_engine(settings)
-    factory = create_session_factory(engine)
+def run_once(
+    base_settings: Settings,
+    *,
+    owner: str,
+    factory: SessionFactory,
+) -> tuple[bool, float]:
+    """Claim at most one job using the worker's shared database pool.
+
+    Runtime configuration is loaded in the same short transaction that claims the
+    next job. This preserves the rule that every newly admitted job freezes the
+    latest effective settings while avoiding per-poll Engine construction.
+    """
     with factory.begin() as session:
+        settings = effective_settings(session, base_settings)
         release_expired_leases(session)
         job = claim_next_job(session, owner=owner, lease_seconds=settings.job_lease_seconds)
         if job is None:
-            engine.dispose()
-            return False
+            return False, settings.job_poll_seconds
         append_event(
             session,
             kind="JOB_LEASED",
@@ -111,9 +120,8 @@ def run_once(settings: Settings, *, owner: str) -> bool:
                     aggregate_id=current.id,
                     payload={"error_code": type(exc).__name__},
                 )
-        engine.dispose()
         LOGGER.exception("job failed", extra={"job_id": str(job.id)})
-        return True
+        return True, settings.job_poll_seconds
 
     with factory.begin() as session:
         current = session.get(Job, job.id)
@@ -126,8 +134,7 @@ def run_once(settings: Settings, *, owner: str) -> bool:
                 aggregate_id=current.id,
                 payload={"kind": current.kind},
             )
-    engine.dispose()
-    return True
+    return True, settings.job_poll_seconds
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -143,28 +150,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     base_settings = Settings.from_env()
     base_settings.ensure_worker_directories()
     engine = create_database_engine(base_settings)
-    if args.check:
-        ping_database(engine)
+    factory = create_session_factory(engine)
+    try:
+        if args.check:
+            ping_database(engine)
+            return 0
+
+        owner = f"{socket.gethostname()}:{os.getpid()}"
+        if args.once:
+            run_once(base_settings, owner=owner, factory=factory)
+            return 0
+
+        stop = StopFlag()
+        signal.signal(signal.SIGTERM, stop.request)
+        signal.signal(signal.SIGINT, stop.request)
+        LOGGER.info("finite worker started")
+        while not stop.requested:
+            worked, poll_seconds = run_once(base_settings, owner=owner, factory=factory)
+            if not worked:
+                time.sleep(poll_seconds)
+        LOGGER.info("finite worker stopped")
+        return 0
+    finally:
         engine.dispose()
-        return 0
-    engine.dispose()
-
-    owner = f"{socket.gethostname()}:{os.getpid()}"
-    if args.once:
-        run_once(load_effective_settings(base_settings), owner=owner)
-        return 0
-
-    stop = StopFlag()
-    signal.signal(signal.SIGTERM, stop.request)
-    signal.signal(signal.SIGINT, stop.request)
-    LOGGER.info("finite worker started")
-    while not stop.requested:
-        runtime_settings = load_effective_settings(base_settings)
-        worked = run_once(runtime_settings, owner=owner)
-        if not worked:
-            time.sleep(runtime_settings.job_poll_seconds)
-    LOGGER.info("finite worker stopped")
-    return 0
 
 
 if __name__ == "__main__":
