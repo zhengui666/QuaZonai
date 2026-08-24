@@ -6,6 +6,7 @@ import { ErrorPanel } from '../ui/ErrorPanel';
 import { Section } from '../ui/Section';
 import { StateBadge } from '../ui/StateBadge';
 
+const MAX_PLUGIN_WHEEL_BYTES = 1_073_741_824;
 const MAX_WORKER_TIMEOUT_SECONDS = 86_400;
 const MAX_JOB_POLL_SECONDS = 3600;
 const MAX_JOB_LEASE_SECONDS = 86_400;
@@ -63,6 +64,7 @@ export function RuntimeConfigurationPanel({ configuration }: { configuration: Ru
   const providerUrlChanged = normalizeBaseUrl(baseUrl) !== normalizeBaseUrl(configuration.codex_base_url ?? '');
   const requiresKeyDecision = providerUrlChanged && configuration.codex_api_key_configured && !apiKey.trim() && !clearApiKey;
   const invalid = Object.values(numericValues).some((value) => value <= 0)
+    || numericValues.max_plugin_wheel_bytes > MAX_PLUGIN_WHEEL_BYTES
     || numericValues.plugin_validation_timeout_seconds > MAX_WORKER_TIMEOUT_SECONDS
     || numericValues.bundle_build_timeout_seconds > MAX_WORKER_TIMEOUT_SECONDS
     || numericValues.plugin_job_timeout_seconds > MAX_WORKER_TIMEOUT_SECONDS
@@ -133,7 +135,7 @@ export function RuntimeConfigurationPanel({ configuration }: { configuration: Ru
 
         <div style={{ margin: '22px 0 10px' }} className="qz-label">Worker limits</div>
         <div className="qz-form-grid">
-          <label className="qz-field"><span className="qz-label">Max plugin wheel bytes</span><TextField.Root type="number" min="1" step="1" value={maxWheelBytes} onChange={(event) => setMaxWheelBytes(event.target.value)} /></label>
+          <label className="qz-field"><span className="qz-label">Max plugin wheel bytes</span><TextField.Root type="number" min="1" max={String(MAX_PLUGIN_WHEEL_BYTES)} step="1" value={maxWheelBytes} onChange={(event) => setMaxWheelBytes(event.target.value)} /><span className="qz-list-subtitle">Maximum 1 GiB.</span></label>
           <label className="qz-field"><span className="qz-label">Plugin validation timeout (s)</span><TextField.Root type="number" min="1" max={String(MAX_WORKER_TIMEOUT_SECONDS)} step="1" value={pluginValidationTimeout} onChange={(event) => setPluginValidationTimeout(event.target.value)} /></label>
           <label className="qz-field"><span className="qz-label">Bundle build timeout (s)</span><TextField.Root type="number" min="1" max={String(MAX_WORKER_TIMEOUT_SECONDS)} step="1" value={bundleBuildTimeout} onChange={(event) => setBundleBuildTimeout(event.target.value)} /></label>
           <label className="qz-field"><span className="qz-label">Plugin job timeout (s)</span><TextField.Root type="number" min="1" max={String(MAX_WORKER_TIMEOUT_SECONDS)} step="1" value={pluginJobTimeout} onChange={(event) => setPluginJobTimeout(event.target.value)} /></label>
