@@ -50,8 +50,9 @@ test('approval only offers compatible Paper downstream and handoff has no stop c
   await page.goto('/approvals');
   await expect(page.getByText(/materially improves the current frontier/i)).toBeVisible();
   await page.getByRole('combobox').click();
-  await expect(page.getByText(/Paper Lab/)).toBeVisible();
-  await expect(page.getByText(/Live Primary/)).not.toBeVisible();
+  const listbox = page.getByRole('listbox');
+  await expect(listbox.getByRole('option', { name: /Paper Lab/ })).toBeVisible();
+  await expect(listbox.getByRole('option', { name: /Live Primary/ })).toHaveCount(0);
   await page.keyboard.press('Escape');
   await page.getByRole('link', { name: 'Handoff & Feedback' }).click();
   await expect(page.getByText('Downstream owns runtime')).toBeVisible();
