@@ -5,8 +5,8 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "quazonai"
 version = "0.1.0"
-description = "API-only quantitative research and live-trading control plane"
-readme = {text = "QuaZonai control plane.", content-type = "text/plain"}
+description = "Autonomous quantitative research intelligence and portfolio construction workbench"
+readme = {text = "QuaZonai research intelligence and portfolio construction control plane.", content-type = "text/plain"}
 license = "AGPL-3.0-only"
 requires-python = ">=3.14,<3.15"
 dependencies = [
@@ -25,19 +25,17 @@ dependencies = [
 
 [project.optional-dependencies]
 research = ["optuna==4.9.0", "pyarrow==25.0.1"]
-trading = ["nautilus-trader==2.0.0rc3"]
 mcp = ["mcp==2.0.0", "PyJWT[crypto]>=2.13,<3"]
 dev = ["mypy>=1.18,<2", "pytest>=9,<10", "ruff>=0.15,<1"]
 
 [project.scripts]
 quazonai = "cli.main:main"
 quazonai-finite-worker = "runners.finite_worker:main"
-quazonai-live-supervisor = "runners.live_supervisor:main"
 quazonai-mcp-gateway = "mcp_gateway.main:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-py-modules = ["quazonai", "crypto", "errors", "events", "jobs", "logging_utils", "main", "optimization", "risk", "schema_validation", "settings", "strategy_contract"]
+py-modules = ["quazonai", "crypto", "errors", "events", "jobs", "logging_utils", "main", "optimization", "schema_validation", "settings"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -64,10 +62,6 @@ plugins = []
 [[tool.mypy.overrides]]
 module = ["runners.plugin_jobs", "runners.research_jobs"]
 disable_error_code = ["assignment"]
-
-[[tool.mypy.overrides]]
-module = ["runners.live"]
-disable_error_code = ["arg-type"]
 
 [[tool.mypy.overrides]]
 module = ["cli.main"]
