@@ -1,0 +1,1 @@
+export function Skeleton({height=18,width='100%'}:{height?:number;width?:number|string}){return<div className="qz-skeleton" aria-hidden style={{height,width}}/>}export function PageSkeleton(){return<div style={{display:'grid',gap:14}}><Skeleton height={34} width="38%"/><Skeleton height={68}/><Skeleton height={280}/><Skeleton height={180}/></div>}

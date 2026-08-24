@@ -1,0 +1,1 @@
+import{TrayIcon}from'@phosphor-icons/react';import type{ReactNode}from'react';export function EmptyState({title,description,action}:{title:string;description:string;action?:ReactNode}){return<div className="qz-empty"><div><TrayIcon size={24} aria-hidden/><strong>{title}</strong><div>{description}</div>{action?<div style={{marginTop:12}}>{action}</div>:null}</div></div>}

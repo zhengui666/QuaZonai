@@ -1,0 +1,1 @@
+import type{ReactNode}from'react';export function PageHeader({title,description,actions}:{title:string;description?:string;actions?:ReactNode}){return<header className="qz-page-header"><div><h1 className="qz-page-title">{title}</h1>{description?<p className="qz-page-description">{description}</p>:null}</div>{actions?<div className="qz-page-actions">{actions}</div>:null}</header>}

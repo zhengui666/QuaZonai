@@ -1,0 +1,1 @@
+import { Button } from '@radix-ui/themes';import { Link } from 'react-router-dom';import { EmptyState } from '../components/ui/EmptyState';export function NotFoundPage(){return <EmptyState title="Page not found" description="This route is not part of the QuaZonai workbench." action={<Button asChild><Link to="/">Return home</Link></Button>}/>}
