@@ -25,7 +25,9 @@ def validate_loopback_endpoint(endpoint: str) -> str:
     if parsed.path not in {"", "/"}:
         raise CliClientError("Core API endpoint cannot contain a path")
     if parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
-        raise CliClientError("Core API endpoint must resolve to the local loopback host")
+        raise CliClientError(
+            "REMOTE_API_ENDPOINT_FORBIDDEN: Core API endpoint must resolve to the local loopback host"
+        )
     return endpoint.rstrip("/")
 
 
