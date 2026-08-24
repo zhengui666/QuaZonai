@@ -1,3 +1,5 @@
+import '@fontsource-variable/geist';
+import '@fontsource-variable/geist-mono';
 import '@radix-ui/themes/styles.css';
 import './styles/theme.css';
 import './styles/production.css';
