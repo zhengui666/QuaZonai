@@ -25,24 +25,12 @@ from db.domain_models import (
     ResearchProgram,
 )
 from db.plugin_models import (
-    CatalogDataset,
     CredentialSecret,
     CredentialSet,
-    DataSource,
     PluginArtifact,
     PluginRelease,
     PluginRuntimeBundle,
     PluginRuntimeBundleMember,
-)
-from db.research_models import (
-    Approval,
-    Experiment,
-    Report,
-    ResearchCase,
-    ResearchSectionRevision,
-    Run,
-    Strategy,
-    StrategyVersion,
 )
 from db.runtime_models import Event, Job
 
@@ -55,16 +43,6 @@ __all__ = [
     "PluginRuntimeBundleMember",
     "CredentialSet",
     "CredentialSecret",
-    "DataSource",
-    "CatalogDataset",
-    "Strategy",
-    "StrategyVersion",
-    "ResearchCase",
-    "ResearchSectionRevision",
-    "Experiment",
-    "Run",
-    "Report",
-    "Approval",
     "Job",
     "Event",
     "OperationReceipt",
