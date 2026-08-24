@@ -16,14 +16,9 @@ RUN groupadd --system quazonai \
 
 WORKDIR /workspace
 COPY backend/ /workspace/backend/
-RUN /opt/venv/bin/python -m pip install --no-cache-dir "/workspace/backend[research,trading,mcp]"
+RUN /opt/venv/bin/python -m pip install --no-cache-dir "/workspace/backend[research,mcp]"
 
-RUN mkdir -p \
-      /var/lib/quazonai/plugins \
-      /var/lib/quazonai/catalog \
-      /var/lib/quazonai/reports \
-      /var/lib/quazonai/imports \
-      /var/lib/quazonai/agent-artifacts \
+RUN mkdir -p /var/lib/quazonai/plugins \
     && chown -R quazonai:quazonai /var/lib/quazonai /workspace
 
 WORKDIR /workspace/backend
