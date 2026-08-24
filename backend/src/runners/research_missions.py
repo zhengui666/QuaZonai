@@ -8,6 +8,7 @@ import shutil
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
@@ -18,7 +19,7 @@ from errors import QfError
 from runtime_config import load_effective_settings
 from settings import Settings
 
-CUSTOM_CODEX_PROVIDER_ID = "quazonai-configured"
+CUSTOM_CODEX_PROVIDER_ID = "quazonai_configured"
 DEFAULT_OPENAI_API_BASE_URL = "https://api.openai.com/v1"
 
 
@@ -141,7 +142,7 @@ def _load_mission_context(settings: Settings, job_id: UUID) -> tuple[UUID, UUID,
         return mission.id, program.id, _mission_context(mission, program, charter, branch)
 
 
-def _codex_launch_configuration(settings: Settings, workspace: Path) -> tuple[object, str | None]:
+def _codex_launch_configuration(settings: Settings, workspace: Path) -> tuple[Any, str | None]:
     """Build app-server launch config without exposing provider secrets to Mission shells."""
     from openai_codex import CodexConfig
 
