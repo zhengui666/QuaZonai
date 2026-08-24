@@ -191,6 +191,7 @@ export interface SystemHealth {
 }
 
 export interface RuntimeConfiguration {
+  revision: number;
   codex_model: string | null;
   codex_base_url: string | null;
   codex_api_key_configured: boolean;
@@ -206,6 +207,7 @@ export interface RuntimeConfiguration {
 }
 
 export interface RuntimeConfigurationUpdate {
+  expected_revision: number;
   codex_model: string | null;
   codex_base_url: string | null;
   codex_api_key?: string | null;
