@@ -13,7 +13,6 @@ x-core-env: &core-env
   QUAZONAI_MAX_PARQUET_UPLOAD_BYTES: ${QUAZONAI_MAX_PARQUET_UPLOAD_BYTES:-10737418240}
   QUAZONAI_JOB_POLL_SECONDS: ${QUAZONAI_JOB_POLL_SECONDS:-1.0}
   QUAZONAI_JOB_LEASE_SECONDS: ${QUAZONAI_JOB_LEASE_SECONDS:-60}
-  QUAZONAI_SUPERVISOR_POLL_SECONDS: ${QUAZONAI_SUPERVISOR_POLL_SECONDS:-1.0}
 
 x-core-service: &core-service
   build:
@@ -94,19 +93,6 @@ services:
     command: ["quazonai-finite-worker"]
     healthcheck:
       test: ["CMD", "quazonai-finite-worker", "--check"]
-      interval: 15s
-      timeout: 5s
-      retries: 8
-      start_period: 10s
-
-  live-supervisor:
-    <<: *core-service
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-    command: ["quazonai-live-supervisor"]
-    healthcheck:
-      test: ["CMD", "quazonai-live-supervisor", "--check"]
       interval: 15s
       timeout: 5s
       retries: 8
