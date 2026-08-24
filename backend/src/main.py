@@ -21,7 +21,7 @@ def create_app(*, settings: Settings | None = None, engine: Engine | None = None
     runtime_engine = engine or create_database_engine(runtime_settings)
 
     app = FastAPI(
-        title="QuaZonai Research Intelligence API",
+        title="QuaZonai API",
         version=__version__,
         docs_url=None,
         redoc_url=None,
