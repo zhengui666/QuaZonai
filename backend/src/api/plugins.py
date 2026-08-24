@@ -28,7 +28,7 @@ from db.repositories import get_plugin_release, list_plugin_releases, plugin_cat
 from errors import QfError
 from events import append_event
 from jobs import enqueue_job
-from plugins.manager import activate_release, deactivate_release
+from plugins.manager import activate_release, deactivate_release, require_research_data_release
 from plugins.storage import stream_upload, validate_upload_filename
 from plugins.wheel_metadata import inspect_wheel, validate_wheel_set
 from settings import Settings
@@ -227,6 +227,9 @@ async def stage_release(
                 descriptor_snapshot={},
             )
             session.add(release)
+            # Child artifacts and the install job reference the release directly; flush
+            # the parent first because these models intentionally have no ORM relationship.
+            session.flush()
             for index, (path, item) in enumerate(zip(paths, metadata, strict=True)):
                 session.add(
                     PluginArtifact(
@@ -366,6 +369,7 @@ def prewarm_bundle(
         for item in releases_by_id.values():
             if item.state not in {"STAGED", "ACTIVE", "DRAINING", "INACTIVE"}:
                 raise QfError("PLUGIN_INVALID_STATE", "Runtime bundle requires validated releases.", 409)
+            require_research_data_release(item)
 
         compatibility_keys = {
             releases_by_id[item.plugin_release_id].descriptor_snapshot.get("compatibility_key")
@@ -404,6 +408,7 @@ def prewarm_bundle(
             environment_path=str(Path("bundles") / str(bundle_id)),
         )
         session.add(bundle)
+        session.flush()
         for member in payload.members:
             session.add(
                 PluginRuntimeBundleMember(
