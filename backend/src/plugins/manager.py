@@ -14,7 +14,7 @@ from errors import QfError
 _ALLOWED_CAPABILITIES = {"HISTORICAL_IMPORT", "LIVE_DATA", "RESEARCH_TOOL"}
 
 
-def _require_research_data_release(release: PluginRelease) -> None:
+def require_research_data_release(release: PluginRelease) -> None:
     raw = release.descriptor_snapshot.get("capabilities", [])
     capabilities = {str(item) for item in raw} if isinstance(raw, list) else set()
     unsupported = sorted(capabilities - _ALLOWED_CAPABILITIES)
@@ -40,7 +40,7 @@ def activate_release(session: Session, release_id: UUID) -> PluginRelease:
             409,
             {"state": release.state},
         )
-    _require_research_data_release(release)
+    require_research_data_release(release)
 
     other_defaults = list(
         session.scalars(
