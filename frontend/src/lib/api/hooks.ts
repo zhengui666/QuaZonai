@@ -135,7 +135,7 @@ export function useCreateDownstream() {
 export function useUpdateRuntimeConfiguration() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (payload: RuntimeConfigurationUpdate) => apiRequest<RuntimeConfiguration>('/api/v1/system/runtime-configuration', { method: 'PUT', body: jsonBody(payload) }),
+    mutationFn: (payload: RuntimeConfigurationUpdate) => apiRequest<RuntimeConfiguration>('/api/v1/system/runtime-configuration', { method: 'PUT', body: jsonBody(payload), idempotent: true }),
     onSuccess: async () => {
       await Promise.all([
         client.invalidateQueries({ queryKey: keys.runtimeConfiguration }),
