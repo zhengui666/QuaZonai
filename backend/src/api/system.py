@@ -1,4 +1,4 @@
-"""System health and schema endpoints."""
+"""System health endpoints for the research-intelligence control plane."""
 
 from __future__ import annotations
 
@@ -21,8 +21,8 @@ class HealthResponse(BaseModel):
     database: str
     master_key: str
     plugin_manager: str
-    finite_worker: str
-    live_supervisor: str
+    research_worker: str
+    codex: str
     details: dict[str, Any]
 
 
@@ -45,7 +45,7 @@ def health(request: Request) -> HealthResponse:
         database=database_state,
         master_key=master_key_state,
         plugin_manager="ready" if database_state == "ready" else "unavailable",
-        finite_worker="not_observed",
-        live_supervisor="not_observed",
+        research_worker="not_observed",
+        codex="not_observed",
         details=details,
     )
