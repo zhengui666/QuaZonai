@@ -32,7 +32,10 @@ class RuntimeConfiguration(Base, TimestampMixin):
     __table_args__ = (
         CheckConstraint("scope = 'SYSTEM'", name="ck_runtime_configuration_scope"),
         CheckConstraint("revision > 0", name="ck_runtime_configuration_revision"),
-        CheckConstraint("max_plugin_wheel_bytes > 0", name="ck_runtime_max_plugin_wheel_bytes"),
+        CheckConstraint(
+            "max_plugin_wheel_bytes > 0 AND max_plugin_wheel_bytes <= 1073741824",
+            name="ck_runtime_max_plugin_wheel_bytes",
+        ),
         CheckConstraint(
             "plugin_validation_timeout_seconds > 0 AND plugin_validation_timeout_seconds <= 86400",
             name="ck_runtime_plugin_validation_timeout",
