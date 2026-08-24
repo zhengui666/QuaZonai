@@ -31,7 +31,14 @@ jobs:
         with:
           node-version: '22.16.0'
       - name: Install exact frontend dependencies
-        run: npm install --no-audit --no-fund
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+      - name: Upload generated npm lockfile
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-package-lock
+          path: frontend/package-lock.json
+          if-no-files-found: error
       - name: Typecheck
         run: npm run typecheck
       - name: Unit and interaction tests
