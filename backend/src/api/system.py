@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import secrets
 from datetime import UTC, datetime
 from typing import Any
@@ -12,13 +13,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from crypto import EncryptedSecret, decrypt_bound_secret, encrypt_bound_secret
 from db.models import PublicMutationReceipt, RuntimeConfiguration
 from db.session import ping_database
 from errors import QfError
 from events import append_event
 from runtime_config import (
     codex_api_key_configured,
-    effective_settings,
     get_runtime_configuration,
     update_runtime_configuration,
 )
@@ -26,7 +27,10 @@ from settings import Settings, SettingsError
 
 router = APIRouter(prefix="/api/v1/system", tags=["system"])
 RUNTIME_CONFIGURATION_OPERATION = "system.runtime_configuration.replace"
+RECEIPT_SECRET_FIELD = "codex_api_key_secret"
+MAX_WORKER_TIMEOUT_SECONDS = 86_400
 MAX_JOB_POLL_SECONDS = 3600.0
+MAX_JOB_LEASE_SECONDS = 86_400
 
 
 class HealthResponse(BaseModel):
@@ -69,12 +73,12 @@ class RuntimeConfigurationInput(BaseModel):
     codex_api_key: str | None = Field(default=None, max_length=16_384)
     clear_codex_api_key: bool = False
     max_plugin_wheel_bytes: int = Field(gt=0)
-    plugin_validation_timeout_seconds: int = Field(gt=0)
-    bundle_build_timeout_seconds: int = Field(gt=0)
-    plugin_job_timeout_seconds: int = Field(gt=0)
-    mission_job_timeout_seconds: int = Field(gt=0)
+    plugin_validation_timeout_seconds: int = Field(gt=0, le=MAX_WORKER_TIMEOUT_SECONDS)
+    bundle_build_timeout_seconds: int = Field(gt=0, le=MAX_WORKER_TIMEOUT_SECONDS)
+    plugin_job_timeout_seconds: int = Field(gt=0, le=MAX_WORKER_TIMEOUT_SECONDS)
+    mission_job_timeout_seconds: int = Field(gt=0, le=MAX_WORKER_TIMEOUT_SECONDS)
     job_poll_seconds: float = Field(ge=0.01, le=MAX_JOB_POLL_SECONDS)
-    job_lease_seconds: int = Field(gt=0)
+    job_lease_seconds: int = Field(gt=0, le=MAX_JOB_LEASE_SECONDS)
 
     @field_validator("codex_model")
     @classmethod
@@ -167,33 +171,75 @@ def _idempotency_shape(payload: RuntimeConfigurationInput) -> dict[str, Any]:
     return normalized
 
 
+def _receipt_secret_aad(idempotency_key: str, key_version: int) -> bytes:
+    return (
+        f"quazonai|operation={RUNTIME_CONFIGURATION_OPERATION}|"
+        f"idempotency_key={idempotency_key}|field=codex_api_key|key_version={key_version}"
+    ).encode("utf-8")
+
+
+def _receipt_request(
+    payload: RuntimeConfigurationInput,
+    settings: Settings,
+    idempotency_key: str,
+) -> dict[str, Any]:
+    normalized = _idempotency_shape(payload)
+    if payload.codex_api_key is None:
+        return normalized
+    encrypted = encrypt_bound_secret(
+        payload.codex_api_key,
+        master_key=settings.master_key_bytes(),
+        associated_data=_receipt_secret_aad(idempotency_key, 1),
+    )
+    normalized[RECEIPT_SECRET_FIELD] = {
+        "ciphertext": base64.b64encode(encrypted.ciphertext).decode("ascii"),
+        "nonce": base64.b64encode(encrypted.nonce).decode("ascii"),
+        "key_version": encrypted.key_version,
+    }
+    return normalized
+
+
 def _receipt_matches(
     receipt: PublicMutationReceipt,
     payload: RuntimeConfigurationInput,
     settings: Settings,
-    session: Any,
+    idempotency_key: str,
 ) -> bool:
     if receipt.operation_name != RUNTIME_CONFIGURATION_OPERATION:
         return False
-    if receipt.normalized_request != _idempotency_shape(payload):
+
+    stored = dict(receipt.normalized_request)
+    secret_record = stored.pop(RECEIPT_SECRET_FIELD, None)
+    if stored != _idempotency_shape(payload):
         return False
     if payload.codex_api_key is None:
-        return True
-
-    # Do not persist a second encrypted copy of the provider key just to dedupe a
-    # retry. An immediate retry can validate the submitted key against the current
-    # runtime revision; if later mutations advanced that revision, reusing the old
-    # idempotency key is rejected rather than retaining historical secret material.
-    response_revision = receipt.response_json.get("revision")
-    item = get_runtime_configuration(session)
-    if item is None or item.revision != response_revision:
+        return secret_record is None
+    if not isinstance(secret_record, dict):
         return False
-    current_key = effective_settings(session, settings).codex_api_key
-    return current_key is not None and secrets.compare_digest(current_key, payload.codex_api_key)
+
+    try:
+        encrypted = EncryptedSecret(
+            ciphertext=base64.b64decode(str(secret_record["ciphertext"]), validate=True),
+            nonce=base64.b64decode(str(secret_record["nonce"]), validate=True),
+            key_version=int(secret_record["key_version"]),
+        )
+        original_key = decrypt_bound_secret(
+            encrypted,
+            master_key=settings.master_key_bytes(),
+            associated_data=_receipt_secret_aad(idempotency_key, encrypted.key_version),
+        )
+    except (KeyError, TypeError, ValueError, QfError) as exc:
+        raise QfError(
+            "IDEMPOTENCY_RECEIPT_INVALID",
+            "Stored runtime-configuration idempotency receipt is invalid.",
+            500,
+        ) from exc
+    return secrets.compare_digest(original_key, payload.codex_api_key)
 
 
 def _claim_idempotency_receipt(
     session: Session,
+    settings: Settings,
     key: str,
     payload: RuntimeConfigurationInput,
 ) -> tuple[PublicMutationReceipt, bool]:
@@ -210,7 +256,7 @@ def _claim_idempotency_receipt(
     receipt = PublicMutationReceipt(
         idempotency_key=key,
         operation_name=RUNTIME_CONFIGURATION_OPERATION,
-        normalized_request=_idempotency_shape(payload),
+        normalized_request=_receipt_request(payload, settings, key),
         response_json={},
         status_code=0,
         created_at=datetime.now(UTC),
@@ -256,9 +302,9 @@ def replace_runtime_configuration(
         with factory.begin() as session:
             claimed_receipt: PublicMutationReceipt | None = None
             if key is not None:
-                receipt, claimed = _claim_idempotency_receipt(session, key, payload)
+                receipt, claimed = _claim_idempotency_receipt(session, settings, key, payload)
                 if not claimed:
-                    if not _receipt_matches(receipt, payload, settings, session):
+                    if not _receipt_matches(receipt, payload, settings, key):
                         raise QfError(
                             "IDEMPOTENCY_KEY_REUSED",
                             "The idempotency key belongs to a different request.",
