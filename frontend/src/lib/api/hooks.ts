@@ -1,4 +1,5 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useRef } from 'react';
 import { apiRequest, jsonBody, normalizeList } from './client';
 import type {
   ActivityEvent,
@@ -134,9 +135,24 @@ export function useCreateDownstream() {
 
 export function useUpdateRuntimeConfiguration() {
   const client = useQueryClient();
+  const pendingSave = useRef<{ body: string; key: string } | null>(null);
   return useMutation({
-    mutationFn: (payload: RuntimeConfigurationUpdate) => apiRequest<RuntimeConfiguration>('/api/v1/system/runtime-configuration', { method: 'PUT', body: jsonBody(payload), idempotent: true }),
+    mutationFn: (payload: RuntimeConfigurationUpdate) => {
+      const body = jsonBody(payload);
+      let pending = pendingSave.current;
+      if (pending === null || pending.body !== body) {
+        pending = { body, key: crypto.randomUUID() };
+        pendingSave.current = pending;
+      }
+      return apiRequest<RuntimeConfiguration>('/api/v1/system/runtime-configuration', {
+        method: 'PUT',
+        body,
+        idempotent: true,
+        headers: { 'Idempotency-Key': pending.key },
+      });
+    },
     onSuccess: async () => {
+      pendingSave.current = null;
       await Promise.all([
         client.invalidateQueries({ queryKey: keys.runtimeConfiguration }),
         client.invalidateQueries({ queryKey: keys.health }),
