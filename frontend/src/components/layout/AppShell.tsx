@@ -1,17 +1,30 @@
-import { AtomIcon, BellIcon, ChartLineUpIcon, CirclesFourIcon, FlaskIcon, GaugeIcon, GearIcon, HouseIcon, MoonIcon, PaperPlaneTiltIcon, SunIcon, TargetIcon } from '@phosphor-icons/react';
+import {
+  AtomIcon,
+  BellIcon,
+  ChartLineUpIcon,
+  CirclesFourIcon,
+  FlaskIcon,
+  GaugeIcon,
+  GearIcon,
+  HouseIcon,
+  MoonIcon,
+  PaperPlaneTiltIcon,
+  SunIcon,
+  TargetIcon,
+} from '@phosphor-icons/react';
 import { Button, Theme } from '@radix-ui/themes';
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { PageSkeleton } from '../ui/Skeleton';
 
 const nav = [
-  { to: '/', label: 'Home', icon: HouseIcon, end: true },
+  { to: '/', label: 'Dashboard', icon: HouseIcon, end: true },
   { to: '/ideas', label: 'Idea Composer', icon: FlaskIcon },
-  { to: '/research', label: 'Research', icon: AtomIcon },
-  { to: '/alphas', label: 'Alpha Library', icon: ChartLineUpIcon },
+  { to: '/research', label: 'Research Observatory', icon: AtomIcon },
+  { to: '/alpha', label: 'Alpha Library', icon: ChartLineUpIcon },
   { to: '/portfolio', label: 'Portfolio Lab', icon: CirclesFourIcon },
-  { to: '/approvals', label: 'Approvals', icon: TargetIcon },
-  { to: '/handoffs', label: 'Handoff & Feedback', icon: PaperPlaneTiltIcon },
+  { to: '/approval', label: 'Candidate Approval', icon: TargetIcon },
+  { to: '/handoff', label: 'Handoff Center', icon: PaperPlaneTiltIcon },
   { to: '/admin', label: 'Administration', icon: GearIcon },
 ];
 
@@ -28,17 +41,17 @@ export function AppShell() {
   const [mode, setMode] = useThemeMode();
   const location = useLocation();
   const current = useMemo(
-    () => nav.find((item) => item.end ? location.pathname === item.to : location.pathname.startsWith(item.to))?.label ?? 'QuaZonai',
+    () => nav.find((item) => (item.end ? location.pathname === item.to : location.pathname.startsWith(item.to)))?.label ?? 'QuaZonai',
     [location.pathname],
   );
 
   return (
-    <Theme appearance={mode} accentColor="jade" grayColor="sage" radius="medium" scaling="90%">
+    <Theme appearance={mode} accentColor="jade" grayColor="sage" radius="small" scaling="90%">
       <div className="qz-app">
         <aside className="qz-sidebar" aria-label="Primary navigation">
           <div className="qz-brand">
-            <div className="qz-brand-mark"><GaugeIcon size={18} weight="duotone" /></div>
-            <div><div className="qz-brand-title">QuaZonai</div><div className="qz-brand-subtitle">Autonomous Research</div></div>
+            <div className="qz-brand-mark" aria-hidden="true"><GaugeIcon size={18} weight="duotone" /></div>
+            <div><div className="qz-brand-title">QuaZonai</div><div className="qz-brand-subtitle">Quant Research Cockpit</div></div>
           </div>
           <nav className="qz-nav">
             {nav.map(({ to, label, icon: Icon, end }) => (
@@ -60,14 +73,12 @@ export function AppShell() {
               </Button>
             </div>
           </header>
-          <div className="qz-content">
-            <Suspense fallback={<PageSkeleton />}><Outlet /></Suspense>
-          </div>
+          <div className="qz-content"><Suspense fallback={<PageSkeleton />}><Outlet /></Suspense></div>
         </main>
         <nav className="qz-mobile-nav" aria-label="Mobile navigation">
           {nav.slice(0, 5).map(({ to, label, icon: Icon, end }) => (
             <NavLink key={to} to={to} end={end}>
-              {({ isActive }) => <><Icon size={19} weight={isActive ? 'duotone' : 'regular'} /><span>{label.replace('Idea Composer', 'Ideas').replace('Alpha Library', 'Alphas').replace('Portfolio Lab', 'Portfolio')}</span></>}
+              {({ isActive }) => <><Icon size={19} weight={isActive ? 'duotone' : 'regular'} /><span>{label.replace('Idea Composer', 'Ideas').replace('Research Observatory', 'Research').replace('Alpha Library', 'Alpha').replace('Portfolio Lab', 'Portfolio')}</span></>}
             </NavLink>
           ))}
         </nav>

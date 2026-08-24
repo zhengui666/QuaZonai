@@ -23,11 +23,15 @@ export function App() {
         <Route path="ideas" element={<IdeaComposerPage />} />
         <Route path="research" element={<ResearchListPage />} />
         <Route path="research/:id" element={<ResearchDetailPage />} />
+        <Route path="alpha" element={<AlphaLibraryPage />} />
+        <Route path="alpha/:id" element={<AlphaDetailPage />} />
         <Route path="alphas" element={<AlphaLibraryPage />} />
         <Route path="alphas/:id" element={<AlphaDetailPage />} />
         <Route path="portfolio" element={<PortfolioLabPage />} />
         <Route path="portfolio/candidates/:id" element={<PortfolioCandidatePage />} />
+        <Route path="approval" element={<ApprovalInboxPage />} />
         <Route path="approvals" element={<ApprovalInboxPage />} />
+        <Route path="handoff" element={<HandoffFeedbackPage />} />
         <Route path="handoffs" element={<HandoffFeedbackPage />} />
         <Route path="admin" element={<AdministrationPage />} />
         <Route path="*" element={<NotFoundPage />} />
