@@ -6,11 +6,10 @@ x-core-env: &core-env
   QUAZONAI_ALEMBIC_URL: ${QUAZONAI_ALEMBIC_URL:-postgresql+psycopg://quazonai:quazonai-local@postgres:5432/quazonai}
   QUAZONAI_MASTER_KEY: ${QUAZONAI_MASTER_KEY:-}
   QUAZONAI_PLUGIN_ROOT: /var/lib/quazonai/plugins
-  QUAZONAI_CATALOG_ROOT: /var/lib/quazonai/catalog
-  QUAZONAI_REPORT_ROOT: /var/lib/quazonai/reports
-  QUAZONAI_IMPORT_ROOT: /var/lib/quazonai/imports
-  QUAZONAI_AGENT_ARTIFACT_ROOT: /var/lib/quazonai/agent-artifacts
-  QUAZONAI_MAX_PARQUET_UPLOAD_BYTES: ${QUAZONAI_MAX_PARQUET_UPLOAD_BYTES:-10737418240}
+  QUAZONAI_MAX_PLUGIN_WHEEL_BYTES: ${QUAZONAI_MAX_PLUGIN_WHEEL_BYTES:-268435456}
+  QUAZONAI_PLUGIN_VALIDATION_TIMEOUT_SECONDS: ${QUAZONAI_PLUGIN_VALIDATION_TIMEOUT_SECONDS:-180}
+  QUAZONAI_BUNDLE_BUILD_TIMEOUT_SECONDS: ${QUAZONAI_BUNDLE_BUILD_TIMEOUT_SECONDS:-600}
+  QUAZONAI_PLUGIN_JOB_TIMEOUT_SECONDS: ${QUAZONAI_PLUGIN_JOB_TIMEOUT_SECONDS:-900}
   QUAZONAI_JOB_POLL_SECONDS: ${QUAZONAI_JOB_POLL_SECONDS:-1.0}
   QUAZONAI_JOB_LEASE_SECONDS: ${QUAZONAI_JOB_LEASE_SECONDS:-60}
 
@@ -22,10 +21,6 @@ x-core-service: &core-service
     <<: *core-env
   volumes:
     - plugin-data:/var/lib/quazonai/plugins
-    - catalog-data:/var/lib/quazonai/catalog
-    - report-data:/var/lib/quazonai/reports
-    - import-data:/var/lib/quazonai/imports
-    - agent-artifact-data:/var/lib/quazonai/agent-artifacts
   restart: unless-stopped
   read_only: true
   security_opt:
@@ -101,7 +96,3 @@ services:
 volumes:
   postgres-data:
   plugin-data:
-  catalog-data:
-  report-data:
-  import-data:
-  agent-artifact-data:
