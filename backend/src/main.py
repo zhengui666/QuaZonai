@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+from collections.abc import Awaitable, Callable
+
+from fastapi import FastAPI, Request, Response
 from sqlalchemy import Engine
 
 from quazonai import __version__
@@ -22,6 +24,14 @@ from db.session import create_database_engine, create_session_factory
 from errors import install_error_handlers
 from settings import Settings
 
+_GATEWAY_HEADER_ALIASES = {
+    b"x-qz-internal-token": b"x-quazonai-internal-token",
+    b"x-qz-agent-issuer": b"x-quazonai-agent-issuer",
+    b"x-qz-agent-subject": b"x-quazonai-agent-subject",
+    b"x-qz-agent-client-id": b"x-quazonai-agent-client-id",
+    b"x-qz-agent-scopes": b"x-quazonai-agent-scopes",
+}
+
 
 def create_app(*, settings: Settings | None = None, engine: Engine | None = None) -> FastAPI:
     runtime_settings = settings or Settings.from_env()
@@ -37,6 +47,20 @@ def create_app(*, settings: Settings | None = None, engine: Engine | None = None
     app.state.settings = runtime_settings
     app.state.engine = runtime_engine
     app.state.session_factory = create_session_factory(runtime_engine)
+
+    @app.middleware("http")
+    async def normalize_gateway_headers(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        """Normalize the MCP edge's canonical X-QZ headers for the Core dependency."""
+        headers = list(request.scope["headers"])
+        present = dict(headers)
+        for canonical, internal in _GATEWAY_HEADER_ALIASES.items():
+            if canonical in present and internal not in present:
+                headers.append((internal, present[canonical]))
+        request.scope["headers"] = headers
+        return await call_next(request)
 
     install_error_handlers(app)
     app.include_router(system_router)
