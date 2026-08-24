@@ -26,7 +26,7 @@ def _venv_python(root: Path) -> Path:
 
 
 def _package_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return Path(__file__).resolve().parents[1]
 
 
 def _run(
@@ -97,10 +97,7 @@ def create_validation_environment(
         ],
         timeout_seconds=timeout_seconds,
     )
-    _run(
-        [uv, "pip", "check", "--python", str(python)],
-        timeout_seconds=timeout_seconds,
-    )
+    _run([uv, "pip", "check", "--python", str(python)], timeout_seconds=timeout_seconds)
     return ValidationEnvironment(root=root, python=python)
 
 
@@ -121,7 +118,7 @@ def validate_installed_plugin(
         [
             str(environment.python),
             "-m",
-            "quazonai.plugins.validator_entry",
+            "plugins.validator_entry",
             "--plugin-id",
             plugin_id,
             "--version",
