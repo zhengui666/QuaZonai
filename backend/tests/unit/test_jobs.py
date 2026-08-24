@@ -7,6 +7,7 @@ from sqlalchemy.orm import sessionmaker
 
 from db.models import Job
 from jobs import claim_next_job, enqueue_job, release_expired_leases
+from runners.finite_worker import run_once
 
 
 def test_claim_and_release_expired_job(engine) -> None:  # type: ignore[no-untyped-def]
@@ -42,3 +43,29 @@ def test_claim_and_release_expired_job(engine) -> None:  # type: ignore[no-untyp
         assert job is not None
         assert job.state == "READY"
         assert job.lease_owner is None
+
+
+def test_worker_run_once_uses_shared_factory_and_completes_job(
+    engine,  # type: ignore[no-untyped-def]
+    settings,  # type: ignore[no-untyped-def]
+) -> None:
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    with factory.begin() as session:
+        created = enqueue_job(
+            session,
+            kind="SYSTEM_NOOP",
+            resource_type="system",
+            resource_id=uuid4(),
+        )
+        job_id = created.id
+
+    worked, poll_seconds = run_once(settings, owner="worker-a", factory=factory)
+
+    assert worked is True
+    assert poll_seconds == settings.job_poll_seconds
+    with factory() as session:
+        job = session.get(Job, job_id)
+        assert job is not None
+        assert job.state == "SUCCEEDED"
+        assert job.lease_owner is None
+        assert job.lease_expires_at is None

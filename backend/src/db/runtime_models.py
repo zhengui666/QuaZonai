@@ -19,6 +19,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -88,6 +89,17 @@ class Job(Base, TimestampMixin):
             name="ck_job_state",
         ),
         Index("ix_jobs_ready", "state", "available_at"),
+        Index(
+            "ix_jobs_ready_queue",
+            "available_at",
+            "created_at",
+            postgresql_where=text("state = 'READY'"),
+        ),
+        Index(
+            "ix_jobs_leased_expiry",
+            "lease_expires_at",
+            postgresql_where=text("state = 'LEASED'"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
@@ -107,7 +119,10 @@ class Job(Base, TimestampMixin):
 
 class Event(Base):
     __tablename__ = "events"
-    __table_args__ = (Index("ix_events_id", "id"),)
+    __table_args__ = (
+        Index("ix_events_id", "id"),
+        Index("ix_events_aggregate_activity", "aggregate_type", "aggregate_id", "id"),
+    )
 
     id: Mapped[int] = mapped_column(IDENTITY_INT, primary_key=True, autoincrement=True)
     kind: Mapped[str] = mapped_column(String(100), nullable=False)
