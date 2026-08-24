@@ -39,7 +39,7 @@ export function DataTable<T>({
   ariaLabel = 'Data table',
   enableVirtualization = true,
 }: DataTableProps<T>) {
-  const { t, text } = useI18n();
+  const { t, text, plural } = useI18n();
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
@@ -59,6 +59,7 @@ export function DataTable<T>({
     initialState: { pagination: { pageSize: initialPageSize, pageIndex: 0 } },
     getRowId,
   });
+  const filteredRowCount = table.getFilteredRowModel().rows.length;
   const rows = table.getRowModel().rows;
   const virtualEnabled = enableVirtualization && data.length > 100 && rows.length > 30;
   const virtualizer = useVirtualizer({
@@ -82,7 +83,14 @@ export function DataTable<T>({
           <TextField.Slot><MagnifyingGlassIcon size={14} /></TextField.Slot>
         </TextField.Root>
         <div className="qz-table-tools">
-          <span className="qz-section-meta qz-number">{t('table.rows', { count: table.getFilteredRowModel().rows.length })}</span>
+          <span className="qz-section-meta qz-number">{plural({
+            zero: 'table.rows.zero',
+            one: 'table.rows.one',
+            two: 'table.rows.two',
+            few: 'table.rows.few',
+            many: 'table.rows.many',
+            other: 'table.rows.other',
+          }, filteredRowCount)}</span>
           <DropdownMenu.Root>
             <DropdownMenu.Trigger><Button size="1" variant="soft"><ColumnsIcon size={13} />{t('table.columns')}</Button></DropdownMenu.Trigger>
             <DropdownMenu.Content align="end">

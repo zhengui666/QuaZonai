@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { localeLabels, localeOrder, messages, type Locale, type MessageKey } from './messages';
+import { pluralMessages, type PluralMessageKey } from './pluralMessages';
 
 const STORAGE_KEY = 'qz-locale';
 const localeIndex: Record<Locale, number> = { en: 0, 'zh-CN': 1, 'zh-TW': 2, ja: 3, ko: 4, es: 5, ar: 6 };
@@ -8,6 +9,7 @@ const sourceIndex = new Map<string, MessageKey>(
 );
 
 export type TranslationValues = Record<string, string | number | null | undefined>;
+type PluralTranslationKey = MessageKey | PluralMessageKey;
 
 function interpolate(template: string, values?: TranslationValues): string {
   if (!values) return template;
@@ -19,6 +21,13 @@ function interpolate(template: string, values?: TranslationValues): string {
 
 export function translateKey(locale: Locale, key: MessageKey, values?: TranslationValues): string {
   return interpolate(messages[key][localeIndex[locale]], values);
+}
+
+function translatePluralKey(locale: Locale, key: PluralTranslationKey, values?: TranslationValues): string {
+  const template = key in messages
+    ? messages[key as MessageKey][localeIndex[locale]]
+    : pluralMessages[key as PluralMessageKey][localeIndex[locale]];
+  return interpolate(template, values);
 }
 
 export function translateSource(locale: Locale, source: string, values?: TranslationValues): string {
@@ -80,7 +89,7 @@ interface I18nContextValue {
   setLocale: (locale: Locale) => void;
   t: (key: MessageKey, values?: TranslationValues) => string;
   text: (source: string, values?: TranslationValues) => string;
-  plural: (forms: Partial<Record<Intl.LDMLPluralRule, MessageKey>>, count: number, values?: TranslationValues) => string;
+  plural: (forms: Partial<Record<Intl.LDMLPluralRule, PluralTranslationKey>>, count: number, values?: TranslationValues) => string;
 }
 
 const I18nContext = createContext<I18nContextValue | null>(null);
@@ -106,7 +115,7 @@ export function I18nProvider({ children, initialLocale }: { children: ReactNode;
       const rule = new Intl.PluralRules(locale).select(count);
       const key = forms[rule] ?? forms.other ?? forms.one;
       if (!key) return String(count);
-      return translateKey(locale, key, { count, ...values });
+      return translatePluralKey(locale, key, { count, ...values });
     },
   }), [locale]);
 
