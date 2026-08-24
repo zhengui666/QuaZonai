@@ -11,8 +11,7 @@
 .coverage
 htmlcov
 
-# Legacy trees are intentionally absent from the target image
-frontend
+# Legacy backend trees are intentionally absent from the target image
 backend/app
 backend/scheduler
 backend/schema
