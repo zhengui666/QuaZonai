@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from crypto import EncryptedSecret, decrypt_bound_secret, encrypt_bound_secret
 from db.models import RuntimeConfiguration
+from errors import QfError
 from settings import Settings, SettingsError
 
 RUNTIME_SCOPE = "SYSTEM"
@@ -141,10 +142,24 @@ def update_runtime_configuration(
     job_lease_seconds: int,
 ) -> RuntimeConfiguration:
     item = ensure_runtime_configuration(session, base_settings)
-    item.codex_model = codex_model.strip() if codex_model and codex_model.strip() else None
-    item.codex_base_url = (
+    next_base_url = (
         codex_base_url.strip() if codex_base_url and codex_base_url.strip() else None
     )
+    replacement_key = codex_api_key.strip() if codex_api_key and codex_api_key.strip() else None
+    if (
+        item.codex_base_url != next_base_url
+        and codex_api_key_configured(item)
+        and replacement_key is None
+        and not clear_codex_api_key
+    ):
+        raise QfError(
+            "CODEX_PROVIDER_CREDENTIAL_REENTRY_REQUIRED",
+            "Changing the Codex base URL requires re-entering or clearing the stored API key.",
+            409,
+        )
+
+    item.codex_model = codex_model.strip() if codex_model and codex_model.strip() else None
+    item.codex_base_url = next_base_url
     item.max_plugin_wheel_bytes = max_plugin_wheel_bytes
     item.plugin_validation_timeout_seconds = plugin_validation_timeout_seconds
     item.bundle_build_timeout_seconds = bundle_build_timeout_seconds
@@ -157,9 +172,9 @@ def update_runtime_configuration(
         item.codex_api_key_ciphertext = None
         item.codex_api_key_nonce = None
         item.codex_api_key_key_version = None
-    elif codex_api_key is not None and codex_api_key.strip():
+    elif replacement_key is not None:
         encrypted = encrypt_bound_secret(
-            codex_api_key.strip(),
+            replacement_key,
             master_key=base_settings.master_key_bytes(),
             associated_data=_api_key_aad(item.id, 1),
         )
