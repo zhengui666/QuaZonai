@@ -1,0 +1,182 @@
+"""Seed deterministic browser-test facts into the real test database.
+
+This module lives under tests and is never imported by production runtime code.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from uuid import UUID
+
+from sqlalchemy import delete
+
+from db.models import (
+    AlphaQualification,
+    ApprovalSnapshot,
+    CandidatePackage,
+    DatasetRevision,
+    DownstreamSystem,
+    ForwardEvidenceEpisode,
+    GovernedDataSource,
+    HandoffOffer,
+    MarketUniverseVersion,
+    PortfolioCandidate,
+    PortfolioMandate,
+    PortfolioProgram,
+    PublicMutationReceipt,
+    ResearchBranch,
+    ResearchCharter,
+    ResearchMission,
+    ResearchProgram,
+)
+from db.session import create_database_engine, create_session_factory
+from settings import Settings
+
+UNIVERSE_ID = UUID("10000000-0000-0000-0000-000000000001")
+MANDATE_ID = UUID("20000000-0000-0000-0000-000000000001")
+MANDATE_VERSION_ID = UUID("20000000-0000-0000-0000-000000000002")
+PORTFOLIO_PROGRAM_ID = UUID("30000000-0000-0000-0000-000000000001")
+CANDIDATE_ID = UUID("40000000-0000-0000-0000-000000000001")
+ALPHA_ID = UUID("50000000-0000-0000-0000-000000000001")
+PAPER_DOWNSTREAM_ID = UUID("60000000-0000-0000-0000-000000000001")
+LIVE_DOWNSTREAM_ID = UUID("60000000-0000-0000-0000-000000000002")
+APPROVAL_ID = UUID("70000000-0000-0000-0000-000000000001")
+
+
+def main() -> None:
+    settings = Settings.from_env()
+    engine = create_database_engine(settings)
+    factory = create_session_factory(engine)
+    now = datetime.now(UTC)
+    with factory() as session, session.begin():
+        for model in (
+            ForwardEvidenceEpisode,
+            HandoffOffer,
+            CandidatePackage,
+            ApprovalSnapshot,
+            PortfolioCandidate,
+            PortfolioProgram,
+            PortfolioMandate,
+            AlphaQualification,
+            DatasetRevision,
+            GovernedDataSource,
+            ResearchMission,
+            ResearchBranch,
+            ResearchProgram,
+            ResearchCharter,
+            DownstreamSystem,
+            MarketUniverseVersion,
+            PublicMutationReceipt,
+        ):
+            session.execute(delete(model))
+
+        universe = MarketUniverseVersion(
+            id=UNIVERSE_ID,
+            universe_key="US_EQUITIES",
+            version_no=1,
+            name="US Equities",
+            state="ACTIVE",
+            spec_json={"calendar": "XNYS", "currency": "USD"},
+            created_at=now,
+        )
+        mandate = PortfolioMandate(
+            id=MANDATE_ID,
+            key="CORE_GROWTH",
+            name="Core Growth",
+            enabled=True,
+            latest_version_id=MANDATE_VERSION_ID,
+            spec_json={"objective": "Risk-adjusted long-term growth"},
+            state="ACTIVE",
+        )
+        alpha = AlphaQualification(
+            id=ALPHA_ID,
+            universe_version_id=UNIVERSE_ID,
+            universe="US Equities",
+            horizon="1D",
+            role="PRIMARY_ALPHA",
+            state="ACTIVE",
+            name="PEAD residual drift",
+            degradation_state="HEALTHY",
+            metrics={"search_adjusted_quality": 0.72},
+            lineage=[],
+            scope_json={},
+            created_at=now,
+        )
+        portfolio_program = PortfolioProgram(
+            id=PORTFOLIO_PROGRAM_ID,
+            mandate_version_id=MANDATE_VERSION_ID,
+            mandate_name="Core Growth",
+            state="CANDIDATE_READY",
+            current_candidate_id=CANDIDATE_ID,
+        )
+        candidate = PortfolioCandidate(
+            id=CANDIDATE_ID,
+            portfolio_program_id=PORTFOLIO_PROGRAM_ID,
+            mandate_version_id=MANDATE_VERSION_ID,
+            mandate_name="Core Growth",
+            state="READY",
+            universe_set_json=["US Equities"],
+            members=[
+                {
+                    "alpha_qualification_id": str(ALPHA_ID),
+                    "alpha_name": "PEAD residual drift",
+                    "role": "PRIMARY_ALPHA",
+                    "target_weight": 0.45,
+                    "universe": "US Equities",
+                }
+            ],
+            metrics={"search_adjusted_quality": 0.78},
+            created_at=now,
+        )
+        paper = DownstreamSystem(
+            id=PAPER_DOWNSTREAM_ID,
+            name="Paper Lab",
+            environment_type="PAPER",
+            enabled=True,
+            package_contract_version="1",
+            feedback_contract_version="1",
+            compatibility=["US_EQUITIES"],
+            preflight_state="READY",
+            public_config={},
+        )
+        live = DownstreamSystem(
+            id=LIVE_DOWNSTREAM_ID,
+            name="Live Primary",
+            environment_type="LIVE",
+            enabled=True,
+            package_contract_version="1",
+            feedback_contract_version="1",
+            compatibility=["US_EQUITIES"],
+            preflight_state="READY",
+            public_config={},
+        )
+        approval = ApprovalSnapshot(
+            id=APPROVAL_ID,
+            candidate_id=CANDIDATE_ID,
+            purpose="PAPER",
+            state="PENDING",
+            valid_until=now + timedelta(days=7),
+            recommendation_rationale=(
+                "Independent evidence is stable and the candidate materially improves the current frontier."
+            ),
+            human_report={"summary": "Paper validation is the next governed step."},
+            evidence_summary={"search_adjusted_quality": 0.78},
+            risk_summary={"tail_dependence": 0.23},
+            cost_summary={"turnover_cost_bps": 7},
+            capacity_summary={"capacity_ratio": 0.72},
+            changes_summary={"changed": "Risk-adjusted edge improved"},
+            capital_context={
+                "base_currency": "USD",
+                "deployable_capital": 100000,
+                "observed_at": now.isoformat(),
+            },
+        )
+        session.add_all(
+            [universe, mandate, alpha, portfolio_program, candidate, paper, live, approval]
+        )
+
+    engine.dispose()
+
+
+if __name__ == "__main__":
+    main()
