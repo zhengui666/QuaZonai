@@ -27,8 +27,13 @@ def _noop_handler(_: Settings, __: Job) -> None:
     return
 
 
-def _child_handler(module: str, *fixed_arguments: str) -> Handler:
+def _child_handler(
+    module: str,
+    *fixed_arguments: str,
+    timeout_attribute: str = "plugin_job_timeout_seconds",
+) -> Handler:
     def handler(settings: Settings, job: Job) -> None:
+        timeout = float(getattr(settings, timeout_attribute))
         try:
             subprocess.run(
                 [sys.executable, "-m", module, *fixed_arguments, str(job.id)],
@@ -36,14 +41,15 @@ def _child_handler(module: str, *fixed_arguments: str) -> Handler:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
                 text=True,
-                timeout=settings.plugin_job_timeout_seconds,
+                timeout=timeout,
                 env=os.environ.copy(),
             )
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(f"{job.kind} child exceeded its time limit") from exc
         except subprocess.CalledProcessError as exc:
+            message = (exc.stderr or "").strip()[-2000:]
             raise RuntimeError(
-                f"{job.kind} child failed with exit code {exc.returncode}"
+                f"{job.kind} child failed with exit code {exc.returncode}: {message}"
             ) from exc
 
     return handler
@@ -54,6 +60,11 @@ HANDLERS: dict[str, Handler] = {
     "PLUGIN_INSTALL": _child_handler("runners.plugin_jobs", "install"),
     "PLUGIN_BUNDLE_BUILD": _child_handler("runners.plugin_jobs", "build"),
     "PLUGIN_REMOVE": _child_handler("runners.plugin_jobs", "remove"),
+    "RESEARCH_MISSION": _child_handler(
+        "runners.research_missions",
+        "run",
+        timeout_attribute="mission_job_timeout_seconds",
+    ),
 }
 
 
@@ -71,6 +82,7 @@ def run_once(settings: Settings, *, owner: str) -> bool:
         release_expired_leases(session)
         job = claim_next_job(session, owner=owner, lease_seconds=settings.job_lease_seconds)
         if job is None:
+            engine.dispose()
             return False
         append_event(
             session,
@@ -98,6 +110,7 @@ def run_once(settings: Settings, *, owner: str) -> bool:
                     aggregate_id=current.id,
                     payload={"error_code": type(exc).__name__},
                 )
+        engine.dispose()
         LOGGER.exception("job failed", extra={"job_id": str(job.id)})
         return True
 

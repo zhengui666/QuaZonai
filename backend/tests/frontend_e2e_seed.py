@@ -19,6 +19,7 @@ from db.models import (
     ForwardEvidenceEpisode,
     GovernedDataSource,
     HandoffOffer,
+    IdeaContribution,
     MarketUniverseVersion,
     PortfolioCandidate,
     PortfolioMandate,
@@ -30,6 +31,7 @@ from db.models import (
     ResearchProgram,
 )
 from db.session import create_database_engine, create_session_factory
+from downstream_auth import install_service_token, issue_service_token
 from settings import Settings
 
 UNIVERSE_ID = UUID("10000000-0000-0000-0000-000000000001")
@@ -61,6 +63,7 @@ def main() -> None:
             DatasetRevision,
             GovernedDataSource,
             ResearchMission,
+            IdeaContribution,
             ResearchBranch,
             ResearchProgram,
             ResearchCharter,
@@ -110,6 +113,8 @@ def main() -> None:
             preflight_state="READY",
             public_config={},
         )
+        install_service_token(paper, issue_service_token(settings, PAPER_DOWNSTREAM_ID))
+        install_service_token(live, issue_service_token(settings, LIVE_DOWNSTREAM_ID))
         portfolio_program = PortfolioProgram(
             id=PORTFOLIO_PROGRAM_ID,
             mandate_version_id=MANDATE_VERSION_ID,
@@ -144,6 +149,7 @@ def main() -> None:
             members=[
                 {
                     "alpha_qualification_id": str(ALPHA_ID),
+                    "instrument_id": "AAPL",
                     "alpha_name": "PEAD residual drift",
                     "role": "PRIMARY_ALPHA",
                     "target_weight": 0.45,

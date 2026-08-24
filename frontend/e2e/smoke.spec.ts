@@ -9,7 +9,7 @@ test('Flow 1: create idea -> research program -> mission appears', async ({ page
   await expect(page.getByText(/post-earnings drift in liquid US equities/i)).toBeVisible();
   await page.getByRole('button', { name: 'Start Research' }).click();
   await expect(page).toHaveURL(/\/research\/[0-9a-f-]+$/i);
-  await expect(page.getByText(/Alpha Discovery · Running/i)).toBeVisible();
+  await expect(page.getByText(/Alpha Discovery · Ready/i)).toBeVisible();
 });
 
 test('Flow 2: candidate ready -> approve -> handoff available', async ({ page }) => {

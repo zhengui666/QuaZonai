@@ -56,6 +56,11 @@ def settings(tmp_path: Path) -> Settings:
         plugin_job_timeout_seconds=90,
         job_poll_seconds=0.01,
         job_lease_seconds=60,
+        package_root=tmp_path / "packages",
+        mission_root=tmp_path / "missions",
+        codex_home=tmp_path / "codex",
+        mission_job_timeout_seconds=90,
+        frontend_dist=tmp_path / "frontend-dist",
     )
     result.ensure_worker_directories()
     return result

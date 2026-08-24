@@ -49,7 +49,7 @@ jobs:
           test ! -d native/quazonai_nautilus_risk
           ! grep -R -n -E '/api/v1/(deployments|risk-accounts|execution-connections)|quazonai-live-supervisor|nautilus_trader' backend/src compose.yml backend/pyproject.toml
       - name: Install product runtimes
-        run: python -m pip install -e 'backend[dev,research,mcp]'
+        run: python -m pip install -e 'backend[dev,research,mcp,agent]'
       - name: Compile
         run: python -m compileall -q backend/src
       - name: Lint
@@ -60,6 +60,7 @@ jobs:
         run: |
           python - <<'PY'
           import mcp
+          import openai_codex
           import optuna
           import pyarrow
           import quazonai
@@ -100,6 +101,7 @@ jobs:
             fi
             sleep 2
           done
+          curl --fail --silent http://127.0.0.1:8000/ | grep -q '<div id="root"'
           docker compose --env-file .env.example ps
       - name: Stop Compose
         if: always()

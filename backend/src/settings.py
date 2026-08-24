@@ -53,6 +53,12 @@ class Settings:
     plugin_job_timeout_seconds: int
     job_poll_seconds: float
     job_lease_seconds: int
+    package_root: Path = Path("/var/lib/quazonai/packages")
+    mission_root: Path = Path("/var/lib/quazonai/missions")
+    codex_home: Path = Path("/home/quazonai/.codex")
+    codex_model: str | None = None
+    mission_job_timeout_seconds: int = 1800
+    frontend_dist: Path = Path("/workspace/frontend-dist")
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -83,6 +89,20 @@ class Settings:
             ),
             job_poll_seconds=_positive_float("QUAZONAI_JOB_POLL_SECONDS", 1.0),
             job_lease_seconds=_positive_int("QUAZONAI_JOB_LEASE_SECONDS", 60),
+            package_root=Path(
+                os.environ.get("QUAZONAI_PACKAGE_ROOT", "/var/lib/quazonai/packages")
+            ),
+            mission_root=Path(
+                os.environ.get("QUAZONAI_MISSION_ROOT", "/var/lib/quazonai/missions")
+            ),
+            codex_home=Path(os.environ.get("CODEX_HOME", "/home/quazonai/.codex")),
+            codex_model=os.environ.get("QUAZONAI_CODEX_MODEL") or None,
+            mission_job_timeout_seconds=_positive_int(
+                "QUAZONAI_MISSION_JOB_TIMEOUT_SECONDS", 1800
+            ),
+            frontend_dist=Path(
+                os.environ.get("QUAZONAI_FRONTEND_DIST", "/workspace/frontend-dist")
+            ),
         )
 
     @property
@@ -94,6 +114,10 @@ class Settings:
         except (binascii.Error, ValueError):
             return False
         return len(decoded) == 32
+
+    @property
+    def codex_auth_configured(self) -> bool:
+        return bool(os.environ.get("OPENAI_API_KEY")) or (self.codex_home / "auth.json").is_file()
 
     def master_key_bytes(self) -> bytes:
         if not self.master_key_configured or self.master_key is None:
@@ -115,5 +139,11 @@ class Settings:
             self.plugin_root / "releases",
             self.plugin_root / "bundle-staging",
             self.plugin_root / "bundles",
+            self.package_root,
+            self.package_root / "staging",
+            self.mission_root,
+            self.mission_root / "programs",
+            self.mission_root / "worktrees",
+            self.codex_home,
         ):
             path.mkdir(parents=True, exist_ok=True)

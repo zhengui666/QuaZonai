@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy import Engine
 
 from quazonai import __version__
@@ -14,6 +17,22 @@ from api.system import router as system_router
 from db.session import create_database_engine, create_session_factory
 from errors import install_error_handlers
 from settings import Settings
+
+
+def _install_frontend(app: FastAPI, frontend_dist: Path) -> None:
+    root = frontend_dist.resolve()
+    index = root / "index.html"
+    if not index.is_file():
+        return
+
+    @app.get("/{path:path}", include_in_schema=False)
+    def frontend(path: str) -> FileResponse:
+        if path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not Found")
+        candidate = (root / path).resolve()
+        if candidate.is_relative_to(root) and candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(index)
 
 
 def create_app(*, settings: Settings | None = None, engine: Engine | None = None) -> FastAPI:
@@ -42,4 +61,5 @@ def create_app(*, settings: Settings | None = None, engine: Engine | None = None
     def openapi_schema() -> dict[str, object]:
         return app.openapi()
 
+    _install_frontend(app, runtime_settings.frontend_dist)
     return app

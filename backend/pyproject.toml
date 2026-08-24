@@ -25,6 +25,7 @@ dependencies = [
 
 [project.optional-dependencies]
 research = ["optuna==4.9.0", "pyarrow==25.0.1"]
+agent = ["openai-codex==0.144.4"]
 mcp = ["mcp==2.0.0", "PyJWT[crypto]>=2.13,<3"]
 dev = ["mypy>=1.18,<2", "pytest>=9,<10", "ruff>=0.15,<1"]
 
@@ -35,7 +36,7 @@ quazonai-mcp-gateway = "mcp_gateway.main:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-py-modules = ["quazonai", "crypto", "errors", "events", "jobs", "logging_utils", "main", "optimization", "schema_validation", "settings"]
+py-modules = ["quazonai", "candidate_packages", "crypto", "downstream_auth", "errors", "events", "jobs", "logging_utils", "main", "optimization", "schema_validation", "settings"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -60,7 +61,7 @@ ignore_missing_imports = true
 plugins = []
 
 [[tool.mypy.overrides]]
-module = ["runners.plugin_jobs", "runners.research_jobs"]
+module = ["runners.plugin_jobs", "runners.research_missions"]
 disable_error_code = ["assignment"]
 
 [[tool.mypy.overrides]]

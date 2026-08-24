@@ -43,6 +43,9 @@ jobs:
       QUAZONAI_DATABASE_URL: postgresql+psycopg://quazonai:quazonai@127.0.0.1:5432/quazonai_frontend
       QUAZONAI_ALEMBIC_URL: postgresql+psycopg://quazonai:quazonai@127.0.0.1:5432/quazonai_frontend
       QUAZONAI_MASTER_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      QUAZONAI_PACKAGE_ROOT: ${{ runner.temp }}/quazonai-packages
+      QUAZONAI_MISSION_ROOT: ${{ runner.temp }}/quazonai-missions
+      CODEX_HOME: ${{ runner.temp }}/codex-home
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

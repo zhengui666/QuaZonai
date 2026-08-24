@@ -40,13 +40,30 @@ def build_parser() -> argparse.ArgumentParser:
     commands.add_parser("status")
     commands.add_parser("readiness")
 
+    idea = commands.add_parser("idea")
+    idea_actions = idea.add_subparsers(dest="action", required=True)
+    preview = idea_actions.add_parser("preview")
+    preview.add_argument("--text", required=True)
+
     research = commands.add_parser("research")
     research_actions = research.add_subparsers(dest="action", required=True)
     research_actions.add_parser("list")
     show = research_actions.add_parser("show")
     show.add_argument("id")
+    start = research_actions.add_parser("start")
+    start.add_argument("--idea", required=True)
+    start.add_argument(
+        "--overlap-action",
+        choices=["recommended", "new-program", "independent-program"],
+        default="recommended",
+    )
     create = research_actions.add_parser("create")
     create.add_argument("idea")
+    create.add_argument(
+        "--overlap-action",
+        choices=["recommended", "new-program", "independent-program"],
+        default="recommended",
+    )
     for action in ("pause", "resume", "archive", "restore"):
         item = research_actions.add_parser(action)
         item.add_argument("id")
@@ -110,16 +127,27 @@ def execute(client: ApiClient, args: argparse.Namespace) -> Any:
         return client.request("GET", "/api/v1/system/health")
     if args.resource == "readiness":
         return client.request("GET", "/api/v1/readiness")
+    if args.resource == "idea":
+        return client.request(
+            "POST",
+            "/api/v1/ideas/preview",
+            json_body={"idea": args.text},
+        )
     if args.resource == "research":
         if args.action == "list":
             return client.request("GET", "/api/v1/research-programs")
         if args.action == "show":
             return client.request("GET", f"/api/v1/research-programs/{args.id}")
-        if args.action == "create":
+        if args.action in {"create", "start"}:
+            idea_text = args.idea
             return client.request(
                 "POST",
                 "/api/v1/research-programs",
-                json_body={"idea": args.idea, "answers": {}},
+                json_body={
+                    "idea": idea_text,
+                    "answers": {},
+                    "overlap_action": args.overlap_action,
+                },
                 headers=_headers(),
             )
         if args.action in {"pause", "resume", "archive", "restore"}:
@@ -146,7 +174,10 @@ def execute(client: ApiClient, args: argparse.Namespace) -> Any:
         if args.action == "show":
             return client.request("GET", f"/api/v1/approvals/{args.id}")
         if args.action == "approve":
-            body = {"downstream_system_id": args.downstream_id, "expected_state": args.expected_state}
+            body = {
+                "downstream_system_id": args.downstream_id,
+                "expected_state": args.expected_state,
+            }
         else:
             body = {
                 "reason_code": args.reason_code,

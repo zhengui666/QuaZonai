@@ -6,7 +6,18 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, Uuid
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base, JSON_VALUE, TimestampMixin
@@ -16,7 +27,7 @@ class PublicMutationReceipt(Base):
     __tablename__ = "public_mutation_receipts"
 
     idempotency_key: Mapped[str] = mapped_column(String(200), primary_key=True)
-    operation_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    operation_name: Mapped[str] = mapped_column(String(240), nullable=False)
     normalized_request: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, nullable=False, default=dict)
     response_json: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, nullable=False, default=dict)
     status_code: Mapped[int] = mapped_column(Integer, nullable=False, default=200)
@@ -44,13 +55,35 @@ class ResearchProgram(Base, TimestampMixin):
     __table_args__ = (Index("ix_research_program_state", "state"),)
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    charter_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("research_charters.id", ondelete="RESTRICT"), nullable=False)
+    charter_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("research_charters.id", ondelete="RESTRICT"), nullable=False
+    )
     title: Mapped[str] = mapped_column(String(240), nullable=False)
     state: Mapped[str] = mapped_column(String(40), nullable=False, default="ACTIVE")
     cooling_reason: Mapped[str | None] = mapped_column(Text)
     blocked_reason: Mapped[str | None] = mapped_column(Text)
     wake_reason: Mapped[str | None] = mapped_column(Text)
+    source_program_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("research_programs.id", ondelete="RESTRICT")
+    )
+    relationship_type: Mapped[str | None] = mapped_column(String(80))
+    evidence_inherited_from_program_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("research_programs.id", ondelete="RESTRICT")
+    )
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+
+class IdeaContribution(Base):
+    __tablename__ = "idea_contributions"
+    __table_args__ = (Index("ix_idea_contribution_program", "program_id", "created_at"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    program_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("research_programs.id", ondelete="CASCADE"), nullable=False
+    )
+    idea_text: Mapped[str] = mapped_column(Text, nullable=False)
+    action: Mapped[str] = mapped_column(String(80), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class ResearchBranch(Base):
@@ -58,8 +91,12 @@ class ResearchBranch(Base):
     __table_args__ = (Index("ix_research_branch_program", "program_id"),)
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    program_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("research_programs.id", ondelete="CASCADE"), nullable=False)
-    parent_branch_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("research_branches.id", ondelete="RESTRICT"))
+    program_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("research_programs.id", ondelete="CASCADE"), nullable=False
+    )
+    parent_branch_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("research_branches.id", ondelete="RESTRICT")
+    )
     derivation_type: Mapped[str] = mapped_column(String(80), nullable=False, default="ROOT")
     hypothesis: Mapped[str] = mapped_column(Text, nullable=False)
     changed_assumptions: Mapped[list[str]] = mapped_column(JSON_VALUE, nullable=False, default=list)
@@ -73,13 +110,19 @@ class ResearchMission(Base):
     __table_args__ = (Index("ix_research_mission_program_state", "program_id", "state"),)
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    program_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("research_programs.id", ondelete="CASCADE"), nullable=False)
-    branch_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("research_branches.id", ondelete="CASCADE"), nullable=False)
+    program_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("research_programs.id", ondelete="CASCADE"), nullable=False
+    )
+    branch_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("research_branches.id", ondelete="CASCADE"), nullable=False
+    )
     type: Mapped[str] = mapped_column(String(100), nullable=False)
     role: Mapped[str | None] = mapped_column(String(100))
     state: Mapped[str] = mapped_column(String(40), nullable=False, default="PLANNED")
     objective: Mapped[str | None] = mapped_column(Text)
     dependencies: Mapped[list[str]] = mapped_column(JSON_VALUE, nullable=False, default=list)
+    codex_thread_id: Mapped[str | None] = mapped_column(String(200))
+    workspace_path: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
@@ -89,7 +132,9 @@ class ResearchMission(Base):
 
 class MarketUniverseVersion(Base):
     __tablename__ = "market_universe_versions"
-    __table_args__ = (UniqueConstraint("universe_key", "version_no", name="uq_market_universe_version"),)
+    __table_args__ = (
+        UniqueConstraint("universe_key", "version_no", name="uq_market_universe_version"),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     universe_key: Mapped[str] = mapped_column(String(120), nullable=False)
@@ -120,8 +165,12 @@ class DatasetRevision(Base):
     __table_args__ = (Index("ix_dataset_revision_source", "data_source_id"),)
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    data_source_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("governed_data_sources.id", ondelete="RESTRICT"))
-    universe_version_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("market_universe_versions.id", ondelete="RESTRICT"))
+    data_source_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("governed_data_sources.id", ondelete="RESTRICT")
+    )
+    universe_version_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("market_universe_versions.id", ondelete="RESTRICT")
+    )
     universe_name: Mapped[str | None] = mapped_column(String(200))
     revision_no: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     schema_version: Mapped[str | None] = mapped_column(String(100))
@@ -141,10 +190,14 @@ class AlphaQualification(Base):
     __table_args__ = (Index("ix_alpha_qualification_state", "state"),)
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    program_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("research_programs.id", ondelete="SET NULL"))
+    program_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("research_programs.id", ondelete="SET NULL")
+    )
     alpha_model_version_id: Mapped[UUID | None] = mapped_column(Uuid)
     calibration_version_id: Mapped[UUID | None] = mapped_column(Uuid)
-    universe_version_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("market_universe_versions.id", ondelete="RESTRICT"))
+    universe_version_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("market_universe_versions.id", ondelete="RESTRICT")
+    )
     universe: Mapped[str | None] = mapped_column(String(200))
     horizon: Mapped[str | None] = mapped_column(String(100))
     role: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -187,7 +240,9 @@ class PortfolioCandidate(Base):
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     candidate_family_id: Mapped[UUID | None] = mapped_column(Uuid)
-    portfolio_program_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("portfolio_programs.id", ondelete="CASCADE"), nullable=False)
+    portfolio_program_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("portfolio_programs.id", ondelete="CASCADE"), nullable=False
+    )
     mandate_version_id: Mapped[UUID | None] = mapped_column(Uuid)
     mandate_name: Mapped[str | None] = mapped_column(String(200))
     capital_context_version_id: Mapped[UUID | None] = mapped_column(Uuid)
@@ -218,6 +273,9 @@ class DownstreamSystem(Base, TimestampMixin):
     compatibility: Mapped[list[str]] = mapped_column(JSON_VALUE, nullable=False, default=list)
     preflight_state: Mapped[str] = mapped_column(String(40), nullable=False, default="READY")
     public_config: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, nullable=False, default=dict)
+    service_token_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary)
+    service_token_nonce: Mapped[bytes | None] = mapped_column(LargeBinary)
+    service_token_key_version: Mapped[int | None] = mapped_column(Integer)
 
 
 class ApprovalSnapshot(Base, TimestampMixin):
@@ -225,10 +283,14 @@ class ApprovalSnapshot(Base, TimestampMixin):
     __table_args__ = (Index("ix_approval_snapshot_state", "state"),)
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    candidate_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("portfolio_candidates.id", ondelete="RESTRICT"), nullable=False)
+    candidate_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("portfolio_candidates.id", ondelete="RESTRICT"), nullable=False
+    )
     purpose: Mapped[str] = mapped_column(String(40), nullable=False)
     state: Mapped[str] = mapped_column(String(40), nullable=False, default="PENDING")
-    downstream_system_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("downstream_systems.id", ondelete="RESTRICT"))
+    downstream_system_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("downstream_systems.id", ondelete="RESTRICT")
+    )
     valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     stale_reason: Mapped[str | None] = mapped_column(Text)
@@ -247,9 +309,19 @@ class CandidatePackage(Base):
     __tablename__ = "candidate_packages"
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    approval_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("approval_snapshots.id", ondelete="RESTRICT"), nullable=False, unique=True)
-    candidate_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("portfolio_candidates.id", ondelete="RESTRICT"), nullable=False)
+    approval_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("approval_snapshots.id", ondelete="RESTRICT"),
+        nullable=False,
+        unique=True,
+    )
+    candidate_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("portfolio_candidates.id", ondelete="RESTRICT"), nullable=False
+    )
     contract_version: Mapped[str] = mapped_column(String(40), nullable=False, default="1")
+    state: Mapped[str] = mapped_column(String(40), nullable=False, default="AVAILABLE")
+    manifest_json: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, nullable=False, default=dict)
+    relative_path: Mapped[str] = mapped_column(Text, nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -259,15 +331,26 @@ class HandoffOffer(Base, TimestampMixin):
     __table_args__ = (Index("ix_handoff_offer_state", "state"),)
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    approval_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("approval_snapshots.id", ondelete="RESTRICT"), nullable=False)
-    candidate_package_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("candidate_packages.id", ondelete="RESTRICT"), nullable=False)
-    candidate_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("portfolio_candidates.id", ondelete="RESTRICT"), nullable=False)
+    approval_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("approval_snapshots.id", ondelete="RESTRICT"), nullable=False
+    )
+    candidate_package_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("candidate_packages.id", ondelete="RESTRICT"), nullable=False
+    )
+    candidate_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("portfolio_candidates.id", ondelete="RESTRICT"), nullable=False
+    )
     purpose: Mapped[str] = mapped_column(String(40), nullable=False)
-    downstream_system_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("downstream_systems.id", ondelete="RESTRICT"), nullable=False)
+    downstream_system_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("downstream_systems.id", ondelete="RESTRICT"), nullable=False
+    )
     state: Mapped[str] = mapped_column(String(40), nullable=False, default="AVAILABLE")
     claim_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     stale_reason: Mapped[str | None] = mapped_column(Text)
     feedback_state: Mapped[str | None] = mapped_column(String(40), default="PENDING")
+    feedback_contract_snapshot: Mapped[dict[str, Any]] = mapped_column(
+        JSON_VALUE, nullable=False, default=dict
+    )
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -277,9 +360,14 @@ class ForwardEvidenceEpisode(Base):
     __table_args__ = (Index("ix_forward_evidence_handoff", "handoff_id"),)
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    handoff_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("handoff_offers.id", ondelete="CASCADE"), nullable=False)
+    handoff_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("handoff_offers.id", ondelete="CASCADE"), nullable=False
+    )
     state: Mapped[str] = mapped_column(String(40), nullable=False, default="FEEDBACK_COMPLETE")
     evidence: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, nullable=False, default=dict)
+    observation_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    observation_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    sample_size: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
@@ -287,6 +375,7 @@ __all__ = [
     "PublicMutationReceipt",
     "ResearchCharter",
     "ResearchProgram",
+    "IdeaContribution",
     "ResearchBranch",
     "ResearchMission",
     "MarketUniverseVersion",

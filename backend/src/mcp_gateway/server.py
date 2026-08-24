@@ -66,7 +66,7 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
         instructions=(
             "Operate QuaZonai as a research-intelligence and portfolio-construction workbench. "
             "Never request broker credentials, place orders, manage positions, or control a downstream runtime. "
-            "Human approval is limited to immutable Candidate decisions."
+            "Candidate approval and rejection are human-only decisions and are intentionally absent from MCP."
         ),
         token_verifier=JwksTokenVerifier(settings),
         auth=AuthSettings(
@@ -195,42 +195,6 @@ def create_server(settings: McpGatewaySettings) -> ScopedMCPServer:
     async def approval_show(approval_id: UUID) -> dict[str, Any]:
         require_scope("quazonai:read")
         return await current_client(settings).get(f"/api/v1/approvals/{approval_id}")
-
-    @_tool(server, name="quazonai.approval.approve", scope="quazonai:approval:write", annotations=DECISION)
-    async def approval_approve(
-        approval_id: UUID,
-        downstream_system_id: UUID,
-        expected_state: str,
-        idempotency_key: UUID,
-    ) -> dict[str, Any]:
-        require_scope("quazonai:approval:write")
-        return await _write(
-            settings,
-            "POST",
-            f"/api/v1/approvals/{approval_id}/approve",
-            {
-                "downstream_system_id": str(downstream_system_id),
-                "expected_state": expected_state,
-            },
-            idempotency_key,
-        )
-
-    @_tool(server, name="quazonai.approval.reject", scope="quazonai:approval:write", annotations=DECISION)
-    async def approval_reject(
-        approval_id: UUID,
-        reason_code: str,
-        expected_state: str,
-        idempotency_key: UUID,
-        note: str | None = None,
-    ) -> dict[str, Any]:
-        require_scope("quazonai:approval:write")
-        return await _write(
-            settings,
-            "POST",
-            f"/api/v1/approvals/{approval_id}/reject",
-            {"reason_code": reason_code, "note": note, "expected_state": expected_state},
-            idempotency_key,
-        )
 
     @_tool(server, name="quazonai.handoff.list", scope="quazonai:read", annotations=READ)
     async def handoff_list() -> list[dict[str, Any]]:
