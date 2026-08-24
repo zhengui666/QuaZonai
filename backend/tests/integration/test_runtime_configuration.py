@@ -99,6 +99,39 @@ def test_runtime_configuration_can_clear_codex_key(
     assert response.json()["codex_api_key_configured"] is False
 
 
+def test_runtime_configuration_requires_key_reentry_when_base_url_changes(
+    engine: Engine,
+    settings: Settings,
+) -> None:
+    client = TestClient(create_app(settings=settings, engine=engine))
+    assert client.put(
+        "/api/v1/system/runtime-configuration",
+        json=_payload(codex_api_key="sk-original-provider"),
+    ).status_code == 200
+
+    rejected = client.put(
+        "/api/v1/system/runtime-configuration",
+        json=_payload(codex_base_url="https://attacker.example.test/v1"),
+    )
+    assert rejected.status_code == 409
+    assert rejected.json()["error"]["code"] == "CODEX_PROVIDER_CREDENTIAL_REENTRY_REQUIRED"
+    current = client.get("/api/v1/system/runtime-configuration")
+    assert current.status_code == 200
+    assert current.json()["codex_base_url"] == "https://gateway.example.test/v1"
+    assert current.json()["codex_api_key_configured"] is True
+
+    replaced = client.put(
+        "/api/v1/system/runtime-configuration",
+        json=_payload(
+            codex_base_url="https://replacement.example.test/v1",
+            codex_api_key="sk-replacement-provider",
+        ),
+    )
+    assert replaced.status_code == 200, replaced.text
+    assert replaced.json()["codex_base_url"] == "https://replacement.example.test/v1"
+    assert replaced.json()["codex_api_key_configured"] is True
+
+
 def test_runtime_configuration_rejects_credential_bearing_base_url(
     engine: Engine,
     settings: Settings,
