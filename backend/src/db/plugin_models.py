@@ -1,4 +1,4 @@
-"""Plugin persistence models."""
+"""Research/data plugin persistence models."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
-    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -53,9 +52,7 @@ class PluginRelease(Base):
     api_version: Mapped[str] = mapped_column(String(50), nullable=False)
     state: Mapped[str] = mapped_column(String(32), nullable=False, default="RECEIVED")
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    descriptor_snapshot: Mapped[dict[str, Any]] = mapped_column(
-        JSON_VALUE, nullable=False, default=dict
-    )
+    descriptor_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, nullable=False, default=dict)
     last_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -68,9 +65,7 @@ class PluginArtifact(Base):
     __tablename__ = "plugin_artifacts"
     __table_args__ = (
         CheckConstraint("role IN ('PRIMARY','DEPENDENCY')", name="ck_plugin_artifact_role"),
-        UniqueConstraint(
-            "plugin_release_id", "filename", name="uq_plugin_artifact_filename"
-        ),
+        UniqueConstraint("plugin_release_id", "filename", name="uq_plugin_artifact_filename"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
@@ -100,7 +95,6 @@ class PluginRuntimeBundle(Base):
     state: Mapped[str] = mapped_column(String(20), nullable=False, default="BUILDING")
     python_version: Mapped[str] = mapped_column(String(50), nullable=False)
     qf_version: Mapped[str] = mapped_column(String(50), nullable=False)
-    nautilus_version: Mapped[str | None] = mapped_column(String(100))
     environment_path: Mapped[str] = mapped_column(Text, nullable=False)
     last_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
@@ -114,16 +108,14 @@ class PluginRuntimeBundleMember(Base):
     __tablename__ = "plugin_runtime_bundle_members"
     __table_args__ = (
         CheckConstraint(
-            "member_role IN ('DATA','EXECUTION','IMPORTER','AUXILIARY')",
+            "member_role IN ('RESEARCH','DATA','IMPORTER','AUXILIARY')",
             name="ck_plugin_bundle_member_role",
         ),
         Index("ix_plugin_bundle_member_release", "plugin_release_id"),
     )
 
     runtime_bundle_id: Mapped[UUID] = mapped_column(
-        Uuid,
-        ForeignKey("plugin_runtime_bundles.id", ondelete="CASCADE"),
-        primary_key=True,
+        Uuid, ForeignKey("plugin_runtime_bundles.id", ondelete="CASCADE"), primary_key=True
     )
     plugin_release_id: Mapped[UUID] = mapped_column(
         Uuid, ForeignKey("plugin_releases.id", ondelete="RESTRICT"), primary_key=True
@@ -133,18 +125,14 @@ class PluginRuntimeBundleMember(Base):
 
 class CredentialSet(Base, TimestampMixin):
     __tablename__ = "credential_sets"
-    __table_args__ = (
-        UniqueConstraint("plugin_release_id", "name", name="uq_credential_set_name"),
-    )
+    __table_args__ = (UniqueConstraint("plugin_release_id", "name", name="uq_credential_set_name"),)
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     plugin_release_id: Mapped[UUID] = mapped_column(
         Uuid, ForeignKey("plugin_releases.id", ondelete="RESTRICT"), nullable=False
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
-    public_config: Mapped[dict[str, Any]] = mapped_column(
-        JSON_VALUE, nullable=False, default=dict
-    )
+    public_config: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, nullable=False, default=dict)
 
 
 class CredentialSecret(Base):
@@ -159,83 +147,6 @@ class CredentialSecret(Base):
     key_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
 
-class DataSource(Base, TimestampMixin):
-    __tablename__ = "data_sources"
-    __table_args__ = (
-        CheckConstraint(
-            "state IN ('ACTIVE','INACTIVE','BLOCKED_PLUGIN_REMOVED')",
-            name="ck_data_source_state",
-        ),
-        UniqueConstraint("name", name="uq_data_source_name"),
-    )
-
-    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    plugin_release_id: Mapped[UUID] = mapped_column(
-        Uuid, ForeignKey("plugin_releases.id", ondelete="RESTRICT"), nullable=False
-    )
-    credential_set_id: Mapped[UUID | None] = mapped_column(
-        Uuid, ForeignKey("credential_sets.id", ondelete="RESTRICT")
-    )
-    name: Mapped[str] = mapped_column(String(200), nullable=False)
-    config: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, nullable=False, default=dict)
-    state: Mapped[str] = mapped_column(String(40), nullable=False, default="ACTIVE")
-
-
-class ExecutionConnection(Base, TimestampMixin):
-    __tablename__ = "execution_connections"
-    __table_args__ = (
-        CheckConstraint(
-            "state IN ('ACTIVE','INACTIVE','BLOCKED_PLUGIN_REMOVED')",
-            name="ck_execution_connection_state",
-        ),
-        UniqueConstraint("name", name="uq_execution_connection_name"),
-    )
-
-    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    plugin_release_id: Mapped[UUID] = mapped_column(
-        Uuid, ForeignKey("plugin_releases.id", ondelete="RESTRICT"), nullable=False
-    )
-    credential_set_id: Mapped[UUID] = mapped_column(
-        Uuid, ForeignKey("credential_sets.id", ondelete="RESTRICT"), nullable=False
-    )
-    name: Mapped[str] = mapped_column(String(200), nullable=False)
-    config: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, nullable=False, default=dict)
-    state: Mapped[str] = mapped_column(String(40), nullable=False, default="ACTIVE")
-
-
-class CatalogDataset(Base):
-    __tablename__ = "catalog_datasets"
-    __table_args__ = (
-        CheckConstraint(
-            "state IN ('IMPORTING','READY','FAILED')", name="ck_catalog_dataset_state"
-        ),
-        Index("ix_catalog_dataset_source_state", "data_source_id", "state"),
-    )
-
-    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    data_source_id: Mapped[UUID] = mapped_column(
-        Uuid, ForeignKey("data_sources.id", ondelete="RESTRICT"), nullable=False
-    )
-    instrument_id: Mapped[str] = mapped_column(String(300), nullable=False)
-    catalog_path: Mapped[str] = mapped_column(Text, nullable=False)
-    dataset_metadata: Mapped[dict[str, Any]] = mapped_column(
-        "metadata", JSON_VALUE, nullable=False, default=dict
-    )
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    row_count: Mapped[int | None] = mapped_column(BigInteger)
-    state: Mapped[str] = mapped_column(String(20), nullable=False, default="IMPORTING")
-    run_id: Mapped[UUID | None] = mapped_column(
-        Uuid,
-        ForeignKey(
-            "runs.id",
-            ondelete="SET NULL",
-            use_alter=True,
-            name="fk_catalog_dataset_run",
-        ),
-    )
-
-
 __all__ = [
     "PluginRelease",
     "PluginArtifact",
@@ -243,7 +154,4 @@ __all__ = [
     "PluginRuntimeBundleMember",
     "CredentialSet",
     "CredentialSecret",
-    "DataSource",
-    "ExecutionConnection",
-    "CatalogDataset",
 ]
