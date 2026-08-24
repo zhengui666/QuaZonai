@@ -45,6 +45,7 @@ REQUIRED_PATHS = {
     "/api/v1/events/stream",
     "/api/v1/plugin-releases",
     "/api/v1/system/health",
+    "/api/v1/system/runtime-configuration",
 }
 
 FORBIDDEN_PREFIXES = (
