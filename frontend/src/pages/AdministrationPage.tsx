@@ -11,6 +11,7 @@ import { PageHeader } from '../components/ui/PageHeader';
 import { PageSkeleton } from '../components/ui/Skeleton';
 import { StateBadge } from '../components/ui/StateBadge';
 import { Section } from '../components/ui/Section';
+import { useI18n } from '../i18n';
 import {
   useApprovals,
   useCreateDataSource,
@@ -81,26 +82,30 @@ const capitalColumns: ColumnDef<CapitalContextRow, unknown>[] = [
 ];
 
 function DataSourceDialog() {
+  const { t } = useI18n();
   const mutation = useCreateDataSource();
   const [name, setName] = useState('');
   const [provider, setProvider] = useState('');
   const [fields, setFields] = useState('');
-  return <Dialog.Root><Dialog.Trigger><Button size="1" variant="soft"><DatabaseIcon size={14} />Register data source</Button></Dialog.Trigger><Dialog.Content maxWidth="500px"><Dialog.Title>Register governed data source</Dialog.Title><Dialog.Description size="2">This creates public connector configuration only. Credentials remain write-only and are never echoed into research UI.</Dialog.Description><div className="qz-form-grid" style={{ marginTop: 18 }}><label className="qz-field"><span className="qz-label">Name</span><TextField.Root value={name} onChange={(event) => setName(event.target.value)} /></label><label className="qz-field"><span className="qz-label">Provider</span><TextField.Root value={provider} onChange={(event) => setProvider(event.target.value)} /></label><label className="qz-field"><span className="qz-label">Canonical fields</span><TextField.Root value={fields} onChange={(event) => setFields(event.target.value)} placeholder="event_time, available_time, close, volume" /></label><Button disabled={!name.trim() || mutation.isPending} onClick={() => mutation.mutate({ name: name.trim(), provider: provider.trim(), fields: fields.split(',').map((value) => value.trim()).filter(Boolean), state: 'STAGED' })}>{mutation.isPending ? 'Registering…' : 'Register'}</Button></div></Dialog.Content></Dialog.Root>;
+  return <Dialog.Root><Dialog.Trigger><Button size="1" variant="soft"><DatabaseIcon size={14} />{t('admin.registerDataSource')}</Button></Dialog.Trigger><Dialog.Content maxWidth="500px"><Dialog.Title>{t('admin.registerGoverned')}</Dialog.Title><Dialog.Description size="2">{t('admin.dataSourceDesc')}</Dialog.Description><div className="qz-form-grid" style={{ marginTop: 18 }}><label className="qz-field"><span className="qz-label">{t('admin.name')}</span><TextField.Root value={name} onChange={(event) => setName(event.target.value)} /></label><label className="qz-field"><span className="qz-label">{t('admin.provider')}</span><TextField.Root value={provider} onChange={(event) => setProvider(event.target.value)} /></label><label className="qz-field"><span className="qz-label">{t('admin.canonicalFields')}</span><TextField.Root value={fields} onChange={(event) => setFields(event.target.value)} placeholder="event_time, available_time, close, volume" /></label><Button disabled={!name.trim() || mutation.isPending} onClick={() => mutation.mutate({ name: name.trim(), provider: provider.trim(), fields: fields.split(',').map((value) => value.trim()).filter(Boolean), state: 'STAGED' })}>{mutation.isPending ? t('common.registering') : t('admin.register')}</Button></div></Dialog.Content></Dialog.Root>;
 }
 
 function DownstreamDialog() {
+  const { t } = useI18n();
   const mutation = useCreateDownstream();
   const [name, setName] = useState('');
   const [environment, setEnvironment] = useState('PAPER');
-  return <Dialog.Root><Dialog.Trigger><Button size="1" variant="soft"><PlugsConnectedIcon size={14} />Register downstream</Button></Dialog.Trigger><Dialog.Content maxWidth="500px"><Dialog.Title>Register logical downstream</Dialog.Title><Dialog.Description size="2">QuaZonai publishes packages to logical consumers; it does not own their runtime, accounts or execution.</Dialog.Description><div className="qz-form-grid" style={{ marginTop: 18 }}><label className="qz-field"><span className="qz-label">Name</span><TextField.Root value={name} onChange={(event) => setName(event.target.value)} /></label><label className="qz-field"><span className="qz-label">Environment</span><Select.Root value={environment} onValueChange={setEnvironment}><Select.Trigger /><Select.Content>{['PAPER', 'LIVE', 'EXTERNAL_BACKTEST'].map((value) => <Select.Item key={value} value={value}>{humanize(value)}</Select.Item>)}</Select.Content></Select.Root></label><Button disabled={!name.trim() || mutation.isPending} onClick={() => mutation.mutate({ name: name.trim(), environment_type: environment, enabled: true })}>{mutation.isPending ? 'Registering…' : 'Register'}</Button></div></Dialog.Content></Dialog.Root>;
+  return <Dialog.Root><Dialog.Trigger><Button size="1" variant="soft"><PlugsConnectedIcon size={14} />{t('admin.registerDownstream')}</Button></Dialog.Trigger><Dialog.Content maxWidth="500px"><Dialog.Title>{t('admin.registerLogical')}</Dialog.Title><Dialog.Description size="2">{t('admin.downstreamDesc')}</Dialog.Description><div className="qz-form-grid" style={{ marginTop: 18 }}><label className="qz-field"><span className="qz-label">{t('admin.name')}</span><TextField.Root value={name} onChange={(event) => setName(event.target.value)} /></label><label className="qz-field"><span className="qz-label">{t('admin.environment')}</span><Select.Root value={environment} onValueChange={setEnvironment}><Select.Trigger /><Select.Content>{['PAPER', 'LIVE', 'EXTERNAL_BACKTEST'].map((value) => <Select.Item key={value} value={value}>{humanize(value)}</Select.Item>)}</Select.Content></Select.Root></label><Button disabled={!name.trim() || mutation.isPending} onClick={() => mutation.mutate({ name: name.trim(), environment_type: environment, enabled: true })}>{mutation.isPending ? t('common.registering') : t('admin.register')}</Button></div></Dialog.Content></Dialog.Root>;
 }
 
 function MandateRow({ mandate }: { mandate: PortfolioMandate }) {
+  const { t } = useI18n();
   const toggle = useMandateToggle(mandate.id, mandate.enabled);
-  return <div className="qz-list-row"><div className="qz-list-main"><div className="qz-list-title">{mandate.name}</div><div className="qz-list-subtitle">{String(mandate.spec_json?.objective ?? mandate.spec_json?.description ?? 'Versioned capital objective')}</div></div><div style={{ display: 'flex', gap: 10, alignItems: 'center' }}><StateBadge state={mandate.enabled ? 'ENABLED' : 'DISABLED'} /><Switch checked={mandate.enabled} disabled={toggle.isPending} onCheckedChange={() => toggle.mutate()} aria-label={`Toggle ${mandate.name}`} /></div></div>;
+  return <div className="qz-list-row"><div className="qz-list-main"><div className="qz-list-title">{mandate.name}</div><div className="qz-list-subtitle">{String(mandate.spec_json?.objective ?? mandate.spec_json?.description ?? t('admin.versionedObjective'))}</div></div><div style={{ display: 'flex', gap: 10, alignItems: 'center' }}><StateBadge state={mandate.enabled ? 'ENABLED' : 'DISABLED'} /><Switch checked={mandate.enabled} disabled={toggle.isPending} onCheckedChange={() => toggle.mutate()} aria-label={`${t('admin.enabled')}: ${mandate.name}`} /></div></div>;
 }
 
 export function AdministrationPage() {
+  const { t } = useI18n();
   const readiness = useReadiness();
   const health = useHealth();
   const runtimeConfiguration = useRuntimeConfiguration();
@@ -136,18 +141,18 @@ export function AdministrationPage() {
       <Section title="Capability registry">
         <Tabs.Root defaultValue="data">
           <Tabs.List>
-            <Tabs.Trigger value="data">Data sources</Tabs.Trigger>
-            <Tabs.Trigger value="datasets">Datasets</Tabs.Trigger>
-            <Tabs.Trigger value="universes">Universes</Tabs.Trigger>
-            <Tabs.Trigger value="capital">Capital context</Tabs.Trigger>
-            <Tabs.Trigger value="downstreams">Downstreams</Tabs.Trigger>
-            <Tabs.Trigger value="plugins">Plugins</Tabs.Trigger>
+            <Tabs.Trigger value="data">{t('admin.dataSources')}</Tabs.Trigger>
+            <Tabs.Trigger value="datasets">{t('admin.datasets')}</Tabs.Trigger>
+            <Tabs.Trigger value="universes">{t('admin.universes')}</Tabs.Trigger>
+            <Tabs.Trigger value="capital">{t('admin.capitalContextTab')}</Tabs.Trigger>
+            <Tabs.Trigger value="downstreams">{t('admin.downstreams')}</Tabs.Trigger>
+            <Tabs.Trigger value="plugins">{t('admin.plugins')}</Tabs.Trigger>
           </Tabs.List>
           <div style={{ marginTop: 12 }}>
             <Tabs.Content value="data"><DataTable data={sources.data ?? []} columns={dataSourceColumns} emptyTitle="No data sources" emptyDescription="Register an approved data connector before autonomous acquisition can run." /></Tabs.Content>
             <Tabs.Content value="datasets"><DataTable data={datasets.data ?? []} columns={datasetColumns} emptyTitle="No dataset revisions" emptyDescription="Discovery and Sealed dataset revisions appear after governed ingestion." /></Tabs.Content>
             <Tabs.Content value="universes"><DataTable data={universes.data ?? []} columns={universeColumns} emptyTitle="No universes" emptyDescription="Define Market Universe resources through the backend-supported administration contract before scoped research." /></Tabs.Content>
-            <Tabs.Content value="capital"><div className="qz-resource-note">Capital Context is immutable once frozen into a Candidate/Approval. The current public API has no Capital Context mutation endpoint, so the frontend deliberately exposes observed snapshots without inventing unsupported editing.</div><div style={{ marginTop: 10 }}><DataTable data={capitalRows} columns={capitalColumns} emptyTitle="No capital context snapshots" emptyDescription="Capital context appears when the backend includes a frozen context in an Approval snapshot." /></div></Tabs.Content>
+            <Tabs.Content value="capital"><div className="qz-resource-note">{t('admin.capitalNote')}</div><div style={{ marginTop: 10 }}><DataTable data={capitalRows} columns={capitalColumns} emptyTitle="No capital context snapshots" emptyDescription="Capital context appears when the backend includes a frozen context in an Approval snapshot." /></div></Tabs.Content>
             <Tabs.Content value="downstreams"><DataTable data={downstreams.data ?? []} columns={downstreamColumns} emptyTitle="No downstream systems" emptyDescription="Research can run without a downstream. Configure logical Paper or Live consumers only when handoff is needed." /></Tabs.Content>
             <Tabs.Content value="plugins">{(plugins.data ?? []).length ? <DataTable data={plugins.data ?? []} columns={pluginColumns} /> : <EmptyState title="No runtime plugins" description="Approved DATA/RESEARCH/HANDOFF plugin releases appear here. Execution plugins are outside QuaZonai." />}</Tabs.Content>
           </div>

@@ -1,5 +1,6 @@
 import { Button, Switch, TextField } from '@radix-ui/themes';
 import { useEffect, useMemo, useState } from 'react';
+import { useI18n } from '../../i18n';
 import { useUpdateRuntimeConfiguration } from '../../lib/api/hooks';
 import type { RuntimeConfiguration } from '../../lib/api/types';
 import { ErrorPanel } from '../ui/ErrorPanel';
@@ -26,6 +27,7 @@ function normalizeBaseUrl(value: string): string {
 }
 
 export function RuntimeConfigurationPanel({ configuration }: { configuration: RuntimeConfiguration }) {
+  const { t } = useI18n();
   const update = useUpdateRuntimeConfiguration();
   const [model, setModel] = useState(configuration.codex_model ?? '');
   const [baseUrl, setBaseUrl] = useState(configuration.codex_base_url ?? '');
@@ -99,54 +101,54 @@ export function RuntimeConfigurationPanel({ configuration }: { configuration: Ru
     <Section title="Runtime configuration" meta="Persisted operator settings; changes apply to newly claimed work without editing .env">
       <div className="qz-panel qz-panel-pad">
         <div className="qz-grid-4" style={{ marginBottom: 18 }}>
-          <div><div className="qz-label">Codex authentication</div><div style={{ marginTop: 6 }}><StateBadge state={authState} /></div></div>
-          <div><div className="qz-label">Provider endpoint</div><div style={{ marginTop: 6 }}><StateBadge state={configuration.codex_base_url ? 'CUSTOM' : 'DEFAULT'} /></div></div>
-          <div><div className="qz-label">Model</div><div className="qz-mono" style={{ marginTop: 8 }}>{configuration.codex_model || 'Codex default'}</div></div>
-          <div><div className="qz-label">Revision</div><div className="qz-number" style={{ marginTop: 8 }}>{configuration.revision}</div></div>
+          <div><div className="qz-label">{t('runtime.codexAuth')}</div><div style={{ marginTop: 6 }}><StateBadge state={authState} /></div></div>
+          <div><div className="qz-label">{t('runtime.providerEndpoint')}</div><div style={{ marginTop: 6 }}><StateBadge state={configuration.codex_base_url ? 'CUSTOM' : 'DEFAULT'} /></div></div>
+          <div><div className="qz-label">{t('runtime.model')}</div><div className="qz-mono" style={{ marginTop: 8 }}>{configuration.codex_model || t('runtime.codexDefault')}</div></div>
+          <div><div className="qz-label">{t('runtime.revision')}</div><div className="qz-number" style={{ marginTop: 8 }}>{configuration.revision}</div></div>
         </div>
 
         <div className="qz-resource-note" style={{ marginBottom: 16 }}>
-          Codex model, provider endpoint, API key and worker limits are runtime configuration, not bootstrap environment variables. API keys are encrypted at rest and never read back to the browser. A blank API-key field keeps the stored key unchanged unless the provider endpoint changes. Stale saves are rejected by revision instead of overwriting newer configuration.
+          {t('runtime.note')}
         </div>
 
         <div className="qz-form-grid">
           <label className="qz-field">
-            <span className="qz-label">Codex model</span>
-            <TextField.Root value={model} onChange={(event) => setModel(event.target.value)} placeholder="Use Codex default" />
+            <span className="qz-label">{t('runtime.codexModel')}</span>
+            <TextField.Root value={model} onChange={(event) => setModel(event.target.value)} placeholder={t('runtime.useDefault')} />
           </label>
           <label className="qz-field">
-            <span className="qz-label">Codex base URL</span>
+            <span className="qz-label">{t('runtime.baseUrl')}</span>
             <TextField.Root value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.openai.com/v1" />
-            <span className="qz-list-subtitle">Absolute HTTP(S) provider API root. Do not embed credentials in the URL.</span>
+            <span className="qz-list-subtitle">{t('runtime.baseUrlHelp')}</span>
           </label>
           <label className="qz-field">
-            <span className="qz-label">Codex API key</span>
-            <TextField.Root type="password" value={apiKey} disabled={clearApiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={configuration.codex_api_key_configured ? 'Configured — enter a new key to replace' : 'Optional when using Codex login or an unauthenticated gateway'} />
-            {requiresKeyDecision ? <span className="qz-list-subtitle">Changing the Base URL cannot reuse the stored key. Re-enter the key for the new endpoint or clear it.</span> : null}
+            <span className="qz-label">{t('runtime.apiKey')}</span>
+            <TextField.Root type="password" value={apiKey} disabled={clearApiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={configuration.codex_api_key_configured ? t('runtime.keyConfigured') : t('runtime.keyOptional')} />
+            {requiresKeyDecision ? <span className="qz-list-subtitle">{t('runtime.keyEndpointWarning')}</span> : null}
           </label>
           <label className="qz-field" style={{ alignSelf: 'end' }}>
-            <span className="qz-label">Clear stored API key</span>
+            <span className="qz-label">{t('runtime.clearKey')}</span>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center', minHeight: 32 }}>
               <Switch checked={clearApiKey} onCheckedChange={(checked) => { setClearApiKey(checked); if (checked) setApiKey(''); }} />
-              <span className="qz-list-subtitle">{clearApiKey ? 'Will remove on save' : 'Keep current key'}</span>
+              <span className="qz-list-subtitle">{clearApiKey ? t('runtime.removeOnSave') : t('runtime.keepKey')}</span>
             </div>
           </label>
         </div>
 
-        <div style={{ margin: '22px 0 10px' }} className="qz-label">Worker limits</div>
+        <div style={{ margin: '22px 0 10px' }} className="qz-label">{t('runtime.workerLimits')}</div>
         <div className="qz-form-grid">
-          <label className="qz-field"><span className="qz-label">Max plugin wheel bytes</span><TextField.Root type="number" min="1" max={String(MAX_PLUGIN_WHEEL_BYTES)} step="1" value={maxWheelBytes} onChange={(event) => setMaxWheelBytes(event.target.value)} /><span className="qz-list-subtitle">Maximum 1 GiB.</span></label>
-          <label className="qz-field"><span className="qz-label">Plugin validation timeout (s)</span><TextField.Root type="number" min="1" max={String(MAX_WORKER_TIMEOUT_SECONDS)} step="1" value={pluginValidationTimeout} onChange={(event) => setPluginValidationTimeout(event.target.value)} /></label>
-          <label className="qz-field"><span className="qz-label">Bundle build timeout (s)</span><TextField.Root type="number" min="1" max={String(MAX_WORKER_TIMEOUT_SECONDS)} step="1" value={bundleBuildTimeout} onChange={(event) => setBundleBuildTimeout(event.target.value)} /></label>
-          <label className="qz-field"><span className="qz-label">Plugin job timeout (s)</span><TextField.Root type="number" min="1" max={String(MAX_WORKER_TIMEOUT_SECONDS)} step="1" value={pluginJobTimeout} onChange={(event) => setPluginJobTimeout(event.target.value)} /></label>
-          <label className="qz-field"><span className="qz-label">Mission job timeout (s)</span><TextField.Root type="number" min="1" max={String(MAX_WORKER_TIMEOUT_SECONDS)} step="1" value={missionJobTimeout} onChange={(event) => setMissionJobTimeout(event.target.value)} /><span className="qz-list-subtitle">Timeout limits: 1–86400 seconds.</span></label>
-          <label className="qz-field"><span className="qz-label">Job poll interval (s)</span><TextField.Root type="number" min="0.01" max={String(MAX_JOB_POLL_SECONDS)} step="0.01" value={jobPollSeconds} onChange={(event) => setJobPollSeconds(event.target.value)} /><span className="qz-list-subtitle">0.01–3600 seconds.</span></label>
-          <label className="qz-field"><span className="qz-label">Job lease (s)</span><TextField.Root type="number" min="1" max={String(MAX_JOB_LEASE_SECONDS)} step="1" value={jobLeaseSeconds} onChange={(event) => setJobLeaseSeconds(event.target.value)} /></label>
+          <label className="qz-field"><span className="qz-label">{t('runtime.maxWheel')}</span><TextField.Root type="number" min="1" max={String(MAX_PLUGIN_WHEEL_BYTES)} step="1" value={maxWheelBytes} onChange={(event) => setMaxWheelBytes(event.target.value)} /><span className="qz-list-subtitle">{t('runtime.max1Gib')}</span></label>
+          <label className="qz-field"><span className="qz-label">{t('runtime.validationTimeout')}</span><TextField.Root type="number" min="1" max={String(MAX_WORKER_TIMEOUT_SECONDS)} step="1" value={pluginValidationTimeout} onChange={(event) => setPluginValidationTimeout(event.target.value)} /></label>
+          <label className="qz-field"><span className="qz-label">{t('runtime.bundleTimeout')}</span><TextField.Root type="number" min="1" max={String(MAX_WORKER_TIMEOUT_SECONDS)} step="1" value={bundleBuildTimeout} onChange={(event) => setBundleBuildTimeout(event.target.value)} /></label>
+          <label className="qz-field"><span className="qz-label">{t('runtime.pluginJobTimeout')}</span><TextField.Root type="number" min="1" max={String(MAX_WORKER_TIMEOUT_SECONDS)} step="1" value={pluginJobTimeout} onChange={(event) => setPluginJobTimeout(event.target.value)} /></label>
+          <label className="qz-field"><span className="qz-label">{t('runtime.missionTimeout')}</span><TextField.Root type="number" min="1" max={String(MAX_WORKER_TIMEOUT_SECONDS)} step="1" value={missionJobTimeout} onChange={(event) => setMissionJobTimeout(event.target.value)} /><span className="qz-list-subtitle">{t('runtime.timeoutRange')}</span></label>
+          <label className="qz-field"><span className="qz-label">{t('runtime.pollInterval')}</span><TextField.Root type="number" min="0.01" max={String(MAX_JOB_POLL_SECONDS)} step="0.01" value={jobPollSeconds} onChange={(event) => setJobPollSeconds(event.target.value)} /><span className="qz-list-subtitle">{t('runtime.pollRange')}</span></label>
+          <label className="qz-field"><span className="qz-label">{t('runtime.jobLease')}</span><TextField.Root type="number" min="1" max={String(MAX_JOB_LEASE_SECONDS)} step="1" value={jobLeaseSeconds} onChange={(event) => setJobLeaseSeconds(event.target.value)} /></label>
         </div>
 
         {update.error ? <div style={{ marginTop: 16 }}><ErrorPanel error={update.error} /></div> : null}
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 18 }}>
-          <Button disabled={invalid || update.isPending} onClick={save}>{update.isPending ? 'Saving…' : 'Save runtime configuration'}</Button>
+          <Button disabled={invalid || update.isPending} onClick={save}>{update.isPending ? t('common.saving') : t('runtime.save')}</Button>
         </div>
       </div>
     </Section>

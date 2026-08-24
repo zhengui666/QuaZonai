@@ -13,6 +13,7 @@ import { PageHeader } from '../components/ui/PageHeader';
 import { PageSkeleton } from '../components/ui/Skeleton';
 import { StateBadge } from '../components/ui/StateBadge';
 import { Section } from '../components/ui/Section';
+import { Translated, useI18n } from '../i18n';
 import { useProgram, useProgramAction, useProgramActivity, useProgramMissions } from '../lib/api/hooks';
 import type { ActivityEvent, OhlcPoint } from '../lib/api/types';
 import { formatDateTime, humanize } from '../lib/format';
@@ -32,9 +33,9 @@ const evidenceColumns: ColumnDef<ActivityEvent, unknown>[] = [
   { id: 'summary', header: 'Evidence / result', cell: ({ row }) => <span className="qz-list-subtitle" style={{ whiteSpace: 'normal' }}>{eventSummary(row.original)}</span> },
 ];
 
-function eventSummary(event: ActivityEvent) {
+function eventSummary(event: ActivityEvent): ReactNode {
   const value = event.payload?.summary ?? event.payload?.result ?? event.payload?.classification ?? event.payload?.evidence;
-  if (value === undefined || value === null) return 'Structured event recorded.';
+  if (value === undefined || value === null) return <Translated source="Structured event recorded." />;
   return typeof value === 'string' ? value : JSON.stringify(value);
 }
 
@@ -50,13 +51,16 @@ function extractOhlc(events: Array<{ payload?: Record<string, unknown> }>): Ohlc
 }
 
 function ProgramActionDialog({ id, action, label, icon }: { id: string; action: 'pause' | 'resume' | 'archive' | 'restore'; label: string; icon: ReactNode }) {
+  const { t, text } = useI18n();
   const mutation = useProgramAction(id, action);
   const [reason, setReason] = useState('');
   const needsReason = action === 'pause' || action === 'archive';
-  return <Dialog.Root><Dialog.Trigger><Button size="1" variant="soft">{icon}{label}</Button></Dialog.Trigger><Dialog.Content maxWidth="440px"><Dialog.Title>{label} research program</Dialog.Title><Dialog.Description size="2" mb="4">This changes research scheduling only. It never controls an external Paper/Live runtime.</Dialog.Description>{needsReason ? <TextArea placeholder="Reason for operator override" value={reason} onChange={(event) => setReason(event.target.value)} /> : null}<div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}><Dialog.Close><Button variant="soft" color="gray">Cancel</Button></Dialog.Close><Button disabled={mutation.isPending || (needsReason && !reason.trim())} onClick={() => mutation.mutate(needsReason ? reason.trim() : undefined)}>{mutation.isPending ? 'Applying…' : label}</Button></div></Dialog.Content></Dialog.Root>;
+  const localizedLabel = text(label);
+  return <Dialog.Root><Dialog.Trigger><Button size="1" variant="soft">{icon}{localizedLabel}</Button></Dialog.Trigger><Dialog.Content maxWidth="440px"><Dialog.Title>{t('research.actionTitle', { action: localizedLabel })}</Dialog.Title><Dialog.Description size="2" mb="4">{t('research.actionDesc')}</Dialog.Description>{needsReason ? <TextArea placeholder={t('research.reasonPlaceholder')} value={reason} onChange={(event) => setReason(event.target.value)} /> : null}<div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}><Dialog.Close><Button variant="soft" color="gray">{t('common.cancel')}</Button></Dialog.Close><Button disabled={mutation.isPending || (needsReason && !reason.trim())} onClick={() => mutation.mutate(needsReason ? reason.trim() : undefined)}>{mutation.isPending ? t('common.applying') : localizedLabel}</Button></div></Dialog.Content></Dialog.Root>;
 }
 
 export function ResearchDetailPage() {
+  const { t } = useI18n();
   const { id } = useParams();
   const program = useProgram(id);
   const missions = useProgramMissions(id);
@@ -89,21 +93,21 @@ export function ResearchDetailPage() {
     <>
       <PageHeader
         title={current.title ?? current.charter?.research_question ?? `Research ${current.id.slice(0, 8)}`}
-        description={current.charter?.original_idea_text ?? 'Autonomous research program'}
+        description={current.charter?.original_idea_text ?? t('research.autonomousProgram')}
         actions={<>{current.state === 'ACTIVE' ? <ProgramActionDialog id={id} action="pause" label="Pause" icon={<PauseIcon size={14} />} /> : current.state === 'PAUSED' ? <ProgramActionDialog id={id} action="resume" label="Resume" icon={<PlayIcon size={14} />} /> : null}{current.state !== 'ARCHIVED' ? <ProgramActionDialog id={id} action="archive" label="Archive" icon={<ArchiveIcon size={14} />} /> : <ProgramActionDialog id={id} action="restore" label="Restore" icon={<RewindIcon size={14} />} />}</>}
       />
       <KpiStrip items={[
-        { label: 'Program state', value: <StateBadge state={current.state} />, note: current.cooling_reason ?? current.blocked_reason ?? current.wake_reason ?? 'Autonomous scheduling' },
-        { label: 'Missions', value: missionList.length, note: `${running} running · ${succeeded} succeeded · ${failed} failed` },
-        { label: 'Branches', value: current.branch_count ?? branchRows.length, note: 'Lineage-tracked hypothesis paths' },
-        { label: 'Alphas', value: current.alpha_count ?? '—', note: 'Qualified or under evaluation' },
+        { label: 'Program state', value: <StateBadge state={current.state} />, note: current.cooling_reason ?? current.blocked_reason ?? current.wake_reason ?? t('research.autonomousScheduling') },
+        { label: 'Missions', value: missionList.length, note: t('research.noteMissions', { running, succeeded, failed }) },
+        { label: 'Branches', value: current.branch_count ?? branchRows.length, note: t('research.lineagePaths') },
+        { label: 'Alphas', value: current.alpha_count ?? '—', note: t('research.qualifiedOrEval') },
       ]} />
-      <Section title="Frozen research charter" meta={`Created ${formatDateTime(current.charter?.created_at ?? current.created_at)}`}>
+      <Section title="Frozen research charter" meta={t('research.created', { date: formatDateTime(current.charter?.created_at ?? current.created_at) })}>
         <div className="qz-panel qz-panel-pad qz-grid-2">
-          <div><div className="qz-label">Research question</div><div style={{ fontSize: 13, marginTop: 5 }}>{current.charter?.research_question ?? '—'}</div></div>
-          <div><div className="qz-label">Prediction horizon</div><div className="qz-list-subtitle">{current.charter?.prediction_horizon ?? '—'}</div></div>
-          <div><div className="qz-label">Market scope</div><div className="qz-list-subtitle">{Array.isArray(current.charter?.market_scope) ? current.charter.market_scope.join(', ') : current.charter?.market_scope ?? '—'}</div></div>
-          <div><div className="qz-label">Explicit exclusions</div><div className="qz-list-subtitle">{current.charter?.explicit_exclusions?.join(', ') || 'None'}</div></div>
+          <div><div className="qz-label">{t('idea.researchQuestion')}</div><div style={{ fontSize: 13, marginTop: 5 }}>{current.charter?.research_question ?? '—'}</div></div>
+          <div><div className="qz-label">{t('idea.predictionHorizon')}</div><div className="qz-list-subtitle">{current.charter?.prediction_horizon ?? '—'}</div></div>
+          <div><div className="qz-label">{t('idea.marketScope')}</div><div className="qz-list-subtitle">{Array.isArray(current.charter?.market_scope) ? current.charter.market_scope.join(', ') : current.charter?.market_scope ?? '—'}</div></div>
+          <div><div className="qz-label">{t('research.explicitExclusions')}</div><div className="qz-list-subtitle">{current.charter?.explicit_exclusions?.join(', ') || t('common.none')}</div></div>
         </div>
       </Section>
       <div className="qz-grid-2">
@@ -114,7 +118,7 @@ export function ResearchDetailPage() {
       <Section title="Experiment & evidence ledger" meta="Independent evaluation, Search Ledger and exposure-related domain events">
         {evidenceEvents.length ? <DataTable data={evidenceEvents} columns={evidenceColumns} ariaLabel="Experiment and evidence events" initialPageSize={20} getRowId={(event) => String(event.id)} /> : <EmptyState title="No experiment evidence yet" description="Structured experiment, evaluation and evidence events will appear here when returned by the Program activity API." />}
       </Section>
-      <Section title="Agent activity" meta={`${events.length} structured events · hidden chain-of-thought excluded`}>
+      <Section title="Agent activity" meta={t('research.agentActivityMeta', { count: events.length })}>
         {events.length ? <div className="qz-panel qz-panel-pad qz-timeline">{events.slice(0, 40).map((event, index) => <div key={String(event.id)} className="qz-timeline-item" data-active={index === 0}><div className="qz-timeline-title">{humanize(event.kind)}</div><div className="qz-timeline-meta qz-number">{formatDateTime(event.created_at)}{event.mission_id ? ` · ${event.mission_id.slice(0, 8)}` : ''}</div>{event.payload?.summary ? <div className="qz-timeline-body">{String(event.payload.summary)}</div> : null}</div>)}</div> : <EmptyState title="No activity yet" description="Agent commands, test exits, Domain events and material evidence appear here without exposing hidden chain-of-thought." />}
       </Section>
     </>

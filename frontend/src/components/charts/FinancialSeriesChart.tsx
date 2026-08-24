@@ -1,5 +1,6 @@
 import { AreaSeries, ColorType, LineSeries, createChart, type AreaData, type ISeriesApi, type LineData, type Time } from 'lightweight-charts';
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
+import { useI18n } from '../../i18n';
 import type { TimeValuePoint } from '../../lib/metrics';
 
 export interface FinancialSeries { name: string; data: TimeValuePoint[]; kind?: 'line' | 'area'; }
@@ -12,8 +13,10 @@ function toTime(value: string | number): Time {
 
 export function FinancialSeriesChart({ series, ariaLabel, height = 320 }: { series: FinancialSeries[]; ariaLabel: string; height?: number }) {
   const ref = useRef<HTMLDivElement>(null);
+  const { text } = useI18n();
+  const localizedSeries = useMemo(() => series.map((item) => ({ ...item, name: text(item.name) })), [series, text]);
   useEffect(() => {
-    if (!ref.current || series.every((item) => item.data.length === 0)) return;
+    if (!ref.current || localizedSeries.every((item) => item.data.length === 0)) return;
     const styles = getComputedStyle(document.documentElement);
     const border = styles.getPropertyValue('--qz-border').trim();
     const muted = styles.getPropertyValue('--qz-text-faint').trim();
@@ -28,7 +31,7 @@ export function FinancialSeriesChart({ series, ariaLabel, height = 320 }: { seri
     });
     const colors = ['#4f9b82', '#8a9692', '#b08a56', '#7c8fa6'];
     const handles: Array<{ name: string; api: ISeriesApi<'Line'> | ISeriesApi<'Area'> }> = [];
-    series.forEach((item, index) => {
+    localizedSeries.forEach((item, index) => {
       if (!item.data.length) return;
       if (item.kind === 'area') {
         const api = chart.addSeries(AreaSeries, { lineColor: colors[index % colors.length], topColor: 'rgba(79,155,130,.20)', bottomColor: 'rgba(79,155,130,.02)', lineWidth: 2 });
@@ -57,6 +60,6 @@ export function FinancialSeriesChart({ series, ariaLabel, height = 320 }: { seri
     });
     chart.timeScale().fitContent();
     return () => chart.remove();
-  }, [ariaLabel, height, series]);
-  return <div ref={ref} className="qz-chart-host" style={{ minHeight: height }} role="img" aria-label={ariaLabel} />;
+  }, [height, localizedSeries]);
+  return <div ref={ref} className="qz-chart-host" style={{ minHeight: height }} role="img" aria-label={text(ariaLabel)} />;
 }

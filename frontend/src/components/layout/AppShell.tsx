@@ -16,17 +16,18 @@ import {
 import { Button, DropdownMenu, Theme } from '@radix-ui/themes';
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { localeLabels, localeOrder, useI18n, type MessageKey } from '../../i18n';
 import { PageSkeleton } from '../ui/Skeleton';
 
-const nav = [
-  { to: '/', label: 'Dashboard', icon: HouseIcon, end: true },
-  { to: '/ideas', label: 'Idea Composer', icon: FlaskIcon },
-  { to: '/research', label: 'Research Observatory', icon: AtomIcon },
-  { to: '/alpha', label: 'Alpha Library', icon: ChartLineUpIcon },
-  { to: '/portfolio', label: 'Portfolio Lab', icon: CirclesFourIcon },
-  { to: '/approval', label: 'Candidate Approval', icon: TargetIcon },
-  { to: '/handoff', label: 'Handoff Center', icon: PaperPlaneTiltIcon },
-  { to: '/admin', label: 'Administration', icon: GearIcon },
+const nav: Array<{ to: string; labelKey: MessageKey; mobileKey?: MessageKey; icon: typeof HouseIcon; end?: boolean }> = [
+  { to: '/', labelKey: 'nav.dashboard', icon: HouseIcon, end: true },
+  { to: '/ideas', labelKey: 'nav.ideas', mobileKey: 'nav.mobile.ideas', icon: FlaskIcon },
+  { to: '/research', labelKey: 'nav.research', mobileKey: 'nav.mobile.research', icon: AtomIcon },
+  { to: '/alpha', labelKey: 'nav.alpha', mobileKey: 'nav.mobile.alpha', icon: ChartLineUpIcon },
+  { to: '/portfolio', labelKey: 'nav.portfolio', mobileKey: 'nav.mobile.portfolio', icon: CirclesFourIcon },
+  { to: '/approval', labelKey: 'nav.approval', icon: TargetIcon },
+  { to: '/handoff', labelKey: 'nav.handoff', icon: PaperPlaneTiltIcon },
+  { to: '/admin', labelKey: 'nav.admin', icon: GearIcon },
 ];
 
 function useThemeMode() {
@@ -40,30 +41,31 @@ function useThemeMode() {
 
 export function AppShell() {
   const [mode, setMode] = useThemeMode();
+  const { locale, setLocale, t } = useI18n();
   const location = useLocation();
   const navigate = useNavigate();
-  const current = useMemo(
-    () => nav.find((item) => (item.end ? location.pathname === item.to : location.pathname.startsWith(item.to)))?.label ?? 'QuaZonai',
-    [location.pathname],
-  );
+  const current = useMemo(() => {
+    const item = nav.find((entry) => (entry.end ? location.pathname === entry.to : location.pathname.startsWith(entry.to)));
+    return item ? t(item.labelKey) : 'QuaZonai';
+  }, [location.pathname, t]);
 
   return (
     <Theme appearance={mode} accentColor="jade" grayColor="sage" radius="small" scaling="90%">
       <div className="qz-app">
-        <aside className="qz-sidebar" aria-label="Primary navigation">
+        <aside className="qz-sidebar" aria-label={t('a11y.primaryNavigation')}>
           <div className="qz-brand">
             <div className="qz-brand-mark" aria-hidden="true"><GaugeIcon size={18} weight="duotone" /></div>
-            <div><div className="qz-brand-title">QuaZonai</div><div className="qz-brand-subtitle">Quant Research Cockpit</div></div>
+            <div><div className="qz-brand-title">QuaZonai</div><div className="qz-brand-subtitle">{t('brand.subtitle')}</div></div>
           </div>
           <nav className="qz-nav">
-            {nav.map(({ to, label, icon: Icon, end }) => (
+            {nav.map(({ to, labelKey, icon: Icon, end }) => (
               <NavLink key={to} to={to} end={end} className="qz-nav-link">
-                {({ isActive }) => <><Icon size={17} weight={isActive ? 'duotone' : 'regular'} /><span>{label}</span></>}
+                {({ isActive }) => <><Icon size={17} weight={isActive ? 'duotone' : 'regular'} /><span>{t(labelKey)}</span></>}
               </NavLink>
             ))}
           </nav>
           <div className="qz-sidebar-bottom">
-            <NavLink to="/admin" className="qz-nav-link"><BellIcon size={17} /><span>System status</span></NavLink>
+            <NavLink to="/admin" className="qz-nav-link"><BellIcon size={17} /><span>{t('nav.status')}</span></NavLink>
           </div>
         </aside>
         <main className="qz-main">
@@ -72,25 +74,39 @@ export function AppShell() {
             <div className="qz-topbar-actions">
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger>
-                  <Button className="qz-mobile-nav-button" aria-label="Open navigation" size="1" variant="soft"><ListIcon size={16} /></Button>
+                  <Button className="qz-mobile-nav-button" aria-label={t('a11y.openNavigation')} size="1" variant="soft"><ListIcon size={16} /></Button>
                 </DropdownMenu.Trigger>
                 <DropdownMenu.Content align="end">
-                  {nav.map(({ to, label, icon: Icon }) => (
-                    <DropdownMenu.Item key={to} onSelect={() => navigate(to)}><Icon size={14} />{label}</DropdownMenu.Item>
+                  {nav.map(({ to, labelKey, icon: Icon }) => (
+                    <DropdownMenu.Item key={to} onSelect={() => navigate(to)}><Icon size={14} />{t(labelKey)}</DropdownMenu.Item>
                   ))}
                 </DropdownMenu.Content>
               </DropdownMenu.Root>
-              <Button aria-label={`Switch to ${mode === 'dark' ? 'light' : 'dark'} theme`} size="1" variant="soft" onClick={() => setMode(mode === 'dark' ? 'light' : 'dark')}>
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger>
+                  <Button aria-label={t('language.change')} size="1" variant="soft" className="qz-locale-button">{localeLabels[locale].short}</Button>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Content align="end">
+                  {localeOrder.map((code) => (
+                    <DropdownMenu.Item key={code} onSelect={() => setLocale(code)}>
+                      <span aria-hidden="true" className="qz-locale-check">{code === locale ? '✓' : ''}</span>
+                      <span>{localeLabels[code].native}</span>
+                      <span className="qz-section-meta">{localeLabels[code].english}</span>
+                    </DropdownMenu.Item>
+                  ))}
+                </DropdownMenu.Content>
+              </DropdownMenu.Root>
+              <Button aria-label={mode === 'dark' ? t('theme.light') : t('theme.dark')} size="1" variant="soft" onClick={() => setMode(mode === 'dark' ? 'light' : 'dark')}>
                 {mode === 'dark' ? <SunIcon size={15} /> : <MoonIcon size={15} />}
               </Button>
             </div>
           </header>
           <div className="qz-content"><Suspense fallback={<PageSkeleton />}><Outlet /></Suspense></div>
         </main>
-        <nav className="qz-mobile-nav" aria-label="Mobile primary navigation">
-          {nav.slice(0, 5).map(({ to, label, icon: Icon, end }) => (
+        <nav className="qz-mobile-nav" aria-label={t('a11y.mobileNavigation')}>
+          {nav.slice(0, 5).map(({ to, labelKey, mobileKey, icon: Icon, end }) => (
             <NavLink key={to} to={to} end={end}>
-              {({ isActive }) => <><Icon size={19} weight={isActive ? 'duotone' : 'regular'} /><span>{label.replace('Idea Composer', 'Ideas').replace('Research Observatory', 'Research').replace('Alpha Library', 'Alpha').replace('Portfolio Lab', 'Portfolio')}</span></>}
+              {({ isActive }) => <><Icon size={19} weight={isActive ? 'duotone' : 'regular'} /><span>{t(mobileKey ?? labelKey)}</span></>}
             </NavLink>
           ))}
         </nav>

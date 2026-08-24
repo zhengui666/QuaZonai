@@ -5,9 +5,11 @@ import { useNavigate } from 'react-router-dom';
 import { ErrorPanel } from '../components/ui/ErrorPanel';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Section } from '../components/ui/Section';
+import { useI18n } from '../i18n';
 import { useIdeaPreview, useStartResearch } from '../lib/api/hooks';
 
 export function IdeaComposerPage() {
+  const { t } = useI18n();
   const [idea, setIdea] = useState('');
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [overlapAction, setOverlapAction] = useState('recommended');
@@ -34,46 +36,46 @@ export function IdeaComposerPage() {
         <Section title="Research idea" meta="One clarification round maximum">
           <div className="qz-panel qz-panel-pad qz-form-grid">
             <label className="qz-field">
-              <span className="qz-label">What should the research system investigate?</span>
+              <span className="qz-label">{t('idea.question')}</span>
               <TextArea
                 size="3"
                 rows={8}
                 value={idea}
                 onChange={(event) => setIdea(event.target.value)}
-                placeholder="Example: Test whether short-horizon post-earnings drift in liquid US equities remains predictive after realistic turnover and capacity costs."
+                placeholder={t('idea.placeholder')}
               />
-              <span className="qz-help">State the market, economic intuition, horizon, or explicit exclusions if they matter. Do not specify model classes or optimization algorithms unless they are part of the investment hypothesis.</span>
+              <span className="qz-help">{t('idea.help')}</span>
             </label>
             <Button disabled={!canPreview || preview.isPending} onClick={() => preview.mutate(idea.trim())}>
-              <FlaskIcon size={15} />{preview.isPending ? 'Analyzing…' : 'Preview research charter'}
+              <FlaskIcon size={15} />{preview.isPending ? t('idea.analyzing') : t('idea.preview')}
             </Button>
             {preview.error ? <ErrorPanel error={preview.error} /> : null}
           </div>
         </Section>
         <Section title="Charter preview" meta="Frozen after Start Research">
           {!result ? (
-            <div className="qz-empty"><div><strong>No charter yet</strong><div>Preview the idea to see the immutable research boundary before committing compute and evidence.</div></div></div>
+            <div className="qz-empty"><div><strong>{t('idea.noCharter')}</strong><div>{t('idea.noCharterDesc')}</div></div></div>
           ) : (
             <div className="qz-panel qz-panel-pad qz-form-grid">
               {result.overlap ? (
                 <Callout.Root color="amber" size="1">
                   <Callout.Icon><WarningCircleIcon /></Callout.Icon>
-                  <Callout.Text><strong>{result.overlap.kind}</strong> · {result.overlap.rationale ?? result.overlap.recommendation ?? 'Existing research may overlap.'}</Callout.Text>
+                  <Callout.Text><strong>{result.overlap.kind}</strong> · {result.overlap.rationale ?? result.overlap.recommendation ?? t('idea.overlapFallback')}</Callout.Text>
                 </Callout.Root>
               ) : (
                 <Callout.Root color="green" size="1">
                   <Callout.Icon><CheckCircleIcon /></Callout.Icon>
-                  <Callout.Text>No material overlap detected.</Callout.Text>
+                  <Callout.Text>{t('idea.noOverlap')}</Callout.Text>
                 </Callout.Root>
               )}
-              <div><div className="qz-label">Research question</div><div style={{ marginTop: 5, fontSize: 13 }}>{result.charter?.research_question ?? idea}</div></div>
+              <div><div className="qz-label">{t('idea.researchQuestion')}</div><div style={{ marginTop: 5, fontSize: 13 }}>{result.charter?.research_question ?? idea}</div></div>
               <div className="qz-grid-2">
-                <div><div className="qz-label">Market scope</div><div className="qz-list-subtitle">{Array.isArray(result.charter?.market_scope) ? result.charter.market_scope.join(', ') : result.charter?.market_scope ?? 'System inferred'}</div></div>
-                <div><div className="qz-label">Prediction horizon</div><div className="qz-list-subtitle">{result.charter?.prediction_horizon ?? 'System inferred'}</div></div>
+                <div><div className="qz-label">{t('idea.marketScope')}</div><div className="qz-list-subtitle">{Array.isArray(result.charter?.market_scope) ? result.charter.market_scope.join(', ') : result.charter?.market_scope ?? t('common.systemInferred')}</div></div>
+                <div><div className="qz-label">{t('idea.predictionHorizon')}</div><div className="qz-list-subtitle">{result.charter?.prediction_horizon ?? t('common.systemInferred')}</div></div>
               </div>
               {questions.length ? (
                 <div className="qz-form-grid">
-                  <div className="qz-label">Material clarification</div>
+                  <div className="qz-label">{t('idea.materialClarification')}</div>
                   {questions.map((question) => (
                     <label className="qz-field" key={question.key}>
                       <span style={{ fontSize: 12 }}>{question.question}</span>
@@ -84,13 +86,13 @@ export function IdeaComposerPage() {
               ) : null}
               {result.overlap ? (
                 <RadioGroup.Root value={overlapAction} onValueChange={setOverlapAction}>
-                  <RadioGroup.Item value="recommended">Use system recommendation</RadioGroup.Item>
-                  <RadioGroup.Item value="new-program">Create related program</RadioGroup.Item>
-                  <RadioGroup.Item value="independent-program">Create independent program with inherited evidence burden</RadioGroup.Item>
+                  <RadioGroup.Item value="recommended">{t('idea.useRecommendation')}</RadioGroup.Item>
+                  <RadioGroup.Item value="new-program">{t('idea.createRelated')}</RadioGroup.Item>
+                  <RadioGroup.Item value="independent-program">{t('idea.createIndependent')}</RadioGroup.Item>
                 </RadioGroup.Root>
               ) : null}
               <Button color="green" disabled={start.isPending || (questions.length > 0 && !answersComplete)} onClick={launch}>
-                {start.isPending ? 'Starting…' : 'Start Research'}
+                {start.isPending ? t('common.starting') : t('idea.startResearch')}
               </Button>
               {start.error ? <ErrorPanel error={start.error} /> : null}
             </div>

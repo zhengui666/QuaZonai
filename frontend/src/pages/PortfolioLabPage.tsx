@@ -12,6 +12,7 @@ import { PageHeader } from '../components/ui/PageHeader';
 import { PageSkeleton } from '../components/ui/Skeleton';
 import { StateBadge } from '../components/ui/StateBadge';
 import { Section } from '../components/ui/Section';
+import { Translated, useI18n } from '../i18n';
 import { useCandidates, useMandates, usePortfolioPrograms } from '../lib/api/hooks';
 import type { PortfolioProgram } from '../lib/api/types';
 import { formatDateTime } from '../lib/format';
@@ -22,10 +23,11 @@ const programColumns: ColumnDef<PortfolioProgram, unknown>[] = [
   { accessorKey: 'state', header: 'State', cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
   { accessorKey: 'candidate_count', header: 'Candidates', cell: ({ getValue }) => <span className="qz-number">{String(getValue() ?? '—')}</span> },
   { accessorKey: 'updated_at', header: 'Updated', cell: ({ getValue }) => formatDateTime(getValue() as string | undefined) },
-  { id: 'candidate', header: '', cell: ({ row }) => row.original.current_candidate_id ? <Button asChild size="1" variant="ghost"><Link to={`/portfolio/candidates/${row.original.current_candidate_id}`}>Candidate <ArrowRightIcon size={12} /></Link></Button> : <span className="qz-section-meta">Researching</span> },
+  { id: 'candidate', header: '', cell: ({ row }) => row.original.current_candidate_id ? <Button asChild size="1" variant="ghost"><Link to={`/portfolio/candidates/${row.original.current_candidate_id}`}><Translated source="Candidate" /> <ArrowRightIcon size={12} /></Link></Button> : <span className="qz-section-meta"><Translated source="Researching" /></span> },
 ];
 
 export function PortfolioLabPage() {
+  const { t } = useI18n();
   const mandates = useMandates();
   const programs = usePortfolioPrograms();
   const candidateIds = (programs.data ?? []).flatMap((item) => item.current_candidate_id ? [item.current_candidate_id] : []);
@@ -49,7 +51,7 @@ export function PortfolioLabPage() {
   return (
     <>
       <PageHeader title="Portfolio Lab" description="Qualified Alpha assets are assembled under immutable Mandates and current Capital Context. The workbench visualizes allocation, risk and evidence but never exposes manual weighting or trading controls." />
-      <Section title="Mandates" meta="Capital objectives are versioned separately from Alpha research"><div className="qz-grid-3">{(mandates.data ?? []).map((mandate) => <div className="qz-panel qz-panel-pad" key={mandate.id}><div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}><strong style={{ fontSize: 13 }}>{mandate.name}</strong><StateBadge state={mandate.enabled ? 'ENABLED' : 'DISABLED'} /></div><div className="qz-list-subtitle" style={{ marginTop: 8 }}>{String(mandate.spec_json?.objective ?? mandate.spec_json?.description ?? 'Versioned portfolio mandate')}</div><div className="qz-section-meta qz-mono" style={{ marginTop: 12 }}>{mandate.latest_version_id?.slice(0, 12) ?? mandate.id.slice(0, 12)}</div></div>)}</div></Section>
+      <Section title="Mandates" meta="Capital objectives are versioned separately from Alpha research"><div className="qz-grid-3">{(mandates.data ?? []).map((mandate) => <div className="qz-panel qz-panel-pad" key={mandate.id}><div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}><strong style={{ fontSize: 13 }}>{mandate.name}</strong><StateBadge state={mandate.enabled ? 'ENABLED' : 'DISABLED'} /></div><div className="qz-list-subtitle" style={{ marginTop: 8 }}>{String(mandate.spec_json?.objective ?? mandate.spec_json?.description ?? t('portfolio.versionedMandate'))}</div><div className="qz-section-meta qz-mono" style={{ marginTop: 12 }}>{mandate.latest_version_id?.slice(0, 12) ?? mandate.id.slice(0, 12)}</div></div>)}</div></Section>
       <Section title="Portfolio Programs" meta="Automatically created when qualified assets create a real assembly opportunity"><DataTable data={programs.data ?? []} columns={programColumns} searchPlaceholder="Filter portfolio programs…" emptyTitle="No portfolio programs" emptyDescription="Programs appear after a Mandate is enabled and qualified Alpha assets support portfolio research." getRowId={(row) => row.id} /></Section>
       <div className="qz-grid-2">
         <Section title="Portfolio equity" meta="Lightweight Charts · latest API candidate">{equity.length ? <div className="qz-panel qz-panel-pad"><FinancialSeriesChart ariaLabel="Portfolio equity and benchmark chart" series={[{ name: 'Portfolio', data: equity, kind: 'area' }, { name: 'Benchmark', data: benchmark }]} /></div> : <EmptyState title="No equity curve" description="The latest candidate has not returned a portfolio performance series." />}</Section>

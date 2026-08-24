@@ -13,6 +13,7 @@ import {
 } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useMemo, useRef, useState } from 'react';
+import { useI18n } from '../../i18n';
 import { EmptyState } from './EmptyState';
 
 interface DataTableProps<T> {
@@ -38,6 +39,7 @@ export function DataTable<T>({
   ariaLabel = 'Data table',
   enableVirtualization = true,
 }: DataTableProps<T>) {
+  const { t, text } = useI18n();
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
@@ -76,17 +78,17 @@ export function DataTable<T>({
   return (
     <div className="qz-table-shell">
       <div className="qz-table-toolbar">
-        <TextField.Root className="qz-table-search" size="1" value={globalFilter} onChange={(event) => { setGlobalFilter(event.target.value); table.setPageIndex(0); }} placeholder={searchPlaceholder}>
+        <TextField.Root className="qz-table-search" size="1" value={globalFilter} onChange={(event) => { setGlobalFilter(event.target.value); table.setPageIndex(0); }} placeholder={text(searchPlaceholder)}>
           <TextField.Slot><MagnifyingGlassIcon size={14} /></TextField.Slot>
         </TextField.Root>
         <div className="qz-table-tools">
-          <span className="qz-section-meta qz-number">{table.getFilteredRowModel().rows.length} rows</span>
+          <span className="qz-section-meta qz-number">{t('table.rows', { count: table.getFilteredRowModel().rows.length })}</span>
           <DropdownMenu.Root>
-            <DropdownMenu.Trigger><Button size="1" variant="soft"><ColumnsIcon size={13} />Columns</Button></DropdownMenu.Trigger>
+            <DropdownMenu.Trigger><Button size="1" variant="soft"><ColumnsIcon size={13} />{t('table.columns')}</Button></DropdownMenu.Trigger>
             <DropdownMenu.Content align="end">
               {table.getAllLeafColumns().filter((column) => column.getCanHide()).map((column) => (
                 <DropdownMenu.CheckboxItem key={column.id} checked={column.getIsVisible()} onCheckedChange={(checked) => column.toggleVisibility(Boolean(checked))}>
-                  {String(column.columnDef.header ?? column.id)}
+                  {text(String(column.columnDef.header ?? column.id))}
                 </DropdownMenu.CheckboxItem>
               ))}
             </DropdownMenu.Content>
@@ -94,21 +96,24 @@ export function DataTable<T>({
         </div>
       </div>
       <div ref={viewportRef} className="qz-table-viewport" data-virtualized={virtualEnabled ? 'true' : 'false'}>
-        <table className="qz-table" aria-label={ariaLabel}>
+        <table className="qz-table" aria-label={text(ariaLabel)}>
           <thead>
             {table.getHeaderGroups().map((group) => (
               <tr key={group.id}>
                 {group.headers.map((header) => {
                   const sorted = header.column.getIsSorted();
                   const ariaSort = sorted === 'asc' ? 'ascending' : sorted === 'desc' ? 'descending' : header.column.getCanSort() ? 'none' : undefined;
+                  const headerContent = typeof header.column.columnDef.header === 'string'
+                    ? text(header.column.columnDef.header)
+                    : flexRender(header.column.columnDef.header, header.getContext());
                   return (
                     <th key={header.id} colSpan={header.colSpan} aria-sort={ariaSort}>
                       {header.isPlaceholder ? null : header.column.getCanSort() ? (
                         <Button className="qz-sort-button" type="button" size="1" variant="ghost" onClick={header.column.getToggleSortingHandler()}>
-                          {flexRender(header.column.columnDef.header, header.getContext())}
+                          {headerContent}
                           {sorted === 'asc' ? <CaretUpIcon size={11} /> : sorted === 'desc' ? <CaretDownIcon size={11} /> : <CaretUpDownIcon size={11} />}
                         </Button>
-                      ) : flexRender(header.column.columnDef.header, header.getContext())}
+                      ) : headerContent}
                     </th>
                   );
                 })}
@@ -125,14 +130,14 @@ export function DataTable<T>({
         </table>
       </div>
       <div className="qz-table-pagination">
-        <span className="qz-number">Page {table.getState().pagination.pageIndex + 1} / {Math.max(1, table.getPageCount())}</span>
+        <span className="qz-number">{t('table.page', { page: table.getState().pagination.pageIndex + 1, pages: Math.max(1, table.getPageCount()) })}</span>
         <div className="qz-table-tools">
           <Select.Root value={String(table.getState().pagination.pageSize)} onValueChange={(value) => table.setPageSize(Number(value))}>
-            <Select.Trigger aria-label="Rows per page" />
-            <Select.Content>{[20, 50, 100].map((size) => <Select.Item value={String(size)} key={size}>{size} / page</Select.Item>)}</Select.Content>
+            <Select.Trigger aria-label={t('table.rowsPerPage')} />
+            <Select.Content>{[20, 50, 100].map((size) => <Select.Item value={String(size)} key={size}>{t('table.perPage', { count: size })}</Select.Item>)}</Select.Content>
           </Select.Root>
-          <Button size="1" variant="soft" disabled={!table.getCanPreviousPage()} onClick={() => table.previousPage()}>Previous</Button>
-          <Button size="1" variant="soft" disabled={!table.getCanNextPage()} onClick={() => table.nextPage()}>Next</Button>
+          <Button size="1" variant="soft" disabled={!table.getCanPreviousPage()} onClick={() => table.previousPage()}>{t('table.previous')}</Button>
+          <Button size="1" variant="soft" disabled={!table.getCanNextPage()} onClick={() => table.nextPage()}>{t('table.next')}</Button>
         </div>
       </div>
     </div>

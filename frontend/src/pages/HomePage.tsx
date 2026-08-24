@@ -9,6 +9,7 @@ import { PageHeader } from '../components/ui/PageHeader';
 import { PageSkeleton } from '../components/ui/Skeleton';
 import { StateBadge } from '../components/ui/StateBadge';
 import { Section } from '../components/ui/Section';
+import { useI18n } from '../i18n';
 import { useAlphaLibrary, useApprovals, useHandoffs, useHealth, usePortfolioPrograms, useProgramMissionMatrix, usePrograms, useReadiness } from '../lib/api/hooks';
 import { formatDateTime, humanize } from '../lib/format';
 import { useEventStream } from '../lib/useEventStream';
@@ -26,6 +27,7 @@ function healthState(value: unknown) {
 }
 
 export function HomePage() {
+  const { t, plural } = useI18n();
   const programs = usePrograms();
   const approvals = useApprovals();
   const readiness = useReadiness();
@@ -55,9 +57,9 @@ export function HomePage() {
   const candidateReady = (portfolio.data ?? []).filter((item) => /CANDIDATE|READY/i.test(item.state)).length;
   const availableHandoffs = (handoffs.data ?? []).filter((item) => item.state === 'AVAILABLE').length;
   const pulse = [
-    { label: 'Programs', active, cooling, evidence: events.filter((event) => /EVALUAT|EVIDENCE|QUALIF/i.test(event.kind)).length },
-    { label: 'Missions', active: runningMissions, cooling: blocked, evidence: missions.filter((mission) => mission.state === 'SUCCEEDED').length },
-    { label: 'Evidence', active: (alphas.data ?? []).length, cooling: evaluationRunning, evidence: events.length },
+    { label: t('research.program'), active, cooling, evidence: events.filter((event) => /EVALUAT|EVIDENCE|QUALIF/i.test(event.kind)).length },
+    { label: t('research.missions'), active: runningMissions, cooling: blocked, evidence: missions.filter((mission) => mission.state === 'SUCCEEDED').length },
+    { label: t('alpha.evidence'), active: (alphas.data ?? []).length, cooling: evaluationRunning, evidence: events.length },
   ];
 
   return (
@@ -65,33 +67,33 @@ export function HomePage() {
       <PageHeader
         title="Research command center"
         description="Autonomous research, independent evaluation, portfolio construction and handoff readiness in one operational cockpit. Human attention stays concentrated on ideas and immutable candidate decisions."
-        actions={<><Button asChild size="2"><Link to="/ideas"><FlaskIcon size={15} />Propose idea</Link></Button><Button asChild size="2" variant="soft"><Link to="/approval"><TargetIcon size={15} />Review approvals</Link></Button></>}
+        actions={<><Button asChild size="2"><Link to="/ideas"><FlaskIcon size={15} />{t('home.proposeIdea')}</Link></Button><Button asChild size="2" variant="soft"><Link to="/approval"><TargetIcon size={15} />{t('home.reviewApprovals')}</Link></Button></>}
       />
       <KpiStrip items={[
-        { label: 'Active programs', value: active, note: `${cooling} cooling · ${blocked} blocked` },
-        { label: 'Running missions', value: runningMissions, note: `${discoveryMissions} alpha discovery` },
-        { label: 'Alpha library', value: (alphas.data ?? []).length, note: `${evaluationRunning} evaluations running` },
-        { label: 'Evaluation status', value: evaluationRunning ? 'RUNNING' : evaluationMissions.length ? 'CURRENT' : 'IDLE', note: `${evaluationMissions.length} evaluation missions observed` },
+        { label: 'Active programs', value: active, note: t('home.notePrograms', { cooling, blocked }) },
+        { label: 'Running missions', value: runningMissions, note: t('home.noteDiscovery', { count: discoveryMissions }) },
+        { label: 'Alpha Library', value: (alphas.data ?? []).length, note: t('home.noteEvaluations', { count: evaluationRunning }) },
+        { label: 'Evaluation status', value: humanize(evaluationRunning ? 'RUNNING' : evaluationMissions.length ? 'CURRENT' : 'IDLE'), note: t('home.noteEvaluationMissions', { count: evaluationMissions.length }) },
       ]} />
       <div className="qz-split" style={{ marginTop: 20 }}>
         <Section title="Research pulse" meta="Material progress, not token or command counts"><div className="qz-panel qz-panel-pad"><ResearchPulseChart data={pulse} /></div></Section>
-        <Section title="Action center" meta={`${pending.length} decision${pending.length === 1 ? '' : 's'}`}>
-          {pending.length ? <div className="qz-panel qz-panel-pad qz-list">{pending.slice(0, 5).map((approval) => <div className="qz-list-row" key={approval.id}><div className="qz-list-main"><div className="qz-list-title">{approval.purpose} candidate · {approval.candidate?.mandate_name ?? approval.candidate_id.slice(0, 8)}</div><div className="qz-list-subtitle">Valid until {formatDateTime(approval.valid_until ?? approval.expires_at)}</div></div><Button asChild size="1" variant="ghost"><Link to="/approval">Review <ArrowRightIcon size={12} /></Link></Button></div>)}</div> : <EmptyState title="No decisions waiting" description="Research continues autonomously. You will only be interrupted by a material candidate or required administration." />}
+        <Section title="Action center" meta={plural({ one: 'home.decision', other: 'home.decisions' }, pending.length)}>
+          {pending.length ? <div className="qz-panel qz-panel-pad qz-list">{pending.slice(0, 5).map((approval) => <div className="qz-list-row" key={approval.id}><div className="qz-list-main"><div className="qz-list-title">{approval.purpose} {t('common.candidate')} · {approval.candidate?.mandate_name ?? approval.candidate_id.slice(0, 8)}</div><div className="qz-list-subtitle">{t('home.validUntil', { date: formatDateTime(approval.valid_until ?? approval.expires_at) })}</div></div><Button asChild size="1" variant="ghost"><Link to="/approval">{t('home.review')} <ArrowRightIcon size={12} /></Link></Button></div>)}</div> : <EmptyState title="No decisions waiting" description="Research continues autonomously. You will only be interrupted by a material candidate or required administration." />}
         </Section>
       </div>
       <Section title="Portfolio readiness" meta="Construction and handoff pipeline">
         <KpiStrip items={[
-          { label: 'Candidates ready', value: candidateReady, note: `${(portfolio.data ?? []).length} portfolio programs` },
-          { label: 'Approval pending', value: pending.length, note: pending.length ? 'Human decision required' : 'No approval queue' },
-          { label: 'Handoff available', value: availableHandoffs, note: `${(handoffs.data ?? []).filter((item) => item.state === 'CLAIMED').length} claimed` },
-          { label: 'Paper readiness', value: ready(readiness.data?.PAPER_HANDOFF_READY) ? 'READY' : 'NOT READY', note: ready(readiness.data?.LIVE_HANDOFF_READY) ? 'Live also ready' : 'Live independently gated' },
+          { label: 'Candidates ready', value: candidateReady, note: `${(portfolio.data ?? []).length} ${t('portfolio.programs')}` },
+          { label: 'Approval pending', value: pending.length, note: pending.length ? t('home.humanRequired') : t('home.noApprovalQueue') },
+          { label: 'Handoff available', value: availableHandoffs, note: `${(handoffs.data ?? []).filter((item) => item.state === 'CLAIMED').length} ${t('handoff.claimed')}` },
+          { label: 'Paper readiness', value: ready(readiness.data?.PAPER_HANDOFF_READY) ? t('common.ready') : t('common.notReady'), note: ready(readiness.data?.LIVE_HANDOFF_READY) ? t('home.liveAlsoReady') : t('home.liveGated') },
         ]} />
       </Section>
       <Section title="System health" meta="Backend-authoritative readiness">
         <div className="qz-grid-3">
-          <div className="qz-panel qz-panel-pad"><div className="qz-label">Agent worker heartbeat</div><div style={{ marginTop: 8 }}><StateBadge state={healthState(health.data?.agent_worker)} /></div><div className="qz-list-subtitle">Mission process and Codex child lifecycle</div></div>
-          <div className="qz-panel qz-panel-pad"><div className="qz-label">Codex readiness</div><div style={{ marginTop: 8 }}><StateBadge state={healthState(health.data?.codex)} /></div><div className="qz-list-subtitle">App Server authentication and runtime availability</div></div>
-          <div className="qz-panel qz-panel-pad"><div className="qz-label">Data readiness</div><div style={{ marginTop: 8 }}><StateBadge state={ready(readiness.data?.RESEARCH_READY) ? 'READY' : healthState(health.data?.data)} /></div><div className="qz-list-subtitle">Governed Discovery data required for research</div></div>
+          <div className="qz-panel qz-panel-pad"><div className="qz-label">{t('home.agentHeartbeat')}</div><div style={{ marginTop: 8 }}><StateBadge state={healthState(health.data?.agent_worker)} /></div><div className="qz-list-subtitle">{t('home.agentHeartbeatDesc')}</div></div>
+          <div className="qz-panel qz-panel-pad"><div className="qz-label">{t('home.codexReadiness')}</div><div style={{ marginTop: 8 }}><StateBadge state={healthState(health.data?.codex)} /></div><div className="qz-list-subtitle">{t('home.codexReadinessDesc')}</div></div>
+          <div className="qz-panel qz-panel-pad"><div className="qz-label">{t('home.dataReadiness')}</div><div style={{ marginTop: 8 }}><StateBadge state={ready(readiness.data?.RESEARCH_READY) ? 'READY' : healthState(health.data?.data)} /></div><div className="qz-list-subtitle">{t('home.dataReadinessDesc')}</div></div>
         </div>
       </Section>
       <Section title="Recent material events" meta={connected ? 'Live SSE connection' : 'Reconnecting automatically'}>

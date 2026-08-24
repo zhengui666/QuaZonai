@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, type RenderOptions } from '@testing-library/react';
 import type { ReactElement, ReactNode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
+import { I18nProvider } from '../i18n';
 
 export function renderApp(ui: ReactElement, options?: RenderOptions & { route?: string }) {
   const client = new QueryClient({
@@ -11,11 +12,13 @@ export function renderApp(ui: ReactElement, options?: RenderOptions & { route?: 
 
   function Wrapper({ children }: { children: ReactNode }) {
     return (
-      <Theme appearance="dark" accentColor="jade" grayColor="sage" radius="medium" scaling="90%">
-        <QueryClientProvider client={client}>
-          <MemoryRouter initialEntries={[options?.route ?? '/']}>{children}</MemoryRouter>
-        </QueryClientProvider>
-      </Theme>
+      <I18nProvider initialLocale="en">
+        <Theme appearance="dark" accentColor="jade" grayColor="sage" radius="medium" scaling="90%">
+          <QueryClientProvider client={client}>
+            <MemoryRouter initialEntries={[options?.route ?? '/']}>{children}</MemoryRouter>
+          </QueryClientProvider>
+        </Theme>
+      </I18nProvider>
     );
   }
 

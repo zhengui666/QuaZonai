@@ -9,6 +9,7 @@ import { PageHeader } from '../components/ui/PageHeader';
 import { PageSkeleton } from '../components/ui/Skeleton';
 import { StateBadge } from '../components/ui/StateBadge';
 import { Section } from '../components/ui/Section';
+import { useI18n } from '../i18n';
 import { useHandoffs, useRevokeHandoff } from '../lib/api/hooks';
 import type { HandoffOffer } from '../lib/api/types';
 import { formatDateTime } from '../lib/format';
@@ -17,9 +18,10 @@ import { findTimeSeries } from '../lib/metrics';
 type HandoffWithEvidence = HandoffOffer & { forward_evidence?: Record<string, unknown>; evidence_summary?: Record<string, unknown> };
 
 function Revoke({ offer }: { offer: HandoffOffer }) {
+  const { t } = useI18n();
   const mutation = useRevokeHandoff(offer.id);
   const revocable = ['APPROVED', 'PUBLISHING', 'AVAILABLE'].includes(offer.state);
-  return revocable ? <Button size="1" variant="soft" color="red" disabled={mutation.isPending} onClick={() => mutation.mutate('OPERATOR_REVOKE')}>{mutation.isPending ? 'Revoking…' : 'Revoke offer'}</Button> : <span className="qz-section-meta">{['CLAIMED', 'DOWNSTREAM_ACCEPTED', 'FEEDBACK_PENDING', 'FEEDBACK_IN_PROGRESS', 'FEEDBACK_PARTIAL', 'FEEDBACK_COMPLETE'].includes(offer.state) ? 'Downstream owns runtime' : 'Historical'}</span>;
+  return revocable ? <Button size="1" variant="soft" color="red" disabled={mutation.isPending} onClick={() => mutation.mutate('OPERATOR_REVOKE')}>{mutation.isPending ? t('common.revoking') : t('handoff.revoke')}</Button> : <span className="qz-section-meta">{['CLAIMED', 'DOWNSTREAM_ACCEPTED', 'FEEDBACK_PENDING', 'FEEDBACK_IN_PROGRESS', 'FEEDBACK_PARTIAL', 'FEEDBACK_COMPLETE'].includes(offer.state) ? t('handoff.downstreamOwns') : t('common.historical')}</span>;
 }
 
 const columns: ColumnDef<HandoffOffer, unknown>[] = [
@@ -33,6 +35,7 @@ const columns: ColumnDef<HandoffOffer, unknown>[] = [
 ];
 
 export function HandoffFeedbackPage() {
+  const { t } = useI18n();
   const query = useHandoffs();
   if (query.isLoading) return <PageSkeleton />;
   if (query.error) return <ErrorPanel error={query.error} />;
@@ -53,7 +56,7 @@ export function HandoffFeedbackPage() {
         { label: 'Feedback complete', value: handoffs.filter((item) => item.state === 'FEEDBACK_COMPLETE' || item.feedback_state === 'FEEDBACK_COMPLETE').length },
       ]} />
       <div style={{ marginTop: 20 }}><DataTable data={handoffs} columns={columns} searchPlaceholder="Filter handoffs…" emptyTitle="No handoffs" emptyDescription="Approved candidates appear here after their Candidate Package is published." getRowId={(row) => row.id} ariaLabel="Handoff packages and feedback" /></div>
-      <Section title="Forward Evidence" meta={evidenceCarrier ? `Candidate ${evidenceCarrier.candidate_id?.slice(0, 8) ?? '—'} · API feedback evidence` : 'Awaiting contract-valid feedback'}>
+      <Section title="Forward Evidence" meta={evidenceCarrier ? `${t('common.candidate')} ${evidenceCarrier.candidate_id?.slice(0, 8) ?? '—'} · API feedback evidence` : t('handoff.awaitingFeedback')}>
         {performance.length || drawdown.length ? <div className="qz-panel qz-panel-pad"><FinancialSeriesChart ariaLabel="Forward evidence performance and drawdown chart" series={[{ name: 'Forward performance', data: performance, kind: 'area' }, { name: 'Benchmark', data: benchmark }, { name: 'Drawdown', data: drawdown }]} /></div> : <EmptyState title="No forward evidence series" description="Forward evidence is only charted when the Handoff API returns contract-valid time-series observations. No synthetic performance is generated." />}
       </Section>
     </>

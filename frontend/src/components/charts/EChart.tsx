@@ -4,11 +4,13 @@ import * as echarts from 'echarts/core';
 import type { EChartsCoreOption } from 'echarts/core';
 import { CanvasRenderer } from 'echarts/renderers';
 import { useEffect, useRef } from 'react';
+import { useI18n } from '../../i18n';
 
 echarts.use([BarChart, HeatmapChart, LineChart, GridComponent, LegendComponent, TooltipComponent, VisualMapComponent, CanvasRenderer]);
 
 export function EChart({ option, ariaLabel, height = 300 }: { option: EChartsCoreOption; ariaLabel: string; height?: number }) {
   const ref = useRef<HTMLDivElement>(null);
+  const { text } = useI18n();
   useEffect(() => {
     if (!ref.current) return;
     const chart = echarts.init(ref.current, undefined, { renderer: 'canvas' });
@@ -18,5 +20,5 @@ export function EChart({ option, ariaLabel, height = 300 }: { option: EChartsCor
     observer.observe(ref.current);
     return () => { observer.disconnect(); chart.dispose(); };
   }, [option]);
-  return <div ref={ref} className="qz-chart" style={{ height }} role="img" aria-label={ariaLabel} />;
+  return <div ref={ref} className="qz-chart" style={{ height }} role="img" aria-label={text(ariaLabel)} />;
 }
