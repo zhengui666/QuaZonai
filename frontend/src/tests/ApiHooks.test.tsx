@@ -55,10 +55,15 @@ describe('API hooks', () => {
     });
   });
 
-  it('updates Codex and worker runtime configuration with revision and idempotency', async () => {
+  it('reuses one idempotency key when the same runtime save is retried', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     const invalidate = vi.spyOn(client, 'invalidateQueries');
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(() => jsonResponse({ revision: 8, codex_model: 'gpt-5.6-sol', codex_base_url: 'https://gateway.example/v1', codex_api_key_configured: true }));
+    let attempt = 0;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(() => {
+      attempt += 1;
+      if (attempt === 1) return Promise.reject(new TypeError('response lost'));
+      return jsonResponse({ revision: 8, codex_model: 'gpt-5.6-sol', codex_base_url: 'https://gateway.example/v1', codex_api_key_configured: true });
+    });
     const { result } = renderHook(() => useUpdateRuntimeConfiguration(), { wrapper: createWrapper(client) });
     const payload = {
       expected_revision: 7,
@@ -76,14 +81,27 @@ describe('API hooks', () => {
     };
 
     await act(async () => {
+      await expect(result.current.mutateAsync(payload)).rejects.toThrow('response lost');
+    });
+    await act(async () => {
       await result.current.mutateAsync(payload);
     });
 
-    expect(fetchMock).toHaveBeenCalledWith('/api/v1/system/runtime-configuration', expect.objectContaining({ method: 'PUT' }));
-    const options = fetchMock.mock.calls[0][1] as RequestInit;
-    expect(JSON.parse(String(options.body))).toEqual(payload);
-    const headers = options.headers as Headers;
-    expect(headers.get('Idempotency-Key')).toBeTruthy();
+    const firstOptions = fetchMock.mock.calls[0][1] as RequestInit;
+    const secondOptions = fetchMock.mock.calls[1][1] as RequestInit;
+    expect(JSON.parse(String(secondOptions.body))).toEqual(payload);
+    const firstHeaders = firstOptions.headers as Headers;
+    const secondHeaders = secondOptions.headers as Headers;
+    expect(firstHeaders.get('Idempotency-Key')).toBeTruthy();
+    expect(secondHeaders.get('Idempotency-Key')).toBe(firstHeaders.get('Idempotency-Key'));
+
+    await act(async () => {
+      await result.current.mutateAsync({ ...payload, expected_revision: 8, codex_model: 'gpt-5.6-sol-next' });
+    });
+    const thirdHeaders = (fetchMock.mock.calls[2][1] as RequestInit).headers as Headers;
+    expect(thirdHeaders.get('Idempotency-Key')).toBeTruthy();
+    expect(thirdHeaders.get('Idempotency-Key')).not.toBe(secondHeaders.get('Idempotency-Key'));
+
     await waitFor(() => {
       expect(invalidate).toHaveBeenCalledWith({ queryKey: ['runtime-configuration'] });
       expect(invalidate).toHaveBeenCalledWith({ queryKey: ['health'] });
