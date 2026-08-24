@@ -17,6 +17,10 @@ depends_on = None
 
 
 LEGACY_TABLES_CHILD_FIRST = (
+    "agent_impact_tokens",
+    "agent_artifacts",
+    "mcp_task_bindings",
+    "operation_receipts",
     "risk_events",
     "risk_reservations",
     "risk_open_orders",
@@ -49,7 +53,17 @@ def upgrade() -> None:
 
     if bind.dialect.name == "postgresql":
         op.execute(
+            "UPDATE plugin_runtime_bundles SET state = 'STALE' "
+            "WHERE id IN (SELECT runtime_bundle_id FROM plugin_runtime_bundle_members "
+            "WHERE member_role = 'EXECUTION')"
+        )
+        op.execute(
             "DELETE FROM plugin_runtime_bundle_members WHERE member_role = 'EXECUTION'"
+        )
+        op.execute(
+            "UPDATE plugin_releases SET state = 'INACTIVE', is_default = FALSE, "
+            "last_error = 'Legacy execution capability disabled by ownership migration' "
+            "WHERE descriptor_snapshot::text LIKE '%\"EXECUTION\"%'"
         )
         op.execute(
             "ALTER TABLE plugin_runtime_bundle_members "
@@ -60,14 +74,12 @@ def upgrade() -> None:
             "ck_plugin_bundle_member_role CHECK "
             "(member_role IN ('RESEARCH','DATA','IMPORTER','AUXILIARY'))"
         )
-        op.execute(
-            "ALTER TABLE plugin_runtime_bundles DROP COLUMN IF EXISTS nautilus_version"
-        )
+        op.execute("ALTER TABLE plugin_runtime_bundles DROP COLUMN IF EXISTS nautilus_version")
         for table in LEGACY_TABLES_CHILD_FIRST:
             op.execute(f'DROP TABLE IF EXISTS "{table}" CASCADE')
     else:
-        # SQLite is used only by unit/integration tests. Fresh test databases are
-        # generated from current metadata; the boundary cleanup is PostgreSQL-owned.
+        # SQLite remains a local fallback for isolated unit tests. Fresh SQLite
+        # databases are generated from current metadata and contain no legacy tables.
         for table in LEGACY_TABLES_CHILD_FIRST:
             op.execute(f'DROP TABLE IF EXISTS "{table}"')
 
