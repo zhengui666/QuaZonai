@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import subprocess
 from datetime import UTC, datetime
@@ -14,7 +15,11 @@ from sqlalchemy import select
 from db.models import Event, Job, ResearchBranch, ResearchCharter, ResearchMission, ResearchProgram
 from db.session import create_database_engine, create_session_factory
 from errors import QfError
+from runtime_config import load_effective_settings
 from settings import Settings
+
+CUSTOM_CODEX_PROVIDER_ID = "quazonai-configured"
+DEFAULT_OPENAI_API_BASE_URL = "https://api.openai.com/v1"
 
 
 def _now() -> datetime:
@@ -136,6 +141,49 @@ def _load_mission_context(settings: Settings, job_id: UUID) -> tuple[UUID, UUID,
         return mission.id, program.id, _mission_context(mission, program, charter, branch)
 
 
+def _codex_launch_configuration(settings: Settings, workspace: Path) -> tuple[object, str | None]:
+    """Build app-server launch config without exposing provider secrets to Mission shells."""
+    from openai_codex import CodexConfig
+
+    environment = {
+        "CODEX_HOME": str(settings.codex_home),
+        # Runtime Codex authentication is deliberately not inherited from QuaZonai's
+        # bootstrap environment. Existing ChatGPT login remains available via CODEX_HOME.
+        "OPENAI_API_KEY": "",
+        "CODEX_API_KEY": "",
+    }
+    overrides = [
+        'shell_environment_policy.inherit="core"',
+        "shell_environment_policy.ignore_default_excludes=false",
+    ]
+    provider_id: str | None = None
+
+    if settings.codex_base_url or settings.codex_api_key:
+        provider_id = CUSTOM_CODEX_PROVIDER_ID
+        base_url = settings.codex_base_url or DEFAULT_OPENAI_API_BASE_URL
+        overrides.extend(
+            [
+                f"model_providers.{provider_id}.name=\"QuaZonai configured provider\"",
+                f"model_providers.{provider_id}.base_url={json.dumps(base_url)}",
+                f"model_providers.{provider_id}.wire_api=\"responses\"",
+            ]
+        )
+        if settings.codex_api_key:
+            environment["QUAZONAI_CODEX_API_KEY"] = settings.codex_api_key
+            overrides.append(
+                f"model_providers.{provider_id}.env_key=\"QUAZONAI_CODEX_API_KEY\""
+            )
+
+    return (
+        CodexConfig(
+            cwd=str(workspace),
+            env=environment,
+            config_overrides=tuple(overrides),
+        ),
+        provider_id,
+    )
+
+
 def run_mission(settings: Settings, job_id: UUID) -> None:
     """Start app-server first, then atomically admit the Mission into RUNNING."""
     try:
@@ -154,12 +202,14 @@ def run_mission(settings: Settings, job_id: UUID) -> None:
     engine = create_database_engine(settings)
     factory = create_session_factory(engine)
     try:
-        with Codex() as codex:
+        codex_config, model_provider = _codex_launch_configuration(settings, workspace)
+        with Codex(codex_config) as codex:
             thread = codex.thread_start(
                 approval_mode=ApprovalMode.deny_all,
                 sandbox=Sandbox.workspace_write,
                 cwd=str(workspace),
                 model=settings.codex_model,
+                model_provider=model_provider,
                 config={
                     "sandbox_workspace_write": {"network_access": False},
                     "web_search": "disabled",
@@ -252,7 +302,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
-    run_mission(Settings.from_env(), UUID(args.job_id))
+    settings = load_effective_settings(Settings.from_env())
+    run_mission(settings, UUID(args.job_id))
     return 0
 
 
