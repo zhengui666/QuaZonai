@@ -97,7 +97,7 @@ test('Flow 2: candidate ready -> approve -> handoff available', async ({ page })
   await expect(page.getByText(/materially improves the current frontier/i)).toBeVisible();
   await page.getByRole('button', { name: 'Approve' }).click();
   await page.getByRole('link', { name: 'Handoff Center' }).click();
-  await expect(page.getByText('Available')).toBeVisible();
+  await expect(page.getByText('Available', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: /stop|undeploy|close position|buy|sell/i })).toHaveCount(0);
 });
 
