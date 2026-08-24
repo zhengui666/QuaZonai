@@ -31,6 +31,7 @@ from jobs import enqueue_job
 from plugins.manager import activate_release, deactivate_release, require_research_data_release
 from plugins.storage import stream_upload, validate_upload_filename
 from plugins.wheel_metadata import inspect_wheel, validate_wheel_set
+from runtime_config import get_runtime_configuration
 from settings import Settings
 
 router = APIRouter(prefix="/api/v1", tags=["plugins"])
@@ -192,6 +193,12 @@ async def stage_release(
     session: Session = Depends(get_session),
 ) -> PluginStageResponse:
     settings: Settings = request.app.state.settings
+    factory = request.app.state.session_factory
+    with factory() as configuration_session:
+        runtime = get_runtime_configuration(configuration_session)
+        max_upload_bytes = (
+            runtime.max_plugin_wheel_bytes if runtime is not None else settings.max_plugin_wheel_bytes
+        )
     release_id = uuid4()
     staging_dir = settings.plugin_root / "staging" / str(release_id)
     uploaded = [primary, *(dependencies or [])]
@@ -203,7 +210,7 @@ async def stage_release(
         paths: list[Path] = []
         for upload, name in zip(uploaded, names, strict=True):
             destination = staging_dir / name
-            await stream_upload(upload, destination, max_bytes=settings.max_plugin_wheel_bytes)
+            await stream_upload(upload, destination, max_bytes=max_upload_bytes)
             paths.append(destination)
 
         metadata = [inspect_wheel(path) for path in paths]
@@ -424,7 +431,9 @@ def prewarm_bundle(
             resource_id=bundle_id,
         )
         session.flush()
-        return BundlePrewarmResponse(bundle=_bundle_view(session, bundle), job=_job_view(job), reused=False)
+        return BundlePrewarmResponse(
+            bundle=_bundle_view(session, bundle), job=_job_view(job), reused=False
+        )
 
 
 @router.get("/plugin-runtime-bundles/{bundle_id}", response_model=BundleView)
