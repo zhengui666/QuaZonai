@@ -28,6 +28,8 @@ from settings import Settings
 
 CUSTOM_CODEX_PROVIDER_ID = "quazonai_configured"
 DEFAULT_OPENAI_API_BASE_URL = "https://api.openai.com/v1"
+BROKER_REQUEST = b"TOKEN\n"
+BROKER_ACCEPT_POLL_SECONDS = 0.25
 
 
 def _now() -> datetime:
@@ -153,9 +155,11 @@ def _load_mission_context(settings: Settings, job_id: UUID) -> tuple[UUID, UUID,
 def _provider_credential_broker(api_key: str | None) -> Iterator[Path | None]:
     """Expose a configured provider key exactly once to Codex's auth helper.
 
-    Mission commands cannot execute until the first provider request succeeds. The
-    broker is therefore consumed and closed before any Mission-owned shell process
-    can run. The plaintext never enters the App Server environment or command line.
+    The broker remains available for the lifetime of the pending Codex session
+    instead of expiring on an arbitrary startup deadline. Mission commands cannot
+    execute until the first provider request succeeds, so the one-shot socket is
+    consumed before Mission-owned shell code can run. The plaintext never enters
+    the App Server environment or command line.
     """
     if not api_key:
         yield None
@@ -168,14 +172,30 @@ def _provider_credential_broker(api_key: str | None) -> Iterator[Path | None]:
     server.bind(str(socket_path))
     os.chmod(socket_path, 0o600)
     server.listen(1)
-    server.settimeout(15.0)
+    server.settimeout(BROKER_ACCEPT_POLL_SECONDS)
+    stop_event = threading.Event()
 
     def serve_once() -> None:
         try:
-            connection, _ = server.accept()
+            connection: socket.socket | None = None
+            while not stop_event.is_set():
+                try:
+                    connection, _ = server.accept()
+                    break
+                except socket.timeout:
+                    continue
+            if connection is None:
+                return
+
             with connection:
                 connection.settimeout(5.0)
-                if connection.recv(16) != b"TOKEN\n":
+                request = bytearray()
+                while len(request) < len(BROKER_REQUEST):
+                    chunk = connection.recv(len(BROKER_REQUEST) - len(request))
+                    if not chunk:
+                        break
+                    request.extend(chunk)
+                if bytes(request) != BROKER_REQUEST:
                     return
                 connection.sendall(api_key.encode("utf-8"))
         except (OSError, TimeoutError):
@@ -191,11 +211,12 @@ def _provider_credential_broker(api_key: str | None) -> Iterator[Path | None]:
     try:
         yield socket_path
     finally:
+        stop_event.set()
         try:
             server.close()
         except OSError:
             pass
-        thread.join(timeout=1.0)
+        thread.join(timeout=2.0)
         shutil.rmtree(root, ignore_errors=True)
 
 
