@@ -88,46 +88,6 @@ def main() -> None:
             spec_json={"objective": "Risk-adjusted long-term growth"},
             state="ACTIVE",
         )
-        alpha = AlphaQualification(
-            id=ALPHA_ID,
-            universe_version_id=UNIVERSE_ID,
-            universe="US Equities",
-            horizon="1D",
-            role="PRIMARY_ALPHA",
-            state="ACTIVE",
-            name="PEAD residual drift",
-            degradation_state="HEALTHY",
-            metrics={"search_adjusted_quality": 0.72},
-            lineage=[],
-            scope_json={},
-            created_at=now,
-        )
-        portfolio_program = PortfolioProgram(
-            id=PORTFOLIO_PROGRAM_ID,
-            mandate_version_id=MANDATE_VERSION_ID,
-            mandate_name="Core Growth",
-            state="CANDIDATE_READY",
-            current_candidate_id=CANDIDATE_ID,
-        )
-        candidate = PortfolioCandidate(
-            id=CANDIDATE_ID,
-            portfolio_program_id=PORTFOLIO_PROGRAM_ID,
-            mandate_version_id=MANDATE_VERSION_ID,
-            mandate_name="Core Growth",
-            state="READY",
-            universe_set_json=["US Equities"],
-            members=[
-                {
-                    "alpha_qualification_id": str(ALPHA_ID),
-                    "alpha_name": "PEAD residual drift",
-                    "role": "PRIMARY_ALPHA",
-                    "target_weight": 0.45,
-                    "universe": "US Equities",
-                }
-            ],
-            metrics={"search_adjusted_quality": 0.78},
-            created_at=now,
-        )
         paper = DownstreamSystem(
             id=PAPER_DOWNSTREAM_ID,
             name="Paper Lab",
@@ -150,6 +110,52 @@ def main() -> None:
             preflight_state="READY",
             public_config={},
         )
+        portfolio_program = PortfolioProgram(
+            id=PORTFOLIO_PROGRAM_ID,
+            mandate_version_id=MANDATE_VERSION_ID,
+            mandate_name="Core Growth",
+            state="CANDIDATE_READY",
+            current_candidate_id=CANDIDATE_ID,
+        )
+        session.add_all([universe, mandate, paper, live, portfolio_program])
+        session.flush()
+
+        alpha = AlphaQualification(
+            id=ALPHA_ID,
+            universe_version_id=UNIVERSE_ID,
+            universe="US Equities",
+            horizon="1D",
+            role="PRIMARY_ALPHA",
+            state="ACTIVE",
+            name="PEAD residual drift",
+            degradation_state="HEALTHY",
+            metrics={"search_adjusted_quality": 0.72},
+            lineage=[],
+            scope_json={},
+            created_at=now,
+        )
+        candidate = PortfolioCandidate(
+            id=CANDIDATE_ID,
+            portfolio_program_id=PORTFOLIO_PROGRAM_ID,
+            mandate_version_id=MANDATE_VERSION_ID,
+            mandate_name="Core Growth",
+            state="READY",
+            universe_set_json=["US Equities"],
+            members=[
+                {
+                    "alpha_qualification_id": str(ALPHA_ID),
+                    "alpha_name": "PEAD residual drift",
+                    "role": "PRIMARY_ALPHA",
+                    "target_weight": 0.45,
+                    "universe": "US Equities",
+                }
+            ],
+            metrics={"search_adjusted_quality": 0.78},
+            created_at=now,
+        )
+        session.add_all([alpha, candidate])
+        session.flush()
+
         approval = ApprovalSnapshot(
             id=APPROVAL_ID,
             candidate_id=CANDIDATE_ID,
@@ -171,9 +177,7 @@ def main() -> None:
                 "observed_at": now.isoformat(),
             },
         )
-        session.add_all(
-            [universe, mandate, alpha, portfolio_program, candidate, paper, live, approval]
-        )
+        session.add(approval)
 
     engine.dispose()
 
