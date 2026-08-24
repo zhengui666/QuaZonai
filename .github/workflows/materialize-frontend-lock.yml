@@ -33,3 +33,5 @@ jobs:
           fi
           git commit -m 'chore(frontend): commit package lock'
           git push origin HEAD:codex/production-rebuild
+
+# one-shot: remove this workflow after the lock commit is present
