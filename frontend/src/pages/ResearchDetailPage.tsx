@@ -1,4 +1,122 @@
-import { Button,Dialog,TextArea } from '@radix-ui/themes';import { ArchiveIcon,PauseIcon,PlayIcon,RewindIcon } from '@phosphor-icons/react';import { useState,type ReactNode } from 'react';import { useParams } from 'react-router-dom';import type { OhlcPoint } from '../lib/api/types';import { CandlestickChart } from '../components/charts/CandlestickChart';import { MissionGraph } from '../components/graphs/MissionGraph';import { EmptyState } from '../components/ui/EmptyState';import { ErrorPanel } from '../components/ui/ErrorPanel';import { KpiStrip } from '../components/ui/KpiStrip';import { PageHeader } from '../components/ui/PageHeader';import { PageSkeleton } from '../components/ui/Skeleton';import { StateBadge } from '../components/ui/StateBadge';import { Section } from '../components/ui/Section';import { useProgram,useProgramAction,useProgramActivity,useProgramMissions } from '../lib/api/hooks';import { formatDateTime,humanize } from '../lib/format';
-function extractOhlc(events:Array<{payload?:Record<string,unknown>}>):OhlcPoint[]{for(const event of events){const series=event.payload?.ohlc;if(Array.isArray(series)){const valid=series.filter((item):item is OhlcPoint=>Boolean(item&&typeof item==='object'&&'open'in item&&'close'in item)) as OhlcPoint[];if(valid.length)return valid}}return[]}
-function ProgramActionDialog({id,action,label,icon}:{id:string;action:'pause'|'resume'|'archive'|'restore';label:string;icon:ReactNode}){const mutation=useProgramAction(id,action);const[reason,setReason]=useState('');const needsReason=action==='pause'||action==='archive';return <Dialog.Root><Dialog.Trigger><Button size="1" variant="soft">{icon}{label}</Button></Dialog.Trigger><Dialog.Content maxWidth="440px"><Dialog.Title>{label} research program</Dialog.Title><Dialog.Description size="2" mb="4">This changes research scheduling only. It never controls an external Paper/Live runtime.</Dialog.Description>{needsReason?<TextArea placeholder="Reason for operator override" value={reason} onChange={e=>setReason(e.target.value)}/>:null}<div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:18}}><Dialog.Close><Button variant="soft" color="gray">Cancel</Button></Dialog.Close><Button disabled={mutation.isPending||(needsReason&&!reason.trim())} onClick={()=>mutation.mutate(needsReason?reason.trim():undefined)}>{mutation.isPending?'Applying…':label}</Button></div></Dialog.Content></Dialog.Root>}
-export function ResearchDetailPage(){const{id}=useParams();const program=useProgram(id);const missions=useProgramMissions(id);const activity=useProgramActivity(id);if(program.isLoading||missions.isLoading||activity.isLoading)return<PageSkeleton/>;if(program.error)return<ErrorPanel error={program.error}/>;if(!program.data||!id)return<EmptyState title="Program not found" description="The requested research program no longer exists or is unavailable."/>;const p=program.data;const missionList=missions.data??[];const events=activity.data??[];const ohlc=extractOhlc(events);const running=missionList.filter(m=>m.state==='RUNNING').length;const succeeded=missionList.filter(m=>m.state==='SUCCEEDED').length;const failed=missionList.filter(m=>m.state==='FAILED').length;return <><PageHeader title={p.title??p.charter?.research_question??`Research ${p.id.slice(0,8)}`} description={p.charter?.original_idea_text??'Autonomous research program'} actions={<>{p.state==='ACTIVE'?<ProgramActionDialog id={id} action="pause" label="Pause" icon={<PauseIcon size={14}/>}/>:p.state==='PAUSED'?<ProgramActionDialog id={id} action="resume" label="Resume" icon={<PlayIcon size={14}/>}/>:null}{p.state!=='ARCHIVED'?<ProgramActionDialog id={id} action="archive" label="Archive" icon={<ArchiveIcon size={14}/>}/>:<ProgramActionDialog id={id} action="restore" label="Restore" icon={<RewindIcon size={14}/>}/>}</>}/><KpiStrip items={[{label:'Program state',value:<StateBadge state={p.state}/>,note:p.cooling_reason??p.blocked_reason??p.wake_reason??'Autonomous scheduling'},{label:'Missions',value:missionList.length,note:`${running} running · ${succeeded} succeeded · ${failed} failed`},{label:'Branches',value:p.branch_count??'—',note:'Lineage-tracked hypothesis paths'},{label:'Alphas',value:p.alpha_count??'—',note:'Qualified or in research'}]}/><Section title="Frozen research charter" meta={`Created ${formatDateTime(p.charter?.created_at??p.created_at)}`}><div className="qz-panel qz-panel-pad qz-grid-2"><div><div className="qz-label">Research question</div><div style={{fontSize:13,marginTop:5}}>{p.charter?.research_question??'—'}</div></div><div><div className="qz-label">Prediction horizon</div><div className="qz-list-subtitle">{p.charter?.prediction_horizon??'—'}</div></div><div><div className="qz-label">Market scope</div><div className="qz-list-subtitle">{Array.isArray(p.charter?.market_scope)?p.charter.market_scope.join(', '):p.charter?.market_scope??'—'}</div></div><div><div className="qz-label">Explicit exclusions</div><div className="qz-list-subtitle">{p.charter?.explicit_exclusions?.join(', ')||'None'}</div></div></div></Section><Section title="Mission graph" meta="Read-only · QZ owns scheduling and dependencies">{missionList.length?<MissionGraph missions={missionList}/>:<EmptyState title="No Missions scheduled" description="The program may be cooling, paused, or waiting for a data capability."/>}</Section>{ohlc.length?<Section title="Market context" meta="TradingView Lightweight Charts · evidence context only"><div className="qz-panel qz-panel-pad"><CandlestickChart data={ohlc}/></div></Section>:null}<Section title="Mission timeline" meta={`${events.length} activity events`}>{events.length?<div className="qz-panel qz-panel-pad qz-timeline">{events.slice(0,40).map((event,index)=><div key={String(event.id)} className="qz-timeline-item" data-active={index===0}><div className="qz-timeline-title">{humanize(event.kind)}</div><div className="qz-timeline-meta qz-number">{formatDateTime(event.created_at)}{event.mission_id?` · ${event.mission_id.slice(0,8)}`:''}</div>{event.payload?.summary?<div className="qz-timeline-body">{String(event.payload.summary)}</div>:null}</div>)}</div>:<EmptyState title="No activity yet" description="Agent commands, test exits, Domain events and material evidence will appear here without exposing hidden chain-of-thought."/>}</Section></>}
+import { ArchiveIcon, PauseIcon, PlayIcon, RewindIcon } from '@phosphor-icons/react';
+import { Button, Dialog, TextArea } from '@radix-ui/themes';
+import type { ColumnDef } from '@tanstack/react-table';
+import { useState, type ReactNode } from 'react';
+import { useParams } from 'react-router-dom';
+import { CandlestickChart } from '../components/charts/CandlestickChart';
+import { MissionGraph } from '../components/graphs/MissionGraph';
+import { DataTable } from '../components/ui/DataTable';
+import { EmptyState } from '../components/ui/EmptyState';
+import { ErrorPanel } from '../components/ui/ErrorPanel';
+import { KpiStrip } from '../components/ui/KpiStrip';
+import { PageHeader } from '../components/ui/PageHeader';
+import { PageSkeleton } from '../components/ui/Skeleton';
+import { StateBadge } from '../components/ui/StateBadge';
+import { Section } from '../components/ui/Section';
+import { useProgram, useProgramAction, useProgramActivity, useProgramMissions } from '../lib/api/hooks';
+import type { ActivityEvent, OhlcPoint } from '../lib/api/types';
+import { formatDateTime, humanize } from '../lib/format';
+
+type BranchSummary = { id: string; missions: number; running: number; succeeded: number; failed: number };
+const branchColumns: ColumnDef<BranchSummary, unknown>[] = [
+  { accessorKey: 'id', header: 'Branch', cell: ({ getValue }) => <span className="qz-mono">{String(getValue()).slice(0, 16)}</span> },
+  { accessorKey: 'missions', header: 'Missions', cell: ({ getValue }) => <span className="qz-number">{String(getValue())}</span> },
+  { accessorKey: 'running', header: 'Running', cell: ({ getValue }) => <span className="qz-number">{String(getValue())}</span> },
+  { accessorKey: 'succeeded', header: 'Succeeded', cell: ({ getValue }) => <span className="qz-number">{String(getValue())}</span> },
+  { accessorKey: 'failed', header: 'Failed', cell: ({ getValue }) => <span className="qz-number">{String(getValue())}</span> },
+];
+const evidenceColumns: ColumnDef<ActivityEvent, unknown>[] = [
+  { accessorKey: 'kind', header: 'Event', cell: ({ getValue }) => humanize(String(getValue())) },
+  { accessorKey: 'mission_id', header: 'Mission', cell: ({ getValue }) => <span className="qz-mono">{String(getValue() ?? '—').slice(0, 12)}</span> },
+  { accessorKey: 'created_at', header: 'Observed', cell: ({ getValue }) => formatDateTime(getValue() as string) },
+  { id: 'summary', header: 'Evidence / result', cell: ({ row }) => <span className="qz-list-subtitle" style={{ whiteSpace: 'normal' }}>{eventSummary(row.original)}</span> },
+];
+
+function eventSummary(event: ActivityEvent) {
+  const value = event.payload?.summary ?? event.payload?.result ?? event.payload?.classification ?? event.payload?.evidence;
+  if (value === undefined || value === null) return 'Structured event recorded.';
+  return typeof value === 'string' ? value : JSON.stringify(value);
+}
+
+function extractOhlc(events: Array<{ payload?: Record<string, unknown> }>): OhlcPoint[] {
+  for (const event of events) {
+    const series = event.payload?.ohlc;
+    if (Array.isArray(series)) {
+      const valid = series.filter((item): item is OhlcPoint => Boolean(item && typeof item === 'object' && 'open' in item && 'close' in item)) as OhlcPoint[];
+      if (valid.length) return valid;
+    }
+  }
+  return [];
+}
+
+function ProgramActionDialog({ id, action, label, icon }: { id: string; action: 'pause' | 'resume' | 'archive' | 'restore'; label: string; icon: ReactNode }) {
+  const mutation = useProgramAction(id, action);
+  const [reason, setReason] = useState('');
+  const needsReason = action === 'pause' || action === 'archive';
+  return <Dialog.Root><Dialog.Trigger><Button size="1" variant="soft">{icon}{label}</Button></Dialog.Trigger><Dialog.Content maxWidth="440px"><Dialog.Title>{label} research program</Dialog.Title><Dialog.Description size="2" mb="4">This changes research scheduling only. It never controls an external Paper/Live runtime.</Dialog.Description>{needsReason ? <TextArea placeholder="Reason for operator override" value={reason} onChange={(event) => setReason(event.target.value)} /> : null}<div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}><Dialog.Close><Button variant="soft" color="gray">Cancel</Button></Dialog.Close><Button disabled={mutation.isPending || (needsReason && !reason.trim())} onClick={() => mutation.mutate(needsReason ? reason.trim() : undefined)}>{mutation.isPending ? 'Applying…' : label}</Button></div></Dialog.Content></Dialog.Root>;
+}
+
+export function ResearchDetailPage() {
+  const { id } = useParams();
+  const program = useProgram(id);
+  const missions = useProgramMissions(id);
+  const activity = useProgramActivity(id);
+  if (program.isLoading || missions.isLoading || activity.isLoading) return <PageSkeleton />;
+  if (program.error || missions.error || activity.error) return <ErrorPanel error={program.error ?? missions.error ?? activity.error} />;
+  if (!program.data || !id) return <EmptyState title="Program not found" description="The requested research program no longer exists or is unavailable." />;
+
+  const current = program.data;
+  const missionList = missions.data ?? [];
+  const events = activity.data ?? [];
+  const ohlc = extractOhlc(events);
+  const running = missionList.filter((mission) => mission.state === 'RUNNING').length;
+  const succeeded = missionList.filter((mission) => mission.state === 'SUCCEEDED').length;
+  const failed = missionList.filter((mission) => mission.state === 'FAILED').length;
+  const branchMap = new Map<string, BranchSummary>();
+  for (const mission of missionList) {
+    const branchId = mission.branch_id ?? 'unassigned';
+    const branch = branchMap.get(branchId) ?? { id: branchId, missions: 0, running: 0, succeeded: 0, failed: 0 };
+    branch.missions += 1;
+    if (mission.state === 'RUNNING') branch.running += 1;
+    if (mission.state === 'SUCCEEDED') branch.succeeded += 1;
+    if (mission.state === 'FAILED') branch.failed += 1;
+    branchMap.set(branchId, branch);
+  }
+  const branchRows = [...branchMap.values()];
+  const evidenceEvents = events.filter((event) => /EXPERIMENT|EVALUAT|EVIDENCE|SEARCH|DISCLOS|QUALIF|CALIBR|PROMOT/i.test(event.kind));
+
+  return (
+    <>
+      <PageHeader
+        title={current.title ?? current.charter?.research_question ?? `Research ${current.id.slice(0, 8)}`}
+        description={current.charter?.original_idea_text ?? 'Autonomous research program'}
+        actions={<>{current.state === 'ACTIVE' ? <ProgramActionDialog id={id} action="pause" label="Pause" icon={<PauseIcon size={14} />} /> : current.state === 'PAUSED' ? <ProgramActionDialog id={id} action="resume" label="Resume" icon={<PlayIcon size={14} />} /> : null}{current.state !== 'ARCHIVED' ? <ProgramActionDialog id={id} action="archive" label="Archive" icon={<ArchiveIcon size={14} />} /> : <ProgramActionDialog id={id} action="restore" label="Restore" icon={<RewindIcon size={14} />} />}</>}
+      />
+      <KpiStrip items={[
+        { label: 'Program state', value: <StateBadge state={current.state} />, note: current.cooling_reason ?? current.blocked_reason ?? current.wake_reason ?? 'Autonomous scheduling' },
+        { label: 'Missions', value: missionList.length, note: `${running} running · ${succeeded} succeeded · ${failed} failed` },
+        { label: 'Branches', value: current.branch_count ?? branchRows.length, note: 'Lineage-tracked hypothesis paths' },
+        { label: 'Alphas', value: current.alpha_count ?? '—', note: 'Qualified or under evaluation' },
+      ]} />
+      <Section title="Frozen research charter" meta={`Created ${formatDateTime(current.charter?.created_at ?? current.created_at)}`}>
+        <div className="qz-panel qz-panel-pad qz-grid-2">
+          <div><div className="qz-label">Research question</div><div style={{ fontSize: 13, marginTop: 5 }}>{current.charter?.research_question ?? '—'}</div></div>
+          <div><div className="qz-label">Prediction horizon</div><div className="qz-list-subtitle">{current.charter?.prediction_horizon ?? '—'}</div></div>
+          <div><div className="qz-label">Market scope</div><div className="qz-list-subtitle">{Array.isArray(current.charter?.market_scope) ? current.charter.market_scope.join(', ') : current.charter?.market_scope ?? '—'}</div></div>
+          <div><div className="qz-label">Explicit exclusions</div><div className="qz-list-subtitle">{current.charter?.explicit_exclusions?.join(', ') || 'None'}</div></div>
+        </div>
+      </Section>
+      <div className="qz-grid-2">
+        <Section title="Research branches" meta="Derived from Mission lineage returned by the API">{branchRows.length ? <DataTable data={branchRows} columns={branchColumns} ariaLabel="Research branches" initialPageSize={20} enableVirtualization={false} /> : <EmptyState title="No branches yet" description="Branch lineage appears after the research program schedules scoped Missions." />}</Section>
+        <Section title="Mission DAG" meta="React Flow · read-only dependencies">{missionList.length ? <MissionGraph missions={missionList} /> : <EmptyState title="No Missions scheduled" description="The program may be cooling, paused, or waiting for a data capability." />}</Section>
+      </div>
+      {ohlc.length ? <Section title="Market context" meta="TradingView Lightweight Charts · evidence context only"><div className="qz-panel qz-panel-pad"><CandlestickChart data={ohlc} /></div></Section> : null}
+      <Section title="Experiment & evidence ledger" meta="Independent evaluation, Search Ledger and exposure-related domain events">
+        {evidenceEvents.length ? <DataTable data={evidenceEvents} columns={evidenceColumns} ariaLabel="Experiment and evidence events" initialPageSize={20} getRowId={(event) => String(event.id)} /> : <EmptyState title="No experiment evidence yet" description="Structured experiment, evaluation and evidence events will appear here when returned by the Program activity API." />}
+      </Section>
+      <Section title="Agent activity" meta={`${events.length} structured events · hidden chain-of-thought excluded`}>
+        {events.length ? <div className="qz-panel qz-panel-pad qz-timeline">{events.slice(0, 40).map((event, index) => <div key={String(event.id)} className="qz-timeline-item" data-active={index === 0}><div className="qz-timeline-title">{humanize(event.kind)}</div><div className="qz-timeline-meta qz-number">{formatDateTime(event.created_at)}{event.mission_id ? ` · ${event.mission_id.slice(0, 8)}` : ''}</div>{event.payload?.summary ? <div className="qz-timeline-body">{String(event.payload.summary)}</div> : null}</div>)}</div> : <EmptyState title="No activity yet" description="Agent commands, test exits, Domain events and material evidence appear here without exposing hidden chain-of-thought." />}
+      </Section>
+    </>
+  );
+}
