@@ -83,7 +83,7 @@ def validate_strategy_source(
     package_root = str(Path(__file__).resolve().parents[1])
     existing = environment.get("PYTHONPATH")
     environment["PYTHONPATH"] = (
-        package_root if not existing else f"{package_root}{os.pathsep}{existing}"
+        package_root if not existing else f"{existing}{os.pathsep}{package_root}"
     )
     try:
         process = subprocess.run(
