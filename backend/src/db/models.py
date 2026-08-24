@@ -3,7 +3,6 @@
 Importing this module registers every table on ``Base.metadata``.
 """
 
-from db.agent_models import AgentArtifact, AgentImpactToken, McpTaskBinding, OperationReceipt
 from db.base import Base, TimestampMixin
 from db.domain_models import (
     AlphaQualification,
@@ -45,10 +44,6 @@ __all__ = [
     "CredentialSecret",
     "Job",
     "Event",
-    "OperationReceipt",
-    "AgentArtifact",
-    "AgentImpactToken",
-    "McpTaskBinding",
     "PublicMutationReceipt",
     "ResearchCharter",
     "ResearchProgram",
