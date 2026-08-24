@@ -1576,6 +1576,34 @@ Program list/detail：
 - plugin releases；
 - storage/worker/evaluator health。
 
+### 42.1 国际化与本地化
+
+Web 工作台的语言是**纯展示层用户偏好**。它不进入 Domain、API、Approval、Handoff 或任何不可变业务事实，也不改写后端规范枚举、reason code、对象 ID 或 wire payload。
+
+V1 随前端静态包提供以下 UI locale：
+
+```text
+English
+简体中文
+繁體中文
+日本語
+한국어
+Español
+العربية
+```
+
+规则：
+
+- 首次访问按“浏览器已保存偏好 → `navigator.languages` → English”解析 locale；显式切换后仅持久化到浏览器本地存储，不创建后端用户配置或新的业务状态；
+- message catalog 必须有稳定 key、English source/fallback，并支持变量插值；数量语义使用 `Intl.PluralRules`，日期、数字、百分比使用当前 locale 的 `Intl` formatter；
+- 切换 locale 必须同步 `html.lang`；RTL locale 必须同步 `html.dir=rtl`，并保证 App Shell、导航、表格、审批卡、时间线、表单和可访问性文本的阅读方向正确；
+- UI chrome、固定说明、已知状态枚举和拒绝原因可以本地化，但 API 返回的自由文本研究内容、审计事实、用户输入、schema 字段、ID 和 canonical reason/status value 不做隐式机器翻译；
+- 展示层可以把 canonical value 映射为本地化 label，但 mutation 和业务判断始终使用原始 canonical value；
+- 新增用户可见固定文案应进入统一 catalog 或共享翻译 primitive，不能在各页面复制平行 locale 机制；
+- 核心测试至少覆盖 locale negotiation、English fallback、catalog key、状态映射、持久化以及 RTL `lang/dir` 行为。
+
+实现使用 React Context 与浏览器标准 `Intl` / `navigator.languages` / local storage 能力；i18n 不成为新的 server state，也不要求新增运行服务。
+
 ---
 
 # Part XII — Security & Isolation
