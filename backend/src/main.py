@@ -13,6 +13,7 @@ from api.agent_actions import router as agent_actions_router
 from api.credentials import router as credentials_router
 from api.datasets import router as datasets_router
 from api.deployments import router as deployments_router
+from api.domain import router as domain_router
 from api.events import router as events_router
 from api.integrations import router as integrations_router
 from api.plugins import router as plugins_router
@@ -65,6 +66,8 @@ def create_app(*, settings: Settings | None = None, engine: Engine | None = None
 
     install_error_handlers(app)
     app.include_router(system_router)
+    # The DESIGN.md domain contract is mounted before legacy compatibility routers.
+    app.include_router(domain_router)
     app.include_router(plugins_router)
     app.include_router(credentials_router)
     app.include_router(integrations_router)
