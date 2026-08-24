@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import TracebackType
 from typing import Any, BinaryIO
 from urllib.parse import urlparse
 
@@ -10,7 +11,9 @@ import httpx
 
 
 class CliClientError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def validate_loopback_endpoint(endpoint: str) -> str:
@@ -30,6 +33,17 @@ class ApiClient:
     def __init__(self, endpoint: str, *, timeout: float = 30.0) -> None:
         self.endpoint = validate_loopback_endpoint(endpoint)
         self.timeout = timeout
+
+    def __enter__(self) -> "ApiClient":
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        return None
 
     def request(
         self,
@@ -61,10 +75,14 @@ class ApiClient:
                 error = payload.get("error") or {}
                 code = error.get("code") or f"HTTP_{response.status_code}"
                 message = error.get("message") or response.text
-                raise CliClientError(f"{code}: {message}")
+                raise CliClientError(
+                    f"{code}: {message}",
+                    status_code=response.status_code,
+                )
             except (ValueError, AttributeError) as exc:
                 raise CliClientError(
                     f"HTTP_{response.status_code}: {response.text}",
+                    status_code=response.status_code,
                 ) from exc
         if not response.content:
             return None
