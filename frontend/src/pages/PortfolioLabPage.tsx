@@ -31,7 +31,7 @@ export function PortfolioLabPage() {
   const candidateIds = (programs.data ?? []).flatMap((item) => item.current_candidate_id ? [item.current_candidate_id] : []);
   const candidates = useCandidates(candidateIds);
   const current = candidates.find((query) => query.data)?.data;
-  const allocation = current?.members?.map((member) => ({ name: member.alpha_name ?? member.alpha_qualification_id.slice(0, 8), value: member.target_weight ?? member.target_contribution ?? 0 })) ?? [];
+  const allocation = useMemo(() => current?.members?.map((member) => ({ name: member.alpha_name ?? member.alpha_qualification_id.slice(0, 8), value: member.target_weight ?? member.target_contribution ?? 0 })) ?? [], [current?.members]);
   const risk = findNamedValues(current?.metrics, ['risk_exposure', 'factor_exposure', 'universe_exposure']);
   const matrix = findMatrix(current?.metrics, ['correlation_matrix', 'correlation']);
   const equity = findTimeSeries(current?.metrics, ['equity_curve', 'performance', 'portfolio_equity']);
