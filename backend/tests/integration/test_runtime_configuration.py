@@ -172,7 +172,7 @@ def test_runtime_configuration_rejects_stale_revision(
     assert stale.json()["error"]["code"] == "RUNTIME_CONFIGURATION_STALE"
 
 
-def test_runtime_configuration_deduplicates_idempotent_retry_without_storing_secret(
+def test_runtime_configuration_deduplicates_key_retry_with_encrypted_receipt_secret(
     engine: Engine,
     settings: Settings,
 ) -> None:
@@ -199,10 +199,50 @@ def test_runtime_configuration_deduplicates_idempotent_retry_without_storing_sec
         assert "sk-idempotent-secret" not in str(receipt.normalized_request)
         assert "codex_api_key" not in receipt.normalized_request
         assert receipt.normalized_request["codex_api_key_action"] == "set"
+        secret_record = receipt.normalized_request["codex_api_key_secret"]
+        assert isinstance(secret_record, dict)
+        assert secret_record["ciphertext"]
+        assert secret_record["nonce"]
+
+
+def test_key_bearing_receipt_remains_replayable_after_later_update(
+    engine: Engine,
+    settings: Settings,
+) -> None:
+    client = TestClient(create_app(settings=settings, engine=engine))
+    first_headers = {"Idempotency-Key": "runtime-config-original-key-save"}
+    first_payload = _payload(codex_api_key="sk-original-idempotent")
+
+    first = client.put(
+        "/api/v1/system/runtime-configuration",
+        json=first_payload,
+        headers=first_headers,
+    )
+    assert first.status_code == 200, first.text
+
+    later = client.put(
+        "/api/v1/system/runtime-configuration",
+        json=_payload(
+            expected_revision=first.json()["revision"],
+            codex_model="gpt-5.6-sol-next",
+        ),
+        headers={"Idempotency-Key": "runtime-config-later-save"},
+    )
+    assert later.status_code == 200, later.text
+    assert later.json()["revision"] == first.json()["revision"] + 1
+
+    replay = client.put(
+        "/api/v1/system/runtime-configuration",
+        json=first_payload,
+        headers=first_headers,
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json() == first.json()
 
 
 def test_idempotency_receipt_claim_serializes_same_key(
     engine: Engine,
+    settings: Settings,
 ) -> None:
     if engine.dialect.name != "postgresql":
         pytest.skip("Concurrent receipt serialization is verified on PostgreSQL")
@@ -214,6 +254,7 @@ def test_idempotency_receipt_claim_serializes_same_key(
         first_transaction = first_session.begin()
         first_receipt, first_claimed = _claim_idempotency_receipt(
             first_session,
+            settings,
             "runtime-config-concurrent",
             payload,
         )
@@ -223,6 +264,7 @@ def test_idempotency_receipt_claim_serializes_same_key(
             with factory.begin() as second_session:
                 receipt, claimed = _claim_idempotency_receipt(
                     second_session,
+                    settings,
                     "runtime-config-concurrent",
                     payload,
                 )
@@ -241,21 +283,23 @@ def test_idempotency_receipt_claim_serializes_same_key(
     assert claimed is False
 
 
-def test_runtime_configuration_rejects_poll_interval_outside_bounds(
+def test_runtime_configuration_rejects_worker_limits_outside_bounds(
     engine: Engine,
     settings: Settings,
 ) -> None:
     client = TestClient(create_app(settings=settings, engine=engine))
-    below = client.put(
-        "/api/v1/system/runtime-configuration",
-        json=_payload(job_poll_seconds=0.001),
+    invalid_payloads = (
+        _payload(job_poll_seconds=0.001),
+        _payload(job_poll_seconds=3600.01),
+        _payload(plugin_validation_timeout_seconds=86_401),
+        _payload(bundle_build_timeout_seconds=86_401),
+        _payload(plugin_job_timeout_seconds=2_147_484),
+        _payload(mission_job_timeout_seconds=2_147_484),
+        _payload(job_lease_seconds=86_401),
     )
-    above = client.put(
-        "/api/v1/system/runtime-configuration",
-        json=_payload(job_poll_seconds=3600.01),
-    )
-    assert below.status_code == 422
-    assert above.status_code == 422
+    for payload in invalid_payloads:
+        response = client.put("/api/v1/system/runtime-configuration", json=payload)
+        assert response.status_code == 422, response.text
 
 
 def test_runtime_configuration_rejects_credential_bearing_base_url(
