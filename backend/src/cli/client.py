@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-from typing import Any, BinaryIO
+from types import TracebackType
+from typing import Any
 from urllib.parse import urlparse
 
 import httpx
 
 
 class CliClientError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def validate_loopback_endpoint(endpoint: str) -> str:
@@ -23,7 +24,9 @@ def validate_loopback_endpoint(endpoint: str) -> str:
     if parsed.path not in {"", "/"}:
         raise CliClientError("Core API endpoint cannot contain a path")
     if parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
-        raise CliClientError("Core API endpoint must resolve to the local loopback host")
+        raise CliClientError(
+            "REMOTE_API_ENDPOINT_FORBIDDEN: Core API endpoint must resolve to the local loopback host"
+        )
     return endpoint.rstrip("/")
 
 
@@ -32,15 +35,25 @@ class ApiClient:
         self.endpoint = validate_loopback_endpoint(endpoint)
         self.timeout = timeout
 
+    def __enter__(self) -> "ApiClient":
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        return None
+
     def request(
         self,
         method: str,
         path: str,
         *,
         json_body: Any | None = None,
-        data: dict[str, str] | None = None,
-        files: list[tuple[str, tuple[str, BinaryIO, str]]] | None = None,
         params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
     ) -> Any:
         if not path.startswith("/api/v1/"):
             raise CliClientError("CLI requests must target a fixed /api/v1 operation")
@@ -49,9 +62,8 @@ class ApiClient:
                 method,
                 f"{self.endpoint}{path}",
                 json=json_body,
-                data=data,
-                files=files,
                 params=params,
+                headers=headers,
                 timeout=self.timeout,
             )
         except httpx.HTTPError as exc:
@@ -62,10 +74,14 @@ class ApiClient:
                 error = payload.get("error") or {}
                 code = error.get("code") or f"HTTP_{response.status_code}"
                 message = error.get("message") or response.text
-                raise CliClientError(f"{code}: {message}")
+                raise CliClientError(
+                    f"{code}: {message}",
+                    status_code=response.status_code,
+                )
             except (ValueError, AttributeError) as exc:
                 raise CliClientError(
                     f"HTTP_{response.status_code}: {response.text}",
+                    status_code=response.status_code,
                 ) from exc
         if not response.content:
             return None
@@ -73,59 +89,3 @@ class ApiClient:
             return response.json()
         except ValueError:
             return response.text
-
-    def upload_plugin(self, primary: Path, dependencies: list[Path]) -> Any:
-        opened: list[BinaryIO] = []
-        try:
-            files: list[tuple[str, tuple[str, BinaryIO, str]]] = []
-            primary_handle = primary.open("rb")
-            opened.append(primary_handle)
-            files.append(("primary", (primary.name, primary_handle, "application/octet-stream")))
-            for dependency in dependencies:
-                dependency_handle = dependency.open("rb")
-                opened.append(dependency_handle)
-                files.append(
-                    (
-                        "dependencies",
-                        (dependency.name, dependency_handle, "application/octet-stream"),
-                    )
-                )
-            return self.request("POST", "/api/v1/plugin-releases", files=files)
-        finally:
-            for opened_handle in opened:
-                opened_handle.close()
-
-    def upload_strategy(
-        self,
-        strategy_id: str,
-        source: Path,
-        default_config_json: str,
-    ) -> Any:
-        with source.open("rb") as handle:
-            return self.request(
-                "POST",
-                f"/api/v1/strategies/{strategy_id}/versions",
-                data={"default_config_json": default_config_json},
-                files=[("file", (source.name, handle, "text/x-python"))],
-            )
-
-    def upload_dataset(
-        self,
-        source_id: str,
-        parquet: Path,
-        *,
-        instrument_id: str,
-        source_label: str,
-        metadata_json: str,
-    ) -> Any:
-        with parquet.open("rb") as handle:
-            return self.request(
-                "POST",
-                f"/api/v1/data-sources/{source_id}/imports/parquet-l2",
-                data={
-                    "instrument_id": instrument_id,
-                    "source_label": source_label,
-                    "metadata_json": metadata_json,
-                },
-                files=[("file", (parquet.name, handle, "application/octet-stream"))],
-            )

@@ -1,8 +1,7 @@
-"""Plugin release, runtime bundle, and lifecycle API."""
+"""Research/data plugin release and runtime-bundle lifecycle API."""
 
 from __future__ import annotations
 
-import importlib.metadata
 import platform
 import shutil
 from collections.abc import Iterable
@@ -19,25 +18,17 @@ from sqlalchemy.orm import Session
 from quazonai import __version__
 from api.dependencies import get_session
 from db.models import (
-    DataSource,
-    Deployment,
-    ExecutionConnection,
     Job,
     PluginArtifact,
     PluginRelease,
     PluginRuntimeBundle,
     PluginRuntimeBundleMember,
-    Run,
 )
-from db.repositories import (
-    get_plugin_release,
-    list_plugin_releases,
-    plugin_catalog,
-)
+from db.repositories import get_plugin_release, list_plugin_releases, plugin_catalog
 from errors import QfError
 from events import append_event
 from jobs import enqueue_job
-from plugins.manager import activate_release, deactivate_release
+from plugins.manager import activate_release, deactivate_release, require_research_data_release
 from plugins.storage import stream_upload, validate_upload_filename
 from plugins.wheel_metadata import inspect_wheel, validate_wheel_set
 from settings import Settings
@@ -74,7 +65,7 @@ class PluginStageResponse(BaseModel):
     job: JobView
 
 
-MemberRole = Literal["DATA", "EXECUTION", "IMPORTER", "AUXILIARY"]
+MemberRole = Literal["RESEARCH", "DATA", "IMPORTER", "AUXILIARY"]
 
 
 class BundleMemberInput(BaseModel):
@@ -104,7 +95,6 @@ class BundleView(BaseModel):
     state: str
     python_version: str
     qf_version: str
-    nautilus_version: str | None
     environment_path: str
     last_error: str | None
     members: list[BundleMemberInput]
@@ -118,23 +108,11 @@ class BundlePrewarmResponse(BaseModel):
 
 class PluginImpactView(BaseModel):
     plugin_release_id: UUID
-    data_sources: int
-    execution_connections: int
     runtime_bundles: int
-    runs: int
-    deployments: int
 
     @property
     def referenced(self) -> bool:
-        return any(
-            (
-                self.data_sources,
-                self.execution_connections,
-                self.runtime_bundles,
-                self.runs,
-                self.deployments,
-            )
-        )
+        return self.runtime_bundles > 0
 
 
 def _release_view(release: PluginRelease) -> PluginReleaseView:
@@ -161,7 +139,6 @@ def _bundle_view(session: Session, bundle: PluginRuntimeBundle) -> BundleView:
         state=bundle.state,
         python_version=bundle.python_version,
         qf_version=bundle.qf_version,
-        nautilus_version=bundle.nautilus_version,
         environment_path=bundle.environment_path,
         last_error=bundle.last_error,
         members=[
@@ -174,54 +151,14 @@ def _bundle_view(session: Session, bundle: PluginRuntimeBundle) -> BundleView:
     )
 
 
-def _nautilus_version() -> str | None:
-    try:
-        return importlib.metadata.version("nautilus-trader")
-    except importlib.metadata.PackageNotFoundError:
-        return None
-
-
 def _impact(session: Session, release_id: UUID) -> PluginImpactView:
-    bundle_ids = select(PluginRuntimeBundleMember.runtime_bundle_id).where(
-        PluginRuntimeBundleMember.plugin_release_id == release_id
-    )
     return PluginImpactView(
         plugin_release_id=release_id,
-        data_sources=int(
-            session.scalar(
-                select(func.count()).select_from(DataSource).where(
-                    DataSource.plugin_release_id == release_id
-                )
-            )
-            or 0
-        ),
-        execution_connections=int(
-            session.scalar(
-                select(func.count()).select_from(ExecutionConnection).where(
-                    ExecutionConnection.plugin_release_id == release_id
-                )
-            )
-            or 0
-        ),
         runtime_bundles=int(
             session.scalar(
                 select(func.count(func.distinct(PluginRuntimeBundleMember.runtime_bundle_id))).where(
                     PluginRuntimeBundleMember.plugin_release_id == release_id
                 )
-            )
-            or 0
-        ),
-        runs=int(
-            session.scalar(
-                select(func.count()).select_from(Run).where(Run.runtime_bundle_id.in_(bundle_ids))
-            )
-            or 0
-        ),
-        deployments=int(
-            session.scalar(
-                select(func.count())
-                .select_from(Deployment)
-                .where(Deployment.runtime_bundle_id.in_(bundle_ids))
             )
             or 0
         ),
@@ -260,21 +197,13 @@ async def stage_release(
     uploaded = [primary, *(dependencies or [])]
     names = [validate_upload_filename(item.filename) for item in uploaded]
     if len(set(names)) != len(names):
-        raise QfError(
-            "PLUGIN_ARTIFACT_INVALID",
-            "Wheel filenames must be unique within one release.",
-            422,
-        )
+        raise QfError("PLUGIN_ARTIFACT_INVALID", "Wheel filenames must be unique.", 422)
 
     try:
         paths: list[Path] = []
         for upload, name in zip(uploaded, names, strict=True):
             destination = staging_dir / name
-            await stream_upload(
-                upload,
-                destination,
-                max_bytes=settings.max_plugin_wheel_bytes,
-            )
+            await stream_upload(upload, destination, max_bytes=settings.max_plugin_wheel_bytes)
             paths.append(destination)
 
         metadata = [inspect_wheel(path) for path in paths]
@@ -287,12 +216,7 @@ async def stage_release(
                 )
             )
             if existing is not None:
-                raise QfError(
-                    "PLUGIN_VERSION_EXISTS",
-                    "This plugin ID and version already exist.",
-                    409,
-                    {"plugin_id": entry_point.name, "version": metadata[0].version},
-                )
+                raise QfError("PLUGIN_VERSION_EXISTS", "Plugin version already exists.", 409)
             release = PluginRelease(
                 id=release_id,
                 plugin_id=entry_point.name,
@@ -303,6 +227,9 @@ async def stage_release(
                 descriptor_snapshot={},
             )
             session.add(release)
+            # Child artifacts and the install job reference the release directly; flush
+            # the parent first because these models intentionally have no ORM relationship.
+            session.flush()
             for index, (path, item) in enumerate(zip(paths, metadata, strict=True)):
                 session.add(
                     PluginArtifact(
@@ -332,11 +259,7 @@ async def stage_release(
     except IntegrityError as exc:
         session.rollback()
         shutil.rmtree(staging_dir, ignore_errors=True)
-        raise QfError(
-            "PLUGIN_VERSION_EXISTS",
-            "This plugin ID and version already exist.",
-            409,
-        ) from exc
+        raise QfError("PLUGIN_VERSION_EXISTS", "Plugin version already exists.", 409) from exc
     except Exception:
         session.rollback()
         shutil.rmtree(staging_dir, ignore_errors=True)
@@ -352,10 +275,7 @@ def release(release_id: UUID, session: Session = Depends(get_session)) -> Plugin
 
 
 @router.get("/plugin-releases/{release_id}/impact", response_model=PluginImpactView)
-def release_impact(
-    release_id: UUID,
-    session: Session = Depends(get_session),
-) -> PluginImpactView:
+def release_impact(release_id: UUID, session: Session = Depends(get_session)) -> PluginImpactView:
     if get_plugin_release(session, release_id) is None:
         raise QfError("PLUGIN_UNKNOWN", "Plugin release does not exist.", 404)
     return _impact(session, release_id)
@@ -407,17 +327,12 @@ def remove_release(
         if impact.referenced and not force:
             raise QfError(
                 "PLUGIN_IN_USE",
-                "Plugin release still has persistent or runtime references.",
+                "Plugin release still belongs to a runtime bundle.",
                 409,
                 impact.model_dump(mode="json"),
             )
         if item.state in {"REMOVING", "REMOVED"}:
-            raise QfError(
-                "PLUGIN_INVALID_STATE",
-                "Plugin release is already removing or removed.",
-                409,
-                {"state": item.state},
-            )
+            raise QfError("PLUGIN_INVALID_STATE", "Plugin is already removing or removed.", 409)
         item.state = "DRAINING"
         item.is_default = False
         job = enqueue_job(
@@ -438,11 +353,7 @@ def remove_release(
     return _job_view(job)
 
 
-@router.post(
-    "/plugin-runtime-bundles/prewarm",
-    response_model=BundlePrewarmResponse,
-    status_code=202,
-)
+@router.post("/plugin-runtime-bundles/prewarm", response_model=BundlePrewarmResponse, status_code=202)
 def prewarm_bundle(
     payload: BundlePrewarmRequest,
     session: Session = Depends(get_session),
@@ -451,48 +362,29 @@ def prewarm_bundle(
     with session.begin():
         releases_by_id = {
             item.id: item
-            for item in session.scalars(
-                select(PluginRelease).where(PluginRelease.id.in_(release_ids))
-            )
+            for item in session.scalars(select(PluginRelease).where(PluginRelease.id.in_(release_ids)))
         }
         if set(releases_by_id) != release_ids:
-            missing = sorted(str(value) for value in release_ids - set(releases_by_id))
-            raise QfError(
-                "PLUGIN_UNKNOWN",
-                "Runtime bundle references missing plugin releases.",
-                404,
-                {"missing_release_ids": missing},
-            )
+            raise QfError("PLUGIN_UNKNOWN", "Runtime bundle references missing releases.", 404)
         for item in releases_by_id.values():
             if item.state not in {"STAGED", "ACTIVE", "DRAINING", "INACTIVE"}:
-                raise QfError(
-                    "PLUGIN_INVALID_STATE",
-                    "Runtime bundle can only use validated plugin releases.",
-                    409,
-                    {"release_id": str(item.id), "state": item.state},
-                )
+                raise QfError("PLUGIN_INVALID_STATE", "Runtime bundle requires validated releases.", 409)
+            require_research_data_release(item)
 
-        data_keys = {
+        compatibility_keys = {
             releases_by_id[item.plugin_release_id].descriptor_snapshot.get("compatibility_key")
             for item in payload.members
-            if item.member_role == "DATA"
+            if releases_by_id[item.plugin_release_id].descriptor_snapshot.get("compatibility_key")
         }
-        execution_keys = {
-            releases_by_id[item.plugin_release_id].descriptor_snapshot.get("compatibility_key")
-            for item in payload.members
-            if item.member_role == "EXECUTION"
-        }
-        if data_keys and execution_keys and data_keys != execution_keys:
+        if len(compatibility_keys) > 1:
             raise QfError(
-                "DATA_EXEC_INCOMPATIBLE",
-                "Data and execution plugins have incompatible compatibility keys.",
+                "PLUGIN_BUNDLE_INCOMPATIBLE",
+                "Research/data plugins have incompatible compatibility keys.",
                 422,
             )
 
         ready_bundles = list(
-            session.scalars(
-                select(PluginRuntimeBundle).where(PluginRuntimeBundle.state == "READY")
-            )
+            session.scalars(select(PluginRuntimeBundle).where(PluginRuntimeBundle.state == "READY"))
         )
         for existing in ready_bundles:
             existing_members = list(
@@ -504,9 +396,7 @@ def prewarm_bundle(
             )
             if _same_members(existing_members, payload.members):
                 return BundlePrewarmResponse(
-                    bundle=_bundle_view(session, existing),
-                    job=None,
-                    reused=True,
+                    bundle=_bundle_view(session, existing), job=None, reused=True
                 )
 
         bundle_id = uuid4()
@@ -515,10 +405,10 @@ def prewarm_bundle(
             state="BUILDING",
             python_version=platform.python_version(),
             qf_version=__version__,
-            nautilus_version=_nautilus_version(),
             environment_path=str(Path("bundles") / str(bundle_id)),
         )
         session.add(bundle)
+        session.flush()
         for member in payload.members:
             session.add(
                 PluginRuntimeBundleMember(
@@ -533,26 +423,12 @@ def prewarm_bundle(
             resource_type="plugin_runtime_bundle",
             resource_id=bundle_id,
         )
-        append_event(
-            session,
-            kind="PLUGIN_BUNDLE_BUILD_REQUESTED",
-            aggregate_type="plugin_runtime_bundle",
-            aggregate_id=bundle_id,
-            payload={"members": [item.model_dump(mode="json") for item in payload.members]},
-            actor_kind="LOCAL_OPERATOR",
-        )
-    return BundlePrewarmResponse(
-        bundle=_bundle_view(session, bundle),
-        job=_job_view(job),
-        reused=False,
-    )
+        session.flush()
+        return BundlePrewarmResponse(bundle=_bundle_view(session, bundle), job=_job_view(job), reused=False)
 
 
 @router.get("/plugin-runtime-bundles/{bundle_id}", response_model=BundleView)
-def runtime_bundle(
-    bundle_id: UUID,
-    session: Session = Depends(get_session),
-) -> BundleView:
+def get_bundle(bundle_id: UUID, session: Session = Depends(get_session)) -> BundleView:
     bundle = session.get(PluginRuntimeBundle, bundle_id)
     if bundle is None:
         raise QfError("PLUGIN_BUNDLE_UNKNOWN", "Runtime bundle does not exist.", 404)

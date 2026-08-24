@@ -15,6 +15,7 @@ from sqlalchemy import select
 from db.models import Event
 
 router = APIRouter(prefix="/api/v1", tags=["events"])
+SSE_EVENT_NAME = "qz-event"
 
 
 class EventView(BaseModel):
@@ -78,7 +79,7 @@ async def _stream(request: Request, cursor: int) -> AsyncIterator[str]:
             for item in items:
                 last_id = item.id
                 payload = json.dumps(item.model_dump(mode="json"), separators=(",", ":"))
-                yield f"id: {item.id}\nevent: {item.kind}\ndata: {payload}\n\n"
+                yield f"id: {item.id}\nevent: {SSE_EVENT_NAME}\ndata: {payload}\n\n"
         else:
             idle_ticks += 1
             if idle_ticks >= 15:

@@ -24,12 +24,12 @@ def test_descriptor_snapshot_is_structural() -> None:
 def test_required_secret_must_exist_in_schema() -> None:
     with pytest.raises(ValidationError):
         DescriptorSnapshot(
-            plugin_id="polymarket",
+            plugin_id="research_feed",
             version="1.0.0",
-            capabilities={Capability.EXECUTION},
-            compatibility_key="polymarket-v1",
+            capabilities={Capability.RESEARCH_TOOL},
+            compatibility_key="research-v1",
             requires_python=">=3.14,<3.15",
             requires_qf=">=0.1,<0.2",
             secret_config_schema={"type": "object", "properties": {}},
-            required_secret_names=("private_key",),
+            required_secret_names=("api_key",),
         )

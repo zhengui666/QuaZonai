@@ -1,280 +1,281 @@
 # QuaZonai Agent 治理
 
-本文件是开发 Agent 的最小治理入口。它定义执行顺序、事实源指针、架构边界和完成门槛；不复制完整 API、数据表、产品背景或 Skill 内容。
+本文件是开发 Agent 的最小治理入口。它定义事实源、不可突破边界、工作顺序和完成标准；产品与架构事实只在 `DESIGN.md` 定义。
 
 ## 1. 事实源与读取顺序
 
-1. `DESIGN.md` 是 QuaZonai 唯一完整的产品与架构事实源。
-2. `OPERATIONS.md` 是用户运行视图，不得改写 `DESIGN.md` 的状态、风险或交易语义。
-3. `CLI.md` 是本地 CLI、MCP Gateway 和外部 Agent Skill 的实现展开，不得引入新的产品事实；冲突时先更新 `DESIGN.md`。
-4. `skills/quazonai/SKILL.md` 是外部运行 Agent 的工作流，不是 QZ 内置 Agent runtime，也不是权限或风险事实源。
-5. `README.md` 是运行入口和当前状态摘要，不是第二份设计文档。
-6. 代码、配置、测试和运行结果是实现证据；它们不能静默改写文档事实。
-7. 法律文件按各自约束处理。
+1. `DESIGN.md`：QuaZonai 唯一完整的产品、领域与技术架构事实源；
+2. `OPERATIONS.md`：单用户运行视图；不得创造新的产品事实；
+3. `CLI.md`：CLI、Codex App Server、Mission Tool 和外部 Skill 的实现展开；
+4. `skills/quazonai/SKILL.md`：外部/人工 Codex 使用的薄工作流，不是业务状态机；
+5. `README.md`：入口、当前实现状态、Quick Start 和文档链接；
+6. 代码、配置、测试、运行结果：实现证据，不能静默改写设计。
 
-开始任何跨层工作前，先读取 `DESIGN.md` 中与任务相关的章节。若目标行为、状态、字段、接口、插件能力、MCP Tool、OAuth scope、风险规则或验收标准没有明确记录，先补文档再写代码。
+任何跨层产品、领域、API、Agent Runtime、数据、Evaluation、Alpha、Portfolio、Approval、Package、Handoff 或插件变更前，先读取 `DESIGN.md` 对应章节。若设计没有明确行为，先更新 `DESIGN.md`。
 
-### 何时必须读取设计全文
+## 2. 不可突破的产品边界
 
-- 修改产品流程、Research、Approval 或 Deployment 生命周期；
-- 修改 Nautilus ownership、插件安装/激活/停用/卸载、runtime bundle、Strategy 合同或数据导入；
-- 修改本地 CLI、MCP Gateway、OAuth、Tool/Resource、Tasks、Artifact upload 或 Skill；
-- 修改 Polymarket、风险、Recovery、Heartbeat、Stop/Restart 或真实资金边界；
-- 修改数据库、持久卷、运行拓扑、依赖、API 资源或错误语义；
-- 进行仓库级删除、重构、发布或 live 验收。
+### 2.1 QuaZonai ownership
 
-## 2. 不可突破的边界
+QuaZonai 只拥有：
 
-### 2.1 交易与产品边界
+- Idea / Research Charter；
+- Research Program / Branch / Mission；
+- Data Source Registry / Dataset Revision；
+- Search Ledger / Evidence Exposure；
+- Feature / Alpha / Calibration / Alpha Library；
+- Portfolio Mandate / Portfolio Program / Portfolio Candidate；
+- Independent Evaluation；
+- Approval Snapshot；
+- Candidate Package；
+- Handoff Registry / Feedback / Forward Evidence；
+- Degradation Monitoring；
+- Codex Harness 研究运行时与 Web 工作台。
 
-- NautilusTrader 是唯一交易内核；QZ 是控制平面和产品层。
-- 订单、成交、仓位、NAV、撮合、费用、市场数据和交易场所同步不在 QZ 重建第二套事实账本。
-- 券商执行连接只使用官方 Nautilus adapter；没有官方 adapter 的执行场所不支持。
-- `parquet_l2` 只负责固定 L2 Parquet 到 Nautilus Catalog 的导入，不是自定义券商协议客户端。
-- QZ 无前端、无业务用户/workspace/RBAC、无内置 LLM/Agent runtime/model provider、无 Paper scheduler。
-- Plugin 和 Strategy 都是可信代码；独立进程是生命周期和故障边界，不得描述为恶意代码安全沙箱。
-- 跨 instrument 的中央逐单风险必须沿设计指定的 Rust execution seam 实现；不使用 C++，不复制 Polymarket 协议客户端。
-- 不新增应用级 SHA、hash、checksum、digest 或 fingerprint 字段、文件、状态判断或完整性流程。
-- 不预埋公共插件市场、HA、Redis、密钥轮换、旧业务迁移框架或其他未批准机制。
+QuaZonai **不拥有**：
 
-### 2.2 运行时插件边界
+- broker/exchange credential；
+- order、fill、position、account、NAV；
+- TradingNode、Paper/Live runtime；
+- execution risk、heartbeat、recovery、venue reconciliation；
+- 下游启动/停止/撤单/平仓/强制下线。
 
-- 数据源和执行连接必须引用具体 `plugin_release_id`；不得只依赖可漂移的 `plugin_id` 或全局 site-packages。
-- 第三方插件只在独立 validator 或 runner 子进程中发现和加载；API、finite worker、live supervisor 和 MCP Gateway 长进程不得导入插件代码。
-- 插件使用操作者上传的 wheel 集和隔离、不可变 runtime bundle；不接受 sdist、editable install、任意 Git/URL 安装或运行时源码编译。
-- 动态插拔通过 release 状态机、drain、子进程退出和新 bundle 完成；不得使用 `importlib.reload()`、修改 `sys.modules` 或在运行中的 TradingNode 内原地替换 adapter。
-- 插件升级必须 side-by-side；已有 Run、Data Source、Execution Connection 和 Deployment 不得被静默切换版本。
-- 普通停用只阻止新绑定并允许已有引用 drain；强制卸载必须先取消未启动作业、标准 Stop 受影响 Deployment、等待 Runner 退出，再删除 artifacts/bundles。
-- `READY` bundle 不得原地修改；Python/QZ/Nautilus 版本变化使旧 bundle `STALE`，不得用于新的 Run 或 generation。
+NautilusTrader、LEAN 或自定义交易系统都是独立 downstream consumer。任何实现把 QZ 重新做成 Execution Control Plane 都是架构违规。
 
-### 2.3 CLI 与远程 MCP 边界
+### 2.2 人类操作承诺
 
-- 本地人类只通过官方 `quazonai` CLI 或 loopback Core API 操作。
-- 远程 AI Agent 只通过官方 MCP Streamable HTTP Gateway 和 `skills/quazonai/SKILL.md` 操作。
-- **不得实现 SSH transport、普通 Shell、forced command、端口转发或自定义 JSONL 隧道。**
-- Core API 继续只通过宿主 `127.0.0.1:8000` 和内部网络可达；不得为 Agent 公开 `/api/v1` 或增加 `--allow-remote-api`。
-- MCP Gateway 是独立 resource server，只公开 `/mcp`、OAuth protected-resource metadata 和受限 Artifact upload endpoint。
-- Gateway 不访问 PostgreSQL、Docker socket、Plugin/Catalog/Report/Wallet Volume。
-- Gateway 不提供通用 HTTP proxy，也不把 MCP access token 传给 Core API、Polymarket 或其他下游。
-- MCP HTTP 授权使用 OAuth 2.1、RFC 9728 discovery、精确 resource/audience 和 scopes；这不是 QZ 业务用户模型。
-- Gateway 必须校验 token signature、issuer、expiration、audience/resource、client identity 和 scopes。
-- Gateway 必须校验 Host 和存在的 Origin；CORS 不允许 `*`。
-- Tool list 按 scope 过滤；客户端提示和 Tool annotations 不能代替服务器权限校验。
-- Human CLI 和 MCP Tool 必须映射相同领域行为；不得建立 Agent 专用自动化后门。
-- Skill 只能使用当前 MCP `tools/list`、Resources 和 Tool Result；不得根据历史聊天假定命令存在。
-- Skill、MCP Tool 或 Elicitation 不得请求、读取、显示或转发 OAuth token、API Key、Private Key、Wallet Secret、Password 或支付凭据。
-- Credential Secret 写入/读取、Approval approve/reject、Force Plugin Remove、Live Canary、Master Key 和数据库破坏操作永久 human-only，不能通过 scope 解锁。
-- `deployment.stop` 只有用户明确要求或设计规定的紧急风险策略触发时才可由 Agent 调用；必须明确 Stop 不强平已有仓位。
-- MCP Tasks 只能映射 QZ 已持久化的 job/run/deployment；业务事实不得只存在 MCP session 或 task store。
-- Artifact 上传使用 HTTPS 两阶段、精确 size、offset 和生命周期；禁止把大型文件 Base64 放入 MCP JSON，也禁止服务器抓取任意远程 URL。
+正常 Research Program 生命周期只允许两类常规人工动作：
 
-## 3. 文档优先
+1. 提出 Idea；
+2. 审批系统推荐的 Paper/Live Handoff Candidate。
 
-涉及以下任一变化时，先更新 `DESIGN.md`，再同步 `OPERATIONS.md`、`CLI.md`、README 和 Skill：
+Pause/Resume/Archive/Restore、数据授权、Codex 登录、Mandate/Universe/Downstream/Plugin 配置和故障处理属于低频 Administration，不得被开发成每个 Program 的必经人工步骤。
 
-- 产品能力、Research 状态、Approval 条件或失败语义；
-- Plugin package contract、capability、release/bundle 状态或动态插拔语义；
-- CLI command、MCP Tool/Resource、OAuth scope、Artifact、Task 或 human-only gate；
-- Strategy 合同或数据格式；
-- API、错误码、数据库模型或持久化 ownership；
-- 风险上限、Reservation、Reconciliation、Heartbeat、Recovery 或真实资金边界；
-- 运行拓扑、依赖、部署入口和验收标准。
+### 2.3 不可变事实
 
-顺序固定为：
+以下正式对象不原地改写语义：
+
+- Research Charter；
+- Dataset Revision；
+- Feature/Alpha/Calibration Version；
+- Alpha Qualification Version；
+- Evaluation Episode disclosure/exposure；
+- Portfolio Mandate Version；
+- Capital Context Version；
+- Portfolio Candidate；
+- Approval Snapshot；
+- Candidate Package；
+- Handoff Offer 的历史终态。
+
+改变依赖就创建新 Version/Candidate/Snapshot，而不是 patch 旧事实。
+
+### 2.4 No custom hash gates
+
+不得新增应用级 SHA、hash、checksum、digest、fingerprint、内容寻址身份或以其为 Gate 的完整性流程。
+
+允许 Git、wheel、数据库等底层工具自身使用内部 hash，但 QZ 业务身份、幂等、审批、发布、插件、Package、Workspace 或验证不得依赖这些值。
+
+## 3. Codex Harness 边界
+
+### 3.1 App Server
+
+- 内置 Agent Runtime 使用官方 `codex app-server`；
+- V1 稳定生产传输使用 stdio；
+- experimental WebSocket、dynamicTools、project/environments 等不能成为 V1 必需能力；
+- Codex Thread/Turn/Item 是执行上下文，不是业务事实源；
+- 一个 Mission 对应一个 durable Thread；Program 不使用无限长 Thread。
+
+### 3.2 Mission isolation
+
+默认 Mission：
+
+- 独立 Codex App Server child；
+- 临时独占 Git worktree；
+- `workspace-write`；
+- network disabled；
+- `approvalPolicy=never`；
+- 只允许 Mission worktree root；
+- 不访问 QZ source repo、其他 Program、Sealed data、Secrets、Docker socket 或数据库凭据。
+
+需要数据、实验或受控外部能力时，通过 mission-scoped stdio MCP Tool Server。
+
+### 3.3 Agent 不能做什么
+
+任何 Codex profile 都不能：
+
+- approve/reject Candidate；
+- publish Handoff；
+- 修改 Charter/Mandate/Sealed result；
+- 访问 provider/downstream secret；
+- 写 PostgreSQL；
+- 读取 Sealed raw data；
+- 控制 downstream runtime；
+- 用 Git branch/commit/merge/rebase/worktree 管理绕过 QZ Workspace Manager。
+
+Agent 输出必须通过 schema、artifact validation 和 Domain Validator 才能推进状态。
+
+### 3.4 隐藏推理
+
+不得把模型隐藏 chain-of-thought 当作产品事实、审计证据或 UI 内容。只保存可验证活动：Tool 调用、文件 diff、测试、命令结果、结构化结论、Domain Event。
+
+## 4. Research / Evidence 边界
+
+- Discovery、Sealed Promotion、Forward Evidence 三层必须分离；
+- Sealed raw data 不进入 Codex workspace/MCP；
+- Level 1 disclosure 由 deterministic policy 生成；
+- Search Ledger 保存失败和被淘汰尝试；
+- Evidence Exposure 沿 lineage 继承；
+- Episode 一旦披露后不能重新作为该 lineage 的独立证据；
+- 数据必须保留 point-in-time `available_at` 语义；
+- Data Quality failure 不得偷换成 Alpha failure。
+
+## 5. Alpha / Portfolio 边界
+
+- Alpha 不发订单，只发 score/expected return + uncertainty；
+- relative score 未校准时不得冒充 expected return；
+- Alpha Qualification 绑定 Universe + Horizon；
+- Shadow Alpha 只能参加受限 Portfolio Contribution research，不能直接 Handoff；
+- Portfolio Program 必须绑定 Mandate Version；
+- Candidate 任一关键依赖变化就创建新 Candidate；
+- Multi-Universe Portfolio 必须使用 universe-specific cost/capacity 与 cross-universe risk；
+- Material Improvement Gate 控制 Approval 噪音；
+- 不允许在 Approval 页面手工改 Alpha、权重或 Mandate。
+
+## 6. Handoff / Downstream 边界
+
+- Candidate Package 只输出 TargetPortfolioFrame，不输出订单；
+- Approval 绑定一个逻辑 downstream system；
+- Paper 与 Live 分开审批；
+- 未领取 Offer 可 revoke；`CLAIMED` 后 QZ 无 stop/revoke runtime 权限；
+- 缺失/迟到/部分 feedback 不等于 Candidate failure；
+- 只有 complete valid Paper feedback 才能进入 Live Promotion；
+- Degradation 只能产生 Research wake/advisory，不自动换仓或停止交易。
+
+## 7. Runtime Plugin 边界
+
+插件只允许：
 
 ```text
-发现缺口或冲突
-→ 更新 DESIGN.md
-→ 同步 OPERATIONS.md / CLI.md
-→ 检查 README.md / AGENTS.md / Skill 指针
-→ 实现
-→ 运行最窄有效验证
-→ 独立复核
-→ 汇总证据
+DATA_CONNECTOR
+DATA_TRANSFORM_ADAPTER
+RESEARCH_ADAPTER
+HANDOFF_CONNECTOR
 ```
 
-如果实现与设计冲突，停止相关代码工作并报告冲突。不得用代码事实反向覆盖文档事实，也不得让 README、OPERATIONS、CLI、AGENTS 或 Skill 变成竞争事实源。
+禁止 broker/execution/order capability。
 
-## 4. Ponytail 实现纪律
+- 只接受 wheel；禁止 sdist/editable/Git URL/运行时源码编译；
+- 每个 release side-by-side；已有资源固定具体 release；
+- 第三方插件只在 validator/connector runner child 中 import；
+- 长进程不得 import plugin；
+- 动态卸载依赖进程退出，不使用 `reload()` 或 `sys.modules` 热替换；
+- Secret 不暴露给 Codex。
 
-每次编码、重构、依赖选择和 Review 都使用 Ponytail full：
+## 8. 文档优先工作流
 
-1. 先判断需求是否必须存在；推测性需求删除。
-2. 查找现有实现；能复用就不新增。
-3. 优先 Python 标准库、平台能力、官方 MCP SDK 和已批准依赖。
-4. 做最小局部改动；删除优先于添加，少文件、少状态、少抽象。
-5. 一个实现不建立接口、工厂或配置层来假装可扩展。
-6. 插件框架只实现已批准的 runtime release/bundle seam，不扩张为应用市场。
-7. CLI 是薄客户端；不复制 API 领域逻辑。
-8. MCP Gateway 只实现标准 MCP、OAuth resource server 和 Artifact bridge，不扩张为通用 API Gateway。
-9. Skill 只编排 MCP Tool，不把模型推理变成新的业务状态机。
-10. 能下沉到 Nautilus、Python packaging、uv、MCP SDK、OAuth 标准或 PostgreSQL 原语的行为，不在 QZ 重写。
-11. 真实简化上限用一行 `ponytail:` 注释说明升级条件；普通代码不添加口号式注释。
+顺序固定：
 
-Ponytail 不得删掉真实边界的校验、错误处理、Secret 保护、数据一致性、插件 drain、OAuth audience、scope、idempotency、precondition、human handoff 或用户明确要求。
+```text
+确认事实源
+→ 画 ownership / data flow
+→ 更新 DESIGN.md
+→ 同步 OPERATIONS.md / CLI.md / README / Skill
+→ 实现最小正确改动
+→ 运行最窄有效验证
+→ 跨边界验证
+→ 独立复核
+→ 汇总已验证/未验证项
+```
 
-## 5. 分层与 ownership
+不得让 README、OPERATIONS、CLI、Skill、代码注释或聊天记录成为竞争事实源。
 
-修改前先画出调用和数据流，确认真正拥有者：
+## 9. 实现纪律
 
-- API：请求校验、控制面状态、统一错误、SSE、最终幂等和领域校验；
-- QZ orchestration：Research、Strategy Version、Experiment、Run、Approval、Deployment、Universe 和控制事件；
-- CLI：本地 human command、输出、watch 和 Secret-safe 输入；
-- MCP Gateway：MCP protocol、OAuth token validation、scope-filtered tools、Resources、Tasks、Artifact bridge 和 audit；
-- Skill：外部 Agent 工作流、读取优先、Tool 选择和 human handoff；
-- Plugin Manager：release、artifact、activation、drain、remove、descriptor snapshot 和 bundle 编排；
-- Plugin Validator/Builder：短进程安装 wheel、加载 entry point、生成 schema、构建 bundle；
-- Runners/Workers：有限作业和独立 Nautilus 进程生命周期；
-- Nautilus：Catalog、回测、风险、订单、成交、仓位和 Reconciliation；
-- PostgreSQL：QZ 控制面、插件、job/event、幂等、Optuna 和风险最小投影；
-- 持久卷：Plugin Release/Bundle、Artifact staging、Catalog、Report 和 Import staging。
+使用 Ponytail 原则：
 
-任何同时修改两个 ownership 层的工作，都必须在设计中说明边界和失败路径。
+1. 没有真实需求就删除；
+2. 先复用平台和标准，不自建平行机制；
+3. 删除优先于兼容 wrapper；
+4. 状态、接口和抽象只为真实边界存在；
+5. CLI 是薄客户端；
+6. Agent Tool Server 只做 capability-enforced domain bridge，不复制业务状态机；
+7. 能由 PostgreSQL transaction、Arrow、Polars、Optuna、CVXPY、MCP SDK、Codex App Server 可靠承担的，不重复造轮子；
+8. 旧 Nautilus execution-control code 没有兼容义务，应删除而非迁移到新抽象里。
 
-## 6. 关键路径纪律
+## 10. Ownership
 
-### 6.1 MCP 与外部 Agent
+- Frontend：展示和用户输入，不决定领域状态；
+- API：wire validation、operator mutation、SSE、统一错误；
+- Domain：全部状态机和业务 Gate；
+- Orchestrator：Mission/Program scheduling、Cooling/Wake、Promotion；
+- Agent Worker：Codex child/process/thread/worktree lifecycle；
+- Mission Tool Server：按 MissionContract 暴露受限 MCP tools；
+- Research Engine：Arrow/Polars/evaluator/Optuna/CVXPY；
+- Sealed Evaluator：独立 Promotion Evaluation；
+- Plugin Manager：data/handoff plugin release/runtime；
+- Worker：data/plugin/package/handoff/degradation jobs；
+- PostgreSQL：业务事实、jobs、events、Search Ledger、Exposure；
+- Persistent volumes：datasets、artifacts、packages、plugin runtimes、Program repos；
+- Downstream：运行、订单、仓位、账户和执行安全。
 
-- 实现 MCP `2025-11-25` Streamable HTTP；不实现旧 HTTP+SSE 作为主路径。
-- 使用官方 MCP SDK，并固定经过验证的稳定版本。
-- `tools/list`、input/output schema、structuredContent 和 Tool annotations 必须有合同测试。
-- OAuth resource metadata、401 challenge、PKCE、Client Credentials、scope challenge 和 audience validation 必须用真实 HTTP 测试。
-- Access token 每次请求校验；MCP session ID 不得被当作认证。
-- Mutation Tool 必须带 idempotency key；同 key 不得用于不同 normalized request。
-- 更新类 Tool 必须携带 current state/revision/version/generation 等前置条件；冲突后重新读取，不盲重试。
-- 高影响 Tool 必须先获得绑定 principal/target/version 的 impact token。
-- Human-only Tool 不得出现在 tools/list；直接调用也必须 hard-deny 且无副作用。
-- Long-running Tool 无 Tasks 客户端也必须可用；支持 Tasks 时必须绑定 OAuth principal。
-- Gateway 断线、重启或 task 过期不得改变底层 QZ Run/Deployment 事实。
-- Form Elicitation 不得请求敏感信息；Approval 和 Secret 返回 human handoff。
-- Artifact 上传按 offset 流式处理，不全量入内存；中断和过期清理 staging；不生成应用级 hash。
+## 11. 验证纪律
 
-### 6.2 运行时插件
+每个检查前明确：
 
-- 只接受 PRIMARY/DEPENDENCY wheels 和唯一 `quazonai.plugins` entry point。
-- API、worker、supervisor、Gateway 主进程不得导入第三方插件。
-- 安装只使用离线、本地 wheels 和预编译 binary；禁止远程解析、sdist build、editable install 和 Python 自动下载。
-- Descriptor import 不得启动网络、后台线程或交易节点。
-- Release、Artifact、Bundle 使用数据库 UUID 和显式关系，不建立内容 hash。
-- 新 release 激活时旧 release 进入 `DRAINING`；已有资源固定旧 release。
-- 强制 Remove 必须由独立 job 执行标准 drain/Stop。
+1. 要发现什么具体失败；
+2. 失败会如何改变下一步。
 
-### 6.3 Strategy、回测和优化
+最少层次：
 
-- 只接受设计规定的单个 `.py` 合同和大小上限。
-- 回测只走 `BacktestNode + ParquetDataCatalog`。
-- Run 和全部 optimization trials 固定同一 runtime bundle。
-- 优化保持 100 trials、最多 4 个独立 BacktestNode 进程和 Optuna 独立 schema。
-- Pareto 自动选择使用固定确定性算法；不得改成人工挑选。
-- Holdout 只运行一次；失败 candidate 不得被同一 Holdout 上的下一个 candidate 替换。
+1. 文档/术语/路径一致性；
+2. 受影响模块 unit；
+3. PostgreSQL transaction/integration；
+4. process isolation；
+5. Codex App Server / MCP contract；
+6. Sealed non-leakage；
+7. browser + fake downstream E2E；
+8. 只有真实边界扩大时才跑更宽检查。
 
-### 6.4 Parquet 和外部交易
+不能只用 mock 证明：
 
-- L2 Importer 从固定 bundle 启动，分批读取并严格校验 decimal、snapshot 和事件连续性。
-- 导入失败不注册部分 Catalog，终态清理 staging。
-- Polymarket 订单语义遵循官方 adapter；不增加自定义 stop/trailing/OCO。
-- Polymarket Plugin 或 Nautilus 升级必须重新验证 factory、Risk Decorator、Recovery 和 Canary。
-- 真实资金路径保留 production read-only preflight、最小金额 canary 和独立复核。
+- Codex stdio protocol lifecycle；
+- thread resume；
+- Mission worktree isolation；
+- MCP capability hard deny；
+- Sealed raw data 不可达；
+- PostgreSQL concurrency/idempotency；
+- plugin wheel install/entry point/process isolation；
+- Candidate Package Reference Fixture conformance；
+- Handoff claim vs revoke 原子竞争；
+- event replay / SSE reconnect。
 
-### 6.5 风险和恢复
+## 12. 文档任务完成标准
 
-- 25 pUSD 是具体 InstrumentId 的 Nautilus 原生逐单限制；100 pUSD 是 QZ funder gross reservation。
-- Reservation 在官方 client submit 前完成；无法证明为减仓的订单按全部 debit 计入。
-- DB、projection、owner、heartbeat、runtime bundle 或 reconciliation 不完整时，增加风险 fail-closed；cancel 仍可用。
-- Recovery generation 无 Strategy、无 heartbeat；Armed generation 再次对账并激活风险后才加载 Strategy。
-- Plugin switch 和 Universe 变化通过受控 Restart；新 instrument/bundle 未生成精确风险映射前不得交易。
-- `DRAINING` release 可服务原 Deployment 自动 Recovery；`REMOVED` release 不得被同 plugin_id 其他版本自动替代。
+- `DESIGN.md` 仍是唯一完整事实源；
+- `OPERATIONS.md` 只写用户运行视图；
+- `CLI.md` 只展开接口/Agent Runtime；
+- `README.md` 不承诺未实现能力；
+- Skill 不复制完整领域模型；
+- 不再出现 QZ 管理 Nautilus execution/deployment/recovery/risk 的当前目标描述；
+- Codex built-in runtime 与 optional external automation 区分清楚；
+- 无应用级 hash gate；
+- 术语、状态、路径、API、服务名一致；
+- 独立 Documentation/Architecture review 无阻断意见。
 
-## 7. Agent 编排
+## 13. 代码任务完成标准
 
-QuaZonai 开发使用主 Agent + 执行子 Agent。
+交付前确认：
 
-主 Agent：
+- 目标行为已先进入 `DESIGN.md`；
+- 变更位于正确 ownership；
+- 无 broker/order/position/deployment control 回流 QZ；
+- Codex 无 Secret/Sealed/DB 越权；
+- immutable versions、idempotency 和 expected revision 有测试；
+- Search Ledger/Exposure 不因复制对象被重置；
+- Candidate/Approval/Package 不被原地修改；
+- downstream claim 后 QZ 不提供 runtime stop；
+- plugin 不在长进程热加载/热卸载；
+- 无新增应用级 hash/checksum/digest/fingerprint 业务逻辑；
+- 实现报告与独立复核报告均已提交。
 
-- 读取事实源并界定工作包；
-- 拆分文档、实现、测试和复核依赖；
-- 指定输入、输出、边界和验收条件；
-- 汇总结构化报告，处理冲突和返工；
-- 只依据独立证据收口。
-
-执行子 Agent 负责工作包内文档、代码、测试、静态检查和运行验证。关键改动的实现与独立验收不能由同一 Agent 承担。
-
-MCP 关键工作包至少拆为：
-
-- Protocol/Tool/Resource schema；
-- OAuth discovery、token verification 和 scope；
-- shared command mapping、idempotency 和 precondition；
-- Tasks/notification；
-- Artifact upload；
-- Skill E2E；
-- 独立 live boundary review。
-
-子 Agent 报告必须包含：
-
-- 修改文件和行为摘要；
-- `DESIGN.md` 一致性；
-- API/schema/依赖/持久化影响；
-- 执行的检查、结果和失败原因；
-- MCP/OAuth/Tool/Artifact 证据；
-- 未验证项、风险和阻塞；
-- 是否满足完成标准。
-
-## 8. 验证纪律
-
-每次检查前写清楚：
-
-1. 它要发现的具体失败；
-2. 失败后下一步如何改变。
-
-验证顺序：
-
-1. 文档和路径自洽；
-2. 受影响模块最窄单元/行为检查；
-3. 跨边界集成；
-4. 只有边界扩大或设计明确要求时运行更宽检查。
-
-以下不能只靠 mock：
-
-- OAuth discovery、PKCE、audience 和 scope；
-- Origin/Host validation；
-- MCP Streamable HTTP 和 reconnect；
-- Tool list 过滤和 human-only hard deny；
-- Idempotency、precondition、task isolation；
-- Artifact 大文件流式上传和 resume；
-- Plugin wheel install、entry point、native extension 和 bundle isolation；
-- PostgreSQL locks；
-- Nautilus factory、Recovery、Heartbeat、unknown submit 和真实订单状态。
-
-Review 只报告可达真实缺陷，说明路径、影响和最小修复；不要用未来可能性制造工作。
-
-## 9. 文档任务完成标准
-
-- `DESIGN.md` 仍是唯一产品/架构事实源；
-- `OPERATIONS.md` 只描述用户运行视图；
-- `CLI.md` 只展开 CLI/MCP/Skill；
-- `README.md` 只保留入口、状态、Quick Start 和文档链接；
-- `AGENTS.md` 只保留治理规则；
-- Skill 不复制完整 API 和风险事实；
-- 文档不再出现 SSH 作为远程 Agent 传输；
-- MCP OAuth 明确是 transport authorization，不是业务用户域；
-- 文档没有承诺未实现的 ready 状态；
-- 路径、端口、scope、Tool、Plugin 状态和术语一致；
-- 文档检查和 `git diff --check` 通过；
-- 独立 Documentation/Architecture Reviewer 无阻断意见。
-
-## 10. 代码任务完成标准
-
-交付前必须确认：
-
-- 先更新受影响事实源；
-- 变更位于正确 ownership point，未创建平行交易内核；
-- MCP 没有退化为 raw Core API、通用 proxy、SSH 或 Shell；
-- OAuth token audience、scope、no-passthrough、Origin/Host、rate limit 有验证；
-- Human-only Tool 不可被配置解锁；
-- Idempotency、precondition、impact token、Tasks 和 Artifact lifecycle 有测试；
-- 插件动态插拔未退化为全局 site-packages、长进程 reload 或静默版本漂移；
-- 没有新增前端、业务 auth、多租户、应用级 hash、公共插件市场或未批准抽象；
-- 外部系统部分区分“已验证”“未验证”和“被阻塞”；
-- 实现报告和独立复核报告均已提交。
-
-未满足任一项时，状态只能是未完成或部分完成，不得标记为 release-ready/live-ready。
+未满足任一项，只能标记为部分完成，不得宣称 conforming/release-ready。

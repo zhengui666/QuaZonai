@@ -1,4 +1,4 @@
-"""Stable structural plugin descriptor contract."""
+"""Stable structural plugin descriptor contract for research/data extensions."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ _PLUGIN_ID = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
 class Capability(StrEnum):
     HISTORICAL_IMPORT = "HISTORICAL_IMPORT"
     LIVE_DATA = "LIVE_DATA"
-    EXECUTION = "EXECUTION"
+    RESEARCH_TOOL = "RESEARCH_TOOL"
 
 
 class DescriptorSnapshot(BaseModel):
@@ -27,7 +27,6 @@ class DescriptorSnapshot(BaseModel):
     compatibility_key: str
     requires_python: str
     requires_qf: str
-    requires_nautilus: str | None = None
     public_config_schema: dict[str, Any] = Field(default_factory=dict)
     secret_config_schema: dict[str, Any] = Field(default_factory=dict)
     required_secret_names: tuple[str, ...] = ()
@@ -61,12 +60,12 @@ class DescriptorSnapshot(BaseModel):
 
 @runtime_checkable
 class RuntimePlugin(Protocol):
-    """Runtime-only plugin object loaded inside validator/runner child processes."""
+    """Runtime-only plugin object loaded inside validator/worker child processes."""
 
     def descriptor(self) -> DescriptorSnapshot: ...
 
     def build_data_config(self, public_config: dict[str, Any]) -> object: ...
 
-    def build_execution_config(self, public_config: dict[str, Any]) -> object: ...
-
     def build_catalog_importer(self, public_config: dict[str, Any]) -> object: ...
+
+    def build_research_tool(self, public_config: dict[str, Any]) -> object: ...
