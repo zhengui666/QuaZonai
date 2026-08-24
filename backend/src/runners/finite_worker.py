@@ -1,4 +1,4 @@
-"""Durable finite-job worker with isolated child processes for plugin and research code."""
+"""Durable finite-job worker for bounded research/data infrastructure work."""
 
 from __future__ import annotations
 
@@ -13,11 +13,7 @@ import time
 from collections.abc import Callable, Sequence
 
 from db.models import Job
-from db.session import (
-    create_database_engine,
-    create_session_factory,
-    ping_database,
-)
+from db.session import create_database_engine, create_session_factory, ping_database
 from events import append_event
 from jobs import claim_next_job, complete_job, fail_job, release_expired_leases
 from logging_utils import configure_logging
@@ -33,11 +29,6 @@ def _noop_handler(_: Settings, __: Job) -> None:
 
 def _child_handler(module: str, *fixed_arguments: str) -> Handler:
     def handler(settings: Settings, job: Job) -> None:
-        timeout = (
-            settings.plugin_job_timeout_seconds
-            if module.endswith("plugin_jobs")
-            else settings.research_job_timeout_seconds
-        )
         try:
             subprocess.run(
                 [sys.executable, "-m", module, *fixed_arguments, str(job.id)],
@@ -45,7 +36,7 @@ def _child_handler(module: str, *fixed_arguments: str) -> Handler:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
                 text=True,
-                timeout=timeout,
+                timeout=settings.plugin_job_timeout_seconds,
                 env=os.environ.copy(),
             )
         except subprocess.TimeoutExpired as exc:
@@ -60,13 +51,9 @@ def _child_handler(module: str, *fixed_arguments: str) -> Handler:
 
 HANDLERS: dict[str, Handler] = {
     "SYSTEM_NOOP": _noop_handler,
-    "PLUGIN_INSTALL": _child_handler("quazonai.runners.plugin_jobs", "install"),
-    "PLUGIN_BUNDLE_BUILD": _child_handler("quazonai.runners.plugin_jobs", "build"),
-    "PLUGIN_REMOVE": _child_handler("quazonai.runners.plugin_jobs", "remove"),
-    "PARQUET_IMPORT": _child_handler("quazonai.runners.import_parquet"),
-    "BACKTEST": _child_handler("quazonai.runners.research_jobs", "backtest"),
-    "OPTIMIZATION": _child_handler("quazonai.runners.research_jobs", "optimization"),
-    "HOLDOUT": _child_handler("quazonai.runners.research_jobs", "holdout"),
+    "PLUGIN_INSTALL": _child_handler("runners.plugin_jobs", "install"),
+    "PLUGIN_BUNDLE_BUILD": _child_handler("runners.plugin_jobs", "build"),
+    "PLUGIN_REMOVE": _child_handler("runners.plugin_jobs", "remove"),
 }
 
 
@@ -82,11 +69,7 @@ def run_once(settings: Settings, *, owner: str) -> bool:
     factory = create_session_factory(engine)
     with factory.begin() as session:
         release_expired_leases(session)
-        job = claim_next_job(
-            session,
-            owner=owner,
-            lease_seconds=settings.job_lease_seconds,
-        )
+        job = claim_next_job(session, owner=owner, lease_seconds=settings.job_lease_seconds)
         if job is None:
             return False
         append_event(
@@ -129,11 +112,12 @@ def run_once(settings: Settings, *, owner: str) -> bool:
                 aggregate_id=current.id,
                 payload={"kind": current.kind},
             )
+    engine.dispose()
     return True
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="QuaZonai finite worker")
+    parser = argparse.ArgumentParser(description="QuaZonai finite research worker")
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--once", action="store_true")
     return parser
@@ -147,6 +131,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     engine = create_database_engine(settings)
     if args.check:
         ping_database(engine)
+        engine.dispose()
         return 0
 
     owner = f"{socket.gethostname()}:{os.getpid()}"
