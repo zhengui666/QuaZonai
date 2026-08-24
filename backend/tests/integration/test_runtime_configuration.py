@@ -172,7 +172,7 @@ def test_runtime_configuration_rejects_stale_revision(
     assert stale.json()["error"]["code"] == "RUNTIME_CONFIGURATION_STALE"
 
 
-def test_runtime_configuration_deduplicates_key_retry_with_encrypted_receipt_secret(
+def test_runtime_configuration_deduplicates_key_retry_without_retaining_secret(
     engine: Engine,
     settings: Settings,
 ) -> None:
@@ -196,13 +196,11 @@ def test_runtime_configuration_deduplicates_key_retry_with_encrypted_receipt_sec
         assert event_count == 1
         receipt = session.get(PublicMutationReceipt, "runtime-config-retry")
         assert receipt is not None
-        assert "sk-idempotent-secret" not in str(receipt.normalized_request)
+        serialized = str(receipt.normalized_request)
+        assert "sk-idempotent-secret" not in serialized
         assert "codex_api_key" not in receipt.normalized_request
+        assert "codex_api_key_secret" not in receipt.normalized_request
         assert receipt.normalized_request["codex_api_key_action"] == "set"
-        secret_record = receipt.normalized_request["codex_api_key_secret"]
-        assert isinstance(secret_record, dict)
-        assert secret_record["ciphertext"]
-        assert secret_record["nonce"]
 
 
 def test_key_bearing_receipt_remains_replayable_after_later_update(
@@ -240,10 +238,38 @@ def test_key_bearing_receipt_remains_replayable_after_later_update(
     assert replay.json() == first.json()
 
 
-def test_idempotency_receipt_claim_serializes_same_key(
+def test_key_bearing_idempotency_equivalence_uses_secret_action_not_secret_value(
     engine: Engine,
     settings: Settings,
 ) -> None:
+    client = TestClient(create_app(settings=settings, engine=engine))
+    headers = {"Idempotency-Key": "runtime-config-write-only-secret"}
+    original = _payload(codex_api_key="sk-first-value")
+
+    first = client.put("/api/v1/system/runtime-configuration", json=original, headers=headers)
+    assert first.status_code == 200, first.text
+
+    replay = client.put(
+        "/api/v1/system/runtime-configuration",
+        json=_payload(codex_api_key="sk-different-retry-value"),
+        headers=headers,
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json() == first.json()
+
+    factory = create_session_factory(engine)
+    with factory() as session:
+        runtime = effective_settings(session, settings)
+        assert runtime.codex_api_key == "sk-first-value"
+        event_count = session.scalar(
+            select(func.count()).select_from(Event).where(
+                Event.kind == "RUNTIME_CONFIGURATION_UPDATED"
+            )
+        )
+        assert event_count == 1
+
+
+def test_idempotency_receipt_claim_serializes_same_key(engine: Engine) -> None:
     if engine.dialect.name != "postgresql":
         pytest.skip("Concurrent receipt serialization is verified on PostgreSQL")
 
@@ -254,7 +280,6 @@ def test_idempotency_receipt_claim_serializes_same_key(
         first_transaction = first_session.begin()
         first_receipt, first_claimed = _claim_idempotency_receipt(
             first_session,
-            settings,
             "runtime-config-concurrent",
             payload,
         )
@@ -264,7 +289,6 @@ def test_idempotency_receipt_claim_serializes_same_key(
             with factory.begin() as second_session:
                 receipt, claimed = _claim_idempotency_receipt(
                     second_session,
-                    settings,
                     "runtime-config-concurrent",
                     payload,
                 )
@@ -289,6 +313,8 @@ def test_runtime_configuration_rejects_worker_limits_outside_bounds(
 ) -> None:
     client = TestClient(create_app(settings=settings, engine=engine))
     invalid_payloads = (
+        _payload(max_plugin_wheel_bytes=1_073_741_825),
+        _payload(max_plugin_wheel_bytes=9_223_372_036_854_775_808),
         _payload(job_poll_seconds=0.001),
         _payload(job_poll_seconds=3600.01),
         _payload(plugin_validation_timeout_seconds=86_401),
