@@ -53,7 +53,9 @@ export function RuntimeConfigurationPanel({ configuration }: { configuration: Ru
 
   const providerUrlChanged = normalizeBaseUrl(baseUrl) !== normalizeBaseUrl(configuration.codex_base_url ?? '');
   const requiresKeyDecision = providerUrlChanged && configuration.codex_api_key_configured && !apiKey.trim() && !clearApiKey;
-  const invalid = Object.values(numericValues).some((value) => value <= 0) || requiresKeyDecision;
+  const invalid = Object.values(numericValues).some((value) => value <= 0)
+    || numericValues.job_poll_seconds < 0.01
+    || requiresKeyDecision;
   const authState = configuration.codex_api_key_configured
     ? 'API KEY CONFIGURED'
     : configuration.codex_login_configured
@@ -62,6 +64,7 @@ export function RuntimeConfigurationPanel({ configuration }: { configuration: Ru
 
   const save = () => {
     update.mutate({
+      expected_revision: configuration.revision,
       codex_model: model.trim() || null,
       codex_base_url: baseUrl.trim() || null,
       codex_api_key: clearApiKey ? null : apiKey.trim() || null,
@@ -82,11 +85,11 @@ export function RuntimeConfigurationPanel({ configuration }: { configuration: Ru
           <div><div className="qz-label">Codex authentication</div><div style={{ marginTop: 6 }}><StateBadge state={authState} /></div></div>
           <div><div className="qz-label">Provider endpoint</div><div style={{ marginTop: 6 }}><StateBadge state={configuration.codex_base_url ? 'CUSTOM' : 'DEFAULT'} /></div></div>
           <div><div className="qz-label">Model</div><div className="qz-mono" style={{ marginTop: 8 }}>{configuration.codex_model || 'Codex default'}</div></div>
-          <div><div className="qz-label">Last updated</div><div style={{ marginTop: 8 }}>{configuration.updated_at ? new Date(configuration.updated_at).toLocaleString() : 'Defaults'}</div></div>
+          <div><div className="qz-label">Revision</div><div className="qz-number" style={{ marginTop: 8 }}>{configuration.revision}</div></div>
         </div>
 
         <div className="qz-resource-note" style={{ marginBottom: 16 }}>
-          Codex model, provider endpoint, API key and worker limits are runtime configuration, not bootstrap environment variables. API keys are encrypted at rest and never read back to the browser. A blank API-key field keeps the stored key unchanged unless the provider endpoint changes.
+          Codex model, provider endpoint, API key and worker limits are runtime configuration, not bootstrap environment variables. API keys are encrypted at rest and never read back to the browser. A blank API-key field keeps the stored key unchanged unless the provider endpoint changes. Stale saves are rejected by revision instead of overwriting newer configuration.
         </div>
 
         <div className="qz-form-grid">
@@ -120,7 +123,7 @@ export function RuntimeConfigurationPanel({ configuration }: { configuration: Ru
           <label className="qz-field"><span className="qz-label">Bundle build timeout (s)</span><TextField.Root type="number" min="1" value={bundleBuildTimeout} onChange={(event) => setBundleBuildTimeout(event.target.value)} /></label>
           <label className="qz-field"><span className="qz-label">Plugin job timeout (s)</span><TextField.Root type="number" min="1" value={pluginJobTimeout} onChange={(event) => setPluginJobTimeout(event.target.value)} /></label>
           <label className="qz-field"><span className="qz-label">Mission job timeout (s)</span><TextField.Root type="number" min="1" value={missionJobTimeout} onChange={(event) => setMissionJobTimeout(event.target.value)} /></label>
-          <label className="qz-field"><span className="qz-label">Job poll interval (s)</span><TextField.Root type="number" min="0.01" step="0.01" value={jobPollSeconds} onChange={(event) => setJobPollSeconds(event.target.value)} /></label>
+          <label className="qz-field"><span className="qz-label">Job poll interval (s)</span><TextField.Root type="number" min="0.01" step="0.01" value={jobPollSeconds} onChange={(event) => setJobPollSeconds(event.target.value)} /><span className="qz-list-subtitle">Minimum 0.01 seconds.</span></label>
           <label className="qz-field"><span className="qz-label">Job lease (s)</span><TextField.Root type="number" min="1" value={jobLeaseSeconds} onChange={(event) => setJobLeaseSeconds(event.target.value)} /></label>
         </div>
 
