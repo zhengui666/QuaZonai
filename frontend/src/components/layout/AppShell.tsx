@@ -7,14 +7,15 @@ import {
   GaugeIcon,
   GearIcon,
   HouseIcon,
+  ListIcon,
   MoonIcon,
   PaperPlaneTiltIcon,
   SunIcon,
   TargetIcon,
 } from '@phosphor-icons/react';
-import { Button, Theme } from '@radix-ui/themes';
+import { Button, DropdownMenu, Theme } from '@radix-ui/themes';
 import { Suspense, useEffect, useMemo, useState } from 'react';
-import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { PageSkeleton } from '../ui/Skeleton';
 
 const nav = [
@@ -40,6 +41,7 @@ function useThemeMode() {
 export function AppShell() {
   const [mode, setMode] = useThemeMode();
   const location = useLocation();
+  const navigate = useNavigate();
   const current = useMemo(
     () => nav.find((item) => (item.end ? location.pathname === item.to : location.pathname.startsWith(item.to)))?.label ?? 'QuaZonai',
     [location.pathname],
@@ -68,6 +70,16 @@ export function AppShell() {
           <header className="qz-topbar">
             <div className="qz-topbar-title">{current}</div>
             <div className="qz-topbar-actions">
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger>
+                  <Button className="qz-mobile-nav-button" aria-label="Open navigation" size="1" variant="soft"><ListIcon size={16} /></Button>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Content align="end">
+                  {nav.map(({ to, label, icon: Icon }) => (
+                    <DropdownMenu.Item key={to} onSelect={() => navigate(to)}><Icon size={14} />{label}</DropdownMenu.Item>
+                  ))}
+                </DropdownMenu.Content>
+              </DropdownMenu.Root>
               <Button aria-label={`Switch to ${mode === 'dark' ? 'light' : 'dark'} theme`} size="1" variant="soft" onClick={() => setMode(mode === 'dark' ? 'light' : 'dark')}>
                 {mode === 'dark' ? <SunIcon size={15} /> : <MoonIcon size={15} />}
               </Button>
@@ -75,7 +87,7 @@ export function AppShell() {
           </header>
           <div className="qz-content"><Suspense fallback={<PageSkeleton />}><Outlet /></Suspense></div>
         </main>
-        <nav className="qz-mobile-nav" aria-label="Mobile navigation">
+        <nav className="qz-mobile-nav" aria-label="Mobile primary navigation">
           {nav.slice(0, 5).map(({ to, label, icon: Icon, end }) => (
             <NavLink key={to} to={to} end={end}>
               {({ isActive }) => <><Icon size={19} weight={isActive ? 'duotone' : 'regular'} /><span>{label.replace('Idea Composer', 'Ideas').replace('Research Observatory', 'Research').replace('Alpha Library', 'Alpha').replace('Portfolio Lab', 'Portfolio')}</span></>}
