@@ -407,11 +407,13 @@ Administration 是 Codex runtime 配置的事实入口，显示并允许修改�
 - App Server preflight；
 - Agent worker health。
 
-自定义 Base URL 必须是绝对 HTTP(S) URL，不能把 username/password、query token 或 fragment 嵌入 URL。配置了 Base URL/API key 时，Mission 使用独立 Codex model provider；未配置时继续使用持久 `CODEX_HOME` 中的标准 Codex 登录。
+自定义 Base URL 必须是绝对 HTTP(S) URL，不能把 username/password、query token 或 fragment 嵌入 URL。配置了 Base URL/API key 时，Mission 使用独立 Codex model provider；未配置时继续使用持久 `CODEX_HOME` 中的标准 Codex 登录。已有 API key 时更改 Base URL，必须重新输入该 endpoint 对应的 key 或显式清除旧 key。
 
-Codex API key 由 `QUAZONAI_MASTER_KEY` 使用 AES-256-GCM 加密后保存到 PostgreSQL。Secret/token 不在 Web 展示，也不写入事件 payload。
+Codex API key 由 `QUAZONAI_MASTER_KEY` 使用 AES-256-GCM 加密后保存到 PostgreSQL。Secret/token 不在 Web 展示，也不写入事件 payload；运行时通过受信任 runner 的 one-shot credential broker 交给 Codex provider auth，不进入 App Server/Mission 环境变量。
 
 `.env` 只负责启动级基础设施：运行环境、PostgreSQL、master key、存储根目录和 HTTP port。Codex model/API key/Base URL 不再由 `.env` 配置。
+
+Runtime Configuration 使用 revision + 幂等 mutation：页面保存携带当前 revision，若其他请求已先更新则返回冲突并要求刷新，不覆盖较新配置；网络重试复用同一个 `Idempotency-Key`，不会重复修改 revision、重复写事件或重复保存 secret。
 
 ### 14.3 Worker limits
 
@@ -422,7 +424,7 @@ Codex API key 由 `QUAZONAI_MASTER_KEY` 使用 AES-256-GCM 加密后保存到 Po
 - runtime bundle build timeout；
 - plugin job timeout；
 - research Mission job timeout；
-- job poll interval；
+- job poll interval（最小 `0.01s`）；
 - job lease duration。
 
 Worker 在领取后续 job 时读取最新配置；修改这些值不要求重建 Compose stack，也不改变已经运行中的 child process 的既定 deadline。
