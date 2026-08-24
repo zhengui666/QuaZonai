@@ -6,6 +6,7 @@ from dataclasses import replace
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from crypto import EncryptedSecret, decrypt_bound_secret, encrypt_bound_secret
@@ -53,7 +54,19 @@ def _new_runtime_configuration(
         job_lease_seconds=base_settings.job_lease_seconds,
     )
     session.add(item)
-    session.flush()
+    try:
+        session.flush()
+    except IntegrityError as exc:
+        # SELECT ... FOR UPDATE cannot lock a singleton row that does not exist yet.
+        # If two operators race the first save, the unique SYSTEM scope serializes
+        # creation; translate the losing insert into the same optimistic-concurrency
+        # conflict used by later stale revisions instead of leaking a database error.
+        raise QfError(
+            "RUNTIME_CONFIGURATION_STALE",
+            "Runtime configuration was created by another request; reload and retry.",
+            409,
+            {"expected_revision": 0},
+        ) from exc
     return item
 
 
