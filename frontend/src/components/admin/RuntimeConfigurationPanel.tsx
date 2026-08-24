@@ -6,9 +6,16 @@ import { ErrorPanel } from '../ui/ErrorPanel';
 import { Section } from '../ui/Section';
 import { StateBadge } from '../ui/StateBadge';
 
+const MAX_JOB_POLL_SECONDS = 3600;
+
 function positiveNumber(value: string): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function positiveInteger(value: string): number {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0;
 }
 
 function normalizeBaseUrl(value: string): string {
@@ -42,19 +49,20 @@ export function RuntimeConfigurationPanel({ configuration }: { configuration: Ru
   }, [configuration]);
 
   const numericValues = useMemo(() => ({
-    max_plugin_wheel_bytes: positiveNumber(maxWheelBytes),
-    plugin_validation_timeout_seconds: positiveNumber(pluginValidationTimeout),
-    bundle_build_timeout_seconds: positiveNumber(bundleBuildTimeout),
-    plugin_job_timeout_seconds: positiveNumber(pluginJobTimeout),
-    mission_job_timeout_seconds: positiveNumber(missionJobTimeout),
+    max_plugin_wheel_bytes: positiveInteger(maxWheelBytes),
+    plugin_validation_timeout_seconds: positiveInteger(pluginValidationTimeout),
+    bundle_build_timeout_seconds: positiveInteger(bundleBuildTimeout),
+    plugin_job_timeout_seconds: positiveInteger(pluginJobTimeout),
+    mission_job_timeout_seconds: positiveInteger(missionJobTimeout),
     job_poll_seconds: positiveNumber(jobPollSeconds),
-    job_lease_seconds: positiveNumber(jobLeaseSeconds),
+    job_lease_seconds: positiveInteger(jobLeaseSeconds),
   }), [maxWheelBytes, pluginValidationTimeout, bundleBuildTimeout, pluginJobTimeout, missionJobTimeout, jobPollSeconds, jobLeaseSeconds]);
 
   const providerUrlChanged = normalizeBaseUrl(baseUrl) !== normalizeBaseUrl(configuration.codex_base_url ?? '');
   const requiresKeyDecision = providerUrlChanged && configuration.codex_api_key_configured && !apiKey.trim() && !clearApiKey;
   const invalid = Object.values(numericValues).some((value) => value <= 0)
     || numericValues.job_poll_seconds < 0.01
+    || numericValues.job_poll_seconds > MAX_JOB_POLL_SECONDS
     || requiresKeyDecision;
   const authState = configuration.codex_api_key_configured
     ? 'API KEY CONFIGURED'
@@ -118,13 +126,13 @@ export function RuntimeConfigurationPanel({ configuration }: { configuration: Ru
 
         <div style={{ margin: '22px 0 10px' }} className="qz-label">Worker limits</div>
         <div className="qz-form-grid">
-          <label className="qz-field"><span className="qz-label">Max plugin wheel bytes</span><TextField.Root type="number" min="1" value={maxWheelBytes} onChange={(event) => setMaxWheelBytes(event.target.value)} /></label>
-          <label className="qz-field"><span className="qz-label">Plugin validation timeout (s)</span><TextField.Root type="number" min="1" value={pluginValidationTimeout} onChange={(event) => setPluginValidationTimeout(event.target.value)} /></label>
-          <label className="qz-field"><span className="qz-label">Bundle build timeout (s)</span><TextField.Root type="number" min="1" value={bundleBuildTimeout} onChange={(event) => setBundleBuildTimeout(event.target.value)} /></label>
-          <label className="qz-field"><span className="qz-label">Plugin job timeout (s)</span><TextField.Root type="number" min="1" value={pluginJobTimeout} onChange={(event) => setPluginJobTimeout(event.target.value)} /></label>
-          <label className="qz-field"><span className="qz-label">Mission job timeout (s)</span><TextField.Root type="number" min="1" value={missionJobTimeout} onChange={(event) => setMissionJobTimeout(event.target.value)} /></label>
-          <label className="qz-field"><span className="qz-label">Job poll interval (s)</span><TextField.Root type="number" min="0.01" step="0.01" value={jobPollSeconds} onChange={(event) => setJobPollSeconds(event.target.value)} /><span className="qz-list-subtitle">Minimum 0.01 seconds.</span></label>
-          <label className="qz-field"><span className="qz-label">Job lease (s)</span><TextField.Root type="number" min="1" value={jobLeaseSeconds} onChange={(event) => setJobLeaseSeconds(event.target.value)} /></label>
+          <label className="qz-field"><span className="qz-label">Max plugin wheel bytes</span><TextField.Root type="number" min="1" step="1" value={maxWheelBytes} onChange={(event) => setMaxWheelBytes(event.target.value)} /></label>
+          <label className="qz-field"><span className="qz-label">Plugin validation timeout (s)</span><TextField.Root type="number" min="1" step="1" value={pluginValidationTimeout} onChange={(event) => setPluginValidationTimeout(event.target.value)} /></label>
+          <label className="qz-field"><span className="qz-label">Bundle build timeout (s)</span><TextField.Root type="number" min="1" step="1" value={bundleBuildTimeout} onChange={(event) => setBundleBuildTimeout(event.target.value)} /></label>
+          <label className="qz-field"><span className="qz-label">Plugin job timeout (s)</span><TextField.Root type="number" min="1" step="1" value={pluginJobTimeout} onChange={(event) => setPluginJobTimeout(event.target.value)} /></label>
+          <label className="qz-field"><span className="qz-label">Mission job timeout (s)</span><TextField.Root type="number" min="1" step="1" value={missionJobTimeout} onChange={(event) => setMissionJobTimeout(event.target.value)} /></label>
+          <label className="qz-field"><span className="qz-label">Job poll interval (s)</span><TextField.Root type="number" min="0.01" max={String(MAX_JOB_POLL_SECONDS)} step="0.01" value={jobPollSeconds} onChange={(event) => setJobPollSeconds(event.target.value)} /><span className="qz-list-subtitle">0.01–3600 seconds.</span></label>
+          <label className="qz-field"><span className="qz-label">Job lease (s)</span><TextField.Root type="number" min="1" step="1" value={jobLeaseSeconds} onChange={(event) => setJobLeaseSeconds(event.target.value)} /></label>
         </div>
 
         {update.error ? <div style={{ marginTop: 16 }}><ErrorPanel error={update.error} /></div> : null}
