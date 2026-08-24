@@ -50,23 +50,12 @@ def settings(tmp_path: Path) -> Settings:
         alembic_url=database_url,
         master_key=key,
         plugin_root=tmp_path / "plugins",
-        catalog_root=tmp_path / "catalog",
-        report_root=tmp_path / "reports",
-        import_root=tmp_path / "imports",
-        agent_artifact_root=tmp_path / "agent-artifacts",
-        max_parquet_upload_bytes=1024 * 1024,
         max_plugin_wheel_bytes=1024 * 1024,
         plugin_validation_timeout_seconds=30,
         bundle_build_timeout_seconds=60,
         plugin_job_timeout_seconds=90,
-        integration_preflight_timeout_seconds=30,
-        strategy_validation_timeout_seconds=30,
-        parquet_import_timeout_seconds=60,
-        backtest_timeout_seconds=60,
-        research_job_timeout_seconds=120,
         job_poll_seconds=0.01,
         job_lease_seconds=60,
-        supervisor_poll_seconds=0.01,
     )
     result.ensure_worker_directories()
     return result
