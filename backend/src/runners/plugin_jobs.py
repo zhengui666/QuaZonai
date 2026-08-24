@@ -1,4 +1,4 @@
-"""Short-lived implementations for plugin install, bundle build, and removal jobs."""
+"""Short-lived implementations for research/data plugin lifecycle jobs."""
 
 from __future__ import annotations
 
@@ -13,27 +13,17 @@ from uuid import UUID
 from sqlalchemy import select
 
 from db.models import (
-    DataSource,
-    ExecutionConnection,
     Job,
     PluginArtifact,
     PluginRelease,
     PluginRuntimeBundle,
     PluginRuntimeBundleMember,
 )
-from db.session import (
-    SessionFactory,
-    create_database_engine,
-    create_session_factory,
-)
+from db.session import SessionFactory, create_database_engine, create_session_factory
 from errors import QfError
 from events import append_event
 from plugins.contract import DescriptorSnapshot
-from plugins.runtime import (
-    build_bundle_environment,
-    resolve_plugin_path,
-    validate_release_environment,
-)
+from plugins.runtime import build_bundle_environment, resolve_plugin_path, validate_release_environment
 from plugins.wheel_metadata import inspect_wheel, validate_wheel_set
 from settings import Settings
 
@@ -47,9 +37,7 @@ def _load_job(factory: SessionFactory, job_id: UUID) -> Job:
         return job
 
 
-def _mark_release_failed(
-    factory: SessionFactory, release_id: UUID, message: str
-) -> None:
+def _mark_release_failed(factory: SessionFactory, release_id: UUID, message: str) -> None:
     with factory.begin() as session:
         release = session.get(PluginRelease, release_id)
         if release is None or release.state == "REMOVED":
@@ -71,7 +59,6 @@ def install_plugin(settings: Settings, job_id: UUID) -> None:
     factory = create_session_factory(engine)
     job = _load_job(factory, job_id)
     release_id = job.resource_id
-
     try:
         with factory.begin() as session:
             release = session.execute(
@@ -94,24 +81,14 @@ def install_plugin(settings: Settings, job_id: UUID) -> None:
                 )
             )
             if not artifacts:
-                raise QfError(
-                    "PLUGIN_ARTIFACT_INVALID",
-                    "Plugin release has no wheel artifacts.",
-                    422,
-                )
-            session.flush()
+                raise QfError("PLUGIN_ARTIFACT_INVALID", "Plugin release has no wheel artifacts.", 422)
 
         resolved = [resolve_plugin_path(settings.plugin_root, item.relative_path) for item in artifacts]
         primary_index = next(
-            (index for index, item in enumerate(artifacts) if item.role == "PRIMARY"),
-            None,
+            (index for index, item in enumerate(artifacts) if item.role == "PRIMARY"), None
         )
         if primary_index is None:
-            raise QfError(
-                "PLUGIN_ARTIFACT_INVALID",
-                "Plugin release is missing its primary wheel.",
-                422,
-            )
+            raise QfError("PLUGIN_ARTIFACT_INVALID", "Plugin release is missing primary wheel.", 422)
         metadata = [inspect_wheel(path) for path in resolved]
         primary_metadata = metadata[primary_index]
         dependency_metadata = tuple(
@@ -125,9 +102,8 @@ def install_plugin(settings: Settings, job_id: UUID) -> None:
             if release.plugin_id != entry_point.name:
                 raise QfError(
                     "PLUGIN_ARTIFACT_INVALID",
-                    "Primary wheel entry point does not match the declared plugin ID.",
+                    "Primary wheel entry point does not match declared plugin ID.",
                     422,
-                    {"declared": release.plugin_id, "entry_point": entry_point.name},
                 )
             release.state = "VALIDATING"
 
@@ -139,16 +115,11 @@ def install_plugin(settings: Settings, job_id: UUID) -> None:
             version=primary_metadata.version,
             timeout_seconds=settings.plugin_validation_timeout_seconds,
         )
-
         staging_dir = settings.plugin_root / "staging" / str(release_id)
         final_dir = settings.plugin_root / "releases" / str(release_id)
         final_dir.parent.mkdir(parents=True, exist_ok=True)
         if final_dir.exists():
-            raise QfError(
-                "PLUGIN_INSTALL_FAILED",
-                "Plugin release destination already exists.",
-                409,
-            )
+            raise QfError("PLUGIN_INSTALL_FAILED", "Plugin release destination exists.", 409)
         os.replace(staging_dir, final_dir)
 
         with factory.begin() as session:
@@ -162,17 +133,11 @@ def install_plugin(settings: Settings, job_id: UUID) -> None:
             release.last_error = None
             stored_artifacts = list(
                 session.scalars(
-                    select(PluginArtifact).where(
-                        PluginArtifact.plugin_release_id == release_id
-                    )
+                    select(PluginArtifact).where(PluginArtifact.plugin_release_id == release_id)
                 )
             )
-            by_name = {item.filename: item for item in artifacts}
             for item in stored_artifacts:
                 item.relative_path = str(Path("releases") / str(release_id) / item.filename)
-                source = by_name[item.filename]
-                item.package_name = source.package_name
-                item.package_version = source.package_version
             append_event(
                 session,
                 kind="PLUGIN_RELEASE_STAGED",
@@ -183,6 +148,8 @@ def install_plugin(settings: Settings, job_id: UUID) -> None:
     except Exception as exc:
         _mark_release_failed(factory, release_id, str(exc))
         raise
+    finally:
+        engine.dispose()
 
 
 def build_bundle(settings: Settings, job_id: UUID) -> None:
@@ -203,48 +170,30 @@ def build_bundle(settings: Settings, job_id: UUID) -> None:
                 )
             )
             if not members:
-                raise QfError(
-                    "PLUGIN_BUNDLE_BUILD_FAILED",
-                    "Runtime bundle has no plugin members.",
-                    422,
-                )
+                raise QfError("PLUGIN_BUNDLE_BUILD_FAILED", "Runtime bundle has no members.", 422)
             release_ids = {item.plugin_release_id for item in members}
             releases = list(
                 session.scalars(select(PluginRelease).where(PluginRelease.id.in_(release_ids)))
             )
             artifacts = list(
                 session.scalars(
-                    select(PluginArtifact).where(
-                        PluginArtifact.plugin_release_id.in_(release_ids)
-                    )
+                    select(PluginArtifact).where(PluginArtifact.plugin_release_id.in_(release_ids))
                 )
             )
-
         release_by_id = {item.id: item for item in releases}
         if set(release_by_id) != release_ids:
-            raise QfError(
-                "PLUGIN_BUNDLE_BUILD_FAILED",
-                "Runtime bundle references a missing plugin release.",
-                422,
-            )
-        for release in releases:
-            if release.state not in {"STAGED", "ACTIVE", "DRAINING", "INACTIVE"}:
-                raise QfError(
-                    "PLUGIN_BUNDLE_BUILD_FAILED",
-                    "Runtime bundle contains an unusable plugin release.",
-                    409,
-                    {"release_id": str(release.id), "state": release.state},
-                )
+            raise QfError("PLUGIN_BUNDLE_BUILD_FAILED", "Bundle references missing release.", 422)
+        if any(
+            release.state not in {"STAGED", "ACTIVE", "DRAINING", "INACTIVE"}
+            for release in releases
+        ):
+            raise QfError("PLUGIN_BUNDLE_BUILD_FAILED", "Bundle contains unusable release.", 409)
 
         wheel_paths = tuple(
             resolve_plugin_path(settings.plugin_root, artifact.relative_path)
             for artifact in sorted(
                 artifacts,
-                key=lambda item: (
-                    str(item.plugin_release_id),
-                    item.role,
-                    item.filename,
-                ),
+                key=lambda item: (str(item.plugin_release_id), item.role, item.filename),
             )
         )
         snapshots = tuple(
@@ -265,7 +214,6 @@ def build_bundle(settings: Settings, job_id: UUID) -> None:
             bundle.environment_path = str(Path("bundles") / str(bundle_id))
             bundle.python_version = result.python_version
             bundle.qf_version = result.qf_version
-            bundle.nautilus_version = result.nautilus_version
             bundle.ready_at = datetime.now(UTC)
             bundle.last_error = None
             append_event(
@@ -282,6 +230,8 @@ def build_bundle(settings: Settings, job_id: UUID) -> None:
                 bundle.state = "FAILED"
                 bundle.last_error = str(exc)[-4000:]
         raise
+    finally:
+        engine.dispose()
 
 
 def remove_plugin(settings: Settings, job_id: UUID) -> None:
@@ -290,7 +240,6 @@ def remove_plugin(settings: Settings, job_id: UUID) -> None:
     job = _load_job(factory, job_id)
     release_id = job.resource_id
     force = bool(job.payload.get("force", False))
-
     with factory.begin() as session:
         release = session.execute(
             select(PluginRelease).where(PluginRelease.id == release_id).with_for_update()
@@ -298,28 +247,26 @@ def remove_plugin(settings: Settings, job_id: UUID) -> None:
         if release.state == "REMOVED":
             return
         if release.state == "ACTIVE" and not force:
-            raise QfError(
-                "PLUGIN_IN_USE",
-                "An active plugin release cannot be removed without force.",
-                409,
+            raise QfError("PLUGIN_IN_USE", "Active plugin cannot be removed without force.", 409)
+        bundle_ids = list(
+            session.scalars(
+                select(PluginRuntimeBundleMember.runtime_bundle_id).where(
+                    PluginRuntimeBundleMember.plugin_release_id == release_id
+                )
             )
+        )
+        if bundle_ids and not force:
+            raise QfError("PLUGIN_IN_USE", "Plugin still belongs to runtime bundles.", 409)
+        if force and bundle_ids:
+            for bundle in session.scalars(
+                select(PluginRuntimeBundle).where(PluginRuntimeBundle.id.in_(bundle_ids))
+            ):
+                if bundle.state not in {"REMOVED", "FAILED"}:
+                    bundle.state = "STALE"
         release.state = "REMOVING"
         release.is_default = False
-        if force:
-            for source in session.scalars(
-                select(DataSource).where(DataSource.plugin_release_id == release_id)
-            ):
-                source.state = "BLOCKED_PLUGIN_REMOVED"
-            for connection in session.scalars(
-                select(ExecutionConnection).where(
-                    ExecutionConnection.plugin_release_id == release_id
-                )
-            ):
-                connection.state = "BLOCKED_PLUGIN_REMOVED"
 
-    release_dir = settings.plugin_root / "releases" / str(release_id)
-    shutil.rmtree(release_dir, ignore_errors=True)
-
+    shutil.rmtree(settings.plugin_root / "releases" / str(release_id), ignore_errors=True)
     with factory.begin() as session:
         release = session.get(PluginRelease, release_id)
         assert release is not None
@@ -333,6 +280,7 @@ def remove_plugin(settings: Settings, job_id: UUID) -> None:
             aggregate_id=release.id,
             payload={"force": force},
         )
+    engine.dispose()
 
 
 def build_parser() -> argparse.ArgumentParser:
