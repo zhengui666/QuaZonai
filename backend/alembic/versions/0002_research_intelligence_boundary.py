@@ -1,6 +1,6 @@
 """Enforce the Research Intelligence / Portfolio Construction ownership boundary.
 
-Revision ID: 0002_research_intelligence_boundary
+Revision ID: 0002_research_boundary
 Revises: 0001_initial
 """
 
@@ -10,7 +10,7 @@ from alembic import op
 
 from db.models import Base
 
-revision = "0002_research_intelligence_boundary"
+revision = "0002_research_boundary"
 down_revision = "0001_initial"
 branch_labels = None
 depends_on = None
@@ -86,6 +86,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     raise RuntimeError(
-        "0002_research_intelligence_boundary is intentionally irreversible: "
-        "downgrading would restore QuaZonai-owned execution state outside DESIGN.md."
+        "0002_research_boundary is intentionally irreversible: downgrading would restore "
+        "QuaZonai-owned execution state outside DESIGN.md."
     )
