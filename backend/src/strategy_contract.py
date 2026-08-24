@@ -80,17 +80,17 @@ def validate_strategy_source(
     source_path = validation_dir / "strategy.py"
     source_path.write_text(source_text, encoding="utf-8")
     environment = os.environ.copy()
-    package_root = str(Path(__file__).resolve().parents[1])
+    source_root = str(Path(__file__).resolve().parent)
     existing = environment.get("PYTHONPATH")
     environment["PYTHONPATH"] = (
-        package_root if not existing else f"{existing}{os.pathsep}{package_root}"
+        source_root if not existing else f"{existing}{os.pathsep}{source_root}"
     )
     try:
         process = subprocess.run(
             [
                 sys.executable,
                 "-m",
-                "quazonai.runners.strategy_validator",
+                "runners.strategy_validator",
                 "--source",
                 str(source_path),
                 "--config-json",
