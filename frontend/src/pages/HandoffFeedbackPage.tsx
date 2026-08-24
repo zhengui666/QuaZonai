@@ -1,14 +1,20 @@
 import { Button } from '@radix-ui/themes';
 import type { ColumnDef } from '@tanstack/react-table';
+import { FinancialSeriesChart } from '../components/charts/FinancialSeriesChart';
 import { DataTable } from '../components/ui/DataTable';
+import { EmptyState } from '../components/ui/EmptyState';
 import { ErrorPanel } from '../components/ui/ErrorPanel';
 import { KpiStrip } from '../components/ui/KpiStrip';
 import { PageHeader } from '../components/ui/PageHeader';
 import { PageSkeleton } from '../components/ui/Skeleton';
 import { StateBadge } from '../components/ui/StateBadge';
+import { Section } from '../components/ui/Section';
 import { useHandoffs, useRevokeHandoff } from '../lib/api/hooks';
 import type { HandoffOffer } from '../lib/api/types';
 import { formatDateTime } from '../lib/format';
+import { findTimeSeries } from '../lib/metrics';
+
+type HandoffWithEvidence = HandoffOffer & { forward_evidence?: Record<string, unknown>; evidence_summary?: Record<string, unknown> };
 
 function Revoke({ offer }: { offer: HandoffOffer }) {
   const mutation = useRevokeHandoff(offer.id);
@@ -31,6 +37,12 @@ export function HandoffFeedbackPage() {
   if (query.isLoading) return <PageSkeleton />;
   if (query.error) return <ErrorPanel error={query.error} />;
   const handoffs = query.data ?? [];
+  const evidenceCarrier = (handoffs as HandoffWithEvidence[]).find((item) => item.forward_evidence || item.evidence_summary);
+  const evidence = evidenceCarrier?.forward_evidence ?? evidenceCarrier?.evidence_summary;
+  const performance = findTimeSeries(evidence, ['performance', 'equity_curve', 'forward_performance', 'portfolio']);
+  const benchmark = findTimeSeries(evidence, ['benchmark', 'benchmark_curve']);
+  const drawdown = findTimeSeries(evidence, ['drawdown', 'drawdown_curve']);
+
   return (
     <>
       <PageHeader title="Handoff Center" description="Immutable Candidate Packages move through Available, Claimed, Accepted and Forward Evidence states. Once claimed, QuaZonai deliberately exposes no runtime, order, position or stop control." />
@@ -40,7 +52,10 @@ export function HandoffFeedbackPage() {
         { label: 'Accepted', value: handoffs.filter((item) => item.state === 'DOWNSTREAM_ACCEPTED').length },
         { label: 'Feedback complete', value: handoffs.filter((item) => item.state === 'FEEDBACK_COMPLETE' || item.feedback_state === 'FEEDBACK_COMPLETE').length },
       ]} />
-      <div style={{ marginTop: 20 }}><DataTable data={handoffs} columns={columns} searchPlaceholder="Filter handoffs…" emptyTitle="No handoffs" emptyDescription="Approved candidates appear here after their Candidate Package is published." getRowId={(row) => row.id} /></div>
+      <div style={{ marginTop: 20 }}><DataTable data={handoffs} columns={columns} searchPlaceholder="Filter handoffs…" emptyTitle="No handoffs" emptyDescription="Approved candidates appear here after their Candidate Package is published." getRowId={(row) => row.id} ariaLabel="Handoff packages and feedback" /></div>
+      <Section title="Forward Evidence" meta={evidenceCarrier ? `Candidate ${evidenceCarrier.candidate_id?.slice(0, 8) ?? '—'} · API feedback evidence` : 'Awaiting contract-valid feedback'}>
+        {performance.length || drawdown.length ? <div className="qz-panel qz-panel-pad"><FinancialSeriesChart ariaLabel="Forward evidence performance and drawdown chart" series={[{ name: 'Forward performance', data: performance, kind: 'area' }, { name: 'Benchmark', data: benchmark }, { name: 'Drawdown', data: drawdown }]} /></div> : <EmptyState title="No forward evidence series" description="Forward evidence is only charted when the Handoff API returns contract-valid time-series observations. No synthetic performance is generated." />}
+      </Section>
     </>
   );
 }
