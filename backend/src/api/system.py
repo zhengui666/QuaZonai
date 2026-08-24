@@ -219,7 +219,7 @@ def _claim_idempotency_receipt(
         with session.begin_nested():
             session.add(receipt)
             session.flush()
-    except IntegrityError:
+    except IntegrityError as exc:
         if receipt in session:
             session.expunge(receipt)
         session.expire_all()
@@ -229,7 +229,7 @@ def _claim_idempotency_receipt(
                 "IDEMPOTENCY_RECEIPT_CONFLICT",
                 "The idempotency receipt could not be resolved after a concurrent request.",
                 409,
-            )
+            ) from exc
         return existing, False
     return receipt, True
 
