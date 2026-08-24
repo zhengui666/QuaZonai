@@ -34,23 +34,29 @@ class RuntimeConfiguration(Base, TimestampMixin):
         CheckConstraint("revision > 0", name="ck_runtime_configuration_revision"),
         CheckConstraint("max_plugin_wheel_bytes > 0", name="ck_runtime_max_plugin_wheel_bytes"),
         CheckConstraint(
-            "plugin_validation_timeout_seconds > 0",
+            "plugin_validation_timeout_seconds > 0 AND plugin_validation_timeout_seconds <= 86400",
             name="ck_runtime_plugin_validation_timeout",
         ),
         CheckConstraint(
-            "bundle_build_timeout_seconds > 0",
+            "bundle_build_timeout_seconds > 0 AND bundle_build_timeout_seconds <= 86400",
             name="ck_runtime_bundle_build_timeout",
         ),
-        CheckConstraint("plugin_job_timeout_seconds > 0", name="ck_runtime_plugin_job_timeout"),
         CheckConstraint(
-            "mission_job_timeout_seconds > 0",
+            "plugin_job_timeout_seconds > 0 AND plugin_job_timeout_seconds <= 86400",
+            name="ck_runtime_plugin_job_timeout",
+        ),
+        CheckConstraint(
+            "mission_job_timeout_seconds > 0 AND mission_job_timeout_seconds <= 86400",
             name="ck_runtime_mission_job_timeout",
         ),
         CheckConstraint(
             "job_poll_seconds >= 0.01 AND job_poll_seconds <= 3600",
             name="ck_runtime_job_poll_seconds",
         ),
-        CheckConstraint("job_lease_seconds > 0", name="ck_runtime_job_lease_seconds"),
+        CheckConstraint(
+            "job_lease_seconds > 0 AND job_lease_seconds <= 86400",
+            name="ck_runtime_job_lease_seconds",
+        ),
         UniqueConstraint("scope", name="uq_runtime_configuration_scope"),
     )
 
