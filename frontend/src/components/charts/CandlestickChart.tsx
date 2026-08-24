@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { CandlestickSeries, ColorType, HistogramSeries, createChart, type CandlestickData, type HistogramData, type Time } from 'lightweight-charts';
+import { useI18n } from '../../i18n';
 import type { OhlcPoint } from '../../lib/api/types';
 
 function toTime(value: string | number): Time {
@@ -9,6 +10,7 @@ function toTime(value: string | number): Time {
 }
 
 export function CandlestickChart({ data }: { data: OhlcPoint[] }) {
+  const { t } = useI18n();
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -54,5 +56,5 @@ export function CandlestickChart({ data }: { data: OhlcPoint[] }) {
     return () => { tooltip.remove(); chart.remove(); };
   }, [data]);
 
-  return <div ref={ref} className="qz-chart-host qz-chart-tall" role="img" aria-label="Candlestick market data chart" />;
+  return <div ref={ref} className="qz-chart-host qz-chart-tall" role="img" aria-label={`${t('research.marketContext')} · OHLC`} />;
 }
