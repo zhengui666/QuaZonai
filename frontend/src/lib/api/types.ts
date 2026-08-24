@@ -190,6 +190,37 @@ export interface SystemHealth {
   [key: string]: unknown;
 }
 
+export interface RuntimeConfiguration {
+  revision: number;
+  codex_model: string | null;
+  codex_base_url: string | null;
+  codex_api_key_configured: boolean;
+  codex_login_configured: boolean;
+  max_plugin_wheel_bytes: number;
+  plugin_validation_timeout_seconds: number;
+  bundle_build_timeout_seconds: number;
+  plugin_job_timeout_seconds: number;
+  mission_job_timeout_seconds: number;
+  job_poll_seconds: number;
+  job_lease_seconds: number;
+  updated_at?: string | null;
+}
+
+export interface RuntimeConfigurationUpdate {
+  expected_revision: number;
+  codex_model: string | null;
+  codex_base_url: string | null;
+  codex_api_key?: string | null;
+  clear_codex_api_key: boolean;
+  max_plugin_wheel_bytes: number;
+  plugin_validation_timeout_seconds: number;
+  bundle_build_timeout_seconds: number;
+  plugin_job_timeout_seconds: number;
+  mission_job_timeout_seconds: number;
+  job_poll_seconds: number;
+  job_lease_seconds: number;
+}
+
 export interface MarketUniverse { id: UUID; universe_key?: string; version_no?: number; name: string; state?: string; spec_json?: Record<string, unknown>; }
 export interface DatasetRevision { id: UUID; data_source_id?: UUID; universe_version_id?: UUID; universe_name?: string; revision_no?: number; schema_version?: string; event_start?: string; event_end?: string; available_start?: string; available_end?: string; row_count?: number; quality_state?: string; point_in_time_state?: string; partition?: 'DISCOVERY' | 'SEALED' | string; created_at?: string; }
 export interface DataSource { id: UUID; name: string; provider?: string; state: string; universe_scope?: string[] | UUID[]; fields?: string[]; update_cadence?: string; preflight_state?: string; }

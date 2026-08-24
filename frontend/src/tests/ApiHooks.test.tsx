@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { useApprovalDecision, useCreateDataSource } from '../lib/api/hooks';
+import { useApprovalDecision, useCreateDataSource, useUpdateRuntimeConfiguration } from '../lib/api/hooks';
 import { jsonResponse } from './testUtils';
 
 function createWrapper(client: QueryClient) {
@@ -52,6 +52,60 @@ describe('API hooks', () => {
     await waitFor(() => {
       expect(invalidate).toHaveBeenCalledWith({ queryKey: ['approvals'] });
       expect(invalidate).toHaveBeenCalledWith({ queryKey: ['handoffs'] });
+    });
+  });
+
+  it('reuses one idempotency key when the same runtime save is retried', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    let attempt = 0;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(() => {
+      attempt += 1;
+      if (attempt === 1) return Promise.reject(new TypeError('response lost'));
+      return jsonResponse({ revision: 8, codex_model: 'gpt-5.6-sol', codex_base_url: 'https://gateway.example/v1', codex_api_key_configured: true });
+    });
+    const { result } = renderHook(() => useUpdateRuntimeConfiguration(), { wrapper: createWrapper(client) });
+    const payload = {
+      expected_revision: 7,
+      codex_model: 'gpt-5.6-sol',
+      codex_base_url: 'https://gateway.example/v1',
+      codex_api_key: 'secret-value',
+      clear_codex_api_key: false,
+      max_plugin_wheel_bytes: 268435456,
+      plugin_validation_timeout_seconds: 180,
+      bundle_build_timeout_seconds: 600,
+      plugin_job_timeout_seconds: 900,
+      mission_job_timeout_seconds: 1800,
+      job_poll_seconds: 1,
+      job_lease_seconds: 60,
+    };
+
+    await act(async () => {
+      await expect(result.current.mutateAsync(payload)).rejects.toThrow('response lost');
+    });
+    await act(async () => {
+      await result.current.mutateAsync(payload);
+    });
+
+    const firstOptions = fetchMock.mock.calls[0][1] as RequestInit;
+    const secondOptions = fetchMock.mock.calls[1][1] as RequestInit;
+    expect(JSON.parse(String(secondOptions.body))).toEqual(payload);
+    const firstHeaders = firstOptions.headers as Headers;
+    const secondHeaders = secondOptions.headers as Headers;
+    expect(firstHeaders.get('Idempotency-Key')).toBeTruthy();
+    expect(secondHeaders.get('Idempotency-Key')).toBe(firstHeaders.get('Idempotency-Key'));
+
+    await act(async () => {
+      await result.current.mutateAsync({ ...payload, expected_revision: 8, codex_model: 'gpt-5.6-sol-next' });
+    });
+    const thirdHeaders = (fetchMock.mock.calls[2][1] as RequestInit).headers as Headers;
+    expect(thirdHeaders.get('Idempotency-Key')).toBeTruthy();
+    expect(thirdHeaders.get('Idempotency-Key')).not.toBe(secondHeaders.get('Idempotency-Key'));
+
+    await waitFor(() => {
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ['runtime-configuration'] });
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ['health'] });
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ['readiness'] });
     });
   });
 });

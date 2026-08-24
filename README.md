@@ -30,12 +30,13 @@ Normal research has two recurring human actions: propose an Idea and approve/rej
 cp .env.example .env
 # Set a strong PostgreSQL password.
 # Set QUAZONAI_MASTER_KEY to base64 encoding of exactly 32 random bytes.
-# Set OPENAI_API_KEY, or provision a Codex login in the persistent codex-data volume.
 
 docker compose --env-file .env up --build
 ```
 
 Open `http://127.0.0.1:8000`. The production image serves the React workbench and `/api/v1/*` from the same FastAPI origin on that port.
+
+After startup, open **Administration → Runtime configuration** to configure the Codex model, optional custom OpenAI-compatible Base URL, optional API key, and Worker limits. These values are persisted in PostgreSQL instead of `.env`; the Codex API key is write-only in the Web/API surface and AES-GCM encrypted at rest by `QUAZONAI_MASTER_KEY`. Existing Codex login state in the persistent `codex-data` volume remains supported when no API key/custom provider is required. Runtime changes apply to newly claimed work without rebuilding the Compose stack.
 
 Research Program creation persists a `READY` Mission and durable job. The finite Worker starts the official Codex App Server in an exclusive git worktree; only after App Server admission succeeds does the Mission transition to `RUNNING`. If Codex authentication is unavailable, the job and Mission fail explicitly instead of being left falsely Running.
 

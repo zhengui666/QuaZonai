@@ -36,7 +36,7 @@ quazonai-mcp-gateway = "mcp_gateway.main:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-py-modules = ["quazonai", "candidate_packages", "crypto", "downstream_auth", "errors", "events", "jobs", "logging_utils", "main", "optimization", "schema_validation", "settings"]
+py-modules = ["quazonai", "candidate_packages", "crypto", "downstream_auth", "errors", "events", "jobs", "logging_utils", "main", "optimization", "runtime_config", "schema_validation", "settings"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

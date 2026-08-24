@@ -53,6 +53,7 @@ QuaZonai V1 是单用户、自托管私有工作台。正常 Research Program �
 
 - 完成首次 `RESEARCH_READY`；
 - Codex 登录/认证；
+- 在 Runtime Configuration 配置 Codex provider/model 与 Worker limits；
 - 配置 Data Source / Universe / Mandate / Capital Context；
 - 配置 Paper/Live downstream；
 - 安装/激活/停用 research/data/handoff plugin；
@@ -395,30 +396,52 @@ Live handoff
 
 首次安装只要求达到 `RESEARCH_READY`。
 
-### 14.2 Codex
+### 14.2 Codex / Runtime Configuration
 
-显示：
+Administration 是 Codex runtime 配置的事实入口，显示并允许修改：
 
-- Codex executable/version；
-- authenticated / unauthenticated；
+- Codex executable/version 与 login 状态；
+- 可选 `model`；
+- 可选自定义 OpenAI-compatible `Base URL`；
+- 可选 Codex API key；API key 只写、永不回显；
 - App Server preflight；
 - Agent worker health。
 
-Secret/token 不在 Web 展示。
+自定义 Base URL 必须是绝对 HTTP(S) URL，不能把 username/password、query token 或 fragment 嵌入 URL。配置了 Base URL/API key 时，Mission 使用独立 Codex model provider；未配置时继续使用持久 `CODEX_HOME` 中的标准 Codex 登录。已有 API key 时更改 Base URL，必须重新输入该 endpoint 对应的 key 或显式清除旧 key。
 
-### 14.3 Data
+Codex API key 由 `QUAZONAI_MASTER_KEY` 使用 AES-256-GCM 加密后保存到 PostgreSQL。Secret/token 不在 Web 展示，也不写入事件 payload；运行时通过受信任 runner 的 one-shot credential broker 交给 Codex provider auth，不进入 App Server/Mission 环境变量。
+
+`.env` 只负责启动级基础设施：运行环境、PostgreSQL、master key、存储根目录和 HTTP port。Codex model/API key/Base URL 不再由 `.env` 配置。
+
+Runtime Configuration 使用 revision + 幂等 mutation：页面保存携带当前 revision，若其他请求已先更新则返回冲突并要求刷新，不覆盖较新配置；网络重试复用同一个 `Idempotency-Key`，不会重复修改 revision、重复写事件或重复保存 secret。
+
+### 14.3 Worker limits
+
+以下运行参数在 Runtime Configuration 中由管理员维护，而不是 `.env`：
+
+- plugin wheel 最大字节数；
+- plugin validation timeout；
+- runtime bundle build timeout；
+- plugin job timeout；
+- research Mission job timeout；
+- job poll interval（最小 `0.01s`）；
+- job lease duration。
+
+Worker 在领取后续 job 时读取最新配置；修改这些值不要求重建 Compose stack，也不改变已经运行中的 child process 的既定 deadline。
+
+### 14.4 Data
 
 管理员配置 approved Data Sources/Connectors。Codex 只调用批准的数据能力。
 
-### 14.4 Universe / Mandate
+### 14.5 Universe / Mandate
 
 Universe 和 Mandate 是长期配置。首次启用默认 Mandate；其他模板按需启用。
 
-### 14.5 Capital Context
+### 14.6 Capital Context
 
 可以由 Administration 或 downstream feedback 提供现实资金规模快照；QZ 不读取 broker account/positions。
 
-### 14.6 Downstream
+### 14.7 Downstream
 
 配置逻辑系统及连接，例如：
 
@@ -430,7 +453,7 @@ External Validator
 
 QZ 只验证 Handoff/Feedback contract，不检查其交易节点内部状态。
 
-### 14.7 Plugins
+### 14.8 Plugins
 
 只允许 Data/Research/Handoff plugins。运行时 side-by-side install/activate/drain/remove，不允许 execution broker plugins。
 

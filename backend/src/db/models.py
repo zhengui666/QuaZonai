@@ -32,7 +32,7 @@ from db.plugin_models import (
     PluginRuntimeBundle,
     PluginRuntimeBundleMember,
 )
-from db.runtime_models import Event, Job
+from db.runtime_models import Event, Job, RuntimeConfiguration
 
 __all__ = [
     "Base",
@@ -43,6 +43,7 @@ __all__ = [
     "PluginRuntimeBundleMember",
     "CredentialSet",
     "CredentialSecret",
+    "RuntimeConfiguration",
     "Job",
     "Event",
     "PublicMutationReceipt",

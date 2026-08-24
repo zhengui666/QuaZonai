@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import shutil
+import socket
 import subprocess
+import sys
+import tempfile
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
@@ -14,7 +23,13 @@ from sqlalchemy import select
 from db.models import Event, Job, ResearchBranch, ResearchCharter, ResearchMission, ResearchProgram
 from db.session import create_database_engine, create_session_factory
 from errors import QfError
+from runtime_config import load_effective_settings
 from settings import Settings
+
+CUSTOM_CODEX_PROVIDER_ID = "quazonai_configured"
+DEFAULT_OPENAI_API_BASE_URL = "https://api.openai.com/v1"
+BROKER_REQUEST = b"TOKEN\n"
+BROKER_ACCEPT_POLL_SECONDS = 0.25
 
 
 def _now() -> datetime:
@@ -136,6 +151,139 @@ def _load_mission_context(settings: Settings, job_id: UUID) -> tuple[UUID, UUID,
         return mission.id, program.id, _mission_context(mission, program, charter, branch)
 
 
+@contextmanager
+def _provider_credential_broker(api_key: str | None) -> Iterator[Path | None]:
+    """Expose a configured provider key exactly once to Codex's auth helper.
+
+    The broker remains available for the lifetime of the pending Codex session
+    instead of expiring on an arbitrary startup deadline. Mission commands cannot
+    execute until the first provider request succeeds, so the one-shot socket is
+    consumed before Mission-owned shell code can run. The plaintext never enters
+    the App Server environment or command line.
+    """
+    if not api_key:
+        yield None
+        return
+
+    root = Path(tempfile.mkdtemp(prefix="quazonai-codex-auth-"))
+    os.chmod(root, 0o700)
+    socket_path = root / "token.sock"
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(socket_path))
+    os.chmod(socket_path, 0o600)
+    server.listen(1)
+    server.settimeout(BROKER_ACCEPT_POLL_SECONDS)
+    stop_event = threading.Event()
+
+    def serve_once() -> None:
+        try:
+            connection: socket.socket | None = None
+            while not stop_event.is_set():
+                try:
+                    connection, _ = server.accept()
+                    break
+                except socket.timeout:
+                    continue
+            if connection is None:
+                return
+
+            with connection:
+                connection.settimeout(5.0)
+                request = bytearray()
+                while len(request) < len(BROKER_REQUEST):
+                    chunk = connection.recv(len(BROKER_REQUEST) - len(request))
+                    if not chunk:
+                        break
+                    request.extend(chunk)
+                if bytes(request) != BROKER_REQUEST:
+                    return
+                connection.sendall(api_key.encode("utf-8"))
+        except (OSError, TimeoutError):
+            return
+        finally:
+            try:
+                server.close()
+            except OSError:
+                pass
+
+    thread = threading.Thread(target=serve_once, name="codex-provider-auth", daemon=True)
+    thread.start()
+    try:
+        yield socket_path
+    finally:
+        stop_event.set()
+        try:
+            server.close()
+        except OSError:
+            pass
+        thread.join(timeout=2.0)
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _codex_launch_configuration(
+    settings: Settings,
+    workspace: Path,
+    *,
+    credential_socket: Path | None = None,
+) -> tuple[Any, str | None]:
+    """Build App Server launch config without placing provider secrets in its environment."""
+    from openai_codex import CodexConfig
+
+    environment = {
+        "CODEX_HOME": str(settings.codex_home),
+        "OPENAI_API_KEY": "",
+        "CODEX_API_KEY": "",
+        "QUAZONAI_CODEX_API_KEY": "",
+        # The App Server does not need Core bootstrap credentials. Scrub them from
+        # the environment inherited by Mission-owned child processes as well.
+        "QUAZONAI_MASTER_KEY": "",
+        "QUAZONAI_DATABASE_URL": "",
+        "QUAZONAI_ALEMBIC_URL": "",
+        "POSTGRES_PASSWORD": "",
+    }
+    overrides = [
+        'shell_environment_policy.inherit="core"',
+        "shell_environment_policy.ignore_default_excludes=false",
+    ]
+    provider_id: str | None = None
+
+    if settings.codex_base_url or settings.codex_api_key:
+        provider_id = CUSTOM_CODEX_PROVIDER_ID
+        base_url = settings.codex_base_url or DEFAULT_OPENAI_API_BASE_URL
+        overrides.extend(
+            [
+                f"model_providers.{provider_id}.name=\"QuaZonai configured provider\"",
+                f"model_providers.{provider_id}.base_url={json.dumps(base_url)}",
+                f"model_providers.{provider_id}.wire_api=\"responses\"",
+            ]
+        )
+        if settings.codex_api_key:
+            if credential_socket is None:
+                raise QfError(
+                    "CODEX_PROVIDER_AUTH_UNAVAILABLE",
+                    "Codex provider credential broker is unavailable.",
+                    503,
+                )
+            auth_cwd = Path(__file__).resolve().parents[2]
+            auth_args = ["-m", "runners.codex_provider_auth", str(credential_socket)]
+            auth_config = (
+                "{ command = "
+                f"{json.dumps(sys.executable)}, args = {json.dumps(auth_args)}, "
+                "timeout_ms = 5000, refresh_interval_ms = 0, cwd = "
+                f"{json.dumps(str(auth_cwd))} }}"
+            )
+            overrides.append(f"model_providers.{provider_id}.auth={auth_config}")
+
+    return (
+        CodexConfig(
+            cwd=str(workspace),
+            env=environment,
+            config_overrides=tuple(overrides),
+        ),
+        provider_id,
+    )
+
+
 def run_mission(settings: Settings, job_id: UUID) -> None:
     """Start app-server first, then atomically admit the Mission into RUNNING."""
     try:
@@ -154,53 +302,60 @@ def run_mission(settings: Settings, job_id: UUID) -> None:
     engine = create_database_engine(settings)
     factory = create_session_factory(engine)
     try:
-        with Codex() as codex:
-            thread = codex.thread_start(
-                approval_mode=ApprovalMode.deny_all,
-                sandbox=Sandbox.workspace_write,
-                cwd=str(workspace),
-                model=settings.codex_model,
-                config={
-                    "sandbox_workspace_write": {"network_access": False},
-                    "web_search": "disabled",
-                },
-                developer_instructions=(
-                    "You are a QuaZonai Research Mission worker. Work only inside this Mission worktree. "
-                    "Read MISSION.md, perform the bounded research task, and write durable findings to RESULT.md. "
-                    "Do not request approvals, do not access external networks, do not place trades, do not manage "
-                    "broker state, and do not alter the frozen Research Charter."
-                ),
+        with _provider_credential_broker(settings.codex_api_key) as credential_socket:
+            codex_config, model_provider = _codex_launch_configuration(
+                settings,
+                workspace,
+                credential_socket=credential_socket,
             )
-            with factory() as session, session.begin():
-                mission = session.execute(
-                    select(ResearchMission)
-                    .where(ResearchMission.id == mission_id)
-                    .with_for_update()
-                ).scalar_one()
-                if mission.state != "READY":
-                    raise QfError(
-                        "MISSION_STATE_CONFLICT",
-                        "Mission state changed before Codex admission.",
-                        409,
-                        {"state": mission.state},
-                    )
-                mission.state = "RUNNING"
-                mission.started_at = _now()
-                mission.codex_thread_id = thread.id
-                mission.workspace_path = str(workspace)
-                mission.summary = "Codex app-server admitted the Mission and started the research turn."
-                _event(
-                    session,
-                    kind="MISSION_STARTED",
-                    program_id=program_id,
-                    mission_id=mission_id,
-                    payload={"codex_thread_id": thread.id},
+            with Codex(codex_config) as codex:
+                thread = codex.thread_start(
+                    approval_mode=ApprovalMode.deny_all,
+                    sandbox=Sandbox.workspace_write,
+                    cwd=str(workspace),
+                    model=settings.codex_model,
+                    model_provider=model_provider,
+                    config={
+                        "sandbox_workspace_write": {"network_access": False},
+                        "web_search": "disabled",
+                    },
+                    developer_instructions=(
+                        "You are a QuaZonai Research Mission worker. Work only inside this Mission worktree. "
+                        "Read MISSION.md, perform the bounded research task, and write durable findings to RESULT.md. "
+                        "Do not request approvals, do not access external networks, do not place trades, do not manage "
+                        "broker state, and do not alter the frozen Research Charter."
+                    ),
                 )
+                with factory() as session, session.begin():
+                    mission = session.execute(
+                        select(ResearchMission)
+                        .where(ResearchMission.id == mission_id)
+                        .with_for_update()
+                    ).scalar_one()
+                    if mission.state != "READY":
+                        raise QfError(
+                            "MISSION_STATE_CONFLICT",
+                            "Mission state changed before Codex admission.",
+                            409,
+                            {"state": mission.state},
+                        )
+                    mission.state = "RUNNING"
+                    mission.started_at = _now()
+                    mission.codex_thread_id = thread.id
+                    mission.workspace_path = str(workspace)
+                    mission.summary = "Codex app-server admitted the Mission and started the research turn."
+                    _event(
+                        session,
+                        kind="MISSION_STARTED",
+                        program_id=program_id,
+                        mission_id=mission_id,
+                        payload={"codex_thread_id": thread.id},
+                    )
 
-            result = thread.run(
-                "Execute the Mission in MISSION.md. Produce RESULT.md with the evidence, assumptions, limitations, "
-                "and concrete next research actions. Return a concise completion summary."
-            )
+                result = thread.run(
+                    "Execute the Mission in MISSION.md. Produce RESULT.md with the evidence, assumptions, limitations, "
+                    "and concrete next research actions. Return a concise completion summary."
+                )
 
         _git("add", "-A", cwd=workspace)
         status = _git("status", "--porcelain", cwd=workspace).stdout.strip()
@@ -252,7 +407,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
-    run_mission(Settings.from_env(), UUID(args.job_id))
+    settings = load_effective_settings(Settings.from_env())
+    run_mission(settings, UUID(args.job_id))
     return 0
 
 

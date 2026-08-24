@@ -17,6 +17,7 @@ from db.session import create_database_engine, create_session_factory, ping_data
 from events import append_event
 from jobs import claim_next_job, complete_job, fail_job, release_expired_leases
 from logging_utils import configure_logging
+from runtime_config import load_effective_settings
 from settings import Settings
 
 LOGGER = logging.getLogger("quazonai.finite_worker")
@@ -139,17 +140,18 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     configure_logging()
-    settings = Settings.from_env()
-    settings.ensure_worker_directories()
-    engine = create_database_engine(settings)
+    base_settings = Settings.from_env()
+    base_settings.ensure_worker_directories()
+    engine = create_database_engine(base_settings)
     if args.check:
         ping_database(engine)
         engine.dispose()
         return 0
+    engine.dispose()
 
     owner = f"{socket.gethostname()}:{os.getpid()}"
     if args.once:
-        run_once(settings, owner=owner)
+        run_once(load_effective_settings(base_settings), owner=owner)
         return 0
 
     stop = StopFlag()
@@ -157,9 +159,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     signal.signal(signal.SIGINT, stop.request)
     LOGGER.info("finite worker started")
     while not stop.requested:
-        worked = run_once(settings, owner=owner)
+        runtime_settings = load_effective_settings(base_settings)
+        worked = run_once(runtime_settings, owner=owner)
         if not worked:
-            time.sleep(settings.job_poll_seconds)
+            time.sleep(runtime_settings.job_poll_seconds)
     LOGGER.info("finite worker stopped")
     return 0
 
