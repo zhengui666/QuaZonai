@@ -30,6 +30,7 @@ _GATEWAY_HEADER_ALIASES = {
     b"x-qz-agent-subject": b"x-quazonai-agent-subject",
     b"x-qz-agent-client-id": b"x-quazonai-agent-client-id",
     b"x-qz-agent-scopes": b"x-quazonai-agent-scopes",
+    b"x-qz-upload-offset": b"x-quazonai-upload-offset",
 }
 
 
