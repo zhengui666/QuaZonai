@@ -2,6 +2,7 @@ import { DatabaseIcon, PlugsConnectedIcon } from '@phosphor-icons/react';
 import { Button, Dialog, Select, Switch, Tabs, TextField } from '@radix-ui/themes';
 import type { ColumnDef } from '@tanstack/react-table';
 import { useState } from 'react';
+import { RuntimeConfigurationPanel } from '../components/admin/RuntimeConfigurationPanel';
 import { DataTable } from '../components/ui/DataTable';
 import { EmptyState } from '../components/ui/EmptyState';
 import { ErrorPanel } from '../components/ui/ErrorPanel';
@@ -22,6 +23,7 @@ import {
   useMandates,
   usePluginReleases,
   useReadiness,
+  useRuntimeConfiguration,
   useUniverses,
 } from '../lib/api/hooks';
 import type { DataSource, DatasetRevision, DownstreamSystem, MarketUniverse, PluginRelease, PortfolioMandate } from '../lib/api/types';
@@ -101,6 +103,7 @@ function MandateRow({ mandate }: { mandate: PortfolioMandate }) {
 export function AdministrationPage() {
   const readiness = useReadiness();
   const health = useHealth();
+  const runtimeConfiguration = useRuntimeConfiguration();
   const sources = useDataSources();
   const datasets = useDatasets();
   const universes = useUniverses();
@@ -108,7 +111,7 @@ export function AdministrationPage() {
   const plugins = usePluginReleases();
   const mandates = useMandates();
   const approvals = useApprovals();
-  const queries = [readiness, health, sources, datasets, universes, downstreams, plugins, mandates, approvals];
+  const queries = [readiness, health, runtimeConfiguration, sources, datasets, universes, downstreams, plugins, mandates, approvals];
   if (queries.some((query) => query.isLoading)) return <PageSkeleton />;
   const error = queries.find((query) => query.error)?.error;
   if (error) return <ErrorPanel error={error} />;
@@ -128,6 +131,7 @@ export function AdministrationPage() {
       <PageHeader title="Administration" description="Low-frequency capability configuration and operational health. These controls prepare research and handoff capabilities; they never expose broker credentials or trading execution." actions={<><DataSourceDialog /><DownstreamDialog /></>} />
       <KpiStrip items={[{ label: 'System ready', value: ready(readiness.data?.SYSTEM_READY) ? 'YES' : 'NO' }, { label: 'Research ready', value: ready(readiness.data?.RESEARCH_READY) ? 'YES' : 'NO' }, { label: 'Paper handoff', value: ready(readiness.data?.PAPER_HANDOFF_READY) ? 'READY' : 'NOT READY' }, { label: 'Live handoff', value: ready(readiness.data?.LIVE_HANDOFF_READY) ? 'READY' : 'NOT READY' }]} />
       <Section title="Runtime health" meta="Authoritative service readiness, not UI guesses"><div className="qz-panel qz-panel-pad qz-grid-4">{Object.entries(health.data ?? {}).filter(([key]) => ['database', 'worker', 'agent_worker', 'evaluator', 'storage', 'codex'].includes(key)).map(([key, value]) => <div key={key}><div className="qz-label">{humanize(key)}</div><div style={{ marginTop: 6 }}><StateBadge state={typeof value === 'object' && value && 'state' in value ? String((value as { state: unknown }).state) : value ? 'READY' : 'UNKNOWN'} /></div></div>)}</div></Section>
+      <RuntimeConfigurationPanel configuration={runtimeConfiguration.data!} />
       <Section title="Mandate templates" meta="Enable only the capital objectives you want researched"><div className="qz-panel qz-panel-pad qz-list">{(mandates.data ?? []).map((mandate) => <MandateRow key={mandate.id} mandate={mandate} />)}</div></Section>
       <Section title="Capability registry">
         <Tabs.Root defaultValue="data">
