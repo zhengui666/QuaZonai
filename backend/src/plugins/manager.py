@@ -1,4 +1,4 @@
-"""Plugin release lifecycle operations owned by the control plane."""
+"""Research/data plugin release lifecycle operations owned by the control plane."""
 
 from __future__ import annotations
 
@@ -10,6 +10,21 @@ from sqlalchemy.orm import Session
 
 from db.models import PluginRelease
 from errors import QfError
+
+_ALLOWED_CAPABILITIES = {"HISTORICAL_IMPORT", "LIVE_DATA", "RESEARCH_TOOL"}
+
+
+def _require_research_data_release(release: PluginRelease) -> None:
+    raw = release.descriptor_snapshot.get("capabilities", [])
+    capabilities = {str(item) for item in raw} if isinstance(raw, list) else set()
+    unsupported = sorted(capabilities - _ALLOWED_CAPABILITIES)
+    if unsupported:
+        raise QfError(
+            "PLUGIN_CAPABILITY_FORBIDDEN",
+            "Plugin declares capabilities outside the QuaZonai research/data boundary.",
+            422,
+            {"unsupported_capabilities": unsupported},
+        )
 
 
 def activate_release(session: Session, release_id: UUID) -> PluginRelease:
@@ -25,6 +40,7 @@ def activate_release(session: Session, release_id: UUID) -> PluginRelease:
             409,
             {"state": release.state},
         )
+    _require_research_data_release(release)
 
     other_defaults = list(
         session.scalars(
@@ -42,8 +58,6 @@ def activate_release(session: Session, release_id: UUID) -> PluginRelease:
         if previous.state == "ACTIVE":
             previous.state = "DRAINING"
 
-    # Release the database-enforced default slot before assigning it to the new version.
-    # This preserves the invariant on databases that check the partial unique index row-by-row.
     if other_defaults:
         session.flush()
 
