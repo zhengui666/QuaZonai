@@ -16,7 +16,7 @@ import {
 import { Button, DropdownMenu, Theme } from '@radix-ui/themes';
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { localeLabels, localeOrder, useI18n, type MessageKey } from '../../i18n';
+import { localeLabels, localeOrder, useI18n, type Locale, type MessageKey } from '../../i18n';
 import { PageSkeleton } from '../ui/Skeleton';
 
 const nav: Array<{ to: string; labelKey: MessageKey; mobileKey?: MessageKey; icon: typeof HouseIcon; end?: boolean }> = [
@@ -48,6 +48,9 @@ export function AppShell() {
     const item = nav.find((entry) => (entry.end ? location.pathname === entry.to : location.pathname.startsWith(entry.to)));
     return item ? t(item.labelKey) : 'QuaZonai';
   }, [location.pathname, t]);
+  const changeLocale = (value: string) => {
+    if ((localeOrder as readonly string[]).includes(value)) setLocale(value as Locale);
+  };
 
   return (
     <Theme appearance={mode} accentColor="jade" grayColor="sage" radius="small" scaling="90%">
@@ -84,16 +87,17 @@ export function AppShell() {
               </DropdownMenu.Root>
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger>
-                  <Button aria-label={t('language.change')} size="1" variant="soft" className="qz-locale-button">{localeLabels[locale].short}</Button>
+                  <Button aria-label={`${t('language.change')}: ${localeLabels[locale].native}`} size="1" variant="soft" className="qz-locale-button">{localeLabels[locale].short}</Button>
                 </DropdownMenu.Trigger>
                 <DropdownMenu.Content align="end">
-                  {localeOrder.map((code) => (
-                    <DropdownMenu.Item key={code} onSelect={() => setLocale(code)}>
-                      <span aria-hidden="true" className="qz-locale-check">{code === locale ? '✓' : ''}</span>
-                      <span>{localeLabels[code].native}</span>
-                      <span className="qz-section-meta">{localeLabels[code].english}</span>
-                    </DropdownMenu.Item>
-                  ))}
+                  <DropdownMenu.RadioGroup value={locale} onValueChange={changeLocale}>
+                    {localeOrder.map((code) => (
+                      <DropdownMenu.RadioItem key={code} value={code}>
+                        <span>{localeLabels[code].native}</span>
+                        <span className="qz-section-meta">{localeLabels[code].english}</span>
+                      </DropdownMenu.RadioItem>
+                    ))}
+                  </DropdownMenu.RadioGroup>
                 </DropdownMenu.Content>
               </DropdownMenu.Root>
               <Button aria-label={mode === 'dark' ? t('theme.light') : t('theme.dark')} size="1" variant="soft" onClick={() => setMode(mode === 'dark' ? 'light' : 'dark')}>

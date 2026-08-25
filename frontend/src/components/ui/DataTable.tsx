@@ -12,8 +12,10 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useMemo, useRef, useState } from 'react';
-import { useI18n, type MessageKey } from '../../i18n';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { useI18n, type Locale, type MessageKey } from '../../i18n';
+import { translateDomainLabel } from '../../i18n/domain';
+import { formatDateTime } from '../../lib/format';
 import { EmptyState } from './EmptyState';
 
 type LocalizedColumnMeta = { messageKey?: MessageKey };
@@ -21,6 +23,29 @@ type LocalizedColumnMeta = { messageKey?: MessageKey };
 function messageKeyFromMeta(meta: unknown): MessageKey | undefined {
   if (!meta || typeof meta !== 'object' || !('messageKey' in meta)) return undefined;
   return (meta as LocalizedColumnMeta).messageKey;
+}
+
+function humanizeCanonical(value: string): string {
+  return value.replaceAll('_', ' ').toLowerCase().replace(/(^|\s)\S/g, (character) => character.toUpperCase());
+}
+
+function searchableValues(value: unknown, locale: Locale): string[] {
+  if (value === null || value === undefined) return [];
+  if (Array.isArray(value)) return value.flatMap((item) => searchableValues(item, locale));
+  if (typeof value === 'boolean') {
+    const source = value ? 'Enabled' : 'Disabled';
+    return [String(value), translateDomainLabel(locale, source) ?? source];
+  }
+  if (typeof value === 'number') return [String(value), new Intl.NumberFormat(locale).format(value)];
+  if (typeof value === 'string') {
+    const values = [value];
+    const domainLabel = translateDomainLabel(locale, humanizeCanonical(value));
+    if (domainLabel) values.push(domainLabel);
+    if (/^\d{4}-\d{2}-\d{2}(?:T|$)/.test(value)) values.push(formatDateTime(value));
+    return values;
+  }
+  if (typeof value === 'object') return Object.values(value as Record<string, unknown>).flatMap((item) => searchableValues(item, locale));
+  return [String(value)];
 }
 
 interface DataTableProps<T> {
@@ -46,12 +71,17 @@ export function DataTable<T>({
   ariaLabel = 'Data table',
   enableVirtualization = true,
 }: DataTableProps<T>) {
-  const { t, text, plural } = useI18n();
+  const { locale, t, text, plural } = useI18n();
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
   const viewportRef = useRef<HTMLDivElement>(null);
   const stableColumns = useMemo(() => columns, [columns]);
+  const localizedGlobalFilter = useCallback((row: { getValue: (columnId: string) => unknown }, columnId: string, filterValue: unknown) => {
+    const query = String(filterValue ?? '').trim().toLocaleLowerCase(locale);
+    if (!query) return true;
+    return searchableValues(row.getValue(columnId), locale).some((candidate) => candidate.toLocaleLowerCase(locale).includes(query));
+  }, [locale]);
   const table = useReactTable({
     data,
     columns: stableColumns,
@@ -59,6 +89,7 @@ export function DataTable<T>({
     onSortingChange: setSorting,
     onGlobalFilterChange: setGlobalFilter,
     onColumnVisibilityChange: setColumnVisibility,
+    globalFilterFn: localizedGlobalFilter,
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getSortedRowModel: getSortedRowModel(),

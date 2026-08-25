@@ -31,6 +31,7 @@ const labels: Record<string, DomainLabels> = {
   Failed: l('Failed', '失败', '失敗', '失敗', '실패', 'Fallido', 'فاشل'),
   Invalidated: l('Invalidated', '已失效', '已失效', '無効化済み', '무효화됨', 'Invalidado', 'أُبطل'),
   Rejected: l('Rejected', '已拒绝', '已拒絕', '却下済み', '거부됨', 'Rechazado', 'مرفوض'),
+  Revoked: l('Revoked', '已撤销', '已撤銷', '取消済み', '철회됨', 'Revocado', 'ملغى'),
   'Downstream Rejected': l('Downstream Rejected', '下游已拒绝', '下游已拒絕', 'ダウンストリーム却下', '다운스트림 거부', 'Rechazado por downstream', 'مرفوض من downstream'),
   Expired: l('Expired', '已过期', '已過期', '期限切れ', '만료됨', 'Caducado', 'منتهي الصلاحية'),
   Blocked: l('Blocked', '阻塞', '阻塞', 'ブロック', '차단됨', 'Bloqueado', 'محظور'),

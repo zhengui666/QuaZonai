@@ -50,6 +50,8 @@ function expectDecisionCount(locale: Locale, count: number, expected: string) {
   view.unmount();
 }
 
+const formatted = (locale: Locale, value: number) => new Intl.NumberFormat(locale).format(value);
+
 afterEach(() => {
   localStorage.clear();
   document.documentElement.lang = 'en';
@@ -81,13 +83,21 @@ describe('i18n', () => {
     expect(screen.queryByRole('heading', { name: '仪表盘' })).not.toBeInTheDocument();
   });
 
-  it('localizes plugin lifecycle states exposed by the backend contract', () => {
+  it('localizes reachable lifecycle and handoff states', () => {
     expect(translateDomainLabel('zh-CN', 'Received')).toBe('已接收');
     expect(translateDomainLabel('ja', 'Installing')).toBe('インストール中');
     expect(translateDomainLabel('ko', 'Validating')).toBe('검증 중');
     expect(translateDomainLabel('es', 'Draining')).toBe('Drenando');
     expect(translateDomainLabel('ar', 'Removing')).toBe('جارٍ الإزالة');
     expect(translateDomainLabel('zh-TW', 'Removed')).toBe('已移除');
+    expect(translateDomainLabel('zh-CN', 'Revoked')).toBe('已撤销');
+  });
+
+  it('formats numeric interpolation using the active locale', () => {
+    expect(translateKey('ar', 'table.page', { page: 1234, pages: 5678 }))
+      .toBe(`الصفحة ${formatted('ar', 1234)} / ${formatted('ar', 5678)}`);
+    expect(translateKey('es', 'table.perPage', { count: 1234 }))
+      .toBe(`${formatted('es', 1234)} / página`);
   });
 
   it('selects locale-aware row-count plural forms', () => {
@@ -97,17 +107,17 @@ describe('i18n', () => {
     expectRowCount('ar', 0, 'لا صفوف');
     expectRowCount('ar', 1, 'صف واحد');
     expectRowCount('ar', 2, 'صفّان');
-    expectRowCount('ar', 3, '3 صفوف');
-    expectRowCount('ar', 11, '11 صفًا');
+    expectRowCount('ar', 3, `${formatted('ar', 3)} صفوف`);
+    expectRowCount('ar', 11, `${formatted('ar', 11)} صفًا`);
   });
 
   it('selects all Arabic decision-count plural categories', () => {
     expectDecisionCount('ar', 0, 'لا قرارات');
     expectDecisionCount('ar', 1, 'قرار واحد');
     expectDecisionCount('ar', 2, 'قراران');
-    expectDecisionCount('ar', 3, '3 قرارات');
-    expectDecisionCount('ar', 11, '11 قرارًا');
-    expectDecisionCount('ar', 100, '100 قرار');
+    expectDecisionCount('ar', 3, `${formatted('ar', 3)} قرارات`);
+    expectDecisionCount('ar', 11, `${formatted('ar', 11)} قرارًا`);
+    expectDecisionCount('ar', 100, `${formatted('ar', 100)} قرار`);
   });
 
   it('synchronizes an inferred/initial locale to the document without persisting it', async () => {

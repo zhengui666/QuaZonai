@@ -26,28 +26,30 @@ const sourceIndex = buildSourceIndex();
 export type TranslationValues = Record<string, string | number | null | undefined>;
 type PluralTranslationKey = MessageKey | PluralMessageKey;
 
-function interpolate(template: string, values?: TranslationValues): string {
+function interpolate(locale: Locale, template: string, values?: TranslationValues): string {
   if (!values) return template;
+  const numberFormat = new Intl.NumberFormat(locale);
   return template.replace(/\{([A-Za-z0-9_]+)\}/g, (match, name: string) => {
     const value = values[name];
-    return value === null || value === undefined ? match : String(value);
+    if (value === null || value === undefined) return match;
+    return typeof value === 'number' ? numberFormat.format(value) : String(value);
   });
 }
 
 export function translateKey(locale: Locale, key: MessageKey, values?: TranslationValues): string {
-  return interpolate(messages[key][localeIndex[locale]], values);
+  return interpolate(locale, messages[key][localeIndex[locale]], values);
 }
 
 function translatePluralKey(locale: Locale, key: PluralTranslationKey, values?: TranslationValues): string {
   const template = key in messages
     ? messages[key as MessageKey][localeIndex[locale]]
     : pluralMessages[key as PluralMessageKey][localeIndex[locale]];
-  return interpolate(template, values);
+  return interpolate(locale, template, values);
 }
 
 export function translateSource(locale: Locale, source: string, values?: TranslationValues): string {
   const key = sourceIndex.get(source);
-  return key ? translateKey(locale, key, values) : interpolate(source, values);
+  return key ? translateKey(locale, key, values) : interpolate(locale, source, values);
 }
 
 function normalizeLocale(value: string): string {
@@ -133,7 +135,7 @@ export function I18nProvider({ children, initialLocale }: { children: ReactNode;
     plural: (forms, count, values) => {
       const rule = new Intl.PluralRules(locale).select(count);
       const key = forms[rule] ?? forms.other ?? forms.one;
-      if (!key) return String(count);
+      if (!key) return new Intl.NumberFormat(locale).format(count);
       return translatePluralKey(locale, key, { count, ...values });
     },
   }), [locale, setLocale]);
