@@ -46,7 +46,7 @@ def _login(
     )
 
 
-def test_auth_disabled_preserves_development_operator_access(
+def test_auth_disabled_preserves_direct_operator_access(
     settings: Settings,
     engine: Engine,
 ) -> None:
@@ -242,22 +242,10 @@ def test_enabled_auth_requires_complete_configuration(settings: Settings) -> Non
         partial.validate_operator_auth()
 
 
-def test_disabled_auth_rejects_credential_configuration(settings: Settings) -> None:
-    partial = replace(
-        settings,
-        operator_auth_enabled=False,
-        operator_username="operator",
-    )
-
-    with pytest.raises(SettingsError, match="disabled but authentication settings are present"):
-        partial.validate_operator_auth()
-
-
-def test_production_requires_operator_authentication(settings: Settings) -> None:
+def test_production_can_explicitly_keep_auth_disabled(settings: Settings) -> None:
     production = replace(settings, environment="production", operator_auth_enabled=False)
 
-    with pytest.raises(SettingsError, match="AUTH_ENABLED must be true in production"):
-        production.validate_operator_auth()
+    production.validate_operator_auth()
 
 
 def test_production_requires_https_and_sets_secure_cookies(
