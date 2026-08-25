@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 from dataclasses import replace
 
@@ -10,7 +11,7 @@ from fastapi import Request
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 
-from api.events import _stream_authorized
+from api.events import _stream_authorized, stream_events
 from main import create_app
 from operator_auth import (
     SESSION_COOKIE_NAME,
@@ -44,6 +45,9 @@ def _payload(settings: Settings, *, password: str) -> dict[str, object]:
 
 
 def _request_with_session(app: object, session_cookie: str) -> Request:
+    async def receive() -> dict[str, object]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
     return Request(
         {
             "type": "http",
@@ -62,7 +66,8 @@ def _request_with_session(app: object, session_cookie: str) -> Request:
             "client": ("203.0.113.10", 43210),
             "server": ("testserver", 80),
             "app": app,
-        }
+        },
+        receive=receive,
     )
 
 
@@ -156,6 +161,54 @@ def test_logout_terminates_preexisting_stream_authorization(
     )
     assert logout.status_code == 204
     assert not _stream_authorized(stream_request, generation)
+
+
+def test_anonymous_logout_does_not_revoke_other_active_streams(
+    settings: Settings,
+    engine: Engine,
+) -> None:
+    secured = _enabled_settings(settings)
+    app = create_app(settings=secured, engine=engine)
+    runtime: OperatorAuthRuntime = app.state.operator_auth_runtime
+    generation = runtime.stream_generation()
+    anonymous = TestClient(app)
+
+    response = anonymous.post(
+        "/api/v1/auth/logout",
+        headers={"Origin": "http://testserver"},
+    )
+
+    assert response.status_code == 204
+    assert runtime.stream_generation() == generation
+
+
+def test_stream_admission_generation_closes_pre_iteration_logout_race(
+    settings: Settings,
+    engine: Engine,
+) -> None:
+    secured = _enabled_settings(settings)
+    app = create_app(settings=secured, engine=engine)
+    client = TestClient(app)
+    login = client.post(
+        "/api/v1/auth/login",
+        headers={"Origin": "http://testserver"},
+        json=_payload(secured, password="correct horse battery staple"),
+    )
+    assert login.status_code == 200
+    session_cookie = client.cookies.get(SESSION_COOKIE_NAME)
+    assert session_cookie is not None
+
+    stream_request = _request_with_session(app, session_cookie)
+    response = stream_events(stream_request, cursor=0)
+
+    runtime: OperatorAuthRuntime = app.state.operator_auth_runtime
+    runtime.revoke_active_streams()
+
+    async def read_first_frame() -> bytes | str:
+        return await anext(response.body_iterator)
+
+    with pytest.raises(StopAsyncIteration):
+        asyncio.run(read_first_frame())
 
 
 def test_stream_revalidation_observes_cookie_key_rotation(
