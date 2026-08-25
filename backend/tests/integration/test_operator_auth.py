@@ -16,6 +16,7 @@ from settings import Settings, SettingsError
 def _enabled_settings(settings: Settings) -> Settings:
     return replace(
         settings,
+        operator_auth_enabled=True,
         operator_username="operator",
         operator_password="correct horse battery staple",
         operator_totp_secret=pyotp.random_base32(),
@@ -189,18 +190,21 @@ def test_logout_requires_origin_and_forgets_trusted_browser(settings: Settings, 
     assert client.get("/api/v1/auth/session").status_code == 401
 
 
-def test_partial_auth_configuration_is_rejected(settings: Settings) -> None:
-    partial = replace(settings, operator_username="operator")
+def test_enabled_auth_requires_complete_configuration(settings: Settings) -> None:
+    partial = replace(
+        settings,
+        operator_auth_enabled=True,
+        operator_username="operator",
+    )
 
-    with pytest.raises(SettingsError, match="partially configured"):
+    with pytest.raises(SettingsError, match="enabled but incomplete"):
         partial.validate_operator_auth()
 
 
-def test_production_requires_auth_configuration(settings: Settings) -> None:
-    production = replace(settings, environment="production")
+def test_production_can_explicitly_keep_auth_disabled(settings: Settings) -> None:
+    production = replace(settings, environment="production", operator_auth_enabled=False)
 
-    with pytest.raises(SettingsError, match="must be configured in production"):
-        production.validate_operator_auth()
+    production.validate_operator_auth()
 
 
 def test_production_requires_https_and_sets_secure_cookies(
