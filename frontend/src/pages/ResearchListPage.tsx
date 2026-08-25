@@ -10,13 +10,13 @@ import { StateBadge } from '../components/ui/StateBadge';
 import { Translated } from '../i18n';
 import { usePrograms } from '../lib/api/hooks';
 import type { ResearchProgram } from '../lib/api/types';
-import { formatDateTime } from '../lib/format';
+import { formatDateTime, formatNumber } from '../lib/format';
 
 const columns: ColumnDef<ResearchProgram, unknown>[] = [
   { accessorKey: 'title', header: 'Program', cell: ({ row }) => <div><div className="qz-list-title">{row.original.title ?? row.original.charter?.research_question ?? row.original.id.slice(0, 8)}</div><div className="qz-list-subtitle qz-mono">{row.original.id}</div></div> },
   { accessorKey: 'state', header: 'State', cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
-  { accessorKey: 'mission_count', header: 'Missions', cell: ({ getValue }) => <span className="qz-number">{String(getValue() ?? '—')}</span> },
-  { accessorKey: 'alpha_count', header: 'Alphas', cell: ({ getValue }) => <span className="qz-number">{String(getValue() ?? '—')}</span> },
+  { accessorKey: 'mission_count', header: 'Missions', cell: ({ getValue }) => <span className="qz-number">{formatNumber(getValue() as number | undefined)}</span> },
+  { accessorKey: 'alpha_count', header: 'Alphas', cell: ({ getValue }) => <span className="qz-number">{formatNumber(getValue() as number | undefined)}</span> },
   { accessorKey: 'updated_at', header: 'Updated', cell: ({ getValue }) => formatDateTime(getValue() as string | undefined) },
   { id: 'open', header: '', cell: ({ row }) => <Button asChild size="1" variant="ghost"><Link to={`/research/${row.original.id}`}><Translated source="Open" /> <ArrowRightIcon size={12} /></Link></Button>, enableSorting: false },
 ];
