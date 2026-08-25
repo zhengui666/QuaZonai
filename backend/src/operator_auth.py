@@ -393,8 +393,8 @@ def clear_auth_cookies(response: Response, settings: Settings) -> None:
 def require_same_origin(request: Request, settings: Settings) -> None:
     if request.method.upper() in _SAFE_METHODS or not settings.auth_enabled:
         return
-    expected = (settings.auth_public_origin or "").rstrip("/")
-    origin = (request.headers.get("origin") or "").rstrip("/")
+    expected = settings.canonical_auth_public_origin or ""
+    origin = request.headers.get("origin") or ""
     if not expected or not origin or not secrets.compare_digest(origin, expected):
         raise QfError(
             "AUTH_ORIGIN_REJECTED",
