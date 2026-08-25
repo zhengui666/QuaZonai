@@ -74,11 +74,13 @@ def _install_operator_auth(app: FastAPI) -> None:
         ):
             return await call_next(request)
 
-        machine_identity = authenticate_machine(
-            settings,
-            request.headers.get("authorization"),
-        )
-        if machine_identity is not None:
+        authorization = request.headers.get("authorization")
+        if authorization is not None:
+            machine_identity = authenticate_machine(settings, authorization)
+            if machine_identity is None:
+                return _auth_error_response(
+                    QfError("AUTH_REQUIRED", "Operator authentication is required.", 401)
+                )
             request.state.operator = machine_identity
             return await call_next(request)
 
