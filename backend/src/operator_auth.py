@@ -24,8 +24,15 @@ COOKIE_VERSION = 1
 COOKIE_NONCE_BYTES = 12
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 _DOWNSTREAM_ROUTE = re.compile(
-    r"^/api/v1/handoffs/[^/]+/(?:claim|accept|reject|package|feedback)$"
+    r"^/api/v1/handoffs/[^/]+/(?P<action>claim|accept|reject|package|feedback)$"
 )
+_DOWNSTREAM_METHODS = {
+    "claim": "POST",
+    "accept": "POST",
+    "reject": "POST",
+    "package": "GET",
+    "feedback": "POST",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,9 +242,18 @@ def require_same_origin(request: Request, settings: Settings) -> None:
         )
 
 
-def is_operator_auth_exempt(path: str) -> bool:
+def is_operator_auth_exempt(method: str, path: str) -> bool:
+    """Return whether one exact method/path belongs outside Operator authentication.
+
+    Downstream-owned Handoff routes remain authenticated by their per-downstream
+    service token. Matching both method and path prevents a future Operator route
+    that reuses one path with a different HTTP method from becoming public.
+    """
     if path == "/api/v1/system/health":
         return True
     if path.startswith("/api/v1/auth/"):
         return True
-    return _DOWNSTREAM_ROUTE.fullmatch(path) is not None
+    match = _DOWNSTREAM_ROUTE.fullmatch(path)
+    if match is None:
+        return False
+    return _DOWNSTREAM_METHODS[match.group("action")] == method.upper()
