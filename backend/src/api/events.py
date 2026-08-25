@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
 from db.models import Event
-from operator_auth import OperatorAuthRuntime, reauthenticate_operator_request
+from operator_auth import OperatorAuthRuntime, authenticate_browser, authenticate_machine
 from settings import Settings
 
 router = APIRouter(prefix="/api/v1", tags=["events"])
@@ -67,7 +67,10 @@ def _stream_authorized(request: Request, generation: int) -> bool:
     runtime: OperatorAuthRuntime = request.app.state.operator_auth_runtime
     if runtime.stream_generation() != generation:
         return False
-    return reauthenticate_operator_request(request, settings)
+    authorization = request.headers.get("authorization")
+    if authorization is not None:
+        return authenticate_machine(settings, authorization) is not None
+    return authenticate_browser(request, settings) is not None
 
 
 @router.get("/events", response_model=list[EventView])
