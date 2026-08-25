@@ -18,7 +18,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import Request, Response
 
 from errors import QfError
-from settings import Settings
+from settings import Settings, SettingsError, canonicalize_http_origin
 
 SESSION_COOKIE_NAME = "quazonai_session"
 TRUSTED_BROWSER_COOKIE_NAME = "quazonai_trusted_browser"
@@ -393,15 +393,26 @@ def clear_auth_cookies(response: Response, settings: Settings) -> None:
 def require_same_origin(request: Request, settings: Settings) -> None:
     if request.method.upper() in _SAFE_METHODS or not settings.auth_enabled:
         return
-    expected = settings.canonical_auth_public_origin or ""
-    origin = request.headers.get("origin") or ""
-    if not expected or not origin or not secrets.compare_digest(origin, expected):
-        raise QfError(
-            "AUTH_ORIGIN_REJECTED",
-            "The request origin is not allowed for browser-authenticated mutations.",
-            403,
+    expected = settings.canonical_auth_public_origin
+    supplied = request.headers.get("origin")
+    try:
+        origin = (
+  canonicalize_http_origin(supplied, name="Origin")
+  if supplied is not None
+  else None
         )
-
+    except SettingsError:
+        origin = None
+    if (
+        expected is None
+        or origin is None
+        or not secrets.compare_digest(origin, expected)
+    ):
+        raise QfError(
+  "AUTH_ORIGIN_REJECTED",
+  "The request origin is not allowed for browser-authenticated mutations.",
+  403,
+        )
 
 def is_operator_auth_exempt(method: str, path: str) -> bool:
     """Return whether one exact method/path belongs outside Operator authentication.
