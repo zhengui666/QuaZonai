@@ -7,11 +7,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from errors import QfError
 from operator_auth import (
-    TRUSTED_BROWSER_COOKIE_NAME,
     authenticate_browser,
     authenticate_login,
     clear_auth_cookies,
     clear_trusted_browser_cookie,
+    has_valid_trusted_browser,
     require_same_origin,
     set_session_cookie,
     set_trusted_browser_cookie,
@@ -39,9 +39,15 @@ class SessionView(BaseModel):
     auth_enabled: bool
 
 
+def _prevent_auth_response_caching(response: Response) -> None:
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+
+
 @router.post("/login", response_model=SessionView)
 def login(payload: LoginInput, request: Request, response: Response) -> SessionView:
     settings: Settings = request.app.state.settings
+    _prevent_auth_response_caching(response)
     require_same_origin(request, settings)
     if not settings.auth_enabled:
         return SessionView(
@@ -78,6 +84,7 @@ def login(payload: LoginInput, request: Request, response: Response) -> SessionV
 @router.get("/session", response_model=SessionView)
 def session(request: Request, response: Response) -> SessionView:
     settings: Settings = request.app.state.settings
+    _prevent_auth_response_caching(response)
     if not settings.auth_enabled:
         return SessionView(
             authenticated=True,
@@ -97,10 +104,7 @@ def session(request: Request, response: Response) -> SessionView:
     return SessionView(
         authenticated=True,
         username=identity.username,
-        trusted_browser=(
-            identity.source == "trusted_browser"
-            or bool(request.cookies.get(TRUSTED_BROWSER_COOKIE_NAME))
-        ),
+        trusted_browser=has_valid_trusted_browser(request, settings),
         auth_enabled=True,
     )
 
@@ -108,5 +112,6 @@ def session(request: Request, response: Response) -> SessionView:
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 def logout(request: Request, response: Response) -> None:
     settings: Settings = request.app.state.settings
+    _prevent_auth_response_caching(response)
     require_same_origin(request, settings)
     clear_auth_cookies(response, settings)
