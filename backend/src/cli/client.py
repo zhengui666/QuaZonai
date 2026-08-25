@@ -9,6 +9,8 @@ from urllib.parse import urlparse
 
 import httpx
 
+from settings import SettingsError, validate_machine_api_token
+
 
 class CliClientError(RuntimeError):
     def __init__(self, message: str, *, status_code: int | None = None) -> None:
@@ -31,6 +33,17 @@ def validate_loopback_endpoint(endpoint: str) -> str:
     return endpoint.rstrip("/")
 
 
+def _machine_token(explicit: str | None) -> str | None:
+    configured = explicit if explicit is not None else os.environ.get("QUAZONAI_API_TOKEN")
+    if configured is None or configured == "":
+        return None
+    try:
+        validate_machine_api_token(configured)
+    except SettingsError as exc:
+        raise CliClientError(str(exc)) from exc
+    return configured
+
+
 class ApiClient:
     def __init__(
         self,
@@ -41,8 +54,7 @@ class ApiClient:
     ) -> None:
         self.endpoint = validate_loopback_endpoint(endpoint)
         self.timeout = timeout
-        configured_token = api_token if api_token is not None else os.environ.get("QUAZONAI_API_TOKEN")
-        self.api_token = configured_token.strip() if configured_token and configured_token.strip() else None
+        self.api_token = _machine_token(api_token)
 
     def __enter__(self) -> "ApiClient":
         return self
