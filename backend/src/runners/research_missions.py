@@ -234,12 +234,22 @@ def _codex_launch_configuration(
         "OPENAI_API_KEY": "",
         "CODEX_API_KEY": "",
         "QUAZONAI_CODEX_API_KEY": "",
-        # The App Server does not need Core bootstrap credentials. Scrub them from
-        # the environment inherited by Mission-owned child processes as well.
+        # The App Server does not need Core bootstrap or Operator credentials.
+        # Explicitly clear them from the environment inherited by Mission-owned
+        # child processes, including non-Compose local launches.
         "QUAZONAI_MASTER_KEY": "",
         "QUAZONAI_DATABASE_URL": "",
         "QUAZONAI_ALEMBIC_URL": "",
         "POSTGRES_PASSWORD": "",
+        "QUAZONAI_AUTH_ENABLED": "",
+        "QUAZONAI_AUTH_USERNAME": "",
+        "QUAZONAI_AUTH_PASSWORD": "",
+        "QUAZONAI_AUTH_TOTP_SECRET": "",
+        "QUAZONAI_AUTH_COOKIE_KEY": "",
+        "QUAZONAI_API_TOKEN": "",
+        "QUAZONAI_AUTH_PUBLIC_ORIGIN": "",
+        "QUAZONAI_AUTH_SESSION_TTL_SECONDS": "",
+        "QUAZONAI_AUTH_TRUSTED_BROWSER_TTL_DAYS": "",
     }
     overrides = [
         'shell_environment_policy.inherit="core"',
