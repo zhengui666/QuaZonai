@@ -13,7 +13,7 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { cloneElement, isValidElement, useCallback, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import { useI18n, type Locale, type MessageKey } from '../../i18n';
 import { translateDomainLabel } from '../../i18n/domain';
 import { formatDateTime } from '../../lib/format';
@@ -32,6 +32,21 @@ function messageKeyFromMeta(meta: unknown): MessageKey | undefined {
 
 function humanizeCanonical(value: string): string {
   return value.replaceAll('_', ' ').toLowerCase().replace(/(^|\s)\S/g, (character) => character.toUpperCase());
+}
+
+function numericDisplayValue(value: number, locale: Locale, meta?: LocalizedColumnMeta): string {
+  if (meta?.searchFormat === 'compact') {
+    return new Intl.NumberFormat(locale, { notation: 'compact', maximumFractionDigits: 2 }).format(value);
+  }
+  if (meta?.searchFormat === 'percent') {
+    const decimals = meta.searchDecimals ?? 1;
+    return new Intl.NumberFormat(locale, {
+      style: 'percent',
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    }).format(value);
+  }
+  return new Intl.NumberFormat(locale).format(value);
 }
 
 function numericSearchValues(value: number, locale: Locale, meta?: LocalizedColumnMeta): string[] {
@@ -72,6 +87,24 @@ function searchableValues(value: unknown, locale: Locale, meta?: LocalizedColumn
 function objectField(value: unknown, key: string): unknown {
   if (value === null || typeof value !== 'object') return undefined;
   return (value as Record<string, unknown>)[key];
+}
+
+function numericRawValue(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : undefined;
+}
+
+function localizeDirectNumericCell(rendered: ReactNode, rawValue: unknown, locale: Locale, meta?: LocalizedColumnMeta): ReactNode {
+  if (!isValidElement(rendered)) return rendered;
+  const element = rendered as ReactElement<{ className?: string; children?: ReactNode }>;
+  if (!element.props.className?.split(/\s+/).includes('qz-number')) return rendered;
+  const numeric = numericRawValue(rawValue);
+  if (numeric === undefined) return rendered;
+  const children = element.props.children;
+  if (children !== rawValue && children !== String(rawValue)) return rendered;
+  return cloneElement(element, undefined, numericDisplayValue(numeric, locale, meta));
 }
 
 interface DataTableProps<T> {
@@ -205,7 +238,13 @@ export function DataTable<T>({
           <tbody>
             {paddingTop > 0 ? <tr aria-hidden="true"><td colSpan={table.getVisibleLeafColumns().length} style={{ height: paddingTop, padding: 0, border: 0 }} /></tr> : null}
             {visibleRows.map((row) => (
-              <tr key={row.id}>{row.getVisibleCells().map((cell) => <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>)}</tr>
+              <tr key={row.id}>{row.getVisibleCells().map((cell) => {
+                const rendered = flexRender(cell.column.columnDef.cell, cell.getContext());
+                const meta = columnMeta(cell.column.columnDef.meta);
+                const accessorValue = cell.getValue();
+                const rawValue = accessorValue === undefined ? objectField(row.original, cell.column.id) : accessorValue;
+                return <td key={cell.id}>{localizeDirectNumericCell(rendered, rawValue, locale, meta)}</td>;
+              })}</tr>
             ))}
             {paddingBottom > 0 ? <tr aria-hidden="true"><td colSpan={table.getVisibleLeafColumns().length} style={{ height: paddingBottom, padding: 0, border: 0 }} /></tr> : null}
           </tbody>
