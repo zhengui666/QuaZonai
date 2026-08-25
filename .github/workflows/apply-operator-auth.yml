@@ -220,6 +220,8 @@ jobs:
           cat > frontend/playwright.config.ts <<'TSFILE'
           import { defineConfig, devices } from '@playwright/test';
 
+          const STORAGE_STATE_PATH = '.auth/operator.json';
+
           export default defineConfig({
             testDir: './e2e',
             globalSetup: './e2e/global-setup.ts',
@@ -246,8 +248,6 @@ jobs:
               },
             ],
           });
-
-          const STORAGE_STATE_PATH = '.auth/operator.json';
           TSFILE
           rm -rf tools/auth-patch tools/auth-patch-v2
           git diff --check
