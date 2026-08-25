@@ -53,16 +53,19 @@ python -m pip install ./backend
 quazonai --help
 ```
 
-For a user-level Codex installation, copy or symlink the Skill directory:
+For a user-level Codex installation, copy or symlink the Skill directory into `$CODEX_HOME/skills`. When `CODEX_HOME` is unset, Codex defaults to `~/.codex`:
 
 ```bash
-mkdir -p "${HOME}/.agents/skills"
-ln -sfn "$(pwd)/skills/quazonai" "${HOME}/.agents/skills/quazonai"
+CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
+mkdir -p "${CODEX_HOME}/skills"
+ln -sfn "$(pwd)/skills/quazonai" "${CODEX_HOME}/skills/quazonai"
 ```
 
-Then restart or reload the Agent client and ask it to perform a QuaZonai operation, such as “check QuaZonai readiness” or “show active research programs.” Codex clients that support explicit Skill invocation can use `$quazonai`.
+Then restart or reload Codex and ask it to perform a QuaZonai operation, such as “check QuaZonai readiness” or “show active research programs.” Codex clients that support explicit Skill invocation can use `$quazonai`.
 
-The Skill assumes the Core API is running on a local loopback endpoint. It is an external operator workflow, not QuaZonai's built-in per-Mission Codex runtime.
+Other Agent Skills-compatible clients may use a different discovery directory, including repository-scoped locations. Follow that client's documentation rather than assuming Codex's user-level path.
+
+The Skill assumes the Core API is running on a local loopback endpoint. It is an external operator workflow, not QuaZonai's built-in per-Mission Codex runtime. When used from this source checkout, the Skill defers to `AGENTS.md`, `DESIGN.md`, `OPERATIONS.md`, and `CLI.md`; when installed standalone, its bundled references provide the portable operating baseline. Candidate approval/rejection commands remain human-only and are never executed by an AI Agent.
 
 ## Verification
 
@@ -83,7 +86,7 @@ GitHub Actions additionally runs PostgreSQL 18 row-lock/idempotency integration,
 - [`AGENTS.md`](AGENTS.md): development governance and hard boundaries.
 - [`OPERATIONS.md`](OPERATIONS.md): user operating model.
 - [`CLI.md`](CLI.md): CLI, Codex App Server and Mission Tool contracts.
-- [`skills/quazonai/SKILL.md`](skills/quazonai/SKILL.md): self-contained external Agent workflow for the implemented CLI.
+- [`skills/quazonai/SKILL.md`](skills/quazonai/SKILL.md): portable external Agent workflow for the implemented CLI; defers to the repository sources of truth when available.
 
 ## Status
 
