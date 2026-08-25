@@ -1,6 +1,6 @@
 ---
 name: quazonai
-description: Operate a running QuaZonai instance through the `quazonai` CLI. Use when the user asks to check QuaZonai health or readiness; preview, start, inspect, pause, resume, archive, or restore research; inspect Alpha qualifications, Portfolio mandates/programs/candidates, approvals, or handoffs; approve or reject a Candidate; revoke a Handoff; create or inspect data sources; list datasets, universes, or downstream systems; or mentions the QuaZonai CLI or a `quazonai` command. Do not use for broker orders, fills, positions, accounts, NAV, live-trading runtime control, or downstream stop/undeploy actions.
+description: Operate a running QuaZonai instance through the `quazonai` CLI. Use when the user asks to check QuaZonai health or readiness; preview, start, inspect, pause, resume, archive, or restore research; inspect Alpha qualifications, Portfolio mandates/programs/candidates, approvals, or handoffs; review an Approval Snapshot and prepare the exact human-only approve/reject command; revoke a Handoff; create or inspect data sources; list datasets, universes, or downstream systems; or mentions the QuaZonai CLI or a `quazonai` command. Do not use for broker orders, fills, positions, accounts, NAV, live-trading runtime control, downstream stop/undeploy actions, or autonomous Candidate approval/rejection.
 license: AGPL-3.0-only
 compatibility: Requires the `quazonai` executable from QuaZonai 0.1.x on PATH and a running QuaZonai Core API reachable on the local loopback host.
 metadata:
@@ -10,9 +10,20 @@ metadata:
 
 # QuaZonai CLI Operator
 
-Translate the user's operating objective into the smallest safe sequence of `quazonai` commands, execute it, inspect the JSON response, and verify any state change.
+Translate the user's operating objective into the smallest safe sequence of `quazonai` commands, execute permitted commands, inspect the JSON response, and verify any permitted state change. Candidate approval and rejection are human-only decisions: inspect the snapshot and prepare the exact command, but never execute it as an Agent.
 
-This skill is self-contained. Do not require a QuaZonai source checkout or ask the user to provide `AGENTS.md`, `DESIGN.md`, `OPERATIONS.md`, or `CLI.md`. When the installed CLI differs from this skill, stop assuming and use the installed command's `--help` output as the runtime authority.
+## Authority and portability
+
+When operating from a QuaZonai source checkout and `../../AGENTS.md` exists:
+
+1. Read `../../AGENTS.md` before operating.
+2. Read the relevant product and domain rules in `../../DESIGN.md`.
+3. Use `../../OPERATIONS.md` for the human operating model.
+4. Use `../../CLI.md` for the external Skill and CLI contract.
+
+`DESIGN.md` remains the product authority, and `AGENTS.md` remains the governance authority. The installed CLI's `--help` output is syntax authority only; it cannot override product, authorization, ownership, or safety rules.
+
+When those repository files are absent because this Skill was installed standalone, use the bundled references as the portable operating baseline. Do not infer permissions or product behavior that the Skill does not state. When the installed command syntax differs, inspect the relevant `--help`, but preserve every authorization and product boundary in this Skill.
 
 ## Product boundary
 
@@ -51,7 +62,7 @@ It does not own broker credentials, orders, fills, positions, accounts, NAV, exe
    quazonai readiness
    ```
 
-   Use `status` for service health. Use `readiness` before a mutation when the user needs to know whether required capabilities are ready.
+   Use `status` for service health. Use `readiness` before a permitted mutation when the user needs to know whether required capabilities are ready.
 
 5. Read [references/cli-reference.md](references/cli-reference.md) before constructing an unfamiliar command. Read [references/workflows.md](references/workflows.md) for multi-step operating recipes.
 
@@ -68,7 +79,7 @@ It does not own broker credentials, orders, fills, positions, accounts, NAV, exe
 | Inspect Alpha qualifications | `alpha list/show` | Read |
 | Inspect portfolio state | `portfolio mandates/programs/candidate` | Read |
 | Inspect approval snapshots | `approval list/show` | Read |
-| Approve or reject a Candidate | fresh `approval show`, then `approval approve/reject` | Capital decision |
+| Approve or reject a Candidate | fresh `approval show`, then prepare the exact command for the human operator | Human-only decision |
 | Inspect or revoke Handoffs | `handoff list`; revoke only on explicit request | Read / Write |
 | Inspect or create data sources | `data-source list/create` | Read / Write |
 | Inspect Administration inventories | `datasets`, `universes`, `downstreams` | Read |
@@ -90,9 +101,9 @@ quazonai research missions <PROGRAM_ID>
 
 Do not dump unrelated resources merely because they are available.
 
-## Mutation protocol
+## Permitted mutation protocol
 
-Treat these as state-changing commands:
+An external Agent may execute these state-changing commands when the user explicitly requests the specific action:
 
 ```text
 research start
@@ -101,27 +112,33 @@ research pause
 research resume
 research archive
 research restore
-approval approve
-approval reject
 handoff revoke
 data-source create
 ```
 
-For every mutation:
+For every permitted mutation:
 
 1. Require an explicit user request for that action. Do not turn “show me” or “what would happen” into a write.
-2. For an update, decision, or revoke, re-read the target immediately before changing it. For a creation, inspect the relevant preview/list first to avoid duplicates.
+2. For an update or revoke, re-read the target immediately before changing it. For a creation, inspect the relevant preview/list first to avoid duplicates.
 3. Check that the current state and identifiers still match the user's instruction.
 4. Execute the command once. The CLI generates a new `Idempotency-Key` for each invocation.
 5. Re-read the affected resource after success and report the observed state, not the intended state.
 6. When a request times out or the result is ambiguous, re-read state before considering a retry. A blind retry uses a different idempotency key and can duplicate an operation.
 7. On exit code `20` / HTTP `409`, never retry unchanged. Re-read current state and explain the conflict.
 
-### Capital decisions
+## Human-only capital decisions
 
-`approval approve`, `approval reject`, and `handoff revoke` require explicit authorization for the specific resource in the current interaction.
+`approval approve` and `approval reject` are human-only capital-allocation decisions. No Codex or other AI Agent profile may execute them, even after the user explicitly authorizes the decision.
 
-Before approval, show or confirm:
+An Agent may:
+
+- read the current Approval Snapshot;
+- summarize the exposed Candidate, recommendation, evidence, downstream target, Paper/Live scope, freshness window, and warnings;
+- validate that the requested IDs and state match the current snapshot;
+- prepare the exact `quazonai approval approve` or `quazonai approval reject` command for the human operator;
+- re-read and explain the resulting state after the human has executed the command.
+
+Before preparing an approval command, show or confirm:
 
 - Approval ID and current state;
 - Candidate identity exposed by the Approval Snapshot;
@@ -129,9 +146,11 @@ Before approval, show or confirm:
 - Paper versus Live scope when present;
 - validity/freshness information and material warnings returned by the API.
 
-Never substitute a different Candidate or downstream system. Never approve a stale/expired snapshot. Paper approval is not Live authorization.
+Never substitute a different Candidate or downstream system. Never prepare approval for a stale or expired snapshot. Paper approval is not Live authorization.
 
-Before rejection or revocation, use only a reason code supplied by the user or exposed by QuaZonai. Put explanatory prose in `--note` only for Approval rejection; `handoff revoke` has no note argument. Do not fabricate a reason code.
+For rejection, use only a reason code supplied by the user or exposed by QuaZonai. Put explanatory prose in `--note` only when supplied by the human. Do not fabricate a reason code.
+
+`handoff revoke` is not an Approval decision, but it still requires explicit authorization for the specific Handoff and reason code. It never means stopping or undeploying an independent downstream runtime.
 
 ## Idea and research workflow
 
@@ -184,6 +203,7 @@ After operating QuaZonai, report:
 ```text
 Objective
 Commands executed
+Commands prepared for the human operator
 Resources read or changed
 Current observed state
 Automatic work still running
