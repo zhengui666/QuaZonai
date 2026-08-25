@@ -186,7 +186,7 @@ class Settings:
 
     @property
     def auth_cookie_secure(self) -> bool:
-        return self.environment.casefold() == "production"
+        return urlparse(self.auth_public_origin or "").scheme.casefold() == "https"
 
     def master_key_bytes(self) -> bytes:
         if not self.master_key_configured or self.master_key is None:
@@ -199,10 +199,7 @@ class Settings:
         return _base64_key(self.auth_cookie_key, name="QUAZONAI_AUTH_COOKIE_KEY")
 
     def validate_operator_auth(self) -> None:
-        """Validate the complete opt-in operator-authentication configuration."""
-        if not self.operator_auth_enabled:
-            return
-
+        """Validate the single-operator authentication deployment contract."""
         fields = {
             "QUAZONAI_AUTH_USERNAME": self.operator_username,
             "QUAZONAI_AUTH_PASSWORD": self.operator_password,
@@ -211,6 +208,18 @@ class Settings:
             "QUAZONAI_API_TOKEN": self.api_token,
             "QUAZONAI_AUTH_PUBLIC_ORIGIN": self.auth_public_origin,
         }
+        configured = [name for name, value in fields.items() if value]
+
+        if not self.operator_auth_enabled:
+            if self.environment.casefold() == "production":
+                raise SettingsError("QUAZONAI_AUTH_ENABLED must be true in production")
+            if configured:
+                raise SettingsError(
+                    "Operator authentication is disabled but authentication settings are present; "
+                    "set QUAZONAI_AUTH_ENABLED=true or clear: " + ", ".join(configured)
+                )
+            return
+
         missing = [name for name, value in fields.items() if not value]
         if missing:
             raise SettingsError(
