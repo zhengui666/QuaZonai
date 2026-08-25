@@ -1,13 +1,39 @@
+import { useState } from 'react';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AuthGate } from './AuthGate';
+import { AuthGate, useOperatorAuth } from './AuthGate';
 
 function jsonResponse(value: unknown, status = 200): Promise<Response> {
   return Promise.resolve(new Response(JSON.stringify(value), {
     status,
     headers: { 'content-type': 'application/json' },
   }));
+}
+
+function emptyResponse(status = 204): Promise<Response> {
+  return Promise.resolve(new Response(null, { status }));
+}
+
+function LogoutProbe() {
+  const { logout } = useOperatorAuth();
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <>
+      <div>Workbench ready</div>
+      <button
+        onClick={() => {
+          void logout().catch((reason: unknown) => {
+            setError(reason instanceof Error ? reason.message : 'Sign out failed.');
+          });
+        }}
+        type="button"
+      >
+        Sign out probe
+      </button>
+      {error ? <div role="alert">{error}</div> : null}
+    </>
+  );
 }
 
 afterEach(() => {
@@ -86,5 +112,48 @@ describe('AuthGate', () => {
       trust_browser: true,
     });
     expect(await screen.findByText('Workbench ready')).toBeInTheDocument();
+  });
+
+  it('enters the login gate only after logout succeeds', async () => {
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => jsonResponse({
+        authenticated: true,
+        username: 'operator',
+        trusted_browser: true,
+        auth_enabled: true,
+      }))
+      .mockImplementationOnce(() => emptyResponse());
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+
+    render(<AuthGate><LogoutProbe /></AuthGate>);
+
+    await user.click(await screen.findByRole('button', { name: 'Sign out probe' }));
+
+    expect(await screen.findByRole('heading', { name: 'Verify your identity' })).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the authenticated workbench when logout is rejected', async () => {
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => jsonResponse({
+        authenticated: true,
+        username: 'operator',
+        trusted_browser: true,
+        auth_enabled: true,
+      }))
+      .mockImplementationOnce(() => jsonResponse({
+        error: { message: 'The request origin is not allowed.' },
+      }, 403));
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+
+    render(<AuthGate><LogoutProbe /></AuthGate>);
+
+    await user.click(await screen.findByRole('button', { name: 'Sign out probe' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('The request origin is not allowed.');
+    expect(screen.getByText('Workbench ready')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Verify your identity' })).not.toBeInTheDocument();
   });
 });
