@@ -42,6 +42,44 @@ Research Program creation persists a `READY` Mission and durable job. The finite
 
 Registering a Downstream System returns its Bearer service token once. Store that token in the downstream system's secret store; QuaZonai keeps only an AES-GCM encrypted-at-rest copy bound to that Downstream System. Claim, accept, reject, Candidate Package download, and feedback calls require that Bearer token.
 
+## Agent Skill
+
+[`skills/quazonai/`](skills/quazonai/) is the portable Agent Skills package for operating a running QuaZonai instance through the local `quazonai` CLI. Install the entire directory, not only `SKILL.md`, so the bundled command reference and workflows remain available.
+
+Install the CLI from the repository root:
+
+```bash
+python -m pip install ./backend
+quazonai --help
+```
+
+For a user-level Codex installation, symlink the Skill directory into `$CODEX_HOME/skills`. When `CODEX_HOME` is unset, Codex defaults to `~/.codex`. The subshell safely replaces an existing symlink but refuses to overwrite or nest inside an existing real directory:
+
+```bash
+(
+  set -eu
+  CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
+  SKILL_SOURCE="$(pwd)/skills/quazonai"
+  SKILL_DEST="${CODEX_HOME}/skills/quazonai"
+
+  mkdir -p "${CODEX_HOME}/skills"
+  if [ -L "${SKILL_DEST}" ]; then
+    rm "${SKILL_DEST}"
+  elif [ -e "${SKILL_DEST}" ]; then
+    printf 'Refusing to replace existing directory or file: %s\n' "${SKILL_DEST}" >&2
+    printf 'Move or remove it explicitly, then run this installer again.\n' >&2
+    exit 1
+  fi
+  ln -s "${SKILL_SOURCE}" "${SKILL_DEST}"
+)
+```
+
+Then restart or reload Codex and ask it to perform a QuaZonai operation, such as “check QuaZonai readiness” or “show active research programs.” Codex clients that support explicit Skill invocation can use `$quazonai`.
+
+Other Agent Skills-compatible clients may use a different discovery directory, including repository-scoped locations. Follow that client's documentation rather than assuming Codex's user-level path.
+
+The Skill assumes the Core API is running on a local loopback endpoint. It is an external operator workflow, not QuaZonai's built-in per-Mission Codex runtime. When used while the active working directory is inside a validated QuaZonai checkout, the Skill discovers that checkout with Git and defers to its `AGENTS.md`, `DESIGN.md`, `OPERATIONS.md`, and `CLI.md`; when installed standalone elsewhere, its bundled references provide the portable operating baseline. Candidate approval/rejection commands remain human-only and are never executed by an AI Agent.
+
 ## Verification
 
 ```bash
@@ -61,7 +99,7 @@ GitHub Actions additionally runs PostgreSQL 18 row-lock/idempotency integration,
 - [`AGENTS.md`](AGENTS.md): development governance and hard boundaries.
 - [`OPERATIONS.md`](OPERATIONS.md): user operating model.
 - [`CLI.md`](CLI.md): CLI, Codex App Server and Mission Tool contracts.
-- [`skills/quazonai/SKILL.md`](skills/quazonai/SKILL.md): thin external/operator Agent workflow.
+- [`skills/quazonai/SKILL.md`](skills/quazonai/SKILL.md): portable external Agent workflow for the implemented CLI; defers to the repository sources of truth when available.
 
 ## Status
 
