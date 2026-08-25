@@ -14,7 +14,7 @@ Idea → frozen Research Charter → autonomous Mission DAG → Alpha qualificat
 → Forward Evidence → Degradation Monitoring → research wake-up
 ```
 
-Normal research has two recurring human actions: propose an Idea and approve/reject the system-recommended Candidate. Setup, optional operator authentication, data authorization, Codex authentication, Mandate/Universe/downstream/plugin configuration and incident response live under Administration.
+Normal research has two recurring human actions: propose an Idea and approve/reject the system-recommended Candidate. Setup, operator authentication, data authorization, Codex authentication, Mandate/Universe/downstream/plugin configuration and incident response live under Administration.
 
 ## Stack
 
@@ -33,13 +33,16 @@ cp .env.example .env
 # Set QUAZONAI_MASTER_KEY to base64 encoding of exactly 32 random bytes.
 ```
 
-Operator authentication is explicitly opt-in. The default setting keeps the existing direct-access behavior:
+Development/test may explicitly keep the existing direct-access behavior:
 
 ```dotenv
+QUAZONAI_ENV=development
 QUAZONAI_AUTH_ENABLED=false
 ```
 
-Keep direct access only for a loopback-only deployment or behind another access boundary you deliberately trust. To enable QuaZonai's own single-operator login, first generate the TOTP setup secret, browser-cookie key and CLI machine token:
+Direct access is only for a loopback-only development/test installation or another access boundary you deliberately trust. `QUAZONAI_ENV=production` requires QuaZonai Operator Authentication to be enabled and fully configured; the API refuses to start otherwise. Supplying any authentication credential while `QUAZONAI_AUTH_ENABLED=false` is also rejected so a partially configured deployment cannot silently remain anonymous.
+
+Generate the TOTP setup secret, browser-cookie key and CLI machine token:
 
 ```bash
 python - <<'PY'
@@ -66,7 +69,7 @@ QUAZONAI_AUTH_PUBLIC_ORIGIN=http://127.0.0.1:8000
 
 Add `QUAZONAI_AUTH_TOTP_SECRET` to Google Authenticator with **Enter a setup key**, account name `QuaZonai`, and **Time based** key type. The browser login then requires username, password, and the current 6-digit authenticator code.
 
-`QUAZONAI_AUTH_PUBLIC_ORIGIN` must exactly match the browser origin, including scheme and non-default port. When authentication is enabled in `production`, the origin must use HTTPS and QuaZonai automatically marks browser cookies `Secure`. A remotely exposed installation should normally set the externally trusted TLS origin, for example `https://quazonai.example.com`.
+`QUAZONAI_AUTH_PUBLIC_ORIGIN` must exactly match the browser origin, including scheme and non-default port. HTTPS origins automatically receive `Secure` browser cookies. Production additionally requires an HTTPS origin. A remotely exposed installation should normally set the externally trusted TLS origin, for example `https://quazonai.example.com`.
 
 Start QuaZonai:
 
@@ -74,7 +77,7 @@ Start QuaZonai:
 docker compose --env-file .env up --build
 ```
 
-Open `http://127.0.0.1:8000` for the default local deployment. The production image serves the React workbench and `/api/v1/*` from the same FastAPI origin on that port.
+Open `http://127.0.0.1:8000` for the default local development deployment. The production image serves the React workbench and `/api/v1/*` from the same FastAPI origin on that port.
 
 ### Operator 2FA and trusted browsers
 
@@ -84,7 +87,7 @@ The login form offers **Trust this browser**. When selected, the server stores a
 
 Only trust a browser profile you control. Signing out deletes both the current session and trusted-browser credential. Rotating `QUAZONAI_AUTH_COOKIE_KEY` invalidates every existing browser session and trusted-browser credential immediately. Rotating `QUAZONAI_AUTH_TOTP_SECRET` requires updating the authenticator entry. Rotating `QUAZONAI_API_TOKEN` invalidates the old CLI/automation credential.
 
-When `QUAZONAI_AUTH_ENABLED=false`, the Web/operator API preserves direct access and no login or logout controls are shown. When it is `true`, startup fails closed unless the complete authentication group is valid. Production authentication additionally requires an HTTPS public origin and automatically uses `Secure` cookies.
+When `QUAZONAI_AUTH_ENABLED=false`, direct Web/operator API access is available only in development/test with the entire authentication credential group empty. When authentication is enabled, startup fails closed unless the complete group is valid. Production always requires authentication, an HTTPS public origin, and `Secure` cookies.
 
 After startup, open **Administration → Runtime configuration** to configure the Codex model, optional custom OpenAI-compatible Base URL, optional API key, and Worker limits. These values are persisted in PostgreSQL instead of `.env`; the Codex API key is write-only in the Web/API surface and AES-GCM encrypted at rest by `QUAZONAI_MASTER_KEY`. Existing Codex login state in the persistent `codex-data` volume remains supported when no API key/custom provider is required. Runtime changes apply to newly claimed work without rebuilding the Compose stack.
 
@@ -100,7 +103,7 @@ Install the CLI from the repository root:
 
 ```bash
 python -m pip install ./backend
-# Required only when QUAZONAI_AUTH_ENABLED=true:
+# Required when QUAZONAI_AUTH_ENABLED=true:
 export QUAZONAI_API_TOKEN='<same machine token configured for the API>'
 quazonai --help
 ```
