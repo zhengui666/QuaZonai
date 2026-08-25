@@ -1,5 +1,6 @@
 import { lazy } from 'react';
 import { Route, Routes } from 'react-router-dom';
+import { AuthGate } from '../auth/AuthGate';
 import { AppShell } from '../components/layout/AppShell';
 
 const HomePage = lazy(async () => ({ default: (await import('../pages/HomePage')).HomePage }));
@@ -17,25 +18,27 @@ const NotFoundPage = lazy(async () => ({ default: (await import('../pages/NotFou
 
 export function App() {
   return (
-    <Routes>
-      <Route element={<AppShell />}>
-        <Route index element={<HomePage />} />
-        <Route path="ideas" element={<IdeaComposerPage />} />
-        <Route path="research" element={<ResearchListPage />} />
-        <Route path="research/:id" element={<ResearchDetailPage />} />
-        <Route path="alpha" element={<AlphaLibraryPage />} />
-        <Route path="alpha/:id" element={<AlphaDetailPage />} />
-        <Route path="alphas" element={<AlphaLibraryPage />} />
-        <Route path="alphas/:id" element={<AlphaDetailPage />} />
-        <Route path="portfolio" element={<PortfolioLabPage />} />
-        <Route path="portfolio/candidates/:id" element={<PortfolioCandidatePage />} />
-        <Route path="approval" element={<ApprovalInboxPage />} />
-        <Route path="approvals" element={<ApprovalInboxPage />} />
-        <Route path="handoff" element={<HandoffFeedbackPage />} />
-        <Route path="handoffs" element={<HandoffFeedbackPage />} />
-        <Route path="admin" element={<AdministrationPage />} />
-        <Route path="*" element={<NotFoundPage />} />
-      </Route>
-    </Routes>
+    <AuthGate>
+      <Routes>
+        <Route element={<AppShell />}>
+          <Route index element={<HomePage />} />
+          <Route path="ideas" element={<IdeaComposerPage />} />
+          <Route path="research" element={<ResearchListPage />} />
+          <Route path="research/:id" element={<ResearchDetailPage />} />
+          <Route path="alpha" element={<AlphaLibraryPage />} />
+          <Route path="alpha/:id" element={<AlphaDetailPage />} />
+          <Route path="alphas" element={<AlphaLibraryPage />} />
+          <Route path="alphas/:id" element={<AlphaDetailPage />} />
+          <Route path="portfolio" element={<PortfolioLabPage />} />
+          <Route path="portfolio/candidates/:id" element={<PortfolioCandidatePage />} />
+          <Route path="approval" element={<ApprovalInboxPage />} />
+          <Route path="approvals" element={<ApprovalInboxPage />} />
+          <Route path="handoff" element={<HandoffFeedbackPage />} />
+          <Route path="handoffs" element={<HandoffFeedbackPage />} />
+          <Route path="admin" element={<AdministrationPage />} />
+          <Route path="*" element={<NotFoundPage />} />
+        </Route>
+      </Routes>
+    </AuthGate>
   );
 }
