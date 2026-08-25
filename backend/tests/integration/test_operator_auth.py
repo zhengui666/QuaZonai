@@ -9,7 +9,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 
 from main import create_app
-from operator_auth import SESSION_COOKIE_NAME, TRUSTED_BROWSER_COOKIE_NAME
+from operator_auth import (
+    SESSION_COOKIE_NAME,
+    TRUSTED_BROWSER_COOKIE_NAME,
+    is_operator_auth_exempt,
+)
 from settings import Settings, SettingsError
 
 
@@ -44,6 +48,22 @@ def _login(
             "trust_browser": trust_browser,
         },
     )
+
+
+def test_downstream_auth_exemptions_are_method_specific() -> None:
+    handoff_id = "00000000-0000-0000-0000-000000000001"
+    route = f"/api/v1/handoffs/{handoff_id}"
+
+    assert is_operator_auth_exempt("POST", f"{route}/claim")
+    assert is_operator_auth_exempt("POST", f"{route}/accept")
+    assert is_operator_auth_exempt("POST", f"{route}/reject")
+    assert is_operator_auth_exempt("GET", f"{route}/package")
+    assert is_operator_auth_exempt("POST", f"{route}/feedback")
+
+    assert not is_operator_auth_exempt("GET", f"{route}/claim")
+    assert not is_operator_auth_exempt("GET", f"{route}/feedback")
+    assert not is_operator_auth_exempt("POST", f"{route}/package")
+    assert not is_operator_auth_exempt("GET", route)
 
 
 def test_auth_disabled_preserves_direct_operator_access(
