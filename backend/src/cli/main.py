@@ -93,11 +93,11 @@ def build_parser() -> argparse.ArgumentParser:
     approval_show.add_argument("id")
     approve = approval_actions.add_parser("approve")
     approve.add_argument("id")
-    approve.add_argument("downstream_id")
+    approve.add_argument("--downstream", dest="downstream_id", required=True)
     approve.add_argument("--expected-state", default="PENDING")
     reject = approval_actions.add_parser("reject")
     reject.add_argument("id")
-    reject.add_argument("reason_code")
+    reject.add_argument("--reason", dest="reason_code", required=True)
     reject.add_argument("--note")
     reject.add_argument("--expected-state", default="PENDING")
 
@@ -106,7 +106,7 @@ def build_parser() -> argparse.ArgumentParser:
     handoff_actions.add_parser("list")
     revoke = handoff_actions.add_parser("revoke")
     revoke.add_argument("id")
-    revoke.add_argument("reason_code")
+    revoke.add_argument("--reason", dest="reason_code", required=True)
 
     data = commands.add_parser("data-source")
     data_actions = data.add_subparsers(dest="action", required=True)
