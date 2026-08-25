@@ -1,0 +1,87 @@
+name: One-shot canonical origin implementation
+
+on:
+  push:
+    branches:
+      - feat/operator-totp-auth
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/operator-totp-auth
+          fetch-depth: 0
+
+      - name: Patch browser-origin comparison
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("backend/src/operator_auth.py")
+          text = path.read_text(encoding="utf-8")
+
+          old_import = "from settings import Settings\n"
+          new_import = "from settings import Settings, SettingsError, canonicalize_http_origin\n"
+          if text.count(old_import) != 1:
+              raise SystemExit("operator_auth.py: settings import match failed")
+          text = text.replace(old_import, new_import, 1)
+
+          old_function = '''def require_same_origin(request: Request, settings: Settings) -> None:
+              if request.method.upper() in _SAFE_METHODS or not settings.auth_enabled:
+                  return
+              expected = (settings.auth_public_origin or "").rstrip("/")
+              origin = (request.headers.get("origin") or "").rstrip("/")
+              if not expected or not origin or not secrets.compare_digest(origin, expected):
+                  raise QfError(
+                      "AUTH_ORIGIN_REJECTED",
+                      "The request origin is not allowed for browser-authenticated mutations.",
+                      403,
+                  )
+          '''.replace("          ", "")
+          new_function = '''def require_same_origin(request: Request, settings: Settings) -> None:
+              if request.method.upper() in _SAFE_METHODS or not settings.auth_enabled:
+                  return
+              expected = settings.canonical_auth_public_origin
+              supplied = request.headers.get("origin")
+              try:
+                  origin = (
+                      canonicalize_http_origin(supplied, name="Origin")
+                      if supplied is not None
+                      else None
+                  )
+              except SettingsError:
+                  origin = None
+              if expected is None or origin is None or not secrets.compare_digest(origin, expected):
+                  raise QfError(
+                      "AUTH_ORIGIN_REJECTED",
+                      "The request origin is not allowed for browser-authenticated mutations.",
+                      403,
+                  )
+          '''.replace("          ", "")
+          if text.count(old_function) != 1:
+              raise SystemExit("operator_auth.py: require_same_origin match failed")
+          text = text.replace(old_function, new_function, 1)
+          path.write_text(text, encoding="utf-8")
+
+          Path(".github/workflows/one-shot-origin-implementation.yml").unlink()
+          PY
+
+      - name: Verify implementation markers
+        run: |
+          grep -Fq 'canonicalize_http_origin(supplied, name="Origin")' backend/src/operator_auth.py
+          grep -Fq 'settings.canonical_auth_public_origin' backend/src/operator_auth.py
+          test ! -e .github/workflows/one-shot-origin-implementation.yml
+
+      - name: Commit implementation
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m 'fix(auth): compare canonical browser origins'
+          git push origin HEAD:feat/operator-totp-auth
