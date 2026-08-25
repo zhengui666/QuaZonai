@@ -41,24 +41,15 @@ def _login(client: TestClient, settings: Settings, *, origin: str):
 
 
 @pytest.mark.parametrize(
-    ("configured_origin", "browser_origin", "base_url"),
+    ("configured_origin", "browser_origin"),
     [
-        ("https://EXAMPLE.com:443", "https://example.com", "https://example.com"),
-        (
-            "https://bücher.example:443",
-            "https://xn--bcher-kva.example",
-            "https://xn--bcher-kva.example",
-        ),
+        ("https://EXAMPLE.com:443", "https://example.com"),
+        ("https://bücher.example:443", "https://xn--bcher-kva.example"),
         (
             "https://[2001:0DB8:0:0:0:0:0:1]:443",
             "https://[2001:db8::1]",
-            "https://[2001:db8::1]",
         ),
-        (
-            "https://EXAMPLE.com:8443",
-            "https://example.com:8443",
-            "https://example.com:8443",
-        ),
+        ("https://EXAMPLE.com:8443", "https://example.com:8443"),
     ],
 )
 def test_login_accepts_equivalent_browser_origin_serializations(
@@ -66,10 +57,15 @@ def test_login_accepts_equivalent_browser_origin_serializations(
     engine: Engine,
     configured_origin: str,
     browser_origin: str,
-    base_url: str,
 ) -> None:
     secured = _enabled_settings(settings, origin=configured_origin)
-    client = TestClient(create_app(settings=secured, engine=engine), base_url=base_url)
+    # The TestClient transport itself cannot parse bracketed IPv6 netlocs in its
+    # synthetic base URL. Origin validation is driven by the explicit Origin
+    # header, so keep the transport host neutral while exercising the real app.
+    client = TestClient(
+        create_app(settings=secured, engine=engine),
+        base_url="https://testserver",
+    )
 
     response = _login(client, secured, origin=browser_origin)
 
