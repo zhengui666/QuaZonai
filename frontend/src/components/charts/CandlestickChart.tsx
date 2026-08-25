@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { CandlestickSeries, ColorType, HistogramSeries, createChart, type CandlestickData, type HistogramData, type Time } from 'lightweight-charts';
-import { useI18n } from '../../i18n';
+import { useI18n, type Locale } from '../../i18n';
 import type { OhlcPoint } from '../../lib/api/types';
 
 function toTime(value: string | number): Time {
@@ -9,8 +9,26 @@ function toTime(value: string | number): Time {
   return Math.floor(new Date(value).getTime() / 1000) as Time;
 }
 
+export function formatCandlestickTooltipValue(locale: Locale, value: number): string {
+  return new Intl.NumberFormat(locale, { minimumFractionDigits: 4, maximumFractionDigits: 4 }).format(value);
+}
+
+export function formatCandlestickTooltipTime(locale: Locale, time: Time): string {
+  if (typeof time === 'number') {
+    return new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(time * 1000));
+  }
+  if (typeof time === 'string') {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(time);
+    if (!match) return time;
+    const [, year, month, day] = match;
+    return new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'short', day: '2-digit', timeZone: 'UTC' }).format(new Date(Date.UTC(Number(year), Number(month) - 1, Number(day))));
+  }
+  const item = time as { year: number; month: number; day: number };
+  return new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'short', day: '2-digit', timeZone: 'UTC' }).format(new Date(Date.UTC(item.year, item.month - 1, item.day)));
+}
+
 export function CandlestickChart({ data }: { data: OhlcPoint[] }) {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -47,14 +65,15 @@ export function CandlestickChart({ data }: { data: OhlcPoint[] }) {
       if (!param.time || !param.point || param.point.x < 0 || param.point.y < 0) { tooltip.hidden = true; return; }
       const value = param.seriesData.get(candle) as { open?: number; high?: number; low?: number; close?: number } | undefined;
       if (typeof value?.close !== 'number') { tooltip.hidden = true; return; }
-      tooltip.textContent = `${String(param.time)} · O ${value.open?.toFixed(4)} · H ${value.high?.toFixed(4)} · L ${value.low?.toFixed(4)} · C ${value.close.toFixed(4)}`;
+      const formatValue = (item: number | undefined) => typeof item === 'number' ? formatCandlestickTooltipValue(locale, item) : '—';
+      tooltip.textContent = `${formatCandlestickTooltipTime(locale, param.time)} · O ${formatValue(value.open)} · H ${formatValue(value.high)} · L ${formatValue(value.low)} · C ${formatValue(value.close)}`;
       tooltip.hidden = false;
       tooltip.style.left = `${Math.min(param.point.x + 12, Math.max(8, ref.current!.clientWidth - 310))}px`;
       tooltip.style.top = `${Math.max(8, param.point.y - 34)}px`;
     });
     chart.timeScale().fitContent();
     return () => { tooltip.remove(); chart.remove(); };
-  }, [data]);
+  }, [data, locale]);
 
   return <div ref={ref} className="qz-chart-host qz-chart-tall" role="img" aria-label={`${t('research.marketContext')} · OHLC`} />;
 }

@@ -14,7 +14,8 @@ import {
   TargetIcon,
 } from '@phosphor-icons/react';
 import { Button, DropdownMenu, Theme } from '@radix-ui/themes';
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import { Direction } from 'radix-ui';
+import { Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { localeLabels, localeOrder, useI18n, type Locale, type MessageKey } from '../../i18n';
 import { PageSkeleton } from '../ui/Skeleton';
@@ -39,6 +40,11 @@ function useThemeMode() {
   return [mode, setMode] as const;
 }
 
+export function LocaleDirectionProvider({ children }: { children: ReactNode }) {
+  const { locale } = useI18n();
+  return <Direction.Provider dir={localeLabels[locale].dir}>{children}</Direction.Provider>;
+}
+
 export function AppShell() {
   const [mode, setMode] = useThemeMode();
   const { locale, setLocale, t } = useI18n();
@@ -54,67 +60,69 @@ export function AppShell() {
 
   return (
     <Theme appearance={mode} accentColor="jade" grayColor="sage" radius="small" scaling="90%">
-      <div className="qz-app">
-        <aside className="qz-sidebar" aria-label={t('a11y.primaryNavigation')}>
-          <div className="qz-brand">
-            <div className="qz-brand-mark" aria-hidden="true"><GaugeIcon size={18} weight="duotone" /></div>
-            <div><div className="qz-brand-title">QuaZonai</div><div className="qz-brand-subtitle">{t('brand.subtitle')}</div></div>
-          </div>
-          <nav className="qz-nav">
-            {nav.map(({ to, labelKey, icon: Icon, end }) => (
-              <NavLink key={to} to={to} end={end} className="qz-nav-link">
-                {({ isActive }) => <><Icon size={17} weight={isActive ? 'duotone' : 'regular'} /><span>{t(labelKey)}</span></>}
+      <LocaleDirectionProvider>
+        <div className="qz-app">
+          <aside className="qz-sidebar" aria-label={t('a11y.primaryNavigation')}>
+            <div className="qz-brand">
+              <div className="qz-brand-mark" aria-hidden="true"><GaugeIcon size={18} weight="duotone" /></div>
+              <div><div className="qz-brand-title">QuaZonai</div><div className="qz-brand-subtitle">{t('brand.subtitle')}</div></div>
+            </div>
+            <nav className="qz-nav">
+              {nav.map(({ to, labelKey, icon: Icon, end }) => (
+                <NavLink key={to} to={to} end={end} className="qz-nav-link">
+                  {({ isActive }) => <><Icon size={17} weight={isActive ? 'duotone' : 'regular'} /><span>{t(labelKey)}</span></>}
+                </NavLink>
+              ))}
+            </nav>
+            <div className="qz-sidebar-bottom">
+              <NavLink to="/admin" className="qz-nav-link"><BellIcon size={17} /><span>{t('nav.status')}</span></NavLink>
+            </div>
+          </aside>
+          <main className="qz-main">
+            <header className="qz-topbar">
+              <div className="qz-topbar-title">{current}</div>
+              <div className="qz-topbar-actions">
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger>
+                    <Button className="qz-mobile-nav-button" aria-label={t('a11y.openNavigation')} size="1" variant="soft"><ListIcon size={16} /></Button>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Content align="end">
+                    {nav.map(({ to, labelKey, icon: Icon }) => (
+                      <DropdownMenu.Item key={to} onSelect={() => navigate(to)}><Icon size={14} />{t(labelKey)}</DropdownMenu.Item>
+                    ))}
+                  </DropdownMenu.Content>
+                </DropdownMenu.Root>
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger>
+                    <Button aria-label={`${t('language.change')}: ${localeLabels[locale].native}`} size="1" variant="soft" className="qz-locale-button">{localeLabels[locale].short}</Button>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Content align="end">
+                    <DropdownMenu.RadioGroup value={locale} onValueChange={changeLocale}>
+                      {localeOrder.map((code) => (
+                        <DropdownMenu.RadioItem key={code} value={code}>
+                          <span>{localeLabels[code].native}</span>
+                          <span className="qz-section-meta">{localeLabels[code].english}</span>
+                        </DropdownMenu.RadioItem>
+                      ))}
+                    </DropdownMenu.RadioGroup>
+                  </DropdownMenu.Content>
+                </DropdownMenu.Root>
+                <Button aria-label={mode === 'dark' ? t('theme.light') : t('theme.dark')} size="1" variant="soft" onClick={() => setMode(mode === 'dark' ? 'light' : 'dark')}>
+                  {mode === 'dark' ? <SunIcon size={15} /> : <MoonIcon size={15} />}
+                </Button>
+              </div>
+            </header>
+            <div className="qz-content"><Suspense fallback={<PageSkeleton />}><Outlet /></Suspense></div>
+          </main>
+          <nav className="qz-mobile-nav" aria-label={t('a11y.mobileNavigation')}>
+            {nav.slice(0, 5).map(({ to, labelKey, mobileKey, icon: Icon, end }) => (
+              <NavLink key={to} to={to} end={end}>
+                {({ isActive }) => <><Icon size={19} weight={isActive ? 'duotone' : 'regular'} /><span>{t(mobileKey ?? labelKey)}</span></>}
               </NavLink>
             ))}
           </nav>
-          <div className="qz-sidebar-bottom">
-            <NavLink to="/admin" className="qz-nav-link"><BellIcon size={17} /><span>{t('nav.status')}</span></NavLink>
-          </div>
-        </aside>
-        <main className="qz-main">
-          <header className="qz-topbar">
-            <div className="qz-topbar-title">{current}</div>
-            <div className="qz-topbar-actions">
-              <DropdownMenu.Root>
-                <DropdownMenu.Trigger>
-                  <Button className="qz-mobile-nav-button" aria-label={t('a11y.openNavigation')} size="1" variant="soft"><ListIcon size={16} /></Button>
-                </DropdownMenu.Trigger>
-                <DropdownMenu.Content align="end">
-                  {nav.map(({ to, labelKey, icon: Icon }) => (
-                    <DropdownMenu.Item key={to} onSelect={() => navigate(to)}><Icon size={14} />{t(labelKey)}</DropdownMenu.Item>
-                  ))}
-                </DropdownMenu.Content>
-              </DropdownMenu.Root>
-              <DropdownMenu.Root>
-                <DropdownMenu.Trigger>
-                  <Button aria-label={`${t('language.change')}: ${localeLabels[locale].native}`} size="1" variant="soft" className="qz-locale-button">{localeLabels[locale].short}</Button>
-                </DropdownMenu.Trigger>
-                <DropdownMenu.Content align="end">
-                  <DropdownMenu.RadioGroup value={locale} onValueChange={changeLocale}>
-                    {localeOrder.map((code) => (
-                      <DropdownMenu.RadioItem key={code} value={code}>
-                        <span>{localeLabels[code].native}</span>
-                        <span className="qz-section-meta">{localeLabels[code].english}</span>
-                      </DropdownMenu.RadioItem>
-                    ))}
-                  </DropdownMenu.RadioGroup>
-                </DropdownMenu.Content>
-              </DropdownMenu.Root>
-              <Button aria-label={mode === 'dark' ? t('theme.light') : t('theme.dark')} size="1" variant="soft" onClick={() => setMode(mode === 'dark' ? 'light' : 'dark')}>
-                {mode === 'dark' ? <SunIcon size={15} /> : <MoonIcon size={15} />}
-              </Button>
-            </div>
-          </header>
-          <div className="qz-content"><Suspense fallback={<PageSkeleton />}><Outlet /></Suspense></div>
-        </main>
-        <nav className="qz-mobile-nav" aria-label={t('a11y.mobileNavigation')}>
-          {nav.slice(0, 5).map(({ to, labelKey, mobileKey, icon: Icon, end }) => (
-            <NavLink key={to} to={to} end={end}>
-              {({ isActive }) => <><Icon size={19} weight={isActive ? 'duotone' : 'regular'} /><span>{t(mobileKey ?? labelKey)}</span></>}
-            </NavLink>
-          ))}
-        </nav>
-      </div>
+        </div>
+      </LocaleDirectionProvider>
     </Theme>
   );
 }

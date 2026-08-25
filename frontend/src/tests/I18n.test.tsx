@@ -1,5 +1,8 @@
+import { Direction } from 'radix-ui';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
+import { LocaleDirectionProvider } from '../components/layout/AppShell';
+import { KpiStrip } from '../components/ui/KpiStrip';
 import { PageHeader } from '../components/ui/PageHeader';
 import { I18nProvider, resolveLocale, translateKey, translateSource, useI18n, type Locale } from '../i18n';
 import { translateDomainLabel } from '../i18n/domain';
@@ -13,6 +16,10 @@ function Probe() {
 function LocaleSwitchProbe() {
   const { locale, setLocale } = useI18n();
   return <button onClick={() => setLocale('es')}>{locale}</button>;
+}
+
+function RadixDirectionProbe() {
+  return <div data-testid="radix-direction">{Direction.useDirection()}</div>;
 }
 
 function RowCountProbe({ count }: { count: number }) {
@@ -63,6 +70,8 @@ describe('i18n', () => {
   it('negotiates common regional locale variants with an English fallback', () => {
     expect(resolveLocale(['zh-HK'])).toBe('zh-TW');
     expect(resolveLocale(['zh-SG'])).toBe('zh-CN');
+    expect(resolveLocale(['zh-Hans-HK'])).toBe('zh-CN');
+    expect(resolveLocale(['zh-Hant-CN'])).toBe('zh-TW');
     expect(resolveLocale(['es-MX'])).toBe('es');
     expect(resolveLocale(['fr-FR'])).toBe('en');
   });
@@ -84,6 +93,28 @@ describe('i18n', () => {
     expect(heading).toBeInTheDocument();
     expect(heading).toHaveAttribute('dir', 'auto');
     expect(screen.getByText('English research rationale: EUR/USD')).toHaveAttribute('dir', 'auto');
+  });
+
+  it('propagates the locale direction through the Radix direction context', () => {
+    render(
+      <I18nProvider initialLocale="ar">
+        <LocaleDirectionProvider><RadixDirectionProbe /></LocaleDirectionProvider>
+      </I18nProvider>,
+    );
+    expect(screen.getByTestId('radix-direction')).toHaveTextContent('rtl');
+  });
+
+  it('formats numeric KPI values and preserves nonnumeric React nodes', () => {
+    render(
+      <I18nProvider initialLocale="ar">
+        <KpiStrip items={[
+          { label: 'Count', value: 1234 },
+          { label: 'Custom', value: <strong data-testid="custom-kpi">raw node</strong> },
+        ]} />
+      </I18nProvider>,
+    );
+    expect(screen.getByText(formatted('ar', 1234))).toBeInTheDocument();
+    expect(screen.getByTestId('custom-kpi')).toHaveTextContent('raw node');
   });
 
   it('localizes reachable lifecycle, portfolio, role, mission, degradation, and plugin capability values', () => {

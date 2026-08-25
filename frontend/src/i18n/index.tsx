@@ -65,7 +65,9 @@ function matchLocale(value: string): Locale | undefined {
   if ((localeOrder as readonly string[]).includes(canonical)) return canonical as Locale;
   const lower = canonical.toLowerCase();
   if (lower.startsWith('zh')) {
-    return /(?:hant|tw|hk|mo)/i.test(canonical) ? 'zh-TW' : 'zh-CN';
+    if (/(?:^|-)hans(?:-|$)/i.test(canonical)) return 'zh-CN';
+    if (/(?:^|-)hant(?:-|$)/i.test(canonical)) return 'zh-TW';
+    return /(?:^|-)(?:tw|hk|mo)(?:-|$)/i.test(canonical) ? 'zh-TW' : 'zh-CN';
   }
   if (lower.startsWith('ja')) return 'ja';
   if (lower.startsWith('ko')) return 'ko';

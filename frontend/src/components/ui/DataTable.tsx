@@ -69,6 +69,11 @@ function searchableValues(value: unknown, locale: Locale, meta?: LocalizedColumn
   return [String(value)];
 }
 
+function objectField(value: unknown, key: string): unknown {
+  if (value === null || typeof value !== 'object') return undefined;
+  return (value as Record<string, unknown>)[key];
+}
+
 interface DataTableProps<T> {
   data: T[];
   columns: ColumnDef<T, unknown>[];
@@ -102,7 +107,9 @@ export function DataTable<T>({
     const query = String(filterValue ?? '').trim().toLocaleLowerCase(locale);
     if (!query) return true;
     const meta = columnMeta(row.getAllCells().find((cell) => cell.column.id === columnId)?.column.columnDef.meta);
-    return searchableValues(row.getValue(columnId), locale, meta).some((candidate) => candidate.toLocaleLowerCase(locale).includes(query));
+    const accessorValue = row.getValue(columnId);
+    const value = accessorValue === undefined ? objectField(row.original, columnId) : accessorValue;
+    return searchableValues(value, locale, meta).some((candidate) => candidate.toLocaleLowerCase(locale).includes(query));
   }, [locale]);
   const table = useReactTable({
     data,
@@ -112,6 +119,7 @@ export function DataTable<T>({
     onGlobalFilterChange: setGlobalFilter,
     onColumnVisibilityChange: setColumnVisibility,
     globalFilterFn: localizedGlobalFilter,
+    getColumnCanGlobalFilter: (column) => Boolean(column.accessorFn) || data.some((row) => objectField(row, column.id) !== undefined),
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getSortedRowModel: getSortedRowModel(),

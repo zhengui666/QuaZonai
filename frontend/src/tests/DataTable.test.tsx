@@ -27,6 +27,12 @@ const countColumns: ColumnDef<CountRow, unknown>[] = [
   { accessorKey: 'count', header: 'Count' },
 ];
 
+interface CapabilityRow { name: string; capabilities: string[] }
+const capabilityColumns: ColumnDef<CapabilityRow, unknown>[] = [
+  { accessorKey: 'name', header: 'Name' },
+  { id: 'capabilities', header: 'Capabilities', cell: ({ row }) => row.original.capabilities.join(', ') },
+];
+
 describe('DataTable', () => {
   it('filters raw values using TanStack Table', () => {
     renderApp(<DataTable data={[{ name: 'Beta', state: 'ACTIVE' }, { name: 'Alpha', state: 'COOLING' }]} columns={columns} />);
@@ -75,5 +81,24 @@ describe('DataTable', () => {
     renderApp(<DataTable data={[{ name: 'One row', count: 1 }]} columns={countColumns} />);
     fireEvent.change(screen.getByPlaceholderText('Filter rows…'), { target: { value: '100%' } });
     expect(screen.queryByText('One row')).not.toBeInTheDocument();
+  });
+
+  it('indexes property-backed id columns without an explicit accessor', () => {
+    render(
+      <I18nProvider initialLocale="zh-CN">
+        <Theme appearance="dark" accentColor="jade" grayColor="sage" radius="small" scaling="90%">
+          <DataTable
+            data={[
+              { name: 'Importer', capabilities: ['HISTORICAL_IMPORT'] },
+              { name: 'Live feed', capabilities: ['LIVE_DATA'] },
+            ]}
+            columns={capabilityColumns}
+          />
+        </Theme>
+      </I18nProvider>,
+    );
+    fireEvent.change(screen.getByPlaceholderText('筛选行…'), { target: { value: '历史导入' } });
+    expect(screen.getByText('Importer')).toBeInTheDocument();
+    expect(screen.queryByText('Live feed')).not.toBeInTheDocument();
   });
 });
