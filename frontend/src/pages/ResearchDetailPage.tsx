@@ -14,7 +14,7 @@ import { PageSkeleton } from '../components/ui/Skeleton';
 import { StateBadge } from '../components/ui/StateBadge';
 import { Section } from '../components/ui/Section';
 import { Translated, useI18n } from '../i18n';
-import { formatMissionStateSummary, formatStructuredEventCount } from '../i18n/researchCounts';
+import { failedMissionForms, runningMissionForms, structuredEventForms, succeededMissionForms } from '../i18n/researchPlural';
 import { useProgram, useProgramAction, useProgramActivity, useProgramMissions } from '../lib/api/hooks';
 import type { ActivityEvent, OhlcPoint } from '../lib/api/types';
 import { formatDateTime, formatNumber, humanize } from '../lib/format';
@@ -61,7 +61,7 @@ function ProgramActionDialog({ id, action, label, icon }: { id: string; action: 
 }
 
 export function ResearchDetailPage() {
-  const { t, locale } = useI18n();
+  const { t, plural } = useI18n();
   const { id } = useParams();
   const program = useProgram(id);
   const missions = useProgramMissions(id);
@@ -92,6 +92,11 @@ export function ResearchDetailPage() {
   const headerTitle = current.title ?? current.charter?.research_question ?? `${t('research.program')} ${current.id.slice(0, 8)}`;
   const headerDescription = current.charter?.original_idea_text ?? t('research.autonomousProgram');
   const programReason = current.cooling_reason ?? current.blocked_reason ?? current.wake_reason;
+  const missionSummary = [
+    plural(runningMissionForms, running),
+    plural(succeededMissionForms, succeeded),
+    plural(failedMissionForms, failed),
+  ].join(' · ');
 
   return (
     <>
@@ -104,7 +109,7 @@ export function ResearchDetailPage() {
       />
       <KpiStrip items={[
         { label: 'Program state', value: <StateBadge state={current.state} />, note: programReason ? <span dir="auto">{programReason}</span> : t('research.autonomousScheduling') },
-        { label: 'Missions', value: missionList.length, note: formatMissionStateSummary(locale, { running, succeeded, failed }) },
+        { label: 'Missions', value: missionList.length, note: missionSummary },
         { label: 'Branches', value: current.branch_count ?? branchRows.length, note: t('research.lineagePaths') },
         { label: 'Alphas', value: current.alpha_count ?? '—', note: t('research.qualifiedOrEval') },
       ]} />
@@ -124,7 +129,7 @@ export function ResearchDetailPage() {
       <Section title="Experiment & evidence ledger" meta="Independent evaluation, Search Ledger and exposure-related domain events">
         {evidenceEvents.length ? <DataTable data={evidenceEvents} columns={evidenceColumns} ariaLabel={t('research.evidenceLedger')} initialPageSize={20} getRowId={(event) => String(event.id)} /> : <EmptyState title="No experiment evidence yet" description="Structured experiment, evaluation and evidence events will appear here when returned by the Program activity API." />}
       </Section>
-      <Section title="Agent activity" meta={formatStructuredEventCount(locale, events.length)}>
+      <Section title="Agent activity" meta={plural(structuredEventForms, events.length)}>
         {events.length ? <div className="qz-panel qz-panel-pad qz-timeline">{events.slice(0, 40).map((event, index) => <div key={String(event.id)} className="qz-timeline-item" data-active={index === 0}><div className="qz-timeline-title">{humanize(event.kind)}</div><div className="qz-timeline-meta qz-number">{formatDateTime(event.created_at)}{event.mission_id ? ` · ${event.mission_id.slice(0, 8)}` : ''}</div>{event.payload?.summary ? <div className="qz-timeline-body" dir="auto">{String(event.payload.summary)}</div> : null}</div>)}</div> : <EmptyState title="No activity yet" description="Agent commands, test exits, Domain events and material evidence appear here without exposing hidden chain-of-thought." />}
       </Section>
     </>
