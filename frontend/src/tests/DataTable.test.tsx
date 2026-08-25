@@ -24,7 +24,7 @@ const numericColumns: ColumnDef<NumericRow, unknown>[] = [
 interface CountRow { name: string; count: number }
 const countColumns: ColumnDef<CountRow, unknown>[] = [
   { accessorKey: 'name', header: 'Name' },
-  { accessorKey: 'count', header: 'Count' },
+  { accessorKey: 'count', header: 'Count', cell: ({ getValue }) => <span className="qz-number">{String(getValue())}</span> },
 ];
 
 interface CapabilityRow { name: string; capabilities: string[] }
@@ -75,6 +75,18 @@ describe('DataTable', () => {
     fireEvent.change(input, { target: { value: percent } });
     expect(screen.getByText('Large')).toBeInTheDocument();
     expect(screen.queryByText('Small')).not.toBeInTheDocument();
+  });
+
+  it('formats direct qz-number cells with the active locale', () => {
+    render(
+      <I18nProvider initialLocale="ar">
+        <Theme appearance="dark" accentColor="jade" grayColor="sage" radius="small" scaling="90%">
+          <DataTable data={[{ name: 'Arabic count', count: 1234 }]} columns={countColumns} />
+        </Theme>
+      </I18nProvider>,
+    );
+    expect(screen.getByText(new Intl.NumberFormat('ar').format(1234))).toBeInTheDocument();
+    expect(screen.queryByText('1234')).not.toBeInTheDocument();
   });
 
   it('does not generate percentage aliases for ordinary numeric columns', () => {
