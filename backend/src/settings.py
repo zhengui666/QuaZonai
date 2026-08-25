@@ -6,6 +6,8 @@ import base64
 import binascii
 import ipaddress
 import os
+import re
+import secrets
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import ParseResult, urlparse
@@ -33,6 +35,8 @@ MIN_OPERATOR_PASSWORD_CHARACTERS = 12
 MAX_OPERATOR_PASSWORD_CHARACTERS = 4096
 MIN_MACHINE_TOKEN_CHARACTERS = 32
 MAX_MACHINE_TOKEN_CHARACTERS = 4096
+_DEFAULT_ORIGIN_PORTS = {"http": 80, "https": 443}
+_BEARER_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9\-._~+/]+={0,}", re.ASCII)
 
 
 def _optional_env(name: str) -> str | None:
@@ -41,6 +45,13 @@ def _optional_env(name: str) -> str | None:
         return None
     clean = value.strip()
     return clean or None
+
+
+def _optional_raw_env(name: str) -> str | None:
+    value = os.environ.get(name)
+    if value is None or value == "":
+        return None
+    return value
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -80,36 +91,54 @@ def _base64_key(value: str | None, *, name: str) -> bytes:
     return decoded
 
 
-def _validate_origin_host(parsed: ParseResult) -> None:
-    try:
-        hostname = parsed.hostname
-        _ = parsed.port
-    except ValueError as exc:
+def validate_machine_api_token(value: str) -> None:
+    """Validate the RFC 6750 b64token grammar used in the Authorization header."""
+    if not MIN_MACHINE_TOKEN_CHARACTERS <= len(value) <= MAX_MACHINE_TOKEN_CHARACTERS:
         raise SettingsError(
-            "QUAZONAI_AUTH_PUBLIC_ORIGIN must contain a valid host and optional TCP port"
-        ) from exc
-    if hostname is None or any(character.isspace() or ord(character) < 32 for character in hostname):
+            "QUAZONAI_API_TOKEN must contain between "
+            f"{MIN_MACHINE_TOKEN_CHARACTERS} and {MAX_MACHINE_TOKEN_CHARACTERS} characters"
+        )
+    if _BEARER_TOKEN_PATTERN.fullmatch(value) is None:
         raise SettingsError(
-            "QUAZONAI_AUTH_PUBLIC_ORIGIN must contain a valid host and optional TCP port"
+            "QUAZONAI_API_TOKEN must use RFC 6750 b64token ASCII characters only"
         )
 
+
+def _canonical_origin_host(parsed: ParseResult, *, name: str) -> tuple[str, int | None]:
     try:
-        ipaddress.ip_address(hostname)
-        return
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError as exc:
+        raise SettingsError(f"{name} must contain a valid host and optional TCP port") from exc
+    if port == 0:
+        raise SettingsError(f"{name} must contain a valid host and optional TCP port")
+    if hostname is None or any(
+        character.isspace() or ord(character) < 32 for character in hostname
+    ):
+        raise SettingsError(f"{name} must contain a valid host and optional TCP port")
+    if "%" in hostname:
+        raise SettingsError(f"{name} contains an invalid hostname")
+
+    try:
+        address = ipaddress.ip_address(hostname)
     except ValueError:
-        pass
+        address = None
+    if address is not None:
+        if address.version == 6:
+            return f"[{address.compressed}]", port
+        return address.compressed, port
 
     # A dotted-decimal host made only of digits is intended to be an IPv4
     # literal. Do not reinterpret an invalid address as a DNS name.
     if all(character.isdigit() or character == "." for character in hostname):
-        raise SettingsError("QUAZONAI_AUTH_PUBLIC_ORIGIN contains an invalid hostname")
+        raise SettingsError(f"{name} contains an invalid hostname")
 
     try:
-        ascii_hostname = hostname.encode("idna").decode("ascii")
+        ascii_hostname = hostname.encode("idna").decode("ascii").lower()
     except UnicodeError as exc:
-        raise SettingsError("QUAZONAI_AUTH_PUBLIC_ORIGIN contains an invalid hostname") from exc
+        raise SettingsError(f"{name} contains an invalid hostname") from exc
     if len(ascii_hostname) > 253:
-        raise SettingsError("QUAZONAI_AUTH_PUBLIC_ORIGIN contains an invalid hostname")
+        raise SettingsError(f"{name} contains an invalid hostname")
     labels = ascii_hostname.split(".")
     if any(
         not label
@@ -119,7 +148,31 @@ def _validate_origin_host(parsed: ParseResult) -> None:
         or any(not (character.isalnum() or character == "-") for character in label)
         for label in labels
     ):
-        raise SettingsError("QUAZONAI_AUTH_PUBLIC_ORIGIN contains an invalid hostname")
+        raise SettingsError(f"{name} contains an invalid hostname")
+    return ascii_hostname, port
+
+
+def canonicalize_http_origin(value: str, *, name: str = "Origin") -> str:
+    """Serialize an absolute HTTP(S) origin using browser-equivalent semantics."""
+    clean = value.strip()
+    parsed = urlparse(clean)
+    scheme = parsed.scheme.lower()
+    if (
+        scheme not in _DEFAULT_ORIGIN_PORTS
+        or not parsed.netloc
+        or parsed.username
+        or parsed.password
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+    ):
+        raise SettingsError(f"{name} must be an origin such as https://quazonai.example.com")
+
+    host, port = _canonical_origin_host(parsed, name=name)
+    default_port = _DEFAULT_ORIGIN_PORTS[scheme]
+    port_suffix = "" if port is None or port == default_port else f":{port}"
+    return f"{scheme}://{host}{port_suffix}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,7 +267,7 @@ class Settings:
             operator_password=_optional_env("QUAZONAI_AUTH_PASSWORD"),
             operator_totp_secret=totp_secret,
             auth_cookie_key=_optional_env("QUAZONAI_AUTH_COOKIE_KEY"),
-            api_token=_optional_env("QUAZONAI_API_TOKEN"),
+            api_token=_optional_raw_env("QUAZONAI_API_TOKEN"),
             auth_public_origin=_optional_env("QUAZONAI_AUTH_PUBLIC_ORIGIN"),
             auth_session_ttl_seconds=session_ttl,
             auth_trusted_browser_ttl_days=trusted_browser_ttl,
@@ -239,8 +292,20 @@ class Settings:
         return self.operator_auth_enabled
 
     @property
+    def canonical_auth_public_origin(self) -> str | None:
+        if self.auth_public_origin is None:
+            return None
+        return canonicalize_http_origin(
+            self.auth_public_origin,
+            name="QUAZONAI_AUTH_PUBLIC_ORIGIN",
+        )
+
+    @property
     def auth_cookie_secure(self) -> bool:
-        return urlparse(self.auth_public_origin or "").scheme.casefold() == "https"
+        if not self.auth_enabled:
+            return False
+        origin = self.canonical_auth_public_origin
+        return origin is not None and origin.startswith("https://")
 
     def master_key_bytes(self) -> bytes:
         if not self.master_key_configured or self.master_key is None:
@@ -280,19 +345,29 @@ class Settings:
 
         if len(self.operator_username) > MAX_OPERATOR_USERNAME_CHARACTERS:
             raise SettingsError(
-                f"QUAZONAI_AUTH_USERNAME must contain at most {MAX_OPERATOR_USERNAME_CHARACTERS} characters"
+                f"QUAZONAI_AUTH_USERNAME must contain at most "
+                f"{MAX_OPERATOR_USERNAME_CHARACTERS} characters"
             )
-        if not MIN_OPERATOR_PASSWORD_CHARACTERS <= len(self.operator_password) <= MAX_OPERATOR_PASSWORD_CHARACTERS:
+        if not (
+            MIN_OPERATOR_PASSWORD_CHARACTERS
+            <= len(self.operator_password)
+            <= MAX_OPERATOR_PASSWORD_CHARACTERS
+        ):
             raise SettingsError(
                 "QUAZONAI_AUTH_PASSWORD must contain between "
-                f"{MIN_OPERATOR_PASSWORD_CHARACTERS} and {MAX_OPERATOR_PASSWORD_CHARACTERS} characters"
+                f"{MIN_OPERATOR_PASSWORD_CHARACTERS} and "
+                f"{MAX_OPERATOR_PASSWORD_CHARACTERS} characters"
             )
-        if not MIN_MACHINE_TOKEN_CHARACTERS <= len(self.api_token) <= MAX_MACHINE_TOKEN_CHARACTERS:
+        validate_machine_api_token(self.api_token)
+
+        cookie_key = self.auth_cookie_key_bytes()
+        if self.master_key_configured and secrets.compare_digest(
+            cookie_key,
+            self.master_key_bytes(),
+        ):
             raise SettingsError(
-                "QUAZONAI_API_TOKEN must contain between "
-                f"{MIN_MACHINE_TOKEN_CHARACTERS} and {MAX_MACHINE_TOKEN_CHARACTERS} characters"
+                "QUAZONAI_AUTH_COOKIE_KEY must be different from QUAZONAI_MASTER_KEY"
             )
-        self.auth_cookie_key_bytes()
 
         padded_secret = self.operator_totp_secret + "=" * (
             (8 - len(self.operator_totp_secret) % 8) % 8
@@ -308,22 +383,11 @@ class Settings:
                 "QUAZONAI_AUTH_TOTP_SECRET must encode at least 20 bytes of secret material"
             )
 
-        parsed = urlparse(self.auth_public_origin)
-        if (
-            parsed.scheme not in {"http", "https"}
-            or not parsed.netloc
-            or parsed.username
-            or parsed.password
-            or parsed.params
-            or parsed.query
-            or parsed.fragment
-            or parsed.path not in {"", "/"}
+        canonical_origin = self.canonical_auth_public_origin
+        assert canonical_origin is not None
+        if self.environment.casefold() == "production" and not canonical_origin.startswith(
+            "https://"
         ):
-            raise SettingsError(
-                "QUAZONAI_AUTH_PUBLIC_ORIGIN must be an origin such as https://quazonai.example.com"
-            )
-        _validate_origin_host(parsed)
-        if self.environment.casefold() == "production" and parsed.scheme != "https":
             raise SettingsError("QUAZONAI_AUTH_PUBLIC_ORIGIN must use https in production")
 
     def validate_database_scheme(self) -> None:
