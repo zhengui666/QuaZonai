@@ -10,6 +10,7 @@ import {
   ListIcon,
   MoonIcon,
   PaperPlaneTiltIcon,
+  SignOutIcon,
   SunIcon,
   TargetIcon,
 } from '@phosphor-icons/react';
@@ -47,6 +48,18 @@ export function AppShell() {
     [location.pathname],
   );
 
+  async function logout() {
+    try {
+      await fetch('/api/v1/auth/logout', {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+    } finally {
+      window.dispatchEvent(new Event('quazonai:auth-required'));
+      navigate('/');
+    }
+  }
+
   return (
     <Theme appearance={mode} accentColor="jade" grayColor="sage" radius="small" scaling="90%">
       <div className="qz-app">
@@ -78,10 +91,15 @@ export function AppShell() {
                   {nav.map(({ to, label, icon: Icon }) => (
                     <DropdownMenu.Item key={to} onSelect={() => navigate(to)}><Icon size={14} />{label}</DropdownMenu.Item>
                   ))}
+                  <DropdownMenu.Separator />
+                  <DropdownMenu.Item color="red" onSelect={() => { void logout(); }}><SignOutIcon size={14} />Sign out</DropdownMenu.Item>
                 </DropdownMenu.Content>
               </DropdownMenu.Root>
               <Button aria-label={`Switch to ${mode === 'dark' ? 'light' : 'dark'} theme`} size="1" variant="soft" onClick={() => setMode(mode === 'dark' ? 'light' : 'dark')}>
                 {mode === 'dark' ? <SunIcon size={15} /> : <MoonIcon size={15} />}
+              </Button>
+              <Button aria-label="Sign out and forget this browser" size="1" variant="soft" color="red" onClick={() => { void logout(); }}>
+                <SignOutIcon size={15} />
               </Button>
             </div>
           </header>
