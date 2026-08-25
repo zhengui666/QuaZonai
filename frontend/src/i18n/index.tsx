@@ -1,12 +1,27 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { localeLabels, localeOrder, messages, type Locale, type MessageKey } from './messages';
 import { pluralMessages, type PluralMessageKey } from './pluralMessages';
 
 const STORAGE_KEY = 'qz-locale';
 const localeIndex: Record<Locale, number> = { en: 0, 'zh-CN': 1, 'zh-TW': 2, ja: 3, ko: 4, es: 5, ar: 6 };
-const sourceIndex = new Map<string, MessageKey>(
-  Object.entries(messages).map(([key, value]) => [value[0], key as MessageKey]),
-);
+
+function buildSourceIndex(): Map<string, MessageKey> {
+  const groups = new Map<string, MessageKey[]>();
+  for (const key of Object.keys(messages) as MessageKey[]) {
+    const source = messages[key][0];
+    groups.set(source, [...(groups.get(source) ?? []), key]);
+  }
+  const index = new Map<string, MessageKey>();
+  for (const [source, keys] of groups) {
+    const first = keys[0];
+    if (!first) continue;
+    const equivalent = keys.slice(1).every((key) => messages[key].every((value, position) => value === messages[first][position]));
+    if (equivalent) index.set(source, first);
+  }
+  return index;
+}
+
+const sourceIndex = buildSourceIndex();
 
 export type TranslationValues = Record<string, string | number | null | undefined>;
 type PluralTranslationKey = MessageKey | PluralMessageKey;
@@ -95,15 +110,19 @@ interface I18nContextValue {
 const I18nContext = createContext<I18nContextValue | null>(null);
 
 export function I18nProvider({ children, initialLocale }: { children: ReactNode; initialLocale?: Locale }) {
-  const [locale, setLocale] = useState<Locale>(() => initialLocale ?? storedLocale() ?? browserLocale());
+  const [locale, setLocaleState] = useState<Locale>(() => initialLocale ?? storedLocale() ?? browserLocale());
   activeLocale = locale;
+
+  const setLocale = useCallback((nextLocale: Locale) => {
+    setLocaleState(nextLocale);
+    try { localStorage.setItem(STORAGE_KEY, nextLocale); } catch { /* Browser privacy modes may reject storage. */ }
+  }, []);
 
   useEffect(() => {
     activeLocale = locale;
     const descriptor = localeLabels[locale];
     document.documentElement.lang = locale;
     document.documentElement.dir = descriptor.dir;
-    try { localStorage.setItem(STORAGE_KEY, locale); } catch { /* Browser privacy modes may reject storage. */ }
   }, [locale]);
 
   const value = useMemo<I18nContextValue>(() => ({
@@ -117,7 +136,7 @@ export function I18nProvider({ children, initialLocale }: { children: ReactNode;
       if (!key) return String(count);
       return translatePluralKey(locale, key, { count, ...values });
     },
-  }), [locale]);
+  }), [locale, setLocale]);
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }

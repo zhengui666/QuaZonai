@@ -77,8 +77,15 @@ export function HomePage() {
       ]} />
       <div className="qz-split" style={{ marginTop: 20 }}>
         <Section title="Research pulse" meta="Material progress, not token or command counts"><div className="qz-panel qz-panel-pad"><ResearchPulseChart data={pulse} /></div></Section>
-        <Section title="Action center" meta={plural({ one: 'home.decision', other: 'home.decisions' }, pending.length)}>
-          {pending.length ? <div className="qz-panel qz-panel-pad qz-list">{pending.slice(0, 5).map((approval) => <div className="qz-list-row" key={approval.id}><div className="qz-list-main"><div className="qz-list-title">{approval.purpose} {t('common.candidate')} · {approval.candidate?.mandate_name ?? approval.candidate_id.slice(0, 8)}</div><div className="qz-list-subtitle">{t('home.validUntil', { date: formatDateTime(approval.valid_until ?? approval.expires_at) })}</div></div><Button asChild size="1" variant="ghost"><Link to="/approval">{t('home.review')} <ArrowRightIcon size={12} /></Link></Button></div>)}</div> : <EmptyState title="No decisions waiting" description="Research continues autonomously. You will only be interrupted by a material candidate or required administration." />}
+        <Section title="Action center" meta={plural({
+          zero: 'home.decisions.zero',
+          one: 'home.decisions.one',
+          two: 'home.decisions.two',
+          few: 'home.decisions.few',
+          many: 'home.decisions.many',
+          other: 'home.decisions.other',
+        }, pending.length)}>
+          {pending.length ? <div className="qz-panel qz-panel-pad qz-list">{pending.slice(0, 5).map((approval) => <div className="qz-list-row" key={approval.id}><div className="qz-list-main"><div className="qz-list-title">{humanize(approval.purpose)} {t('common.candidate')} · {approval.candidate?.mandate_name ?? approval.candidate_id.slice(0, 8)}</div><div className="qz-list-subtitle">{t('home.validUntil', { date: formatDateTime(approval.valid_until ?? approval.expires_at) })}</div></div><Button asChild size="1" variant="ghost"><Link to="/approval">{t('home.review')} <ArrowRightIcon size={12} /></Link></Button></div>)}</div> : <EmptyState title="No decisions waiting" description="Research continues autonomously. You will only be interrupted by a material candidate or required administration." />}
         </Section>
       </div>
       <Section title="Portfolio readiness" meta="Construction and handoff pipeline">

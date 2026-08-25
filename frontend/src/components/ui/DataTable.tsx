@@ -13,8 +13,15 @@ import {
 } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useMemo, useRef, useState } from 'react';
-import { useI18n } from '../../i18n';
+import { useI18n, type MessageKey } from '../../i18n';
 import { EmptyState } from './EmptyState';
+
+type LocalizedColumnMeta = { messageKey?: MessageKey };
+
+function messageKeyFromMeta(meta: unknown): MessageKey | undefined {
+  if (!meta || typeof meta !== 'object' || !('messageKey' in meta)) return undefined;
+  return (meta as LocalizedColumnMeta).messageKey;
+}
 
 interface DataTableProps<T> {
   data: T[];
@@ -94,11 +101,14 @@ export function DataTable<T>({
           <DropdownMenu.Root>
             <DropdownMenu.Trigger><Button size="1" variant="soft"><ColumnsIcon size={13} />{t('table.columns')}</Button></DropdownMenu.Trigger>
             <DropdownMenu.Content align="end">
-              {table.getAllLeafColumns().filter((column) => column.getCanHide()).map((column) => (
-                <DropdownMenu.CheckboxItem key={column.id} checked={column.getIsVisible()} onCheckedChange={(checked) => column.toggleVisibility(Boolean(checked))}>
-                  {text(String(column.columnDef.header ?? column.id))}
-                </DropdownMenu.CheckboxItem>
-              ))}
+              {table.getAllLeafColumns().filter((column) => column.getCanHide()).map((column) => {
+                const messageKey = messageKeyFromMeta(column.columnDef.meta);
+                return (
+                  <DropdownMenu.CheckboxItem key={column.id} checked={column.getIsVisible()} onCheckedChange={(checked) => column.toggleVisibility(Boolean(checked))}>
+                    {messageKey ? t(messageKey) : text(String(column.columnDef.header ?? column.id))}
+                  </DropdownMenu.CheckboxItem>
+                );
+              })}
             </DropdownMenu.Content>
           </DropdownMenu.Root>
         </div>
@@ -111,9 +121,12 @@ export function DataTable<T>({
                 {group.headers.map((header) => {
                   const sorted = header.column.getIsSorted();
                   const ariaSort = sorted === 'asc' ? 'ascending' : sorted === 'desc' ? 'descending' : header.column.getCanSort() ? 'none' : undefined;
-                  const headerContent = typeof header.column.columnDef.header === 'string'
-                    ? text(header.column.columnDef.header)
-                    : flexRender(header.column.columnDef.header, header.getContext());
+                  const messageKey = messageKeyFromMeta(header.column.columnDef.meta);
+                  const headerContent = messageKey
+                    ? t(messageKey)
+                    : typeof header.column.columnDef.header === 'string'
+                      ? text(header.column.columnDef.header)
+                      : flexRender(header.column.columnDef.header, header.getContext());
                   return (
                     <th key={header.id} colSpan={header.colSpan} aria-sort={ariaSort}>
                       {header.isPlaceholder ? null : header.column.getCanSort() ? (

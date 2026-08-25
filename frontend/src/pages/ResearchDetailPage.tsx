@@ -20,17 +20,17 @@ import { formatDateTime, humanize } from '../lib/format';
 
 type BranchSummary = { id: string; missions: number; running: number; succeeded: number; failed: number };
 const branchColumns: ColumnDef<BranchSummary, unknown>[] = [
-  { accessorKey: 'id', header: 'Branch', cell: ({ getValue }) => <span className="qz-mono">{String(getValue()).slice(0, 16)}</span> },
-  { accessorKey: 'missions', header: 'Missions', cell: ({ getValue }) => <span className="qz-number">{String(getValue())}</span> },
-  { accessorKey: 'running', header: 'Running', cell: ({ getValue }) => <span className="qz-number">{String(getValue())}</span> },
-  { accessorKey: 'succeeded', header: 'Succeeded', cell: ({ getValue }) => <span className="qz-number">{String(getValue())}</span> },
-  { accessorKey: 'failed', header: 'Failed', cell: ({ getValue }) => <span className="qz-number">{String(getValue())}</span> },
+  { accessorKey: 'id', header: 'Branch', meta: { messageKey: 'research.branch' }, cell: ({ getValue }) => <span className="qz-mono">{String(getValue()).slice(0, 16)}</span> },
+  { accessorKey: 'missions', header: 'Missions', meta: { messageKey: 'research.missions' }, cell: ({ getValue }) => <span className="qz-number">{String(getValue())}</span> },
+  { accessorKey: 'running', header: 'Running', meta: { messageKey: 'research.running' }, cell: ({ getValue }) => <span className="qz-number">{String(getValue())}</span> },
+  { accessorKey: 'succeeded', header: 'Succeeded', meta: { messageKey: 'research.succeeded' }, cell: ({ getValue }) => <span className="qz-number">{String(getValue())}</span> },
+  { accessorKey: 'failed', header: 'Failed', meta: { messageKey: 'research.failed' }, cell: ({ getValue }) => <span className="qz-number">{String(getValue())}</span> },
 ];
 const evidenceColumns: ColumnDef<ActivityEvent, unknown>[] = [
-  { accessorKey: 'kind', header: 'Event', cell: ({ getValue }) => humanize(String(getValue())) },
-  { accessorKey: 'mission_id', header: 'Mission', cell: ({ getValue }) => <span className="qz-mono">{String(getValue() ?? '—').slice(0, 12)}</span> },
-  { accessorKey: 'created_at', header: 'Observed', cell: ({ getValue }) => formatDateTime(getValue() as string) },
-  { id: 'summary', header: 'Evidence / result', cell: ({ row }) => <span className="qz-list-subtitle" style={{ whiteSpace: 'normal' }}>{eventSummary(row.original)}</span> },
+  { accessorKey: 'kind', header: 'Event', meta: { messageKey: 'research.event' }, cell: ({ getValue }) => humanize(String(getValue())) },
+  { accessorKey: 'mission_id', header: 'Mission', meta: { messageKey: 'research.mission' }, cell: ({ getValue }) => <span className="qz-mono">{String(getValue() ?? '—').slice(0, 12)}</span> },
+  { accessorKey: 'created_at', header: 'Observed', meta: { messageKey: 'research.observed' }, cell: ({ getValue }) => formatDateTime(getValue() as string) },
+  { id: 'summary', header: 'Evidence / result', meta: { messageKey: 'research.evidenceResult' }, cell: ({ row }) => <span className="qz-list-subtitle" style={{ whiteSpace: 'normal' }}>{eventSummary(row.original)}</span> },
 ];
 
 function eventSummary(event: ActivityEvent): ReactNode {
@@ -88,12 +88,16 @@ export function ResearchDetailPage() {
   }
   const branchRows = [...branchMap.values()];
   const evidenceEvents = events.filter((event) => /EXPERIMENT|EVALUAT|EVIDENCE|SEARCH|DISCLOS|QUALIF|CALIBR|PROMOT/i.test(event.kind));
+  const headerTitle = current.title ?? current.charter?.research_question ?? `${t('research.program')} ${current.id.slice(0, 8)}`;
+  const headerDescription = current.charter?.original_idea_text ?? t('research.autonomousProgram');
 
   return (
     <>
       <PageHeader
-        title={current.title ?? current.charter?.research_question ?? `Research ${current.id.slice(0, 8)}`}
-        description={current.charter?.original_idea_text ?? t('research.autonomousProgram')}
+        title={headerTitle}
+        description={headerDescription}
+        translateTitle={false}
+        translateDescription={false}
         actions={<>{current.state === 'ACTIVE' ? <ProgramActionDialog id={id} action="pause" label="Pause" icon={<PauseIcon size={14} />} /> : current.state === 'PAUSED' ? <ProgramActionDialog id={id} action="resume" label="Resume" icon={<PlayIcon size={14} />} /> : null}{current.state !== 'ARCHIVED' ? <ProgramActionDialog id={id} action="archive" label="Archive" icon={<ArchiveIcon size={14} />} /> : <ProgramActionDialog id={id} action="restore" label="Restore" icon={<RewindIcon size={14} />} />}</>}
       />
       <KpiStrip items={[

@@ -45,7 +45,7 @@ export function AlphaDetailPage() {
 
   return (
     <>
-      <PageHeader title={alpha.name ?? `Alpha ${alpha.id.slice(0, 8)}`} description="Qualification is explicitly scoped by Universe, horizon, role, calibration and independent evidence. Historical versions remain immutable when health or evidence changes." />
+      <PageHeader title={alpha.name ?? `Alpha ${alpha.id.slice(0, 8)}`} translateTitle={false} description="Qualification is explicitly scoped by Universe, horizon, role, calibration and independent evidence. Historical versions remain immutable when health or evidence changes." />
       <KpiStrip items={[{ label: 'Role', value: humanize(alpha.role) }, { label: 'Qualification', value: <StateBadge state={alpha.state} /> }, { label: 'Health', value: <StateBadge state={alpha.degradation_state ?? 'HEALTHY'} /> }, { label: 'Horizon', value: alpha.horizon ?? '—' }]} />
       <div className="qz-grid-2" style={{ marginTop: 20 }}>
         <Section title="Performance" meta="API evidence · Lightweight Charts">{performance.length ? <div className="qz-panel qz-panel-pad"><FinancialSeriesChart ariaLabel="Alpha performance and benchmark chart" series={[{ name: 'Alpha', data: performance, kind: 'area' }, { name: 'Benchmark', data: benchmark }]} /></div> : <EmptyState title="No performance series" description="The Alpha API has not returned a performance curve for this qualification." />}</Section>
