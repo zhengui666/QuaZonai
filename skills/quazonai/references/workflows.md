@@ -2,7 +2,7 @@
 
 Use these recipes after reading the operating rules in `../SKILL.md`. Replace placeholders only with values returned by the user or by a fresh CLI read.
 
-When this Skill is running from the QuaZonai source checkout, the repository-root `AGENTS.md`, `DESIGN.md`, `OPERATIONS.md`, and `CLI.md` remain authoritative over these portable recipes.
+When the active working directory is inside a validated QuaZonai checkout, that checkout's `AGENTS.md`, `DESIGN.md`, `OPERATIONS.md`, and `CLI.md` remain authoritative over these portable recipes.
 
 ## 1. Diagnose connectivity and readiness
 
@@ -181,7 +181,7 @@ Render this exact command for the human operator to run in their local terminal:
 ```text
 quazonai approval approve \
   <APPROVAL_ID> \
-  <DOWNSTREAM_SYSTEM_ID> \
+  --downstream <DOWNSTREAM_SYSTEM_ID> \
   --expected-state PENDING
 ```
 
@@ -213,7 +213,7 @@ Render this exact command for the human operator:
 ```text
 quazonai approval reject \
   <APPROVAL_ID> \
-  <REASON_CODE> \
+  --reason <REASON_CODE> \
   --expected-state PENDING
 ```
 
@@ -238,7 +238,7 @@ Locate the Handoff ID and current state in the returned JSON.
 Revoke only on explicit authorization for the specific Handoff and reason code:
 
 ```bash
-quazonai handoff revoke <HANDOFF_ID> <REASON_CODE>
+quazonai handoff revoke <HANDOFF_ID> --reason <REASON_CODE>
 quazonai handoff list
 ```
 
