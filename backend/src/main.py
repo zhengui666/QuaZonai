@@ -19,6 +19,7 @@ from api.system import router as system_router
 from db.session import create_database_engine, create_session_factory
 from errors import QfError, install_error_handlers
 from operator_auth import (
+    OperatorAuthRuntime,
     authenticate_browser,
     authenticate_machine,
     is_operator_auth_exempt,
@@ -54,6 +55,7 @@ def _auth_error_response(exc: QfError) -> JSONResponse:
                 "details": exc.details,
             }
         },
+        headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
     )
 
 
@@ -112,6 +114,7 @@ def create_app(*, settings: Settings | None = None, engine: Engine | None = None
     app.state.settings = runtime_settings
     app.state.engine = runtime_engine
     app.state.session_factory = create_session_factory(runtime_engine)
+    app.state.operator_auth_runtime = OperatorAuthRuntime()
 
     install_error_handlers(app)
     _install_operator_auth(app)
