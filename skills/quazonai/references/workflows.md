@@ -2,9 +2,11 @@
 
 Use these recipes after reading the operating rules in `../SKILL.md`. Replace placeholders only with values returned by the user or by a fresh CLI read.
 
+When this Skill is running from the QuaZonai source checkout, the repository-root `AGENTS.md`, `DESIGN.md`, `OPERATIONS.md`, and `CLI.md` remain authoritative over these portable recipes.
+
 ## 1. Diagnose connectivity and readiness
 
-Use when the CLI cannot connect, the user asks whether QuaZonai is operational, or a mutation is about to start and readiness matters.
+Use when the CLI cannot connect, the user asks whether QuaZonai is operational, or a permitted mutation is about to start and readiness matters.
 
 ```bash
 quazonai status
@@ -159,29 +161,33 @@ Summarize only fields actually returned by the API, including:
 - freshness/validity window;
 - material warnings and evidence.
 
-Do not infer permission to approve from a request to inspect.
+Do not infer permission to approve from a request to inspect. No AI Agent may execute `approval approve` or `approval reject`; these remain human-only capital-allocation decisions.
 
-## 7. Approve a Candidate
+## 7. Prepare a human Approval command
 
-Proceed only after the user explicitly authorizes the specific Approval ID and downstream system.
+The Agent may inspect and prepare, but must not execute, the decision.
 
-Re-read immediately before the decision:
+Re-read immediately before preparing the command:
 
 ```bash
 quazonai approval show <APPROVAL_ID>
 quazonai downstreams
 ```
 
-Execute once:
+Confirm that the Approval is current, the Candidate matches the user's decision, the downstream system ID is exact, the Paper/Live scope is understood, and the snapshot is not stale or expired.
 
-```bash
+Render this exact command for the human operator to run in their local terminal:
+
+```text
 quazonai approval approve \
   <APPROVAL_ID> \
   <DOWNSTREAM_SYSTEM_ID> \
   --expected-state PENDING
 ```
 
-Verify:
+Do not execute it through Agent tools or a shell. Do not substitute another Candidate or downstream system.
+
+After the human has run it, the Agent may verify through read-only commands:
 
 ```bash
 quazonai approval show <APPROVAL_ID>
@@ -190,24 +196,34 @@ quazonai handoff list
 
 Report the actual observed Approval/Handoff state. `DOWNSTREAM_ACCEPTED`, when present, means the downstream accepted a package contract; it does not prove that a trading runtime is running.
 
-On exit `20`, re-read the Approval. Do not retry with a different Candidate or downstream system.
+If the human reports exit `20`, re-read the Approval and prepare a new command only from current state.
 
-## 8. Reject a Candidate
+## 8. Prepare a human Rejection command
 
-Proceed only after explicit authorization and a user-supplied or API-supported reason code.
+The Agent may inspect and prepare, but must not execute, the decision. Use only a reason code supplied by the human or exposed by QuaZonai.
+
+First re-read:
 
 ```bash
 quazonai approval show <APPROVAL_ID>
+```
 
+Render this exact command for the human operator:
+
+```text
 quazonai approval reject \
   <APPROVAL_ID> \
   <REASON_CODE> \
   --expected-state PENDING
-
-quazonai approval show <APPROVAL_ID>
 ```
 
-Add `--note "<TEXT>"` only when the user supplied explanatory text. Do not invent a reason code from prose when the valid code set is unknown; inspect the API response or ask the user to choose from codes already exposed by QuaZonai.
+Add `--note "<TEXT>"` only when the human supplied explanatory text. Do not invent a reason code from prose when the valid code set is unknown.
+
+Do not execute the command. After the human has run it, verify read-only:
+
+```bash
+quazonai approval show <APPROVAL_ID>
+```
 
 ## 9. Inspect or revoke a Handoff
 
@@ -219,7 +235,7 @@ quazonai handoff list
 
 Locate the Handoff ID and current state in the returned JSON.
 
-Revoke only on explicit authorization:
+Revoke only on explicit authorization for the specific Handoff and reason code:
 
 ```bash
 quazonai handoff revoke <HANDOFF_ID> <REASON_CODE>
@@ -265,18 +281,20 @@ quazonai downstreams
 
 These are list operations. The implemented CLI does not provide per-item `show` commands for these resources.
 
-## 12. Recover from an ambiguous mutation
+## 12. Recover from an ambiguous permitted mutation
 
-When the command times out, the network disconnects, or exit `1` does not establish whether the Core API committed the mutation:
+When a permitted mutation times out, the network disconnects, or exit `1` does not establish whether the Core API committed the mutation:
 
 1. Do not immediately repeat the write.
 2. Run `quazonai status` if service availability is uncertain.
 3. Re-read the affected resource with the corresponding read command.
 4. If the desired state is already visible, report success with the verification evidence.
-5. If the prior state is still visible, confirm that the original request still applies, then issue one new mutation.
+5. If the prior state is still visible, confirm that the original request still applies, then issue one new permitted mutation.
 6. If state is conflicting or advanced, stop and report the current state.
 
 Each CLI invocation creates a fresh idempotency key. Shell-command repetition is not request replay.
+
+This retry workflow never authorizes an Agent to execute `approval approve` or `approval reject`.
 
 ## 13. Response template
 
@@ -287,7 +305,10 @@ Objective
 - <what the user asked>
 
 Commands executed
-- <exact command with secrets omitted>
+- <exact permitted command with secrets omitted>
+
+Commands prepared for the human operator
+- <human-only approval/rejection command, if applicable>
 
 Resources read or changed
 - <resource type and ID>
