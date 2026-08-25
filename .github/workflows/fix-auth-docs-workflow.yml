@@ -1,0 +1,36 @@
+name: Fix operator auth docs workflow
+
+on:
+  push:
+    branches:
+      - feat/operator-totp-2fa
+    paths:
+      - .github/workflows/fix-auth-docs-workflow.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/operator-totp-2fa
+          fetch-depth: 0
+      - name: Fix delimiter and self-remove
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          target = Path('.github/workflows/apply-operator-auth-docs.yml')
+          text = target.read_text(encoding='utf-8')
+          text = text.replace("          python - <<'PY'\n          from pathlib import Path", "          python - <<'PYTHON_SCRIPT'\n          from pathlib import Path", 1)
+          text = text.replace("          Path(\".github/workflows/apply-operator-auth-docs.yml\").unlink()\n          PY\n      - name: Commit generated documentation", "          Path(\".github/workflows/apply-operator-auth-docs.yml\").unlink()\n          PYTHON_SCRIPT\n      - name: Commit generated documentation", 1)
+          target.write_text(text, encoding='utf-8')
+          Path('.github/workflows/fix-auth-docs-workflow.yml').unlink()
+          PY
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .github/workflows/apply-operator-auth-docs.yml .github/workflows/fix-auth-docs-workflow.yml
+          git commit -m 'chore: repair operator auth docs workflow'
+          git push origin HEAD:feat/operator-totp-2fa
