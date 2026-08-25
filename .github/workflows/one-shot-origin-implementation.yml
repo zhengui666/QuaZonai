@@ -21,6 +21,7 @@ jobs:
       - name: Patch browser-origin comparison
         run: |
           python - <<'PY'
+          import re
           from pathlib import Path
 
           path = Path("backend/src/operator_auth.py")
@@ -32,19 +33,12 @@ jobs:
               raise SystemExit("operator_auth.py: settings import match failed")
           text = text.replace(old_import, new_import, 1)
 
-          old_function = '''def require_same_origin(request: Request, settings: Settings) -> None:
-              if request.method.upper() in _SAFE_METHODS or not settings.auth_enabled:
-                  return
-              expected = (settings.auth_public_origin or "").rstrip("/")
-              origin = (request.headers.get("origin") or "").rstrip("/")
-              if not expected or not origin or not secrets.compare_digest(origin, expected):
-                  raise QfError(
-                      "AUTH_ORIGIN_REJECTED",
-                      "The request origin is not allowed for browser-authenticated mutations.",
-                      403,
-                  )
-          '''.replace("          ", "")
-          new_function = '''def require_same_origin(request: Request, settings: Settings) -> None:
+          pattern = re.compile(
+              r"def require_same_origin\(request: Request, settings: Settings\) -> None:\n"
+              r".*?(?=\n\ndef is_operator_auth_exempt)",
+              re.DOTALL,
+          )
+          replacement = '''def require_same_origin(request: Request, settings: Settings) -> None:
               if request.method.upper() in _SAFE_METHODS or not settings.auth_enabled:
                   return
               expected = settings.canonical_auth_public_origin
@@ -57,16 +51,20 @@ jobs:
                   )
               except SettingsError:
                   origin = None
-              if expected is None or origin is None or not secrets.compare_digest(origin, expected):
+              if (
+                  expected is None
+                  or origin is None
+                  or not secrets.compare_digest(origin, expected)
+              ):
                   raise QfError(
                       "AUTH_ORIGIN_REJECTED",
                       "The request origin is not allowed for browser-authenticated mutations.",
                       403,
                   )
-          '''.replace("          ", "")
-          if text.count(old_function) != 1:
-              raise SystemExit("operator_auth.py: require_same_origin match failed")
-          text = text.replace(old_function, new_function, 1)
+          '''.replace("          ", "").rstrip()
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f"operator_auth.py: require_same_origin matches={count}")
           path.write_text(text, encoding="utf-8")
 
           Path(".github/workflows/one-shot-origin-implementation.yml").unlink()
