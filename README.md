@@ -54,6 +54,8 @@ print("QUAZONAI_API_TOKEN=" + secrets.token_urlsafe(32))
 PY
 ```
 
+Generate `QUAZONAI_AUTH_COOKIE_KEY` independently from `QUAZONAI_MASTER_KEY`; QuaZonai rejects equal decoded 32-byte values. The generated `secrets.token_urlsafe(32)` machine token satisfies the accepted RFC 6750 Bearer `b64token` grammar. Do not add spaces, quotes, line breaks, or other characters to the value.
+
 Copy the generated values into `.env`, then configure the complete authentication group:
 
 ```dotenv
@@ -68,7 +70,7 @@ QUAZONAI_AUTH_PUBLIC_ORIGIN=http://127.0.0.1:8000
 
 Add `QUAZONAI_AUTH_TOTP_SECRET` to Google Authenticator with **Enter a setup key**, account name `QuaZonai`, and **Time based** key type. The browser login then requires username, password, and the current 6-digit authenticator code.
 
-`QUAZONAI_AUTH_PUBLIC_ORIGIN` must exactly match the browser origin, including scheme and non-default port. HTTPS origins automatically receive `Secure` browser cookies. When authentication is enabled in `production`, the origin must use HTTPS. A remotely exposed installation should normally set the externally trusted TLS origin, for example `https://quazonai.example.com`.
+`QUAZONAI_AUTH_PUBLIC_ORIGIN` is canonicalized with browser-origin semantics before comparison: scheme/host are lower-cased, Unicode hosts use IDNA ASCII, IPv6 is compressed/bracketed, default `:80`/`:443` ports are omitted, and non-default ports are retained. HTTPS origins automatically receive `Secure` browser cookies. When authentication is enabled in `production`, the origin must use HTTPS. A remotely exposed installation should normally set the externally trusted TLS origin, for example `https://quazonai.example.com`.
 
 Start QuaZonai:
 
@@ -107,7 +109,7 @@ export QUAZONAI_API_TOKEN='<same machine token configured for the API>'
 quazonai --help
 ```
 
-When Operator authentication is enabled, the CLI automatically sends `QUAZONAI_API_TOKEN` as its Bearer machine credential. It never reads the browser cookie, Operator password, or TOTP setup secret. The CLI remains loopback-only by design.
+When Operator authentication is enabled, the CLI automatically sends `QUAZONAI_API_TOKEN` as its Bearer machine credential. The token must be 32–4096 RFC 6750 `b64token` ASCII characters; whitespace, CR/LF, control characters, non-ASCII, and other punctuation are rejected at API startup. The CLI never reads the browser cookie, Operator password, or TOTP setup secret and remains loopback-only by design.
 
 For a user-level Codex installation, symlink the Skill directory into `$CODEX_HOME/skills`. When `CODEX_HOME` is unset, Codex defaults to `~/.codex`. The subshell safely replaces an existing symlink but refuses to overwrite or nest inside an existing real directory:
 

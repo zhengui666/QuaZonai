@@ -46,7 +46,7 @@ export QUAZONAI_API_TOKEN='<same machine token configured on the API>'
 quazonai status
 ```
 
-`QUAZONAI_API_TOKEN` 是本地 automation credential，不是网页登录 token。轮换该值后需要同步更新调用 CLI 的 shell/secret manager；不需要重新配置 Google Authenticator。
+`QUAZONAI_API_TOKEN` 是本地 automation credential，不是网页登录 token。它必须是 32–4096 字符 RFC 6750 `b64token`；CLI 不转义空白、CR/LF、控制字符、非 ASCII 或其他非法 header 字符。轮换该值后需要同步更新调用 CLI 的 shell/secret manager；不需要重新配置 Google Authenticator。
 
 统一成功输出：
 

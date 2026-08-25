@@ -412,7 +412,7 @@ QUAZONAI_AUTH_ENABLED=true
 + Google Authenticator-compatible 6-digit TOTP
 ```
 
-TOTP setup key 来自 `.env` 的 `QUAZONAI_AUTH_TOTP_SECRET`。在 Google Authenticator 中选择 **Enter a setup key**，使用该值并选择 **Time based**。TOTP secret、Operator password、cookie key 和 machine API token 都属于启动级 secret，不能放进聊天、截图、事件或日志。
+TOTP setup key 来自 `.env` 的 `QUAZONAI_AUTH_TOTP_SECRET`。在 Google Authenticator 中选择 **Enter a setup key**，使用该值并选择 **Time based**。TOTP secret、Operator password、cookie key 和 machine API token 都属于启动级 secret，不能放进聊天、截图、事件或日志。`QUAZONAI_AUTH_COOKIE_KEY` 必须独立生成且不能与 `QUAZONAI_MASTER_KEY` 相同；`QUAZONAI_API_TOKEN` 必须使用 RFC 6750 `b64token` 可安全写入 Authorization header 的 ASCII 字符集。
 
 登录时可以勾选 **Trust this browser**。选中后服务器在当前浏览器 profile 写入长期 HttpOnly trusted-browser credential；短期 session 过期后，只要该 trusted credential 仍有效，就会自动恢复新 session，用户不再输入 password/TOTP。默认 trusted-browser 有效期 30 天，默认短 session 为 12 小时。
 
@@ -431,11 +431,11 @@ TOTP setup key 来自 `.env` 的 `QUAZONAI_AUTH_TOTP_SECRET`。在 Google Authen
 - `QUAZONAI_API_TOKEN`：旧 CLI/automation Bearer token 失效；
 - `QUAZONAI_AUTH_PASSWORD`：之后的完整登录使用新密码，但已有 cookie 仍由 cookie key 控制，所以设备级紧急撤销应轮换 cookie key。
 
-认证启用时，`QUAZONAI_AUTH_PUBLIC_ORIGIN` 必须与浏览器实际 Origin 精确一致；production 必须为 HTTPS，反向代理/Tunnel 应在可信 TLS 层终止 HTTPS，并把该外部 Origin 写入 `.env`。
+认证启用时，`QUAZONAI_AUTH_PUBLIC_ORIGIN` 与浏览器 `Origin` 都按 browser-origin 规则 canonicalize 后精确比较：scheme/host 小写、Unicode host 使用 IDNA ASCII、IPv6 压缩并保留 brackets、默认端口省略、非默认端口保留。production 必须为 HTTPS，反向代理/Tunnel 应在可信 TLS 层终止 HTTPS，并把该外部 Origin 写入 `.env`。
 
 `QUAZONAI_AUTH_ENABLED=false` 在所有环境保留 direct access，此时 auth credential/TTL 值均 dormant，应保持 loopback-only 或使用另一个明确可信的访问边界。设为 `true` 后，任一 Operator auth 必需值缺失或非法都会使 API fail closed；启用认证的 production 还要求 HTTPS 并自动使用 Secure cookie。连续失败登录会触发 1–5 秒的短退避，但不会形成持久账户锁定；被限制的请求仍显示统一的无效凭据错误。
 
-Operator Authentication 启用时，CLI/automation 不使用 Web cookie、密码或 TOTP，而是从环境读取 `QUAZONAI_API_TOKEN`；认证关闭时不要求该 token。Downstream consumer 的 Bearer service token 仍独立，只能操作其自身 Handoff/Feedback 合同。
+Operator Authentication 启用时，CLI/automation 不使用 Web cookie、密码或 TOTP，而是从环境读取符合 RFC 6750 `b64token` 语法的 `QUAZONAI_API_TOKEN`；认证关闭时不要求该 token。Downstream consumer 的 Bearer service token 仍独立，只能操作其自身 Handoff/Feedback 合同。
 
 ### 14.3 Codex / Runtime Configuration
 
