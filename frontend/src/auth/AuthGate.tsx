@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from 'react';
 import { Theme } from '@radix-ui/themes';
 import '../styles/auth.css';
 
@@ -15,7 +24,20 @@ interface ErrorEnvelope {
   error?: { message?: string };
 }
 
-function LoginPage({ onAuthenticated }: { onAuthenticated: () => void }) {
+interface OperatorAuthContextValue {
+  authEnabled: boolean;
+  logout: () => Promise<void>;
+}
+
+const OperatorAuthContext = createContext<OperatorAuthContextValue | null>(null);
+
+export function useOperatorAuth(): OperatorAuthContextValue {
+  const value = useContext(OperatorAuthContext);
+  if (value === null) throw new Error('useOperatorAuth must be used inside AuthGate');
+  return value;
+}
+
+function LoginPage({ onAuthenticated }: { onAuthenticated: (session: SessionView) => void }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [totpCode, setTotpCode] = useState('');
@@ -50,7 +72,7 @@ function LoginPage({ onAuthenticated }: { onAuthenticated: () => void }) {
         setError(message);
         return;
       }
-      onAuthenticated();
+      onAuthenticated(await response.json() as SessionView);
     } catch {
       setError('Unable to reach QuaZonai.');
     } finally {
@@ -131,35 +153,65 @@ function LoginPage({ onAuthenticated }: { onAuthenticated: () => void }) {
 
 export function AuthGate({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>('checking');
+  const [session, setSession] = useState<SessionView | null>(null);
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
+
+  const acceptSession = useCallback((nextSession: SessionView) => {
+    setSession(nextSession);
+    setState(nextSession.authenticated ? 'authenticated' : 'anonymous');
+  }, []);
 
   const checkSession = useCallback(async () => {
     setBootstrapError(null);
     try {
       const response = await fetch('/api/v1/auth/session', { credentials: 'same-origin' });
       if (response.ok) {
-        const session = await response.json() as SessionView;
-        setState(session.authenticated ? 'authenticated' : 'anonymous');
+        acceptSession(await response.json() as SessionView);
         return;
       }
       if (response.status === 401) {
+        setSession(null);
         setState('anonymous');
         return;
       }
       setBootstrapError(`Authentication service returned HTTP ${response.status}.`);
+      setSession(null);
       setState('anonymous');
     } catch {
       setBootstrapError('Unable to reach the authentication service.');
+      setSession(null);
       setState('anonymous');
     }
-  }, []);
+  }, [acceptSession]);
+
+  const logout = useCallback(async () => {
+    if (!session?.auth_enabled) return;
+    try {
+      await fetch('/api/v1/auth/logout', {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+    } finally {
+      setSession(null);
+      setState('anonymous');
+    }
+  }, [session?.auth_enabled]);
 
   useEffect(() => { void checkSession(); }, [checkSession]);
   useEffect(() => {
-    const requireAuth = () => setState('anonymous');
+    const requireAuth = () => {
+      if (session?.auth_enabled === false) return;
+      setSession(null);
+      setState('anonymous');
+    };
     window.addEventListener('quazonai:auth-required', requireAuth);
     return () => window.removeEventListener('quazonai:auth-required', requireAuth);
-  }, []);
+  }, [session?.auth_enabled]);
+
+  const contextValue = useMemo<OperatorAuthContextValue>(
+    () => ({ authEnabled: session?.auth_enabled ?? false, logout }),
+    [logout, session?.auth_enabled],
+  );
 
   if (state === 'checking') {
     return (
@@ -171,10 +223,14 @@ export function AuthGate({ children }: { children: ReactNode }) {
   if (state === 'anonymous') {
     return (
       <>
-        <LoginPage onAuthenticated={() => setState('authenticated')} />
+        <LoginPage onAuthenticated={acceptSession} />
         {bootstrapError ? <div className="qz-auth-bootstrap-error" role="status">{bootstrapError}</div> : null}
       </>
     );
   }
-  return <>{children}</>;
+  return (
+    <OperatorAuthContext.Provider value={contextValue}>
+      {children}
+    </OperatorAuthContext.Provider>
+  );
 }
