@@ -23,7 +23,7 @@ QuaZonai **不拥有交易执行**。NautilusTrader、LEAN 或任何自定义执
 1. **提出 Research Idea**；
 2. **审批系统推荐的 Paper / Live Candidate Handoff**。
 
-首次安装、Operator 登录、数据授权、Codex 登录与 Runtime Configuration、Mandate/Universe/下游配置、插件管理和故障处理属于低频 Administration，不计入正常研究旅程。
+首次安装、可选 Operator 登录、数据授权、Codex 登录与 Runtime Configuration、Mandate/Universe/下游配置、插件管理和故障处理属于低频 Administration，不计入正常研究旅程。
 
 完整闭环：
 
@@ -1070,6 +1070,7 @@ Codex provider 配置与 Worker limits 属于**运行时管理配置**，由本�
 QUAZONAI_ENV
 PostgreSQL database/user/password + DATABASE_URL/ALEMBIC_URL
 QUAZONAI_MASTER_KEY
+QUAZONAI_AUTH_ENABLED
 QUAZONAI_AUTH_USERNAME / QUAZONAI_AUTH_PASSWORD / QUAZONAI_AUTH_TOTP_SECRET
 QUAZONAI_AUTH_COOKIE_KEY / QUAZONAI_API_TOKEN / QUAZONAI_AUTH_PUBLIC_ORIGIN
 plugin/package/mission storage roots
@@ -1295,7 +1296,7 @@ evaluator           # Sealed Promotion evaluator, no Codex workspace access
 
 不引入 Redis、Celery、Kafka 或 Kubernetes。使用 PostgreSQL durable jobs + `FOR UPDATE SKIP LOCKED`，事件表 + `LISTEN/NOTIFY` 仅做唤醒。
 
-`api` 默认只发布宿主 `127.0.0.1:8000`。远程访问由操作者自己的受信 TLS/reverse-proxy/tunnel 层处理；V1 不建设多用户业务认证或 RBAC，但 Web/operator API 必须有单用户 Operator Authentication 边界，不能因为端口被暴露而自动获得工作台访问权。
+`api` 默认只发布宿主 `127.0.0.1:8000`。远程访问由操作者自己的受信 TLS/reverse-proxy/tunnel 层处理；V1 不建设多用户业务认证或 RBAC。`QUAZONAI_AUTH_ENABLED=true` 时 Web/operator API 使用单用户 Operator Authentication 边界；为 `false` 时保留 direct access，操作者必须保持 loopback-only 或提供另一个明确可信的访问边界。
 
 ### 37.1 Operator Authentication
 
@@ -1304,6 +1305,7 @@ Operator Authentication 是部署/访问边界，不是新的业务用户、tena
 `.env` / process environment 配置：
 
 ```text
+QUAZONAI_AUTH_ENABLED
 QUAZONAI_AUTH_USERNAME
 QUAZONAI_AUTH_PASSWORD
 QUAZONAI_AUTH_TOTP_SECRET
@@ -1316,7 +1318,7 @@ QUAZONAI_AUTH_TRUSTED_BROWSER_TTL_DAYS     # optional, bounded default
 
 规则：
 
-- production 启动必须 fail closed：Operator username/password、TOTP secret、独立 32-byte cookie encryption key、machine API token 与 public origin 缺失或格式非法时拒绝启动；development/test 可在整组 auth 配置完全缺失时显式保持 auth disabled，任一字段部分配置仍视为错误；
+- `QUAZONAI_AUTH_ENABLED=false` 时在所有环境保留 direct Web/operator API access，不显示登录门；该模式只适合 loopback-only 或另有明确可信访问边界的部署；设为 `true` 时 username/password、TOTP secret、独立 32-byte cookie encryption key、machine API token 与 public origin 必须全部存在且格式合法，否则启动 fail closed；启用认证的 production public origin 必须使用 HTTPS；
 - 正常浏览器登录要求 `username + password + TOTP`。TOTP 使用 RFC 6238 兼容 Google Authenticator 的标准 30 秒、6 位配置；允许有限 clock-skew window，不自研 OTP/HMAC 协议；
 - 密码、TOTP setup secret、cookie key 与 API token 都是启动级 secret；Web/API 不回读、不写事件、不写日志；
 - 成功登录签发短期 browser session cookie。勾选 **Trust this browser** 时另外签发长期 trusted-browser cookie；两者都使用独立 `QUAZONAI_AUTH_COOKIE_KEY` 做 AES-256-GCM authenticated encryption，Cookie 必须 `HttpOnly`、`SameSite=Strict`，production 必须 `Secure`，不能把 bearer credential 放入 `localStorage`/`sessionStorage`；
@@ -1500,7 +1502,7 @@ GET      /api/v1/system/health                   # public healthcheck
 GET/PUT  /api/v1/system/runtime-configuration
 ```
 
-Operator API 默认要求 authenticated browser session/trusted-browser credential 或 machine API token；认证入口和 healthcheck 是明确例外。下游 service credential 只授权其自身 Handoff/Feedback 资源，不形成业务用户/RBAC 域，也不被 Operator auth 替代。
+Operator Authentication 启用时，Operator API 要求 authenticated browser session/trusted-browser credential 或 machine API token；认证入口和 healthcheck 是明确例外。认证关闭时保留 direct access。下游 service credential 只授权其自身 Handoff/Feedback 资源，不形成业务用户/RBAC 域，也不被 Operator auth 替代。
 
 统一错误 envelope：
 
@@ -1528,7 +1530,7 @@ Operator API 默认要求 authenticated browser session/trusted-browser credenti
 
 ## 42. 页面设计
 
-### Operator Login
+### Operator Login（仅在 `QUAZONAI_AUTH_ENABLED=true` 时）
 
 - 未认证浏览器只显示登录门，不加载研究工作台数据；
 - 输入单 Operator username、password 和 6 位 authenticator code；
@@ -1649,7 +1651,7 @@ Provider/Data/Handoff secret 不得进入 Codex Mission shell、Research Tool Se
 
 ## 45. Threat / failure boundary
 
-V1 假定合作的单机操作者；插件和 Mission code 不是恶意代码安全沙箱。但暴露 Web/API 时必须验证 Operator 身份，不能把“单用户”解释为“匿名访问”。trusted-browser cookie 等价于长期设备凭证，应只授予操作者控制的浏览器 profile；设备丢失/浏览器 profile 泄漏时通过轮换 `QUAZONAI_AUTH_COOKIE_KEY` 全局撤销。
+V1 假定合作的单机操作者；插件和 Mission code 不是恶意代码安全沙箱。暴露 Web/API 时，若启用 QuaZonai Operator Authentication 就必须验证 Operator 身份；若关闭认证，则必须由 loopback-only 或另一个明确可信的访问边界承担保护，不能无意中把服务公开为匿名工作台。trusted-browser cookie 等价于长期设备凭证，应只授予操作者控制的浏览器 profile；设备丢失/浏览器 profile 泄漏时通过轮换 `QUAZONAI_AUTH_COOKIE_KEY` 全局撤销。
 
 不得因为“不是恶意沙箱”而放弃：
 
@@ -1799,11 +1801,11 @@ QuaZonai/
 
 ### Product
 
-- [ ] 未认证浏览器不能读取或修改 Operator API；
+- [ ] `QUAZONAI_AUTH_ENABLED=true` 时未认证浏览器不能读取或修改 Operator API；为 `false` 时保留 direct access；
 - [ ] password + Google Authenticator-compatible TOTP 可建立 browser session；
 - [ ] 勾选 Trust this browser 后，同一浏览器在 session 过期后可用 trusted credential 免 password/TOTP 恢复；
 - [ ] logout/forget browser、trusted credential expiry 和 cookie-key rotation 会阻止后续免密恢复；
-- [ ] production auth 配置缺失/非法时 API fail closed，healthcheck 仍可用于正常已配置实例；
+- [ ] Operator Authentication 启用后，配置缺失/非法时 API fail closed；启用认证的 production 要求 HTTPS/Secure cookie；healthcheck 仍保持 public；
 - [ ] machine API token 可供 CLI/automation 使用且不会被下发到浏览器；
 - [ ] downstream service token 仍只授权对应 Handoff/Feedback，Operator auth 不破坏 downstream contract；
 - [ ] cookie-authenticated unsafe request 的 Origin 不匹配时被拒绝；

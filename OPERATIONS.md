@@ -14,7 +14,7 @@ QuaZonai V1 是单用户、自托管私有工作台。正常 Research Program �
 完整用户视图：
 
 ```text
-Operator 登录
+可选 Operator 登录（认证启用时）
 → 提出 Idea
 → 系统自治研究
 → 系统构建 Alpha / Portfolio
@@ -52,7 +52,7 @@ Operator 登录
 
 低频操作：
 
-- 配置单 Operator 登录与 Google Authenticator-compatible TOTP；
+- 决定是否启用单 Operator 登录，并在启用时配置 Google Authenticator-compatible TOTP；
 - 决定是否在受控设备上启用 `Trust this browser`；
 - 完成首次 `RESEARCH_READY`；
 - Codex 登录/认证；
@@ -401,12 +401,13 @@ Live handoff
 
 ### 14.2 Operator Authentication
 
-QuaZonai V1 只有一个部署 Operator。它不是业务用户系统、tenant 或 RBAC。
+QuaZonai V1 只有一个部署 Operator。它不是业务用户系统、tenant 或 RBAC。`QUAZONAI_AUTH_ENABLED=false` 保留 direct access；只有显式设为 `true` 才启用下述登录门。
 
-正常 Web 登录输入：
+认证启用后的 Web 登录输入：
 
 ```text
-QUAZONAI_AUTH_USERNAME
+QUAZONAI_AUTH_ENABLED=true
++ QUAZONAI_AUTH_USERNAME
 + QUAZONAI_AUTH_PASSWORD
 + Google Authenticator-compatible 6-digit TOTP
 ```
@@ -430,9 +431,9 @@ TOTP setup key 来自 `.env` 的 `QUAZONAI_AUTH_TOTP_SECRET`。在 Google Authen
 - `QUAZONAI_API_TOKEN`：旧 CLI/automation Bearer token 失效；
 - `QUAZONAI_AUTH_PASSWORD`：之后的完整登录使用新密码，但已有 cookie 仍由 cookie key 控制，所以设备级紧急撤销应轮换 cookie key。
 
-`QUAZONAI_AUTH_PUBLIC_ORIGIN` 必须与浏览器实际 Origin 精确一致。Production 必须为 HTTPS；反向代理/Tunnel 应在可信 TLS 层终止 HTTPS，并把该外部 Origin 写入 `.env`。
+认证启用时，`QUAZONAI_AUTH_PUBLIC_ORIGIN` 必须与浏览器实际 Origin 精确一致；production 必须为 HTTPS，反向代理/Tunnel 应在可信 TLS 层终止 HTTPS，并把该外部 Origin 写入 `.env`。
 
-Production 缺少任一 Operator auth 必需值时 API fail closed。Development/Test 只有在整组主要 auth 配置都缺失时才允许 auth disabled；部分配置不会降级成匿名访问。
+`QUAZONAI_AUTH_ENABLED=false` 在所有环境保留 direct access，此时应保持 loopback-only 或使用另一个明确可信的访问边界。设为 `true` 后，任一 Operator auth 必需值缺失或非法都会使 API fail closed；启用认证的 production 还要求 HTTPS 并自动使用 Secure cookie。
 
 CLI/automation 不使用 Web cookie、密码或 TOTP，而是从环境读取 `QUAZONAI_API_TOKEN`。Downstream consumer 的 Bearer service token 仍独立，只能操作其自身 Handoff/Feedback 合同。
 
