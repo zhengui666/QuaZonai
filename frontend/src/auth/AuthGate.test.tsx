@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AuthGate } from './AuthGate';
@@ -27,6 +27,22 @@ describe('AuthGate', () => {
     render(<AuthGate><div>Workbench ready</div></AuthGate>);
 
     expect(await screen.findByText('Workbench ready')).toBeInTheDocument();
+  });
+
+  it('preserves direct access when operator authentication is disabled', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => jsonResponse({
+      authenticated: true,
+      username: 'local-operator',
+      trusted_browser: false,
+      auth_enabled: false,
+    })));
+
+    render(<AuthGate><div>Direct workbench</div></AuthGate>);
+
+    expect(await screen.findByText('Direct workbench')).toBeInTheDocument();
+    act(() => window.dispatchEvent(new Event('quazonai:auth-required')));
+    expect(screen.getByText('Direct workbench')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Verify your identity' })).not.toBeInTheDocument();
   });
 
   it('shows password, authenticator code, and trusted-browser option when anonymous', async () => {
