@@ -4,9 +4,17 @@ Use these recipes after reading the operating rules in `../SKILL.md`. Replace pl
 
 When the active working directory is inside a validated QuaZonai checkout, that checkout's `AGENTS.md`, `DESIGN.md`, `OPERATIONS.md`, and `CLI.md` remain authoritative over these portable recipes.
 
-## 1. Diagnose connectivity and readiness
+## 1. Diagnose connectivity, authentication, and readiness
 
-Use when the CLI cannot connect, the user asks whether QuaZonai is operational, or a permitted mutation is about to start and readiness matters.
+Use when the CLI cannot connect, the API returns `AUTH_REQUIRED`, the user asks whether QuaZonai is operational, or a permitted mutation is about to start and readiness matters.
+
+When Operator Authentication may be enabled, verify only that the machine token exists; do not print it:
+
+```bash
+test -n "${QUAZONAI_API_TOKEN:-}"
+```
+
+Then query the API:
 
 ```bash
 quazonai status
@@ -17,6 +25,13 @@ Interpret them separately:
 
 - `status` answers whether the Core API and reported services are healthy;
 - `readiness` answers whether QuaZonai reports the capabilities required for work as ready.
+
+Authentication interpretation:
+
+- no `QUAZONAI_API_TOKEN` plus `AUTH_REQUIRED`: the CLI process lacks the required environment prerequisite;
+- token present plus `AUTH_REQUIRED`: the CLI environment and API likely have different token revisions, or the API received no token;
+- never fall back to the Operator password, TOTP setup secret, browser cookies, or a downstream Handoff service token;
+- when authentication is disabled, direct loopback access works without a token.
 
 If the CLI executable is missing and the current directory is a QuaZonai checkout containing `backend/pyproject.toml`:
 
