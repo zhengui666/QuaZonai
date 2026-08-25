@@ -8,9 +8,11 @@ from pathlib import Path
 from cli.main import build_parser
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+README_PATH = REPO_ROOT / "README.md"
 SKILL_DIR = REPO_ROOT / "skills" / "quazonai"
 SKILL_PATH = SKILL_DIR / "SKILL.md"
 CLI_REFERENCE_PATH = SKILL_DIR / "references" / "cli-reference.md"
+WORKFLOWS_PATH = SKILL_DIR / "references" / "workflows.md"
 
 
 def _frontmatter(text: str) -> str:
@@ -70,6 +72,10 @@ def _bash_commands(text: str) -> list[str]:
     return commands
 
 
+def _skill_documents() -> tuple[Path, ...]:
+    return SKILL_PATH, CLI_REFERENCE_PATH, WORKFLOWS_PATH
+
+
 def test_skill_metadata_is_portable_and_discoverable() -> None:
     text = SKILL_PATH.read_text(encoding="utf-8")
     frontmatter = _frontmatter(text)
@@ -84,6 +90,7 @@ def test_skill_metadata_is_portable_and_discoverable() -> None:
     assert "`quazonai` CLI" in description
     assert "Use when" in description
     assert "Do not use" in description
+    assert "human-only approve/reject command" in description
     assert len(compatibility) <= 500
     assert len(text.splitlines()) < 500
 
@@ -99,11 +106,18 @@ def test_skill_references_are_relative_and_present() -> None:
     for relative_path in reference_links:
         assert (SKILL_DIR / relative_path).is_file()
 
-    assert "This skill is self-contained." in text
-    assert not re.search(
-        r"\]\((?:\.\./)*(?:AGENTS|DESIGN|OPERATIONS|CLI)\.md(?:#[^)]+)?\)",
-        text,
-    )
+
+def test_skill_defers_to_repository_authority_when_available() -> None:
+    skill = SKILL_PATH.read_text(encoding="utf-8")
+    reference = CLI_REFERENCE_PATH.read_text(encoding="utf-8")
+
+    assert "When operating from a QuaZonai source checkout" in skill
+    assert "`DESIGN.md` remains the product authority" in skill
+    assert "`AGENTS.md` remains the governance authority" in skill
+    assert "`--help` output is syntax authority only" in skill
+    assert "installed standalone" in skill
+    assert "`DESIGN.md` remains the product authority" in reference
+    assert "never overrides product, ownership, authorization, or safety rules" in reference
 
 
 def test_documented_command_inventory_matches_argparse_tree() -> None:
@@ -120,12 +134,7 @@ def test_documented_command_inventory_matches_argparse_tree() -> None:
 
 def test_skill_does_not_advertise_design_only_commands() -> None:
     combined = "\n".join(
-        path.read_text(encoding="utf-8")
-        for path in (
-            SKILL_PATH,
-            CLI_REFERENCE_PATH,
-            SKILL_DIR / "references" / "workflows.md",
-        )
+        path.read_text(encoding="utf-8") for path in _skill_documents()
     )
     stale_invocations = {
         "quazonai mandate ",
@@ -149,11 +158,7 @@ def test_all_documented_shell_commands_parse() -> None:
     parser = build_parser()
     parsed_commands: list[str] = []
 
-    for path in (
-        SKILL_PATH,
-        CLI_REFERENCE_PATH,
-        SKILL_DIR / "references" / "workflows.md",
-    ):
+    for path in _skill_documents():
         for command in _bash_commands(path.read_text(encoding="utf-8")):
             if not command.startswith("quazonai "):
                 continue
@@ -164,6 +169,35 @@ def test_all_documented_shell_commands_parse() -> None:
             parsed_commands.append(command)
 
     assert parsed_commands
+
+
+def test_candidate_decisions_are_prepared_but_never_executed_by_agents() -> None:
+    combined = "\n".join(
+        path.read_text(encoding="utf-8") for path in _skill_documents()
+    )
+    bash_commands = [
+        command
+        for path in _skill_documents()
+        for command in _bash_commands(path.read_text(encoding="utf-8"))
+    ]
+
+    assert "No Codex or other AI Agent profile may execute them" in combined
+    assert "An AI Agent must never execute `approval approve` or `approval reject`" in combined
+    assert "Human-only decision" in combined
+    assert not any(
+        re.match(r"^quazonai approval (approve|reject)\b", command)
+        and "--help" not in command
+        for command in bash_commands
+    )
+
+
+def test_codex_installation_uses_codex_home() -> None:
+    readme = README_PATH.read_text(encoding="utf-8")
+
+    assert 'CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"' in readme
+    assert 'mkdir -p "${CODEX_HOME}/skills"' in readme
+    assert '"${CODEX_HOME}/skills/quazonai"' in readme
+    assert 'mkdir -p "${HOME}/.agents/skills"' not in readme
 
 
 def test_high_risk_argument_shapes_match_documentation() -> None:
@@ -213,12 +247,7 @@ def test_high_risk_argument_shapes_match_documentation() -> None:
 
 def test_global_endpoint_examples_use_argparse_order() -> None:
     combined = "\n".join(
-        path.read_text(encoding="utf-8")
-        for path in (
-            SKILL_PATH,
-            CLI_REFERENCE_PATH,
-            SKILL_DIR / "references" / "workflows.md",
-        )
+        path.read_text(encoding="utf-8") for path in _skill_documents()
     )
 
     assert "quazonai --endpoint http://127.0.0.1:8000 status" in combined
