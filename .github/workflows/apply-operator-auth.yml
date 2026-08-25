@@ -46,6 +46,7 @@ jobs:
           cat tools/auth-patch/part-* | base64 --decode | gzip --decompress > tools/apply_operator_auth.py
           python - <<'PY'
           from pathlib import Path
+
           path = Path("tools/apply_operator_auth.py")
           text = path.read_text(encoding="utf-8")
           path.write_text(
@@ -54,6 +55,41 @@ jobs:
           )
           PY
           python tools/apply_operator_auth.py
+          python - <<'PY'
+          from pathlib import Path
+
+          auth_test = Path("frontend/src/tests/Auth.test.tsx")
+          auth_test_text = auth_test.read_text(encoding="utf-8")
+          auth_test.write_text(
+              auth_test_text.replace(", waitFor", ""),
+              encoding="utf-8",
+          )
+
+          workflow = Path(".github/workflows/frontend.yml")
+          workflow_text = workflow.read_text(encoding="utf-8")
+          marker = (
+              "      QUAZONAI_MASTER_KEY: "
+              "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n"
+          )
+          auth_environment = marker + (
+              "      QUAZONAI_AUTH_USERNAME: operator\n"
+              "      QUAZONAI_AUTH_PASSWORD: correct-horse-battery-staple-for-ci\n"
+              "      QUAZONAI_AUTH_TOTP_SECRET: GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ\n"
+              "      QUAZONAI_AUTH_API_TOKEN: ci-operator-api-token-0123456789abcdef0123456789\n"
+              "      QUAZONAI_AUTH_COOKIE_SECURE: 'false'\n"
+          )
+          if "QUAZONAI_AUTH_USERNAME" not in workflow_text:
+              if marker not in workflow_text:
+                  raise RuntimeError("frontend workflow master-key marker was not found")
+              workflow_text = workflow_text.replace(marker, auth_environment, 1)
+          workflow.write_text(workflow_text, encoding="utf-8")
+
+          gitignore = Path(".gitignore")
+          gitignore_text = gitignore.read_text(encoding="utf-8")
+          if "frontend/.auth/" not in gitignore_text:
+              gitignore_text += "\n# Generated browser authentication state\nfrontend/.auth/\n"
+          gitignore.write_text(gitignore_text, encoding="utf-8")
+          PY
           cat > backend/alembic/versions/0006_operator_auth.py <<'PYFILE'
           """Add the single-operator authentication state and trusted-browser registry.
 
@@ -104,6 +140,115 @@ jobs:
               for model in (TrustedBrowser, OperatorTotpUse, OperatorAuthState):
                   model.__table__.drop(bind=bind, checkfirst=True)
           PYFILE
+          cat > frontend/e2e/global-setup.ts <<'TSFILE'
+          import { createHmac } from 'node:crypto';
+          import { mkdir } from 'node:fs/promises';
+          import { dirname } from 'node:path';
+          import { request } from '@playwright/test';
+
+          const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+          const STORAGE_STATE_PATH = '.auth/operator.json';
+
+          function decodeBase32(value: string): Buffer {
+            const normalized = value.replace(/=+$/u, '').replace(/\s+/gu, '').toUpperCase();
+            let accumulator = 0;
+            let bitCount = 0;
+            const bytes: number[] = [];
+
+            for (const character of normalized) {
+              const digit = BASE32_ALPHABET.indexOf(character);
+              if (digit < 0) {
+                throw new Error(`Invalid base32 character in TOTP secret: ${character}`);
+              }
+              accumulator = (accumulator << 5) | digit;
+              bitCount += 5;
+              if (bitCount >= 8) {
+                bitCount -= 8;
+                bytes.push((accumulator >> bitCount) & 0xff);
+                accumulator &= (1 << bitCount) - 1;
+              }
+            }
+
+            return Buffer.from(bytes);
+          }
+
+          function currentTotp(secret: string): string {
+            const counter = Math.floor(Date.now() / 30_000);
+            const counterBytes = Buffer.alloc(8);
+            counterBytes.writeBigUInt64BE(BigInt(counter));
+            const digest = createHmac('sha1', decodeBase32(secret)).update(counterBytes).digest();
+            const offset = (digest.at(-1) ?? 0) & 0x0f;
+            const binary = (
+              ((digest[offset]! & 0x7f) << 24)
+              | (digest[offset + 1]! << 16)
+              | (digest[offset + 2]! << 8)
+              | digest[offset + 3]!
+            ) >>> 0;
+            return String(binary % 1_000_000).padStart(6, '0');
+          }
+
+          export default async function globalSetup(): Promise<void> {
+            const username = process.env.QUAZONAI_AUTH_USERNAME;
+            const password = process.env.QUAZONAI_AUTH_PASSWORD;
+            const totpSecret = process.env.QUAZONAI_AUTH_TOTP_SECRET;
+            if (!username || !password || !totpSecret) {
+              throw new Error('Playwright operator authentication environment is incomplete.');
+            }
+
+            const api = await request.newContext({ baseURL: 'http://127.0.0.1:8000' });
+            try {
+              const response = await api.post('/api/v1/auth/login', {
+                data: {
+                  username,
+                  password,
+                  totp_code: currentTotp(totpSecret),
+                  trust_browser: false,
+                },
+              });
+              if (!response.ok()) {
+                throw new Error(
+                  `Operator login failed (${response.status()}): ${await response.text()}`,
+                );
+              }
+              await mkdir(dirname(STORAGE_STATE_PATH), { recursive: true });
+              await api.storageState({ path: STORAGE_STATE_PATH });
+            } finally {
+              await api.dispose();
+            }
+          }
+          TSFILE
+          cat > frontend/playwright.config.ts <<'TSFILE'
+          import { defineConfig, devices } from '@playwright/test';
+
+          export default defineConfig({
+            testDir: './e2e',
+            globalSetup: './e2e/global-setup.ts',
+            fullyParallel: true,
+            retries: process.env.CI ? 2 : 0,
+            workers: process.env.CI ? 1 : undefined,
+            reporter: process.env.CI
+              ? [['github'], ['html', { open: 'never' }]]
+              : 'list',
+            use: {
+              baseURL: 'http://127.0.0.1:4173',
+              storageState: STORAGE_STATE_PATH,
+              trace: 'retain-on-failure',
+            },
+            webServer: {
+              command: 'npm run dev -- --host 127.0.0.1 --port 4173',
+              url: 'http://127.0.0.1:4173',
+              reuseExistingServer: !process.env.CI,
+            },
+            projects: [
+              {
+                name: 'chromium',
+                use: { ...devices['Desktop Chrome'] },
+              },
+            ],
+          });
+
+          const STORAGE_STATE_PATH = '.auth/operator.json';
+          TSFILE
           rm -rf tools/auth-patch tools/auth-patch-v2
           git diff --check
       - name: Research ownership boundary
