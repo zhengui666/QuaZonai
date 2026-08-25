@@ -51,6 +51,25 @@ Because `--endpoint` is a global option, place it before the resource:
 quazonai --endpoint http://localhost:8000 readiness
 ```
 
+## Machine authentication
+
+When QuaZonai Operator Authentication is enabled, the CLI reads `QUAZONAI_API_TOKEN` from its process environment and automatically sends:
+
+```text
+Authorization: Bearer <QUAZONAI_API_TOKEN>
+```
+
+Do not put the token in the endpoint URL, command arguments, shell history, output, or documentation. Do not use the Operator password, TOTP setup secret, browser session cookie, or trusted-browser cookie from the CLI.
+
+A safe shell prerequisite check verifies presence without printing the value:
+
+```bash
+test -n "${QUAZONAI_API_TOKEN:-}"
+quazonai status
+```
+
+When authentication is disabled, no machine token is required. `AUTH_REQUIRED` means the protected API did not receive the current configured machine credential. A downstream Handoff service token is separate and must not be replaced by `QUAZONAI_API_TOKEN`.
+
 ## Implemented command inventory
 
 The following table is contract-tested against the `argparse` command tree. Do not add design-stage or imagined commands to an invocation. An implemented command is not automatically authorized for an Agent: `approval approve` and `approval reject` are human-only decisions.
@@ -220,6 +239,8 @@ Exit codes:
 | `2` | Command-line usage/input failure |
 | `10` | Core API `5xx` failure |
 | `20` | Core API `409 Conflict` |
+
+`AUTH_REQUIRED` is an exit-code `1` authentication/configuration failure. Verify that the current process has `QUAZONAI_API_TOKEN` without printing it. Never fall back to browser credentials or a downstream service token.
 
 ## Mutation mechanics
 
