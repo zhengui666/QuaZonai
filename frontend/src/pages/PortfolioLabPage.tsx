@@ -15,13 +15,13 @@ import { Section } from '../components/ui/Section';
 import { Translated, useI18n } from '../i18n';
 import { useCandidates, useMandates, usePortfolioPrograms } from '../lib/api/hooks';
 import type { PortfolioProgram } from '../lib/api/types';
-import { formatDateTime } from '../lib/format';
+import { formatDateTime, formatNumber } from '../lib/format';
 import { findMatrix, findNamedValues, findTimeSeries } from '../lib/metrics';
 
 const programColumns: ColumnDef<PortfolioProgram, unknown>[] = [
   { accessorKey: 'mandate_name', header: 'Mandate', cell: ({ row }) => <div><div className="qz-list-title">{row.original.mandate_name ?? row.original.mandate_version_id.slice(0, 8)}</div><div className="qz-list-subtitle qz-mono">{row.original.id}</div></div> },
   { accessorKey: 'state', header: 'State', cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
-  { accessorKey: 'candidate_count', header: 'Candidates', cell: ({ getValue }) => <span className="qz-number">{String(getValue() ?? '—')}</span> },
+  { accessorKey: 'candidate_count', header: 'Candidates', cell: ({ getValue }) => <span className="qz-number">{formatNumber(getValue() as number | undefined)}</span> },
   { accessorKey: 'updated_at', header: 'Updated', cell: ({ getValue }) => formatDateTime(getValue() as string | undefined) },
   { id: 'candidate', header: '', cell: ({ row }) => row.original.current_candidate_id ? <Button asChild size="1" variant="ghost"><Link to={`/portfolio/candidates/${row.original.current_candidate_id}`}><Translated source="Candidate" /> <ArrowRightIcon size={12} /></Link></Button> : <span className="qz-section-meta"><Translated source="Researching" /></span> },
 ];
@@ -59,7 +59,7 @@ export function PortfolioLabPage() {
       </div>
       <div className="qz-grid-2">
         <Section title="Risk exposure" meta="Factor / universe exposure">{risk.length ? <div className="qz-panel qz-panel-pad"><EChart ariaLabel="Portfolio risk exposure chart" option={riskOption} /></div> : <EmptyState title="No exposure vector" description="Risk exposure remains unavailable until returned by the candidate evidence API." />}</Section>
-        <Section title="Correlation matrix" meta="Cross-alpha / cross-universe dependence">{matrix ? <div className="qz-panel qz-panel-pad"><EChart ariaLabel="Portfolio correlation matrix" option={correlationOption} /></div> : <EmptyState title="No correlation matrix" description="The current candidate did not return matrix evidence." />}</Section>
+        <Section title="Correlation matrix" meta="Cross-alpha / cross-universe dependence">{matrix ? <div className="qz-panel qz-panel-pad"><EChart ariaLabel="Portfolio correlation matrix chart" option={correlationOption} /></div> : <EmptyState title="No correlation matrix" description="The current candidate did not return matrix evidence." />}</Section>
       </div>
     </>
   );
