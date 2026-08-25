@@ -53,19 +53,32 @@ python -m pip install ./backend
 quazonai --help
 ```
 
-For a user-level Codex installation, copy or symlink the Skill directory into `$CODEX_HOME/skills`. When `CODEX_HOME` is unset, Codex defaults to `~/.codex`:
+For a user-level Codex installation, symlink the Skill directory into `$CODEX_HOME/skills`. When `CODEX_HOME` is unset, Codex defaults to `~/.codex`. The subshell safely replaces an existing symlink but refuses to overwrite or nest inside an existing real directory:
 
 ```bash
-CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
-mkdir -p "${CODEX_HOME}/skills"
-ln -sfn "$(pwd)/skills/quazonai" "${CODEX_HOME}/skills/quazonai"
+(
+  set -eu
+  CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
+  SKILL_SOURCE="$(pwd)/skills/quazonai"
+  SKILL_DEST="${CODEX_HOME}/skills/quazonai"
+
+  mkdir -p "${CODEX_HOME}/skills"
+  if [ -L "${SKILL_DEST}" ]; then
+    rm "${SKILL_DEST}"
+  elif [ -e "${SKILL_DEST}" ]; then
+    printf 'Refusing to replace existing directory or file: %s\n' "${SKILL_DEST}" >&2
+    printf 'Move or remove it explicitly, then run this installer again.\n' >&2
+    exit 1
+  fi
+  ln -s "${SKILL_SOURCE}" "${SKILL_DEST}"
+)
 ```
 
 Then restart or reload Codex and ask it to perform a QuaZonai operation, such as “check QuaZonai readiness” or “show active research programs.” Codex clients that support explicit Skill invocation can use `$quazonai`.
 
 Other Agent Skills-compatible clients may use a different discovery directory, including repository-scoped locations. Follow that client's documentation rather than assuming Codex's user-level path.
 
-The Skill assumes the Core API is running on a local loopback endpoint. It is an external operator workflow, not QuaZonai's built-in per-Mission Codex runtime. When used from this source checkout, the Skill defers to `AGENTS.md`, `DESIGN.md`, `OPERATIONS.md`, and `CLI.md`; when installed standalone, its bundled references provide the portable operating baseline. Candidate approval/rejection commands remain human-only and are never executed by an AI Agent.
+The Skill assumes the Core API is running on a local loopback endpoint. It is an external operator workflow, not QuaZonai's built-in per-Mission Codex runtime. When used while the active working directory is inside a validated QuaZonai checkout, the Skill discovers that checkout with Git and defers to its `AGENTS.md`, `DESIGN.md`, `OPERATIONS.md`, and `CLI.md`; when installed standalone elsewhere, its bundled references provide the portable operating baseline. Candidate approval/rejection commands remain human-only and are never executed by an AI Agent.
 
 ## Verification
 
