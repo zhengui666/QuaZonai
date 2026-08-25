@@ -5,5 +5,5 @@ export function PageHeader({ title, description, actions, translateTitle = true,
   const { text } = useI18n();
   const renderedTitle = translateTitle ? text(title) : title;
   const renderedDescription = description && translateDescription ? text(description) : description;
-  return <header className="qz-page-header"><div><h1 className="qz-page-title">{renderedTitle}</h1>{renderedDescription ? <p className="qz-page-description">{renderedDescription}</p> : null}</div>{actions ? <div className="qz-page-actions">{actions}</div> : null}</header>;
+  return <header className="qz-page-header"><div><h1 className="qz-page-title" dir={translateTitle ? undefined : 'auto'}>{renderedTitle}</h1>{renderedDescription ? <p className="qz-page-description" dir={translateDescription ? undefined : 'auto'}>{renderedDescription}</p> : null}</div>{actions ? <div className="qz-page-actions">{actions}</div> : null}</header>;
 }

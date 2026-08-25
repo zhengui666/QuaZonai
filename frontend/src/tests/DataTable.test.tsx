@@ -17,8 +17,14 @@ const columns: ColumnDef<Row, unknown>[] = [
 interface NumericRow { name: string; amount: number; weight: number }
 const numericColumns: ColumnDef<NumericRow, unknown>[] = [
   { accessorKey: 'name', header: 'Name' },
-  { accessorKey: 'amount', header: 'Amount', cell: ({ getValue }) => <span>{formatCompactNumber(getValue() as number)}</span> },
-  { accessorKey: 'weight', header: 'Weight', cell: ({ getValue }) => <span>{formatPercent(getValue() as number)}</span> },
+  { accessorKey: 'amount', header: 'Amount', meta: { searchFormat: 'compact' }, cell: ({ getValue }) => <span>{formatCompactNumber(getValue() as number)}</span> },
+  { accessorKey: 'weight', header: 'Weight', meta: { searchFormat: 'percent', searchDecimals: 1 }, cell: ({ getValue }) => <span>{formatPercent(getValue() as number)}</span> },
+];
+
+interface CountRow { name: string; count: number }
+const countColumns: ColumnDef<CountRow, unknown>[] = [
+  { accessorKey: 'name', header: 'Name' },
+  { accessorKey: 'count', header: 'Count' },
 ];
 
 describe('DataTable', () => {
@@ -44,7 +50,7 @@ describe('DataTable', () => {
     expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
   });
 
-  it('filters numeric columns by the compact and percentage text rendered in cells', () => {
+  it('filters numeric columns by the declared compact and percentage display formats', () => {
     const data = [
       { name: 'Large', amount: 1234, weight: 0.25 },
       { name: 'Small', amount: 12, weight: 0.05 },
@@ -63,5 +69,11 @@ describe('DataTable', () => {
     fireEvent.change(input, { target: { value: percent } });
     expect(screen.getByText('Large')).toBeInTheDocument();
     expect(screen.queryByText('Small')).not.toBeInTheDocument();
+  });
+
+  it('does not generate percentage aliases for ordinary numeric columns', () => {
+    renderApp(<DataTable data={[{ name: 'One row', count: 1 }]} columns={countColumns} />);
+    fireEvent.change(screen.getByPlaceholderText('Filter rows…'), { target: { value: '100%' } });
+    expect(screen.queryByText('One row')).not.toBeInTheDocument();
   });
 });

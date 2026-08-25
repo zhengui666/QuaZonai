@@ -78,13 +78,15 @@ describe('i18n', () => {
     expect(translateSource('zh-CN', 'Observed')).toBe('Observed');
   });
 
-  it('preserves user-authored text that happens to equal a catalog source', () => {
-    render(<I18nProvider initialLocale="zh-CN"><PageHeader title="Dashboard" translateTitle={false} /></I18nProvider>);
-    expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: '仪表盘' })).not.toBeInTheDocument();
+  it('preserves user-authored header text and lets the browser infer its direction', () => {
+    render(<I18nProvider initialLocale="ar"><PageHeader title="Dashboard 12 / ES" description="English research rationale: EUR/USD" translateTitle={false} translateDescription={false} /></I18nProvider>);
+    const heading = screen.getByRole('heading', { name: 'Dashboard 12 / ES' });
+    expect(heading).toBeInTheDocument();
+    expect(heading).toHaveAttribute('dir', 'auto');
+    expect(screen.getByText('English research rationale: EUR/USD')).toHaveAttribute('dir', 'auto');
   });
 
-  it('localizes reachable lifecycle, portfolio, role, mission, and degradation values', () => {
+  it('localizes reachable lifecycle, portfolio, role, mission, degradation, and plugin capability values', () => {
     expect(translateDomainLabel('zh-CN', 'Received')).toBe('已接收');
     expect(translateDomainLabel('ja', 'Installing')).toBe('インストール中');
     expect(translateDomainLabel('ko', 'Validating')).toBe('검증 중');
@@ -102,6 +104,9 @@ describe('i18n', () => {
     expect(translateDomainLabel('es', 'Regime Signal')).toBe('Señal de régimen');
     expect(translateDomainLabel('ar', 'Risk Modulator')).toBe('مُعدِّل المخاطر');
     expect(translateDomainLabel('zh-TW', 'Shadow Alpha')).toBe('影子 Alpha');
+    expect(translateDomainLabel('zh-CN', 'Historical Import')).toBe('历史导入');
+    expect(translateDomainLabel('ja', 'Live Data')).toBe('リアルタイムデータ');
+    expect(translateDomainLabel('es', 'Research Tool')).toBe('Herramienta de investigación');
   });
 
   it('keeps arbitrary schema identifiers language-neutral', () => {

@@ -19,36 +19,45 @@ import { translateDomainLabel } from '../../i18n/domain';
 import { formatDateTime } from '../../lib/format';
 import { EmptyState } from './EmptyState';
 
-type LocalizedColumnMeta = { messageKey?: MessageKey };
+type SearchFormat = 'compact' | 'percent';
+type LocalizedColumnMeta = { messageKey?: MessageKey; searchFormat?: SearchFormat; searchDecimals?: number };
+
+function columnMeta(meta: unknown): LocalizedColumnMeta | undefined {
+  return meta && typeof meta === 'object' ? meta as LocalizedColumnMeta : undefined;
+}
 
 function messageKeyFromMeta(meta: unknown): MessageKey | undefined {
-  if (!meta || typeof meta !== 'object' || !('messageKey' in meta)) return undefined;
-  return (meta as LocalizedColumnMeta).messageKey;
+  return columnMeta(meta)?.messageKey;
 }
 
 function humanizeCanonical(value: string): string {
   return value.replaceAll('_', ' ').toLowerCase().replace(/(^|\s)\S/g, (character) => character.toUpperCase());
 }
 
-function numericSearchValues(value: number, locale: Locale): string[] {
-  const standard = new Intl.NumberFormat(locale).format(value);
-  const compact = new Intl.NumberFormat(locale, { notation: 'compact', maximumFractionDigits: 2 }).format(value);
-  const percentages = [0, 1, 2].map((decimals) => new Intl.NumberFormat(locale, {
-    style: 'percent',
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  }).format(value));
-  return [String(value), standard, compact, ...percentages];
+function numericSearchValues(value: number, locale: Locale, meta?: LocalizedColumnMeta): string[] {
+  const values = [String(value), new Intl.NumberFormat(locale).format(value)];
+  if (meta?.searchFormat === 'compact') {
+    values.push(new Intl.NumberFormat(locale, { notation: 'compact', maximumFractionDigits: 2 }).format(value));
+  }
+  if (meta?.searchFormat === 'percent') {
+    const decimals = meta.searchDecimals ?? 1;
+    values.push(new Intl.NumberFormat(locale, {
+      style: 'percent',
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    }).format(value));
+  }
+  return values;
 }
 
-function searchableValues(value: unknown, locale: Locale): string[] {
+function searchableValues(value: unknown, locale: Locale, meta?: LocalizedColumnMeta): string[] {
   if (value === null || value === undefined) return [];
-  if (Array.isArray(value)) return value.flatMap((item) => searchableValues(item, locale));
+  if (Array.isArray(value)) return value.flatMap((item) => searchableValues(item, locale, meta));
   if (typeof value === 'boolean') {
     const source = value ? 'Enabled' : 'Disabled';
     return [String(value), translateDomainLabel(locale, source) ?? source];
   }
-  if (typeof value === 'number') return numericSearchValues(value, locale);
+  if (typeof value === 'number') return numericSearchValues(value, locale, meta);
   if (typeof value === 'string') {
     const values = [value];
     const domainLabel = translateDomainLabel(locale, humanizeCanonical(value));
@@ -56,7 +65,7 @@ function searchableValues(value: unknown, locale: Locale): string[] {
     if (/^\d{4}-\d{2}-\d{2}(?:T|$)/.test(value)) values.push(formatDateTime(value));
     return values;
   }
-  if (typeof value === 'object') return Object.values(value as Record<string, unknown>).flatMap((item) => searchableValues(item, locale));
+  if (typeof value === 'object') return Object.values(value as Record<string, unknown>).flatMap((item) => searchableValues(item, locale, meta));
   return [String(value)];
 }
 
@@ -92,7 +101,8 @@ export function DataTable<T>({
   const localizedGlobalFilter = useCallback<FilterFn<T>>((row, columnId, filterValue) => {
     const query = String(filterValue ?? '').trim().toLocaleLowerCase(locale);
     if (!query) return true;
-    return searchableValues(row.getValue(columnId), locale).some((candidate) => candidate.toLocaleLowerCase(locale).includes(query));
+    const meta = columnMeta(row.getAllCells().find((cell) => cell.column.id === columnId)?.column.columnDef.meta);
+    return searchableValues(row.getValue(columnId), locale, meta).some((candidate) => candidate.toLocaleLowerCase(locale).includes(query));
   }, [locale]);
   const table = useReactTable({
     data,

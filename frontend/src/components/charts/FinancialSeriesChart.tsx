@@ -1,6 +1,6 @@
 import { AreaSeries, ColorType, LineSeries, createChart, type AreaData, type ISeriesApi, type LineData, type Time } from 'lightweight-charts';
 import { useEffect, useMemo, useRef } from 'react';
-import { useI18n } from '../../i18n';
+import { useI18n, type Locale } from '../../i18n';
 import type { TimeValuePoint } from '../../lib/metrics';
 
 export interface FinancialSeries { name: string; data: TimeValuePoint[]; kind?: 'line' | 'area'; }
@@ -11,9 +11,27 @@ function toTime(value: string | number): Time {
   return Math.floor(new Date(value).getTime() / 1000) as Time;
 }
 
+export function formatFinancialTooltipValue(locale: Locale, value: number): string {
+  return new Intl.NumberFormat(locale, { minimumFractionDigits: 4, maximumFractionDigits: 4 }).format(value);
+}
+
+export function formatFinancialTooltipTime(locale: Locale, time: Time): string {
+  if (typeof time === 'number') {
+    return new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(time * 1000));
+  }
+  if (typeof time === 'string') {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(time);
+    if (!match) return time;
+    const [, year, month, day] = match;
+    return new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'short', day: '2-digit', timeZone: 'UTC' }).format(new Date(Date.UTC(Number(year), Number(month) - 1, Number(day))));
+  }
+  const item = time as { year: number; month: number; day: number };
+  return new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'short', day: '2-digit', timeZone: 'UTC' }).format(new Date(Date.UTC(item.year, item.month - 1, item.day)));
+}
+
 export function FinancialSeriesChart({ series, ariaLabel, height = 320 }: { series: FinancialSeries[]; ariaLabel: string; height?: number }) {
   const ref = useRef<HTMLDivElement>(null);
-  const { text } = useI18n();
+  const { locale, text } = useI18n();
   const localizedSeries = useMemo(() => series.map((item) => ({ ...item, name: text(item.name) })), [series, text]);
   useEffect(() => {
     if (!ref.current || localizedSeries.every((item) => item.data.length === 0)) return;
@@ -51,15 +69,15 @@ export function FinancialSeriesChart({ series, ariaLabel, height = 320 }: { seri
       if (!param.time || !param.point || param.point.x < 0 || param.point.y < 0) { tooltip.hidden = true; return; }
       const values = handles.flatMap(({ name, api }) => {
         const datum = param.seriesData.get(api) as { value?: number } | undefined;
-        return typeof datum?.value === 'number' ? [`${name}: ${datum.value.toFixed(4)}`] : [];
+        return typeof datum?.value === 'number' ? [`${name}: ${formatFinancialTooltipValue(locale, datum.value)}`] : [];
       });
-      tooltip.textContent = `${String(param.time)}${values.length ? ` · ${values.join(' · ')}` : ''}`;
+      tooltip.textContent = `${formatFinancialTooltipTime(locale, param.time)}${values.length ? ` · ${values.join(' · ')}` : ''}`;
       tooltip.hidden = false;
       tooltip.style.left = `${Math.min(param.point.x + 12, Math.max(8, ref.current!.clientWidth - 260))}px`;
       tooltip.style.top = `${Math.max(8, param.point.y - 34)}px`;
     });
     chart.timeScale().fitContent();
     return () => chart.remove();
-  }, [height, localizedSeries]);
+  }, [height, locale, localizedSeries]);
   return <div ref={ref} className="qz-chart-host" style={{ minHeight: height }} role="img" aria-label={text(ariaLabel)} />;
 }

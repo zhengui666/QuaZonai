@@ -44,7 +44,7 @@ const datasetColumns: ColumnDef<DatasetRevision, unknown>[] = [
   { accessorKey: 'id', header: 'Revision', meta: { messageKey: 'admin.revision' }, cell: ({ getValue }) => <span className="qz-mono">{String(getValue()).slice(0, 12)}</span> },
   { accessorKey: 'partition', header: 'Partition', meta: { messageKey: 'admin.partition' }, cell: ({ getValue }) => <StateBadge state={String(getValue() ?? 'DISCOVERY')} /> },
   { accessorKey: 'universe_name', header: 'Universe', meta: { messageKey: 'alpha.universe' } },
-  { accessorKey: 'row_count', header: 'Rows', meta: { messageKey: 'admin.rows' }, cell: ({ getValue }) => <span className="qz-number">{formatCompactNumber(getValue() as number)}</span> },
+  { accessorKey: 'row_count', header: 'Rows', meta: { messageKey: 'admin.rows', searchFormat: 'compact' }, cell: ({ getValue }) => <span className="qz-number">{formatCompactNumber(getValue() as number)}</span> },
   { accessorKey: 'quality_state', header: 'Quality', meta: { messageKey: 'admin.quality' }, cell: ({ getValue }) => <StateBadge state={String(getValue() ?? 'UNKNOWN')} /> },
   { accessorKey: 'point_in_time_state', header: 'PIT', cell: ({ getValue }) => <StateBadge state={String(getValue() ?? 'UNKNOWN')} /> },
   { accessorKey: 'created_at', header: 'Registered', meta: { messageKey: 'admin.registered' }, cell: ({ getValue }) => formatDateTime(getValue() as string | undefined) },
