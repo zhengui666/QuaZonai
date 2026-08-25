@@ -1,6 +1,8 @@
 # QuaZonai CLI reference
 
-Use this file for exact syntax. It documents the command tree implemented by `backend/src/cli/main.py` in QuaZonai 0.1.x. The installed CLI's `--help` output wins if a later release differs.
+Use this file for exact implemented syntax. In a QuaZonai source checkout, `DESIGN.md` remains the product authority, `AGENTS.md` remains the governance authority, and `CLI.md` remains the external Skill/CLI contract. The installed CLI's `--help` output is syntax authority only if a later release differs; it never overrides product, ownership, authorization, or safety rules.
+
+This reference documents the command tree implemented by `backend/src/cli/main.py` in QuaZonai 0.1.x.
 
 ## Install and verify
 
@@ -51,7 +53,7 @@ quazonai --endpoint http://localhost:8000 readiness
 
 ## Implemented command inventory
 
-The following table is contract-tested against the `argparse` command tree. Do not add design-stage or imagined commands to an invocation.
+The following table is contract-tested against the `argparse` command tree. Do not add design-stage or imagined commands to an invocation. An implemented command is not automatically authorized for an Agent: `approval approve` and `approval reject` are human-only decisions.
 
 <!-- cli-command-paths:start -->
 | Command path | Access | Purpose |
@@ -76,8 +78,8 @@ The following table is contract-tested against the `argparse` command tree. Do n
 | `portfolio candidate` | Read | Read one Portfolio Candidate |
 | `approval list` | Read | List Approval Snapshots |
 | `approval show` | Read | Read one Approval Snapshot |
-| `approval approve` | Capital decision | Approve an Approval Snapshot for one downstream system |
-| `approval reject` | Capital decision | Reject an Approval Snapshot |
+| `approval approve` | Human-only decision | Approve an Approval Snapshot for one downstream system; an Agent may prepare but never execute it |
+| `approval reject` | Human-only decision | Reject an Approval Snapshot; an Agent may prepare but never execute it |
 | `handoff list` | Read | List Handoffs |
 | `handoff revoke` | Write | Revoke a Handoff when the domain preconditions permit it |
 | `data-source list` | Read | List Data Sources |
@@ -147,6 +149,8 @@ There is no implemented command for manual Alpha selection, Candidate patching, 
 
 ## Approval
 
+The CLI implements the following human commands so the Agent can explain and prepare their exact syntax:
+
 ```text
 quazonai approval list
 quazonai approval show <APPROVAL_ID>
@@ -166,6 +170,8 @@ quazonai approval reject \
 The default expected state is `PENDING`.
 
 `DOWNSTREAM_SYSTEM_ID` and `REASON_CODE` are positional arguments. Do not rewrite them as `--downstream` or `--reason`.
+
+An AI Agent must never execute `approval approve` or `approval reject`. It may run `approval list/show`, validate the current snapshot, and render the exact decision command for the human operator.
 
 ## Handoff
 
@@ -217,12 +223,14 @@ Exit codes:
 
 ## Mutation mechanics
 
-The CLI automatically creates a fresh UUID `Idempotency-Key` for each mutation invocation. It does not expose a flag for reusing that key. Therefore:
+The CLI automatically creates a fresh UUID `Idempotency-Key` for each mutation invocation. It does not expose a flag for reusing that key. For Agent-permitted mutations:
 
 - execute a requested mutation once;
 - after timeout/connection ambiguity, read current state before retrying;
 - never assume rerunning the same shell command is the same idempotent request;
 - on `409`, read the target and rebuild the action from current state.
+
+These mechanics describe the CLI; they do not authorize an Agent to execute the human-only Approval commands.
 
 The CLI is a thin HTTP client. It does not read PostgreSQL, Dataset volumes, Program repositories, Codex state, plugin runtimes, broker accounts, or downstream trading runtimes directly.
 
@@ -235,4 +243,4 @@ quazonai research start --help
 quazonai approval approve --help
 ```
 
-Use the narrowest relevant `--help` command when syntax fails. Do not probe the Core API with guessed paths or replace the CLI with ad hoc `curl`.
+Use the narrowest relevant `--help` command when syntax fails. `--help` confirms syntax only. Do not use it to relax governance, probe the Core API with guessed paths, or replace the CLI with ad hoc `curl`.
