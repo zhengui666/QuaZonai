@@ -64,10 +64,36 @@ def test_enabled_auth_rejects_invalid_ttl_values(monkeypatch: pytest.MonkeyPatch
         Settings.from_env()
 
 
+def test_environment_is_trimmed_before_security_policy(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("QUAZONAI_ENV", " production ")
+
+    configured = Settings.from_env()
+
+    assert configured.environment == "production"
+
+
+def test_production_whitespace_cannot_bypass_https_requirement(settings: Settings) -> None:
+    configured = _enabled_auth(
+        settings,
+        environment="production ",
+        auth_public_origin="http://quazonai.example.com",
+    )
+
+    with pytest.raises(SettingsError, match="must use https in production"):
+        configured.validate_operator_auth()
+
+
 def test_enabled_auth_rejects_password_longer_than_login_schema(settings: Settings) -> None:
     configured = _enabled_auth(settings, operator_password="x" * 4097)
 
     with pytest.raises(SettingsError, match="between 12 and 4096"):
+        configured.validate_operator_auth()
+
+
+def test_enabled_auth_rejects_unencodable_configured_credentials(settings: Settings) -> None:
+    configured = _enabled_auth(settings, operator_username="operator\ud800")
+
+    with pytest.raises(SettingsError, match="valid Unicode text"):
         configured.validate_operator_auth()
 
 
@@ -81,6 +107,10 @@ def test_enabled_auth_rejects_password_longer_than_login_schema(settings: Settin
         "https://bad-.example.com",
         "https://example..com",
         "https://999.999.999.999",
+        "https://exa\nmple.com",
+        "https://example.\tcom",
+        "ht\ntps://example.com",
+        "https://example.com\r",
     ],
 )
 def test_enabled_auth_rejects_invalid_origin_host_or_port(
