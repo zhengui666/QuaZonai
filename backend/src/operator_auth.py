@@ -397,9 +397,9 @@ def require_same_origin(request: Request, settings: Settings) -> None:
     supplied = request.headers.get("origin")
     try:
         origin = (
-  canonicalize_http_origin(supplied, name="Origin")
-  if supplied is not None
-  else None
+            canonicalize_http_origin(supplied, name="Origin")
+            if supplied is not None
+            else None
         )
     except SettingsError:
         origin = None
@@ -409,10 +409,12 @@ def require_same_origin(request: Request, settings: Settings) -> None:
         or not secrets.compare_digest(origin, expected)
     ):
         raise QfError(
-  "AUTH_ORIGIN_REJECTED",
-  "The request origin is not allowed for browser-authenticated mutations.",
-  403,
+            "AUTH_ORIGIN_REJECTED",
+            "The request origin is not allowed for browser-authenticated mutations.",
+            403,
         )
+
+
 
 def is_operator_auth_exempt(method: str, path: str) -> bool:
     """Return whether one exact method/path belongs outside Operator authentication.
