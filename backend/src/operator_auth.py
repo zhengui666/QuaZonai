@@ -195,6 +195,20 @@ def authenticate_browser(request: Request, settings: Settings) -> OperatorIdenti
     return None
 
 
+def has_valid_trusted_browser(request: Request, settings: Settings) -> bool:
+    """Return whether this request carries a currently valid trusted-browser credential."""
+    if not settings.auth_enabled:
+        return False
+    return (
+        _read_cookie(
+            settings,
+            request.cookies.get(TRUSTED_BROWSER_COOKIE_NAME),
+            kind="trusted-browser",
+        )
+        is not None
+    )
+
+
 def set_session_cookie(response: Response, settings: Settings) -> None:
     token = _issue_cookie(
         settings,
