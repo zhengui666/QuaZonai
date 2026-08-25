@@ -42,6 +42,28 @@ Research Program creation persists a `READY` Mission and durable job. The finite
 
 Registering a Downstream System returns its Bearer service token once. Store that token in the downstream system's secret store; QuaZonai keeps only an AES-GCM encrypted-at-rest copy bound to that Downstream System. Claim, accept, reject, Candidate Package download, and feedback calls require that Bearer token.
 
+## Agent Skill
+
+[`skills/quazonai/`](skills/quazonai/) is the portable Agent Skills package for operating a running QuaZonai instance through the local `quazonai` CLI. Install the entire directory, not only `SKILL.md`, so the bundled command reference and workflows remain available.
+
+Install the CLI from the repository root:
+
+```bash
+python -m pip install ./backend
+quazonai --help
+```
+
+For a user-level Codex installation, copy or symlink the Skill directory:
+
+```bash
+mkdir -p "${HOME}/.agents/skills"
+ln -sfn "$(pwd)/skills/quazonai" "${HOME}/.agents/skills/quazonai"
+```
+
+Then restart or reload the Agent client and ask it to perform a QuaZonai operation, such as “check QuaZonai readiness” or “show active research programs.” Codex clients that support explicit Skill invocation can use `$quazonai`.
+
+The Skill assumes the Core API is running on a local loopback endpoint. It is an external operator workflow, not QuaZonai's built-in per-Mission Codex runtime.
+
 ## Verification
 
 ```bash
@@ -61,7 +83,7 @@ GitHub Actions additionally runs PostgreSQL 18 row-lock/idempotency integration,
 - [`AGENTS.md`](AGENTS.md): development governance and hard boundaries.
 - [`OPERATIONS.md`](OPERATIONS.md): user operating model.
 - [`CLI.md`](CLI.md): CLI, Codex App Server and Mission Tool contracts.
-- [`skills/quazonai/SKILL.md`](skills/quazonai/SKILL.md): thin external/operator Agent workflow.
+- [`skills/quazonai/SKILL.md`](skills/quazonai/SKILL.md): self-contained external Agent workflow for the implemented CLI.
 
 ## Status
 
