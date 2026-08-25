@@ -21,12 +21,13 @@ def test_api_token_from_environment_is_sent_as_bearer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, Any] = {}
+    token = "machine-token-value-" + "x" * 32
 
     def fake_request(method: str, url: str, **kwargs: Any) -> httpx.Response:
         captured.update(method=method, url=url, **kwargs)
         return httpx.Response(200, json={"ready": True})
 
-    monkeypatch.setenv("QUAZONAI_API_TOKEN", "machine-token-value")
+    monkeypatch.setenv("QUAZONAI_API_TOKEN", token)
     monkeypatch.setattr(httpx, "request", fake_request)
 
     result = ApiClient("http://127.0.0.1:8000").request(
@@ -35,7 +36,47 @@ def test_api_token_from_environment_is_sent_as_bearer(
     )
 
     assert result == {"ready": True}
-    assert captured["headers"] == {"Authorization": "Bearer machine-token-value"}
+    assert captured["headers"] == {"Authorization": f"Bearer {token}"}
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        " " + "x" * 32,
+        "x" * 32 + " ",
+        "x" * 32 + "\n",
+        "x" * 32 + "\r",
+        "x" * 31 + "é",
+    ],
+)
+def test_malformed_machine_token_is_rejected_without_normalization(
+    monkeypatch: pytest.MonkeyPatch,
+    token: str,
+) -> None:
+    monkeypatch.setenv("QUAZONAI_API_TOKEN", token)
+
+    with pytest.raises(CliClientError, match="QUAZONAI_API_TOKEN"):
+        ApiClient("http://127.0.0.1:8000")
+
+
+def test_empty_machine_token_is_treated_as_unconfigured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_request(method: str, url: str, **kwargs: Any) -> httpx.Response:
+        captured.update(method=method, url=url, **kwargs)
+        return httpx.Response(200, json={"ok": True})
+
+    monkeypatch.setenv("QUAZONAI_API_TOKEN", "")
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    ApiClient("http://127.0.0.1:8000").request(
+        "GET",
+        "/api/v1/system/health",
+    )
+
+    assert captured["headers"] == {}
 
 
 def test_explicit_authorization_header_is_not_overwritten(
@@ -51,7 +92,7 @@ def test_explicit_authorization_header_is_not_overwritten(
 
     ApiClient(
         "http://127.0.0.1:8000",
-        api_token="operator-machine-token",
+        api_token="operator-machine-token-" + "x" * 32,
     ).request(
         "GET",
         "/api/v1/handoffs/offer-1/package",
@@ -61,21 +102,3 @@ def test_explicit_authorization_header_is_not_overwritten(
     assert captured["headers"] == {
         "Authorization": "Bearer downstream-service-token",
     }
-
-
-def test_blank_machine_token_is_not_sent(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: dict[str, Any] = {}
-
-    def fake_request(method: str, url: str, **kwargs: Any) -> httpx.Response:
-        captured.update(method=method, url=url, **kwargs)
-        return httpx.Response(200, json={"ok": True})
-
-    monkeypatch.setenv("QUAZONAI_API_TOKEN", "   ")
-    monkeypatch.setattr(httpx, "request", fake_request)
-
-    ApiClient("http://127.0.0.1:8000").request(
-        "GET",
-        "/api/v1/system/health",
-    )
-
-    assert captured["headers"] == {}
