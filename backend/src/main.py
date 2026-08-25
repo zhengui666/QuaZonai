@@ -68,7 +68,7 @@ def _install_operator_auth(app: FastAPI) -> None:
         if (
             not settings.auth_enabled
             or not path.startswith("/api/v1/")
-            or is_operator_auth_exempt(path)
+            or is_operator_auth_exempt(request.method, path)
         ):
             return await call_next(request)
 
