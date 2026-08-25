@@ -2,7 +2,7 @@
 name: quazonai
 description: Operate a running QuaZonai instance through the `quazonai` CLI. Use when the user asks to check QuaZonai health or readiness; preview, start, inspect, pause, resume, archive, or restore research; inspect Alpha qualifications, Portfolio mandates/programs/candidates, approvals, or handoffs; review an Approval Snapshot and prepare the exact human-only approve/reject command; revoke a Handoff; create or inspect data sources; list datasets, universes, or downstream systems; or mentions the QuaZonai CLI or a `quazonai` command. Do not use for broker orders, fills, positions, accounts, NAV, live-trading runtime control, downstream stop/undeploy actions, or autonomous Candidate approval/rejection.
 license: AGPL-3.0-only
-compatibility: Requires the `quazonai` executable from QuaZonai 0.1.x on PATH and a running QuaZonai Core API reachable on the local loopback host.
+compatibility: Requires the `quazonai` executable from QuaZonai 0.1.x on PATH and a running QuaZonai Core API reachable on the local loopback host. When Operator Authentication is enabled, the process environment must provide `QUAZONAI_API_TOKEN`.
 metadata:
   author: zhengui666
   version: "1.0"
@@ -53,7 +53,22 @@ It does not own broker credentials, orders, fills, positions, accounts, NAV, exe
    quazonai --help
    ```
 
-2. Resolve the Core API endpoint in this order:
+2. Respect the Operator Authentication boundary:
+
+   - when Operator Authentication is enabled, the CLI reads `QUAZONAI_API_TOKEN` from its process environment and sends it as a Bearer machine credential;
+   - never request, read, infer, print, or store `QUAZONAI_AUTH_PASSWORD`, `QUAZONAI_AUTH_TOTP_SECRET`, browser session cookies, or trusted-browser cookies;
+   - never substitute the machine token for a downstream system's Handoff service token;
+   - when authentication is disabled, the CLI retains direct loopback access and does not require the machine token.
+
+   Check only whether the machine token is present; never print its value:
+
+   ```bash
+   test -n "${QUAZONAI_API_TOKEN:-}"
+   ```
+
+   If the API returns `AUTH_REQUIRED`, do not attempt an interactive browser login through the Agent. Treat a missing token as an environment prerequisite; treat a rejected token as a credential-rotation/configuration mismatch.
+
+3. Resolve the Core API endpoint in this order:
 
    1. an explicit global `--endpoint URL`;
    2. `QUAZONAI_API_ENDPOINT`;
@@ -61,7 +76,7 @@ It does not own broker credentials, orders, fills, positions, accounts, NAV, exe
 
    The endpoint must use `http` or `https`, have no credentials/query/fragment/path, and use `127.0.0.1`, `localhost`, or `::1`. Remote hosts are intentionally rejected.
 
-3. Place the global option before the resource command:
+4. Place the global option before the resource command:
 
    ```bash
    quazonai --endpoint http://127.0.0.1:8000 status
@@ -69,7 +84,7 @@ It does not own broker credentials, orders, fills, positions, accounts, NAV, exe
 
    Do not write `quazonai status --endpoint ...`.
 
-4. Check only what the task needs:
+5. Check only what the task needs:
 
    ```bash
    quazonai status
@@ -78,7 +93,7 @@ It does not own broker credentials, orders, fills, positions, accounts, NAV, exe
 
    Use `status` for service health. Use `readiness` before a permitted mutation when the user needs to know whether required capabilities are ready.
 
-5. Read [references/cli-reference.md](references/cli-reference.md) before constructing an unfamiliar command. Read [references/workflows.md](references/workflows.md) for multi-step operating recipes.
+6. Read [references/cli-reference.md](references/cli-reference.md) before constructing an unfamiliar command. Read [references/workflows.md](references/workflows.md) for multi-step operating recipes.
 
 ## Route the request
 
@@ -207,6 +222,8 @@ Successful commands print the Core API response as indented JSON to stdout. Erro
 | `2` | Invalid command usage/input | Correct the command from `--help`; do not retry unchanged |
 | `10` | Core API returned a server-side `5xx` response | Check `status`; retry only after evidence of recovery |
 | `20` | Core API returned `409 Conflict` | Re-read the target; rebuild the action from current state |
+
+On `AUTH_REQUIRED`, verify only the presence of `QUAZONAI_API_TOKEN`; never print it or fall back to the Operator password/TOTP. On a rejected machine token, report that the API and CLI environment need the same current token.
 
 Do not parse human prose from stdout. Consume the JSON value. Preserve API error codes and messages verbatim enough to remain actionable, but never expose secrets or credentials.
 
