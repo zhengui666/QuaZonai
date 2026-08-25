@@ -83,7 +83,7 @@ describe('i18n', () => {
     expect(screen.queryByRole('heading', { name: '仪表盘' })).not.toBeInTheDocument();
   });
 
-  it('localizes reachable lifecycle and handoff states', () => {
+  it('localizes reachable lifecycle, handoff, program, mission, and degradation states', () => {
     expect(translateDomainLabel('zh-CN', 'Received')).toBe('已接收');
     expect(translateDomainLabel('ja', 'Installing')).toBe('インストール中');
     expect(translateDomainLabel('ko', 'Validating')).toBe('검증 중');
@@ -91,6 +91,9 @@ describe('i18n', () => {
     expect(translateDomainLabel('ar', 'Removing')).toBe('جارٍ الإزالة');
     expect(translateDomainLabel('zh-TW', 'Removed')).toBe('已移除');
     expect(translateDomainLabel('zh-CN', 'Revoked')).toBe('已撤销');
+    expect(translateDomainLabel('zh-CN', 'Approval Pending')).toBe('待审批');
+    expect(translateDomainLabel('ja', 'Cancelled')).toBe('キャンセル済み');
+    expect(translateDomainLabel('ko', 'Degrading')).toBe('열화 중');
   });
 
   it('formats numeric interpolation using the active locale', () => {
