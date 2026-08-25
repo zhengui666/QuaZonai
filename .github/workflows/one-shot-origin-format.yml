@@ -1,0 +1,79 @@
+name: One-shot canonical origin formatting repair
+
+on:
+  push:
+    branches:
+      - feat/operator-totp-auth
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/operator-totp-auth
+          fetch-depth: 0
+
+      - name: Repair canonical origin function
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+
+          path = Path("backend/src/operator_auth.py")
+          text = path.read_text(encoding="utf-8")
+          pattern = re.compile(
+              r"def require_same_origin\(request: Request, settings: Settings\) -> None:\n"
+              r".*?(?=\ndef is_operator_auth_exempt)",
+              re.DOTALL,
+          )
+          replacement = '''def require_same_origin(request: Request, settings: Settings) -> None:
+              if request.method.upper() in _SAFE_METHODS or not settings.auth_enabled:
+                  return
+              expected = settings.canonical_auth_public_origin
+              supplied = request.headers.get("origin")
+              try:
+                  origin = (
+                      canonicalize_http_origin(supplied, name="Origin")
+                      if supplied is not None
+                      else None
+                  )
+              except SettingsError:
+                  origin = None
+              if (
+                  expected is None
+                  or origin is None
+                  or not secrets.compare_digest(origin, expected)
+              ):
+                  raise QfError(
+                      "AUTH_ORIGIN_REJECTED",
+                      "The request origin is not allowed for browser-authenticated mutations.",
+                      403,
+                  )
+
+
+          '''
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f"operator_auth.py: require_same_origin matches={count}")
+          path.write_text(text, encoding="utf-8")
+          Path(".github/workflows/one-shot-origin-format.yml").unlink()
+          PY
+
+      - name: Verify formatting
+        run: |
+          python -m compileall -q backend/src/operator_auth.py
+          grep -Fq 'canonicalize_http_origin(supplied, name="Origin")' backend/src/operator_auth.py
+          test ! -e .github/workflows/one-shot-origin-format.yml
+
+      - name: Commit repair
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m 'fix(auth): format canonical origin validation'
+          git push origin HEAD:feat/operator-totp-auth
