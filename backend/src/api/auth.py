@@ -11,6 +11,7 @@ from operator_auth import (
     authenticate_browser,
     authenticate_login,
     clear_auth_cookies,
+    clear_trusted_browser_cookie,
     require_same_origin,
     set_session_cookie,
     set_trusted_browser_cookie,
@@ -63,6 +64,8 @@ def login(payload: LoginInput, request: Request, response: Response) -> SessionV
     set_session_cookie(response, settings)
     if payload.trust_browser:
         set_trusted_browser_cookie(response, settings)
+    else:
+        clear_trusted_browser_cookie(response, settings)
     assert settings.operator_username is not None
     return SessionView(
         authenticated=True,
