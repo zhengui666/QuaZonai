@@ -50,7 +50,17 @@ def _login(
     )
 
 
-def test_downstream_auth_exemptions_are_method_specific() -> None:
+def test_public_and_downstream_auth_exemptions_are_method_specific() -> None:
+    assert is_operator_auth_exempt("GET", "/api/v1/system/health")
+    assert is_operator_auth_exempt("POST", "/api/v1/auth/login")
+    assert is_operator_auth_exempt("GET", "/api/v1/auth/session")
+    assert is_operator_auth_exempt("POST", "/api/v1/auth/logout")
+
+    assert not is_operator_auth_exempt("POST", "/api/v1/system/health")
+    assert not is_operator_auth_exempt("GET", "/api/v1/auth/login")
+    assert not is_operator_auth_exempt("POST", "/api/v1/auth/session")
+    assert not is_operator_auth_exempt("GET", "/api/v1/auth/future-sensitive-route")
+
     handoff_id = "00000000-0000-0000-0000-000000000001"
     route = f"/api/v1/handoffs/{handoff_id}"
 
@@ -146,6 +156,23 @@ def test_password_totp_login_sets_strict_http_only_cookies(settings: Settings, e
     assert "HttpOnly" in cookie_headers
     assert "SameSite=strict" in cookie_headers
     assert "Secure" not in cookie_headers
+
+
+def test_full_login_without_trust_removes_existing_trusted_browser(
+    settings: Settings,
+    engine: Engine,
+) -> None:
+    secured = _enabled_settings(settings)
+    client = TestClient(create_app(settings=secured, engine=engine))
+    assert _login(client, secured, trust_browser=True).status_code == 200
+    assert TRUSTED_BROWSER_COOKIE_NAME in client.cookies
+
+    response = _login(client, secured, trust_browser=False)
+
+    assert response.status_code == 200
+    assert response.json()["trusted_browser"] is False
+    assert SESSION_COOKIE_NAME in client.cookies
+    assert TRUSTED_BROWSER_COOKIE_NAME not in client.cookies
 
 
 def test_invalid_login_does_not_reveal_failed_factor(settings: Settings, engine: Engine) -> None:
