@@ -192,6 +192,11 @@ def _cookie_aad(kind: str) -> bytes:
     return f"quazonai|operator-auth|cookie={kind}|version={COOKIE_VERSION}".encode("utf-8")
 
 
+def _constant_time_text_equal(left: str, right: str) -> bool:
+    """Compare arbitrary Unicode credentials without str-only compare_digest limits."""
+    return secrets.compare_digest(left.encode("utf-8"), right.encode("utf-8"))
+
+
 def _issue_cookie(settings: Settings, *, kind: str, ttl_seconds: int) -> str:
     assert settings.operator_username is not None
     issued_at = int(time.time())
@@ -240,7 +245,7 @@ def _read_cookie(settings: Settings, value: str | None, *, kind: str) -> str | N
             raise _InvalidCookie
         if expires_at <= int(time.time()):
             return None
-        if settings.operator_username is None or not secrets.compare_digest(
+        if settings.operator_username is None or not _constant_time_text_equal(
             username, settings.operator_username
         ):
             return None
@@ -265,8 +270,8 @@ def authenticate_login(
     assert settings.operator_password is not None
     assert settings.operator_totp_secret is not None
 
-    username_valid = secrets.compare_digest(username, settings.operator_username)
-    password_valid = secrets.compare_digest(password, settings.operator_password)
+    username_valid = _constant_time_text_equal(username, settings.operator_username)
+    password_valid = _constant_time_text_equal(password, settings.operator_password)
     normalized_code = "".join(totp_code.split())
     code_shape_valid = len(normalized_code) == 6 and normalized_code.isdigit()
     totp_valid = False

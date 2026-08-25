@@ -45,6 +45,7 @@ def _login(client: TestClient, settings: Settings, *, origin: str):
     [
         ("https://EXAMPLE.com:443", "https://example.com"),
         ("https://bücher.example:443", "https://xn--bcher-kva.example"),
+        ("https://faß.de", "https://xn--fa-hia.de"),
         (
             "https://[2001:0DB8:0:0:0:0:0:1]:443",
             "https://[2001:db8::1]",

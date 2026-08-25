@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import ParseResult, urlparse
 
+import idna
+
 
 class SettingsError(ValueError):
     """Raised when a required setting is invalid."""
@@ -134,8 +136,8 @@ def _canonical_origin_host(parsed: ParseResult, *, name: str) -> tuple[str, int 
         raise SettingsError(f"{name} contains an invalid hostname")
 
     try:
-        ascii_hostname = hostname.encode("idna").decode("ascii").lower()
-    except UnicodeError as exc:
+        ascii_hostname = idna.encode(hostname, uts46=True, std3_rules=True).decode("ascii").lower()
+    except idna.IDNAError as exc:
         raise SettingsError(f"{name} contains an invalid hostname") from exc
     if len(ascii_hostname) > 253:
         raise SettingsError(f"{name} contains an invalid hostname")
