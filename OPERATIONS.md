@@ -9,12 +9,13 @@ QuaZonai V1 是单用户、自托管私有工作台。正常 Research Program �
 1. **提出 Research Idea**；
 2. **审批系统推荐的 Paper / Live Candidate Handoff**。
 
-其余动作都属于低频 Administration 或故障处置，不应成为每个 Program 的必经步骤。
+其余动作都属于低频 Administration 或故障处置，不应成为每个 Program 的必经步骤。Operator 登录属于部署访问边界，也不增加 Research Program 的常规业务步骤。
 
 完整用户视图：
 
 ```text
-提出 Idea
+Operator 登录
+→ 提出 Idea
 → 系统自治研究
 → 系统构建 Alpha / Portfolio
 → 有实质价值时通知审批
@@ -51,6 +52,8 @@ QuaZonai V1 是单用户、自托管私有工作台。正常 Research Program �
 
 低频操作：
 
+- 配置单 Operator 登录与 Google Authenticator-compatible TOTP；
+- 决定是否在受控设备上启用 `Trust this browser`；
 - 完成首次 `RESEARCH_READY`；
 - Codex 登录/认证；
 - 在 Runtime Configuration 配置 Codex provider/model 与 Worker limits；
@@ -396,7 +399,44 @@ Live handoff
 
 首次安装只要求达到 `RESEARCH_READY`。
 
-### 14.2 Codex / Runtime Configuration
+### 14.2 Operator Authentication
+
+QuaZonai V1 只有一个部署 Operator。它不是业务用户系统、tenant 或 RBAC。
+
+正常 Web 登录输入：
+
+```text
+QUAZONAI_AUTH_USERNAME
++ QUAZONAI_AUTH_PASSWORD
++ Google Authenticator-compatible 6-digit TOTP
+```
+
+TOTP setup key 来自 `.env` 的 `QUAZONAI_AUTH_TOTP_SECRET`。在 Google Authenticator 中选择 **Enter a setup key**，使用该值并选择 **Time based**。TOTP secret、Operator password、cookie key 和 machine API token 都属于启动级 secret，不能放进聊天、截图、事件或日志。
+
+登录时可以勾选 **Trust this browser**。选中后服务器在当前浏览器 profile 写入长期 HttpOnly trusted-browser credential；短期 session 过期后，只要该 trusted credential 仍有效，就会自动恢复新 session，用户不再输入 password/TOTP。默认 trusted-browser 有效期 30 天，默认短 session 为 12 小时。
+
+只应信任自己控制的浏览器 profile。公共/共享电脑不要勾选。正常 Sign out 会同时清除 session 与 trusted-browser credential。
+
+失窃/不再可信设备的处置：
+
+1. 立即轮换 `.env` 中 `QUAZONAI_AUTH_COOKIE_KEY`；
+2. 重启 API；
+3. 全部现有 session 与 trusted-browser credential 随即失效；
+4. 所有浏览器必须重新执行 password + TOTP 登录。
+
+其他 credential 轮换：
+
+- `QUAZONAI_AUTH_TOTP_SECRET`：所有旧 Authenticator code 失效，需要重新配置 Authenticator；
+- `QUAZONAI_API_TOKEN`：旧 CLI/automation Bearer token 失效；
+- `QUAZONAI_AUTH_PASSWORD`：之后的完整登录使用新密码，但已有 cookie 仍由 cookie key 控制，所以设备级紧急撤销应轮换 cookie key。
+
+`QUAZONAI_AUTH_PUBLIC_ORIGIN` 必须与浏览器实际 Origin 精确一致。Production 必须为 HTTPS；反向代理/Tunnel 应在可信 TLS 层终止 HTTPS，并把该外部 Origin 写入 `.env`。
+
+Production 缺少任一 Operator auth 必需值时 API fail closed。Development/Test 只有在整组主要 auth 配置都缺失时才允许 auth disabled；部分配置不会降级成匿名访问。
+
+CLI/automation 不使用 Web cookie、密码或 TOTP，而是从环境读取 `QUAZONAI_API_TOKEN`。Downstream consumer 的 Bearer service token 仍独立，只能操作其自身 Handoff/Feedback 合同。
+
+### 14.3 Codex / Runtime Configuration
 
 Administration 是 Codex runtime 配置的事实入口，显示并允许修改：
 
@@ -411,11 +451,11 @@ Administration 是 Codex runtime 配置的事实入口，显示并允许修改�
 
 Codex API key 由 `QUAZONAI_MASTER_KEY` 使用 AES-256-GCM 加密后保存到 PostgreSQL。Secret/token 不在 Web 展示，也不写入事件 payload；运行时通过受信任 runner 的 one-shot credential broker 交给 Codex provider auth，不进入 App Server/Mission 环境变量。
 
-`.env` 只负责启动级基础设施：运行环境、PostgreSQL、master key、存储根目录和 HTTP port。Codex model/API key/Base URL 不再由 `.env` 配置。
+`.env` 只负责启动级基础设施与 Operator access：运行环境、PostgreSQL、master key、Operator username/password/TOTP、browser cookie key、CLI machine token、public origin、存储根目录和 HTTP port。Codex model/API key/Base URL 不由 `.env` 配置。
 
 Runtime Configuration 使用 revision + 幂等 mutation：页面保存携带当前 revision，若其他请求已先更新则返回冲突并要求刷新，不覆盖较新配置；网络重试复用同一个 `Idempotency-Key`，不会重复修改 revision、重复写事件或重复保存 secret。
 
-### 14.3 Worker limits
+### 14.4 Worker limits
 
 以下运行参数在 Runtime Configuration 中由管理员维护，而不是 `.env`：
 
@@ -429,19 +469,19 @@ Runtime Configuration 使用 revision + 幂等 mutation：页面保存携带当�
 
 Worker 在领取后续 job 时读取最新配置；修改这些值不要求重建 Compose stack，也不改变已经运行中的 child process 的既定 deadline。
 
-### 14.4 Data
+### 14.5 Data
 
 管理员配置 approved Data Sources/Connectors。Codex 只调用批准的数据能力。
 
-### 14.5 Universe / Mandate
+### 14.6 Universe / Mandate
 
 Universe 和 Mandate 是长期配置。首次启用默认 Mandate；其他模板按需启用。
 
-### 14.6 Capital Context
+### 14.7 Capital Context
 
 可以由 Administration 或 downstream feedback 提供现实资金规模快照；QZ 不读取 broker account/positions。
 
-### 14.7 Downstream
+### 14.8 Downstream
 
 配置逻辑系统及连接，例如：
 
@@ -453,7 +493,7 @@ External Validator
 
 QZ 只验证 Handoff/Feedback contract，不检查其交易节点内部状态。
 
-### 14.8 Plugins
+### 14.9 Plugins
 
 只允许 Data/Research/Handoff plugins。运行时 side-by-side install/activate/drain/remove，不允许 execution broker plugins。
 
