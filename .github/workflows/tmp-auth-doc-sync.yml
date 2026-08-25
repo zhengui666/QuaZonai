@@ -16,7 +16,7 @@ jobs:
         with:
           ref: feat/operator-totp-auth
           fetch-depth: 0
-      - name: Synchronize opt-in authentication contract
+      - name: Normalize remaining opt-in wording
         shell: python
         run: |
           from pathlib import Path
@@ -30,110 +30,43 @@ jobs:
 
           replace_once(
               "DESIGN.md",
-              "首次安装、Operator 登录、数据授权、Codex 登录与 Runtime Configuration、Mandate/Universe/下游配置、插件管理和故障处理属于低频 Administration，不计入正常研究旅程。",
-              "首次安装、可选 Operator 登录、数据授权、Codex 登录与 Runtime Configuration、Mandate/Universe/下游配置、插件管理和故障处理属于低频 Administration，不计入正常研究旅程。",
+              "- 成功登录签发短期 browser session cookie。勾选 **Trust this browser** 时另外签发长期 trusted-browser cookie；两者都使用独立 `QUAZONAI_AUTH_COOKIE_KEY` 做 AES-256-GCM authenticated encryption，Cookie 必须 `HttpOnly`、`SameSite=Strict`，production 必须 `Secure`，不能把 bearer credential 放入 `localStorage`/`sessionStorage`；",
+              "- 成功登录签发短期 browser session cookie。勾选 **Trust this browser** 时另外签发长期 trusted-browser cookie；两者都使用独立 `QUAZONAI_AUTH_COOKIE_KEY` 做 AES-256-GCM authenticated encryption，Cookie 必须 `HttpOnly`、`SameSite=Strict`，启用认证的 production 必须自动标记 `Secure`，不能把 bearer credential 放入 `localStorage`/`sessionStorage`；",
           )
           replace_once(
               "DESIGN.md",
-              "QUAZONAI_MASTER_KEY\nQUAZONAI_AUTH_USERNAME / QUAZONAI_AUTH_PASSWORD / QUAZONAI_AUTH_TOTP_SECRET",
-              "QUAZONAI_MASTER_KEY\nQUAZONAI_AUTH_ENABLED\nQUAZONAI_AUTH_USERNAME / QUAZONAI_AUTH_PASSWORD / QUAZONAI_AUTH_TOTP_SECRET",
+              "- browser cookie 认证的 unsafe request 必须通过同源校验，production 使用 `QUAZONAI_AUTH_PUBLIC_ORIGIN` 作为准确 Origin；`SameSite=Strict` 不是唯一 CSRF 控制；",
+              "- browser cookie 认证的 unsafe request 必须与 `QUAZONAI_AUTH_PUBLIC_ORIGIN` 做精确同源校验；启用认证的 production origin 必须使用 HTTPS；`SameSite=Strict` 不是唯一 CSRF 控制；",
           )
           replace_once(
               "DESIGN.md",
-              "`api` 默认只发布宿主 `127.0.0.1:8000`。远程访问由操作者自己的受信 TLS/reverse-proxy/tunnel 层处理；V1 不建设多用户业务认证或 RBAC，但 Web/operator API 必须有单用户 Operator Authentication 边界，不能因为端口被暴露而自动获得工作台访问权。",
-              "`api` 默认只发布宿主 `127.0.0.1:8000`。远程访问由操作者自己的受信 TLS/reverse-proxy/tunnel 层处理；V1 不建设多用户业务认证或 RBAC。`QUAZONAI_AUTH_ENABLED=true` 时 Web/operator API 使用单用户 Operator Authentication 边界；为 `false` 时保留 direct access，操作者必须保持 loopback-only 或提供另一个明确可信的访问边界。",
-          )
-          replace_once(
-              "DESIGN.md",
-              "```text\nQUAZONAI_AUTH_USERNAME\nQUAZONAI_AUTH_PASSWORD\nQUAZONAI_AUTH_TOTP_SECRET",
-              "```text\nQUAZONAI_AUTH_ENABLED\nQUAZONAI_AUTH_USERNAME\nQUAZONAI_AUTH_PASSWORD\nQUAZONAI_AUTH_TOTP_SECRET",
-          )
-          replace_once(
-              "DESIGN.md",
-              "- production 启动必须 fail closed：Operator username/password、TOTP secret、独立 32-byte cookie encryption key、machine API token 与 public origin 缺失或格式非法时拒绝启动；development/test 可在整组 auth 配置完全缺失时显式保持 auth disabled，任一字段部分配置仍视为错误；",
-              "- `QUAZONAI_AUTH_ENABLED=false` 时在所有环境保留 direct Web/operator API access，不显示登录门；该模式只适合 loopback-only 或另有明确可信访问边界的部署；设为 `true` 时 username/password、TOTP secret、独立 32-byte cookie encryption key、machine API token 与 public origin 必须全部存在且格式合法，否则启动 fail closed；启用认证的 production public origin 必须使用 HTTPS；",
-          )
-          replace_once(
-              "DESIGN.md",
-              "Operator API 默认要求 authenticated browser session/trusted-browser credential 或 machine API token；认证入口和 healthcheck 是明确例外。",
-              "Operator Authentication 启用时，Operator API 要求 authenticated browser session/trusted-browser credential 或 machine API token；认证入口和 healthcheck 是明确例外。认证关闭时保留 direct access。",
-          )
-          replace_once(
-              "DESIGN.md",
-              "### Operator Login\n",
-              "### Operator Login（仅在 `QUAZONAI_AUTH_ENABLED=true` 时）\n",
-          )
-          replace_once(
-              "DESIGN.md",
-              "V1 假定合作的单机操作者；插件和 Mission code 不是恶意代码安全沙箱。但暴露 Web/API 时必须验证 Operator 身份，不能把“单用户”解释为“匿名访问”。",
-              "V1 假定合作的单机操作者；插件和 Mission code 不是恶意代码安全沙箱。暴露 Web/API 时，若启用 QuaZonai Operator Authentication 就必须验证 Operator 身份；若关闭认证，则必须由 loopback-only 或另一个明确可信的访问边界承担保护，不能无意中把服务公开为匿名工作台。",
-          )
-          replace_once(
-              "DESIGN.md",
-              "- [ ] 未认证浏览器不能读取或修改 Operator API；",
-              "- [ ] `QUAZONAI_AUTH_ENABLED=true` 时未认证浏览器不能读取或修改 Operator API；为 `false` 时保留 direct access；",
-          )
-          replace_once(
-              "DESIGN.md",
-              "- [ ] production auth 配置缺失/非法时 API fail closed，healthcheck 仍可用于正常已配置实例；",
-              "- [ ] Operator Authentication 启用后，配置缺失/非法时 API fail closed；启用认证的 production 要求 HTTPS/Secure cookie；healthcheck 仍保持 public；",
-          )
-
-          replace_once(
-              "OPERATIONS.md",
-              "Operator 登录\n→ 提出 Idea",
-              "可选 Operator 登录（认证启用时）\n→ 提出 Idea",
+              "- `/api/v1/system/health` 保持 public 供容器/orchestrator healthcheck；`/api/v1/auth/login` 与 session bootstrap 属于认证入口；其余 Operator API 要求有效 browser credential 或 `Authorization: Bearer <QUAZONAI_API_TOKEN>`；",
+              "- `/api/v1/system/health` 保持 public 供容器/orchestrator healthcheck；`/api/v1/auth/login` 与 session bootstrap 属于认证入口；Operator Authentication 启用时，其余 Operator API 要求有效 browser credential 或 `Authorization: Bearer <QUAZONAI_API_TOKEN>`；关闭时保留 direct access；",
           )
           replace_once(
               "OPERATIONS.md",
-              "- 配置单 Operator 登录与 Google Authenticator-compatible TOTP；",
-              "- 决定是否启用单 Operator 登录，并在启用时配置 Google Authenticator-compatible TOTP；",
+              "`.env` 只负责启动级基础设施与 Operator access：运行环境、PostgreSQL、master key、Operator username/password/TOTP、browser cookie key、CLI machine token、public origin、存储根目录和 HTTP port。",
+              "`.env` 只负责启动级基础设施与 Operator access：运行环境、PostgreSQL、master key、`QUAZONAI_AUTH_ENABLED`、Operator username/password/TOTP、browser cookie key、CLI machine token、public origin、存储根目录和 HTTP port。",
           )
           replace_once(
               "OPERATIONS.md",
-              "QuaZonai V1 只有一个部署 Operator。它不是业务用户系统、tenant 或 RBAC。\n\n正常 Web 登录输入：",
-              "QuaZonai V1 只有一个部署 Operator。它不是业务用户系统、tenant 或 RBAC。`QUAZONAI_AUTH_ENABLED=false` 保留 direct access；只有显式设为 `true` 才启用下述登录门。\n\n认证启用后的 Web 登录输入：",
-          )
-          replace_once(
-              "OPERATIONS.md",
-              "```text\nQUAZONAI_AUTH_USERNAME\n+ QUAZONAI_AUTH_PASSWORD",
-              "```text\nQUAZONAI_AUTH_ENABLED=true\n+ QUAZONAI_AUTH_USERNAME\n+ QUAZONAI_AUTH_PASSWORD",
-          )
-          replace_once(
-              "OPERATIONS.md",
-              "`QUAZONAI_AUTH_PUBLIC_ORIGIN` 必须与浏览器实际 Origin 精确一致。Production 必须为 HTTPS；反向代理/Tunnel 应在可信 TLS 层终止 HTTPS，并把该外部 Origin 写入 `.env`。",
-              "认证启用时，`QUAZONAI_AUTH_PUBLIC_ORIGIN` 必须与浏览器实际 Origin 精确一致；production 必须为 HTTPS，反向代理/Tunnel 应在可信 TLS 层终止 HTTPS，并把该外部 Origin 写入 `.env`。",
-          )
-          replace_once(
-              "OPERATIONS.md",
-              "Production 缺少任一 Operator auth 必需值时 API fail closed。Development/Test 只有在整组主要 auth 配置都缺失时才允许 auth disabled；部分配置不会降级成匿名访问。",
-              "`QUAZONAI_AUTH_ENABLED=false` 在所有环境保留 direct access，此时应保持 loopback-only 或使用另一个明确可信的访问边界。设为 `true` 后，任一 Operator auth 必需值缺失或非法都会使 API fail closed；启用认证的 production 还要求 HTTPS 并自动使用 Secure cookie。",
-          )
-
-          replace_once(
-              "CLI.md",
-              "Human Web\n  → password + TOTP / trusted-browser credential",
-              "Human Web\n  → direct access, or password + TOTP / trusted-browser credential when auth is enabled",
+              "CLI/automation 不使用 Web cookie、密码或 TOTP，而是从环境读取 `QUAZONAI_API_TOKEN`。Downstream consumer 的 Bearer service token 仍独立，只能操作其自身 Handoff/Feedback 合同。",
+              "Operator Authentication 启用时，CLI/automation 不使用 Web cookie、密码或 TOTP，而是从环境读取 `QUAZONAI_API_TOKEN`；认证关闭时不要求该 token。Downstream consumer 的 Bearer service token 仍独立，只能操作其自身 Handoff/Feedback 合同。",
           )
           replace_once(
               "CLI.md",
-              "- Operator Authentication 启用时，CLI 从环境读取 `QUAZONAI_API_TOKEN` 并以 `Authorization: Bearer` 调用 Operator API；",
-              "- `QUAZONAI_AUTH_ENABLED=true` 时，CLI 从环境读取 `QUAZONAI_API_TOKEN` 并以 `Authorization: Bearer` 调用 Operator API；认证关闭时该 token 不是必需项；",
+              "Local human / automation\n  → quazonai CLI\n  → QUAZONAI_API_TOKEN Bearer credential",
+              "Local human / automation\n  → quazonai CLI\n  → QUAZONAI_API_TOKEN Bearer credential when auth is enabled",
           )
-          replace_once(
-              "CLI.md",
-              "```bash\nexport QUAZONAI_API_TOKEN='<same machine token configured on the API>'\nquazonai status\n```",
-              "```bash\n# Required when QUAZONAI_AUTH_ENABLED=true:\nexport QUAZONAI_API_TOKEN='<same machine token configured on the API>'\nquazonai status\n```",
-          )
-      - name: Commit synchronized documentation
+      - name: Commit normalized documentation
         shell: bash
         run: |
           if git diff --quiet -- DESIGN.md OPERATIONS.md CLI.md; then
-            echo "Documentation already synchronized."
+            echo "Documentation already normalized."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add DESIGN.md OPERATIONS.md CLI.md
-          git commit -m "docs(auth): align governed docs with explicit opt-in"
+          git commit -m "docs(auth): normalize remaining opt-in wording"
           git push origin HEAD:feat/operator-totp-auth
