@@ -15,7 +15,7 @@ The current repository does not commit a backend `uv.lock`; do not treat a nonex
 
 | Component | Direct dependencies |
 | --- | --- |
-| Backend runtime | Alembic, cryptography, FastAPI, HTTPX, packaging, psycopg, Pydantic, PyOTP, python-multipart, SQLAlchemy, uv, Uvicorn |
+| Backend runtime | Alembic, cryptography, FastAPI, HTTPX, idna, packaging, psycopg, Pydantic, PyOTP, python-multipart, SQLAlchemy, uv, Uvicorn |
 | Backend optional research/runtime groups | Optuna, PyArrow, openai-codex, MCP, PyJWT |
 | Frontend | React, React DOM, React Router DOM, Radix Themes, TanStack Query/Table/Virtual, XYFlow React, Phosphor Icons, ECharts, Lightweight Charts, Geist fonts |
 | Development and test tooling | Ruff, mypy, pytest, Playwright, Vitest, ESLint, TypeScript, Vite, Testing Library, jsdom |
