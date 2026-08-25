@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from types import TracebackType
 from typing import Any
 from urllib.parse import urlparse
@@ -31,9 +32,17 @@ def validate_loopback_endpoint(endpoint: str) -> str:
 
 
 class ApiClient:
-    def __init__(self, endpoint: str, *, timeout: float = 30.0) -> None:
+    def __init__(
+        self,
+        endpoint: str,
+        *,
+        timeout: float = 30.0,
+        api_token: str | None = None,
+    ) -> None:
         self.endpoint = validate_loopback_endpoint(endpoint)
         self.timeout = timeout
+        configured_token = api_token if api_token is not None else os.environ.get("QUAZONAI_API_TOKEN")
+        self.api_token = configured_token.strip() if configured_token and configured_token.strip() else None
 
     def __enter__(self) -> "ApiClient":
         return self
@@ -57,13 +66,16 @@ class ApiClient:
     ) -> Any:
         if not path.startswith("/api/v1/"):
             raise CliClientError("CLI requests must target a fixed /api/v1 operation")
+        request_headers = dict(headers or {})
+        if self.api_token is not None:
+            request_headers.setdefault("Authorization", f"Bearer {self.api_token}")
         try:
             response = httpx.request(
                 method,
                 f"{self.endpoint}{path}",
                 json=json_body,
                 params=params,
-                headers=headers,
+                headers=request_headers,
                 timeout=self.timeout,
             )
         except httpx.HTTPError as exc:
