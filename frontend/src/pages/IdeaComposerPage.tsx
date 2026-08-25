@@ -38,6 +38,7 @@ export function IdeaComposerPage() {
             <label className="qz-field">
               <span className="qz-label">{t('idea.question')}</span>
               <TextArea
+                dir="auto"
                 size="3"
                 rows={8}
                 value={idea}
@@ -60,7 +61,7 @@ export function IdeaComposerPage() {
               {result.overlap ? (
                 <Callout.Root color="amber" size="1">
                   <Callout.Icon><WarningCircleIcon /></Callout.Icon>
-                  <Callout.Text><strong>{result.overlap.kind}</strong> · {result.overlap.rationale ?? result.overlap.recommendation ?? t('idea.overlapFallback')}</Callout.Text>
+                  <Callout.Text dir="auto"><strong>{result.overlap.kind}</strong> · {result.overlap.rationale ?? result.overlap.recommendation ?? t('idea.overlapFallback')}</Callout.Text>
                 </Callout.Root>
               ) : (
                 <Callout.Root color="green" size="1">
@@ -68,18 +69,18 @@ export function IdeaComposerPage() {
                   <Callout.Text>{t('idea.noOverlap')}</Callout.Text>
                 </Callout.Root>
               )}
-              <div><div className="qz-label">{t('idea.researchQuestion')}</div><div style={{ marginTop: 5, fontSize: 13 }}>{result.charter?.research_question ?? idea}</div></div>
+              <div><div className="qz-label">{t('idea.researchQuestion')}</div><div dir="auto" style={{ marginTop: 5, fontSize: 13 }}>{result.charter?.research_question ?? idea}</div></div>
               <div className="qz-grid-2">
-                <div><div className="qz-label">{t('idea.marketScope')}</div><div className="qz-list-subtitle">{Array.isArray(result.charter?.market_scope) ? result.charter.market_scope.join(', ') : result.charter?.market_scope ?? t('common.systemInferred')}</div></div>
-                <div><div className="qz-label">{t('idea.predictionHorizon')}</div><div className="qz-list-subtitle">{result.charter?.prediction_horizon ?? t('common.systemInferred')}</div></div>
+                <div><div className="qz-label">{t('idea.marketScope')}</div><div dir="auto" className="qz-list-subtitle">{Array.isArray(result.charter?.market_scope) ? result.charter.market_scope.join(', ') : result.charter?.market_scope ?? t('common.systemInferred')}</div></div>
+                <div><div className="qz-label">{t('idea.predictionHorizon')}</div><div dir="auto" className="qz-list-subtitle">{result.charter?.prediction_horizon ?? t('common.systemInferred')}</div></div>
               </div>
               {questions.length ? (
                 <div className="qz-form-grid">
                   <div className="qz-label">{t('idea.materialClarification')}</div>
                   {questions.map((question) => (
                     <label className="qz-field" key={question.key}>
-                      <span style={{ fontSize: 12 }}>{question.question}</span>
-                      <TextField.Root value={answers[question.key] ?? ''} onChange={(event) => setAnswers((current) => ({ ...current, [question.key]: event.target.value }))} />
+                      <span dir="auto" style={{ fontSize: 12 }}>{question.question}</span>
+                      <TextField.Root dir="auto" value={answers[question.key] ?? ''} onChange={(event) => setAnswers((current) => ({ ...current, [question.key]: event.target.value }))} />
                     </label>
                   ))}
                 </div>

@@ -1,5 +1,6 @@
 import { getActiveLocale, getIntlLocale, translateSource } from '../i18n';
 import { translateDomainLabel } from '../i18n/domain';
+import { translateRuntimeLabel } from '../i18n/runtime';
 
 export function formatDateTime(value?: string | null): string {
   if (!value) return '—';
@@ -31,7 +32,7 @@ export function humanize(value?: string | null): string {
   if (!value) return '—';
   const source = humanizeIdentifier(value);
   const locale = getActiveLocale();
-  return translateDomainLabel(locale, source) ?? translateSource(locale, source);
+  return translateRuntimeLabel(locale, source) ?? translateDomainLabel(locale, source) ?? translateSource(locale, source);
 }
 
 export function readMetric(metrics: Record<string, unknown> | undefined, keys: string[]): number | string | null | undefined {

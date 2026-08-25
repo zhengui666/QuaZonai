@@ -26,6 +26,65 @@ function healthState(value: unknown) {
   return value ? 'READY' : 'UNKNOWN';
 }
 
+const homeCountForms = {
+  coolingPrograms: {
+    zero: 'home.coolingPrograms.zero',
+    one: 'home.coolingPrograms.one',
+    two: 'home.coolingPrograms.two',
+    few: 'home.coolingPrograms.few',
+    many: 'home.coolingPrograms.many',
+    other: 'home.coolingPrograms.other',
+  },
+  blockedPrograms: {
+    zero: 'home.blockedPrograms.zero',
+    one: 'home.blockedPrograms.one',
+    two: 'home.blockedPrograms.two',
+    few: 'home.blockedPrograms.few',
+    many: 'home.blockedPrograms.many',
+    other: 'home.blockedPrograms.other',
+  },
+  discoveryMissions: {
+    zero: 'home.discoveryMissions.zero',
+    one: 'home.discoveryMissions.one',
+    two: 'home.discoveryMissions.two',
+    few: 'home.discoveryMissions.few',
+    many: 'home.discoveryMissions.many',
+    other: 'home.discoveryMissions.other',
+  },
+  runningEvaluations: {
+    zero: 'home.runningEvaluations.zero',
+    one: 'home.runningEvaluations.one',
+    two: 'home.runningEvaluations.two',
+    few: 'home.runningEvaluations.few',
+    many: 'home.runningEvaluations.many',
+    other: 'home.runningEvaluations.other',
+  },
+  observedEvaluationMissions: {
+    zero: 'home.observedEvaluationMissions.zero',
+    one: 'home.observedEvaluationMissions.one',
+    two: 'home.observedEvaluationMissions.two',
+    few: 'home.observedEvaluationMissions.few',
+    many: 'home.observedEvaluationMissions.many',
+    other: 'home.observedEvaluationMissions.other',
+  },
+  portfolioPrograms: {
+    zero: 'home.portfolioPrograms.zero',
+    one: 'home.portfolioPrograms.one',
+    two: 'home.portfolioPrograms.two',
+    few: 'home.portfolioPrograms.few',
+    many: 'home.portfolioPrograms.many',
+    other: 'home.portfolioPrograms.other',
+  },
+  claimedHandoffs: {
+    zero: 'home.claimedHandoffs.zero',
+    one: 'home.claimedHandoffs.one',
+    two: 'home.claimedHandoffs.two',
+    few: 'home.claimedHandoffs.few',
+    many: 'home.claimedHandoffs.many',
+    other: 'home.claimedHandoffs.other',
+  },
+} as const;
+
 export function HomePage() {
   const { t, plural } = useI18n();
   const programs = usePrograms();
@@ -56,6 +115,7 @@ export function HomePage() {
   const evaluationRunning = evaluationMissions.filter((mission) => mission.state === 'RUNNING').length;
   const candidateReady = (portfolio.data ?? []).filter((item) => /CANDIDATE|READY/i.test(item.state)).length;
   const availableHandoffs = (handoffs.data ?? []).filter((item) => item.state === 'AVAILABLE').length;
+  const claimedHandoffs = (handoffs.data ?? []).filter((item) => item.state === 'CLAIMED').length;
   const pulse = [
     { label: t('research.program'), active, cooling, evidence: events.filter((event) => /EVALUAT|EVIDENCE|QUALIF/i.test(event.kind)).length },
     { label: t('research.missions'), active: runningMissions, cooling: blocked, evidence: missions.filter((mission) => mission.state === 'SUCCEEDED').length },
@@ -70,10 +130,10 @@ export function HomePage() {
         actions={<><Button asChild size="2"><Link to="/ideas"><FlaskIcon size={15} />{t('home.proposeIdea')}</Link></Button><Button asChild size="2" variant="soft"><Link to="/approval"><TargetIcon size={15} />{t('home.reviewApprovals')}</Link></Button></>}
       />
       <KpiStrip items={[
-        { label: 'Active programs', value: active, note: t('home.notePrograms', { cooling, blocked }) },
-        { label: 'Running missions', value: runningMissions, note: t('home.noteDiscovery', { count: discoveryMissions }) },
-        { label: 'Alpha Library', value: (alphas.data ?? []).length, note: t('home.noteEvaluations', { count: evaluationRunning }) },
-        { label: 'Evaluation status', value: humanize(evaluationRunning ? 'RUNNING' : evaluationMissions.length ? 'CURRENT' : 'IDLE'), note: t('home.noteEvaluationMissions', { count: evaluationMissions.length }) },
+        { label: 'Active programs', value: active, note: `${plural(homeCountForms.coolingPrograms, cooling)} · ${plural(homeCountForms.blockedPrograms, blocked)}` },
+        { label: 'Running missions', value: runningMissions, note: plural(homeCountForms.discoveryMissions, discoveryMissions) },
+        { label: 'Alpha Library', value: (alphas.data ?? []).length, note: plural(homeCountForms.runningEvaluations, evaluationRunning) },
+        { label: 'Evaluation status', value: humanize(evaluationRunning ? 'RUNNING' : evaluationMissions.length ? 'CURRENT' : 'IDLE'), note: plural(homeCountForms.observedEvaluationMissions, evaluationMissions.length) },
       ]} />
       <div className="qz-split" style={{ marginTop: 20 }}>
         <Section title="Research pulse" meta="Material progress, not token or command counts"><div className="qz-panel qz-panel-pad"><ResearchPulseChart data={pulse} /></div></Section>
@@ -90,9 +150,9 @@ export function HomePage() {
       </div>
       <Section title="Portfolio readiness" meta="Construction and handoff pipeline">
         <KpiStrip items={[
-          { label: 'Candidates ready', value: candidateReady, note: `${(portfolio.data ?? []).length} ${t('portfolio.programs')}` },
+          { label: 'Candidates ready', value: candidateReady, note: plural(homeCountForms.portfolioPrograms, (portfolio.data ?? []).length) },
           { label: 'Approval pending', value: pending.length, note: pending.length ? t('home.humanRequired') : t('home.noApprovalQueue') },
-          { label: 'Handoff available', value: availableHandoffs, note: `${(handoffs.data ?? []).filter((item) => item.state === 'CLAIMED').length} ${t('handoff.claimed')}` },
+          { label: 'Handoff available', value: availableHandoffs, note: plural(homeCountForms.claimedHandoffs, claimedHandoffs) },
           { label: 'Paper readiness', value: ready(readiness.data?.PAPER_HANDOFF_READY) ? t('common.ready') : t('common.notReady'), note: ready(readiness.data?.LIVE_HANDOFF_READY) ? t('home.liveAlsoReady') : t('home.liveGated') },
         ]} />
       </Section>
