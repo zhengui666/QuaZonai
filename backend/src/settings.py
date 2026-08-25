@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import base64
 import binascii
+import ipaddress
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import ParseResult, urlparse
 
 
 class SettingsError(ValueError):
@@ -27,6 +28,11 @@ MIN_AUTH_SESSION_TTL_SECONDS = 5 * 60
 MAX_AUTH_SESSION_TTL_SECONDS = 24 * 60 * 60
 MIN_AUTH_TRUSTED_BROWSER_TTL_DAYS = 1
 MAX_AUTH_TRUSTED_BROWSER_TTL_DAYS = 365
+MAX_OPERATOR_USERNAME_CHARACTERS = 200
+MIN_OPERATOR_PASSWORD_CHARACTERS = 12
+MAX_OPERATOR_PASSWORD_CHARACTERS = 4096
+MIN_MACHINE_TOKEN_CHARACTERS = 32
+MAX_MACHINE_TOKEN_CHARACTERS = 4096
 
 
 def _optional_env(name: str) -> str | None:
@@ -74,6 +80,43 @@ def _base64_key(value: str | None, *, name: str) -> bytes:
     return decoded
 
 
+def _validate_origin_host(parsed: ParseResult) -> None:
+    try:
+        hostname = parsed.hostname
+        parsed.port
+    except ValueError as exc:
+        raise SettingsError(
+            "QUAZONAI_AUTH_PUBLIC_ORIGIN must contain a valid host and optional TCP port"
+        ) from exc
+    if hostname is None or any(character.isspace() or ord(character) < 32 for character in hostname):
+        raise SettingsError(
+            "QUAZONAI_AUTH_PUBLIC_ORIGIN must contain a valid host and optional TCP port"
+        )
+
+    try:
+        ipaddress.ip_address(hostname)
+        return
+    except ValueError:
+        pass
+
+    try:
+        ascii_hostname = hostname.encode("idna").decode("ascii")
+    except UnicodeError as exc:
+        raise SettingsError("QUAZONAI_AUTH_PUBLIC_ORIGIN contains an invalid hostname") from exc
+    if len(ascii_hostname) > 253:
+        raise SettingsError("QUAZONAI_AUTH_PUBLIC_ORIGIN contains an invalid hostname")
+    labels = ascii_hostname.split(".")
+    if any(
+        not label
+        or len(label) > 63
+        or not label[0].isalnum()
+        or not label[-1].isalnum()
+        or any(not (character.isalnum() or character == "-") for character in label)
+        for label in labels
+    ):
+        raise SettingsError("QUAZONAI_AUTH_PUBLIC_ORIGIN contains an invalid hostname")
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     environment: str
@@ -114,9 +157,25 @@ class Settings:
             "postgresql+psycopg://quazonai:quazonai-local@127.0.0.1:5432/quazonai",
         )
         alembic_url = os.environ.get("QUAZONAI_ALEMBIC_URL", database_url)
+        operator_auth_enabled = _env_bool("QUAZONAI_AUTH_ENABLED", False)
         totp_secret = _optional_env("QUAZONAI_AUTH_TOTP_SECRET")
         if totp_secret is not None:
             totp_secret = "".join(totp_secret.split()).upper()
+        session_ttl = DEFAULT_AUTH_SESSION_TTL_SECONDS
+        trusted_browser_ttl = DEFAULT_AUTH_TRUSTED_BROWSER_TTL_DAYS
+        if operator_auth_enabled:
+            session_ttl = _bounded_env_int(
+                "QUAZONAI_AUTH_SESSION_TTL_SECONDS",
+                DEFAULT_AUTH_SESSION_TTL_SECONDS,
+                minimum=MIN_AUTH_SESSION_TTL_SECONDS,
+                maximum=MAX_AUTH_SESSION_TTL_SECONDS,
+            )
+            trusted_browser_ttl = _bounded_env_int(
+                "QUAZONAI_AUTH_TRUSTED_BROWSER_TTL_DAYS",
+                DEFAULT_AUTH_TRUSTED_BROWSER_TTL_DAYS,
+                minimum=MIN_AUTH_TRUSTED_BROWSER_TTL_DAYS,
+                maximum=MAX_AUTH_TRUSTED_BROWSER_TTL_DAYS,
+            )
         return cls(
             environment=environment,
             database_url=database_url,
@@ -145,25 +204,15 @@ class Settings:
             frontend_dist=Path(
                 os.environ.get("QUAZONAI_FRONTEND_DIST", "/workspace/frontend-dist")
             ),
-            operator_auth_enabled=_env_bool("QUAZONAI_AUTH_ENABLED", False),
+            operator_auth_enabled=operator_auth_enabled,
             operator_username=_optional_env("QUAZONAI_AUTH_USERNAME"),
             operator_password=_optional_env("QUAZONAI_AUTH_PASSWORD"),
             operator_totp_secret=totp_secret,
             auth_cookie_key=_optional_env("QUAZONAI_AUTH_COOKIE_KEY"),
             api_token=_optional_env("QUAZONAI_API_TOKEN"),
             auth_public_origin=_optional_env("QUAZONAI_AUTH_PUBLIC_ORIGIN"),
-            auth_session_ttl_seconds=_bounded_env_int(
-                "QUAZONAI_AUTH_SESSION_TTL_SECONDS",
-                DEFAULT_AUTH_SESSION_TTL_SECONDS,
-                minimum=MIN_AUTH_SESSION_TTL_SECONDS,
-                maximum=MAX_AUTH_SESSION_TTL_SECONDS,
-            ),
-            auth_trusted_browser_ttl_days=_bounded_env_int(
-                "QUAZONAI_AUTH_TRUSTED_BROWSER_TTL_DAYS",
-                DEFAULT_AUTH_TRUSTED_BROWSER_TTL_DAYS,
-                minimum=MIN_AUTH_TRUSTED_BROWSER_TTL_DAYS,
-                maximum=MAX_AUTH_TRUSTED_BROWSER_TTL_DAYS,
-            ),
+            auth_session_ttl_seconds=session_ttl,
+            auth_trusted_browser_ttl_days=trusted_browser_ttl,
         )
 
     @property
@@ -224,12 +273,20 @@ class Settings:
         assert self.api_token is not None
         assert self.auth_public_origin is not None
 
-        if len(self.operator_username) > 200:
-            raise SettingsError("QUAZONAI_AUTH_USERNAME must contain at most 200 characters")
-        if len(self.operator_password) < 12:
-            raise SettingsError("QUAZONAI_AUTH_PASSWORD must contain at least 12 characters")
-        if len(self.api_token) < 32:
-            raise SettingsError("QUAZONAI_API_TOKEN must contain at least 32 characters")
+        if len(self.operator_username) > MAX_OPERATOR_USERNAME_CHARACTERS:
+            raise SettingsError(
+                f"QUAZONAI_AUTH_USERNAME must contain at most {MAX_OPERATOR_USERNAME_CHARACTERS} characters"
+            )
+        if not MIN_OPERATOR_PASSWORD_CHARACTERS <= len(self.operator_password) <= MAX_OPERATOR_PASSWORD_CHARACTERS:
+            raise SettingsError(
+                "QUAZONAI_AUTH_PASSWORD must contain between "
+                f"{MIN_OPERATOR_PASSWORD_CHARACTERS} and {MAX_OPERATOR_PASSWORD_CHARACTERS} characters"
+            )
+        if not MIN_MACHINE_TOKEN_CHARACTERS <= len(self.api_token) <= MAX_MACHINE_TOKEN_CHARACTERS:
+            raise SettingsError(
+                "QUAZONAI_API_TOKEN must contain between "
+                f"{MIN_MACHINE_TOKEN_CHARACTERS} and {MAX_MACHINE_TOKEN_CHARACTERS} characters"
+            )
         self.auth_cookie_key_bytes()
 
         padded_secret = self.operator_totp_secret + "=" * (
@@ -252,6 +309,7 @@ class Settings:
             or not parsed.netloc
             or parsed.username
             or parsed.password
+            or parsed.params
             or parsed.query
             or parsed.fragment
             or parsed.path not in {"", "/"}
@@ -259,6 +317,7 @@ class Settings:
             raise SettingsError(
                 "QUAZONAI_AUTH_PUBLIC_ORIGIN must be an origin such as https://quazonai.example.com"
             )
+        _validate_origin_host(parsed)
         if self.environment.casefold() == "production" and parsed.scheme != "https":
             raise SettingsError("QUAZONAI_AUTH_PUBLIC_ORIGIN must use https in production")
 
