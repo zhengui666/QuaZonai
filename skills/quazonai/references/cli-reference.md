@@ -157,19 +157,19 @@ quazonai approval show <APPROVAL_ID>
 
 quazonai approval approve \
   <APPROVAL_ID> \
-  <DOWNSTREAM_SYSTEM_ID> \
+  --downstream <DOWNSTREAM_SYSTEM_ID> \
   [--expected-state <STATE>]
 
 quazonai approval reject \
   <APPROVAL_ID> \
-  <REASON_CODE> \
+  --reason <REASON_CODE> \
   [--note "<TEXT>"] \
   [--expected-state <STATE>]
 ```
 
 The default expected state is `PENDING`.
 
-`DOWNSTREAM_SYSTEM_ID` and `REASON_CODE` are positional arguments. Do not rewrite them as `--downstream` or `--reason`.
+`--downstream` and `--reason` are required named options, matching the canonical CLI contract. Do not rewrite them as positional arguments.
 
 An AI Agent must never execute `approval approve` or `approval reject`. It may run `approval list/show`, validate the current snapshot, and render the exact decision command for the human operator.
 
@@ -177,7 +177,7 @@ An AI Agent must never execute `approval approve` or `approval reject`. It may r
 
 ```bash
 quazonai handoff list
-quazonai handoff revoke <HANDOFF_ID> <REASON_CODE>
+quazonai handoff revoke <HANDOFF_ID> --reason <REASON_CODE>
 ```
 
 There is no implemented `handoff show` command. Verify a revoke by listing Handoffs again and locating the returned ID.
