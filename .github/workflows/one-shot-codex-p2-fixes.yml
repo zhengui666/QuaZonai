@@ -29,8 +29,8 @@ jobs:
 
           settings = Path('backend/src/settings.py')
           text = settings.read_text(encoding='utf-8')
-          old = 'import pyotp\n'
-          new = 'import idna\nimport pyotp\n'
+          old = 'from urllib.parse import ParseResult, urlparse\n\n\nclass SettingsError'
+          new = 'from urllib.parse import ParseResult, urlparse\n\nimport idna\n\n\nclass SettingsError'
           if text.count(old) != 1:
               raise SystemExit(f'settings import marker count={text.count(old)}')
           text = text.replace(old, new, 1)
