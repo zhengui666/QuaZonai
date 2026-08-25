@@ -13,7 +13,7 @@ Human Web
 
 Local human / automation
   → quazonai CLI
-  → QUAZONAI_API_TOKEN Bearer credential
+  → QUAZONAI_API_TOKEN Bearer credential when auth is enabled
   → loopback FastAPI Core
 
 Built-in Codex Runtime

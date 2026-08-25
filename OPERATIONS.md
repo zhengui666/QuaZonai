@@ -435,7 +435,7 @@ TOTP setup key 来自 `.env` 的 `QUAZONAI_AUTH_TOTP_SECRET`。在 Google Authen
 
 `QUAZONAI_AUTH_ENABLED=false` 在所有环境保留 direct access，此时应保持 loopback-only 或使用另一个明确可信的访问边界。设为 `true` 后，任一 Operator auth 必需值缺失或非法都会使 API fail closed；启用认证的 production 还要求 HTTPS 并自动使用 Secure cookie。
 
-CLI/automation 不使用 Web cookie、密码或 TOTP，而是从环境读取 `QUAZONAI_API_TOKEN`。Downstream consumer 的 Bearer service token 仍独立，只能操作其自身 Handoff/Feedback 合同。
+Operator Authentication 启用时，CLI/automation 不使用 Web cookie、密码或 TOTP，而是从环境读取 `QUAZONAI_API_TOKEN`；认证关闭时不要求该 token。Downstream consumer 的 Bearer service token 仍独立，只能操作其自身 Handoff/Feedback 合同。
 
 ### 14.3 Codex / Runtime Configuration
 
@@ -452,7 +452,7 @@ Administration 是 Codex runtime 配置的事实入口，显示并允许修改�
 
 Codex API key 由 `QUAZONAI_MASTER_KEY` 使用 AES-256-GCM 加密后保存到 PostgreSQL。Secret/token 不在 Web 展示，也不写入事件 payload；运行时通过受信任 runner 的 one-shot credential broker 交给 Codex provider auth，不进入 App Server/Mission 环境变量。
 
-`.env` 只负责启动级基础设施与 Operator access：运行环境、PostgreSQL、master key、Operator username/password/TOTP、browser cookie key、CLI machine token、public origin、存储根目录和 HTTP port。Codex model/API key/Base URL 不由 `.env` 配置。
+`.env` 只负责启动级基础设施与 Operator access：运行环境、PostgreSQL、master key、`QUAZONAI_AUTH_ENABLED`、Operator username/password/TOTP、browser cookie key、CLI machine token、public origin、存储根目录和 HTTP port。Codex model/API key/Base URL 不由 `.env` 配置。
 
 Runtime Configuration 使用 revision + 幂等 mutation：页面保存携带当前 revision，若其他请求已先更新则返回冲突并要求刷新，不覆盖较新配置；网络重试复用同一个 `Idempotency-Key`，不会重复修改 revision、重复写事件或重复保存 secret。
 
