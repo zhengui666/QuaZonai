@@ -79,11 +79,9 @@ def list_events(
     return _read_events(request, after_id, limit)
 
 
-async def _stream(request: Request, cursor: int) -> AsyncIterator[str]:
+async def _stream(request: Request, cursor: int, generation: int) -> AsyncIterator[str]:
     last_id = cursor
     idle_ticks = 0
-    runtime: OperatorAuthRuntime = request.app.state.operator_auth_runtime
-    generation = runtime.stream_generation()
     while True:
         if await request.is_disconnected() or not _stream_authorized(request, generation):
             return
@@ -110,8 +108,10 @@ def stream_events(
     header = request.headers.get("last-event-id")
     last_event_id = int(header) if header and header.isdigit() else 0
     start = cursor if cursor is not None else last_event_id
+    runtime: OperatorAuthRuntime = request.app.state.operator_auth_runtime
+    admission_generation = runtime.stream_generation()
     return StreamingResponse(
-        _stream(request, start),
+        _stream(request, start, admission_generation),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-store",
