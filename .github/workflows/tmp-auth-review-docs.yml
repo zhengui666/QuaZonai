@@ -1,0 +1,68 @@
+name: One-time reviewed auth documentation sync
+
+on:
+  push:
+    branches:
+      - feat/operator-totp-auth
+
+permissions:
+  contents: write
+
+jobs:
+  sync-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/operator-totp-auth
+          fetch-depth: 0
+      - name: Synchronize reviewed authentication contract
+        shell: python
+        run: |
+          from pathlib import Path
+
+          changed = False
+
+          def replace_if_present(path: str, old: str, new: str) -> None:
+              global changed
+              target = Path(path)
+              text = target.read_text(encoding="utf-8")
+              if old not in text:
+                  return
+              target.write_text(text.replace(old, new, 1), encoding="utf-8")
+              changed = True
+
+          replace_if_present(
+              "DESIGN.md",
+              "- `QUAZONAI_AUTH_ENABLED=false` 时在所有环境保留 direct Web/operator API access，不显示登录门；该模式只适合 loopback-only 或另有明确可信访问边界的部署；设为 `true` 时 username/password、TOTP secret、独立 32-byte cookie encryption key、machine API token 与 public origin 必须全部存在且格式合法，否则启动 fail closed；启用认证的 production public origin 必须使用 HTTPS；",
+              "- `QUAZONAI_AUTH_ENABLED=false` 时在所有环境保留 direct Web/operator API access，不显示登录门，其他 auth credential/TTL 配置均视为 dormant 并忽略；该模式只适合 loopback-only 或另有明确可信访问边界的部署；设为 `true` 时 username/password、TOTP secret、独立 32-byte cookie encryption key、machine API token、public origin 与 bounded TTL 必须全部格式合法，否则启动 fail closed；启用认证的 production public origin 必须使用 HTTPS；",
+          )
+          replace_if_present(
+              "DESIGN.md",
+              "- 认证失败返回统一错误 envelope，不区分“用户名不存在/密码错误/TOTP 错误”等可用于枚举的细节；\n- 不新增应用级 hash/checksum/fingerprint 身份或完整性 Gate。Cookie 使用标准 authenticated encryption，TOTP 使用标准库实现。",
+              "- 认证失败返回统一错误 envelope，不区分“用户名不存在/密码错误/TOTP 错误”等可用于枚举的细节；登录验证使用有界、进程内、按观测来源的短退避：credential verification 最少间隔 1 秒，连续失败指数退避但最大 5 秒，成功即清除状态，受限请求仍返回同一通用认证失败，不建立持久账户锁定；\n- `/api/v1/events/stream` 不是一次认证后永久有效：每轮 polling 必须按当前 settings 重新验证 session/trusted-browser cookie 或 machine token；session 到期、cookie key/token 轮换立即终止流，成功 logout 推进进程内 stream generation，使已打开的 SSE 在下一轮停止并由浏览器按当前 cookie 状态重新连接；\n- Operator password/TOTP/cookie key/machine token/public origin 不得继承到 Codex App Server 或 Mission-owned child environment；\n- 不新增应用级 hash/checksum/fingerprint 身份或完整性 Gate。Cookie 使用标准 authenticated encryption，TOTP 使用标准库实现。",
+          )
+          replace_if_present(
+              "OPERATIONS.md",
+              "只应信任自己控制的浏览器 profile。公共/共享电脑不要勾选。正常 Sign out 会同时清除 session 与 trusted-browser credential。",
+              "只应信任自己控制的浏览器 profile。公共/共享电脑不要勾选。正常 Sign out 会同时清除 session 与 trusted-browser credential，并使当前 API 进程中已经打开的事件流在下一轮认证检查时停止；退出请求失败时 UI 不会伪装成已退出。",
+          )
+          replace_if_present(
+              "OPERATIONS.md",
+              "`QUAZONAI_AUTH_ENABLED=false` 在所有环境保留 direct access，此时应保持 loopback-only 或使用另一个明确可信的访问边界。设为 `true` 后，任一 Operator auth 必需值缺失或非法都会使 API fail closed；启用认证的 production 还要求 HTTPS 并自动使用 Secure cookie。",
+              "`QUAZONAI_AUTH_ENABLED=false` 在所有环境保留 direct access，此时 auth credential/TTL 值均 dormant，应保持 loopback-only 或使用另一个明确可信的访问边界。设为 `true` 后，任一 Operator auth 必需值缺失或非法都会使 API fail closed；启用认证的 production 还要求 HTTPS 并自动使用 Secure cookie。连续失败登录会触发 1–5 秒的短退避，但不会形成持久账户锁定；被限制的请求仍显示统一的无效凭据错误。",
+          )
+
+          if not changed:
+              print("Reviewed authentication documentation already synchronized.")
+      - name: Commit synchronized documentation
+        shell: bash
+        run: |
+          if git diff --quiet -- DESIGN.md OPERATIONS.md; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add DESIGN.md OPERATIONS.md
+          git commit -m "docs(auth): record reviewed login and stream controls"
+          git push origin HEAD:feat/operator-totp-auth
