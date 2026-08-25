@@ -59,7 +59,7 @@ export function PortfolioLabPage() {
       </div>
       <div className="qz-grid-2">
         <Section title="Risk exposure" meta="Factor / universe exposure">{risk.length ? <div className="qz-panel qz-panel-pad"><EChart ariaLabel="Portfolio risk exposure chart" option={riskOption} /></div> : <EmptyState title="No exposure vector" description="Risk exposure remains unavailable until returned by the candidate evidence API." />}</Section>
-        <Section title="Correlation matrix" meta="Cross-alpha / cross-universe dependence">{matrix ? <div className="qz-panel qz-panel-pad"><EChart ariaLabel="Portfolio correlation matrix chart" option={correlationOption} /></div> : <EmptyState title="No correlation matrix" description="The current candidate did not return matrix evidence." />}</Section>
+        <Section title="Correlation matrix" meta="Cross-alpha / cross-universe dependence">{matrix ? <div className="qz-panel qz-panel-pad"><EChart ariaLabel="Portfolio correlation matrix" option={correlationOption} /></div> : <EmptyState title="No correlation matrix" description="The current candidate did not return matrix evidence." />}</Section>
       </div>
     </>
   );
