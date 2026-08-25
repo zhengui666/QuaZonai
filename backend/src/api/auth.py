@@ -18,7 +18,11 @@ from operator_auth import (
     set_session_cookie,
     set_trusted_browser_cookie,
 )
-from settings import Settings
+from settings import (
+    MAX_OPERATOR_PASSWORD_CHARACTERS,
+    MAX_OPERATOR_USERNAME_CHARACTERS,
+    Settings,
+)
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -26,8 +30,8 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 class LoginInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    username: str = Field(min_length=1, max_length=200)
-    password: str = Field(min_length=1, max_length=4096)
+    username: str = Field(min_length=1, max_length=MAX_OPERATOR_USERNAME_CHARACTERS)
+    password: str = Field(min_length=1, max_length=MAX_OPERATOR_PASSWORD_CHARACTERS)
     totp_code: str = Field(min_length=6, max_length=32)
     trust_browser: bool = False
 
@@ -128,7 +132,8 @@ def logout(request: Request, response: Response) -> None:
     settings: Settings = request.app.state.settings
     _prevent_auth_response_caching(response)
     require_same_origin(request, settings)
+    browser_identity = authenticate_browser(request, settings)
     clear_auth_cookies(response, settings)
-    if settings.auth_enabled:
+    if browser_identity is not None:
         runtime: OperatorAuthRuntime = request.app.state.operator_auth_runtime
         runtime.revoke_active_streams()
