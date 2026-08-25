@@ -93,6 +93,17 @@ def _base64_key(value: str | None, *, name: str) -> bytes:
     return decoded
 
 
+def _contains_ascii_control(value: str) -> bool:
+    return any(ord(character) < 32 or ord(character) == 127 for character in value)
+
+
+def _validate_utf8_text(value: str, *, name: str) -> None:
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise SettingsError(f"{name} must contain valid Unicode text") from exc
+
+
 def validate_machine_api_token(value: str) -> None:
     """Validate the RFC 6750 b64token grammar used in the Authorization header."""
     if not MIN_MACHINE_TOKEN_CHARACTERS <= len(value) <= MAX_MACHINE_TOKEN_CHARACTERS:
@@ -156,6 +167,8 @@ def _canonical_origin_host(parsed: ParseResult, *, name: str) -> tuple[str, int 
 
 def canonicalize_http_origin(value: str, *, name: str = "Origin") -> str:
     """Serialize an absolute HTTP(S) origin using browser-equivalent semantics."""
+    if _contains_ascii_control(value):
+        raise SettingsError(f"{name} must not contain ASCII control characters")
     clean = value.strip()
     parsed = urlparse(clean)
     scheme = parsed.scheme.lower()
@@ -211,7 +224,7 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         """Load only bootstrap/infrastructure settings from the process environment."""
-        environment = os.environ.get("QUAZONAI_ENV", "development")
+        environment = _optional_env("QUAZONAI_ENV") or "development"
         database_url = os.environ.get(
             "QUAZONAI_DATABASE_URL",
             "postgresql+psycopg://quazonai:quazonai-local@127.0.0.1:5432/quazonai",
@@ -265,12 +278,12 @@ class Settings:
                 os.environ.get("QUAZONAI_FRONTEND_DIST", "/workspace/frontend-dist")
             ),
             operator_auth_enabled=operator_auth_enabled,
-            operator_username=_optional_env("QUAZONAI_AUTH_USERNAME"),
-            operator_password=_optional_env("QUAZONAI_AUTH_PASSWORD"),
+            operator_username=_optional_raw_env("QUAZONAI_AUTH_USERNAME"),
+            operator_password=_optional_raw_env("QUAZONAI_AUTH_PASSWORD"),
             operator_totp_secret=totp_secret,
-            auth_cookie_key=_optional_env("QUAZONAI_AUTH_COOKIE_KEY"),
+            auth_cookie_key=_optional_raw_env("QUAZONAI_AUTH_COOKIE_KEY"),
             api_token=_optional_raw_env("QUAZONAI_API_TOKEN"),
-            auth_public_origin=_optional_env("QUAZONAI_AUTH_PUBLIC_ORIGIN"),
+            auth_public_origin=_optional_raw_env("QUAZONAI_AUTH_PUBLIC_ORIGIN"),
             auth_session_ttl_seconds=session_ttl,
             auth_trusted_browser_ttl_days=trusted_browser_ttl,
         )
@@ -345,6 +358,8 @@ class Settings:
         assert self.api_token is not None
         assert self.auth_public_origin is not None
 
+        _validate_utf8_text(self.operator_username, name="QUAZONAI_AUTH_USERNAME")
+        _validate_utf8_text(self.operator_password, name="QUAZONAI_AUTH_PASSWORD")
         if len(self.operator_username) > MAX_OPERATOR_USERNAME_CHARACTERS:
             raise SettingsError(
                 f"QUAZONAI_AUTH_USERNAME must contain at most "
@@ -387,7 +402,7 @@ class Settings:
 
         canonical_origin = self.canonical_auth_public_origin
         assert canonical_origin is not None
-        if self.environment.casefold() == "production" and not canonical_origin.startswith(
+        if self.environment.strip().casefold() == "production" and not canonical_origin.startswith(
             "https://"
         ):
             raise SettingsError("QUAZONAI_AUTH_PUBLIC_ORIGIN must use https in production")
