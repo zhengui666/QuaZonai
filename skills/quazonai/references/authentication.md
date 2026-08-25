@@ -28,6 +28,8 @@ Three credentials are intentionally non-interchangeable:
 
 Never copy one credential into another field or retry an authorization failure with a different identity class.
 
-## Direct-access development mode
+## Explicit opt-in and direct access
 
-Development/test installations may explicitly keep Operator Authentication disabled only when the complete authentication credential/origin group is absent. Production must enable authentication and provide a complete valid configuration. The Skill should still avoid assuming that direct access is available: call a harmless read such as `quazonai status`, interpret `AUTH_REQUIRED`, and require the runtime environment to supply `QUAZONAI_API_TOKEN` rather than asking for browser factors.
+`QUAZONAI_AUTH_ENABLED` is the only switch for QuaZonai Operator Authentication. When it is `false`, direct Web/operator API access is preserved in every environment, including production, and dormant authentication credential/TTL values do not implicitly enable or validate the feature. Such a deployment should remain loopback-only or behind another deliberately trusted access boundary.
+
+When `QUAZONAI_AUTH_ENABLED=true`, the complete username/password/TOTP/cookie-key/machine-token/public-origin configuration is required and invalid configuration fails closed; enabled production authentication additionally requires HTTPS. The Skill should not assume which deployment choice was made: call a harmless read such as `quazonai status`, interpret `AUTH_REQUIRED`, and require the runtime environment to supply `QUAZONAI_API_TOKEN` rather than asking for browser factors.
