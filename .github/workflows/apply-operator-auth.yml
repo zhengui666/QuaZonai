@@ -54,6 +54,56 @@ jobs:
           )
           PY
           python tools/apply_operator_auth.py
+          cat > backend/alembic/versions/0006_operator_auth.py <<'PYFILE'
+          """Add the single-operator authentication state and trusted-browser registry.
+
+          Revision ID: 0006_operator_auth
+          Revises: 0005_performance_indexes
+          """
+
+          from __future__ import annotations
+
+          from uuid import UUID
+
+          import sqlalchemy as sa
+          from alembic import op
+
+          from db.models import OperatorAuthState, OperatorTotpUse, TrustedBrowser
+
+          revision = "0006_operator_auth"
+          down_revision = "0005_performance_indexes"
+          branch_labels = None
+          depends_on = None
+
+          _AUTH_STATE_ID = UUID("a36fd7d7-f638-43f7-a0b6-5380b694408d")
+
+
+          def upgrade() -> None:
+              bind = op.get_bind()
+              # 0001 creates current Base.metadata on a fresh database. checkfirst supports
+              # both fresh upgrades and databases already stamped at 0005.
+              for model in (OperatorAuthState, OperatorTotpUse, TrustedBrowser):
+                  model.__table__.create(bind=bind, checkfirst=True)
+
+              auth_state = OperatorAuthState.__table__
+              existing = bind.execute(
+                  sa.select(auth_state.c.id).where(auth_state.c.scope == "SYSTEM")
+              ).scalar_one_or_none()
+              if existing is None:
+                  bind.execute(
+                      sa.insert(auth_state).values(
+                          id=_AUTH_STATE_ID,
+                          scope="SYSTEM",
+                          failed_attempts=0,
+                      )
+                  )
+
+
+          def downgrade() -> None:
+              bind = op.get_bind()
+              for model in (TrustedBrowser, OperatorTotpUse, OperatorAuthState):
+                  model.__table__.drop(bind=bind, checkfirst=True)
+          PYFILE
           rm -rf tools/auth-patch tools/auth-patch-v2
           git diff --check
       - name: Research ownership boundary
