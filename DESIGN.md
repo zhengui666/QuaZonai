@@ -1318,7 +1318,7 @@ QUAZONAI_AUTH_TRUSTED_BROWSER_TTL_DAYS     # optional, bounded default
 
 规则：
 
-- `QUAZONAI_AUTH_ENABLED=false` 时在所有环境保留 direct Web/operator API access，不显示登录门；该模式只适合 loopback-only 或另有明确可信访问边界的部署；设为 `true` 时 username/password、TOTP secret、独立 32-byte cookie encryption key、machine API token 与 public origin 必须全部存在且格式合法，否则启动 fail closed；启用认证的 production public origin 必须使用 HTTPS；
+- `QUAZONAI_AUTH_ENABLED=false` 时在所有环境保留 direct Web/operator API access，不显示登录门，其他 auth credential/TTL 配置均视为 dormant 并忽略；该模式只适合 loopback-only 或另有明确可信访问边界的部署；设为 `true` 时 username/password、TOTP secret、独立 32-byte cookie encryption key、machine API token、public origin 与 bounded TTL 必须全部格式合法，否则启动 fail closed；启用认证的 production public origin 必须使用 HTTPS；
 - 正常浏览器登录要求 `username + password + TOTP`。TOTP 使用 RFC 6238 兼容 Google Authenticator 的标准 30 秒、6 位配置；允许有限 clock-skew window，不自研 OTP/HMAC 协议；
 - 密码、TOTP setup secret、cookie key 与 API token 都是启动级 secret；Web/API 不回读、不写事件、不写日志；
 - 成功登录签发短期 browser session cookie。勾选 **Trust this browser** 时另外签发长期 trusted-browser cookie；两者都使用独立 `QUAZONAI_AUTH_COOKIE_KEY` 做 AES-256-GCM authenticated encryption，Cookie 必须 `HttpOnly`、`SameSite=Strict`，启用认证的 production 必须自动标记 `Secure`，不能把 bearer credential 放入 `localStorage`/`sessionStorage`；
@@ -1328,7 +1328,9 @@ QUAZONAI_AUTH_TRUSTED_BROWSER_TTL_DAYS     # optional, bounded default
 - `/api/v1/system/health` 保持 public 供容器/orchestrator healthcheck；`/api/v1/auth/login` 与 session bootstrap 属于认证入口；Operator Authentication 启用时，其余 Operator API 要求有效 browser credential 或 `Authorization: Bearer <QUAZONAI_API_TOKEN>`；关闭时保留 direct access；
 - CLI/自动化只使用独立 machine API token，不读取 browser cookie/TOTP；browser login 不把 API token 下发给前端；
 - downstream-owned Handoff `claim/accept/reject/package/feedback` 保持现有 per-downstream service credential，只授权对应 Handoff/Feedback，不接受 Operator trusted-browser credential 代替下游身份；
-- 认证失败返回统一错误 envelope，不区分“用户名不存在/密码错误/TOTP 错误”等可用于枚举的细节；
+- 认证失败返回统一错误 envelope，不区分“用户名不存在/密码错误/TOTP 错误”等可用于枚举的细节；登录验证使用有界、进程内、按观测来源的短退避：credential verification 最少间隔 1 秒，连续失败指数退避但最大 5 秒，成功即清除状态，受限请求仍返回同一通用认证失败，不建立持久账户锁定；
+- `/api/v1/events/stream` 不是一次认证后永久有效：每轮 polling 必须按当前 settings 重新验证 session/trusted-browser cookie 或 machine token；session 到期、cookie key/token 轮换立即终止流，成功 logout 推进进程内 stream generation，使已打开的 SSE 在下一轮停止并由浏览器按当前 cookie 状态重新连接；
+- Operator password/TOTP/cookie key/machine token/public origin 不得继承到 Codex App Server 或 Mission-owned child environment；
 - 不新增应用级 hash/checksum/fingerprint 身份或完整性 Gate。Cookie 使用标准 authenticated encryption，TOTP 使用标准库实现。
 
 ## 38. 技术栈
