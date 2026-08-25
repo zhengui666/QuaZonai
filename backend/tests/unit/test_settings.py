@@ -80,6 +80,7 @@ def test_enabled_auth_rejects_password_longer_than_login_schema(settings: Settin
         "https://-bad.example.com",
         "https://bad-.example.com",
         "https://example..com",
+        "https://999.999.999.999",
     ],
 )
 def test_enabled_auth_rejects_invalid_origin_host_or_port(
