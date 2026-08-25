@@ -156,6 +156,7 @@ def test_password_totp_login_sets_strict_http_only_cookies(settings: Settings, e
     assert "HttpOnly" in cookie_headers
     assert "SameSite=strict" in cookie_headers
     assert "Secure" not in cookie_headers
+    assert response.headers["Cache-Control"] == "no-store"
 
 
 def test_full_login_without_trust_removes_existing_trusted_browser(
@@ -199,6 +200,37 @@ def test_invalid_login_does_not_reveal_failed_factor(settings: Settings, engine:
             "details": {},
         }
     }
+    assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_invalid_login_shape_does_not_echo_submitted_secrets(
+    settings: Settings,
+    engine: Engine,
+) -> None:
+    secured = _enabled_settings(settings)
+    client = TestClient(create_app(settings=secured, engine=engine))
+    submitted_password = "do-not-echo-this-password"
+
+    response = client.post(
+        "/api/v1/auth/login",
+        headers={"Origin": "http://testserver"},
+        json={
+            "username": "operator",
+            "password": submitted_password,
+            "trust_browser": False,
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {
+        "error": {
+            "code": "AUTH_INVALID",
+            "message": "Invalid operator credentials.",
+            "details": {},
+        }
+    }
+    assert submitted_password not in response.text
+    assert response.headers["Cache-Control"] == "no-store"
 
 
 def test_browser_mutation_requires_configured_origin(settings: Settings, engine: Engine) -> None:
@@ -238,6 +270,24 @@ def test_trusted_browser_restores_session_without_password_or_totp(
     assert response.status_code == 200
     assert response.json()["trusted_browser"] is True
     assert SESSION_COOKIE_NAME in client.cookies
+    assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_invalid_trusted_cookie_is_not_reported_as_trusted(
+    settings: Settings,
+    engine: Engine,
+) -> None:
+    secured = _enabled_settings(settings)
+    client = TestClient(create_app(settings=secured, engine=engine))
+    assert _login(client, secured, trust_browser=True).status_code == 200
+
+    client.cookies.delete(TRUSTED_BROWSER_COOKIE_NAME)
+    client.cookies.set(TRUSTED_BROWSER_COOKIE_NAME, "tampered")
+
+    response = client.get("/api/v1/auth/session")
+
+    assert response.status_code == 200
+    assert response.json()["trusted_browser"] is False
 
 
 def test_cookie_key_rotation_revokes_session_and_trusted_browser(
@@ -273,6 +323,7 @@ def test_logout_requires_origin_and_forgets_trusted_browser(settings: Settings, 
         headers={"Origin": "http://testserver"},
     )
     assert response.status_code == 204
+    assert response.headers["Cache-Control"] == "no-store"
     assert SESSION_COOKIE_NAME not in client.cookies
     assert TRUSTED_BROWSER_COOKIE_NAME not in client.cookies
     assert client.get("/api/v1/auth/session").status_code == 401
