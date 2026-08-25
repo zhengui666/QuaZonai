@@ -30,11 +30,11 @@ test.describe('single-operator authentication', () => {
   }) => {
     await page.goto('/');
 
-    await page.getByLabel(/username/i).fill(username);
-    await page.getByLabel(/password/i).fill(password);
-    await page.getByLabel(/authenticator|verification code|totp/i).fill(currentTotpCode());
-    await page.getByLabel(/trust this browser/i).check();
-    await page.getByRole('button', { name: /sign in|log in/i }).click();
+    await page.getByLabel('Username', { exact: true }).fill(username);
+    await page.getByLabel('Password', { exact: true }).fill(password);
+    await page.getByLabel('Authenticator code', { exact: true }).fill(currentTotpCode());
+    await page.getByRole('checkbox', { name: /^Trust this browser/ }).check();
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
 
     await expect(page.getByText('Dashboard', { exact: true }).first()).toBeVisible();
 
@@ -59,7 +59,7 @@ test.describe('single-operator authentication', () => {
     );
 
     await page.getByRole('button', { name: /sign out|log out/i }).click();
-    await expect(page.getByLabel(/username/i)).toBeVisible();
+    await expect(page.getByLabel('Username', { exact: true })).toBeVisible();
 
     const loggedOutCookies = await context.cookies();
     expect(loggedOutCookies.some((cookie) => cookie.name === 'quazonai_session')).toBe(false);
