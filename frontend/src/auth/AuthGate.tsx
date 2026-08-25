@@ -37,6 +37,15 @@ export function useOperatorAuth(): OperatorAuthContextValue {
   return value;
 }
 
+async function responseErrorMessage(response: Response, fallback: string): Promise<string> {
+  try {
+    const payload = await response.json() as ErrorEnvelope;
+    return payload.error?.message ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 function LoginPage({ onAuthenticated }: { onAuthenticated: (session: SessionView) => void }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -62,14 +71,7 @@ function LoginPage({ onAuthenticated }: { onAuthenticated: (session: SessionView
         }),
       });
       if (!response.ok) {
-        let message = 'Authentication failed.';
-        try {
-          const payload = await response.json() as ErrorEnvelope;
-          message = payload.error?.message ?? message;
-        } catch {
-          // Keep the intentionally generic authentication message.
-        }
-        setError(message);
+        setError(await responseErrorMessage(response, 'Authentication failed.'));
         return;
       }
       onAuthenticated(await response.json() as SessionView);
@@ -186,15 +188,15 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     if (!session?.auth_enabled) return;
-    try {
-      await fetch('/api/v1/auth/logout', {
-        method: 'POST',
-        credentials: 'same-origin',
-      });
-    } finally {
-      setSession(null);
-      setState('anonymous');
+    const response = await fetch('/api/v1/auth/logout', {
+      method: 'POST',
+      credentials: 'same-origin',
+    });
+    if (!response.ok) {
+      throw new Error(await responseErrorMessage(response, `Sign out failed with HTTP ${response.status}.`));
     }
+    setSession(null);
+    setState('anonymous');
   }, [session?.auth_enabled]);
 
   useEffect(() => { void checkSession(); }, [checkSession]);
