@@ -37,18 +37,6 @@ def _optional_env(name: str) -> str | None:
     return clean or None
 
 
-def _env_bool(name: str, default: bool) -> bool:
-    raw = _optional_env(name)
-    if raw is None:
-        return default
-    normalized = raw.casefold()
-    if normalized in {"1", "true", "yes", "on"}:
-        return True
-    if normalized in {"0", "false", "no", "off"}:
-        return False
-    raise SettingsError(f"{name} must be true or false")
-
-
 def _bounded_env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
     raw = _optional_env(name)
     if raw is None:
@@ -95,21 +83,18 @@ class Settings:
     codex_api_key: str | None = None
     mission_job_timeout_seconds: int = DEFAULT_MISSION_JOB_TIMEOUT_SECONDS
     frontend_dist: Path = Path("/workspace/frontend-dist")
-    operator_auth_enabled: bool = False
     operator_username: str | None = None
     operator_password: str | None = None
     operator_totp_secret: str | None = None
     auth_cookie_key: str | None = None
     api_token: str | None = None
     auth_public_origin: str | None = None
-    auth_cookie_secure: bool = False
     auth_session_ttl_seconds: int = DEFAULT_AUTH_SESSION_TTL_SECONDS
     auth_trusted_browser_ttl_days: int = DEFAULT_AUTH_TRUSTED_BROWSER_TTL_DAYS
 
     @classmethod
     def from_env(cls) -> "Settings":
         """Load only bootstrap/infrastructure settings from the process environment."""
-        environment = os.environ.get("QUAZONAI_ENV", "development")
         database_url = os.environ.get(
             "QUAZONAI_DATABASE_URL",
             "postgresql+psycopg://quazonai:quazonai-local@127.0.0.1:5432/quazonai",
@@ -119,7 +104,7 @@ class Settings:
         if totp_secret is not None:
             totp_secret = "".join(totp_secret.split()).upper()
         return cls(
-            environment=environment,
+            environment=os.environ.get("QUAZONAI_ENV", "development"),
             database_url=database_url,
             alembic_url=alembic_url,
             master_key=_optional_env("QUAZONAI_MASTER_KEY"),
@@ -146,17 +131,12 @@ class Settings:
             frontend_dist=Path(
                 os.environ.get("QUAZONAI_FRONTEND_DIST", "/workspace/frontend-dist")
             ),
-            operator_auth_enabled=_env_bool("QUAZONAI_AUTH_ENABLED", False),
             operator_username=_optional_env("QUAZONAI_AUTH_USERNAME"),
             operator_password=_optional_env("QUAZONAI_AUTH_PASSWORD"),
             operator_totp_secret=totp_secret,
             auth_cookie_key=_optional_env("QUAZONAI_AUTH_COOKIE_KEY"),
             api_token=_optional_env("QUAZONAI_API_TOKEN"),
             auth_public_origin=_optional_env("QUAZONAI_AUTH_PUBLIC_ORIGIN"),
-            auth_cookie_secure=_env_bool(
-                "QUAZONAI_AUTH_COOKIE_SECURE",
-                environment.casefold() == "production",
-            ),
             auth_session_ttl_seconds=_bounded_env_int(
                 "QUAZONAI_AUTH_SESSION_TTL_SECONDS",
                 DEFAULT_AUTH_SESSION_TTL_SECONDS,
@@ -187,7 +167,20 @@ class Settings:
 
     @property
     def auth_enabled(self) -> bool:
-        return self.operator_auth_enabled
+        return all(
+            (
+                self.operator_username,
+                self.operator_password,
+                self.operator_totp_secret,
+                self.auth_cookie_key,
+                self.api_token,
+                self.auth_public_origin,
+            )
+        )
+
+    @property
+    def auth_cookie_secure(self) -> bool:
+        return self.environment.casefold() == "production"
 
     def master_key_bytes(self) -> bytes:
         if not self.master_key_configured or self.master_key is None:
@@ -200,10 +193,7 @@ class Settings:
         return _base64_key(self.auth_cookie_key, name="QUAZONAI_AUTH_COOKIE_KEY")
 
     def validate_operator_auth(self) -> None:
-        """Validate the complete opt-in operator-authentication configuration."""
-        if not self.operator_auth_enabled:
-            return
-
+        """Fail closed for production and reject partially configured auth everywhere."""
         fields = {
             "QUAZONAI_AUTH_USERNAME": self.operator_username,
             "QUAZONAI_AUTH_PASSWORD": self.operator_password,
@@ -212,11 +202,20 @@ class Settings:
             "QUAZONAI_API_TOKEN": self.api_token,
             "QUAZONAI_AUTH_PUBLIC_ORIGIN": self.auth_public_origin,
         }
+        configured = [name for name, value in fields.items() if value]
         missing = [name for name, value in fields.items() if not value]
+        production = self.environment.casefold() == "production"
+
+        if not configured:
+            if production:
+                raise SettingsError(
+                    "Operator authentication must be configured in production: "
+                    + ", ".join(fields)
+                )
+            return
         if missing:
             raise SettingsError(
-                "Operator authentication is enabled but incomplete; missing: "
-                + ", ".join(missing)
+                "Operator authentication is partially configured; missing: " + ", ".join(missing)
             )
 
         assert self.operator_username is not None
@@ -260,13 +259,8 @@ class Settings:
             raise SettingsError(
                 "QUAZONAI_AUTH_PUBLIC_ORIGIN must be an origin such as https://quazonai.example.com"
             )
-        if self.environment.casefold() == "production":
-            if parsed.scheme != "https":
-                raise SettingsError("QUAZONAI_AUTH_PUBLIC_ORIGIN must use https in production")
-            if not self.auth_cookie_secure:
-                raise SettingsError(
-                    "QUAZONAI_AUTH_COOKIE_SECURE must be true when authentication is enabled in production"
-                )
+        if production and parsed.scheme != "https":
+            raise SettingsError("QUAZONAI_AUTH_PUBLIC_ORIGIN must use https in production")
 
     def validate_database_scheme(self) -> None:
         scheme = urlparse(self.database_url).scheme
