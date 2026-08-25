@@ -7,16 +7,16 @@ import { PageSkeleton } from '../components/ui/Skeleton';
 import { StateBadge } from '../components/ui/StateBadge';
 import { useAlphaLibrary } from '../lib/api/hooks';
 import type { AlphaQualification } from '../lib/api/types';
-import { formatDateTime, humanize, readMetric } from '../lib/format';
+import { formatDateTime, formatNumber, humanize, readMetric } from '../lib/format';
 
 const columns: ColumnDef<AlphaQualification, unknown>[] = [
-  { accessorKey: 'name', header: 'Alpha', cell: ({ row }) => <div><div className="qz-list-title"><Link to={`/alpha/${row.original.id}`}>{row.original.name ?? `Alpha ${row.original.id.slice(0, 8)}`}</Link></div><div className="qz-list-subtitle qz-mono">{row.original.id}</div></div> },
+  { accessorKey: 'name', header: 'Alpha', cell: ({ row }) => <div><div className="qz-list-title" dir="auto"><Link to={`/alpha/${row.original.id}`}>{row.original.name ?? `Alpha ${row.original.id.slice(0, 8)}`}</Link></div><div className="qz-list-subtitle qz-mono">{row.original.id}</div></div> },
   { accessorKey: 'universe', header: 'Universe', cell: ({ row }) => row.original.universe ?? row.original.universe_version_id?.slice(0, 8) ?? '—' },
   { accessorKey: 'horizon', header: 'Horizon', cell: ({ getValue }) => String(getValue() ?? '—') },
   { accessorKey: 'role', header: 'Role', cell: ({ getValue }) => humanize(String(getValue())) },
   { accessorKey: 'state', header: 'Qualification', cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
   { accessorKey: 'degradation_state', header: 'Health', cell: ({ getValue }) => <StateBadge state={String(getValue() ?? 'HEALTHY')} /> },
-  { id: 'evidence', header: 'Evidence', cell: ({ row }) => <span className="qz-number">{String(readMetric(row.original.metrics, ['search_adjusted_quality', 'edge', 'ic']) ?? '—')}</span> },
+  { id: 'evidence', header: 'Evidence', cell: ({ row }) => <span className="qz-number">{formatNumber(readMetric(row.original.metrics, ['search_adjusted_quality', 'edge', 'ic']))}</span> },
   { accessorKey: 'created_at', header: 'Qualified', cell: ({ getValue }) => formatDateTime(getValue() as string | undefined) },
 ];
 
