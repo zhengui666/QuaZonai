@@ -13,6 +13,8 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
 from db.models import Event
+from operator_auth import OperatorAuthRuntime, reauthenticate_operator_request
+from settings import Settings
 
 router = APIRouter(prefix="/api/v1", tags=["events"])
 SSE_EVENT_NAME = "qz-event"
@@ -58,6 +60,16 @@ def _read_events(request: Request, after_id: int, limit: int) -> list[EventView]
         return [_view(item) for item in items]
 
 
+def _stream_authorized(request: Request, generation: int) -> bool:
+    settings: Settings = request.app.state.settings
+    if not settings.auth_enabled:
+        return True
+    runtime: OperatorAuthRuntime = request.app.state.operator_auth_runtime
+    if runtime.stream_generation() != generation:
+        return False
+    return reauthenticate_operator_request(request, settings)
+
+
 @router.get("/events", response_model=list[EventView])
 def list_events(
     request: Request,
@@ -70,8 +82,10 @@ def list_events(
 async def _stream(request: Request, cursor: int) -> AsyncIterator[str]:
     last_id = cursor
     idle_ticks = 0
+    runtime: OperatorAuthRuntime = request.app.state.operator_auth_runtime
+    generation = runtime.stream_generation()
     while True:
-        if await request.is_disconnected():
+        if await request.is_disconnected() or not _stream_authorized(request, generation):
             return
         items = _read_events(request, last_id, 200)
         if items:
@@ -99,5 +113,9 @@ def stream_events(
     return StreamingResponse(
         _stream(request, start),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers={
+            "Cache-Control": "no-cache, no-store",
+            "Pragma": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
     )
