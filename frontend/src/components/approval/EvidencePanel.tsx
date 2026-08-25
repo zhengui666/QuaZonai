@@ -1,7 +1,7 @@
 import { Table } from '@radix-ui/themes';
 import { useI18n } from '../../i18n';
 import type { ApprovalSnapshot } from '../../lib/api/types';
-import { formatCompactNumber, formatPercent, humanize } from '../../lib/format';
+import { formatCompactNumber, formatPercent, humanizeIdentifier } from '../../lib/format';
 
 function entries(value?: Record<string, unknown>) { return value ? Object.entries(value).filter(([, item]) => item !== null && item !== undefined).slice(0, 12) : []; }
 function renderValue(value: unknown) {
@@ -20,7 +20,7 @@ export function EvidencePanel({ approval }: { approval: ApprovalSnapshot }) {
     [t('evidence.capacity'), approval.capacity_summary],
     [t('evidence.changes'), approval.changes_summary],
   ];
-  const combined = groups.flatMap(([label, values]) => entries(values).map(([key, value]) => [`${label} · ${humanize(key)}`, value] as const));
+  const combined = groups.flatMap(([label, values]) => entries(values).map(([key, value]) => [`${label} · ${humanizeIdentifier(key)}`, value] as const));
   return (
     <div className="qz-panel">
       <Table.Root size="1">

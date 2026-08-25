@@ -7,6 +7,7 @@ import {
   getPaginationRowModel,
   getSortedRowModel,
   type ColumnDef,
+  type FilterFn,
   type SortingState,
   type VisibilityState,
   useReactTable,
@@ -29,6 +30,17 @@ function humanizeCanonical(value: string): string {
   return value.replaceAll('_', ' ').toLowerCase().replace(/(^|\s)\S/g, (character) => character.toUpperCase());
 }
 
+function numericSearchValues(value: number, locale: Locale): string[] {
+  const standard = new Intl.NumberFormat(locale).format(value);
+  const compact = new Intl.NumberFormat(locale, { notation: 'compact', maximumFractionDigits: 2 }).format(value);
+  const percentages = [0, 1, 2].map((decimals) => new Intl.NumberFormat(locale, {
+    style: 'percent',
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  }).format(value));
+  return [String(value), standard, compact, ...percentages];
+}
+
 function searchableValues(value: unknown, locale: Locale): string[] {
   if (value === null || value === undefined) return [];
   if (Array.isArray(value)) return value.flatMap((item) => searchableValues(item, locale));
@@ -36,7 +48,7 @@ function searchableValues(value: unknown, locale: Locale): string[] {
     const source = value ? 'Enabled' : 'Disabled';
     return [String(value), translateDomainLabel(locale, source) ?? source];
   }
-  if (typeof value === 'number') return [String(value), new Intl.NumberFormat(locale).format(value)];
+  if (typeof value === 'number') return numericSearchValues(value, locale);
   if (typeof value === 'string') {
     const values = [value];
     const domainLabel = translateDomainLabel(locale, humanizeCanonical(value));
@@ -77,7 +89,7 @@ export function DataTable<T>({
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
   const viewportRef = useRef<HTMLDivElement>(null);
   const stableColumns = useMemo(() => columns, [columns]);
-  const localizedGlobalFilter = useCallback((row: { getValue: (columnId: string) => unknown }, columnId: string, filterValue: unknown) => {
+  const localizedGlobalFilter = useCallback<FilterFn<T>>((row, columnId, filterValue) => {
     const query = String(filterValue ?? '').trim().toLocaleLowerCase(locale);
     if (!query) return true;
     return searchableValues(row.getValue(columnId), locale).some((candidate) => candidate.toLocaleLowerCase(locale).includes(query));

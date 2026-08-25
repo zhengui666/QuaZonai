@@ -54,7 +54,7 @@ function ApprovalCard({ approval, systems }: { approval: ApprovalSnapshot; syste
         <div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><StateBadge state={approval.purpose} /><StateBadge state={approval.state} /></div>
           <h2 className="qz-approval-title" style={{ marginTop: 10 }}>{approval.candidate?.mandate_name ?? t('approval.portfolio')} · {t('common.candidate')} {approval.candidate_id.slice(0, 8)}</h2>
-          <p className="qz-approval-rationale">{approval.recommendation_rationale ?? t('approval.noRationale')}</p>
+          <p className="qz-approval-rationale" dir="auto">{approval.recommendation_rationale ?? t('approval.noRationale')}</p>
         </div>
         <div className="qz-section-meta qz-number" style={{ textAlign: 'right' }}>{t('approval.validUntil')}<br />{formatDateTime(expiry)}</div>
       </div>
@@ -62,7 +62,7 @@ function ApprovalCard({ approval, systems }: { approval: ApprovalSnapshot; syste
         <div><div className="qz-label" style={{ marginBottom: 7 }}>{t('approval.level2')}</div><EvidencePanel approval={approval} /></div>
         <div className="qz-panel qz-panel-pad qz-form-grid">
           <div><div className="qz-label">{t('approval.capitalContext')}</div><div className="qz-list-title qz-number" style={{ marginTop: 5 }}>{approval.capital_context?.base_currency ?? '—'} {approval.capital_context?.deployable_capital ?? '—'}</div><div className="qz-list-subtitle">{t('approval.observedDate', { date: formatDateTime(approval.capital_context?.observed_at) })}</div></div>
-          <div><div className="qz-label">{t('approval.humanReport')}</div><div className="qz-list-subtitle" style={{ whiteSpace: 'normal', lineHeight: 1.55 }}>{typeof approval.human_report === 'string' ? approval.human_report : approval.human_report ? JSON.stringify(approval.human_report) : t('approval.noReport')}</div></div>
+          <div><div className="qz-label">{t('approval.humanReport')}</div><div className="qz-list-subtitle" dir="auto" style={{ whiteSpace: 'normal', lineHeight: 1.55 }}>{typeof approval.human_report === 'string' ? approval.human_report : approval.human_report ? JSON.stringify(approval.human_report) : t('approval.noReport')}</div></div>
         </div>
       </div>
       <div className="qz-approval-actions">

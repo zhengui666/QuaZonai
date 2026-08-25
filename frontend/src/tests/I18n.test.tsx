@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { PageHeader } from '../components/ui/PageHeader';
 import { I18nProvider, resolveLocale, translateKey, translateSource, useI18n, type Locale } from '../i18n';
 import { translateDomainLabel } from '../i18n/domain';
+import { humanizeIdentifier } from '../lib/format';
 
 function Probe() {
   const { locale, t } = useI18n();
@@ -83,7 +84,7 @@ describe('i18n', () => {
     expect(screen.queryByRole('heading', { name: '仪表盘' })).not.toBeInTheDocument();
   });
 
-  it('localizes reachable lifecycle, handoff, program, mission, and degradation states', () => {
+  it('localizes reachable lifecycle, portfolio, role, mission, and degradation values', () => {
     expect(translateDomainLabel('zh-CN', 'Received')).toBe('已接收');
     expect(translateDomainLabel('ja', 'Installing')).toBe('インストール中');
     expect(translateDomainLabel('ko', 'Validating')).toBe('검증 중');
@@ -94,6 +95,18 @@ describe('i18n', () => {
     expect(translateDomainLabel('zh-CN', 'Approval Pending')).toBe('待审批');
     expect(translateDomainLabel('ja', 'Cancelled')).toBe('キャンセル済み');
     expect(translateDomainLabel('ko', 'Degrading')).toBe('열화 중');
+    expect(translateDomainLabel('zh-CN', 'Candidate Ready')).toBe('候选就绪');
+    expect(translateDomainLabel('zh-CN', 'Primary Alpha')).toBe('主 Alpha');
+    expect(translateDomainLabel('ja', 'Diversifier Alpha')).toBe('分散Alpha');
+    expect(translateDomainLabel('ko', 'Hedge Alpha')).toBe('헤지 Alpha');
+    expect(translateDomainLabel('es', 'Regime Signal')).toBe('Señal de régimen');
+    expect(translateDomainLabel('ar', 'Risk Modulator')).toBe('مُعدِّل المخاطر');
+    expect(translateDomainLabel('zh-TW', 'Shadow Alpha')).toBe('影子 Alpha');
+  });
+
+  it('keeps arbitrary schema identifiers language-neutral', () => {
+    expect(humanizeIdentifier('capacity')).toBe('Capacity');
+    expect(humanizeIdentifier('search_adjusted_quality')).toBe('Search Adjusted Quality');
   });
 
   it('formats numeric interpolation using the active locale', () => {

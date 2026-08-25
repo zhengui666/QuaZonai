@@ -22,9 +22,14 @@ export function formatPercent(value?: number | string | null, decimals = 1): str
   return new Intl.NumberFormat(getIntlLocale(), { style: 'percent', minimumFractionDigits: decimals, maximumFractionDigits: decimals }).format(numeric);
 }
 
+export function humanizeIdentifier(value?: string | null): string {
+  if (!value) return '—';
+  return value.replaceAll('_', ' ').toLowerCase().replace(/(^|\s)\S/g, (character) => character.toUpperCase());
+}
+
 export function humanize(value?: string | null): string {
   if (!value) return '—';
-  const source = value.replaceAll('_', ' ').toLowerCase().replace(/(^|\s)\S/g, (character) => character.toUpperCase());
+  const source = humanizeIdentifier(value);
   const locale = getActiveLocale();
   return translateDomainLabel(locale, source) ?? translateSource(locale, source);
 }
