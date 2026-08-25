@@ -4,6 +4,7 @@ import base64
 from dataclasses import replace
 
 import pyotp
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 
@@ -15,12 +16,14 @@ from settings import Settings, SettingsError
 def _enabled_settings(settings: Settings) -> Settings:
     return replace(
         settings,
+        operator_auth_enabled=True,
         operator_username="operator",
         operator_password="correct horse battery staple",
         operator_totp_secret=pyotp.random_base32(),
         auth_cookie_key=base64.b64encode(b"a" * 32).decode("ascii"),
         api_token="machine-token-" + "x" * 32,
         auth_public_origin="http://testserver",
+        auth_cookie_secure=False,
     )
 
 
@@ -36,6 +39,22 @@ def _login(client: TestClient, settings: Settings, *, trust_browser: bool = Fals
             "trust_browser": trust_browser,
         },
     )
+
+
+def test_auth_disabled_preserves_direct_operator_access(settings: Settings, engine: Engine) -> None:
+    client = TestClient(create_app(settings=settings, engine=engine))
+
+    response = client.get("/api/v1/system/runtime-configuration")
+    session = client.get("/api/v1/auth/session")
+
+    assert response.status_code == 200
+    assert session.status_code == 200
+    assert session.json() == {
+        "authenticated": True,
+        "username": "local-operator",
+        "trusted_browser": False,
+        "auth_enabled": False,
+    }
 
 
 def test_protected_operator_api_requires_authentication(settings: Settings, engine: Engine) -> None:
@@ -165,23 +184,28 @@ def test_logout_requires_origin_and_forgets_trusted_browser(settings: Settings, 
     assert client.get("/api/v1/auth/session").status_code == 401
 
 
-def test_partial_auth_configuration_is_rejected(settings: Settings) -> None:
-    partial = replace(settings, operator_username="operator")
+def test_enabled_auth_requires_complete_configuration(settings: Settings) -> None:
+    partial = replace(settings, operator_auth_enabled=True, operator_username="operator")
 
-    try:
+    with pytest.raises(SettingsError, match="enabled but incomplete"):
         partial.validate_operator_auth()
-    except SettingsError as exc:
-        assert "partially configured" in str(exc)
-    else:
-        raise AssertionError("partial authentication configuration must fail")
 
 
-def test_production_requires_auth_configuration(settings: Settings) -> None:
-    production = replace(settings, environment="production")
+def test_production_can_explicitly_keep_auth_disabled(settings: Settings) -> None:
+    production = replace(settings, environment="production", operator_auth_enabled=False)
 
-    try:
+    production.validate_operator_auth()
+
+
+def test_enabled_production_requires_https_and_secure_cookie(settings: Settings) -> None:
+    production = replace(
+        _enabled_settings(settings),
+        environment="production",
+        auth_public_origin="https://quazonai.example.com",
+        auth_cookie_secure=False,
+    )
+
+    with pytest.raises(SettingsError, match="AUTH_COOKIE_SECURE"):
         production.validate_operator_auth()
-    except SettingsError as exc:
-        assert "must be configured in production" in str(exc)
-    else:
-        raise AssertionError("production without authentication must fail")
+
+    replace(production, auth_cookie_secure=True).validate_operator_auth()
