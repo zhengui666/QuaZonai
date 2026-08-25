@@ -5,6 +5,8 @@ import re
 import shlex
 from pathlib import Path
 
+import pytest
+
 from cli.main import build_parser
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -111,11 +113,15 @@ def test_skill_defers_to_repository_authority_when_available() -> None:
     skill = SKILL_PATH.read_text(encoding="utf-8")
     reference = CLI_REFERENCE_PATH.read_text(encoding="utf-8")
 
-    assert "When operating from a QuaZonai source checkout" in skill
+    assert "active working directory" in skill
+    assert "git rev-parse --show-toplevel" in skill
+    assert "never from this Skill's installation directory" in skill
+    assert "${QZ_REPO_ROOT}/AGENTS.md" in skill
     assert "`DESIGN.md` remains the product authority" in skill
     assert "`AGENTS.md` remains the governance authority" in skill
     assert "`--help` output is syntax authority only" in skill
     assert "installed standalone" in skill
+    assert "../../AGENTS.md" not in skill
     assert "`DESIGN.md` remains the product authority" in reference
     assert "never overrides product, ownership, authorization, or safety rules" in reference
 
@@ -191,12 +197,16 @@ def test_candidate_decisions_are_prepared_but_never_executed_by_agents() -> None
     )
 
 
-def test_codex_installation_uses_codex_home() -> None:
+def test_codex_installation_uses_codex_home_without_nesting() -> None:
     readme = README_PATH.read_text(encoding="utf-8")
 
     assert 'CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"' in readme
+    assert 'SKILL_DEST="${CODEX_HOME}/skills/quazonai"' in readme
     assert 'mkdir -p "${CODEX_HOME}/skills"' in readme
-    assert '"${CODEX_HOME}/skills/quazonai"' in readme
+    assert 'if [ -L "${SKILL_DEST}" ]' in readme
+    assert 'elif [ -e "${SKILL_DEST}" ]' in readme
+    assert 'ln -s "${SKILL_SOURCE}" "${SKILL_DEST}"' in readme
+    assert "ln -sfn" not in readme
     assert 'mkdir -p "${HOME}/.agents/skills"' not in readme
 
 
@@ -204,24 +214,37 @@ def test_high_risk_argument_shapes_match_documentation() -> None:
     parser = build_parser()
 
     approve = parser.parse_args(
-        ["approval", "approve", "approval-1", "downstream-1"]
+        [
+            "approval",
+            "approve",
+            "approval-1",
+            "--downstream",
+            "downstream-1",
+        ]
     )
     assert approve.id == "approval-1"
     assert approve.downstream_id == "downstream-1"
     assert approve.expected_state == "PENDING"
 
     reject = parser.parse_args(
-        ["approval", "reject", "approval-1", "RISK_LIMIT"]
+        ["approval", "reject", "approval-1", "--reason", "RISK_LIMIT"]
     )
     assert reject.id == "approval-1"
     assert reject.reason_code == "RISK_LIMIT"
     assert reject.note is None
 
     revoke = parser.parse_args(
-        ["handoff", "revoke", "handoff-1", "SUPERSEDED"]
+        ["handoff", "revoke", "handoff-1", "--reason", "SUPERSEDED"]
     )
     assert revoke.id == "handoff-1"
     assert revoke.reason_code == "SUPERSEDED"
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["approval", "approve", "approval-1", "downstream-1"])
+    with pytest.raises(SystemExit):
+        parser.parse_args(["approval", "reject", "approval-1", "RISK_LIMIT"])
+    with pytest.raises(SystemExit):
+        parser.parse_args(["handoff", "revoke", "handoff-1", "SUPERSEDED"])
 
     data_source = parser.parse_args(
         [
@@ -239,10 +262,11 @@ def test_high_risk_argument_shapes_match_documentation() -> None:
     assert data_source.fields == "symbol,price"
 
     reference = CLI_REFERENCE_PATH.read_text(encoding="utf-8")
-    assert "<APPROVAL_ID> \\\n  <DOWNSTREAM_SYSTEM_ID>" in reference
-    assert "quazonai handoff revoke <HANDOFF_ID> <REASON_CODE>" in reference
+    assert "--downstream <DOWNSTREAM_SYSTEM_ID>" in reference
+    assert "--reason <REASON_CODE>" in reference
+    assert "quazonai handoff revoke <HANDOFF_ID> --reason <REASON_CODE>" in reference
+    assert "Do not rewrite them as positional arguments" in reference
     assert "quazonai data-source create \\\n  \"<NAME>\"" in reference
-    assert "quazonai approval approve <APPROVAL_ID> --downstream" not in reference
 
 
 def test_global_endpoint_examples_use_argparse_order() -> None:
