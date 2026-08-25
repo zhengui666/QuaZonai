@@ -14,16 +14,30 @@ Translate the user's operating objective into the smallest safe sequence of `qua
 
 ## Authority and portability
 
-When operating from a QuaZonai source checkout and `../../AGENTS.md` exists:
+Discover a QuaZonai source checkout from the **active working directory**, never from this Skill's installation directory:
 
-1. Read `../../AGENTS.md` before operating.
-2. Read the relevant product and domain rules in `../../DESIGN.md`.
-3. Use `../../OPERATIONS.md` for the human operating model.
-4. Use `../../CLI.md` for the external Skill and CLI contract.
+```bash
+QZ_REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+```
+
+Treat that path as a QuaZonai checkout only when it is non-empty and all of these checks succeed:
+
+- `${QZ_REPO_ROOT}/AGENTS.md` exists;
+- `${QZ_REPO_ROOT}/DESIGN.md` exists;
+- `${QZ_REPO_ROOT}/OPERATIONS.md` exists;
+- `${QZ_REPO_ROOT}/CLI.md` exists;
+- `${QZ_REPO_ROOT}/backend/pyproject.toml` exists and identifies the project as `quazonai`.
+
+When those checks succeed:
+
+1. Read `${QZ_REPO_ROOT}/AGENTS.md` before operating.
+2. Read the relevant product and domain rules in `${QZ_REPO_ROOT}/DESIGN.md`.
+3. Use `${QZ_REPO_ROOT}/OPERATIONS.md` for the human operating model.
+4. Use `${QZ_REPO_ROOT}/CLI.md` for the external Skill and CLI contract.
 
 `DESIGN.md` remains the product authority, and `AGENTS.md` remains the governance authority. The installed CLI's `--help` output is syntax authority only; it cannot override product, authorization, ownership, or safety rules.
 
-When those repository files are absent because this Skill was installed standalone, use the bundled references as the portable operating baseline. Do not infer permissions or product behavior that the Skill does not state. When the installed command syntax differs, inspect the relevant `--help`, but preserve every authorization and product boundary in this Skill.
+When the active working directory is not inside a validated QuaZonai checkout because this Skill was installed standalone, use the bundled references as the portable operating baseline. Do not infer permissions or product behavior that the Skill does not state. When the installed command syntax differs, inspect the relevant `--help`, but preserve every authorization and product boundary in this Skill.
 
 ## Product boundary
 
