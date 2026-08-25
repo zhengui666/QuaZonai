@@ -149,12 +149,14 @@ class OperatorLoginLimiter:
 
 
 class OperatorAuthRuntime:
-    """Process-local coordination for login throttling and active streams."""
+    """Process-local coordination for login throttling, TOTP replay, and active streams."""
 
     def __init__(self, *, login_limiter: OperatorLoginLimiter | None = None) -> None:
         self.login_limiter = login_limiter or OperatorLoginLimiter()
         self._stream_generation = 0
         self._stream_lock = Lock()
+        self._accepted_totp_steps: set[int] = set()
+        self._totp_lock = Lock()
 
     def stream_generation(self) -> int:
         with self._stream_lock:
@@ -163,6 +165,21 @@ class OperatorAuthRuntime:
     def revoke_active_streams(self) -> None:
         with self._stream_lock:
             self._stream_generation += 1
+
+    def consume_totp_step(self, step: int, *, current_step: int) -> bool:
+        """Atomically accept one RFC 6238 time step at most once per API process."""
+        with self._totp_lock:
+            # A ±1 verification window can only reference these nearby steps. Keeping
+            # two older steps avoids replay after a small clock movement while bounding memory.
+            self._accepted_totp_steps = {
+                accepted
+                for accepted in self._accepted_totp_steps
+                if accepted >= current_step - 2
+            }
+            if step in self._accepted_totp_steps:
+                return False
+            self._accepted_totp_steps.add(step)
+            return True
 
 
 class _InvalidCookie(ValueError):
@@ -193,8 +210,13 @@ def _cookie_aad(kind: str) -> bytes:
 
 
 def _constant_time_text_equal(left: str, right: str) -> bool:
-    """Compare arbitrary Unicode credentials without str-only compare_digest limits."""
-    return secrets.compare_digest(left.encode("utf-8"), right.encode("utf-8"))
+    """Compare Unicode credentials while collapsing unencodable request text to false."""
+    try:
+        left_bytes = left.encode("utf-8")
+        right_bytes = right.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return secrets.compare_digest(left_bytes, right_bytes)
 
 
 def _issue_cookie(settings: Settings, *, kind: str, ttl_seconds: int) -> str:
@@ -256,14 +278,28 @@ def _read_cookie(settings: Settings, value: str | None, *, kind: str) -> str | N
         return None
 
 
+def _matching_totp_step(settings: Settings, code: str) -> tuple[int, int] | None:
+    if len(code) != 6 or any(character < "0" or character > "9" for character in code):
+        return None
+    assert settings.operator_totp_secret is not None
+    totp = pyotp.TOTP(settings.operator_totp_secret)
+    current_step = int(time.time()) // totp.interval
+    for step in (current_step - 1, current_step, current_step + 1):
+        expected = totp.at(step * totp.interval)
+        if secrets.compare_digest(expected.encode("ascii"), code.encode("ascii")):
+            return step, current_step
+    return None
+
+
 def authenticate_login(
     settings: Settings,
+    runtime: OperatorAuthRuntime,
     *,
     username: str,
     password: str,
     totp_code: str,
 ) -> bool:
-    """Check username, password and RFC 6238 TOTP without exposing which check failed."""
+    """Check all factors and atomically consume the accepted RFC 6238 time step."""
     if not settings.auth_enabled:
         return False
     assert settings.operator_username is not None
@@ -272,27 +308,25 @@ def authenticate_login(
 
     username_valid = _constant_time_text_equal(username, settings.operator_username)
     password_valid = _constant_time_text_equal(password, settings.operator_password)
-    normalized_code = "".join(totp_code.split())
-    code_shape_valid = len(normalized_code) == 6 and normalized_code.isdigit()
-    totp_valid = False
-    if code_shape_valid:
-        try:
-            totp_valid = pyotp.TOTP(settings.operator_totp_secret).verify(
-                normalized_code,
-                valid_window=1,
-            )
-        except (TypeError, ValueError):
-            totp_valid = False
-    return username_valid and password_valid and totp_valid
+    matched_step = _matching_totp_step(settings, totp_code)
+    if not username_valid or not password_valid or matched_step is None:
+        return False
+    step, current_step = matched_step
+    return runtime.consume_totp_step(step, current_step=current_step)
 
 
 def authenticate_machine(settings: Settings, authorization: str | None) -> OperatorIdentity | None:
     if not settings.auth_enabled or settings.api_token is None or authorization is None:
         return None
     scheme, separator, token = authorization.partition(" ")
-    if not separator or scheme.casefold() != "bearer" or not token.strip():
+    if (
+        not separator
+        or scheme.casefold() != "bearer"
+        or not token
+        or token != token.strip()
+    ):
         return None
-    if not secrets.compare_digest(token.strip(), settings.api_token):
+    if not secrets.compare_digest(token, settings.api_token):
         return None
     assert settings.operator_username is not None
     return OperatorIdentity(username=settings.operator_username, source="machine")
@@ -323,11 +357,12 @@ def authenticate_browser(request: Request, settings: Settings) -> OperatorIdenti
 
 
 def reauthenticate_operator_request(request: Request, settings: Settings) -> bool:
-    """Revalidate a long-lived request against current credentials and key state."""
+    """Revalidate a long-lived request without falling across credential classes."""
     if not settings.auth_enabled:
         return True
-    if authenticate_machine(settings, request.headers.get("authorization")) is not None:
-        return True
+    authorization = request.headers.get("authorization")
+    if authorization is not None:
+        return authenticate_machine(settings, authorization) is not None
     return authenticate_browser(request, settings) is not None
 
 
@@ -418,7 +453,6 @@ def require_same_origin(request: Request, settings: Settings) -> None:
             "The request origin is not allowed for browser-authenticated mutations.",
             403,
         )
-
 
 
 def is_operator_auth_exempt(method: str, path: str) -> bool:
