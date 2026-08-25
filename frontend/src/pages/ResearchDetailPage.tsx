@@ -14,23 +14,24 @@ import { PageSkeleton } from '../components/ui/Skeleton';
 import { StateBadge } from '../components/ui/StateBadge';
 import { Section } from '../components/ui/Section';
 import { Translated, useI18n } from '../i18n';
+import { formatMissionStateSummary, formatStructuredEventCount } from '../i18n/researchCounts';
 import { useProgram, useProgramAction, useProgramActivity, useProgramMissions } from '../lib/api/hooks';
 import type { ActivityEvent, OhlcPoint } from '../lib/api/types';
-import { formatDateTime, humanize } from '../lib/format';
+import { formatDateTime, formatNumber, humanize } from '../lib/format';
 
 type BranchSummary = { id: string; missions: number; running: number; succeeded: number; failed: number };
 const branchColumns: ColumnDef<BranchSummary, unknown>[] = [
   { accessorKey: 'id', header: 'Branch', meta: { messageKey: 'research.branch' }, cell: ({ getValue }) => <span className="qz-mono">{String(getValue()).slice(0, 16)}</span> },
-  { accessorKey: 'missions', header: 'Missions', meta: { messageKey: 'research.missions' }, cell: ({ getValue }) => <span className="qz-number">{String(getValue())}</span> },
-  { accessorKey: 'running', header: 'Running', meta: { messageKey: 'research.running' }, cell: ({ getValue }) => <span className="qz-number">{String(getValue())}</span> },
-  { accessorKey: 'succeeded', header: 'Succeeded', meta: { messageKey: 'research.succeeded' }, cell: ({ getValue }) => <span className="qz-number">{String(getValue())}</span> },
-  { accessorKey: 'failed', header: 'Failed', meta: { messageKey: 'research.failed' }, cell: ({ getValue }) => <span className="qz-number">{String(getValue())}</span> },
+  { accessorKey: 'missions', header: 'Missions', meta: { messageKey: 'research.missions' }, cell: ({ getValue }) => <span className="qz-number">{formatNumber(getValue() as number)}</span> },
+  { accessorKey: 'running', header: 'Running', meta: { messageKey: 'research.running' }, cell: ({ getValue }) => <span className="qz-number">{formatNumber(getValue() as number)}</span> },
+  { accessorKey: 'succeeded', header: 'Succeeded', meta: { messageKey: 'research.succeeded' }, cell: ({ getValue }) => <span className="qz-number">{formatNumber(getValue() as number)}</span> },
+  { accessorKey: 'failed', header: 'Failed', meta: { messageKey: 'research.failed' }, cell: ({ getValue }) => <span className="qz-number">{formatNumber(getValue() as number)}</span> },
 ];
 const evidenceColumns: ColumnDef<ActivityEvent, unknown>[] = [
   { accessorKey: 'kind', header: 'Event', meta: { messageKey: 'research.event' }, cell: ({ getValue }) => humanize(String(getValue())) },
   { accessorKey: 'mission_id', header: 'Mission', meta: { messageKey: 'research.mission' }, cell: ({ getValue }) => <span className="qz-mono">{String(getValue() ?? '—').slice(0, 12)}</span> },
   { accessorKey: 'created_at', header: 'Observed', meta: { messageKey: 'research.observed' }, cell: ({ getValue }) => formatDateTime(getValue() as string) },
-  { id: 'summary', header: 'Evidence / result', meta: { messageKey: 'research.evidenceResult' }, cell: ({ row }) => <span className="qz-list-subtitle" style={{ whiteSpace: 'normal' }}>{eventSummary(row.original)}</span> },
+  { id: 'summary', header: 'Evidence / result', meta: { messageKey: 'research.evidenceResult' }, cell: ({ row }) => <span className="qz-list-subtitle" dir="auto" style={{ whiteSpace: 'normal' }}>{eventSummary(row.original)}</span> },
 ];
 
 function eventSummary(event: ActivityEvent): ReactNode {
@@ -56,11 +57,11 @@ function ProgramActionDialog({ id, action, label, icon }: { id: string; action: 
   const [reason, setReason] = useState('');
   const needsReason = action === 'pause' || action === 'archive';
   const localizedLabel = text(label);
-  return <Dialog.Root><Dialog.Trigger><Button size="1" variant="soft">{icon}{localizedLabel}</Button></Dialog.Trigger><Dialog.Content maxWidth="440px"><Dialog.Title>{t('research.actionTitle', { action: localizedLabel })}</Dialog.Title><Dialog.Description size="2" mb="4">{t('research.actionDesc')}</Dialog.Description>{needsReason ? <TextArea placeholder={t('research.reasonPlaceholder')} value={reason} onChange={(event) => setReason(event.target.value)} /> : null}<div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}><Dialog.Close><Button variant="soft" color="gray">{t('common.cancel')}</Button></Dialog.Close><Button disabled={mutation.isPending || (needsReason && !reason.trim())} onClick={() => mutation.mutate(needsReason ? reason.trim() : undefined)}>{mutation.isPending ? t('common.applying') : localizedLabel}</Button></div></Dialog.Content></Dialog.Root>;
+  return <Dialog.Root><Dialog.Trigger><Button size="1" variant="soft">{icon}{localizedLabel}</Button></Dialog.Trigger><Dialog.Content maxWidth="440px"><Dialog.Title>{t('research.actionTitle', { action: localizedLabel })}</Dialog.Title><Dialog.Description size="2" mb="4">{t('research.actionDesc')}</Dialog.Description>{needsReason ? <TextArea dir="auto" placeholder={t('research.reasonPlaceholder')} value={reason} onChange={(event) => setReason(event.target.value)} /> : null}<div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}><Dialog.Close><Button variant="soft" color="gray">{t('common.cancel')}</Button></Dialog.Close><Button disabled={mutation.isPending || (needsReason && !reason.trim())} onClick={() => mutation.mutate(needsReason ? reason.trim() : undefined)}>{mutation.isPending ? t('common.applying') : localizedLabel}</Button></div></Dialog.Content></Dialog.Root>;
 }
 
 export function ResearchDetailPage() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { id } = useParams();
   const program = useProgram(id);
   const missions = useProgramMissions(id);
@@ -90,6 +91,7 @@ export function ResearchDetailPage() {
   const evidenceEvents = events.filter((event) => /EXPERIMENT|EVALUAT|EVIDENCE|SEARCH|DISCLOS|QUALIF|CALIBR|PROMOT/i.test(event.kind));
   const headerTitle = current.title ?? current.charter?.research_question ?? `${t('research.program')} ${current.id.slice(0, 8)}`;
   const headerDescription = current.charter?.original_idea_text ?? t('research.autonomousProgram');
+  const programReason = current.cooling_reason ?? current.blocked_reason ?? current.wake_reason;
 
   return (
     <>
@@ -101,17 +103,17 @@ export function ResearchDetailPage() {
         actions={<>{current.state === 'ACTIVE' ? <ProgramActionDialog id={id} action="pause" label="Pause" icon={<PauseIcon size={14} />} /> : current.state === 'PAUSED' ? <ProgramActionDialog id={id} action="resume" label="Resume" icon={<PlayIcon size={14} />} /> : null}{current.state !== 'ARCHIVED' ? <ProgramActionDialog id={id} action="archive" label="Archive" icon={<ArchiveIcon size={14} />} /> : <ProgramActionDialog id={id} action="restore" label="Restore" icon={<RewindIcon size={14} />} />}</>}
       />
       <KpiStrip items={[
-        { label: 'Program state', value: <StateBadge state={current.state} />, note: current.cooling_reason ?? current.blocked_reason ?? current.wake_reason ?? t('research.autonomousScheduling') },
-        { label: 'Missions', value: missionList.length, note: t('research.noteMissions', { running, succeeded, failed }) },
+        { label: 'Program state', value: <StateBadge state={current.state} />, note: programReason ? <span dir="auto">{programReason}</span> : t('research.autonomousScheduling') },
+        { label: 'Missions', value: missionList.length, note: formatMissionStateSummary(locale, { running, succeeded, failed }) },
         { label: 'Branches', value: current.branch_count ?? branchRows.length, note: t('research.lineagePaths') },
         { label: 'Alphas', value: current.alpha_count ?? '—', note: t('research.qualifiedOrEval') },
       ]} />
       <Section title="Frozen research charter" meta={t('research.created', { date: formatDateTime(current.charter?.created_at ?? current.created_at) })}>
         <div className="qz-panel qz-panel-pad qz-grid-2">
-          <div><div className="qz-label">{t('idea.researchQuestion')}</div><div style={{ fontSize: 13, marginTop: 5 }}>{current.charter?.research_question ?? '—'}</div></div>
-          <div><div className="qz-label">{t('idea.predictionHorizon')}</div><div className="qz-list-subtitle">{current.charter?.prediction_horizon ?? '—'}</div></div>
-          <div><div className="qz-label">{t('idea.marketScope')}</div><div className="qz-list-subtitle">{Array.isArray(current.charter?.market_scope) ? current.charter.market_scope.join(', ') : current.charter?.market_scope ?? '—'}</div></div>
-          <div><div className="qz-label">{t('research.explicitExclusions')}</div><div className="qz-list-subtitle">{current.charter?.explicit_exclusions?.join(', ') || t('common.none')}</div></div>
+          <div><div className="qz-label">{t('idea.researchQuestion')}</div><div dir="auto" style={{ fontSize: 13, marginTop: 5 }}>{current.charter?.research_question ?? '—'}</div></div>
+          <div><div className="qz-label">{t('idea.predictionHorizon')}</div><div className="qz-list-subtitle" dir="auto">{current.charter?.prediction_horizon ?? '—'}</div></div>
+          <div><div className="qz-label">{t('idea.marketScope')}</div><div className="qz-list-subtitle" dir="auto">{Array.isArray(current.charter?.market_scope) ? current.charter.market_scope.join(', ') : current.charter?.market_scope ?? '—'}</div></div>
+          <div><div className="qz-label">{t('research.explicitExclusions')}</div><div className="qz-list-subtitle" dir="auto">{current.charter?.explicit_exclusions?.join(', ') || t('common.none')}</div></div>
         </div>
       </Section>
       <div className="qz-grid-2">
@@ -122,8 +124,8 @@ export function ResearchDetailPage() {
       <Section title="Experiment & evidence ledger" meta="Independent evaluation, Search Ledger and exposure-related domain events">
         {evidenceEvents.length ? <DataTable data={evidenceEvents} columns={evidenceColumns} ariaLabel={t('research.evidenceLedger')} initialPageSize={20} getRowId={(event) => String(event.id)} /> : <EmptyState title="No experiment evidence yet" description="Structured experiment, evaluation and evidence events will appear here when returned by the Program activity API." />}
       </Section>
-      <Section title="Agent activity" meta={t('research.agentActivityMeta', { count: events.length })}>
-        {events.length ? <div className="qz-panel qz-panel-pad qz-timeline">{events.slice(0, 40).map((event, index) => <div key={String(event.id)} className="qz-timeline-item" data-active={index === 0}><div className="qz-timeline-title">{humanize(event.kind)}</div><div className="qz-timeline-meta qz-number">{formatDateTime(event.created_at)}{event.mission_id ? ` · ${event.mission_id.slice(0, 8)}` : ''}</div>{event.payload?.summary ? <div className="qz-timeline-body">{String(event.payload.summary)}</div> : null}</div>)}</div> : <EmptyState title="No activity yet" description="Agent commands, test exits, Domain events and material evidence appear here without exposing hidden chain-of-thought." />}
+      <Section title="Agent activity" meta={formatStructuredEventCount(locale, events.length)}>
+        {events.length ? <div className="qz-panel qz-panel-pad qz-timeline">{events.slice(0, 40).map((event, index) => <div key={String(event.id)} className="qz-timeline-item" data-active={index === 0}><div className="qz-timeline-title">{humanize(event.kind)}</div><div className="qz-timeline-meta qz-number">{formatDateTime(event.created_at)}{event.mission_id ? ` · ${event.mission_id.slice(0, 8)}` : ''}</div>{event.payload?.summary ? <div className="qz-timeline-body" dir="auto">{String(event.payload.summary)}</div> : null}</div>)}</div> : <EmptyState title="No activity yet" description="Agent commands, test exits, Domain events and material evidence appear here without exposing hidden chain-of-thought." />}
       </Section>
     </>
   );
