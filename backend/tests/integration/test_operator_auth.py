@@ -16,22 +16,26 @@ from settings import Settings, SettingsError
 def _enabled_settings(settings: Settings) -> Settings:
     return replace(
         settings,
-        operator_auth_enabled=True,
         operator_username="operator",
         operator_password="correct horse battery staple",
         operator_totp_secret=pyotp.random_base32(),
         auth_cookie_key=base64.b64encode(b"a" * 32).decode("ascii"),
         api_token="machine-token-" + "x" * 32,
         auth_public_origin="http://testserver",
-        auth_cookie_secure=False,
     )
 
 
-def _login(client: TestClient, settings: Settings, *, trust_browser: bool = False):
+def _login(
+    client: TestClient,
+    settings: Settings,
+    *,
+    trust_browser: bool = False,
+    origin: str = "http://testserver",
+):
     assert settings.operator_totp_secret is not None
     return client.post(
         "/api/v1/auth/login",
-        headers={"Origin": "http://testserver"},
+        headers={"Origin": origin},
         json={
             "username": "operator",
             "password": "correct horse battery staple",
@@ -100,6 +104,7 @@ def test_password_totp_login_sets_strict_http_only_cookies(settings: Settings, e
     assert TRUSTED_BROWSER_COOKIE_NAME in cookie_headers
     assert "HttpOnly" in cookie_headers
     assert "SameSite=strict" in cookie_headers
+    assert "Secure" not in cookie_headers
 
 
 def test_invalid_login_does_not_reveal_failed_factor(settings: Settings, engine: Engine) -> None:
@@ -184,28 +189,42 @@ def test_logout_requires_origin_and_forgets_trusted_browser(settings: Settings, 
     assert client.get("/api/v1/auth/session").status_code == 401
 
 
-def test_enabled_auth_requires_complete_configuration(settings: Settings) -> None:
-    partial = replace(settings, operator_auth_enabled=True, operator_username="operator")
+def test_partial_auth_configuration_is_rejected(settings: Settings) -> None:
+    partial = replace(settings, operator_username="operator")
 
-    with pytest.raises(SettingsError, match="enabled but incomplete"):
+    with pytest.raises(SettingsError, match="partially configured"):
         partial.validate_operator_auth()
 
 
-def test_production_can_explicitly_keep_auth_disabled(settings: Settings) -> None:
-    production = replace(settings, environment="production", operator_auth_enabled=False)
+def test_production_requires_auth_configuration(settings: Settings) -> None:
+    production = replace(settings, environment="production")
 
-    production.validate_operator_auth()
-
-
-def test_enabled_production_requires_https_and_secure_cookie(settings: Settings) -> None:
-    production = replace(
-        _enabled_settings(settings),
-        environment="production",
-        auth_public_origin="https://quazonai.example.com",
-        auth_cookie_secure=False,
-    )
-
-    with pytest.raises(SettingsError, match="AUTH_COOKIE_SECURE"):
+    with pytest.raises(SettingsError, match="must be configured in production"):
         production.validate_operator_auth()
 
-    replace(production, auth_cookie_secure=True).validate_operator_auth()
+
+def test_production_requires_https_and_sets_secure_cookies(
+    settings: Settings,
+    engine: Engine,
+) -> None:
+    insecure = replace(_enabled_settings(settings), environment="production")
+    with pytest.raises(SettingsError, match="must use https in production"):
+        insecure.validate_operator_auth()
+
+    production = replace(
+        insecure,
+        auth_public_origin="https://testserver",
+    )
+    production.validate_operator_auth()
+    client = TestClient(create_app(settings=production, engine=engine))
+
+    response = _login(
+        client,
+        production,
+        trust_browser=True,
+        origin="https://testserver",
+    )
+
+    assert response.status_code == 200
+    cookie_headers = "\n".join(response.headers.get_list("set-cookie"))
+    assert "Secure" in cookie_headers
