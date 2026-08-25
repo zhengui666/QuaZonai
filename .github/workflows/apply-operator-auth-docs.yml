@@ -1,0 +1,303 @@
+name: Apply operator authentication docs
+
+on:
+  push:
+    branches:
+      - feat/operator-totp-2fa
+    paths:
+      - .github/workflows/apply-operator-auth-docs.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/operator-totp-2fa
+          fetch-depth: 0
+      - name: Update authoritative documentation
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def append_once(path: str, marker: str, block: str) -> None:
+              file = Path(path)
+              text = file.read_text(encoding="utf-8")
+              if marker not in text:
+                  file.write_text(text.rstrip() + "\n\n" + block.strip() + "\n", encoding="utf-8")
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              file = Path(path)
+              text = file.read_text(encoding="utf-8")
+              if new in text:
+                  return
+              if old not in text:
+                  raise SystemExit(f"required documentation anchor missing: {path}: {old[:80]!r}")
+              file.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          replace_once(
+              "DESIGN.md",
+              "POST   /api/v1/ideas/preview",
+              "GET    /api/v1/auth/session\nPOST   /api/v1/auth/login\nPOST   /api/v1/auth/logout\n\nPOST   /api/v1/ideas/preview",
+          )
+          append_once(
+              "DESIGN.md",
+              "## 51. Single-operator password + TOTP authentication",
+              r'''
+          ## 51. Single-operator password + TOTP authentication
+
+          QuaZonai 的部署身份模型保持**单机、单操作者**，不引入注册、用户目录、租户、RBAC、OAuth 或社交登录。公网访问的 Human Web 和 operator-facing Core API 使用两项因子：
+
+          1. `.env` 注入的访问密码；
+          2. `.env` 注入的 Base32 TOTP shared secret，由 Google Authenticator 或任意 RFC 6238 兼容 App 生成 6 位动态码。
+
+          Bootstrap 配置：
+
+          ```text
+          QUAZONAI_AUTH_ENABLED
+          QUAZONAI_AUTH_PASSWORD
+          QUAZONAI_AUTH_TOTP_SECRET
+          QUAZONAI_AUTH_SESSION_SECRET
+          QUAZONAI_AUTH_COOKIE_SECURE
+          QUAZONAI_AUTH_SESSION_TTL_SECONDS
+          QUAZONAI_AUTH_TOTP_ISSUER
+          QUAZONAI_AUTH_TOTP_ACCOUNT
+          ```
+
+          这些值属于启动级 Secret/安全配置，不进入 PostgreSQL Runtime Configuration，不通过 API/Web 回读。启用认证但缺少或弱配置时 API **fail closed**：密码至少 12 字符，TOTP secret 至少 160 bit，session secret 必须是 Base64 编码的 32 bytes；`production` 环境必须启用 Secure Cookie。
+
+          登录与会话合同：
+
+          ```text
+          password + RFC 6238 TOTP
+            → POST /api/v1/auth/login
+            → signed HttpOnly SameSite=Strict Cookie
+            → private operator API
+          ```
+
+          Session token 使用 `QUAZONAI_AUTH_SESSION_SECRET` 做 HMAC-SHA256 签名，包含签发/过期时间和随机 nonce，不保存密码或 TOTP secret。Cookie 在 HTTPS 部署必须同时设置 `Secure`。轮换 session secret 会立即使既有 session 失效。
+
+          TOTP 使用 30 秒 time step，接受当前 time step 及前后各 1 个 step。成功 counter 持久化到 `operator_auth_states` singleton，并要求后续成功 counter 严格递增，防止同一动态码重放。登录失败返回统一错误，不区分密码或 TOTP；API process 对直接 peer 实施失败窗口限制，公网反向代理仍必须提供 TLS 和独立 edge rate limiting。
+
+          默认授权边界：
+
+          - `/api/v1/system/health` 保持公开，供容器 health check；
+          - `/api/v1/auth/session|login|logout` 保持公开；
+          - downstream-owned Handoff `claim/accept/reject/package/feedback` 保持原 Bearer service credential；
+          - 其他 `/api/v1/**` 必须持有有效 operator session；
+          - 静态前端 shell 可加载，但未认证时只呈现登录边界，所有业务数据仍由 API Gate 保护；
+          - Handoff `revoke`、Approval 与 Administration 等 operator 操作不得被 downstream Bearer token 替代。
+
+          Local CLI 只连接 loopback Core API。`quazonai auth login` 由人类在终端安全 prompt 中输入两项因子，CLI 将 signed Cookie 保存到 owner-only `0600` session file；AI Agent 不得请求、读取或输入密码/TOTP，也不得代替人类执行 login/logout。
+
+          认证不改变 QuaZonai 与 execution/downstream 系统的所有权边界，也不授权 broker、order、position 或 runtime control。
+
+          ### 51.1 Required acceptance
+
+          - [ ] 启用认证但任一 Secret 无效时 API 启动失败；
+          - [ ] 未登录只能访问 health、auth 和 downstream service-auth surface；
+          - [ ] 正确密码但错误 TOTP、错误密码但正确 TOTP 均失败且错误一致；
+          - [ ] 同一成功 TOTP counter 不能再次登录；
+          - [ ] session tamper/expiry/secret rotation 后私有 API 返回 `OPERATOR_AUTH_REQUIRED`；
+          - [ ] Cookie 为 HttpOnly + SameSite=Strict，production 为 Secure；
+          - [ ] Web、CLI、Compose smoke 和真实浏览器 E2E 覆盖登录；
+          - [ ] downstream Bearer Handoff consumer 合同不被 operator session gate 破坏。
+          ''',
+          )
+
+          append_once(
+              "README.md",
+              "## Operator authentication (Google Authenticator compatible)",
+              r'''
+          ## Operator authentication (Google Authenticator compatible)
+
+          QuaZonai is a single-operator workbench. Authentication is enabled by default for the API container and requires both an access password and an RFC 6238 TOTP code from Google Authenticator or another compatible app.
+
+          Copy the environment template, then replace every example authentication value before any non-loopback exposure:
+
+          ```bash
+          cp .env.example .env
+          python - <<'PY'
+          import base64
+          import os
+          import secrets
+          import urllib.parse
+
+          password = secrets.token_urlsafe(24)
+          totp_secret = base64.b32encode(os.urandom(20)).decode("ascii").rstrip("=")
+          session_secret = base64.b64encode(os.urandom(32)).decode("ascii")
+          label = urllib.parse.quote("QuaZonai:operator")
+          issuer = urllib.parse.quote("QuaZonai")
+
+          print(f"QUAZONAI_AUTH_PASSWORD={password}")
+          print(f"QUAZONAI_AUTH_TOTP_SECRET={totp_secret}")
+          print(f"QUAZONAI_AUTH_SESSION_SECRET={session_secret}")
+          print(f"Authenticator URI: otpauth://totp/{label}?secret={totp_secret}&issuer={issuer}")
+          PY
+          ```
+
+          Put the three generated values in `.env`. Add the displayed `otpauth://` entry to the authenticator app (or enter the Base32 secret manually), then start the stack:
+
+          ```bash
+          docker compose --env-file .env up --build
+          ```
+
+          Open the configured local URL and enter the access password plus the current six-digit authenticator code. For an HTTPS reverse-proxy deployment set `QUAZONAI_ENV=production` and `QUAZONAI_AUTH_COOKIE_SECURE=true`; production startup rejects an insecure cookie configuration. Keep `/api/v1/system/health` available only as needed for health checks and add edge rate limiting at the public proxy.
+
+          The checked-in `.env.example` credentials are deterministic test/development examples, not deployable secrets. `QUAZONAI_AUTH_ENABLED=false` is only appropriate for an explicitly trusted loopback development environment; it must not be used for a public deployment.
+
+          Local CLI authentication is interactive and does not place secrets in shell history:
+
+          ```bash
+          quazonai auth status
+          quazonai auth login
+          quazonai readiness
+          quazonai auth logout
+          ```
+
+          The signed session is stored in `${QUAZONAI_CLI_SESSION_FILE}` or, by default, `~/.config/quazonai/session.json` with mode `0600`.
+          ''',
+          )
+
+          append_once(
+              "OPERATIONS.md",
+              "## Operator authentication operations",
+              r'''
+          ## Operator authentication operations
+
+          ### Bootstrap and enrollment
+
+          1. Generate a unique access password, 160-bit-or-stronger Base32 TOTP secret, and independent 32-byte Base64 session secret; never reuse `QUAZONAI_MASTER_KEY` for session signing.
+          2. Store them only in the deployment `.env`/secret manager and enroll the TOTP secret in Google Authenticator or another RFC 6238 client under the configured issuer/account.
+          3. Keep `QUAZONAI_AUTH_ENABLED=true`. For production HTTPS set `QUAZONAI_ENV=production` and `QUAZONAI_AUTH_COOKIE_SECURE=true`; startup fails otherwise.
+          4. Terminate TLS at the reverse proxy, preserve the API's direct peer semantics, and apply edge login rate limiting. Do not expose PostgreSQL, Worker, Mission roots, or CODEX_HOME.
+          5. Verify public health, unauthenticated denial, authenticated readiness, logout, and a fresh login before declaring the deployment reachable.
+
+          ```bash
+          curl --fail https://<host>/api/v1/system/health
+          quazonai auth status
+          quazonai auth login
+          quazonai readiness
+          ```
+
+          `auth login` prompts for the access password and the current six-digit TOTP without echo. The CLI stores only the signed session Cookie in an owner-only local file. Do not paste either factor into chat, issue comments, logs, command-line flags, or Mission input.
+
+          ### Rotation and incident response
+
+          - Rotate `QUAZONAI_AUTH_SESSION_SECRET` to invalidate all browser and CLI sessions immediately.
+          - Rotate the access password and TOTP secret together after suspected factor disclosure, re-enroll the authenticator, and rotate the session secret in the same maintenance window.
+          - A new TOTP secret may need the next 30-second time step if the previous secret already authenticated in the current counter; replay protection intentionally requires a strictly newer counter.
+          - Retain an offline, access-controlled backup of the TOTP enrollment secret because V1 has no registration, email recovery, recovery codes, or administrator bypass.
+          - Authentication failures expose one generic error. Diagnose clock skew before changing the acceptance window; keep hosts time-synchronized rather than widening the ±1-step policy.
+          - Disabling auth is not an incident workaround for an internet-facing host. Restore access through controlled Secret rotation or a trusted loopback maintenance path.
+
+          ### Public/private route boundary
+
+          Public routes are limited to health, auth endpoints, and the existing downstream Bearer-authenticated Handoff consumer operations. All operator reads and mutations, including readiness, OpenAPI, Administration, Approval, Handoff revoke, data, research, and portfolio surfaces require the signed operator session.
+          ''',
+          )
+
+          append_once(
+              "CLI.md",
+              "## Operator authentication command contract",
+              r'''
+          ## Operator authentication command contract
+
+          The loopback CLI uses the same single-operator session gate as Human Web:
+
+          ```bash
+          quazonai auth status
+          quazonai auth login
+          quazonai auth logout
+          ```
+
+          `auth status` calls `GET /api/v1/auth/session`. `auth login` prompts through `getpass` for the access password and six-digit RFC 6238 TOTP, then calls `POST /api/v1/auth/login`; neither factor is accepted as a command-line flag or printed. `auth logout` calls `POST /api/v1/auth/logout` and removes the local session.
+
+          A successful login persists only the signed Cookie. Session path precedence:
+
+          1. `QUAZONAI_CLI_SESSION_FILE`;
+          2. `${XDG_CONFIG_HOME}/quazonai/session.json`;
+          3. `~/.config/quazonai/session.json`.
+
+          The parent directory is owner-only and the file must be a regular `0600` file; symlinks or group/world-readable files are rejected. A `OPERATOR_AUTH_REQUIRED` response clears stale local state and instructs the operator to log in again.
+
+          `status` remains a public health read. Every other operator command uses the saved session. Downstream Handoff consumers continue to use their independent Bearer credential and do not use the CLI operator session.
+
+          Password/TOTP entry and logout are human-only credential/session operations. An AI Agent may run `auth status`, detect that authentication is required, and prepare `quazonai auth login` for the human, but must never request, receive, type, log, or store either factor and must never execute login/logout itself.
+          ''',
+          )
+
+          replace_once(
+              "skills/quazonai/references/cli-reference.md",
+              "<!-- cli-command-paths:start -->\n| Command path | Access | Purpose |\n|---|---|---|\n",
+              "<!-- cli-command-paths:start -->\n| Command path | Access | Purpose |\n|---|---|---|\n| `auth status` | Read | Read whether operator authentication is enabled and the local session is authenticated |\n| `auth login` | Human-only credential entry | Prompt the human for password and TOTP and persist the signed local session |\n| `auth logout` | Human-only session action | End the server session and remove the local session file |\n",
+          )
+          replace_once(
+              "skills/quazonai/references/cli-reference.md",
+              "## System\n\n```bash\nquazonai status",
+              "## Authentication\n\n```bash\nquazonai auth status\nquazonai auth login\nquazonai auth logout\n```\n\n`auth login` and `auth logout` are human-only. The Agent must never request or enter either factor. When an authenticated command returns `OPERATOR_AUTH_REQUIRED`, tell the human to run `quazonai auth login`, then retry only after the human confirms completion. The CLI stores only the signed Cookie in an owner-only `0600` file.\n\n## System\n\n```bash\nquazonai status",
+          )
+
+          append_once(
+              "skills/quazonai/SKILL.md",
+              "## Operator authentication boundary",
+              r'''
+          ## Operator authentication boundary
+
+          Operator authentication is a human credential boundary:
+
+          1. The Agent may execute `quazonai auth status`.
+          2. If authentication is required, prepare `quazonai auth login` for the human to run locally.
+          3. Never ask the human to paste the access password, Base32 secret, six-digit TOTP, signed Cookie, or session file contents into chat.
+          4. Never execute `auth login` or `auth logout`, never automate the interactive prompt, and never read `${QUAZONAI_CLI_SESSION_FILE}` or the default session file.
+          5. After the human reports successful login, retry only the originally authorized command. A saved session does not expand any mutation permission or the human-only Approval boundary.
+
+          `status` can diagnose public service health without a session. `readiness` and all other operator resources require a valid session when authentication is enabled. Downstream Bearer credentials remain separate and must never be substituted for the operator session.
+          ''',
+          )
+          replace_once(
+              "skills/quazonai/SKILL.md",
+              "| Check service health | `quazonai status` | Read |",
+              "| Check operator authentication | `quazonai auth status` | Read; login/logout remain human-only |\n| Check service health | `quazonai status` | Read |",
+          )
+
+          append_once(
+              "skills/quazonai/references/workflows.md",
+              "## 14. Recover an operator session",
+              r'''
+          ## 14. Recover an operator session
+
+          Check session state without handling credentials:
+
+          ```bash
+          quazonai auth status
+          ```
+
+          If the response is unauthenticated or another command returns `OPERATOR_AUTH_REQUIRED`, do not ask for either factor and do not execute the interactive login. Prepare this exact command for the human operator:
+
+          ```text
+          quazonai auth login
+          ```
+
+          The human enters the access password and current authenticator code in their own terminal. After the human confirms success, run `quazonai auth status` and retry only the previously authorized operation. Never read or copy the CLI session file.
+
+          Logout is also human-only because it destroys the shared local operator session:
+
+          ```text
+          quazonai auth logout
+          ```
+          ''',
+          )
+
+          Path(".github/workflows/apply-operator-auth-docs.yml").unlink()
+          PY
+      - name: Commit generated documentation
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add DESIGN.md README.md OPERATIONS.md CLI.md skills/quazonai .github/workflows/apply-operator-auth-docs.yml
+          git commit -m "docs(auth): define single-operator TOTP boundary"
+          git push origin HEAD:feat/operator-totp-2fa
