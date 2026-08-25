@@ -8,7 +8,9 @@ import json
 import re
 import secrets
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
+from threading import Lock
 from typing import Literal
 
 import pyotp
@@ -22,6 +24,11 @@ SESSION_COOKIE_NAME = "quazonai_session"
 TRUSTED_BROWSER_COOKIE_NAME = "quazonai_trusted_browser"
 COOKIE_VERSION = 1
 COOKIE_NONCE_BYTES = 12
+LOGIN_MIN_INTERVAL_SECONDS = 1.0
+LOGIN_BASE_BACKOFF_SECONDS = 1.0
+LOGIN_MAX_BACKOFF_SECONDS = 5.0
+LOGIN_STATE_RETENTION_SECONDS = 15 * 60.0
+LOGIN_MAX_TRACKED_SOURCES = 2048
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 _PUBLIC_OPERATOR_ROUTES = frozenset(
     {
@@ -50,8 +57,123 @@ class OperatorIdentity:
     renew_session: bool = False
 
 
+@dataclass(slots=True)
+class _LoginAttemptState:
+    next_allowed_at: float
+    failures: int
+    last_seen_at: float
+
+
+class OperatorLoginLimiter:
+    """Bound credential verification rate per observed network source.
+
+    The limiter is deliberately process-local and short-lived: it reduces online
+    guessing without creating a durable account lockout that can strand the one
+    local operator. Blocked requests receive the same generic login failure as an
+    incorrect factor and never execute password/TOTP verification.
+    """
+
+    def __init__(
+        self,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        minimum_interval_seconds: float = LOGIN_MIN_INTERVAL_SECONDS,
+        base_backoff_seconds: float = LOGIN_BASE_BACKOFF_SECONDS,
+        maximum_backoff_seconds: float = LOGIN_MAX_BACKOFF_SECONDS,
+        retention_seconds: float = LOGIN_STATE_RETENTION_SECONDS,
+        max_sources: int = LOGIN_MAX_TRACKED_SOURCES,
+    ) -> None:
+        self._clock = clock
+        self._minimum_interval_seconds = minimum_interval_seconds
+        self._base_backoff_seconds = base_backoff_seconds
+        self._maximum_backoff_seconds = maximum_backoff_seconds
+        self._retention_seconds = retention_seconds
+        self._max_sources = max_sources
+        self._states: dict[str, _LoginAttemptState] = {}
+        self._lock = Lock()
+
+    def _prune(self, now: float) -> None:
+        expired = [
+            source
+            for source, state in self._states.items()
+            if now - state.last_seen_at > self._retention_seconds
+        ]
+        for source in expired:
+            self._states.pop(source, None)
+        while len(self._states) >= self._max_sources:
+            oldest = min(self._states, key=lambda source: self._states[source].last_seen_at)
+            self._states.pop(oldest, None)
+
+    def allow_attempt(self, source: str) -> bool:
+        now = self._clock()
+        with self._lock:
+            self._prune(now)
+            state = self._states.get(source)
+            if state is not None and state.next_allowed_at > now:
+                return False
+            if state is None:
+                state = _LoginAttemptState(
+                    next_allowed_at=now,
+                    failures=0,
+                    last_seen_at=now,
+                )
+                self._states[source] = state
+            state.next_allowed_at = now + self._minimum_interval_seconds
+            state.last_seen_at = now
+            return True
+
+    def record_failure(self, source: str) -> None:
+        now = self._clock()
+        with self._lock:
+            self._prune(now)
+            state = self._states.get(source)
+            if state is None:
+                state = _LoginAttemptState(
+                    next_allowed_at=now,
+                    failures=0,
+                    last_seen_at=now,
+                )
+                self._states[source] = state
+            state.failures = min(state.failures + 1, 32)
+            exponent = min(state.failures - 1, 16)
+            backoff = min(
+                self._maximum_backoff_seconds,
+                self._base_backoff_seconds * (2**exponent),
+            )
+            state.next_allowed_at = max(state.next_allowed_at, now + backoff)
+            state.last_seen_at = now
+
+    def record_success(self, source: str) -> None:
+        with self._lock:
+            self._states.pop(source, None)
+
+
+class OperatorAuthRuntime:
+    """Process-local coordination for login throttling and active streams."""
+
+    def __init__(self, *, login_limiter: OperatorLoginLimiter | None = None) -> None:
+        self.login_limiter = login_limiter or OperatorLoginLimiter()
+        self._stream_generation = 0
+        self._stream_lock = Lock()
+
+    def stream_generation(self) -> int:
+        with self._stream_lock:
+            return self._stream_generation
+
+    def revoke_active_streams(self) -> None:
+        with self._stream_lock:
+            self._stream_generation += 1
+
+
 class _InvalidCookie(ValueError):
     pass
+
+
+def login_source_key(request: Request) -> str:
+    """Return a bounded source key without trusting arbitrary forwarding headers."""
+    if request.client is None or not request.client.host:
+        return "unknown"
+    return request.client.host[:255]
 
 
 def _urlsafe_encode(value: bytes) -> str:
@@ -193,6 +315,15 @@ def authenticate_browser(request: Request, settings: Settings) -> OperatorIdenti
             renew_session=True,
         )
     return None
+
+
+def reauthenticate_operator_request(request: Request, settings: Settings) -> bool:
+    """Revalidate a long-lived request against current credentials and key state."""
+    if not settings.auth_enabled:
+        return True
+    if authenticate_machine(settings, request.headers.get("authorization")) is not None:
+        return True
+    return authenticate_browser(request, settings) is not None
 
 
 def has_valid_trusted_browser(request: Request, settings: Settings) -> bool:
