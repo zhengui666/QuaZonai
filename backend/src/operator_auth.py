@@ -23,6 +23,14 @@ TRUSTED_BROWSER_COOKIE_NAME = "quazonai_trusted_browser"
 COOKIE_VERSION = 1
 COOKIE_NONCE_BYTES = 12
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+_PUBLIC_OPERATOR_ROUTES = frozenset(
+    {
+        ("GET", "/api/v1/system/health"),
+        ("POST", "/api/v1/auth/login"),
+        ("GET", "/api/v1/auth/session"),
+        ("POST", "/api/v1/auth/logout"),
+    }
+)
 _DOWNSTREAM_ROUTE = re.compile(
     r"^/api/v1/handoffs/[^/]+/(?P<action>claim|accept|reject|package|feedback)$"
 )
@@ -218,15 +226,23 @@ def set_trusted_browser_cookie(response: Response, settings: Settings) -> None:
     )
 
 
+def _delete_cookie(response: Response, settings: Settings, name: str) -> None:
+    response.delete_cookie(
+        name,
+        path="/",
+        secure=settings.auth_cookie_secure,
+        httponly=True,
+        samesite="strict",
+    )
+
+
+def clear_trusted_browser_cookie(response: Response, settings: Settings) -> None:
+    _delete_cookie(response, settings, TRUSTED_BROWSER_COOKIE_NAME)
+
+
 def clear_auth_cookies(response: Response, settings: Settings) -> None:
-    for name in (SESSION_COOKIE_NAME, TRUSTED_BROWSER_COOKIE_NAME):
-        response.delete_cookie(
-            name,
-            path="/",
-            secure=settings.auth_cookie_secure,
-            httponly=True,
-            samesite="strict",
-        )
+    _delete_cookie(response, settings, SESSION_COOKIE_NAME)
+    clear_trusted_browser_cookie(response, settings)
 
 
 def require_same_origin(request: Request, settings: Settings) -> None:
@@ -249,11 +265,10 @@ def is_operator_auth_exempt(method: str, path: str) -> bool:
     service token. Matching both method and path prevents a future Operator route
     that reuses one path with a different HTTP method from becoming public.
     """
-    if path == "/api/v1/system/health":
-        return True
-    if path.startswith("/api/v1/auth/"):
+    normalized_method = method.upper()
+    if (normalized_method, path) in _PUBLIC_OPERATOR_ROUTES:
         return True
     match = _DOWNSTREAM_ROUTE.fullmatch(path)
     if match is None:
         return False
-    return _DOWNSTREAM_METHODS[match.group("action")] == method.upper()
+    return _DOWNSTREAM_METHODS[match.group("action")] == normalized_method
