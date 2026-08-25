@@ -17,6 +17,7 @@ import {
 import { Button, DropdownMenu, Theme } from '@radix-ui/themes';
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useOperatorAuth } from '../../auth/AuthGate';
 import { PageSkeleton } from '../ui/Skeleton';
 
 const nav = [
@@ -41,6 +42,7 @@ function useThemeMode() {
 
 export function AppShell() {
   const [mode, setMode] = useThemeMode();
+  const { authEnabled, logout } = useOperatorAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const current = useMemo(
@@ -48,16 +50,9 @@ export function AppShell() {
     [location.pathname],
   );
 
-  async function logout() {
-    try {
-      await fetch('/api/v1/auth/logout', {
-        method: 'POST',
-        credentials: 'same-origin',
-      });
-    } finally {
-      window.dispatchEvent(new Event('quazonai:auth-required'));
-      navigate('/');
-    }
+  async function signOut() {
+    await logout();
+    navigate('/');
   }
 
   return (
@@ -91,16 +86,22 @@ export function AppShell() {
                   {nav.map(({ to, label, icon: Icon }) => (
                     <DropdownMenu.Item key={to} onSelect={() => navigate(to)}><Icon size={14} />{label}</DropdownMenu.Item>
                   ))}
-                  <DropdownMenu.Separator />
-                  <DropdownMenu.Item color="red" onSelect={() => { void logout(); }}><SignOutIcon size={14} />Sign out</DropdownMenu.Item>
+                  {authEnabled ? (
+                    <>
+                      <DropdownMenu.Separator />
+                      <DropdownMenu.Item color="red" onSelect={() => { void signOut(); }}><SignOutIcon size={14} />Sign out</DropdownMenu.Item>
+                    </>
+                  ) : null}
                 </DropdownMenu.Content>
               </DropdownMenu.Root>
               <Button aria-label={`Switch to ${mode === 'dark' ? 'light' : 'dark'} theme`} size="1" variant="soft" onClick={() => setMode(mode === 'dark' ? 'light' : 'dark')}>
                 {mode === 'dark' ? <SunIcon size={15} /> : <MoonIcon size={15} />}
               </Button>
-              <Button aria-label="Sign out and forget this browser" size="1" variant="soft" color="red" onClick={() => { void logout(); }}>
-                <SignOutIcon size={15} />
-              </Button>
+              {authEnabled ? (
+                <Button aria-label="Sign out and forget this browser" size="1" variant="soft" color="red" onClick={() => { void signOut(); }}>
+                  <SignOutIcon size={15} />
+                </Button>
+              ) : null}
             </div>
           </header>
           <div className="qz-content"><Suspense fallback={<PageSkeleton />}><Outlet /></Suspense></div>
