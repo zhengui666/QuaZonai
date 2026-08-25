@@ -9,6 +9,13 @@ export function formatDateTime(value?: string | null): string {
   return new Intl.DateTimeFormat(getIntlLocale(), { year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(date);
 }
 
+export function formatNumber(value?: number | string | null): string {
+  if (value === null || value === undefined || value === '') return '—';
+  const numeric = Number(value);
+  if (Number.isNaN(numeric)) return String(value);
+  return new Intl.NumberFormat(getIntlLocale()).format(numeric);
+}
+
 export function formatCompactNumber(value?: number | string | null): string {
   if (value === null || value === undefined || value === '') return '—';
   const numeric = Number(value);
