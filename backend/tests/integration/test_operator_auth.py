@@ -46,7 +46,10 @@ def _login(
     )
 
 
-def test_auth_disabled_preserves_direct_operator_access(settings: Settings, engine: Engine) -> None:
+def test_auth_disabled_preserves_development_operator_access(
+    settings: Settings,
+    engine: Engine,
+) -> None:
     client = TestClient(create_app(settings=settings, engine=engine))
 
     response = client.get("/api/v1/system/runtime-configuration")
@@ -82,6 +85,23 @@ def test_machine_token_authenticates_cli_style_requests(settings: Settings, engi
     response = client.get(
         "/api/v1/system/runtime-configuration",
         headers={"Authorization": f"Bearer {secured.api_token}"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_machine_token_can_make_operator_mutation_without_browser_origin(
+    settings: Settings,
+    engine: Engine,
+) -> None:
+    secured = _enabled_settings(settings)
+    assert secured.api_token is not None
+    client = TestClient(create_app(settings=secured, engine=engine))
+
+    response = client.post(
+        "/api/v1/ideas/preview",
+        headers={"Authorization": f"Bearer {secured.api_token}"},
+        json={"idea": "Test a liquid US equity factor after realistic costs."},
     )
 
     assert response.status_code == 200
@@ -132,6 +152,27 @@ def test_invalid_login_does_not_reveal_failed_factor(settings: Settings, engine:
             "details": {},
         }
     }
+
+
+def test_browser_mutation_requires_configured_origin(settings: Settings, engine: Engine) -> None:
+    secured = _enabled_settings(settings)
+    client = TestClient(create_app(settings=secured, engine=engine))
+    assert _login(client, secured).status_code == 200
+
+    missing = client.post(
+        "/api/v1/ideas/preview",
+        json={"idea": "Test a liquid US equity factor after realistic costs."},
+    )
+    mismatched = client.post(
+        "/api/v1/ideas/preview",
+        headers={"Origin": "https://attacker.example"},
+        json={"idea": "Test a liquid US equity factor after realistic costs."},
+    )
+
+    assert missing.status_code == 403
+    assert missing.json()["error"]["code"] == "AUTH_ORIGIN_REJECTED"
+    assert mismatched.status_code == 403
+    assert mismatched.json()["error"]["code"] == "AUTH_ORIGIN_REJECTED"
 
 
 def test_trusted_browser_restores_session_without_password_or_totp(
@@ -201,10 +242,22 @@ def test_enabled_auth_requires_complete_configuration(settings: Settings) -> Non
         partial.validate_operator_auth()
 
 
-def test_production_can_explicitly_keep_auth_disabled(settings: Settings) -> None:
+def test_disabled_auth_rejects_credential_configuration(settings: Settings) -> None:
+    partial = replace(
+        settings,
+        operator_auth_enabled=False,
+        operator_username="operator",
+    )
+
+    with pytest.raises(SettingsError, match="disabled but authentication settings are present"):
+        partial.validate_operator_auth()
+
+
+def test_production_requires_operator_authentication(settings: Settings) -> None:
     production = replace(settings, environment="production", operator_auth_enabled=False)
 
-    production.validate_operator_auth()
+    with pytest.raises(SettingsError, match="AUTH_ENABLED must be true in production"):
+        production.validate_operator_auth()
 
 
 def test_production_requires_https_and_sets_secure_cookies(
@@ -225,6 +278,29 @@ def test_production_requires_https_and_sets_secure_cookies(
     response = _login(
         client,
         production,
+        trust_browser=True,
+        origin="https://testserver",
+    )
+
+    assert response.status_code == 200
+    cookie_headers = "\n".join(response.headers.get_list("set-cookie"))
+    assert "Secure" in cookie_headers
+
+
+def test_https_origin_uses_secure_cookies_outside_production(
+    settings: Settings,
+    engine: Engine,
+) -> None:
+    secured = replace(
+        _enabled_settings(settings),
+        auth_public_origin="https://testserver",
+    )
+    secured.validate_operator_auth()
+    client = TestClient(create_app(settings=secured, engine=engine))
+
+    response = _login(
+        client,
+        secured,
         trust_browser=True,
         origin="https://testserver",
     )
