@@ -6,8 +6,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
+
+_AUTH_LOGIN_PATH = "/api/v1/auth/login"
+_AUTH_PATH_PREFIX = "/api/v1/auth/"
+_NO_STORE_HEADERS = {"Cache-Control": "no-store", "Pragma": "no-cache"}
 
 
 class ErrorBody(BaseModel):
@@ -35,17 +41,53 @@ class QfError(Exception):
         return f"{self.code}: {self.message}"
 
 
+def _error_response(
+    *,
+    code: str,
+    message: str,
+    status_code: int,
+    details: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
+    payload = ErrorEnvelope(
+        error=ErrorBody(
+            code=code,
+            message=message,
+            details=details or {},
+        )
+    )
+    return JSONResponse(
+        status_code=status_code,
+        content=payload.model_dump(mode="json"),
+        headers=headers,
+    )
+
+
 def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(QfError)
-    async def handle_qf_error(_: Request, exc: QfError) -> JSONResponse:
-        payload = ErrorEnvelope(
-            error=ErrorBody(
-                code=exc.code,
-                message=exc.message,
-                details=exc.details,
-            )
-        )
-        return JSONResponse(
+    async def handle_qf_error(request: Request, exc: QfError) -> JSONResponse:
+        headers = _NO_STORE_HEADERS if request.url.path.startswith(_AUTH_PATH_PREFIX) else None
+        return _error_response(
+            code=exc.code,
+            message=exc.message,
             status_code=exc.status_code,
-            content=payload.model_dump(mode="json"),
+            details=exc.details,
+            headers=headers,
         )
+
+    @app.exception_handler(RequestValidationError)
+    async def handle_request_validation(
+        request: Request,
+        exc: RequestValidationError,
+    ) -> Response:
+        if request.url.path == _AUTH_LOGIN_PATH:
+            # FastAPI's default validation envelope may include rejected input values.
+            # Login failures must not echo password or TOTP material or reveal which
+            # authentication factor failed validation.
+            return _error_response(
+                code="AUTH_INVALID",
+                message="Invalid operator credentials.",
+                status_code=401,
+                headers=_NO_STORE_HEADERS,
+            )
+        return await request_validation_exception_handler(request, exc)
