@@ -83,7 +83,7 @@ def _base64_key(value: str | None, *, name: str) -> bytes:
 def _validate_origin_host(parsed: ParseResult) -> None:
     try:
         hostname = parsed.hostname
-        parsed.port
+        _ = parsed.port
     except ValueError as exc:
         raise SettingsError(
             "QUAZONAI_AUTH_PUBLIC_ORIGIN must contain a valid host and optional TCP port"
@@ -98,6 +98,11 @@ def _validate_origin_host(parsed: ParseResult) -> None:
         return
     except ValueError:
         pass
+
+    # A dotted-decimal host made only of digits is intended to be an IPv4
+    # literal. Do not reinterpret an invalid address as a DNS name.
+    if all(character.isdigit() or character == "." for character in hostname):
+        raise SettingsError("QUAZONAI_AUTH_PUBLIC_ORIGIN contains an invalid hostname")
 
     try:
         ascii_hostname = hostname.encode("idna").decode("ascii")
