@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 import re
 import secrets
@@ -46,7 +47,7 @@ def _urlsafe_decode(value: str) -> bytes:
     padding = "=" * ((4 - len(value) % 4) % 4)
     try:
         return base64.b64decode(value + padding, altchars=b"-_", validate=True)
-    except (ValueError, base64.binascii.Error) as exc:
+    except (ValueError, binascii.Error) as exc:
         raise _InvalidCookie from exc
 
 
@@ -240,11 +241,3 @@ def is_operator_auth_exempt(path: str) -> bool:
     if path.startswith("/api/v1/auth/"):
         return True
     return _DOWNSTREAM_ROUTE.fullmatch(path) is not None
-
-
-def authentication_required_error() -> QfError:
-    return QfError(
-        "AUTH_REQUIRED",
-        "Operator authentication is required.",
-        401,
-    )
