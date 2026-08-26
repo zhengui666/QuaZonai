@@ -17,6 +17,16 @@
   box-shadow: 0 24px 70px rgb(0 0 0 / 24%);
 }
 
+.qz-auth-language {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 16px;
+}
+
+.qz-auth-language-button {
+  min-width: 42px;
+}
+
 .qz-auth-mark {
   width: 42px;
   height: 42px;

@@ -9,11 +9,13 @@ import {
   type FormEvent,
   type ReactNode,
 } from 'react';
-import { Theme } from '@radix-ui/themes';
-import { useI18n } from '../i18n';
+import { Button, DropdownMenu, Theme } from '@radix-ui/themes';
+import { Direction } from 'radix-ui';
+import { localeLabels, localeOrder, useI18n, type Locale } from '../i18n';
 import '../styles/auth.css';
 
 type AuthState = 'checking' | 'authenticated' | 'anonymous';
+type BootstrapError = { kind: 'http'; status: number } | { kind: 'unreachable' };
 
 interface SessionView {
   authenticated: boolean;
@@ -50,13 +52,16 @@ async function responseErrorMessage(response: Response, fallback: string): Promi
 }
 
 function LoginPage({ onAuthenticated }: { onAuthenticated: (session: SessionView) => void }) {
-  const { t } = useI18n();
+  const { locale, setLocale, t } = useI18n();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [totpCode, setTotpCode] = useState('');
   const [trustBrowser, setTrustBrowser] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const changeLocale = (value: string) => {
+    if ((localeOrder as readonly string[]).includes(value)) setLocale(value as Locale);
+  };
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -88,9 +93,27 @@ function LoginPage({ onAuthenticated }: { onAuthenticated: (session: SessionView
 
   return (
     <Theme appearance="dark" accentColor="jade" grayColor="sage" radius="small" scaling="90%">
-      <main className="qz-auth-page">
-        <section className="qz-auth-card" aria-labelledby="qz-auth-title">
-          <div className="qz-auth-mark" aria-hidden="true">QZ</div>
+      <Direction.Provider dir={localeLabels[locale].dir}>
+        <main className="qz-auth-page">
+          <section className="qz-auth-card" aria-labelledby="qz-auth-title">
+            <div className="qz-auth-language">
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger>
+                  <Button aria-label={`${t('language.change')}: ${localeLabels[locale].native}`} className="qz-auth-language-button" size="1" variant="soft">{localeLabels[locale].short}</Button>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Content align="end">
+                  <DropdownMenu.RadioGroup value={locale} onValueChange={changeLocale}>
+                    {localeOrder.map((code) => (
+                      <DropdownMenu.RadioItem key={code} value={code}>
+                        <span>{localeLabels[code].native}</span>
+                        <span className="qz-section-meta">{localeLabels[code].english}</span>
+                      </DropdownMenu.RadioItem>
+                    ))}
+                  </DropdownMenu.RadioGroup>
+                </DropdownMenu.Content>
+              </DropdownMenu.Root>
+            </div>
+            <div className="qz-auth-mark" aria-hidden="true">QZ</div>
           <div className="qz-auth-heading">
             <p className="qz-auth-eyebrow">{t('auth.operatorAccess')}</p>
             <h1 id="qz-auth-title">{t('auth.verifyIdentity')}</h1>
@@ -153,9 +176,10 @@ function LoginPage({ onAuthenticated }: { onAuthenticated: (session: SessionView
               {submitting ? t('auth.verifying') : t('auth.signIn')}
             </button>
           </form>
-          <p className="qz-auth-footnote">{t('auth.logoutFootnote')}</p>
-        </section>
-      </main>
+            <p className="qz-auth-footnote">{t('auth.logoutFootnote')}</p>
+          </section>
+        </main>
+      </Direction.Provider>
     </Theme>
   );
 }
@@ -164,7 +188,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const { t } = useI18n();
   const [state, setState] = useState<AuthState>('checking');
   const [session, setSession] = useState<SessionView | null>(null);
-  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
+  const [bootstrapError, setBootstrapError] = useState<BootstrapError | null>(null);
   const sessionCheckGeneration = useRef(0);
   const sessionCheckAbortController = useRef<AbortController | null>(null);
 
@@ -204,18 +228,18 @@ export function AuthGate({ children }: { children: ReactNode }) {
         setState('anonymous');
         return;
       }
-      setBootstrapError(t('auth.serviceHttpError', { status: response.status }));
+      setBootstrapError({ kind: 'http', status: response.status });
       setSession(null);
       setState('anonymous');
     } catch {
       if (!isCurrent()) return;
-      setBootstrapError(t('auth.serviceUnreachable'));
+      setBootstrapError({ kind: 'unreachable' });
       setSession(null);
       setState('anonymous');
     } finally {
       if (isCurrent()) sessionCheckAbortController.current = null;
     }
-  }, [acceptSession, t]);
+  }, [acceptSession]);
 
   const logout = useCallback(async () => {
     if (!session?.auth_enabled) return;
@@ -295,6 +319,11 @@ export function AuthGate({ children }: { children: ReactNode }) {
     () => ({ authEnabled: session?.auth_enabled ?? false, logout }),
     [logout, session?.auth_enabled],
   );
+  const bootstrapErrorMessage = bootstrapError?.kind === 'http'
+    ? t('auth.serviceHttpError', { status: bootstrapError.status })
+    : bootstrapError?.kind === 'unreachable'
+      ? t('auth.serviceUnreachable')
+      : null;
 
   if (state === 'checking') {
     return (
@@ -307,7 +336,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return (
       <>
         <LoginPage onAuthenticated={acceptSession} />
-        {bootstrapError ? <div className="qz-auth-bootstrap-error" dir="auto" role="status">{bootstrapError}</div> : null}
+        {bootstrapErrorMessage ? <div className="qz-auth-bootstrap-error" dir="auto" role="status">{bootstrapErrorMessage}</div> : null}
       </>
     );
   }

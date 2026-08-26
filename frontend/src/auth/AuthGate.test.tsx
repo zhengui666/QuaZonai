@@ -7,7 +7,7 @@ import {
   AuthGate,
   useOperatorAuth,
 } from './AuthGate';
-import { I18nProvider, type Locale } from '../i18n';
+import { I18nProvider, useI18n, type Locale } from '../i18n';
 
 function renderAuthGate(children: ReactNode, locale: Locale = 'en') {
   return render(
@@ -60,6 +60,11 @@ function AuthModeProbe() {
   return <div>{authEnabled ? 'Authentication enabled' : 'Direct access enabled'}</div>;
 }
 
+function LocaleChangeProbe() {
+  const { setLocale } = useI18n();
+  return <button onClick={() => setLocale('ar')}>Change locale</button>;
+}
+
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
@@ -79,6 +84,30 @@ describe('AuthGate', () => {
     renderAuthGate(<div>Workbench ready</div>);
 
     expect(await screen.findByText('Workbench ready')).toBeInTheDocument();
+  });
+
+  it('keeps an authenticated session stable when changing locale', async () => {
+    const unexpectedRebootstrap = deferredResponse();
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => jsonResponse({
+        authenticated: true,
+        username: 'operator',
+        trusted_browser: false,
+        auth_enabled: true,
+      }))
+      .mockImplementation(() => unexpectedRebootstrap.promise);
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+
+    renderAuthGate(<><div>Workbench ready</div><LocaleChangeProbe /></>);
+
+    expect(await screen.findByText('Workbench ready')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Change locale' }));
+    await waitFor(() => expect(document.documentElement).toHaveAttribute('dir', 'rtl'));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Workbench ready')).toBeInTheDocument();
   });
 
   it('preserves direct access when operator authentication is disabled', async () => {
@@ -204,6 +233,24 @@ describe('AuthGate', () => {
     expect(screen.getByLabelText('اسم المستخدم')).toHaveAttribute('dir', 'auto');
     expect(screen.getByLabelText('كلمة المرور')).toHaveAttribute('dir', 'ltr');
     expect(screen.getByLabelText('رمز المصادقة')).toHaveAttribute('dir', 'ltr');
+  });
+
+  it('lets an anonymous operator switch the login language before authentication', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401)));
+    const user = userEvent.setup();
+
+    renderAuthGate(<div>Workbench ready</div>);
+
+    await screen.findByRole('heading', { name: 'Verify your identity' });
+    await user.click(screen.getByRole('button', { name: 'Change language: English' }));
+    await user.click(screen.getByRole('menuitemradio', { name: /العربية/ }));
+
+    await waitFor(() => {
+      expect(document.documentElement).toHaveAttribute('lang', 'ar');
+      expect(document.documentElement).toHaveAttribute('dir', 'rtl');
+      expect(screen.getByRole('heading', { name: 'تحقق من هويتك' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'تغيير اللغة: العربية' })).toBeInTheDocument();
+    });
   });
 
   it('submits trusted-browser intent and reveals the workbench after successful login', async () => {
