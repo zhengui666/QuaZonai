@@ -64,6 +64,9 @@ describe('API hooks', () => {
       if (attempt === 1) return Promise.reject(new TypeError('response lost'));
       return jsonResponse({ revision: 8, codex_model: 'gpt-5.6-sol', codex_base_url: 'https://gateway.example/v1', codex_api_key_configured: true });
     });
+    vi.spyOn(globalThis.crypto, 'randomUUID')
+      .mockReturnValueOnce('00000000-0000-4000-8000-000000000001')
+      .mockReturnValueOnce('00000000-0000-4000-8000-000000000002');
     const { result } = renderHook(() => useUpdateRuntimeConfiguration(), { wrapper: createWrapper(client) });
     const payload = {
       expected_revision: 7,

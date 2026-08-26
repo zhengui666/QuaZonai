@@ -106,8 +106,6 @@ function localizeDirectNumericCell(rendered: ReactNode, rawValue: unknown, local
   if (!element.props.className?.split(/\s+/).includes('qz-number')) return rendered;
   const numeric = numericRawValue(rawValue);
   if (numeric === undefined) return rendered;
-  const children = element.props.children;
-  if (children !== rawValue && children !== String(rawValue)) return rendered;
   return cloneElement(element, undefined, numericDisplayValue(numeric, locale, meta));
 }
 
@@ -140,13 +138,15 @@ export function DataTable<T>({
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
   const viewportRef = useRef<HTMLDivElement>(null);
   const stableColumns = useMemo(() => columns, [columns]);
-  const localizedGlobalFilter = useCallback<FilterFn<T>>((row, columnId, filterValue) => {
+  const localizedGlobalFilter = useCallback<FilterFn<T>>((row, _columnId, filterValue) => {
     const query = String(filterValue ?? '').trim().toLocaleLowerCase(locale);
     if (!query) return true;
-    const meta = columnMeta(row.getAllCells().find((cell) => cell.column.id === columnId)?.column.columnDef.meta);
-    const accessorValue = row.getValue(columnId);
-    const value = accessorValue === undefined ? objectField(row.original, columnId) : accessorValue;
-    return searchableValues(value, locale, meta).some((candidate) => candidate.toLocaleLowerCase(locale).includes(query));
+    return row.getAllCells().some((cell) => {
+      const meta = columnMeta(cell.column.columnDef.meta);
+      const accessorValue = cell.getValue();
+      const value = accessorValue === undefined ? objectField(row.original, cell.column.id) : accessorValue;
+      return searchableValues(value, locale, meta).some((candidate) => candidate.toLocaleLowerCase(locale).includes(query));
+    });
   }, [locale]);
   const table = useReactTable({
     data,
