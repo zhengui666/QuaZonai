@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { DataTable } from '../components/ui/DataTable';
 import { StateBadge } from '../components/ui/StateBadge';
 import { I18nProvider, useI18n } from '../i18n';
-import { formatCompactNumber, formatNumber, formatPercent, humanize } from '../lib/format';
+import { formatCapitalAmount, formatCompactNumber, formatNumber, formatPercent, humanize } from '../lib/format';
 import { renderApp } from './testUtils';
 
 interface Row { name: string; state: string }
@@ -31,6 +31,12 @@ interface StringNumericRow { name: string; deployable: string }
 const stringNumericColumns: ColumnDef<StringNumericRow, unknown>[] = [
   { accessorKey: 'name', header: 'Name' },
   { accessorKey: 'deployable', header: 'Deployable', cell: ({ getValue }) => <span className="qz-number">{formatNumber(getValue() as string)}</span> },
+];
+
+interface ExactStringNumericRow { name: string; deployable: string }
+const exactStringNumericColumns: ColumnDef<ExactStringNumericRow, unknown>[] = [
+  { accessorKey: 'name', header: 'Name' },
+  { accessorKey: 'deployable', header: 'Deployable', cell: ({ getValue }) => <span className="qz-number">{formatCapitalAmount(getValue() as string)}</span> },
 ];
 
 interface CapabilityRow { name: string; capabilities: string[] }
@@ -210,6 +216,33 @@ describe('DataTable', () => {
     expect(screen.getByText(localized)).toBeInTheDocument();
     fireEvent.change(screen.getByPlaceholderText('Filtrar filas…'), { target: { value: localized } });
     expect(screen.getByText('String capital')).toBeInTheDocument();
+  });
+
+  it('sorts arbitrary-precision decimal strings exactly and indexes their exact localized display', () => {
+    const larger = '9007199254740993';
+    const smaller = '9007199254740992';
+    render(
+      <I18nProvider initialLocale="es">
+        <Theme appearance="dark" accentColor="jade" grayColor="sage" radius="small" scaling="90%">
+          <DataTable
+            data={[{ name: 'Larger capital', deployable: larger }, { name: 'Smaller capital', deployable: smaller }]}
+            columns={exactStringNumericColumns}
+          />
+        </Theme>
+      </I18nProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Deployable' }));
+    expect(screen.getAllByText(/^(Larger|Smaller) capital$/).map((element) => element.textContent)).toEqual([
+      'Smaller capital',
+      'Larger capital',
+    ]);
+
+    const localizedLarger = formatCapitalAmount(larger, 'es');
+    expect(screen.getByText(localizedLarger)).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText('Filtrar filas…'), { target: { value: localizedLarger } });
+    expect(screen.getByText('Larger capital')).toBeInTheDocument();
+    expect(screen.queryByText('Smaller capital')).not.toBeInTheDocument();
   });
 
   it('does not generate percentage aliases for ordinary numeric columns', () => {

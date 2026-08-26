@@ -19,7 +19,47 @@ export function formatNumber(value?: number | string | null, options?: Intl.Numb
 const capitalNumberFormatOptions = { maximumSignificantDigits: 21 } as const;
 const plainDecimalPattern = /^([+-]?)(\d*)(?:\.(\d*))?$/;
 
-function formatExactCapitalString(value: string, locale: string): string | null {
+type PlainDecimal = {
+  sign: -1 | 1;
+  integer: string;
+  fraction: string;
+};
+
+function parsePlainDecimal(value: string): PlainDecimal | null {
+  const match = plainDecimalPattern.exec(value);
+  if (match === null) return null;
+  const rawInteger = match[2] ?? '';
+  const rawFraction = match[3] ?? '';
+  if (!rawInteger && !rawFraction) return null;
+  const integer = rawInteger.replace(/^0+(?=\d)/, '') || '0';
+  const fraction = rawFraction.replace(/0+$/, '');
+  const isZero = integer === '0' && !fraction;
+  return { sign: match[1] === '-' && !isZero ? -1 : 1, integer, fraction };
+}
+
+function compareDigits(left: string, right: string): number {
+  return left === right ? 0 : left < right ? -1 : 1;
+}
+
+export function comparePlainDecimalStrings(left: string, right: string): number | undefined {
+  const leftDecimal = parsePlainDecimal(left);
+  const rightDecimal = parsePlainDecimal(right);
+  if (leftDecimal === null || rightDecimal === null) return undefined;
+  if (leftDecimal.sign !== rightDecimal.sign) return leftDecimal.sign - rightDecimal.sign;
+
+  let magnitude = leftDecimal.integer.length - rightDecimal.integer.length;
+  if (magnitude === 0) magnitude = compareDigits(leftDecimal.integer, rightDecimal.integer);
+  if (magnitude === 0) {
+    const fractionLength = Math.max(leftDecimal.fraction.length, rightDecimal.fraction.length);
+    magnitude = compareDigits(
+      leftDecimal.fraction.padEnd(fractionLength, '0'),
+      rightDecimal.fraction.padEnd(fractionLength, '0'),
+    );
+  }
+  return leftDecimal.sign === -1 ? -magnitude : magnitude;
+}
+
+export function formatPlainDecimalString(value: string, locale: string): string | null {
   const match = plainDecimalPattern.exec(value);
   if (match === null) return null;
   const sign = match[1] ?? '';
@@ -41,7 +81,7 @@ function formatExactCapitalString(value: string, locale: string): string | null 
     { length: 10 },
     (_, digit) => new Intl.NumberFormat(locale, { useGrouping: false }).format(digit),
   );
-  return `${formattedInteger}${decimal}${fractionalDigits.replace(/\d/g, (digit) => localizedDigits[Number(digit)] ?? digit)}`;
+  return formattedInteger + decimal + fractionalDigits.replace(/\d/g, (digit) => localizedDigits[Number(digit)] ?? digit);
 }
 
 export function formatCapitalAmount(value?: number | string | null, locale = getIntlLocale()): string {
@@ -49,7 +89,7 @@ export function formatCapitalAmount(value?: number | string | null, locale = get
   if (typeof value === 'string') {
     const trimmed = value.trim();
     if (!trimmed) return '—';
-    return formatExactCapitalString(trimmed, locale) ?? value;
+    return formatPlainDecimalString(trimmed, locale) ?? value;
   }
   return Number.isFinite(value)
     ? new Intl.NumberFormat(locale, capitalNumberFormatOptions).format(value)

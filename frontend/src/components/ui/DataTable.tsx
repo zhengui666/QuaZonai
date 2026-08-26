@@ -18,7 +18,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { localeLabels, useI18n, type Locale, type MessageKey } from '../../i18n';
 import { translateDomainLabel } from '../../i18n/domain';
 import { translateRuntimeLabel } from '../../i18n/runtime';
-import { formatDateTime } from '../../lib/format';
+import { comparePlainDecimalStrings, formatDateTime, formatPlainDecimalString } from '../../lib/format';
 import { EmptyState } from './EmptyState';
 
 type SearchFormat = 'compact' | 'percent';
@@ -72,8 +72,12 @@ function searchableValues(value: unknown, locale: Locale, meta?: LocalizedColumn
   if (typeof value === 'number') return numericSearchValues(value, locale, meta);
   if (typeof value === 'string') {
     const values = [value];
-    const numericValue = finiteNumericValue(value);
-    if (numericValue !== undefined) values.push(...numericSearchValues(numericValue, locale, meta));
+    const exactLocalizedValue = formatPlainDecimalString(value.trim(), locale);
+    if (exactLocalizedValue !== null) values.push(exactLocalizedValue);
+    else {
+      const numericValue = finiteNumericValue(value);
+      if (numericValue !== undefined) values.push(...numericSearchValues(numericValue, locale, meta));
+    }
     const sourceLabel = humanizeCanonical(value);
     const domainLabel = translateDomainLabel(locale, sourceLabel);
     if (domainLabel) values.push(domainLabel);
@@ -158,6 +162,10 @@ export function DataTable<T>({
     const rawRight = rowB.getValue(columnId);
     const left = rawLeft === undefined ? objectField(rowA.original, columnId) : rawLeft;
     const right = rawRight === undefined ? objectField(rowB.original, columnId) : rawRight;
+    const exactDecimalComparison = typeof left === 'string' && typeof right === 'string'
+      ? comparePlainDecimalStrings(left.trim(), right.trim())
+      : undefined;
+    if (exactDecimalComparison !== undefined) return exactDecimalComparison;
     const leftNumber = finiteNumericValue(left);
     const rightNumber = finiteNumericValue(right);
     if (leftNumber !== undefined && rightNumber !== undefined) return leftNumber - rightNumber;
