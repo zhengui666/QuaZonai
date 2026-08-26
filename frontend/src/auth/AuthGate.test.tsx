@@ -7,7 +7,7 @@ import {
   AuthGate,
   useOperatorAuth,
 } from './AuthGate';
-import { I18nProvider, useI18n, type Locale } from '../i18n';
+import { I18nProvider, localeLabels, localeOrder, useI18n, type Locale } from '../i18n';
 
 function renderAuthGate(children: ReactNode, locale: Locale = 'en') {
   return render(
@@ -243,6 +243,10 @@ describe('AuthGate', () => {
 
     await screen.findByRole('heading', { name: 'Verify your identity' });
     await user.click(screen.getByRole('button', { name: 'Change language: English' }));
+    for (const code of localeOrder) {
+      expect(screen.getByText(localeLabels[code].native, { selector: `span[lang="${code}"]:not(.qz-section-meta)` })).toHaveAttribute('dir', localeLabels[code].dir);
+      expect(screen.getByText(localeLabels[code].english, { selector: 'span.qz-section-meta' })).toHaveAttributes({ lang: 'en', dir: 'ltr' });
+    }
     await user.click(screen.getByRole('menuitemradio', { name: /العربية/ }));
 
     await waitFor(() => {

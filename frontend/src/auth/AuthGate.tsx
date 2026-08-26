@@ -128,8 +128,8 @@ function LoginPage({ onAuthenticated }: { onAuthenticated: (session: SessionView
                   <DropdownMenu.RadioGroup value={locale} onValueChange={changeLocale}>
                     {localeOrder.map((code) => (
                       <DropdownMenu.RadioItem key={code} value={code}>
-                        <span>{localeLabels[code].native}</span>
-                        <span className="qz-section-meta">{localeLabels[code].english}</span>
+                        <span lang={code} dir={localeLabels[code].dir}>{localeLabels[code].native}</span>
+                        <span className="qz-section-meta" lang="en" dir="ltr">{localeLabels[code].english}</span>
                       </DropdownMenu.RadioItem>
                     ))}
                   </DropdownMenu.RadioGroup>
