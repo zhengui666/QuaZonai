@@ -127,6 +127,43 @@ def test_machine_token_authenticates_cli_style_requests(settings: Settings, engi
     assert "Vary" not in response.headers
 
 
+def test_machine_token_accepts_multiple_ascii_spaces_after_bearer(settings: Settings) -> None:
+    secured = _enabled_settings(settings)
+    assert secured.api_token is not None
+
+    identity = authenticate_machine(secured, f"bEaReR   {secured.api_token}")
+
+    assert identity is not None
+    assert identity.source == "machine"
+
+
+@pytest.mark.parametrize(
+    "authorization_template",
+    [
+        "Bearer\t{token}",
+        "Bearer \t{token}",
+        "Bearer \n{token}",
+        "Bearer {token} ",
+        "Bearer {token}\t",
+        "Bearer {token} extra",
+        "Basic {token}",
+        "Bearer",
+        "Bearer    ",
+        "Bearer\u00a0{token}",
+    ],
+)
+def test_machine_token_rejects_malformed_bearer_whitespace(
+    settings: Settings,
+    authorization_template: str,
+) -> None:
+    secured = _enabled_settings(settings)
+    assert secured.api_token is not None
+
+    authorization = authorization_template.format(token=secured.api_token)
+
+    assert authenticate_machine(secured, authorization) is None
+
+
 def test_browser_authenticated_protected_api_responses_cannot_be_shared_cached(
     settings: Settings,
     engine: Engine,

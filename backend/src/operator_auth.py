@@ -466,12 +466,13 @@ def authenticate_machine(settings: Settings, authorization: str | None) -> Opera
     if not settings.auth_enabled or settings.api_token is None or authorization is None:
         return None
     scheme, separator, token = authorization.partition(" ")
-    if (
-        not separator
-        or scheme.casefold() != "bearer"
-        or not token
-        or token != token.strip()
-    ):
+    if not separator or scheme.casefold() != "bearer":
+        return None
+    # RFC 6750 uses 1*SP between the scheme and b64token.  Only consume ASCII
+    # spaces here: accepting generic whitespace would make tabs or line breaks
+    # valid Authorization delimiters.
+    token = token.lstrip(" ")
+    if not token or token != token.strip():
         return None
     try:
         validate_machine_api_token(token)
