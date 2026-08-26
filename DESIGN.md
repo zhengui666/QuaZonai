@@ -1,6 +1,6 @@
 # QuaZonai 产品需求与技术架构设计
 
-> 架构基线：2026-08-24  
+> 架构基线：2026-08-25  
 > 文档地位：**QuaZonai 唯一完整的产品与架构事实源**  
 > 目标：Codex Harness 驱动的单用户、自托管、持续自治量化研究与策略组合工作台  
 > 当前状态：**目标方案已锁定；现有代码仍包含旧 Nautilus 执行控制路径，尚未 conforming / release-ready**
@@ -23,7 +23,7 @@ QuaZonai **不拥有交易执行**。NautilusTrader、LEAN 或任何自定义执
 1. **提出 Research Idea**；
 2. **审批系统推荐的 Paper / Live Candidate Handoff**。
 
-首次安装、数据授权、Codex 登录与 Runtime Configuration、Mandate/Universe/下游配置、插件管理和故障处理属于低频 Administration，不计入正常研究旅程。
+首次安装、可选 Operator 登录、数据授权、Codex 登录与 Runtime Configuration、Mandate/Universe/下游配置、插件管理和故障处理属于低频 Administration，不计入正常研究旅程。
 
 完整闭环：
 
@@ -1070,6 +1070,9 @@ Codex provider 配置与 Worker limits 属于**运行时管理配置**，由本�
 QUAZONAI_ENV
 PostgreSQL database/user/password + DATABASE_URL/ALEMBIC_URL
 QUAZONAI_MASTER_KEY
+QUAZONAI_AUTH_ENABLED
+QUAZONAI_AUTH_USERNAME / QUAZONAI_AUTH_PASSWORD / QUAZONAI_AUTH_TOTP_SECRET
+QUAZONAI_AUTH_COOKIE_KEY / QUAZONAI_API_TOKEN / QUAZONAI_AUTH_PUBLIC_ORIGIN
 plugin/package/mission storage roots
 HTTP port
 fixed CODEX_HOME / frontend dist deployment paths
@@ -1293,7 +1296,49 @@ evaluator           # Sealed Promotion evaluator, no Codex workspace access
 
 不引入 Redis、Celery、Kafka 或 Kubernetes。使用 PostgreSQL durable jobs + `FOR UPDATE SKIP LOCKED`，事件表 + `LISTEN/NOTIFY` 仅做唤醒。
 
-`api` 默认只发布宿主 `127.0.0.1:8000`。远程访问由操作者自己的受信网络/TLS 层处理；V1 不建设多用户 auth。
+`QUAZONAI_ENV` 只能为 `development`、`test` 或 `production`（忽略大小写与首尾空白）；未知值在启动时拒绝，不能绕过 production 的安全策略。`api` 默认只发布宿主 `127.0.0.1:8000`。远程访问由操作者自己的受信 TLS/reverse-proxy/tunnel 层处理；V1 不建设多用户业务认证或 RBAC。`QUAZONAI_AUTH_ENABLED=true` 时 Web/operator API 使用单用户 Operator Authentication 边界；为 `false` 时保留 direct access，操作者必须保持 loopback-only 或提供另一个明确可信的访问边界。
+
+### 37.1 Operator Authentication
+
+Operator Authentication 是部署/访问边界，不是新的业务用户、tenant 或 RBAC Domain。V1 只有一个由启动环境配置的 Operator。
+
+`.env` / process environment 配置：
+
+```text
+QUAZONAI_AUTH_ENABLED
+QUAZONAI_AUTH_USERNAME
+QUAZONAI_AUTH_PASSWORD
+QUAZONAI_AUTH_TOTP_SECRET
+QUAZONAI_AUTH_COOKIE_KEY
+QUAZONAI_API_TOKEN
+QUAZONAI_AUTH_PUBLIC_ORIGIN
+QUAZONAI_AUTH_SESSION_TTL_SECONDS          # optional, bounded default
+QUAZONAI_AUTH_TRUSTED_BROWSER_TTL_DAYS     # optional, bounded default
+QUAZONAI_AUTH_TRUSTED_PROXY_CIDRS          # optional direct reverse-proxy CIDRs
+```
+
+规则：
+
+- `QUAZONAI_AUTH_ENABLED=false` 时在所有环境保留 direct Web/operator API access，不显示登录门，其他 auth credential/TTL/proxy identity 配置均视为 dormant 并忽略；该模式只适合 loopback-only 或另有明确可信访问边界的部署；设为 `true` 时 username/password、TOTP secret、独立 32-byte cookie encryption key、machine API token、public origin 与 bounded TTL 必须全部格式合法，否则启动 fail closed；直接注入的 `Settings` 也必须执行同一 TTL 类型/范围验证；启用认证的 production public origin 必须使用 HTTPS；
+- 正常浏览器登录要求 `username + password + TOTP`。TOTP 使用 RFC 6238 兼容 Google Authenticator 的标准 30 秒、6 位配置；允许有限 clock-skew window，不自研 OTP/HMAC 协议；
+- 密码、TOTP setup secret、cookie key 与 API token 都是启动级 secret；Web/API 不回读、不写事件、不写日志；
+- `QUAZONAI_AUTH_COOKIE_KEY` 必须与 `QUAZONAI_MASTER_KEY` 使用不同的随机 32-byte key material；两者解码结果相同即启动失败，不能用用途不同代替密钥分离；
+- `QUAZONAI_API_TOKEN` 必须可直接序列化为 RFC 6750 Bearer `b64token`：长度 32–4096，只允许 ASCII 字母、数字、`-._~+/` 与末尾可选 `=`；空白、CR/LF、控制字符、非 ASCII 或其他字符必须在启动时拒绝；
+- 成功登录签发短期 browser session cookie。勾选 **Trust this browser** 时另外签发长期 trusted-browser cookie；两者都使用独立 `QUAZONAI_AUTH_COOKIE_KEY` 做 AES-256-GCM authenticated encryption，Cookie 必须 `HttpOnly`、`SameSite=Strict`，启用认证的 production 必须自动标记 `Secure`，不能把 bearer credential 放入 `localStorage`/`sessionStorage`；每个 credential 还必须绑定签发时的进程内 authenticated-logout generation、当前 API runtime 新生成的随机 process issuance epoch 与当前浏览器 profile 的 sealed local epoch，读取时同时核验三者；process epoch 在每次 API runtime 创建时变化，因此 restart 必须 fail closed 并使所有既有 browser credential 失效，不能让复位 generation 重新接受已退出 cookie；读取每一种 credential 时必须扫描同名 Cookie 的全部 raw 值并只认可该 credential kind 的有效 AEAD token，因此 sibling-domain 注入的重复 cookie 不能以顺序遮蔽 host-only credential；
+- trusted-browser cookie 是长期设备凭证：有效时可在没有密码和 TOTP 的情况下为该浏览器恢复登录；它只存在于浏览器 cookie jar，不形成数据库“用户设备”业务模型；
+- logout 默认同时删除 session 和 trusted-browser cookie，并在当前 host/browser profile 写入一个 `HttpOnly`、`SameSite=Strict`、host-only、由 `QUAZONAI_AUTH_COOKIE_KEY` AEAD 验证的 browser-local logout barrier 与独立 sealed local epoch，至少持续所有可能 trusted-browser credential 的最长有效期；读取时必须扫描同名 Cookie 的全部值并只认可有效值，因此 sibling-domain 注入的同名值既不能覆盖有效 barrier/epoch，也不能在成功登录清除 host-only barrier 后锁死浏览器。成功 password + TOTP 登录只清除 barrier、保留 local epoch 并把新 credential 绑定到它；因此 logout response 先到、旧 login/automatic-renewal response 后到时，即使旧 response 清除了新 barrier，其旧 credential 也不能重新验证。已认证 browser logout 还推进进程内 global issuance generation 并停止已打开 stream；credentialless/public logout 只能改变请求者 browser-local barrier/epoch，不能推进该 global generation 或阻塞其他 browser 的登录/续期。所有 browser credential 也必须包含每个 API runtime 唯一的随机 process issuance epoch，API restart 必须创建新 epoch 并使 pre-restart credential 立即不可验证，即使 generation 重置且 cookie key/local epoch 未变。自动续期永不清除 barrier；在途 `/auth/session` trusted-browser probe 若输给 authenticated logout revocation 必须返回 authentication failure，不能报告一个成功 session view；cookie key 轮换必须使全部既有 session/trusted-browser credential 立即不可验证，从而提供全局 revoke；自然到期后也必须重新执行 password + TOTP；
+- `QUAZONAI_AUTH_PUBLIC_ORIGIN` 必须解析并保存为 canonical browser origin：scheme/host 小写，Unicode hostname 使用浏览器兼容 UTS-46/IDNA 规则转为小写 IDNA ASCII，IPv6 使用压缩后的 bracketed literal，HTTP `:80` / HTTPS `:443` 默认端口省略，非默认端口保留；credential、非根 path、params、query、fragment、非法 host 或非法 port 必须拒绝；非 IP hostname 若按 WHATWG 的 ends-in-a-number 规则会进入 IPv4 parser（例如 `example.127` 或 `example.0x`），也必须在启动时拒绝；
+- browser cookie 认证的 unsafe request 必须把请求 `Origin` 用同一 canonicalizer 解析后再与配置 origin 做恒定时间精确比较；等价浏览器序列化（例如 `https://EXAMPLE.com:443` 与 `https://example.com`）必须匹配，不同 scheme/host/effective port 必须拒绝；启用认证的 production origin 必须使用 HTTPS；`SameSite=Strict` 不是唯一 CSRF 控制；
+- TLS reverse-proxy/tunnel 位于 API 前时，login limiter 只有在 ASGI direct peer 命中可选 `QUAZONAI_AUTH_TRUSTED_PROXY_CIDRS` 中的精确 IP/CIDR 时才读取一个规范化 `X-Forwarded-For`；必须从右向左剥离已信任 proxy hop，再使用最近的 untrusted literal IP。未配置、peer 不匹配、重复/缺失/非法 header 或 header 中只有 trusted hop 时一律回退 direct peer，绝不盲信任 client 提供的 header。proxy 必须 append 自己观测到的 peer（或 overwrite 为经验证的 client IP），不能原样转发入站 header；禁止 `/0` 或宽泛网络。应用负责这项解析，Compose 和手工 Uvicorn 均必须显式使用 `--no-proxy-headers`，并且不能设置 `FORWARDED_ALLOW_IPS` 或传入 `--proxy-headers`，否则它会在应用核验前改写 direct peer；
+- browser cookie 认证的受保护 API response 必须禁止 shared-cache storage：默认返回 `Cache-Control: private, no-store` 与 `Vary: Cookie`；已经提供 `no-store` 的 transport-specific response（包括 SSE）保留其原有 cache headers。该 browser-only policy 不改变 public health 或 machine Bearer traffic；
+- FastAPI 提供的 Web workbench document 及其 SPA deep-link fallback 必须同时返回 `Content-Security-Policy: frame-ancestors 'none'` 与 `X-Frame-Options: DENY`，拒绝任何 parent frame；此控制独立于 cookie `SameSite`/Origin 检查，防止同站或受损 origin 利用已认证浏览器进行 clickjacking；
+- `/api/v1/system/health` 保持 public 供容器/orchestrator healthcheck；`/api/v1/auth/login` 与 session bootstrap 属于认证入口；Operator Authentication 启用时，其余 Operator API 要求有效 browser credential 或 `Authorization: Bearer <QUAZONAI_API_TOKEN>`；关闭时保留 direct access；
+- CLI/自动化只使用独立 machine API token，不读取 browser cookie/TOTP；browser login 不把 API token 下发给前端；
+- downstream-owned Handoff `claim/accept/reject/package/feedback` 保持现有 per-downstream service credential，只授权对应 Handoff/Feedback，不接受 Operator trusted-browser credential 代替下游身份；
+- 认证失败返回统一错误 envelope，不区分“用户名不存在/密码错误/TOTP 错误”等可用于枚举的细节；登录验证使用有界、进程内、按观测来源的短退避：credential verification 最少间隔 1 秒，连续失败指数退避但最大 5 秒，成功即清除状态，受限请求仍返回同一通用认证失败，不建立持久账户锁定；
+- `/api/v1/events/stream` 不是一次认证后永久有效：每轮 polling 必须按当前 settings 重新验证 session/trusted-browser cookie 或 machine token；session 到期、cookie key/token 轮换立即终止流，成功 logout 推进进程内 stream generation，使已打开的 SSE 在下一轮停止并由浏览器按当前 cookie 状态重新连接；
+- Operator password/TOTP/cookie key/machine token/public origin 不得继承到 Codex App Server 或 Mission-owned child environment；
+- 不新增应用级 hash/checksum/fingerprint 身份或完整性 Gate。Cookie 使用标准 authenticated encryption，TOTP 使用标准库实现。
 
 ## 38. 技术栈
 
@@ -1304,6 +1349,7 @@ Backend：
 - SQLAlchemy 2 / Alembic；
 - psycopg 3；
 - PostgreSQL 18；
+- PyOTP（RFC 6238 TOTP）；
 - Polars；
 - PyArrow；
 - Optuna；
@@ -1418,6 +1464,10 @@ Production 构建后 SPA 静态资产由 FastAPI 提供，减少额外运行服�
 Wire contract 由 FastAPI + Pydantic 定义。主要资源：
 
 ```text
+POST   /api/v1/auth/login
+GET    /api/v1/auth/session
+POST   /api/v1/auth/logout
+
 POST   /api/v1/ideas/preview
 POST   /api/v1/research-programs
 GET    /api/v1/research-programs
@@ -1457,11 +1507,11 @@ GET      /api/v1/universes
 GET/POST /api/v1/downstream-systems
 GET      /api/v1/readiness
 GET      /api/v1/events/stream
-GET      /api/v1/system/health
+GET      /api/v1/system/health                   # public healthcheck
 GET/PUT  /api/v1/system/runtime-configuration
 ```
 
-下游 service credential 只授权其自身 Handoff/Feedback 资源，不形成业务用户/RBAC 域。
+Operator Authentication 启用时，Operator API 要求 authenticated browser session/trusted-browser credential 或 machine API token；认证入口和 healthcheck 是明确例外。认证关闭时保留 direct access。下游 service credential 只授权其自身 Handoff/Feedback 资源，不形成业务用户/RBAC 域，也不被 Operator auth 替代。
 
 统一错误 envelope：
 
@@ -1488,6 +1538,15 @@ GET/PUT  /api/v1/system/runtime-configuration
 # Part XI — Frontend
 
 ## 42. 页面设计
+
+### Operator Login（仅在 `QUAZONAI_AUTH_ENABLED=true` 时）
+
+- 未认证浏览器只显示登录门，不加载研究工作台数据；
+- 输入单 Operator username、password 和 6 位 authenticator code；
+- 提供 `Trust this browser` 选项，并明确其会在当前浏览器保存长期 HttpOnly device credential；
+- trusted-browser credential 有效时自动恢复会话，不要求再次输入 password/TOTP；
+- 登录失败使用统一错误，不暴露哪一项凭证错误；
+- logout 默认忘记当前 trusted browser。
 
 ### Home
 
@@ -1610,9 +1669,11 @@ Español
 
 ## 43. Secrets
 
-QZ 只管理研究数据源、Codex provider 和下游 Handoff service credentials，不保存 broker/exchange trading credential。
+QZ 只管理研究数据源、Codex provider、Operator access 和下游 Handoff service credentials，不保存 broker/exchange trading credential。
 
-使用 AES-256-GCM，master key 外部注入。API 永不回读 plaintext/ciphertext/nonce。Provider/Data/Handoff secret 不得进入 Codex Mission shell、Research Tool Server 或持久事件；Codex provider credential 只通过受信任 runner 的 one-shot broker 进入 Codex command-backed provider authentication，不能进入 App Server environment 或命令行。
+Provider/Data/Handoff secret 使用既有 AES-256-GCM + externally injected master key 边界；Operator browser cookie 使用 independently generated、externally injected `QUAZONAI_AUTH_COOKIE_KEY`。该 key 解码后不得与 `QUAZONAI_MASTER_KEY` 相同，不能复用 browser credential 作为业务 secret。API 永不回读 plaintext/ciphertext/nonce。Operator password/TOTP setup secret/API token/cookie key 不得进入前端 bundle、事件、日志、Codex Mission shell 或持久数据库。
+
+Provider/Data/Handoff secret 不得进入 Codex Mission shell、Research Tool Server 或持久事件；Codex provider credential 只通过受信任 runner 的 one-shot broker 进入 Codex command-backed provider authentication，不能进入 App Server environment 或命令行。
 
 ## 44. Sealed Evaluator isolation
 
@@ -1627,10 +1688,11 @@ QZ 只管理研究数据源、Codex provider 和下游 Handoff service credentia
 
 ## 45. Threat / failure boundary
 
-V1 假定合作的单机操作者；插件和 Mission code 不是恶意代码安全沙箱。但必须通过进程、文件根、DB credential 和 capability scope 防止意外越界。
+V1 假定合作的单机操作者；插件和 Mission code 不是恶意代码安全沙箱。暴露 Web/API 时，若启用 QuaZonai Operator Authentication 就必须验证 Operator 身份；若关闭认证，则必须由 loopback-only 或另一个明确可信的访问边界承担保护，不能无意中把服务公开为匿名工作台。trusted-browser cookie 等价于长期设备凭证，应只授予操作者控制的浏览器 profile；设备丢失/浏览器 profile 泄漏时通过轮换 `QUAZONAI_AUTH_COOKIE_KEY` 全局撤销。
 
 不得因为“不是恶意沙箱”而放弃：
 
+- Operator authentication / CSRF origin validation；
 - Sealed 数据隔离；
 - Secret 隔离；
 - Mission workspace 限制；
@@ -1645,7 +1707,9 @@ V1 假定合作的单机操作者；插件和 Mission code 不是恶意代码安
 
 ## 46. CLI 定位
 
-`quazonai` 是 Web 之外的本地薄客户端，用于自动化、Admin、debug 和明确的人类操作。它只调用 Core API，不直接访问 DB/文件系统/Codex internals。
+`quazonai` 是 Web 之外的本地薄客户端，用于自动化、Admin、debug 和明确的人类操作。它只调用 Core API，不直接访问 DB/文件系统/Codex internals。启用 Operator Authentication 时，CLI 从环境读取 `QUAZONAI_API_TOKEN` 并以 Bearer machine credential 调用 Operator API；CLI 不模拟 browser session，也不读取 TOTP secret。
+
+`QUAZONAI_API_TOKEN` 必须符合可直接写入 HTTP Authorization header 的 RFC 6750 `b64token` 语法；CLI 不对非法 token 做转义或降级。
 
 Built-in Codex **不通过 CLI 作为 RPC**，而通过 mission-scoped stdio MCP Tool Server。
 
@@ -1681,7 +1745,6 @@ QuaZonai/
 │  │  ├─ research_engine/
 │  │  ├─ evaluation/
 │  │  ├─ agent_runtime/
-│  │  ├─ mcp_gateway/
 │  │  ├─ plugins/
 │  │  ├─ packaging/
 │  │  └─ workers/
@@ -1708,6 +1771,7 @@ QuaZonai/
 - PostgreSQL schema；
 - FastAPI resources/errors/events/jobs；
 - React shell/Home/Idea/Observatory/Admin；
+- Operator TOTP login / trusted-browser gate；
 - readiness；
 - Program lifecycle。
 
@@ -1775,6 +1839,17 @@ QuaZonai/
 
 ### Product
 
+- [ ] `QUAZONAI_AUTH_ENABLED=true` 时未认证浏览器不能读取或修改 Operator API；为 `false` 时保留 direct access；
+- [ ] password + Google Authenticator-compatible TOTP 可建立 browser session；
+- [ ] 勾选 Trust this browser 后，同一浏览器在 session 过期后可用 trusted credential 免 password/TOTP 恢复；
+- [ ] logout/forget browser、trusted credential expiry 和 cookie-key rotation 会阻止后续免密恢复；
+- [ ] Operator Authentication 启用后，配置缺失/非法时 API fail closed；启用认证的 production 要求 HTTPS/Secure cookie；healthcheck 仍保持 public；
+- [ ] machine API token 可供 CLI/automation 使用且不会被下发到浏览器；
+- [ ] downstream service token 仍只授权对应 Handoff/Feedback，Operator auth 不破坏 downstream contract；
+- [ ] configured/browser Origin 经同一 canonical browser-origin 规则归一化，默认端口、大小写、IDNA 与 IPv6 等价表示可以匹配，不同 effective origin 被拒绝；
+- [ ] `QUAZONAI_AUTH_COOKIE_KEY` 与有效 `QUAZONAI_MASTER_KEY` 解码值相同时启动失败；
+- [ ] `QUAZONAI_API_TOKEN` 只接受 32–4096 字符 RFC 6750 `b64token`，空白、控制字符、非 ASCII 与非法字符在启动时被拒绝；
+- [ ] cookie-authenticated unsafe request 的 Origin 不匹配时被拒绝；
 - [ ] 第一次达到 RESEARCH_READY 后可从 Web 提交 Idea；
 - [ ] Charter 澄清最多一轮并冻结；
 - [ ] 正常 Program 无需人工操作即可持续到 Candidate；
@@ -1828,6 +1903,7 @@ QuaZonai/
 
 - [ ] DB schema 无应用级 hash/checksum/digest/fingerprint 业务字段；
 - [ ] Package、plugin、workspace、approval、idempotency 不以内容 hash 做身份或 Gate；
+- [ ] Operator auth 不引入自定义 password/session/TOTP hash gate；cookie 使用标准 authenticated encryption；
 - [ ] 测试不引入自定义完整性 hash 流程。
 
 ## 50. 当前实现状态与迁移原则

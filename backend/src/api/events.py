@@ -13,6 +13,13 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
 from db.models import Event
+from operator_auth import (
+    OperatorAuthRuntime,
+    STREAM_ADMISSION_GENERATION_STATE_ATTRIBUTE,
+    authenticate_browser,
+    authenticate_machine,
+)
+from settings import Settings
 
 router = APIRouter(prefix="/api/v1", tags=["events"])
 SSE_EVENT_NAME = "qz-event"
@@ -58,6 +65,19 @@ def _read_events(request: Request, after_id: int, limit: int) -> list[EventView]
         return [_view(item) for item in items]
 
 
+def _stream_authorized(request: Request, generation: int) -> bool:
+    settings: Settings = request.app.state.settings
+    if not settings.auth_enabled:
+        return True
+    runtime: OperatorAuthRuntime = request.app.state.operator_auth_runtime
+    if runtime.stream_generation() != generation:
+        return False
+    authorization = request.headers.get("authorization")
+    if authorization is not None:
+        return authenticate_machine(settings, authorization) is not None
+    return authenticate_browser(request, settings) is not None
+
+
 @router.get("/events", response_model=list[EventView])
 def list_events(
     request: Request,
@@ -67,11 +87,11 @@ def list_events(
     return _read_events(request, after_id, limit)
 
 
-async def _stream(request: Request, cursor: int) -> AsyncIterator[str]:
+async def _stream(request: Request, cursor: int, generation: int) -> AsyncIterator[str]:
     last_id = cursor
     idle_ticks = 0
     while True:
-        if await request.is_disconnected():
+        if await request.is_disconnected() or not _stream_authorized(request, generation):
             return
         items = _read_events(request, last_id, 200)
         if items:
@@ -96,8 +116,23 @@ def stream_events(
     header = request.headers.get("last-event-id")
     last_event_id = int(header) if header and header.isdigit() else 0
     start = cursor if cursor is not None else last_event_id
+    runtime: OperatorAuthRuntime = request.app.state.operator_auth_runtime
+    admission_generation = getattr(
+        request.state,
+        STREAM_ADMISSION_GENERATION_STATE_ATTRIBUTE,
+        None,
+    )
+    if admission_generation is None:
+        # Direct endpoint calls in focused tests do not run the middleware. In
+        # production, the auth middleware has already captured this value when
+        # it successfully admitted the request.
+        admission_generation = runtime.stream_generation()
     return StreamingResponse(
-        _stream(request, start),
+        _stream(request, start, admission_generation),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers={
+            "Cache-Control": "no-cache, no-store",
+            "Pragma": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
     )

@@ -10,6 +10,7 @@ import {
   ListIcon,
   MoonIcon,
   PaperPlaneTiltIcon,
+  SignOutIcon,
   SunIcon,
   TargetIcon,
 } from '@phosphor-icons/react';
@@ -17,6 +18,7 @@ import { Button, DropdownMenu, Theme } from '@radix-ui/themes';
 import { Direction } from 'radix-ui';
 import { Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useOperatorAuth } from '../../auth/AuthGate';
 import { localeLabels, localeOrder, useI18n, type Locale, type MessageKey } from '../../i18n';
 import { PageSkeleton } from '../ui/Skeleton';
 
@@ -47,7 +49,10 @@ export function LocaleDirectionProvider({ children }: { children: ReactNode }) {
 
 export function AppShell() {
   const [mode, setMode] = useThemeMode();
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
   const { locale, setLocale, t } = useI18n();
+  const { authEnabled, logout } = useOperatorAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const current = useMemo(() => {
@@ -57,6 +62,20 @@ export function AppShell() {
   const changeLocale = (value: string) => {
     if ((localeOrder as readonly string[]).includes(value)) setLocale(value as Locale);
   };
+
+  async function signOut() {
+    if (signingOut) return;
+    setSigningOut(true);
+    setSignOutError(null);
+    try {
+      await logout();
+      navigate('/');
+    } catch (error) {
+      setSignOutError(error instanceof Error ? error.message : t('auth.signOutFailed'));
+    } finally {
+      setSigningOut(false);
+    }
+  }
 
   return (
     <Theme appearance={mode} accentColor="jade" grayColor="sage" radius="small" scaling="90%">
@@ -82,6 +101,7 @@ export function AppShell() {
             <header className="qz-topbar">
               <div className="qz-topbar-title">{current}</div>
               <div className="qz-topbar-actions">
+                {signOutError ? <span className="qz-signout-error" dir="auto" role="alert">{signOutError}</span> : null}
                 <DropdownMenu.Root>
                   <DropdownMenu.Trigger>
                     <Button className="qz-mobile-nav-button" aria-label={t('a11y.openNavigation')} size="1" variant="soft"><ListIcon size={16} /></Button>
@@ -90,6 +110,14 @@ export function AppShell() {
                     {nav.map(({ to, labelKey, icon: Icon }) => (
                       <DropdownMenu.Item key={to} onSelect={() => navigate(to)}><Icon size={14} />{t(labelKey)}</DropdownMenu.Item>
                     ))}
+                    {authEnabled ? (
+                      <>
+                        <DropdownMenu.Separator />
+                        <DropdownMenu.Item disabled={signingOut} color="red" onSelect={() => { void signOut(); }}>
+                          <SignOutIcon size={14} />{t('auth.signOut')}
+                        </DropdownMenu.Item>
+                      </>
+                    ) : null}
                   </DropdownMenu.Content>
                 </DropdownMenu.Root>
                 <DropdownMenu.Root>
@@ -110,6 +138,11 @@ export function AppShell() {
                 <Button aria-label={mode === 'dark' ? t('theme.light') : t('theme.dark')} size="1" variant="soft" onClick={() => setMode(mode === 'dark' ? 'light' : 'dark')}>
                   {mode === 'dark' ? <SunIcon size={15} /> : <MoonIcon size={15} />}
                 </Button>
+                {authEnabled ? (
+                  <Button aria-label={t('auth.signOutAndForgetBrowser')} disabled={signingOut} size="1" variant="soft" color="red" onClick={() => { void signOut(); }}>
+                    <SignOutIcon size={15} />
+                  </Button>
+                ) : null}
               </div>
             </header>
             <div className="qz-content"><Suspense fallback={<PageSkeleton />}><Outlet /></Suspense></div>

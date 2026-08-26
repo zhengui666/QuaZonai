@@ -8,10 +8,12 @@ QuaZonai 有三条操作通道：
 
 ```text
 Human Web
+  → direct access, or password + TOTP / trusted-browser credential when auth is enabled
   → FastAPI Core
 
 Local human / automation
   → quazonai CLI
+  → QUAZONAI_API_TOKEN Bearer credential when auth is enabled
   → loopback FastAPI Core
 
 Built-in Codex Runtime
@@ -20,18 +22,31 @@ Built-in Codex Runtime
   → QuaZonai Domain/API services
 ```
 
-Built-in Codex **不通过 CLI 作为 RPC**。CLI 是人类与自动化薄客户端；Mission Tool Server 才是 Codex 的结构化研究接口。
+Built-in Codex **不通过 CLI 作为 RPC**。CLI 是人类与自动化薄客户端；Mission Tool Server 才是 Codex 的结构化研究接口。Web Operator credential、CLI machine credential 和 downstream service credential 是三个独立身份边界，不能互相替代。
 
 ## 2. CLI 原则
 
 - 可执行名：`quazonai`；
 - 默认 API：`http://127.0.0.1:8000`；
 - CLI 不直接访问 PostgreSQL、Program repo、Dataset volume、CODEX_HOME 或 plugin runtime；
+- `QUAZONAI_AUTH_ENABLED=true` 时，CLI 从环境读取 `QUAZONAI_API_TOKEN` 并以 `Authorization: Bearer` 调用 Operator API；认证关闭时该 token 不是必需项；
+- CLI 不读取 `QUAZONAI_AUTH_PASSWORD`、`QUAZONAI_AUTH_TOTP_SECRET`、browser session/trusted-browser cookie；
+- machine token 不授予 downstream-owned Handoff claim/accept/reject/package/feedback 权限；这些端点继续使用对应 Downstream System 的 service token；
 - 所有 mutation 发送 `Idempotency-Key`；
 - 更新类操作发送 `expected_revision/state/version`；
-- Secret 只通过安全 stdin/prompt 输入，不打印；
+- Secret 只通过安全 stdin/prompt/环境注入，不打印；
 - `--json` 输出稳定机器可读 envelope；
 - CLI 不复制领域状态机。
+
+典型本地启动：
+
+```bash
+# Required when QUAZONAI_AUTH_ENABLED=true:
+export QUAZONAI_API_TOKEN='<same machine token configured on the API>'
+quazonai readiness
+```
+
+`QUAZONAI_API_TOKEN` 是本地 automation credential，不是网页登录 token。它必须是 32–4096 字符 RFC 6750 `b64token`；CLI 不转义空白、CR/LF、控制字符、非 ASCII 或其他非法 header 字符。轮换该值后需要同步更新调用 CLI 的 shell/secret manager；不需要重新配置 Google Authenticator。
 
 统一成功输出：
 
@@ -662,6 +677,7 @@ Codex：
 - 先读 `AGENTS.md` / `DESIGN.md`；
 - 优先 read current state；
 - 使用官方 CLI/API；
+- Operator Authentication 启用时依赖运行环境提供 `QUAZONAI_API_TOKEN`，不读取/推断 Web 密码或 TOTP secret；
 - 不猜资源/状态；
 - 不处理 Secret；
 - 不替用户批准资本 handoff；
@@ -729,6 +745,9 @@ V1 不建设旧式远程 OAuth MCP Gateway、SSH transport、JSONL 隧道或通�
 ## 32. CLI completion criteria
 
 - Web/CLI mutation 使用同一 Core API/Domain logic；
+- auth-enabled CLI 必须发送正确 `QUAZONAI_API_TOKEN`；缺失/错误 machine token 的 Operator API 请求失败；
+- CLI 不读取/存储 Operator password、TOTP secret 或 browser cookies；
+- CLI machine token 不能替代 downstream service token；
 - CLI 不访问 DB/volume；
 - built-in Codex 不 shell-out CLI 做业务 RPC；
 - Agent Tool surface 不含 human-only mutation；
