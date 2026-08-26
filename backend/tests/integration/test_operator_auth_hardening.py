@@ -23,6 +23,7 @@ from sqlalchemy import Engine
 from api.events import _stream_authorized, stream_events
 from main import create_app
 from operator_auth import (
+    BROWSER_EPOCH_COOKIE_NAME,
     LOGOUT_BARRIER_COOKIE_NAME,
     OperatorIdentity,
     SESSION_COOKIE_NAME,
@@ -100,6 +101,7 @@ def _request_with_cookie_header(app: object, cookie_header: str) -> Request:
 def _trusted_renewal_clients(app: object, client: TestClient) -> tuple[TestClient, TestClient]:
     session_cookie = client.cookies.get(SESSION_COOKIE_NAME)
     trusted_cookie = client.cookies.get(TRUSTED_BROWSER_COOKIE_NAME)
+    browser_epoch = client.cookies.get(BROWSER_EPOCH_COOKIE_NAME)
     assert session_cookie is not None
     assert trusted_cookie is not None
 
@@ -108,6 +110,9 @@ def _trusted_renewal_clients(app: object, client: TestClient) -> tuple[TestClien
     logout_client = TestClient(app)
     logout_client.cookies.set(SESSION_COOKIE_NAME, session_cookie)
     logout_client.cookies.set(TRUSTED_BROWSER_COOKIE_NAME, trusted_cookie)
+    if browser_epoch is not None:
+        renewal_client.cookies.set(BROWSER_EPOCH_COOKIE_NAME, browser_epoch)
+        logout_client.cookies.set(BROWSER_EPOCH_COOKIE_NAME, browser_epoch)
     return renewal_client, logout_client
 
 
@@ -656,7 +661,7 @@ def test_login_ignores_forged_parent_domain_barrier_left_after_host_clear(
     assert response.status_code == 200
 
 
-def test_expired_logout_rejects_an_already_admitted_trusted_renewal(
+def test_anonymous_logout_does_not_block_an_already_admitted_trusted_renewal_in_another_browser(
     settings: Settings,
     engine: Engine,
     monkeypatch: pytest.MonkeyPatch,
@@ -712,12 +717,13 @@ def test_expired_logout_rejects_an_already_admitted_trusted_renewal(
             headers={"Origin": "http://testserver"},
         )
         assert logout.status_code == 204
-        # Expiration makes this logout anonymous for stream revocation, but it
-        # must still prevent a late trusted-browser renewal from minting a
-        # replacement session.
+        # Expiration makes this logout anonymous. It writes a caller-local
+        # barrier/epoch, but cannot be allowed to advance the global issuance
+        # epoch and block an unrelated browser's renewal.
         assert runtime.stream_generation() == stream_generation
-        assert runtime.cookie_generation() == cookie_generation + 1
+        assert runtime.cookie_generation() == cookie_generation
         assert LOGOUT_BARRIER_COOKIE_NAME in logout_client.cookies
+        assert BROWSER_EPOCH_COOKIE_NAME in logout_client.cookies
     finally:
         release_renewal.set()
         renewal_thread.join(timeout=5)
@@ -725,12 +731,11 @@ def test_expired_logout_rejects_an_already_admitted_trusted_renewal(
     assert not renewal_thread.is_alive()
     assert errors == []
     assert len(responses) == 1
-    assert responses[0].status_code == 401
-    assert responses[0].headers.get_list("set-cookie") == []
-    assert renewal_client.cookies.get(SESSION_COOKIE_NAME) is None
+    assert responses[0].status_code == 200
+    assert renewal_client.cookies.get(SESSION_COOKIE_NAME) is not None
 
 
-def test_full_login_cannot_override_a_concurrent_anonymous_logout(
+def test_anonymous_logout_does_not_block_a_concurrent_login_in_another_browser(
     settings: Settings,
     engine: Engine,
     monkeypatch: pytest.MonkeyPatch,
@@ -798,8 +803,9 @@ def test_full_login_cannot_override_a_concurrent_anonymous_logout(
         )
         assert logout.status_code == 204
         assert runtime.stream_generation() == stream_generation
-        assert runtime.cookie_generation() == cookie_generation + 1
+        assert runtime.cookie_generation() == cookie_generation
         assert LOGOUT_BARRIER_COOKIE_NAME in logout_client.cookies
+        assert BROWSER_EPOCH_COOKIE_NAME in logout_client.cookies
     finally:
         release_login.set()
         login_thread.join(timeout=5)
@@ -807,14 +813,12 @@ def test_full_login_cannot_override_a_concurrent_anonymous_logout(
     assert not login_thread.is_alive()
     assert errors == []
     assert len(responses) == 1
-    lost_login = responses[0]
-    assert lost_login.status_code == 401
-    assert lost_login.json()["error"]["code"] == "AUTH_INVALID"
-    assert lost_login.headers.get_list("set-cookie") == []
-    assert login_client.cookies.get(SESSION_COOKIE_NAME) is None
+    completed_login = responses[0]
+    assert completed_login.status_code == 200
+    assert login_client.cookies.get(SESSION_COOKIE_NAME) is not None
 
-    # A login begun after the anonymous logout observes the new cookie epoch and
-    # can explicitly clear that browser's barrier as intended.
+    # A login in the browser that performed anonymous logout binds credentials
+    # to its caller-local epoch and clears its barrier as intended.
     now[0] += totp.interval
     fresh_login = logout_client.post(
         "/api/v1/auth/login",
@@ -908,6 +912,7 @@ def test_full_login_cannot_override_a_concurrent_authenticated_logout(
     )
     runtime: OperatorAuthRuntime = app.state.operator_auth_runtime
     generation = runtime.stream_generation()
+    cookie_generation = runtime.cookie_generation()
     try:
         assert login_authorized.wait(timeout=5)
         logout = logout_client.post(
@@ -916,7 +921,9 @@ def test_full_login_cannot_override_a_concurrent_authenticated_logout(
         )
         assert logout.status_code == 204
         assert runtime.stream_generation() == generation + 1
+        assert runtime.cookie_generation() == cookie_generation + 1
         assert LOGOUT_BARRIER_COOKIE_NAME in logout_client.cookies
+        assert BROWSER_EPOCH_COOKIE_NAME in logout_client.cookies
     finally:
         release_login.set()
         login_thread.join(timeout=5)
@@ -948,6 +955,275 @@ def test_full_login_cannot_override_a_concurrent_authenticated_logout(
     assert logout_client.get("/api/v1/auth/session").status_code == 200
 
 
+def test_authenticated_logout_invalidates_older_browser_cookie_generation(
+    settings: Settings,
+    engine: Engine,
+) -> None:
+    secured = _enabled_settings(settings)
+    app = create_app(settings=secured, engine=engine)
+    logout_client = TestClient(app)
+    login = logout_client.post(
+        "/api/v1/auth/login",
+        headers={"Origin": "http://testserver"},
+        json=_payload(secured, password="correct horse battery staple"),
+    )
+    assert login.status_code == 200
+    session_cookie = logout_client.cookies.get(SESSION_COOKIE_NAME)
+    assert session_cookie is not None
+
+    stale_cookie_client = TestClient(app)
+    stale_cookie_client.cookies.set(SESSION_COOKIE_NAME, session_cookie)
+    runtime: OperatorAuthRuntime = app.state.operator_auth_runtime
+    cookie_generation = runtime.cookie_generation()
+
+    logout = logout_client.post(
+        "/api/v1/auth/logout",
+        headers={"Origin": "http://testserver"},
+    )
+
+    assert logout.status_code == 204
+    assert runtime.cookie_generation() == cookie_generation + 1
+    # The raw request deliberately omits the caller-local epoch and barrier. A
+    # pre-logout credential must still fail from its embedded global generation.
+    assert stale_cookie_client.get("/api/v1/auth/session").status_code == 401
+
+
+def test_network_reordered_login_response_cannot_restore_after_anonymous_logout(
+    settings: Settings,
+    engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = [1_700_000_000.0]
+    monkeypatch.setattr(operator_auth.time, "time", lambda: now[0])
+    secured = _enabled_settings(settings)
+    assert secured.operator_totp_secret is not None
+    app = create_app(settings=secured, engine=engine)
+    delayed_login_client = TestClient(app)
+    delayed_login = delayed_login_client.post(
+        "/api/v1/auth/login",
+        headers={"Origin": "http://testserver"},
+        json=_payload(
+            secured,
+            password="correct horse battery staple",
+            totp_code=pyotp.TOTP(secured.operator_totp_secret).at(int(now[0])),
+            trust_browser=True,
+        ),
+    )
+    assert delayed_login.status_code == 200
+    stale_session = _set_cookie_value(delayed_login, SESSION_COOKIE_NAME)
+    stale_trusted_browser = _set_cookie_value(delayed_login, TRUSTED_BROWSER_COOKIE_NAME)
+    assert not any(
+        header.startswith(f"{BROWSER_EPOCH_COOKIE_NAME}=")
+        for header in delayed_login.headers.get_list("set-cookie")
+    )
+
+    # Model the same browser applying its anonymous logout response first, then
+    # a previously emitted full-login response after the network reorders them.
+    browser = TestClient(app)
+    runtime: OperatorAuthRuntime = app.state.operator_auth_runtime
+    cookie_generation = runtime.cookie_generation()
+    logout = browser.post(
+        "/api/v1/auth/logout",
+        headers={"Origin": "http://testserver"},
+    )
+    assert logout.status_code == 204
+    assert runtime.cookie_generation() == cookie_generation
+    browser_epoch = browser.cookies.get(BROWSER_EPOCH_COOKIE_NAME)
+    assert browser_epoch is not None
+    assert LOGOUT_BARRIER_COOKIE_NAME in browser.cookies
+
+    # The stale response clears the newer barrier and replays its session and
+    # trusted-browser values, but it never touches the durable local epoch.
+    browser.cookies.delete(LOGOUT_BARRIER_COOKIE_NAME)
+    browser.cookies.set(SESSION_COOKIE_NAME, stale_session)
+    browser.cookies.set(TRUSTED_BROWSER_COOKIE_NAME, stale_trusted_browser)
+    assert LOGOUT_BARRIER_COOKIE_NAME not in browser.cookies
+    assert browser.cookies.get(BROWSER_EPOCH_COOKIE_NAME) == browser_epoch
+    assert browser.get("/api/v1/auth/session").status_code == 401
+
+    # A fresh factor-backed login binds new credentials to the retained local
+    # epoch and restores access normally.
+    now[0] += pyotp.TOTP(secured.operator_totp_secret).interval
+    fresh_login = browser.post(
+        "/api/v1/auth/login",
+        headers={"Origin": "http://testserver"},
+        json=_payload(
+            secured,
+            password="correct horse battery staple",
+            totp_code=pyotp.TOTP(secured.operator_totp_secret).at(int(now[0])),
+            trust_browser=True,
+        ),
+    )
+    assert fresh_login.status_code == 200
+    assert browser.get("/api/v1/auth/session").status_code == 200
+
+
+def test_network_reordered_trusted_renewal_cannot_restore_after_anonymous_logout(
+    settings: Settings,
+    engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = [1_700_000_000.0]
+    monkeypatch.setattr(operator_auth.time, "time", lambda: now[0])
+    secured = replace(
+        _enabled_settings(settings),
+        auth_session_ttl_seconds=300,
+        auth_trusted_browser_ttl_days=1,
+    )
+    assert secured.operator_totp_secret is not None
+    app = create_app(settings=secured, engine=engine)
+    initial_browser = TestClient(app)
+    initial_login = initial_browser.post(
+        "/api/v1/auth/login",
+        headers={"Origin": "http://testserver"},
+        json=_payload(
+            secured,
+            password="correct horse battery staple",
+            totp_code=pyotp.TOTP(secured.operator_totp_secret).at(int(now[0])),
+            trust_browser=True,
+        ),
+    )
+    assert initial_login.status_code == 200
+    trusted_cookie = initial_browser.cookies.get(TRUSTED_BROWSER_COOKIE_NAME)
+    assert trusted_cookie is not None
+
+    # The trusted-only request finishes before logout, but model its Set-Cookie
+    # response as delayed in the network rather than applying it to the browser.
+    renewal_client = TestClient(app)
+    renewal_client.cookies.set(TRUSTED_BROWSER_COOKIE_NAME, trusted_cookie)
+    delayed_renewal = renewal_client.get("/api/v1/auth/session")
+    assert delayed_renewal.status_code == 200
+    stale_session = _set_cookie_value(delayed_renewal, SESSION_COOKIE_NAME)
+
+    # A valid caller-local barrier makes a logout anonymous even while a
+    # trusted-browser cookie is present. This models a profile that has already
+    # signed out while an automatic renewal response remains in flight, without
+    # expiring the old renewal's short session before we can test it.
+    barrier_source = TestClient(app)
+    barrier_response = barrier_source.post(
+        "/api/v1/auth/logout",
+        headers={"Origin": "http://testserver"},
+    )
+    assert barrier_response.status_code == 204
+    preexisting_barrier = _set_cookie_value(barrier_response, LOGOUT_BARRIER_COOKIE_NAME)
+    browser = TestClient(app)
+    browser.cookies.set(TRUSTED_BROWSER_COOKIE_NAME, trusted_cookie)
+    browser.cookies.set(
+        LOGOUT_BARRIER_COOKIE_NAME,
+        preexisting_barrier,
+        domain="testserver.local",
+        path="/",
+    )
+    runtime: OperatorAuthRuntime = app.state.operator_auth_runtime
+    cookie_generation = runtime.cookie_generation()
+    # The valid barrier makes this a public/anonymous logout despite a still
+    # valid trusted credential, so it cannot advance global issuance.
+    logout = browser.post(
+        "/api/v1/auth/logout",
+        headers={"Origin": "http://testserver"},
+    )
+    assert logout.status_code == 204
+    assert runtime.cookie_generation() == cookie_generation
+    assert browser.cookies.get(BROWSER_EPOCH_COOKIE_NAME) is not None
+
+    # A new factor-backed login is valid for the retained local epoch and clears
+    # the barrier. A delayed old trusted-only renewal then overwrites its session
+    # header, which must remain unusable even without a barrier to stop it.
+    now[0] += pyotp.TOTP(secured.operator_totp_secret).interval
+    fresh_login = browser.post(
+        "/api/v1/auth/login",
+        headers={"Origin": "http://testserver"},
+        json=_payload(
+            secured,
+            password="correct horse battery staple",
+            totp_code=pyotp.TOTP(secured.operator_totp_secret).at(int(now[0])),
+        ),
+    )
+    assert fresh_login.status_code == 200
+    assert LOGOUT_BARRIER_COOKIE_NAME not in browser.cookies
+    for cookie in list(browser.cookies.jar):
+        if cookie.name == SESSION_COOKIE_NAME:
+            browser.cookies.jar.clear(cookie.domain, cookie.path, cookie.name)
+    browser.cookies.set(SESSION_COOKIE_NAME, stale_session)
+    assert browser.get("/api/v1/auth/session").status_code == 401
+
+
+@pytest.mark.parametrize("forged_epoch_first", (True, False))
+def test_forged_browser_epoch_cookie_cannot_shadow_the_valid_host_epoch(
+    settings: Settings,
+    engine: Engine,
+    forged_epoch_first: bool,
+) -> None:
+    secured = _enabled_settings(settings)
+    assert secured.operator_totp_secret is not None
+    app = create_app(settings=secured, engine=engine)
+    client = TestClient(app)
+    logout = client.post(
+        "/api/v1/auth/logout",
+        headers={"Origin": "http://testserver"},
+    )
+    assert logout.status_code == 204
+    browser_epoch = client.cookies.get(BROWSER_EPOCH_COOKIE_NAME)
+    assert browser_epoch is not None
+    login = client.post(
+        "/api/v1/auth/login",
+        headers={"Origin": "http://testserver"},
+        json=_payload(
+            secured,
+            password="correct horse battery staple",
+            trust_browser=True,
+        ),
+    )
+    assert login.status_code == 200
+    session_cookie = client.cookies.get(SESSION_COOKIE_NAME)
+    assert session_cookie is not None
+
+    epochs = (
+        ("forged-parent-domain-value", browser_epoch)
+        if forged_epoch_first
+        else (browser_epoch, "forged-parent-domain-value")
+    )
+    request = _request_with_cookie_header(
+        app,
+        "; ".join(
+            (
+                *(f"{BROWSER_EPOCH_COOKIE_NAME}={epoch}" for epoch in epochs),
+                f"{SESSION_COOKIE_NAME}={session_cookie}",
+            )
+        ),
+    )
+
+    identity = operator_auth.authenticate_browser(request, secured)
+    assert identity is not None
+    assert identity.source == "session"
+
+
+def test_browser_credentials_without_an_issuance_generation_are_rejected(
+    settings: Settings,
+    engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secured = _enabled_settings(settings)
+    app = create_app(settings=secured, engine=engine)
+    missing_generation = operator_auth._issue_cookie(
+        secured,
+        kind="session",
+        ttl_seconds=secured.auth_session_ttl_seconds,
+    )
+    with monkeypatch.context() as legacy:
+        legacy.setattr(operator_auth, "COOKIE_VERSION", 1)
+        version_one = operator_auth._issue_cookie(
+            secured,
+            kind="session",
+            ttl_seconds=secured.auth_session_ttl_seconds,
+        )
+
+    client = TestClient(app)
+    for stale_cookie in (missing_generation, version_one):
+        client.cookies.set(SESSION_COOKIE_NAME, stale_cookie)
+        assert client.get("/api/v1/auth/session").status_code == 401
+
+
 def test_anonymous_logout_does_not_revoke_other_active_streams(
     settings: Settings,
     engine: Engine,
@@ -956,6 +1232,7 @@ def test_anonymous_logout_does_not_revoke_other_active_streams(
     app = create_app(settings=secured, engine=engine)
     runtime: OperatorAuthRuntime = app.state.operator_auth_runtime
     generation = runtime.stream_generation()
+    cookie_generation = runtime.cookie_generation()
     anonymous = TestClient(app)
 
     response = anonymous.post(
@@ -965,7 +1242,9 @@ def test_anonymous_logout_does_not_revoke_other_active_streams(
 
     assert response.status_code == 204
     assert runtime.stream_generation() == generation
+    assert runtime.cookie_generation() == cookie_generation
     assert LOGOUT_BARRIER_COOKIE_NAME in anonymous.cookies
+    assert BROWSER_EPOCH_COOKIE_NAME in anonymous.cookies
 
 
 def test_stream_admission_generation_captured_by_middleware_closes_logout_race(

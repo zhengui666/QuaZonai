@@ -230,7 +230,10 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return invalidateSessionChecks;
   }, [checkSession, invalidateSessionChecks]);
   useEffect(() => {
-    if (state !== 'authenticated' || session?.auth_enabled !== true) return;
+    // Direct-access tabs need this too: the backend can be restarted with
+    // Operator Authentication enabled while a static page has no SSE or
+    // other request that would surface the new login requirement.
+    if (state !== 'authenticated') return;
     let active = true;
     const revalidateSession = async () => {
       // A slow earlier probe must never overwrite a newer revalidation, logout,

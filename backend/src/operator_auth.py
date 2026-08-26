@@ -30,9 +30,11 @@ from settings import (
 SESSION_COOKIE_NAME = "quazonai_session"
 TRUSTED_BROWSER_COOKIE_NAME = "quazonai_trusted_browser"
 LOGOUT_BARRIER_COOKIE_NAME = "quazonai_logout_barrier"
+BROWSER_EPOCH_COOKIE_NAME = "quazonai_browser_epoch"
 STREAM_ADMISSION_GENERATION_STATE_ATTRIBUTE = "operator_auth_stream_generation"
-COOKIE_VERSION = 1
+COOKIE_VERSION = 2
 COOKIE_NONCE_BYTES = 12
+COOKIE_BROWSER_EPOCH_BYTES = 32
 LOGOUT_BARRIER_MAX_AGE_SECONDS = MAX_AUTH_TRUSTED_BROWSER_TTL_DAYS * 24 * 60 * 60
 LOGIN_MIN_INTERVAL_SECONDS = 1.0
 LOGIN_BASE_BACKOFF_SECONDS = 1.0
@@ -67,6 +69,15 @@ class OperatorIdentity:
     username: str
     source: Literal["session", "trusted_browser", "machine"]
     renew_session: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _CookieClaims:
+    """Authenticated contents shared by all operator-auth cookies."""
+
+    username: str
+    cookie_generation: int | None
+    browser_epoch: str | None
 
 
 @dataclass(slots=True)
@@ -180,7 +191,7 @@ class OperatorAuthRuntime:
             self._stream_generation += 1
 
     def cookie_generation(self) -> int:
-        """Return the logout epoch that gates browser-cookie mutations."""
+        """Return the process-wide authenticated-logout issuance epoch."""
         with self._stream_lock:
             return self._cookie_generation
 
@@ -193,17 +204,19 @@ class OperatorAuthRuntime:
     ) -> None:
         """Atomically record logout intent and mutate browser cookies.
 
-        Every enabled-auth logout advances the cookie generation, including an
-        anonymous or expired-session logout that intentionally must not revoke
-        other active streams. Cookie issuers compare this epoch under the same
-        lock, preventing a request that authenticated earlier from clearing this
-        logout barrier after it is committed.
+        A credentialed browser logout revokes process-wide browser-cookie
+        issuance along with active streams. An anonymous caller must not be
+        allowed to advance that global epoch: raw clients can forge an Origin
+        header and otherwise starve legitimate logins. Every logout still writes
+        a sealed caller-local browser epoch. Credentials bind to that epoch, so a
+        delayed response from this browser cannot become valid after its logout.
         """
         with self._stream_lock:
             if revoke_streams:
                 self._stream_generation += 1
-            if settings.auth_enabled:
                 self._cookie_generation += 1
+            if settings.auth_enabled:
+                set_browser_epoch_cookie(response, settings)
                 set_logout_barrier_cookie(response, settings)
             clear_auth_cookies(response, settings)
 
@@ -213,6 +226,7 @@ class OperatorAuthRuntime:
         settings: Settings,
         *,
         cookie_generation: int,
+        browser_epoch: str | None,
     ) -> bool:
         """Issue a trusted-browser session only when logout has not won the race.
 
@@ -223,7 +237,12 @@ class OperatorAuthRuntime:
         with self._stream_lock:
             if self._cookie_generation != cookie_generation:
                 return False
-            set_session_cookie(response, settings)
+            set_session_cookie(
+                response,
+                settings,
+                cookie_generation=cookie_generation,
+                browser_epoch=browser_epoch,
+            )
             return True
 
     def complete_login_if_current(
@@ -232,6 +251,7 @@ class OperatorAuthRuntime:
         settings: Settings,
         *,
         cookie_generation: int,
+        browser_epoch: str | None,
         trust_browser: bool,
     ) -> bool:
         """Finish a full login only when no logout intervened.
@@ -247,11 +267,22 @@ class OperatorAuthRuntime:
                 return False
             # Only a successful password + TOTP login clears the browser-local
             # logout barrier; automatic trusted-browser renewal intentionally
-            # cannot do this.
+            # cannot do this. It deliberately leaves the separate browser epoch
+            # untouched, so a stale response cannot overwrite a newer logout.
             clear_logout_barrier_cookie(response, settings)
-            set_session_cookie(response, settings)
+            set_session_cookie(
+                response,
+                settings,
+                cookie_generation=cookie_generation,
+                browser_epoch=browser_epoch,
+            )
             if trust_browser:
-                set_trusted_browser_cookie(response, settings)
+                set_trusted_browser_cookie(
+                    response,
+                    settings,
+                    cookie_generation=cookie_generation,
+                    browser_epoch=browser_epoch,
+                )
             else:
                 clear_trusted_browser_cookie(response, settings)
             return True
@@ -371,30 +402,61 @@ def _constant_time_text_equal(left: str, right: str) -> bool:
     return secrets.compare_digest(left_bytes, right_bytes)
 
 
-def _issue_cookie(settings: Settings, *, kind: str, ttl_seconds: int) -> str:
+def _issue_cookie(
+    settings: Settings,
+    *,
+    kind: str,
+    ttl_seconds: int,
+    cookie_generation: int | None = None,
+    browser_epoch: str | None = None,
+) -> str:
     assert settings.operator_username is not None
     issued_at = int(time.time())
-    payload = json.dumps(
-        {
-            "v": COOKIE_VERSION,
-            "kind": kind,
-            "sub": settings.operator_username,
-            "iat": issued_at,
-            "exp": issued_at + ttl_seconds,
-        },
+    payload: dict[str, object] = {
+        "v": COOKIE_VERSION,
+        "kind": kind,
+        "sub": settings.operator_username,
+        "iat": issued_at,
+        "exp": issued_at + ttl_seconds,
+    }
+    if cookie_generation is not None:
+        payload["cookie_generation"] = cookie_generation
+    if browser_epoch is not None:
+        payload["browser_epoch"] = browser_epoch
+    serialized = json.dumps(
+        payload,
         separators=(",", ":"),
         sort_keys=True,
     ).encode("utf-8")
     nonce = secrets.token_bytes(COOKIE_NONCE_BYTES)
     ciphertext = AESGCM(settings.auth_cookie_key_bytes()).encrypt(
         nonce,
-        payload,
+        serialized,
         _cookie_aad(kind),
     )
     return _urlsafe_encode(nonce + ciphertext)
 
 
-def _read_cookie(settings: Settings, value: str | None, *, kind: str) -> str | None:
+def _valid_browser_epoch(value: object) -> bool:
+    """Accept the opaque random value carried by a browser-local epoch cookie."""
+    if not isinstance(value, str):
+        return False
+    try:
+        decoded = _urlsafe_decode(value)
+    except _InvalidCookie:
+        return False
+    return (
+        len(decoded) == COOKIE_BROWSER_EPOCH_BYTES
+        and _urlsafe_encode(decoded) == value
+    )
+
+
+def _read_cookie(
+    settings: Settings,
+    value: str | None,
+    *,
+    kind: str,
+) -> _CookieClaims | None:
     if not value:
         return None
     try:
@@ -423,7 +485,21 @@ def _read_cookie(settings: Settings, value: str | None, *, kind: str) -> str | N
             username, settings.operator_username
         ):
             return None
-        return username
+        cookie_generation = payload.get("cookie_generation")
+        if cookie_generation is not None and (
+            isinstance(cookie_generation, bool)
+            or not isinstance(cookie_generation, int)
+            or cookie_generation < 0
+        ):
+            raise _InvalidCookie
+        browser_epoch = payload.get("browser_epoch")
+        if browser_epoch is not None and not _valid_browser_epoch(browser_epoch):
+            raise _InvalidCookie
+        return _CookieClaims(
+            username=username,
+            cookie_generation=cookie_generation,
+            browser_epoch=browser_epoch,
+        )
     except (ValueError, TypeError, json.JSONDecodeError, _InvalidCookie):
         return None
     except Exception:  # noqa: BLE001 - invalid/tampered cookies collapse to anonymous
@@ -452,7 +528,7 @@ def _read_request_cookie(
     *,
     name: str,
     kind: str,
-) -> str | None:
+) -> _CookieClaims | None:
     """Return a valid cookie of ``kind`` without allowing a duplicate to shadow it.
 
     A parent-Domain cookie can be sent beside a host-only cookie with the same
@@ -460,9 +536,67 @@ def _read_request_cookie(
     value and accept the first one that verifies under the expected AEAD kind.
     """
     for value in _request_cookie_values(request, name):
-        username = _read_cookie(settings, value, kind=kind)
-        if username is not None:
-            return username
+        claims = _read_cookie(settings, value, kind=kind)
+        if claims is not None:
+            return claims
+    return None
+
+
+def browser_cookie_epoch(request: Request, settings: Settings) -> str | None:
+    """Return the current sealed caller-local logout epoch, if one exists.
+
+    The epoch is deliberately separate from the logout barrier. A successful
+    password + TOTP login clears the short-term barrier but leaves this value in
+    place, so a response emitted before a later logout cannot reintroduce a
+    credential that validates in this browser profile.
+    """
+    claims = _read_request_cookie(
+        request,
+        settings,
+        name=BROWSER_EPOCH_COOKIE_NAME,
+        kind="browser-epoch",
+    )
+    if claims is None or claims.cookie_generation is not None:
+        return None
+    return claims.browser_epoch
+
+
+def _current_cookie_generation(request: Request) -> int:
+    runtime: OperatorAuthRuntime = request.app.state.operator_auth_runtime
+    return runtime.cookie_generation()
+
+
+def _matches_browser_issuance(
+    claims: _CookieClaims,
+    *,
+    cookie_generation: int,
+    browser_epoch: str | None,
+) -> bool:
+    if claims.cookie_generation != cookie_generation:
+        return False
+    if claims.browser_epoch is None or browser_epoch is None:
+        return claims.browser_epoch is browser_epoch
+    return secrets.compare_digest(claims.browser_epoch, browser_epoch)
+
+
+def _read_current_browser_credential(
+    request: Request,
+    settings: Settings,
+    *,
+    name: str,
+    kind: str,
+    cookie_generation: int,
+    browser_epoch: str | None,
+) -> _CookieClaims | None:
+    """Return any same-name credential matching both current issuance epochs."""
+    for value in _request_cookie_values(request, name):
+        claims = _read_cookie(settings, value, kind=kind)
+        if claims is not None and _matches_browser_issuance(
+            claims,
+            cookie_generation=cookie_generation,
+            browser_epoch=browser_epoch,
+        ):
+            return claims
     return None
 
 
@@ -551,23 +685,29 @@ def authenticate_browser(request: Request, settings: Settings) -> OperatorIdenti
     # reaches the browser after the logout response.
     if _has_valid_logout_barrier(request, settings):
         return None
-    username = _read_request_cookie(
+    cookie_generation = _current_cookie_generation(request)
+    browser_epoch = browser_cookie_epoch(request, settings)
+    session = _read_current_browser_credential(
         request,
         settings,
         name=SESSION_COOKIE_NAME,
         kind="session",
+        cookie_generation=cookie_generation,
+        browser_epoch=browser_epoch,
     )
-    if username is not None:
-        return OperatorIdentity(username=username, source="session")
-    username = _read_request_cookie(
+    if session is not None:
+        return OperatorIdentity(username=session.username, source="session")
+    trusted_browser = _read_current_browser_credential(
         request,
         settings,
         name=TRUSTED_BROWSER_COOKIE_NAME,
         kind="trusted-browser",
+        cookie_generation=cookie_generation,
+        browser_epoch=browser_epoch,
     )
-    if username is not None:
+    if trusted_browser is not None:
         return OperatorIdentity(
-            username=username,
+            username=trusted_browser.username,
             source="trusted_browser",
             renew_session=True,
         )
@@ -591,21 +731,31 @@ def has_valid_trusted_browser(request: Request, settings: Settings) -> bool:
     if _has_valid_logout_barrier(request, settings):
         return False
     return (
-        _read_request_cookie(
+        _read_current_browser_credential(
             request,
             settings,
             name=TRUSTED_BROWSER_COOKIE_NAME,
             kind="trusted-browser",
+            cookie_generation=_current_cookie_generation(request),
+            browser_epoch=browser_cookie_epoch(request, settings),
         )
         is not None
     )
 
 
-def set_session_cookie(response: Response, settings: Settings) -> None:
+def set_session_cookie(
+    response: Response,
+    settings: Settings,
+    *,
+    cookie_generation: int,
+    browser_epoch: str | None,
+) -> None:
     token = _issue_cookie(
         settings,
         kind="session",
         ttl_seconds=settings.auth_session_ttl_seconds,
+        cookie_generation=cookie_generation,
+        browser_epoch=browser_epoch,
     )
     response.set_cookie(
         SESSION_COOKIE_NAME,
@@ -618,9 +768,21 @@ def set_session_cookie(response: Response, settings: Settings) -> None:
     )
 
 
-def set_trusted_browser_cookie(response: Response, settings: Settings) -> None:
+def set_trusted_browser_cookie(
+    response: Response,
+    settings: Settings,
+    *,
+    cookie_generation: int,
+    browser_epoch: str | None,
+) -> None:
     ttl_seconds = settings.auth_trusted_browser_ttl_days * 24 * 60 * 60
-    token = _issue_cookie(settings, kind="trusted-browser", ttl_seconds=ttl_seconds)
+    token = _issue_cookie(
+        settings,
+        kind="trusted-browser",
+        ttl_seconds=ttl_seconds,
+        cookie_generation=cookie_generation,
+        browser_epoch=browser_epoch,
+    )
     response.set_cookie(
         TRUSTED_BROWSER_COOKIE_NAME,
         token,
@@ -641,6 +803,26 @@ def set_logout_barrier_cookie(response: Response, settings: Settings) -> None:
     )
     response.set_cookie(
         LOGOUT_BARRIER_COOKIE_NAME,
+        token,
+        max_age=LOGOUT_BARRIER_MAX_AGE_SECONDS,
+        httponly=True,
+        secure=settings.auth_cookie_secure,
+        samesite="strict",
+        path="/",
+    )
+
+
+def set_browser_epoch_cookie(response: Response, settings: Settings) -> None:
+    """Write a durable caller-local generation without exposing it to scripts."""
+    epoch = _urlsafe_encode(secrets.token_bytes(COOKIE_BROWSER_EPOCH_BYTES))
+    token = _issue_cookie(
+        settings,
+        kind="browser-epoch",
+        ttl_seconds=LOGOUT_BARRIER_MAX_AGE_SECONDS,
+        browser_epoch=epoch,
+    )
+    response.set_cookie(
+        BROWSER_EPOCH_COOKIE_NAME,
         token,
         max_age=LOGOUT_BARRIER_MAX_AGE_SECONDS,
         httponly=True,

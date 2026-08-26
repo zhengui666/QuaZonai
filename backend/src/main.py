@@ -23,6 +23,7 @@ from operator_auth import (
     STREAM_ADMISSION_GENERATION_STATE_ATTRIBUTE,
     authenticate_browser,
     authenticate_machine,
+    browser_cookie_epoch,
     is_operator_auth_exempt,
     require_same_origin,
 )
@@ -109,10 +110,12 @@ def _install_operator_auth(app: FastAPI) -> None:
         # validation but before the endpoint starts must still invalidate an
         # already-admitted EventSource request on its next poll.
         admission_generation = runtime.stream_generation()
-        # Trusted-browser renewal has a narrower cookie-issuance contract: any
-        # enabled-auth logout, including an anonymous logout that does not revoke
-        # unrelated SSE streams, must win over a late renewal response.
+        # A credentialed logout invalidates process-wide browser issuance; every
+        # logout also changes only its caller's sealed browser epoch. Capture the
+        # latter from this request so a delayed renewal can never become valid in
+        # that browser after its own logout.
         renewal_cookie_generation = runtime.cookie_generation()
+        renewal_browser_epoch = browser_cookie_epoch(request, settings)
         authorization = request.headers.get("authorization")
         if authorization is not None:
             machine_identity = authenticate_machine(settings, authorization)
@@ -151,6 +154,7 @@ def _install_operator_auth(app: FastAPI) -> None:
                 response,
                 settings,
                 cookie_generation=renewal_cookie_generation,
+                browser_epoch=renewal_browser_epoch,
             )
         return response
 

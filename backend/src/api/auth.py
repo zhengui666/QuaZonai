@@ -10,6 +10,7 @@ from operator_auth import (
     OperatorAuthRuntime,
     authenticate_browser,
     authenticate_login,
+    browser_cookie_epoch,
     has_valid_trusted_browser,
     login_source_key,
     require_same_origin,
@@ -72,6 +73,7 @@ def login(payload: LoginInput, request: Request, response: Response) -> SessionV
     # factors are being checked must prevent this request from clearing its
     # barrier or minting a replacement browser session.
     login_cookie_generation = runtime.cookie_generation()
+    login_browser_epoch = browser_cookie_epoch(request, settings)
     source = login_source_key(request, settings)
     if not runtime.login_limiter.allow_attempt(source):
         raise _invalid_credentials()
@@ -88,6 +90,7 @@ def login(payload: LoginInput, request: Request, response: Response) -> SessionV
         response,
         settings,
         cookie_generation=login_cookie_generation,
+        browser_epoch=login_browser_epoch,
         trust_browser=payload.trust_browser,
     ):
         # Keep the public failure shape identical to incorrect credentials. In
@@ -118,6 +121,7 @@ def session(request: Request, response: Response) -> SessionView:
     # Snapshot before parsing the trusted credential. If logout wins while this
     # request is authenticating, its renewal must not write a fresh session cookie.
     renewal_cookie_generation = runtime.cookie_generation()
+    renewal_browser_epoch = browser_cookie_epoch(request, settings)
     identity = authenticate_browser(request, settings)
     if identity is None:
         raise QfError(
@@ -130,6 +134,7 @@ def session(request: Request, response: Response) -> SessionView:
             response,
             settings,
             cookie_generation=renewal_cookie_generation,
+            browser_epoch=renewal_browser_epoch,
         ):
             # A logout revoked this trusted-browser credential after it was
             # parsed. Do not report a usable session when its renewal lost the

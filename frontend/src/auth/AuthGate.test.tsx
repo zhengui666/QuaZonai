@@ -287,6 +287,34 @@ describe('AuthGate', () => {
     expect(await screen.findByRole('heading', { name: 'Verify your identity' })).toBeInTheDocument();
   });
 
+  it('periodically revalidates a direct-access session when authentication becomes enabled', async () => {
+    const setIntervalSpy = vi.spyOn(window, 'setInterval');
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => jsonResponse({
+        authenticated: true,
+        username: 'local-operator',
+        trusted_browser: false,
+        auth_enabled: false,
+      }))
+      .mockImplementationOnce(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AuthGate><div>Alpha library cache</div></AuthGate>);
+
+    expect(await screen.findByText('Alpha library cache')).toBeInTheDocument();
+    const revalidate = setIntervalSpy.mock.calls.find(
+      ([, delay]) => delay === AUTH_SESSION_REVALIDATION_INTERVAL_MS,
+    )?.[0];
+    expect(typeof revalidate).toBe('function');
+    await act(async () => {
+      if (typeof revalidate === 'function') revalidate();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole('heading', { name: 'Verify your identity' })).toBeInTheDocument();
+  });
+
   it('adopts direct-access mode after a successful periodic revalidation', async () => {
     const setIntervalSpy = vi.spyOn(window, 'setInterval');
     const fetchMock = vi.fn()
