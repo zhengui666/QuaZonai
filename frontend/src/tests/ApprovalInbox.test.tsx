@@ -45,7 +45,8 @@ describe('ApprovalInbox', () => {
     expect(formatDeployableCapital('es', '100000')).toBe(new Intl.NumberFormat('es').format(100000));
     expect(formatDeployableCapital('es', '0.0004')).toBe(new Intl.NumberFormat('es', { maximumSignificantDigits: 21 }).format(0.0004));
     expect(formatDeployableCapital('ar', '0.0004')).toBe(new Intl.NumberFormat('ar', { maximumSignificantDigits: 21 }).format(0.0004));
-    expect(formatDeployableCapital('en', '1000000000000001')).toBe(new Intl.NumberFormat('en', { maximumSignificantDigits: 21 }).format(1000000000000001));
+    expect(formatDeployableCapital('en', '9007199254740993')).toBe('9,007,199,254,740,993');
+    expect(formatDeployableCapital('en', '0.123456789012345678901')).toBe('0.123456789012345678901');
   });
 
 

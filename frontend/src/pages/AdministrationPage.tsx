@@ -28,7 +28,7 @@ import {
   useUniverses,
 } from '../lib/api/hooks';
 import type { DataSource, DatasetRevision, DownstreamSystem, MarketUniverse, PluginRelease, PortfolioMandate } from '../lib/api/types';
-import { formatCompactNumber, formatDateTime, formatNumber, humanize } from '../lib/format';
+import { formatCapitalAmount, formatCompactNumber, formatDateTime, formatNumber, humanize } from '../lib/format';
 
 function ready(value: unknown) { return typeof value === 'boolean' ? value : Boolean((value as { ready?: boolean } | undefined)?.ready); }
 
@@ -74,7 +74,7 @@ const pluginColumns: ColumnDef<PluginRelease, unknown>[] = [
 type CapitalContextRow = { id: string; purpose: string; candidate: string; currency: string; deployable: number | string; observed?: string; validUntil?: string };
 
 export function formatCapitalContextValue(value?: number | string | null): string {
-  return formatNumber(value, { maximumSignificantDigits: 21 });
+  return formatCapitalAmount(value);
 }
 
 const capitalColumns: ColumnDef<CapitalContextRow, unknown>[] = [

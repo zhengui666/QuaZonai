@@ -16,6 +16,46 @@ export function formatNumber(value?: number | string | null, options?: Intl.Numb
   return new Intl.NumberFormat(getIntlLocale(), options).format(numeric);
 }
 
+const capitalNumberFormatOptions = { maximumSignificantDigits: 21 } as const;
+const plainDecimalPattern = /^([+-]?)(\d*)(?:\.(\d*))?$/;
+
+function formatExactCapitalString(value: string, locale: string): string | null {
+  const match = plainDecimalPattern.exec(value);
+  if (match === null) return null;
+  const sign = match[1] ?? '';
+  const integerDigits = match[2] ?? '';
+  const fractionalDigits = match[3] ?? '';
+  if (!integerDigits && !fractionalDigits) return null;
+
+  const integerFormatter = new Intl.NumberFormat(locale, { maximumFractionDigits: 0 });
+  const integerValue = BigInt(integerDigits || '0');
+  const formattedInteger = sign === '-' && integerValue === 0n
+    ? integerFormatter.formatToParts(-1).map((part) => part.type === 'integer' ? integerFormatter.format(0) : part.value).join('')
+    : integerFormatter.format(sign === '-' ? -integerValue : integerValue);
+  if (!fractionalDigits) return formattedInteger;
+
+  const decimal = new Intl.NumberFormat(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+    .formatToParts(1.1)
+    .find((part) => part.type === 'decimal')?.value ?? '.';
+  const localizedDigits = Array.from(
+    { length: 10 },
+    (_, digit) => new Intl.NumberFormat(locale, { useGrouping: false }).format(digit),
+  );
+  return `${formattedInteger}${decimal}${fractionalDigits.replace(/\d/g, (digit) => localizedDigits[Number(digit)] ?? digit)}`;
+}
+
+export function formatCapitalAmount(value?: number | string | null, locale = getIntlLocale()): string {
+  if (value === null || value === undefined || value === '') return '—';
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return '—';
+    return formatExactCapitalString(trimmed, locale) ?? value;
+  }
+  return Number.isFinite(value)
+    ? new Intl.NumberFormat(locale, capitalNumberFormatOptions).format(value)
+    : String(value);
+}
+
 export function formatCompactNumber(value?: number | string | null): string {
   if (value === null || value === undefined || value === '') return '—';
   const numeric = Number(value);

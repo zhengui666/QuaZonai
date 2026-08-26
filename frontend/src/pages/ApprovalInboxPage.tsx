@@ -10,7 +10,7 @@ import { StateBadge } from '../components/ui/StateBadge';
 import { useI18n, type Locale } from '../i18n';
 import { useApprovalDecision, useApprovals, useDownstreams } from '../lib/api/hooks';
 import type { ApprovalSnapshot, DownstreamSystem } from '../lib/api/types';
-import { formatDateTime, humanize } from '../lib/format';
+import { formatCapitalAmount, formatDateTime, humanize } from '../lib/format';
 
 const rejectionReasons = [
   'RESEARCH_EVIDENCE_INSUFFICIENT',
@@ -38,9 +38,7 @@ function compatible(approval: ApprovalSnapshot, systems: DownstreamSystem[]) {
 }
 
 export function formatDeployableCapital(locale: Locale, value?: number | string | null): string {
-  if (value === undefined || value === null || value === '') return '—';
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? new Intl.NumberFormat(locale, { maximumSignificantDigits: 21 }).format(numeric) : String(value);
+  return formatCapitalAmount(value, locale);
 }
 
 function ApprovalCard({ approval, systems }: { approval: ApprovalSnapshot; systems: DownstreamSystem[] }) {
