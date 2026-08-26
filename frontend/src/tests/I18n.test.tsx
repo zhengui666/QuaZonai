@@ -209,7 +209,9 @@ describe('i18n', () => {
 
   it('isolates unknown API status labels from RTL chrome', () => {
     render(<I18nProvider initialLocale="ar"><StateBadge state="EXTERNAL_EUR/USD" /></I18nProvider>);
-    expect(screen.getByText('External Eur/Usd')).toHaveAttribute('dir', 'auto');
+    const label = document.querySelector('.qz-status bdi');
+    expect(label).toHaveTextContent('External Eur/usd');
+    expect(label).toHaveAttribute('dir', 'auto');
   });
 
 });
