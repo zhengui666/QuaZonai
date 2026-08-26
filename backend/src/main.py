@@ -20,6 +20,7 @@ from db.session import create_database_engine, create_session_factory
 from errors import QfError, install_error_handlers
 from operator_auth import (
     OperatorAuthRuntime,
+    STREAM_ADMISSION_GENERATION_STATE_ATTRIBUTE,
     authenticate_browser,
     authenticate_machine,
     is_operator_auth_exempt,
@@ -74,6 +75,11 @@ def _install_operator_auth(app: FastAPI) -> None:
         ):
             return await call_next(request)
 
+        runtime: OperatorAuthRuntime = request.app.state.operator_auth_runtime
+        # Capture this before credential validation. A logout that occurs after
+        # validation but before the endpoint starts must still invalidate an
+        # already-admitted EventSource request on its next poll.
+        admission_generation = runtime.stream_generation()
         authorization = request.headers.get("authorization")
         if authorization is not None:
             machine_identity = authenticate_machine(settings, authorization)
@@ -82,6 +88,11 @@ def _install_operator_auth(app: FastAPI) -> None:
                     QfError("AUTH_REQUIRED", "Operator authentication is required.", 401)
                 )
             request.state.operator = machine_identity
+            setattr(
+                request.state,
+                STREAM_ADMISSION_GENERATION_STATE_ATTRIBUTE,
+                admission_generation,
+            )
             return await call_next(request)
 
         browser_identity = authenticate_browser(request, settings)
@@ -95,6 +106,11 @@ def _install_operator_auth(app: FastAPI) -> None:
             return _auth_error_response(exc)
 
         request.state.operator = browser_identity
+        setattr(
+            request.state,
+            STREAM_ADMISSION_GENERATION_STATE_ATTRIBUTE,
+            admission_generation,
+        )
         response = await call_next(request)
         if browser_identity.renew_session:
             set_session_cookie(response, settings)

@@ -3,8 +3,12 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
+import pytest
 
-from cli.client import ApiClient
+from cli.client import ApiClient, CliClientError
+
+
+MACHINE_TOKEN = "machine-token-" + "x" * 32
 
 
 def _json_response() -> httpx.Response:
@@ -24,13 +28,13 @@ def test_cli_injects_machine_operator_token(
         observed.update(method=method, url=url, **kwargs)
         return _json_response()
 
-    monkeypatch.setenv("QUAZONAI_API_TOKEN", "machine-token-value")
+    monkeypatch.setenv("QUAZONAI_API_TOKEN", MACHINE_TOKEN)
     monkeypatch.setattr(httpx, "request", fake_request)
 
     with ApiClient("http://127.0.0.1:8000") as client:
         assert client.request("GET", "/api/v1/readiness") == {"ok": True}
 
-    assert observed["headers"]["Authorization"] == "Bearer machine-token-value"
+    assert observed["headers"]["Authorization"] == f"Bearer {MACHINE_TOKEN}"
 
 
 def test_explicit_authorization_header_is_not_overwritten(
@@ -42,7 +46,7 @@ def test_explicit_authorization_header_is_not_overwritten(
         observed.update(method=method, url=url, **kwargs)
         return _json_response()
 
-    monkeypatch.setenv("QUAZONAI_API_TOKEN", "machine-token-value")
+    monkeypatch.setenv("QUAZONAI_API_TOKEN", MACHINE_TOKEN)
     monkeypatch.setattr(httpx, "request", fake_request)
 
     with ApiClient("http://127.0.0.1:8000") as client:
@@ -55,7 +59,7 @@ def test_explicit_authorization_header_is_not_overwritten(
     assert observed["headers"]["Authorization"] == "Bearer downstream-service-token"
 
 
-def test_blank_machine_token_does_not_create_authorization_header(
+def test_lowercase_explicit_authorization_header_is_not_overwritten(
     monkeypatch: Any,
 ) -> None:
     observed: dict[str, Any] = {}
@@ -64,10 +68,23 @@ def test_blank_machine_token_does_not_create_authorization_header(
         observed.update(method=method, url=url, **kwargs)
         return _json_response()
 
-    monkeypatch.setenv("QUAZONAI_API_TOKEN", "   ")
+    monkeypatch.setenv("QUAZONAI_API_TOKEN", MACHINE_TOKEN)
     monkeypatch.setattr(httpx, "request", fake_request)
 
     with ApiClient("http://127.0.0.1:8000") as client:
-        client.request("GET", "/api/v1/readiness")
+        client.request(
+            "GET",
+            "/api/v1/handoffs/00000000-0000-0000-0000-000000000001/package",
+            headers={"authorization": "Bearer downstream-service-token"},
+        )
 
-    assert "Authorization" not in observed["headers"]
+    assert observed["headers"] == {"authorization": "Bearer downstream-service-token"}
+
+
+def test_whitespace_machine_token_is_rejected_without_sending_a_request(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setenv("QUAZONAI_API_TOKEN", "   ")
+
+    with pytest.raises(CliClientError, match="QUAZONAI_API_TOKEN"):
+        ApiClient("http://127.0.0.1:8000")

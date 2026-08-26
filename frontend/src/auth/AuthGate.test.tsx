@@ -2,7 +2,11 @@ import { useState } from 'react';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AuthGate, useOperatorAuth } from './AuthGate';
+import {
+  AUTH_SESSION_REVALIDATION_INTERVAL_MS,
+  AuthGate,
+  useOperatorAuth,
+} from './AuthGate';
 
 function jsonResponse(value: unknown, status = 200): Promise<Response> {
   return Promise.resolve(new Response(JSON.stringify(value), {
@@ -38,6 +42,8 @@ function LogoutProbe() {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -155,5 +161,33 @@ describe('AuthGate', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('The request origin is not allowed.');
     expect(screen.getByText('Workbench ready')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Verify your identity' })).not.toBeInTheDocument();
+  });
+
+  it('periodically revalidates an enabled session outside the dashboard route', async () => {
+    const setIntervalSpy = vi.spyOn(window, 'setInterval');
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => jsonResponse({
+        authenticated: true,
+        username: 'operator',
+        trusted_browser: false,
+        auth_enabled: true,
+      }))
+      .mockImplementationOnce(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AuthGate><div>Alpha library cache</div></AuthGate>);
+
+    expect(await screen.findByText('Alpha library cache')).toBeInTheDocument();
+    const revalidate = setIntervalSpy.mock.calls.find(
+      ([, delay]) => delay === AUTH_SESSION_REVALIDATION_INTERVAL_MS,
+    )?.[0];
+    expect(typeof revalidate).toBe('function');
+    await act(async () => {
+      if (typeof revalidate === 'function') revalidate();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole('heading', { name: 'Verify your identity' })).toBeInTheDocument();
   });
 });

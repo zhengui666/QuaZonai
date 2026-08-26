@@ -52,6 +52,15 @@ def test_canonicalize_http_origin_matches_browser_serialization(
         "https://example.com:70000",
         "https://[fe80::1%25eth0]",
         "https://999.999.999.999",
+        "http://0x7f.1",
+        "http://0177.0.0.1",
+        "http://127.1",
+        "http://2130706433",
+        "http://0x",
+        "http://0X",
+        "https://example.com\u00a0",
+        "https://[::1",
+        "https://[abc]",
     ],
 )
 def test_canonicalize_http_origin_rejects_non_origin_values(origin: str) -> None:

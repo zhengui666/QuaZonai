@@ -79,7 +79,10 @@ class ApiClient:
         if not path.startswith("/api/v1/"):
             raise CliClientError("CLI requests must target a fixed /api/v1 operation")
         request_headers = dict(headers or {})
-        if self.api_token is not None:
+        has_explicit_authorization = any(
+            name.casefold() == "authorization" for name in request_headers
+        )
+        if self.api_token is not None and not has_explicit_authorization:
             request_headers.setdefault("Authorization", f"Bearer {self.api_token}")
         try:
             response = httpx.request(

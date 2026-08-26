@@ -65,7 +65,7 @@ A safe shell prerequisite check verifies presence without printing the value:
 
 ```bash
 test -n "${QUAZONAI_API_TOKEN:-}"
-quazonai status
+quazonai readiness
 ```
 
 When authentication is disabled, no machine token is required. `AUTH_REQUIRED` means the protected API did not receive the current configured machine credential. A downstream Handoff service token is separate and must not be replaced by `QUAZONAI_API_TOKEN`.

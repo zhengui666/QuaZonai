@@ -39,6 +39,10 @@ MIN_MACHINE_TOKEN_CHARACTERS = 32
 MAX_MACHINE_TOKEN_CHARACTERS = 4096
 _DEFAULT_ORIGIN_PORTS = {"http": 80, "https": 443}
 _BEARER_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9\-._~+/]+={0,}", re.ASCII)
+_WHATWG_IPV4_NUMBER_PATTERN = re.compile(
+    r"(?:0[xX][0-9A-Fa-f]*|0[0-7]*|[0-9]+)",
+    re.ASCII,
+)
 
 
 def _optional_env(name: str) -> str | None:
@@ -97,6 +101,11 @@ def _contains_ascii_control(value: str) -> bool:
     return any(ord(character) < 32 or ord(character) == 127 for character in value)
 
 
+def _contains_non_ascii_whitespace(value: str) -> bool:
+    """Reject whitespace which WHATWG URL parsing does not trim as URL space."""
+    return any(character.isspace() and ord(character) > 127 for character in value)
+
+
 def _validate_utf8_text(value: str, *, name: str) -> None:
     try:
         value.encode("utf-8")
@@ -115,6 +124,23 @@ def validate_machine_api_token(value: str) -> None:
         raise SettingsError(
             "QUAZONAI_API_TOKEN must use RFC 6750 b64token ASCII characters only"
         )
+
+
+def _looks_like_noncanonical_whatwg_ipv4(hostname: str) -> bool:
+    """Return whether a browser treats a non-``ipaddress`` host as numeric IPv4.
+
+    WHATWG URL parsing accepts one-to-four numeric components, including legacy
+    hexadecimal and leading-zero forms, then serializes them as canonical dotted
+    decimal IPv4. ``ipaddress`` deliberately rejects those spellings. Treating
+    them as IDNA hostnames would make the configured origin differ from the
+    browser-sent Origin, so reject them rather than silently accepting a
+    deployment that cannot authenticate browser mutations.
+    """
+    components = hostname.split(".")
+    return 1 <= len(components) <= 4 and all(
+        _WHATWG_IPV4_NUMBER_PATTERN.fullmatch(component) is not None
+        for component in components
+    )
 
 
 def _canonical_origin_host(parsed: ParseResult, *, name: str) -> tuple[str, int | None]:
@@ -140,6 +166,9 @@ def _canonical_origin_host(parsed: ParseResult, *, name: str) -> tuple[str, int 
         if address.version == 6:
             return f"[{address.compressed}]", port
         return address.compressed, port
+
+    if _looks_like_noncanonical_whatwg_ipv4(hostname):
+        raise SettingsError(f"{name} contains an invalid hostname")
 
     # A dotted-decimal host made only of digits is intended to be an IPv4
     # literal. Do not reinterpret an invalid address as a DNS name.
@@ -169,8 +198,15 @@ def canonicalize_http_origin(value: str, *, name: str = "Origin") -> str:
     """Serialize an absolute HTTP(S) origin using browser-equivalent semantics."""
     if _contains_ascii_control(value):
         raise SettingsError(f"{name} must not contain ASCII control characters")
+    if _contains_non_ascii_whitespace(value):
+        raise SettingsError(f"{name} must not contain non-ASCII whitespace")
     clean = value.strip()
-    parsed = urlparse(clean)
+    try:
+        parsed = urlparse(clean)
+    except ValueError as exc:
+        raise SettingsError(
+            f"{name} must be an origin such as https://quazonai.example.com"
+        ) from exc
     scheme = parsed.scheme.lower()
     if (
         scheme not in _DEFAULT_ORIGIN_PORTS

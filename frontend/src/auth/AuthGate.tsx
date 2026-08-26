@@ -30,6 +30,7 @@ interface OperatorAuthContextValue {
 }
 
 const OperatorAuthContext = createContext<OperatorAuthContextValue | null>(null);
+export const AUTH_SESSION_REVALIDATION_INTERVAL_MS = 30_000;
 
 export function useOperatorAuth(): OperatorAuthContextValue {
   const value = useContext(OperatorAuthContext);
@@ -186,6 +187,18 @@ export function AuthGate({ children }: { children: ReactNode }) {
     }
   }, [acceptSession]);
 
+  const revalidateSession = useCallback(async () => {
+    try {
+      const response = await fetch('/api/v1/auth/session', { credentials: 'same-origin' });
+      if (response.status === 401) {
+        setSession(null);
+        setState('anonymous');
+      }
+    } catch {
+      // A transient network failure is not evidence that the browser credential expired.
+    }
+  }, []);
+
   const logout = useCallback(async () => {
     if (!session?.auth_enabled) return;
     const response = await fetch('/api/v1/auth/logout', {
@@ -200,6 +213,11 @@ export function AuthGate({ children }: { children: ReactNode }) {
   }, [session?.auth_enabled]);
 
   useEffect(() => { void checkSession(); }, [checkSession]);
+  useEffect(() => {
+    if (state !== 'authenticated' || session?.auth_enabled !== true) return;
+    const interval = window.setInterval(() => { void revalidateSession(); }, AUTH_SESSION_REVALIDATION_INTERVAL_MS);
+    return () => window.clearInterval(interval);
+  }, [revalidateSession, session?.auth_enabled, state]);
   useEffect(() => {
     const requireAuth = () => {
       if (session?.auth_enabled === false) return;

@@ -6,6 +6,7 @@ from dataclasses import replace
 import pytest
 from fastapi import Request
 
+from errors import QfError
 from operator_auth import require_same_origin
 from settings import Settings, SettingsError
 
@@ -86,3 +87,16 @@ def test_same_origin_uses_browser_canonical_serialization(
     configured.validate_operator_auth()
     assert configured.canonical_auth_public_origin == browser_origin
     require_same_origin(_mutation_request(browser_origin), configured)
+
+
+@pytest.mark.parametrize("origin", ["https://[::1", "https://[abc]"])
+def test_malformed_bracketed_origin_returns_auth_rejection(
+    settings: Settings,
+    origin: str,
+) -> None:
+    configured = _enabled_settings(settings)
+
+    with pytest.raises(QfError, match="origin is not allowed") as raised:
+        require_same_origin(_mutation_request(origin), configured)
+
+    assert raised.value.code == "AUTH_ORIGIN_REJECTED"

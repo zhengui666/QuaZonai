@@ -14,17 +14,17 @@ When Operator Authentication may be enabled, verify only that the machine token 
 test -n "${QUAZONAI_API_TOKEN:-}"
 ```
 
-Then query the API:
+Then use a protected read to verify the credential, and query health separately when needed:
 
 ```bash
-quazonai status
 quazonai readiness
+quazonai status
 ```
 
 Interpret them separately:
 
-- `status` answers whether the Core API and reported services are healthy;
-- `readiness` answers whether QuaZonai reports the capabilities required for work as ready.
+- `readiness` proves the machine credential is accepted when authentication is enabled and reports whether QuaZonai has the capabilities required for work;
+- `status` answers whether the Core API and reported services are healthy, but remains intentionally public and does not prove machine-token authentication.
 
 Authentication interpretation:
 

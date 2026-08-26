@@ -4,6 +4,7 @@ import asyncio
 import base64
 from dataclasses import replace
 
+import main as main_module
 import operator_auth
 import pyotp
 import pytest
@@ -17,6 +18,7 @@ from operator_auth import (
     SESSION_COOKIE_NAME,
     OperatorAuthRuntime,
     OperatorLoginLimiter,
+    STREAM_ADMISSION_GENERATION_STATE_ATTRIBUTE,
 )
 from settings import Settings
 
@@ -34,12 +36,17 @@ def _enabled_settings(settings: Settings) -> Settings:
     )
 
 
-def _payload(settings: Settings, *, password: str) -> dict[str, object]:
+def _payload(
+    settings: Settings,
+    *,
+    password: str,
+    totp_code: str | None = None,
+) -> dict[str, object]:
     assert settings.operator_totp_secret is not None
     return {
         "username": "operator",
         "password": password,
-        "totp_code": pyotp.TOTP(settings.operator_totp_secret).now(),
+        "totp_code": totp_code or pyotp.TOTP(settings.operator_totp_secret).now(),
         "trust_browser": False,
     }
 
@@ -182,7 +189,7 @@ def test_anonymous_logout_does_not_revoke_other_active_streams(
     assert runtime.stream_generation() == generation
 
 
-def test_stream_admission_generation_closes_pre_iteration_logout_race(
+def test_stream_admission_generation_captured_by_middleware_closes_logout_race(
     settings: Settings,
     engine: Engine,
 ) -> None:
@@ -198,17 +205,67 @@ def test_stream_admission_generation_closes_pre_iteration_logout_race(
     session_cookie = client.cookies.get(SESSION_COOKIE_NAME)
     assert session_cookie is not None
 
-    stream_request = _request_with_session(app, session_cookie)
-    response = stream_events(stream_request, cursor=0)
-
     runtime: OperatorAuthRuntime = app.state.operator_auth_runtime
+    stream_request = _request_with_session(app, session_cookie)
+    # Model the authenticated middleware admission, then let logout complete
+    # before the endpoint constructs its generator.
+    setattr(
+        stream_request.state,
+        STREAM_ADMISSION_GENERATION_STATE_ATTRIBUTE,
+        runtime.stream_generation(),
+    )
     runtime.revoke_active_streams()
+    response = stream_events(stream_request, cursor=0)
 
     async def read_first_frame() -> bytes | str:
         return await anext(response.body_iterator)
 
     with pytest.raises(StopAsyncIteration):
         asyncio.run(read_first_frame())
+
+
+def test_middleware_captures_stream_generation_before_authentication_race(
+    settings: Settings,
+    engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secured = _enabled_settings(settings)
+    app = create_app(settings=secured, engine=engine)
+    client = TestClient(app)
+    login = client.post(
+        "/api/v1/auth/login",
+        headers={"Origin": "http://testserver"},
+        json=_payload(secured, password="correct horse battery staple"),
+    )
+    assert login.status_code == 200
+
+    @app.get("/api/v1/test-auth-admission")
+    def auth_admission(request: Request) -> dict[str, int]:
+        return {
+            "generation": getattr(
+                request.state,
+                STREAM_ADMISSION_GENERATION_STATE_ATTRIBUTE,
+            )
+        }
+
+    runtime: OperatorAuthRuntime = app.state.operator_auth_runtime
+    admission_generation = runtime.stream_generation()
+    original_authenticate_browser = main_module.authenticate_browser
+
+    def authenticate_then_logout(
+        request: Request,
+        configured: Settings,
+    ) -> object:
+        identity = original_authenticate_browser(request, configured)
+        runtime.revoke_active_streams()
+        return identity
+
+    monkeypatch.setattr(main_module, "authenticate_browser", authenticate_then_logout)
+    response = client.get("/api/v1/test-auth-admission")
+
+    assert response.status_code == 200
+    assert response.json() == {"generation": admission_generation}
+    assert runtime.stream_generation() == admission_generation + 1
 
 
 def test_stream_revalidation_observes_cookie_key_rotation(
@@ -254,7 +311,11 @@ def test_stream_revalidation_observes_session_expiry(
     login = client.post(
         "/api/v1/auth/login",
         headers={"Origin": "http://testserver"},
-        json=_payload(secured, password="correct horse battery staple"),
+        json=_payload(
+            secured,
+            password="correct horse battery staple",
+            totp_code=pyotp.TOTP(secured.operator_totp_secret).at(int(now[0])),
+        ),
     )
     assert login.status_code == 200
     session_cookie = client.cookies.get(SESSION_COOKIE_NAME)

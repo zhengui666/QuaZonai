@@ -13,6 +13,7 @@ from main import create_app
 from operator_auth import (
     SESSION_COOKIE_NAME,
     TRUSTED_BROWSER_COOKIE_NAME,
+    authenticate_machine,
     is_operator_auth_exempt,
 )
 from settings import Settings, SettingsError
@@ -138,6 +139,14 @@ def test_invalid_explicit_machine_token_does_not_fall_back_to_browser_session(
 
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "AUTH_REQUIRED"
+
+
+def test_non_ascii_explicit_machine_token_is_rejected_without_raising(
+    settings: Settings,
+) -> None:
+    secured = _enabled_settings(settings)
+
+    assert authenticate_machine(secured, "Bearer " + "x" * 31 + "é") is None
 
 
 def test_machine_token_can_make_operator_mutation_without_browser_origin(

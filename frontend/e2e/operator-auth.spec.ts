@@ -23,6 +23,10 @@ function currentTotpCode(): string {
 
 test.describe('single-operator authentication', () => {
   test.skip(!authEnabled, 'Runs only in the dedicated auth-enabled browser workflow.');
+  // A successful attempt consumes its RFC 6238 step. Retrying the same browser
+  // test would inevitably replay that step, so retries cannot exercise a
+  // transient failure meaningfully here.
+  test.describe.configure({ retries: 0 });
 
   test('password + TOTP login, trusted-browser restore, and logout revocation', async ({
     page,

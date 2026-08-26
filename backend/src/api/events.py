@@ -13,7 +13,12 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
 from db.models import Event
-from operator_auth import OperatorAuthRuntime, authenticate_browser, authenticate_machine
+from operator_auth import (
+    OperatorAuthRuntime,
+    STREAM_ADMISSION_GENERATION_STATE_ATTRIBUTE,
+    authenticate_browser,
+    authenticate_machine,
+)
 from settings import Settings
 
 router = APIRouter(prefix="/api/v1", tags=["events"])
@@ -112,7 +117,16 @@ def stream_events(
     last_event_id = int(header) if header and header.isdigit() else 0
     start = cursor if cursor is not None else last_event_id
     runtime: OperatorAuthRuntime = request.app.state.operator_auth_runtime
-    admission_generation = runtime.stream_generation()
+    admission_generation = getattr(
+        request.state,
+        STREAM_ADMISSION_GENERATION_STATE_ATTRIBUTE,
+        None,
+    )
+    if admission_generation is None:
+        # Direct endpoint calls in focused tests do not run the middleware. In
+        # production, the auth middleware has already captured this value when
+        # it successfully admitted the request.
+        admission_generation = runtime.stream_generation()
     return StreamingResponse(
         _stream(request, start, admission_generation),
         media_type="text/event-stream",

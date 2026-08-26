@@ -18,10 +18,16 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import Request, Response
 
 from errors import QfError
-from settings import Settings, SettingsError, canonicalize_http_origin
+from settings import (
+    Settings,
+    SettingsError,
+    canonicalize_http_origin,
+    validate_machine_api_token,
+)
 
 SESSION_COOKIE_NAME = "quazonai_session"
 TRUSTED_BROWSER_COOKIE_NAME = "quazonai_trusted_browser"
+STREAM_ADMISSION_GENERATION_STATE_ATTRIBUTE = "operator_auth_stream_generation"
 COOKIE_VERSION = 1
 COOKIE_NONCE_BYTES = 12
 LOGIN_MIN_INTERVAL_SECONDS = 1.0
@@ -326,7 +332,11 @@ def authenticate_machine(settings: Settings, authorization: str | None) -> Opera
         or token != token.strip()
     ):
         return None
-    if not secrets.compare_digest(token, settings.api_token):
+    try:
+        validate_machine_api_token(token)
+    except SettingsError:
+        return None
+    if not _constant_time_text_equal(token, settings.api_token):
         return None
     assert settings.operator_username is not None
     return OperatorIdentity(username=settings.operator_username, source="machine")
