@@ -19,6 +19,7 @@ const labels: Record<string, DomainLabels> = {
   'Candidate Ready': l('Candidate Ready', '候选就绪', '候選就緒', '候補準備完了', '후보 준비됨', 'Candidato listo', 'المرشح جاهز'),
   Complete: l('Complete', '完成', '完成', '完了', '완료', 'Completo', 'مكتمل'),
   Valid: l('Valid', '有效', '有效', '有効', '유효', 'Válido', 'صالح'),
+  Qualified: l('Qualified', '合格', '合格', '適格', '적격', 'Calificado', 'مؤهل'),
   Enabled: l('Enabled', '已启用', '已啟用', '有効', '활성화', 'Habilitado', 'مفعّل'),
   Disabled: l('Disabled', '已禁用', '已停用', '無効', '비활성화', 'Deshabilitado', 'معطّل'),
   Cooling: l('Cooling', '冷却中', '冷卻中', 'クーリング中', '쿨링 중', 'En enfriamiento', 'في التهدئة'),

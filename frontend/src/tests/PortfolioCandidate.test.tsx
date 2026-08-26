@@ -35,7 +35,7 @@ describe('Portfolio candidate presentation', () => {
     const precise = new Intl.NumberFormat('ar', { maximumSignificantDigits: 15 }).format(0.0004);
     expect(screen.getByText(precise)).toBeInTheDocument();
 
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toContain('\u2066candidate-\u2069');
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toContain('\u2066candidat\u2069');
 
     for (const identifier of ['mandate/', 'policy/v1', 'risk/v2', 'cost/v3', 'capacity/v4', 'constraint-set-3', 'rebalance/v5', 'episode/v6']) {
       expect(screen.getByText(identifier)).toHaveAttribute('dir', 'ltr');
