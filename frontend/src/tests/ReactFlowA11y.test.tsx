@@ -84,4 +84,18 @@ describe('React Flow accessibility labels', () => {
     expect(parts[1]).toBe(' · ');
     expectBidiPart(parts[2], 'برنامج مرتبط');
   });
+
+  it('isolates arbitrary mission types from localized states', () => {
+    renderArabic(<MissionGraph missions={[{ id: 'mission-1', type: 'CUSTOM_EUR_USD', state: 'RUNNING' }]} />);
+    const props = reactFlowSpy.mock.calls.at(-1)?.[0] as { nodes?: Array<{ id: string; data: { label: ReactNode } }> } | undefined;
+    const missionNode = props?.nodes?.find((node) => node.id === 'mission-1');
+    expect(missionNode).toBeDefined();
+    if (!missionNode || !isValidElement<{ children?: ReactNode }>(missionNode.data.label)) return;
+
+    const parts = Children.toArray(missionNode.data.label.props.children);
+    expect(parts).toHaveLength(3);
+    expectBidiPart(parts[0], 'Custom Eur Usd');
+    expect(parts[1]).toBe(' · ');
+    expectBidiPart(parts[2], 'قيد التشغيل');
+  });
 });
