@@ -6,8 +6,8 @@ import type { RuntimeConfiguration } from '../lib/api/types';
 import { renderApp } from './testUtils';
 
 const configuration: RuntimeConfiguration = {
-  revision: 1,
-  codex_model: 'gpt-5.6-sol',
+  revision: 1234,
+  codex_model: 'openai/gpt-5.6-sol',
   codex_base_url: 'https://gateway.example/v1',
   codex_api_key_configured: true,
   codex_login_configured: false,
@@ -23,8 +23,8 @@ const configuration: RuntimeConfiguration = {
 describe('RuntimeConfigurationPanel directionality', () => {
   it('keeps machine identifiers left-to-right and formats the revision in Arabic', () => {
     renderApp(<RuntimeConfigurationPanel configuration={configuration} />, { locale: 'ar' });
-    expect(screen.getByDisplayValue('gpt-5.6-sol')).toHaveAttribute('dir', 'ltr');
-    expect(screen.getByText('gpt-5.6-sol')).toHaveAttribute('dir', 'ltr');
+    expect(screen.getByDisplayValue('openai/gpt-5.6-sol')).toHaveAttribute('dir', 'ltr');
+    expect(screen.getByText('openai/gpt-5.6-sol')).toHaveAttribute('dir', 'ltr');
     expect(screen.getByText(new Intl.NumberFormat('ar').format(configuration.revision))).toBeInTheDocument();
     expect(screen.getByDisplayValue('https://gateway.example/v1')).toHaveAttribute('dir', 'ltr');
     expect(screen.getByPlaceholderText(translateKey('ar', 'runtime.keyConfigured'))).toHaveAttribute('dir', 'ltr');
