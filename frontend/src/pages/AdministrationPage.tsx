@@ -72,11 +72,16 @@ const pluginColumns: ColumnDef<PluginRelease, unknown>[] = [
 ];
 
 type CapitalContextRow = { id: string; purpose: string; candidate: string; currency: string; deployable: number | string; observed?: string; validUntil?: string };
+
+export function formatCapitalContextValue(value?: number | string | null): string {
+  return formatNumber(value, { maximumSignificantDigits: 21 });
+}
+
 const capitalColumns: ColumnDef<CapitalContextRow, unknown>[] = [
   { accessorKey: 'purpose', header: 'Purpose', meta: { messageKey: 'admin.purpose', localizedSort: true }, cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
   { accessorKey: 'candidate', header: 'Candidate', meta: { messageKey: 'common.candidate' }, cell: ({ getValue }) => <span className="qz-mono">{String(getValue()).slice(0, 12)}</span> },
   { accessorKey: 'currency', header: 'Currency', meta: { messageKey: 'admin.currency' } },
-  { accessorKey: 'deployable', header: 'Deployable capital', meta: { messageKey: 'admin.deployableCapital' }, cell: ({ getValue }) => <span className="qz-number">{formatNumber(getValue() as number | string | null | undefined)}</span> },
+  { accessorKey: 'deployable', header: 'Deployable capital', meta: { messageKey: 'admin.deployableCapital' }, cell: ({ getValue }) => <span className="qz-number">{formatCapitalContextValue(getValue() as number | string | null | undefined)}</span> },
   { accessorKey: 'observed', header: 'Observed', meta: { messageKey: 'research.observed' }, cell: ({ getValue }) => formatDateTime(getValue() as string | undefined) },
   { accessorKey: 'validUntil', header: 'Valid until', meta: { messageKey: 'admin.validUntil' }, cell: ({ getValue }) => formatDateTime(getValue() as string | undefined) },
 ];
