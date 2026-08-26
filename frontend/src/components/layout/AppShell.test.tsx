@@ -29,7 +29,9 @@ describe('AppShell locale picker', () => {
     await user.click(screen.getByRole('button', { name: 'Change language: English' }));
     for (const code of localeOrder) {
       expect(screen.getByText(localeLabels[code].native, { selector: `span[lang="${code}"]:not(.qz-section-meta)` })).toHaveAttribute('dir', localeLabels[code].dir);
-      expect(screen.getByText(localeLabels[code].english, { selector: 'span.qz-section-meta' })).toHaveAttributes({ lang: 'en', dir: 'ltr' });
+      const englishLabel = screen.getByText(localeLabels[code].english, { selector: 'span.qz-section-meta' });
+      expect(englishLabel).toHaveAttribute('lang', 'en');
+      expect(englishLabel).toHaveAttribute('dir', 'ltr');
     }
   });
 });
