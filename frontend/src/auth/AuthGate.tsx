@@ -233,15 +233,21 @@ export function AuthGate({ children }: { children: ReactNode }) {
     if (state !== 'authenticated' || session?.auth_enabled !== true) return;
     let active = true;
     const revalidateSession = async () => {
+      // A slow earlier probe must never overwrite a newer revalidation, logout,
+      // or bootstrap result. Share the same monotonic generation as bootstrap
+      // checks so every session-derived UI update has last-result-wins semantics.
+      const generation = sessionCheckGeneration.current + 1;
+      sessionCheckGeneration.current = generation;
+      const isCurrent = () => active && sessionCheckGeneration.current === generation;
       try {
         const response = await fetch('/api/v1/auth/session', { credentials: 'same-origin' });
-        if (!active) return;
+        if (!isCurrent()) return;
         if (response.ok) {
           // The API can change from enabled authentication back to direct access
           // while this tab remains open. A successful bootstrap response is the
           // current source of truth for both the credential and auth mode.
           const nextSession = await response.json() as SessionView;
-          if (active) acceptSession(nextSession);
+          if (isCurrent()) acceptSession(nextSession);
           return;
         }
         if (response.status === 401) {

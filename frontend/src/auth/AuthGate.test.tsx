@@ -321,6 +321,55 @@ describe('AuthGate', () => {
     expect(screen.queryByRole('heading', { name: 'Verify your identity' })).not.toBeInTheDocument();
   });
 
+  it('ignores an older successful periodic revalidation response', async () => {
+    const setIntervalSpy = vi.spyOn(window, 'setInterval');
+    const staleRevalidation = deferredResponse();
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => jsonResponse({
+        authenticated: true,
+        username: 'operator',
+        trusted_browser: false,
+        auth_enabled: true,
+      }))
+      .mockImplementationOnce(() => staleRevalidation.promise)
+      .mockImplementationOnce(() => jsonResponse({
+        authenticated: true,
+        username: 'operator',
+        trusted_browser: false,
+        auth_enabled: true,
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AuthGate><AuthModeProbe /></AuthGate>);
+
+    expect(await screen.findByText('Authentication enabled')).toBeInTheDocument();
+    const revalidate = setIntervalSpy.mock.calls.find(
+      ([, delay]) => delay === AUTH_SESSION_REVALIDATION_INTERVAL_MS,
+    )?.[0];
+    expect(typeof revalidate).toBe('function');
+    await act(async () => {
+      if (typeof revalidate === 'function') {
+        revalidate();
+        revalidate();
+      }
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+
+    await act(async () => {
+      staleRevalidation.resolve(await jsonResponse({
+        authenticated: true,
+        username: 'local-operator',
+        trusted_browser: false,
+        auth_enabled: false,
+      }));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText('Authentication enabled')).toBeInTheDocument();
+    expect(screen.queryByText('Direct access enabled')).not.toBeInTheDocument();
+  });
+
   it('ignores a stale revalidation failure after logout and re-login', async () => {
     const setIntervalSpy = vi.spyOn(window, 'setInterval');
     const staleRevalidation = deferredResponse();
