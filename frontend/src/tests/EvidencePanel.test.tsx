@@ -46,4 +46,12 @@ describe('EvidencePanel', () => {
       new Intl.NumberFormat('es', { style: 'percent', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value),
     );
   });
+  it('formats numeric evidence arrays recursively with the active locale', () => {
+    const compact = new Intl.NumberFormat('es', { notation: 'compact', maximumFractionDigits: 2 }).format(1234.5);
+    const percent = new Intl.NumberFormat('es', { style: 'percent', maximumSignificantDigits: 15 });
+    expect(formatEvidenceValue('es', [1234.5, 0.25, [0.5]])).toBe(
+      `${compact}, ${percent.format(0.25)}, ${percent.format(0.5)}`,
+    );
+  });
+
 });

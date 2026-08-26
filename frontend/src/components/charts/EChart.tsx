@@ -16,7 +16,7 @@ function isRecord(value: unknown): value is OptionRecord {
 
 export function formatEChartNumber(locale: Locale, value: unknown): string {
   if (typeof value === 'number' && Number.isFinite(value)) {
-    return new Intl.NumberFormat(locale, { maximumSignificantDigits: 12 }).format(value);
+    return new Intl.NumberFormat(locale, { maximumSignificantDigits: 15 }).format(value);
   }
   if (Array.isArray(value)) return value.map((item) => formatEChartNumber(locale, item)).join(' · ');
   if (value === null || value === undefined) return '—';

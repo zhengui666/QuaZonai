@@ -11,9 +11,14 @@ function record(value: unknown): UnknownRecord {
 
 describe('EChart locale formatting', () => {
   it('formats numeric values with the requested locale and preserves tuple values', () => {
-    const numberFormat = new Intl.NumberFormat('es', { maximumSignificantDigits: 12 });
+    const numberFormat = new Intl.NumberFormat('es', { maximumSignificantDigits: 15 });
     expect(formatEChartNumber('es', 1234.5)).toBe(numberFormat.format(1234.5));
     expect(formatEChartNumber('es', [0.25, 1234.5])).toBe(`${numberFormat.format(0.25)} · ${numberFormat.format(1234.5)}`);
+    const preciseValue = 0.123456789012345;
+    expect(formatEChartNumber('es', preciseValue)).toBe(numberFormat.format(preciseValue));
+    expect(formatEChartNumber('es', preciseValue)).not.toBe(
+      new Intl.NumberFormat('es', { maximumSignificantDigits: 12 }).format(preciseValue),
+    );
   });
 
   it('adds locale-aware value-axis, tooltip, and visual-map formatters without mutating the caller option', () => {
@@ -26,22 +31,23 @@ describe('EChart locale formatting', () => {
     } as EChartsCoreOption;
 
     const localized = record(localizeEChartOption(option, 'es'));
-    const expected = new Intl.NumberFormat('es', { maximumSignificantDigits: 12 }).format(0.25);
+    const preciseValue = 0.123456789012345;
+    const expected = new Intl.NumberFormat('es', { maximumSignificantDigits: 15 }).format(preciseValue);
     const xAxis = record(localized.xAxis);
     const xAxisLabel = record(xAxis.axisLabel);
-    expect((xAxisLabel.formatter as (value: unknown) => string)(0.25)).toBe(expected);
+    expect((xAxisLabel.formatter as (value: unknown) => string)(preciseValue)).toBe(expected);
 
     const yAxes = localized.yAxis as unknown[];
     expect(record(yAxes[0]).axisLabel).toBeUndefined();
     const valueAxisLabel = record(record(yAxes[1]).axisLabel);
-    expect((valueAxisLabel.formatter as (value: unknown) => string)(0.25)).toBe(expected);
+    expect((valueAxisLabel.formatter as (value: unknown) => string)(preciseValue)).toBe(expected);
 
     const tooltip = record(localized.tooltip);
     expect((tooltip.valueFormatter as (value: unknown) => string)(0.25)).toBe(expected);
 
     const visualMap = record(localized.visualMap);
-    expect((visualMap.formatter as (value: unknown, value2?: unknown) => string)(0.25, 0.5)).toBe(
-      `${expected} – ${new Intl.NumberFormat('es', { maximumSignificantDigits: 12 }).format(0.5)}`,
+    expect((visualMap.formatter as (value: unknown, value2?: unknown) => string)(preciseValue, 0.5)).toBe(
+      `${expected} – ${new Intl.NumberFormat('es', { maximumSignificantDigits: 15 }).format(0.5)}`,
     );
 
     expect(record(record(option).xAxis).axisLabel).toBeUndefined();

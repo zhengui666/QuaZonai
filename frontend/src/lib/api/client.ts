@@ -1,13 +1,20 @@
 import type { ApiErrorEnvelope } from './types';
 
+export type ApiFailure =
+  | { kind: 'api'; message: string }
+  | { kind: 'http'; status: number }
+  | { kind: 'network' };
+
 export class ApiError extends Error {
+  readonly failure: ApiFailure;
   readonly code: string;
   readonly status: number;
   readonly details?: Record<string, unknown>;
 
-  constructor(message: string, status: number, code = 'HTTP_ERROR', details?: Record<string, unknown>) {
-    super(message);
+  constructor(failure: ApiFailure, status: number, code = 'HTTP_ERROR', details?: Record<string, unknown>) {
+    super(failure.kind === 'api' ? failure.message : failure.kind);
     this.name = 'ApiError';
+    this.failure = failure;
     this.status = status;
     this.code = code;
     this.details = details;
@@ -27,7 +34,12 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   if (isBodyJson(options.body) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
   if (options.idempotent && !headers.has('Idempotency-Key')) headers.set('Idempotency-Key', crypto.randomUUID());
 
-  const response = await fetch(path, { ...options, headers, credentials: 'same-origin' });
+  let response: Response;
+  try {
+    response = await fetch(path, { ...options, headers, credentials: 'same-origin' });
+  } catch {
+    throw new ApiError({ kind: 'network' }, 0);
+  }
   if (!response.ok) {
     if (response.status === 401 && !path.startsWith('/api/v1/auth/') && typeof window !== 'undefined') {
       window.dispatchEvent(new Event('quazonai:auth-required'));
@@ -38,12 +50,11 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     } catch {
       // A non-JSON error response is represented by the HTTP status below.
     }
-    throw new ApiError(
-      envelope.error?.message ?? `Request failed with HTTP ${response.status}`,
-      response.status,
-      envelope.error?.code,
-      envelope.error?.details,
-    );
+    const message = envelope.error?.message;
+    const failure: ApiFailure = message === undefined
+      ? { kind: 'http', status: response.status }
+      : { kind: 'api', message };
+    throw new ApiError(failure, response.status, envelope.error?.code, envelope.error?.details);
   }
   if (response.status === 204) return undefined as T;
 

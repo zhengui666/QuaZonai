@@ -68,4 +68,25 @@ describe('ApprovalInbox', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Reject' }));
     expect(await screen.findByRole('textbox', { name: 'Optional note' })).toHaveAttribute('dir', 'auto');
   });
+  it('isolates the capital currency and amount in Arabic', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = String(input);
+      if (url.endsWith('/approvals')) return jsonResponse([{
+        id: 'a-ar',
+        candidate_id: 'candidate-12345678',
+        purpose: 'PAPER',
+        state: 'PENDING',
+        candidate: { id: 'candidate-12345678', portfolio_program_id: 'pp-1', state: 'READY', mandate_name: 'Core Growth' },
+        capital_context: { base_currency: 'USD', deployable_capital: 100000 },
+      }]);
+      if (url.endsWith('/downstream-systems')) return jsonResponse([]);
+      return jsonResponse({}, 404);
+    });
+
+    renderApp(<ApprovalInboxPage />, { route: '/approvals', locale: 'ar' });
+
+    const amount = formatDeployableCapital('ar', 100000);
+    expect(await screen.findByText(`USD ${amount}`, { selector: 'bdi' })).toHaveAttribute('dir', 'ltr');
+  });
+
 });

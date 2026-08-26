@@ -10,7 +10,7 @@ export function formatEvidenceValue(locale: Locale, value: unknown): string {
       ? new Intl.NumberFormat(locale, { style: 'percent', maximumSignificantDigits: 15 }).format(value)
       : new Intl.NumberFormat(locale, { notation: 'compact', maximumFractionDigits: 2 }).format(value);
   }
-  if (Array.isArray(value)) return value.join(', ');
+  if (Array.isArray(value)) return value.map((item) => formatEvidenceValue(locale, item)).join(', ');
   if (typeof value === 'object' && value) return JSON.stringify(value);
   return String(value ?? '—');
 }
