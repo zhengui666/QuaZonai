@@ -64,10 +64,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
       : { kind: 'api', message };
     throw new ApiError(failure, response.status, envelope.error?.code, envelope.error?.details);
   }
-  if (response.status === 204) return undefined as T;
-
-  const contentType = response.headers.get('content-type') ?? '';
-  if (!contentType.includes('application/json')) return await response.text() as T;
+  if (response.status === 204 || response.status === 205) return undefined as T;
   try {
     return await response.json() as T;
   } catch (error) {

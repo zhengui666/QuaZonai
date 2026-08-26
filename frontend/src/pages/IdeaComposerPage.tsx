@@ -34,7 +34,7 @@ export function IdeaComposerPage() {
         description="Describe the investment question in natural language. QuaZonai resolves implementation details itself and only asks when ambiguity would materially change the research boundary."
       />
       <div className="qz-split">
-        <Section title="Research idea" meta="One clarification round maximum">
+        <Section title="Research idea" meta={t('idea.oneRound', { count: 1 })}>
           <div className="qz-panel qz-panel-pad qz-form-grid">
             <label className="qz-field">
               <span className="qz-label">{t('idea.question')}</span>

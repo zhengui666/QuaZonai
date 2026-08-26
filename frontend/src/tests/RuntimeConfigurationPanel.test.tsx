@@ -28,6 +28,7 @@ describe('RuntimeConfigurationPanel directionality', () => {
     expect(screen.getByText(new Intl.NumberFormat('ar').format(configuration.revision))).toBeInTheDocument();
     expect(screen.getByDisplayValue('https://gateway.example/v1')).toHaveAttribute('dir', 'ltr');
     expect(screen.getByPlaceholderText(translateKey('ar', 'runtime.keyConfigured'))).toHaveAttribute('dir', 'ltr');
+    expect(screen.getByText(translateKey('ar', 'runtime.max1Gib', { max: 1 }))).toBeInTheDocument();
     expect(screen.getByText(translateKey('ar', 'runtime.timeoutRange', { min: 1, max: 86_400 }))).toBeInTheDocument();
     expect(screen.getByText(translateKey('ar', 'runtime.pollRange', { min: 0.01, max: 3600 }))).toBeInTheDocument();
     const numericInputs = screen.getAllByRole('spinbutton');

@@ -32,13 +32,18 @@ import { formatCapitalAmount, formatCompactNumber, formatDateTime, formatNumber,
 
 function ready(value: unknown) { return typeof value === 'boolean' ? value : Boolean((value as { ready?: boolean } | undefined)?.ready); }
 
+export function CanonicalFieldList({ fields }: { fields?: string[] }) {
+  const value = fields?.slice(0, 6).join(', ');
+  return value ? <bdi dir="ltr">{value}</bdi> : <>—</>;
+}
+
 const dataSourceColumns: ColumnDef<DataSource, unknown>[] = [
   { accessorKey: 'name', header: 'Source', meta: { messageKey: 'admin.source' } },
   { accessorKey: 'provider', header: 'Provider', meta: { messageKey: 'admin.provider' } },
   { accessorKey: 'state', header: 'State', meta: { messageKey: 'research.state', localizedSort: true }, cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
   { accessorKey: 'preflight_state', header: 'Preflight', meta: { messageKey: 'admin.preflight', localizedSort: true }, cell: ({ getValue }) => <StateBadge state={String(getValue() ?? 'UNKNOWN')} /> },
   { accessorKey: 'update_cadence', header: 'Cadence', meta: { messageKey: 'admin.cadence' } },
-  { id: 'fields', header: 'Fields', meta: { messageKey: 'admin.fields' }, cell: ({ row }) => <span className="qz-list-subtitle">{row.original.fields?.slice(0, 6).join(', ') || '—'}</span> },
+  { id: 'fields', header: 'Fields', meta: { messageKey: 'admin.fields' }, cell: ({ row }) => <span className="qz-list-subtitle"><CanonicalFieldList fields={row.original.fields} /></span> },
 ];
 const datasetColumns: ColumnDef<DatasetRevision, unknown>[] = [
   { accessorKey: 'id', header: 'Revision', meta: { messageKey: 'admin.revision' }, cell: ({ getValue }) => <span className="qz-mono">{String(getValue()).slice(0, 12)}</span> },

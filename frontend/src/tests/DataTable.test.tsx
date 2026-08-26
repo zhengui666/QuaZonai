@@ -33,10 +33,10 @@ const stringNumericColumns: ColumnDef<StringNumericRow, unknown>[] = [
   { accessorKey: 'deployable', header: 'Deployable', cell: ({ getValue }) => <span className="qz-number">{formatNumber(getValue() as string)}</span> },
 ];
 
-interface ExactStringNumericRow { name: string; deployable: string }
+interface ExactStringNumericRow { name: string; deployable: string | number }
 const exactStringNumericColumns: ColumnDef<ExactStringNumericRow, unknown>[] = [
   { accessorKey: 'name', header: 'Name' },
-  { accessorKey: 'deployable', header: 'Deployable', cell: ({ getValue }) => <span className="qz-number">{formatCapitalAmount(getValue() as string)}</span> },
+  { accessorKey: 'deployable', header: 'Deployable', cell: ({ getValue }) => <span className="qz-number">{formatCapitalAmount(getValue() as string | number)}</span> },
 ];
 
 interface CapabilityRow { name: string; capabilities: string[] }
@@ -257,6 +257,24 @@ describe('DataTable', () => {
     fireEvent.change(screen.getByPlaceholderText('Filtrar filas…'), { target: { value: localizedLarger } });
     expect(screen.getByText('Larger capital')).toBeInTheDocument();
     expect(screen.queryByText('Smaller capital')).not.toBeInTheDocument();
+  });
+
+  it('sorts mixed numeric and decimal-string values without lossy coercion', () => {
+    renderApp(
+      <DataTable
+        data={[
+          { name: 'Exact string', deployable: '1000000000000000000001' },
+          { name: 'Numeric value', deployable: 1e21 },
+        ]}
+        columns={exactStringNumericColumns}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Deployable' }));
+    expect(screen.getAllByText(/^(Exact string|Numeric value)$/).map((element) => element.textContent)).toEqual([
+      'Numeric value',
+      'Exact string',
+    ]);
   });
 
   it('does not generate percentage aliases for ordinary numeric columns', () => {

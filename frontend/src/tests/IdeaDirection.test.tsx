@@ -1,10 +1,17 @@
 import { fireEvent, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { IdeaComposerPage } from '../pages/IdeaComposerPage';
+import { translateKey } from '../i18n';
 import { jsonResponse, renderApp } from './testUtils';
 
 describe('IdeaComposer text direction', () => {
   beforeEach(() => vi.restoreAllMocks());
+
+  it('localizes the clarification-round limit', () => {
+    renderApp(<IdeaComposerPage />, { route: '/ideas', locale: 'ar' });
+
+    expect(screen.getByText(translateKey('ar', 'idea.oneRound', { count: 1 }))).toBeInTheDocument();
+  });
 
   it('lets user-authored and API-authored facts determine their own direction', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {

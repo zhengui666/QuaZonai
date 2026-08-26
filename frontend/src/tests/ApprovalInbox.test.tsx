@@ -1,6 +1,7 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApprovalInboxPage, formatDeployableCapital } from '../pages/ApprovalInboxPage';
+import { formatPlainDecimalString } from '../lib/format';
 import { jsonResponse, renderApp } from './testUtils';
 
 describe('ApprovalInbox', () => {
@@ -47,6 +48,7 @@ describe('ApprovalInbox', () => {
     expect(formatDeployableCapital('ar', '0.0004')).toBe(new Intl.NumberFormat('ar', { maximumSignificantDigits: 21 }).format(0.0004));
     expect(formatDeployableCapital('en', '9007199254740993')).toBe('9,007,199,254,740,993');
     expect(formatDeployableCapital('en', '0.123456789012345678901')).toBe('0.123456789012345678901');
+    expect(formatDeployableCapital('ar', '2.5E-4')).toBe(formatPlainDecimalString('0.00025', 'ar'));
   });
 
 
@@ -87,6 +89,27 @@ describe('ApprovalInbox', () => {
 
     const amount = formatDeployableCapital('ar', 100000);
     expect(await screen.findByText(`USD ${amount}`, { selector: 'bdi' })).toHaveAttribute('dir', 'ltr');
+  });
+
+  it('keeps structured human reports in an LTR JSON isolation boundary', async () => {
+    const humanReport = { note: ['EUR/USD', 'سبب عربي'] };
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = String(input);
+      if (url.endsWith('/approvals')) return jsonResponse([{
+        id: 'a-report',
+        candidate_id: 'candidate-12345678',
+        purpose: 'PAPER',
+        state: 'PENDING',
+        candidate: { id: 'candidate-12345678', portfolio_program_id: 'pp-1', state: 'READY', mandate_name: 'Core Growth' },
+        human_report: humanReport,
+      }]);
+      if (url.endsWith('/downstream-systems')) return jsonResponse([]);
+      return jsonResponse({}, 404);
+    });
+
+    renderApp(<ApprovalInboxPage />, { route: '/approvals', locale: 'ar' });
+
+    expect(await screen.findByText(JSON.stringify(humanReport), { selector: 'bdi' })).toHaveAttribute('dir', 'ltr');
   });
 
 });

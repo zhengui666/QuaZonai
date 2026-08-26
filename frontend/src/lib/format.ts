@@ -23,6 +23,8 @@ export function formatNumber(value?: number | string | null, options?: Intl.Numb
 
 const capitalNumberFormatOptions = { maximumSignificantDigits: 21 } as const;
 const plainDecimalPattern = /^([+-]?)(\d*)(?:\.(\d*))?$/;
+const scientificDecimalPattern = /^([+-]?)(?:(\d+)(?:\.(\d*))?|\.(\d+))[eE]([+-]?\d+)$/;
+const maxExpandedDecimalLength = 10_000;
 
 type PlainDecimal = {
   sign: -1 | 1;
@@ -30,8 +32,50 @@ type PlainDecimal = {
   fraction: string;
 };
 
+function expandScientificDecimalString(value: string): string | null {
+  const match = scientificDecimalPattern.exec(value);
+  if (match === null) return null;
+
+  const integerDigits = match[2] ?? '';
+  const fractionalDigits = match[3] ?? match[4] ?? '';
+  const digits = integerDigits + fractionalDigits;
+  if (!digits) return null;
+
+  const exponentToken = match[5] ?? '';
+  const exponentMagnitude = exponentToken.replace(/^[+-]?0*/, '') || '0';
+  if (exponentMagnitude.length > 5) return null;
+  const exponent = BigInt(exponentToken);
+  const decimalIndex = BigInt(integerDigits.length) + exponent;
+  const digitLength = BigInt(digits.length);
+  const maxLength = BigInt(maxExpandedDecimalLength);
+
+  const expandedLength = decimalIndex <= 0n
+    ? 2n - decimalIndex + digitLength
+    : decimalIndex >= digitLength
+      ? decimalIndex
+      : digitLength + 1n;
+  if (expandedLength > maxLength) return null;
+
+  let body: string;
+  if (decimalIndex <= 0n) {
+    body = `0.${'0'.repeat(Number(-decimalIndex))}${digits}`;
+  } else if (decimalIndex >= digitLength) {
+    body = `${digits}${'0'.repeat(Number(decimalIndex - digitLength))}`;
+  } else {
+    const position = Number(decimalIndex);
+    body = `${digits.slice(0, position)}.${digits.slice(position)}`;
+  }
+  return `${match[1] ?? ''}${body}`;
+}
+
+function normalizeDecimalString(value: string): string | null {
+  return plainDecimalPattern.test(value) ? value : expandScientificDecimalString(value);
+}
+
 function parsePlainDecimal(value: string): PlainDecimal | null {
-  const match = plainDecimalPattern.exec(value);
+  const normalizedValue = normalizeDecimalString(value);
+  if (normalizedValue === null) return null;
+  const match = plainDecimalPattern.exec(normalizedValue);
   if (match === null) return null;
   const rawInteger = match[2] ?? '';
   const rawFraction = match[3] ?? '';
@@ -65,7 +109,9 @@ export function comparePlainDecimalStrings(left: string, right: string): number 
 }
 
 export function formatPlainDecimalString(value: string, locale: string): string | null {
-  const match = plainDecimalPattern.exec(value);
+  const normalizedValue = normalizeDecimalString(value);
+  if (normalizedValue === null) return null;
+  const match = plainDecimalPattern.exec(normalizedValue);
   if (match === null) return null;
   const sign = match[1] ?? '';
   const integerDigits = match[2] ?? '';

@@ -42,6 +42,18 @@ function finiteNumericValue(value: unknown): number | undefined {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : undefined;
 }
+
+const decimalSortNumberFormat = new Intl.NumberFormat('en-US', {
+  useGrouping: false,
+  maximumSignificantDigits: 21,
+});
+
+function exactDecimalSortValue(value: unknown): string | undefined {
+  if (typeof value === 'string') return value.trim() || undefined;
+  if (typeof value === 'number' && Number.isFinite(value)) return decimalSortNumberFormat.format(value);
+  return undefined;
+}
+
 function numericSearchValues(value: number, locale: Locale, meta?: LocalizedColumnMeta): string[] {
   const values = [
     String(value),
@@ -164,8 +176,10 @@ export function DataTable<T>({
     const rawRight = rowB.getValue(columnId);
     const left = rawLeft === undefined ? objectField(rowA.original, columnId) : rawLeft;
     const right = rawRight === undefined ? objectField(rowB.original, columnId) : rawRight;
-    const exactDecimalComparison = typeof left === 'string' && typeof right === 'string'
-      ? comparePlainDecimalStrings(left.trim(), right.trim())
+    const leftDecimal = exactDecimalSortValue(left);
+    const rightDecimal = exactDecimalSortValue(right);
+    const exactDecimalComparison = leftDecimal !== undefined && rightDecimal !== undefined
+      ? comparePlainDecimalStrings(leftDecimal, rightDecimal)
       : undefined;
     if (exactDecimalComparison !== undefined) return exactDecimalComparison;
     const leftNumber = finiteNumericValue(left);

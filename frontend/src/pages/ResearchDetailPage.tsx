@@ -37,7 +37,7 @@ const evidenceColumns: ColumnDef<ActivityEvent, unknown>[] = [
 function eventSummary(event: ActivityEvent): ReactNode {
   const value = event.payload?.summary ?? event.payload?.result ?? event.payload?.classification ?? event.payload?.evidence;
   if (value === undefined || value === null) return <Translated source="Structured event recorded." />;
-  return typeof value === 'string' ? value : JSON.stringify(value);
+  return typeof value === 'string' ? <bdi dir="auto">{value}</bdi> : <bdi dir="ltr">{JSON.stringify(value)}</bdi>;
 }
 
 function extractOhlc(events: Array<{ payload?: Record<string, unknown> }>): OhlcPoint[] {
@@ -131,7 +131,7 @@ export function ResearchDetailPage() {
         {evidenceEvents.length ? <DataTable data={evidenceEvents} columns={evidenceColumns} ariaLabel={t('research.evidenceLedger')} initialPageSize={20} getRowId={(event) => String(event.id)} /> : <EmptyState title="No experiment evidence yet" description="Structured experiment, evaluation and evidence events will appear here when returned by the Program activity API." />}
       </Section>
       <Section title="Agent activity" meta={plural(structuredEventForms, events.length)}>
-        {events.length ? <div className="qz-panel qz-panel-pad qz-timeline">{events.slice(0, 40).map((event, index) => <div key={String(event.id)} className="qz-timeline-item" data-active={index === 0}><div className="qz-timeline-title"><bdi dir="auto">{humanize(event.kind)}</bdi></div><div className="qz-timeline-meta qz-number">{formatDateTime(event.created_at)}{event.mission_id ? <> · <bdi dir="ltr">{event.mission_id.slice(0, 8)}</bdi></> : null}</div>{event.payload?.summary ? <div className="qz-timeline-body" dir="auto">{String(event.payload.summary)}</div> : null}</div>)}</div> : <EmptyState title="No activity yet" description="Agent commands, test exits, Domain events and material evidence appear here without exposing hidden chain-of-thought." />}
+        {events.length ? <div className="qz-panel qz-panel-pad qz-timeline">{events.slice(0, 40).map((event, index) => <div key={String(event.id)} className="qz-timeline-item" data-active={index === 0}><div className="qz-timeline-title"><bdi dir="auto">{humanize(event.kind)}</bdi></div><div className="qz-timeline-meta qz-number">{formatDateTime(event.created_at)}{event.mission_id ? <> · <bdi dir="ltr">{event.mission_id.slice(0, 8)}</bdi></> : null}</div>{event.payload?.summary ? <div className="qz-timeline-body" dir="auto">{eventSummary(event)}</div> : null}</div>)}</div> : <EmptyState title="No activity yet" description="Agent commands, test exits, Domain events and material evidence appear here without exposing hidden chain-of-thought." />}
       </Section>
     </>
   );

@@ -57,6 +57,8 @@ interface OperatorAuthContextValue {
 
 const OperatorAuthContext = createContext<OperatorAuthContextValue | null>(null);
 export const AUTH_SESSION_REVALIDATION_INTERVAL_MS = 30_000;
+export const TOTP_CODE_LENGTH = 6;
+const TOTP_CODE_PATTERN = `[0-9]{${TOTP_CODE_LENGTH}}`;
 
 export function useOperatorAuth(): OperatorAuthContextValue {
   const value = useContext(OperatorAuthContext);
@@ -78,7 +80,7 @@ function normalizeTotpCode(value: string): string {
     .replace(/[\u0660-\u0669]/g, (digit) => String(digit.charCodeAt(0) - 0x0660))
     .replace(/[\u06f0-\u06f9]/g, (digit) => String(digit.charCodeAt(0) - 0x06f0))
     .replace(/\D/g, '')
-    .slice(0, 6);
+    .slice(0, TOTP_CODE_LENGTH);
 }
 
 function LoginPage({ onAuthenticated }: { onAuthenticated: (session: SessionView) => void }) {
@@ -155,7 +157,7 @@ function LoginPage({ onAuthenticated }: { onAuthenticated: (session: SessionView
           <div className="qz-auth-heading">
             <p className="qz-auth-eyebrow">{t('auth.operatorAccess')}</p>
             <h1 id="qz-auth-title">{t('auth.verifyIdentity')}</h1>
-            <p>{t('auth.loginDescription')}</p>
+            <p>{t('auth.loginDescription', { digits: TOTP_CODE_LENGTH })}</p>
           </div>
           <form className="qz-auth-form" onSubmit={submit}>
             <label>
@@ -189,10 +191,10 @@ function LoginPage({ onAuthenticated }: { onAuthenticated: (session: SessionView
                 dir="ltr"
                 disabled={submitting}
                 inputMode="numeric"
-                maxLength={6}
+                maxLength={TOTP_CODE_LENGTH}
                 onChange={(event) => setTotpCode(normalizeTotpCode(event.target.value))}
-                pattern="[0-9]{6}"
-                placeholder="000000"
+                pattern={TOTP_CODE_PATTERN}
+                placeholder={'0'.repeat(TOTP_CODE_LENGTH)}
                 required
                 value={totpCode}
               />
@@ -210,7 +212,7 @@ function LoginPage({ onAuthenticated }: { onAuthenticated: (session: SessionView
               </span>
             </label>
             {errorMessage !== null ? <div className="qz-auth-error" dir="auto" role="alert">{errorMessage}</div> : null}
-            <button className="qz-auth-submit" disabled={submitting || totpCode.length !== 6} type="submit">
+            <button className="qz-auth-submit" disabled={submitting || totpCode.length !== TOTP_CODE_LENGTH} type="submit">
               {submitting ? t('auth.verifying') : t('auth.signIn')}
             </button>
           </form>

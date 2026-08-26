@@ -37,6 +37,28 @@ describe('EvidencePanel', () => {
 
     expect(screen.getByText('Search Adjusted Quality')).toHaveAttribute('dir', 'ltr');
   });
+
+  it('isolates mixed-direction nested evidence leaves in Arabic', () => {
+    render(
+      <I18nProvider initialLocale="ar">
+        <Theme appearance="dark" accentColor="jade" grayColor="sage" radius="small" scaling="90%">
+          <EvidencePanel approval={{
+            ...approval,
+            evidence_summary: {
+              mixed: ['EUR/USD', 'تحسن'],
+              nested: { source: 'EUR/USD', note: 'دليل عربي' },
+            },
+          }} />
+        </Theme>
+      </I18nProvider>,
+    );
+
+    expect(screen.getAllByText('EUR/USD', { selector: 'bdi' })).toHaveLength(2);
+    screen.getAllByText('EUR/USD', { selector: 'bdi' }).forEach((value) => expect(value).toHaveAttribute('dir', 'auto'));
+    expect(screen.getByText('تحسن', { selector: 'bdi' })).toHaveAttribute('dir', 'auto');
+    expect(screen.getByText('دليل عربي', { selector: 'bdi' })).toHaveAttribute('dir', 'auto');
+    expect(screen.getByText('note', { selector: 'bdi' })).toHaveAttribute('dir', 'ltr');
+  });
   it('preserves small nonzero evidence percentages', () => {
     const value = 0.00004;
     expect(formatEvidenceValue('es', value)).toBe(

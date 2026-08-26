@@ -66,7 +66,7 @@ function ApprovalCard({ approval, systems }: { approval: ApprovalSnapshot; syste
         <div><div className="qz-label" style={{ marginBottom: 7 }}>{t('approval.level2')}</div><EvidencePanel approval={approval} /></div>
         <div className="qz-panel qz-panel-pad qz-form-grid">
           <div><div className="qz-label">{t('approval.capitalContext')}</div><div className="qz-list-title qz-number" style={{ marginTop: 5 }}><bdi dir="ltr">{approval.capital_context?.base_currency ?? '—'} {formatDeployableCapital(locale, approval.capital_context?.deployable_capital)}</bdi></div><div className="qz-list-subtitle">{t('approval.observedDate', { date: formatDateTime(approval.capital_context?.observed_at) })}</div></div>
-          <div><div className="qz-label">{t('approval.humanReport')}</div><div className="qz-list-subtitle" dir="auto" style={{ whiteSpace: 'normal', lineHeight: 1.55 }}>{typeof approval.human_report === 'string' ? approval.human_report : approval.human_report ? JSON.stringify(approval.human_report) : t('approval.noReport')}</div></div>
+          <div><div className="qz-label">{t('approval.humanReport')}</div><div className="qz-list-subtitle" dir="auto" style={{ whiteSpace: 'normal', lineHeight: 1.55 }}>{typeof approval.human_report === 'string' ? <bdi dir="auto">{approval.human_report}</bdi> : approval.human_report ? <bdi dir="ltr">{JSON.stringify(approval.human_report)}</bdi> : t('approval.noReport')}</div></div>
         </div>
       </div>
       <div className="qz-approval-actions">

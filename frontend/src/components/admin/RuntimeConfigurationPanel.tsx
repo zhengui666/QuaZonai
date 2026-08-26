@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 42282)
-Total output lines: 1120
-
 import { Button, Switch, TextField } from '@radix-ui/themes';
 import { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../../i18n';
@@ -141,7 +138,7 @@ export function RuntimeConfigurationPanel({ configuration }: { configuration: Ru
 
         <div style={{ margin: '22px 0 10px' }} className="qz-label">{t('runtime.workerLimits')}</div>
         <div className="qz-form-grid">
-          <label className="qz-field"><span className="qz-label">{t('runtime.maxWheel')}</span><TextField.Root dir="ltr" type="number" min="1" max={String(MAX_PLUGIN_WHEEL_BYTES)} step="1" value={maxWheelBytes} onChange={(event) => setMaxWheelBytes(event.target.value)} /><span className="qz-list-subtitle">{t('runtime.max1Gib')}</span></label>
+          <label className="qz-field"><span className="qz-label">{t('runtime.maxWheel')}</span><TextField.Root dir="ltr" type="number" min="1" max={String(MAX_PLUGIN_WHEEL_BYTES)} step="1" value={maxWheelBytes} onChange={(event) => setMaxWheelBytes(event.target.value)} /><span className="qz-list-subtitle">{t('runtime.max1Gib', { max: MAX_PLUGIN_WHEEL_BYTES / 1024 ** 3 })}</span></label>
           <label className="qz-field"><span className="qz-label">{t('runtime.validationTimeout')}</span><TextField.Root dir="ltr" type="number" min="1" max={String(MAX_WORKER_TIMEOUT_SECONDS)} step="1" value={pluginValidationTimeout} onChange={(event) => setPluginValidationTimeout(event.target.value)} /></label>
           <label className="qz-field"><span className="qz-label">{t('runtime.bundleTimeout')}</span><TextField.Root dir="ltr" type="number" min="1" max={String(MAX_WORKER_TIMEOUT_SECONDS)} step="1" value={bundleBuildTimeout} onChange={(event) => setBundleBuildTimeout(event.target.value)} /></label>
           <label className="qz-field"><span className="qz-label">{t('runtime.pluginJobTimeout')}</span><TextField.Root dir="ltr" type="number" min="1" max={String(MAX_WORKER_TIMEOUT_SECONDS)} step="1" value={pluginJobTimeout} onChange={(event) => setPluginJobTimeout(event.target.value)} /></label>
