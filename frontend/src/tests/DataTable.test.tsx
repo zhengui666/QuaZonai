@@ -44,6 +44,11 @@ const runtimeColumns: ColumnDef<RuntimeRow, unknown>[] = [
   { accessorKey: 'event', header: 'Event', cell: ({ getValue }) => <span>{humanize(String(getValue()))}</span> },
 ];
 
+interface AlphaRow { alpha: string }
+const alphaColumns: ColumnDef<AlphaRow, unknown>[] = [
+  { accessorKey: 'alpha', header: 'Alpha', meta: { messageKey: 'alpha.name' } },
+];
+
 describe('DataTable', () => {
   it('filters raw values using TanStack Table', () => {
     renderApp(<DataTable data={[{ name: 'Beta', state: 'ACTIVE' }, { name: 'Alpha', state: 'COOLING' }]} columns={columns} />);
@@ -176,5 +181,17 @@ describe('DataTable', () => {
     expect(screen.getByText('Misión iniciada')).toBeInTheDocument();
     fireEvent.change(screen.getByPlaceholderText('Filtrar filas…'), { target: { value: 'Misión iniciada' } });
     expect(screen.getByText('Misión iniciada')).toBeInTheDocument();
+  });
+
+
+  it('uses semantic keys for headers whose source text has multiple presentation meanings', () => {
+    render(
+      <I18nProvider initialLocale="ar">
+        <Theme appearance="dark" accentColor="jade" grayColor="sage" radius="small" scaling="90%">
+          <DataTable data={[{ alpha: 'Momentum' }]} columns={alphaColumns} />
+        </Theme>
+      </I18nProvider>,
+    );
+    expect(screen.getByText('ألفا')).toBeInTheDocument();
   });
 });

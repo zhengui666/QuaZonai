@@ -27,9 +27,16 @@ describe('HomePage text direction', () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
       const url = String(input);
       if (url.endsWith('/readiness') || url.endsWith('/system/health')) return jsonResponse({});
+      if (url.endsWith('/approvals')) return jsonResponse([{
+        id: 'approval-1',
+        candidate_id: 'candidate-12345678',
+        purpose: 'PAPER',
+        state: 'PENDING',
+        valid_until: '2030-01-01T00:00:00Z',
+        candidate: { mandate_name: 'Core Growth — EUR/USD' },
+      }]);
       if ([
         '/research-programs',
-        '/approvals',
         '/alpha-library',
         '/handoffs',
         '/portfolio-programs',
@@ -37,10 +44,11 @@ describe('HomePage text direction', () => {
       return jsonResponse({}, 404);
     });
 
-    renderApp(<HomePage />);
+    renderApp(<HomePage />, { locale: 'ar' });
     const identity = await screen.findByText((_, element) => (
       element?.tagName === 'BDI' && element.textContent === 'Portfolio Program EUR/USD-'
     ));
     expect(identity).toHaveAttribute('dir', 'auto');
+    expect(screen.getByText('Core Growth — EUR/USD')).toHaveAttribute('dir', 'auto');
   });
 });

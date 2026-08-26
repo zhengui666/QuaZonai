@@ -15,7 +15,7 @@ import type { CandidateMember } from '../lib/api/types';
 import { formatPercent, humanize, readMetric } from '../lib/format';
 
 const cols: ColumnDef<CandidateMember, unknown>[] = [
-  { accessorKey: 'alpha_name', header: 'Alpha', cell: ({ row }) => row.original.alpha_name ?? row.original.alpha_qualification_id.slice(0, 10) },
+  { accessorKey: 'alpha_name', header: 'Alpha', meta: { messageKey: 'alpha.name' }, cell: ({ row }) => row.original.alpha_name ?? row.original.alpha_qualification_id.slice(0, 10) },
   { accessorKey: 'role', header: 'Role', cell: ({ getValue }) => humanize(String(getValue())) },
   { accessorKey: 'universe', header: 'Universe' },
   { accessorKey: 'target_weight', header: 'Target weight', meta: { searchFormat: 'percent', searchDecimals: 1 }, cell: ({ getValue }) => <span className="qz-number">{formatPercent(getValue() as number | null)}</span> },

@@ -187,6 +187,7 @@ export const messages = {
   'research.noActivity': m('No activity yet', '暂无活动', '暫無活動', 'アクティビティはまだありません', '아직 활동 없음', 'Aún no hay actividad', 'لا يوجد نشاط بعد'),
   'research.noActivityDesc': m('Agent commands, test exits, Domain events and material evidence appear here without exposing hidden chain-of-thought.', 'Agent 命令、测试退出状态、Domain 事件与实质证据会显示在这里，但不会暴露隐藏思维链。', 'Agent 命令、測試退出狀態、Domain 事件與實質證據會顯示在這裡，但不會暴露隱藏思維鏈。', 'Agentコマンド、テスト終了、Domainイベント、重要証拠を、隠れた思考連鎖を公開せずに表示します。', 'Agent 명령, 테스트 종료, Domain 이벤트 및 중요 증거를 숨겨진 사고 과정을 노출하지 않고 표시합니다.', 'Los comandos del Agent, salidas de pruebas, eventos Domain y evidencia material aparecen aquí sin exponer la cadena de pensamiento oculta.', 'تظهر هنا أوامر Agent ونتائج الاختبارات وأحداث Domain والأدلة الجوهرية دون كشف سلسلة التفكير الخفية.'),
 
+  'alpha.name': m('Alpha', 'Alpha', 'Alpha', 'アルファ', '알파', 'Alfa', 'ألفا'),
   'alpha.universe': m('Universe', 'Universe', 'Universe', 'Universe', 'Universe', 'Universe', 'Universe'),
   'alpha.horizon': m('Horizon', '周期', '週期', 'ホライズン', '기간', 'Horizonte', 'الأفق'),
   'alpha.role': m('Role', '角色', '角色', '役割', '역할', 'Rol', 'الدور'),

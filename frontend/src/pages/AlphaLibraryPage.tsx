@@ -10,7 +10,7 @@ import type { AlphaQualification } from '../lib/api/types';
 import { formatDateTime, formatNumber, humanize, readMetric } from '../lib/format';
 
 const columns: ColumnDef<AlphaQualification, unknown>[] = [
-  { accessorKey: 'name', header: 'Alpha', cell: ({ row }) => <div><div className="qz-list-title" dir="auto"><Link to={`/alpha/${row.original.id}`}>{row.original.name ?? `Alpha ${row.original.id.slice(0, 8)}`}</Link></div><div className="qz-list-subtitle qz-mono">{row.original.id}</div></div> },
+  { accessorKey: 'name', header: 'Alpha', meta: { messageKey: 'alpha.name' }, cell: ({ row }) => <div><div className="qz-list-title" dir="auto"><Link to={`/alpha/${row.original.id}`}>{row.original.name ?? `Alpha ${row.original.id.slice(0, 8)}`}</Link></div><div className="qz-list-subtitle qz-mono">{row.original.id}</div></div> },
   { accessorKey: 'universe', header: 'Universe', cell: ({ row }) => row.original.universe ?? row.original.universe_version_id?.slice(0, 8) ?? '—' },
   { accessorKey: 'horizon', header: 'Horizon', cell: ({ getValue }) => String(getValue() ?? '—') },
   { accessorKey: 'role', header: 'Role', cell: ({ getValue }) => humanize(String(getValue())) },
