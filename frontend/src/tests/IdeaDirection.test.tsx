@@ -42,7 +42,7 @@ describe('IdeaComposer text direction', () => {
     expect(screen.getByRole('textbox', { name: 'Which market symbol: EUR/USD?' })).toHaveAttribute('dir', 'auto');
 
     const overlap = screen.getByText((_, element) => (
-      element?.getAttribute('dir') === 'auto' && element.textContent === 'DUPLICATE · Existing program covers EUR/USD drift.'
+      element?.getAttribute('dir') === 'auto' && element.textContent === 'Duplicate · Existing program covers EUR/USD drift.'
     ));
     expect(overlap).toHaveAttribute('dir', 'auto');
   });

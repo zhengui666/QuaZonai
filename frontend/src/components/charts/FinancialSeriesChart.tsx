@@ -12,7 +12,7 @@ function toTime(value: string | number): Time {
 }
 
 export function formatFinancialTooltipValue(locale: Locale, value: number): string {
-  return new Intl.NumberFormat(locale, { minimumFractionDigits: 4, maximumFractionDigits: 4 }).format(value);
+  return new Intl.NumberFormat(locale, { maximumSignificantDigits: 15 }).format(value);
 }
 
 export function formatFinancialTooltipTime(locale: Locale, time: Time): string {

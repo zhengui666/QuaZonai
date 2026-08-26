@@ -94,6 +94,16 @@ const labels: Record<string, DomainLabels> = {
   'Paper Evidence Insufficient': l('Paper Evidence Insufficient', 'Paper 证据不足', 'Paper 證據不足', 'Paper証拠が不十分', 'Paper 증거 부족', 'Evidencia Paper insuficiente', 'أدلة Paper غير كافية'),
   'Live Readiness Insufficient': l('Live Readiness Insufficient', 'Live 就绪度不足', 'Live 就緒度不足', 'Live準備状況が不十分', 'Live 준비 상태 부족', 'Preparación Live insuficiente', 'جاهزية Live غير كافية'),
   'Not Aligned With Original Idea': l('Not Aligned With Original Idea', '与原始构想不一致', '與原始構想不一致', '元のアイデアと不整合', '원래 아이디어와 불일치', 'No alineado con la idea original', 'غير متوافق مع الفكرة الأصلية'),
+  Database: l('Database', '数据库', '資料庫', 'データベース', '데이터베이스', 'Base de datos', 'قاعدة البيانات'),
+  Worker: l('Worker', '工作进程', '工作程序', 'ワーカー', '워커', 'Proceso de trabajo', 'عامل'),
+  'Agent Worker': l('Agent Worker', '代理工作进程', '代理工作程序', 'エージェントワーカー', '에이전트 워커', 'Proceso de agente', 'عامل الوكيل'),
+  Evaluator: l('Evaluator', '评估器', '評估器', '評価器', '평가기', 'Evaluador', 'المقيِّم'),
+  Storage: l('Storage', '存储', '儲存', 'ストレージ', '스토리지', 'Almacenamiento', 'التخزين'),
+  Codex: l('Codex', 'Codex 服务', 'Codex 服務', 'Codex サービス', 'Codex 서비스', 'Servicio Codex', 'خدمة Codex'),
+  Duplicate: l('Duplicate', '重复', '重複', '重複', '중복', 'Duplicado', 'مكرر'),
+  Branch: l('Branch', '分支', '分支', '分岐', '분기', 'Rama', 'فرع'),
+  'Related Program': l('Related Program', '关联项目', '關聯專案', '関連プログラム', '관련 프로그램', 'Programa relacionado', 'برنامج مرتبط'),
+  New: l('New', '新建', '新增', '新規', '새로 만들기', 'Nuevo', 'جديد'),
   Other: l('Other', '其他', '其他', 'その他', '기타', 'Otro', 'أخرى'),
 };
 

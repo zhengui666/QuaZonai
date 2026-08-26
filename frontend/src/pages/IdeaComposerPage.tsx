@@ -7,6 +7,7 @@ import { PageHeader } from '../components/ui/PageHeader';
 import { Section } from '../components/ui/Section';
 import { useI18n } from '../i18n';
 import { useIdeaPreview, useStartResearch } from '../lib/api/hooks';
+import { humanize } from '../lib/format';
 
 export function IdeaComposerPage() {
   const { t } = useI18n();
@@ -61,7 +62,7 @@ export function IdeaComposerPage() {
               {result.overlap ? (
                 <Callout.Root color="amber" size="1">
                   <Callout.Icon><WarningCircleIcon /></Callout.Icon>
-                  <Callout.Text dir="auto"><strong>{result.overlap.kind}</strong> · {result.overlap.rationale ?? result.overlap.recommendation ?? t('idea.overlapFallback')}</Callout.Text>
+                  <Callout.Text dir="auto"><strong>{humanize(result.overlap.kind)}</strong> · {result.overlap.rationale ?? result.overlap.recommendation ?? t('idea.overlapFallback')}</Callout.Text>
                 </Callout.Root>
               ) : (
                 <Callout.Root color="green" size="1">

@@ -10,7 +10,7 @@ function toTime(value: string | number): Time {
 }
 
 export function formatCandlestickTooltipValue(locale: Locale, value: number): string {
-  return new Intl.NumberFormat(locale, { minimumFractionDigits: 4, maximumFractionDigits: 4 }).format(value);
+  return new Intl.NumberFormat(locale, { maximumSignificantDigits: 15 }).format(value);
 }
 
 export function formatCandlestickTooltipTime(locale: Locale, time: Time): string {
@@ -64,6 +64,7 @@ export function CandlestickChart({ data }: { data: OhlcPoint[] }) {
     }
     const tooltip = document.createElement('div');
     tooltip.className = 'qz-chart-tooltip';
+    tooltip.dir = 'ltr';
     tooltip.hidden = true;
     ref.current.appendChild(tooltip);
     chart.subscribeCrosshairMove((param) => {
@@ -71,7 +72,22 @@ export function CandlestickChart({ data }: { data: OhlcPoint[] }) {
       const value = param.seriesData.get(candle) as { open?: number; high?: number; low?: number; close?: number } | undefined;
       if (typeof value?.close !== 'number') { tooltip.hidden = true; return; }
       const formatValue = (item: number | undefined) => typeof item === 'number' ? formatCandlestickTooltipValue(locale, item) : '—';
-      tooltip.textContent = `${formatCandlestickTooltipTime(locale, param.time)} · O ${formatValue(value.open)} · H ${formatValue(value.high)} · L ${formatValue(value.low)} · C ${formatValue(value.close)}`;
+      const timestamp = document.createElement('bdi');
+      timestamp.dir = 'auto';
+      timestamp.textContent = formatCandlestickTooltipTime(locale, param.time);
+      tooltip.replaceChildren(timestamp);
+      const fields: Array<[string, number | undefined]> = [
+        ['O', value.open],
+        ['H', value.high],
+        ['L', value.low],
+        ['C', value.close],
+      ];
+      for (const [label, item] of fields) {
+        const field = document.createElement('bdi');
+        field.dir = 'ltr';
+        field.textContent = `${label} ${formatValue(item)}`;
+        tooltip.append(' · ', field);
+      }
       tooltip.hidden = false;
       tooltip.style.left = `${Math.min(param.point.x + 12, Math.max(8, ref.current!.clientWidth - 310))}px`;
       tooltip.style.top = `${Math.max(8, param.point.y - 34)}px`;

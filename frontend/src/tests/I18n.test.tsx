@@ -124,7 +124,7 @@ describe('i18n', () => {
     expect(screen.getByText('EUR/USD operator note')).toHaveAttribute('dir', 'auto');
   });
 
-  it('localizes reachable lifecycle, portfolio, role, mission, degradation, and plugin capability values', () => {
+  it('localizes reachable lifecycle, portfolio, runtime-health, overlap, and plugin capability values', () => {
     expect(translateDomainLabel('zh-CN', 'Received')).toBe('已接收');
     expect(translateDomainLabel('ja', 'Installing')).toBe('インストール中');
     expect(translateDomainLabel('ko', 'Validating')).toBe('검증 중');
@@ -145,6 +145,16 @@ describe('i18n', () => {
     expect(translateDomainLabel('zh-CN', 'Historical Import')).toBe('历史导入');
     expect(translateDomainLabel('ja', 'Live Data')).toBe('リアルタイムデータ');
     expect(translateDomainLabel('es', 'Research Tool')).toBe('Herramienta de investigación');
+    expect(translateDomainLabel('zh-CN', 'Database')).toBe('数据库');
+    expect(translateDomainLabel('zh-TW', 'Worker')).toBe('工作程序');
+    expect(translateDomainLabel('ja', 'Agent Worker')).toBe('エージェントワーカー');
+    expect(translateDomainLabel('ko', 'Evaluator')).toBe('평가기');
+    expect(translateDomainLabel('es', 'Storage')).toBe('Almacenamiento');
+    expect(translateDomainLabel('ar', 'Codex')).toBe('خدمة Codex');
+    expect(translateDomainLabel('zh-CN', 'Duplicate')).toBe('重复');
+    expect(translateDomainLabel('ja', 'Branch')).toBe('分岐');
+    expect(translateDomainLabel('ko', 'Related Program')).toBe('관련 프로그램');
+    expect(translateDomainLabel('ar', 'New')).toBe('جديد');
   });
 
   it('keeps arbitrary schema identifiers language-neutral', () => {
