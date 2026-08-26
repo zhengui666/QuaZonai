@@ -29,6 +29,9 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 
   const response = await fetch(path, { ...options, headers, credentials: 'same-origin' });
   if (!response.ok) {
+    if (response.status === 401 && !path.startsWith('/api/v1/auth/') && typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('quazonai:auth-required'));
+    }
     let envelope: ApiErrorEnvelope = {};
     try {
       envelope = await response.json() as ApiErrorEnvelope;

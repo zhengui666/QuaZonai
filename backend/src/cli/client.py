@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import os
 from types import TracebackType
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
+
+from settings import SettingsError, validate_machine_api_token
 
 
 class CliClientError(RuntimeError):
@@ -30,10 +33,28 @@ def validate_loopback_endpoint(endpoint: str) -> str:
     return endpoint.rstrip("/")
 
 
+def _machine_token(explicit: str | None) -> str | None:
+    configured = explicit if explicit is not None else os.environ.get("QUAZONAI_API_TOKEN")
+    if configured is None or configured == "":
+        return None
+    try:
+        validate_machine_api_token(configured)
+    except SettingsError as exc:
+        raise CliClientError(str(exc)) from exc
+    return configured
+
+
 class ApiClient:
-    def __init__(self, endpoint: str, *, timeout: float = 30.0) -> None:
+    def __init__(
+        self,
+        endpoint: str,
+        *,
+        timeout: float = 30.0,
+        api_token: str | None = None,
+    ) -> None:
         self.endpoint = validate_loopback_endpoint(endpoint)
         self.timeout = timeout
+        self.api_token = _machine_token(api_token)
 
     def __enter__(self) -> "ApiClient":
         return self
@@ -57,14 +78,24 @@ class ApiClient:
     ) -> Any:
         if not path.startswith("/api/v1/"):
             raise CliClientError("CLI requests must target a fixed /api/v1 operation")
+        request_headers = dict(headers or {})
+        has_explicit_authorization = any(
+            name.casefold() == "authorization" for name in request_headers
+        )
+        if self.api_token is not None and not has_explicit_authorization:
+            request_headers.setdefault("Authorization", f"Bearer {self.api_token}")
         try:
             response = httpx.request(
                 method,
                 f"{self.endpoint}{path}",
                 json=json_body,
                 params=params,
-                headers=headers,
+                headers=request_headers,
                 timeout=self.timeout,
+                # The CLI only permits loopback endpoints.  Do not let a hostile
+                # or accidentally inherited proxy environment forward its
+                # machine Authorization credential elsewhere.
+                trust_env=False,
             )
         except httpx.HTTPError as exc:
             raise CliClientError(str(exc)) from exc

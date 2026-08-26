@@ -3,6 +3,17 @@ import type { ActivityEvent } from './api/types';
 
 const SSE_EVENT_NAME = 'qz-event';
 
+async function recheckOperatorSession(): Promise<void> {
+  try {
+    const response = await fetch('/api/v1/auth/session', { credentials: 'same-origin' });
+    if (response.status === 401) {
+      window.dispatchEvent(new Event('quazonai:auth-required'));
+    }
+  } catch {
+    // A transient network failure is not proof that the credential expired.
+  }
+}
+
 export function useEventStream(limit = 30) {
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [connected, setConnected] = useState(false);
@@ -10,7 +21,10 @@ export function useEventStream(limit = 30) {
   useEffect(() => {
     const source = new EventSource('/api/v1/events/stream');
     source.onopen = () => setConnected(true);
-    source.onerror = () => setConnected(false);
+    source.onerror = () => {
+      setConnected(false);
+      void recheckOperatorSession();
+    };
 
     const receive = (event: MessageEvent<string>) => {
       try {

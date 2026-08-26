@@ -10,12 +10,14 @@ import {
   ListIcon,
   MoonIcon,
   PaperPlaneTiltIcon,
+  SignOutIcon,
   SunIcon,
   TargetIcon,
 } from '@phosphor-icons/react';
 import { Button, DropdownMenu, Theme } from '@radix-ui/themes';
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useOperatorAuth } from '../../auth/AuthGate';
 import { PageSkeleton } from '../ui/Skeleton';
 
 const nav = [
@@ -40,12 +42,29 @@ function useThemeMode() {
 
 export function AppShell() {
   const [mode, setMode] = useThemeMode();
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
+  const { authEnabled, logout } = useOperatorAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const current = useMemo(
     () => nav.find((item) => (item.end ? location.pathname === item.to : location.pathname.startsWith(item.to)))?.label ?? 'QuaZonai',
     [location.pathname],
   );
+
+  async function signOut() {
+    if (signingOut) return;
+    setSigningOut(true);
+    setSignOutError(null);
+    try {
+      await logout();
+      navigate('/');
+    } catch (error) {
+      setSignOutError(error instanceof Error ? error.message : 'Sign out failed.');
+    } finally {
+      setSigningOut(false);
+    }
+  }
 
   return (
     <Theme appearance={mode} accentColor="jade" grayColor="sage" radius="small" scaling="90%">
@@ -70,6 +89,7 @@ export function AppShell() {
           <header className="qz-topbar">
             <div className="qz-topbar-title">{current}</div>
             <div className="qz-topbar-actions">
+              {signOutError ? <span className="qz-signout-error" role="alert">{signOutError}</span> : null}
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger>
                   <Button className="qz-mobile-nav-button" aria-label="Open navigation" size="1" variant="soft"><ListIcon size={16} /></Button>
@@ -78,11 +98,22 @@ export function AppShell() {
                   {nav.map(({ to, label, icon: Icon }) => (
                     <DropdownMenu.Item key={to} onSelect={() => navigate(to)}><Icon size={14} />{label}</DropdownMenu.Item>
                   ))}
+                  {authEnabled ? (
+                    <>
+                      <DropdownMenu.Separator />
+                      <DropdownMenu.Item disabled={signingOut} color="red" onSelect={() => { void signOut(); }}><SignOutIcon size={14} />Sign out</DropdownMenu.Item>
+                    </>
+                  ) : null}
                 </DropdownMenu.Content>
               </DropdownMenu.Root>
               <Button aria-label={`Switch to ${mode === 'dark' ? 'light' : 'dark'} theme`} size="1" variant="soft" onClick={() => setMode(mode === 'dark' ? 'light' : 'dark')}>
                 {mode === 'dark' ? <SunIcon size={15} /> : <MoonIcon size={15} />}
               </Button>
+              {authEnabled ? (
+                <Button aria-label="Sign out and forget this browser" disabled={signingOut} size="1" variant="soft" color="red" onClick={() => { void signOut(); }}>
+                  <SignOutIcon size={15} />
+                </Button>
+              ) : null}
             </div>
           </header>
           <div className="qz-content"><Suspense fallback={<PageSkeleton />}><Outlet /></Suspense></div>

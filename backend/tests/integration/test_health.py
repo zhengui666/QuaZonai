@@ -30,3 +30,22 @@ def test_openapi_is_available_only_at_explicit_path(
     response = client.get("/api/v1/openapi.json")
     assert response.status_code == 200
     assert response.json()["info"]["title"] == "QuaZonai API"
+
+
+def test_served_workbench_denies_framing_without_affecting_api(
+    engine: Engine,
+    settings: Settings,
+) -> None:
+    settings.frontend_dist.mkdir()
+    (settings.frontend_dist / "index.html").write_text("<main>QuaZonai</main>")
+    client = TestClient(create_app(settings=settings, engine=engine))
+
+    for path in ("/", "/administration"):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert response.headers["content-security-policy"] == "frame-ancestors 'none'"
+        assert response.headers["x-frame-options"] == "DENY"
+
+    openapi = client.get("/api/v1/openapi.json")
+    assert openapi.status_code == 200
+    assert openapi.json()["info"]["title"] == "QuaZonai API"
