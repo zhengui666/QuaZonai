@@ -15,20 +15,22 @@ import {
   TargetIcon,
 } from '@phosphor-icons/react';
 import { Button, DropdownMenu, Theme } from '@radix-ui/themes';
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import { Direction } from 'radix-ui';
+import { Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { useOperatorAuth } from '../../auth/AuthGate';
+import { isLogoutError, useOperatorAuth, type LogoutFailure } from '../../auth/AuthGate';
+import { localeLabels, localeOrder, useI18n, type Locale, type MessageKey } from '../../i18n';
 import { PageSkeleton } from '../ui/Skeleton';
 
-const nav = [
-  { to: '/', label: 'Dashboard', icon: HouseIcon, end: true },
-  { to: '/ideas', label: 'Idea Composer', icon: FlaskIcon },
-  { to: '/research', label: 'Research Observatory', icon: AtomIcon },
-  { to: '/alpha', label: 'Alpha Library', icon: ChartLineUpIcon },
-  { to: '/portfolio', label: 'Portfolio Lab', icon: CirclesFourIcon },
-  { to: '/approval', label: 'Candidate Approval', icon: TargetIcon },
-  { to: '/handoff', label: 'Handoff Center', icon: PaperPlaneTiltIcon },
-  { to: '/admin', label: 'Administration', icon: GearIcon },
+const nav: Array<{ to: string; labelKey: MessageKey; mobileKey?: MessageKey; icon: typeof HouseIcon; end?: boolean }> = [
+  { to: '/', labelKey: 'nav.dashboard', icon: HouseIcon, end: true },
+  { to: '/ideas', labelKey: 'nav.ideas', mobileKey: 'nav.mobile.ideas', icon: FlaskIcon },
+  { to: '/research', labelKey: 'nav.research', mobileKey: 'nav.mobile.research', icon: AtomIcon },
+  { to: '/alpha', labelKey: 'nav.alpha', mobileKey: 'nav.mobile.alpha', icon: ChartLineUpIcon },
+  { to: '/portfolio', labelKey: 'nav.portfolio', mobileKey: 'nav.mobile.portfolio', icon: CirclesFourIcon },
+  { to: '/approval', labelKey: 'nav.approval', icon: TargetIcon },
+  { to: '/handoff', labelKey: 'nav.handoff', icon: PaperPlaneTiltIcon },
+  { to: '/admin', labelKey: 'nav.admin', icon: GearIcon },
 ];
 
 function useThemeMode() {
@@ -40,17 +42,26 @@ function useThemeMode() {
   return [mode, setMode] as const;
 }
 
+export function LocaleDirectionProvider({ children }: { children: ReactNode }) {
+  const { locale } = useI18n();
+  return <Direction.Provider dir={localeLabels[locale].dir}>{children}</Direction.Provider>;
+}
+
 export function AppShell() {
   const [mode, setMode] = useThemeMode();
   const [signingOut, setSigningOut] = useState(false);
-  const [signOutError, setSignOutError] = useState<string | null>(null);
+  const [signOutError, setSignOutError] = useState<LogoutFailure | null>(null);
+  const { locale, setLocale, t } = useI18n();
   const { authEnabled, logout } = useOperatorAuth();
   const location = useLocation();
   const navigate = useNavigate();
-  const current = useMemo(
-    () => nav.find((item) => (item.end ? location.pathname === item.to : location.pathname.startsWith(item.to)))?.label ?? 'QuaZonai',
-    [location.pathname],
-  );
+  const current = useMemo(() => {
+    const item = nav.find((entry) => (entry.end ? location.pathname === entry.to : location.pathname.startsWith(entry.to)));
+    return item ? t(item.labelKey) : 'QuaZonai';
+  }, [location.pathname, t]);
+  const changeLocale = (value: string) => {
+    if ((localeOrder as readonly string[]).includes(value)) setLocale(value as Locale);
+  };
 
   async function signOut() {
     if (signingOut) return;
@@ -60,72 +71,99 @@ export function AppShell() {
       await logout();
       navigate('/');
     } catch (error) {
-      setSignOutError(error instanceof Error ? error.message : 'Sign out failed.');
+      setSignOutError(isLogoutError(error) ? error.failure : { kind: 'unreachable' });
     } finally {
       setSigningOut(false);
     }
   }
 
+  const signOutErrorMessage = signOutError?.kind === 'api'
+    ? signOutError.message
+    : signOutError?.kind === 'http'
+      ? t('auth.signOutHttpError', { status: signOutError.status })
+      : signOutError === null
+        ? null
+        : t('auth.signOutFailed');
+
   return (
     <Theme appearance={mode} accentColor="jade" grayColor="sage" radius="small" scaling="90%">
-      <div className="qz-app">
-        <aside className="qz-sidebar" aria-label="Primary navigation">
-          <div className="qz-brand">
-            <div className="qz-brand-mark" aria-hidden="true"><GaugeIcon size={18} weight="duotone" /></div>
-            <div><div className="qz-brand-title">QuaZonai</div><div className="qz-brand-subtitle">Quant Research Cockpit</div></div>
-          </div>
-          <nav className="qz-nav">
-            {nav.map(({ to, label, icon: Icon, end }) => (
-              <NavLink key={to} to={to} end={end} className="qz-nav-link">
-                {({ isActive }) => <><Icon size={17} weight={isActive ? 'duotone' : 'regular'} /><span>{label}</span></>}
+      <LocaleDirectionProvider>
+        <div className="qz-app">
+          <aside className="qz-sidebar" aria-label={t('a11y.primaryNavigation')}>
+            <div className="qz-brand">
+              <div className="qz-brand-mark" aria-hidden="true"><GaugeIcon size={18} weight="duotone" /></div>
+              <div><div className="qz-brand-title">QuaZonai</div><div className="qz-brand-subtitle">{t('brand.subtitle')}</div></div>
+            </div>
+            <nav className="qz-nav">
+              {nav.map(({ to, labelKey, icon: Icon, end }) => (
+                <NavLink key={to} to={to} end={end} className="qz-nav-link">
+                  {({ isActive }) => <><Icon size={17} weight={isActive ? 'duotone' : 'regular'} /><span>{t(labelKey)}</span></>}
+                </NavLink>
+              ))}
+            </nav>
+            <div className="qz-sidebar-bottom">
+              <NavLink to="/admin" className="qz-nav-link"><BellIcon size={17} /><span>{t('nav.status')}</span></NavLink>
+            </div>
+          </aside>
+          <main className="qz-main">
+            <header className="qz-topbar">
+              <div className="qz-topbar-title">{current}</div>
+              <div className="qz-topbar-actions">
+                {signOutErrorMessage ? <span className="qz-signout-error" dir="auto" role="alert">{signOutErrorMessage}</span> : null}
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger>
+                    <Button className="qz-mobile-nav-button" aria-label={t('a11y.openNavigation')} size="1" variant="soft"><ListIcon size={16} /></Button>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Content align="end">
+                    {nav.map(({ to, labelKey, icon: Icon }) => (
+                      <DropdownMenu.Item key={to} onSelect={() => navigate(to)}><Icon size={14} />{t(labelKey)}</DropdownMenu.Item>
+                    ))}
+                    {authEnabled ? (
+                      <>
+                        <DropdownMenu.Separator />
+                        <DropdownMenu.Item disabled={signingOut} color="red" onSelect={() => { void signOut(); }}>
+                          <SignOutIcon size={14} />{t('auth.signOut')}
+                        </DropdownMenu.Item>
+                      </>
+                    ) : null}
+                  </DropdownMenu.Content>
+                </DropdownMenu.Root>
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger>
+                    <Button aria-label={`${t('language.change')}: ${localeLabels[locale].native}`} size="1" variant="soft" className="qz-locale-button">{localeLabels[locale].short}</Button>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Content align="end">
+                    <DropdownMenu.RadioGroup value={locale} onValueChange={changeLocale}>
+                      {localeOrder.map((code) => (
+                        <DropdownMenu.RadioItem key={code} value={code}>
+                          <span lang={code} dir={localeLabels[code].dir}>{localeLabels[code].native}</span>
+                          <span className="qz-section-meta" lang="en" dir="ltr">{localeLabels[code].english}</span>
+                        </DropdownMenu.RadioItem>
+                      ))}
+                    </DropdownMenu.RadioGroup>
+                  </DropdownMenu.Content>
+                </DropdownMenu.Root>
+                <Button aria-label={mode === 'dark' ? t('theme.light') : t('theme.dark')} size="1" variant="soft" onClick={() => setMode(mode === 'dark' ? 'light' : 'dark')}>
+                  {mode === 'dark' ? <SunIcon size={15} /> : <MoonIcon size={15} />}
+                </Button>
+                {authEnabled ? (
+                  <Button aria-label={t('auth.signOutAndForgetBrowser')} disabled={signingOut} size="1" variant="soft" color="red" onClick={() => { void signOut(); }}>
+                    <SignOutIcon size={15} />
+                  </Button>
+                ) : null}
+              </div>
+            </header>
+            <div className="qz-content"><Suspense fallback={<PageSkeleton />}><Outlet /></Suspense></div>
+          </main>
+          <nav className="qz-mobile-nav" aria-label={t('a11y.mobileNavigation')}>
+            {nav.slice(0, 5).map(({ to, labelKey, mobileKey, icon: Icon, end }) => (
+              <NavLink key={to} to={to} end={end}>
+                {({ isActive }) => <><Icon size={19} weight={isActive ? 'duotone' : 'regular'} /><span>{t(mobileKey ?? labelKey)}</span></>}
               </NavLink>
             ))}
           </nav>
-          <div className="qz-sidebar-bottom">
-            <NavLink to="/admin" className="qz-nav-link"><BellIcon size={17} /><span>System status</span></NavLink>
-          </div>
-        </aside>
-        <main className="qz-main">
-          <header className="qz-topbar">
-            <div className="qz-topbar-title">{current}</div>
-            <div className="qz-topbar-actions">
-              {signOutError ? <span className="qz-signout-error" role="alert">{signOutError}</span> : null}
-              <DropdownMenu.Root>
-                <DropdownMenu.Trigger>
-                  <Button className="qz-mobile-nav-button" aria-label="Open navigation" size="1" variant="soft"><ListIcon size={16} /></Button>
-                </DropdownMenu.Trigger>
-                <DropdownMenu.Content align="end">
-                  {nav.map(({ to, label, icon: Icon }) => (
-                    <DropdownMenu.Item key={to} onSelect={() => navigate(to)}><Icon size={14} />{label}</DropdownMenu.Item>
-                  ))}
-                  {authEnabled ? (
-                    <>
-                      <DropdownMenu.Separator />
-                      <DropdownMenu.Item disabled={signingOut} color="red" onSelect={() => { void signOut(); }}><SignOutIcon size={14} />Sign out</DropdownMenu.Item>
-                    </>
-                  ) : null}
-                </DropdownMenu.Content>
-              </DropdownMenu.Root>
-              <Button aria-label={`Switch to ${mode === 'dark' ? 'light' : 'dark'} theme`} size="1" variant="soft" onClick={() => setMode(mode === 'dark' ? 'light' : 'dark')}>
-                {mode === 'dark' ? <SunIcon size={15} /> : <MoonIcon size={15} />}
-              </Button>
-              {authEnabled ? (
-                <Button aria-label="Sign out and forget this browser" disabled={signingOut} size="1" variant="soft" color="red" onClick={() => { void signOut(); }}>
-                  <SignOutIcon size={15} />
-                </Button>
-              ) : null}
-            </div>
-          </header>
-          <div className="qz-content"><Suspense fallback={<PageSkeleton />}><Outlet /></Suspense></div>
-        </main>
-        <nav className="qz-mobile-nav" aria-label="Mobile primary navigation">
-          {nav.slice(0, 5).map(({ to, label, icon: Icon, end }) => (
-            <NavLink key={to} to={to} end={end}>
-              {({ isActive }) => <><Icon size={19} weight={isActive ? 'duotone' : 'regular'} /><span>{label.replace('Idea Composer', 'Ideas').replace('Research Observatory', 'Research').replace('Alpha Library', 'Alpha').replace('Portfolio Lab', 'Portfolio')}</span></>}
-            </NavLink>
-          ))}
-        </nav>
-      </div>
+        </div>
+      </LocaleDirectionProvider>
     </Theme>
   );
 }

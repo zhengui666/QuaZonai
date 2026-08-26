@@ -1,1 +1,22 @@
-import{WarningCircleIcon}from'@phosphor-icons/react';import type{ReactNode}from'react';import{ApiError}from'../../lib/api/client';export function ErrorPanel({error,action}:{error:unknown;action?:ReactNode}){const message=error instanceof Error?error.message:'An unexpected error occurred.';const code=error instanceof ApiError?error.code:undefined;return<div className="qz-error"><div><WarningCircleIcon size={24} aria-hidden/><strong>{code??'Unable to load data'}</strong><div>{message}</div>{action?<div style={{marginTop:12}}>{action}</div>:null}</div></div>}
+import { WarningCircleIcon } from '@phosphor-icons/react';
+import type { ReactNode } from 'react';
+import { useI18n } from '../../i18n';
+import { ApiError } from '../../lib/api/client';
+
+export function ErrorPanel({ error, action }: { error: unknown; action?: ReactNode }) {
+  const { t } = useI18n();
+  const apiError = error instanceof ApiError ? error : undefined;
+  const message = apiError?.failure.kind === 'api'
+    ? apiError.failure.message
+    : apiError?.failure.kind === 'http'
+      ? t('error.requestHttpError', { status: apiError.failure.status })
+      : apiError?.failure.kind === 'network'
+        ? t('error.requestUnreachable')
+        : apiError?.failure.kind === 'decode'
+          ? t('error.requestInvalidResponse')
+        : error instanceof Error
+          ? error.message
+          : t('error.unexpected');
+  const code = apiError?.code;
+  return <div className="qz-error"><div><WarningCircleIcon size={24} aria-hidden /><strong>{code ? <bdi dir="auto">{code}</bdi> : t('error.unableLoad')}</strong><div dir="auto">{message}</div>{action ? <div style={{ marginTop: 12 }}>{action}</div> : null}</div></div>;
+}

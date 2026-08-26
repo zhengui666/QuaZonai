@@ -9,10 +9,35 @@ import {
   type FormEvent,
   type ReactNode,
 } from 'react';
-import { Theme } from '@radix-ui/themes';
+import { Button, DropdownMenu, Theme } from '@radix-ui/themes';
+import { Direction } from 'radix-ui';
+import { localeLabels, localeOrder, useI18n, type Locale } from '../i18n';
 import '../styles/auth.css';
 
 type AuthState = 'checking' | 'authenticated' | 'anonymous';
+type BootstrapError = { kind: 'http'; status: number } | { kind: 'unreachable' };
+type LoginError =
+  | { kind: 'api'; message: string }
+  | { kind: 'fallback'; message: 'auth.authenticationFailed' | 'auth.unreachable' };
+
+export type LogoutFailure =
+  | { kind: 'api'; message: string }
+  | { kind: 'http'; status: number }
+  | { kind: 'unreachable' };
+
+export class LogoutError extends Error {
+  readonly failure: LogoutFailure;
+
+  constructor(failure: LogoutFailure) {
+    super(failure.kind === 'api' ? failure.message : failure.kind);
+    this.name = 'LogoutError';
+    this.failure = failure;
+  }
+}
+
+export function isLogoutError(error: unknown): error is LogoutError {
+  return error instanceof LogoutError;
+}
 
 interface SessionView {
   authenticated: boolean;
@@ -32,6 +57,8 @@ interface OperatorAuthContextValue {
 
 const OperatorAuthContext = createContext<OperatorAuthContextValue | null>(null);
 export const AUTH_SESSION_REVALIDATION_INTERVAL_MS = 30_000;
+export const TOTP_CODE_LENGTH = 6;
+const TOTP_CODE_PATTERN = `[0-9]{${TOTP_CODE_LENGTH}}`;
 
 export function useOperatorAuth(): OperatorAuthContextValue {
   const value = useContext(OperatorAuthContext);
@@ -39,22 +66,39 @@ export function useOperatorAuth(): OperatorAuthContextValue {
   return value;
 }
 
-async function responseErrorMessage(response: Response, fallback: string): Promise<string> {
+async function apiErrorMessage(response: Response): Promise<string | null> {
   try {
     const payload = await response.json() as ErrorEnvelope;
-    return payload.error?.message ?? fallback;
+    return payload.error?.message ?? null;
   } catch {
-    return fallback;
+    return null;
   }
 }
 
+function normalizeTotpCode(value: string): string {
+  return value
+    .replace(/[\u0660-\u0669]/g, (digit) => String(digit.charCodeAt(0) - 0x0660))
+    .replace(/[\u06f0-\u06f9]/g, (digit) => String(digit.charCodeAt(0) - 0x06f0))
+    .replace(/\D/g, '')
+    .slice(0, TOTP_CODE_LENGTH);
+}
+
 function LoginPage({ onAuthenticated }: { onAuthenticated: (session: SessionView) => void }) {
+  const { locale, setLocale, t } = useI18n();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [totpCode, setTotpCode] = useState('');
   const [trustBrowser, setTrustBrowser] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<LoginError | null>(null);
+  const changeLocale = (value: string) => {
+    if ((localeOrder as readonly string[]).includes(value)) setLocale(value as Locale);
+  };
+  const errorMessage = error === null
+    ? null
+    : error.kind === 'api'
+      ? error.message
+      : t(error.message);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -73,12 +117,15 @@ function LoginPage({ onAuthenticated }: { onAuthenticated: (session: SessionView
         }),
       });
       if (!response.ok) {
-        setError(await responseErrorMessage(response, 'Authentication failed.'));
+        const message = await apiErrorMessage(response);
+        setError(message === null
+          ? { kind: 'fallback', message: 'auth.authenticationFailed' }
+          : { kind: 'api', message });
         return;
       }
       onAuthenticated(await response.json() as SessionView);
     } catch {
-      setError('Unable to reach QuaZonai.');
+      setError({ kind: 'fallback', message: 'auth.unreachable' });
     } finally {
       setSubmitting(false);
     }
@@ -86,19 +133,38 @@ function LoginPage({ onAuthenticated }: { onAuthenticated: (session: SessionView
 
   return (
     <Theme appearance="dark" accentColor="jade" grayColor="sage" radius="small" scaling="90%">
-      <main className="qz-auth-page">
-        <section className="qz-auth-card" aria-labelledby="qz-auth-title">
-          <div className="qz-auth-mark" aria-hidden="true">QZ</div>
+      <Direction.Provider dir={localeLabels[locale].dir}>
+        <main className="qz-auth-page">
+          <section className="qz-auth-card" aria-labelledby="qz-auth-title">
+            <div className="qz-auth-language">
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger>
+                  <Button aria-label={`${t('language.change')}: ${localeLabels[locale].native}`} className="qz-auth-language-button" size="1" variant="soft">{localeLabels[locale].short}</Button>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Content align="end">
+                  <DropdownMenu.RadioGroup value={locale} onValueChange={changeLocale}>
+                    {localeOrder.map((code) => (
+                      <DropdownMenu.RadioItem key={code} value={code}>
+                        <span lang={code} dir={localeLabels[code].dir}>{localeLabels[code].native}</span>
+                        <span className="qz-section-meta" lang="en" dir="ltr">{localeLabels[code].english}</span>
+                      </DropdownMenu.RadioItem>
+                    ))}
+                  </DropdownMenu.RadioGroup>
+                </DropdownMenu.Content>
+              </DropdownMenu.Root>
+            </div>
+            <div className="qz-auth-mark" aria-hidden="true">QZ</div>
           <div className="qz-auth-heading">
-            <p className="qz-auth-eyebrow">QuaZonai operator access</p>
-            <h1 id="qz-auth-title">Verify your identity</h1>
-            <p>Password and a Google Authenticator-compatible 6-digit code are required.</p>
+            <p className="qz-auth-eyebrow">{t('auth.operatorAccess')}</p>
+            <h1 id="qz-auth-title">{t('auth.verifyIdentity')}</h1>
+            <p>{t('auth.loginDescription', { digits: TOTP_CODE_LENGTH })}</p>
           </div>
           <form className="qz-auth-form" onSubmit={submit}>
             <label>
-              <span>Username</span>
+              <span>{t('auth.username')}</span>
               <input
                 autoComplete="username"
+                dir="auto"
                 autoFocus
                 disabled={submitting}
                 onChange={(event) => setUsername(event.target.value)}
@@ -107,9 +173,10 @@ function LoginPage({ onAuthenticated }: { onAuthenticated: (session: SessionView
               />
             </label>
             <label>
-              <span>Password</span>
+              <span>{t('auth.password')}</span>
               <input
                 autoComplete="current-password"
+                dir="ltr"
                 disabled={submitting}
                 onChange={(event) => setPassword(event.target.value)}
                 required
@@ -118,15 +185,16 @@ function LoginPage({ onAuthenticated }: { onAuthenticated: (session: SessionView
               />
             </label>
             <label>
-              <span>Authenticator code</span>
+              <span>{t('auth.authenticatorCode')}</span>
               <input
                 autoComplete="one-time-code"
+                dir="ltr"
                 disabled={submitting}
                 inputMode="numeric"
-                maxLength={6}
-                onChange={(event) => setTotpCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
-                pattern="[0-9]{6}"
-                placeholder="000000"
+                maxLength={TOTP_CODE_LENGTH}
+                onChange={(event) => setTotpCode(normalizeTotpCode(event.target.value))}
+                pattern={TOTP_CODE_PATTERN}
+                placeholder={'0'.repeat(TOTP_CODE_LENGTH)}
                 required
                 value={totpCode}
               />
@@ -139,26 +207,28 @@ function LoginPage({ onAuthenticated }: { onAuthenticated: (session: SessionView
                 type="checkbox"
               />
               <span>
-                <strong>Trust this browser</strong>
-                <small>Future visits can sign in without password or authenticator code until this device trust expires.</small>
+                <strong>{t('auth.trustBrowser')}</strong>
+                <small>{t('auth.trustBrowserDescription')}</small>
               </span>
             </label>
-            {error ? <div className="qz-auth-error" role="alert">{error}</div> : null}
-            <button className="qz-auth-submit" disabled={submitting || totpCode.length !== 6} type="submit">
-              {submitting ? 'Verifying…' : 'Sign in'}
+            {errorMessage !== null ? <div className="qz-auth-error" dir="auto" role="alert">{errorMessage}</div> : null}
+            <button className="qz-auth-submit" disabled={submitting || totpCode.length !== TOTP_CODE_LENGTH} type="submit">
+              {submitting ? t('auth.verifying') : t('auth.signIn')}
             </button>
           </form>
-          <p className="qz-auth-footnote">Only trust a browser profile you control. Logging out forgets this browser.</p>
-        </section>
-      </main>
+            <p className="qz-auth-footnote">{t('auth.logoutFootnote')}</p>
+          </section>
+        </main>
+      </Direction.Provider>
     </Theme>
   );
 }
 
 export function AuthGate({ children }: { children: ReactNode }) {
+  const { t } = useI18n();
   const [state, setState] = useState<AuthState>('checking');
   const [session, setSession] = useState<SessionView | null>(null);
-  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
+  const [bootstrapError, setBootstrapError] = useState<BootstrapError | null>(null);
   const sessionCheckGeneration = useRef(0);
   const sessionCheckAbortController = useRef<AbortController | null>(null);
 
@@ -198,12 +268,12 @@ export function AuthGate({ children }: { children: ReactNode }) {
         setState('anonymous');
         return;
       }
-      setBootstrapError(`Authentication service returned HTTP ${response.status}.`);
+      setBootstrapError({ kind: 'http', status: response.status });
       setSession(null);
       setState('anonymous');
     } catch {
       if (!isCurrent()) return;
-      setBootstrapError('Unable to reach the authentication service.');
+      setBootstrapError({ kind: 'unreachable' });
       setSession(null);
       setState('anonymous');
     } finally {
@@ -213,12 +283,20 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     if (!session?.auth_enabled) return;
-    const response = await fetch('/api/v1/auth/logout', {
-      method: 'POST',
-      credentials: 'same-origin',
-    });
-    if (!response.ok) {
-      throw new Error(await responseErrorMessage(response, `Sign out failed with HTTP ${response.status}.`));
+    try {
+      const response = await fetch('/api/v1/auth/logout', {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+      if (!response.ok) {
+        const message = await apiErrorMessage(response);
+        throw new LogoutError(message === null
+          ? { kind: 'http', status: response.status }
+          : { kind: 'api', message });
+      }
+    } catch (error) {
+      if (isLogoutError(error)) throw error;
+      throw new LogoutError({ kind: 'unreachable' });
     }
     invalidateSessionChecks();
     setSession(null);
@@ -289,11 +367,16 @@ export function AuthGate({ children }: { children: ReactNode }) {
     () => ({ authEnabled: session?.auth_enabled ?? false, logout }),
     [logout, session?.auth_enabled],
   );
+  const bootstrapErrorMessage = bootstrapError?.kind === 'http'
+    ? t('auth.serviceHttpError', { status: bootstrapError.status })
+    : bootstrapError?.kind === 'unreachable'
+      ? t('auth.serviceUnreachable')
+      : null;
 
   if (state === 'checking') {
     return (
       <Theme appearance="dark" accentColor="jade" grayColor="sage" radius="small" scaling="90%">
-        <main className="qz-auth-page"><div className="qz-auth-loading">Checking operator session…</div></main>
+        <main className="qz-auth-page"><div className="qz-auth-loading">{t('auth.checkingSession')}</div></main>
       </Theme>
     );
   }
@@ -301,7 +384,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return (
       <>
         <LoginPage onAuthenticated={acceptSession} />
-        {bootstrapError ? <div className="qz-auth-bootstrap-error" role="status">{bootstrapError}</div> : null}
+        {bootstrapErrorMessage ? <div className="qz-auth-bootstrap-error" dir="auto" role="status">{bootstrapErrorMessage}</div> : null}
       </>
     );
   }

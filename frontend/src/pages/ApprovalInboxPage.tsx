@@ -7,9 +7,10 @@ import { ErrorPanel } from '../components/ui/ErrorPanel';
 import { PageHeader } from '../components/ui/PageHeader';
 import { PageSkeleton } from '../components/ui/Skeleton';
 import { StateBadge } from '../components/ui/StateBadge';
+import { useI18n, type Locale } from '../i18n';
 import { useApprovalDecision, useApprovals, useDownstreams } from '../lib/api/hooks';
 import type { ApprovalSnapshot, DownstreamSystem } from '../lib/api/types';
-import { formatDateTime } from '../lib/format';
+import { formatCapitalAmount, formatDateTime, humanize } from '../lib/format';
 
 const rejectionReasons = [
   'RESEARCH_EVIDENCE_INSUFFICIENT',
@@ -36,7 +37,12 @@ function compatible(approval: ApprovalSnapshot, systems: DownstreamSystem[]) {
   });
 }
 
+export function formatDeployableCapital(locale: Locale, value?: number | string | null): string {
+  return formatCapitalAmount(value, locale);
+}
+
 function ApprovalCard({ approval, systems }: { approval: ApprovalSnapshot; systems: DownstreamSystem[] }) {
+  const { locale, t } = useI18n();
   const options = compatible(approval, systems);
   const [downstream, setDownstream] = useState(approval.downstream_system_id ?? options[0]?.id ?? '');
   const [reason, setReason] = useState('');
@@ -51,34 +57,34 @@ function ApprovalCard({ approval, systems }: { approval: ApprovalSnapshot; syste
       <div className="qz-approval-header">
         <div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><StateBadge state={approval.purpose} /><StateBadge state={approval.state} /></div>
-          <h2 className="qz-approval-title" style={{ marginTop: 10 }}>{approval.candidate?.mandate_name ?? 'Portfolio'} · Candidate {approval.candidate_id.slice(0, 8)}</h2>
-          <p className="qz-approval-rationale">{approval.recommendation_rationale ?? 'No recommendation rationale was returned by the Approval API.'}</p>
+          <h2 className="qz-approval-title" style={{ marginTop: 10 }}><bdi dir="auto">{approval.candidate?.mandate_name ?? t('approval.portfolio')}</bdi> · {t('common.candidate')} <bdi dir="ltr">{approval.candidate_id.slice(0, 8)}</bdi></h2>
+          <p className="qz-approval-rationale" dir="auto">{approval.recommendation_rationale ?? t('approval.noRationale')}</p>
         </div>
-        <div className="qz-section-meta qz-number" style={{ textAlign: 'right' }}>Valid until<br />{formatDateTime(expiry)}</div>
+        <div className="qz-section-meta qz-number" style={{ textAlign: 'right' }}>{t('approval.validUntil')}<br />{formatDateTime(expiry)}</div>
       </div>
       <div className="qz-approval-grid">
-        <div><div className="qz-label" style={{ marginBottom: 7 }}>Level 2 evidence</div><EvidencePanel approval={approval} /></div>
+        <div><div className="qz-label" style={{ marginBottom: 7 }}>{t('approval.level2')}</div><EvidencePanel approval={approval} /></div>
         <div className="qz-panel qz-panel-pad qz-form-grid">
-          <div><div className="qz-label">Capital context</div><div className="qz-list-title qz-number" style={{ marginTop: 5 }}>{approval.capital_context?.base_currency ?? '—'} {approval.capital_context?.deployable_capital ?? '—'}</div><div className="qz-list-subtitle">Observed {formatDateTime(approval.capital_context?.observed_at)}</div></div>
-          <div><div className="qz-label">Human report</div><div className="qz-list-subtitle" style={{ whiteSpace: 'normal', lineHeight: 1.55 }}>{typeof approval.human_report === 'string' ? approval.human_report : approval.human_report ? JSON.stringify(approval.human_report) : 'No narrative report returned.'}</div></div>
+          <div><div className="qz-label">{t('approval.capitalContext')}</div><div className="qz-list-title qz-number" style={{ marginTop: 5 }}><bdi dir="ltr">{approval.capital_context?.base_currency ?? '—'} {formatDeployableCapital(locale, approval.capital_context?.deployable_capital)}</bdi></div><div className="qz-list-subtitle">{t('approval.observedDate', { date: formatDateTime(approval.capital_context?.observed_at) })}</div></div>
+          <div><div className="qz-label">{t('approval.humanReport')}</div><div className="qz-list-subtitle" dir="auto" style={{ whiteSpace: 'normal', lineHeight: 1.55 }}>{typeof approval.human_report === 'string' ? <bdi dir="auto">{approval.human_report}</bdi> : approval.human_report ? <bdi dir="ltr">{JSON.stringify(approval.human_report)}</bdi> : t('approval.noReport')}</div></div>
         </div>
       </div>
       <div className="qz-approval-actions">
-        <div className="qz-field" style={{ minWidth: 260 }}><span className="qz-label">Compatible downstream</span><Select.Root value={downstream} onValueChange={setDownstream} disabled={!pending}><Select.Trigger placeholder={options.length ? 'Select downstream' : 'No compatible downstream'} /><Select.Content>{options.map((option) => <Select.Item value={option.id} key={option.id}>{option.name} · {option.environment_type}</Select.Item>)}</Select.Content></Select.Root></div>
+        <div className="qz-field" style={{ minWidth: 260 }}><span className="qz-label">{t('approval.compatibleDownstream')}</span><Select.Root value={downstream} onValueChange={setDownstream} disabled={!pending}><Select.Trigger placeholder={options.length ? t('approval.selectDownstream') : t('approval.noDownstream')} /><Select.Content>{options.map((option) => <Select.Item value={option.id} key={option.id}><bdi dir="auto">{option.name}</bdi> · {humanize(option.environment_type)}</Select.Item>)}</Select.Content></Select.Root></div>
         <div style={{ display: 'flex', gap: 8 }}>
           <Dialog.Root>
-            <Dialog.Trigger><Button variant="soft" color="red" disabled={!pending}><XIcon size={14} />Reject</Button></Dialog.Trigger>
+            <Dialog.Trigger><Button variant="soft" color="red" disabled={!pending}><XIcon size={14} />{t('approval.reject')}</Button></Dialog.Trigger>
             <Dialog.Content maxWidth="480px">
-              <Dialog.Title>Reject candidate</Dialog.Title>
-              <Dialog.Description size="2">Rejection does not promote the runner-up. A future Approval requires new evidence or a material improvement.</Dialog.Description>
+              <Dialog.Title>{t('approval.rejectTitle')}</Dialog.Title>
+              <Dialog.Description size="2">{t('approval.rejectDesc')}</Dialog.Description>
               <div className="qz-form-grid" style={{ marginTop: 16 }}>
-                <label className="qz-field"><span className="qz-label">Reason code</span><Select.Root value={reason} onValueChange={setReason}><Select.Trigger placeholder="Select reason" /><Select.Content>{rejectionReasons.map((item) => <Select.Item key={item} value={item}>{item.replaceAll('_', ' ')}</Select.Item>)}</Select.Content></Select.Root></label>
-                <label className="qz-field"><span className="qz-label">Optional note</span><TextArea value={note} onChange={(event) => setNote(event.target.value)} /></label>
-                <Button color="red" disabled={!reason || decision.reject.isPending} onClick={() => decision.reject.mutate({ reason_code: reason, note: note || undefined })}>Confirm rejection</Button>
+                <label className="qz-field"><span className="qz-label">{t('approval.reasonCode')}</span><Select.Root value={reason} onValueChange={setReason}><Select.Trigger placeholder={t('approval.selectReason')} /><Select.Content>{rejectionReasons.map((item) => <Select.Item key={item} value={item}>{humanize(item)}</Select.Item>)}</Select.Content></Select.Root></label>
+                <label className="qz-field"><span className="qz-label">{t('approval.optionalNote')}</span><TextArea dir="auto" value={note} onChange={(event) => setNote(event.target.value)} /></label>
+                <Button color="red" disabled={!reason || decision.reject.isPending} onClick={() => decision.reject.mutate({ reason_code: reason, note: note || undefined })}>{t('approval.confirmRejection')}</Button>
               </div>
             </Dialog.Content>
           </Dialog.Root>
-          <Button color="green" disabled={!pending || !downstream || decision.approve.isPending} onClick={() => decision.approve.mutate(downstream)}><CheckIcon size={14} />{decision.approve.isPending ? 'Approving…' : 'Approve'}</Button>
+          <Button color="green" disabled={!pending || !downstream || decision.approve.isPending} onClick={() => decision.approve.mutate(downstream)}><CheckIcon size={14} />{decision.approve.isPending ? t('common.approving') : t('approval.approve')}</Button>
         </div>
       </div>
       {mutationError ? <div style={{ marginTop: 12 }}><ErrorPanel error={mutationError} /></div> : null}

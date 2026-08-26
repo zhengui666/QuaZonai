@@ -8,6 +8,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { App } from './app/App';
+import { I18nProvider } from './i18n';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -25,8 +26,10 @@ const queryClient = new QueryClient({
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter><App /></BrowserRouter>
-    </QueryClientProvider>
+    <I18nProvider>
+      <QueryClientProvider client={queryClient}>
+        <BrowserRouter><App /></BrowserRouter>
+      </QueryClientProvider>
+    </I18nProvider>
   </StrictMode>,
 );

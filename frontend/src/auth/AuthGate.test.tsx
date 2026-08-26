@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -7,6 +7,15 @@ import {
   AuthGate,
   useOperatorAuth,
 } from './AuthGate';
+import { I18nProvider, localeLabels, localeOrder, useI18n, type Locale } from '../i18n';
+
+function renderAuthGate(children: ReactNode, locale: Locale = 'en') {
+  return render(
+    <I18nProvider initialLocale={locale}>
+      <AuthGate>{children}</AuthGate>
+    </I18nProvider>,
+  );
+}
 
 function jsonResponse(value: unknown, status = 200): Promise<Response> {
   return Promise.resolve(new Response(JSON.stringify(value), {
@@ -51,6 +60,11 @@ function AuthModeProbe() {
   return <div>{authEnabled ? 'Authentication enabled' : 'Direct access enabled'}</div>;
 }
 
+function LocaleChangeProbe() {
+  const { setLocale } = useI18n();
+  return <button onClick={() => setLocale('ar')}>Change locale</button>;
+}
+
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
@@ -67,9 +81,33 @@ describe('AuthGate', () => {
       auth_enabled: true,
     })));
 
-    render(<AuthGate><div>Workbench ready</div></AuthGate>);
+    renderAuthGate(<div>Workbench ready</div>);
 
     expect(await screen.findByText('Workbench ready')).toBeInTheDocument();
+  });
+
+  it('keeps an authenticated session stable when changing locale', async () => {
+    const unexpectedRebootstrap = deferredResponse();
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => jsonResponse({
+        authenticated: true,
+        username: 'operator',
+        trusted_browser: false,
+        auth_enabled: true,
+      }))
+      .mockImplementation(() => unexpectedRebootstrap.promise);
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+
+    renderAuthGate(<><div>Workbench ready</div><LocaleChangeProbe /></>);
+
+    expect(await screen.findByText('Workbench ready')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Change locale' }));
+    await waitFor(() => expect(document.documentElement).toHaveAttribute('dir', 'rtl'));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Workbench ready')).toBeInTheDocument();
   });
 
   it('preserves direct access when operator authentication is disabled', async () => {
@@ -81,7 +119,7 @@ describe('AuthGate', () => {
     }));
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<AuthGate><div>Direct workbench</div></AuthGate>);
+    renderAuthGate(<div>Direct workbench</div>);
 
     expect(await screen.findByText('Direct workbench')).toBeInTheDocument();
     act(() => window.dispatchEvent(new Event('quazonai:auth-required')));
@@ -101,7 +139,7 @@ describe('AuthGate', () => {
       .mockImplementationOnce(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401));
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<AuthGate><div>Direct workbench</div></AuthGate>);
+    renderAuthGate(<div>Direct workbench</div>);
 
     expect(await screen.findByText('Direct workbench')).toBeInTheDocument();
     act(() => window.dispatchEvent(new Event('quazonai:auth-required')));
@@ -123,7 +161,7 @@ describe('AuthGate', () => {
       .mockImplementationOnce(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401));
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<AuthGate><div>Direct workbench</div></AuthGate>);
+    renderAuthGate(<div>Direct workbench</div>);
 
     expect(await screen.findByText('Direct workbench')).toBeInTheDocument();
     act(() => {
@@ -152,7 +190,7 @@ describe('AuthGate', () => {
     const fetchMock = vi.fn<typeof fetch>(() => bootstrap.promise);
     vi.stubGlobal('fetch', fetchMock);
 
-    const view = render(<AuthGate><div>Workbench ready</div></AuthGate>);
+    const view = renderAuthGate(<div>Workbench ready</div>);
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     const options = fetchMock.mock.calls[0]?.[1] as RequestInit;
@@ -176,13 +214,103 @@ describe('AuthGate', () => {
   it('shows password, authenticator code, and trusted-browser option when anonymous', async () => {
     vi.stubGlobal('fetch', vi.fn(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401)));
 
-    render(<AuthGate><div>Workbench ready</div></AuthGate>);
+    renderAuthGate(<div>Workbench ready</div>);
 
     expect(await screen.findByRole('heading', { name: 'Verify your identity' })).toBeInTheDocument();
     expect(screen.getByLabelText('Username')).toBeInTheDocument();
     expect(screen.getByLabelText('Password')).toBeInTheDocument();
     expect(screen.getByLabelText('Authenticator code')).toBeInTheDocument();
     expect(screen.getByText('Trust this browser')).toBeInTheDocument();
+  });
+
+  it('localizes the login chrome and preserves entry directions in Arabic', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401)));
+
+    renderAuthGate(<div>Workbench ready</div>, 'ar');
+
+    expect(await screen.findByRole('heading', { name: 'تحقق من هويتك' })).toBeInTheDocument();
+    await waitFor(() => expect(document.documentElement).toHaveAttribute('dir', 'rtl'));
+    expect(screen.getByLabelText('اسم المستخدم')).toHaveAttribute('dir', 'auto');
+    expect(screen.getByLabelText('كلمة المرور')).toHaveAttribute('dir', 'ltr');
+    expect(screen.getByLabelText('رمز المصادقة')).toHaveAttribute('dir', 'ltr');
+  });
+
+  it('lets an anonymous operator switch the login language before authentication', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401)));
+    const user = userEvent.setup();
+
+    renderAuthGate(<div>Workbench ready</div>);
+
+    await screen.findByRole('heading', { name: 'Verify your identity' });
+    await user.click(screen.getByRole('button', { name: 'Change language: English' }));
+    for (const code of localeOrder) {
+      expect(screen.getByText(localeLabels[code].native, { selector: `span[lang="${code}"]:not(.qz-section-meta)` })).toHaveAttribute('dir', localeLabels[code].dir);
+      const englishLabel = screen.getByText(localeLabels[code].english, { selector: 'span.qz-section-meta' });
+      expect(englishLabel).toHaveAttribute('lang', 'en');
+      expect(englishLabel).toHaveAttribute('dir', 'ltr');
+    }
+    await user.click(screen.getByRole('menuitemradio', { name: /العربية/ }));
+
+    await waitFor(() => {
+      expect(document.documentElement).toHaveAttribute('lang', 'ar');
+      expect(document.documentElement).toHaveAttribute('dir', 'rtl');
+      expect(screen.getByRole('heading', { name: 'تحقق من هويتك' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'تغيير اللغة: العربية' })).toBeInTheDocument();
+    });
+  });
+
+  it('re-renders fallback login errors in the selected locale while preserving API messages', async () => {
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401))
+      .mockImplementationOnce(() => jsonResponse({ error: { code: 'INVALID_CREDENTIALS' } }, 401))
+      .mockImplementationOnce(() => jsonResponse({ error: { message: 'Operator locked.' } }, 403));
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+
+    renderAuthGate(<div>Workbench ready</div>);
+
+    await user.type(await screen.findByLabelText('Username'), 'operator');
+    await user.type(screen.getByLabelText('Password'), 'wrong password');
+    await user.type(screen.getByLabelText('Authenticator code'), '123456');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Authentication failed.');
+    await user.click(screen.getByRole('button', { name: 'Change language: English' }));
+    await user.click(screen.getByRole('menuitemradio', { name: /العربية/ }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('فشلت المصادقة.');
+
+    await user.click(screen.getByRole('button', { name: 'تسجيل الدخول' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Operator locked.');
+  });
+
+  it('normalizes Arabic TOTP digits before login', async () => {
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401))
+      .mockImplementationOnce(() => jsonResponse({
+        authenticated: true,
+        username: 'operator',
+        trusted_browser: false,
+        auth_enabled: true,
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+
+    renderAuthGate(<div>Workbench ready</div>, 'ar');
+
+    await user.type(await screen.findByLabelText('اسم المستخدم'), 'operator');
+    await user.type(screen.getByLabelText('كلمة المرور'), 'correct horse battery staple');
+    const totp = screen.getByLabelText('رمز المصادقة');
+    await user.type(totp, '١٢٣٤٥٦');
+    expect(totp).toHaveValue('123456');
+    await user.clear(totp);
+    await user.type(totp, '۱۲۳۴۵۶');
+    expect(totp).toHaveValue('123456');
+
+    await user.click(screen.getByRole('button', { name: 'تسجيل الدخول' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const loginOptions = fetchMock.mock.calls[1]?.[1] as RequestInit;
+    expect(JSON.parse(String(loginOptions.body))).toMatchObject({ totp_code: '123456' });
   });
 
   it('submits trusted-browser intent and reveals the workbench after successful login', async () => {
@@ -197,7 +325,7 @@ describe('AuthGate', () => {
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
 
-    render(<AuthGate><div>Workbench ready</div></AuthGate>);
+    renderAuthGate(<div>Workbench ready</div>);
 
     await user.type(await screen.findByLabelText('Username'), 'operator');
     await user.type(screen.getByLabelText('Password'), 'correct horse battery staple');
@@ -228,7 +356,7 @@ describe('AuthGate', () => {
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
 
-    render(<AuthGate><LogoutProbe /></AuthGate>);
+    renderAuthGate(<LogoutProbe />);
 
     await user.click(await screen.findByRole('button', { name: 'Sign out probe' }));
 
@@ -250,7 +378,7 @@ describe('AuthGate', () => {
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
 
-    render(<AuthGate><LogoutProbe /></AuthGate>);
+    renderAuthGate(<LogoutProbe />);
 
     await user.click(await screen.findByRole('button', { name: 'Sign out probe' }));
 
@@ -271,7 +399,7 @@ describe('AuthGate', () => {
       .mockImplementationOnce(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401));
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<AuthGate><div>Alpha library cache</div></AuthGate>);
+    renderAuthGate(<div>Alpha library cache</div>);
 
     expect(await screen.findByText('Alpha library cache')).toBeInTheDocument();
     const revalidate = setIntervalSpy.mock.calls.find(
@@ -299,7 +427,7 @@ describe('AuthGate', () => {
       .mockImplementationOnce(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401));
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<AuthGate><div>Alpha library cache</div></AuthGate>);
+    renderAuthGate(<div>Alpha library cache</div>);
 
     expect(await screen.findByText('Alpha library cache')).toBeInTheDocument();
     const revalidate = setIntervalSpy.mock.calls.find(
@@ -332,7 +460,7 @@ describe('AuthGate', () => {
       }));
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<AuthGate><AuthModeProbe /></AuthGate>);
+    renderAuthGate(<AuthModeProbe />);
 
     expect(await screen.findByText('Authentication enabled')).toBeInTheDocument();
     const revalidate = setIntervalSpy.mock.calls.find(
@@ -368,7 +496,7 @@ describe('AuthGate', () => {
       }));
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<AuthGate><AuthModeProbe /></AuthGate>);
+    renderAuthGate(<AuthModeProbe />);
 
     expect(await screen.findByText('Authentication enabled')).toBeInTheDocument();
     const revalidate = setIntervalSpy.mock.calls.find(
@@ -419,7 +547,7 @@ describe('AuthGate', () => {
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
 
-    render(<AuthGate><LogoutProbe /></AuthGate>);
+    renderAuthGate(<LogoutProbe />);
 
     await screen.findByText('Workbench ready');
     const revalidate = setIntervalSpy.mock.calls.find(
