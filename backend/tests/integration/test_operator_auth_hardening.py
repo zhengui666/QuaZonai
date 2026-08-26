@@ -290,7 +290,7 @@ def test_trusted_browser_renews_protected_request(
     assert any(SESSION_COOKIE_NAME in header for header in response.headers.get_list("set-cookie"))
 
 
-def test_session_renewal_skips_cookie_when_logout_wins(
+def test_session_renewal_returns_auth_required_when_logout_wins(
     settings: Settings,
     engine: Engine,
     monkeypatch: pytest.MonkeyPatch,
@@ -307,7 +307,9 @@ def test_session_renewal_skips_cookie_when_logout_wins(
         logout_client=logout_client,
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "AUTH_REQUIRED"
+    assert response.headers["Cache-Control"] == "no-store"
     _assert_no_session_cookie(response)
 
 

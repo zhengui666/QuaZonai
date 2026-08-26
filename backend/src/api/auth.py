@@ -128,11 +128,19 @@ def session(request: Request, response: Response) -> SessionView:
             401,
         )
     if identity.renew_session:
-        runtime.renew_session_if_current(
+        if not runtime.renew_session_if_current(
             response,
             settings,
             generation=renewal_generation,
-        )
+        ):
+            # A logout revoked this trusted-browser credential after it was
+            # parsed. Do not report a usable session when its renewal lost the
+            # revocation race: AuthGate treats successful probes as current.
+            raise QfError(
+                "AUTH_REQUIRED",
+                "Operator authentication is required.",
+                401,
+            )
     return SessionView(
         authenticated=True,
         username=identity.username,
