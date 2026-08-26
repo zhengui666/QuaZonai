@@ -21,9 +21,11 @@ const configuration: RuntimeConfiguration = {
 };
 
 describe('RuntimeConfigurationPanel directionality', () => {
-  it('keeps machine identifier inputs left-to-right in Arabic', () => {
+  it('keeps machine identifiers left-to-right and formats the revision in Arabic', () => {
     renderApp(<RuntimeConfigurationPanel configuration={configuration} />, { locale: 'ar' });
     expect(screen.getByDisplayValue('gpt-5.6-sol')).toHaveAttribute('dir', 'ltr');
+    expect(screen.getByText('gpt-5.6-sol')).toHaveAttribute('dir', 'ltr');
+    expect(screen.getByText(new Intl.NumberFormat('ar').format(configuration.revision))).toBeInTheDocument();
     expect(screen.getByDisplayValue('https://gateway.example/v1')).toHaveAttribute('dir', 'ltr');
     expect(screen.getByPlaceholderText(translateKey('ar', 'runtime.keyConfigured'))).toHaveAttribute('dir', 'ltr');
   });

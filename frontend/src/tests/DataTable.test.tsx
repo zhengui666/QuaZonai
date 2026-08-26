@@ -1,10 +1,10 @@
 import { Theme } from '@radix-ui/themes';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { describe, expect, it } from 'vitest';
 import { DataTable } from '../components/ui/DataTable';
 import { StateBadge } from '../components/ui/StateBadge';
-import { I18nProvider } from '../i18n';
+import { I18nProvider, useI18n } from '../i18n';
 import { formatCompactNumber, formatNumber, formatPercent, humanize } from '../lib/format';
 import { renderApp } from './testUtils';
 
@@ -49,6 +49,11 @@ const alphaColumns: ColumnDef<AlphaRow, unknown>[] = [
   { accessorKey: 'alpha', header: 'Alpha', meta: { messageKey: 'alpha.name' } },
 ];
 
+function LocaleChangeButton() {
+  const { setLocale } = useI18n();
+  return <button type="button" onClick={() => setLocale('zh-CN')}>Switch locale</button>;
+}
+
 interface OperatorLabelRow { label: string }
 const operatorLabelColumns: ColumnDef<OperatorLabelRow, unknown>[] = [
   { accessorKey: 'label', header: 'Source', cell: ({ getValue }) => <span>{String(getValue())}</span> },
@@ -77,6 +82,27 @@ describe('DataTable', () => {
     fireEvent.change(screen.getByPlaceholderText('筛选行…'), { target: { value: '活跃' } });
     expect(screen.getByText('Beta')).toBeInTheDocument();
     expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
+  });
+
+  it('clears localized filters when the locale changes', async () => {
+    render(
+      <I18nProvider initialLocale="es">
+        <Theme appearance="dark" accentColor="jade" grayColor="sage" radius="small" scaling="90%">
+          <LocaleChangeButton />
+          <DataTable data={[{ name: 'Beta', state: 'ACTIVE' }, { name: 'Alpha', state: 'COOLING' }]} columns={columns} />
+        </Theme>
+      </I18nProvider>,
+    );
+    fireEvent.change(screen.getByPlaceholderText('Filtrar filas…'), { target: { value: 'Activo' } });
+    expect(screen.getByText('Beta')).toBeInTheDocument();
+    expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Switch locale' }));
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('筛选行…')).toHaveValue('');
+      expect(screen.getByText('Alpha')).toBeInTheDocument();
+      expect(screen.getByText('Beta')).toBeInTheDocument();
+    });
   });
 
   it('sorts translated state labels in their displayed locale', () => {

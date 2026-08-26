@@ -14,7 +14,7 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n, type Locale, type MessageKey } from '../../i18n';
 import { translateDomainLabel } from '../../i18n/domain';
 import { translateRuntimeLabel } from '../../i18n/runtime';
@@ -135,6 +135,7 @@ export function DataTable<T>({
   const { locale, t, text, plural } = useI18n();
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
+  useEffect(() => { setGlobalFilter(''); }, [locale]);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
   const viewportRef = useRef<HTMLDivElement>(null);
   const stableColumns = useMemo(() => withPropertyAccessors(columns, data), [columns, data]);

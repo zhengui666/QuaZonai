@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../../i18n';
 import { useUpdateRuntimeConfiguration } from '../../lib/api/hooks';
 import type { RuntimeConfiguration } from '../../lib/api/types';
+import { formatNumber } from '../../lib/format';
 import { ErrorPanel } from '../ui/ErrorPanel';
 import { Section } from '../ui/Section';
 import { StateBadge } from '../ui/StateBadge';
@@ -103,8 +104,8 @@ export function RuntimeConfigurationPanel({ configuration }: { configuration: Ru
         <div className="qz-grid-4" style={{ marginBottom: 18 }}>
           <div><div className="qz-label">{t('runtime.codexAuth')}</div><div style={{ marginTop: 6 }}><StateBadge state={authState} /></div></div>
           <div><div className="qz-label">{t('runtime.providerEndpoint')}</div><div style={{ marginTop: 6 }}><StateBadge state={configuration.codex_base_url ? 'CUSTOM' : 'DEFAULT'} /></div></div>
-          <div><div className="qz-label">{t('runtime.model')}</div><div className="qz-mono" style={{ marginTop: 8 }}>{configuration.codex_model || t('runtime.codexDefault')}</div></div>
-          <div><div className="qz-label">{t('runtime.revision')}</div><div className="qz-number" style={{ marginTop: 8 }}>{configuration.revision}</div></div>
+          <div><div className="qz-label">{t('runtime.model')}</div><div className="qz-mono" style={{ marginTop: 8 }}>{configuration.codex_model ? <bdi dir="ltr">{configuration.codex_model}</bdi> : t('runtime.codexDefault')}</div></div>
+          <div><div className="qz-label">{t('runtime.revision')}</div><div className="qz-number" style={{ marginTop: 8 }}>{formatNumber(configuration.revision)}</div></div>
         </div>
 
         <div className="qz-resource-note" style={{ marginBottom: 16 }}>
