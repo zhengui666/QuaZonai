@@ -86,4 +86,12 @@ describe('Home KPI count messages', () => {
     expectCount('ar', 'runningEvaluations', 11, `${localizedNumber('ar', 11)} تقييمًا قيد التشغيل`);
     expectCount('ar', 'runningEvaluations', 100, `${localizedNumber('ar', 100)} تقييم قيد التشغيل`);
   });
+  it('honors explicit zero forms before locale plural rules', () => {
+    expectCount('en', 'coolingPrograms', 0, 'No cooling programs');
+    expectCount('zh-CN', 'coolingPrograms', 0, '无冷却中的项目');
+    expectCount('zh-TW', 'coolingPrograms', 0, '無冷卻中的專案');
+    expectCount('ja', 'coolingPrograms', 0, 'クーリング中のプログラムなし');
+    expectCount('ko', 'coolingPrograms', 0, '쿨링 중 프로그램 없음');
+    expectCount('es', 'coolingPrograms', 0, 'Ningún programa en enfriamiento');
+  });
 });

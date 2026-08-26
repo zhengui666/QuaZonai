@@ -62,7 +62,11 @@ export function IdeaComposerPage() {
               {result.overlap ? (
                 <Callout.Root color="amber" size="1">
                   <Callout.Icon><WarningCircleIcon /></Callout.Icon>
-                  <Callout.Text dir="auto"><strong>{humanize(result.overlap.kind)}</strong> · {result.overlap.rationale ?? result.overlap.recommendation ?? t('idea.overlapFallback')}</Callout.Text>
+                  <Callout.Text>
+                    <bdi dir="auto"><strong>{humanize(result.overlap.kind)}</strong></bdi>
+                    {' · '}
+                    <bdi dir="auto">{result.overlap.rationale ?? result.overlap.recommendation ?? t('idea.overlapFallback')}</bdi>
+                  </Callout.Text>
                 </Callout.Root>
               ) : (
                 <Callout.Root color="green" size="1">

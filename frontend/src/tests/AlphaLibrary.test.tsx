@@ -13,6 +13,11 @@ vi.mock('../lib/api/hooks', () => ({
       role: 'PRIMARY_ALPHA',
       state: 'QUALIFIED',
       metrics: { ic: 0.0004 },
+    }, {
+      id: 'abcdef12-3456',
+      role: 'PRIMARY_ALPHA',
+      state: 'QUALIFIED',
+      metrics: {},
     }],
   }),
 }));
@@ -34,5 +39,11 @@ describe('Alpha library evidence metrics', () => {
     const precise = new Intl.NumberFormat('es', { maximumSignificantDigits: 15 }).format(0.0004);
     fireEvent.change(screen.getByRole('textbox'), { target: { value: precise } });
     expect(screen.getByText('Precision Alpha')).toBeInTheDocument();
+  });
+  it('localizes the fallback name while isolating an unnamed alpha identifier', () => {
+    renderApp(<AlphaLibraryPage />, { locale: 'ar' });
+
+    expect(screen.getByRole('link', { name: 'ألفا abcdef12' })).toBeInTheDocument();
+    expect(screen.getByText('abcdef12')).toHaveAttribute('dir', 'ltr');
   });
 });

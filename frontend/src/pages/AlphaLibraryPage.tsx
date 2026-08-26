@@ -5,12 +5,18 @@ import { ErrorPanel } from '../components/ui/ErrorPanel';
 import { PageHeader } from '../components/ui/PageHeader';
 import { PageSkeleton } from '../components/ui/Skeleton';
 import { StateBadge } from '../components/ui/StateBadge';
+import { useI18n } from '../i18n';
 import { useAlphaLibrary } from '../lib/api/hooks';
 import type { AlphaQualification } from '../lib/api/types';
 import { formatDateTime, formatNumber, humanize, readMetric } from '../lib/format';
 
-const columns: ColumnDef<AlphaQualification, unknown>[] = [
-  { accessorKey: 'name', header: 'Alpha', meta: { messageKey: 'alpha.name' }, cell: ({ row }) => <div><div className="qz-list-title"><Link to={`/alpha/${row.original.id}`}>{row.original.name ? <span dir="auto">{row.original.name}</span> : <bdi dir="ltr">{`Alpha ${row.original.id.slice(0, 8)}`}</bdi>}</Link></div><div className="qz-list-subtitle qz-mono"><bdi dir="ltr">{row.original.id}</bdi></div></div> },
+function AlphaName({ alpha }: { alpha: AlphaQualification }) {
+  const { t } = useI18n();
+  if (alpha.name) return <span dir="auto">{alpha.name}</span>;
+  return <><span>{t('alpha.name')}</span>{' '}<bdi dir="ltr">{alpha.id.slice(0, 8)}</bdi></>;
+}
+
+const columns: ColumnDef<AlphaQualification, unknown>[] = [  { accessorKey: 'name', header: 'Alpha', meta: { messageKey: 'alpha.name' }, cell: ({ row }) => <div><div className="qz-list-title"><Link to={`/alpha/${row.original.id}`}><AlphaName alpha={row.original} /></Link></div><div className="qz-list-subtitle qz-mono"><bdi dir="ltr">{row.original.id}</bdi></div></div> },
   { accessorKey: 'universe', header: 'Universe', cell: ({ row }) => row.original.universe ? <span dir="auto">{row.original.universe}</span> : <bdi dir="ltr">{row.original.universe_version_id?.slice(0, 8) ?? '—'}</bdi> },
   { accessorKey: 'horizon', header: 'Horizon', cell: ({ getValue }) => String(getValue() ?? '—') },
   { accessorKey: 'role', header: 'Role', meta: { localizedSort: true }, cell: ({ getValue }) => humanize(String(getValue())) },

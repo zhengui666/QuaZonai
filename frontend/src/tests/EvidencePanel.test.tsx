@@ -54,4 +54,18 @@ describe('EvidencePanel', () => {
     );
   });
 
+  it('formats numeric evidence in nested objects with the active locale', () => {
+    const percent = new Intl.NumberFormat('ar', { style: 'percent', maximumSignificantDigits: 15 });
+    const compact = new Intl.NumberFormat('ar', { notation: 'compact', maximumFractionDigits: 2 });
+    const formatted = formatEvidenceValue('ar', { capacity: { soft: 0.25, vector: [0.5, 1234.5] } });
+
+    expect(formatted).toContain('capacity');
+    expect(formatted).toContain('soft');
+    expect(formatted).toContain('vector');
+    expect(formatted).toContain(percent.format(0.25));
+    expect(formatted).toContain(percent.format(0.5));
+    expect(formatted).toContain(compact.format(1234.5));
+    expect(formatted).not.toContain('0.25');
+    expect(formatted).not.toContain('1234.5');
+  });
 });

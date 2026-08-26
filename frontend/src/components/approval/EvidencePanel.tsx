@@ -11,7 +11,11 @@ export function formatEvidenceValue(locale: Locale, value: unknown): string {
       : new Intl.NumberFormat(locale, { notation: 'compact', maximumFractionDigits: 2 }).format(value);
   }
   if (Array.isArray(value)) return value.map((item) => formatEvidenceValue(locale, item)).join(', ');
-  if (typeof value === 'object' && value) return JSON.stringify(value);
+  if (typeof value === 'object' && value) {
+    return `{ ${Object.entries(value)
+      .map(([key, item]) => `${key}: ${formatEvidenceValue(locale, item)}`)
+      .join(', ')} }`;
+  }
   return String(value ?? '—');
 }
 

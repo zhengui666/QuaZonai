@@ -138,7 +138,7 @@ export function I18nProvider({ children, initialLocale }: { children: ReactNode;
     text: (source, values) => translateSource(locale, source, values),
     plural: (forms, count, values) => {
       const rule = new Intl.PluralRules(locale).select(count);
-      const key = forms[rule] ?? forms.other ?? forms.one;
+      const key = (count === 0 ? forms.zero : undefined) ?? forms[rule] ?? forms.other ?? forms.one;
       if (!key) return new Intl.NumberFormat(locale).format(count);
       return translatePluralKey(locale, key, { count, ...values });
     },

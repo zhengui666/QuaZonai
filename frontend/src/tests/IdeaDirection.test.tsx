@@ -41,9 +41,45 @@ describe('IdeaComposer text direction', () => {
     expect(screen.getByText('Which market symbol: EUR/USD?')).toHaveAttribute('dir', 'auto');
     expect(screen.getByRole('textbox', { name: 'Which market symbol: EUR/USD?' })).toHaveAttribute('dir', 'auto');
 
-    const overlap = screen.getByText((_, element) => (
-      element?.getAttribute('dir') === 'auto' && element.textContent === 'Duplicate · Existing program covers EUR/USD drift.'
+    const kind = screen.getByText((_, element) => (
+      element?.tagName === 'BDI' && element.textContent === 'Duplicate'
     ));
-    expect(overlap).toHaveAttribute('dir', 'auto');
+    const rationale = screen.getByText((_, element) => (
+      element?.tagName === 'BDI' && element.textContent === 'Existing program covers EUR/USD drift.'
+    ));
+    expect(kind).toHaveAttribute('dir', 'auto');
+    expect(rationale).toHaveAttribute('dir', 'auto');
+  });
+  it('isolates a localized overlap kind from an LTR API rationale in Arabic', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      if (String(input).endsWith('/ideas/preview')) {
+        return jsonResponse({
+          charter: {
+            original_idea_text: 'Study EUR/USD post-event drift.',
+            research_question: 'Does EUR/USD drift persist?',
+            prediction_horizon: '1D',
+            market_scope: 'US Equities',
+          },
+          clarification_required: false,
+          overlap: { kind: 'DUPLICATE', rationale: 'Compare EUR/USD' },
+        });
+      }
+      return jsonResponse({}, 404);
+    });
+
+    renderApp(<IdeaComposerPage />, { route: '/ideas', locale: 'ar' });
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Study EUR/USD post-event drift over one day.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'معاينة ميثاق البحث' }));
+
+    const kind = await screen.findByText((_, element) => (
+      element?.tagName === 'BDI' && element.textContent === 'مكرر'
+    ));
+    const rationale = screen.getByText((_, element) => (
+      element?.tagName === 'BDI' && element.textContent === 'Compare EUR/USD'
+    ));
+    expect(kind).toHaveAttribute('dir', 'auto');
+    expect(rationale).toHaveAttribute('dir', 'auto');
+    expect(kind.parentElement).toBe(rationale.parentElement);
+    expect(kind.parentElement).toHaveTextContent('مكرر · Compare EUR/USD');
   });
 });

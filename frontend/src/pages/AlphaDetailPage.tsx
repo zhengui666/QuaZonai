@@ -42,7 +42,8 @@ export function AlphaDetailPage() {
   if (!alpha) return <EmptyState title="Alpha qualification not found" description="The requested immutable qualification is unavailable." />;
 
   const lineage = alpha.lineage ?? [];
-  const rootLabel = alpha.name ?? `Alpha ${alpha.id.slice(0, 8)}`;
+  const fallbackAlphaName = () => <><span>{t('alpha.name')}</span>{' '}<bdi dir="ltr">{alpha.id.slice(0, 8)}</bdi></>;
+  const rootLabel = alpha.name ? <bdi dir="auto">{alpha.name}</bdi> : fallbackAlphaName();
   const nodes: Node[] = [
     {
       id: alpha.id,
@@ -61,7 +62,7 @@ export function AlphaDetailPage() {
 
   return (
     <>
-      <PageHeader title={alpha.name ?? `Alpha ${alpha.id.slice(0, 8)}`} translateTitle={false} description="Qualification is explicitly scoped by Universe, horizon, role, calibration and independent evidence. Historical versions remain immutable when health or evidence changes." />
+      <PageHeader title={alpha.name ?? fallbackAlphaName()} translateTitle={false} description="Qualification is explicitly scoped by Universe, horizon, role, calibration and independent evidence. Historical versions remain immutable when health or evidence changes." />
       <KpiStrip items={[{ label: 'Role', value: humanize(alpha.role) }, { label: 'Qualification', value: <StateBadge state={alpha.state} /> }, { label: 'Health', value: <StateBadge state={alpha.degradation_state ?? 'HEALTHY'} /> }, { label: 'Horizon', value: alpha.horizon ?? '—' }]} />
       <div className="qz-grid-2" style={{ marginTop: 20 }}>
         <Section title="Performance" meta="API evidence · Lightweight Charts">{performance.length ? <div className="qz-panel qz-panel-pad"><FinancialSeriesChart ariaLabel="Alpha performance and benchmark chart" series={[{ name: 'Alpha', data: performance, kind: 'area' }, { name: 'Benchmark', data: benchmark }]} /></div> : <EmptyState title="No performance series" description="The Alpha API has not returned a performance curve for this qualification." />}</Section>
