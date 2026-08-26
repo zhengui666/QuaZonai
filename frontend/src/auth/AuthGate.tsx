@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
   type ReactNode,
@@ -158,18 +159,29 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>('checking');
   const [session, setSession] = useState<SessionView | null>(null);
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
+  const sessionCheckGeneration = useRef(0);
 
-  const acceptSession = useCallback((nextSession: SessionView) => {
-    setSession(nextSession);
-    setState(nextSession.authenticated ? 'authenticated' : 'anonymous');
+  const invalidateSessionChecks = useCallback(() => {
+    sessionCheckGeneration.current += 1;
   }, []);
 
+  const acceptSession = useCallback((nextSession: SessionView) => {
+    invalidateSessionChecks();
+    setSession(nextSession);
+    setState(nextSession.authenticated ? 'authenticated' : 'anonymous');
+  }, [invalidateSessionChecks]);
+
   const checkSession = useCallback(async () => {
+    const generation = sessionCheckGeneration.current + 1;
+    sessionCheckGeneration.current = generation;
+    const isCurrent = () => sessionCheckGeneration.current === generation;
     setBootstrapError(null);
     try {
       const response = await fetch('/api/v1/auth/session', { credentials: 'same-origin' });
+      if (!isCurrent()) return;
       if (response.ok) {
-        acceptSession(await response.json() as SessionView);
+        const nextSession = await response.json() as SessionView;
+        if (isCurrent()) acceptSession(nextSession);
         return;
       }
       if (response.status === 401) {
@@ -181,6 +193,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
       setSession(null);
       setState('anonymous');
     } catch {
+      if (!isCurrent()) return;
       setBootstrapError('Unable to reach the authentication service.');
       setSession(null);
       setState('anonymous');
@@ -196,9 +209,10 @@ export function AuthGate({ children }: { children: ReactNode }) {
     if (!response.ok) {
       throw new Error(await responseErrorMessage(response, `Sign out failed with HTTP ${response.status}.`));
     }
+    invalidateSessionChecks();
     setSession(null);
     setState('anonymous');
-  }, [session?.auth_enabled]);
+  }, [invalidateSessionChecks, session?.auth_enabled]);
 
   useEffect(() => { void checkSession(); }, [checkSession]);
   useEffect(() => {
@@ -231,12 +245,13 @@ export function AuthGate({ children }: { children: ReactNode }) {
         void checkSession();
         return;
       }
+      invalidateSessionChecks();
       setSession(null);
       setState('anonymous');
     };
     window.addEventListener('quazonai:auth-required', requireAuth);
     return () => window.removeEventListener('quazonai:auth-required', requireAuth);
-  }, [checkSession, session?.auth_enabled]);
+  }, [checkSession, invalidateSessionChecks, session?.auth_enabled]);
 
   const contextValue = useMemo<OperatorAuthContextValue>(
     () => ({ authEnabled: session?.auth_enabled ?? false, logout }),

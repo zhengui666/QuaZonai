@@ -105,6 +105,43 @@ describe('AuthGate', () => {
     expect(await screen.findByRole('heading', { name: 'Verify your identity' })).toBeInTheDocument();
   });
 
+  it('ignores an out-of-order direct-access rebootstrap response', async () => {
+    const staleDirectSession = deferredResponse();
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => jsonResponse({
+        authenticated: true,
+        username: 'local-operator',
+        trusted_browser: false,
+        auth_enabled: false,
+      }))
+      .mockImplementationOnce(() => staleDirectSession.promise)
+      .mockImplementationOnce(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AuthGate><div>Direct workbench</div></AuthGate>);
+
+    expect(await screen.findByText('Direct workbench')).toBeInTheDocument();
+    act(() => {
+      window.dispatchEvent(new Event('quazonai:auth-required'));
+      window.dispatchEvent(new Event('quazonai:auth-required'));
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(await screen.findByRole('heading', { name: 'Verify your identity' })).toBeInTheDocument();
+
+    await act(async () => {
+      staleDirectSession.resolve(await jsonResponse({
+        authenticated: true,
+        username: 'local-operator',
+        trusted_browser: false,
+        auth_enabled: false,
+      }));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole('heading', { name: 'Verify your identity' })).toBeInTheDocument();
+    expect(screen.queryByText('Direct workbench')).not.toBeInTheDocument();
+  });
+
   it('shows password, authenticator code, and trusted-browser option when anonymous', async () => {
     vi.stubGlobal('fetch', vi.fn(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401)));
 

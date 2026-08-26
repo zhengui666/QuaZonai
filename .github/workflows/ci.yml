@@ -48,7 +48,8 @@ jobs:
           test ! -e backend/src/runners/live_supervisor.py
           test ! -d backend/src/mcp_gateway
           test ! -d native/quazonai_nautilus_risk
-          ! grep -R -n -E '/api/v1/(deployments|risk-accounts|execution-connections)|quazonai-live-supervisor|nautilus_trader|quazonai-mcp-gateway|mcp_gateway|QUAZONAI_MCP_' backend/src compose.yml backend/pyproject.toml
+          ! grep -R -n -E '/api/v1/(deployments|risk-accounts|execution-connections)|quazonai-live-supervisor|nautilus_trader|quazonai-mcp-gateway|mcp_gateway|QUAZONAI_MCP_' backend/src compose.yml backend/pyproject.toml deploy/Dockerfile.backend
+          ! grep -R -n -E 'backend\[[^]]*mcp|PyJWT' backend/pyproject.toml deploy/Dockerfile.backend THIRD_PARTY_NOTICES.md
       - name: Install product runtimes
         run: python -m pip install -e 'backend[dev,research,agent]'
       - name: Compile

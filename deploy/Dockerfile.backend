@@ -26,7 +26,7 @@ RUN groupadd --system quazonai \
 
 WORKDIR /workspace
 COPY backend/ /workspace/backend/
-RUN /opt/venv/bin/python -m pip install --no-cache-dir "/workspace/backend[research,mcp,agent]"
+RUN /opt/venv/bin/python -m pip install --no-cache-dir "/workspace/backend[research,agent]"
 COPY --from=frontend-builder /workspace/frontend/dist /workspace/frontend-dist
 
 RUN mkdir -p \
