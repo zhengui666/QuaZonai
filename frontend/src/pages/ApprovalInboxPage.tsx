@@ -40,7 +40,7 @@ function compatible(approval: ApprovalSnapshot, systems: DownstreamSystem[]) {
 export function formatDeployableCapital(locale: Locale, value?: number | string | null): string {
   if (value === undefined || value === null || value === '') return '—';
   const numeric = Number(value);
-  return Number.isFinite(numeric) ? new Intl.NumberFormat(locale, { maximumSignificantDigits: 15 }).format(numeric) : String(value);
+  return Number.isFinite(numeric) ? new Intl.NumberFormat(locale, { maximumSignificantDigits: 21 }).format(numeric) : String(value);
 }
 
 function ApprovalCard({ approval, systems }: { approval: ApprovalSnapshot; systems: DownstreamSystem[] }) {
