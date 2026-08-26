@@ -54,7 +54,15 @@ export function AlphaDetailPage() {
     ...lineage.map((item, index) => ({
       id: item.id,
       position: { x: (index % 4) * 200, y: 140 + Math.floor(index / 4) * 110 },
-      data: { label: <bdi dir="auto">{item.label} · {humanize(item.relationship)}</bdi> },
+      data: {
+        label: (
+          <>
+            <bdi dir="auto">{item.label}</bdi>
+            {' · '}
+            <bdi dir="auto">{humanize(item.relationship)}</bdi>
+          </>
+        ),
+      },
       style: { background: 'var(--qz-bg-elevated)', border: '1px solid var(--qz-border-strong)', color: 'var(--qz-text)', borderRadius: 8, width: 170, fontSize: 10 },
     })),
   ];

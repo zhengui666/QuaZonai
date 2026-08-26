@@ -21,6 +21,7 @@ describe('apiRequest failures', () => {
     await expect(apiRequest('/api/v1/example')).rejects.toMatchObject({
       failure: { kind: 'network' },
       status: 0,
+      code: undefined,
     });
   });
 

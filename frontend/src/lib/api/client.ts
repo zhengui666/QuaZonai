@@ -7,14 +7,14 @@ export type ApiFailure =
 
 export class ApiError extends Error {
   readonly failure: ApiFailure;
-  readonly code: string;
+  readonly code?: string;
   readonly status: number;
   readonly details?: Record<string, unknown>;
 
   constructor(
     failure: ApiFailure,
     status: number,
-    code = 'HTTP_ERROR',
+    code?: string,
     details?: Record<string, unknown>,
     diagnosticMessage?: string,
   ) {
@@ -22,7 +22,7 @@ export class ApiError extends Error {
     this.name = 'ApiError';
     this.failure = failure;
     this.status = status;
-    this.code = code;
+    this.code = code ?? (failure.kind === 'network' ? undefined : 'HTTP_ERROR');
     this.details = details;
   }
 }

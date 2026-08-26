@@ -1,6 +1,7 @@
 import { screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { PortfolioCandidatePage } from '../pages/PortfolioCandidatePage';
+import { formatPlainDecimalString } from '../lib/format';
 import { renderApp } from './testUtils';
 
 vi.mock('../components/graphs/RedundancyGraph', () => ({
@@ -23,7 +24,7 @@ vi.mock('../lib/api/hooks', () => ({
       constraint_set_version: 'constraint-set-3',
       rebalance_policy_version: 'rebalance/v5',
       evaluation_episode_id: 'episode/v6',
-      metrics: { search_adjusted_quality: 0.0004 },
+      metrics: { search_adjusted_quality: '0.123456789012345678901' },
       members: [],
     },
   }),
@@ -32,7 +33,8 @@ vi.mock('../lib/api/hooks', () => ({
 describe('Portfolio candidate presentation', () => {
   it('preserves precise quality values and keeps frozen identifiers LTR in Arabic', () => {
     renderApp(<PortfolioCandidatePage />, { locale: 'ar' });
-    const precise = new Intl.NumberFormat('ar', { maximumSignificantDigits: 15 }).format(0.0004);
+    const precise = formatPlainDecimalString('0.123456789012345678901', 'ar')!;
+    expect(precise).not.toBe(new Intl.NumberFormat('ar', { maximumSignificantDigits: 15 }).format(Number('0.123456789012345678901')));
     expect(screen.getByText(precise)).toBeInTheDocument();
 
     expect(screen.getByRole('heading', { level: 1 }).textContent).toContain('\u2066candidat\u2069');

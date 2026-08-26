@@ -35,7 +35,9 @@ describe('ErrorPanel', () => {
       </I18nProvider>,
     );
 
+    expect(screen.getByText('تعذر تحميل البيانات')).toBeInTheDocument();
     expect(screen.getByText('تعذر الوصول إلى الخدمة.')).toBeInTheDocument();
+    expect(screen.queryByText('HTTP_ERROR')).not.toBeInTheDocument();
   });
 
   it('preserves API-authored error text', () => {

@@ -11,9 +11,14 @@ export function formatDateTime(value?: string | null): string {
 
 export function formatNumber(value?: number | string | null, options?: Intl.NumberFormatOptions): string {
   if (value === null || value === undefined || value === '') return '—';
+  const locale = getIntlLocale();
+  if (typeof value === 'string') {
+    const exact = formatPlainDecimalString(value.trim(), locale);
+    if (exact !== null) return exact;
+  }
   const numeric = Number(value);
   if (Number.isNaN(numeric)) return String(value);
-  return new Intl.NumberFormat(getIntlLocale(), options).format(numeric);
+  return new Intl.NumberFormat(locale, options).format(numeric);
 }
 
 const capitalNumberFormatOptions = { maximumSignificantDigits: 21 } as const;
