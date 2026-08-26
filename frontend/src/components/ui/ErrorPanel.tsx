@@ -12,6 +12,8 @@ export function ErrorPanel({ error, action }: { error: unknown; action?: ReactNo
       ? t('error.requestHttpError', { status: apiError.failure.status })
       : apiError?.failure.kind === 'network'
         ? t('error.requestUnreachable')
+        : apiError?.failure.kind === 'decode'
+          ? t('error.requestInvalidResponse')
         : error instanceof Error
           ? error.message
           : t('error.unexpected');

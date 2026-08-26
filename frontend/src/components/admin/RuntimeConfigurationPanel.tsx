@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 42282)
+Total output lines: 1120
+
 import { Button, Switch, TextField } from '@radix-ui/themes';
 import { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../../i18n';
@@ -142,8 +145,8 @@ export function RuntimeConfigurationPanel({ configuration }: { configuration: Ru
           <label className="qz-field"><span className="qz-label">{t('runtime.validationTimeout')}</span><TextField.Root dir="ltr" type="number" min="1" max={String(MAX_WORKER_TIMEOUT_SECONDS)} step="1" value={pluginValidationTimeout} onChange={(event) => setPluginValidationTimeout(event.target.value)} /></label>
           <label className="qz-field"><span className="qz-label">{t('runtime.bundleTimeout')}</span><TextField.Root dir="ltr" type="number" min="1" max={String(MAX_WORKER_TIMEOUT_SECONDS)} step="1" value={bundleBuildTimeout} onChange={(event) => setBundleBuildTimeout(event.target.value)} /></label>
           <label className="qz-field"><span className="qz-label">{t('runtime.pluginJobTimeout')}</span><TextField.Root dir="ltr" type="number" min="1" max={String(MAX_WORKER_TIMEOUT_SECONDS)} step="1" value={pluginJobTimeout} onChange={(event) => setPluginJobTimeout(event.target.value)} /></label>
-          <label className="qz-field"><span className="qz-label">{t('runtime.missionTimeout')}</span><TextField.Root dir="ltr" type="number" min="1" max={String(MAX_WORKER_TIMEOUT_SECONDS)} step="1" value={missionJobTimeout} onChange={(event) => setMissionJobTimeout(event.target.value)} /><span className="qz-list-subtitle">{t('runtime.timeoutRange')}</span></label>
-          <label className="qz-field"><span className="qz-label">{t('runtime.pollInterval')}</span><TextField.Root dir="ltr" type="number" min="0.01" max={String(MAX_JOB_POLL_SECONDS)} step="0.01" value={jobPollSeconds} onChange={(event) => setJobPollSeconds(event.target.value)} /><span className="qz-list-subtitle">{t('runtime.pollRange')}</span></label>
+          <label className="qz-field"><span className="qz-label">{t('runtime.missionTimeout')}</span><TextField.Root dir="ltr" type="number" min="1" max={String(MAX_WORKER_TIMEOUT_SECONDS)} step="1" value={missionJobTimeout} onChange={(event) => setMissionJobTimeout(event.target.value)} /><span className="qz-list-subtitle">{t('runtime.timeoutRange', { min: 1, max: MAX_WORKER_TIMEOUT_SECONDS })}</span></label>
+          <label className="qz-field"><span className="qz-label">{t('runtime.pollInterval')}</span><TextField.Root dir="ltr" type="number" min="0.01" max={String(MAX_JOB_POLL_SECONDS)} step="0.01" value={jobPollSeconds} onChange={(event) => setJobPollSeconds(event.target.value)} /><span className="qz-list-subtitle">{t('runtime.pollRange', { min: 0.01, max: MAX_JOB_POLL_SECONDS })}</span></label>
           <label className="qz-field"><span className="qz-label">{t('runtime.jobLease')}</span><TextField.Root dir="ltr" type="number" min="1" max={String(MAX_JOB_LEASE_SECONDS)} step="1" value={jobLeaseSeconds} onChange={(event) => setJobLeaseSeconds(event.target.value)} /></label>
         </div>
 

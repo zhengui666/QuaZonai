@@ -28,8 +28,14 @@ describe('RuntimeConfigurationPanel directionality', () => {
     expect(screen.getByText(new Intl.NumberFormat('ar').format(configuration.revision))).toBeInTheDocument();
     expect(screen.getByDisplayValue('https://gateway.example/v1')).toHaveAttribute('dir', 'ltr');
     expect(screen.getByPlaceholderText(translateKey('ar', 'runtime.keyConfigured'))).toHaveAttribute('dir', 'ltr');
+    expect(screen.getByText(translateKey('ar', 'runtime.timeoutRange', { min: 1, max: 86_400 }))).toBeInTheDocument();
+    expect(screen.getByText(translateKey('ar', 'runtime.pollRange', { min: 0.01, max: 3600 }))).toBeInTheDocument();
     const numericInputs = screen.getAllByRole('spinbutton');
     expect(numericInputs).toHaveLength(7);
     numericInputs.forEach((input) => expect(input).toHaveAttribute('dir', 'ltr'));
+  });
+
+  it('uses the locale formatter for decimal range bounds', () => {
+    expect(translateKey('es', 'runtime.pollRange', { min: 0.01, max: 3600 })).toBe(`0,01–${new Intl.NumberFormat('es').format(3600)} segundos.`);
   });
 });

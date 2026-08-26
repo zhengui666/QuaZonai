@@ -25,6 +25,19 @@ describe('apiRequest failures', () => {
     });
   });
 
+  it('marks malformed successful JSON responses as localizable fallbacks', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response('{', {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))));
+
+    await expect(apiRequest('/api/v1/example')).rejects.toMatchObject({
+      failure: { kind: 'decode' },
+      status: 200,
+      code: undefined,
+    });
+  });
+
   it('preserves API-authored messages in structured failures', async () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(JSON.stringify({
       error: { message: 'Origin policy denied.' },

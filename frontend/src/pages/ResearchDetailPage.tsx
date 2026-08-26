@@ -119,7 +119,7 @@ export function ResearchDetailPage() {
           <div><div className="qz-label">{t('idea.researchQuestion')}</div><div dir="auto" style={{ fontSize: 13, marginTop: 5 }}>{current.charter?.research_question ?? '—'}</div></div>
           <div><div className="qz-label">{t('idea.predictionHorizon')}</div><div className="qz-list-subtitle" dir="auto">{localizeSystemInferred(current.charter?.prediction_horizon, systemInferred) ?? '—'}</div></div>
           <div><div className="qz-label">{t('idea.marketScope')}</div><div className="qz-list-subtitle">{Array.isArray(current.charter?.market_scope) ? current.charter.market_scope.map((scope, index) => <span key={`${scope}-${index}`}>{index ? ', ' : null}<bdi dir="auto">{localizeSystemInferred(scope, systemInferred)}</bdi></span>) : <bdi dir="auto">{localizeSystemInferred(current.charter?.market_scope, systemInferred) ?? '—'}</bdi>}</div></div>
-          <div><div className="qz-label">{t('research.explicitExclusions')}</div><div className="qz-list-subtitle" dir="auto">{current.charter?.explicit_exclusions?.join(', ') || t('common.none')}</div></div>
+          <div><div className="qz-label">{t('research.explicitExclusions')}</div><div className="qz-list-subtitle">{current.charter?.explicit_exclusions?.length ? current.charter.explicit_exclusions.map((exclusion, index) => <span key={`${exclusion}-${index}`}>{index ? ', ' : null}<bdi dir="auto">{exclusion}</bdi></span>) : t('common.none')}</div></div>
         </div>
       </Section>
       <div className="qz-grid-2">

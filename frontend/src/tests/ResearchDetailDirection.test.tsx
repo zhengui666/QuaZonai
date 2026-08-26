@@ -21,6 +21,7 @@ describe('ResearchDetailPage charter direction', () => {
             research_question: 'Does mixed-market drift persist?',
             prediction_horizon: 'System inferred',
             market_scope: ['بورصة الرياض', 'EUR/USD', 'System inferred'],
+            explicit_exclusions: ['استبعاد غير سائل', 'GBP/JPY'],
           },
         });
       }
@@ -43,5 +44,13 @@ describe('ResearchDetailPage charter direction', () => {
     expect(scopeContainer).toHaveTextContent('بورصة الرياض, EUR/USD, استنتجه النظام');
     expect(screen.getAllByText('استنتجه النظام')).toHaveLength(2);
     expect(screen.queryByText('System inferred')).not.toBeInTheDocument();
+
+    const arabicExclusion = screen.getByText((_, element) => element?.tagName === 'BDI' && element.textContent === 'استبعاد غير سائل');
+    const gbpJpyExclusion = screen.getByText((_, element) => element?.tagName === 'BDI' && element.textContent === 'GBP/JPY');
+    expect(arabicExclusion).toHaveAttribute('dir', 'auto');
+    expect(gbpJpyExclusion).toHaveAttribute('dir', 'auto');
+    const exclusionContainer = arabicExclusion.parentElement?.parentElement;
+    expect(exclusionContainer).not.toHaveAttribute('dir');
+    expect(exclusionContainer).toHaveTextContent('استبعاد غير سائل, GBP/JPY');
   });
 });

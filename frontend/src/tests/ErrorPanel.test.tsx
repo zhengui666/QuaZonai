@@ -40,6 +40,21 @@ describe('ErrorPanel', () => {
     expect(screen.queryByText('HTTP_ERROR')).not.toBeInTheDocument();
   });
 
+  it('localizes client decode fallbacks without exposing diagnostics', () => {
+    render(
+      <I18nProvider initialLocale="ar">
+        <Theme appearance="dark" accentColor="jade" grayColor="sage" radius="small" scaling="90%">
+          <ErrorPanel error={new ApiError({ kind: 'decode' }, 200, undefined, undefined, 'Unexpected end of JSON input')} />
+        </Theme>
+      </I18nProvider>,
+    );
+
+    expect(screen.getByText('تعذر تحميل البيانات')).toBeInTheDocument();
+    expect(screen.getByText('أرجعت الخدمة استجابة غير صالحة.')).toBeInTheDocument();
+    expect(screen.queryByText('Unexpected end of JSON input')).not.toBeInTheDocument();
+    expect(screen.queryByText('HTTP_ERROR')).not.toBeInTheDocument();
+  });
+
   it('preserves API-authored error text', () => {
     render(
       <I18nProvider initialLocale="ar">

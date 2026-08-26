@@ -3,7 +3,8 @@ import type { ApiErrorEnvelope } from './types';
 export type ApiFailure =
   | { kind: 'api'; message: string }
   | { kind: 'http'; status: number }
-  | { kind: 'network' };
+  | { kind: 'network' }
+  | { kind: 'decode' };
 
 export class ApiError extends Error {
   readonly failure: ApiFailure;
@@ -22,7 +23,7 @@ export class ApiError extends Error {
     this.name = 'ApiError';
     this.failure = failure;
     this.status = status;
-    this.code = code ?? (failure.kind === 'network' ? undefined : 'HTTP_ERROR');
+    this.code = code ?? (failure.kind === 'api' || failure.kind === 'http' ? 'HTTP_ERROR' : undefined);
     this.details = details;
   }
 }
@@ -67,7 +68,12 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 
   const contentType = response.headers.get('content-type') ?? '';
   if (!contentType.includes('application/json')) return await response.text() as T;
-  return await response.json() as T;
+  try {
+    return await response.json() as T;
+  } catch (error) {
+    const diagnosticMessage = error instanceof Error ? error.message : typeof error === 'string' ? error : undefined;
+    throw new ApiError({ kind: 'decode' }, response.status, undefined, undefined, diagnosticMessage);
+  }
 }
 
 export function jsonBody(value: unknown): string {
