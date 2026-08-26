@@ -78,11 +78,13 @@ function searchableValues(value: unknown, locale: Locale, meta?: LocalizedColumn
       const numericValue = finiteNumericValue(value);
       if (numericValue !== undefined) values.push(...numericSearchValues(numericValue, locale, meta));
     }
-    const sourceLabel = humanizeCanonical(value);
-    const domainLabel = translateDomainLabel(locale, sourceLabel);
-    if (domainLabel) values.push(domainLabel);
-    const runtimeLabel = translateRuntimeLabel(locale, sourceLabel);
-    if (runtimeLabel) values.push(runtimeLabel);
+    if (meta?.localizedSort) {
+      const sourceLabel = humanizeCanonical(value);
+      const domainLabel = translateDomainLabel(locale, sourceLabel);
+      if (domainLabel) values.push(domainLabel);
+      const runtimeLabel = translateRuntimeLabel(locale, sourceLabel);
+      if (runtimeLabel) values.push(runtimeLabel);
+    }
     if (/^\d{4}-\d{2}-\d{2}(?:T|$)/.test(value)) values.push(formatDateTime(value));
     return values;
   }

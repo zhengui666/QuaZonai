@@ -170,6 +170,20 @@ describe('DataTable', () => {
     expect(screen.getAllByText(/^(AVAILABLE|BLOCKED)$/).map((element) => element.textContent)).toEqual(['AVAILABLE', 'BLOCKED']);
   });
 
+  it('does not filter raw operator labels by hidden localized aliases', () => {
+    render(
+      <I18nProvider initialLocale="es">
+        <Theme appearance="dark" accentColor="jade" grayColor="sage" radius="small" scaling="90%">
+          <DataTable data={[{ label: 'AVAILABLE' }, { label: 'BLOCKED' }]} columns={operatorLabelColumns} />
+        </Theme>
+      </I18nProvider>,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText('Filtrar filas…'), { target: { value: 'Disponible' } });
+    expect(screen.queryByText('AVAILABLE')).not.toBeInTheDocument();
+    expect(screen.queryByText('BLOCKED')).not.toBeInTheDocument();
+  });
+
   it('filters numeric columns by the declared compact and percentage display formats', () => {
     const data = [
       { name: 'Large', amount: 1234, weight: 0.25 },
