@@ -127,6 +127,10 @@ export function humanize(value?: string | null): string {
   return translateRuntimeLabel(locale, source) ?? translateDomainLabel(locale, source) ?? translateSource(locale, source);
 }
 
+export function localizeSystemInferred(value: string | null | undefined, localizedValue: string): string | null | undefined {
+  return value === 'System inferred' ? localizedValue : value;
+}
+
 export function readMetric(metrics: Record<string, unknown> | undefined, keys: string[]): number | string | null | undefined {
   for (const key of keys) {
     if (metrics && key in metrics) {

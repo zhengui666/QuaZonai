@@ -17,7 +17,7 @@ import { Translated, useI18n } from '../i18n';
 import { failedMissionForms, runningMissionForms, structuredEventForms, succeededMissionForms } from '../i18n/researchPlural';
 import { useProgram, useProgramAction, useProgramActivity, useProgramMissions } from '../lib/api/hooks';
 import type { ActivityEvent, OhlcPoint } from '../lib/api/types';
-import { formatDateTime, formatNumber, humanize } from '../lib/format';
+import { formatDateTime, formatNumber, humanize, localizeSystemInferred } from '../lib/format';
 
 type BranchSummary = { id: string; missions: number; running: number; succeeded: number; failed: number };
 const branchColumns: ColumnDef<BranchSummary, unknown>[] = [
@@ -62,6 +62,7 @@ function ProgramActionDialog({ id, action, label, icon }: { id: string; action: 
 
 export function ResearchDetailPage() {
   const { t, plural } = useI18n();
+  const systemInferred = t('common.systemInferred');
   const { id } = useParams();
   const program = useProgram(id);
   const missions = useProgramMissions(id);
@@ -116,8 +117,8 @@ export function ResearchDetailPage() {
       <Section title="Frozen research charter" meta={t('research.created', { date: formatDateTime(current.charter?.created_at ?? current.created_at) })}>
         <div className="qz-panel qz-panel-pad qz-grid-2">
           <div><div className="qz-label">{t('idea.researchQuestion')}</div><div dir="auto" style={{ fontSize: 13, marginTop: 5 }}>{current.charter?.research_question ?? '—'}</div></div>
-          <div><div className="qz-label">{t('idea.predictionHorizon')}</div><div className="qz-list-subtitle" dir="auto">{current.charter?.prediction_horizon ?? '—'}</div></div>
-          <div><div className="qz-label">{t('idea.marketScope')}</div><div className="qz-list-subtitle" dir="auto">{Array.isArray(current.charter?.market_scope) ? current.charter.market_scope.join(', ') : current.charter?.market_scope ?? '—'}</div></div>
+          <div><div className="qz-label">{t('idea.predictionHorizon')}</div><div className="qz-list-subtitle" dir="auto">{localizeSystemInferred(current.charter?.prediction_horizon, systemInferred) ?? '—'}</div></div>
+          <div><div className="qz-label">{t('idea.marketScope')}</div><div className="qz-list-subtitle">{Array.isArray(current.charter?.market_scope) ? current.charter.market_scope.map((scope, index) => <span key={`${scope}-${index}`}>{index ? ', ' : null}<bdi dir="auto">{localizeSystemInferred(scope, systemInferred)}</bdi></span>) : <bdi dir="auto">{localizeSystemInferred(current.charter?.market_scope, systemInferred) ?? '—'}</bdi>}</div></div>
           <div><div className="qz-label">{t('research.explicitExclusions')}</div><div className="qz-list-subtitle" dir="auto">{current.charter?.explicit_exclusions?.join(', ') || t('common.none')}</div></div>
         </div>
       </Section>

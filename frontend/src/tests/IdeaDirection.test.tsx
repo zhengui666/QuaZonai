@@ -82,4 +82,38 @@ describe('IdeaComposer text direction', () => {
     expect(kind.parentElement).toBe(rationale.parentElement);
     expect(kind.parentElement).toHaveTextContent('مكرر · Compare EUR/USD');
   });
+
+  it('isolates mixed market scopes and localizes the system-inferred charter sentinel', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      if (String(input).endsWith('/ideas/preview')) {
+        return jsonResponse({
+          charter: {
+            original_idea_text: 'Study mixed markets.',
+            research_question: 'Does mixed-market drift persist?',
+            prediction_horizon: 'System inferred',
+            market_scope: ['بورصة الرياض', 'EUR/USD', 'System inferred'],
+          },
+          clarification_required: false,
+          overlap: null,
+        });
+      }
+      return jsonResponse({}, 404);
+    });
+
+    renderApp(<IdeaComposerPage />, { route: '/ideas', locale: 'ar' });
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Study mixed market behavior over a meaningful horizon.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'معاينة ميثاق البحث' }));
+
+    const arabicScope = await screen.findByText((_, element) => element?.tagName === 'BDI' && element.textContent === 'بورصة الرياض');
+    const eurUsdScope = screen.getByText((_, element) => element?.tagName === 'BDI' && element.textContent === 'EUR/USD');
+    const inferredScope = screen.getByText((_, element) => element?.tagName === 'BDI' && element.textContent === 'استنتجه النظام');
+    expect(arabicScope).toHaveAttribute('dir', 'auto');
+    expect(eurUsdScope).toHaveAttribute('dir', 'auto');
+    expect(inferredScope).toHaveAttribute('dir', 'auto');
+    const scopeContainer = arabicScope.parentElement?.parentElement;
+    expect(scopeContainer).not.toHaveAttribute('dir');
+    expect(scopeContainer).toHaveTextContent('بورصة الرياض, EUR/USD, استنتجه النظام');
+    expect(screen.getAllByText('استنتجه النظام')).toHaveLength(2);
+    expect(screen.queryByText('System inferred')).not.toBeInTheDocument();
+  });
 });

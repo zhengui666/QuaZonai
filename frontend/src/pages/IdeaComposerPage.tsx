@@ -7,7 +7,7 @@ import { PageHeader } from '../components/ui/PageHeader';
 import { Section } from '../components/ui/Section';
 import { useI18n } from '../i18n';
 import { useIdeaPreview, useStartResearch } from '../lib/api/hooks';
-import { humanize } from '../lib/format';
+import { humanize, localizeSystemInferred } from '../lib/format';
 
 export function IdeaComposerPage() {
   const { t } = useI18n();
@@ -76,8 +76,8 @@ export function IdeaComposerPage() {
               )}
               <div><div className="qz-label">{t('idea.researchQuestion')}</div><div dir="auto" style={{ marginTop: 5, fontSize: 13 }}>{result.charter?.research_question ?? idea}</div></div>
               <div className="qz-grid-2">
-                <div><div className="qz-label">{t('idea.marketScope')}</div><div dir="auto" className="qz-list-subtitle">{Array.isArray(result.charter?.market_scope) ? result.charter.market_scope.join(', ') : result.charter?.market_scope ?? t('common.systemInferred')}</div></div>
-                <div><div className="qz-label">{t('idea.predictionHorizon')}</div><div dir="auto" className="qz-list-subtitle">{result.charter?.prediction_horizon ?? t('common.systemInferred')}</div></div>
+                <div><div className="qz-label">{t('idea.marketScope')}</div><div className="qz-list-subtitle">{Array.isArray(result.charter?.market_scope) ? result.charter.market_scope.map((scope, index) => <span key={`${scope}-${index}`}>{index ? ', ' : null}<bdi dir="auto">{localizeSystemInferred(scope, t('common.systemInferred'))}</bdi></span>) : <bdi dir="auto">{localizeSystemInferred(result.charter?.market_scope, t('common.systemInferred')) ?? t('common.systemInferred')}</bdi>}</div></div>
+                <div><div className="qz-label">{t('idea.predictionHorizon')}</div><div dir="auto" className="qz-list-subtitle">{localizeSystemInferred(result.charter?.prediction_horizon, t('common.systemInferred')) ?? t('common.systemInferred')}</div></div>
               </div>
               {questions.length ? (
                 <div className="qz-form-grid">
