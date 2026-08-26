@@ -96,6 +96,26 @@ def test_enabled_auth_accepts_independent_cookie_and_master_keys(settings: Setti
 
 
 @pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("operator_username", "operator\nname"),
+        ("operator_username", "operator\rname"),
+        ("operator_password", "correct horse\nbattery staple"),
+        ("operator_password", "correct horse\rbattery staple"),
+    ],
+)
+def test_enabled_auth_rejects_browser_unrepresentable_line_breaks(
+    settings: Settings,
+    field: str,
+    value: str,
+) -> None:
+    configured = replace(_enabled_auth(settings), **{field: value})
+
+    with pytest.raises(SettingsError, match="must not contain carriage returns or line feeds"):
+        configured.validate_operator_auth()
+
+
+@pytest.mark.parametrize(
     "token",
     [
         secrets.token_urlsafe(32),

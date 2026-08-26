@@ -439,6 +439,14 @@ class Settings:
 
         _validate_utf8_text(self.operator_username, name="QUAZONAI_AUTH_USERNAME")
         _validate_utf8_text(self.operator_password, name="QUAZONAI_AUTH_PASSWORD")
+        for name, credential in (
+            ("QUAZONAI_AUTH_USERNAME", self.operator_username),
+            ("QUAZONAI_AUTH_PASSWORD", self.operator_password),
+        ):
+            if "\r" in credential or "\n" in credential:
+                raise SettingsError(
+                    f"{name} must not contain carriage returns or line feeds"
+                )
         if len(self.operator_username) > MAX_OPERATOR_USERNAME_CHARACTERS:
             raise SettingsError(
                 f"QUAZONAI_AUTH_USERNAME must contain at most "

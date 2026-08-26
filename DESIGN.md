@@ -1713,7 +1713,6 @@ QuaZonai/
 │  │  ├─ research_engine/
 │  │  ├─ evaluation/
 │  │  ├─ agent_runtime/
-│  │  ├─ mcp_gateway/
 │  │  ├─ plugins/
 │  │  ├─ packaging/
 │  │  └─ workers/

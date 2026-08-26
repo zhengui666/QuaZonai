@@ -223,13 +223,20 @@ export function AuthGate({ children }: { children: ReactNode }) {
   }, [session?.auth_enabled, state]);
   useEffect(() => {
     const requireAuth = () => {
-      if (session?.auth_enabled === false) return;
+      if (session?.auth_enabled === false) {
+        // An open direct-access tab may outlive an API restart that enables
+        // Operator Authentication. Re-bootstrap instead of trusting its stale
+        // session mode forever.
+        setState('checking');
+        void checkSession();
+        return;
+      }
       setSession(null);
       setState('anonymous');
     };
     window.addEventListener('quazonai:auth-required', requireAuth);
     return () => window.removeEventListener('quazonai:auth-required', requireAuth);
-  }, [session?.auth_enabled]);
+  }, [checkSession, session?.auth_enabled]);
 
   const contextValue = useMemo<OperatorAuthContextValue>(
     () => ({ authEnabled: session?.auth_enabled ?? false, logout }),

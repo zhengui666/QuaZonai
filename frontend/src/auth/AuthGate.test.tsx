@@ -68,19 +68,41 @@ describe('AuthGate', () => {
   });
 
   it('preserves direct access when operator authentication is disabled', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => jsonResponse({
+    const fetchMock = vi.fn(() => jsonResponse({
       authenticated: true,
       username: 'local-operator',
       trusted_browser: false,
       auth_enabled: false,
-    })));
+    }));
+    vi.stubGlobal('fetch', fetchMock);
 
     render(<AuthGate><div>Direct workbench</div></AuthGate>);
 
     expect(await screen.findByText('Direct workbench')).toBeInTheDocument();
     act(() => window.dispatchEvent(new Event('quazonai:auth-required')));
-    expect(screen.getByText('Direct workbench')).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText('Direct workbench')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Verify your identity' })).not.toBeInTheDocument();
+  });
+
+  it('rechecks a stale direct-access session after an authentication-required signal', async () => {
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => jsonResponse({
+        authenticated: true,
+        username: 'local-operator',
+        trusted_browser: false,
+        auth_enabled: false,
+      }))
+      .mockImplementationOnce(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AuthGate><div>Direct workbench</div></AuthGate>);
+
+    expect(await screen.findByText('Direct workbench')).toBeInTheDocument();
+    act(() => window.dispatchEvent(new Event('quazonai:auth-required')));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole('heading', { name: 'Verify your identity' })).toBeInTheDocument();
   });
 
   it('shows password, authenticator code, and trusted-browser option when anonymous', async () => {
