@@ -109,6 +109,10 @@ def _install_operator_auth(app: FastAPI) -> None:
         # validation but before the endpoint starts must still invalidate an
         # already-admitted EventSource request on its next poll.
         admission_generation = runtime.stream_generation()
+        # Trusted-browser renewal has a narrower cookie-issuance contract: any
+        # enabled-auth logout, including an anonymous logout that does not revoke
+        # unrelated SSE streams, must win over a late renewal response.
+        renewal_cookie_generation = runtime.cookie_generation()
         authorization = request.headers.get("authorization")
         if authorization is not None:
             machine_identity = authenticate_machine(settings, authorization)
@@ -146,7 +150,7 @@ def _install_operator_auth(app: FastAPI) -> None:
             runtime.renew_session_if_current(
                 response,
                 settings,
-                generation=admission_generation,
+                cookie_generation=renewal_cookie_generation,
             )
         return response
 

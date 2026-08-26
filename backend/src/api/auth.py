@@ -10,15 +10,9 @@ from operator_auth import (
     OperatorAuthRuntime,
     authenticate_browser,
     authenticate_login,
-    clear_auth_cookies,
-    clear_logout_barrier_cookie,
-    clear_trusted_browser_cookie,
     has_valid_trusted_browser,
     login_source_key,
     require_same_origin,
-    set_session_cookie,
-    set_logout_barrier_cookie,
-    set_trusted_browser_cookie,
 )
 from settings import (
     MAX_OPERATOR_PASSWORD_CHARACTERS,
@@ -74,6 +68,10 @@ def login(payload: LoginInput, request: Request, response: Response) -> SessionV
         )
 
     runtime: OperatorAuthRuntime = request.app.state.operator_auth_runtime
+    # Snapshot before credential verification. A logout that completes while the
+    # factors are being checked must prevent this request from clearing its
+    # barrier or minting a replacement browser session.
+    login_cookie_generation = runtime.cookie_generation()
     source = login_source_key(request, settings)
     if not runtime.login_limiter.allow_attempt(source):
         raise _invalid_credentials()
@@ -86,16 +84,16 @@ def login(payload: LoginInput, request: Request, response: Response) -> SessionV
     ):
         runtime.login_limiter.record_failure(source)
         raise _invalid_credentials()
+    if not runtime.complete_login_if_current(
+        response,
+        settings,
+        cookie_generation=login_cookie_generation,
+        trust_browser=payload.trust_browser,
+    ):
+        # Keep the public failure shape identical to incorrect credentials. In
+        # particular, do not return a successful SessionView without its cookie.
+        raise _invalid_credentials()
     runtime.login_limiter.record_success(source)
-
-    # Only a successful password + TOTP login clears the browser-local logout
-    # barrier; automatic trusted-browser renewal intentionally cannot do this.
-    clear_logout_barrier_cookie(response, settings)
-    set_session_cookie(response, settings)
-    if payload.trust_browser:
-        set_trusted_browser_cookie(response, settings)
-    else:
-        clear_trusted_browser_cookie(response, settings)
     assert settings.operator_username is not None
     return SessionView(
         authenticated=True,
@@ -119,7 +117,7 @@ def session(request: Request, response: Response) -> SessionView:
     runtime: OperatorAuthRuntime = request.app.state.operator_auth_runtime
     # Snapshot before parsing the trusted credential. If logout wins while this
     # request is authenticating, its renewal must not write a fresh session cookie.
-    renewal_generation = runtime.stream_generation()
+    renewal_cookie_generation = runtime.cookie_generation()
     identity = authenticate_browser(request, settings)
     if identity is None:
         raise QfError(
@@ -131,7 +129,7 @@ def session(request: Request, response: Response) -> SessionView:
         if not runtime.renew_session_if_current(
             response,
             settings,
-            generation=renewal_generation,
+            cookie_generation=renewal_cookie_generation,
         ):
             # A logout revoked this trusted-browser credential after it was
             # parsed. Do not report a usable session when its renewal lost the
@@ -155,13 +153,13 @@ def logout(request: Request, response: Response) -> None:
     _prevent_auth_response_caching(response)
     require_same_origin(request, settings)
     browser_identity = authenticate_browser(request, settings)
-    if browser_identity is not None:
-        runtime: OperatorAuthRuntime = request.app.state.operator_auth_runtime
-        runtime.revoke_active_streams()
-    if settings.auth_enabled:
-        # This also covers a request that authenticated a trusted-browser credential
-        # just before it expired and is still preparing a renewal response. The
-        # barrier is browser-local and same-origin logout is the operator's explicit
-        # intent to prevent that response from restoring access.
-        set_logout_barrier_cookie(response, settings)
-    clear_auth_cookies(response, settings)
+    runtime: OperatorAuthRuntime = request.app.state.operator_auth_runtime
+    # This also covers an anonymous request or a request that authenticated a
+    # trusted-browser credential just before expiry. `complete_logout` commits
+    # the barrier and cookie epoch atomically, while only a valid browser
+    # identity revokes active streams.
+    runtime.complete_logout(
+        response,
+        settings,
+        revoke_streams=browser_identity is not None,
+    )

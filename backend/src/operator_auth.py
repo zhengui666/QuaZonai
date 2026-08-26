@@ -161,11 +161,12 @@ class OperatorLoginLimiter:
 
 
 class OperatorAuthRuntime:
-    """Coordinate login throttling, TOTP replay, logout revocation, and renewal."""
+    """Coordinate login throttling, TOTP replay, logout, and cookie issuance."""
 
     def __init__(self, *, login_limiter: OperatorLoginLimiter | None = None) -> None:
         self.login_limiter = login_limiter or OperatorLoginLimiter()
         self._stream_generation = 0
+        self._cookie_generation = 0
         self._stream_lock = Lock()
         self._accepted_totp_steps: set[int] = set()
         self._totp_lock = Lock()
@@ -178,23 +179,81 @@ class OperatorAuthRuntime:
         with self._stream_lock:
             self._stream_generation += 1
 
+    def cookie_generation(self) -> int:
+        """Return the logout epoch that gates browser-cookie mutations."""
+        with self._stream_lock:
+            return self._cookie_generation
+
+    def complete_logout(
+        self,
+        response: Response,
+        settings: Settings,
+        *,
+        revoke_streams: bool,
+    ) -> None:
+        """Atomically record logout intent and mutate browser cookies.
+
+        Every enabled-auth logout advances the cookie generation, including an
+        anonymous or expired-session logout that intentionally must not revoke
+        other active streams. Cookie issuers compare this epoch under the same
+        lock, preventing a request that authenticated earlier from clearing this
+        logout barrier after it is committed.
+        """
+        with self._stream_lock:
+            if revoke_streams:
+                self._stream_generation += 1
+            if settings.auth_enabled:
+                self._cookie_generation += 1
+                set_logout_barrier_cookie(response, settings)
+            clear_auth_cookies(response, settings)
+
     def renew_session_if_current(
         self,
         response: Response,
         settings: Settings,
         *,
-        generation: int,
+        cookie_generation: int,
     ) -> bool:
         """Issue a trusted-browser session only when logout has not won the race.
 
-        The generation comparison and response mutation share the logout lock so a
-        concurrent logout cannot advance the generation between this check and the
-        ``Set-Cookie`` write.
+        The cookie-generation comparison and response mutation share the logout
+        lock so a concurrent logout cannot advance the epoch between this check
+        and the ``Set-Cookie`` write.
         """
         with self._stream_lock:
-            if self._stream_generation != generation:
+            if self._cookie_generation != cookie_generation:
                 return False
             set_session_cookie(response, settings)
+            return True
+
+    def complete_login_if_current(
+        self,
+        response: Response,
+        settings: Settings,
+        *,
+        cookie_generation: int,
+        trust_browser: bool,
+    ) -> bool:
+        """Finish a full login only when no logout intervened.
+
+        A password + TOTP check can take place concurrently with logout. Keep the
+        cookie-generation comparison and every login-related ``Set-Cookie``
+        mutation in the same critical section as logout, so an earlier login
+        cannot delete a newer logout barrier or restore a session after logout
+        wins.
+        """
+        with self._stream_lock:
+            if self._cookie_generation != cookie_generation:
+                return False
+            # Only a successful password + TOTP login clears the browser-local
+            # logout barrier; automatic trusted-browser renewal intentionally
+            # cannot do this.
+            clear_logout_barrier_cookie(response, settings)
+            set_session_cookie(response, settings)
+            if trust_browser:
+                set_trusted_browser_cookie(response, settings)
+            else:
+                clear_trusted_browser_cookie(response, settings)
             return True
 
     def consume_totp_step(self, step: int, *, current_step: int) -> bool:
