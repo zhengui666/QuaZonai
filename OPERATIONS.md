@@ -416,7 +416,7 @@ TOTP setup key 来自 `.env` 的 `QUAZONAI_AUTH_TOTP_SECRET`。在 Google Authen
 
 登录时可以勾选 **Trust this browser**。选中后服务器在当前浏览器 profile 写入长期 HttpOnly trusted-browser credential；短期 session 过期后，只要该 trusted credential 仍有效，就会自动恢复新 session，用户不再输入 password/TOTP。默认 trusted-browser 有效期 30 天，默认短 session 为 12 小时。
 
-只应信任自己控制的浏览器 profile。公共/共享电脑不要勾选。正常 Sign out 会同时清除 session 与 trusted-browser credential，并使当前 API 进程中已经打开的事件流在下一轮认证检查时停止；退出请求失败时 UI 不会伪装成已退出。
+只应信任自己控制的浏览器 profile。公共/共享电脑不要勾选。正常 Sign out 会同时清除 session 与 trusted-browser credential、写入当前浏览器 profile 的 `HttpOnly`/`SameSite=Strict` logout barrier，并使当前 API 进程中已经打开的事件流在下一轮认证检查时停止。该 barrier 使已在途 trusted-browser 自动续期的晚到响应不能恢复访问；只有下一次成功的 password + TOTP 登录才会清除它。退出请求失败时 UI 不会伪装成已退出。
 
 失窃/不再可信设备的处置：
 

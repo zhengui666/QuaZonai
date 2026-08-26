@@ -19,6 +19,7 @@ from fastapi import Request, Response
 
 from errors import QfError
 from settings import (
+    MAX_AUTH_TRUSTED_BROWSER_TTL_DAYS,
     Settings,
     SettingsError,
     canonicalize_http_origin,
@@ -27,9 +28,11 @@ from settings import (
 
 SESSION_COOKIE_NAME = "quazonai_session"
 TRUSTED_BROWSER_COOKIE_NAME = "quazonai_trusted_browser"
+LOGOUT_BARRIER_COOKIE_NAME = "quazonai_logout_barrier"
 STREAM_ADMISSION_GENERATION_STATE_ATTRIBUTE = "operator_auth_stream_generation"
 COOKIE_VERSION = 1
 COOKIE_NONCE_BYTES = 12
+LOGOUT_BARRIER_MAX_AGE_SECONDS = MAX_AUTH_TRUSTED_BROWSER_TTL_DAYS * 24 * 60 * 60
 LOGIN_MIN_INTERVAL_SECONDS = 1.0
 LOGIN_BASE_BACKOFF_SECONDS = 1.0
 LOGIN_MAX_BACKOFF_SECONDS = 5.0
@@ -155,7 +158,7 @@ class OperatorLoginLimiter:
 
 
 class OperatorAuthRuntime:
-    """Process-local coordination for login throttling, TOTP replay, and active streams."""
+    """Coordinate login throttling, TOTP replay, logout revocation, and renewal."""
 
     def __init__(self, *, login_limiter: OperatorLoginLimiter | None = None) -> None:
         self.login_limiter = login_limiter or OperatorLoginLimiter()
@@ -171,6 +174,25 @@ class OperatorAuthRuntime:
     def revoke_active_streams(self) -> None:
         with self._stream_lock:
             self._stream_generation += 1
+
+    def renew_session_if_current(
+        self,
+        response: Response,
+        settings: Settings,
+        *,
+        generation: int,
+    ) -> bool:
+        """Issue a trusted-browser session only when logout has not won the race.
+
+        The generation comparison and response mutation share the logout lock so a
+        concurrent logout cannot advance the generation between this check and the
+        ``Set-Cookie`` write.
+        """
+        with self._stream_lock:
+            if self._stream_generation != generation:
+                return False
+            set_session_cookie(response, settings)
+            return True
 
     def consume_totp_step(self, step: int, *, current_step: int) -> bool:
         """Atomically accept one RFC 6238 time step at most once per API process."""
@@ -345,6 +367,11 @@ def authenticate_machine(settings: Settings, authorization: str | None) -> Opera
 def authenticate_browser(request: Request, settings: Settings) -> OperatorIdentity | None:
     if not settings.auth_enabled:
         return None
+    # A successful sign-out leaves a browser-local barrier behind. It makes a
+    # stale automatic-renewal response harmless even when its Set-Cookie header
+    # reaches the browser after the logout response.
+    if request.cookies.get(LOGOUT_BARRIER_COOKIE_NAME) is not None:
+        return None
     username = _read_cookie(
         settings,
         request.cookies.get(SESSION_COOKIE_NAME),
@@ -379,6 +406,8 @@ def reauthenticate_operator_request(request: Request, settings: Settings) -> boo
 def has_valid_trusted_browser(request: Request, settings: Settings) -> bool:
     """Return whether this request carries a currently valid trusted-browser credential."""
     if not settings.auth_enabled:
+        return False
+    if request.cookies.get(LOGOUT_BARRIER_COOKIE_NAME) is not None:
         return False
     return (
         _read_cookie(
@@ -421,6 +450,19 @@ def set_trusted_browser_cookie(response: Response, settings: Settings) -> None:
     )
 
 
+def set_logout_barrier_cookie(response: Response, settings: Settings) -> None:
+    """Prevent a late trusted-browser renewal response from restoring access."""
+    response.set_cookie(
+        LOGOUT_BARRIER_COOKIE_NAME,
+        "1",
+        max_age=LOGOUT_BARRIER_MAX_AGE_SECONDS,
+        httponly=True,
+        secure=settings.auth_cookie_secure,
+        samesite="strict",
+        path="/",
+    )
+
+
 def _delete_cookie(response: Response, settings: Settings, name: str) -> None:
     response.delete_cookie(
         name,
@@ -433,6 +475,10 @@ def _delete_cookie(response: Response, settings: Settings, name: str) -> None:
 
 def clear_trusted_browser_cookie(response: Response, settings: Settings) -> None:
     _delete_cookie(response, settings, TRUSTED_BROWSER_COOKIE_NAME)
+
+
+def clear_logout_barrier_cookie(response: Response, settings: Settings) -> None:
+    _delete_cookie(response, settings, LOGOUT_BARRIER_COOKIE_NAME)
 
 
 def clear_auth_cookies(response: Response, settings: Settings) -> None:

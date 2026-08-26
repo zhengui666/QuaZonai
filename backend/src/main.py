@@ -25,7 +25,6 @@ from operator_auth import (
     authenticate_machine,
     is_operator_auth_exempt,
     require_same_origin,
-    set_session_cookie,
 )
 from settings import Settings
 
@@ -113,7 +112,11 @@ def _install_operator_auth(app: FastAPI) -> None:
         )
         response = await call_next(request)
         if browser_identity.renew_session:
-            set_session_cookie(response, settings)
+            runtime.renew_session_if_current(
+                response,
+                settings,
+                generation=admission_generation,
+            )
         return response
 
 
