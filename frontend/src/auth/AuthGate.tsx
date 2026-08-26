@@ -187,18 +187,6 @@ export function AuthGate({ children }: { children: ReactNode }) {
     }
   }, [acceptSession]);
 
-  const revalidateSession = useCallback(async () => {
-    try {
-      const response = await fetch('/api/v1/auth/session', { credentials: 'same-origin' });
-      if (response.status === 401) {
-        setSession(null);
-        setState('anonymous');
-      }
-    } catch {
-      // A transient network failure is not evidence that the browser credential expired.
-    }
-  }, []);
-
   const logout = useCallback(async () => {
     if (!session?.auth_enabled) return;
     const response = await fetch('/api/v1/auth/logout', {
@@ -215,9 +203,24 @@ export function AuthGate({ children }: { children: ReactNode }) {
   useEffect(() => { void checkSession(); }, [checkSession]);
   useEffect(() => {
     if (state !== 'authenticated' || session?.auth_enabled !== true) return;
+    let active = true;
+    const revalidateSession = async () => {
+      try {
+        const response = await fetch('/api/v1/auth/session', { credentials: 'same-origin' });
+        if (active && response.status === 401) {
+          setSession(null);
+          setState('anonymous');
+        }
+      } catch {
+        // A transient network failure is not evidence that the browser credential expired.
+      }
+    };
     const interval = window.setInterval(() => { void revalidateSession(); }, AUTH_SESSION_REVALIDATION_INTERVAL_MS);
-    return () => window.clearInterval(interval);
-  }, [revalidateSession, session?.auth_enabled, state]);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [session?.auth_enabled, state]);
   useEffect(() => {
     const requireAuth = () => {
       if (session?.auth_enabled === false) return;

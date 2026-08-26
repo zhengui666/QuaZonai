@@ -143,6 +143,44 @@ def _looks_like_noncanonical_whatwg_ipv4(hostname: str) -> bool:
     )
 
 
+def _serialize_whatwg_ipv6(address: ipaddress.IPv6Address) -> str:
+    """Serialize IPv6 as the URL Standard does, without an IPv4 dotted tail.
+
+    ``ipaddress`` chooses dotted-quad notation for IPv4-mapped addresses, but
+    browsers serialize the same 128-bit address using hexadecimal IPv6 pieces
+    in an Origin header. Formatting from the address integer keeps configured
+    origins and browser origins equivalent for both spellings.
+    """
+    number = int(address)
+    pieces = [format((number >> shift) & 0xFFFF, "x") for shift in range(112, -1, -16)]
+
+    best_start = -1
+    best_length = 0
+    current_start = 0
+    current_length = 0
+    for index, piece in enumerate(pieces):
+        if piece == "0":
+            if current_length == 0:
+                current_start = index
+            current_length += 1
+            if current_length > best_length:
+                best_start = current_start
+                best_length = current_length
+        else:
+            current_length = 0
+
+    if best_length < 2:
+        return ":".join(pieces)
+
+    before = ":".join(pieces[:best_start])
+    after = ":".join(pieces[best_start + best_length :])
+    if before and after:
+        return f"{before}::{after}"
+    if before:
+        return f"{before}::"
+    return f"::{after}"
+
+
 def _canonical_origin_host(parsed: ParseResult, *, name: str) -> tuple[str, int | None]:
     try:
         hostname = parsed.hostname
@@ -162,9 +200,9 @@ def _canonical_origin_host(parsed: ParseResult, *, name: str) -> tuple[str, int 
         address = ipaddress.ip_address(hostname)
     except ValueError:
         address = None
+    if isinstance(address, ipaddress.IPv6Address):
+        return f"[{_serialize_whatwg_ipv6(address)}]", port
     if address is not None:
-        if address.version == 6:
-            return f"[{address.compressed}]", port
         return address.compressed, port
 
     if _looks_like_noncanonical_whatwg_ipv4(hostname):
@@ -211,8 +249,13 @@ def canonicalize_http_origin(value: str, *, name: str = "Origin") -> str:
     if (
         scheme not in _DEFAULT_ORIGIN_PORTS
         or not parsed.netloc
-        or parsed.username
-        or parsed.password
+        or parsed.username is not None
+        or parsed.password is not None
+        # ``urlparse`` drops empty query, fragment, and path-param delimiters;
+        # retain the public-origin contract even when their payload is empty.
+        or any(delimiter in clean for delimiter in ("?", "#", ";"))
+        # Likewise, a trailing colon has no parsed port but is not an origin.
+        or parsed.netloc.endswith(":")
         or parsed.params
         or parsed.query
         or parsed.fragment

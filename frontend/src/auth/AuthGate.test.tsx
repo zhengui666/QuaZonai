@@ -19,6 +19,12 @@ function emptyResponse(status = 204): Promise<Response> {
   return Promise.resolve(new Response(null, { status }));
 }
 
+function deferredResponse(): { promise: Promise<Response>; resolve: (response: Response) => void } {
+  let resolve: (response: Response) => void;
+  const promise = new Promise<Response>((complete) => { resolve = complete; });
+  return { promise, resolve: (response) => resolve(response) };
+}
+
 function LogoutProbe() {
   const { logout } = useOperatorAuth();
   const [error, setError] = useState<string | null>(null);
@@ -189,5 +195,52 @@ describe('AuthGate', () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(await screen.findByRole('heading', { name: 'Verify your identity' })).toBeInTheDocument();
+  });
+
+  it('ignores a stale revalidation failure after logout and re-login', async () => {
+    const setIntervalSpy = vi.spyOn(window, 'setInterval');
+    const staleRevalidation = deferredResponse();
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => jsonResponse({
+        authenticated: true,
+        username: 'operator',
+        trusted_browser: false,
+        auth_enabled: true,
+      }))
+      .mockImplementationOnce(() => staleRevalidation.promise)
+      .mockImplementationOnce(() => emptyResponse())
+      .mockImplementationOnce(() => jsonResponse({
+        authenticated: true,
+        username: 'operator',
+        trusted_browser: false,
+        auth_enabled: true,
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+
+    render(<AuthGate><LogoutProbe /></AuthGate>);
+
+    await screen.findByText('Workbench ready');
+    const revalidate = setIntervalSpy.mock.calls.find(
+      ([, delay]) => delay === AUTH_SESSION_REVALIDATION_INTERVAL_MS,
+    )?.[0];
+    expect(typeof revalidate).toBe('function');
+    act(() => { if (typeof revalidate === 'function') revalidate(); });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    await user.click(screen.getByRole('button', { name: 'Sign out probe' }));
+    await user.type(await screen.findByLabelText('Username'), 'operator');
+    await user.type(screen.getByLabelText('Password'), 'correct horse battery staple');
+    await user.type(screen.getByLabelText('Authenticator code'), '123456');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+    expect(await screen.findByText('Workbench ready')).toBeInTheDocument();
+
+    await act(async () => {
+      staleRevalidation.resolve(new Response(null, { status: 401 }));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText('Workbench ready')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Verify your identity' })).not.toBeInTheDocument();
   });
 });
