@@ -35,6 +35,11 @@ export function CandlestickChart({ data }: { data: OhlcPoint[] }) {
     if (!ref.current || data.length === 0) return;
     const styles = getComputedStyle(document.documentElement);
     const chart = createChart(ref.current, {
+      localization: {
+        locale,
+        priceFormatter: (value: number) => formatCandlestickTooltipValue(locale, value),
+        timeFormatter: (time: Time) => formatCandlestickTooltipTime(locale, time),
+      },
       autoSize: true,
       height: 360,
       layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: styles.getPropertyValue('--qz-text-faint').trim(), fontSize: 10 },

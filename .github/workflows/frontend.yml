@@ -43,14 +43,16 @@ jobs:
       QUAZONAI_DATABASE_URL: postgresql+psycopg://quazonai:quazonai@127.0.0.1:5432/quazonai_frontend
       QUAZONAI_ALEMBIC_URL: postgresql+psycopg://quazonai:quazonai@127.0.0.1:5432/quazonai_frontend
       QUAZONAI_MASTER_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-      QUAZONAI_PACKAGE_ROOT: ${{ runner.temp }}/quazonai-packages
-      QUAZONAI_MISSION_ROOT: ${{ runner.temp }}/quazonai-missions
-      CODEX_HOME: ${{ runner.temp }}/codex-home
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'
+      - name: Configure temporary runtime paths
+        run: |
+          echo "QUAZONAI_PACKAGE_ROOT=${RUNNER_TEMP}/quazonai-packages" >> "$GITHUB_ENV"
+          echo "QUAZONAI_MISSION_ROOT=${RUNNER_TEMP}/quazonai-missions" >> "$GITHUB_ENV"
+          echo "CODEX_HOME=${RUNNER_TEMP}/codex-home" >> "$GITHUB_ENV"
       - name: Install backend test runtime
         run: python -m pip install -e 'backend[dev,research,mcp]'
       - name: Migrate real browser-test database

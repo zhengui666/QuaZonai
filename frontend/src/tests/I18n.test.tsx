@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { LocaleDirectionProvider } from '../components/layout/AppShell';
 import { KpiStrip } from '../components/ui/KpiStrip';
 import { PageHeader } from '../components/ui/PageHeader';
+import { ErrorPanel } from '../components/ui/ErrorPanel';
 import { I18nProvider, resolveLocale, translateKey, translateSource, useI18n, type Locale } from '../i18n';
 import { translateDomainLabel } from '../i18n/domain';
 import { humanizeIdentifier } from '../lib/format';
@@ -191,5 +192,9 @@ describe('i18n', () => {
       expect(localStorage.getItem('qz-locale')).toBe('es');
       expect(document.documentElement.lang).toBe('es');
     });
+  });
+  it('gives API-authored error text automatic direction', () => {
+    render(<I18nProvider initialLocale="ar"><ErrorPanel error={new Error('Request failed: https://example.test/path')} /></I18nProvider>);
+    expect(screen.getByText('Request failed: https://example.test/path')).toHaveAttribute('dir', 'auto');
   });
 });

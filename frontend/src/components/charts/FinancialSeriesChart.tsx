@@ -39,6 +39,11 @@ export function FinancialSeriesChart({ series, ariaLabel, height = 320 }: { seri
     const border = styles.getPropertyValue('--qz-border').trim();
     const muted = styles.getPropertyValue('--qz-text-faint').trim();
     const chart = createChart(ref.current, {
+      localization: {
+        locale,
+        priceFormatter: (value: number) => formatFinancialTooltipValue(locale, value),
+        timeFormatter: (time: Time) => formatFinancialTooltipTime(locale, time),
+      },
       autoSize: true,
       height,
       layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: muted, fontSize: 10 },

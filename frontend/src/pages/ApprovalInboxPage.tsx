@@ -7,7 +7,7 @@ import { ErrorPanel } from '../components/ui/ErrorPanel';
 import { PageHeader } from '../components/ui/PageHeader';
 import { PageSkeleton } from '../components/ui/Skeleton';
 import { StateBadge } from '../components/ui/StateBadge';
-import { useI18n } from '../i18n';
+import { useI18n, type Locale } from '../i18n';
 import { useApprovalDecision, useApprovals, useDownstreams } from '../lib/api/hooks';
 import type { ApprovalSnapshot, DownstreamSystem } from '../lib/api/types';
 import { formatDateTime, humanize } from '../lib/format';
@@ -37,8 +37,14 @@ function compatible(approval: ApprovalSnapshot, systems: DownstreamSystem[]) {
   });
 }
 
+export function formatDeployableCapital(locale: Locale, value?: number | string | null): string {
+  if (value === undefined || value === null || value === '') return '—';
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? new Intl.NumberFormat(locale).format(numeric) : String(value);
+}
+
 function ApprovalCard({ approval, systems }: { approval: ApprovalSnapshot; systems: DownstreamSystem[] }) {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const options = compatible(approval, systems);
   const [downstream, setDownstream] = useState(approval.downstream_system_id ?? options[0]?.id ?? '');
   const [reason, setReason] = useState('');
@@ -53,7 +59,7 @@ function ApprovalCard({ approval, systems }: { approval: ApprovalSnapshot; syste
       <div className="qz-approval-header">
         <div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><StateBadge state={approval.purpose} /><StateBadge state={approval.state} /></div>
-          <h2 className="qz-approval-title" style={{ marginTop: 10 }}>{approval.candidate?.mandate_name ?? t('approval.portfolio')} · {t('common.candidate')} {approval.candidate_id.slice(0, 8)}</h2>
+          <h2 className="qz-approval-title" style={{ marginTop: 10 }}><bdi dir="auto">{approval.candidate?.mandate_name ?? t('approval.portfolio')}</bdi> · {t('common.candidate')} {approval.candidate_id.slice(0, 8)}</h2>
           <p className="qz-approval-rationale" dir="auto">{approval.recommendation_rationale ?? t('approval.noRationale')}</p>
         </div>
         <div className="qz-section-meta qz-number" style={{ textAlign: 'right' }}>{t('approval.validUntil')}<br />{formatDateTime(expiry)}</div>
@@ -61,12 +67,12 @@ function ApprovalCard({ approval, systems }: { approval: ApprovalSnapshot; syste
       <div className="qz-approval-grid">
         <div><div className="qz-label" style={{ marginBottom: 7 }}>{t('approval.level2')}</div><EvidencePanel approval={approval} /></div>
         <div className="qz-panel qz-panel-pad qz-form-grid">
-          <div><div className="qz-label">{t('approval.capitalContext')}</div><div className="qz-list-title qz-number" style={{ marginTop: 5 }}>{approval.capital_context?.base_currency ?? '—'} {approval.capital_context?.deployable_capital ?? '—'}</div><div className="qz-list-subtitle">{t('approval.observedDate', { date: formatDateTime(approval.capital_context?.observed_at) })}</div></div>
+          <div><div className="qz-label">{t('approval.capitalContext')}</div><div className="qz-list-title qz-number" style={{ marginTop: 5 }}>{approval.capital_context?.base_currency ?? '—'} {formatDeployableCapital(locale, approval.capital_context?.deployable_capital)}</div><div className="qz-list-subtitle">{t('approval.observedDate', { date: formatDateTime(approval.capital_context?.observed_at) })}</div></div>
           <div><div className="qz-label">{t('approval.humanReport')}</div><div className="qz-list-subtitle" dir="auto" style={{ whiteSpace: 'normal', lineHeight: 1.55 }}>{typeof approval.human_report === 'string' ? approval.human_report : approval.human_report ? JSON.stringify(approval.human_report) : t('approval.noReport')}</div></div>
         </div>
       </div>
       <div className="qz-approval-actions">
-        <div className="qz-field" style={{ minWidth: 260 }}><span className="qz-label">{t('approval.compatibleDownstream')}</span><Select.Root value={downstream} onValueChange={setDownstream} disabled={!pending}><Select.Trigger placeholder={options.length ? t('approval.selectDownstream') : t('approval.noDownstream')} /><Select.Content>{options.map((option) => <Select.Item value={option.id} key={option.id}>{option.name} · {option.environment_type}</Select.Item>)}</Select.Content></Select.Root></div>
+        <div className="qz-field" style={{ minWidth: 260 }}><span className="qz-label">{t('approval.compatibleDownstream')}</span><Select.Root value={downstream} onValueChange={setDownstream} disabled={!pending}><Select.Trigger placeholder={options.length ? t('approval.selectDownstream') : t('approval.noDownstream')} /><Select.Content>{options.map((option) => <Select.Item value={option.id} key={option.id}><bdi dir="auto">{option.name}</bdi> · {humanize(option.environment_type)}</Select.Item>)}</Select.Content></Select.Root></div>
         <div style={{ display: 'flex', gap: 8 }}>
           <Dialog.Root>
             <Dialog.Trigger><Button variant="soft" color="red" disabled={!pending}><XIcon size={14} />{t('approval.reject')}</Button></Dialog.Trigger>

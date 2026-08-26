@@ -16,6 +16,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { cloneElement, isValidElement, useCallback, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import { useI18n, type Locale, type MessageKey } from '../../i18n';
 import { translateDomainLabel } from '../../i18n/domain';
+import { translateRuntimeLabel } from '../../i18n/runtime';
 import { formatDateTime } from '../../lib/format';
 import { EmptyState } from './EmptyState';
 
@@ -75,8 +76,11 @@ function searchableValues(value: unknown, locale: Locale, meta?: LocalizedColumn
   if (typeof value === 'number') return numericSearchValues(value, locale, meta);
   if (typeof value === 'string') {
     const values = [value];
-    const domainLabel = translateDomainLabel(locale, humanizeCanonical(value));
+    const sourceLabel = humanizeCanonical(value);
+    const domainLabel = translateDomainLabel(locale, sourceLabel);
     if (domainLabel) values.push(domainLabel);
+    const runtimeLabel = translateRuntimeLabel(locale, sourceLabel);
+    if (runtimeLabel) values.push(runtimeLabel);
     if (/^\d{4}-\d{2}-\d{2}(?:T|$)/.test(value)) values.push(formatDateTime(value));
     return values;
   }

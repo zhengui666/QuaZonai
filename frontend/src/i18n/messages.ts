@@ -372,6 +372,7 @@ export const messages = {
   'admin.partition': m('Partition', '分区', '分區', 'パーティション', '파티션', 'Partición', 'القسم'),
   'admin.rows': m('Rows', '行数', '列數', '行数', '행 수', 'Filas', 'الصفوف'),
   'admin.quality': m('Quality', '质量', '品質', '品質', '품질', 'Calidad', 'الجودة'),
+  'admin.pit': m('PIT', '时点', '時點', '時点', '시점', 'PIT', 'نقطة زمنية'),
   'admin.registered': m('Registered', '注册时间', '註冊時間', '登録', '등록', 'Registrado', 'مسجل'),
   'admin.key': m('Key', '键', '鍵', 'キー', '키', 'Clave', 'المفتاح'),
   'admin.version': m('Version', '版本', '版本', 'バージョン', '버전', 'Versión', 'الإصدار'),

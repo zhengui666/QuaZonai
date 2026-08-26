@@ -28,7 +28,7 @@ export function EvidencePanel({ approval }: { approval: ApprovalSnapshot }) {
           {combined.length ? combined.map(([key, value]) => (
             <Table.Row key={key}>
               <Table.RowHeaderCell style={{ color: 'var(--qz-text-muted)', fontSize: 11 }}>{key}</Table.RowHeaderCell>
-              <Table.Cell className="qz-number" style={{ textAlign: 'right', fontSize: 11 }}>{renderValue(value)}</Table.Cell>
+              <Table.Cell className="qz-number" dir="auto" style={{ textAlign: 'right', fontSize: 11 }}>{renderValue(value)}</Table.Cell>
             </Table.Row>
           )) : <Table.Row><Table.Cell style={{ color: 'var(--qz-text-faint)', fontSize: 11 }}>{t('evidence.empty')}</Table.Cell></Table.Row>}
         </Table.Body>

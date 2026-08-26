@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { DataTable } from '../components/ui/DataTable';
 import { StateBadge } from '../components/ui/StateBadge';
 import { I18nProvider } from '../i18n';
-import { formatCompactNumber, formatPercent } from '../lib/format';
+import { formatCompactNumber, formatPercent, humanize } from '../lib/format';
 import { renderApp } from './testUtils';
 
 interface Row { name: string; state: string }
@@ -31,6 +31,11 @@ interface CapabilityRow { name: string; capabilities: string[] }
 const capabilityColumns: ColumnDef<CapabilityRow, unknown>[] = [
   { accessorKey: 'name', header: 'Name' },
   { id: 'capabilities', header: 'Capabilities', cell: ({ row }) => row.original.capabilities.join(', ') },
+];
+
+interface RuntimeRow { event: string }
+const runtimeColumns: ColumnDef<RuntimeRow, unknown>[] = [
+  { accessorKey: 'event', header: 'Event', cell: ({ getValue }) => <span>{humanize(String(getValue()))}</span> },
 ];
 
 describe('DataTable', () => {
@@ -112,5 +117,17 @@ describe('DataTable', () => {
     fireEvent.change(screen.getByPlaceholderText('筛选行…'), { target: { value: '历史导入' } });
     expect(screen.getByText('Importer')).toBeInTheDocument();
     expect(screen.queryByText('Live feed')).not.toBeInTheDocument();
+  });
+  it('indexes localized runtime labels', () => {
+    render(
+      <I18nProvider initialLocale="es">
+        <Theme appearance="dark" accentColor="jade" grayColor="sage" radius="small" scaling="90%">
+          <DataTable data={[{ event: 'MISSION_STARTED' }]} columns={runtimeColumns} />
+        </Theme>
+      </I18nProvider>,
+    );
+    expect(screen.getByText('Misión iniciada')).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText('Filtrar filas…'), { target: { value: 'Misión iniciada' } });
+    expect(screen.getByText('Misión iniciada')).toBeInTheDocument();
   });
 });
