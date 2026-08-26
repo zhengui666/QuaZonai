@@ -8,5 +8,5 @@ const info = new Set(['RUNNING', 'PLANNED', 'INTERRUPTED', 'CANCELLED', 'PAPER',
 export function StateBadge({ state, label }: { state?: string | null; label?: string }) {
   const normalized = (state ?? 'UNKNOWN').toUpperCase();
   const tone = success.has(normalized) ? 'success' : warning.has(normalized) ? 'warning' : danger.has(normalized) ? 'danger' : info.has(normalized) ? 'info' : 'accent';
-  return <span className="qz-status" data-tone={tone}>{label ?? humanize(state)}</span>;
+  return <span className="qz-status" data-tone={tone}><bdi dir="auto">{label ?? humanize(state)}</bdi></span>;
 }

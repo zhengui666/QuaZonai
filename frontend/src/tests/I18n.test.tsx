@@ -5,6 +5,7 @@ import { LocaleDirectionProvider } from '../components/layout/AppShell';
 import { KpiStrip } from '../components/ui/KpiStrip';
 import { PageHeader } from '../components/ui/PageHeader';
 import { ErrorPanel } from '../components/ui/ErrorPanel';
+import { StateBadge } from '../components/ui/StateBadge';
 import { I18nProvider, resolveLocale, translateKey, translateSource, useI18n, type Locale } from '../i18n';
 import { translateDomainLabel } from '../i18n/domain';
 import { humanizeIdentifier } from '../lib/format';
@@ -204,4 +205,11 @@ describe('i18n', () => {
     render(<I18nProvider initialLocale="ar"><ErrorPanel error={new Error('Request failed: https://example.test/path')} /></I18nProvider>);
     expect(screen.getByText('Request failed: https://example.test/path')).toHaveAttribute('dir', 'auto');
   });
+
+
+  it('isolates unknown API status labels from RTL chrome', () => {
+    render(<I18nProvider initialLocale="ar"><StateBadge state="EXTERNAL_EUR/USD" /></I18nProvider>);
+    expect(screen.getByText('External Eur/Usd')).toHaveAttribute('dir', 'auto');
+  });
+
 });
