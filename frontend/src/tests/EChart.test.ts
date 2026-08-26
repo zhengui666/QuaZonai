@@ -43,7 +43,7 @@ describe('EChart locale formatting', () => {
     expect((valueAxisLabel.formatter as (value: unknown) => string)(preciseValue)).toBe(expected);
 
     const tooltip = record(localized.tooltip);
-    expect((tooltip.valueFormatter as (value: unknown) => string)(0.25)).toBe(expected);
+    expect((tooltip.valueFormatter as (value: unknown) => string)(preciseValue)).toBe(expected);
 
     const visualMap = record(localized.visualMap);
     expect((visualMap.formatter as (value: unknown, value2?: unknown) => string)(preciseValue, 0.5)).toBe(

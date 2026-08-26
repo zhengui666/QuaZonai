@@ -12,7 +12,9 @@ export function ErrorPanel({ error, action }: { error: unknown; action?: ReactNo
       ? t('error.requestHttpError', { status: apiError.failure.status })
       : apiError?.failure.kind === 'network'
         ? t('error.requestUnreachable')
-        : t('error.unexpected');
+        : error instanceof Error
+          ? error.message
+          : t('error.unexpected');
   const code = apiError?.code;
   return <div className="qz-error"><div><WarningCircleIcon size={24} aria-hidden /><strong>{code ? <bdi dir="auto">{code}</bdi> : t('error.unableLoad')}</strong><div dir="auto">{message}</div>{action ? <div style={{ marginTop: 12 }}>{action}</div> : null}</div></div>;
 }

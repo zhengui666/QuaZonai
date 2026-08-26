@@ -11,8 +11,14 @@ export class ApiError extends Error {
   readonly status: number;
   readonly details?: Record<string, unknown>;
 
-  constructor(failure: ApiFailure, status: number, code = 'HTTP_ERROR', details?: Record<string, unknown>) {
-    super(failure.kind === 'api' ? failure.message : failure.kind);
+  constructor(
+    failure: ApiFailure,
+    status: number,
+    code = 'HTTP_ERROR',
+    details?: Record<string, unknown>,
+    diagnosticMessage?: string,
+  ) {
+    super(failure.kind === 'api' ? failure.message : diagnosticMessage ?? failure.kind);
     this.name = 'ApiError';
     this.failure = failure;
     this.status = status;
@@ -37,8 +43,9 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   let response: Response;
   try {
     response = await fetch(path, { ...options, headers, credentials: 'same-origin' });
-  } catch {
-    throw new ApiError({ kind: 'network' }, 0);
+  } catch (error) {
+    const diagnosticMessage = error instanceof Error ? error.message : typeof error === 'string' ? error : undefined;
+    throw new ApiError({ kind: 'network' }, 0, undefined, undefined, diagnosticMessage);
   }
   if (!response.ok) {
     if (response.status === 401 && !path.startsWith('/api/v1/auth/') && typeof window !== 'undefined') {
