@@ -387,6 +387,26 @@ def _request_cookie_values(request: Request, name: str) -> tuple[str, ...]:
     return tuple(values)
 
 
+def _read_request_cookie(
+    request: Request,
+    settings: Settings,
+    *,
+    name: str,
+    kind: str,
+) -> str | None:
+    """Return a valid cookie of ``kind`` without allowing a duplicate to shadow it.
+
+    A parent-Domain cookie can be sent beside a host-only cookie with the same
+    name. Raw Cookie field order is not a security boundary, so scan every
+    value and accept the first one that verifies under the expected AEAD kind.
+    """
+    for value in _request_cookie_values(request, name):
+        username = _read_cookie(settings, value, kind=kind)
+        if username is not None:
+            return username
+    return None
+
+
 def _has_valid_logout_barrier(request: Request, settings: Settings) -> bool:
     """Honor only an AEAD-authenticated host-issued logout barrier.
 
@@ -394,9 +414,14 @@ def _has_valid_logout_barrier(request: Request, settings: Settings) -> bool:
     Any valid barrier must still win, while forged values alone must not create a
     persistent denial of service after the host-only barrier is cleared at login.
     """
-    return any(
-        _read_cookie(settings, value, kind="logout-barrier") is not None
-        for value in _request_cookie_values(request, LOGOUT_BARRIER_COOKIE_NAME)
+    return (
+        _read_request_cookie(
+            request,
+            settings,
+            name=LOGOUT_BARRIER_COOKIE_NAME,
+            kind="logout-barrier",
+        )
+        is not None
     )
 
 
@@ -466,16 +491,18 @@ def authenticate_browser(request: Request, settings: Settings) -> OperatorIdenti
     # reaches the browser after the logout response.
     if _has_valid_logout_barrier(request, settings):
         return None
-    username = _read_cookie(
+    username = _read_request_cookie(
+        request,
         settings,
-        request.cookies.get(SESSION_COOKIE_NAME),
+        name=SESSION_COOKIE_NAME,
         kind="session",
     )
     if username is not None:
         return OperatorIdentity(username=username, source="session")
-    username = _read_cookie(
+    username = _read_request_cookie(
+        request,
         settings,
-        request.cookies.get(TRUSTED_BROWSER_COOKIE_NAME),
+        name=TRUSTED_BROWSER_COOKIE_NAME,
         kind="trusted-browser",
     )
     if username is not None:
@@ -504,9 +531,10 @@ def has_valid_trusted_browser(request: Request, settings: Settings) -> bool:
     if _has_valid_logout_barrier(request, settings):
         return False
     return (
-        _read_cookie(
+        _read_request_cookie(
+            request,
             settings,
-            request.cookies.get(TRUSTED_BROWSER_COOKIE_NAME),
+            name=TRUSTED_BROWSER_COOKIE_NAME,
             kind="trusted-browser",
         )
         is not None

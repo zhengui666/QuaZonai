@@ -503,6 +503,79 @@ def test_forged_logout_barrier_does_not_block_valid_browser_credentials(
     assert operator_auth.has_valid_trusted_browser(request, secured)
 
 
+@pytest.mark.parametrize("forged_parent_first", (True, False))
+def test_parent_domain_session_cookie_cannot_shadow_host_only_session(
+    settings: Settings,
+    engine: Engine,
+    forged_parent_first: bool,
+) -> None:
+    secured = _enabled_settings(settings)
+    app = create_app(settings=secured, engine=engine)
+    client = TestClient(app)
+    _login_trusted_browser(client, secured)
+    session_cookie = client.cookies.get(SESSION_COOKIE_NAME)
+    assert session_cookie is not None
+
+    # A browser can send a sibling's parent-Domain cookie beside the host-only
+    # credential in either order. Cookie metadata is absent from the request,
+    # so model the two same-name values exactly as the server receives them.
+    cookie_values = (
+        ("forged-parent-domain-value", session_cookie)
+        if forged_parent_first
+        else (session_cookie, "forged-parent-domain-value")
+    )
+    request = _request_with_cookie_header(
+        app,
+        "; ".join(
+            f"{SESSION_COOKIE_NAME}={value}" for value in cookie_values
+        ),
+    )
+
+    identity = operator_auth.authenticate_browser(request, secured)
+    assert identity is not None
+    assert identity.source == "session"
+
+
+@pytest.mark.parametrize("forged_parent_first", (True, False))
+def test_parent_domain_trusted_cookie_cannot_shadow_host_only_credential(
+    settings: Settings,
+    engine: Engine,
+    forged_parent_first: bool,
+) -> None:
+    secured = _enabled_settings(settings)
+    app = create_app(settings=secured, engine=engine)
+    client = TestClient(app)
+    _login_trusted_browser(client, secured)
+    trusted_cookie = client.cookies.get(TRUSTED_BROWSER_COOKIE_NAME)
+    assert trusted_cookie is not None
+
+    cookie_values = (
+        ("forged-parent-domain-value", trusted_cookie)
+        if forged_parent_first
+        else (trusted_cookie, "forged-parent-domain-value")
+    )
+    request = _request_with_cookie_header(
+        app,
+        "; ".join(
+            (
+                # An injected session cookie must not prevent valid trusted-
+                # browser authentication after no valid session is found.
+                f"{SESSION_COOKIE_NAME}=forged-parent-domain-value",
+                *(
+                    f"{TRUSTED_BROWSER_COOKIE_NAME}={value}"
+                    for value in cookie_values
+                ),
+            )
+        ),
+    )
+
+    identity = operator_auth.authenticate_browser(request, secured)
+    assert identity is not None
+    assert identity.source == "trusted_browser"
+    assert identity.renew_session
+    assert operator_auth.has_valid_trusted_browser(request, secured)
+
+
 def test_valid_logout_barrier_wins_over_forged_duplicate_cookie(
     settings: Settings,
     engine: Engine,
