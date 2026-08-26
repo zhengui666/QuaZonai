@@ -6,6 +6,7 @@ from dataclasses import replace
 
 import pyotp
 import pytest
+from api import events as events_module
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 
@@ -122,6 +123,72 @@ def test_machine_token_authenticates_cli_style_requests(settings: Settings, engi
     )
 
     assert response.status_code == 200
+    assert "Cache-Control" not in response.headers
+    assert "Vary" not in response.headers
+
+
+def test_browser_authenticated_protected_api_responses_cannot_be_shared_cached(
+    settings: Settings,
+    engine: Engine,
+) -> None:
+    secured = _enabled_settings(settings)
+    client = TestClient(create_app(settings=secured, engine=engine))
+    assert _login(client, secured).status_code == 200
+
+    get_response = client.get("/api/v1/system/runtime-configuration")
+    post_response = client.post(
+        "/api/v1/ideas/preview",
+        headers={"Origin": "http://testserver"},
+        json={"idea": "Test a liquid US equity factor after realistic costs."},
+    )
+
+    for response in (get_response, post_response):
+        assert response.status_code == 200
+        assert response.headers["Cache-Control"] == "private, no-store"
+        assert response.headers["Vary"] == "Cookie"
+
+
+def test_public_and_machine_api_gets_keep_their_existing_cache_headers(
+    settings: Settings,
+    engine: Engine,
+) -> None:
+    secured = _enabled_settings(settings)
+    assert secured.api_token is not None
+    client = TestClient(create_app(settings=secured, engine=engine))
+
+    public = client.get("/api/v1/system/health")
+    machine = client.get(
+        "/api/v1/system/runtime-configuration",
+        headers={"Authorization": f"Bearer {secured.api_token}"},
+    )
+
+    assert public.status_code == 200
+    assert machine.status_code == 200
+    for response in (public, machine):
+        assert "Cache-Control" not in response.headers
+        assert "Vary" not in response.headers
+
+
+def test_browser_cache_policy_preserves_sse_no_store_headers(
+    settings: Settings,
+    engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secured = _enabled_settings(settings)
+    client = TestClient(create_app(settings=secured, engine=engine))
+    assert _login(client, secured).status_code == 200
+
+    async def one_frame(*_args: object) -> object:
+        yield ": test\\n\\n"
+
+    monkeypatch.setattr(events_module, "_stream", one_frame)
+    response = client.get("/api/v1/events/stream")
+
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-cache, no-store"
+    assert response.headers["Pragma"] == "no-cache"
+    assert response.headers["X-Accel-Buffering"] == "no"
+    assert "Vary" not in response.headers
 
 
 def test_invalid_explicit_machine_token_does_not_fall_back_to_browser_session(

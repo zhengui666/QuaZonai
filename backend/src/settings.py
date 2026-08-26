@@ -38,6 +38,7 @@ MAX_OPERATOR_PASSWORD_CHARACTERS = 4096
 MIN_MACHINE_TOKEN_CHARACTERS = 32
 MAX_MACHINE_TOKEN_CHARACTERS = 4096
 _DEFAULT_ORIGIN_PORTS = {"http": 80, "https": 443}
+_ALLOWED_ENVIRONMENTS = frozenset({"development", "production", "test"})
 _BEARER_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9\-._~+/]+={0,}", re.ASCII)
 _WHATWG_IPV4_NUMBER_PATTERN = re.compile(
     r"(?:0[xX][0-9A-Fa-f]*|0[0-7]*|[0-9]+)",
@@ -58,6 +59,20 @@ def _optional_raw_env(name: str) -> str | None:
     if value is None or value == "":
         return None
     return value
+
+
+def _normalize_environment(value: str) -> str:
+    """Return the canonical deployment environment or reject unknown labels.
+
+    The environment selects security policy, so an arbitrary value must not be
+    able to opt out of the production HTTPS and Secure-cookie requirements.
+    Keep the existing trim/case-insensitive behavior for the supported labels.
+    """
+    normalized = value.strip().casefold()
+    if normalized not in _ALLOWED_ENVIRONMENTS:
+        allowed = ", ".join(sorted(_ALLOWED_ENVIRONMENTS))
+        raise SettingsError(f"QUAZONAI_ENV must be one of: {allowed}")
+    return normalized
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -303,7 +318,9 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         """Load only bootstrap/infrastructure settings from the process environment."""
-        environment = _optional_env("QUAZONAI_ENV") or "development"
+        environment = _normalize_environment(
+            _optional_env("QUAZONAI_ENV") or "development"
+        )
         database_url = os.environ.get(
             "QUAZONAI_DATABASE_URL",
             "postgresql+psycopg://quazonai:quazonai-local@127.0.0.1:5432/quazonai",
@@ -413,6 +430,7 @@ class Settings:
 
     def validate_operator_auth(self) -> None:
         """Validate the complete opt-in operator-authentication configuration."""
+        environment = _normalize_environment(self.environment)
         if not self.operator_auth_enabled:
             return
 
@@ -489,7 +507,7 @@ class Settings:
 
         canonical_origin = self.canonical_auth_public_origin
         assert canonical_origin is not None
-        if self.environment.strip().casefold() == "production" and not canonical_origin.startswith(
+        if environment == "production" and not canonical_origin.startswith(
             "https://"
         ):
             raise SettingsError("QUAZONAI_AUTH_PUBLIC_ORIGIN must use https in production")

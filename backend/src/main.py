@@ -29,6 +29,13 @@ from operator_auth import (
 from settings import Settings
 
 
+_WORKBENCH_FRAME_HEADERS = {
+    "Content-Security-Policy": "frame-ancestors 'none'",
+    "X-Frame-Options": "DENY",
+}
+_BROWSER_PROTECTED_CACHE_CONTROL = "private, no-store"
+
+
 def _install_frontend(app: FastAPI, frontend_dist: Path) -> None:
     root = frontend_dist.resolve()
     index = root / "index.html"
@@ -41,8 +48,8 @@ def _install_frontend(app: FastAPI, frontend_dist: Path) -> None:
             raise HTTPException(status_code=404, detail="Not Found")
         candidate = (root / path).resolve()
         if candidate.is_relative_to(root) and candidate.is_file():
-            return FileResponse(candidate)
-        return FileResponse(index)
+            return FileResponse(candidate, headers=_WORKBENCH_FRAME_HEADERS)
+        return FileResponse(index, headers=_WORKBENCH_FRAME_HEADERS)
 
 
 def _auth_error_response(exc: QfError) -> JSONResponse:
@@ -57,6 +64,29 @@ def _auth_error_response(exc: QfError) -> JSONResponse:
         },
         headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
     )
+
+
+def _response_already_prevents_storage(response: Response) -> bool:
+    return any(
+        directive.partition("=")[0].strip().casefold() == "no-store"
+        for directive in response.headers.get("Cache-Control", "").split(",")
+    )
+
+
+def _prevent_shared_caching_of_browser_response(response: Response) -> None:
+    """Mark a browser-authenticated API response as ineligible for shared storage.
+
+    Streaming endpoints already supply ``no-store`` together with transport-specific
+    headers. Leave those responses untouched so this middleware does not dilute their
+    streaming cache semantics.
+    """
+    if _response_already_prevents_storage(response):
+        return
+    response.headers["Cache-Control"] = _BROWSER_PROTECTED_CACHE_CONTROL
+    vary = [field.strip() for field in response.headers.get("Vary", "").split(",")]
+    if not any(field.casefold() == "cookie" for field in vary):
+        vary.append("Cookie")
+    response.headers["Vary"] = ", ".join(field for field in vary if field)
 
 
 def _install_operator_auth(app: FastAPI) -> None:
@@ -111,6 +141,7 @@ def _install_operator_auth(app: FastAPI) -> None:
             admission_generation,
         )
         response = await call_next(request)
+        _prevent_shared_caching_of_browser_response(response)
         if browser_identity.renew_session:
             runtime.renew_session_if_current(
                 response,

@@ -64,12 +64,43 @@ def test_enabled_auth_rejects_invalid_ttl_values(monkeypatch: pytest.MonkeyPatch
         Settings.from_env()
 
 
-def test_environment_is_trimmed_before_security_policy(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("QUAZONAI_ENV", " production ")
+def test_environment_defaults_to_development(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("QUAZONAI_ENV", raising=False)
 
     configured = Settings.from_env()
 
-    assert configured.environment == "production"
+    assert configured.environment == "development"
+
+
+@pytest.mark.parametrize(
+    ("configured_value", "expected"),
+    [
+        (" development ", "development"),
+        ("TEST", "test"),
+        (" production ", "production"),
+    ],
+)
+def test_environment_is_normalized_to_an_allowed_value(
+    monkeypatch: pytest.MonkeyPatch,
+    configured_value: str,
+    expected: str,
+) -> None:
+    monkeypatch.setenv("QUAZONAI_ENV", configured_value)
+
+    configured = Settings.from_env()
+
+    assert configured.environment == expected
+
+
+@pytest.mark.parametrize("configured_value", ["prod", "production-like", "staging"])
+def test_from_env_rejects_unknown_security_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    configured_value: str,
+) -> None:
+    monkeypatch.setenv("QUAZONAI_ENV", configured_value)
+
+    with pytest.raises(SettingsError, match="QUAZONAI_ENV must be one of"):
+        Settings.from_env()
 
 
 def test_production_whitespace_cannot_bypass_https_requirement(settings: Settings) -> None:
@@ -80,6 +111,17 @@ def test_production_whitespace_cannot_bypass_https_requirement(settings: Setting
     )
 
     with pytest.raises(SettingsError, match="must use https in production"):
+        configured.validate_operator_auth()
+
+
+def test_unknown_environment_cannot_bypass_production_security_policy(settings: Settings) -> None:
+    configured = _enabled_auth(
+        settings,
+        environment="production-like",
+        auth_public_origin="http://quazonai.example.com",
+    )
+
+    with pytest.raises(SettingsError, match="QUAZONAI_ENV must be one of"):
         configured.validate_operator_auth()
 
 

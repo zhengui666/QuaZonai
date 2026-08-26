@@ -70,7 +70,7 @@ QUAZONAI_AUTH_PUBLIC_ORIGIN=http://127.0.0.1:8000
 
 Add `QUAZONAI_AUTH_TOTP_SECRET` to Google Authenticator with **Enter a setup key**, account name `QuaZonai`, and **Time based** key type. The browser login then requires username, password, and the current 6-digit authenticator code.
 
-`QUAZONAI_AUTH_PUBLIC_ORIGIN` is canonicalized with browser-origin semantics before comparison: scheme/host are lower-cased, Unicode hosts use IDNA ASCII, IPv6 is compressed/bracketed, default `:80`/`:443` ports are omitted, and non-default ports are retained. HTTPS origins automatically receive `Secure` browser cookies. When authentication is enabled in `production`, the origin must use HTTPS. A remotely exposed installation should normally set the externally trusted TLS origin, for example `https://quazonai.example.com`.
+`QUAZONAI_ENV` accepts only `development`, `test`, or `production` (case-insensitive and surrounding whitespace is ignored). `QUAZONAI_AUTH_PUBLIC_ORIGIN` is canonicalized with browser-origin semantics before comparison: scheme/host are lower-cased, Unicode hosts use IDNA ASCII, IPv6 is compressed/bracketed, default `:80`/`:443` ports are omitted, and non-default ports are retained. HTTPS origins automatically receive `Secure` browser cookies. When authentication is enabled in `production`, the origin must use HTTPS. A remotely exposed installation should normally set the externally trusted TLS origin, for example `https://quazonai.example.com`.
 
 Start QuaZonai:
 
