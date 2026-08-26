@@ -70,7 +70,7 @@ export function AlphaDetailPage() {
         <Section title="Feature importance" meta="Explainability evidence">{importance.length ? <div className="qz-panel qz-panel-pad"><EChart ariaLabel="Feature importance chart" option={importanceOption} /></div> : <EmptyState title="No feature importance" description="No explainability vector was returned for this Alpha qualification." />}</Section>
       </div>
       <Section title="Qualification lineage" meta="React Flow · immutable ancestry and reusable evidence"><div className="qz-flow"><ReactFlow nodes={nodes} edges={edges} fitView nodesDraggable={false} nodesConnectable={false}><Background gap={22} color="var(--qz-border)" /><Controls showInteractive={false} /></ReactFlow></div></Section>
-      <Section title="Scope and evidence"><div className="qz-panel qz-panel-pad"><pre className="qz-code">{JSON.stringify({ universe: alpha.universe ?? alpha.universe_version_id, scope: alpha.scope_json, metrics: alpha.metrics, evaluation_episode_id: alpha.evaluation_episode_id }, null, 2)}</pre></div></Section>
+      <Section title="Scope and evidence"><div className="qz-panel qz-panel-pad"><pre className="qz-code" dir="ltr">{JSON.stringify({ universe: alpha.universe ?? alpha.universe_version_id, scope: alpha.scope_json, metrics: alpha.metrics, evaluation_episode_id: alpha.evaluation_episode_id }, null, 2)}</pre></div></Section>
     </>
   );
 }

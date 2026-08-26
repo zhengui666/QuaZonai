@@ -81,7 +81,7 @@ function ApprovalCard({ approval, systems }: { approval: ApprovalSnapshot; syste
               <Dialog.Description size="2">{t('approval.rejectDesc')}</Dialog.Description>
               <div className="qz-form-grid" style={{ marginTop: 16 }}>
                 <label className="qz-field"><span className="qz-label">{t('approval.reasonCode')}</span><Select.Root value={reason} onValueChange={setReason}><Select.Trigger placeholder={t('approval.selectReason')} /><Select.Content>{rejectionReasons.map((item) => <Select.Item key={item} value={item}>{humanize(item)}</Select.Item>)}</Select.Content></Select.Root></label>
-                <label className="qz-field"><span className="qz-label">{t('approval.optionalNote')}</span><TextArea value={note} onChange={(event) => setNote(event.target.value)} /></label>
+                <label className="qz-field"><span className="qz-label">{t('approval.optionalNote')}</span><TextArea dir="auto" value={note} onChange={(event) => setNote(event.target.value)} /></label>
                 <Button color="red" disabled={!reason || decision.reject.isPending} onClick={() => decision.reject.mutate({ reason_code: reason, note: note || undefined })}>{t('approval.confirmRejection')}</Button>
               </div>
             </Dialog.Content>

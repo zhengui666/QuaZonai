@@ -110,12 +110,15 @@ describe('i18n', () => {
       <I18nProvider initialLocale="ar">
         <KpiStrip items={[
           { label: 'Count', value: 1234 },
-          { label: 'Custom', value: <strong data-testid="custom-kpi">raw node</strong> },
+          { label: 'Custom', value: <strong data-testid="custom-kpi">raw node</strong>, note: 'EUR/USD operator note' },
         ]} />
       </I18nProvider>,
     );
     expect(screen.getByText(formatted('ar', 1234))).toBeInTheDocument();
+    expect(screen.getByText(formatted('ar', 1234)).closest('.qz-kpi-value')).toHaveAttribute('dir', 'auto');
     expect(screen.getByTestId('custom-kpi')).toHaveTextContent('raw node');
+    expect(screen.getByTestId('custom-kpi').closest('.qz-kpi-value')).toHaveAttribute('dir', 'auto');
+    expect(screen.getByText('EUR/USD operator note')).toHaveAttribute('dir', 'auto');
   });
 
   it('localizes reachable lifecycle, portfolio, role, mission, degradation, and plugin capability values', () => {

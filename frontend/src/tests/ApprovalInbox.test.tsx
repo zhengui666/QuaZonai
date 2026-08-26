@@ -44,4 +44,24 @@ describe('ApprovalInbox', () => {
     expect(formatDeployableCapital('ar', 100000)).toBe(new Intl.NumberFormat('ar').format(100000));
     expect(formatDeployableCapital('es', '100000')).toBe(new Intl.NumberFormat('es').format(100000));
   });
+
+
+  it('lets rejection notes infer their text direction', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = String(input);
+      if (url.endsWith('/approvals')) return jsonResponse([{
+        id: 'a-rtl',
+        candidate_id: 'candidate-12345678',
+        purpose: 'PAPER',
+        state: 'PENDING',
+        candidate: { id: 'candidate-12345678', portfolio_program_id: 'pp-1', state: 'READY', mandate_name: 'Core Growth' },
+      }]);
+      if (url.endsWith('/downstream-systems')) return jsonResponse([]);
+      return jsonResponse({}, 404);
+    });
+
+    renderApp(<ApprovalInboxPage />, { route: '/approvals' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Reject' }));
+    expect(await screen.findByRole('textbox', { name: 'Optional note' })).toHaveAttribute('dir', 'auto');
+  });
 });
