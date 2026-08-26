@@ -23,8 +23,8 @@ const configuration: RuntimeConfiguration = {
 describe('RuntimeConfigurationPanel directionality', () => {
   it('keeps machine identifier inputs left-to-right in Arabic', () => {
     renderApp(<RuntimeConfigurationPanel configuration={configuration} />, { locale: 'ar' });
-    expect(screen.getByLabelText(translateKey('ar', 'runtime.codexModel'))).toHaveAttribute('dir', 'ltr');
-    expect(screen.getByLabelText(translateKey('ar', 'runtime.baseUrl'))).toHaveAttribute('dir', 'ltr');
-    expect(screen.getByLabelText(translateKey('ar', 'runtime.apiKey'))).toHaveAttribute('dir', 'ltr');
+    expect(screen.getByDisplayValue('gpt-5.6-sol')).toHaveAttribute('dir', 'ltr');
+    expect(screen.getByDisplayValue('https://gateway.example/v1')).toHaveAttribute('dir', 'ltr');
+    expect(screen.getByPlaceholderText(translateKey('ar', 'runtime.keyConfigured'))).toHaveAttribute('dir', 'ltr');
   });
 });
