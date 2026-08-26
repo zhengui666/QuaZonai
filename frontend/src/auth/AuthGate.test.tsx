@@ -142,6 +142,32 @@ describe('AuthGate', () => {
     expect(screen.queryByText('Direct workbench')).not.toBeInTheDocument();
   });
 
+  it('cancels an unfinished bootstrap request when unmounted', async () => {
+    const bootstrap = deferredResponse();
+    const fetchMock = vi.fn<typeof fetch>(() => bootstrap.promise);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const view = render(<AuthGate><div>Workbench ready</div></AuthGate>);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const options = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const signal = options.signal as AbortSignal;
+    expect(signal.aborted).toBe(false);
+
+    view.unmount();
+    expect(signal.aborted).toBe(true);
+
+    await act(async () => {
+      bootstrap.resolve(await jsonResponse({
+        authenticated: true,
+        username: 'operator',
+        trusted_browser: false,
+        auth_enabled: true,
+      }));
+      await Promise.resolve();
+    });
+  });
+
   it('shows password, authenticator code, and trusted-browser option when anonymous', async () => {
     vi.stubGlobal('fetch', vi.fn(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401)));
 

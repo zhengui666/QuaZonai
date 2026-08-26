@@ -160,9 +160,12 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<SessionView | null>(null);
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
   const sessionCheckGeneration = useRef(0);
+  const sessionCheckAbortController = useRef<AbortController | null>(null);
 
   const invalidateSessionChecks = useCallback(() => {
     sessionCheckGeneration.current += 1;
+    sessionCheckAbortController.current?.abort();
+    sessionCheckAbortController.current = null;
   }, []);
 
   const acceptSession = useCallback((nextSession: SessionView) => {
@@ -174,10 +177,16 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const checkSession = useCallback(async () => {
     const generation = sessionCheckGeneration.current + 1;
     sessionCheckGeneration.current = generation;
+    sessionCheckAbortController.current?.abort();
+    const controller = new AbortController();
+    sessionCheckAbortController.current = controller;
     const isCurrent = () => sessionCheckGeneration.current === generation;
     setBootstrapError(null);
     try {
-      const response = await fetch('/api/v1/auth/session', { credentials: 'same-origin' });
+      const response = await fetch('/api/v1/auth/session', {
+        credentials: 'same-origin',
+        signal: controller.signal,
+      });
       if (!isCurrent()) return;
       if (response.ok) {
         const nextSession = await response.json() as SessionView;
@@ -197,6 +206,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
       setBootstrapError('Unable to reach the authentication service.');
       setSession(null);
       setState('anonymous');
+    } finally {
+      if (isCurrent()) sessionCheckAbortController.current = null;
     }
   }, [acceptSession]);
 
@@ -214,7 +225,10 @@ export function AuthGate({ children }: { children: ReactNode }) {
     setState('anonymous');
   }, [invalidateSessionChecks, session?.auth_enabled]);
 
-  useEffect(() => { void checkSession(); }, [checkSession]);
+  useEffect(() => {
+    void checkSession();
+    return invalidateSessionChecks;
+  }, [checkSession, invalidateSessionChecks]);
   useEffect(() => {
     if (state !== 'authenticated' || session?.auth_enabled !== true) return;
     let active = true;
