@@ -27,6 +27,12 @@ const countColumns: ColumnDef<CountRow, unknown>[] = [
   { accessorKey: 'count', header: 'Count', cell: ({ getValue }) => <span className="qz-number">{formatNumber(getValue() as number)}</span> },
 ];
 
+interface StringNumericRow { name: string; deployable: string }
+const stringNumericColumns: ColumnDef<StringNumericRow, unknown>[] = [
+  { accessorKey: 'name', header: 'Name' },
+  { accessorKey: 'deployable', header: 'Deployable', cell: ({ getValue }) => <span className="qz-number">{formatNumber(getValue() as string)}</span> },
+];
+
 interface CapabilityRow { name: string; capabilities: string[] }
 const capabilityColumns: ColumnDef<CapabilityRow, unknown>[] = [
   { id: 'name', header: 'Name', cell: ({ row }) => row.original.name },
@@ -92,6 +98,20 @@ describe('DataTable', () => {
     );
     expect(screen.getByText(new Intl.NumberFormat('ar').format(1234))).toBeInTheDocument();
     expect(screen.queryByText('1234')).not.toBeInTheDocument();
+  });
+
+  it('indexes localized display aliases for numeric strings', () => {
+    render(
+      <I18nProvider initialLocale="es">
+        <Theme appearance="dark" accentColor="jade" grayColor="sage" radius="small" scaling="90%">
+          <DataTable data={[{ name: 'String capital', deployable: '123456' }]} columns={stringNumericColumns} />
+        </Theme>
+      </I18nProvider>,
+    );
+    const localized = new Intl.NumberFormat('es').format(123456);
+    expect(screen.getByText(localized)).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText('Filtrar filas…'), { target: { value: localized } });
+    expect(screen.getByText('String capital')).toBeInTheDocument();
   });
 
   it('does not generate percentage aliases for ordinary numeric columns', () => {

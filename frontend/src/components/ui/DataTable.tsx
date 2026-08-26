@@ -61,6 +61,8 @@ function searchableValues(value: unknown, locale: Locale, meta?: LocalizedColumn
   if (typeof value === 'number') return numericSearchValues(value, locale, meta);
   if (typeof value === 'string') {
     const values = [value];
+    const numericValue = Number(value);
+    if (value.trim() && Number.isFinite(numericValue)) values.push(...numericSearchValues(numericValue, locale, meta));
     const sourceLabel = humanizeCanonical(value);
     const domainLabel = translateDomainLabel(locale, sourceLabel);
     if (domainLabel) values.push(domainLabel);
