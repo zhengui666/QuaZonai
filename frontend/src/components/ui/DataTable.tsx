@@ -15,7 +15,7 @@ import {
 } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useI18n, type Locale, type MessageKey } from '../../i18n';
+import { localeLabels, useI18n, type Locale, type MessageKey } from '../../i18n';
 import { translateDomainLabel } from '../../i18n/domain';
 import { translateRuntimeLabel } from '../../i18n/runtime';
 import { formatDateTime } from '../../lib/format';
@@ -36,8 +36,18 @@ function humanizeCanonical(value: string): string {
   return value.replaceAll('_', ' ').toLowerCase().replace(/(^|\s)\S/g, (character) => character.toUpperCase());
 }
 
+function finiteNumericValue(value: unknown): number | undefined {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : undefined;
+}
 function numericSearchValues(value: number, locale: Locale, meta?: LocalizedColumnMeta): string[] {
-  const values = [String(value), new Intl.NumberFormat(locale).format(value)];
+  const values = [
+    String(value),
+    new Intl.NumberFormat(locale).format(value),
+    new Intl.NumberFormat(locale, { maximumSignificantDigits: 15 }).format(value),
+  ];
   if (meta?.searchFormat === 'compact') {
     values.push(new Intl.NumberFormat(locale, { notation: 'compact', maximumFractionDigits: 2 }).format(value));
   }
@@ -62,8 +72,8 @@ function searchableValues(value: unknown, locale: Locale, meta?: LocalizedColumn
   if (typeof value === 'number') return numericSearchValues(value, locale, meta);
   if (typeof value === 'string') {
     const values = [value];
-    const numericValue = Number(value);
-    if (value.trim() && Number.isFinite(numericValue)) values.push(...numericSearchValues(numericValue, locale, meta));
+    const numericValue = finiteNumericValue(value);
+    if (numericValue !== undefined) values.push(...numericSearchValues(numericValue, locale, meta));
     const sourceLabel = humanizeCanonical(value);
     const domainLabel = translateDomainLabel(locale, sourceLabel);
     if (domainLabel) values.push(domainLabel);
@@ -148,7 +158,9 @@ export function DataTable<T>({
     const rawRight = rowB.getValue(columnId);
     const left = rawLeft === undefined ? objectField(rowA.original, columnId) : rawLeft;
     const right = rawRight === undefined ? objectField(rowB.original, columnId) : rawRight;
-    if (typeof left === 'number' && typeof right === 'number') return left - right;
+    const leftNumber = finiteNumericValue(left);
+    const rightNumber = finiteNumericValue(right);
+    if (leftNumber !== undefined && rightNumber !== undefined) return leftNumber - rightNumber;
     const meta = columnMeta(rowA.getAllCells().find((cell) => cell.column.id === columnId)?.column.columnDef.meta);
     const leftLabel = meta?.localizedSort ? localizedSortLabel(left, locale) : left === null || left === undefined ? '' : String(left);
     const rightLabel = meta?.localizedSort ? localizedSortLabel(right, locale) : right === null || right === undefined ? '' : String(right);
@@ -200,7 +212,7 @@ export function DataTable<T>({
     <div className="qz-table-shell">
       <div className="qz-table-toolbar">
         <TextField.Root className="qz-table-search" dir="auto" size="1" value={globalFilter} onChange={(event) => { setGlobalFilter(event.target.value); table.setPageIndex(0); }} aria-label={text(searchPlaceholder)} placeholder={text(searchPlaceholder)}>
-          <TextField.Slot><MagnifyingGlassIcon size={14} /></TextField.Slot>
+          <TextField.Slot side={localeLabels[locale].dir === 'rtl' ? 'right' : 'left'}><MagnifyingGlassIcon size={14} /></TextField.Slot>
         </TextField.Root>
         <div className="qz-table-tools">
           <span className="qz-section-meta qz-number">{plural({

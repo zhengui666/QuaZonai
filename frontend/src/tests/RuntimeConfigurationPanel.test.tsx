@@ -28,5 +28,8 @@ describe('RuntimeConfigurationPanel directionality', () => {
     expect(screen.getByText(new Intl.NumberFormat('ar').format(configuration.revision))).toBeInTheDocument();
     expect(screen.getByDisplayValue('https://gateway.example/v1')).toHaveAttribute('dir', 'ltr');
     expect(screen.getByPlaceholderText(translateKey('ar', 'runtime.keyConfigured'))).toHaveAttribute('dir', 'ltr');
+    const numericInputs = screen.getAllByRole('spinbutton');
+    expect(numericInputs).toHaveLength(7);
+    numericInputs.forEach((input) => expect(input).toHaveAttribute('dir', 'ltr'));
   });
 });

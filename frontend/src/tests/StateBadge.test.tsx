@@ -17,4 +17,8 @@ describe('StateBadge localization', () => {
     expect(screen.getByText('مؤهل')).toBeInTheDocument();
     expect(screen.queryByText('تاريخ التأهيل')).not.toBeInTheDocument();
   });
+  it('localizes the canonical not_observed health state in Arabic', () => {
+    renderApp(<StateBadge state="not_observed" />, { locale: 'ar' });
+    expect(screen.getByText('غير مرصود')).toBeInTheDocument();
+  });
 });

@@ -260,4 +260,14 @@ describe('DataTable', () => {
     );
     expect(screen.getByText('ألفا')).toBeInTheDocument();
   });
+  it('sorts numeric-string cells by their numeric value', () => {
+    renderApp(
+      <DataTable
+        data={[{ name: '2.2 row', deployable: '2.2' }, { name: '2.10 row', deployable: '2.10' }]}
+        columns={stringNumericColumns}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Deployable' }));
+    expect(screen.getAllByText(/2\.(2|10) row/).map((element) => element.textContent)).toEqual(['2.10 row', '2.2 row']);
+  });
 });

@@ -12,7 +12,7 @@ import { Section } from '../components/ui/Section';
 import { Translated, useI18n } from '../i18n';
 import { useHandoffs, useRevokeHandoff } from '../lib/api/hooks';
 import type { HandoffOffer } from '../lib/api/types';
-import { formatDateTime } from '../lib/format';
+import { formatDateTime, humanize } from '../lib/format';
 import { findTimeSeries } from '../lib/metrics';
 
 type HandoffWithEvidence = HandoffOffer & { forward_evidence?: Record<string, unknown>; evidence_summary?: Record<string, unknown> };
@@ -25,7 +25,7 @@ function Revoke({ offer }: { offer: HandoffOffer }) {
 }
 
 const columns: ColumnDef<HandoffOffer, unknown>[] = [
-  { accessorKey: 'downstream_name', header: 'Downstream', cell: ({ row }) => <div><div className="qz-list-title">{row.original.downstream_name ?? row.original.downstream_system_id?.slice(0, 8) ?? '—'}</div><div className="qz-list-subtitle"><bdi dir="ltr">{row.original.purpose ?? '—'}</bdi> · <Translated source="Candidate" /> <bdi dir="ltr">{row.original.candidate_id?.slice(0, 8) ?? '—'}</bdi></div></div> },
+  { accessorKey: 'downstream_name', header: 'Downstream', cell: ({ row }) => <div><div className="qz-list-title">{row.original.downstream_name ? <span dir="auto">{row.original.downstream_name}</span> : <bdi dir="ltr">{row.original.downstream_system_id?.slice(0, 8) ?? '—'}</bdi>}</div><div className="qz-list-subtitle"><span dir="auto">{humanize(row.original.purpose)}</span> · <Translated source="Candidate" /> <bdi dir="ltr">{row.original.candidate_id?.slice(0, 8) ?? '—'}</bdi></div></div> },
   { accessorKey: 'state', header: 'Package / offer', meta: { localizedSort: true }, cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
   { accessorKey: 'feedback_state', header: 'Forward evidence', meta: { localizedSort: true }, cell: ({ getValue }) => <StateBadge state={String(getValue() ?? 'PENDING')} /> },
   { accessorKey: 'claim_deadline', header: 'Claim deadline', cell: ({ getValue }) => formatDateTime(getValue() as string | null) },

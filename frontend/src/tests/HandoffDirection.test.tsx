@@ -13,7 +13,8 @@ describe('Handoff feedback text direction', () => {
         id: 'handoff-1',
         state: 'AVAILABLE',
         candidate_id: 'abc12345-long-candidate-id',
-        downstream_name: 'مختبر ورقي',
+        downstream_system_id: 'downstream-12345678',
+        purpose: 'PAPER',
         forward_evidence: {},
       }]);
       return jsonResponse({}, 404);
@@ -25,5 +26,7 @@ describe('Handoff feedback text direction', () => {
     ));
     const tableCandidateId = candidateIds.find((element) => element.closest('td'));
     expect(tableCandidateId).toHaveAttribute('dir', 'ltr');
+    expect(screen.getByText('downstre')).toHaveAttribute('dir', 'ltr');
+    expect(screen.getByText('ورقي')).toBeInTheDocument();
   });
 });

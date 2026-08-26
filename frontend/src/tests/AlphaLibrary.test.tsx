@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react';
+import { fireEvent, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { AlphaLibraryPage } from '../pages/AlphaLibraryPage';
 import { renderApp } from './testUtils';
@@ -28,5 +28,11 @@ describe('Alpha library evidence metrics', () => {
     renderApp(<AlphaLibraryPage />, { locale: 'ar' });
 
     expect(screen.getByText('alpha-precision')).toHaveAttribute('dir', 'ltr');
+  });
+  it('filters the visible localized evidence value', () => {
+    renderApp(<AlphaLibraryPage />, { locale: 'es' });
+    const precise = new Intl.NumberFormat('es', { maximumSignificantDigits: 15 }).format(0.0004);
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: precise } });
+    expect(screen.getByText('Precision Alpha')).toBeInTheDocument();
   });
 });

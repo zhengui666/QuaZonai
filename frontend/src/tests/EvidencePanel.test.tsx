@@ -1,7 +1,7 @@
 import { Theme } from '@radix-ui/themes';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { EvidencePanel } from '../components/approval/EvidencePanel';
+import { EvidencePanel, formatEvidenceValue } from '../components/approval/EvidencePanel';
 import { I18nProvider } from '../i18n';
 import type { ApprovalSnapshot } from '../lib/api/types';
 
@@ -36,5 +36,14 @@ describe('EvidencePanel', () => {
     );
 
     expect(screen.getByText('Search Adjusted Quality')).toHaveAttribute('dir', 'ltr');
+  });
+  it('preserves small nonzero evidence percentages', () => {
+    const value = 0.00004;
+    expect(formatEvidenceValue('es', value)).toBe(
+      new Intl.NumberFormat('es', { style: 'percent', maximumSignificantDigits: 15 }).format(value),
+    );
+    expect(formatEvidenceValue('es', value)).not.toBe(
+      new Intl.NumberFormat('es', { style: 'percent', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value),
+    );
   });
 });

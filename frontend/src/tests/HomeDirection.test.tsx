@@ -14,7 +14,7 @@ vi.mock('../lib/useEventStream', () => ({
       id: 'event-1',
       kind: 'ALPHA_QUALIFIED',
       created_at: '2030-01-01T00:00:00Z',
-      aggregate_type: 'Portfolio Program',
+      aggregate_type: 'PORTFOLIO_MANDATE',
       aggregate_id: 'EUR/USD-12345678',
     }],
   }),
@@ -46,9 +46,10 @@ describe('HomePage text direction', () => {
 
     renderApp(<HomePage />, { locale: 'ar' });
     const identity = await screen.findByText((_, element) => (
-      element?.tagName === 'BDI' && element.textContent === 'Portfolio Program EUR/USD-'
+      element?.tagName === 'BDI' && element.textContent === 'EUR/USD-'
     ));
-    expect(identity).toHaveAttribute('dir', 'auto');
+    expect(identity).toHaveAttribute('dir', 'ltr');
+    expect(screen.getByText('تفويض المحفظة')).toHaveAttribute('dir', 'auto');
     expect(screen.getByText('Core Growth — EUR/USD')).toHaveAttribute('dir', 'auto');
   });
 });

@@ -165,7 +165,7 @@ export function HomePage() {
         </div>
       </Section>
       <Section title="Recent material events" meta={connected ? 'Live SSE connection' : 'Reconnecting automatically'}>
-        {events.length ? <div className="qz-panel qz-panel-pad qz-timeline">{events.slice(0, 10).map((event, index) => <div className="qz-timeline-item" data-active={index === 0} key={String(event.id)}><div className="qz-timeline-title">{humanize(event.kind)}</div><div className="qz-timeline-meta qz-number">{formatDateTime(event.created_at)}</div>{event.aggregate_type ? <div className="qz-timeline-body"><bdi dir="auto">{event.aggregate_type} {event.aggregate_id?.slice(0, 8)}</bdi></div> : null}</div>)}</div> : <EmptyState title="Waiting for material events" description="The live stream omits raw market traffic and low-value agent chatter." />}
+        {events.length ? <div className="qz-panel qz-panel-pad qz-timeline">{events.slice(0, 10).map((event, index) => <div className="qz-timeline-item" data-active={index === 0} key={String(event.id)}><div className="qz-timeline-title">{humanize(event.kind)}</div><div className="qz-timeline-meta qz-number">{formatDateTime(event.created_at)}</div>{event.aggregate_type ? <div className="qz-timeline-body"><span dir="auto">{humanize(event.aggregate_type)}</span>{event.aggregate_id ? <> <bdi dir="ltr">{event.aggregate_id.slice(0, 8)}</bdi></> : null}</div> : null}</div>)}</div> : <EmptyState title="Waiting for material events" description="The live stream omits raw market traffic and low-value agent chatter." />}
       </Section>
     </>
   );
