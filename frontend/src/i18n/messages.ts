@@ -6,6 +6,7 @@ const m = (...items: MessageTuple): MessageTuple => items;
 
 export const messages = {
   'brand.subtitle': m('Quant Research Cockpit', '量化研究驾驶舱', '量化研究駕駛艙', 'クオンツ研究コックピット', '퀀트 리서치 콕핏', 'Centro de investigación cuantitativa', 'قمرة البحث الكمي'),
+  'app.documentTitle': m('QuaZonai Research Workbench', 'QuaZonai 量化研究工作台', 'QuaZonai 量化研究工作臺', 'QuaZonai クオンツ研究ワークベンチ', 'QuaZonai 퀀트 리서치 워크벤치', 'Espacio de trabajo de investigación cuantitativa QuaZonai', 'منصة QuaZonai للبحث الكمي'),
   'nav.dashboard': m('Dashboard', '仪表盘', '儀表板', 'ダッシュボード', '대시보드', 'Panel', 'لوحة التحكم'),
   'nav.ideas': m('Idea Composer', '研究构想', '研究構想', 'アイデア作成', '아이디어 작성', 'Compositor de ideas', 'صياغة الأفكار'),
   'nav.research': m('Research Observatory', '研究观测台', '研究觀測台', '研究オブザーバトリ', '리서치 관측소', 'Observatorio de investigación', 'مرصد البحث'),

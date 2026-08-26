@@ -82,7 +82,7 @@ export function FinancialSeriesChart({ series, ariaLabel, height = 320 }: { seri
       tooltip.style.top = `${Math.max(8, param.point.y - 34)}px`;
     });
     chart.timeScale().fitContent();
-    return () => chart.remove();
+    return () => { tooltip.remove(); chart.remove(); };
   }, [height, locale, localizedSeries]);
   return <div ref={ref} className="qz-chart-host" style={{ minHeight: height }} role="img" aria-label={text(ariaLabel)} />;
 }

@@ -65,6 +65,7 @@ afterEach(() => {
   localStorage.clear();
   document.documentElement.lang = 'en';
   document.documentElement.dir = 'ltr';
+  document.title = 'QuaZonai Research Workbench';
 });
 
 describe('i18n', () => {
@@ -74,6 +75,7 @@ describe('i18n', () => {
     expect(resolveLocale(['zh-Hans-HK'])).toBe('zh-CN');
     expect(resolveLocale(['zh-Hant-CN'])).toBe('zh-TW');
     expect(resolveLocale(['es-MX'])).toBe('es');
+    expect(resolveLocale(['kok-IN', 'en-US'])).toBe('en');
     expect(resolveLocale(['fr-FR'])).toBe('en');
   });
 
@@ -182,6 +184,7 @@ describe('i18n', () => {
     await waitFor(() => {
       expect(document.documentElement.lang).toBe('ar');
       expect(document.documentElement.dir).toBe('rtl');
+      expect(document.title).toBe(translateKey('ar', 'app.documentTitle'));
       expect(localStorage.getItem('qz-locale')).toBeNull();
     });
   });
@@ -194,6 +197,7 @@ describe('i18n', () => {
       expect(screen.getByRole('button', { name: 'es' })).toBeInTheDocument();
       expect(localStorage.getItem('qz-locale')).toBe('es');
       expect(document.documentElement.lang).toBe('es');
+      expect(document.title).toBe(translateKey('es', 'app.documentTitle'));
     });
   });
   it('gives API-authored error text automatic direction', () => {

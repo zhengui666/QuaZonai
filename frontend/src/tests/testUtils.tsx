@@ -3,26 +3,27 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, type RenderOptions } from '@testing-library/react';
 import type { ReactElement, ReactNode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
-import { I18nProvider } from '../i18n';
+import { I18nProvider, type Locale } from '../i18n';
 
-export function renderApp(ui: ReactElement, options?: RenderOptions & { route?: string }) {
+export function renderApp(ui: ReactElement, options?: RenderOptions & { route?: string; locale?: Locale }) {
+  const { route = '/', locale = 'en', ...renderOptions } = options ?? {};
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
 
   function Wrapper({ children }: { children: ReactNode }) {
     return (
-      <I18nProvider initialLocale="en">
+      <I18nProvider initialLocale={locale}>
         <Theme appearance="dark" accentColor="jade" grayColor="sage" radius="medium" scaling="90%">
           <QueryClientProvider client={client}>
-            <MemoryRouter initialEntries={[options?.route ?? '/']}>{children}</MemoryRouter>
+            <MemoryRouter initialEntries={[route]}>{children}</MemoryRouter>
           </QueryClientProvider>
         </Theme>
       </I18nProvider>
     );
   }
 
-  return render(ui, { wrapper: Wrapper, ...options });
+  return render(ui, { wrapper: Wrapper, ...renderOptions });
 }
 
 export function jsonResponse(value: unknown, status = 200) {

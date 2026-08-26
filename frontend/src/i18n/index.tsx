@@ -64,16 +64,17 @@ function matchLocale(value: string): Locale | undefined {
   const canonical = normalizeLocale(value);
   if ((localeOrder as readonly string[]).includes(canonical)) return canonical as Locale;
   const lower = canonical.toLowerCase();
-  if (lower.startsWith('zh')) {
+  const primaryLanguage = lower.split('-', 1)[0];
+  if (primaryLanguage === 'zh') {
     if (/(?:^|-)hans(?:-|$)/i.test(canonical)) return 'zh-CN';
     if (/(?:^|-)hant(?:-|$)/i.test(canonical)) return 'zh-TW';
     return /(?:^|-)(?:tw|hk|mo)(?:-|$)/i.test(canonical) ? 'zh-TW' : 'zh-CN';
   }
-  if (lower.startsWith('ja')) return 'ja';
-  if (lower.startsWith('ko')) return 'ko';
-  if (lower.startsWith('es')) return 'es';
-  if (lower.startsWith('ar')) return 'ar';
-  if (lower.startsWith('en')) return 'en';
+  if (primaryLanguage === 'ja') return 'ja';
+  if (primaryLanguage === 'ko') return 'ko';
+  if (primaryLanguage === 'es') return 'es';
+  if (primaryLanguage === 'ar') return 'ar';
+  if (primaryLanguage === 'en') return 'en';
   return undefined;
 }
 
@@ -127,6 +128,7 @@ export function I18nProvider({ children, initialLocale }: { children: ReactNode;
     const descriptor = localeLabels[locale];
     document.documentElement.lang = locale;
     document.documentElement.dir = descriptor.dir;
+    document.title = translateKey(locale, 'app.documentTitle');
   }, [locale]);
 
   const value = useMemo<I18nContextValue>(() => ({

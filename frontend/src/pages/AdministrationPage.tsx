@@ -101,7 +101,7 @@ function DownstreamDialog() {
 function MandateRow({ mandate }: { mandate: PortfolioMandate }) {
   const { t } = useI18n();
   const toggle = useMandateToggle(mandate.id, mandate.enabled);
-  return <div className="qz-list-row"><div className="qz-list-main"><div className="qz-list-title">{mandate.name}</div><div className="qz-list-subtitle">{String(mandate.spec_json?.objective ?? mandate.spec_json?.description ?? t('admin.versionedObjective'))}</div></div><div style={{ display: 'flex', gap: 10, alignItems: 'center' }}><StateBadge state={mandate.enabled ? 'ENABLED' : 'DISABLED'} /><Switch checked={mandate.enabled} disabled={toggle.isPending} onCheckedChange={() => toggle.mutate()} aria-label={`${t('admin.enabled')}: ${mandate.name}`} /></div></div>;
+  return <div className="qz-list-row"><div className="qz-list-main"><div className="qz-list-title" dir="auto">{mandate.name}</div><div className="qz-list-subtitle" dir="auto">{String(mandate.spec_json?.objective ?? mandate.spec_json?.description ?? t('admin.versionedObjective'))}</div></div><div style={{ display: 'flex', gap: 10, alignItems: 'center' }}><StateBadge state={mandate.enabled ? 'ENABLED' : 'DISABLED'} /><Switch checked={mandate.enabled} disabled={toggle.isPending} onCheckedChange={() => toggle.mutate()} aria-label={`${t('admin.enabled')}: ${mandate.name}`} /></div></div>;
 }
 
 export function AdministrationPage() {
