@@ -13,7 +13,7 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { cloneElement, isValidElement, useCallback, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useI18n, type Locale, type MessageKey } from '../../i18n';
 import { translateDomainLabel } from '../../i18n/domain';
 import { translateRuntimeLabel } from '../../i18n/runtime';
@@ -33,21 +33,6 @@ function messageKeyFromMeta(meta: unknown): MessageKey | undefined {
 
 function humanizeCanonical(value: string): string {
   return value.replaceAll('_', ' ').toLowerCase().replace(/(^|\s)\S/g, (character) => character.toUpperCase());
-}
-
-function numericDisplayValue(value: number, locale: Locale, meta?: LocalizedColumnMeta): string {
-  if (meta?.searchFormat === 'compact') {
-    return new Intl.NumberFormat(locale, { notation: 'compact', maximumFractionDigits: 2 }).format(value);
-  }
-  if (meta?.searchFormat === 'percent') {
-    const decimals = meta.searchDecimals ?? 1;
-    return new Intl.NumberFormat(locale, {
-      style: 'percent',
-      minimumFractionDigits: decimals,
-      maximumFractionDigits: decimals,
-    }).format(value);
-  }
-  return new Intl.NumberFormat(locale).format(value);
 }
 
 function numericSearchValues(value: number, locale: Locale, meta?: LocalizedColumnMeta): string[] {
@@ -93,20 +78,18 @@ function objectField(value: unknown, key: string): unknown {
   return (value as Record<string, unknown>)[key];
 }
 
-function numericRawValue(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value !== 'string' || !value.trim()) return undefined;
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : undefined;
-}
-
-function localizeDirectNumericCell(rendered: ReactNode, rawValue: unknown, locale: Locale, meta?: LocalizedColumnMeta): ReactNode {
-  if (!isValidElement(rendered)) return rendered;
-  const element = rendered as ReactElement<{ className?: string; children?: ReactNode }>;
-  if (!element.props.className?.split(/\s+/).includes('qz-number')) return rendered;
-  const numeric = numericRawValue(rawValue);
-  if (numeric === undefined) return rendered;
-  return cloneElement(element, undefined, numericDisplayValue(numeric, locale, meta));
+function withPropertyAccessors<T>(defs: ColumnDef<T, unknown>[], data: T[]): ColumnDef<T, unknown>[] {
+  return defs.map((def) => {
+    if ('columns' in def) return def;
+    const id = 'id' in def ? def.id : undefined;
+    const hasAccessor = ('accessorKey' in def && def.accessorKey !== undefined) || ('accessorFn' in def && def.accessorFn !== undefined);
+    if (!id || hasAccessor || !data.some((row) => objectField(row, id) !== undefined)) return def;
+    return {
+      ...def,
+      accessorFn: (row: T) => objectField(row, id),
+      enableSorting: def.enableSorting ?? false,
+    } as ColumnDef<T, unknown>;
+  });
 }
 
 interface DataTableProps<T> {
@@ -137,16 +120,14 @@ export function DataTable<T>({
   const [globalFilter, setGlobalFilter] = useState('');
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
   const viewportRef = useRef<HTMLDivElement>(null);
-  const stableColumns = useMemo(() => columns, [columns]);
-  const localizedGlobalFilter = useCallback<FilterFn<T>>((row, _columnId, filterValue) => {
+  const stableColumns = useMemo(() => withPropertyAccessors(columns, data), [columns, data]);
+  const localizedGlobalFilter = useCallback<FilterFn<T>>((row, columnId, filterValue) => {
     const query = String(filterValue ?? '').trim().toLocaleLowerCase(locale);
     if (!query) return true;
-    return row.getAllCells().some((cell) => {
-      const meta = columnMeta(cell.column.columnDef.meta);
-      const accessorValue = cell.getValue();
-      const value = accessorValue === undefined ? objectField(row.original, cell.column.id) : accessorValue;
-      return searchableValues(value, locale, meta).some((candidate) => candidate.toLocaleLowerCase(locale).includes(query));
-    });
+    const meta = columnMeta(row.getAllCells().find((cell) => cell.column.id === columnId)?.column.columnDef.meta);
+    const accessorValue = row.getValue(columnId);
+    const value = accessorValue === undefined ? objectField(row.original, columnId) : accessorValue;
+    return searchableValues(value, locale, meta).some((candidate) => candidate.toLocaleLowerCase(locale).includes(query));
   }, [locale]);
   const table = useReactTable({
     data,
@@ -156,7 +137,7 @@ export function DataTable<T>({
     onGlobalFilterChange: setGlobalFilter,
     onColumnVisibilityChange: setColumnVisibility,
     globalFilterFn: localizedGlobalFilter,
-    getColumnCanGlobalFilter: (column) => Boolean(column.accessorFn) || data.some((row) => objectField(row, column.id) !== undefined),
+    getColumnCanGlobalFilter: (column) => Boolean(column.accessorFn),
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getSortedRowModel: getSortedRowModel(),
@@ -242,13 +223,9 @@ export function DataTable<T>({
           <tbody>
             {paddingTop > 0 ? <tr aria-hidden="true"><td colSpan={table.getVisibleLeafColumns().length} style={{ height: paddingTop, padding: 0, border: 0 }} /></tr> : null}
             {visibleRows.map((row) => (
-              <tr key={row.id}>{row.getVisibleCells().map((cell) => {
-                const rendered = flexRender(cell.column.columnDef.cell, cell.getContext());
-                const meta = columnMeta(cell.column.columnDef.meta);
-                const accessorValue = cell.getValue();
-                const rawValue = accessorValue === undefined ? objectField(row.original, cell.column.id) : accessorValue;
-                return <td key={cell.id}>{localizeDirectNumericCell(rendered, rawValue, locale, meta)}</td>;
-              })}</tr>
+              <tr key={row.id}>{row.getVisibleCells().map((cell) => (
+                <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
+              ))}</tr>
             ))}
             {paddingBottom > 0 ? <tr aria-hidden="true"><td colSpan={table.getVisibleLeafColumns().length} style={{ height: paddingBottom, padding: 0, border: 0 }} /></tr> : null}
           </tbody>

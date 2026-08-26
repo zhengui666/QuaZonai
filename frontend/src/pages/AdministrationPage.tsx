@@ -28,7 +28,7 @@ import {
   useUniverses,
 } from '../lib/api/hooks';
 import type { DataSource, DatasetRevision, DownstreamSystem, MarketUniverse, PluginRelease, PortfolioMandate } from '../lib/api/types';
-import { formatCompactNumber, formatDateTime, humanize } from '../lib/format';
+import { formatCompactNumber, formatDateTime, formatNumber, humanize } from '../lib/format';
 
 function ready(value: unknown) { return typeof value === 'boolean' ? value : Boolean((value as { ready?: boolean } | undefined)?.ready); }
 
@@ -52,7 +52,7 @@ const datasetColumns: ColumnDef<DatasetRevision, unknown>[] = [
 const universeColumns: ColumnDef<MarketUniverse, unknown>[] = [
   { accessorKey: 'name', header: 'Universe', meta: { messageKey: 'alpha.universe' } },
   { accessorKey: 'universe_key', header: 'Key', meta: { messageKey: 'admin.key' }, cell: ({ getValue }) => <span className="qz-mono">{String(getValue() ?? '—')}</span> },
-  { accessorKey: 'version_no', header: 'Version', meta: { messageKey: 'admin.version' }, cell: ({ getValue }) => <span className="qz-number">{String(getValue() ?? '—')}</span> },
+  { accessorKey: 'version_no', header: 'Version', meta: { messageKey: 'admin.version' }, cell: ({ getValue }) => <span className="qz-number">{formatNumber(getValue() as number | string | null | undefined)}</span> },
   { accessorKey: 'state', header: 'State', meta: { messageKey: 'research.state' }, cell: ({ getValue }) => <StateBadge state={String(getValue() ?? 'ACTIVE')} /> },
 ];
 const downstreamColumns: ColumnDef<DownstreamSystem, unknown>[] = [
@@ -71,12 +71,12 @@ const pluginColumns: ColumnDef<PluginRelease, unknown>[] = [
   { accessorKey: 'created_at', header: 'Created', meta: { messageKey: 'admin.created' }, cell: ({ getValue }) => formatDateTime(getValue() as string | undefined) },
 ];
 
-type CapitalContextRow = { id: string; purpose: string; candidate: string; currency: string; deployable: string; observed?: string; validUntil?: string };
+type CapitalContextRow = { id: string; purpose: string; candidate: string; currency: string; deployable: number | string; observed?: string; validUntil?: string };
 const capitalColumns: ColumnDef<CapitalContextRow, unknown>[] = [
   { accessorKey: 'purpose', header: 'Purpose', meta: { messageKey: 'admin.purpose' }, cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
   { accessorKey: 'candidate', header: 'Candidate', meta: { messageKey: 'common.candidate' }, cell: ({ getValue }) => <span className="qz-mono">{String(getValue()).slice(0, 12)}</span> },
   { accessorKey: 'currency', header: 'Currency', meta: { messageKey: 'admin.currency' } },
-  { accessorKey: 'deployable', header: 'Deployable capital', meta: { messageKey: 'admin.deployableCapital' }, cell: ({ getValue }) => <span className="qz-number">{String(getValue())}</span> },
+  { accessorKey: 'deployable', header: 'Deployable capital', meta: { messageKey: 'admin.deployableCapital' }, cell: ({ getValue }) => <span className="qz-number">{formatNumber(getValue() as number | string | null | undefined)}</span> },
   { accessorKey: 'observed', header: 'Observed', meta: { messageKey: 'research.observed' }, cell: ({ getValue }) => formatDateTime(getValue() as string | undefined) },
   { accessorKey: 'validUntil', header: 'Valid until', meta: { messageKey: 'admin.validUntil' }, cell: ({ getValue }) => formatDateTime(getValue() as string | undefined) },
 ];
@@ -126,7 +126,7 @@ export function AdministrationPage() {
     purpose: approval.purpose,
     candidate: approval.candidate_id,
     currency: approval.capital_context.base_currency ?? '—',
-    deployable: String(approval.capital_context.deployable_capital ?? '—'),
+    deployable: approval.capital_context.deployable_capital ?? '—',
     observed: approval.capital_context.observed_at,
     validUntil: approval.capital_context.valid_until,
   }] : []);

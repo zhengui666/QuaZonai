@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { DataTable } from '../components/ui/DataTable';
 import { StateBadge } from '../components/ui/StateBadge';
 import { I18nProvider } from '../i18n';
-import { formatCompactNumber, formatPercent, humanize } from '../lib/format';
+import { formatCompactNumber, formatNumber, formatPercent, humanize } from '../lib/format';
 import { renderApp } from './testUtils';
 
 interface Row { name: string; state: string }
@@ -24,12 +24,12 @@ const numericColumns: ColumnDef<NumericRow, unknown>[] = [
 interface CountRow { name: string; count: number }
 const countColumns: ColumnDef<CountRow, unknown>[] = [
   { accessorKey: 'name', header: 'Name' },
-  { accessorKey: 'count', header: 'Count', cell: ({ getValue }) => <span className="qz-number">{String(getValue())}</span> },
+  { accessorKey: 'count', header: 'Count', cell: ({ getValue }) => <span className="qz-number">{formatNumber(getValue() as number)}</span> },
 ];
 
 interface CapabilityRow { name: string; capabilities: string[] }
 const capabilityColumns: ColumnDef<CapabilityRow, unknown>[] = [
-  { accessorKey: 'name', header: 'Name' },
+  { id: 'name', header: 'Name', cell: ({ row }) => row.original.name },
   { id: 'capabilities', header: 'Capabilities', cell: ({ row }) => row.original.capabilities.join(', ') },
 ];
 
@@ -82,7 +82,7 @@ describe('DataTable', () => {
     expect(screen.queryByText('Small')).not.toBeInTheDocument();
   });
 
-  it('formats direct qz-number cells with the active locale', () => {
+  it('renders qz-number cells with the active locale at the cell boundary', () => {
     render(
       <I18nProvider initialLocale="ar">
         <Theme appearance="dark" accentColor="jade" grayColor="sage" radius="small" scaling="90%">
