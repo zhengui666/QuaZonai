@@ -20,14 +20,14 @@ export function EvidencePanel({ approval }: { approval: ApprovalSnapshot }) {
     [t('evidence.capacity'), approval.capacity_summary],
     [t('evidence.changes'), approval.changes_summary],
   ];
-  const combined = groups.flatMap(([label, values]) => entries(values).map(([key, value]) => [`${label} · ${humanizeIdentifier(key)}`, value] as const));
+  const combined = groups.flatMap(([label, values]) => entries(values).map(([key, value]) => [label, key, value] as const));
   return (
     <div className="qz-panel">
       <Table.Root size="1">
         <Table.Body>
-          {combined.length ? combined.map(([key, value]) => (
-            <Table.Row key={key}>
-              <Table.RowHeaderCell style={{ color: 'var(--qz-text-muted)', fontSize: 11 }}>{key}</Table.RowHeaderCell>
+          {combined.length ? combined.map(([label, key, value]) => (
+            <Table.Row key={`${label}:${key}`}>
+              <Table.RowHeaderCell style={{ color: 'var(--qz-text-muted)', fontSize: 11 }}><span dir="auto">{label}</span> · <bdi dir="ltr">{humanizeIdentifier(key)}</bdi></Table.RowHeaderCell>
               <Table.Cell className="qz-number" dir="auto" style={{ textAlign: 'right', fontSize: 11 }}>{renderValue(value)}</Table.Cell>
             </Table.Row>
           )) : <Table.Row><Table.Cell style={{ color: 'var(--qz-text-faint)', fontSize: 11 }}>{t('evidence.empty')}</Table.Cell></Table.Row>}

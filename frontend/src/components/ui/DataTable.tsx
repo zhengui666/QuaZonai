@@ -135,7 +135,10 @@ export function DataTable<T>({
   const { locale, t, text, plural } = useI18n();
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
-  useEffect(() => { setGlobalFilter(''); }, [locale]);
+  useEffect(() => {
+    setGlobalFilter('');
+    setSorting([]);
+  }, [locale]);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
   const viewportRef = useRef<HTMLDivElement>(null);
   const stableColumns = useMemo(() => withPropertyAccessors(columns, data), [columns, data]);

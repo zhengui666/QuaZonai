@@ -13,7 +13,7 @@ import type { ResearchProgram } from '../lib/api/types';
 import { formatDateTime, formatNumber } from '../lib/format';
 
 const columns: ColumnDef<ResearchProgram, unknown>[] = [
-  { accessorKey: 'title', header: 'Program', cell: ({ row }) => <div><div className="qz-list-title">{row.original.title ?? row.original.charter?.research_question ?? row.original.id.slice(0, 8)}</div><div className="qz-list-subtitle qz-mono">{row.original.id}</div></div> },
+  { accessorKey: 'title', header: 'Program', cell: ({ row }) => <div><div className="qz-list-title" dir="auto">{row.original.title ?? row.original.charter?.research_question ?? row.original.id.slice(0, 8)}</div><div className="qz-list-subtitle qz-mono"><bdi dir="ltr">{row.original.id}</bdi></div></div> },
   { accessorKey: 'state', header: 'State', meta: { localizedSort: true }, cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
   { accessorKey: 'mission_count', header: 'Missions', cell: ({ getValue }) => <span className="qz-number">{formatNumber(getValue() as number | undefined)}</span> },
   { accessorKey: 'alpha_count', header: 'Alphas', cell: ({ getValue }) => <span className="qz-number">{formatNumber(getValue() as number | undefined)}</span> },

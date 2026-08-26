@@ -105,6 +105,26 @@ describe('DataTable', () => {
     });
   });
 
+  it('clears localized sorting when the locale changes', async () => {
+    render(
+      <I18nProvider initialLocale="es">
+        <Theme appearance="dark" accentColor="jade" grayColor="sage" radius="small" scaling="90%">
+          <LocaleChangeButton />
+          <DataTable data={[{ name: 'Blocked row', state: 'BLOCKED' }, { name: 'Active row', state: 'ACTIVE' }]} columns={columns} />
+        </Theme>
+      </I18nProvider>,
+    );
+    const stateSort = screen.getAllByRole('button').find((button) => /^(State|Estado)/.test(button.textContent ?? ''));
+    expect(stateSort).toBeDefined();
+    fireEvent.click(stateSort!);
+    expect(screen.getAllByText(/^(Activo|Bloqueado)$/).map((element) => element.textContent)).toEqual(['Activo', 'Bloqueado']);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Switch locale' }));
+    await waitFor(() => {
+      expect(screen.getAllByText(/^(活跃|阻塞)$/).map((element) => element.textContent)).toEqual(['阻塞', '活跃']);
+    });
+  });
+
   it('sorts translated state labels in their displayed locale', () => {
     render(
       <I18nProvider initialLocale="es">

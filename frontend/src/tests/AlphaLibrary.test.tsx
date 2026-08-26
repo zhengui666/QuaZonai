@@ -24,4 +24,9 @@ describe('Alpha library evidence metrics', () => {
     expect(screen.getByText(precise)).toBeInTheDocument();
     expect(precise).not.toBe(new Intl.NumberFormat('es').format(0.0004));
   });
+  it('isolates alpha identifiers after Arabic API names', () => {
+    renderApp(<AlphaLibraryPage />, { locale: 'ar' });
+
+    expect(screen.getByText('alpha-precision')).toHaveAttribute('dir', 'ltr');
+  });
 });

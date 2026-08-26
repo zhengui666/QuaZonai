@@ -13,16 +13,17 @@ describe('Handoff feedback text direction', () => {
         id: 'handoff-1',
         state: 'AVAILABLE',
         candidate_id: 'abc12345-long-candidate-id',
-        downstream_name: 'Paper Lab',
+        downstream_name: 'مختبر ورقي',
         forward_evidence: {},
       }]);
       return jsonResponse({}, 404);
     });
 
     renderApp(<HandoffFeedbackPage />, { route: '/handoff', locale: 'ar' });
-    const candidateId = await screen.findByText((_, element) => (
+    const candidateIds = await screen.findAllByText((_, element) => (
       element?.tagName === 'BDI' && element.textContent === 'abc12345'
     ));
-    expect(candidateId).toHaveAttribute('dir', 'ltr');
+    const tableCandidateId = candidateIds.find((element) => element.closest('td'));
+    expect(tableCandidateId).toHaveAttribute('dir', 'ltr');
   });
 });

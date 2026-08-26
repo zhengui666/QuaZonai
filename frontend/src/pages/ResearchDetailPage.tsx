@@ -89,7 +89,7 @@ export function ResearchDetailPage() {
   }
   const branchRows = [...branchMap.values()];
   const evidenceEvents = events.filter((event) => /EXPERIMENT|EVALUAT|EVIDENCE|SEARCH|DISCLOS|QUALIF|CALIBR|PROMOT/i.test(event.kind));
-  const headerTitle = current.title ?? current.charter?.research_question ?? `${t('research.program')} ${current.id.slice(0, 8)}`;
+  const headerTitle = current.title ?? current.charter?.research_question ?? `${t('research.program')} \u2066${current.id.slice(0, 8)}\u2069`;
   const headerDescription = current.charter?.original_idea_text ?? t('research.autonomousProgram');
   const programReason = current.cooling_reason ?? current.blocked_reason ?? current.wake_reason;
   const missionSummary = [

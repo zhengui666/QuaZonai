@@ -59,7 +59,7 @@ function ApprovalCard({ approval, systems }: { approval: ApprovalSnapshot; syste
       <div className="qz-approval-header">
         <div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><StateBadge state={approval.purpose} /><StateBadge state={approval.state} /></div>
-          <h2 className="qz-approval-title" style={{ marginTop: 10 }}><bdi dir="auto">{approval.candidate?.mandate_name ?? t('approval.portfolio')}</bdi> · {t('common.candidate')} {approval.candidate_id.slice(0, 8)}</h2>
+          <h2 className="qz-approval-title" style={{ marginTop: 10 }}><bdi dir="auto">{approval.candidate?.mandate_name ?? t('approval.portfolio')}</bdi> · {t('common.candidate')} <bdi dir="ltr">{approval.candidate_id.slice(0, 8)}</bdi></h2>
           <p className="qz-approval-rationale" dir="auto">{approval.recommendation_rationale ?? t('approval.noRationale')}</p>
         </div>
         <div className="qz-section-meta qz-number" style={{ textAlign: 'right' }}>{t('approval.validUntil')}<br />{formatDateTime(expiry)}</div>

@@ -26,4 +26,15 @@ describe('EvidencePanel', () => {
     expect(screen.getByText(/Capacity$/)).toBeInTheDocument();
     expect(screen.queryByText(/容量$/)).not.toBeInTheDocument();
   });
+  it('isolates canonical evidence schema keys in Arabic', () => {
+    render(
+      <I18nProvider initialLocale="ar">
+        <Theme appearance="dark" accentColor="jade" grayColor="sage" radius="small" scaling="90%">
+          <EvidencePanel approval={{ ...approval, evidence_summary: { search_adjusted_quality: 0.5 } }} />
+        </Theme>
+      </I18nProvider>,
+    );
+
+    expect(screen.getByText('Search Adjusted Quality')).toHaveAttribute('dir', 'ltr');
+  });
 });
