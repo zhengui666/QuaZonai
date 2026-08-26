@@ -279,7 +279,7 @@ describe('DataTable', () => {
         </Theme>
       </I18nProvider>,
     );
-    fireEvent.change(screen.getByPlaceholderText('筛选行…'), { target: { value: '历史导入' } });
+    fireEvent.change(screen.getByPlaceholderText('筛选行…'), { target: { value: 'HISTORICAL_IMPORT' } });
     expect(screen.getByText('Importer')).toBeInTheDocument();
     expect(screen.queryByText('Live feed')).not.toBeInTheDocument();
   });
