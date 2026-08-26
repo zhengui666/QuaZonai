@@ -48,7 +48,8 @@ describe('DataTable', () => {
   it('filters raw values using TanStack Table', () => {
     renderApp(<DataTable data={[{ name: 'Beta', state: 'ACTIVE' }, { name: 'Alpha', state: 'COOLING' }]} columns={columns} />);
     expect(screen.getByText('Beta')).toBeInTheDocument();
-    fireEvent.change(screen.getByPlaceholderText('Filter rows…'), { target: { value: 'Alpha' } });
+    const filterInput = screen.getByRole('textbox', { name: 'Filter rows…' });
+    fireEvent.change(filterInput, { target: { value: 'Alpha' } });
     expect(screen.getByText('Alpha')).toBeInTheDocument();
     expect(screen.queryByText('Beta')).not.toBeInTheDocument();
   });

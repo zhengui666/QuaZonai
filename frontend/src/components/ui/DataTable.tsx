@@ -167,7 +167,7 @@ export function DataTable<T>({
   return (
     <div className="qz-table-shell">
       <div className="qz-table-toolbar">
-        <TextField.Root className="qz-table-search" size="1" value={globalFilter} onChange={(event) => { setGlobalFilter(event.target.value); table.setPageIndex(0); }} placeholder={text(searchPlaceholder)}>
+        <TextField.Root className="qz-table-search" size="1" value={globalFilter} onChange={(event) => { setGlobalFilter(event.target.value); table.setPageIndex(0); }} aria-label={text(searchPlaceholder)} placeholder={text(searchPlaceholder)}>
           <TextField.Slot><MagnifyingGlassIcon size={14} /></TextField.Slot>
         </TextField.Root>
         <div className="qz-table-tools">
