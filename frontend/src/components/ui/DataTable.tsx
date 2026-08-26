@@ -22,7 +22,7 @@ import { formatDateTime } from '../../lib/format';
 import { EmptyState } from './EmptyState';
 
 type SearchFormat = 'compact' | 'percent';
-type LocalizedColumnMeta = { messageKey?: MessageKey; searchFormat?: SearchFormat; searchDecimals?: number };
+type LocalizedColumnMeta = { messageKey?: MessageKey; searchFormat?: SearchFormat; searchDecimals?: number; localizedSort?: boolean };
 
 function columnMeta(meta: unknown): LocalizedColumnMeta | undefined {
   return meta && typeof meta === 'object' ? meta as LocalizedColumnMeta : undefined;
@@ -83,6 +83,7 @@ function objectField(value: unknown, key: string): unknown {
 
 function localizedSortLabel(value: unknown, locale: Locale): string {
   if (value === null || value === undefined) return '';
+  if (Array.isArray(value)) return value.map((item) => localizedSortLabel(item, locale)).join(', ');
   if (typeof value === 'boolean') {
     const source = value ? 'Enabled' : 'Disabled';
     return translateDomainLabel(locale, source) ?? source;
@@ -144,7 +145,10 @@ export function DataTable<T>({
     const left = rawLeft === undefined ? objectField(rowA.original, columnId) : rawLeft;
     const right = rawRight === undefined ? objectField(rowB.original, columnId) : rawRight;
     if (typeof left === 'number' && typeof right === 'number') return left - right;
-    return sortCollator.compare(localizedSortLabel(left, locale), localizedSortLabel(right, locale));
+    const meta = columnMeta(rowA.getAllCells().find((cell) => cell.column.id === columnId)?.column.columnDef.meta);
+    const leftLabel = meta?.localizedSort ? localizedSortLabel(left, locale) : left === null || left === undefined ? '' : String(left);
+    const rightLabel = meta?.localizedSort ? localizedSortLabel(right, locale) : right === null || right === undefined ? '' : String(right);
+    return sortCollator.compare(leftLabel, rightLabel);
   }, [locale, sortCollator]);
   const localizedGlobalFilter = useCallback<FilterFn<T>>((row, columnId, filterValue) => {
     const query = String(filterValue ?? '').trim().toLocaleLowerCase(locale);

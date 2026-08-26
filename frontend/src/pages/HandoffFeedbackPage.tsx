@@ -26,8 +26,8 @@ function Revoke({ offer }: { offer: HandoffOffer }) {
 
 const columns: ColumnDef<HandoffOffer, unknown>[] = [
   { accessorKey: 'downstream_name', header: 'Downstream', cell: ({ row }) => <div><div className="qz-list-title">{row.original.downstream_name ?? row.original.downstream_system_id?.slice(0, 8) ?? '—'}</div><div className="qz-list-subtitle">{row.original.purpose ?? '—'} · <Translated source="Candidate" /> {row.original.candidate_id?.slice(0, 8) ?? '—'}</div></div> },
-  { accessorKey: 'state', header: 'Package / offer', cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
-  { accessorKey: 'feedback_state', header: 'Forward evidence', cell: ({ getValue }) => <StateBadge state={String(getValue() ?? 'PENDING')} /> },
+  { accessorKey: 'state', header: 'Package / offer', meta: { localizedSort: true }, cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
+  { accessorKey: 'feedback_state', header: 'Forward evidence', meta: { localizedSort: true }, cell: ({ getValue }) => <StateBadge state={String(getValue() ?? 'PENDING')} /> },
   { accessorKey: 'claim_deadline', header: 'Claim deadline', cell: ({ getValue }) => formatDateTime(getValue() as string | null) },
   { accessorKey: 'package_contract_version', header: 'Package contract' },
   { accessorKey: 'feedback_contract_version', header: 'Feedback contract' },

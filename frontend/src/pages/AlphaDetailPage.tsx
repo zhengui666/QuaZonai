@@ -2,6 +2,7 @@ import { Background, Controls, ReactFlow, type Edge, type Node } from '@xyflow/r
 import '@xyflow/react/dist/style.css';
 import { useMemo } from 'react';
 import { useParams } from 'react-router-dom';
+import { useReactFlowAriaLabelConfig } from '../components/graphs/reactFlowA11y';
 import { EChart } from '../components/charts/EChart';
 import { FinancialSeriesChart } from '../components/charts/FinancialSeriesChart';
 import { EmptyState } from '../components/ui/EmptyState';
@@ -18,6 +19,7 @@ import { findCalibration, findNamedValues, findTimeSeries } from '../lib/metrics
 
 export function AlphaDetailPage() {
   const { t } = useI18n();
+  const ariaLabelConfig = useReactFlowAriaLabelConfig();
   const { id } = useParams();
   const query = useAlpha(id);
   const alpha = query.data;
@@ -69,7 +71,7 @@ export function AlphaDetailPage() {
         <Section title="Calibration" meta="Predicted vs observed">{calibration.length ? <div className="qz-panel qz-panel-pad"><EChart ariaLabel="Alpha calibration chart" option={calibrationOption} /></div> : <EmptyState title="No calibration curve" description="Calibration metadata exists independently; the API did not return curve points." />}</Section>
         <Section title="Feature importance" meta="Explainability evidence">{importance.length ? <div className="qz-panel qz-panel-pad"><EChart ariaLabel="Feature importance chart" option={importanceOption} /></div> : <EmptyState title="No feature importance" description="No explainability vector was returned for this Alpha qualification." />}</Section>
       </div>
-      <Section title="Qualification lineage" meta="React Flow · immutable ancestry and reusable evidence"><div className="qz-flow"><ReactFlow nodes={nodes} edges={edges} fitView nodesDraggable={false} nodesConnectable={false}><Background gap={22} color="var(--qz-border)" /><Controls showInteractive={false} /></ReactFlow></div></Section>
+      <Section title="Qualification lineage" meta="React Flow · immutable ancestry and reusable evidence"><div className="qz-flow"><ReactFlow ariaLabelConfig={ariaLabelConfig} nodes={nodes} edges={edges} fitView nodesDraggable={false} nodesConnectable={false}><Background gap={22} color="var(--qz-border)" /><Controls showInteractive={false} /></ReactFlow></div></Section>
       <Section title="Scope and evidence"><div className="qz-panel qz-panel-pad"><pre className="qz-code" dir="ltr">{JSON.stringify({ universe: alpha.universe ?? alpha.universe_version_id, scope: alpha.scope_json, metrics: alpha.metrics, evaluation_episode_id: alpha.evaluation_episode_id }, null, 2)}</pre></div></Section>
     </>
   );

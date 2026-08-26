@@ -24,6 +24,7 @@ const streamedEventLabels = [
   'Approval Approved',
   'Approval Rejected',
   'Handoff Available',
+  'Handoff Expired',
   'Handoff Revoked',
   'Handoff Claimed',
   'Handoff Accepted',
@@ -63,6 +64,7 @@ describe('research runtime presentation labels', () => {
       ['es', 'Mission Started', 'Misión iniciada'],
       ['ar', 'Mission Succeeded', 'نجحت المهمة'],
       ['zh-CN', 'Mission Failed', '任务失败'],
+      ['es', 'Handoff Expired', 'Entrega vencida'],
     ];
 
     for (const [locale, source, expected] of cases) {

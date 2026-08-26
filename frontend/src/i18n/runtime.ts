@@ -22,6 +22,7 @@ const labels: Record<string, RuntimeLabels> = {
   'Approval Approved': l('Approval Approved', '审批已批准', '審批已核准', '承認済み', '승인됨', 'Aprobación aprobada', 'تمت الموافقة'),
   'Approval Rejected': l('Approval Rejected', '审批已拒绝', '審批已拒絕', '承認却下', '승인 거부됨', 'Aprobación rechazada', 'رُفضت الموافقة'),
   'Handoff Available': l('Handoff Available', '交付可领取', '交付可領取', 'ハンドオフ利用可能', '핸드오프 사용 가능', 'Entrega disponible', 'التسليم متاح'),
+  'Handoff Expired': l('Handoff Expired', '交付已过期', '交付已過期', 'ハンドオフ期限切れ', '핸드오프 만료됨', 'Entrega vencida', 'انتهت مهلة التسليم'),
   'Handoff Revoked': l('Handoff Revoked', '交付已撤销', '交付已撤銷', 'ハンドオフ取消済み', '핸드오프 취소됨', 'Entrega revocada', 'تم إلغاء التسليم'),
   'Handoff Claimed': l('Handoff Claimed', '交付已领取', '交付已領取', 'ハンドオフ取得済み', '핸드오프 수령됨', 'Entrega reclamada', 'تم استلام التسليم'),
   'Handoff Accepted': l('Handoff Accepted', '交付已接受', '交付已接受', 'ハンドオフ受領済み', '핸드오프 수락됨', 'Entrega aceptada', 'تم قبول التسليم'),

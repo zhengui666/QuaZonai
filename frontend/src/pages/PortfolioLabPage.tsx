@@ -20,7 +20,7 @@ import { findMatrix, findNamedValues, findTimeSeries } from '../lib/metrics';
 
 const programColumns: ColumnDef<PortfolioProgram, unknown>[] = [
   { accessorKey: 'mandate_name', header: 'Mandate', cell: ({ row }) => <div><div className="qz-list-title">{row.original.mandate_name ?? row.original.mandate_version_id.slice(0, 8)}</div><div className="qz-list-subtitle qz-mono">{row.original.id}</div></div> },
-  { accessorKey: 'state', header: 'State', cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
+  { accessorKey: 'state', header: 'State', meta: { localizedSort: true }, cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
   { accessorKey: 'candidate_count', header: 'Candidates', cell: ({ getValue }) => <span className="qz-number">{formatNumber(getValue() as number | undefined)}</span> },
   { accessorKey: 'updated_at', header: 'Updated', cell: ({ getValue }) => formatDateTime(getValue() as string | undefined) },
   { id: 'candidate', header: '', cell: ({ row }) => row.original.current_candidate_id ? <Button asChild size="1" variant="ghost"><Link to={`/portfolio/candidates/${row.original.current_candidate_id}`}><Translated source="Candidate" /> <ArrowRightIcon size={12} /></Link></Button> : <span className="qz-section-meta"><Translated source="Researching" /></span> },

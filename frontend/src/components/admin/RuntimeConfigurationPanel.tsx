@@ -114,16 +114,16 @@ export function RuntimeConfigurationPanel({ configuration }: { configuration: Ru
         <div className="qz-form-grid">
           <label className="qz-field">
             <span className="qz-label">{t('runtime.codexModel')}</span>
-            <TextField.Root value={model} onChange={(event) => setModel(event.target.value)} placeholder={t('runtime.useDefault')} />
+            <TextField.Root dir="ltr" value={model} onChange={(event) => setModel(event.target.value)} placeholder={t('runtime.useDefault')} />
           </label>
           <label className="qz-field">
             <span className="qz-label">{t('runtime.baseUrl')}</span>
-            <TextField.Root value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.openai.com/v1" />
+            <TextField.Root dir="ltr" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.openai.com/v1" />
             <span className="qz-list-subtitle">{t('runtime.baseUrlHelp')}</span>
           </label>
           <label className="qz-field">
             <span className="qz-label">{t('runtime.apiKey')}</span>
-            <TextField.Root type="password" value={apiKey} disabled={clearApiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={configuration.codex_api_key_configured ? t('runtime.keyConfigured') : t('runtime.keyOptional')} />
+            <TextField.Root dir="ltr" type="password" value={apiKey} disabled={clearApiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={configuration.codex_api_key_configured ? t('runtime.keyConfigured') : t('runtime.keyOptional')} />
             {requiresKeyDecision ? <span className="qz-list-subtitle">{t('runtime.keyEndpointWarning')}</span> : null}
           </label>
           <label className="qz-field" style={{ alignSelf: 'end' }}>

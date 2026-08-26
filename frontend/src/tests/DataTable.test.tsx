@@ -11,7 +11,7 @@ import { renderApp } from './testUtils';
 interface Row { name: string; state: string }
 const columns: ColumnDef<Row, unknown>[] = [
   { accessorKey: 'name', header: 'Name' },
-  { accessorKey: 'state', header: 'State', cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
+  { accessorKey: 'state', header: 'State', meta: { localizedSort: true }, cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
 ];
 
 interface NumericRow { name: string; amount: number; weight: number }
@@ -41,12 +41,17 @@ const capabilityColumns: ColumnDef<CapabilityRow, unknown>[] = [
 
 interface RuntimeRow { event: string }
 const runtimeColumns: ColumnDef<RuntimeRow, unknown>[] = [
-  { accessorKey: 'event', header: 'Event', cell: ({ getValue }) => <span>{humanize(String(getValue()))}</span> },
+  { accessorKey: 'event', header: 'Event', meta: { localizedSort: true }, cell: ({ getValue }) => <span>{humanize(String(getValue()))}</span> },
 ];
 
 interface AlphaRow { alpha: string }
 const alphaColumns: ColumnDef<AlphaRow, unknown>[] = [
   { accessorKey: 'alpha', header: 'Alpha', meta: { messageKey: 'alpha.name' } },
+];
+
+interface OperatorLabelRow { label: string }
+const operatorLabelColumns: ColumnDef<OperatorLabelRow, unknown>[] = [
+  { accessorKey: 'label', header: 'Source', cell: ({ getValue }) => <span>{String(getValue())}</span> },
 ];
 
 describe('DataTable', () => {
@@ -97,6 +102,20 @@ describe('DataTable', () => {
       'Bloqueado',
       'Disponible',
     ]);
+  });
+
+  it('sorts raw operator labels by the text that is actually displayed', () => {
+    render(
+      <I18nProvider initialLocale="es">
+        <Theme appearance="dark" accentColor="jade" grayColor="sage" radius="small" scaling="90%">
+          <DataTable data={[{ label: 'BLOCKED' }, { label: 'AVAILABLE' }]} columns={operatorLabelColumns} />
+        </Theme>
+      </I18nProvider>,
+    );
+    const sourceSort = screen.getAllByRole('button').find((button) => /^(Source|Fuente)/.test(button.textContent ?? ''));
+    expect(sourceSort).toBeDefined();
+    fireEvent.click(sourceSort!);
+    expect(screen.getAllByText(/^(AVAILABLE|BLOCKED)$/).map((element) => element.textContent)).toEqual(['AVAILABLE', 'BLOCKED']);
   });
 
   it('filters numeric columns by the declared compact and percentage display formats', () => {

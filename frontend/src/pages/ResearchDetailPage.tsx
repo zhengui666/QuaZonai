@@ -28,7 +28,7 @@ const branchColumns: ColumnDef<BranchSummary, unknown>[] = [
   { accessorKey: 'failed', header: 'Failed', meta: { messageKey: 'research.failed' }, cell: ({ getValue }) => <span className="qz-number">{formatNumber(getValue() as number)}</span> },
 ];
 const evidenceColumns: ColumnDef<ActivityEvent, unknown>[] = [
-  { accessorKey: 'kind', header: 'Event', meta: { messageKey: 'research.event' }, cell: ({ getValue }) => humanize(String(getValue())) },
+  { accessorKey: 'kind', header: 'Event', meta: { messageKey: 'research.event', localizedSort: true }, cell: ({ getValue }) => humanize(String(getValue())) },
   { accessorKey: 'mission_id', header: 'Mission', meta: { messageKey: 'research.mission' }, cell: ({ getValue }) => <span className="qz-mono">{String(getValue() ?? '—').slice(0, 12)}</span> },
   { accessorKey: 'created_at', header: 'Observed', meta: { messageKey: 'research.observed' }, cell: ({ getValue }) => formatDateTime(getValue() as string) },
   { id: 'summary', header: 'Evidence / result', meta: { messageKey: 'research.evidenceResult' }, cell: ({ row }) => <span className="qz-list-subtitle" dir="auto" style={{ whiteSpace: 'normal' }}>{eventSummary(row.original)}</span> },

@@ -13,10 +13,10 @@ const columns: ColumnDef<AlphaQualification, unknown>[] = [
   { accessorKey: 'name', header: 'Alpha', meta: { messageKey: 'alpha.name' }, cell: ({ row }) => <div><div className="qz-list-title" dir="auto"><Link to={`/alpha/${row.original.id}`}>{row.original.name ?? `Alpha ${row.original.id.slice(0, 8)}`}</Link></div><div className="qz-list-subtitle qz-mono">{row.original.id}</div></div> },
   { accessorKey: 'universe', header: 'Universe', cell: ({ row }) => row.original.universe ?? row.original.universe_version_id?.slice(0, 8) ?? '—' },
   { accessorKey: 'horizon', header: 'Horizon', cell: ({ getValue }) => String(getValue() ?? '—') },
-  { accessorKey: 'role', header: 'Role', cell: ({ getValue }) => humanize(String(getValue())) },
-  { accessorKey: 'state', header: 'Qualification', cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
-  { accessorKey: 'degradation_state', header: 'Health', cell: ({ getValue }) => <StateBadge state={String(getValue() ?? 'HEALTHY')} /> },
-  { id: 'evidence', header: 'Evidence', cell: ({ row }) => <span className="qz-number">{formatNumber(readMetric(row.original.metrics, ['search_adjusted_quality', 'edge', 'ic']))}</span> },
+  { accessorKey: 'role', header: 'Role', meta: { localizedSort: true }, cell: ({ getValue }) => humanize(String(getValue())) },
+  { accessorKey: 'state', header: 'Qualification', meta: { localizedSort: true }, cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
+  { accessorKey: 'degradation_state', header: 'Health', meta: { localizedSort: true }, cell: ({ getValue }) => <StateBadge state={String(getValue() ?? 'HEALTHY')} /> },
+  { id: 'evidence', header: 'Evidence', cell: ({ row }) => <span className="qz-number">{formatNumber(readMetric(row.original.metrics, ['search_adjusted_quality', 'edge', 'ic']), { maximumSignificantDigits: 15 })}</span> },
   { accessorKey: 'created_at', header: 'Qualified', cell: ({ getValue }) => formatDateTime(getValue() as string | undefined) },
 ];
 

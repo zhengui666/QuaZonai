@@ -35,45 +35,45 @@ function ready(value: unknown) { return typeof value === 'boolean' ? value : Boo
 const dataSourceColumns: ColumnDef<DataSource, unknown>[] = [
   { accessorKey: 'name', header: 'Source', meta: { messageKey: 'admin.source' } },
   { accessorKey: 'provider', header: 'Provider', meta: { messageKey: 'admin.provider' } },
-  { accessorKey: 'state', header: 'State', meta: { messageKey: 'research.state' }, cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
-  { accessorKey: 'preflight_state', header: 'Preflight', meta: { messageKey: 'admin.preflight' }, cell: ({ getValue }) => <StateBadge state={String(getValue() ?? 'UNKNOWN')} /> },
+  { accessorKey: 'state', header: 'State', meta: { messageKey: 'research.state', localizedSort: true }, cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
+  { accessorKey: 'preflight_state', header: 'Preflight', meta: { messageKey: 'admin.preflight', localizedSort: true }, cell: ({ getValue }) => <StateBadge state={String(getValue() ?? 'UNKNOWN')} /> },
   { accessorKey: 'update_cadence', header: 'Cadence', meta: { messageKey: 'admin.cadence' } },
   { id: 'fields', header: 'Fields', meta: { messageKey: 'admin.fields' }, cell: ({ row }) => <span className="qz-list-subtitle">{row.original.fields?.slice(0, 6).join(', ') || '—'}</span> },
 ];
 const datasetColumns: ColumnDef<DatasetRevision, unknown>[] = [
   { accessorKey: 'id', header: 'Revision', meta: { messageKey: 'admin.revision' }, cell: ({ getValue }) => <span className="qz-mono">{String(getValue()).slice(0, 12)}</span> },
-  { accessorKey: 'partition', header: 'Partition', meta: { messageKey: 'admin.partition' }, cell: ({ getValue }) => <StateBadge state={String(getValue() ?? 'DISCOVERY')} /> },
+  { accessorKey: 'partition', header: 'Partition', meta: { messageKey: 'admin.partition', localizedSort: true }, cell: ({ getValue }) => <StateBadge state={String(getValue() ?? 'DISCOVERY')} /> },
   { accessorKey: 'universe_name', header: 'Universe', meta: { messageKey: 'alpha.universe' } },
   { accessorKey: 'row_count', header: 'Rows', meta: { messageKey: 'admin.rows', searchFormat: 'compact' }, cell: ({ getValue }) => <span className="qz-number">{formatCompactNumber(getValue() as number)}</span> },
-  { accessorKey: 'quality_state', header: 'Quality', meta: { messageKey: 'admin.quality' }, cell: ({ getValue }) => <StateBadge state={String(getValue() ?? 'UNKNOWN')} /> },
-  { accessorKey: 'point_in_time_state', header: 'PIT', meta: { messageKey: 'admin.pit' }, cell: ({ getValue }) => <StateBadge state={String(getValue() ?? 'UNKNOWN')} /> },
+  { accessorKey: 'quality_state', header: 'Quality', meta: { messageKey: 'admin.quality', localizedSort: true }, cell: ({ getValue }) => <StateBadge state={String(getValue() ?? 'UNKNOWN')} /> },
+  { accessorKey: 'point_in_time_state', header: 'PIT', meta: { messageKey: 'admin.pit', localizedSort: true }, cell: ({ getValue }) => <StateBadge state={String(getValue() ?? 'UNKNOWN')} /> },
   { accessorKey: 'created_at', header: 'Registered', meta: { messageKey: 'admin.registered' }, cell: ({ getValue }) => formatDateTime(getValue() as string | undefined) },
 ];
 const universeColumns: ColumnDef<MarketUniverse, unknown>[] = [
   { accessorKey: 'name', header: 'Universe', meta: { messageKey: 'alpha.universe' } },
   { accessorKey: 'universe_key', header: 'Key', meta: { messageKey: 'admin.key' }, cell: ({ getValue }) => <span className="qz-mono">{String(getValue() ?? '—')}</span> },
   { accessorKey: 'version_no', header: 'Version', meta: { messageKey: 'admin.version' }, cell: ({ getValue }) => <span className="qz-number">{formatNumber(getValue() as number | string | null | undefined)}</span> },
-  { accessorKey: 'state', header: 'State', meta: { messageKey: 'research.state' }, cell: ({ getValue }) => <StateBadge state={String(getValue() ?? 'ACTIVE')} /> },
+  { accessorKey: 'state', header: 'State', meta: { messageKey: 'research.state', localizedSort: true }, cell: ({ getValue }) => <StateBadge state={String(getValue() ?? 'ACTIVE')} /> },
 ];
 const downstreamColumns: ColumnDef<DownstreamSystem, unknown>[] = [
   { accessorKey: 'name', header: 'System', meta: { messageKey: 'admin.system' } },
-  { accessorKey: 'environment_type', header: 'Environment', meta: { messageKey: 'admin.environment' }, cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
-  { accessorKey: 'enabled', header: 'Enabled', meta: { messageKey: 'admin.enabled' }, cell: ({ getValue }) => <StateBadge state={getValue() ? 'ENABLED' : 'DISABLED'} /> },
-  { accessorKey: 'preflight_state', header: 'Preflight', meta: { messageKey: 'admin.preflight' }, cell: ({ getValue }) => <StateBadge state={String(getValue() ?? 'UNKNOWN')} /> },
+  { accessorKey: 'environment_type', header: 'Environment', meta: { messageKey: 'admin.environment', localizedSort: true }, cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
+  { accessorKey: 'enabled', header: 'Enabled', meta: { messageKey: 'admin.enabled', localizedSort: true }, cell: ({ getValue }) => <StateBadge state={getValue() ? 'ENABLED' : 'DISABLED'} /> },
+  { accessorKey: 'preflight_state', header: 'Preflight', meta: { messageKey: 'admin.preflight', localizedSort: true }, cell: ({ getValue }) => <StateBadge state={String(getValue() ?? 'UNKNOWN')} /> },
   { accessorKey: 'package_contract_version', header: 'Package contract', meta: { messageKey: 'admin.packageContract' } },
   { accessorKey: 'feedback_contract_version', header: 'Feedback contract', meta: { messageKey: 'admin.feedbackContract' } },
 ];
 const pluginColumns: ColumnDef<PluginRelease, unknown>[] = [
   { accessorKey: 'plugin_id', header: 'Plugin', meta: { messageKey: 'admin.plugin' } },
   { accessorKey: 'version', header: 'Version', meta: { messageKey: 'admin.version' } },
-  { accessorKey: 'state', header: 'State', meta: { messageKey: 'research.state' }, cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
-  { id: 'capabilities', header: 'Capabilities', meta: { messageKey: 'admin.capabilities' }, cell: ({ row }) => <span className="qz-list-subtitle">{row.original.capabilities?.map(humanize).join(', ') || '—'}</span> },
+  { accessorKey: 'state', header: 'State', meta: { messageKey: 'research.state', localizedSort: true }, cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
+  { id: 'capabilities', header: 'Capabilities', meta: { messageKey: 'admin.capabilities', localizedSort: true }, cell: ({ row }) => <span className="qz-list-subtitle">{row.original.capabilities?.map(humanize).join(', ') || '—'}</span> },
   { accessorKey: 'created_at', header: 'Created', meta: { messageKey: 'admin.created' }, cell: ({ getValue }) => formatDateTime(getValue() as string | undefined) },
 ];
 
 type CapitalContextRow = { id: string; purpose: string; candidate: string; currency: string; deployable: number | string; observed?: string; validUntil?: string };
 const capitalColumns: ColumnDef<CapitalContextRow, unknown>[] = [
-  { accessorKey: 'purpose', header: 'Purpose', meta: { messageKey: 'admin.purpose' }, cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
+  { accessorKey: 'purpose', header: 'Purpose', meta: { messageKey: 'admin.purpose', localizedSort: true }, cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
   { accessorKey: 'candidate', header: 'Candidate', meta: { messageKey: 'common.candidate' }, cell: ({ getValue }) => <span className="qz-mono">{String(getValue()).slice(0, 12)}</span> },
   { accessorKey: 'currency', header: 'Currency', meta: { messageKey: 'admin.currency' } },
   { accessorKey: 'deployable', header: 'Deployable capital', meta: { messageKey: 'admin.deployableCapital' }, cell: ({ getValue }) => <span className="qz-number">{formatNumber(getValue() as number | string | null | undefined)}</span> },
