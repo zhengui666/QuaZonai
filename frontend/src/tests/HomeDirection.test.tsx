@@ -3,6 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { HomePage } from '../pages/HomePage';
 import { jsonResponse, renderApp } from './testUtils';
 
+vi.mock('../components/charts/ResearchPulseChart', () => ({
+  ResearchPulseChart: () => null,
+}));
+
 vi.mock('../lib/useEventStream', () => ({
   useEventStream: () => ({
     connected: true,
