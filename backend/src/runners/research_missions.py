@@ -250,6 +250,7 @@ def _codex_launch_configuration(
         "QUAZONAI_AUTH_PUBLIC_ORIGIN": "",
         "QUAZONAI_AUTH_SESSION_TTL_SECONDS": "",
         "QUAZONAI_AUTH_TRUSTED_BROWSER_TTL_DAYS": "",
+        "QUAZONAI_AUTH_TRUSTED_PROXY_CIDRS": "",
     }
     overrides = [
         'shell_environment_policy.inherit="core"',

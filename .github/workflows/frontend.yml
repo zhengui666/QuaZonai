@@ -64,7 +64,7 @@ jobs:
         run: python backend/tests/frontend_e2e_seed.py
       - name: Start real FastAPI
         run: |
-          nohup uvicorn main:create_app --factory --host 127.0.0.1 --port 8000 >/tmp/quazonai-api.log 2>&1 &
+          nohup uvicorn main:create_app --factory --no-proxy-headers --host 127.0.0.1 --port 8000 >/tmp/quazonai-api.log 2>&1 &
           echo $! >/tmp/quazonai-api.pid
           for attempt in $(seq 1 60); do
             if curl --fail --silent http://127.0.0.1:8000/api/v1/system/health >/dev/null; then

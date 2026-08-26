@@ -37,6 +37,7 @@ def test_codex_child_environment_scrubs_operator_auth_configuration(
         "QUAZONAI_AUTH_PUBLIC_ORIGIN",
         "QUAZONAI_AUTH_SESSION_TTL_SECONDS",
         "QUAZONAI_AUTH_TRUSTED_BROWSER_TTL_DAYS",
+        "QUAZONAI_AUTH_TRUSTED_PROXY_CIDRS",
     )
     for name in scrubbed_names:
         assert config.env[name] == ""

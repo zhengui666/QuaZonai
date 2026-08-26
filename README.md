@@ -72,6 +72,8 @@ Add `QUAZONAI_AUTH_TOTP_SECRET` to Google Authenticator with **Enter a setup key
 
 `QUAZONAI_ENV` accepts only `development`, `test`, or `production` (case-insensitive and surrounding whitespace is ignored). `QUAZONAI_AUTH_PUBLIC_ORIGIN` is canonicalized with browser-origin semantics before comparison: scheme/host are lower-cased, Unicode hosts use IDNA ASCII, IPv6 is compressed/bracketed, default `:80`/`:443` ports are omitted, and non-default ports are retained. HTTPS origins automatically receive `Secure` browser cookies. When authentication is enabled in `production`, the origin must use HTTPS. A remotely exposed installation should normally set the externally trusted TLS origin, for example `https://quazonai.example.com`.
 
+If a TLS reverse proxy or tunnel connects to the API, set `QUAZONAI_AUTH_TRUSTED_PROXY_CIDRS` only to the exact direct proxy IP/CIDR seen by the API/container. `127.0.0.1/32` is appropriate only for a direct or host-network peer; Compose commonly sees a Docker bridge/gateway address, so configure the actual connecting address instead. Configure that proxy to append its observed peer to `X-Forwarded-For` or overwrite it with a verified client address. QuaZonai ignores forwarding headers from every other peer and falls back to the direct source for login throttling; do not use `/0` or a broad client network. The Compose command explicitly uses `--no-proxy-headers`; manual Uvicorn launches must use that flag too and must not set `FORWARDED_ALLOW_IPS` or pass `--proxy-headers`, so QuaZonai can verify the actual direct peer before parsing the header.
+
 Start QuaZonai:
 
 ```bash

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import ipaddress
 import time
 from collections.abc import Callable
 from dataclasses import replace
 from threading import Event, Thread
 from types import ModuleType
+from typing import Any
 
 import main as main_module
 import operator_auth
@@ -62,6 +64,13 @@ def _payload(
 
 
 def _request_with_session(app: object, session_cookie: str) -> Request:
+    return _request_with_cookie_header(
+        app,
+        f"{SESSION_COOKIE_NAME}={session_cookie}",
+    )
+
+
+def _request_with_cookie_header(app: object, cookie_header: str) -> Request:
     async def receive() -> dict[str, object]:
         return {"type": "http.request", "body": b"", "more_body": False}
 
@@ -77,7 +86,7 @@ def _request_with_session(app: object, session_cookie: str) -> Request:
             "headers": [
                 (
                     b"cookie",
-                    f"{SESSION_COOKIE_NAME}={session_cookie}".encode("ascii"),
+                    cookie_header.encode("ascii"),
                 )
             ],
             "client": ("203.0.113.10", 43210),
@@ -102,10 +111,15 @@ def _trusted_renewal_clients(app: object, client: TestClient) -> tuple[TestClien
     return renewal_client, logout_client
 
 
-def _login_trusted_browser(client: TestClient, settings: Settings) -> None:
+def _login_trusted_browser(
+    client: TestClient,
+    settings: Settings,
+    *,
+    origin: str = "http://testserver",
+) -> None:
     response = client.post(
         "/api/v1/auth/login",
-        headers={"Origin": "http://testserver"},
+        headers={"Origin": origin},
         json=_payload(
             settings,
             password="correct horse battery staple",
@@ -117,6 +131,19 @@ def _login_trusted_browser(client: TestClient, settings: Settings) -> None:
 
 def _assert_no_session_cookie(response: HttpxResponse) -> None:
     assert not any(SESSION_COOKIE_NAME in header for header in response.headers.get_list("set-cookie"))
+
+
+def _set_cookie_value(response: Any, name: str) -> str:
+    matching = [
+        header
+        for header in response.headers.get_list("set-cookie")
+        if header.startswith(f"{name}=")
+    ]
+    assert len(matching) == 1
+    cookie_name, separator, value = matching[0].partition(";")[0].partition("=")
+    assert cookie_name == name
+    assert separator
+    return value
 
 
 def _start_request_in_thread(
@@ -236,6 +263,47 @@ def test_login_backoff_is_bounded_without_durable_lockout() -> None:
     assert not limiter.allow_attempt("203.0.113.10")
     now[0] += 0.02
     assert limiter.allow_attempt("203.0.113.10")
+
+
+def test_trusted_proxy_separates_login_backoff_sources(
+    settings: Settings,
+    engine: Engine,
+) -> None:
+    secured = replace(
+        _enabled_settings(settings),
+        auth_trusted_proxy_cidrs=(ipaddress.ip_network("10.20.30.0/24"),),
+    )
+    now = [100.0]
+    limiter = OperatorLoginLimiter(
+        clock=lambda: now[0],
+        minimum_interval_seconds=1.0,
+        base_backoff_seconds=1.0,
+        maximum_backoff_seconds=5.0,
+    )
+    app = create_app(settings=secured, engine=engine)
+    app.state.operator_auth_runtime = OperatorAuthRuntime(login_limiter=limiter)
+    attacker = TestClient(app, client=("10.20.30.2", 50000))
+    operator = TestClient(app, client=("10.20.30.2", 50001))
+
+    rejected = attacker.post(
+        "/api/v1/auth/login",
+        headers={
+            "Origin": "http://testserver",
+            "X-Forwarded-For": "198.51.100.11, 10.20.30.3",
+        },
+        json=_payload(secured, password="wrong-password-value"),
+    )
+    accepted = operator.post(
+        "/api/v1/auth/login",
+        headers={
+            "Origin": "http://testserver",
+            "X-Forwarded-For": "203.0.113.12, 10.20.30.3",
+        },
+        json=_payload(secured, password="correct horse battery staple"),
+    )
+
+    assert rejected.status_code == 401
+    assert accepted.status_code == 200
 
 
 def test_logout_terminates_preexisting_stream_authorization(
@@ -403,6 +471,116 @@ def test_logout_barrier_rejects_late_automatic_renewal_cookies(
     assert fresh_login.status_code == 200
     assert LOGOUT_BARRIER_COOKIE_NAME not in logout_client.cookies
     assert logout_client.get("/api/v1/test-late-trusted-renewal").status_code == 200
+
+
+def test_forged_logout_barrier_does_not_block_valid_browser_credentials(
+    settings: Settings,
+    engine: Engine,
+) -> None:
+    secured = _enabled_settings(settings)
+    app = create_app(settings=secured, engine=engine)
+    client = TestClient(app)
+    _login_trusted_browser(client, secured)
+    session_cookie = client.cookies.get(SESSION_COOKIE_NAME)
+    trusted_cookie = client.cookies.get(TRUSTED_BROWSER_COOKIE_NAME)
+    assert session_cookie is not None
+    assert trusted_cookie is not None
+
+    request = _request_with_cookie_header(
+        app,
+        "; ".join(
+            (
+                f"{LOGOUT_BARRIER_COOKIE_NAME}=1",
+                f"{SESSION_COOKIE_NAME}={session_cookie}",
+                f"{TRUSTED_BROWSER_COOKIE_NAME}={trusted_cookie}",
+            )
+        ),
+    )
+
+    identity = operator_auth.authenticate_browser(request, secured)
+    assert identity is not None
+    assert identity.source == "session"
+    assert operator_auth.has_valid_trusted_browser(request, secured)
+
+
+def test_valid_logout_barrier_wins_over_forged_duplicate_cookie(
+    settings: Settings,
+    engine: Engine,
+) -> None:
+    secured = _enabled_settings(settings)
+    app = create_app(settings=secured, engine=engine)
+    client = TestClient(app)
+    _login_trusted_browser(client, secured)
+    session_cookie = client.cookies.get(SESSION_COOKIE_NAME)
+    trusted_cookie = client.cookies.get(TRUSTED_BROWSER_COOKIE_NAME)
+    assert session_cookie is not None
+    assert trusted_cookie is not None
+
+    logout = client.post(
+        "/api/v1/auth/logout",
+        headers={"Origin": "http://testserver"},
+    )
+    assert logout.status_code == 204
+    barrier_cookie = _set_cookie_value(logout, LOGOUT_BARRIER_COOKIE_NAME)
+    assert barrier_cookie != "1"
+
+    request = _request_with_cookie_header(
+        app,
+        "; ".join(
+            (
+                f"{LOGOUT_BARRIER_COOKIE_NAME}={barrier_cookie}",
+                f"{LOGOUT_BARRIER_COOKIE_NAME}=1",
+                f"{SESSION_COOKIE_NAME}={session_cookie}",
+                f"{TRUSTED_BROWSER_COOKIE_NAME}={trusted_cookie}",
+            )
+        ),
+    )
+
+    assert operator_auth.authenticate_browser(request, secured) is None
+    assert not operator_auth.has_valid_trusted_browser(request, secured)
+
+
+def test_login_ignores_forged_parent_domain_barrier_left_after_host_clear(
+    settings: Settings,
+    engine: Engine,
+) -> None:
+    origin = "https://quazonai.example.com"
+    secured = replace(_enabled_settings(settings), auth_public_origin=origin)
+    assert secured.operator_totp_secret is not None
+    app = create_app(settings=secured, engine=engine)
+    client = TestClient(app, base_url=origin)
+    _login_trusted_browser(client, secured, origin=origin)
+    client.cookies.set(
+        LOGOUT_BARRIER_COOKIE_NAME,
+        "1",
+        domain=".example.com",
+        path="/",
+    )
+
+    logout = client.post("/api/v1/auth/logout", headers={"Origin": origin})
+    assert logout.status_code == 204
+    assert _set_cookie_value(logout, LOGOUT_BARRIER_COOKIE_NAME) != "1"
+
+    totp = pyotp.TOTP(secured.operator_totp_secret)
+    login = client.post(
+        "/api/v1/auth/login",
+        headers={"Origin": origin},
+        json=_payload(
+            secured,
+            password="correct horse battery staple",
+            totp_code=totp.at(int(time.time()) + totp.interval),
+        ),
+    )
+    assert login.status_code == 200
+    remaining_barriers = [
+        (cookie.domain, cookie.value)
+        for cookie in client.cookies.jar
+        if cookie.name == LOGOUT_BARRIER_COOKIE_NAME
+    ]
+    assert remaining_barriers == [(".example.com", "1")]
+
+    response = client.get("/api/v1/system/runtime-configuration")
+    assert response.status_code == 200
 
 
 def test_expired_logout_still_blocks_an_already_admitted_trusted_renewal(

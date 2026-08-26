@@ -39,6 +39,7 @@ MIN_MACHINE_TOKEN_CHARACTERS = 32
 MAX_MACHINE_TOKEN_CHARACTERS = 4096
 _DEFAULT_ORIGIN_PORTS = {"http": 80, "https": 443}
 _ALLOWED_ENVIRONMENTS = frozenset({"development", "production", "test"})
+TrustedProxyNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
 _BEARER_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9\-._~+/]+={0,}", re.ASCII)
 _WHATWG_IPV4_NUMBER_PATTERN = re.compile(
     r"(?:0[xX][0-9A-Fa-f]*|0[0-7]*|[0-9]+)",
@@ -95,9 +96,82 @@ def _bounded_env_int(name: str, default: int, *, minimum: int, maximum: int) -> 
         value = int(raw)
     except ValueError as exc:
         raise SettingsError(f"{name} must be an integer") from exc
+    return _validate_bounded_int(
+        value,
+        name=name,
+        minimum=minimum,
+        maximum=maximum,
+    )
+
+
+def _validate_bounded_int(
+    value: object,
+    *,
+    name: str,
+    minimum: int,
+    maximum: int,
+) -> int:
+    """Validate an already-parsed bounded configuration integer.
+
+    ``Settings`` is also constructed directly by tests and embedding callers,
+    so this must reject non-integer values (including ``bool``) rather than
+    relying solely on the environment parser.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise SettingsError(f"{name} must be an integer")
     if not minimum <= value <= maximum:
         raise SettingsError(f"{name} must be between {minimum} and {maximum}")
     return value
+
+
+def _parse_trusted_proxy_cidrs(value: str | None) -> tuple[TrustedProxyNetwork, ...]:
+    """Parse opt-in direct-peer networks allowed to supply client identity.
+
+    The API must never trust a forwarding header solely because it is present.
+    A `/0` network is equivalent to that unsafe behavior, so reject it along
+    with non-canonical or non-IP values at enabled-auth startup.
+    """
+    if value is None:
+        return ()
+
+    networks: list[TrustedProxyNetwork] = []
+    for raw_network in value.split(","):
+        candidate = raw_network.strip()
+        if not candidate:
+            raise SettingsError(
+                "QUAZONAI_AUTH_TRUSTED_PROXY_CIDRS must be a comma-separated "
+                "list of IP addresses or CIDRs"
+            )
+        try:
+            network = ipaddress.ip_network(candidate, strict=True)
+        except ValueError as exc:
+            raise SettingsError(
+                "QUAZONAI_AUTH_TRUSTED_PROXY_CIDRS must be a comma-separated "
+                "list of IP addresses or canonical CIDRs"
+            ) from exc
+        networks.append(network)
+    return _validate_trusted_proxy_cidrs(tuple(networks))
+
+
+def _validate_trusted_proxy_cidrs(value: object) -> tuple[TrustedProxyNetwork, ...]:
+    """Validate direct ``Settings`` input as strictly as the environment parser."""
+    if not isinstance(value, tuple):
+        raise SettingsError(
+            "QUAZONAI_AUTH_TRUSTED_PROXY_CIDRS must be a tuple of IP networks"
+        )
+
+    networks: list[TrustedProxyNetwork] = []
+    for network in value:
+        if not isinstance(network, (ipaddress.IPv4Network, ipaddress.IPv6Network)):
+            raise SettingsError(
+                "QUAZONAI_AUTH_TRUSTED_PROXY_CIDRS must contain IP networks only"
+            )
+        if network.prefixlen == 0:
+            raise SettingsError(
+                "QUAZONAI_AUTH_TRUSTED_PROXY_CIDRS must not trust an all-addresses /0 network"
+            )
+        networks.append(network)
+    return tuple(networks)
 
 
 def _base64_key(value: str | None, *, name: str) -> bytes:
@@ -311,6 +385,7 @@ class Settings:
     auth_public_origin: str | None = None
     auth_session_ttl_seconds: int = DEFAULT_AUTH_SESSION_TTL_SECONDS
     auth_trusted_browser_ttl_days: int = DEFAULT_AUTH_TRUSTED_BROWSER_TTL_DAYS
+    auth_trusted_proxy_cidrs: tuple[TrustedProxyNetwork, ...] = ()
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -329,6 +404,7 @@ class Settings:
             totp_secret = "".join(totp_secret.split()).upper()
         session_ttl = DEFAULT_AUTH_SESSION_TTL_SECONDS
         trusted_browser_ttl = DEFAULT_AUTH_TRUSTED_BROWSER_TTL_DAYS
+        trusted_proxy_cidrs: tuple[TrustedProxyNetwork, ...] = ()
         if operator_auth_enabled:
             session_ttl = _bounded_env_int(
                 "QUAZONAI_AUTH_SESSION_TTL_SECONDS",
@@ -341,6 +417,9 @@ class Settings:
                 DEFAULT_AUTH_TRUSTED_BROWSER_TTL_DAYS,
                 minimum=MIN_AUTH_TRUSTED_BROWSER_TTL_DAYS,
                 maximum=MAX_AUTH_TRUSTED_BROWSER_TTL_DAYS,
+            )
+            trusted_proxy_cidrs = _parse_trusted_proxy_cidrs(
+                _optional_env("QUAZONAI_AUTH_TRUSTED_PROXY_CIDRS")
             )
         return cls(
             environment=environment,
@@ -379,6 +458,7 @@ class Settings:
             auth_public_origin=_optional_raw_env("QUAZONAI_AUTH_PUBLIC_ORIGIN"),
             auth_session_ttl_seconds=session_ttl,
             auth_trusted_browser_ttl_days=trusted_browser_ttl,
+            auth_trusted_proxy_cidrs=trusted_proxy_cidrs,
         )
 
     @property
@@ -430,6 +510,20 @@ class Settings:
         environment = _normalize_environment(self.environment)
         if not self.operator_auth_enabled:
             return
+
+        _validate_bounded_int(
+            self.auth_session_ttl_seconds,
+            name="QUAZONAI_AUTH_SESSION_TTL_SECONDS",
+            minimum=MIN_AUTH_SESSION_TTL_SECONDS,
+            maximum=MAX_AUTH_SESSION_TTL_SECONDS,
+        )
+        _validate_bounded_int(
+            self.auth_trusted_browser_ttl_days,
+            name="QUAZONAI_AUTH_TRUSTED_BROWSER_TTL_DAYS",
+            minimum=MIN_AUTH_TRUSTED_BROWSER_TTL_DAYS,
+            maximum=MAX_AUTH_TRUSTED_BROWSER_TTL_DAYS,
+        )
+        _validate_trusted_proxy_cidrs(self.auth_trusted_proxy_cidrs)
 
         fields = {
             "QUAZONAI_AUTH_USERNAME": self.operator_username,

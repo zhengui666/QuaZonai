@@ -433,6 +433,8 @@ TOTP setup key 来自 `.env` 的 `QUAZONAI_AUTH_TOTP_SECRET`。在 Google Authen
 
 `QUAZONAI_ENV` 只能为 `development`、`test` 或 `production`（忽略大小写与首尾空白）。认证启用时，`QUAZONAI_AUTH_PUBLIC_ORIGIN` 与浏览器 `Origin` 都按 browser-origin 规则 canonicalize 后精确比较：scheme/host 小写、Unicode host 使用 IDNA ASCII、IPv6 压缩并保留 brackets、默认端口省略、非默认端口保留。production 必须为 HTTPS，反向代理/Tunnel 应在可信 TLS 层终止 HTTPS，并把该外部 Origin 写入 `.env`。
 
+若 TLS reverse proxy/tunnel 把浏览器请求转发到 API，配置 `QUAZONAI_AUTH_TRUSTED_PROXY_CIDRS` 为 **API/容器实际看到的 direct proxy peer** 的精确 IP/CIDR，不要使用 `/0` 或包含普通客户端的宽泛网络。只有 proxy 与 API 直接同机运行或使用 host network 时，`127.0.0.1/32` 才可能正确；Compose 容器通常看到 Docker bridge/gateway 地址，应按实际连接来源配置。仅在该匹配成立时，登录限流才读取一个 `X-Forwarded-For`：它会从右向左移除受信 proxy hop，并使用最近的非受信 literal IP。proxy 必须 append 自己实际观测到的 peer（例如 Nginx 的 `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`），或以已验证的 client IP overwrite 此 header，不能只转发客户端送入的值。没有此配置、peer 不匹配，或 header 缺失/重复/非法时，QuaZonai 有意忽略 header 并以 direct peer 限流。Compose 已明确运行 Uvicorn `--no-proxy-headers`；手工启动也必须显式传入此 flag，且不能传入 `--proxy-headers` 或设置 `FORWARDED_ALLOW_IPS`，否则 Uvicorn 会在 QuaZonai 校验前改写 direct peer。
+
 QuaZonai 提供的 Web workbench 会返回 `Content-Security-Policy: frame-ancestors 'none'` 和 `X-Frame-Options: DENY`，不能嵌入任何 iframe。反向代理不得移除或放宽这两个响应头；这项控制补充而不取代 cookie `SameSite` 和 Origin 校验。
 
 `QUAZONAI_AUTH_ENABLED=false` 在所有环境保留 direct access，此时 auth credential/TTL 值均 dormant，应保持 loopback-only 或使用另一个明确可信的访问边界。设为 `true` 后，任一 Operator auth 必需值缺失或非法都会使 API fail closed；启用认证的 production 还要求 HTTPS 并自动使用 Secure cookie。连续失败登录会触发 1–5 秒的短退避，但不会形成持久账户锁定；被限制的请求仍显示统一的无效凭据错误。

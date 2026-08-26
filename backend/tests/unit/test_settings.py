@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import ipaddress
 from dataclasses import replace
 
 import pytest
@@ -8,6 +9,10 @@ import pytest
 from settings import (
     DEFAULT_AUTH_SESSION_TTL_SECONDS,
     DEFAULT_AUTH_TRUSTED_BROWSER_TTL_DAYS,
+    MAX_AUTH_SESSION_TTL_SECONDS,
+    MAX_AUTH_TRUSTED_BROWSER_TTL_DAYS,
+    MIN_AUTH_SESSION_TTL_SECONDS,
+    MIN_AUTH_TRUSTED_BROWSER_TTL_DAYS,
     Settings,
     SettingsError,
 )
@@ -62,6 +67,62 @@ def test_enabled_auth_rejects_invalid_ttl_values(monkeypatch: pytest.MonkeyPatch
 
     with pytest.raises(SettingsError, match="must be an integer"):
         Settings.from_env()
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "setting_name"),
+    [
+        (
+            "auth_session_ttl_seconds",
+            MIN_AUTH_SESSION_TTL_SECONDS - 1,
+            "QUAZONAI_AUTH_SESSION_TTL_SECONDS",
+        ),
+        (
+            "auth_session_ttl_seconds",
+            MAX_AUTH_SESSION_TTL_SECONDS + 1,
+            "QUAZONAI_AUTH_SESSION_TTL_SECONDS",
+        ),
+        (
+            "auth_trusted_browser_ttl_days",
+            MIN_AUTH_TRUSTED_BROWSER_TTL_DAYS - 1,
+            "QUAZONAI_AUTH_TRUSTED_BROWSER_TTL_DAYS",
+        ),
+        (
+            "auth_trusted_browser_ttl_days",
+            MAX_AUTH_TRUSTED_BROWSER_TTL_DAYS + 1,
+            "QUAZONAI_AUTH_TRUSTED_BROWSER_TTL_DAYS",
+        ),
+    ],
+)
+def test_direct_enabled_auth_rejects_out_of_bounds_ttls(
+    settings: Settings,
+    field: str,
+    value: int,
+    setting_name: str,
+) -> None:
+    configured = _enabled_auth(settings, **{field: value})
+
+    with pytest.raises(SettingsError, match=f"{setting_name} must be between"):
+        configured.validate_operator_auth()
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "setting_name"),
+    [
+        ("auth_session_ttl_seconds", 300.0, "QUAZONAI_AUTH_SESSION_TTL_SECONDS"),
+        ("auth_trusted_browser_ttl_days", True, "QUAZONAI_AUTH_TRUSTED_BROWSER_TTL_DAYS"),
+    ],
+)
+def test_direct_enabled_auth_rejects_non_integer_ttls(
+    settings: Settings,
+    field: str,
+    value: object,
+    setting_name: str,
+) -> None:
+    configured = _enabled_auth(settings, **{field: value})
+
+    with pytest.raises(SettingsError, match=f"{setting_name} must be an integer"):
+        configured.validate_operator_auth()
 
 
 def test_environment_defaults_to_development(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -191,3 +252,70 @@ def test_enabled_auth_accepts_valid_origin_hosts(settings: Settings, origin: str
     configured = _enabled_auth(settings, auth_public_origin=origin)
 
     configured.validate_operator_auth()
+
+
+def test_disabled_auth_ignores_dormant_trusted_proxy_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("QUAZONAI_AUTH_ENABLED", "false")
+    monkeypatch.setenv("QUAZONAI_AUTH_TRUSTED_PROXY_CIDRS", "not-a-cidr")
+
+    configured = Settings.from_env()
+
+    assert configured.auth_trusted_proxy_cidrs == ()
+
+
+@pytest.mark.parametrize(
+    "configured_value",
+    [
+        "not-a-cidr",
+        "10.0.0.1/24",
+        "192.0.2.1,,2001:db8::1",
+        "0.0.0.0/0",
+        "::/0",
+    ],
+)
+def test_enabled_auth_rejects_unsafe_trusted_proxy_cidrs(
+    monkeypatch: pytest.MonkeyPatch,
+    configured_value: str,
+) -> None:
+    monkeypatch.setenv("QUAZONAI_AUTH_ENABLED", "true")
+    monkeypatch.setenv("QUAZONAI_AUTH_TRUSTED_PROXY_CIDRS", configured_value)
+
+    with pytest.raises(SettingsError, match="QUAZONAI_AUTH_TRUSTED_PROXY_CIDRS"):
+        Settings.from_env()
+
+
+def test_enabled_auth_parses_exact_trusted_proxy_cidrs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("QUAZONAI_AUTH_ENABLED", "true")
+    monkeypatch.setenv(
+        "QUAZONAI_AUTH_TRUSTED_PROXY_CIDRS",
+        "127.0.0.1/32, 2001:db8:1::/64",
+    )
+
+    configured = Settings.from_env()
+
+    assert tuple(str(network) for network in configured.auth_trusted_proxy_cidrs) == (
+        "127.0.0.1/32",
+        "2001:db8:1::/64",
+    )
+
+
+@pytest.mark.parametrize(
+    "configured_cidrs",
+    [
+        (ipaddress.ip_network("0.0.0.0/0"),),
+        ("not-an-ip-network",),
+        [ipaddress.ip_network("127.0.0.1/32")],
+    ],
+)
+def test_direct_enabled_auth_validates_trusted_proxy_networks(
+    settings: Settings,
+    configured_cidrs: object,
+) -> None:
+    configured = _enabled_auth(settings, auth_trusted_proxy_cidrs=configured_cidrs)
+
+    with pytest.raises(SettingsError, match="QUAZONAI_AUTH_TRUSTED_PROXY_CIDRS"):
+        configured.validate_operator_auth()

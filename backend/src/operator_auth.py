@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import ipaddress
 import json
 import re
 import secrets
@@ -38,6 +39,8 @@ LOGIN_BASE_BACKOFF_SECONDS = 1.0
 LOGIN_MAX_BACKOFF_SECONDS = 5.0
 LOGIN_STATE_RETENTION_SECONDS = 15 * 60.0
 LOGIN_MAX_TRACKED_SOURCES = 2048
+MAX_FORWARDED_FOR_HEADER_CHARACTERS = 2048
+MAX_FORWARDED_FOR_CHAIN_HOPS = 32
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 _PUBLIC_OPERATOR_ROUTES = frozenset(
     {
@@ -214,11 +217,73 @@ class _InvalidCookie(ValueError):
     pass
 
 
-def login_source_key(request: Request) -> str:
-    """Return a bounded source key without trusting arbitrary forwarding headers."""
+def _parse_network_address(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """Accept only an unambiguous bare IP address from proxy metadata."""
+    if not value or "%" in value:
+        return None
+    try:
+        return ipaddress.ip_address(value)
+    except ValueError:
+        return None
+
+
+def _is_trusted_proxy(
+    address: ipaddress.IPv4Address | ipaddress.IPv6Address,
+    settings: Settings,
+) -> bool:
+    return any(
+        address.version == network.version and address in network
+        for network in settings.auth_trusted_proxy_cidrs
+    )
+
+
+def _forwarded_client_address(
+    request: Request,
+    settings: Settings,
+) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """Return the nearest untrusted client from one trusted proxy chain.
+
+    Each trusted proxy must append its observed peer to ``X-Forwarded-For``.
+    Walking the chain right-to-left therefore ignores client-supplied entries
+    and known intermediary hops. Ambiguous or malformed forwarding metadata is
+    deliberately ignored rather than becoming a caller-controlled limiter key.
+    """
+    values = request.headers.getlist("x-forwarded-for")
+    if len(values) != 1 or len(values[0]) > MAX_FORWARDED_FOR_HEADER_CHARACTERS:
+        return None
+
+    addresses: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
+    raw_addresses = values[0].split(",")
+    if not 1 <= len(raw_addresses) <= MAX_FORWARDED_FOR_CHAIN_HOPS:
+        return None
+    for raw_address in raw_addresses:
+        address = _parse_network_address(raw_address.strip())
+        if address is None:
+            return None
+        addresses.append(address)
+
+    while addresses and _is_trusted_proxy(addresses[-1], settings):
+        addresses.pop()
+    return addresses[-1] if addresses else None
+
+
+def login_source_key(request: Request, settings: Settings) -> str:
+    """Return a limiter key from a direct peer or explicitly trusted proxy.
+
+    Client-provided ``X-Forwarded-For`` is ignored unless the ASGI direct peer
+    belongs to a configured trusted-proxy network. Missing or malformed proxy
+    metadata falls back to the direct peer, preserving the conservative legacy
+    behavior instead of weakening credential throttling.
+    """
     if request.client is None or not request.client.host:
         return "unknown"
-    return request.client.host[:255]
+    peer = _parse_network_address(request.client.host)
+    if peer is None:
+        return request.client.host[:255]
+    if not _is_trusted_proxy(peer, settings):
+        return str(peer)
+    forwarded_client = _forwarded_client_address(request, settings)
+    return str(forwarded_client) if forwarded_client is not None else str(peer)
 
 
 def _urlsafe_encode(value: bytes) -> str:
@@ -306,6 +371,35 @@ def _read_cookie(settings: Settings, value: str | None, *, kind: str) -> str | N
         return None
 
 
+def _request_cookie_values(request: Request, name: str) -> tuple[str, ...]:
+    """Return every value for one cookie name without losing duplicate fields.
+
+    A sibling subdomain can attach a parent-Domain cookie with the same name as a
+    host-only cookie. ``Request.cookies`` keeps only one duplicate value, so use the
+    raw Cookie fields when an authenticated cookie must not be shadowed by a forgery.
+    """
+    values: list[str] = []
+    for header in request.headers.getlist("cookie"):
+        for pair in header.split(";"):
+            cookie_name, separator, value = pair.strip().partition("=")
+            if separator and cookie_name == name:
+                values.append(value)
+    return tuple(values)
+
+
+def _has_valid_logout_barrier(request: Request, settings: Settings) -> bool:
+    """Honor only an AEAD-authenticated host-issued logout barrier.
+
+    The browser may send a forged parent-Domain value beside the host-only barrier.
+    Any valid barrier must still win, while forged values alone must not create a
+    persistent denial of service after the host-only barrier is cleared at login.
+    """
+    return any(
+        _read_cookie(settings, value, kind="logout-barrier") is not None
+        for value in _request_cookie_values(request, LOGOUT_BARRIER_COOKIE_NAME)
+    )
+
+
 def _matching_totp_step(settings: Settings, code: str) -> tuple[int, int] | None:
     if len(code) != 6 or any(character < "0" or character > "9" for character in code):
         return None
@@ -370,7 +464,7 @@ def authenticate_browser(request: Request, settings: Settings) -> OperatorIdenti
     # A successful sign-out leaves a browser-local barrier behind. It makes a
     # stale automatic-renewal response harmless even when its Set-Cookie header
     # reaches the browser after the logout response.
-    if request.cookies.get(LOGOUT_BARRIER_COOKIE_NAME) is not None:
+    if _has_valid_logout_barrier(request, settings):
         return None
     username = _read_cookie(
         settings,
@@ -407,7 +501,7 @@ def has_valid_trusted_browser(request: Request, settings: Settings) -> bool:
     """Return whether this request carries a currently valid trusted-browser credential."""
     if not settings.auth_enabled:
         return False
-    if request.cookies.get(LOGOUT_BARRIER_COOKIE_NAME) is not None:
+    if _has_valid_logout_barrier(request, settings):
         return False
     return (
         _read_cookie(
@@ -452,9 +546,14 @@ def set_trusted_browser_cookie(response: Response, settings: Settings) -> None:
 
 def set_logout_barrier_cookie(response: Response, settings: Settings) -> None:
     """Prevent a late trusted-browser renewal response from restoring access."""
+    token = _issue_cookie(
+        settings,
+        kind="logout-barrier",
+        ttl_seconds=LOGOUT_BARRIER_MAX_AGE_SECONDS,
+    )
     response.set_cookie(
         LOGOUT_BARRIER_COOKIE_NAME,
-        "1",
+        token,
         max_age=LOGOUT_BARRIER_MAX_AGE_SECONDS,
         httponly=True,
         secure=settings.auth_cookie_secure,
@@ -478,6 +577,8 @@ def clear_trusted_browser_cookie(response: Response, settings: Settings) -> None
 
 
 def clear_logout_barrier_cookie(response: Response, settings: Settings) -> None:
+    # A host-only deletion cannot remove a sibling's parent-Domain cookie. Such a
+    # value is harmless because readers accept only the authenticated token above.
     _delete_cookie(response, settings, LOGOUT_BARRIER_COOKIE_NAME)
 
 

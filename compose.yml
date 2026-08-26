@@ -72,10 +72,11 @@ services:
       QUAZONAI_AUTH_PUBLIC_ORIGIN: ${QUAZONAI_AUTH_PUBLIC_ORIGIN:-}
       QUAZONAI_AUTH_SESSION_TTL_SECONDS: ${QUAZONAI_AUTH_SESSION_TTL_SECONDS:-43200}
       QUAZONAI_AUTH_TRUSTED_BROWSER_TTL_DAYS: ${QUAZONAI_AUTH_TRUSTED_BROWSER_TTL_DAYS:-30}
+      QUAZONAI_AUTH_TRUSTED_PROXY_CIDRS: ${QUAZONAI_AUTH_TRUSTED_PROXY_CIDRS:-}
     depends_on:
       migrate:
         condition: service_completed_successfully
-    command: ["uvicorn", "main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["uvicorn", "main:create_app", "--factory", "--no-proxy-headers", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "127.0.0.1:${QUAZONAI_HTTP_PORT:-8000}:8000"
     healthcheck:

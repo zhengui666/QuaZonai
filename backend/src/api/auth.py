@@ -74,7 +74,7 @@ def login(payload: LoginInput, request: Request, response: Response) -> SessionV
         )
 
     runtime: OperatorAuthRuntime = request.app.state.operator_auth_runtime
-    source = login_source_key(request)
+    source = login_source_key(request, settings)
     if not runtime.login_limiter.allow_attempt(source):
         raise _invalid_credentials()
     if not authenticate_login(

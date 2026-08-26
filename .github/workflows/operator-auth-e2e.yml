@@ -81,7 +81,7 @@ jobs:
           python -m db.preflight
       - name: Start authenticated FastAPI
         run: |
-          nohup uvicorn main:create_app --factory --host 127.0.0.1 --port 8000 >/tmp/quazonai-auth-api.log 2>&1 &
+          nohup uvicorn main:create_app --factory --no-proxy-headers --host 127.0.0.1 --port 8000 >/tmp/quazonai-auth-api.log 2>&1 &
           echo $! >/tmp/quazonai-auth-api.pid
           for attempt in $(seq 1 60); do
             if curl --fail --silent http://127.0.0.1:8000/api/v1/system/health >/dev/null; then
