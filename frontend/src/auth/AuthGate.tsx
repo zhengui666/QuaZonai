@@ -235,7 +235,16 @@ export function AuthGate({ children }: { children: ReactNode }) {
     const revalidateSession = async () => {
       try {
         const response = await fetch('/api/v1/auth/session', { credentials: 'same-origin' });
-        if (active && response.status === 401) {
+        if (!active) return;
+        if (response.ok) {
+          // The API can change from enabled authentication back to direct access
+          // while this tab remains open. A successful bootstrap response is the
+          // current source of truth for both the credential and auth mode.
+          const nextSession = await response.json() as SessionView;
+          if (active) acceptSession(nextSession);
+          return;
+        }
+        if (response.status === 401) {
           setSession(null);
           setState('anonymous');
         }
@@ -248,7 +257,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
       active = false;
       window.clearInterval(interval);
     };
-  }, [session?.auth_enabled, state]);
+  }, [acceptSession, session?.auth_enabled, state]);
   useEffect(() => {
     const requireAuth = () => {
       if (session?.auth_enabled === false) {

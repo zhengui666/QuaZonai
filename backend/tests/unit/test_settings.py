@@ -149,6 +149,14 @@ def test_enabled_auth_rejects_unencodable_configured_credentials(settings: Setti
         "https://bad-.example.com",
         "https://example..com",
         "https://999.999.999.999",
+        # WHATWG special-URL host parsing sends any hostname ending in a
+        # number to the IPv4 parser, so these are rejected by browsers rather
+        # than being valid DNS origins.
+        "https://example.127",
+        "https://example.0127",
+        "https://example.0x",
+        "https://example.0x7f",
+        "https://example.\uff11\uff12\uff17",
         "https://exa\nmple.com",
         "https://example.\tcom",
         "ht\ntps://example.com",
@@ -172,6 +180,11 @@ def test_enabled_auth_rejects_invalid_origin_host_or_port(
         "https://localhost:8443",
         "https://127.0.0.1:8443",
         "https://[::1]:8443",
+        # A number must be the final label to trigger WHATWG's IPv4 parser.
+        "https://127.example",
+        "https://example.127abc",
+        "https://example.0xg",
+        "https://example.127.example",
     ],
 )
 def test_enabled_auth_accepts_valid_origin_hosts(settings: Settings, origin: str) -> None:

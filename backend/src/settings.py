@@ -141,21 +141,24 @@ def validate_machine_api_token(value: str) -> None:
         )
 
 
-def _looks_like_noncanonical_whatwg_ipv4(hostname: str) -> bool:
-    """Return whether a browser treats a non-``ipaddress`` host as numeric IPv4.
+def _whatwg_hostname_ends_in_number(hostname: str) -> bool:
+    """Return whether the URL Standard sends ``hostname`` to its IPv4 parser.
 
-    WHATWG URL parsing accepts one-to-four numeric components, including legacy
-    hexadecimal and leading-zero forms, then serializes them as canonical dotted
-    decimal IPv4. ``ipaddress`` deliberately rejects those spellings. Treating
-    them as IDNA hostnames would make the configured origin differ from the
-    browser-sent Origin, so reject them rather than silently accepting a
-    deployment that cannot authenticate browser mutations.
+    For special schemes, WHATWG invokes the IPv4 parser whenever the final
+    host label is a valid decimal, legacy-octal, or hexadecimal IPv4 number.
+    That includes names such as ``example.127``: the IPv4 parser then rejects
+    the mixed labels, while accepting it as an IDNA DNS name here would
+    configure an origin a browser can never send. Apply the rule after UTS-46
+    conversion, because Unicode digits can map to ASCII digits during that
+    conversion.
     """
     components = hostname.split(".")
-    return 1 <= len(components) <= 4 and all(
-        _WHATWG_IPV4_NUMBER_PATTERN.fullmatch(component) is not None
-        for component in components
-    )
+    if components[-1] == "":
+        components.pop()
+        if not components:
+            return False
+    final_component = components[-1]
+    return _WHATWG_IPV4_NUMBER_PATTERN.fullmatch(final_component) is not None
 
 
 def _serialize_whatwg_ipv6(address: ipaddress.IPv6Address) -> str:
@@ -220,18 +223,12 @@ def _canonical_origin_host(parsed: ParseResult, *, name: str) -> tuple[str, int 
     if address is not None:
         return address.compressed, port
 
-    if _looks_like_noncanonical_whatwg_ipv4(hostname):
-        raise SettingsError(f"{name} contains an invalid hostname")
-
-    # A dotted-decimal host made only of digits is intended to be an IPv4
-    # literal. Do not reinterpret an invalid address as a DNS name.
-    if all(character.isdigit() or character == "." for character in hostname):
-        raise SettingsError(f"{name} contains an invalid hostname")
-
     try:
         ascii_hostname = idna.encode(hostname, uts46=True, std3_rules=True).decode("ascii").lower()
     except idna.IDNAError as exc:
         raise SettingsError(f"{name} contains an invalid hostname") from exc
+    if _whatwg_hostname_ends_in_number(ascii_hostname):
+        raise SettingsError(f"{name} contains an invalid hostname")
     if len(ascii_hostname) > 253:
         raise SettingsError(f"{name} contains an invalid hostname")
     labels = ascii_hostname.split(".")
