@@ -92,6 +92,10 @@ class ApiClient:
                 params=params,
                 headers=request_headers,
                 timeout=self.timeout,
+                # The CLI only permits loopback endpoints.  Do not let a hostile
+                # or accidentally inherited proxy environment forward its
+                # machine Authorization credential elsewhere.
+                trust_env=False,
             )
         except httpx.HTTPError as exc:
             raise CliClientError(str(exc)) from exc

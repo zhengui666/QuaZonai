@@ -72,7 +72,7 @@ def login(payload: LoginInput, request: Request, response: Response) -> SessionV
     # Snapshot before credential verification. A logout that completes while the
     # factors are being checked must prevent this request from clearing its
     # barrier or minting a replacement browser session.
-    login_cookie_generation = runtime.cookie_generation()
+    login_cookie_issuance = runtime.cookie_issuance()
     login_browser_epoch = browser_cookie_epoch(request, settings)
     source = login_source_key(request, settings)
     if not runtime.login_limiter.allow_attempt(source):
@@ -89,7 +89,7 @@ def login(payload: LoginInput, request: Request, response: Response) -> SessionV
     if not runtime.complete_login_if_current(
         response,
         settings,
-        cookie_generation=login_cookie_generation,
+        cookie_issuance=login_cookie_issuance,
         browser_epoch=login_browser_epoch,
         trust_browser=payload.trust_browser,
     ):
@@ -120,7 +120,7 @@ def session(request: Request, response: Response) -> SessionView:
     runtime: OperatorAuthRuntime = request.app.state.operator_auth_runtime
     # Snapshot before parsing the trusted credential. If logout wins while this
     # request is authenticating, its renewal must not write a fresh session cookie.
-    renewal_cookie_generation = runtime.cookie_generation()
+    renewal_cookie_issuance = runtime.cookie_issuance()
     renewal_browser_epoch = browser_cookie_epoch(request, settings)
     identity = authenticate_browser(request, settings)
     if identity is None:
@@ -133,7 +133,7 @@ def session(request: Request, response: Response) -> SessionView:
         if not runtime.renew_session_if_current(
             response,
             settings,
-            cookie_generation=renewal_cookie_generation,
+            cookie_issuance=renewal_cookie_issuance,
             browser_epoch=renewal_browser_epoch,
         ):
             # A logout revoked this trusted-browser credential after it was

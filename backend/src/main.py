@@ -114,7 +114,7 @@ def _install_operator_auth(app: FastAPI) -> None:
         # logout also changes only its caller's sealed browser epoch. Capture the
         # latter from this request so a delayed renewal can never become valid in
         # that browser after its own logout.
-        renewal_cookie_generation = runtime.cookie_generation()
+        renewal_cookie_issuance = runtime.cookie_issuance()
         renewal_browser_epoch = browser_cookie_epoch(request, settings)
         authorization = request.headers.get("authorization")
         if authorization is not None:
@@ -153,7 +153,7 @@ def _install_operator_auth(app: FastAPI) -> None:
             runtime.renew_session_if_current(
                 response,
                 settings,
-                cookie_generation=renewal_cookie_generation,
+                cookie_issuance=renewal_cookie_issuance,
                 browser_epoch=renewal_browser_epoch,
             )
         return response

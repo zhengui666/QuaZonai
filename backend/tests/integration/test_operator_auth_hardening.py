@@ -988,6 +988,90 @@ def test_authenticated_logout_invalidates_older_browser_cookie_generation(
     assert stale_cookie_client.get("/api/v1/auth/session").status_code == 401
 
 
+def test_restart_cannot_revive_pre_logout_browser_credentials_with_same_local_epoch(
+    settings: Settings,
+    engine: Engine,
+) -> None:
+    """A reset counter must not re-authorize cookies issued before logout."""
+    secured = _enabled_settings(settings)
+    first_app = create_app(settings=secured, engine=engine)
+    browser = TestClient(first_app)
+
+    # Establish the caller-local epoch first. The stale credentials below are
+    # therefore not rejected merely because their browser-local epoch is absent.
+    anonymous_logout = browser.post(
+        "/api/v1/auth/logout",
+        headers={"Origin": "http://testserver"},
+    )
+    assert anonymous_logout.status_code == 204
+    browser_epoch = browser.cookies.get(BROWSER_EPOCH_COOKIE_NAME)
+    assert browser_epoch is not None
+
+    login = browser.post(
+        "/api/v1/auth/login",
+        headers={"Origin": "http://testserver"},
+        json=_payload(
+            secured,
+            password="correct horse battery staple",
+            trust_browser=True,
+        ),
+    )
+    assert login.status_code == 200
+    session_cookie = browser.cookies.get(SESSION_COOKIE_NAME)
+    trusted_cookie = browser.cookies.get(TRUSTED_BROWSER_COOKIE_NAME)
+    assert session_cookie is not None
+    assert trusted_cookie is not None
+
+    first_runtime: OperatorAuthRuntime = first_app.state.operator_auth_runtime
+    pre_logout_issuance = first_runtime.cookie_issuance()
+    assert pre_logout_issuance.generation == 0
+
+    # A different browser profile performs an authenticated logout. It advances
+    # only the global generation; the stale profile retains its old local epoch.
+    logout_browser = TestClient(first_app)
+    logout_browser.cookies.set(SESSION_COOKIE_NAME, session_cookie)
+    logout_browser.cookies.set(BROWSER_EPOCH_COOKIE_NAME, browser_epoch)
+    logout = logout_browser.post(
+        "/api/v1/auth/logout",
+        headers={"Origin": "http://testserver"},
+    )
+    assert logout.status_code == 204
+    assert first_runtime.cookie_generation() == pre_logout_issuance.generation + 1
+
+    # Model an API restart with the same cookie key and retained stale browser
+    # epoch. Its counter starts at zero again, just like the original runtime.
+    restarted_app = create_app(settings=secured, engine=engine)
+    restarted_runtime: OperatorAuthRuntime = restarted_app.state.operator_auth_runtime
+    restarted_issuance = restarted_runtime.cookie_issuance()
+    assert restarted_issuance.generation == pre_logout_issuance.generation
+    assert restarted_issuance.process_epoch != pre_logout_issuance.process_epoch
+
+    for name, value in (
+        (SESSION_COOKIE_NAME, session_cookie),
+        (TRUSTED_BROWSER_COOKIE_NAME, trusted_cookie),
+    ):
+        stale_browser = TestClient(restarted_app)
+        stale_browser.cookies.set(BROWSER_EPOCH_COOKIE_NAME, browser_epoch)
+        stale_browser.cookies.set(name, value)
+        assert stale_browser.get("/api/v1/auth/session").status_code == 401
+
+    # Reauthentication under the restarted runtime mints credentials with its
+    # new process epoch and retains the caller-local epoch as before.
+    reauthenticated_browser = TestClient(restarted_app)
+    reauthenticated_browser.cookies.set(BROWSER_EPOCH_COOKIE_NAME, browser_epoch)
+    reauthenticated = reauthenticated_browser.post(
+        "/api/v1/auth/login",
+        headers={"Origin": "http://testserver"},
+        json=_payload(
+            secured,
+            password="correct horse battery staple",
+            trust_browser=True,
+        ),
+    )
+    assert reauthenticated.status_code == 200
+    assert reauthenticated_browser.get("/api/v1/auth/session").status_code == 200
+
+
 def test_network_reordered_login_response_cannot_restore_after_anonymous_logout(
     settings: Settings,
     engine: Engine,

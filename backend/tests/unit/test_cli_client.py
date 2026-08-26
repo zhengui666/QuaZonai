@@ -37,6 +37,37 @@ def test_api_token_from_environment_is_sent_as_bearer(
 
     assert result == {"ready": True}
     assert captured["headers"] == {"Authorization": f"Bearer {token}"}
+    assert captured["trust_env"] is False
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "proxy_variable"),
+    [
+        ("http://127.0.0.1:8000", "HTTP_PROXY"),
+        ("https://127.0.0.1:8443", "HTTPS_PROXY"),
+        ("http://127.0.0.1:8000", "ALL_PROXY"),
+    ],
+)
+def test_loopback_request_ignores_proxy_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    endpoint: str,
+    proxy_variable: str,
+) -> None:
+    captured: dict[str, Any] = {}
+    token = "machine-token-value-" + "x" * 32
+
+    def fake_request(method: str, url: str, **kwargs: Any) -> httpx.Response:
+        captured.update(method=method, url=url, **kwargs)
+        return httpx.Response(200, json={"ready": True})
+
+    monkeypatch.setenv(proxy_variable, "http://proxy.invalid:8080")
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    ApiClient(endpoint, api_token=token).request("GET", "/api/v1/readiness")
+
+    assert captured["headers"] == {"Authorization": f"Bearer {token}"}
+    assert captured["trust_env"] is False
 
 
 @pytest.mark.parametrize(
