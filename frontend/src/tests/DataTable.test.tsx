@@ -195,6 +195,7 @@ describe('DataTable', () => {
     );
     expect(screen.getByText(new Intl.NumberFormat('ar').format(1234))).toBeInTheDocument();
     expect(screen.queryByText('1234')).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox')).toHaveAttribute('dir', 'auto');
   });
 
   it('indexes localized display aliases for numeric strings', () => {

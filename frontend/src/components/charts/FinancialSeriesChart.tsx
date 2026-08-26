@@ -68,15 +68,23 @@ export function FinancialSeriesChart({ series, ariaLabel, height = 320 }: { seri
     });
     const tooltip = document.createElement('div');
     tooltip.className = 'qz-chart-tooltip';
+    tooltip.dir = 'ltr';
     tooltip.hidden = true;
     ref.current.appendChild(tooltip);
     chart.subscribeCrosshairMove((param) => {
       if (!param.time || !param.point || param.point.x < 0 || param.point.y < 0) { tooltip.hidden = true; return; }
-      const values = handles.flatMap(({ name, api }) => {
+      const timestamp = document.createElement('bdi');
+      timestamp.dir = 'auto';
+      timestamp.textContent = formatFinancialTooltipTime(locale, param.time);
+      tooltip.replaceChildren(timestamp);
+      handles.forEach(({ name, api }) => {
         const datum = param.seriesData.get(api) as { value?: number } | undefined;
-        return typeof datum?.value === 'number' ? [`${name}: ${formatFinancialTooltipValue(locale, datum.value)}`] : [];
+        if (typeof datum?.value !== 'number') return;
+        const field = document.createElement('bdi');
+        field.dir = 'auto';
+        field.textContent = `${name}: ${formatFinancialTooltipValue(locale, datum.value)}`;
+        tooltip.append(' · ', field);
       });
-      tooltip.textContent = `${formatFinancialTooltipTime(locale, param.time)}${values.length ? ` · ${values.join(' · ')}` : ''}`;
       tooltip.hidden = false;
       tooltip.style.left = `${Math.min(param.point.x + 12, Math.max(8, ref.current!.clientWidth - 260))}px`;
       tooltip.style.top = `${Math.max(8, param.point.y - 34)}px`;

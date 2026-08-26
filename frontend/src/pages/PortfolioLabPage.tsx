@@ -1,4 +1,3 @@
-import { ArrowRightIcon } from '@phosphor-icons/react';
 import { Button } from '@radix-ui/themes';
 import type { ColumnDef } from '@tanstack/react-table';
 import { useMemo } from 'react';
@@ -8,6 +7,7 @@ import { FinancialSeriesChart } from '../components/charts/FinancialSeriesChart'
 import { DataTable } from '../components/ui/DataTable';
 import { EmptyState } from '../components/ui/EmptyState';
 import { ErrorPanel } from '../components/ui/ErrorPanel';
+import { ForwardArrowIcon } from '../components/ui/ForwardArrowIcon';
 import { PageHeader } from '../components/ui/PageHeader';
 import { PageSkeleton } from '../components/ui/Skeleton';
 import { StateBadge } from '../components/ui/StateBadge';
@@ -23,7 +23,7 @@ const programColumns: ColumnDef<PortfolioProgram, unknown>[] = [
   { accessorKey: 'state', header: 'State', meta: { localizedSort: true }, cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
   { accessorKey: 'candidate_count', header: 'Candidates', cell: ({ getValue }) => <span className="qz-number">{formatNumber(getValue() as number | undefined)}</span> },
   { accessorKey: 'updated_at', header: 'Updated', cell: ({ getValue }) => formatDateTime(getValue() as string | undefined) },
-  { id: 'candidate', header: '', cell: ({ row }) => row.original.current_candidate_id ? <Button asChild size="1" variant="ghost"><Link to={`/portfolio/candidates/${row.original.current_candidate_id}`}><Translated source="Candidate" /> <ArrowRightIcon size={12} /></Link></Button> : <span className="qz-section-meta"><Translated source="Researching" /></span> },
+  { id: 'candidate', header: '', cell: ({ row }) => row.original.current_candidate_id ? <Button asChild size="1" variant="ghost"><Link to={`/portfolio/candidates/${row.original.current_candidate_id}`}><Translated source="Candidate" /> <ForwardArrowIcon size={12} /></Link></Button> : <span className="qz-section-meta"><Translated source="Researching" /></span> },
 ];
 
 export function PortfolioLabPage() {

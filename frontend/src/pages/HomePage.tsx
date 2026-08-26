@@ -1,9 +1,10 @@
-import { ArrowRightIcon, FlaskIcon, TargetIcon } from '@phosphor-icons/react';
+import { FlaskIcon, TargetIcon } from '@phosphor-icons/react';
 import { Button } from '@radix-ui/themes';
 import { Link } from 'react-router-dom';
 import { ResearchPulseChart } from '../components/charts/ResearchPulseChart';
 import { EmptyState } from '../components/ui/EmptyState';
 import { ErrorPanel } from '../components/ui/ErrorPanel';
+import { ForwardArrowIcon } from '../components/ui/ForwardArrowIcon';
 import { KpiStrip } from '../components/ui/KpiStrip';
 import { PageHeader } from '../components/ui/PageHeader';
 import { PageSkeleton } from '../components/ui/Skeleton';
@@ -145,7 +146,7 @@ export function HomePage() {
           many: 'home.decisions.many',
           other: 'home.decisions.other',
         }, pending.length)}>
-          {pending.length ? <div className="qz-panel qz-panel-pad qz-list">{pending.slice(0, 5).map((approval) => <div className="qz-list-row" key={approval.id}><div className="qz-list-main"><div className="qz-list-title">{humanize(approval.purpose)} {t('common.candidate')} · <bdi dir="auto">{approval.candidate?.mandate_name ?? approval.candidate_id.slice(0, 8)}</bdi></div><div className="qz-list-subtitle">{t('home.validUntil', { date: formatDateTime(approval.valid_until ?? approval.expires_at) })}</div></div><Button asChild size="1" variant="ghost"><Link to="/approval">{t('home.review')} <ArrowRightIcon size={12} /></Link></Button></div>)}</div> : <EmptyState title="No decisions waiting" description="Research continues autonomously. You will only be interrupted by a material candidate or required administration." />}
+          {pending.length ? <div className="qz-panel qz-panel-pad qz-list">{pending.slice(0, 5).map((approval) => <div className="qz-list-row" key={approval.id}><div className="qz-list-main"><div className="qz-list-title">{humanize(approval.purpose)} {t('common.candidate')} · <bdi dir="auto">{approval.candidate?.mandate_name ?? approval.candidate_id.slice(0, 8)}</bdi></div><div className="qz-list-subtitle">{t('home.validUntil', { date: formatDateTime(approval.valid_until ?? approval.expires_at) })}</div></div><Button asChild size="1" variant="ghost"><Link to="/approval">{t('home.review')} <ForwardArrowIcon size={12} /></Link></Button></div>)}</div> : <EmptyState title="No decisions waiting" description="Research continues autonomously. You will only be interrupted by a material candidate or required administration." />}
         </Section>
       </div>
       <Section title="Portfolio readiness" meta="Construction and handoff pipeline">
