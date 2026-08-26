@@ -18,7 +18,7 @@ import { Button, DropdownMenu, Theme } from '@radix-ui/themes';
 import { Direction } from 'radix-ui';
 import { Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { useOperatorAuth } from '../../auth/AuthGate';
+import { isLogoutError, useOperatorAuth, type LogoutFailure } from '../../auth/AuthGate';
 import { localeLabels, localeOrder, useI18n, type Locale, type MessageKey } from '../../i18n';
 import { PageSkeleton } from '../ui/Skeleton';
 
@@ -50,7 +50,7 @@ export function LocaleDirectionProvider({ children }: { children: ReactNode }) {
 export function AppShell() {
   const [mode, setMode] = useThemeMode();
   const [signingOut, setSigningOut] = useState(false);
-  const [signOutError, setSignOutError] = useState<string | null>(null);
+  const [signOutError, setSignOutError] = useState<LogoutFailure | null>(null);
   const { locale, setLocale, t } = useI18n();
   const { authEnabled, logout } = useOperatorAuth();
   const location = useLocation();
@@ -71,11 +71,19 @@ export function AppShell() {
       await logout();
       navigate('/');
     } catch (error) {
-      setSignOutError(error instanceof Error ? error.message : t('auth.signOutFailed'));
+      setSignOutError(isLogoutError(error) ? error.failure : { kind: 'unreachable' });
     } finally {
       setSigningOut(false);
     }
   }
+
+  const signOutErrorMessage = signOutError?.kind === 'api'
+    ? signOutError.message
+    : signOutError?.kind === 'http'
+      ? t('auth.signOutHttpError', { status: signOutError.status })
+      : signOutError === null
+        ? null
+        : t('auth.signOutFailed');
 
   return (
     <Theme appearance={mode} accentColor="jade" grayColor="sage" radius="small" scaling="90%">
@@ -101,7 +109,7 @@ export function AppShell() {
             <header className="qz-topbar">
               <div className="qz-topbar-title">{current}</div>
               <div className="qz-topbar-actions">
-                {signOutError ? <span className="qz-signout-error" dir="auto" role="alert">{signOutError}</span> : null}
+                {signOutErrorMessage ? <span className="qz-signout-error" dir="auto" role="alert">{signOutErrorMessage}</span> : null}
                 <DropdownMenu.Root>
                   <DropdownMenu.Trigger>
                     <Button className="qz-mobile-nav-button" aria-label={t('a11y.openNavigation')} size="1" variant="soft"><ListIcon size={16} /></Button>

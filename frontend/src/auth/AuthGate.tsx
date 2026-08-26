@@ -20,6 +20,25 @@ type LoginError =
   | { kind: 'api'; message: string }
   | { kind: 'fallback'; message: 'auth.authenticationFailed' | 'auth.unreachable' };
 
+export type LogoutFailure =
+  | { kind: 'api'; message: string }
+  | { kind: 'http'; status: number }
+  | { kind: 'unreachable' };
+
+export class LogoutError extends Error {
+  readonly failure: LogoutFailure;
+
+  constructor(failure: LogoutFailure) {
+    super(failure.kind === 'api' ? failure.message : failure.kind);
+    this.name = 'LogoutError';
+    this.failure = failure;
+  }
+}
+
+export function isLogoutError(error: unknown): error is LogoutError {
+  return error instanceof LogoutError;
+}
+
 interface SessionView {
   authenticated: boolean;
   username: string;
@@ -52,10 +71,6 @@ async function apiErrorMessage(response: Response): Promise<string | null> {
   } catch {
     return null;
   }
-}
-
-async function responseErrorMessage(response: Response, fallback: string): Promise<string> {
-  return (await apiErrorMessage(response)) ?? fallback;
 }
 
 function normalizeTotpCode(value: string): string {
@@ -266,17 +281,25 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     if (!session?.auth_enabled) return;
-    const response = await fetch('/api/v1/auth/logout', {
-      method: 'POST',
-      credentials: 'same-origin',
-    });
-    if (!response.ok) {
-      throw new Error(await responseErrorMessage(response, t('auth.signOutHttpError', { status: response.status })));
+    try {
+      const response = await fetch('/api/v1/auth/logout', {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+      if (!response.ok) {
+        const message = await apiErrorMessage(response);
+        throw new LogoutError(message === null
+          ? { kind: 'http', status: response.status }
+          : { kind: 'api', message });
+      }
+    } catch (error) {
+      if (isLogoutError(error)) throw error;
+      throw new LogoutError({ kind: 'unreachable' });
     }
     invalidateSessionChecks();
     setSession(null);
     setState('anonymous');
-  }, [invalidateSessionChecks, session?.auth_enabled, t]);
+  }, [invalidateSessionChecks, session?.auth_enabled]);
 
   useEffect(() => {
     void checkSession();
