@@ -8,6 +8,7 @@ import {
   getSortedRowModel,
   type ColumnDef,
   type FilterFn,
+  type SortingFn,
   type SortingState,
   type VisibilityState,
   useReactTable,
@@ -80,6 +81,19 @@ function objectField(value: unknown, key: string): unknown {
   return (value as Record<string, unknown>)[key];
 }
 
+function localizedSortLabel(value: unknown, locale: Locale): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'boolean') {
+    const source = value ? 'Enabled' : 'Disabled';
+    return translateDomainLabel(locale, source) ?? source;
+  }
+  if (typeof value === 'string') {
+    const source = humanizeCanonical(value);
+    return translateRuntimeLabel(locale, source) ?? translateDomainLabel(locale, source) ?? value;
+  }
+  return String(value);
+}
+
 function withPropertyAccessors<T>(defs: ColumnDef<T, unknown>[], data: T[]): ColumnDef<T, unknown>[] {
   return defs.map((def) => {
     if ('columns' in def) return def;
@@ -123,6 +137,15 @@ export function DataTable<T>({
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
   const viewportRef = useRef<HTMLDivElement>(null);
   const stableColumns = useMemo(() => withPropertyAccessors(columns, data), [columns, data]);
+  const sortCollator = useMemo(() => new Intl.Collator(locale, { numeric: true, sensitivity: 'base' }), [locale]);
+  const localizedSorting = useCallback<SortingFn<T>>((rowA, rowB, columnId) => {
+    const rawLeft = rowA.getValue(columnId);
+    const rawRight = rowB.getValue(columnId);
+    const left = rawLeft === undefined ? objectField(rowA.original, columnId) : rawLeft;
+    const right = rawRight === undefined ? objectField(rowB.original, columnId) : rawRight;
+    if (typeof left === 'number' && typeof right === 'number') return left - right;
+    return sortCollator.compare(localizedSortLabel(left, locale), localizedSortLabel(right, locale));
+  }, [locale, sortCollator]);
   const localizedGlobalFilter = useCallback<FilterFn<T>>((row, columnId, filterValue) => {
     const query = String(filterValue ?? '').trim().toLocaleLowerCase(locale);
     if (!query) return true;
@@ -134,6 +157,7 @@ export function DataTable<T>({
   const table = useReactTable({
     data,
     columns: stableColumns,
+    defaultColumn: { sortingFn: localizedSorting },
     state: { sorting, globalFilter, columnVisibility },
     onSortingChange: setSorting,
     onGlobalFilterChange: setGlobalFilter,
@@ -226,7 +250,7 @@ export function DataTable<T>({
             {paddingTop > 0 ? <tr aria-hidden="true"><td colSpan={table.getVisibleLeafColumns().length} style={{ height: paddingTop, padding: 0, border: 0 }} /></tr> : null}
             {visibleRows.map((row) => (
               <tr key={row.id}>{row.getVisibleCells().map((cell) => (
-                <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
+                <td key={cell.id} dir="auto">{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
               ))}</tr>
             ))}
             {paddingBottom > 0 ? <tr aria-hidden="true"><td colSpan={table.getVisibleLeafColumns().length} style={{ height: paddingBottom, padding: 0, border: 0 }} /></tr> : null}

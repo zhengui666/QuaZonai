@@ -48,6 +48,7 @@ describe('DataTable', () => {
   it('filters raw values using TanStack Table', () => {
     renderApp(<DataTable data={[{ name: 'Beta', state: 'ACTIVE' }, { name: 'Alpha', state: 'COOLING' }]} columns={columns} />);
     expect(screen.getByText('Beta')).toBeInTheDocument();
+    expect(screen.getByText('Beta').closest('td')).toHaveAttribute('dir', 'auto');
     const filterInput = screen.getByRole('textbox', { name: 'Filter rows…' });
     fireEvent.change(filterInput, { target: { value: 'Alpha' } });
     expect(screen.getByText('Alpha')).toBeInTheDocument();
@@ -66,6 +67,31 @@ describe('DataTable', () => {
     fireEvent.change(screen.getByPlaceholderText('筛选行…'), { target: { value: '活跃' } });
     expect(screen.getByText('Beta')).toBeInTheDocument();
     expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
+  });
+
+  it('sorts translated state labels in their displayed locale', () => {
+    render(
+      <I18nProvider initialLocale="es">
+        <Theme appearance="dark" accentColor="jade" grayColor="sage" radius="small" scaling="90%">
+          <DataTable
+            data={[
+              { name: 'Active row', state: 'ACTIVE' },
+              { name: 'Blocked row', state: 'BLOCKED' },
+              { name: 'Available row', state: 'AVAILABLE' },
+            ]}
+            columns={columns}
+          />
+        </Theme>
+      </I18nProvider>,
+    );
+    const stateSort = screen.getAllByRole('button').find((button) => /^(State|Estado)/.test(button.textContent ?? ''));
+    expect(stateSort).toBeDefined();
+    fireEvent.click(stateSort!);
+    expect(screen.getAllByText(/^(Activo|Bloqueado|Disponible)$/).map((element) => element.textContent)).toEqual([
+      'Activo',
+      'Bloqueado',
+      'Disponible',
+    ]);
   });
 
   it('filters numeric columns by the declared compact and percentage display formats', () => {

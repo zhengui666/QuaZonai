@@ -40,7 +40,21 @@ export function AlphaDetailPage() {
   if (!alpha) return <EmptyState title="Alpha qualification not found" description="The requested immutable qualification is unavailable." />;
 
   const lineage = alpha.lineage ?? [];
-  const nodes: Node[] = [{ id: alpha.id, position: { x: 260, y: 0 }, data: { label: alpha.name ?? `Alpha ${alpha.id.slice(0, 8)}` }, style: { background: 'var(--qz-accent-soft)', border: '1px solid var(--qz-accent)', color: 'var(--qz-text)', borderRadius: 8, width: 180, fontSize: 11 } }, ...lineage.map((item, index) => ({ id: item.id, position: { x: (index % 4) * 200, y: 140 + Math.floor(index / 4) * 110 }, data: { label: `${item.label} · ${humanize(item.relationship)}` }, style: { background: 'var(--qz-bg-elevated)', border: '1px solid var(--qz-border-strong)', color: 'var(--qz-text)', borderRadius: 8, width: 170, fontSize: 10 } }))];
+  const rootLabel = alpha.name ?? `Alpha ${alpha.id.slice(0, 8)}`;
+  const nodes: Node[] = [
+    {
+      id: alpha.id,
+      position: { x: 260, y: 0 },
+      data: { label: <bdi dir="auto">{rootLabel}</bdi> },
+      style: { background: 'var(--qz-accent-soft)', border: '1px solid var(--qz-accent)', color: 'var(--qz-text)', borderRadius: 8, width: 180, fontSize: 11 },
+    },
+    ...lineage.map((item, index) => ({
+      id: item.id,
+      position: { x: (index % 4) * 200, y: 140 + Math.floor(index / 4) * 110 },
+      data: { label: <bdi dir="auto">{item.label} · {humanize(item.relationship)}</bdi> },
+      style: { background: 'var(--qz-bg-elevated)', border: '1px solid var(--qz-border-strong)', color: 'var(--qz-text)', borderRadius: 8, width: 170, fontSize: 10 },
+    })),
+  ];
   const edges: Edge[] = lineage.map((item, index) => ({ id: `l-${index}`, source: item.id, target: alpha.id, style: { stroke: 'var(--qz-border-strong)' } }));
 
   return (
