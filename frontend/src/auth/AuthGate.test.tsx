@@ -253,6 +253,60 @@ describe('AuthGate', () => {
     });
   });
 
+  it('re-renders fallback login errors in the selected locale while preserving API messages', async () => {
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401))
+      .mockImplementationOnce(() => jsonResponse({ error: { code: 'INVALID_CREDENTIALS' } }, 401))
+      .mockImplementationOnce(() => jsonResponse({ error: { message: 'Operator locked.' } }, 403));
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+
+    renderAuthGate(<div>Workbench ready</div>);
+
+    await user.type(await screen.findByLabelText('Username'), 'operator');
+    await user.type(screen.getByLabelText('Password'), 'wrong password');
+    await user.type(screen.getByLabelText('Authenticator code'), '123456');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Authentication failed.');
+    await user.click(screen.getByRole('button', { name: 'Change language: English' }));
+    await user.click(screen.getByRole('menuitemradio', { name: /العربية/ }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('فشلت المصادقة.');
+
+    await user.click(screen.getByRole('button', { name: 'تسجيل الدخول' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Operator locked.');
+  });
+
+  it('normalizes Arabic TOTP digits before login', async () => {
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401))
+      .mockImplementationOnce(() => jsonResponse({
+        authenticated: true,
+        username: 'operator',
+        trusted_browser: false,
+        auth_enabled: true,
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+
+    renderAuthGate(<div>Workbench ready</div>, 'ar');
+
+    await user.type(await screen.findByLabelText('اسم المستخدم'), 'operator');
+    await user.type(screen.getByLabelText('كلمة المرور'), 'correct horse battery staple');
+    const totp = screen.getByLabelText('رمز المصادقة');
+    await user.type(totp, '١٢٣٤٥٦');
+    expect(totp).toHaveValue('123456');
+    await user.clear(totp);
+    await user.type(totp, '۱۲۳۴۵۶');
+    expect(totp).toHaveValue('123456');
+
+    await user.click(screen.getByRole('button', { name: 'تسجيل الدخول' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const loginOptions = fetchMock.mock.calls[1]?.[1] as RequestInit;
+    expect(JSON.parse(String(loginOptions.body))).toMatchObject({ totp_code: '123456' });
+  });
+
   it('submits trusted-browser intent and reveals the workbench after successful login', async () => {
     const fetchMock = vi.fn()
       .mockImplementationOnce(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401))

@@ -16,6 +16,9 @@ import '../styles/auth.css';
 
 type AuthState = 'checking' | 'authenticated' | 'anonymous';
 type BootstrapError = { kind: 'http'; status: number } | { kind: 'unreachable' };
+type LoginError =
+  | { kind: 'api'; message: string }
+  | { kind: 'fallback'; message: 'auth.authenticationFailed' | 'auth.unreachable' };
 
 interface SessionView {
   authenticated: boolean;
@@ -42,13 +45,25 @@ export function useOperatorAuth(): OperatorAuthContextValue {
   return value;
 }
 
-async function responseErrorMessage(response: Response, fallback: string): Promise<string> {
+async function apiErrorMessage(response: Response): Promise<string | null> {
   try {
     const payload = await response.json() as ErrorEnvelope;
-    return payload.error?.message ?? fallback;
+    return payload.error?.message ?? null;
   } catch {
-    return fallback;
+    return null;
   }
+}
+
+async function responseErrorMessage(response: Response, fallback: string): Promise<string> {
+  return (await apiErrorMessage(response)) ?? fallback;
+}
+
+function normalizeTotpCode(value: string): string {
+  return value
+    .replace(/[\u0660-\u0669]/g, (digit) => String(digit.charCodeAt(0) - 0x0660))
+    .replace(/[\u06f0-\u06f9]/g, (digit) => String(digit.charCodeAt(0) - 0x06f0))
+    .replace(/\D/g, '')
+    .slice(0, 6);
 }
 
 function LoginPage({ onAuthenticated }: { onAuthenticated: (session: SessionView) => void }) {
@@ -58,10 +73,15 @@ function LoginPage({ onAuthenticated }: { onAuthenticated: (session: SessionView
   const [totpCode, setTotpCode] = useState('');
   const [trustBrowser, setTrustBrowser] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<LoginError | null>(null);
   const changeLocale = (value: string) => {
     if ((localeOrder as readonly string[]).includes(value)) setLocale(value as Locale);
   };
+  const errorMessage = error === null
+    ? null
+    : error.kind === 'api'
+      ? error.message
+      : t(error.message);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -80,12 +100,15 @@ function LoginPage({ onAuthenticated }: { onAuthenticated: (session: SessionView
         }),
       });
       if (!response.ok) {
-        setError(await responseErrorMessage(response, t('auth.authenticationFailed')));
+        const message = await apiErrorMessage(response);
+        setError(message === null
+          ? { kind: 'fallback', message: 'auth.authenticationFailed' }
+          : { kind: 'api', message });
         return;
       }
       onAuthenticated(await response.json() as SessionView);
     } catch {
-      setError(t('auth.unreachable'));
+      setError({ kind: 'fallback', message: 'auth.unreachable' });
     } finally {
       setSubmitting(false);
     }
@@ -152,7 +175,7 @@ function LoginPage({ onAuthenticated }: { onAuthenticated: (session: SessionView
                 disabled={submitting}
                 inputMode="numeric"
                 maxLength={6}
-                onChange={(event) => setTotpCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                onChange={(event) => setTotpCode(normalizeTotpCode(event.target.value))}
                 pattern="[0-9]{6}"
                 placeholder="000000"
                 required
@@ -171,7 +194,7 @@ function LoginPage({ onAuthenticated }: { onAuthenticated: (session: SessionView
                 <small>{t('auth.trustBrowserDescription')}</small>
               </span>
             </label>
-            {error ? <div className="qz-auth-error" dir="auto" role="alert">{error}</div> : null}
+            {errorMessage !== null ? <div className="qz-auth-error" dir="auto" role="alert">{errorMessage}</div> : null}
             <button className="qz-auth-submit" disabled={submitting || totpCode.length !== 6} type="submit">
               {submitting ? t('auth.verifying') : t('auth.signIn')}
             </button>

@@ -43,6 +43,8 @@ describe('ApprovalInbox', () => {
   it('formats deployable capital with the selected locale', () => {
     expect(formatDeployableCapital('ar', 100000)).toBe(new Intl.NumberFormat('ar').format(100000));
     expect(formatDeployableCapital('es', '100000')).toBe(new Intl.NumberFormat('es').format(100000));
+    expect(formatDeployableCapital('es', '0.0004')).toBe(new Intl.NumberFormat('es', { maximumSignificantDigits: 15 }).format(0.0004));
+    expect(formatDeployableCapital('ar', '0.0004')).toBe(new Intl.NumberFormat('ar', { maximumSignificantDigits: 15 }).format(0.0004));
   });
 
 
