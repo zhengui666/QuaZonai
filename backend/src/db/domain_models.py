@@ -293,7 +293,7 @@ class DownstreamSystem(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     environment_type: Mapped[str] = mapped_column(String(40), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    package_contract_version: Mapped[str] = mapped_column(String(40), nullable=False, default="1")
+    package_contract_version: Mapped[str] = mapped_column(String(40), nullable=False, default="2")
     feedback_contract_version: Mapped[str] = mapped_column(String(40), nullable=False, default="1")
     compatibility: Mapped[list[str]] = mapped_column(JSON_VALUE, nullable=False, default=list)
     preflight_state: Mapped[str] = mapped_column(String(40), nullable=False, default="READY")
@@ -338,8 +338,8 @@ class ApprovalSnapshot(Base, TimestampMixin):
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
 
-class CandidatePackage(Base):
-    __tablename__ = "candidate_packages"
+class CandidateBundle(Base):
+    __tablename__ = "candidate_bundles"
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     approval_id: Mapped[UUID] = mapped_column(
@@ -367,8 +367,8 @@ class HandoffOffer(Base, TimestampMixin):
     approval_id: Mapped[UUID] = mapped_column(
         Uuid, ForeignKey("approval_snapshots.id", ondelete="RESTRICT"), nullable=False
     )
-    candidate_package_id: Mapped[UUID] = mapped_column(
-        Uuid, ForeignKey("candidate_packages.id", ondelete="RESTRICT"), nullable=False
+    candidate_bundle_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("candidate_bundles.id", ondelete="RESTRICT"), nullable=False
     )
     candidate_id: Mapped[UUID] = mapped_column(
         Uuid, ForeignKey("portfolio_candidates.id", ondelete="RESTRICT"), nullable=False
@@ -420,7 +420,7 @@ __all__ = [
     "PortfolioCandidate",
     "DownstreamSystem",
     "ApprovalSnapshot",
-    "CandidatePackage",
+    "CandidateBundle",
     "HandoffOffer",
     "ForwardEvidenceEpisode",
 ]

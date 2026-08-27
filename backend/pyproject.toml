@@ -37,7 +37,7 @@ quazonai-finite-worker = "runners.finite_worker:main"
 [tool.setuptools]
 package-dir = {"" = "src"}
 py-modules = [
-  "candidate_bundles","quazonai", "candidate_packages", "crypto", "downstream_auth", "errors", "events", "jobs", "logging_utils", "main", "operator_auth", "optimization", "runtime_config", "schema_validation", "settings"]
+  "candidate_bundles", "quazonai", "crypto", "downstream_auth", "errors", "events", "jobs", "logging_utils", "main", "operator_auth", "optimization", "runtime_config", "schema_validation", "settings"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

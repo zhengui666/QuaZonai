@@ -15,6 +15,12 @@ depends_on = None
 
 
 def upgrade() -> None:
+    op.rename_table("candidate_packages", "candidate_bundles")
+    op.alter_column(
+        "handoff_offers",
+        "candidate_package_id",
+        new_column_name="candidate_bundle_id",
+    )
     op.create_table(
         "search_ledger_entries",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
@@ -35,11 +41,20 @@ def upgrade() -> None:
         sa.Column("failure_message", sa.Text(), nullable=True),
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.ForeignKeyConstraint(["branch_id"], ["research_branches.id"], ondelete="SET NULL"),
-        sa.ForeignKeyConstraint(["dataset_revision_id"], ["dataset_revisions.id"], ondelete="RESTRICT"),
+        sa.ForeignKeyConstraint(
+            ["dataset_revision_id"], ["dataset_revisions.id"], ondelete="RESTRICT"
+        ),
         sa.ForeignKeyConstraint(["mission_id"], ["research_missions.id"], ondelete="SET NULL"),
-        sa.ForeignKeyConstraint(["parent_entry_id"], ["search_ledger_entries.id"], ondelete="SET NULL"),
+        sa.ForeignKeyConstraint(
+            ["parent_entry_id"], ["search_ledger_entries.id"], ondelete="SET NULL"
+        ),
         sa.ForeignKeyConstraint(["program_id"], ["research_programs.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
@@ -59,17 +74,34 @@ def upgrade() -> None:
         op.add_column("dataset_revisions", sa.Column(name, type_, nullable=True))
     op.add_column(
         "dataset_revisions",
-        sa.Column("instrument_scope", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'[]'::jsonb"), nullable=False),
+        sa.Column(
+            "instrument_scope",
+            postgresql.JSONB(astext_type=sa.Text()),
+            server_default=sa.text("'[]'::jsonb"),
+            nullable=False,
+        ),
     )
     op.add_column(
         "dataset_revisions",
-        sa.Column("quality_result", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'::jsonb"), nullable=False),
+        sa.Column(
+            "quality_result",
+            postgresql.JSONB(astext_type=sa.Text()),
+            server_default=sa.text("'{}'::jsonb"),
+            nullable=False,
+        ),
     )
     op.add_column(
         "dataset_revisions",
-        sa.Column("point_in_time_result", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'::jsonb"), nullable=False),
+        sa.Column(
+            "point_in_time_result",
+            postgresql.JSONB(astext_type=sa.Text()),
+            server_default=sa.text("'{}'::jsonb"),
+            nullable=False,
+        ),
     )
-    op.add_column("dataset_revisions", sa.Column("ingested_at", sa.DateTime(timezone=True), nullable=True))
+    op.add_column(
+        "dataset_revisions", sa.Column("ingested_at", sa.DateTime(timezone=True), nullable=True)
+    )
     op.add_column(
         "alpha_qualifications",
         sa.Column("source_experiment_id", postgresql.UUID(as_uuid=True), nullable=True),
@@ -97,6 +129,12 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.alter_column(
+        "handoff_offers",
+        "candidate_bundle_id",
+        new_column_name="candidate_package_id",
+    )
+    op.rename_table("candidate_bundles", "candidate_packages")
     op.drop_constraint(
         "fk_portfolio_candidate_simulation_experiment", "portfolio_candidates", type_="foreignkey"
     )

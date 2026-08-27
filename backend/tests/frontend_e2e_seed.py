@@ -13,7 +13,7 @@ from sqlalchemy import delete
 from db.models import (
     AlphaQualification,
     ApprovalSnapshot,
-    CandidatePackage,
+    CandidateBundle,
     DatasetRevision,
     DownstreamSystem,
     ForwardEvidenceEpisode,
@@ -54,7 +54,7 @@ def main() -> None:
         for model in (
             ForwardEvidenceEpisode,
             HandoffOffer,
-            CandidatePackage,
+            CandidateBundle,
             ApprovalSnapshot,
             PortfolioCandidate,
             PortfolioProgram,

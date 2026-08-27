@@ -440,7 +440,9 @@ def _has_secret_value(value: Any, *, key: str = "") -> bool:
     if secret_key and value not in (None, "", "INJECT_AT_REMOTE_RUNTIME_ONLY"):
         return True
     if isinstance(value, Mapping):
-        return any(_has_secret_value(child, key=str(child_key)) for child_key, child in value.items())
+        return any(
+            _has_secret_value(child, key=str(child_key)) for child_key, child in value.items()
+        )
     if isinstance(value, list):
         return any(_has_secret_value(child, key=key) for child in value)
     return False

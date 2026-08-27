@@ -13,11 +13,15 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from candidate_packages import build_candidate_package, resolve_package_archive
+from candidate_bundles import (
+    BUNDLE_CONTRACT_VERSION,
+    build_candidate_bundle,
+    resolve_bundle_archive,
+)
 from db.models import (
     AlphaQualification,
     ApprovalSnapshot,
-    CandidatePackage,
+    CandidateBundle,
     DatasetRevision,
     DownstreamSystem,
     Event,
@@ -228,7 +232,7 @@ class ApprovalRejectInput(StrictModel):
 class HandoffView(StrictModel):
     id: UUID
     approval_id: UUID
-    candidate_package_id: UUID
+    candidate_bundle_id: UUID
     candidate_id: UUID
     purpose: str
     downstream_system_id: UUID
@@ -285,7 +289,7 @@ class DownstreamInput(StrictModel):
     name: str = Field(min_length=1, max_length=200)
     environment_type: str
     enabled: bool = True
-    package_contract_version: str = "1"
+    package_contract_version: str = "2"
     feedback_contract_version: str = "1"
     compatibility: list[str] = Field(default_factory=list)
     public_config: dict[str, Any] = Field(default_factory=dict)
@@ -613,7 +617,7 @@ def _approval_view(session: Session, item: ApprovalSnapshot) -> ApprovalView:
 
 def _handoff_view(session: Session, item: HandoffOffer) -> HandoffView:
     downstream = session.get(DownstreamSystem, item.downstream_system_id)
-    package = session.get(CandidatePackage, item.candidate_package_id)
+    package = session.get(CandidateBundle, item.candidate_bundle_id)
     package_version = package.contract_version if package else "1"
     contract = item.feedback_contract_snapshot or {}
     feedback_version = str(
@@ -625,7 +629,7 @@ def _handoff_view(session: Session, item: HandoffOffer) -> HandoffView:
     return HandoffView(
         id=item.id,
         approval_id=item.approval_id,
-        candidate_package_id=item.candidate_package_id,
+        candidate_bundle_id=item.candidate_bundle_id,
         candidate_id=item.candidate_id,
         purpose=item.purpose,
         downstream_system_id=item.downstream_system_id,
@@ -1298,16 +1302,16 @@ def approve_candidate(
             candidate = session.get(PortfolioCandidate, approval.candidate_id)
             if candidate is None:
                 raise QfError("CANDIDATE_NOT_FOUND", "Approval candidate was not found.", 500)
-            built = build_candidate_package(
+            built = build_candidate_bundle(
                 request.app.state.settings,
                 approval=approval,
                 candidate=candidate,
                 downstream=downstream,
             )
-            package = CandidatePackage(
+            package = CandidateBundle(
                 approval_id=approval.id,
                 candidate_id=candidate.id,
-                contract_version=downstream.package_contract_version,
+                contract_version=BUNDLE_CONTRACT_VERSION,
                 state="AVAILABLE",
                 manifest_json=built.manifest,
                 relative_path=built.relative_path,
@@ -1319,7 +1323,7 @@ def approve_candidate(
             contract = _feedback_contract_snapshot(downstream, approval.purpose)
             handoff = HandoffOffer(
                 approval_id=approval.id,
-                candidate_package_id=package.id,
+                candidate_bundle_id=package.id,
                 candidate_id=candidate.id,
                 purpose=approval.purpose,
                 downstream_system_id=downstream.id,
@@ -1609,12 +1613,12 @@ def get_handoff_package(
             raise QfError(
                 "HANDOFF_PACKAGE_UNAVAILABLE", "Package is not available in this state.", 409
             )
-        package = session.get(CandidatePackage, handoff.candidate_package_id)
+        package = session.get(CandidateBundle, handoff.candidate_bundle_id)
         if package is None:
             raise QfError("CANDIDATE_PACKAGE_NOT_FOUND", "Candidate Package was not found.", 500)
-        archive = resolve_package_archive(request.app.state.settings, package.relative_path)
+        archive = resolve_bundle_archive(request.app.state.settings, package.relative_path)
         return FileResponse(
-            archive, media_type="application/zip", filename=f"candidate-package-{package.id}.zip"
+            archive, media_type="application/zip", filename=f"candidate-bundle-{package.id}.zip"
         )
 
 

@@ -10,7 +10,11 @@ import zipfile
 
 import pytest
 
-from candidate_bundles import build_candidate_bundle, resolve_bundle_archive, validate_candidate_bundle
+from candidate_bundles import (
+    build_candidate_bundle,
+    resolve_bundle_archive,
+    validate_candidate_bundle,
+)
 from errors import QfError
 
 
@@ -66,7 +70,7 @@ def _candidate() -> Candidate:
                 "risk_config": {"max_notional": "100000"},
                 "discovery_summary": {"accepted_runs": 4},
                 "sealed_summary": {"passed": True},
-            }
+            },
         },
     )
 

@@ -154,7 +154,7 @@ export interface ApprovalSnapshot {
 export interface HandoffOffer {
   id: UUID;
   approval_id?: UUID;
-  candidate_package_id?: UUID;
+  candidate_bundle_id?: UUID;
   candidate_id?: UUID;
   purpose?: string;
   downstream_system_id?: UUID;

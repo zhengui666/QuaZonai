@@ -7,7 +7,7 @@ from db.base import Base, TimestampMixin
 from db.domain_models import (
     AlphaQualification,
     ApprovalSnapshot,
-    CandidatePackage,
+    CandidateBundle,
     DatasetRevision,
     DownstreamSystem,
     ForwardEvidenceEpisode,
@@ -62,7 +62,7 @@ __all__ = [
     "PortfolioCandidate",
     "DownstreamSystem",
     "ApprovalSnapshot",
-    "CandidatePackage",
+    "CandidateBundle",
     "HandoffOffer",
     "ForwardEvidenceEpisode",
     "SearchLedgerEntry",
