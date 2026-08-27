@@ -535,3 +535,11 @@ QZ 只验证 Handoff/Feedback contract，不检查其交易节点内部状态。
 ---
 
 QuaZonai 的产品体验应始终保持：**用户提出投资研究问题，系统自治完成研究与组合，只有真正需要资本决策时再把一个可解释、不可变、经过独立验证的 Candidate 交给用户审批。**
+
+## Remote Nautilus runtime operations (Issue 22)
+
+- Research 与 Sealed Gateway 必须独立部署，分别配置 URL/token；生产环境必须使用 HTTPS/mTLS 边界，Core 中的 token 只能调用 research-only API。
+- Gateway 镜像必须精确安装 `nautilus_trader==1.231.0`，持久化 ParquetDataCatalog，禁止暴露 live/order-management endpoint。
+- 数据接入先调用 catalog ingest/validate，再把 `catalog_uri`、provider/license、Instrument scope、schema revision、quality 与 point-in-time 结果写入 Dataset Revision。
+- 升级 Nautilus 版本时必须同时更新 pin、协议契约、真实 BacktestNode CI、Candidate Bundle conformance fixture；禁止静默漂移。
+- `QUAZONAI_NAUTILUS_SEALED_*` 只能提供给 sealed evaluator worker，不得提供给 Research Mission/Codex 子进程。

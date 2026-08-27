@@ -34,9 +34,7 @@ def _leaf_command_paths(
     prefix: tuple[str, ...] = (),
 ) -> set[str]:
     subparser_actions = [
-        action
-        for action in parser._actions
-        if isinstance(action, argparse._SubParsersAction)
+        action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
     ]
     if not subparser_actions:
         return {" ".join(prefix)}
@@ -127,9 +125,7 @@ def test_skill_defers_to_repository_authority_when_available() -> None:
 
 
 def test_documented_command_inventory_matches_argparse_tree() -> None:
-    documented = _documented_command_paths(
-        CLI_REFERENCE_PATH.read_text(encoding="utf-8")
-    )
+    documented = _documented_command_paths(CLI_REFERENCE_PATH.read_text(encoding="utf-8"))
     implemented = _leaf_command_paths(build_parser())
 
     assert documented == implemented, (
@@ -139,9 +135,7 @@ def test_documented_command_inventory_matches_argparse_tree() -> None:
 
 
 def test_skill_does_not_advertise_design_only_commands() -> None:
-    combined = "\n".join(
-        path.read_text(encoding="utf-8") for path in _skill_documents()
-    )
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in _skill_documents())
     stale_invocations = {
         "quazonai mandate ",
         "quazonai portfolio list",
@@ -178,9 +172,7 @@ def test_all_documented_shell_commands_parse() -> None:
 
 
 def test_candidate_decisions_are_prepared_but_never_executed_by_agents() -> None:
-    combined = "\n".join(
-        path.read_text(encoding="utf-8") for path in _skill_documents()
-    )
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in _skill_documents())
     bash_commands = [
         command
         for path in _skill_documents()
@@ -191,8 +183,7 @@ def test_candidate_decisions_are_prepared_but_never_executed_by_agents() -> None
     assert "An AI Agent must never execute `approval approve` or `approval reject`" in combined
     assert "Human-only decision" in combined
     assert not any(
-        re.match(r"^quazonai approval (approve|reject)\b", command)
-        and "--help" not in command
+        re.match(r"^quazonai approval (approve|reject)\b", command) and "--help" not in command
         for command in bash_commands
     )
 
@@ -226,16 +217,12 @@ def test_high_risk_argument_shapes_match_documentation() -> None:
     assert approve.downstream_id == "downstream-1"
     assert approve.expected_state == "PENDING"
 
-    reject = parser.parse_args(
-        ["approval", "reject", "approval-1", "--reason", "RISK_LIMIT"]
-    )
+    reject = parser.parse_args(["approval", "reject", "approval-1", "--reason", "RISK_LIMIT"])
     assert reject.id == "approval-1"
     assert reject.reason_code == "RISK_LIMIT"
     assert reject.note is None
 
-    revoke = parser.parse_args(
-        ["handoff", "revoke", "handoff-1", "--reason", "SUPERSEDED"]
-    )
+    revoke = parser.parse_args(["handoff", "revoke", "handoff-1", "--reason", "SUPERSEDED"])
     assert revoke.id == "handoff-1"
     assert revoke.reason_code == "SUPERSEDED"
 
@@ -266,13 +253,11 @@ def test_high_risk_argument_shapes_match_documentation() -> None:
     assert "--reason <REASON_CODE>" in reference
     assert "quazonai handoff revoke <HANDOFF_ID> --reason <REASON_CODE>" in reference
     assert "Do not rewrite them as positional arguments" in reference
-    assert "quazonai data-source create \\\n  \"<NAME>\"" in reference
+    assert 'quazonai data-source create \\\n  "<NAME>"' in reference
 
 
 def test_global_endpoint_examples_use_argparse_order() -> None:
-    combined = "\n".join(
-        path.read_text(encoding="utf-8") for path in _skill_documents()
-    )
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in _skill_documents())
 
     assert "quazonai --endpoint http://127.0.0.1:8000 status" in combined
     assert not re.search(r"(?m)^\s*quazonai status --endpoint", combined)

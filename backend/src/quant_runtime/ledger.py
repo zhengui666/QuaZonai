@@ -4,13 +4,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from db.models import DatasetRevision, Event, ResearchMission, SearchLedgerEntry
+from db.models import DatasetRevision, ResearchMission, SearchLedgerEntry
 from errors import QfError
 from quant_runtime.client import NautilusQuantRuntime, RemoteNautilusConfig
 from quant_runtime.contracts import (
@@ -23,31 +22,6 @@ from quant_runtime.contracts import (
 
 def _now() -> datetime:
     return datetime.now(UTC)
-
-
-def _event(
-    session: Session,
-    *,
-    kind: str,
-    program_id: UUID,
-    mission_id: UUID | None,
-    entry_id: UUID,
-    payload: dict[str, Any] | None = None,
-) -> None:
-    session.add(
-        Event(
-            kind=kind,
-            aggregate_type="RESEARCH_PROGRAM",
-            aggregate_id=program_id,
-            actor_kind="SYSTEM",
-            actor_metadata={},
-            payload={
-                "search_ledger_entry_id": str(entry_id),
-                "mission_id": str(mission_id) if mission_id else None,
-                **(payload or {}),
-            },
-        )
-    )
 
 
 class ExperimentCoordinator:
@@ -99,14 +73,6 @@ class ExperimentCoordinator:
                 failure_message=None,
             )
             session.add(entry)
-            _event(
-                session,
-                kind="NAUTILUS_EXPERIMENT_STARTED",
-                program_id=program_id,
-                mission_id=mission_id,
-                entry_id=entry.id,
-                payload={"mode": entry.mode},
-            )
 
         try:
             config = RemoteNautilusConfig.from_env(sealed=sealed)
@@ -128,14 +94,6 @@ class ExperimentCoordinator:
                 entry.finished_at = _now()
                 entry.failure_code = str(getattr(exc, "code", type(exc).__name__))[:100]
                 entry.failure_message = str(exc)[-12000:]
-                _event(
-                    session,
-                    kind="NAUTILUS_EXPERIMENT_FAILED",
-                    program_id=program_id,
-                    mission_id=mission_id,
-                    entry_id=entry.id,
-                    payload={"failure_code": entry.failure_code},
-                )
             raise
 
         with self._factory() as session, session.begin():
@@ -155,14 +113,6 @@ class ExperimentCoordinator:
             else:
                 entry.evidence_json = result.model_dump(mode="json")
                 entry.disclosure_json = {}
-            _event(
-                session,
-                kind="NAUTILUS_EXPERIMENT_SUCCEEDED",
-                program_id=program_id,
-                mission_id=mission_id,
-                entry_id=entry.id,
-                payload={"remote_run_id": entry.remote_run_id, "mode": entry.mode},
-            )
             session.flush()
             session.expunge(entry)
             return entry

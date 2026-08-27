@@ -71,9 +71,7 @@ def inspect_wheel(path: Path) -> WheelMetadata:
                 )
 
             metadata_names = [
-                item.filename
-                for item in members
-                if item.filename.endswith(".dist-info/METADATA")
+                item.filename for item in members if item.filename.endswith(".dist-info/METADATA")
             ]
             if len(metadata_names) != 1:
                 raise QfError(

@@ -66,7 +66,9 @@ class StrategyArtifact(StrictModel):
         for path in self.source_files:
             parts = path.replace("\\", "/").split("/")
             if path.startswith(("/", "\\")) or ".." in parts:
-                raise ValueError("strategy source paths must be relative and traversal-free")
+                raise ValueError(
+                    "strategy source paths must be relative and traversal-free"
+                )
         return self
 
 

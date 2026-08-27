@@ -279,3 +279,7 @@ HANDOFF_CONNECTOR
 - 实现报告与独立复核报告均已提交。
 
 未满足任一项，只能标记为部分完成，不得宣称 conforming/release-ready。
+
+## Issue 22 effective Nautilus ownership boundary
+
+本节覆盖旧版“禁止 Nautilus”或“仅输出 TargetPortfolioFrame”的描述。允许在协议、文档、Candidate Bundle 与独立 `nautilus_runtime/` 服务中使用 NautilusTrader；`backend/src` 可调用远程 Gateway，但严禁导入 `nautilus_trader` 或拥有 live broker/order/account control。唯一可晋级证据来自 Search Ledger 中真实远程 Nautilus 运行；Candidate Bundle 必须复用相同 StrategyArtifact。`tools/check_quant_runtime_boundary.py` 是精确 AST ownership 检查，禁止恢复全仓字符串黑名单。

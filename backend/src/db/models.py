@@ -23,6 +23,7 @@ from db.domain_models import (
     ResearchCharter,
     ResearchMission,
     ResearchProgram,
+    SearchLedgerEntry,
 )
 from db.plugin_models import (
     CredentialSecret,
@@ -64,4 +65,5 @@ __all__ = [
     "CandidatePackage",
     "HandoffOffer",
     "ForwardEvidenceEpisode",
+    "SearchLedgerEntry",
 ]

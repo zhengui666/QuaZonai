@@ -136,7 +136,9 @@ class NautilusQuantRuntime:
         self._client = httpx.Client(
             base_url=config.base_url.rstrip("/") + "/",
             headers=headers,
-            timeout=httpx.Timeout(config.timeout_seconds, connect=min(config.timeout_seconds, 15.0)),
+            timeout=httpx.Timeout(
+                config.timeout_seconds, connect=min(config.timeout_seconds, 15.0)
+            ),
             transport=transport,
             follow_redirects=False,
         )

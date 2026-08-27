@@ -22,22 +22,35 @@ from quazonai_nautilus_gateway.models import (
 def _authorize(authorization: Annotated[str | None, Header()] = None) -> None:
     configured = os.getenv("NAUTILUS_GATEWAY_TOKEN", "")
     if not configured:
-        if os.getenv("NAUTILUS_GATEWAY_ALLOW_ANONYMOUS", "false").lower() in {"1", "true", "yes"}:
+        if os.getenv("NAUTILUS_GATEWAY_ALLOW_ANONYMOUS", "false").lower() in {
+            "1",
+            "true",
+            "yes",
+        }:
             return
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="gateway token missing")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="gateway token missing",
+        )
     expected = f"Bearer {configured}"
     if authorization is None or not hmac.compare_digest(authorization, expected):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid bearer token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid bearer token"
+        )
 
 
 def create_app(*, data_root: Path | None = None) -> FastAPI:
-    root = data_root or Path(os.getenv("NAUTILUS_GATEWAY_DATA_ROOT", "/var/lib/quazonai-nautilus"))
+    root = data_root or Path(
+        os.getenv("NAUTILUS_GATEWAY_DATA_ROOT", "/tmp/quazonai-nautilus")
+    )
     engine = NautilusGatewayEngine(root)
     app = FastAPI(title="QuaZonai Remote Nautilus Gateway", version="1")
 
     @app.exception_handler(GatewayContractError)
     async def contract_error(_: Any, exc: GatewayContractError) -> JSONResponse:
-        return JSONResponse(status_code=422, content={"code": "CONTRACT_INVALID", "detail": str(exc)})
+        return JSONResponse(
+            status_code=422, content={"code": "CONTRACT_INVALID", "detail": str(exc)}
+        )
 
     @app.get("/healthz", include_in_schema=False)
     def health() -> dict[str, str]:

@@ -510,10 +510,14 @@ def _program_view(session: Session, item: ResearchProgram) -> ResearchProgramVie
         select(func.count()).select_from(ResearchBranch).where(ResearchBranch.program_id == item.id)
     )
     mission_count = session.scalar(
-        select(func.count()).select_from(ResearchMission).where(ResearchMission.program_id == item.id)
+        select(func.count())
+        .select_from(ResearchMission)
+        .where(ResearchMission.program_id == item.id)
     )
     alpha_count = session.scalar(
-        select(func.count()).select_from(AlphaQualification).where(AlphaQualification.program_id == item.id)
+        select(func.count())
+        .select_from(AlphaQualification)
+        .where(AlphaQualification.program_id == item.id)
     )
     return ResearchProgramView(
         id=item.id,
@@ -639,7 +643,9 @@ def _handoff_view(session: Session, item: HandoffOffer) -> HandoffView:
 
 def _find_duplicate_program(session: Session, idea: str) -> ResearchProgram | None:
     normalized = idea.strip().casefold()
-    for program in session.scalars(select(ResearchProgram).order_by(ResearchProgram.created_at.desc())):
+    for program in session.scalars(
+        select(ResearchProgram).order_by(ResearchProgram.created_at.desc())
+    ):
         charter = session.get(ResearchCharter, program.charter_id)
         if charter and charter.original_idea_text.strip().casefold() == normalized:
             return program
@@ -726,6 +732,7 @@ def create_program(
         raise QfError("OVERLAP_ACTION_INVALID", "Overlap action is invalid.", 422)
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
+
         def action() -> dict[str, Any]:
             duplicate = _find_duplicate_program(session, payload.idea)
             if duplicate is not None and payload.overlap_action in {None, "recommended"}:
@@ -869,7 +876,9 @@ def list_programs(request: Request) -> list[ResearchProgramView]:
     with factory() as session:
         return [
             _program_view(session, item)
-            for item in session.scalars(select(ResearchProgram).order_by(ResearchProgram.created_at.desc()))
+            for item in session.scalars(
+                select(ResearchProgram).order_by(ResearchProgram.created_at.desc())
+            )
         ]
 
 
@@ -898,6 +907,7 @@ def _program_action(
     }
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
+
         def action() -> dict[str, Any]:
             item = session.execute(
                 select(ResearchProgram).where(ResearchProgram.id == program_id).with_for_update()
@@ -941,22 +951,42 @@ def _program_action(
 
 
 @router.post("/research-programs/{program_id}/pause", response_model=ResearchProgramView)
-def pause_program(program_id: UUID, payload: ProgramActionInput, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def pause_program(
+    program_id: UUID,
+    payload: ProgramActionInput,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     return _program_action(program_id, payload, request, idempotency_key, "pause")
 
 
 @router.post("/research-programs/{program_id}/resume", response_model=ResearchProgramView)
-def resume_program(program_id: UUID, payload: ProgramActionInput, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def resume_program(
+    program_id: UUID,
+    payload: ProgramActionInput,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     return _program_action(program_id, payload, request, idempotency_key, "resume")
 
 
 @router.post("/research-programs/{program_id}/archive", response_model=ResearchProgramView)
-def archive_program(program_id: UUID, payload: ProgramActionInput, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def archive_program(
+    program_id: UUID,
+    payload: ProgramActionInput,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     return _program_action(program_id, payload, request, idempotency_key, "archive")
 
 
 @router.post("/research-programs/{program_id}/restore", response_model=ResearchProgramView)
-def restore_program(program_id: UUID, payload: ProgramActionInput, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def restore_program(
+    program_id: UUID,
+    payload: ProgramActionInput,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     return _program_action(program_id, payload, request, idempotency_key, "restore")
 
 
@@ -1024,7 +1054,9 @@ def get_alpha(qualification_id: UUID, request: Request) -> AlphaView:
     with factory() as session:
         item = session.get(AlphaQualification, qualification_id)
         if item is None:
-            raise QfError("ALPHA_QUALIFICATION_NOT_FOUND", "Alpha Qualification was not found.", 404)
+            raise QfError(
+                "ALPHA_QUALIFICATION_NOT_FOUND", "Alpha Qualification was not found.", 404
+            )
         return _alpha_view(item)
 
 
@@ -1046,28 +1078,62 @@ def list_mandates(request: Request) -> list[MandateView]:
         ]
 
 
-def _toggle_mandate(mandate_id: UUID, request: Request, idempotency_key: str | None, enabled: bool) -> dict[str, Any]:
+def _toggle_mandate(
+    mandate_id: UUID, request: Request, idempotency_key: str | None, enabled: bool
+) -> dict[str, Any]:
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
+
         def action() -> dict[str, Any]:
-            item = session.execute(select(PortfolioMandate).where(PortfolioMandate.id == mandate_id).with_for_update()).scalar_one_or_none()
+            item = session.execute(
+                select(PortfolioMandate).where(PortfolioMandate.id == mandate_id).with_for_update()
+            ).scalar_one_or_none()
             if item is None:
                 raise QfError("MANDATE_NOT_FOUND", "Portfolio Mandate was not found.", 404)
             item.enabled = enabled
-            _event(session, "MANDATE_ENABLED" if enabled else "MANDATE_DISABLED", "PORTFOLIO_MANDATE", item.id, {}, actor_kind="HUMAN")
+            _event(
+                session,
+                "MANDATE_ENABLED" if enabled else "MANDATE_DISABLED",
+                "PORTFOLIO_MANDATE",
+                item.id,
+                {},
+                actor_kind="HUMAN",
+            )
             session.flush()
-            return MandateView(id=item.id, key=item.key, name=item.name, enabled=item.enabled, latest_version_id=item.latest_version_id, spec_json=item.spec_json, state=item.state).model_dump(mode="json")
+            return MandateView(
+                id=item.id,
+                key=item.key,
+                name=item.name,
+                enabled=item.enabled,
+                latest_version_id=item.latest_version_id,
+                spec_json=item.spec_json,
+                state=item.state,
+            ).model_dump(mode="json")
 
-        return _idempotent(session, idempotency_key, f"portfolio-mandate.{'enable' if enabled else 'disable'}:{mandate_id}", {}, action)
+        return _idempotent(
+            session,
+            idempotency_key,
+            f"portfolio-mandate.{'enable' if enabled else 'disable'}:{mandate_id}",
+            {},
+            action,
+        )
 
 
 @router.post("/portfolio-mandates/{mandate_id}/enable", response_model=MandateView)
-def enable_mandate(mandate_id: UUID, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def enable_mandate(
+    mandate_id: UUID,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     return _toggle_mandate(mandate_id, request, idempotency_key, True)
 
 
 @router.post("/portfolio-mandates/{mandate_id}/disable", response_model=MandateView)
-def disable_mandate(mandate_id: UUID, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def disable_mandate(
+    mandate_id: UUID,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     return _toggle_mandate(mandate_id, request, idempotency_key, False)
 
 
@@ -1076,9 +1142,26 @@ def list_portfolio_programs(request: Request) -> list[PortfolioProgramView]:
     factory = request.app.state.session_factory
     with factory() as session:
         result: list[PortfolioProgramView] = []
-        for item in session.scalars(select(PortfolioProgram).order_by(PortfolioProgram.created_at.desc())):
-            count = session.scalar(select(func.count()).select_from(PortfolioCandidate).where(PortfolioCandidate.portfolio_program_id == item.id))
-            result.append(PortfolioProgramView(id=item.id, mandate_version_id=item.mandate_version_id, mandate_name=item.mandate_name, state=item.state, created_at=_iso(item.created_at), updated_at=_iso(item.updated_at), candidate_count=int(count or 0), current_candidate_id=item.current_candidate_id))
+        for item in session.scalars(
+            select(PortfolioProgram).order_by(PortfolioProgram.created_at.desc())
+        ):
+            count = session.scalar(
+                select(func.count())
+                .select_from(PortfolioCandidate)
+                .where(PortfolioCandidate.portfolio_program_id == item.id)
+            )
+            result.append(
+                PortfolioProgramView(
+                    id=item.id,
+                    mandate_version_id=item.mandate_version_id,
+                    mandate_name=item.mandate_name,
+                    state=item.state,
+                    created_at=_iso(item.created_at),
+                    updated_at=_iso(item.updated_at),
+                    candidate_count=int(count or 0),
+                    current_candidate_id=item.current_candidate_id,
+                )
+            )
         return result
 
 
@@ -1096,7 +1179,12 @@ def get_candidate(candidate_id: UUID, request: Request) -> CandidateView:
 def list_approvals(request: Request) -> list[ApprovalView]:
     factory = request.app.state.session_factory
     with factory() as session:
-        return [_approval_view(session, item) for item in session.scalars(select(ApprovalSnapshot).order_by(ApprovalSnapshot.created_at.desc()))]
+        return [
+            _approval_view(session, item)
+            for item in session.scalars(
+                select(ApprovalSnapshot).order_by(ApprovalSnapshot.created_at.desc())
+            )
+        ]
 
 
 @router.get("/approvals/{approval_id}", response_model=ApprovalView)
@@ -1112,7 +1200,9 @@ def get_approval(approval_id: UUID, request: Request) -> ApprovalView:
 def _expire_approval_if_needed(request: Request, approval_id: UUID) -> bool:
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
-        approval = session.execute(select(ApprovalSnapshot).where(ApprovalSnapshot.id == approval_id).with_for_update()).scalar_one_or_none()
+        approval = session.execute(
+            select(ApprovalSnapshot).where(ApprovalSnapshot.id == approval_id).with_for_update()
+        ).scalar_one_or_none()
         if approval is None:
             return False
         if approval.state == "PENDING" and _is_past(approval.valid_until):
@@ -1128,13 +1218,21 @@ def _feedback_contract_snapshot(downstream: DownstreamSystem, purpose: str) -> d
     if not isinstance(configured, dict):
         configured = {}
     required_fields = configured.get("required_fields", [])
-    if not isinstance(required_fields, list) or not all(isinstance(item, str) for item in required_fields):
-        raise QfError("FEEDBACK_CONTRACT_INVALID", "feedback_contract.required_fields must be a list of strings.", 422)
+    if not isinstance(required_fields, list) or not all(
+        isinstance(item, str) for item in required_fields
+    ):
+        raise QfError(
+            "FEEDBACK_CONTRACT_INVALID",
+            "feedback_contract.required_fields must be a list of strings.",
+            422,
+        )
     try:
         minimum_duration = int(configured.get("minimum_observation_duration_seconds", 1))
         minimum_sample = int(configured.get("minimum_valid_sample_size", 1))
     except (TypeError, ValueError) as exc:
-        raise QfError("FEEDBACK_CONTRACT_INVALID", "Feedback contract minimums must be integers.", 422) from exc
+        raise QfError(
+            "FEEDBACK_CONTRACT_INVALID", "Feedback contract minimums must be integers.", 422
+        ) from exc
     if minimum_duration < 0 or minimum_sample < 1:
         raise QfError("FEEDBACK_CONTRACT_INVALID", "Feedback contract minimums are invalid.", 422)
     return {
@@ -1143,35 +1241,69 @@ def _feedback_contract_snapshot(downstream: DownstreamSystem, purpose: str) -> d
         "minimum_observation_duration_seconds": minimum_duration,
         "minimum_valid_sample_size": minimum_sample,
         "required_fields": required_fields,
-        "accepted_package_contracts": configured.get("accepted_package_contracts", [downstream.package_contract_version]),
-        "accepted_arrow_contracts": configured.get("accepted_arrow_contracts", ["arrow-ipc-file-v1"]),
+        "accepted_package_contracts": configured.get(
+            "accepted_package_contracts", [downstream.package_contract_version]
+        ),
+        "accepted_arrow_contracts": configured.get(
+            "accepted_arrow_contracts", ["arrow-ipc-file-v1"]
+        ),
         "disclosure_policy": configured.get("disclosure_policy", "FULL"),
     }
 
 
 @router.post("/approvals/{approval_id}/approve", response_model=ApprovalView)
-def approve_candidate(approval_id: UUID, payload: ApprovalApproveInput, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def approve_candidate(
+    approval_id: UUID,
+    payload: ApprovalApproveInput,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     if _expire_approval_if_needed(request, approval_id):
         raise QfError("APPROVAL_EXPIRED", "Approval validity window has expired.", 409)
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
+
         def action() -> dict[str, Any]:
-            approval = session.execute(select(ApprovalSnapshot).where(ApprovalSnapshot.id == approval_id).with_for_update()).scalar_one_or_none()
+            approval = session.execute(
+                select(ApprovalSnapshot).where(ApprovalSnapshot.id == approval_id).with_for_update()
+            ).scalar_one_or_none()
             if approval is None:
                 raise QfError("APPROVAL_NOT_FOUND", "Approval Snapshot was not found.", 404)
             if approval.state != payload.expected_state or approval.state != "PENDING":
-                raise QfError("APPROVAL_STATE_CONFLICT", "Approval state changed before the decision.", 409, {"expected": payload.expected_state, "actual": approval.state})
+                raise QfError(
+                    "APPROVAL_STATE_CONFLICT",
+                    "Approval state changed before the decision.",
+                    409,
+                    {"expected": payload.expected_state, "actual": approval.state},
+                )
             downstream = session.get(DownstreamSystem, payload.downstream_system_id)
-            if downstream is None or not downstream.enabled or downstream.preflight_state != "READY":
+            if (
+                downstream is None
+                or not downstream.enabled
+                or downstream.preflight_state != "READY"
+            ):
                 raise QfError("DOWNSTREAM_NOT_READY", "Selected downstream is not ready.", 409)
             if downstream.environment_type != approval.purpose:
-                raise QfError("DOWNSTREAM_INCOMPATIBLE", "Downstream environment does not match Approval purpose.", 409)
+                raise QfError(
+                    "DOWNSTREAM_INCOMPATIBLE",
+                    "Downstream environment does not match Approval purpose.",
+                    409,
+                )
             if downstream.service_token_ciphertext is None:
-                raise QfError("DOWNSTREAM_CREDENTIAL_NOT_CONFIGURED", "Selected downstream has no service credential.", 409)
+                raise QfError(
+                    "DOWNSTREAM_CREDENTIAL_NOT_CONFIGURED",
+                    "Selected downstream has no service credential.",
+                    409,
+                )
             candidate = session.get(PortfolioCandidate, approval.candidate_id)
             if candidate is None:
                 raise QfError("CANDIDATE_NOT_FOUND", "Approval candidate was not found.", 500)
-            built = build_candidate_package(request.app.state.settings, approval=approval, candidate=candidate, downstream=downstream)
+            built = build_candidate_package(
+                request.app.state.settings,
+                approval=approval,
+                candidate=candidate,
+                downstream=downstream,
+            )
             package = CandidatePackage(
                 approval_id=approval.id,
                 candidate_id=candidate.id,
@@ -1201,63 +1333,127 @@ def approve_candidate(approval_id: UUID, payload: ApprovalApproveInput, request:
             approval.state = "APPROVED"
             approval.downstream_system_id = downstream.id
             approval.revision += 1
-            _event(session, "APPROVAL_APPROVED", "APPROVAL", approval.id, {"candidate_id": str(candidate.id), "handoff_id": str(handoff.id)}, actor_kind="HUMAN")
-            _event(session, "HANDOFF_AVAILABLE", "HANDOFF", handoff.id, {"candidate_id": str(candidate.id), "approval_id": str(approval.id)})
+            _event(
+                session,
+                "APPROVAL_APPROVED",
+                "APPROVAL",
+                approval.id,
+                {"candidate_id": str(candidate.id), "handoff_id": str(handoff.id)},
+                actor_kind="HUMAN",
+            )
+            _event(
+                session,
+                "HANDOFF_AVAILABLE",
+                "HANDOFF",
+                handoff.id,
+                {"candidate_id": str(candidate.id), "approval_id": str(approval.id)},
+            )
             session.flush()
             return _approval_view(session, approval).model_dump(mode="json")
 
-        return _idempotent(session, idempotency_key, f"approval.approve:{approval_id}", payload, action)
+        return _idempotent(
+            session, idempotency_key, f"approval.approve:{approval_id}", payload, action
+        )
 
 
 @router.post("/approvals/{approval_id}/reject", response_model=ApprovalView)
-def reject_candidate(approval_id: UUID, payload: ApprovalRejectInput, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def reject_candidate(
+    approval_id: UUID,
+    payload: ApprovalRejectInput,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     if _expire_approval_if_needed(request, approval_id):
         raise QfError("APPROVAL_EXPIRED", "Approval validity window has expired.", 409)
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
+
         def action() -> dict[str, Any]:
-            approval = session.execute(select(ApprovalSnapshot).where(ApprovalSnapshot.id == approval_id).with_for_update()).scalar_one_or_none()
+            approval = session.execute(
+                select(ApprovalSnapshot).where(ApprovalSnapshot.id == approval_id).with_for_update()
+            ).scalar_one_or_none()
             if approval is None:
                 raise QfError("APPROVAL_NOT_FOUND", "Approval Snapshot was not found.", 404)
             if approval.state != payload.expected_state or approval.state != "PENDING":
                 raise QfError("APPROVAL_STATE_CONFLICT", "Approval state changed.", 409)
             approval.state = "REJECTED"
             approval.revision += 1
-            approval.human_report = {"decision": "REJECT", "reason_code": payload.reason_code, "note": payload.note}
-            _event(session, "APPROVAL_REJECTED", "APPROVAL", approval.id, {"reason_code": payload.reason_code}, actor_kind="HUMAN")
+            approval.human_report = {
+                "decision": "REJECT",
+                "reason_code": payload.reason_code,
+                "note": payload.note,
+            }
+            _event(
+                session,
+                "APPROVAL_REJECTED",
+                "APPROVAL",
+                approval.id,
+                {"reason_code": payload.reason_code},
+                actor_kind="HUMAN",
+            )
             session.flush()
             return _approval_view(session, approval).model_dump(mode="json")
 
-        return _idempotent(session, idempotency_key, f"approval.reject:{approval_id}", payload, action)
+        return _idempotent(
+            session, idempotency_key, f"approval.reject:{approval_id}", payload, action
+        )
 
 
 @router.get("/handoffs", response_model=list[HandoffView])
 def list_handoffs(request: Request) -> list[HandoffView]:
     factory = request.app.state.session_factory
     with factory() as session:
-        return [_handoff_view(session, item) for item in session.scalars(select(HandoffOffer).order_by(HandoffOffer.created_at.desc()))]
+        return [
+            _handoff_view(session, item)
+            for item in session.scalars(
+                select(HandoffOffer).order_by(HandoffOffer.created_at.desc())
+            )
+        ]
 
 
 @router.post("/handoffs/{handoff_id}/revoke", response_model=HandoffView)
-def revoke_handoff(handoff_id: UUID, payload: HandoffRevokeInput, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def revoke_handoff(
+    handoff_id: UUID,
+    payload: HandoffRevokeInput,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
+
         def action() -> dict[str, Any]:
-            handoff = session.execute(select(HandoffOffer).where(HandoffOffer.id == handoff_id).with_for_update()).scalar_one_or_none()
+            handoff = session.execute(
+                select(HandoffOffer).where(HandoffOffer.id == handoff_id).with_for_update()
+            ).scalar_one_or_none()
             if handoff is None:
                 raise QfError("HANDOFF_NOT_FOUND", "Handoff was not found.", 404)
             if handoff.state not in {"APPROVED", "PUBLISHING", "AVAILABLE"}:
-                raise QfError("HANDOFF_ALREADY_OWNED", "Claimed or terminal Handoff cannot be revoked by QuaZonai.", 409)
+                raise QfError(
+                    "HANDOFF_ALREADY_OWNED",
+                    "Claimed or terminal Handoff cannot be revoked by QuaZonai.",
+                    409,
+                )
             handoff.state = "REVOKED"
             handoff.stale_reason = payload.reason_code
-            _event(session, "HANDOFF_REVOKED", "HANDOFF", handoff.id, {"reason_code": payload.reason_code}, actor_kind="HUMAN")
+            _event(
+                session,
+                "HANDOFF_REVOKED",
+                "HANDOFF",
+                handoff.id,
+                {"reason_code": payload.reason_code},
+                actor_kind="HUMAN",
+            )
             session.flush()
             return _handoff_view(session, handoff).model_dump(mode="json")
 
-        return _idempotent(session, idempotency_key, f"handoff.revoke:{handoff_id}", payload, action)
+        return _idempotent(
+            session, idempotency_key, f"handoff.revoke:{handoff_id}", payload, action
+        )
 
 
-def _authenticate_handoff(session: Session, request: Request, handoff: HandoffOffer, authorization: str | None) -> DownstreamSystem:
+def _authenticate_handoff(
+    session: Session, request: Request, handoff: HandoffOffer, authorization: str | None
+) -> DownstreamSystem:
     downstream = session.get(DownstreamSystem, handoff.downstream_system_id)
     if downstream is None:
         raise QfError("DOWNSTREAM_NOT_FOUND", "Handoff Downstream System is missing.", 500)
@@ -1268,7 +1464,9 @@ def _authenticate_handoff(session: Session, request: Request, handoff: HandoffOf
 def _expire_handoff_if_needed(request: Request, handoff_id: UUID) -> bool:
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
-        handoff = session.execute(select(HandoffOffer).where(HandoffOffer.id == handoff_id).with_for_update()).scalar_one_or_none()
+        handoff = session.execute(
+            select(HandoffOffer).where(HandoffOffer.id == handoff_id).with_for_update()
+        ).scalar_one_or_none()
         if handoff is None:
             return False
         if handoff.state == "AVAILABLE" and _is_past(handoff.claim_deadline):
@@ -1279,18 +1477,29 @@ def _expire_handoff_if_needed(request: Request, handoff_id: UUID) -> bool:
 
 
 @router.post("/handoffs/{handoff_id}/claim", response_model=HandoffView)
-def claim_handoff(handoff_id: UUID, payload: HandoffStateInput, request: Request, authorization: str | None = Header(default=None, alias="Authorization"), idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def claim_handoff(
+    handoff_id: UUID,
+    payload: HandoffStateInput,
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     if _expire_handoff_if_needed(request, handoff_id):
         raise QfError("HANDOFF_EXPIRED", "Handoff claim deadline expired.", 409)
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
+
         def action() -> dict[str, Any]:
-            handoff = session.execute(select(HandoffOffer).where(HandoffOffer.id == handoff_id).with_for_update()).scalar_one_or_none()
+            handoff = session.execute(
+                select(HandoffOffer).where(HandoffOffer.id == handoff_id).with_for_update()
+            ).scalar_one_or_none()
             if handoff is None:
                 raise QfError("HANDOFF_NOT_FOUND", "Handoff was not found.", 404)
             _authenticate_handoff(session, request, handoff, authorization)
             if handoff.state != "AVAILABLE":
-                raise QfError("HANDOFF_STATE_CONFLICT", "Only Available Handoffs can be claimed.", 409)
+                raise QfError(
+                    "HANDOFF_STATE_CONFLICT", "Only Available Handoffs can be claimed.", 409
+                )
             if payload.expected_state and payload.expected_state != handoff.state:
                 raise QfError("HANDOFF_STATE_CONFLICT", "Handoff state changed before claim.", 409)
             handoff.state = "CLAIMED"
@@ -1303,18 +1512,31 @@ def claim_handoff(handoff_id: UUID, payload: HandoffStateInput, request: Request
 
 
 @router.post("/handoffs/{handoff_id}/accept", response_model=HandoffView)
-def accept_handoff(handoff_id: UUID, payload: HandoffStateInput, request: Request, authorization: str | None = Header(default=None, alias="Authorization"), idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def accept_handoff(
+    handoff_id: UUID,
+    payload: HandoffStateInput,
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
+
         def action() -> dict[str, Any]:
-            handoff = session.execute(select(HandoffOffer).where(HandoffOffer.id == handoff_id).with_for_update()).scalar_one_or_none()
+            handoff = session.execute(
+                select(HandoffOffer).where(HandoffOffer.id == handoff_id).with_for_update()
+            ).scalar_one_or_none()
             if handoff is None:
                 raise QfError("HANDOFF_NOT_FOUND", "Handoff was not found.", 404)
             _authenticate_handoff(session, request, handoff, authorization)
             if handoff.state != "CLAIMED":
-                raise QfError("HANDOFF_STATE_CONFLICT", "Only Claimed Handoffs can be accepted.", 409)
+                raise QfError(
+                    "HANDOFF_STATE_CONFLICT", "Only Claimed Handoffs can be accepted.", 409
+                )
             if payload.expected_state and payload.expected_state != handoff.state:
-                raise QfError("HANDOFF_STATE_CONFLICT", "Handoff state changed before acceptance.", 409)
+                raise QfError(
+                    "HANDOFF_STATE_CONFLICT", "Handoff state changed before acceptance.", 409
+                )
             handoff.state = "DOWNSTREAM_ACCEPTED"
             handoff.accepted_at = _now()
             handoff.feedback_state = "FEEDBACK_PENDING"
@@ -1322,15 +1544,26 @@ def accept_handoff(handoff_id: UUID, payload: HandoffStateInput, request: Reques
             session.flush()
             return _handoff_view(session, handoff).model_dump(mode="json")
 
-        return _idempotent(session, idempotency_key, f"handoff.accept:{handoff_id}", payload, action)
+        return _idempotent(
+            session, idempotency_key, f"handoff.accept:{handoff_id}", payload, action
+        )
 
 
 @router.post("/handoffs/{handoff_id}/reject", response_model=HandoffView)
-def downstream_reject_handoff(handoff_id: UUID, payload: HandoffStateInput, request: Request, authorization: str | None = Header(default=None, alias="Authorization"), idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def downstream_reject_handoff(
+    handoff_id: UUID,
+    payload: HandoffStateInput,
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
+
         def action() -> dict[str, Any]:
-            handoff = session.execute(select(HandoffOffer).where(HandoffOffer.id == handoff_id).with_for_update()).scalar_one_or_none()
+            handoff = session.execute(
+                select(HandoffOffer).where(HandoffOffer.id == handoff_id).with_for_update()
+            ).scalar_one_or_none()
             if handoff is None:
                 raise QfError("HANDOFF_NOT_FOUND", "Handoff was not found.", 404)
             _authenticate_handoff(session, request, handoff, authorization)
@@ -1338,31 +1571,56 @@ def downstream_reject_handoff(handoff_id: UUID, payload: HandoffStateInput, requ
                 raise QfError("HANDOFF_STATE_CONFLICT", "Handoff cannot be rejected now.", 409)
             handoff.state = "DOWNSTREAM_REJECTED"
             handoff.stale_reason = payload.reason_code
-            _event(session, "HANDOFF_DOWNSTREAM_REJECTED", "HANDOFF", handoff.id, {"reason_code": payload.reason_code})
+            _event(
+                session,
+                "HANDOFF_DOWNSTREAM_REJECTED",
+                "HANDOFF",
+                handoff.id,
+                {"reason_code": payload.reason_code},
+            )
             session.flush()
             return _handoff_view(session, handoff).model_dump(mode="json")
 
-        return _idempotent(session, idempotency_key, f"handoff.downstream-reject:{handoff_id}", payload, action)
+        return _idempotent(
+            session, idempotency_key, f"handoff.downstream-reject:{handoff_id}", payload, action
+        )
 
 
 @router.get("/handoffs/{handoff_id}/package", response_class=FileResponse)
-def get_handoff_package(handoff_id: UUID, request: Request, authorization: str | None = Header(default=None, alias="Authorization")) -> FileResponse:
+def get_handoff_package(
+    handoff_id: UUID,
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> FileResponse:
     factory = request.app.state.session_factory
     with factory() as session:
         handoff = session.get(HandoffOffer, handoff_id)
         if handoff is None:
             raise QfError("HANDOFF_NOT_FOUND", "Handoff was not found.", 404)
         _authenticate_handoff(session, request, handoff, authorization)
-        if handoff.state not in {"CLAIMED", "DOWNSTREAM_ACCEPTED", "FEEDBACK_PENDING", "FEEDBACK_IN_PROGRESS", "FEEDBACK_PARTIAL", "FEEDBACK_COMPLETE"}:
-            raise QfError("HANDOFF_PACKAGE_UNAVAILABLE", "Package is not available in this state.", 409)
+        if handoff.state not in {
+            "CLAIMED",
+            "DOWNSTREAM_ACCEPTED",
+            "FEEDBACK_PENDING",
+            "FEEDBACK_IN_PROGRESS",
+            "FEEDBACK_PARTIAL",
+            "FEEDBACK_COMPLETE",
+        }:
+            raise QfError(
+                "HANDOFF_PACKAGE_UNAVAILABLE", "Package is not available in this state.", 409
+            )
         package = session.get(CandidatePackage, handoff.candidate_package_id)
         if package is None:
             raise QfError("CANDIDATE_PACKAGE_NOT_FOUND", "Candidate Package was not found.", 500)
         archive = resolve_package_archive(request.app.state.settings, package.relative_path)
-        return FileResponse(archive, media_type="application/zip", filename=f"candidate-package-{package.id}.zip")
+        return FileResponse(
+            archive, media_type="application/zip", filename=f"candidate-package-{package.id}.zip"
+        )
 
 
-def _validate_complete_feedback(handoff: HandoffOffer, payload: FeedbackInput) -> tuple[datetime, datetime, int]:
+def _validate_complete_feedback(
+    handoff: HandoffOffer, payload: FeedbackInput
+) -> tuple[datetime, datetime, int]:
     problems: list[str] = []
     if payload.observation_start is None:
         problems.append("observation_start is required")
@@ -1371,7 +1629,12 @@ def _validate_complete_feedback(handoff: HandoffOffer, payload: FeedbackInput) -
     if payload.sample_size is None:
         problems.append("sample_size is required")
     if problems:
-        raise QfError("FEEDBACK_CONTRACT_INVALID", "Complete feedback does not satisfy the frozen Feedback Contract.", 422, {"problems": problems})
+        raise QfError(
+            "FEEDBACK_CONTRACT_INVALID",
+            "Complete feedback does not satisfy the frozen Feedback Contract.",
+            422,
+            {"problems": problems},
+        )
     assert payload.observation_start is not None
     assert payload.observation_end is not None
     assert payload.sample_size is not None
@@ -1390,24 +1653,49 @@ def _validate_complete_feedback(handoff: HandoffOffer, payload: FeedbackInput) -
     if not isinstance(required_fields, list):
         problems.append("frozen required_fields is invalid")
     else:
-        missing = [field for field in required_fields if field not in payload.evidence or payload.evidence[field] is None]
+        missing = [
+            field
+            for field in required_fields
+            if field not in payload.evidence or payload.evidence[field] is None
+        ]
         if missing:
-            problems.append(f"missing required evidence fields: {', '.join(str(item) for item in missing)}")
+            problems.append(
+                f"missing required evidence fields: {', '.join(str(item) for item in missing)}"
+            )
     if problems:
-        raise QfError("FEEDBACK_CONTRACT_INVALID", "Complete feedback does not satisfy the frozen Feedback Contract.", 422, {"problems": problems})
+        raise QfError(
+            "FEEDBACK_CONTRACT_INVALID",
+            "Complete feedback does not satisfy the frozen Feedback Contract.",
+            422,
+            {"problems": problems},
+        )
     return start, end, payload.sample_size
 
 
 @router.post("/handoffs/{handoff_id}/feedback", response_model=HandoffView)
-def submit_feedback(handoff_id: UUID, payload: FeedbackInput, request: Request, authorization: str | None = Header(default=None, alias="Authorization"), idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def submit_feedback(
+    handoff_id: UUID,
+    payload: FeedbackInput,
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
+
         def action() -> dict[str, Any]:
-            handoff = session.execute(select(HandoffOffer).where(HandoffOffer.id == handoff_id).with_for_update()).scalar_one_or_none()
+            handoff = session.execute(
+                select(HandoffOffer).where(HandoffOffer.id == handoff_id).with_for_update()
+            ).scalar_one_or_none()
             if handoff is None:
                 raise QfError("HANDOFF_NOT_FOUND", "Handoff was not found.", 404)
             _authenticate_handoff(session, request, handoff, authorization)
-            if handoff.state not in {"DOWNSTREAM_ACCEPTED", "FEEDBACK_PENDING", "FEEDBACK_IN_PROGRESS", "FEEDBACK_PARTIAL"}:
+            if handoff.state not in {
+                "DOWNSTREAM_ACCEPTED",
+                "FEEDBACK_PENDING",
+                "FEEDBACK_IN_PROGRESS",
+                "FEEDBACK_PARTIAL",
+            }:
                 raise QfError("HANDOFF_STATE_CONFLICT", "Handoff is not accepting feedback.", 409)
             allowed = {"FEEDBACK_IN_PROGRESS", "FEEDBACK_PARTIAL", "FEEDBACK_COMPLETE"}
             if payload.state not in allowed:
@@ -1427,22 +1715,50 @@ def submit_feedback(handoff_id: UUID, payload: FeedbackInput, request: Request, 
                 session.flush()
                 handoff.state = "FEEDBACK_COMPLETE"
                 handoff.feedback_state = "FEEDBACK_COMPLETE"
-                _event(session, "FORWARD_EVIDENCE_RECORDED", "HANDOFF", handoff.id, {"episode_id": str(episode.id), "state": "FEEDBACK_COMPLETE"})
+                _event(
+                    session,
+                    "FORWARD_EVIDENCE_RECORDED",
+                    "HANDOFF",
+                    handoff.id,
+                    {"episode_id": str(episode.id), "state": "FEEDBACK_COMPLETE"},
+                )
             else:
                 handoff.state = payload.state
                 handoff.feedback_state = payload.state
-                _event(session, "HANDOFF_FEEDBACK_STATUS", "HANDOFF", handoff.id, {"state": payload.state})
+                _event(
+                    session,
+                    "HANDOFF_FEEDBACK_STATUS",
+                    "HANDOFF",
+                    handoff.id,
+                    {"state": payload.state},
+                )
             session.flush()
             return _handoff_view(session, handoff).model_dump(mode="json")
 
-        return _idempotent(session, idempotency_key, f"handoff.feedback:{handoff_id}", payload, action)
+        return _idempotent(
+            session, idempotency_key, f"handoff.feedback:{handoff_id}", payload, action
+        )
 
 
 @router.get("/data-sources", response_model=list[DataSourceView])
 def list_data_sources(request: Request) -> list[DataSourceView]:
     factory = request.app.state.session_factory
     with factory() as session:
-        return [DataSourceView(id=item.id, name=item.name, provider=item.provider, state=item.state, universe_scope=item.universe_scope, fields=item.fields, update_cadence=item.update_cadence, preflight_state=item.preflight_state) for item in session.scalars(select(GovernedDataSource).order_by(GovernedDataSource.name))]
+        return [
+            DataSourceView(
+                id=item.id,
+                name=item.name,
+                provider=item.provider,
+                state=item.state,
+                universe_scope=item.universe_scope,
+                fields=item.fields,
+                update_cadence=item.update_cadence,
+                preflight_state=item.preflight_state,
+            )
+            for item in session.scalars(
+                select(GovernedDataSource).order_by(GovernedDataSource.name)
+            )
+        ]
 
 
 @router.get("/data-sources/{source_id}", response_model=DataSourceView)
@@ -1452,49 +1768,134 @@ def get_data_source(source_id: UUID, request: Request) -> DataSourceView:
         item = session.get(GovernedDataSource, source_id)
         if item is None:
             raise QfError("DATA_SOURCE_NOT_FOUND", "Data Source was not found.", 404)
-        return DataSourceView(id=item.id, name=item.name, provider=item.provider, state=item.state, universe_scope=item.universe_scope, fields=item.fields, update_cadence=item.update_cadence, preflight_state=item.preflight_state)
+        return DataSourceView(
+            id=item.id,
+            name=item.name,
+            provider=item.provider,
+            state=item.state,
+            universe_scope=item.universe_scope,
+            fields=item.fields,
+            update_cadence=item.update_cadence,
+            preflight_state=item.preflight_state,
+        )
 
 
 @router.post("/data-sources", response_model=DataSourceView, status_code=201)
-def create_data_source(payload: DataSourceInput, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def create_data_source(
+    payload: DataSourceInput,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
+
         def action() -> dict[str, Any]:
-            duplicate = session.scalar(select(GovernedDataSource).where(GovernedDataSource.name == payload.name.strip()))
+            duplicate = session.scalar(
+                select(GovernedDataSource).where(GovernedDataSource.name == payload.name.strip())
+            )
             if duplicate:
                 raise QfError("DATA_SOURCE_NAME_CONFLICT", "Data Source name already exists.", 409)
-            item = GovernedDataSource(name=payload.name.strip(), provider=payload.provider, state="ACTIVE", universe_scope=payload.universe_scope, fields=payload.fields, update_cadence=payload.update_cadence, preflight_state="READY", public_config=payload.public_config)
+            item = GovernedDataSource(
+                name=payload.name.strip(),
+                provider=payload.provider,
+                state="ACTIVE",
+                universe_scope=payload.universe_scope,
+                fields=payload.fields,
+                update_cadence=payload.update_cadence,
+                preflight_state="READY",
+                public_config=payload.public_config,
+            )
             session.add(item)
             session.flush()
-            _event(session, "DATA_SOURCE_REGISTERED", "DATA_SOURCE", item.id, {}, actor_kind="HUMAN")
-            return DataSourceView(id=item.id, name=item.name, provider=item.provider, state=item.state, universe_scope=item.universe_scope, fields=item.fields, update_cadence=item.update_cadence, preflight_state=item.preflight_state).model_dump(mode="json")
+            _event(
+                session, "DATA_SOURCE_REGISTERED", "DATA_SOURCE", item.id, {}, actor_kind="HUMAN"
+            )
+            return DataSourceView(
+                id=item.id,
+                name=item.name,
+                provider=item.provider,
+                state=item.state,
+                universe_scope=item.universe_scope,
+                fields=item.fields,
+                update_cadence=item.update_cadence,
+                preflight_state=item.preflight_state,
+            ).model_dump(mode="json")
 
-        return _idempotent(session, idempotency_key, "data-source.create", payload, action, status_code=201)
+        return _idempotent(
+            session, idempotency_key, "data-source.create", payload, action, status_code=201
+        )
 
 
 @router.get("/datasets", response_model=list[DatasetView])
 def list_datasets(request: Request) -> list[DatasetView]:
     factory = request.app.state.session_factory
     with factory() as session:
-        return [DatasetView(id=item.id, data_source_id=item.data_source_id, universe_version_id=item.universe_version_id, universe_name=item.universe_name, revision_no=item.revision_no, schema_version=item.schema_version, event_start=_iso(item.event_start), event_end=_iso(item.event_end), available_start=_iso(item.available_start), available_end=_iso(item.available_end), row_count=item.row_count, quality_state=item.quality_state, point_in_time_state=item.point_in_time_state, partition=item.partition, created_at=_iso(item.created_at) or "") for item in session.scalars(select(DatasetRevision).order_by(DatasetRevision.created_at.desc()))]
+        return [
+            DatasetView(
+                id=item.id,
+                data_source_id=item.data_source_id,
+                universe_version_id=item.universe_version_id,
+                universe_name=item.universe_name,
+                revision_no=item.revision_no,
+                schema_version=item.schema_version,
+                event_start=_iso(item.event_start),
+                event_end=_iso(item.event_end),
+                available_start=_iso(item.available_start),
+                available_end=_iso(item.available_end),
+                row_count=item.row_count,
+                quality_state=item.quality_state,
+                point_in_time_state=item.point_in_time_state,
+                partition=item.partition,
+                created_at=_iso(item.created_at) or "",
+            )
+            for item in session.scalars(
+                select(DatasetRevision).order_by(DatasetRevision.created_at.desc())
+            )
+        ]
 
 
 @router.get("/universes", response_model=list[UniverseView])
 def list_universes(request: Request) -> list[UniverseView]:
     factory = request.app.state.session_factory
     with factory() as session:
-        return [UniverseView(id=item.id, universe_key=item.universe_key, version_no=item.version_no, name=item.name, state=item.state, spec_json=item.spec_json) for item in session.scalars(select(MarketUniverseVersion).order_by(MarketUniverseVersion.universe_key, MarketUniverseVersion.version_no.desc()))]
+        return [
+            UniverseView(
+                id=item.id,
+                universe_key=item.universe_key,
+                version_no=item.version_no,
+                name=item.name,
+                state=item.state,
+                spec_json=item.spec_json,
+            )
+            for item in session.scalars(
+                select(MarketUniverseVersion).order_by(
+                    MarketUniverseVersion.universe_key, MarketUniverseVersion.version_no.desc()
+                )
+            )
+        ]
 
 
 def _downstream_view(item: DownstreamSystem) -> DownstreamView:
-    return DownstreamView(id=item.id, name=item.name, environment_type=item.environment_type, enabled=item.enabled, package_contract_version=item.package_contract_version, feedback_contract_version=item.feedback_contract_version, compatibility=item.compatibility, preflight_state=item.preflight_state)
+    return DownstreamView(
+        id=item.id,
+        name=item.name,
+        environment_type=item.environment_type,
+        enabled=item.enabled,
+        package_contract_version=item.package_contract_version,
+        feedback_contract_version=item.feedback_contract_version,
+        compatibility=item.compatibility,
+        preflight_state=item.preflight_state,
+    )
 
 
 @router.get("/downstream-systems", response_model=list[DownstreamView])
 def list_downstreams(request: Request) -> list[DownstreamView]:
     factory = request.app.state.session_factory
     with factory() as session:
-        return [_downstream_view(item) for item in session.scalars(select(DownstreamSystem).order_by(DownstreamSystem.name))]
+        return [
+            _downstream_view(item)
+            for item in session.scalars(select(DownstreamSystem).order_by(DownstreamSystem.name))
+        ]
 
 
 @router.get("/downstream-systems/{downstream_id}", response_model=DownstreamView)
@@ -1508,50 +1909,147 @@ def get_downstream(downstream_id: UUID, request: Request) -> DownstreamView:
 
 
 @router.post("/downstream-systems", response_model=DownstreamRegistrationView, status_code=201)
-def create_downstream(payload: DownstreamInput, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def create_downstream(
+    payload: DownstreamInput,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     if payload.environment_type not in {"PAPER", "LIVE", "EXTERNAL_BACKTEST"}:
         raise QfError("DOWNSTREAM_ENVIRONMENT_INVALID", "Downstream environment is invalid.", 422)
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
+
         def action() -> dict[str, Any]:
-            duplicate = session.scalar(select(DownstreamSystem).where(DownstreamSystem.name == payload.name.strip()))
+            duplicate = session.scalar(
+                select(DownstreamSystem).where(DownstreamSystem.name == payload.name.strip())
+            )
             if duplicate:
                 raise QfError("DOWNSTREAM_NAME_CONFLICT", "Downstream name already exists.", 409)
             downstream_id = uuid4()
             issued = issue_service_token(request.app.state.settings, downstream_id)
-            item = DownstreamSystem(id=downstream_id, name=payload.name.strip(), environment_type=payload.environment_type, enabled=payload.enabled, package_contract_version=payload.package_contract_version, feedback_contract_version=payload.feedback_contract_version, compatibility=payload.compatibility, preflight_state="READY", public_config=payload.public_config)
+            item = DownstreamSystem(
+                id=downstream_id,
+                name=payload.name.strip(),
+                environment_type=payload.environment_type,
+                enabled=payload.enabled,
+                package_contract_version=payload.package_contract_version,
+                feedback_contract_version=payload.feedback_contract_version,
+                compatibility=payload.compatibility,
+                preflight_state="READY",
+                public_config=payload.public_config,
+            )
             install_service_token(item, issued)
             _feedback_contract_snapshot(item, payload.environment_type)
             session.add(item)
             session.flush()
-            _event(session, "DOWNSTREAM_REGISTERED", "DOWNSTREAM_SYSTEM", item.id, {}, actor_kind="HUMAN")
-            return DownstreamRegistrationView(**_downstream_view(item).model_dump(), service_token=issued.token).model_dump(mode="json")
+            _event(
+                session,
+                "DOWNSTREAM_REGISTERED",
+                "DOWNSTREAM_SYSTEM",
+                item.id,
+                {},
+                actor_kind="HUMAN",
+            )
+            return DownstreamRegistrationView(
+                **_downstream_view(item).model_dump(), service_token=issued.token
+            ).model_dump(mode="json")
 
-        return _idempotent(session, idempotency_key, "downstream.create", payload, action, status_code=201)
+        return _idempotent(
+            session, idempotency_key, "downstream.create", payload, action, status_code=201
+        )
 
 
-@router.post("/downstream-systems/{downstream_id}/rotate-service-token", response_model=DownstreamTokenView)
-def rotate_downstream_token(downstream_id: UUID, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+@router.post(
+    "/downstream-systems/{downstream_id}/rotate-service-token", response_model=DownstreamTokenView
+)
+def rotate_downstream_token(
+    downstream_id: UUID,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
+
         def action() -> dict[str, Any]:
-            item = session.execute(select(DownstreamSystem).where(DownstreamSystem.id == downstream_id).with_for_update()).scalar_one_or_none()
+            item = session.execute(
+                select(DownstreamSystem)
+                .where(DownstreamSystem.id == downstream_id)
+                .with_for_update()
+            ).scalar_one_or_none()
             if item is None:
                 raise QfError("DOWNSTREAM_NOT_FOUND", "Downstream System was not found.", 404)
             issued = issue_service_token(request.app.state.settings, item.id)
             install_service_token(item, issued)
-            _event(session, "DOWNSTREAM_SERVICE_TOKEN_ROTATED", "DOWNSTREAM_SYSTEM", item.id, {}, actor_kind="HUMAN")
-            return DownstreamTokenView(downstream_system_id=item.id, service_token=issued.token).model_dump(mode="json")
+            _event(
+                session,
+                "DOWNSTREAM_SERVICE_TOKEN_ROTATED",
+                "DOWNSTREAM_SYSTEM",
+                item.id,
+                {},
+                actor_kind="HUMAN",
+            )
+            return DownstreamTokenView(
+                downstream_system_id=item.id, service_token=issued.token
+            ).model_dump(mode="json")
 
-        return _idempotent(session, idempotency_key, f"downstream.rotate-service-token:{downstream_id}", {}, action)
+        return _idempotent(
+            session, idempotency_key, f"downstream.rotate-service-token:{downstream_id}", {}, action
+        )
 
 
 @router.get("/readiness", response_model=dict[str, Any])
 def readiness(request: Request) -> dict[str, Any]:
     factory = request.app.state.session_factory
     with factory() as session:
-        data_ready = bool(session.scalar(select(func.count()).select_from(GovernedDataSource).where(GovernedDataSource.state == "ACTIVE", GovernedDataSource.preflight_state == "READY")) or session.scalar(select(func.count()).select_from(DatasetRevision)))
-        paper_ready = bool(session.scalar(select(func.count()).select_from(DownstreamSystem).where(DownstreamSystem.environment_type == "PAPER", DownstreamSystem.enabled.is_(True), DownstreamSystem.preflight_state == "READY", DownstreamSystem.service_token_ciphertext.is_not(None))))
-        live_downstream_ready = bool(session.scalar(select(func.count()).select_from(DownstreamSystem).where(DownstreamSystem.environment_type == "LIVE", DownstreamSystem.enabled.is_(True), DownstreamSystem.preflight_state == "READY", DownstreamSystem.service_token_ciphertext.is_not(None))))
-        paper_feedback_ready = bool(session.scalar(select(func.count()).select_from(ForwardEvidenceEpisode).join(HandoffOffer, ForwardEvidenceEpisode.handoff_id == HandoffOffer.id).where(HandoffOffer.purpose == "PAPER", ForwardEvidenceEpisode.state == "FEEDBACK_COMPLETE")))
-        return {"SYSTEM_READY": True, "RESEARCH_READY": data_ready, "PAPER_HANDOFF_READY": paper_ready, "LIVE_HANDOFF_READY": live_downstream_ready and paper_feedback_ready}
+        data_ready = bool(
+            session.scalar(
+                select(func.count())
+                .select_from(GovernedDataSource)
+                .where(
+                    GovernedDataSource.state == "ACTIVE",
+                    GovernedDataSource.preflight_state == "READY",
+                )
+            )
+            or session.scalar(select(func.count()).select_from(DatasetRevision))
+        )
+        paper_ready = bool(
+            session.scalar(
+                select(func.count())
+                .select_from(DownstreamSystem)
+                .where(
+                    DownstreamSystem.environment_type == "PAPER",
+                    DownstreamSystem.enabled.is_(True),
+                    DownstreamSystem.preflight_state == "READY",
+                    DownstreamSystem.service_token_ciphertext.is_not(None),
+                )
+            )
+        )
+        live_downstream_ready = bool(
+            session.scalar(
+                select(func.count())
+                .select_from(DownstreamSystem)
+                .where(
+                    DownstreamSystem.environment_type == "LIVE",
+                    DownstreamSystem.enabled.is_(True),
+                    DownstreamSystem.preflight_state == "READY",
+                    DownstreamSystem.service_token_ciphertext.is_not(None),
+                )
+            )
+        )
+        paper_feedback_ready = bool(
+            session.scalar(
+                select(func.count())
+                .select_from(ForwardEvidenceEpisode)
+                .join(HandoffOffer, ForwardEvidenceEpisode.handoff_id == HandoffOffer.id)
+                .where(
+                    HandoffOffer.purpose == "PAPER",
+                    ForwardEvidenceEpisode.state == "FEEDBACK_COMPLETE",
+                )
+            )
+        )
+        return {
+            "SYSTEM_READY": True,
+            "RESEARCH_READY": data_ready,
+            "PAPER_HANDOFF_READY": paper_ready,
+            "LIVE_HANDOFF_READY": live_downstream_ready and paper_feedback_ready,
+        }

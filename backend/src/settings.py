@@ -156,16 +156,12 @@ def _parse_trusted_proxy_cidrs(value: str | None) -> tuple[TrustedProxyNetwork, 
 def _validate_trusted_proxy_cidrs(value: object) -> tuple[TrustedProxyNetwork, ...]:
     """Validate direct ``Settings`` input as strictly as the environment parser."""
     if not isinstance(value, tuple):
-        raise SettingsError(
-            "QUAZONAI_AUTH_TRUSTED_PROXY_CIDRS must be a tuple of IP networks"
-        )
+        raise SettingsError("QUAZONAI_AUTH_TRUSTED_PROXY_CIDRS must be a tuple of IP networks")
 
     networks: list[TrustedProxyNetwork] = []
     for network in value:
         if not isinstance(network, (ipaddress.IPv4Network, ipaddress.IPv6Network)):
-            raise SettingsError(
-                "QUAZONAI_AUTH_TRUSTED_PROXY_CIDRS must contain IP networks only"
-            )
+            raise SettingsError("QUAZONAI_AUTH_TRUSTED_PROXY_CIDRS must contain IP networks only")
         if network.prefixlen == 0:
             raise SettingsError(
                 "QUAZONAI_AUTH_TRUSTED_PROXY_CIDRS must not trust an all-addresses /0 network"
@@ -210,9 +206,7 @@ def validate_machine_api_token(value: str) -> None:
             f"{MIN_MACHINE_TOKEN_CHARACTERS} and {MAX_MACHINE_TOKEN_CHARACTERS} characters"
         )
     if _BEARER_TOKEN_PATTERN.fullmatch(value) is None:
-        raise SettingsError(
-            "QUAZONAI_API_TOKEN must use RFC 6750 b64token ASCII characters only"
-        )
+        raise SettingsError("QUAZONAI_API_TOKEN must use RFC 6750 b64token ASCII characters only")
 
 
 def _whatwg_hostname_ends_in_number(hostname: str) -> bool:
@@ -390,9 +384,7 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         """Load only bootstrap/infrastructure settings from the process environment."""
-        environment = _normalize_environment(
-            _optional_env("QUAZONAI_ENV") or "development"
-        )
+        environment = _normalize_environment(_optional_env("QUAZONAI_ENV") or "development")
         database_url = os.environ.get(
             "QUAZONAI_DATABASE_URL",
             "postgresql+psycopg://quazonai:quazonai-local@127.0.0.1:5432/quazonai",
@@ -426,9 +418,7 @@ class Settings:
             database_url=database_url,
             alembic_url=alembic_url,
             master_key=_optional_env("QUAZONAI_MASTER_KEY"),
-            plugin_root=Path(
-                os.environ.get("QUAZONAI_PLUGIN_ROOT", "/var/lib/quazonai/plugins")
-            ),
+            plugin_root=Path(os.environ.get("QUAZONAI_PLUGIN_ROOT", "/var/lib/quazonai/plugins")),
             max_plugin_wheel_bytes=DEFAULT_MAX_PLUGIN_WHEEL_BYTES,
             plugin_validation_timeout_seconds=DEFAULT_PLUGIN_VALIDATION_TIMEOUT_SECONDS,
             bundle_build_timeout_seconds=DEFAULT_BUNDLE_BUILD_TIMEOUT_SECONDS,
@@ -467,7 +457,7 @@ class Settings:
             return False
         try:
             decoded = base64.b64decode(self.master_key, validate=True)
-        except (binascii.Error, ValueError):
+        except binascii.Error, ValueError:
             return False
         return len(decoded) == 32
 
@@ -536,8 +526,7 @@ class Settings:
         missing = [name for name, value in fields.items() if not value]
         if missing:
             raise SettingsError(
-                "Operator authentication is enabled but incomplete; missing: "
-                + ", ".join(missing)
+                "Operator authentication is enabled but incomplete; missing: " + ", ".join(missing)
             )
 
         assert self.operator_username is not None
@@ -553,9 +542,7 @@ class Settings:
             ("QUAZONAI_AUTH_PASSWORD", self.operator_password),
         ):
             if "\r" in credential or "\n" in credential:
-                raise SettingsError(
-                    f"{name} must not contain carriage returns or line feeds"
-                )
+                raise SettingsError(f"{name} must not contain carriage returns or line feeds")
         if len(self.operator_username) > MAX_OPERATOR_USERNAME_CHARACTERS:
             raise SettingsError(
                 f"QUAZONAI_AUTH_USERNAME must contain at most "
@@ -598,9 +585,7 @@ class Settings:
 
         canonical_origin = self.canonical_auth_public_origin
         assert canonical_origin is not None
-        if environment == "production" and not canonical_origin.startswith(
-            "https://"
-        ):
+        if environment == "production" and not canonical_origin.startswith("https://"):
             raise SettingsError("QUAZONAI_AUTH_PUBLIC_ORIGIN must use https in production")
 
     def validate_database_scheme(self) -> None:

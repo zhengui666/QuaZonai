@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 import hashlib
 import io
 import json
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 from typing import Any
 from uuid import UUID, uuid4
 import zipfile
@@ -25,14 +25,17 @@ BUNDLE_CONTRACT_VERSION = "2"
 
 
 def _json_bytes(value: Any) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        indent=2,
-        sort_keys=True,
-        separators=(",", ": "),
-        default=str,
-    ).encode("utf-8") + b"\n"
+    return (
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+            separators=(",", ": "),
+            default=str,
+        ).encode("utf-8")
+        + b"\n"
+    )
 
 
 def _safe_path(path: str) -> PurePosixPath:
@@ -100,7 +103,9 @@ def _strategy_wheel(artifact: StrategyArtifact, *, candidate_id: UUID) -> bytes:
     files[f"{dist_info}/METADATA"] = metadata
     files[f"{dist_info}/WHEEL"] = wheel_metadata
 
-    records = [f"{path},{_record_hash(payload)},{len(payload)}" for path, payload in sorted(files.items())]
+    records = [
+        f"{path},{_record_hash(payload)},{len(payload)}" for path, payload in sorted(files.items())
+    ]
     records.append(f"{dist_info}/RECORD,,")
     files[f"{dist_info}/RECORD"] = ("\n".join(records) + "\n").encode()
 

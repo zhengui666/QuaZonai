@@ -36,11 +36,14 @@ quazonai-finite-worker = "runners.finite_worker:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-py-modules = ["quazonai", "candidate_packages", "crypto", "downstream_auth", "errors", "events", "jobs", "logging_utils", "main", "operator_auth", "optimization", "runtime_config", "schema_validation", "settings"]
+py-modules = [
+  "candidate_bundles","quazonai", "candidate_packages", "crypto", "downstream_auth", "errors", "events", "jobs", "logging_utils", "main", "operator_auth", "optimization", "runtime_config", "schema_validation", "settings"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["api*", "cli*", "db*", "plugins*", "runners*"]
+include = ["api*", "cli*", "db*", "plugins*", "runners*",
+  "quant_runtime*",
+]
 
 [tool.ruff]
 target-version = "py314"

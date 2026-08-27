@@ -31,7 +31,7 @@ class Candidate:
 
 def _candidate() -> Candidate:
     experiment_id = uuid4()
-    strategy_source = '''from nautilus_trader.config import StrategyConfig\nfrom nautilus_trader.trading.strategy import Strategy\n\nclass ExampleConfig(StrategyConfig, frozen=True):\n    pass\n\nclass ExampleStrategy(Strategy):\n    def __init__(self, config: ExampleConfig):\n        super().__init__(config)\n'''
+    strategy_source = """from nautilus_trader.config import StrategyConfig\nfrom nautilus_trader.trading.strategy import Strategy\n\nclass ExampleConfig(StrategyConfig, frozen=True):\n    pass\n\nclass ExampleStrategy(Strategy):\n    def __init__(self, config: ExampleConfig):\n        super().__init__(config)\n"""
     return Candidate(
         id=uuid4(),
         program_id=uuid4(),

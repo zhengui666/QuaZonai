@@ -3,22 +3,22 @@
 from __future__ import annotations
 
 import base64
-from contextlib import contextmanager
-from datetime import UTC, datetime
-from decimal import Decimal
 import hashlib
 import importlib
 import io
 import json
-from pathlib import Path
 import sys
 import tempfile
-from typing import Any, Iterator
-from uuid import uuid4
 import zipfile
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import UTC, datetime
+from decimal import Decimal
+from pathlib import Path
+from typing import Any
+from uuid import uuid4
 
 import pandas as pd
-
 from nautilus_trader import __version__ as nautilus_version
 from nautilus_trader.backtest.config import (
     BacktestDataConfig,
@@ -69,12 +69,12 @@ def _jsonable(value: Any) -> Any:
         except TypeError:
             try:
                 return _jsonable(type(value).to_dict(value))
-            except Exception:
+            except (AttributeError, TypeError, ValueError):
                 pass
     if hasattr(value, "as_dict"):
         try:
             return _jsonable(value.as_dict())
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             pass
     return str(value)
 
@@ -153,10 +153,14 @@ class NautilusGatewayEngine:
                 "bid_size": [row.volume or "1000000" for row in request.rows],
                 "ask_size": [row.volume or "1000000" for row in request.rows],
             },
-            index=pd.DatetimeIndex([row.timestamp for row in request.rows], name="timestamp"),
+            index=pd.DatetimeIndex(
+                [row.timestamp for row in request.rows], name="timestamp"
+            ),
         ).sort_index()
         if not frame.index.is_monotonic_increasing or frame.index.has_duplicates:
-            raise GatewayContractError("event timestamps must be unique and monotonically increasing")
+            raise GatewayContractError(
+                "event timestamps must be unique and monotonically increasing"
+            )
         if (frame["bid_price"].map(Decimal) > frame["ask_price"].map(Decimal)).any():
             raise GatewayContractError("bid price cannot exceed ask price")
 
@@ -242,7 +246,10 @@ class NautilusGatewayEngine:
                     "missing": sorted(requested.difference(scope)),
                 }
             )
-        if request.nautilus_data_type and request.nautilus_data_type != manifest["nautilus_data_type"]:
+        if (
+            request.nautilus_data_type
+            and request.nautilus_data_type != manifest["nautilus_data_type"]
+        ):
             findings.append(
                 {
                     "code": "DATA_TYPE_MISMATCH",
@@ -263,10 +270,14 @@ class NautilusGatewayEngine:
         }
 
     @contextmanager
-    def _strategy(self, request: BacktestExperimentRequest) -> Iterator[ImportableStrategyConfig]:
+    def _strategy(
+        self, request: BacktestExperimentRequest
+    ) -> Iterator[ImportableStrategyConfig]:
         strategy = request.strategy
         if strategy.requirements:
-            normalized = {item.replace(" ", "").lower() for item in strategy.requirements}
+            normalized = {
+                item.replace(" ", "").lower() for item in strategy.requirements
+            }
             allowed = {f"nautilus_trader=={VALIDATED_NAUTILUS_VERSION}"}
             if not normalized.issubset(allowed):
                 raise GatewayContractError(
@@ -280,7 +291,9 @@ class NautilusGatewayEngine:
             )
             return
 
-        with tempfile.TemporaryDirectory(prefix="qz-strategy-", dir=self._artifact_root) as directory:
+        with tempfile.TemporaryDirectory(
+            prefix="qz-strategy-", dir=self._artifact_root
+        ) as directory:
             root = Path(directory)
             for relative, content in strategy.source_files.items():
                 destination = root / _safe_rel_path(relative)
@@ -331,7 +344,9 @@ class NautilusGatewayEngine:
             )
         )
         if not validation["valid"]:
-            raise GatewayContractError(f"catalog validation failed: {validation['findings']!r}")
+            raise GatewayContractError(
+                f"catalog validation failed: {validation['findings']!r}"
+            )
         catalog_path = self._catalog_path(request.catalog_key)
         instrument = self._instrument(request.instrument_ids[0])
         venue = str(instrument.id).rsplit(".", 1)[-1]
@@ -371,7 +386,9 @@ class NautilusGatewayEngine:
                 except (AttributeError, KeyError):
                     engine = getattr(node, "_engines", {}).get(run_config.id)
                 if engine is None:
-                    raise RuntimeError("Nautilus BacktestNode did not retain its engine")
+                    raise RuntimeError(
+                        "Nautilus BacktestNode did not retain its engine"
+                    )
                 evidence = self._evidence(request, result, engine, started_at)
             finally:
                 node.dispose()
@@ -404,7 +421,9 @@ class NautilusGatewayEngine:
                 "order_type": _jsonable(_attr(order, "order_type")),
                 "status": _jsonable(_attr(order, "status")),
                 "quantity": _jsonable(_attr(order, "quantity")),
-                "filled_quantity": _jsonable(_attr(order, "filled_qty", "filled_quantity")),
+                "filled_quantity": _jsonable(
+                    _attr(order, "filled_qty", "filled_quantity")
+                ),
                 "ts_init": _jsonable(_attr(order, "ts_init")),
             }
             for order in orders
@@ -453,7 +472,9 @@ class NautilusGatewayEngine:
                 "general": _jsonable(_attr(result, "stats_general") or {}),
                 "total_events": _jsonable(_attr(result, "total_events") or 0),
                 "total_orders": _jsonable(_attr(result, "total_orders") or len(orders)),
-                "total_positions": _jsonable(_attr(result, "total_positions") or len(positions)),
+                "total_positions": _jsonable(
+                    _attr(result, "total_positions") or len(positions)
+                ),
                 "iterations": _jsonable(_attr(result, "iterations") or 0),
                 "elapsed_time": _jsonable(_attr(result, "elapsed_time") or 0),
             },
@@ -497,15 +518,30 @@ class NautilusGatewayEngine:
         if wheel:
             try:
                 self._verify_wheel(wheel, request.manifest)
-            except Exception as exc:
+            except (
+                GatewayContractError,
+                ImportError,
+                KeyError,
+                TypeError,
+                ValueError,
+                zipfile.BadZipFile,
+            ) as exc:
                 findings.append({"code": "STRATEGY_WHEEL_INVALID", "detail": str(exc)})
-        forbidden_keys = {"password", "secret", "api_key", "private_key", "broker_token"}
+        forbidden_keys = {
+            "password",
+            "secret",
+            "api_key",
+            "private_key",
+            "broker_token",
+        }
 
         def walk(value: Any, path: str = "manifest") -> None:
             if isinstance(value, dict):
                 for key, item in value.items():
                     if str(key).lower() in forbidden_keys:
-                        findings.append({"code": "LIVE_SECRET_IN_BUNDLE", "path": f"{path}.{key}"})
+                        findings.append(
+                            {"code": "LIVE_SECRET_IN_BUNDLE", "path": f"{path}.{key}"}
+                        )
                     walk(item, f"{path}.{key}")
             elif isinstance(value, list):
                 for index, item in enumerate(value):
@@ -537,16 +573,26 @@ class NautilusGatewayEngine:
     def _verify_wheel(wheel: bytes, manifest: dict[str, Any]) -> None:
         with zipfile.ZipFile(io.BytesIO(wheel)) as archive:
             names = archive.namelist()
-            if not names or any(Path(name).is_absolute() or ".." in Path(name).parts for name in names):
+            if not names or any(
+                Path(name).is_absolute() or ".." in Path(name).parts for name in names
+            ):
                 raise GatewayContractError("wheel contains unsafe paths")
-            metadata_names = [name for name in names if name.endswith(".dist-info/METADATA")]
+            metadata_names = [
+                name for name in names if name.endswith(".dist-info/METADATA")
+            ]
             if len(metadata_names) != 1:
-                raise GatewayContractError("wheel must contain exactly one METADATA file")
+                raise GatewayContractError(
+                    "wheel must contain exactly one METADATA file"
+                )
             metadata = archive.read(metadata_names[0]).decode("utf-8")
             pin = f"Requires-Dist: nautilus_trader (=={VALIDATED_NAUTILUS_VERSION})"
-            alternate_pin = f"Requires-Dist: nautilus-trader (=={VALIDATED_NAUTILUS_VERSION})"
+            alternate_pin = (
+                f"Requires-Dist: nautilus-trader (=={VALIDATED_NAUTILUS_VERSION})"
+            )
             if pin not in metadata and alternate_pin not in metadata:
-                raise GatewayContractError("wheel does not pin the validated Nautilus version")
+                raise GatewayContractError(
+                    "wheel does not pin the validated Nautilus version"
+                )
             strategy_path = str(manifest.get("strategy", {}).get("strategy_path", ""))
             config_path = str(manifest.get("strategy", {}).get("config_path", ""))
             if ":" not in strategy_path or ":" not in config_path:
@@ -559,12 +605,20 @@ class NautilusGatewayEngine:
                 try:
                     strategy_module, strategy_name = strategy_path.split(":", 1)
                     config_module, config_name = config_path.split(":", 1)
-                    strategy_class = getattr(importlib.import_module(strategy_module), strategy_name)
-                    config_class = getattr(importlib.import_module(config_module), config_name)
+                    strategy_class = getattr(
+                        importlib.import_module(strategy_module), strategy_name
+                    )
+                    config_class = getattr(
+                        importlib.import_module(config_module), config_name
+                    )
                     if not issubclass(strategy_class, Strategy):
-                        raise GatewayContractError("strategy class is not a Nautilus Strategy")
+                        raise GatewayContractError(
+                            "strategy class is not a Nautilus Strategy"
+                        )
                     if not issubclass(config_class, StrategyConfig):
-                        raise GatewayContractError("config class is not a Nautilus StrategyConfig")
+                        raise GatewayContractError(
+                            "config class is not a Nautilus StrategyConfig"
+                        )
                 finally:
                     sys.path.remove(str(wheel_path))
                     sys.modules.pop(strategy_module, None)

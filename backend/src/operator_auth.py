@@ -328,9 +328,7 @@ class OperatorAuthRuntime:
             # A ±1 verification window can only reference these nearby steps. Keeping
             # two older steps avoids replay after a small clock movement while bounding memory.
             self._accepted_totp_steps = {
-                accepted
-                for accepted in self._accepted_totp_steps
-                if accepted >= current_step - 2
+                accepted for accepted in self._accepted_totp_steps if accepted >= current_step - 2
             }
             if step in self._accepted_totp_steps:
                 return False
@@ -541,9 +539,8 @@ def _read_cookie(
         ):
             raise _InvalidCookie
         cookie_issuance_epoch = payload.get("cookie_issuance_epoch")
-        if (
-            cookie_issuance_epoch is not None
-            and not _valid_cookie_issuance_epoch(cookie_issuance_epoch)
+        if cookie_issuance_epoch is not None and not _valid_cookie_issuance_epoch(
+            cookie_issuance_epoch
         ):
             raise _InvalidCookie
         if kind in {"session", "trusted-browser"}:
@@ -563,7 +560,7 @@ def _read_cookie(
             cookie_issuance_epoch=cookie_issuance_epoch,
             browser_epoch=browser_epoch,
         )
-    except (ValueError, TypeError, json.JSONDecodeError, _InvalidCookie):
+    except ValueError, TypeError, json.JSONDecodeError, _InvalidCookie:
         return None
     except Exception:  # noqa: BLE001 - invalid/tampered cookies collapse to anonymous
         return None
@@ -935,18 +932,10 @@ def require_same_origin(request: Request, settings: Settings) -> None:
     expected = settings.canonical_auth_public_origin
     supplied = request.headers.get("origin")
     try:
-        origin = (
-            canonicalize_http_origin(supplied, name="Origin")
-            if supplied is not None
-            else None
-        )
+        origin = canonicalize_http_origin(supplied, name="Origin") if supplied is not None else None
     except SettingsError:
         origin = None
-    if (
-        expected is None
-        or origin is None
-        or not secrets.compare_digest(origin, expected)
-    ):
+    if expected is None or origin is None or not secrets.compare_digest(origin, expected):
         raise QfError(
             "AUTH_ORIGIN_REJECTED",
             "The request origin is not allowed for browser-authenticated mutations.",

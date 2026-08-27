@@ -22,9 +22,7 @@ def _materialize(value: Any) -> Any:
 
 def load_snapshot(*, plugin_id: str, version: str) -> DescriptorSnapshot:
     candidates = [
-        item
-        for item in metadata.entry_points(group="quazonai.plugins")
-        if item.name == plugin_id
+        item for item in metadata.entry_points(group="quazonai.plugins") if item.name == plugin_id
     ]
     if len(candidates) != 1:
         raise RuntimeError(

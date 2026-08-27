@@ -164,3 +164,7 @@ GitHub Actions additionally runs PostgreSQL 18 row-lock/idempotency integration,
 ## Status
 
 `codex/production-rebuild` is the implementation branch for the autonomous research architecture. It is release-ready only when the branch CI is green; documentation alone does not constitute implementation evidence.
+
+## Remote NautilusTrader requirement
+
+QuaZonai 采用 Nautilus-first 架构，但 Core 不嵌入 NautilusTrader。完整研究流需要部署 `nautilus_runtime/` 中的独立 Gateway，精确版本为 `1.231.0`，并通过 `QUAZONAI_NAUTILUS_RESEARCH_*` / `QUAZONAI_NAUTILUS_SEALED_*` 连接远程实例。Core compose 不会启动该运行时。

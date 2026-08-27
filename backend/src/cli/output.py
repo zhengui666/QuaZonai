@@ -13,9 +13,7 @@ def render_json(value: Any) -> str:
 def render_table(value: Any) -> str:
     if isinstance(value, dict):
         width = max((len(str(key)) for key in value), default=0)
-        return "\n".join(
-            f"{str(key):<{width}}  {format_cell(item)}" for key, item in value.items()
-        )
+        return "\n".join(f"{str(key):<{width}}  {format_cell(item)}" for key, item in value.items())
     if isinstance(value, list):
         if not value:
             return "No results."
@@ -36,9 +34,7 @@ def render_table(value: Any) -> str:
             header = "  ".join(f"{column:<{widths[column]}}" for column in columns)
             divider = "  ".join("-" * widths[column] for column in columns)
             body = [
-                "  ".join(
-                    f"{format_cell(row.get(column)):<{widths[column]}}" for column in columns
-                )
+                "  ".join(f"{format_cell(row.get(column)):<{widths[column]}}" for column in columns)
                 for row in rows
             ]
             return "\n".join([header, divider, *body])

@@ -89,9 +89,7 @@ def test_runtime_configuration_round_trip_encrypts_codex_key(
         assert runtime.codex_base_url == "https://gateway.example.test/v1"
         assert runtime.codex_api_key == "sk-runtime-secret"
         assert runtime.job_poll_seconds == 0.5
-        event = session.scalar(
-            select(Event).where(Event.kind == "RUNTIME_CONFIGURATION_UPDATED")
-        )
+        event = session.scalar(select(Event).where(Event.kind == "RUNTIME_CONFIGURATION_UPDATED"))
         assert event is not None
         assert "sk-runtime-secret" not in str(event.payload)
 
@@ -189,9 +187,9 @@ def test_runtime_configuration_deduplicates_key_retry_without_retaining_secret(
     factory = create_session_factory(engine)
     with factory() as session:
         event_count = session.scalar(
-            select(func.count()).select_from(Event).where(
-                Event.kind == "RUNTIME_CONFIGURATION_UPDATED"
-            )
+            select(func.count())
+            .select_from(Event)
+            .where(Event.kind == "RUNTIME_CONFIGURATION_UPDATED")
         )
         assert event_count == 1
         receipt = session.get(PublicMutationReceipt, "runtime-config-retry")
@@ -262,9 +260,9 @@ def test_key_bearing_idempotency_equivalence_uses_secret_action_not_secret_value
         runtime = effective_settings(session, settings)
         assert runtime.codex_api_key == "sk-first-value"
         event_count = session.scalar(
-            select(func.count()).select_from(Event).where(
-                Event.kind == "RUNTIME_CONFIGURATION_UPDATED"
-            )
+            select(func.count())
+            .select_from(Event)
+            .where(Event.kind == "RUNTIME_CONFIGURATION_UPDATED")
         )
         assert event_count == 1
 
@@ -388,7 +386,7 @@ def test_codex_launch_uses_command_auth_without_secret_in_process_configuration(
     assert config.env["QUAZONAI_MASTER_KEY"] == ""
     joined = "\n".join(config.config_overrides)
     assert "https://gateway.example.test/v1" in joined
-    assert "wire_api=\"responses\"" in joined
+    assert 'wire_api="responses"' in joined
     assert "runners.codex_provider_auth" in joined
     assert str(socket_path) in joined
     assert "refresh_interval_ms = 0" in joined

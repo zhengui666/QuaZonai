@@ -135,7 +135,9 @@ def _login_trusted_browser(
 
 
 def _assert_no_session_cookie(response: HttpxResponse) -> None:
-    assert not any(SESSION_COOKIE_NAME in header for header in response.headers.get_list("set-cookie"))
+    assert not any(
+        SESSION_COOKIE_NAME in header for header in response.headers.get_list("set-cookie")
+    )
 
 
 def _set_cookie_value(response: Any, name: str) -> str:
@@ -531,9 +533,7 @@ def test_parent_domain_session_cookie_cannot_shadow_host_only_session(
     )
     request = _request_with_cookie_header(
         app,
-        "; ".join(
-            f"{SESSION_COOKIE_NAME}={value}" for value in cookie_values
-        ),
+        "; ".join(f"{SESSION_COOKIE_NAME}={value}" for value in cookie_values),
     )
 
     identity = operator_auth.authenticate_browser(request, secured)
@@ -566,10 +566,7 @@ def test_parent_domain_trusted_cookie_cannot_shadow_host_only_credential(
                 # An injected session cookie must not prevent valid trusted-
                 # browser authentication after no valid session is found.
                 f"{SESSION_COOKIE_NAME}=forged-parent-domain-value",
-                *(
-                    f"{TRUSTED_BROWSER_COOKIE_NAME}={value}"
-                    for value in cookie_values
-                ),
+                *(f"{TRUSTED_BROWSER_COOKIE_NAME}={value}" for value in cookie_values),
             )
         ),
     )

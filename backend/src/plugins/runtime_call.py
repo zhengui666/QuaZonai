@@ -21,9 +21,7 @@ def _materialize(value: Any) -> Any:
 
 def _load_plugin(plugin_id: str) -> tuple[Any, DescriptorSnapshot]:
     candidates = [
-        item
-        for item in metadata.entry_points(group="quazonai.plugins")
-        if item.name == plugin_id
+        item for item in metadata.entry_points(group="quazonai.plugins") if item.name == plugin_id
     ]
     if len(candidates) != 1:
         raise RuntimeError(f"expected one plugin entry point named {plugin_id!r}")

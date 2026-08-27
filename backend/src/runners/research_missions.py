@@ -25,6 +25,7 @@ from db.session import create_database_engine, create_session_factory
 from errors import QfError
 from runtime_config import load_effective_settings
 from settings import Settings
+from quant_runtime.workspace import execute_workspace_experiments
 
 CUSTOM_CODEX_PROVIDER_ID = "quazonai_configured"
 DEFAULT_OPENAI_API_BASE_URL = "https://api.openai.com/v1"
@@ -56,7 +57,9 @@ def _event(
     )
 
 
-def _git(*args: str, cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
+def _git(
+    *args: str, cwd: Path | None = None, check: bool = True
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args],
         cwd=cwd,
@@ -198,7 +201,7 @@ def _provider_credential_broker(api_key: str | None) -> Iterator[Path | None]:
                 if bytes(request) != BROKER_REQUEST:
                     return
                 connection.sendall(api_key.encode("utf-8"))
-        except (OSError, TimeoutError):
+        except OSError, TimeoutError:
             return
         finally:
             try:
@@ -263,9 +266,9 @@ def _codex_launch_configuration(
         base_url = settings.codex_base_url or DEFAULT_OPENAI_API_BASE_URL
         overrides.extend(
             [
-                f"model_providers.{provider_id}.name=\"QuaZonai configured provider\"",
+                f'model_providers.{provider_id}.name="QuaZonai configured provider"',
                 f"model_providers.{provider_id}.base_url={json.dumps(base_url)}",
-                f"model_providers.{provider_id}.wire_api=\"responses\"",
+                f'model_providers.{provider_id}.wire_api="responses"',
             ]
         )
         if settings.codex_api_key:
@@ -354,7 +357,9 @@ def run_mission(settings: Settings, job_id: UUID) -> None:
                     mission.started_at = _now()
                     mission.codex_thread_id = thread.id
                     mission.workspace_path = str(workspace)
-                    mission.summary = "Codex app-server admitted the Mission and started the research turn."
+                    mission.summary = (
+                        "Codex app-server admitted the Mission and started the research turn."
+                    )
                     _event(
                         session,
                         kind="MISSION_STARTED",
@@ -367,18 +372,41 @@ def run_mission(settings: Settings, job_id: UUID) -> None:
                     "Execute the Mission in MISSION.md. Produce RESULT.md with the evidence, assumptions, limitations, "
                     "and concrete next research actions. Return a concise completion summary."
                 )
+                if mission.branch_id is None:
+                    raise QfError(
+                        "MISSION_BRANCH_MISSING",
+                        "Research Mission has no Branch for experiment lineage.",
+                        500,
+                    )
+                executed_experiment_ids: set[UUID] = set()
+                executed_experiment_ids.update(
+                    execute_workspace_experiments(
+                        settings,
+                        workspace=workspace,
+                        mission_id=mission.id,
+                        program_id=mission.program_id,
+                        branch_id=mission.branch_id,
+                        already_executed=executed_experiment_ids,
+                    )
+                )
+                if executed_experiment_ids:
+                    result = thread.run(
+                        "Read evidence/INDEX.json and every new evidence/*.json file. Compare the real "
+                        "Nautilus orders, fills, positions, PnL and statistics, then update RESULT.md. "
+                        "Do not create additional experiment contracts in this final evidence turn."
+                    )
 
         _git("add", "-A", cwd=workspace)
         status = _git("status", "--porcelain", cwd=workspace).stdout.strip()
         if status:
             _git("commit", "-m", f"Complete research mission {mission_id}", cwd=workspace)
 
-        final_response = (result.final_response or "Mission completed without a textual summary.").strip()
+        final_response = (
+            result.final_response or "Mission completed without a textual summary."
+        ).strip()
         with factory() as session, session.begin():
             mission = session.execute(
-                select(ResearchMission)
-                .where(ResearchMission.id == mission_id)
-                .with_for_update()
+                select(ResearchMission).where(ResearchMission.id == mission_id).with_for_update()
             ).scalar_one()
             mission.state = "SUCCEEDED"
             mission.finished_at = _now()

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Fail CI when QuaZonai Core takes ownership of the Nautilus runtime.
 
 This replaces the former broad text ban.  Documentation, contracts and
@@ -9,9 +8,10 @@ not import it or expose live brokerage/order-control surfaces.
 from __future__ import annotations
 
 import ast
-from pathlib import Path
 import re
 import sys
+from pathlib import Path
+
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,7 +36,10 @@ for path in sorted(CORE.rglob("*.py")):
             names = [node.module or ""]
         else:
             continue
-        if any(name == "nautilus_trader" or name.startswith("nautilus_trader.") for name in names):
+        if any(
+            name == "nautilus_trader" or name.startswith("nautilus_trader.")
+            for name in names
+        ):
             errors.append(
                 f"{path.relative_to(ROOT)}:{node.lineno} imports nautilus_trader in Core"
             )

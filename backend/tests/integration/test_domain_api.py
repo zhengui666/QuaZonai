@@ -110,7 +110,9 @@ def test_duplicate_idea_uses_contribution_instead_of_copying_program(
         assert session.scalar(select(func.count()).select_from(ResearchProgram)) == 1
 
 
-def _seed_candidate_approval(engine: Engine, settings: Settings, *, expired: bool = False) -> tuple[str, str, str]:
+def _seed_candidate_approval(
+    engine: Engine, settings: Settings, *, expired: bool = False
+) -> tuple[str, str, str]:
     factory = create_session_factory(engine)
     with factory() as session, session.begin():
         downstream_id = uuid4()
@@ -159,7 +161,8 @@ def _seed_candidate_approval(engine: Engine, settings: Settings, *, expired: boo
             candidate_id=candidate.id,
             purpose="PAPER",
             state="PENDING",
-            valid_until=datetime.now(UTC) + (-timedelta(minutes=1) if expired else timedelta(days=7)),
+            valid_until=datetime.now(UTC)
+            + (-timedelta(minutes=1) if expired else timedelta(days=7)),
             recommendation_rationale="Independent evidence materially improves the frontier.",
             human_report={},
             evidence_summary={"search_adjusted_quality": 0.78},

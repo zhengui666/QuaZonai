@@ -754,3 +754,7 @@ V1 不建设旧式远程 OAuth MCP Gateway、SSH transport、JSONL 隧道或通�
 - 所有身份使用 QZ UUID/version/revision；
 - 不引入应用级 SHA/checksum/digest/fingerprint Gate；
 - 文档命令与实现 `--help`/OpenAPI contract test 对齐。
+
+## Remote Nautilus contract artifacts
+
+Research Mission 在 `experiments/*.json` 写 protocol-v1 `BacktestExperimentRequest`，在 `strategy/` 写同一 StrategyArtifact source bundle。父 Worker 执行后写 `evidence/<experiment-id>.json` 和 `evidence/INDEX.json`。Gateway 运维入口为独立包 `nautilus_runtime/` 的 `quazonai-nautilus-gateway`；它不是 QuaZonai Core 子命令，也不得由 Core 启停。

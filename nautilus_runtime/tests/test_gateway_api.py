@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi.testclient import TestClient
-
 from quazonai_nautilus_gateway.app import create_app
 
 

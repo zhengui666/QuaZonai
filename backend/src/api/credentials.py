@@ -214,9 +214,7 @@ def replace_credential(
         item.name = payload.name.strip()
         item.public_config = payload.public_config
         session.execute(
-            delete(CredentialSecret).where(
-                CredentialSecret.credential_set_id == credential_id
-            )
+            delete(CredentialSecret).where(CredentialSecret.credential_set_id == credential_id)
         )
         for field_name, value in payload.secrets.items():
             encrypted = encrypt_secret(
@@ -254,9 +252,7 @@ def decrypt_credential_secrets(
     master_key = _master_key(settings)
     rows = list(
         session.scalars(
-            select(CredentialSecret).where(
-                CredentialSecret.credential_set_id == credential_set.id
-            )
+            select(CredentialSecret).where(CredentialSecret.credential_set_id == credential_set.id)
         )
     )
     return {
