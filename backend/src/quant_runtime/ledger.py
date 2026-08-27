@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import json
+import os
+import stat
 from datetime import UTC, datetime
 from pathlib import Path
-from uuid import UUID
+from typing import Any
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
@@ -24,6 +28,32 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def _normalized_request(request: BacktestExperimentRequest) -> dict[str, Any]:
+    return request.model_dump(mode="json")
+
+
+def _same_identity(
+    entry: SearchLedgerEntry,
+    *,
+    mission_id: UUID | None,
+    program_id: UUID,
+    branch_id: UUID | None,
+    parent_entry_id: UUID | None,
+    request: BacktestExperimentRequest,
+    sealed: bool,
+) -> bool:
+    expected_mode = ExperimentMode.SEALED.value if sealed else request.mode.value
+    return (
+        entry.program_id == program_id
+        and entry.branch_id == branch_id
+        and entry.mission_id == mission_id
+        and entry.parent_entry_id == parent_entry_id
+        and entry.dataset_revision_id == request.dataset_revision_id
+        and entry.mode == expected_mode
+        and entry.request_json == _normalized_request(request)
+    )
+
+
 class ExperimentCoordinator:
     """Executes one remote experiment without holding a DB transaction over the network."""
 
@@ -38,11 +68,34 @@ class ExperimentCoordinator:
         branch_id: UUID | None,
         request: BacktestExperimentRequest,
         sealed: bool = False,
+        parent_entry_id: UUID | None = None,
     ) -> SearchLedgerEntry:
         with self._factory() as session, session.begin():
             existing = session.get(SearchLedgerEntry, request.experiment_id)
             if existing is not None:
+                if not _same_identity(
+                    existing,
+                    mission_id=mission_id,
+                    program_id=program_id,
+                    branch_id=branch_id,
+                    parent_entry_id=parent_entry_id,
+                    request=request,
+                    sealed=sealed,
+                ):
+                    raise QfError(
+                        "EXPERIMENT_ID_REUSED",
+                        "Experiment id is already bound to a different immutable contract or lineage.",
+                        409,
+                    )
+                if existing.state == "RUNNING":
+                    raise QfError(
+                        "EXPERIMENT_ALREADY_RUNNING",
+                        "The exact experiment is already running.",
+                        409,
+                    )
+                session.expunge(existing)
                 return existing
+
             dataset = session.get(DatasetRevision, request.dataset_revision_id)
             self._validate_dataset(dataset, request=request, sealed=sealed)
             if mission_id is not None:
@@ -53,18 +106,47 @@ class ExperimentCoordinator:
                         "Experiment Mission does not exist in the requested Program.",
                         404,
                     )
+
+            if parent_entry_id is not None:
+                parent = session.execute(
+                    select(SearchLedgerEntry)
+                    .where(SearchLedgerEntry.id == parent_entry_id)
+                    .with_for_update()
+                ).scalar_one_or_none()
+                if parent is None or parent.program_id != program_id:
+                    raise QfError(
+                        "EXPERIMENT_PARENT_INVALID",
+                        "Experiment parent does not exist in the requested Program.",
+                        422,
+                    )
+                if sealed:
+                    exposure = session.scalar(
+                        select(SearchLedgerEntry).where(
+                            SearchLedgerEntry.parent_entry_id == parent_entry_id,
+                            SearchLedgerEntry.mode == ExperimentMode.SEALED.value,
+                            SearchLedgerEntry.state.in_(["RUNNING", "SUCCEEDED"]),
+                        )
+                    )
+                    if exposure is not None:
+                        raise QfError(
+                            "SEALED_EXPOSURE_ALREADY_CONSUMED",
+                            "This source experiment already has a sealed evaluation exposure.",
+                            409,
+                            {"sealed_experiment_id": str(exposure.id)},
+                        )
+
             entry = SearchLedgerEntry(
                 id=request.experiment_id,
                 program_id=program_id,
                 branch_id=branch_id,
                 mission_id=mission_id,
                 dataset_revision_id=request.dataset_revision_id,
-                parent_entry_id=None,
+                parent_entry_id=parent_entry_id,
                 mode=ExperimentMode.SEALED.value if sealed else request.mode.value,
                 state="RUNNING",
                 runtime_name="NAUTILUS_TRADER",
                 runtime_version=None,
-                request_json=request.model_dump(mode="json"),
+                request_json=_normalized_request(request),
                 evidence_json={},
                 disclosure_json={},
                 started_at=_now(),
@@ -210,13 +292,55 @@ class ExperimentCoordinator:
             )
 
 
+def _safe_directory(root: Path, name: str) -> Path:
+    workspace = root.resolve(strict=True)
+    candidate = workspace / name
+    try:
+        info = os.lstat(candidate)
+    except FileNotFoundError:
+        os.mkdir(candidate, mode=0o700)
+        info = os.lstat(candidate)
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        raise QfError(
+            "MISSION_WORKSPACE_PATH_UNSAFE",
+            "Mission-controlled evidence path must be a real directory, not a link.",
+            422,
+            {"path": name},
+        )
+    if candidate.parent.resolve(strict=True) != workspace:
+        raise QfError(
+            "MISSION_WORKSPACE_PATH_UNSAFE",
+            "Mission evidence directory escaped its worktree.",
+            422,
+        )
+    return candidate
+
+
+def write_workspace_json(workspace: Path, relative_path: str, payload: Any) -> Path:
+    """Atomically write parent-worker evidence without following Mission symlinks."""
+    relative = Path(relative_path)
+    if relative.is_absolute() or ".." in relative.parts or len(relative.parts) != 2:
+        raise QfError("MISSION_WORKSPACE_PATH_UNSAFE", "Evidence path is invalid.", 422)
+    directory = _safe_directory(workspace, relative.parts[0])
+    destination = directory / relative.parts[1]
+    temporary = directory / f".{relative.parts[1]}.{uuid4().hex}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(temporary, flags, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream, ensure_ascii=False, indent=2)
+            stream.write("\n")
+        # os.replace replaces a destination symlink itself; it never writes through it.
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return destination
+
+
 def write_evidence(workspace: Path, entry: SearchLedgerEntry) -> Path:
     """Expose only structured, auditable evidence to a Discovery Mission workspace."""
-    import json
-
-    evidence_root = workspace / "evidence"
-    evidence_root.mkdir(parents=True, exist_ok=True)
-    path = evidence_root / f"{entry.id}.json"
     payload = {
         "experiment_id": str(entry.id),
         "state": entry.state,
@@ -228,5 +352,4 @@ def write_evidence(workspace: Path, entry: SearchLedgerEntry) -> Path:
         "failure_code": entry.failure_code,
         "failure_message": entry.failure_message,
     }
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    return path
+    return write_workspace_json(workspace, f"evidence/{entry.id}.json", payload)
