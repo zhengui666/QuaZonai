@@ -1939,7 +1939,7 @@ QuaZonai/
 
 - 生产数据源必须有许可、允许用途、保留与再分发依据；模型/provider 和 downstream 使用条款必须与部署方式一致；
 - 第三方依赖、镜像、插件及 Candidate Package 内分发组件的许可证和 notices 必须完整，AGPL-3.0-only 及其他许可证义务必须得到明确确认；
-- 产品和运营文档必须说明回测、历史数据和统计选择的局限，Paper 与 Live 独立审批，研穵结果不保证收益，真实交易和账户责任属于独立 downstream 与操作者；
+- 产品和运营文档必须说明回测、历史数据和统计选择的局限，Paper 与 Live 独立审批，研究结果不保证收益，真实交易和账户责任属于独立 downstream 与操作者；
 - Secret inventory、生成、存储、轮换、撤销、泄漏处置、数据/日志保留和独立安全复核必须完成；
 - 在所有设计符合性、生产准入和纵向验收证据完成前，README、UI、发布说明和对外材料不得宣称 conforming、release-ready、production-ready 或 live-ready。
 

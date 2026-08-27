@@ -42,7 +42,7 @@
 ## 3. 项目完成的统一门槛
 
 - [ ] **GAP-DONE-01 — 目标与事实完全对齐。** `DESIGN.md` 中所有 V1 当前态要求均有实现和自动化证据；尚未交付的未来能力不得继续以当前能力口吻出现在 README、UI、API 或营销描述中。
-- [ ] **GAP-DONE-02 — 真实纵向闭环成立。** 在干净环境中，从 Idea 到 Charter、Mission DAG、真实数据、Alpha、独立评估、Portfolio Candidate、人工 Paper Approval、Candidate Package、下游 claim、完整 Paper feedback、Forward Evidence、Degradation/Wake-up 全链路自动完成。
+- [ ] **GAP-DONE-02 — 真实纵向闭环成立。** 在干净环境中，从 Idea 到 Charter、Mission DAG、真实数据、Alpha、独立评估、Portfolio Candidate、Candidate Package、人工 Paper Approval、下游 claim、完整 Paper feedback、Forward Evidence、Degradation/Wake-up 全链路自动完成。
 - [ ] **GAP-DONE-03 — Live 边界成立。** 只有完整且有效的 Paper Forward Evidence 才能创建新的 Live Approval；Paper Approval 永不隐式授权 Live；QuaZonai 不执行交易，也不控制已领取的下游运行时。
 - [ ] **GAP-DONE-04 — 生产验证成立。** 安装、升级、迁移、备份、恢复、密钥轮换、故障重启、事件重放、资源耗尽和回滚均有测试或演练证据。
 - [ ] **GAP-DONE-05 — 发布门禁成立。** 所有 GitHub 必需检查成功、无未解决 review thread、`@codex review` 最新结论无问题、版本和变更记录完整，才能合并或发布。
