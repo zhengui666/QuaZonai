@@ -327,11 +327,13 @@ def execute_workspace_experiments(
                 )
             except QfError as exc:
                 with factory() as evidence_session:
-                    entry = evidence_session.get(SearchLedgerEntry, contract.experiment_id)
-                    if entry is not None:
-                        evidence_session.expunge(entry)
-                if entry is not None:
-                    write_evidence(workspace, entry)
+                    failed_entry = evidence_session.get(
+                        SearchLedgerEntry, contract.experiment_id
+                    )
+                    if failed_entry is not None:
+                        evidence_session.expunge(failed_entry)
+                if failed_entry is not None:
+                    write_evidence(workspace, failed_entry)
                 else:
                     write_workspace_json(
                         workspace,
