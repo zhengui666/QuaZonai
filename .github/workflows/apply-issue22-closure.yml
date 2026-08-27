@@ -1,0 +1,43 @@
+name: Apply Issue 22 closure patch
+
+on:
+  push:
+    branches:
+      - feat/issue-22-remote-nautilus-runtime
+    paths:
+      - tools/apply_issue22_core_closure.py
+      - tools/apply_issue22_gateway_closure.py
+      - .github/workflows/apply-issue22-closure.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/issue-22-remote-nautilus-runtime
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Apply closure patches
+        run: |
+          python tools/apply_issue22_core_closure.py
+          python tools/apply_issue22_gateway_closure.py
+          python -m compileall -q backend/src nautilus_runtime/src
+      - name: Remove one-shot maintenance files
+        run: |
+          rm -f tools/apply_issue22_core_closure.py
+          rm -f tools/apply_issue22_gateway_closure.py
+          rm -f .github/workflows/apply-issue22-closure.yml
+      - name: Commit closure
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix(runtime): close issue 22 contract gaps"
+          git push origin HEAD:feat/issue-22-remote-nautilus-runtime
