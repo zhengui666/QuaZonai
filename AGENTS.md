@@ -1,281 +1,212 @@
 # QuaZonai Agent 治理
 
-本文件是开发 Agent 的最小治理入口。它定义事实源、不可突破边界、工作顺序和完成标准；产品与架构事实只在 `DESIGN.md` 定义。
+本文件是开发 Agent 的最小治理入口。`DESIGN.md` 是产品、领域和技术架构的唯一完整事实源；`OPERATIONS.md`、`CLI.md`、`README.md` 和 Skill 只能展开对应视图，不能创造竞争事实。
 
-## 1. 事实源与读取顺序
+## 1. 长期产品边界
 
-1. `DESIGN.md`：QuaZonai 唯一完整的产品、领域与技术架构事实源；
-2. `OPERATIONS.md`：单用户运行视图；不得创造新的产品事实；
-3. `CLI.md`：CLI、Codex App Server、Mission Tool 和外部 Skill 的实现展开；
-4. `skills/quazonai/SKILL.md`：外部/人工 Codex 使用的薄工作流，不是业务状态机；
-5. `README.md`：入口、当前实现状态、Quick Start 和文档链接；
-6. 代码、配置、测试、运行结果：实现证据，不能静默改写设计。
+一句话定义：
 
-任何跨层产品、领域、API、Agent Runtime、数据、Evaluation、Alpha、Portfolio、Approval、Package、Handoff 或插件变更前，先读取 `DESIGN.md` 对应章节。若设计没有明确行为，先更新 `DESIGN.md`。
+> **QuaZonai 决定研究什么、如何搜索、何时相信、是否批准；NautilusTrader 负责市场数据如何进入、策略如何运行、交易如何仿真、订单/仓位/PnL 如何形成，以及独立 Paper/Live runtime 如何执行。**
 
-## 2. 不可突破的产品边界
+新增量化基础设施前，必须先判断 NautilusTrader 是否已经可靠提供；答案为“是”时默认复用，不在 QZ 重写平行机制。
 
-### 2.1 QuaZonai ownership
+### 1.1 QuaZonai ownership
 
-QuaZonai 只拥有：
+QuaZonai 是 AI 自治量化研究与治理 Control Plane，只拥有：
 
-- Idea / Research Charter；
-- Research Program / Branch / Mission；
-- Data Source Registry / Dataset Revision；
-- Search Ledger / Evidence Exposure；
-- Feature / Alpha / Calibration / Alpha Library；
-- Portfolio Mandate / Portfolio Program / Portfolio Candidate；
-- Independent Evaluation；
-- Approval Snapshot；
-- Candidate Package；
-- Handoff Registry / Feedback / Forward Evidence；
-- Degradation Monitoring；
-- Codex Harness 研究运行时与 Web 工作台。
+- Idea、Research Charter、Program、Branch、Mission DAG；
+- Codex Mission 编排、Search Ledger、Evidence Exposure；
+- 数据来源、许可、版本、point-in-time 与 Catalog binding 治理元数据；
+- Discovery / Sealed / Forward Evidence 隔离与披露策略；
+- 多重检验、过拟合控制、Alpha Qualification / Alpha Library；
+- Portfolio Mandate、Alpha selection、target-weight optimization；
+- Portfolio Candidate、Material Improvement、Paper/Live 人工 Approval；
+- Nautilus-native Candidate Bundle、Handoff Registry、Forward Evidence；
+- Degradation Monitoring、Research Wake-up；
+- Web/API/PostgreSQL/durable jobs/audit events。
 
-QuaZonai **不拥有**：
+### 1.2 NautilusTrader ownership
 
-- broker/exchange credential；
-- order、fill、position、account、NAV；
-- TradingNode、Paper/Live runtime；
-- execution risk、heartbeat、recovery、venue reconciliation；
-- 下游启动/停止/撤单/平仓/强制下线。
+NautilusTrader 是 Canonical Quant Runtime，优先拥有：
 
-NautilusTrader、LEAN 或自定义交易系统都是独立 downstream consumer。任何实现把 QZ 重新做成 Execution Control Plane 都是架构违规。
+- Instrument、Venue 与 Quote/Trade/Bar/OrderBook/CustomData 模型；
+- loader、wrangler、adapter、ParquetDataCatalog；
+- Actor、Strategy、Indicator；
+- BacktestNode / BacktestEngine、事件时钟和事件排序；
+- simulated venue、matching、order lifecycle；
+- Fee / Fill / Latency / Funding / Margin / Account 模型；
+- Cache、runtime Portfolio、positions、balances、realized/unrealized PnL；
+- Execution RiskEngine；
+- 单次 backtest 的 reports/statistics；
+- 独立 Paper/Live 的 DataEngine、RiskEngine、ExecutionEngine、LiveNode；
+- broker/exchange adapters、reconciliation、recovery。
 
-### 2.2 人类操作承诺
+## 2. 远程运行拓扑
 
-正常 Research Program 生命周期只允许两类常规人工动作：
+用户运行的 NautilusTrader 是**远程独立实例**。QuaZonai Core 不通过 Python import、共享文件系统、Docker socket、子进程或 `localhost` 假设嵌入它。
 
-1. 提出 Idea；
-2. 审批系统推荐的 Paper/Live Handoff Candidate。
+正式边界：
 
-Pause/Resume/Archive/Restore、数据授权、Codex 登录、Mandate/Universe/Downstream/Plugin 配置和故障处理属于低频 Administration，不得被开发成每个 Program 的必经人工步骤。
+```text
+QuaZonai API / Agent Worker / PostgreSQL
+        │ typed HTTP experiment contract
+        ▼
+Remote Nautilus Research Runtime
+        │ structured raw run evidence
+        ▼
+QuaZonai Evaluation Governance
+        │ sealed contract
+        ▼
+Remote Sealed Nautilus Runtime
+        │ deterministic controlled disclosure
+        ▼
+Alpha / Portfolio / Approval / Candidate Bundle
+        │ handoff
+        ▼
+Independent Nautilus Paper / Live Runtime
+```
 
-### 2.3 不可变事实
+要求：
 
-以下正式对象不原地改写语义：
+- Core 代码只依赖 `quant_runtime.RemoteNautilusQuantRuntime`；
+- `nautilus_trader` 只允许在独立 remote-runtime entry point 和真实 integration tests 中 import；
+- pinned version 为 `1.231.0`，升级必须经过完整兼容测试；
+- Research 与 Sealed endpoint/token/catalog 必须可独立配置；
+- runtime service credential 只进入受信 worker，不进入 Web/API、Codex child、事件、日志或 Bundle；
+- Sealed endpoint 只返回 deterministic disclosure，不向 Codex 返回 raw sealed reports；
+- runtime URL 不允许内嵌 username/password/query token/fragment。
 
-- Research Charter；
-- Dataset Revision；
-- Feature/Alpha/Calibration Version；
-- Alpha Qualification Version；
-- Evaluation Episode disclosure/exposure；
-- Portfolio Mandate Version；
-- Capital Context Version；
-- Portfolio Candidate；
-- Approval Snapshot；
-- Candidate Package；
-- Handoff Offer 的历史终态。
+## 3. 必须保留的执行安全边界
 
-改变依赖就创建新 Version/Candidate/Snapshot，而不是 patch 旧事实。
+采用 Nautilus-first 不等于把实盘执行塞进 QZ Core：
 
-### 2.4 No custom hash gates
+- QZ API/Web/DB 不持有 broker/exchange credential；
+- QZ 不提交、修改或撤销真实订单；
+- QZ 不维护实时订单、成交、仓位、账户或 NAV 账本；
+- QZ 不成为 OMS/EMS，不提供实时交易控制 UI；
+- QZ 不启动、停止、flatten、recover 或 reconcile 下游 Paper/Live node；
+- Paper/Live runtime 持有自己的 secrets，并独立承担 stop/cancel/flatten/recovery；
+- QZ 只能批准、交付、接收反馈、发出 degradation/withdrawal advisory。
 
-不得新增应用级 SHA、hash、checksum、digest、fingerprint、内容寻址身份或以其为 Gate 的完整性流程。
+任何 `TradingNode`/`LiveNode`、broker adapter、真实订单控制或账户状态回流 QZ Core，均为阻断级架构违规。
 
-允许 Git、wheel、数据库等底层工具自身使用内部 hash，但 QZ 业务身份、幂等、审批、发布、插件、Package、Workspace 或验证不得依赖这些值。
+## 4. Data / Cache / DB / MessageBus 边界
 
-## 3. Codex Harness 边界
+- Nautilus Catalog：canonical market data 与 Nautilus data types；
+- QZ PostgreSQL：Dataset Revision 的 provider/license/catalog URI/type/instrument scope/time range/schema/quality/PIT 等治理元数据；
+- Nautilus Cache/MessageBus：单个 quant runtime 内部市场、订单、仓位、账户和事件；
+- QZ durable jobs/events：跨进程 Mission、Experiment、Approval、Handoff 和恢复；
+- 不自建与 Nautilus 平行的行情文件格式、事件类型、撮合、PnL 或 order-risk ledger。
 
-### 3.1 App Server
+## 5. Research Mission 与受控实验
 
-- 内置 Agent Runtime 使用官方 `codex app-server`；
-- V1 稳定生产传输使用 stdio；
-- experimental WebSocket、dynamicTools、project/environments 等不能成为 V1 必需能力；
-- Codex Thread/Turn/Item 是执行上下文，不是业务事实源；
-- 一个 Mission 对应一个 durable Thread；Program 不使用无限长 Thread。
+Codex 默认仍使用独立 app-server child、独占 worktree、`workspace-write`、network disabled、`approvalPolicy=never`。
 
-### 3.2 Mission isolation
+Agent 可以写研究代码与 `experiment-contract.json`，但不能：
 
-默认 Mission：
+- 获得 runtime URL/token、数据库凭据、provider secret 或 broker credential；
+- 直接调用远程 Nautilus 实例；
+- 写 PostgreSQL；
+- 读取 Sealed raw data/results；
+- approve Candidate 或控制 Paper/Live runtime。
 
-- 独立 Codex App Server child；
-- 临时独占 Git worktree；
-- `workspace-write`；
-- network disabled；
-- `approvalPolicy=never`；
-- 只允许 Mission worktree root；
-- 不访问 QZ source repo、其他 Program、Sealed data、Secrets、Docker socket 或数据库凭据。
+受信 Mission runner 负责：
 
-需要数据、实验或受控外部能力时，通过 mission-scoped stdio MCP Tool Server。
+1. 校验 Mission state/type/capability；
+2. 校验 Dataset Revision 与 immutable Catalog binding；
+3. 将 Agent contract 强制绑定 governed URI/type/instrument scope；
+4. 持久化 `QuantExperiment`；
+5. 写入成功和失败 Search Ledger；
+6. 排入 remote Discovery Backtest；
+7. Discovery 成功后创建独立 Sealed contract/job。
 
-### 3.3 Agent 不能做什么
+Agent 输出不能直接推进正式状态；必须经过 schema、catalog scope、runtime version、evidence 和 deterministic promotion gates。
 
-任何 Codex profile 都不能：
+## 6. Evidence / Alpha / Portfolio
+
+- Discovery、Sealed、Forward Evidence 三层必须分离；
+- 同一 pinned Nautilus version 和同一 Strategy artifact 可复用于 Backtest/Paper/Live；
+- Independent 的核心是数据、token、进程和 disclosure 隔离，不是第二套模拟器；
+- Sealed raw reports 不进入 Codex workspace；
+- Alpha Qualification 必须引用真实 `QuantExperiment` / `SealedEvaluation`；
+- 测试 seed、人工 DB 写入或文本 `RESULT.md` 不能冒充正式运行证据；
+- QZ 负责 Alpha selection、Mandate、optimizer 与 target weights；
+- target weights → rebalance/orders、positions/PnL/margin/order risk 由 Nautilus Strategy/runtime 承担；
+- Portfolio Candidate 必须重新经过 Nautilus transaction-level simulation。
+
+## 7. Nautilus-native Candidate Bundle
+
+主要交付协议必须冻结真实 Nautilus runtime contract，而非 QZ 自建 Feature/Alpha/Calibration/Portfolio Policy 微型运行时。
+
+最低布局：
+
+```text
+candidate/
+  manifest.json
+  requirements.lock
+  strategy/strategy.whl
+  strategy/strategy-config.json
+  data/requirements.json
+  data/instrument-scope.json
+  runtime/nautilus-version.json
+  runtime/backtest-run-config.json
+  runtime/venue-config.json
+  runtime/risk-config.json
+  runtime/live-node-template.json
+  validation/expected-orders.json
+  validation/expected-positions.json
+  validation/expected-statistics.json
+  evidence/discovery-summary.json
+  evidence/sealed-summary.json
+  evidence/robustness-summary.json
+  lineage.json
+```
+
+Bundle 禁止真实 broker/provider/runtime credential、private key、account secret、order-control endpoint。验证依赖 schema、显式版本、wheel metadata、fixture/report conformance，不新增应用级 hash/checksum/fingerprint gate。
+
+## 8. Codex / Secret / Sealed hard deny
+
+任何 Agent profile 都不能：
 
 - approve/reject Candidate；
 - publish Handoff；
 - 修改 Charter/Mandate/Sealed result；
-- 访问 provider/downstream secret；
-- 写 PostgreSQL；
-- 读取 Sealed raw data；
-- 控制 downstream runtime；
-- 用 Git branch/commit/merge/rebase/worktree 管理绕过 QZ Workspace Manager。
+- 访问 provider/downstream/runtime secret；
+- 访问 QZ DB、Docker socket、其他 Program 或 Sealed catalog；
+- 管理 Git branch/commit/merge/rebase/worktree 绕过 Workspace Manager；
+- 展示或持久化隐藏 chain-of-thought。
 
-Agent 输出必须通过 schema、artifact validation 和 Domain Validator 才能推进状态。
+只保存可验证活动：Tool 调用、文件 diff、测试、命令结果、结构化结论、runtime evidence、Domain Event。
 
-### 3.4 隐藏推理
-
-不得把模型隐藏 chain-of-thought 当作产品事实、审计证据或 UI 内容。只保存可验证活动：Tool 调用、文件 diff、测试、命令结果、结构化结论、Domain Event。
-
-## 4. Research / Evidence 边界
-
-- Discovery、Sealed Promotion、Forward Evidence 三层必须分离；
-- Sealed raw data 不进入 Codex workspace/MCP；
-- Level 1 disclosure 由 deterministic policy 生成；
-- Search Ledger 保存失败和被淘汰尝试；
-- Evidence Exposure 沿 lineage 继承；
-- Episode 一旦披露后不能重新作为该 lineage 的独立证据；
-- 数据必须保留 point-in-time `available_at` 语义；
-- Data Quality failure 不得偷换成 Alpha failure。
-
-## 5. Alpha / Portfolio 边界
-
-- Alpha 不发订单，只发 score/expected return + uncertainty；
-- relative score 未校准时不得冒充 expected return；
-- Alpha Qualification 绑定 Universe + Horizon；
-- Shadow Alpha 只能参加受限 Portfolio Contribution research，不能直接 Handoff；
-- Portfolio Program 必须绑定 Mandate Version；
-- Candidate 任一关键依赖变化就创建新 Candidate；
-- Multi-Universe Portfolio 必须使用 universe-specific cost/capacity 与 cross-universe risk；
-- Material Improvement Gate 控制 Approval 噪音；
-- 不允许在 Approval 页面手工改 Alpha、权重或 Mandate。
-
-## 6. Handoff / Downstream 边界
-
-- Candidate Package 只输出 TargetPortfolioFrame，不输出订单；
-- Approval 绑定一个逻辑 downstream system；
-- Paper 与 Live 分开审批；
-- 未领取 Offer 可 revoke；`CLAIMED` 后 QZ 无 stop/revoke runtime 权限；
-- 缺失/迟到/部分 feedback 不等于 Candidate failure；
-- 只有 complete valid Paper feedback 才能进入 Live Promotion；
-- Degradation 只能产生 Research wake/advisory，不自动换仓或停止交易。
-
-## 7. Runtime Plugin 边界
-
-插件只允许：
+## 9. 文档优先顺序
 
 ```text
-DATA_CONNECTOR
-DATA_TRANSFORM_ADAPTER
-RESEARCH_ADAPTER
-HANDOFF_CONNECTOR
-```
-
-禁止 broker/execution/order capability。
-
-- 只接受 wheel；禁止 sdist/editable/Git URL/运行时源码编译；
-- 每个 release side-by-side；已有资源固定具体 release；
-- 第三方插件只在 validator/connector runner child 中 import；
-- 长进程不得 import plugin；
-- 动态卸载依赖进程退出，不使用 `reload()` 或 `sys.modules` 热替换；
-- Secret 不暴露给 Codex。
-
-## 8. 文档优先工作流
-
-顺序固定：
-
-```text
-确认事实源
-→ 画 ownership / data flow
+确认 DESIGN.md 事实
+→ 画 QZ / Remote Nautilus / Downstream ownership 与 data flow
 → 更新 DESIGN.md
-→ 同步 OPERATIONS.md / CLI.md / README / Skill
+→ 同步 AGENTS / OPERATIONS / CLI / README / Skill
 → 实现最小正确改动
-→ 运行最窄有效验证
-→ 跨边界验证
-→ 独立复核
-→ 汇总已验证/未验证项
+→ unit / DB / remote-contract / real Nautilus integration
+→ Sealed non-leakage / Candidate conformance / vertical E2E
+→ 独立 review
 ```
 
-不得让 README、OPERATIONS、CLI、Skill、代码注释或聊天记录成为竞争事实源。
+旧代码、旧 schema、旧 Candidate Package、旧测试 seed 和与新边界冲突的 compatibility wrapper 均无兼容义务；删除优先于双写或 wrapper。
 
-## 9. 实现纪律
+## 10. 完成标准
 
-使用 Ponytail 原则：
+代码任务只有满足以下全部条件才可声明完成：
 
-1. 没有真实需求就删除；
-2. 先复用平台和标准，不自建平行机制；
-3. 删除优先于兼容 wrapper；
-4. 状态、接口和抽象只为真实边界存在；
-5. CLI 是薄客户端；
-6. Agent Tool Server 只做 capability-enforced domain bridge，不复制业务状态机；
-7. 能由 PostgreSQL transaction、Arrow、Polars、Optuna、CVXPY、MCP SDK、Codex App Server 可靠承担的，不重复造轮子；
-8. 旧 Nautilus execution-control code 没有兼容义务，应删除而非迁移到新抽象里。
-
-## 10. Ownership
-
-- Frontend：展示和用户输入，不决定领域状态；
-- API：wire validation、operator mutation、SSE、统一错误；
-- Domain：全部状态机和业务 Gate；
-- Orchestrator：Mission/Program scheduling、Cooling/Wake、Promotion；
-- Agent Worker：Codex child/process/thread/worktree lifecycle；
-- Mission Tool Server：按 MissionContract 暴露受限 MCP tools；
-- Research Engine：Arrow/Polars/evaluator/Optuna/CVXPY；
-- Sealed Evaluator：独立 Promotion Evaluation；
-- Plugin Manager：data/handoff plugin release/runtime；
-- Worker：data/plugin/package/handoff/degradation jobs；
-- PostgreSQL：业务事实、jobs、events、Search Ledger、Exposure；
-- Persistent volumes：datasets、artifacts、packages、plugin runtimes、Program repos；
-- Downstream：运行、订单、仓位、账户和执行安全。
-
-## 11. 验证纪律
-
-每个检查前明确：
-
-1. 要发现什么具体失败；
-2. 失败会如何改变下一步。
-
-最少层次：
-
-1. 文档/术语/路径一致性；
-2. 受影响模块 unit；
-3. PostgreSQL transaction/integration；
-4. process isolation；
-5. Codex App Server / MCP contract；
-6. Sealed non-leakage；
-7. browser + fake downstream E2E；
-8. 只有真实边界扩大时才跑更宽检查。
-
-不能只用 mock 证明：
-
-- Codex stdio protocol lifecycle；
-- thread resume；
-- Mission worktree isolation；
-- MCP capability hard deny；
-- Sealed raw data 不可达；
-- PostgreSQL concurrency/idempotency；
-- plugin wheel install/entry point/process isolation；
-- Candidate Package Reference Fixture conformance；
-- Handoff claim vs revoke 原子竞争；
-- event replay / SSE reconnect。
-
-## 12. 文档任务完成标准
-
-- `DESIGN.md` 仍是唯一完整事实源；
-- `OPERATIONS.md` 只写用户运行视图；
-- `CLI.md` 只展开接口/Agent Runtime；
-- `README.md` 不承诺未实现能力；
-- Skill 不复制完整领域模型；
-- 不再出现 QZ 管理 Nautilus execution/deployment/recovery/risk 的当前目标描述；
-- Codex built-in runtime 与 optional external automation 区分清楚；
-- 无应用级 hash gate；
-- 术语、状态、路径、API、服务名一致；
-- 独立 Documentation/Architecture review 无阻断意见。
-
-## 13. 代码任务完成标准
-
-交付前确认：
-
-- 目标行为已先进入 `DESIGN.md`；
-- 变更位于正确 ownership；
-- 无 broker/order/position/deployment control 回流 QZ；
-- Codex 无 Secret/Sealed/DB 越权；
-- immutable versions、idempotency 和 expected revision 有测试；
-- Search Ledger/Exposure 不因复制对象被重置；
-- Candidate/Approval/Package 不被原地修改；
-- downstream claim 后 QZ 不提供 runtime stop；
-- plugin 不在长进程热加载/热卸载；
-- 无新增应用级 hash/checksum/digest/fingerprint 业务逻辑；
-- 实现报告与独立复核报告均已提交。
-
-未满足任一项，只能标记为部分完成，不得宣称 conforming/release-ready。
+- `DESIGN.md` 已先定义最终行为，其他文档无冲突；
+- Core 不 import/install NautilusTrader，remote runtime 精确 pin `1.231.0`；
+- 至少一个真实 Catalog ingestion + BacktestNode integration test；
+- orders/fills/positions/PnL/statistics 形成结构化 evidence；
+- Discovery 与 Sealed 使用独立 remote contract，Sealed 无 raw result 泄漏；
+- Search Ledger 同时记录成功和失败；
+- Alpha/Candidate/Approval 来源于真实 evidence；
+- Candidate Bundle 为 Nautilus-native 且无 secrets；
+- Paper/Live 仍是独立下游，QZ 无 runtime control；
+- compile、lint、typecheck、PostgreSQL migration、unit/integration/E2E、Compose、两个镜像构建全部通过；
+- GitHub CI 在最终 head 全绿；
+- GitHub `@codex review` 对同一最终 head 明确无问题；
+- 所有 review thread 已解决后才合并 main。
