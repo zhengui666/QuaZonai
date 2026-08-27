@@ -111,29 +111,23 @@ def upgrade() -> None:
             sa.Column("service_token_key_version", sa.Integer(), nullable=True),
         )
 
-    # ``0001_initial`` intentionally creates current Base.metadata for fresh
-    # development databases.  Before Issue #22 that table was named
-    # candidate_packages; on a fresh Nautilus-first database it is already
-    # candidate_bundles.  Keep this historical migration idempotent for both
-    # shapes without re-introducing a runtime compatibility layer.
-    package_table = "candidate_packages" if "candidate_packages" in tables else "candidate_bundles"
-    package_offer_column = (
-        "candidate_package_id" if package_table == "candidate_packages" else "candidate_bundle_id"
-    )
-    package_columns = _columns(bind, package_table)
-    if "state" not in package_columns:
+    # Issue #22 is a clean schema boundary: only the Nautilus-native Candidate
+    # Bundle table exists.  There is deliberately no Candidate Package fallback
+    # or in-place conversion path for pre-boundary databases.
+    bundle_columns = _columns(bind, "candidate_bundles")
+    if "state" not in bundle_columns:
         op.add_column(
-            package_table,
+            "candidate_bundles",
             sa.Column(
                 "state",
                 sa.String(length=40),
                 nullable=False,
-                server_default="LEGACY_NON_EXECUTABLE",
+                server_default="AVAILABLE",
             ),
         )
-    if "manifest_json" not in package_columns:
+    if "manifest_json" not in bundle_columns:
         op.add_column(
-            package_table,
+            "candidate_bundles",
             sa.Column(
                 "manifest_json",
                 _json_type(bind),
@@ -141,18 +135,11 @@ def upgrade() -> None:
                 server_default=sa.text("'{}'"),
             ),
         )
-    if "relative_path" not in package_columns:
+    if "relative_path" not in bundle_columns:
         op.add_column(
-            package_table,
+            "candidate_bundles",
             sa.Column("relative_path", sa.Text(), nullable=False, server_default=""),
         )
-        if package_table == "candidate_packages":
-            op.execute(
-                "UPDATE handoff_offers SET state = 'REVOKED', "
-                "stale_reason = 'Legacy Candidate Package is not executable under the current contract' "
-                f"WHERE {package_offer_column} IN (SELECT id FROM {package_table}) "
-                "AND state IN ('APPROVED','PUBLISHING','AVAILABLE')"
-            )
 
     handoff_columns = _columns(bind, "handoff_offers")
     if "feedback_contract_snapshot" not in handoff_columns:
@@ -201,5 +188,5 @@ def upgrade() -> None:
 def downgrade() -> None:
     raise RuntimeError(
         "0003_review_contracts is intentionally irreversible because it establishes "
-        "credential, package, lineage, and validated-forward-evidence contracts."
+        "credential, bundle, lineage, and validated-forward-evidence contracts."
     )
