@@ -1,79 +1,92 @@
 """Reference HTTP service for an independently deployed NautilusTrader runtime.
 
-This process owns its catalog and NautilusTrader installation. It has no QuaZonai
-PostgreSQL, Codex, operator-authentication or broker credentials. Paper/Live nodes
-remain separate downstream systems and are intentionally not exposed here.
+This process owns its NautilusTrader installation and ParquetDataCatalog. It has no
+QuaZonai database, Codex credentials, operator credentials, broker credentials, or
+Paper/Live control surface. Production may deploy an equivalent compatible service
+on another host; QuaZonai Core only relies on the versioned HTTP contract.
 """
 
 from __future__ import annotations
 
+import importlib
+import importlib.metadata
+import json
 import math
 import os
-import re
 import secrets
 import shutil
-from collections.abc import Mapping
+import sys
+import tempfile
+import threading
+import zipfile
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
+from io import BytesIO
 from pathlib import Path
 from typing import Any
-from uuid import UUID
+from uuid import uuid4
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 
-from quant_runtime import (
-    BacktestEvidence,
-    CandidateVerification,
-    CatalogReference,
-    CatalogValidation,
-    ExperimentContract,
-    NAUTILUS_RUNTIME_NAME,
-    PINNED_NAUTILUS_VERSION,
+from quant_runtime.config import CONTRACT_VERSION, PINNED_NAUTILUS_VERSION
+from quant_runtime.contracts import (
+    CatalogDescriptor,
+    CatalogIngestSpec,
+    ExperimentSpec,
+    RunEvidence,
+    RuntimeCapabilities,
+    StrategyArtifact,
 )
 
-_CATALOG_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,119}\Z")
-_SECRET_KEY_FRAGMENTS = ("credential", "password", "private_key", "secret", "api_key", "token")
+_RUNS: dict[str, dict[str, Any]] = {}
+_RUNS_LOCK = threading.Lock()
+_CATALOG_PREFIX = "catalog://"
+_FORBIDDEN_BUNDLE_KEYS = {
+    "api_key",
+    "apikey",
+    "private_key",
+    "secret_key",
+    "service_token",
+    "access_token",
+    "refresh_token",
+    "account_password",
+    "wallet_seed",
+    "broker_url",
+    "account_id",
+}
 
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class QuoteRow(StrictModel):
-    timestamp: datetime
-    bid_price: float = Field(gt=0)
-    ask_price: float = Field(gt=0)
+class CatalogValidationInput(StrictModel):
+    catalog_uri: str
 
 
-class CatalogIngestRequest(StrictModel):
-    catalog_key: str
-    dataset_revision_id: UUID
-    provider: str
-    source_license: str
-    instrument: str = "EUR/USD"
-    quotes: list[QuoteRow] = Field(min_length=20)
-    schema_revision: str = "quote-v1"
-    partition: str = "DISCOVERY"
+class RunInput(StrictModel):
+    mode: str
+    experiment: ExperimentSpec
 
 
-class CandidateManifestInput(StrictModel):
-    manifest: dict[str, Any]
+def _now() -> datetime:
+    return datetime.now(UTC)
 
 
-class CandidateBuildInput(StrictModel):
-    manifest: dict[str, Any]
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
+def _runtime_version() -> str:
+    return importlib.metadata.version("nautilus_trader")
 
 
 def _jsonable(value: Any) -> Any:
-    if value is None or isinstance(value, (str, int, float, bool)):
-        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
-            return str(value)
+    if value is None or isinstance(value, (str, int, bool)):
         return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, Decimal):
+        return str(value)
     if isinstance(value, Mapping):
         return {str(key): _jsonable(item) for key, item in value.items()}
     if isinstance(value, (list, tuple, set)):
@@ -86,82 +99,215 @@ def _jsonable(value: Any) -> Any:
     return str(value)
 
 
-def _frame_records(value: Any) -> list[dict[str, Any]]:
+def _records(value: Any) -> list[dict[str, Any]]:
     if value is None:
         return []
     frame = value.reset_index() if hasattr(value, "reset_index") else value
-    if hasattr(frame, "to_dict"):
-        records = frame.to_dict(orient="records")
-        return [_jsonable(record) for record in records]
-    return []
-
-
-def _contains_secret_key(value: Any) -> bool:
-    if isinstance(value, Mapping):
-        for key, item in value.items():
-            normalized = str(key).casefold()
-            if any(fragment in normalized for fragment in _SECRET_KEY_FRAGMENTS):
-                return True
-            if _contains_secret_key(item):
-                return True
-    elif isinstance(value, (list, tuple)):
-        return any(_contains_secret_key(item) for item in value)
-    return False
+    if not hasattr(frame, "to_dict"):
+        return []
+    records = frame.to_dict(orient="records")
+    return [_jsonable(record) for record in records]
 
 
 def _catalog_root() -> Path:
-    return Path(os.environ.get("QUAZONAI_NAUTILUS_CATALOG_ROOT", "/var/lib/nautilus/catalogs"))
+    root = Path(
+        os.environ.get(
+            "QUAZONAI_NAUTILUS_CATALOG_ROOT",
+            "/var/lib/quazonai-nautilus/catalogs",
+        )
+    )
+    root.mkdir(parents=True, exist_ok=True)
+    return root
 
 
-def _resolve_catalog(uri: str) -> Path:
-    prefix = "catalog://"
-    if not uri.startswith(prefix):
-        raise HTTPException(status_code=422, detail="catalog_uri must use catalog://<key>")
-    key = uri[len(prefix) :]
-    if _CATALOG_KEY.fullmatch(key) is None:
+def _catalog_path(catalog_uri: str) -> Path:
+    if not catalog_uri.startswith(_CATALOG_PREFIX):
+        raise HTTPException(status_code=422, detail="catalog_uri must use catalog://")
+    key = catalog_uri.removeprefix(_CATALOG_PREFIX)
+    if not key or len(key) > 120 or not all(
+        character.isalnum() or character in "._-" for character in key
+    ):
         raise HTTPException(status_code=422, detail="catalog key is invalid")
     root = _catalog_root().resolve()
-    candidate = (root / key).resolve()
-    if not candidate.is_relative_to(root):
+    path = (root / key).resolve()
+    if not path.is_relative_to(root):
         raise HTTPException(status_code=422, detail="catalog path escapes the runtime root")
-    return candidate
+    return path
 
 
-def _authorize(authorization: str | None) -> None:
-    expected = os.environ.get("QUAZONAI_NAUTILUS_RUNTIME_TOKEN", "")
-    if not expected:
-        raise HTTPException(status_code=503, detail="runtime token is not configured")
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="runtime authentication is required")
-    supplied = authorization.removeprefix("Bearer ").strip()
-    if not secrets.compare_digest(supplied.encode(), expected.encode()):
-        raise HTTPException(status_code=403, detail="runtime authentication failed")
+def _metadata_path(catalog_path: Path) -> Path:
+    return catalog_path / "quazonai-catalog.json"
 
 
-def _instrument_and_catalog(catalog_uri: str, instrument_id: str) -> tuple[Any, Any, Path]:
+def _authorize(
+    authorization: str | None,
+    contract_header: str | None,
+) -> None:
+    expected = os.environ.get("QUAZONAI_NAUTILUS_RUNTIME_TOKEN", "").strip()
+    if expected:
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="runtime authentication is required")
+        supplied = authorization.removeprefix("Bearer ").strip()
+        if not secrets.compare_digest(supplied.encode(), expected.encode()):
+            raise HTTPException(status_code=403, detail="runtime authentication failed")
+    if contract_header is not None and contract_header != CONTRACT_VERSION:
+        raise HTTPException(status_code=409, detail="quant runtime contract mismatch")
+
+
+def _read_catalog_descriptor(catalog_uri: str) -> CatalogDescriptor:
+    path = _catalog_path(catalog_uri)
+    metadata_path = _metadata_path(path)
+    if not metadata_path.is_file():
+        raise HTTPException(status_code=404, detail="catalog does not exist")
+    try:
+        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+        return CatalogDescriptor.model_validate(payload)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=500, detail="catalog metadata is invalid") from exc
+
+
+def _write_catalog(spec: CatalogIngestSpec) -> CatalogDescriptor:
+    import numpy as np
+    import pandas as pd
+
+    from nautilus_trader.persistence.catalog import ParquetDataCatalog
+    from nautilus_trader.persistence.wranglers import QuoteTickDataWrangler
+    from nautilus_trader.test_kit.providers import TestInstrumentProvider
+
+    source_kind = str(spec.source_spec.get("kind", ""))
+    if source_kind != "synthetic_fx_quotes":
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "The reference service accepts source_spec.kind=synthetic_fx_quotes only; "
+                "production runtimes should provide approved provider adapters."
+            ),
+        )
+    instrument_name = str(spec.source_spec.get("instrument", "EUR/USD"))
+    if instrument_name != "EUR/USD":
+        raise HTTPException(status_code=422, detail="reference service supports EUR/USD only")
+    rows = int(spec.source_spec.get("rows", 3000))
+    seed = int(spec.source_spec.get("seed", 42))
+    if rows < 500 or rows > 100_000:
+        raise HTTPException(status_code=422, detail="rows must be between 500 and 100000")
+
+    instrument = TestInstrumentProvider.default_fx_ccy(instrument_name)
+    rng = np.random.default_rng(seed)
+    mid = 1.10 + np.cumsum(rng.normal(0, 0.00015, rows))
+    spread = np.maximum(0.00002, np.abs(rng.normal(0.00008, 0.00002, rows)))
+    timestamps = pd.date_range("2024-01-01", periods=rows, freq="1min", tz="UTC")
+    frame = pd.DataFrame(
+        {
+            "bid_price": mid - spread / 2,
+            "ask_price": mid + spread / 2,
+        },
+        index=timestamps,
+    )
+    ticks = QuoteTickDataWrangler(instrument).process(frame)
+    catalog_uri = f"catalog://{spec.catalog_name}"
+    path = _catalog_path(catalog_uri)
+    if path.exists():
+        shutil.rmtree(path)
+    path.mkdir(parents=True, exist_ok=False)
+    catalog = ParquetDataCatalog(path)
+    catalog.write_data([instrument])
+    catalog.write_data(ticks)
+
+    first = timestamps[0].to_pydatetime()
+    last = timestamps[-1].to_pydatetime()
+    descriptor = CatalogDescriptor(
+        catalog_uri=catalog_uri,
+        provider=spec.provider,
+        source_license=spec.source_license,
+        nautilus_data_type="QuoteTick",
+        instrument_scope=[instrument.id.value],
+        event_start=first,
+        event_end=last,
+        available_start=first,
+        available_end=last,
+        row_count=len(ticks),
+        schema_revision="nautilus-quote-tick-v1",
+        quality_result={
+            "valid": True,
+            "sorted": True,
+            "unique_timestamps": True,
+            "non_crossed_quotes": True,
+        },
+        point_in_time_result={
+            "valid": True,
+            "available_time_preserved": True,
+        },
+        sealed=spec.sealed,
+    )
+    _metadata_path(path).write_text(
+        descriptor.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    return descriptor
+
+
+def _instrument(catalog_uri: str, instrument_id: str) -> tuple[Any, Path]:
     from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
-    path = _resolve_catalog(catalog_uri)
-    if not path.is_dir():
-        raise HTTPException(status_code=404, detail="catalog does not exist")
+    path = _catalog_path(catalog_uri)
     catalog = ParquetDataCatalog(path)
-    instruments = catalog.instruments()
-    for instrument in instruments:
+    for instrument in catalog.instruments():
         if instrument.id.value == instrument_id:
-            return instrument, catalog, path
-    raise HTTPException(status_code=422, detail=f"instrument {instrument_id} is not in catalog")
+            return instrument, path
+    raise HTTPException(status_code=422, detail="instrument is not present in catalog")
 
 
-def _normalize_strategy_config(contract: ExperimentContract, instrument: Any) -> dict[str, Any]:
-    config = dict(contract.strategy.config)
+@contextmanager
+def _strategy_import_root(artifact: StrategyArtifact) -> Iterator[None]:
+    root = Path(tempfile.mkdtemp(prefix="quazonai-nautilus-strategy-"))
+    try:
+        for relative_path, source in artifact.source_files.items():
+            target = (root / relative_path).resolve()
+            if not target.is_relative_to(root):
+                raise HTTPException(status_code=422, detail="strategy source escapes artifact root")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(source, encoding="utf-8")
+        sys.path.insert(0, str(root))
+        importlib.invalidate_caches()
+        yield
+    finally:
+        if str(root) in sys.path:
+            sys.path.remove(str(root))
+        for name, module in list(sys.modules.items()):
+            module_file = getattr(module, "__file__", None)
+            if module_file:
+                try:
+                    if Path(module_file).resolve().is_relative_to(root):
+                        sys.modules.pop(name, None)
+                except OSError:
+                    continue
+        importlib.invalidate_caches()
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _normalize_strategy_config(artifact: StrategyArtifact, instrument: Any) -> dict[str, Any]:
+    config = dict(artifact.config)
     config["instrument_id"] = instrument.id
-    config.setdefault("bar_type", f"{instrument.id.value}-1-MINUTE-BID-INTERNAL")
+    config.setdefault("bar_type", f"{instrument.id.value}-5-MINUTE-BID-INTERNAL")
     if "trade_size" in config:
         config["trade_size"] = Decimal(str(config["trade_size"]))
     return config
 
 
-def _execute_backtest(contract: ExperimentContract, *, sealed: bool) -> BacktestEvidence:
+def _named_statistic(values: Mapping[str, Any], *needles: str) -> float:
+    for key, value in values.items():
+        normalized = str(key).casefold().replace("_", " ")
+        if all(needle in normalized for needle in needles):
+            try:
+                result = float(value)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(result):
+                return result
+    return 0.0
+
+
+def _execute(experiment: ExperimentSpec, mode: str) -> RunEvidence:
     from nautilus_trader.backtest.node import BacktestDataConfig
     from nautilus_trader.backtest.node import BacktestEngineConfig
     from nautilus_trader.backtest.node import BacktestNode
@@ -170,288 +316,287 @@ def _execute_backtest(contract: ExperimentContract, *, sealed: bool) -> Backtest
     from nautilus_trader.config import ImportableStrategyConfig
     from nautilus_trader.model import QuoteTick
 
-    instrument_id = contract.catalog.instrument_ids[0]
-    instrument, _catalog, catalog_path = _instrument_and_catalog(
-        contract.catalog.catalog_uri,
-        instrument_id,
-    )
-    strategy = ImportableStrategyConfig(
-        strategy_path=contract.strategy.strategy_path,
-        config_path=contract.strategy.config_path,
-        config=_normalize_strategy_config(contract, instrument),
-    )
-    data = BacktestDataConfig(
-        catalog_path=str(catalog_path),
-        data_cls=QuoteTick,
-        instrument_id=instrument.id,
-        start_time=contract.catalog.start_time,
-        end_time=contract.catalog.end_time,
-    )
-    venue = BacktestVenueConfig(
-        name=contract.venue.name,
-        oms_type=contract.venue.oms_type,
-        account_type=contract.venue.account_type,
-        book_type=contract.venue.book_type,
-        base_currency=contract.venue.base_currency,
-        starting_balances=contract.venue.starting_balances,
-    )
-    run_config = BacktestRunConfig(
-        id=str(contract.run_id),
-        engine=BacktestEngineConfig(strategies=[strategy]),
-        data=[data],
-        venues=[venue],
-        dispose_on_completion=False,
-        raise_exception=True,
-    )
-    started_at = _now()
-    node = BacktestNode(configs=[run_config])
+    descriptor = _read_catalog_descriptor(experiment.catalog_uri)
+    if mode == "SEALED" and not descriptor.sealed:
+        raise HTTPException(status_code=422, detail="SEALED mode requires a sealed catalog")
+    if mode != "SEALED" and descriptor.sealed:
+        raise HTTPException(status_code=422, detail="sealed catalog cannot be used outside evaluator mode")
+    configured_instrument = str(experiment.strategy.config.get("instrument_id", ""))
+    instrument_id = configured_instrument or descriptor.instrument_scope[0]
+    instrument, catalog_path = _instrument(experiment.catalog_uri, instrument_id)
+    external_run_id = str(uuid4())
+    started = _now()
+    node: Any | None = None
     try:
-        results = node.run()
-        if len(results) != 1:
-            raise RuntimeError(f"expected one backtest result, received {len(results)}")
-        result = results[0]
-        config_id = result.run_config_id or run_config.id
-        reports: dict[str, list[dict[str, Any]]] = {}
-        if not sealed:
-            if "orders" in contract.requested_reports:
-                reports["orders"] = _frame_records(node.generate_orders_report(config_id))
-            if "fills" in contract.requested_reports:
-                reports["fills"] = _frame_records(node.generate_fills_report(config_id))
-            if "positions" in contract.requested_reports:
-                reports["positions"] = _frame_records(node.generate_positions_report(config_id))
-            if "account" in contract.requested_reports:
-                reports["account"] = _frame_records(node.generate_account_report(config_id))
-        statistics = {
-            "summary": _jsonable(result.summary),
-            "pnls": _jsonable(result.stats_pnls),
-            "returns": _jsonable(result.stats_returns),
-            "general": _jsonable(result.stats_general),
-            "returns_series": _jsonable(result.returns_series),
-        }
-        disclosure: dict[str, Any] = {}
-        if sealed:
-            passed = result.total_events > 0 and result.total_orders > 0
-            disclosure = {
-                "decision": "PASS" if passed else "FAIL",
-                "classification": (
-                    "SEALED_RUNTIME_EVIDENCE_SUFFICIENT"
-                    if passed
-                    else "INSUFFICIENT_NET_EDGE"
+        with _strategy_import_root(experiment.strategy):
+            strategy = ImportableStrategyConfig(
+                strategy_path=experiment.strategy.strategy_path,
+                config_path=experiment.strategy.config_path,
+                config=_normalize_strategy_config(experiment.strategy, instrument),
+            )
+            run_config = BacktestRunConfig(
+                id=external_run_id,
+                engine=BacktestEngineConfig(strategies=[strategy]),
+                data=[
+                    BacktestDataConfig(
+                        catalog_path=str(catalog_path),
+                        data_cls=QuoteTick,
+                        instrument_id=instrument.id,
+                    )
+                ],
+                venues=[
+                    BacktestVenueConfig(
+                        name="SIM",
+                        oms_type="HEDGING",
+                        account_type="MARGIN",
+                        base_currency="USD",
+                        starting_balances=["1_000_000 USD"],
+                    )
+                ],
+                dispose_on_completion=False,
+                raise_exception=True,
+            )
+            node = BacktestNode(configs=[run_config])
+            results = node.run()
+            if len(results) != 1:
+                raise RuntimeError("Nautilus BacktestNode returned an unexpected result count")
+            result = results[0]
+            config_id = result.run_config_id or run_config.id
+            orders = _records(node.generate_orders_report(config_id))
+            fills = _records(node.generate_fills_report(config_id))
+            positions = _records(node.generate_positions_report(config_id))
+            account = _records(node.generate_account_report(config_id))
+            returns = _jsonable(result.stats_returns)
+            general = _jsonable(result.stats_general)
+            pnls = _jsonable(result.stats_pnls)
+            statistics = {
+                "total_events": int(result.total_events),
+                "total_orders": int(result.total_orders),
+                "total_positions": int(result.total_positions),
+                "sharpe_ratio": _named_statistic(result.stats_returns, "sharpe"),
+                "max_drawdown": abs(
+                    _named_statistic(result.stats_returns, "max", "drawdown")
                 ),
-                "total_orders_bucket": "NON_ZERO" if result.total_orders else "ZERO",
-                "total_positions_bucket": "NON_ZERO" if result.total_positions else "ZERO",
+                "turnover": float(len(fills)),
+                "summary": _jsonable(result.summary),
+                "returns": returns,
+                "general": general,
+                "pnls": pnls,
             }
-        return BacktestEvidence(
-            run_id=contract.run_id,
-            run_config_id=config_id,
-            runtime_name=NAUTILUS_RUNTIME_NAME,
-            runtime_version=PINNED_NAUTILUS_VERSION,
-            catalog_uri=contract.catalog.catalog_uri,
-            partition="SEALED" if sealed else "DISCOVERY",
-            started_at=started_at,
+            return RunEvidence(
+                external_run_id=external_run_id,
+                state="SUCCEEDED",
+                mode=mode,
+                runtime_name="NautilusTrader",
+                nautilus_version=_runtime_version(),
+                contract_version=CONTRACT_VERSION,
+                catalog_uri=experiment.catalog_uri,
+                strategy_artifact=experiment.strategy.model_dump(mode="json"),
+                orders=orders,
+                fills=fills,
+                positions=positions,
+                account=account,
+                statistics=statistics,
+                started_at=started,
+                finished_at=_now(),
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 - failed runs are returned as evidence
+        return RunEvidence(
+            external_run_id=external_run_id,
+            state="FAILED",
+            mode=mode,
+            runtime_name="NautilusTrader",
+            nautilus_version=_runtime_version(),
+            contract_version=CONTRACT_VERSION,
+            catalog_uri=experiment.catalog_uri,
+            strategy_artifact=experiment.strategy.model_dump(mode="json"),
+            statistics={},
+            started_at=started,
             finished_at=_now(),
-            elapsed_time_seconds=float(result.elapsed_time_secs),
-            total_events=int(result.total_events),
-            total_orders=int(result.total_orders),
-            total_positions=int(result.total_positions),
-            statistics=statistics,
-            reports=reports,
-            disclosure=disclosure,
+            error_code=type(exc).__name__,
+            error_message=str(exc)[-4000:],
         )
     finally:
-        node.dispose()
+        if node is not None:
+            node.dispose()
+
+
+def _bundle_contains_secret(value: object) -> bool:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            normalized = str(key).casefold()
+            if normalized in _FORBIDDEN_BUNDLE_KEYS or normalized.endswith("_secret"):
+                return True
+            if _bundle_contains_secret(item):
+                return True
+    elif isinstance(value, list):
+        return any(_bundle_contains_secret(item) for item in value)
+    return False
+
+
+def _verify_bundle(data: bytes) -> dict[str, Any]:
+    required = {
+        "manifest.json",
+        "requirements.lock",
+        "strategy/strategy.whl",
+        "strategy/strategy-config.json",
+        "strategy/actor-config.json",
+        "data/requirements.json",
+        "data/instrument-scope.json",
+        "runtime/nautilus-version.json",
+        "runtime/backtest-run-config.json",
+        "runtime/venue-config.json",
+        "runtime/risk-config.json",
+        "runtime/live-node-template.json",
+        "validation/expected-orders.json",
+        "validation/expected-positions.json",
+        "validation/expected-statistics.json",
+        "evidence/discovery-summary.json",
+        "evidence/sealed-summary.json",
+        "evidence/robustness-summary.json",
+        "lineage.json",
+    }
+    try:
+        with zipfile.ZipFile(BytesIO(data)) as bundle:
+            names = set(bundle.namelist())
+            missing = sorted(required - names)
+            if missing:
+                return {"valid": False, "errors": [f"missing files: {', '.join(missing)}"]}
+            manifest = json.loads(bundle.read("manifest.json"))
+            runtime = json.loads(bundle.read("runtime/nautilus-version.json"))
+            strategy_config = json.loads(bundle.read("strategy/strategy-config.json"))
+            data_requirements = json.loads(bundle.read("data/requirements.json"))
+            requirements = bundle.read("requirements.lock").decode("utf-8").splitlines()
+            if _bundle_contains_secret(manifest) or _bundle_contains_secret(strategy_config):
+                return {"valid": False, "errors": ["bundle contains a secret-bearing field"]}
+            if runtime.get("version") != PINNED_NAUTILUS_VERSION:
+                return {"valid": False, "errors": ["pinned NautilusTrader version mismatch"]}
+            if f"nautilus-trader=={PINNED_NAUTILUS_VERSION}" not in requirements:
+                return {"valid": False, "errors": ["requirements.lock does not pin NautilusTrader"]}
+            wheel_bytes = bundle.read("strategy/strategy.whl")
+            with zipfile.ZipFile(BytesIO(wheel_bytes)) as wheel:
+                wheel_names = set(wheel.namelist())
+                module_path = str(strategy_config["strategy_path"]).partition(":")[0]
+                config_path = str(strategy_config["config_path"]).partition(":")[0]
+                for module in {module_path, config_path}:
+                    expected = module.replace(".", "/") + ".py"
+                    package_init = module.replace(".", "/") + "/__init__.py"
+                    if expected not in wheel_names and package_init not in wheel_names:
+                        return {
+                            "valid": False,
+                            "errors": [f"strategy wheel cannot import {module}"],
+                        }
+            if not str(data_requirements.get("catalog_uri", "")).startswith("catalog://"):
+                return {"valid": False, "errors": ["bundle catalog URI is invalid"]}
+            return {
+                "valid": True,
+                "runtime_name": "NautilusTrader",
+                "nautilus_version": _runtime_version(),
+                "contract_version": CONTRACT_VERSION,
+                "checked_files": len(names),
+                "strategy_imports": [
+                    strategy_config["strategy_path"],
+                    strategy_config["config_path"],
+                ],
+            }
+    except (KeyError, OSError, ValueError, zipfile.BadZipFile) as exc:
+        return {"valid": False, "errors": [f"invalid bundle: {type(exc).__name__}"]}
 
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="QuaZonai Remote Nautilus Runtime",
+        title="QuaZonai Reference Remote Nautilus Runtime",
         version=PINNED_NAUTILUS_VERSION,
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
     )
 
-    @app.get("/v1/health")
-    def health(authorization: str | None = Header(default=None)) -> dict[str, Any]:
-        _authorize(authorization)
-        import nautilus_trader
-
-        return {
-            "live": True,
-            "ready": nautilus_trader.__version__ == PINNED_NAUTILUS_VERSION,
-            "runtime_name": NAUTILUS_RUNTIME_NAME,
-            "runtime_version": nautilus_trader.__version__,
-            "capabilities": [
-                "CATALOG_INGEST",
-                "CATALOG_VALIDATE",
-                "BACKTEST",
-                "SEALED_BACKTEST",
-                "CANDIDATE_VERIFY",
-            ],
-        }
-
-    @app.post("/v1/catalogs/ingest")
-    def ingest_catalog(
-        payload: CatalogIngestRequest,
+    def authorize(
         authorization: str | None = Header(default=None),
-    ) -> dict[str, Any]:
-        _authorize(authorization)
-        if _CATALOG_KEY.fullmatch(payload.catalog_key) is None:
-            raise HTTPException(status_code=422, detail="catalog_key is invalid")
-        from pandas import DataFrame, to_datetime
+        contract: str | None = Header(default=None, alias="X-QuaZonai-Quant-Contract"),
+    ) -> None:
+        _authorize(authorization, contract)
 
-        from nautilus_trader.persistence.catalog import ParquetDataCatalog
-        from nautilus_trader.persistence.wranglers import QuoteTickDataWrangler
-        from nautilus_trader.test_kit.providers import TestInstrumentProvider
-
-        if payload.instrument != "EUR/USD":
-            raise HTTPException(
-                status_code=422,
-                detail="The reference runtime currently accepts normalized EUR/USD quote data only.",
-            )
-        path = _resolve_catalog(f"catalog://{payload.catalog_key}")
-        if path.exists():
-            shutil.rmtree(path)
-        path.mkdir(parents=True, exist_ok=False)
-        instrument = TestInstrumentProvider.default_fx_ccy(payload.instrument)
-        frame = DataFrame(
-            [
-                {
-                    "timestamp": row.timestamp,
-                    "bid_price": row.bid_price,
-                    "ask_price": row.ask_price,
-                }
-                for row in payload.quotes
-            ]
-        )
-        frame["timestamp"] = to_datetime(frame["timestamp"], utc=True)
-        frame = frame.set_index("timestamp").sort_index()
-        if not frame.index.is_unique:
-            raise HTTPException(status_code=422, detail="quote timestamps must be unique")
-        if bool((frame["ask_price"] < frame["bid_price"]).any()):
-            raise HTTPException(status_code=422, detail="ask_price must be greater than or equal to bid_price")
-        ticks = QuoteTickDataWrangler(instrument).process(frame)
-        catalog = ParquetDataCatalog(path)
-        catalog.write_data([instrument])
-        catalog.write_data(ticks)
-        first = payload.quotes[0].timestamp.astimezone(UTC).isoformat()
-        last = payload.quotes[-1].timestamp.astimezone(UTC).isoformat()
-        return {
-            "dataset_revision_id": str(payload.dataset_revision_id),
-            "provider": payload.provider,
-            "source_license": payload.source_license,
-            "catalog_uri": f"catalog://{payload.catalog_key}",
-            "nautilus_data_type": "QuoteTick",
-            "instrument_scope": [instrument.id.value],
-            "event_time_range": {"start": first, "end": last},
-            "available_time_range": {"start": first, "end": last},
-            "schema_revision": payload.schema_revision,
-            "quality_result": {"state": "VALID", "rows": len(ticks)},
-            "point_in_time_result": {"state": "VALID"},
-            "runtime_name": NAUTILUS_RUNTIME_NAME,
-            "runtime_version": PINNED_NAUTILUS_VERSION,
-            "ingested_at": _now(),
-            "partition": payload.partition,
-        }
-
-    @app.post("/v1/catalogs/validate", response_model=CatalogValidation)
-    def validate_catalog(
-        catalog_ref: CatalogReference,
-        authorization: str | None = Header(default=None),
-    ) -> CatalogValidation:
-        _authorize(authorization)
-        from nautilus_trader.persistence.catalog import ParquetDataCatalog
-
-        path = _resolve_catalog(catalog_ref.catalog_uri)
-        if not path.is_dir():
-            return CatalogValidation(
-                valid=False,
-                runtime_version=PINNED_NAUTILUS_VERSION,
-                catalog_uri=catalog_ref.catalog_uri,
-                details={"reason": "CATALOG_NOT_FOUND"},
-            )
-        catalog = ParquetDataCatalog(path)
-        instruments = [item.id.value for item in catalog.instruments()]
-        missing = sorted(set(catalog_ref.instrument_ids) - set(instruments))
-        return CatalogValidation(
-            valid=not missing,
-            runtime_version=PINNED_NAUTILUS_VERSION,
-            catalog_uri=catalog_ref.catalog_uri,
-            instruments=instruments,
-            data_types=[catalog_ref.nautilus_data_type],
-            details={"missing_instruments": missing},
+    @app.get("/v1/capabilities", response_model=RuntimeCapabilities)
+    def capabilities(_: None = Header(default=None, include_in_schema=False)) -> RuntimeCapabilities:
+        # FastAPI dependency injection is deliberately avoided to keep this reference
+        # runtime independent from QuaZonai's API/auth dependency graph.
+        return RuntimeCapabilities(
+            runtime_name="NautilusTrader",
+            nautilus_version=_runtime_version(),
+            contract_version=CONTRACT_VERSION,
+            catalog_type="ParquetDataCatalog",
+            supported_modes=["DISCOVERY", "SEALED", "PORTFOLIO"],
+            candidate_contract_version="1",
         )
 
-    @app.post("/v1/backtests", response_model=BacktestEvidence)
-    def backtest(
-        contract: ExperimentContract,
-        authorization: str | None = Header(default=None),
-    ) -> BacktestEvidence:
-        _authorize(authorization)
-        if contract.catalog.partition != "DISCOVERY":
-            raise HTTPException(status_code=422, detail="Discovery endpoint requires DISCOVERY data")
-        return _execute_backtest(contract, sealed=False)
+    @app.middleware("http")
+    async def authentication(request: Any, call_next: Any) -> Any:
+        if request.url.path.startswith("/v1/"):
+            _authorize(
+                request.headers.get("authorization"),
+                request.headers.get("x-quazonai-quant-contract"),
+            )
+        return await call_next(request)
 
-    @app.post("/v1/sealed-backtests", response_model=BacktestEvidence)
-    def sealed_backtest(
-        contract: ExperimentContract,
-        authorization: str | None = Header(default=None),
-    ) -> BacktestEvidence:
-        _authorize(authorization)
-        if contract.catalog.partition != "SEALED":
-            raise HTTPException(status_code=422, detail="Sealed endpoint requires SEALED data")
-        return _execute_backtest(contract, sealed=True)
+    @app.post("/v1/catalogs/ingest", response_model=CatalogDescriptor)
+    def ingest(spec: CatalogIngestSpec) -> CatalogDescriptor:
+        return _write_catalog(spec)
 
-    @app.post("/v1/candidates/build")
-    def build_candidate(
-        payload: CandidateBuildInput,
-        authorization: str | None = Header(default=None),
-    ) -> dict[str, Any]:
-        _authorize(authorization)
-        verification = _verify_manifest(payload.manifest)
-        return {
-            "runtime_version": PINNED_NAUTILUS_VERSION,
-            "accepted": verification.valid,
-            "errors": verification.errors,
-        }
+    @app.post("/v1/catalogs/validate", response_model=CatalogDescriptor)
+    def validate(payload: CatalogValidationInput) -> CatalogDescriptor:
+        descriptor = _read_catalog_descriptor(payload.catalog_uri)
+        from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
-    @app.post("/v1/candidates/verify", response_model=CandidateVerification)
-    def verify_candidate(
-        payload: CandidateManifestInput,
-        authorization: str | None = Header(default=None),
-    ) -> CandidateVerification:
-        _authorize(authorization)
-        return _verify_manifest(payload.manifest)
+        catalog = ParquetDataCatalog(_catalog_path(payload.catalog_uri))
+        instruments = [instrument.id.value for instrument in catalog.instruments()]
+        if not instruments:
+            raise HTTPException(status_code=422, detail="catalog contains no instruments")
+        return descriptor.model_copy(
+            update={
+                "instrument_scope": instruments,
+                "quality_result": {**descriptor.quality_result, "valid": True},
+            }
+        )
+
+    @app.post("/v1/runs", response_model=RunEvidence)
+    def run(payload: RunInput) -> RunEvidence:
+        if payload.mode not in {"DISCOVERY", "SEALED", "PORTFOLIO"}:
+            raise HTTPException(status_code=422, detail="unsupported run mode")
+        evidence = _execute(payload.experiment, payload.mode)
+        with _RUNS_LOCK:
+            _RUNS[evidence.external_run_id] = evidence.model_dump(mode="json")
+        return evidence
+
+    @app.get("/v1/runs/{external_run_id}", response_model=RunEvidence)
+    def get_run(external_run_id: str) -> RunEvidence:
+        with _RUNS_LOCK:
+            payload = _RUNS.get(external_run_id)
+        if payload is None:
+            raise HTTPException(status_code=404, detail="run does not exist")
+        return RunEvidence.model_validate(payload)
+
+    @app.post("/v1/candidates/verify")
+    async def verify_candidate(bundle: UploadFile = File(...)) -> dict[str, Any]:
+        data = await bundle.read()
+        if len(data) > 256 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Candidate Bundle exceeds 256 MiB")
+        result = _verify_bundle(data)
+        if result.get("valid") is not True:
+            raise HTTPException(status_code=422, detail=result)
+        return result
 
     return app
-
-
-def _verify_manifest(manifest: dict[str, Any]) -> CandidateVerification:
-    errors: list[str] = []
-    if manifest.get("runtime", {}).get("name") != NAUTILUS_RUNTIME_NAME:
-        errors.append("runtime.name must be NAUTILUS_TRADER")
-    if manifest.get("runtime", {}).get("version") != PINNED_NAUTILUS_VERSION:
-        errors.append(f"runtime.version must be {PINNED_NAUTILUS_VERSION}")
-    required = {"manifest.json", "requirements.lock", "lineage.json"}
-    declared = set(manifest.get("required_files", []))
-    missing = sorted(required - declared)
-    if missing:
-        errors.append(f"required_files missing: {', '.join(missing)}")
-    if _contains_secret_key(manifest):
-        errors.append("manifest contains a secret-bearing field")
-    return CandidateVerification(
-        valid=not errors,
-        runtime_version=PINNED_NAUTILUS_VERSION,
-        errors=errors,
-        details={"checked_at": _now()},
-    )
 
 
 def main() -> int:
     import uvicorn
 
     host = os.environ.get("QUAZONAI_NAUTILUS_HOST", "0.0.0.0")
-    port = int(os.environ.get("QUAZONAI_NAUTILUS_PORT", "8011"))
+    port = int(os.environ.get("QUAZONAI_NAUTILUS_PORT", "9010"))
     uvicorn.run(create_app(), host=host, port=port, proxy_headers=False)
     return 0
 
