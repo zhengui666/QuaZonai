@@ -45,6 +45,10 @@ def migration_head(migrations: Path) -> str:
     return heads.pop()
 
 
+def json_db_type(_: str) -> str:
+    return "JSON_VALUE"
+
+
 def load_original() -> object | None:
     path = ROOT / ".github/scripts/apply_issue22.py"
     if not path.exists():
@@ -55,6 +59,7 @@ def load_original() -> object | None:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     module.migration_head = migration_head
+    module.json_db_type = json_db_type
     return module
 
 
@@ -92,8 +97,6 @@ def ensure_runner_type_safety() -> None:
     if not path.exists():
         return
     text = path.read_text(encoding="utf-8")
-    # A Mission branch is required by the domain, but make the boundary explicit
-    # for type checkers and corrupt-row diagnostics.
     needle = "executed_experiment_ids: set[UUID] = set()"
     if needle in text and "MISSION_BRANCH_MISSING" not in text:
         replacement = (
