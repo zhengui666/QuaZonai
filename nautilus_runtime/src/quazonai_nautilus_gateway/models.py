@@ -46,6 +46,20 @@ _FORBIDDEN_SOURCE_NAMES = {
     "setattr",
     "vars",
 }
+_FORBIDDEN_SOURCE_ATTRIBUTES = {
+    "__bases__",
+    "__builtins__",
+    "__class__",
+    "__closure__",
+    "__code__",
+    "__dict__",
+    "__getattribute__",
+    "__globals__",
+    "__loader__",
+    "__mro__",
+    "__spec__",
+    "__subclasses__",
+}
 
 
 class StrictModel(BaseModel):
@@ -61,7 +75,7 @@ def _validate_restricted_strategy_source(path: str, source: str) -> None:
     """Keep Mission-authored Python inside the remote runtime capability boundary.
 
     SOURCE_BUNDLE code executes in a disposable process with a sanitized environment and no
-    network.  This AST gate additionally prevents it from obtaining filesystem/process/reflection
+    network. This AST gate additionally prevents it from obtaining filesystem/process/reflection
     capabilities which could inspect a held-out catalog or forge the trusted runner result.
     """
     try:
@@ -86,7 +100,7 @@ def _validate_restricted_strategy_source(path: str, source: str) -> None:
         elif isinstance(node, ast.Name):
             if node.id in _FORBIDDEN_SOURCE_NAMES or node.id.startswith("__"):
                 raise ValueError(f"strategy source name {node.id!r} is not permitted")
-        elif isinstance(node, ast.Attribute) and node.attr.startswith("__"):
+        elif isinstance(node, ast.Attribute) and node.attr in _FORBIDDEN_SOURCE_ATTRIBUTES:
             raise ValueError(f"strategy source attribute {node.attr!r} is not permitted")
 
 
