@@ -1,0 +1,164 @@
+name: Issue 22 closure patch
+
+on:
+  push:
+    branches:
+      - feat/issue-22-remote-nautilus-runtime
+    paths:
+      - .github/workflows/issue22-closure-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/issue-22-remote-nautilus-runtime
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Remove legacy Candidate Package compatibility and fix cross-runtime syntax
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace(path: str, old: str, new: str, *, count: int = -1) -> None:
+              file = Path(path)
+              text = file.read_text(encoding="utf-8")
+              if old not in text:
+                  raise SystemExit(f"expected text not found in {path}: {old!r}")
+              text = text.replace(old, new, count)
+              file.write_text(text, encoding="utf-8")
+
+          replace(
+              "backend/src/operator_auth.py",
+              "except ValueError, TypeError, json.JSONDecodeError, _InvalidCookie:",
+              "except (ValueError, TypeError, json.JSONDecodeError, _InvalidCookie):",
+          )
+          replace(
+              "backend/src/runners/research_missions.py",
+              "except OSError, TimeoutError:",
+              "except (OSError, TimeoutError):",
+          )
+          replace(
+              "backend/src/settings.py",
+              "except binascii.Error, ValueError:",
+              "except (binascii.Error, ValueError):",
+          )
+
+          domain = Path("backend/src/api/domain.py")
+          text = domain.read_text(encoding="utf-8")
+          text = text.replace(
+              "from candidate_packages import build_candidate_package, resolve_package_archive",
+              "from candidate_bundles import (\n"
+              "    BUNDLE_CONTRACT_VERSION,\n"
+              "    build_candidate_bundle,\n"
+              "    resolve_bundle_archive,\n"
+              ")",
+          )
+          text = text.replace("CandidatePackage,", "CandidateBundle,")
+          text = text.replace("build_candidate_package(", "build_candidate_bundle(")
+          text = text.replace("resolve_package_archive(", "resolve_bundle_archive(")
+          text = text.replace("CandidatePackage(", "CandidateBundle(")
+          text = text.replace("session.get(CandidatePackage,", "session.get(CandidateBundle,")
+          text = text.replace("candidate_package_id", "candidate_bundle_id")
+          text = text.replace(
+              "contract_version=downstream.package_contract_version,",
+              "contract_version=BUNDLE_CONTRACT_VERSION,",
+          )
+          text = text.replace(
+              'filename=f"candidate-package-{package.id}.zip"',
+              'filename=f"candidate-bundle-{package.id}.zip"',
+          )
+          text = text.replace('package_contract_version: str = "1"', 'package_contract_version: str = "2"')
+          domain.write_text(text, encoding="utf-8")
+
+          models = Path("backend/src/db/domain_models.py")
+          text = models.read_text(encoding="utf-8")
+          text = text.replace("class CandidatePackage(Base):", "class CandidateBundle(Base):")
+          text = text.replace('__tablename__ = "candidate_packages"', '__tablename__ = "candidate_bundles"')
+          text = text.replace("candidate_package_id", "candidate_bundle_id")
+          text = text.replace('ForeignKey("candidate_packages.id"', 'ForeignKey("candidate_bundles.id"')
+          text = text.replace('"CandidatePackage",', '"CandidateBundle",')
+          text = text.replace(
+              'package_contract_version: Mapped[str] = mapped_column(String(40), nullable=False, default="1")',
+              'package_contract_version: Mapped[str] = mapped_column(String(40), nullable=False, default="2")',
+          )
+          models.write_text(text, encoding="utf-8")
+
+          public_models = Path("backend/src/db/models.py")
+          text = public_models.read_text(encoding="utf-8")
+          text = text.replace("CandidatePackage,", "CandidateBundle,")
+          text = text.replace('"CandidatePackage",', '"CandidateBundle",')
+          public_models.write_text(text, encoding="utf-8")
+
+          migration = Path("backend/alembic/versions/0006_nautilus_first_runtime.py")
+          text = migration.read_text(encoding="utf-8")
+          text = text.replace(
+              "def upgrade() -> None:\n",
+              "def upgrade() -> None:\n"
+              "    op.rename_table(\"candidate_packages\", \"candidate_bundles\")\n"
+              "    op.alter_column(\n"
+              "        \"handoff_offers\",\n"
+              "        \"candidate_package_id\",\n"
+              "        new_column_name=\"candidate_bundle_id\",\n"
+              "    )\n",
+              1,
+          )
+          text = text.replace(
+              "def downgrade() -> None:\n",
+              "def downgrade() -> None:\n"
+              "    op.alter_column(\n"
+              "        \"handoff_offers\",\n"
+              "        \"candidate_bundle_id\",\n"
+              "        new_column_name=\"candidate_package_id\",\n"
+              "    )\n"
+              "    op.rename_table(\"candidate_bundles\", \"candidate_packages\")\n",
+              1,
+          )
+          migration.write_text(text, encoding="utf-8")
+
+          pyproject = Path("backend/pyproject.toml")
+          text = pyproject.read_text(encoding="utf-8")
+          text = text.replace('"candidate_bundles","quazonai", "candidate_packages",', '"candidate_bundles", "quazonai",')
+          pyproject.write_text(text, encoding="utf-8")
+
+          legacy = Path("backend/src/candidate_packages.py")
+          legacy.unlink()
+
+          # Candidate Bundle is a breaking V2 contract. Update direct source/test references;
+          # do not preserve aliases or dual schema fields.
+          for root in (Path("backend/tests"), Path("frontend/src")):
+              if not root.exists():
+                  continue
+              for file in root.rglob("*"):
+                  if file.suffix not in {".py", ".ts", ".tsx"}:
+                      continue
+                  value = file.read_text(encoding="utf-8")
+                  value = value.replace("CandidatePackage", "CandidateBundle")
+                  value = value.replace("candidate_package_id", "candidate_bundle_id")
+                  value = value.replace("candidate-package", "candidate-bundle")
+                  value = value.replace("candidate_packages", "candidate_bundles")
+                  file.write_text(value, encoding="utf-8")
+          PY
+          python -m pip install --disable-pip-version-check ruff
+          ruff format backend/src backend/tests backend/alembic/versions/0006_nautilus_first_runtime.py
+          ruff check --fix --config backend/pyproject.toml backend/src backend/tests
+          python -m compileall -q backend/src
+          python tools/check_quant_runtime_boundary.py
+          if grep -R -n -E 'candidate_packages|candidate_package_id|build_candidate_package|resolve_package_archive|CandidatePackage' backend/src backend/tests backend/pyproject.toml; then
+            echo 'legacy Candidate Package compatibility remains' >&2
+            exit 1
+          fi
+      - name: Push product-only closure patch
+        run: |
+          git config user.name "QuaZonai Maintainer"
+          git config user.email "actions@users.noreply.github.com"
+          git add backend frontend/src
+          git commit -m "refactor(runtime): remove Candidate Package compatibility"
+          git push origin HEAD:feat/issue-22-remote-nautilus-runtime
