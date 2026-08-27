@@ -107,3 +107,54 @@ jobs:
       - name: Stop Compose
         if: always()
         run: docker compose --env-file .env.example down --volumes --remove-orphans
+
+  # ISSUE22_MATERIALIZER_START
+  materialize-issue22:
+    if: github.event_name == 'pull_request' && github.head_ref == 'feat/issue-22-remote-nautilus-runtime'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: feat/issue-22-remote-nautilus-runtime
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Materialize Issue 22 migration
+        run: |
+          python .github/scripts/repair_issue22.py
+          python -m pip install --disable-pip-version-check ruff
+          ruff format backend/src backend/tests nautilus_runtime tools/check_quant_runtime_boundary.py
+          ruff check --fix backend/src backend/tests nautilus_runtime tools/check_quant_runtime_boundary.py
+          python -m compileall -q backend/src nautilus_runtime/src
+          python tools/check_quant_runtime_boundary.py
+      - name: Remove migration scaffolding and publish product state
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('.github/workflows/ci.yml')
+          text = path.read_text(encoding='utf-8')
+          start_marker = '  # ISSUE22_MATERIALIZER_START\n'
+          end_marker = '  # ISSUE22_MATERIALIZER_END\n'
+          start = text.index(start_marker)
+          end = text.index(end_marker, start) + len(end_marker)
+          text = text[:start] + text[end:]
+          path.write_text(text, encoding='utf-8')
+          PY
+          rm -f .github/ISSUE22_PR_READY
+          rm -f .github/workflows/apply-issue22.yml
+          rm -f .github/workflows/repair-issue22.yml
+          rm -f .github/workflows/finalize-issue22.yml
+          rm -f .github/workflows/finalize-issue22-v2.yml
+          rm -f .github/workflows/export-source.yml
+          rm -f .github/scripts/apply_issue22.py
+          rm -f .github/scripts/repair_issue22.py
+          git config user.name 'QuaZonai Maintainer'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -A
+          git commit -m 'feat(runtime): materialize issue 22 architecture'
+          git push origin HEAD:feat/issue-22-remote-nautilus-runtime
+  # ISSUE22_MATERIALIZER_END
