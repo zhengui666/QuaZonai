@@ -22,6 +22,7 @@ from db.models import (
 from db.session import create_database_engine, create_session_factory
 from errors import QfError
 from quant_runtime.contracts import BacktestExperimentRequest, ExperimentMode
+from quant_runtime.data_scope import dataset_revision_domains, normalize_data_domain
 from quant_runtime.ledger import (
     ExperimentCoordinator,
     write_evidence,
@@ -32,35 +33,6 @@ from settings import Settings
 MAX_EXPERIMENTS_PER_ROUND = 20
 CATALOG_URI_PREFIX = "nautilus-catalog://"
 
-
-_DATA_TYPE_DOMAINS = {
-    "quotetick": {"quotes", "market_data"},
-    "tradetick": {"trades", "market_data"},
-    "bar": {"bars", "market_data"},
-    "orderbookdelta": {"order_book", "market_data"},
-    "orderbookdeltas": {"order_book", "market_data"},
-}
-
-
-def _normalize_domain(value: object) -> str:
-    return str(value).strip().casefold().replace("-", "_").replace(" ", "_")
-
-
-def _revision_domains(
-    revision: DatasetRevision,
-    source: GovernedDataSource | None,
-) -> set[str]:
-    result = set(_DATA_TYPE_DOMAINS.get(_normalize_domain(revision.nautilus_data_type), set()))
-    if source is not None:
-        config = source.public_config or {}
-        for key in ("data_domain", "domain"):
-            if config.get(key):
-                result.add(_normalize_domain(config[key]))
-        configured = config.get("data_domains")
-        if isinstance(configured, list):
-            result.update(_normalize_domain(value) for value in configured)
-        result.update(_normalize_domain(value) for value in (source.fields or []))
-    return {value for value in result if value}
 
 
 def prepare_experiment_workspace(
@@ -95,7 +67,7 @@ def prepare_experiment_workspace(
                 except ValueError:
                     continue
             allowed_domains = {
-                _normalize_domain(value) for value in (charter.allowed_data_domains or []) if value
+                normalize_data_domain(value) for value in (charter.allowed_data_domains or []) if value
             }
             revisions = []
             if allowed_universe_ids and allowed_domains:
@@ -126,7 +98,13 @@ def prepare_experiment_workspace(
                     if revision.data_source_id is not None
                     else None
                 )
-                domains = _revision_domains(revision, source)
+                if (
+                    source is None
+                    or source.state != "ACTIVE"
+                    or source.preflight_state != "READY"
+                ):
+                    continue
+                domains = dataset_revision_domains(revision, source)
                 if not domains.intersection(allowed_domains):
                     continue
                 catalog_uri = revision.catalog_uri or ""

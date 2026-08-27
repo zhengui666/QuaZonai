@@ -12,10 +12,14 @@ from sqlalchemy import Engine, func, select
 from db.models import (
     ApprovalSnapshot,
     DownstreamSystem,
+    DatasetRevision,
     ForwardEvidenceEpisode,
+    GovernedDataSource,
     Job,
+    MarketUniverseVersion,
     PortfolioCandidate,
     PortfolioProgram,
+    ResearchCharter,
     ResearchProgram,
 )
 from db.session import create_session_factory
@@ -26,6 +30,66 @@ from settings import Settings
 
 def _client(engine: Engine, settings: Settings) -> TestClient:
     return TestClient(create_app(settings=settings, engine=engine))
+
+
+def _seed_research_scope(
+    engine: Engine,
+    *,
+    name: str = "US Equities",
+    key: str = "US_EQUITIES",
+    instrument_id: str = "AAPL.XNAS",
+) -> UUID:
+    factory = create_session_factory(engine)
+    now = datetime.now(UTC)
+    universe_id = uuid4()
+    with factory() as session, session.begin():
+        universe = MarketUniverseVersion(
+            id=universe_id,
+            universe_key=f"{key}_{universe_id.hex[:8]}",
+            version_no=1,
+            name=name,
+            state="ACTIVE",
+            spec_json={},
+            created_at=now,
+        )
+        source = GovernedDataSource(
+            name=f"Governed quotes {universe_id}",
+            provider="Integration provider",
+            state="ACTIVE",
+            universe_scope=[name],
+            fields=["event_time", "available_time", "bid_price", "ask_price"],
+            preflight_state="READY",
+            public_config={"data_domains": ["quotes", "market_data"]},
+        )
+        session.add_all([universe, source])
+        session.flush()
+        session.add(
+            DatasetRevision(
+                data_source_id=source.id,
+                universe_version_id=universe.id,
+                universe_name=name,
+                revision_no=1,
+                event_start=now - timedelta(days=30),
+                event_end=now - timedelta(days=20),
+                available_start=now - timedelta(days=30),
+                available_end=now - timedelta(days=20),
+                row_count=100,
+                quality_state="VALID",
+                point_in_time_state="VALID",
+                partition="DISCOVERY",
+                created_at=now,
+                provider_name="Integration provider",
+                source_license="integration-test",
+                catalog_uri=f"nautilus-catalog://scope-{universe_id.hex}",
+                nautilus_data_type="QuoteTick",
+                instrument_scope=[instrument_id],
+                schema_revision="quote-v2",
+                quality_result={"state": "VALID"},
+                point_in_time_result={"state": "VALID"},
+                ingested_at=now,
+            )
+        )
+    return universe_id
 
 
 def _nautilus_candidate_metrics(experiment_id: UUID) -> dict:
@@ -106,6 +170,7 @@ def test_program_creation_is_idempotent_and_queues_a_durable_mission(
     engine: Engine,
     settings: Settings,
 ) -> None:
+    universe_id = _seed_research_scope(engine)
     client = _client(engine, settings)
     headers = {"Idempotency-Key": "program-create-1"}
     payload = {
@@ -118,6 +183,15 @@ def test_program_creation_is_idempotent_and_queues_a_durable_mission(
     program = created.json()
     assert program["state"] == "ACTIVE"
     assert program["mission_count"] == 1
+    assert program["charter"]["universe_version_ids"] == [str(universe_id)]
+    assert set(program["charter"]["allowed_data_domains"]) >= {"quotes", "market_data"}
+
+    factory = create_session_factory(engine)
+    with factory() as session:
+        charter = session.get(ResearchCharter, UUID(program["charter_id"]))
+        assert charter is not None
+        assert charter.universe_version_ids == [str(universe_id)]
+        assert set(charter.allowed_data_domains) >= {"quotes", "market_data"}
 
     replay = client.post("/api/v1/research-programs", headers=headers, json=payload)
     assert replay.status_code == 201, replay.text
@@ -142,7 +216,6 @@ def test_program_creation_is_idempotent_and_queues_a_durable_mission(
     assert {event["kind"] for event in activity.json()} >= {"PROGRAM_CREATED", "MISSION_READY"}
     assert "MISSION_STARTED" not in {event["kind"] for event in activity.json()}
 
-    factory = create_session_factory(engine)
     with factory() as session:
         job = session.scalar(
             select(Job).where(
@@ -158,6 +231,7 @@ def test_duplicate_idea_uses_contribution_instead_of_copying_program(
     engine: Engine,
     settings: Settings,
 ) -> None:
+    _seed_research_scope(engine)
     client = _client(engine, settings)
     idea = "Test short-horizon momentum in liquid US equities after realistic costs."
     first = client.post(
@@ -182,6 +256,30 @@ def test_duplicate_idea_uses_contribution_instead_of_copying_program(
     factory = create_session_factory(engine)
     with factory() as session:
         assert session.scalar(select(func.count()).select_from(ResearchProgram)) == 1
+
+
+def test_program_creation_rejects_unavailable_inferred_scope(
+    engine: Engine,
+    settings: Settings,
+) -> None:
+    _seed_research_scope(engine, name="US Equities", key="US_EQUITIES")
+    client = _client(engine, settings)
+
+    response = client.post(
+        "/api/v1/research-programs",
+        headers={"Idempotency-Key": "scope-unavailable"},
+        json={
+            "idea": "Test crypto spot momentum after realistic costs and liquidity filters.",
+            "answers": {},
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["code"] == "RESEARCH_SCOPE_UNAVAILABLE"
+
+    factory = create_session_factory(engine)
+    with factory() as session:
+        assert session.scalar(select(func.count()).select_from(ResearchProgram)) == 0
+        assert session.scalar(select(func.count()).select_from(ResearchCharter)) == 0
 
 
 def _seed_candidate_approval(

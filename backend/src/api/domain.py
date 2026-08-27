@@ -42,6 +42,7 @@ from db.models import (
 from downstream_auth import authenticate_downstream, install_service_token, issue_service_token
 from errors import QfError
 from jobs import enqueue_job
+from quant_runtime.data_scope import dataset_revision_domains, market_scope_matches_universe
 
 router = APIRouter(prefix="/api/v1", tags=["domain"])
 
@@ -458,6 +459,110 @@ def _charter_preview(idea: str) -> CharterView:
     )
 
 
+def _resolve_frozen_research_scope(
+    session: Session,
+    preview: CharterView,
+) -> tuple[list[UUID], list[str], str | list[str]]:
+    """Resolve an Idea to concrete executable governed Discovery scope."""
+    revisions = list(
+        session.scalars(
+            select(DatasetRevision)
+            .where(
+                DatasetRevision.partition == "DISCOVERY",
+                DatasetRevision.quality_state == "VALID",
+                DatasetRevision.point_in_time_state == "VALID",
+                DatasetRevision.catalog_uri.is_not(None),
+                DatasetRevision.universe_version_id.is_not(None),
+                DatasetRevision.data_source_id.is_not(None),
+            )
+            .order_by(DatasetRevision.created_at.desc())
+        )
+    )
+    universe_ids = {
+        item.universe_version_id for item in revisions if item.universe_version_id is not None
+    }
+    source_ids = {item.data_source_id for item in revisions if item.data_source_id is not None}
+    universes = (
+        list(
+            session.scalars(
+                select(MarketUniverseVersion).where(
+                    MarketUniverseVersion.id.in_(universe_ids),
+                    MarketUniverseVersion.state == "ACTIVE",
+                )
+            )
+        )
+        if universe_ids
+        else []
+    )
+    sources = (
+        list(
+            session.scalars(
+                select(GovernedDataSource).where(
+                    GovernedDataSource.id.in_(source_ids),
+                    GovernedDataSource.state == "ACTIVE",
+                    GovernedDataSource.preflight_state == "READY",
+                )
+            )
+        )
+        if source_ids
+        else []
+    )
+    latest_by_key: dict[str, MarketUniverseVersion] = {}
+    for universe in universes:
+        if (
+            universe.universe_key not in latest_by_key
+            or universe.version_no > latest_by_key[universe.universe_key].version_no
+        ):
+            latest_by_key[universe.universe_key] = universe
+    active_universes = {item.id: item for item in latest_by_key.values()}
+    active_sources = {item.id: item for item in sources}
+
+    eligible: list[tuple[DatasetRevision, MarketUniverseVersion, set[str]]] = []
+    for revision in revisions:
+        if revision.universe_version_id is None or revision.data_source_id is None:
+            continue
+        matched_universe = active_universes.get(revision.universe_version_id)
+        matched_source = active_sources.get(revision.data_source_id)
+        if matched_universe is None or matched_source is None:
+            continue
+        if not market_scope_matches_universe(preview.market_scope, matched_universe):
+            continue
+        catalog_uri = revision.catalog_uri or ""
+        if not catalog_uri.startswith("nautilus-catalog://") or not revision.instrument_scope:
+            continue
+        domains = dataset_revision_domains(revision, matched_source)
+        if not domains:
+            continue
+        eligible.append((revision, matched_universe, domains))
+
+    if not eligible:
+        raise QfError(
+            "RESEARCH_SCOPE_UNAVAILABLE",
+            "No executable governed Discovery dataset matches the inferred Research scope.",
+            422,
+            {"market_scope": preview.market_scope},
+        )
+
+    concrete_universes = {universe.id: universe for _, universe, _ in eligible}
+    requested_scope = preview.market_scope
+    if requested_scope is None or requested_scope == "System inferred":
+        names = sorted({item.name for item in concrete_universes.values()})
+        if len(names) != 1:
+            raise QfError(
+                "RESEARCH_SCOPE_AMBIGUOUS",
+                "The Idea does not resolve to one configured executable market scope.",
+                422,
+                {"available_market_scopes": names},
+            )
+        frozen_market_scope: str | list[str] = names[0]
+    else:
+        frozen_market_scope = requested_scope
+
+    frozen_universe_ids = sorted(concrete_universes, key=str)
+    frozen_domains = sorted({domain for _, _, domains in eligible for domain in domains})
+    return frozen_universe_ids, frozen_domains, frozen_market_scope
+
+
 def _charter_view(item: ResearchCharter) -> CharterView:
     universe_ids: list[UUID] = []
     for value in item.universe_version_ids:
@@ -784,17 +889,23 @@ def create_program(
                 return _program_view(session, duplicate).model_dump(mode="json")
 
             preview = _charter_preview(payload.idea)
+            universe_version_ids, allowed_data_domains, market_scope = (
+                _resolve_frozen_research_scope(session, preview)
+            )
             now = _now()
             charter = ResearchCharter(
                 original_idea_text=preview.original_idea_text,
                 research_question=preview.research_question or preview.original_idea_text,
-                market_scope=preview.market_scope or "System inferred",
-                universe_version_ids=[],
+                market_scope=market_scope,
+                universe_version_ids=[str(value) for value in universe_version_ids],
                 prediction_horizon=preview.prediction_horizon,
-                allowed_data_domains=[],
+                allowed_data_domains=allowed_data_domains,
                 explicit_exclusions=preview.explicit_exclusions,
                 material_assumptions=preview.material_assumptions,
-                system_assumptions=preview.system_assumptions,
+                system_assumptions=[
+                    *preview.system_assumptions,
+                    "Universe Versions and data domains were frozen from executable governed Discovery revisions at Program creation.",
+                ],
                 created_at=now,
             )
             session.add(charter)
