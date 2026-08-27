@@ -45,6 +45,45 @@ def test_claim_and_release_expired_job(engine) -> None:  # type: ignore[no-untyp
         assert job.lease_owner is None
 
 
+def test_claim_next_job_respects_explicit_worker_capabilities(
+    engine,  # type: ignore[no-untyped-def]
+) -> None:
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    earlier = datetime.now(UTC) - timedelta(minutes=1)
+    with factory.begin() as session:
+        privileged = enqueue_job(
+            session,
+            kind="SEALED_ALPHA_QUALIFICATION",
+            resource_type="SEARCH_LEDGER_ENTRY",
+            resource_id=uuid4(),
+            available_at=earlier,
+        )
+        ordinary = enqueue_job(
+            session,
+            kind="SYSTEM_NOOP",
+            resource_type="system",
+            resource_id=uuid4(),
+        )
+        privileged_id = privileged.id
+        ordinary_id = ordinary.id
+
+    with factory.begin() as session:
+        claimed = claim_next_job(
+            session,
+            owner="ordinary-worker",
+            lease_seconds=60,
+            kinds={"SYSTEM_NOOP"},
+        )
+        assert claimed is not None
+        assert claimed.id == ordinary_id
+
+    with factory() as session:
+        privileged = session.get(Job, privileged_id)
+        assert privileged is not None
+        assert privileged.state == "READY"
+        assert privileged.lease_owner is None
+
+
 def test_worker_run_once_uses_shared_factory_and_completes_job(
     engine,  # type: ignore[no-untyped-def]
     settings,  # type: ignore[no-untyped-def]
