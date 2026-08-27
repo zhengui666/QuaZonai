@@ -44,16 +44,7 @@ class ExperimentCoordinator:
             if existing is not None:
                 return existing
             dataset = session.get(DatasetRevision, request.dataset_revision_id)
-            self._validate_dataset(dataset, sealed=sealed)
-            assert dataset is not None
-            requested_catalog_uri = f"nautilus-catalog://{request.catalog_key}"
-            if dataset.catalog_uri != requested_catalog_uri:
-                raise QfError(
-                    "DATASET_CATALOG_MISMATCH",
-                    "Experiment catalog does not match the governed Dataset Revision.",
-                    422,
-                    {"expected": dataset.catalog_uri, "requested": requested_catalog_uri},
-                )
+            self._validate_dataset(dataset, request=request, sealed=sealed)
             if mission_id is not None:
                 mission = session.get(ResearchMission, mission_id)
                 if mission is None or mission.program_id != program_id:
@@ -126,7 +117,12 @@ class ExperimentCoordinator:
             return entry
 
     @staticmethod
-    def _validate_dataset(dataset: DatasetRevision | None, *, sealed: bool) -> None:
+    def _validate_dataset(
+        dataset: DatasetRevision | None,
+        *,
+        request: BacktestExperimentRequest,
+        sealed: bool,
+    ) -> None:
         if dataset is None:
             raise QfError("DATASET_REVISION_NOT_FOUND", "Dataset Revision does not exist.", 404)
         expected_partition = "SEALED" if sealed else "DISCOVERY"
@@ -149,6 +145,33 @@ class ExperimentCoordinator:
                 "Dataset Revision is not linked to a remote Nautilus catalog.",
                 422,
             )
+        expected_catalog_uri = f"nautilus-catalog://{request.catalog_key}"
+        if dataset.catalog_uri != expected_catalog_uri:
+            raise QfError(
+                "DATASET_CATALOG_MISMATCH",
+                "Experiment catalog does not match the governed Dataset Revision.",
+                422,
+                {"expected": dataset.catalog_uri, "requested": expected_catalog_uri},
+            )
+        governed_scope = set(dataset.instrument_scope or [])
+        requested_scope = set(request.instrument_ids)
+        if not governed_scope or not requested_scope.issubset(governed_scope):
+            raise QfError(
+                "DATASET_INSTRUMENT_SCOPE_MISMATCH",
+                "Experiment instruments are outside the governed Dataset Revision scope.",
+                422,
+                {
+                    "governed": sorted(governed_scope),
+                    "requested": sorted(requested_scope),
+                },
+            )
+        if dataset.nautilus_data_type and dataset.nautilus_data_type != "QuoteTick":
+            raise QfError(
+                "DATASET_NAUTILUS_TYPE_MISMATCH",
+                "The current Backtest contract requires a QuoteTick Dataset Revision.",
+                422,
+                {"actual": dataset.nautilus_data_type},
+            )
         if dataset.available_start is None or dataset.available_end is None:
             raise QfError(
                 "DATASET_AVAILABILITY_MISSING",
@@ -159,6 +182,30 @@ class ExperimentCoordinator:
             raise QfError(
                 "DATASET_POINT_IN_TIME_INVALID",
                 "Dataset availability cannot precede its event-time range.",
+                422,
+            )
+        if request.start_time is not None and dataset.event_start is not None:
+            if request.start_time < dataset.event_start:
+                raise QfError(
+                    "DATASET_TIME_RANGE_MISMATCH",
+                    "Experiment starts before the governed Dataset Revision.",
+                    422,
+                )
+        if request.end_time is not None and dataset.event_end is not None:
+            if request.end_time > dataset.event_end:
+                raise QfError(
+                    "DATASET_TIME_RANGE_MISMATCH",
+                    "Experiment ends after the governed Dataset Revision.",
+                    422,
+                )
+        if (
+            request.start_time is not None
+            and request.end_time is not None
+            and request.start_time >= request.end_time
+        ):
+            raise QfError(
+                "EXPERIMENT_TIME_RANGE_INVALID",
+                "Experiment start_time must precede end_time.",
                 422,
             )
 
