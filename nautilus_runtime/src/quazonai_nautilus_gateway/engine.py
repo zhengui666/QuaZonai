@@ -43,6 +43,9 @@ from quazonai_nautilus_gateway.models import (
     ExperimentMode,
 )
 
+CANDIDATE_BUNDLE_CONTRACT = "QUAZONAI_NAUTILUS_CANDIDATE_BUNDLE"
+CANDIDATE_BUNDLE_CONTRACT_VERSION = "2"
+
 
 class GatewayContractError(ValueError):
     pass
@@ -70,12 +73,12 @@ def _jsonable(value: Any) -> Any:
             try:
                 return _jsonable(type(value).to_dict(value))
             except (AttributeError, TypeError, ValueError):
-                pass
+                return str(value)
     if hasattr(value, "as_dict"):
         try:
             return _jsonable(value.as_dict())
         except (AttributeError, TypeError, ValueError):
-            pass
+            return str(value)
     return str(value)
 
 
@@ -97,6 +100,13 @@ def _safe_rel_path(path: str) -> Path:
     if candidate.is_absolute() or ".." in candidate.parts:
         raise GatewayContractError("artifact path traversal is forbidden")
     return candidate
+
+
+def _parse_time(value: str | datetime) -> datetime:
+    parsed = value if isinstance(value, datetime) else datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        raise GatewayContractError("catalog timestamps must be timezone-aware")
+    return parsed.astimezone(UTC)
 
 
 class NautilusGatewayEngine:
@@ -145,48 +155,100 @@ class NautilusGatewayEngine:
         return instrument
 
     def ingest(self, request: CatalogIngestRequest) -> dict[str, Any]:
+        if request.protocol_version != PROTOCOL_VERSION:
+            raise GatewayContractError("unsupported protocol version")
         instrument = self._instrument(request.instrument_id)
-        frame = pd.DataFrame(
-            {
-                "bid_price": [row.bid_price for row in request.rows],
-                "ask_price": [row.ask_price for row in request.rows],
-                "bid_size": [row.volume or "1000000" for row in request.rows],
-                "ask_size": [row.volume or "1000000" for row in request.rows],
-            },
-            index=pd.DatetimeIndex(
-                [row.timestamp for row in request.rows], name="timestamp"
-            ),
-        ).sort_index()
+        rows = sorted(request.rows, key=lambda row: row.timestamp)
+        event_times = [row.timestamp.astimezone(UTC) for row in rows]
+        if len(set(event_times)) != len(event_times):
+            raise GatewayContractError("event timestamps must be unique")
+
+        try:
+            frame = pd.DataFrame(
+                {
+                    "bid_price": [float(row.bid_price) for row in rows],
+                    "ask_price": [float(row.ask_price) for row in rows],
+                    "bid_size": [float(row.volume or "1000000") for row in rows],
+                    "ask_size": [float(row.volume or "1000000") for row in rows],
+                },
+                index=pd.DatetimeIndex(event_times, name="timestamp"),
+            )
+        except ValueError as exc:
+            raise GatewayContractError("quote prices and sizes must be numeric") from exc
         if not frame.index.is_monotonic_increasing or frame.index.has_duplicates:
             raise GatewayContractError(
                 "event timestamps must be unique and monotonically increasing"
             )
-        if (frame["bid_price"].map(Decimal) > frame["ask_price"].map(Decimal)).any():
+        if (frame["bid_price"] > frame["ask_price"]).any():
             raise GatewayContractError("bid price cannot exceed ask price")
 
-        ticks = QuoteTickDataWrangler(instrument).process(frame)
+        wrangled = QuoteTickDataWrangler(instrument).process(frame)
+        ticks = [
+            QuoteTick(
+                tick.instrument_id,
+                tick.bid_price,
+                tick.ask_price,
+                tick.bid_size,
+                tick.ask_size,
+                tick.ts_event,
+                int(pd.Timestamp(row.available_at).value),
+            )
+            for tick, row in zip(wrangled, rows, strict=True)
+        ]
+        if any(tick.ts_init < tick.ts_event for tick in ticks):
+            raise GatewayContractError("availability timestamp cannot precede event timestamp")
+
         catalog_path = self._catalog_path(request.catalog_key)
         catalog_path.mkdir(parents=True, exist_ok=True)
         catalog = ParquetDataCatalog(path=str(catalog_path))
         catalog.write_data([instrument])
         catalog.write_data(ticks)
-        event_start = request.rows[0].timestamp.astimezone(UTC)
-        event_end = request.rows[-1].timestamp.astimezone(UTC)
+
+        event_start = min(event_times)
+        event_end = max(event_times)
+        availability_times = [row.available_at.astimezone(UTC) for row in rows]
+        available_start = min(availability_times)
+        available_end = max(availability_times)
         schema_revision = hashlib.sha256(
-            b"QuoteTick:timestamp,bid_price,ask_price,bid_size,ask_size:v1"
+            b"QuoteTick:ts_event,ts_init,bid_price,ask_price,bid_size,ask_size:v2"
         ).hexdigest()
+        manifest_path = catalog_path / "quazonai-catalog-manifest.json"
+        existing: dict[str, Any] = {}
+        if manifest_path.exists():
+            existing = json.loads(manifest_path.read_text(encoding="utf-8"))
+        instrument_records = dict(existing.get("instruments", {}))
+        instrument_records[str(instrument.id)] = {
+            "provider": request.provider,
+            "source": request.source,
+            "source_license": request.source_license,
+            "row_count": len(ticks),
+            "event_time_start": event_start.isoformat(),
+            "event_time_end": event_end.isoformat(),
+            "available_time_start": available_start.isoformat(),
+            "available_time_end": available_end.isoformat(),
+        }
+        instrument_scope = sorted(str(item.id) for item in catalog.instruments())
+        all_records = list(instrument_records.values())
+        catalog_event_start = min(_parse_time(item["event_time_start"]) for item in all_records)
+        catalog_event_end = max(_parse_time(item["event_time_end"]) for item in all_records)
+        catalog_available_start = min(
+            _parse_time(item["available_time_start"]) for item in all_records
+        )
+        catalog_available_end = max(
+            _parse_time(item["available_time_end"]) for item in all_records
+        )
         manifest = {
             "protocol_version": PROTOCOL_VERSION,
             "runtime_version": nautilus_version,
             "catalog_key": request.catalog_key,
-            "provider": request.provider,
-            "source": request.source,
-            "source_license": request.source_license,
-            "instrument_id": str(instrument.id),
             "nautilus_data_type": request.nautilus_data_type,
-            "event_time_start": event_start.isoformat(),
-            "event_time_end": event_end.isoformat(),
-            "row_count": len(ticks),
+            "instrument_scope": instrument_scope,
+            "instruments": instrument_records,
+            "event_time_start": catalog_event_start.isoformat(),
+            "event_time_end": catalog_event_end.isoformat(),
+            "available_time_start": catalog_available_start.isoformat(),
+            "available_time_end": catalog_available_end.isoformat(),
+            "row_count": sum(int(item["row_count"]) for item in all_records),
             "schema_revision": schema_revision,
             "quality_result": {
                 "state": "VALID",
@@ -196,24 +258,25 @@ class NautilusGatewayEngine:
             },
             "point_in_time_result": {
                 "state": "VALID",
-                "event_time_ordered": True,
-                "ingestion_time_recorded": True,
+                "replay_order": "TS_INIT",
+                "event_time_preserved": True,
+                "availability_time_preserved": True,
             },
             "ingested_at": _utc_now().isoformat(),
         }
-        (catalog_path / "quazonai-catalog-manifest.json").write_text(
-            json.dumps(manifest, indent=2), encoding="utf-8"
-        )
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         return {
             "protocol_version": PROTOCOL_VERSION,
             "runtime_version": nautilus_version,
             "catalog_key": request.catalog_key,
             "catalog_uri": f"nautilus-catalog://{request.catalog_key}",
             "nautilus_data_type": request.nautilus_data_type,
-            "instrument_scope": [str(instrument.id)],
-            "event_time_start": event_start,
-            "event_time_end": event_end,
-            "row_count": len(ticks),
+            "instrument_scope": instrument_scope,
+            "event_time_start": catalog_event_start,
+            "event_time_end": catalog_event_end,
+            "available_time_start": catalog_available_start,
+            "available_time_end": catalog_available_end,
+            "row_count": manifest["row_count"],
             "schema_revision": schema_revision,
             "quality_result": manifest["quality_result"],
             "point_in_time_result": manifest["point_in_time_result"],
@@ -221,6 +284,8 @@ class NautilusGatewayEngine:
         }
 
     def validate_catalog(self, request: CatalogValidationRequest) -> dict[str, Any]:
+        if request.protocol_version != PROTOCOL_VERSION:
+            raise GatewayContractError("unsupported protocol version")
         catalog_path = self._catalog_path(request.catalog_key)
         manifest_path = catalog_path / "quazonai-catalog-manifest.json"
         findings: list[dict[str, Any]] = []
@@ -237,7 +302,7 @@ class NautilusGatewayEngine:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         catalog = ParquetDataCatalog(path=str(catalog_path))
         instruments = catalog.instruments()
-        scope = [str(instrument.id) for instrument in instruments]
+        scope = sorted(str(instrument.id) for instrument in instruments)
         requested = set(request.instrument_ids)
         if requested and not requested.issubset(scope):
             findings.append(
@@ -246,6 +311,8 @@ class NautilusGatewayEngine:
                     "missing": sorted(requested.difference(scope)),
                 }
             )
+        if set(manifest.get("instrument_scope", [])) != set(scope):
+            findings.append({"code": "CATALOG_MANIFEST_SCOPE_MISMATCH"})
         if (
             request.nautilus_data_type
             and request.nautilus_data_type != manifest["nautilus_data_type"]
@@ -266,6 +333,8 @@ class NautilusGatewayEngine:
             "row_count": manifest["row_count"],
             "event_time_start": manifest["event_time_start"],
             "event_time_end": manifest["event_time_end"],
+            "available_time_start": manifest["available_time_start"],
+            "available_time_end": manifest["available_time_end"],
             "findings": findings,
         }
 
@@ -321,9 +390,13 @@ class NautilusGatewayEngine:
         config: dict[str, Any], request: BacktestExperimentRequest
     ) -> dict[str, Any]:
         result = dict(config)
-        instrument = NautilusGatewayEngine._instrument(request.instrument_ids[0])
+        instruments = [
+            NautilusGatewayEngine._instrument(item).id for item in request.instrument_ids
+        ]
         if "instrument_id" in result:
-            result["instrument_id"] = instrument.id
+            result["instrument_id"] = instruments[0]
+        if "instrument_ids" in result:
+            result["instrument_ids"] = instruments
         if "bar_type" in result:
             from nautilus_trader.model.data import BarType
 
@@ -348,32 +421,40 @@ class NautilusGatewayEngine:
                 f"catalog validation failed: {validation['findings']!r}"
             )
         catalog_path = self._catalog_path(request.catalog_key)
-        instrument = self._instrument(request.instrument_ids[0])
-        venue = str(instrument.id).rsplit(".", 1)[-1]
+        instruments = [self._instrument(item) for item in request.instrument_ids]
+        venue_names = sorted({str(instrument.id).rsplit(".", 1)[-1] for instrument in instruments})
         started_at = _utc_now()
 
         with self._strategy(request) as strategy_config:
             engine_config = BacktestEngineConfig(strategies=[strategy_config])
-            venue_defaults = {
-                "name": venue,
-                "oms_type": "HEDGING",
-                "account_type": "MARGIN",
-                "base_currency": "USD",
-                "starting_balances": ["1_000_000 USD"],
-                "book_type": "L1_MBP",
-            }
-            venue_defaults.update(request.venue_config)
-            data_config = BacktestDataConfig(
-                catalog_path=str(catalog_path),
-                data_cls=QuoteTick,
-                instrument_id=instrument.id,
-                start_time=request.start_time,
-                end_time=request.end_time,
-            )
+            venue_overrides = dict(request.venue_config)
+            venue_overrides.pop("name", None)
+            venues: list[BacktestVenueConfig] = []
+            for venue_name in venue_names:
+                venue_defaults: dict[str, Any] = {
+                    "name": venue_name,
+                    "oms_type": "HEDGING",
+                    "account_type": "MARGIN",
+                    "base_currency": "USD",
+                    "starting_balances": ["1_000_000 USD"],
+                    "book_type": "L1_MBP",
+                }
+                venue_defaults.update(venue_overrides)
+                venues.append(BacktestVenueConfig(**venue_defaults))
+            data = [
+                BacktestDataConfig(
+                    catalog_path=str(catalog_path),
+                    data_cls=QuoteTick,
+                    instrument_id=instrument.id,
+                    start_time=request.start_time,
+                    end_time=request.end_time,
+                )
+                for instrument in instruments
+            ]
             run_config = BacktestRunConfig(
                 engine=engine_config,
-                venues=[BacktestVenueConfig(**venue_defaults)],
-                data=[data_config],
+                venues=venues,
+                data=data,
             )
             node = BacktestNode(configs=[run_config])
             try:
@@ -481,6 +562,7 @@ class NautilusGatewayEngine:
             "diagnostics": {
                 "catalog_key": request.catalog_key,
                 "instrument_ids": request.instrument_ids,
+                "loaded_instrument_count": len(request.instrument_ids),
                 "strategy_artifact_id": request.strategy.artifact_id,
             },
         }
@@ -527,12 +609,14 @@ class NautilusGatewayEngine:
                 zipfile.BadZipFile,
             ) as exc:
                 findings.append({"code": "STRATEGY_WHEEL_INVALID", "detail": str(exc)})
+
         forbidden_keys = {
             "password",
             "secret",
             "api_key",
             "private_key",
             "broker_token",
+            "broker_secret",
         }
 
         def walk(value: Any, path: str = "manifest") -> None:
@@ -549,18 +633,46 @@ class NautilusGatewayEngine:
 
         walk(request.manifest)
         required = {
+            "contract",
+            "contract_version",
+            "bundle_id",
+            "candidate_id",
             "runtime",
             "strategy",
-            "data_requirements",
-            "backtest_run_config",
-            "venue_config",
-            "risk_config",
-            "lineage",
+            "data",
+            "runtime_config",
+            "validation",
             "evidence",
+            "lineage",
+            "target_weights",
         }
         missing = sorted(required.difference(request.manifest))
         if missing:
             findings.append({"code": "MANIFEST_FIELDS_MISSING", "fields": missing})
+        if request.manifest.get("contract") != CANDIDATE_BUNDLE_CONTRACT:
+            findings.append({"code": "BUNDLE_CONTRACT_INVALID"})
+        if request.manifest.get("contract_version") != CANDIDATE_BUNDLE_CONTRACT_VERSION:
+            findings.append({"code": "BUNDLE_CONTRACT_VERSION_INVALID"})
+        if str(request.manifest.get("candidate_id")) != str(request.candidate_id):
+            findings.append({"code": "CANDIDATE_ID_MISMATCH"})
+        runtime = request.manifest.get("runtime", {})
+        if runtime.get("name") != "NAUTILUS_TRADER":
+            findings.append({"code": "RUNTIME_NAME_INVALID"})
+        if runtime.get("version") != VALIDATED_NAUTILUS_VERSION:
+            findings.append({"code": "RUNTIME_VERSION_INVALID"})
+        if runtime.get("deployment") != "REMOTE_INDEPENDENT_RUNTIME":
+            findings.append({"code": "RUNTIME_DEPLOYMENT_INVALID"})
+        if runtime.get("paper_live_reuse") != "SAME_STRATEGY_WHEEL_AND_CONFIG":
+            findings.append({"code": "STRATEGY_REUSE_CONTRACT_INVALID"})
+        strategy = request.manifest.get("strategy", {})
+        if strategy.get("wheel") != "strategy/strategy.whl":
+            findings.append({"code": "STRATEGY_WHEEL_PATH_INVALID"})
+        fixture_required = {"orders", "positions", "statistics"}
+        fixture_missing = sorted(fixture_required.difference(request.fixture))
+        if fixture_missing:
+            findings.append(
+                {"code": "CONFORMANCE_FIXTURE_INCOMPLETE", "fields": fixture_missing}
+            )
         return {
             "protocol_version": PROTOCOL_VERSION,
             "runtime_version": nautilus_version,
@@ -597,14 +709,14 @@ class NautilusGatewayEngine:
             config_path = str(manifest.get("strategy", {}).get("config_path", ""))
             if ":" not in strategy_path or ":" not in config_path:
                 raise GatewayContractError("manifest strategy import paths are invalid")
+            strategy_module, strategy_name = strategy_path.split(":", 1)
+            config_module, config_name = config_path.split(":", 1)
             with tempfile.TemporaryDirectory(prefix="qz-wheel-verify-") as directory:
                 wheel_path = Path(directory) / "candidate.whl"
                 wheel_path.write_bytes(wheel)
                 sys.path.insert(0, str(wheel_path))
                 importlib.invalidate_caches()
                 try:
-                    strategy_module, strategy_name = strategy_path.split(":", 1)
-                    config_module, config_name = config_path.split(":", 1)
                     strategy_class = getattr(
                         importlib.import_module(strategy_module), strategy_name
                     )
