@@ -1,0 +1,169 @@
+"""Turn explicit forward-evidence degradation into bounded research work.
+
+Forward evidence is downstream observation only. It may wake research by
+creating a new Mission, but it never controls a paper/live node, broker, order,
+or account state.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import Any
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from db.models import (
+    AlphaQualification,
+    ForwardEvidenceEpisode,
+    HandoffOffer,
+    PortfolioCandidate,
+    ResearchBranch,
+    ResearchMission,
+    ResearchProgram,
+)
+from events import append_event
+from jobs import enqueue_job
+
+_DEGRADATION_STATES = {"DEGRADED", "FAILED"}
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _is_explicit_degradation(evidence: dict[str, Any]) -> bool:
+    if evidence.get("degraded") is True:
+        return True
+    return str(evidence.get("degradation_state", "")).strip().upper() in _DEGRADATION_STATES
+
+
+def _member_alpha_ids(candidate: PortfolioCandidate) -> list[UUID]:
+    result: list[UUID] = []
+    for member in candidate.members or []:
+        raw = member.get("alpha_qualification_id") if isinstance(member, dict) else None
+        if not raw:
+            continue
+        try:
+            alpha_id = UUID(str(raw))
+        except ValueError:
+            continue
+        if alpha_id not in result:
+            result.append(alpha_id)
+    return result
+
+
+def _latest_branch(session: Session, program_id: UUID) -> ResearchBranch | None:
+    return session.scalar(
+        select(ResearchBranch)
+        .where(ResearchBranch.program_id == program_id)
+        .order_by(ResearchBranch.created_at.desc())
+        .limit(1)
+    )
+
+
+def _already_scheduled(alpha: AlphaQualification, episode_id: UUID) -> bool:
+    return str((alpha.metrics or {}).get("degradation_followup_episode_id", "")) == str(episode_id)
+
+
+def schedule_degradation_missions(session: Session) -> int:
+    """Create at most one research Mission per Alpha and degraded feedback episode."""
+    created = 0
+    episodes = list(
+        session.scalars(
+            select(ForwardEvidenceEpisode)
+            .where(ForwardEvidenceEpisode.state == "FEEDBACK_COMPLETE")
+            .order_by(ForwardEvidenceEpisode.created_at.asc())
+        )
+    )
+    for episode in episodes:
+        evidence = episode.evidence or {}
+        if not _is_explicit_degradation(evidence):
+            continue
+        handoff = session.get(HandoffOffer, episode.handoff_id)
+        if handoff is None:
+            continue
+        candidate = session.get(PortfolioCandidate, handoff.candidate_id)
+        if candidate is None:
+            continue
+        for alpha_id in _member_alpha_ids(candidate):
+            alpha = session.get(AlphaQualification, alpha_id)
+            if alpha is None or alpha.program_id is None or _already_scheduled(alpha, episode.id):
+                continue
+            program = session.get(ResearchProgram, alpha.program_id)
+            if program is None or program.state in {"PAUSED", "ARCHIVED"}:
+                continue
+            parent = _latest_branch(session, program.id)
+            if parent is None:
+                continue
+            branch = ResearchBranch(
+                program_id=program.id,
+                parent_branch_id=parent.id,
+                derivation_type="FORWARD_DEGRADATION",
+                hypothesis=(
+                    f"Investigate forward-evidence degradation for Alpha {alpha.id} without changing "
+                    "the frozen Research Charter."
+                ),
+                changed_assumptions=[
+                    f"Forward evidence episode {episode.id} reported explicit degradation."
+                ],
+                preserved_constraints=["FROZEN_RESEARCH_CHARTER", "NO_LIVE_CONTROL"],
+                state="ACTIVE",
+                created_at=_now(),
+            )
+            session.add(branch)
+            session.flush()
+            mission = ResearchMission(
+                program_id=program.id,
+                branch_id=branch.id,
+                type="ALPHA_DEGRADATION_RESEARCH",
+                role="ALPHA_RESEARCHER",
+                state="READY",
+                objective=(
+                    f"Diagnose Alpha {alpha.id} using governed Discovery evidence after degraded "
+                    f"Forward Evidence episode {episode.id}; propose a new independently evaluated "
+                    "candidate rather than modifying downstream runtime state."
+                ),
+                dependencies=[],
+                attempt=1,
+                summary="Degradation-triggered Mission is ready for the Agent Worker.",
+            )
+            session.add(mission)
+            session.flush()
+            job = enqueue_job(
+                session,
+                kind="RESEARCH_MISSION",
+                resource_type="research_mission",
+                resource_id=mission.id,
+                payload={
+                    "program_id": str(program.id),
+                    "branch_id": str(branch.id),
+                    "alpha_qualification_id": str(alpha.id),
+                    "forward_evidence_episode_id": str(episode.id),
+                    "trigger": "EXPLICIT_DEGRADATION",
+                },
+            )
+            alpha.degradation_state = "DEGRADED"
+            alpha.metrics = {
+                **(alpha.metrics or {}),
+                "degradation_followup_episode_id": str(episode.id),
+                "degradation_followup_mission_id": str(mission.id),
+                "degradation_followup_job_id": str(job.id),
+                "latest_forward_evidence": evidence,
+            }
+            append_event(
+                session,
+                kind="DEGRADATION_MISSION_READY",
+                aggregate_type="RESEARCH_PROGRAM",
+                aggregate_id=program.id,
+                payload={
+                    "mission_id": str(mission.id),
+                    "branch_id": str(branch.id),
+                    "alpha_qualification_id": str(alpha.id),
+                    "forward_evidence_episode_id": str(episode.id),
+                    "job_id": str(job.id),
+                },
+            )
+            created += 1
+    return created
