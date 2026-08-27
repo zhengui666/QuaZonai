@@ -1,0 +1,31 @@
+name: Remove issue 22 temporary markers
+on:
+  push:
+    branches: [feat/issue-22-remote-nautilus-runtime]
+    paths: [.github/workflows/cleanup-issue22-markers.yml]
+permissions:
+  contents: write
+jobs:
+  clean:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/issue-22-remote-nautilus-runtime
+      - run: |
+          rm -f \
+            PR_BODY_ISSUE_22.tmp \
+            STOP_WRITES \
+            I_TYPED_WRONG_TOOL_AGAIN \
+            LAST_ACCIDENTAL_MARKER \
+            WHY_TOOL_ROUTING_STUCK \
+            .github/DO_NOT_COMMIT_MORE \
+            .github/ISSUE22_PR_READY \
+            .github/workflows/cleanup-pr-body-temp.yml \
+            .github/workflows/cleanup-issue22-markers.yml
+          git config user.name "QuaZonai Maintainer"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "chore: remove temporary issue 22 artifacts"
+          git push origin HEAD:feat/issue-22-remote-nautilus-runtime
