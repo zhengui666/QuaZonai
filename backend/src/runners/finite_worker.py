@@ -17,6 +17,7 @@ from db.session import SessionFactory, create_database_engine, create_session_fa
 from events import append_event
 from jobs import claim_next_job, complete_job, fail_job, release_expired_leases
 from logging_utils import configure_logging
+from quant_runtime.degradation import schedule_degradation_missions
 from runtime_config import effective_settings
 from settings import Settings
 
@@ -82,15 +83,18 @@ def run_once(
     owner: str,
     factory: SessionFactory,
 ) -> tuple[bool, float]:
-    """Claim at most one job using the worker's shared database pool.
+    """Admit degradation follow-ups, then claim at most one durable job.
 
     Runtime configuration is loaded in the same short transaction that claims the
-    next job. This preserves the rule that every newly admitted job freezes the
-    latest effective settings while avoiding per-poll Engine construction.
+    next job. Explicit degraded Forward Evidence can enqueue a bounded research
+    Mission in this transaction; the worker may then claim it immediately. This
+    feedback loop only creates research work and never mutates downstream runtime
+    or broker state.
     """
     with factory.begin() as session:
         settings = effective_settings(session, base_settings)
         release_expired_leases(session)
+        schedule_degradation_missions(session)
         job = claim_next_job(session, owner=owner, lease_seconds=settings.job_lease_seconds)
         if job is None:
             return False, settings.job_poll_seconds
