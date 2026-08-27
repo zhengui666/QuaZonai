@@ -110,7 +110,12 @@ def test_duplicate_idea_uses_contribution_instead_of_copying_program(
         assert session.scalar(select(func.count()).select_from(ResearchProgram)) == 1
 
 
-def _seed_candidate_approval(engine: Engine, settings: Settings, *, expired: bool = False) -> tuple[str, str, str]:
+def _seed_candidate_approval(
+    engine: Engine,
+    settings: Settings,
+    *,
+    expired: bool = False,
+) -> tuple[str, str, str]:
     factory = create_session_factory(engine)
     with factory() as session, session.begin():
         downstream_id = uuid4()
@@ -122,7 +127,7 @@ def _seed_candidate_approval(engine: Engine, settings: Settings, *, expired: boo
             enabled=True,
             package_contract_version="1",
             feedback_contract_version="1",
-            compatibility=[],
+            compatibility=["NAUTILUS_TRADER_1.231.0"],
             preflight_state="READY",
             public_config={
                 "feedback_contract": {
@@ -140,16 +145,73 @@ def _seed_candidate_approval(engine: Engine, settings: Settings, *, expired: boo
         )
         session.add_all([downstream, program])
         session.flush()
+        strategy_artifact = {
+            "strategy_path": "strategy.example:ExampleStrategy",
+            "config_path": "strategy.example:ExampleConfig",
+            "config": {
+                "instrument_id": "AAPL.SIM",
+                "bar_type": "AAPL.SIM-1-MINUTE-LAST-EXTERNAL",
+                "trade_size": "1",
+            },
+            "source_files": {
+                "strategy/__init__.py": "",
+                "strategy/example.py": (
+                    "class ExampleConfig:\n    pass\n\n"
+                    "class ExampleStrategy:\n    pass\n"
+                ),
+            },
+            "requirements": ["nautilus-trader==1.231.0"],
+        }
+        portfolio_evidence = {
+            "external_run_id": "fixture-portfolio-run",
+            "state": "SUCCEEDED",
+            "mode": "PORTFOLIO",
+            "runtime_name": "NautilusTrader",
+            "nautilus_version": "1.231.0",
+            "contract_version": "1",
+            "catalog_uri": "catalog://fixture-discovery",
+            "strategy_artifact": strategy_artifact,
+            "orders": [
+                {"instrument_id": "AAPL.SIM", "side": "BUY", "quantity": "1"},
+                {"instrument_id": "MSFT.SIM", "side": "BUY", "quantity": "1"},
+            ],
+            "fills": [
+                {"instrument_id": "AAPL.SIM", "quantity": "1"},
+                {"instrument_id": "MSFT.SIM", "quantity": "1"},
+            ],
+            "positions": [
+                {"instrument_id": "AAPL.SIM", "quantity": "1"},
+                {"instrument_id": "MSFT.SIM", "quantity": "1"},
+            ],
+            "account": [{"currency": "USD", "balance": "100000"}],
+            "statistics": {
+                "total_orders": 2,
+                "total_positions": 2,
+                "sharpe_ratio": 1.2,
+                "max_drawdown": 0.08,
+                "turnover": 0.25,
+            },
+        }
         candidate = PortfolioCandidate(
             portfolio_program_id=program.id,
             mandate_version_id=program.mandate_version_id,
             mandate_name=program.mandate_name,
             state="READY",
             members=[
-                {"instrument_id": "AAPL", "target_weight": 0.6},
-                {"instrument_id": "MSFT", "target_weight": 0.4},
+                {"instrument_id": "AAPL.SIM", "target_weight": 0.6},
+                {"instrument_id": "MSFT.SIM", "target_weight": 0.4},
             ],
-            metrics={"search_adjusted_quality": 0.78},
+            metrics={
+                "search_adjusted_quality": 0.78,
+                "sealed_statistics": {"sharpe_ratio": 1.1, "max_drawdown": 0.09},
+                "nautilus": {
+                    "strategy_artifact": strategy_artifact,
+                    "portfolio_evidence": portfolio_evidence,
+                    "discovery_run_id": "fixture-discovery-run",
+                    "sealed_run_id": "fixture-sealed-run",
+                    "portfolio_run_id": "fixture-portfolio-run",
+                },
+            },
             created_at=datetime.now(UTC),
         )
         session.add(candidate)
@@ -159,7 +221,8 @@ def _seed_candidate_approval(engine: Engine, settings: Settings, *, expired: boo
             candidate_id=candidate.id,
             purpose="PAPER",
             state="PENDING",
-            valid_until=datetime.now(UTC) + (-timedelta(minutes=1) if expired else timedelta(days=7)),
+            valid_until=datetime.now(UTC)
+            + (-timedelta(minutes=1) if expired else timedelta(days=7)),
             recommendation_rationale="Independent evidence materially improves the frontier.",
             human_report={},
             evidence_summary={"search_adjusted_quality": 0.78},
@@ -183,11 +246,19 @@ def test_approval_builds_package_and_authenticated_handoff_feedback(
     headers = {"Idempotency-Key": "approve-1"}
     body = {"downstream_system_id": downstream_id, "expected_state": "PENDING"}
 
-    approved = client.post(f"/api/v1/approvals/{approval_id}/approve", headers=headers, json=body)
+    approved = client.post(
+        f"/api/v1/approvals/{approval_id}/approve",
+        headers=headers,
+        json=body,
+    )
     assert approved.status_code == 200, approved.text
     assert approved.json()["state"] == "APPROVED"
 
-    replay = client.post(f"/api/v1/approvals/{approval_id}/approve", headers=headers, json=body)
+    replay = client.post(
+        f"/api/v1/approvals/{approval_id}/approve",
+        headers=headers,
+        json=body,
+    )
     assert replay.status_code == 200
     assert replay.json()["state"] == "APPROVED"
 
@@ -220,20 +291,31 @@ def test_approval_builds_package_and_authenticated_handoff_feedback(
         names = set(archive.namelist())
         required = {
             "manifest.json",
-            "schemas/canonical-input.schema.json",
-            "schemas/raw-alpha.schema.json",
-            "schemas/target-portfolio-frame.schema.json",
-            "fixtures/input.arrow",
-            "fixtures/expected_alpha.arrow",
-            "fixtures/expected_portfolio.arrow",
-            "evidence/approval-summary.json",
+            "requirements.lock",
+            "strategy/strategy.whl",
+            "strategy/strategy-config.json",
+            "strategy/actor-config.json",
+            "data/requirements.json",
+            "data/instrument-scope.json",
+            "runtime/nautilus-version.json",
+            "runtime/backtest-run-config.json",
+            "runtime/venue-config.json",
+            "runtime/risk-config.json",
+            "runtime/live-node-template.json",
+            "validation/expected-orders.json",
+            "validation/expected-positions.json",
+            "validation/expected-statistics.json",
+            "evidence/discovery-summary.json",
+            "evidence/sealed-summary.json",
+            "evidence/robustness-summary.json",
             "lineage.json",
         }
         assert required <= names
         manifest = json.loads(archive.read("manifest.json"))
-        for runtime_path in manifest["runtime"].values():
-            if isinstance(runtime_path, str):
-                assert runtime_path in names
+        assert manifest["canonical_runtime"]["name"] == "NautilusTrader"
+        assert manifest["canonical_runtime"]["version"] == "1.231.0"
+        assert manifest["same_strategy_artifact_for_backtest_paper_live"] is True
+        assert manifest["strategy"]["wheel"] in names
 
     accepted = client.post(
         f"/api/v1/handoffs/{handoff['id']}/accept",
