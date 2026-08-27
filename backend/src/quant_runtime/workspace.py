@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -14,7 +16,11 @@ from db.models import DatasetRevision
 from db.session import create_database_engine, create_session_factory
 from errors import QfError
 from quant_runtime.contracts import BacktestExperimentRequest, ExperimentMode
-from quant_runtime.ledger import ExperimentCoordinator, write_evidence
+from quant_runtime.ledger import (
+    ExperimentCoordinator,
+    write_evidence,
+    write_workspace_json,
+)
 from settings import Settings
 
 MAX_EXPERIMENTS_PER_ROUND = 20
@@ -24,7 +30,7 @@ CATALOG_URI_PREFIX = "nautilus-catalog://"
 def prepare_experiment_workspace(settings: Settings, *, workspace: Path) -> int:
     """Publish only governed Discovery datasets and the executable contract to a Mission.
 
-    The files contain no database credentials or remote-runtime token.  The child
+    The files contain no database credentials or remote-runtime token. The child
     Agent can propose source-bundle strategies and experiment requests, while the
     parent worker remains the only process able to validate and execute them.
     """
@@ -76,10 +82,7 @@ def prepare_experiment_workspace(settings: Settings, *, workspace: Path) -> int:
 
     (workspace / "DATASETS.json").write_text(
         json.dumps(
-            {
-                "policy": "GOVERNED_DISCOVERY_ONLY",
-                "datasets": datasets,
-            },
+            {"policy": "GOVERNED_DISCOVERY_ONLY", "datasets": datasets},
             ensure_ascii=False,
             indent=2,
             default=str,
@@ -116,9 +119,11 @@ and sends accepted requests to the separately deployed NautilusTrader runtime.
 5. `strategy.strategy_path` and `strategy.config_path` must resolve inside that source
    bundle. The strategy must be a real NautilusTrader `Strategy` and its config a real
    `StrategyConfig`. Pin only the validated `nautilus_trader==1.231.0` runtime dependency.
-6. Do not invent fills, PnL, positions, statistics, or DatasetRevision metadata. The parent
+6. `data_config` and `risk_config` are reserved and must remain empty until an explicit
+   contract version applies them. Do not claim assumptions the remote runtime ignores.
+7. Do not invent fills, PnL, positions, statistics, or DatasetRevision metadata. The parent
    worker executes accepted contracts and writes canonical results to `evidence/*.json`.
-7. The exact successful `StrategyArtifact` is immutable research lineage and is what a
+8. The exact successful `StrategyArtifact` is immutable research lineage and is what a
    promoted Candidate Bundle must reuse for downstream paper/live Nautilus runtimes.
 
 If `DATASETS.json` contains no usable dataset, document the blocked evidence requirement in
@@ -129,7 +134,21 @@ If `DATASETS.json` contains no usable dataset, document the blocked evidence req
     return len(datasets)
 
 
-def _load_contract(path: Path) -> BacktestExperimentRequest:
+def _load_contract(path: Path, *, root: Path) -> BacktestExperimentRequest:
+    if path.is_symlink():
+        raise QfError(
+            "MISSION_WORKSPACE_PATH_UNSAFE",
+            "Mission experiment contracts cannot be symlinks.",
+            422,
+            {"path": path.name},
+        )
+    if path.parent.resolve(strict=True) != root.resolve(strict=True):
+        raise QfError(
+            "MISSION_WORKSPACE_PATH_UNSAFE",
+            "Mission experiment contract escaped its controlled directory.",
+            422,
+            {"path": path.name},
+        )
     try:
         raw: Any = json.loads(path.read_text(encoding="utf-8"))
         return BacktestExperimentRequest.model_validate(raw)
@@ -142,6 +161,22 @@ def _load_contract(path: Path) -> BacktestExperimentRequest:
         ) from exc
 
 
+def _controlled_experiment_root(workspace: Path) -> Path | None:
+    real_workspace = workspace.resolve(strict=True)
+    contracts_root = real_workspace / "experiments"
+    try:
+        info = os.lstat(contracts_root)
+    except FileNotFoundError:
+        return None
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        raise QfError(
+            "MISSION_WORKSPACE_PATH_UNSAFE",
+            "Mission experiments path must be a real directory, not a link.",
+            422,
+        )
+    return contracts_root
+
+
 def execute_workspace_experiments(
     settings: Settings,
     *,
@@ -151,16 +186,17 @@ def execute_workspace_experiments(
     branch_id: UUID,
     already_executed: set[UUID],
 ) -> list[UUID]:
-    """Execute new Discovery contracts and write structured evidence for the next Codex turn.
-
-    The Codex child can only create files in its worktree.  The parent worker owns
-    DB credentials and the remote runtime token, validates every contract, and
-    performs the network call outside the Codex sandbox.
-    """
-    contracts_root = workspace / "experiments"
-    if not contracts_root.exists():
+    """Execute new Discovery contracts and write structured evidence for the next Codex turn."""
+    contracts_root = _controlled_experiment_root(workspace)
+    if contracts_root is None:
         return []
-    paths = sorted(path for path in contracts_root.glob("*.json") if path.is_file())
+    paths = sorted(path for path in contracts_root.iterdir() if path.suffix == ".json")
+    if any(path.is_symlink() or not path.is_file() for path in paths):
+        raise QfError(
+            "MISSION_WORKSPACE_PATH_UNSAFE",
+            "Mission experiment entries must be regular JSON files.",
+            422,
+        )
     if len(paths) > MAX_EXPERIMENTS_PER_ROUND:
         raise QfError(
             "EXPERIMENT_ROUND_LIMIT_EXCEEDED",
@@ -175,7 +211,7 @@ def execute_workspace_experiments(
     executed: list[UUID] = []
     try:
         for path in paths:
-            contract = _load_contract(path)
+            contract = _load_contract(path, root=contracts_root)
             if contract.experiment_id in already_executed:
                 continue
             if contract.mode not in {ExperimentMode.DISCOVERY, ExperimentMode.PORTFOLIO}:
@@ -212,9 +248,5 @@ def execute_workspace_experiments(
             "attempts in the Search Ledger; do not delete inconvenient evidence."
         ),
     }
-    evidence_root = workspace / "evidence"
-    evidence_root.mkdir(parents=True, exist_ok=True)
-    (evidence_root / "INDEX.json").write_text(
-        json.dumps(comparison, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    write_workspace_json(workspace, "evidence/INDEX.json", comparison)
     return executed
