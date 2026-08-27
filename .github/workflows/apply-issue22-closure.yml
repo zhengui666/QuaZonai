@@ -32,6 +32,16 @@ jobs:
           python tools/apply_issue22_core_closure.py
           python tools/apply_issue22_gateway_closure.py
           python -m compileall -q nautilus_runtime/src
+          python - <<'PY'
+          from pathlib import Path
+          for name in (
+              "backend/tests/integration/test_nautilus_promotion.py",
+              "backend/tests/unit/test_candidate_bundles.py",
+              "nautilus_runtime/tests/test_real_backtest.py",
+          ):
+              path = Path(name)
+              path.write_text(path.read_text(encoding="utf-8").rstrip() + "\n", encoding="utf-8")
+          PY
       - name: Remove one-shot maintenance files
         run: |
           rm -f tools/apply_issue22_core_closure.py
