@@ -133,25 +133,10 @@ jobs:
           python tools/check_quant_runtime_boundary.py
       - name: Remove migration scaffolding and publish product state
         run: |
-          python - <<'PY'
-          from pathlib import Path
-          path = Path('.github/workflows/ci.yml')
-          text = path.read_text(encoding='utf-8')
-          start_marker = '  # ISSUE22_MATERIALIZER_START\n'
-          end_marker = '  # ISSUE22_MATERIALIZER_END\n'
-          start = text.index(start_marker)
-          end = text.index(end_marker, start) + len(end_marker)
-          text = text[:start] + text[end:]
-          path.write_text(text, encoding='utf-8')
-          PY
           rm -f .github/ISSUE22_PR_READY
-          rm -f .github/workflows/apply-issue22.yml
-          rm -f .github/workflows/repair-issue22.yml
-          rm -f .github/workflows/finalize-issue22.yml
-          rm -f .github/workflows/finalize-issue22-v2.yml
-          rm -f .github/workflows/export-source.yml
           rm -f .github/scripts/apply_issue22.py
           rm -f .github/scripts/repair_issue22.py
+          git restore --source=HEAD -- .github/workflows
           git config user.name 'QuaZonai Maintainer'
           git config user.email 'actions@users.noreply.github.com'
           git add -A
