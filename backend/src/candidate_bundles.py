@@ -492,9 +492,24 @@ def build_candidate_bundle(
 def build_candidate_verification_request(
     built: BuiltCandidateBundle, *, candidate_id: UUID
 ) -> CandidateVerificationRequest:
-    """Extract the exact immutable wheel/reference fixture for the remote conformance gate."""
+    """Extract the exact wheel and deterministic reference replay contract."""
     with zipfile.ZipFile(io.BytesIO(built.archive_bytes)) as archive:
+        lineage = json.loads(archive.read("lineage.json"))
+        dataset_revision_ids = list(lineage.get("dataset_revision_ids", []))
+        if len(dataset_revision_ids) != 1:
+            raise QfError(
+                "CANDIDATE_CONFORMANCE_LINEAGE_INVALID",
+                "Candidate conformance requires exactly one portfolio-simulation Dataset Revision.",
+                500,
+                {"dataset_revision_ids": dataset_revision_ids},
+            )
         fixture = {
+            "dataset_revision_id": dataset_revision_ids[0],
+            "strategy_config": json.loads(archive.read("strategy/strategy-config.json")),
+            "instrument_scope": json.loads(archive.read("data/instrument-scope.json")),
+            "backtest_run_config": json.loads(archive.read("runtime/backtest-run-config.json")),
+            "venue_config": json.loads(archive.read("runtime/venue-config.json")),
+            "risk_config": json.loads(archive.read("runtime/risk-config.json")),
             "orders": json.loads(archive.read("validation/expected-orders.json")),
             "fills": json.loads(archive.read("validation/expected-fills.json")),
             "positions": json.loads(archive.read("validation/expected-positions.json")),
@@ -507,7 +522,6 @@ def build_candidate_verification_request(
         strategy_wheel_b64=base64.b64encode(wheel).decode("ascii"),
         fixture=fixture,
     )
-
 
 def _has_secret_value(value: Any, *, key: str = "") -> bool:
     normalized = key.casefold().replace("-", "_")

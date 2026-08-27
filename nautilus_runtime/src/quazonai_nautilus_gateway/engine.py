@@ -721,43 +721,34 @@ class NautilusGatewayEngine:
 
     def verify_candidate(self, request: CandidateVerificationRequest) -> dict[str, Any]:
         findings: list[dict[str, Any]] = []
+        replay: dict[str, Any] | None = None
         try:
             wheel = base64.b64decode(request.strategy_wheel_b64, validate=True)
         except ValueError:
             wheel = b""
             findings.append({"code": "STRATEGY_WHEEL_BASE64_INVALID"})
-        if wheel:
-            try:
-                self._isolated_operation(
-                    "verify-wheel",
-                    {
-                        "wheel_b64": base64.b64encode(wheel).decode("ascii"),
-                        "manifest": request.manifest,
-                    },
-                )
-            except (
-                GatewayContractError,
-                ImportError,
-                KeyError,
-                TypeError,
-                ValueError,
-                zipfile.BadZipFile,
-            ) as exc:
-                findings.append({"code": "STRATEGY_WHEEL_INVALID", "detail": str(exc)})
 
-        forbidden_keys = {
+        forbidden_markers = (
             "password",
             "secret",
             "api_key",
             "private_key",
+            "credential",
+            "access_token",
+            "auth_token",
             "broker_token",
             "broker_secret",
-        }
+        )
 
         def walk(value: Any, path: str = "manifest") -> None:
             if isinstance(value, dict):
                 for key, item in value.items():
-                    if str(key).lower() in forbidden_keys:
+                    normalized = str(key).casefold().replace("-", "_")
+                    if any(marker in normalized for marker in forbidden_markers) and item not in (
+                        None,
+                        "",
+                        "INJECT_AT_REMOTE_RUNTIME_ONLY",
+                    ):
                         findings.append(
                             {"code": "LIVE_SECRET_IN_BUNDLE", "path": f"{path}.{key}"}
                         )
@@ -802,12 +793,114 @@ class NautilusGatewayEngine:
         strategy = request.manifest.get("strategy", {})
         if strategy.get("wheel") != "strategy/strategy.whl":
             findings.append({"code": "STRATEGY_WHEEL_PATH_INVALID"})
-        fixture_required = {"orders", "positions", "statistics"}
+
+        fixture_required = {
+            "dataset_revision_id",
+            "strategy_config",
+            "instrument_scope",
+            "backtest_run_config",
+            "venue_config",
+            "risk_config",
+            "orders",
+            "fills",
+            "positions",
+            "statistics",
+        }
         fixture_missing = sorted(fixture_required.difference(request.fixture))
         if fixture_missing:
             findings.append(
                 {"code": "CONFORMANCE_FIXTURE_INCOMPLETE", "fields": fixture_missing}
             )
+
+        if wheel and not findings:
+            run_config = request.fixture.get("backtest_run_config")
+            catalog_key = run_config.get("catalog_key") if isinstance(run_config, dict) else None
+            if not isinstance(catalog_key, str) or not catalog_key:
+                findings.append({"code": "CONFORMANCE_CATALOG_MISSING"})
+            else:
+                try:
+                    replay = self._isolated_operation(
+                        "verify-candidate",
+                        {
+                            "wheel_b64": base64.b64encode(wheel).decode("ascii"),
+                            "manifest": request.manifest,
+                            "fixture": request.fixture,
+                        },
+                        catalog_key=catalog_key,
+                    )
+                except (
+                    GatewayContractError,
+                    ImportError,
+                    KeyError,
+                    TypeError,
+                    ValueError,
+                    zipfile.BadZipFile,
+                ) as exc:
+                    findings.append(
+                        {"code": "CONFORMANCE_REPLAY_FAILED", "detail": str(exc)}
+                    )
+
+        def canonical_rows(rows: Any, fields: tuple[str, ...]) -> list[dict[str, Any]]:
+            if not isinstance(rows, list):
+                return []
+            normalized = [
+                {field: _jsonable(row.get(field)) for field in fields}
+                for row in rows
+                if isinstance(row, dict)
+            ]
+            return sorted(normalized, key=lambda row: json.dumps(row, sort_keys=True))
+
+        if replay is not None:
+            comparisons = {
+                "orders": (
+                    "instrument_id",
+                    "side",
+                    "order_type",
+                    "status",
+                    "quantity",
+                    "filled_quantity",
+                ),
+                "fills": (
+                    "instrument_id",
+                    "side",
+                    "quantity",
+                    "price",
+                    "commission",
+                ),
+                "positions": (
+                    "instrument_id",
+                    "side",
+                    "quantity",
+                    "realized_pnl",
+                    "unrealized_pnl",
+                ),
+            }
+            for name, fields in comparisons.items():
+                expected_rows = canonical_rows(request.fixture.get(name), fields)
+                actual_rows = canonical_rows(replay.get(name), fields)
+                if actual_rows != expected_rows:
+                    findings.append(
+                        {
+                            "code": "CONFORMANCE_REFERENCE_MISMATCH",
+                            "section": name,
+                            "expected": expected_rows,
+                            "actual": actual_rows,
+                        }
+                    )
+            expected_stats = request.fixture.get("statistics", {})
+            actual_stats = replay.get("statistics", {})
+            for key in ("total_orders", "total_positions", "iterations"):
+                if isinstance(expected_stats, dict) and key in expected_stats:
+                    if actual_stats.get(key) != expected_stats.get(key):
+                        findings.append(
+                            {
+                                "code": "CONFORMANCE_REFERENCE_MISMATCH",
+                                "section": f"statistics.{key}",
+                                "expected": expected_stats.get(key),
+                                "actual": actual_stats.get(key),
+                            }
+                        )
+
         return {
             "protocol_version": PROTOCOL_VERSION,
             "runtime_version": nautilus_version,
