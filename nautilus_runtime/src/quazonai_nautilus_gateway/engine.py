@@ -258,7 +258,10 @@ class NautilusGatewayEngine:
         catalog_path = self._catalog_path(request.catalog_key)
         manifest_path = catalog_path / "quazonai-catalog-manifest.json"
         request_path = catalog_path / "quazonai-ingest-request.json"
-        canonical_request = request.model_dump(mode="json")
+        # request_id identifies a transport attempt, not the immutable dataset contract.
+        # Retried ingestion of byte-for-byte equivalent governed data must therefore
+        # resolve to the same catalog revision even when the caller uses a new request UUID.
+        canonical_request = request.model_dump(mode="json", exclude={"request_id"})
         if manifest_path.exists():
             if not request_path.exists():
                 raise GatewayContractError(
