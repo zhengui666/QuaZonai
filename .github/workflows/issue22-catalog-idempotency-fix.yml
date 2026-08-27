@@ -1,0 +1,46 @@
+name: Issue 22 catalog idempotency fix
+
+on:
+  push:
+    branches:
+      - feat/issue-22-remote-nautilus-runtime
+    paths:
+      - .github/workflows/issue22-catalog-idempotency-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/issue-22-remote-nautilus-runtime
+          fetch-depth: 0
+      - name: Exclude transport request id from immutable ingest contract
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('nautilus_runtime/src/quazonai_nautilus_gateway/engine.py')
+          text = path.read_text()
+          old = '        canonical_request = request.model_dump(mode="json")\n'
+          new = (
+              '        # request_id identifies a transport attempt, not the immutable dataset contract.\n'
+              '        # Retried ingestion of byte-for-byte equivalent governed data must therefore\n'
+              '        # resolve to the same catalog revision even when the caller uses a new request UUID.\n'
+              '        canonical_request = request.model_dump(mode="json", exclude={"request_id"})\n'
+          )
+          if text.count(old) != 1:
+              raise SystemExit('canonical ingest request target not found exactly once')
+          path.write_text(text.replace(old, new, 1))
+          Path('.github/workflows/issue22-catalog-idempotency-fix.yml').unlink()
+          PY
+      - name: Commit fix
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m 'fix(runtime): make catalog ingest retries semantic-idempotent'
+          git push --force-with-lease origin HEAD:feat/issue-22-remote-nautilus-runtime
