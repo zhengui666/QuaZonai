@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import base64
+import io
+import zipfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from quazonai_nautilus_gateway.engine import NautilusGatewayEngine
 from quazonai_nautilus_gateway.models import (
     BacktestExperimentRequest,
+    CandidateVerificationRequest,
     CatalogIngestRequest,
     CatalogValidationRequest,
     ExperimentMode,
@@ -15,17 +19,19 @@ from quazonai_nautilus_gateway.models import (
 )
 
 
-def _rows() -> list[QuoteRow]:
+def _rows(*, base: float = 1.09) -> list[QuoteRow]:
     started = datetime(2024, 1, 2, tzinfo=UTC)
     result: list[QuoteRow] = []
     # Repeated trends force more than one fast/slow EMA crossing.
     for index in range(360):
         phase = index % 90
         offset = phase if phase < 45 else 90 - phase
-        mid = 1.0900 + (offset - 22) * 0.0001
+        mid = base + (offset - 22) * 0.0001
+        timestamp = started + timedelta(minutes=index)
         result.append(
             QuoteRow(
-                timestamp=started + timedelta(minutes=index),
+                timestamp=timestamp,
+                available_at=timestamp + timedelta(seconds=2),
                 bid_price=f"{mid - 0.00005:.5f}",
                 ask_price=f"{mid + 0.00005:.5f}",
                 volume="1000000",
@@ -40,7 +46,7 @@ def _request() -> BacktestExperimentRequest:
         mode=ExperimentMode.DISCOVERY,
         dataset_revision_id=uuid4(),
         catalog_key="integration-fx-quotes",
-        instrument_ids=["EUR/USD.SIM"],
+        instrument_ids=["EUR/USD.SIM", "GBP/USD.SIM"],
         strategy=StrategyArtifact(
             artifact_id="builtin-ema-cross-v1",
             kind="IMPORTABLE",
@@ -58,9 +64,27 @@ def _request() -> BacktestExperimentRequest:
     )
 
 
+def _candidate_wheel() -> bytes:
+    stream = io.BytesIO()
+    metadata = (
+        "Metadata-Version: 2.3\n"
+        "Name: quazonai-candidate-strategy\n"
+        "Version: 0.0.1\n"
+        "Requires-Dist: nautilus_trader (==1.231.0)\n\n"
+    )
+    source = (
+        "from nautilus_trader.examples.strategies.ema_cross import "
+        "EMACross as CandidateStrategy, EMACrossConfig as CandidateConfig\n"
+    )
+    with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("candidate_strategy.py", source)
+        archive.writestr("quazonai_candidate_strategy-0.0.1.dist-info/METADATA", metadata)
+    return stream.getvalue()
+
+
 def test_real_catalog_backtest_and_sealed_disclosure(tmp_path: Path) -> None:
     engine = NautilusGatewayEngine(tmp_path)
-    ingested = engine.ingest(
+    first = engine.ingest(
         CatalogIngestRequest(
             catalog_key="integration-fx-quotes",
             provider="CI_GENERATED_CSV_EQUIVALENT",
@@ -70,18 +94,34 @@ def test_real_catalog_backtest_and_sealed_disclosure(tmp_path: Path) -> None:
             rows=_rows(),
         )
     )
-    assert ingested["catalog_uri"] == "nautilus-catalog://integration-fx-quotes"
-    assert ingested["row_count"] == 360
-    assert ingested["quality_result"]["state"] == "VALID"
+    assert first["catalog_uri"] == "nautilus-catalog://integration-fx-quotes"
+    assert first["row_count"] == 360
+    assert first["quality_result"]["state"] == "VALID"
+    assert first["point_in_time_result"]["replay_order"] == "TS_INIT"
+    assert first["available_time_start"] > first["event_time_start"]
+
+    second = engine.ingest(
+        CatalogIngestRequest(
+            catalog_key="integration-fx-quotes",
+            provider="CI_GENERATED_CSV_EQUIVALENT",
+            source="fixture://deterministic-gbp-usd-quotes.csv",
+            source_license="CC0-1.0",
+            instrument_id="GBP/USD.SIM",
+            rows=_rows(base=1.27),
+        )
+    )
+    assert second["row_count"] == 720
+    assert second["instrument_scope"] == ["EUR/USD.SIM", "GBP/USD.SIM"]
 
     validated = engine.validate_catalog(
         CatalogValidationRequest(
             catalog_key="integration-fx-quotes",
-            instrument_ids=["EUR/USD.SIM"],
+            instrument_ids=["EUR/USD.SIM", "GBP/USD.SIM"],
             nautilus_data_type="QuoteTick",
         )
     )
     assert validated["valid"] is True
+    assert validated["row_count"] == 720
 
     request = _request()
     evidence = engine.run_backtest(request)
@@ -92,6 +132,7 @@ def test_real_catalog_backtest_and_sealed_disclosure(tmp_path: Path) -> None:
     assert evidence["fills"]
     assert evidence["positions"]
     assert isinstance(evidence["pnl"], dict)
+    assert evidence["diagnostics"]["loaded_instrument_count"] == 2
 
     sealed = engine.run_sealed_backtest(
         request.model_copy(update={"mode": ExperimentMode.SEALED})
@@ -101,3 +142,42 @@ def test_real_catalog_backtest_and_sealed_disclosure(tmp_path: Path) -> None:
     assert "fills" not in sealed
     assert "positions" not in sealed
     assert sealed["disclosure"]["fill_count"] > 0
+
+
+def test_candidate_bundle_v2_conformance_uses_same_nautilus_strategy(tmp_path: Path) -> None:
+    engine = NautilusGatewayEngine(tmp_path)
+    candidate_id = uuid4()
+    manifest = {
+        "contract": "QUAZONAI_NAUTILUS_CANDIDATE_BUNDLE",
+        "contract_version": "2",
+        "bundle_id": str(uuid4()),
+        "candidate_id": str(candidate_id),
+        "runtime": {
+            "name": "NAUTILUS_TRADER",
+            "version": "1.231.0",
+            "deployment": "REMOTE_INDEPENDENT_RUNTIME",
+            "paper_live_reuse": "SAME_STRATEGY_WHEEL_AND_CONFIG",
+        },
+        "strategy": {
+            "artifact_id": "source-bundle-1",
+            "wheel": "strategy/strategy.whl",
+            "strategy_path": "candidate_strategy:CandidateStrategy",
+            "config_path": "candidate_strategy:CandidateConfig",
+        },
+        "data": {},
+        "runtime_config": {},
+        "validation": {},
+        "evidence": {},
+        "lineage": {},
+        "target_weights": [],
+    }
+    verified = engine.verify_candidate(
+        CandidateVerificationRequest(
+            candidate_id=UUID(str(candidate_id)),
+            manifest=manifest,
+            strategy_wheel_b64=base64.b64encode(_candidate_wheel()).decode(),
+            fixture={"orders": [], "positions": [], "statistics": {}},
+        )
+    )
+    assert verified["compatible"] is True, verified["findings"]
+    assert verified["runtime_version"] == "1.231.0"
