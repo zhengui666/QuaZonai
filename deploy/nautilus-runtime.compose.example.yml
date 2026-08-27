@@ -1,0 +1,50 @@
+name: quazonai-nautilus-runtime
+
+services:
+  research-runtime:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.nautilus-runtime
+    environment:
+      QUAZONAI_NAUTILUS_RUNTIME_TOKEN: ${QUAZONAI_NAUTILUS_RUNTIME_TOKEN:?required}
+      QUAZONAI_NAUTILUS_CATALOG_ROOT: /var/lib/nautilus/catalogs
+      QUAZONAI_NAUTILUS_HOST: 0.0.0.0
+      QUAZONAI_NAUTILUS_PORT: 8011
+    volumes:
+      - research-catalogs:/var/lib/nautilus/catalogs
+    ports:
+      - "127.0.0.1:8011:8011"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=512m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+  sealed-runtime:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.nautilus-runtime
+    environment:
+      QUAZONAI_NAUTILUS_RUNTIME_TOKEN: ${QUAZONAI_NAUTILUS_SEALED_RUNTIME_TOKEN:?required}
+      QUAZONAI_NAUTILUS_CATALOG_ROOT: /var/lib/nautilus/sealed-catalogs
+      QUAZONAI_NAUTILUS_HOST: 0.0.0.0
+      QUAZONAI_NAUTILUS_PORT: 8011
+    volumes:
+      - sealed-catalogs:/var/lib/nautilus/sealed-catalogs:ro
+    ports:
+      - "127.0.0.1:8012:8011"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=512m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+volumes:
+  research-catalogs:
+  sealed-catalogs:
