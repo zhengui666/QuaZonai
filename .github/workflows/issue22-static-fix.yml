@@ -1,0 +1,32 @@
+name: Issue 22 static fixes
+
+on:
+  push:
+    branches:
+      - issue-22-nautilus-first-remote-runtime
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.head_commit.message != 'fix: harden Nautilus bundle and CI checks'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: issue-22-nautilus-first-remote-runtime
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - run: python scripts/fix_issue22_static.py
+      - run: python -m compileall -q backend/src scripts/fix_issue22_static.py
+      - name: Commit fixes
+        run: |
+          git config user.name 'QuaZonai Issue 22 Worker'
+          git config user.email 'quazonai-issue22@localhost'
+          git rm scripts/fix_issue22_static.py .github/workflows/issue22-static-fix.yml
+          git add backend/src/runners/quant_experiments.py backend/src/runners/nautilus_remote_runtime.py backend/src/candidate_packages.py .github/workflows/ci.yml
+          git commit -m 'fix: harden Nautilus bundle and CI checks'
+          git push origin HEAD:issue-22-nautilus-first-remote-runtime
