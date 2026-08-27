@@ -20,7 +20,7 @@ def run_sealed_evaluation(
     source_experiment_id: UUID,
     sealed_dataset_revision_id: UUID,
 ) -> SearchLedgerEntry:
-    """Re-run the same artifact/config against sealed data and return disclosure only."""
+    """Re-run the same artifact/config once against sealed data and return disclosure only."""
     engine = create_database_engine(settings)
     factory = create_session_factory(engine)
     try:
@@ -83,6 +83,7 @@ def run_sealed_evaluation(
             branch_id=branch_id,
             request=request,
             sealed=True,
+            parent_entry_id=source_experiment_id,
         )
     finally:
         engine.dispose()
