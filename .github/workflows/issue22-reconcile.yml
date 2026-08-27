@@ -1,0 +1,37 @@
+name: Issue 22 branch reconciliation
+
+on:
+  push:
+    branches:
+      - issue-22-nautilus-first-remote-runtime
+
+permissions:
+  contents: write
+
+jobs:
+  reconcile:
+    if: github.event.head_commit.message != 'chore: finalize Issue 22 branch state'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: issue-22-nautilus-first-remote-runtime
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - run: python scripts/reconcile_issue22_branch.py
+      - run: python -m pip install 'ruff>=0.15,<1'
+      - run: ruff format --config backend/pyproject.toml backend/src backend/tests
+      - run: ruff check --fix --config backend/pyproject.toml backend/src backend/tests
+      - run: python -m compileall -q backend/src backend/tests
+      - name: Commit reconciled branch
+        run: |
+          git config user.name 'QuaZonai Issue 22 Worker'
+          git config user.email 'quazonai-issue22@localhost'
+          git add -A
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m 'chore: finalize Issue 22 branch state'
+          git push origin HEAD:issue-22-nautilus-first-remote-runtime
