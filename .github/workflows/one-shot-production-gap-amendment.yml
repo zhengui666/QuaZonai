@@ -1,0 +1,143 @@
+name: One-shot production gap amendment
+
+on:
+  push:
+    branches:
+      - docs/production-gap-register
+    paths:
+      - .github/workflows/one-shot-production-gap-amendment.yml
+
+permissions:
+  contents: write
+
+jobs:
+  amend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: docs/production-gap-register
+          fetch-depth: 0
+      - name: Apply reviewed documentation amendments
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          design_path = Path("DESIGN.md")
+          design = design_path.read_text(encoding="utf-8")
+
+          old_loop = """  → Portfolio Candidate
+  → Independent Evaluation
+  → Human Approval
+  → Candidate Package
+  → Handoff Registry"""
+          new_loop = """  → Portfolio Candidate
+  → Independent Evaluation
+  → Candidate Package build / Reference Runtime conformance
+  → Approval Snapshot
+  → Human Approval
+  → Handoff Registry"""
+          if old_loop not in design:
+              raise SystemExit("DESIGN product-loop anchor not found")
+          design = design.replace(old_loop, new_loop, 1)
+
+          snapshot_anchor = """Snapshot 冻结：Candidate Package、Evidence Set、Alpha/Calibration、Mandate、Capital Context、Portfolio Policy、Risk/Cost/Capacity/Constraint、目标 downstream、downstream connection version、Package/Feedback Contract、compatibility preflight、validity policy。
+"""
+          snapshot_replacement = snapshot_anchor + """
+Candidate Package 必须在 Approval Snapshot 进入 `PENDING` 前完成构建和 Reference Runtime conformance，并以不可变 `candidate_package_id` 绑定到 Snapshot。`approve` / `reject` 只决定该既有 Snapshot；审批动作不得首次构建、替换或重新绑定 Package。
+"""
+          if snapshot_anchor not in design:
+              raise SystemExit("DESIGN approval snapshot anchor not found")
+          design = design.replace(snapshot_anchor, snapshot_replacement, 1)
+
+          production_contract = r'''### 49.1 生产完成与发布准入合同
+
+“V1 产品符合设计”与“可以声明生产级可用”是两个同时必须满足的维度。生产级声明除本节前述产品、领域、隔离和验收要求外，还必须满足以下发布、运营、安全与合规控制。各项不设置优先级或严重度；技术依赖可以决定实施顺序，但任何未满足项都阻断 production-ready 声明。
+
+#### Repository / review governance
+
+- `main` 禁止直接推送和 force push；所有变更通过 PR 合入；
+- 适用的 backend、frontend、browser E2E、Operator Auth、安全与构建检查必须成为 required checks，并在 PR 当前 head 上成功；
+- 所有 review thread 必须解决；当前 head 必须在 GitHub 上请求 `@codex review`，且最新结果认为没有问题；
+- PR 模板必须记录受影响的 DESIGN 条款、迁移与兼容影响、回滚办法、测试证据、运营影响和安全边界；
+- 发布使用明确版本、变更记录、数据库 schema version、Package/Plugin contract version 和支持矩阵。
+
+#### Build / supply-chain admission
+
+- Python、Node、Codex、PostgreSQL、容器基础镜像和生产依赖必须固定、可重复构建并保留 lockfile；
+- CodeQL、依赖漏洞、secret、许可证和容器扫描必须通过；发布产物必须生成可归档的 SBOM；
+- 测试镜像与发布镜像来自同一构建定义，不能使用只在验收环境存在的依赖、mock、seed 或手工业务事实。
+
+#### Operational acceptance
+
+- 必须从空白持久卷完成安装、migration、真实 readiness 和纵向闭环验收；
+- PostgreSQL、Dataset、Artifact、Package、Plugin runtime、Program repo 和必要 Codex state 必须有一致性备份、加密、保留与恢复演练；
+- 升级、迁移失败、回滚、进程重启、事件重放、job lease 恢复、磁盘/内存压力和依赖服务故障必须有测试或演练证据；
+- 结构化日志、指标、告警、容量阈值、SLO/恢复目标和安装/升级/密钥轮换/事故 Runbook 必须可执行；
+- 发布后必须执行 migration preflight、服务 health、Web/API、Worker、Mission sandbox、Sealed Evaluator、Package 与 downstream contract smoke。
+
+#### Security / compliance / external claims
+
+- 生产数据源必须有许可、允许用途、保留与再分发依据；模型/provider 和 downstream 使用条款必须与部署方式一致；
+- 第三方依赖、镜像、插件及 Candidate Package 内分发组件的许可证和 notices 必须完整，AGPL-3.0-only 及其他许可证义务必须得到明确确认；
+- 产品和运营文档必须说明回测、历史数据和统计选择的局限，Paper 与 Live 独立审批，研究结果不保证收益，真实交易和账户责任属于独立 downstream 与操作者；
+- Secret inventory、生成、存储、轮换、撤销、泄漏处置、数据/日志保留和独立安全复核必须完成；
+- 在所有设计符合性、生产准入和纵向验收证据完成前，README、UI、发布说明和对外材料不得宣称 conforming、release-ready、production-ready 或 live-ready。
+
+[`PRODUCTION_GAP_REGISTER.md`](PRODUCTION_GAP_REGISTER.md) 是本节和本文其他要求的从属实现差距/验收分解表。它可以把既有要求拆成更具体的代码、测试和运行证据，但不得自行新增领域对象、状态、API、用户旅程或 ownership；需要新增或改变产品、架构或生产准入事实时，必须先更新本文。
+
+'''
+          design_marker = "## 50. 当前实现状态与迁移原则"
+          if design_marker not in design:
+              raise SystemExit("DESIGN section 50 anchor not found")
+          if "### 49.1 生产完成与发布准入合同" not in design:
+              design = design.replace(design_marker, production_contract + design_marker, 1)
+          design_path.write_text(design, encoding="utf-8")
+
+          gap_path = Path("PRODUCTION_GAP_REGISTER.md")
+          gap = gap_path.read_text(encoding="utf-8")
+
+          replacements = [
+              (
+                  "> 上位事实源：[`DESIGN.md`](DESIGN.md)  \n> 文档性质：实现差距登记与验收清单，不新增或修改产品事实",
+                  "> 上位事实源：[`DESIGN.md`](DESIGN.md)，特别是 §49.1 的生产完成与发布准入合同  \n> 文档性质：把 `DESIGN.md` 已定义的产品、架构、生产治理、运营、安全与合规要求拆解为可关闭的实现差距和验收证据；不得反向改写产品事实",
+              ),
+              (
+                  "本清单**不使用优先级、严重度、阶段、排期或先后等级**。编号只用于追踪，章节只按领域分组；任何未关闭项都阻断“项目闭环完成”和“生产级可用”的结论。",
+                  "本清单**不使用优先级、严重度、阶段、排期或先后等级**。编号只用于追踪，章节只按领域分组。所有条目都从 `DESIGN.md` 的产品/架构要求或 §49.1 的生产完成与发布准入合同展开；任何未关闭项都阻断“项目闭环完成”和“生产级可用”的结论。\n\n本清单可以把上位要求拆成更具体的工程证据，但不能新增领域对象、状态、API、用户旅程或 ownership。发现需要新增产品/架构/生产准入事实时，必须先更新 `DESIGN.md`，再追加或修改本清单。",
+              ),
+              (
+                  "**GAP-APPROVAL-03 — Snapshot 冻结完整。** Candidate、Package、Evidence、Alpha/Calibration、Mandate、Capital Context、Policy、Risk/Cost/Capacity/Constraint、Downstream Connection 和 Contracts 全部冻结。",
+                  "**GAP-APPROVAL-03 — Snapshot 冻结完整。** Candidate Package 必须先完成构建与 Reference Runtime 验证，随后与 Candidate、Evidence、Alpha/Calibration、Mandate、Capital Context、Policy、Risk/Cost/Capacity/Constraint、Downstream Connection 和 Contracts 一并冻结到 PENDING Snapshot；approve mutation 只能决定并发布该既有 Package，不得在审批时首次构建、替换或重绑定 Package。",
+              ),
+              (
+                  "APPROVED/PUBLISHING/AVAILABLE/CLAIMED/ACCEPTED/REJECTED/FEEDBACK_*",
+                  "APPROVED/PUBLISHING/AVAILABLE/CLAIMED/DOWNSTREAM_ACCEPTED/DOWNSTREAM_REJECTED/FEEDBACK_*",
+              ),
+              (
+                  "注册一个真实或官方 sandbox Data Connector、一个 Market Universe、一个 Paper Downstream 和对应 Feedback Contract。",
+                  "注册一个真实或官方 sandbox Data Connector、一个 Market Universe、彼此独立且兼容的 Paper Downstream 与 Live Downstream，以及各自的连接版本和 Feedback Contract；两类 downstream preflight 均成功。",
+              ),
+              (
+                  "唯一推荐 Candidate 通过 Material Improvement 后生成 Paper Approval Snapshot。\n- [ ] 人类在 Web 审查并批准；Agent 无法执行同一动作。\n- [ ] 系统从真实冻结 artifacts 构建 Candidate Package并通过 Reference Runtime fixture。",
+                  "唯一推荐 Candidate 通过 Material Improvement 后，系统先从真实冻结 artifacts 构建不可变 Candidate Package，并在隔离环境通过 Reference Runtime fixture。\n- [ ] 系统把该既有、已验证 Package 与完整依赖冻结到 Paper Approval Snapshot；Snapshot 进入 PENDING 前 Package 已可供人类审查。\n- [ ] 人类在 Web 审查 Candidate、证据和所绑定 Package 后批准；Agent 无法执行同一动作，approve mutation 不重建或替换 Package。",
+              ),
+              (
+                  "在有效 Paper evidence 存在时，系统重新评估并可生成独立 Live Approval；没有证据时必须阻断。",
+                  "在有效 Paper evidence 与已完成 preflight 的独立 Live Downstream 同时存在时，系统重新评估并可生成绑定该 Live 目标的独立 Live Approval；任一条件缺失时进入相应 configuration-required/blocked 状态，不创建不可行动 Approval。",
+              ),
+          ]
+          for old, new in replacements:
+              if old not in gap:
+                  raise SystemExit(f"GAP register anchor not found: {old[:80]}")
+              gap = gap.replace(old, new, 1)
+          gap_path.write_text(gap, encoding="utf-8")
+          PY
+      - name: Commit amendment and remove one-shot workflow
+        run: |
+          git config user.name "QuaZonai Documentation Bot"
+          git config user.email "quazonai-docs@users.noreply.github.com"
+          git add DESIGN.md PRODUCTION_GAP_REGISTER.md
+          git rm .github/workflows/one-shot-production-gap-amendment.yml
+          git commit -m "docs: align production gap register with design"
+          git push origin HEAD:docs/production-gap-register
