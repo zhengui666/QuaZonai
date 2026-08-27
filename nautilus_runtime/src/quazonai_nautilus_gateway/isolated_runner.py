@@ -1,17 +1,23 @@
-"""Disposable child process for constrained strategy and wheel imports."""
+"""Disposable child process for constrained strategy and wheel execution."""
 
 from __future__ import annotations
 
 import base64
+import importlib
 import json
 import os
 from pathlib import Path
 import socket
 import sys
 from typing import Any
+from uuid import uuid4
 
 from quazonai_nautilus_gateway.engine import NautilusGatewayEngine, _jsonable
-from quazonai_nautilus_gateway.models import BacktestExperimentRequest
+from quazonai_nautilus_gateway.models import (
+    BacktestExperimentRequest,
+    ExperimentMode,
+    StrategyArtifact,
+)
 
 _TRUSTED_RESULT_NAME = ".trusted-result.json"
 
@@ -38,6 +44,51 @@ def _deny_external_network() -> None:
     socket.create_connection = denied_create_connection
 
 
+def _run_candidate_conformance(
+    engine: NautilusGatewayEngine,
+    root: Path,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    wheel = base64.b64decode(payload["wheel_b64"], validate=True)
+    manifest = payload["manifest"]
+    fixture = payload["fixture"]
+    engine._verify_wheel_inline(wheel, manifest)
+
+    strategy_manifest = manifest["strategy"]
+    run_config = fixture["backtest_run_config"]
+    wheel_path = root / "candidate.whl"
+    wheel_path.write_bytes(wheel)
+    sys.path.insert(0, str(wheel_path))
+    importlib.invalidate_caches()
+    strategy_module = str(strategy_manifest["strategy_path"]).split(":", 1)[0]
+    config_module = str(strategy_manifest["config_path"]).split(":", 1)[0]
+    try:
+        request = BacktestExperimentRequest(
+            experiment_id=uuid4(),
+            mode=ExperimentMode.CONFORMANCE,
+            dataset_revision_id=fixture["dataset_revision_id"],
+            catalog_key=run_config["catalog_key"],
+            instrument_ids=fixture["instrument_scope"],
+            strategy=StrategyArtifact(
+                artifact_id=str(strategy_manifest["artifact_id"]),
+                kind="IMPORTABLE",
+                strategy_path=str(strategy_manifest["strategy_path"]),
+                config_path=str(strategy_manifest["config_path"]),
+                config=fixture["strategy_config"],
+                requirements=["nautilus_trader==1.231.0"],
+            ),
+            start_time=run_config.get("start_time"),
+            end_time=run_config.get("end_time"),
+            venue_config=fixture.get("venue_config", {}),
+            risk_config=fixture.get("risk_config", {}),
+        )
+        return engine.run_backtest(request, _source_isolated=True)
+    finally:
+        sys.path.remove(str(wheel_path))
+        sys.modules.pop(strategy_module, None)
+        sys.modules.pop(config_module, None)
+
+
 def main() -> None:
     if len(sys.argv) != 4:
         raise SystemExit(2)
@@ -62,6 +113,8 @@ def main() -> None:
         wheel = base64.b64decode(payload["wheel_b64"], validate=True)
         engine._verify_wheel_inline(wheel, payload["manifest"])
         result = {"verified": True}
+    elif operation == "verify-candidate":
+        result = _run_candidate_conformance(engine, root, payload)
     else:
         raise SystemExit(5)
     output_path.write_text(json.dumps(_jsonable(result)), encoding="utf-8")
