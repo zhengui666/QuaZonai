@@ -55,7 +55,11 @@ def _require_real_transaction_evidence(entry: SearchLedgerEntry) -> dict[str, An
             422,
         )
     evidence = entry.evidence_json or {}
-    missing = [name for name in ("orders", "fills", "positions", "pnl", "statistics") if name not in evidence]
+    missing = [
+        name
+        for name in ("orders", "fills", "positions", "pnl", "statistics")
+        if name not in evidence
+    ]
     if missing:
         raise QfError(
             "NAUTILUS_EVIDENCE_INCOMPLETE",
@@ -310,10 +314,6 @@ def _load_portfolio_source(
             "Every selected Alpha must be active, healthy, and qualified.",
             422,
         )
-    # The clean v2 baseline selects one exact executable Alpha artifact for each
-    # Nautilus candidate. This avoids falsely claiming that generic strategy code
-    # can express an arbitrary multi-alpha blend. The optimizer is the deterministic
-    # evidence score selection over all supplied qualified Alphas.
     selected = max(alphas, key=lambda item: (_alpha_score(item), str(item.id)))
     if selected.source_experiment_id is None:
         raise QfError("ALPHA_LINEAGE_MISSING", "Qualified Alpha has no source experiment.", 422)
@@ -390,8 +390,12 @@ def simulate_portfolio_candidate(
         ).scalar_one_or_none()
         if portfolio_program is None:
             raise QfError("PORTFOLIO_PROGRAM_NOT_FOUND", "Portfolio Program disappeared.", 500)
-        alpha = session.get(AlphaQualification, alpha_id)
-        if alpha is None or alpha.state != "ACTIVE" or alpha.degradation_state != "HEALTHY":
+        persisted_alpha = session.get(AlphaQualification, alpha_id)
+        if (
+            persisted_alpha is None
+            or persisted_alpha.state != "ACTIVE"
+            or persisted_alpha.degradation_state != "HEALTHY"
+        ):
             raise QfError("ALPHA_NOT_PORTFOLIO_READY", "Selected Alpha changed before promotion.", 409)
         request_json = BacktestExperimentRequest.model_validate(simulation.request_json)
         strategy = StrategyArtifact.model_validate(request_json.strategy)
@@ -403,9 +407,9 @@ def simulate_portfolio_candidate(
             universe_set_json=[alpha_universe] if alpha_universe else [],
             members=[
                 {
-                    "alpha_qualification_id": str(alpha.id),
+                    "alpha_qualification_id": str(persisted_alpha.id),
                     "alpha_name": alpha_name,
-                    "role": alpha.role,
+                    "role": persisted_alpha.role,
                     "target_weight": 1.0,
                     "universe": alpha_universe,
                     "instrument_ids": request_json.instrument_ids,
@@ -416,28 +420,34 @@ def simulate_portfolio_candidate(
                 "optimizer": {
                     "name": "MAX_SEARCH_ADJUSTED_QUALITY_V1",
                     "considered_alpha_ids": [str(item) for item in alpha_ids],
-                    "selected_alpha_id": str(alpha.id),
+                    "selected_alpha_id": str(persisted_alpha.id),
                     "target_weight": 1.0,
                 },
                 "nautilus": {
                     "strategy_artifact": strategy.model_dump(mode="json"),
                     "evidence": simulation_evidence,
                     "dataset_revision_ids": [str(simulation.dataset_revision_id)],
-                    "alpha_qualification_ids": [str(alpha.id)],
+                    "alpha_qualification_ids": [str(persisted_alpha.id)],
                     "instrument_scope": request_json.instrument_ids,
                     "data_requirements": {"nautilus_data_type": "QuoteTick"},
                     "backtest_run_config": {
                         "catalog_key": request_json.catalog_key,
                         "catalog_uri": f"{CATALOG_URI_PREFIX}{request_json.catalog_key}",
                         "mode": ExperimentMode.PORTFOLIO.value,
-                        "start_time": request_json.start_time.isoformat() if request_json.start_time else None,
-                        "end_time": request_json.end_time.isoformat() if request_json.end_time else None,
+                        "start_time": (
+                            request_json.start_time.isoformat() if request_json.start_time else None
+                        ),
+                        "end_time": (
+                            request_json.end_time.isoformat() if request_json.end_time else None
+                        ),
                     },
                     "venue_config": request_json.venue_config,
                     "risk_config": request_json.risk_config,
                     "discovery_summary": discovery_summary,
                     "sealed_summary": sealed_summary,
-                    "robustness_summary": {"status": "PASSED_SEALED_AND_PORTFOLIO_SIMULATION"},
+                    "robustness_summary": {
+                        "status": "PASSED_SEALED_AND_PORTFOLIO_SIMULATION"
+                    },
                 },
             },
             created_at=_now(),
@@ -453,11 +463,12 @@ def simulate_portfolio_candidate(
             state="PENDING",
             valid_until=_now() + timedelta(days=7),
             recommendation_rationale=(
-                "Candidate passed sealed Alpha qualification and a real Nautilus transaction-level portfolio simulation."
+                "Candidate passed sealed Alpha qualification and a real Nautilus transaction-level "
+                "portfolio simulation."
             ),
             human_report={
                 "summary": "Paper runtime validation is the next governed step.",
-                "selected_alpha_id": str(alpha.id),
+                "selected_alpha_id": str(persisted_alpha.id),
             },
             evidence_summary={
                 "search_adjusted_quality": alpha_quality,
@@ -476,5 +487,5 @@ def simulate_portfolio_candidate(
             candidate_id=candidate.id,
             approval_id=approval.id,
             simulation_experiment_id=simulation.id,
-            selected_alpha_id=alpha.id,
+            selected_alpha_id=persisted_alpha.id,
         )
