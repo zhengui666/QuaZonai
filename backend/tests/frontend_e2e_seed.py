@@ -6,7 +6,7 @@ This module lives under tests and is never imported by production runtime code.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import delete
 
@@ -43,6 +43,81 @@ ALPHA_ID = UUID("50000000-0000-0000-0000-000000000001")
 PAPER_DOWNSTREAM_ID = UUID("60000000-0000-0000-0000-000000000001")
 LIVE_DOWNSTREAM_ID = UUID("60000000-0000-0000-0000-000000000002")
 APPROVAL_ID = UUID("70000000-0000-0000-0000-000000000001")
+
+
+def _nautilus_candidate_metrics() -> dict:
+    experiment_id = uuid4()
+    strategy_source = (
+        "from nautilus_trader.examples.strategies.ema_cross import "
+        "EMACross as CandidateStrategy, EMACrossConfig as CandidateConfig\n"
+    )
+    return {
+        "search_adjusted_quality": 0.78,
+        "nautilus": {
+            "strategy_artifact": {
+                "artifact_id": "candidate-ema-cross-v1",
+                "kind": "SOURCE_BUNDLE",
+                "strategy_path": "candidate_strategy:CandidateStrategy",
+                "config_path": "candidate_strategy:CandidateConfig",
+                "config": {
+                    "instrument_id": "EUR/USD.SIM",
+                    "bar_type": "EUR/USD.SIM-1-MINUTE-BID-INTERNAL",
+                    "trade_size": "100000",
+                    "fast_ema_period": 3,
+                    "slow_ema_period": 8,
+                },
+                "source_files": {"candidate_strategy.py": strategy_source},
+                "requirements": ["nautilus_trader==1.231.0"],
+            },
+            "evidence": {
+                "experiment_id": str(experiment_id),
+                "orders": [
+                    {
+                        "order_id": "O-E2E-1",
+                        "instrument_id": "EUR/USD.SIM",
+                        "side": "BUY",
+                        "order_type": "MARKET",
+                        "status": "FILLED",
+                        "quantity": "100000",
+                        "filled_quantity": "100000",
+                    }
+                ],
+                "fills": [
+                    {
+                        "trade_id": "T-E2E-1",
+                        "order_id": "O-E2E-1",
+                        "instrument_id": "EUR/USD.SIM",
+                        "side": "BUY",
+                        "quantity": "100000",
+                        "price": "1.10000",
+                    }
+                ],
+                "positions": [
+                    {
+                        "position_id": "P-E2E-1",
+                        "instrument_id": "EUR/USD.SIM",
+                        "side": "LONG",
+                        "quantity": "100000",
+                    }
+                ],
+                "pnl": {"realized": "250 USD"},
+                "statistics": {"total_orders": 1, "total_fills": 1, "total_positions": 1},
+            },
+            "dataset_revision_ids": [],
+            "alpha_qualification_ids": [str(ALPHA_ID)],
+            "instrument_scope": ["EUR/USD.SIM"],
+            "data_requirements": {"nautilus_data_type": "QuoteTick"},
+            "backtest_run_config": {
+                "catalog_uri": "nautilus-catalog://frontend-e2e",
+                "mode": "PORTFOLIO",
+            },
+            "venue_config": {"name": "SIM", "oms_type": "HEDGING", "account_type": "MARGIN"},
+            "risk_config": {"bypass": False},
+            "discovery_summary": {"source": "search-ledger"},
+            "sealed_summary": {"raw_evidence_withheld": True},
+            "robustness_summary": {"status": "PASS"},
+        },
+    }
 
 
 def main() -> None:
@@ -96,7 +171,7 @@ def main() -> None:
             name="Paper Lab",
             environment_type="PAPER",
             enabled=True,
-            package_contract_version="1",
+            package_contract_version="2",
             feedback_contract_version="1",
             compatibility=["US_EQUITIES"],
             preflight_state="READY",
@@ -107,7 +182,7 @@ def main() -> None:
             name="Live Primary",
             environment_type="LIVE",
             enabled=True,
-            package_contract_version="1",
+            package_contract_version="2",
             feedback_contract_version="1",
             compatibility=["US_EQUITIES"],
             preflight_state="READY",
@@ -149,14 +224,14 @@ def main() -> None:
             members=[
                 {
                     "alpha_qualification_id": str(ALPHA_ID),
-                    "instrument_id": "AAPL",
+                    "instrument_id": "EUR/USD.SIM",
                     "alpha_name": "PEAD residual drift",
                     "role": "PRIMARY_ALPHA",
-                    "target_weight": 0.45,
+                    "target_weight": 1.0,
                     "universe": "US Equities",
                 }
             ],
-            metrics={"search_adjusted_quality": 0.78},
+            metrics=_nautilus_candidate_metrics(),
             created_at=now,
         )
         session.add_all([alpha, candidate])
