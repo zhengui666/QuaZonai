@@ -455,6 +455,7 @@ class NautilusGatewayEngine:
                 engine=engine_config,
                 venues=venues,
                 data=data,
+                dispose_on_completion=False,
             )
             node = BacktestNode(configs=[run_config])
             try:
