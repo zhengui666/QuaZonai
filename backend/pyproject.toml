@@ -28,11 +28,17 @@ dependencies = [
 [project.optional-dependencies]
 research = ["optuna==4.9.0", "pyarrow==25.0.1"]
 agent = ["openai-codex==0.144.4"]
+nautilus-runtime = [
+  "nautilus-trader==1.231.0",
+  "numpy>=2.3,<3",
+  "pandas>=2.3,<4",
+]
 dev = ["mypy>=1.18,<2", "pytest>=9,<10", "ruff>=0.15,<1"]
 
 [project.scripts]
 quazonai = "cli.main:main"
 quazonai-finite-worker = "runners.finite_worker:main"
+quazonai-nautilus-runtime = "runners.nautilus_remote_runtime:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
