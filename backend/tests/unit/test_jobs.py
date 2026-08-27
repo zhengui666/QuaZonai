@@ -69,3 +69,37 @@ def test_worker_run_once_uses_shared_factory_and_completes_job(
         assert job.state == "SUCCEEDED"
         assert job.lease_owner is None
         assert job.lease_expires_at is None
+
+
+def test_finite_worker_never_claims_sealed_evaluator_work(
+    engine,  # type: ignore[no-untyped-def]
+    settings,  # type: ignore[no-untyped-def]
+) -> None:
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    earlier = datetime.now(UTC) - timedelta(minutes=1)
+    with factory.begin() as session:
+        sealed = enqueue_job(
+            session,
+            kind="SEALED_ALPHA_QUALIFICATION",
+            resource_type="SEARCH_LEDGER_ENTRY",
+            resource_id=uuid4(),
+            payload={"sealed_dataset_revision_id": str(uuid4())},
+            available_at=earlier,
+        )
+        finite = enqueue_job(
+            session,
+            kind="SYSTEM_NOOP",
+            resource_type="system",
+            resource_id=uuid4(),
+        )
+        sealed_id = sealed.id
+        finite_id = finite.id
+
+    worked, _ = run_once(settings, owner="finite-worker", factory=factory)
+
+    assert worked is True
+    with factory() as session:
+        sealed = session.get(Job, sealed_id)
+        finite = session.get(Job, finite_id)
+        assert sealed is not None and sealed.state == "READY"
+        assert finite is not None and finite.state == "SUCCEEDED"
