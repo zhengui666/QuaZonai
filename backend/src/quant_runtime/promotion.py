@@ -411,8 +411,14 @@ def _canonical_alpha_ids(alpha_ids: list[UUID]) -> list[UUID]:
 
 def _candidate_quality(candidate: PortfolioCandidate) -> float:
     raw = (candidate.metrics or {}).get("search_adjusted_quality")
+    if raw is None:
+        raise QfError(
+            "CANDIDATE_BASELINE_EVIDENCE_MISSING",
+            "Current Candidate lacks a numeric search-adjusted quality baseline.",
+            422,
+        )
     try:
-        value = float(raw)
+        value = float(raw)  # type: ignore[arg-type]
     except (TypeError, ValueError) as exc:
         raise QfError(
             "CANDIDATE_BASELINE_EVIDENCE_MISSING",
