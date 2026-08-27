@@ -46,13 +46,13 @@ _STRATEGY = StrategyArtifact(
 )
 
 
-def _evidence(experiment_id: object) -> dict:
+def _evidence(experiment_id: object, mode: str = "DISCOVERY") -> dict:
     return {
         "protocol_version": "2",
         "runtime_version": PINNED_NAUTILUS_VERSION,
         "experiment_id": str(experiment_id),
         "remote_run_id": f"remote-{experiment_id}",
-        "mode": "DISCOVERY",
+        "mode": mode,
         "orders": [{"order_id": "O-1", "status": "FILLED"}],
         "fills": [{"trade_id": "T-1", "order_id": "O-1"}],
         "positions": [{"position_id": "P-1", "side": "LONG"}],
@@ -239,7 +239,11 @@ def test_real_evidence_promotes_through_alpha_and_portfolio(
                 runtime_version=PINNED_NAUTILUS_VERSION,
                 remote_run_id=f"remote-{request.experiment_id}",
                 request_json=request.model_dump(mode="json"),
-                evidence_json={} if sealed else _evidence(request.experiment_id),
+                evidence_json=(
+                    {}
+                    if sealed
+                    else _evidence(request.experiment_id, request.mode.value)
+                ),
                 disclosure_json=(
                     {
                         "passed": True,

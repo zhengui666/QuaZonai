@@ -92,7 +92,7 @@ def _seed_research_scope(
     return universe_id
 
 
-def _nautilus_candidate_metrics(experiment_id: UUID) -> dict:
+def _nautilus_candidate_metrics(experiment_id: UUID, alpha_id: UUID) -> dict:
     strategy_source = (
         "from nautilus_trader.examples.strategies.ema_cross import "
         "EMACross as CandidateStrategy, EMACrossConfig as CandidateConfig\n"
@@ -150,7 +150,7 @@ def _nautilus_candidate_metrics(experiment_id: UUID) -> dict:
                 "statistics": {"total_orders": 1, "total_fills": 1, "total_positions": 1},
             },
             "dataset_revision_ids": [],
-            "alpha_qualification_ids": [],
+            "alpha_qualification_ids": [str(alpha_id)],
             "instrument_scope": ["EUR/USD.SIM", "GBP/USD.SIM"],
             "data_requirements": {"nautilus_data_type": "QuoteTick"},
             "backtest_run_config": {
@@ -315,16 +315,25 @@ def _seed_candidate_approval(
         session.add_all([downstream, program])
         session.flush()
         experiment_id = uuid4()
+        alpha_id = uuid4()
         candidate = PortfolioCandidate(
             portfolio_program_id=program.id,
             mandate_version_id=program.mandate_version_id,
             mandate_name=program.mandate_name,
             state="READY",
             members=[
-                {"instrument_id": "EUR/USD.SIM", "target_weight": 0.6},
-                {"instrument_id": "GBP/USD.SIM", "target_weight": 0.4},
+                {
+                    "alpha_qualification_id": str(alpha_id),
+                    "instrument_id": "EUR/USD.SIM",
+                    "target_weight": 0.6,
+                },
+                {
+                    "alpha_qualification_id": str(alpha_id),
+                    "instrument_id": "GBP/USD.SIM",
+                    "target_weight": 0.4,
+                },
             ],
-            metrics=_nautilus_candidate_metrics(experiment_id),
+            metrics=_nautilus_candidate_metrics(experiment_id, alpha_id),
             created_at=datetime.now(UTC),
         )
         session.add(candidate)
