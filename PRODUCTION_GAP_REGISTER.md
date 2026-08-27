@@ -2,12 +2,14 @@
 
 > 基线日期：2026-08-27  
 > 核对基线：`main@7b3eb5d70e550bedb951762dbd1a8724cb6494c2`  
-> 上位事实源：[`DESIGN.md`](DESIGN.md)  
-> 文档性质：实现差距登记与验收清单，不新增或修改产品事实
+> 上位事实源：[`DESIGN.md`](DESIGN.md)，特别是 §49.1 的生产完成与发布准入合同  
+> 文档性质：把 `DESIGN.md` 已定义的产品、架构、生产治理、运营、安全与合规要求拆解为可关闭的实现差距和验收证据；不得反向改写产品事实
 
 ## 1. 使用规则
 
-本清单**不使用优先级、严重度、阶段、排期或先后等级**。编号只用于追踪，章节只按领域分组；任何未关闭项都阻断“项目闭环完成”和“生产级可用”的结论。
+本清单**不使用优先级、严重度、阶段、排期或先后等级**。编号只用于追踪，章节只按领域分组。所有条目都从 `DESIGN.md` 的产品/架构要求或 §49.1 的生产完成与发布准入合同展开；任何未关闭项都阻断“项目闭环完成”和“生产级可用”的结论。
+
+本清单可以把上位要求拆成更具体的工程证据，但不能新增领域对象、状态、API、用户旅程或 ownership。发现需要新增产品/架构/生产准入事实时，必须先更新 `DESIGN.md`，再追加或修改本清单。
 
 每个 Gap 只有在同时满足以下条件时才可以勾选：
 
@@ -185,7 +187,7 @@
 
 - [ ] **GAP-APPROVAL-01 — Approval 自动产生。** 只有 Promotion Gate、唯一推荐、Material Improvement、Evidence maturity、无重复 pending、downstream preflight 全部通过才创建。
 - [ ] **GAP-APPROVAL-02 — Paper/Live 分离。** 类型、证据、目标 downstream、有效期和批准记录独立；Paper 通过不改变 Live 状态。
-- [ ] **GAP-APPROVAL-03 — Snapshot 冻结完整。** Candidate、Package、Evidence、Alpha/Calibration、Mandate、Capital Context、Policy、Risk/Cost/Capacity/Constraint、Downstream Connection 和 Contracts 全部冻结。
+- [ ] **GAP-APPROVAL-03 — Snapshot 冻结完整。** Candidate Package 必须先完成构建与 Reference Runtime 验证，随后与 Candidate、Evidence、Alpha/Calibration、Mandate、Capital Context、Policy、Risk/Cost/Capacity/Constraint、Downstream Connection 和 Contracts 一并冻结到 PENDING Snapshot；approve mutation 只能决定并发布该既有 Package，不得在审批时首次构建、替换或重绑定 Package。
 - [ ] **GAP-APPROVAL-04 — Stale/Expired 自动判定。** 依赖变化、Qualification 隔离、Forward Evidence 推翻、Capital 超容量、连接/contract/preflight 变化或超时后不可批准，必须重新评估生成新 Snapshot。
 - [ ] **GAP-APPROVAL-05 — 单一推荐和节流。** 同 Program 同时最多一个可行动 Approval；拒绝不递补第二名，没有新证据或实质改善不得重复打扰。
 - [ ] **GAP-APPROVAL-06 — Reject contract。** 服务端校验固定 reason code 和 note；决定为终态并进入审计，Agent 只能按 disclosure policy 看到允许内容。
@@ -203,7 +205,7 @@
 
 - [ ] **GAP-HANDOFF-01 — Downstream Connection Version。** 逻辑 Downstream System、版本化连接、Plugin Release、public config、credential set、Package/Feedback compatibility 和 preflight 分离。
 - [ ] **GAP-HANDOFF-02 — Service token 生命周期。** 注册时只返回一次、加密保存、可轮换、可撤销、作用域仅限对应系统；Operator credential 不能代替。
-- [ ] **GAP-HANDOFF-03 — 完整 Handoff 状态机。** APPROVED/PUBLISHING/AVAILABLE/CLAIMED/ACCEPTED/REJECTED/FEEDBACK_* 及异常状态、deadline 和事件全部实现。
+- [ ] **GAP-HANDOFF-03 — 完整 Handoff 状态机。** APPROVED/PUBLISHING/AVAILABLE/CLAIMED/DOWNSTREAM_ACCEPTED/DOWNSTREAM_REJECTED/FEEDBACK_* 及异常状态、deadline 和事件全部实现。
 - [ ] **GAP-HANDOFF-04 — Claim 与 revoke 原子竞争。** PostgreSQL row lock 测试证明 AVAILABLE 只可能被一次 claim 或 revoke；CLAIMED 后 QuaZonai 永远不能 revoke/stop/undeploy。
 - [ ] **GAP-HANDOFF-05 — Downstream Package 消费。** 提供 Reference Consumer/fake downstream，使用 service token claim、下载、验证、accept/reject，并输出 contract-valid feedback。
 - [ ] **GAP-HANDOFF-06 — Feedback Contract 完整。** observation duration、sample size、required fields、deadlines、grace、accepted contracts、disclosure 和 partial/stale/invalid 规则冻结。
@@ -328,7 +330,7 @@
 - [ ] 使用固定 release artifact 和空白持久卷启动生产 Compose。
 - [ ] 执行数据库 preflight/migration，所有服务达到各自真实 readiness。
 - [ ] 启用 Operator Authentication，使用 password + TOTP 登录；验证 trusted browser、logout 和 machine CLI token。
-- [ ] 注册一个真实或官方 sandbox Data Connector、一个 Market Universe、一个 Paper Downstream 和对应 Feedback Contract。
+- [ ] 注册一个真实或官方 sandbox Data Connector、一个 Market Universe、彼此独立且兼容的 Paper Downstream 与 Live Downstream，以及各自的连接版本和 Feedback Contract；两类 downstream preflight 均成功。
 - [ ] Connector 拉取数据并生成通过 point-in-time/质量检查的 Dataset Revision。
 - [ ] 用户提交一个边界明确的 Research Idea；系统在需要时只进行一轮澄清。
 - [ ] 冻结 Research Charter，创建 Program、Branch、Mission DAG 和 durable jobs。
@@ -340,14 +342,14 @@
 - [ ] 通过 Gate 的 Alpha 形成不可变 Qualification 并进入 Alpha Library。
 - [ ] Enabled Mandate 与 Capital Context 自动触发 Portfolio Program。
 - [ ] 系统构造多个候选、保存 Portfolio Search Ledger，并完成 portfolio-level sealed evaluation。
-- [ ] 唯一推荐 Candidate 通过 Material Improvement 后生成 Paper Approval Snapshot。
-- [ ] 人类在 Web 审查并批准；Agent 无法执行同一动作。
-- [ ] 系统从真实冻结 artifacts 构建 Candidate Package并通过 Reference Runtime fixture。
+- [ ] 唯一推荐 Candidate 通过 Material Improvement 后，系统先从真实冻结 artifacts 构建不可变 Candidate Package，并在隔离环境通过 Reference Runtime fixture。
+- [ ] 系统把该既有、已验证 Package 与完整依赖冻结到 Paper Approval Snapshot；Snapshot 进入 PENDING 前 Package 已可供人类审查。
+- [ ] 人类在 Web 审查 Candidate、证据和所绑定 Package 后批准；Agent 无法执行同一动作，approve mutation 不重建或替换 Package。
 - [ ] Paper Downstream 使用其 service token 原子 claim、下载、验证并 accept。
 - [ ] QuaZonai 在 claim 后不提供 stop/revoke runtime；只能显示状态和 advisory。
 - [ ] Downstream 返回 partial feedback，系统记录但不判定 Candidate 失败。
 - [ ] Downstream 返回 complete contract-valid feedback，系统生成 Forward Evidence Episode。
-- [ ] 在有效 Paper evidence 存在时，系统重新评估并可生成独立 Live Approval；没有证据时必须阻断。
+- [ ] 在有效 Paper evidence 与已完成 preflight 的独立 Live Downstream 同时存在时，系统重新评估并可生成绑定该 Live 目标的独立 Live Approval；任一条件缺失时进入相应 configuration-required/blocked 状态，不创建不可行动 Approval。
 - [ ] 注入性能退化 feedback，Degradation Policy 达到条件后唤醒 Program并创建 Diagnostic Mission。
 - [ ] 重启 API/Worker/Agent/evaluator，系统从 PostgreSQL、事件和 artifacts 恢复，不重复副作用。
 - [ ] 执行备份、清空环境、恢复，核对 Program、Evidence、Candidate、Approval、Package、Handoff 和 Feedback。

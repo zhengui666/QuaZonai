@@ -36,8 +36,9 @@ Idea
   → Portfolio Program
   → Portfolio Candidate
   → Independent Evaluation
+  → Candidate Package build / Reference Runtime conformance
+  → Approval Snapshot
   → Human Approval
-  → Candidate Package
   → Handoff Registry
   → Independent Downstream Runtime
   → Forward Evidence
@@ -847,6 +848,8 @@ PENDING → APPROVED
 终态不可恢复。
 
 Snapshot 冻结：Candidate Package、Evidence Set、Alpha/Calibration、Mandate、Capital Context、Portfolio Policy、Risk/Cost/Capacity/Constraint、目标 downstream、downstream connection version、Package/Feedback Contract、compatibility preflight、validity policy。
+
+Candidate Package 必须在 Approval Snapshot 进入 `PENDING` 前完成构建和 Reference Runtime conformance，并以不可变 `candidate_package_id` 绑定到 Snapshot。`approve` / `reject` 只决定该既有 Snapshot；审批动作不得首次构建、替换或重新绑定 Package。
 
 ### 23.1 STALE / EXPIRED
 
@@ -1905,6 +1908,42 @@ QuaZonai/
 - [ ] Package、plugin、workspace、approval、idempotency 不以内容 hash 做身份或 Gate；
 - [ ] Operator auth 不引入自定义 password/session/TOTP hash gate；cookie 使用标准 authenticated encryption；
 - [ ] 测试不引入自定义完整性 hash 流程。
+
+### 49.1 生产完成与发布准入合同
+
+“V1 产品符合设计”与“可以声明生产级可用”是两个同时必须满足的维度。生产级声明除本节前述产品、领域、隔离和验收要求外，还必须满足以下发布、运营、安全与合规控制。各项不设置优先级或严重度；技术依赖可以决定实施顺序，但任何未满足项都阻断 production-ready 声明。
+
+#### Repository / review governance
+
+- `main` 禁止直接推送和 force push；所有变更通过 PR 合入；
+- 适用的 backend、frontend、browser E2E、Operator Auth、安全与构建检查必须成为 required checks，并在 PR 当前 head 上成功；
+- 所有 review thread 必须解决；当前 head 必须在 GitHub 上请求 `@codex review`，且最新结果认为没有问题；
+- PR 模板必须记录受影响的 DESIGN 条款、迁移与兼容影响、回滚办法、测试证据、运营影响和安全边界；
+- 发布使用明确版本、变更记录、数据库 schema version、Package/Plugin contract version 和支持矩阵。
+
+#### Build / supply-chain admission
+
+- Python、Node、Codex、PostgreSQL、容器基础镜像和生产依赖必须固定、可重复构建并保留 lockfile；
+- CodeQL、依赖漏洞、secret、许可证和容器扫描必须通过；发布产物必须生成可归档的 SBOM；
+- 测试镜像与发布镜像来自同一构建定义，不能使用只在验收环境存在的依赖、mock、seed 或手工业务事实。
+
+#### Operational acceptance
+
+- 必须从空白持久卷完成安装、migration、真实 readiness 和纵向闭环验收；
+- PostgreSQL、Dataset、Artifact、Package、Plugin runtime、Program repo 和必要 Codex state 必须有一致性备份、加密、保留与恢复演练；
+- 升级、迁移失败、回滚、进程重启、事件重放、job lease 恢复、磁盘/内存压力和依赖服务故障必须有测试或演练证据；
+- 结构化日志、指标、告警、容量阈值、SLO/恢复目标和安装/升级/密钥轮换/事故 Runbook 必须可执行；
+- 发布后必须执行 migration preflight、服务 health、Web/API、Worker、Mission sandbox、Sealed Evaluator、Package 与 downstream contract smoke。
+
+#### Security / compliance / external claims
+
+- 生产数据源必须有许可、允许用途、保留与再分发依据；模型/provider 和 downstream 使用条款必须与部署方式一致；
+- 第三方依赖、镜像、插件及 Candidate Package 内分发组件的许可证和 notices 必须完整，AGPL-3.0-only 及其他许可证义务必须得到明确确认；
+- 产品和运营文档必须说明回测、历史数据和统计选择的局限，Paper 与 Live 独立审批，研穵结果不保证收益，真实交易和账户责任属于独立 downstream 与操作者；
+- Secret inventory、生成、存储、轮换、撤销、泄漏处置、数据/日志保留和独立安全复核必须完成；
+- 在所有设计符合性、生产准入和纵向验收证据完成前，README、UI、发布说明和对外材料不得宣称 conforming、release-ready、production-ready 或 live-ready。
+
+[`PRODUCTION_GAP_REGISTER.md`](PRODUCTION_GAP_REGISTER.md) 是本节和本文其他要求的从属实现差距/验收分解表。它可以把既有要求拆成更具体的代码、测试和运行证据，但不得自行新增领域对象、状态、API、用户旅程或 ownership；需要新增或改变产品、架构或生产准入事实时，必须先更新本文。
 
 ## 50. 当前实现状态与迁移原则
 
