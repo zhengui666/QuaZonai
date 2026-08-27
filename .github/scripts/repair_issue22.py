@@ -70,6 +70,22 @@ def ensure_pyproject_syntax() -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def ensure_runtime_lint() -> None:
+    engine = ROOT / "nautilus_runtime/src/quazonai_nautilus_gateway/engine.py"
+    text = engine.read_text(encoding="utf-8")
+    text = text.replace("except Exception:\n                pass", "except (AttributeError, TypeError, ValueError):\n                pass")
+    text = text.replace("except Exception:\n            pass", "except (AttributeError, TypeError, ValueError):\n            pass")
+    text = text.replace(
+        "except Exception as exc:\n                findings.append",
+        "except (GatewayContractError, ImportError, KeyError, TypeError, ValueError, zipfile.BadZipFile) as exc:\n                findings.append",
+    )
+    engine.write_text(text, encoding="utf-8")
+    boundary = ROOT / "tools/check_quant_runtime_boundary.py"
+    boundary_text = boundary.read_text(encoding="utf-8")
+    if boundary_text.startswith("#!/usr/bin/env python3\n"):
+        boundary.write_text(boundary_text.split("\n", 1)[1], encoding="utf-8")
+
+
 def ensure_models_export() -> None:
     model_file = next(
         path
@@ -138,6 +154,7 @@ def main() -> None:
     ensure_models_export()
     ensure_gateway_import_safe()
     ensure_runner_type_safety()
+    ensure_runtime_lint()
 
 
 if __name__ == "__main__":
