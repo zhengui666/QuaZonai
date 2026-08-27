@@ -18,22 +18,50 @@ from quazonai_nautilus_gateway.models import (
     StrategyArtifact,
 )
 
+_ONE_SHOT_SOURCE = '''
+from decimal import Decimal
+
+from nautilus_trader.config import StrategyConfig
+from nautilus_trader.model.data import QuoteTick
+from nautilus_trader.model.enums import OrderSide
+from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.trading.strategy import Strategy
+
+
+class OneShotConfig(StrategyConfig, frozen=True):
+    instrument_id: InstrumentId
+    trade_size: Decimal
+
+
+class OneShotStrategy(Strategy):
+    def __init__(self, config: OneShotConfig):
+        super().__init__(config)
+        self._submitted = False
+
+    def on_start(self) -> None:
+        self.subscribe_quote_ticks(self.config.instrument_id)
+
+    def on_quote_tick(self, tick: QuoteTick) -> None:
+        if self._submitted:
+            return
+        instrument = self.cache.instrument(self.config.instrument_id)
+        if instrument is None:
+            raise RuntimeError(f"instrument unavailable: {self.config.instrument_id}")
+        order = self.order_factory.market(
+            instrument_id=self.config.instrument_id,
+            order_side=OrderSide.BUY,
+            quantity=instrument.make_qty(self.config.trade_size),
+        )
+        self.submit_order(order)
+        self._submitted = True
+'''.lstrip()
+
 
 def _rows(*, base: float = 1.09) -> list[QuoteRow]:
     started = datetime(2024, 1, 2, tzinfo=UTC)
     result: list[QuoteRow] = []
-    # Hold stable regimes and then step sharply between them. Once both EMAs are
-    # initialized, each regime change deterministically flips fast-vs-slow and
-    # therefore submits a real market order through Nautilus's matching engine.
     for index in range(360):
-        if index < 60:
-            mid = base - 0.01
-        elif index < 180:
-            mid = base + 0.01
-        elif index < 300:
-            mid = base - 0.01
-        else:
-            mid = base + 0.01
+        mid = base + ((index % 20) - 10) * 0.00001
         timestamp = started + timedelta(minutes=index)
         result.append(
             QuoteRow(
@@ -55,17 +83,15 @@ def _request() -> BacktestExperimentRequest:
         catalog_key="integration-fx-quotes",
         instrument_ids=["EUR/USD.SIM", "GBP/USD.SIM"],
         strategy=StrategyArtifact(
-            artifact_id="builtin-ema-cross-v1",
-            kind="IMPORTABLE",
-            strategy_path="nautilus_trader.examples.strategies.ema_cross:EMACross",
-            config_path="nautilus_trader.examples.strategies.ema_cross:EMACrossConfig",
+            artifact_id="one-shot-source-bundle-v1",
+            kind="SOURCE_BUNDLE",
+            strategy_path="one_shot:OneShotStrategy",
+            config_path="one_shot:OneShotConfig",
             config={
                 "instrument_id": "EUR/USD.SIM",
-                "bar_type": "EUR/USD.SIM-1-MINUTE-BID-INTERNAL",
                 "trade_size": "100000",
-                "fast_ema_period": 3,
-                "slow_ema_period": 8,
             },
+            source_files={"one_shot.py": _ONE_SHOT_SOURCE},
             requirements=["nautilus_trader==1.231.0"],
         ),
     )
