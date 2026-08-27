@@ -12,7 +12,13 @@ from uuid import UUID
 from pydantic import ValidationError
 from sqlalchemy import select
 
-from db.models import DatasetRevision
+from db.models import (
+    DatasetRevision,
+    GovernedDataSource,
+    ResearchCharter,
+    ResearchMission,
+    ResearchProgram,
+)
 from db.session import create_database_engine, create_session_factory
 from errors import QfError
 from quant_runtime.contracts import BacktestExperimentRequest, ExperimentMode
@@ -27,7 +33,42 @@ MAX_EXPERIMENTS_PER_ROUND = 20
 CATALOG_URI_PREFIX = "nautilus-catalog://"
 
 
-def prepare_experiment_workspace(settings: Settings, *, workspace: Path) -> int:
+_DATA_TYPE_DOMAINS = {
+    "quotetick": {"quotes", "market_data"},
+    "tradetick": {"trades", "market_data"},
+    "bar": {"bars", "market_data"},
+    "orderbookdelta": {"order_book", "market_data"},
+    "orderbookdeltas": {"order_book", "market_data"},
+}
+
+
+def _normalize_domain(value: object) -> str:
+    return str(value).strip().casefold().replace("-", "_").replace(" ", "_")
+
+
+def _revision_domains(
+    revision: DatasetRevision,
+    source: GovernedDataSource | None,
+) -> set[str]:
+    result = set(_DATA_TYPE_DOMAINS.get(_normalize_domain(revision.nautilus_data_type), set()))
+    if source is not None:
+        config = source.public_config or {}
+        for key in ("data_domain", "domain"):
+            if config.get(key):
+                result.add(_normalize_domain(config[key]))
+        configured = config.get("data_domains")
+        if isinstance(configured, list):
+            result.update(_normalize_domain(value) for value in configured)
+        result.update(_normalize_domain(value) for value in (source.fields or []))
+    return {value for value in result if value}
+
+
+def prepare_experiment_workspace(
+    settings: Settings,
+    *,
+    workspace: Path,
+    mission_id: UUID,
+) -> int:
     """Publish only governed Discovery datasets and the executable contract to a Mission.
 
     The files contain no database credentials or remote-runtime token. The child
@@ -38,45 +79,83 @@ def prepare_experiment_workspace(settings: Settings, *, workspace: Path) -> int:
     factory = create_session_factory(engine)
     try:
         with factory() as session:
-            revisions = list(
-                session.scalars(
-                    select(DatasetRevision)
-                    .where(
-                        DatasetRevision.partition == "DISCOVERY",
-                        DatasetRevision.quality_state == "VALID",
-                        DatasetRevision.point_in_time_state == "VALID",
-                        DatasetRevision.catalog_uri.is_not(None),
-                    )
-                    .order_by(DatasetRevision.created_at.desc())
+            mission = session.get(ResearchMission, mission_id)
+            program = session.get(ResearchProgram, mission.program_id) if mission is not None else None
+            charter = session.get(ResearchCharter, program.charter_id) if program is not None else None
+            if mission is None or program is None or charter is None:
+                raise QfError(
+                    "MISSION_CHARTER_MISSING",
+                    "Mission cannot publish datasets without its frozen Research Charter.",
+                    422,
                 )
-            )
-        datasets: list[dict[str, Any]] = []
-        for revision in revisions:
-            catalog_uri = revision.catalog_uri or ""
-            if not catalog_uri.startswith(CATALOG_URI_PREFIX):
-                continue
-            catalog_key = catalog_uri.removeprefix(CATALOG_URI_PREFIX)
-            if not catalog_key or not revision.instrument_scope:
-                continue
-            datasets.append(
-                {
-                    "dataset_revision_id": str(revision.id),
-                    "catalog_key": catalog_key,
-                    "catalog_uri": catalog_uri,
-                    "provider_name": revision.provider_name,
-                    "source_license": revision.source_license,
-                    "nautilus_data_type": revision.nautilus_data_type,
-                    "instrument_scope": revision.instrument_scope,
-                    "event_start": revision.event_start,
-                    "event_end": revision.event_end,
-                    "available_start": revision.available_start,
-                    "available_end": revision.available_end,
-                    "row_count": revision.row_count,
-                    "schema_revision": revision.schema_revision,
-                    "quality_result": revision.quality_result,
-                    "point_in_time_result": revision.point_in_time_result,
-                }
-            )
+            allowed_universe_ids: set[UUID] = set()
+            for raw_id in charter.universe_version_ids or []:
+                try:
+                    allowed_universe_ids.add(UUID(str(raw_id)))
+                except ValueError:
+                    continue
+            allowed_domains = {
+                _normalize_domain(value) for value in (charter.allowed_data_domains or []) if value
+            }
+            revisions = []
+            if allowed_universe_ids and allowed_domains:
+                revisions = list(
+                    session.scalars(
+                        select(DatasetRevision)
+                        .where(
+                            DatasetRevision.partition == "DISCOVERY",
+                            DatasetRevision.quality_state == "VALID",
+                            DatasetRevision.point_in_time_state == "VALID",
+                            DatasetRevision.catalog_uri.is_not(None),
+                            DatasetRevision.universe_version_id.in_(allowed_universe_ids),
+                        )
+                        .order_by(DatasetRevision.created_at.desc())
+                    )
+                )
+            source_ids = {item.data_source_id for item in revisions if item.data_source_id is not None}
+            sources = {
+                item.id: item
+                for item in session.scalars(
+                    select(GovernedDataSource).where(GovernedDataSource.id.in_(source_ids))
+                )
+            } if source_ids else {}
+            datasets: list[dict[str, Any]] = []
+            for revision in revisions:
+                source = (
+                    sources.get(revision.data_source_id)
+                    if revision.data_source_id is not None
+                    else None
+                )
+                domains = _revision_domains(revision, source)
+                if not domains.intersection(allowed_domains):
+                    continue
+                catalog_uri = revision.catalog_uri or ""
+                if not catalog_uri.startswith(CATALOG_URI_PREFIX):
+                    continue
+                catalog_key = catalog_uri.removeprefix(CATALOG_URI_PREFIX)
+                if not catalog_key or not revision.instrument_scope:
+                    continue
+                datasets.append(
+                    {
+                        "dataset_revision_id": str(revision.id),
+                        "universe_version_id": str(revision.universe_version_id),
+                        "data_domains": sorted(domains),
+                        "catalog_key": catalog_key,
+                        "catalog_uri": catalog_uri,
+                        "provider_name": revision.provider_name,
+                        "source_license": revision.source_license,
+                        "nautilus_data_type": revision.nautilus_data_type,
+                        "instrument_scope": revision.instrument_scope,
+                        "event_start": revision.event_start,
+                        "event_end": revision.event_end,
+                        "available_start": revision.available_start,
+                        "available_end": revision.available_end,
+                        "row_count": revision.row_count,
+                        "schema_revision": revision.schema_revision,
+                        "quality_result": revision.quality_result,
+                        "point_in_time_result": revision.point_in_time_result,
+                    }
+                )
     finally:
         engine.dispose()
 

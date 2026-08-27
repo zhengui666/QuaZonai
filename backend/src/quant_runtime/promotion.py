@@ -22,6 +22,7 @@ from db.models import (
     ApprovalSnapshot,
     DatasetRevision,
     PortfolioCandidate,
+    PortfolioMandate,
     PortfolioProgram,
     ResearchCharter,
     ResearchProgram,
@@ -142,6 +143,24 @@ def _select_sealed_dataset(
             "Sealed Dataset Revision must pass quality and point-in-time governance.",
             422,
         )
+    if source_dataset.universe_version_id is None:
+        raise QfError(
+            "DISCOVERY_UNIVERSE_VERSION_MISSING",
+            "Discovery evidence must bind a concrete Universe Version before qualification.",
+            422,
+        )
+    if dataset.universe_version_id != source_dataset.universe_version_id:
+        raise QfError(
+            "SEALED_UNIVERSE_VERSION_MISMATCH",
+            "Sealed evaluation must use the same frozen Universe Version as Discovery.",
+            422,
+            {
+                "discovery_universe_version_id": str(source_dataset.universe_version_id),
+                "sealed_universe_version_id": (
+                    str(dataset.universe_version_id) if dataset.universe_version_id else None
+                ),
+            },
+        )
     source_scope = set(source_dataset.instrument_scope or [])
     sealed_scope = set(dataset.instrument_scope or [])
     if not source_scope or not source_scope.issubset(sealed_scope):
@@ -186,6 +205,39 @@ def qualify_alpha(
         source_dataset = session.get(DatasetRevision, source.dataset_revision_id)
         if source_dataset is None:
             raise QfError("DATASET_REVISION_NOT_FOUND", "Discovery Dataset Revision is missing.", 404)
+        program = session.get(ResearchProgram, source.program_id)
+        charter = session.get(ResearchCharter, program.charter_id) if program is not None else None
+        if charter is None:
+            raise QfError(
+                "RESEARCH_CHARTER_MISSING",
+                "Discovery evidence has no frozen Research Charter.",
+                422,
+            )
+        source_horizon = (charter.prediction_horizon or "").strip()
+        if not source_horizon:
+            raise QfError(
+                "ALPHA_HORIZON_MISSING",
+                "Alpha Qualification requires a frozen non-empty prediction horizon.",
+                422,
+            )
+        if source_dataset.universe_version_id is None:
+            raise QfError(
+                "DISCOVERY_UNIVERSE_VERSION_MISSING",
+                "Discovery evidence must bind a concrete Universe Version before qualification.",
+                422,
+            )
+        charter_universe_ids: set[UUID] = set()
+        for raw_universe_id in charter.universe_version_ids or []:
+            try:
+                charter_universe_ids.add(UUID(str(raw_universe_id)))
+            except ValueError:
+                continue
+        if source_dataset.universe_version_id not in charter_universe_ids:
+            raise QfError(
+                "DISCOVERY_UNIVERSE_CHARTER_MISMATCH",
+                "Discovery Dataset Revision is outside the frozen Research Charter universe set.",
+                422,
+            )
         sealed_dataset = _select_sealed_dataset(session, source_dataset, sealed_dataset_revision_id)
         sealed_request = source_request.model_copy(
             update={
@@ -209,6 +261,7 @@ def qualify_alpha(
         branch_id=source_branch_id,
         request=sealed_request,
         sealed=True,
+        parent_entry_id=source_experiment_id,
     )
     disclosure = sealed_entry.disclosure_json or {}
     if sealed_entry.evidence_json:
@@ -230,7 +283,12 @@ def qualify_alpha(
         sealed = session.get(SearchLedgerEntry, sealed_entry.id)
         if source is None or sealed is None:
             raise QfError("SEARCH_LEDGER_ENTRY_NOT_FOUND", "Evaluation lineage disappeared.", 500)
-        sealed.parent_entry_id = source.id
+        if sealed.parent_entry_id != source.id:
+            raise QfError(
+                "SEALED_LINEAGE_MISMATCH",
+                "Sealed exposure was not reserved against its Discovery source.",
+                500,
+            )
         existing = session.scalar(
             select(AlphaQualification).where(
                 AlphaQualification.source_experiment_id == source_experiment_id,
@@ -240,14 +298,12 @@ def qualify_alpha(
         if existing is not None:
             session.expunge(existing)
             return existing
-        program = session.get(ResearchProgram, source_program_id)
-        charter = session.get(ResearchCharter, program.charter_id) if program is not None else None
         quality = min(1.0, 0.5 + min(float(disclosure.get("fill_count", 0)), 50.0) / 100.0)
         alpha = AlphaQualification(
             program_id=source_program_id,
             universe_version_id=source_universe_version_id,
-            universe=source_universe or (charter.market_scope if charter else None),
-            horizon=charter.prediction_horizon if charter else None,
+            universe=source_universe or str(source_universe_version_id),
+            horizon=source_horizon,
             role=role,
             state="ACTIVE",
             name=name or f"Nautilus alpha {str(source_experiment_id)[:8]}",
@@ -331,6 +387,209 @@ def _load_portfolio_source(
     return selected, source, request
 
 
+_SUPPORTED_MANDATE_CONSTRAINTS = {
+    "max_single_alpha_weight",
+    "max_single_weight",
+    "max_concentration",
+    "allowed_universe_version_ids",
+    "allowed_universes",
+    "max_drawdown",
+    "max_turnover",
+    "max_cost_bps",
+    "min_capacity_ratio",
+    "max_leverage",
+    "max_margin_usage",
+}
+
+
+def _bound_mandate(session: Session, program: PortfolioProgram) -> PortfolioMandate:
+    mandate = session.scalar(
+        select(PortfolioMandate)
+        .where(
+            PortfolioMandate.latest_version_id == program.mandate_version_id,
+            PortfolioMandate.enabled.is_(True),
+            PortfolioMandate.state == "ACTIVE",
+        )
+        .limit(1)
+    )
+    if mandate is None:
+        raise QfError(
+            "PORTFOLIO_MANDATE_NOT_ACTIVE",
+            "Portfolio Program must bind an enabled active Mandate Version.",
+            422,
+            {"mandate_version_id": str(program.mandate_version_id)},
+        )
+    return mandate
+
+
+def _mandate_constraints(mandate: PortfolioMandate) -> dict[str, Any]:
+    spec = mandate.spec_json or {}
+    declared = spec.get("constraints", {})
+    if declared is None:
+        declared = {}
+    if not isinstance(declared, dict):
+        raise QfError(
+            "PORTFOLIO_MANDATE_INVALID",
+            "Portfolio Mandate constraints must be an object.",
+            422,
+        )
+    constraints = dict(declared)
+    for key in _SUPPORTED_MANDATE_CONSTRAINTS:
+        if key in spec and key not in constraints:
+            constraints[key] = spec[key]
+    unknown = sorted(set(constraints) - _SUPPORTED_MANDATE_CONSTRAINTS)
+    if unknown:
+        raise QfError(
+            "PORTFOLIO_MANDATE_CONSTRAINT_UNSUPPORTED",
+            "The bound Portfolio Mandate declares constraints this optimizer cannot evaluate.",
+            422,
+            {"constraints": unknown},
+        )
+    return constraints
+
+
+def _number(value: object, *, key: str) -> float:
+    try:
+        result = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        raise QfError(
+            "PORTFOLIO_MANDATE_INVALID",
+            "Portfolio Mandate numeric constraint is invalid.",
+            422,
+            {"constraint": key},
+        ) from exc
+    if result != result or result in {float("inf"), float("-inf")}:
+        raise QfError(
+            "PORTFOLIO_MANDATE_INVALID",
+            "Portfolio Mandate numeric constraint must be finite.",
+            422,
+            {"constraint": key},
+        )
+    return result
+
+
+def _first_constraint(constraints: dict[str, Any], *keys: str) -> tuple[str, Any] | None:
+    for key in keys:
+        if key in constraints:
+            return key, constraints[key]
+    return None
+
+
+def _validate_mandate_before_simulation(
+    mandate: PortfolioMandate,
+    alpha: AlphaQualification,
+) -> dict[str, Any]:
+    constraints = _mandate_constraints(mandate)
+    concentration = _first_constraint(
+        constraints, "max_single_alpha_weight", "max_single_weight", "max_concentration"
+    )
+    if concentration is not None and _number(concentration[1], key=concentration[0]) < 1.0:
+        raise QfError(
+            "PORTFOLIO_MANDATE_CONCENTRATION_UNSATISFIED",
+            "The current single-Alpha optimizer cannot satisfy the Mandate concentration cap.",
+            422,
+            {"constraint": concentration[0], "required_weight": 1.0},
+        )
+    allowed_ids = constraints.get("allowed_universe_version_ids")
+    if allowed_ids is not None:
+        if not isinstance(allowed_ids, list) or alpha.universe_version_id is None:
+            raise QfError(
+                "PORTFOLIO_MANDATE_UNIVERSE_UNSATISFIED",
+                "Mandate Universe-Version constraint cannot be satisfied by the selected Alpha.",
+                422,
+            )
+        allowed = {str(value) for value in allowed_ids}
+        if str(alpha.universe_version_id) not in allowed:
+            raise QfError(
+                "PORTFOLIO_MANDATE_UNIVERSE_UNSATISFIED",
+                "Selected Alpha is outside the Mandate's allowed Universe Versions.",
+                422,
+            )
+    allowed_names = constraints.get("allowed_universes")
+    if allowed_names is not None:
+        if not isinstance(allowed_names, list) or not alpha.universe:
+            raise QfError(
+                "PORTFOLIO_MANDATE_UNIVERSE_UNSATISFIED",
+                "Mandate Universe constraint cannot be satisfied by the selected Alpha.",
+                422,
+            )
+        if alpha.universe not in {str(value) for value in allowed_names}:
+            raise QfError(
+                "PORTFOLIO_MANDATE_UNIVERSE_UNSATISFIED",
+                "Selected Alpha is outside the Mandate's allowed Universes.",
+                422,
+            )
+    return constraints
+
+
+def _metric_from_evidence(value: object, aliases: set[str]) -> float | None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            normalized = str(key).casefold().replace(" ", "_").replace("-", "_")
+            if normalized in aliases:
+                try:
+                    return float(item)
+                except (TypeError, ValueError):
+                    pass
+            nested = _metric_from_evidence(item, aliases)
+            if nested is not None:
+                return nested
+    elif isinstance(value, list):
+        for item in value:
+            nested = _metric_from_evidence(item, aliases)
+            if nested is not None:
+                return nested
+    return None
+
+
+def _require_evidence_metric(
+    evidence: dict[str, Any],
+    *,
+    constraint: str,
+    aliases: set[str],
+) -> float:
+    value = _metric_from_evidence(evidence, aliases)
+    if value is None:
+        raise QfError(
+            "PORTFOLIO_MANDATE_CONSTRAINT_EVIDENCE_MISSING",
+            "Nautilus simulation did not produce evidence required by the Portfolio Mandate.",
+            422,
+            {"constraint": constraint},
+        )
+    return value
+
+
+def _validate_mandate_after_simulation(
+    constraints: dict[str, Any],
+    evidence: dict[str, Any],
+) -> None:
+    checks = {
+        "max_drawdown": ({"max_drawdown", "maxdrawdown"}, "max"),
+        "max_turnover": ({"turnover", "portfolio_turnover"}, "max"),
+        "max_cost_bps": ({"cost_bps", "transaction_cost_bps", "turnover_cost_bps"}, "max"),
+        "min_capacity_ratio": ({"capacity_ratio"}, "min"),
+        "max_leverage": ({"leverage", "gross_leverage"}, "max"),
+        "max_margin_usage": ({"margin_usage", "margin_utilization"}, "max"),
+    }
+    for key, (aliases, direction) in checks.items():
+        if key not in constraints:
+            continue
+        actual = abs(
+            _require_evidence_metric(evidence, constraint=key, aliases=aliases)
+            if key == "max_drawdown"
+            else _require_evidence_metric(evidence, constraint=key, aliases=aliases)
+        )
+        limit = _number(constraints[key], key=key)
+        violated = actual > limit if direction == "max" else actual < limit
+        if violated:
+            raise QfError(
+                "PORTFOLIO_MANDATE_CONSTRAINT_FAILED",
+                "Nautilus transaction-level simulation violates the bound Portfolio Mandate.",
+                422,
+                {"constraint": key, "actual": actual, "limit": limit},
+            )
+
+
 @dataclass(frozen=True, slots=True)
 class CandidatePromotion:
     candidate_id: UUID
@@ -344,16 +603,55 @@ def simulate_portfolio_candidate(
     *,
     portfolio_program_id: UUID,
     alpha_ids: list[UUID],
+    simulation_experiment_id: UUID | None = None,
 ) -> CandidatePromotion:
     """Optimize Alpha selection, run a real PORTFOLIO simulation, and freeze approval facts."""
     with factory() as session:
         portfolio_program = session.get(PortfolioProgram, portfolio_program_id)
         if portfolio_program is None:
             raise QfError("PORTFOLIO_PROGRAM_NOT_FOUND", "Portfolio Program does not exist.", 404)
+        experiment_id = simulation_experiment_id or uuid4()
+        if simulation_experiment_id is not None:
+            existing_candidate = session.scalar(
+                select(PortfolioCandidate).where(
+                    PortfolioCandidate.simulation_experiment_id == simulation_experiment_id
+                )
+            )
+            if existing_candidate is not None:
+                existing_approval = session.scalar(
+                    select(ApprovalSnapshot)
+                    .where(ApprovalSnapshot.candidate_id == existing_candidate.id)
+                    .order_by(ApprovalSnapshot.created_at.desc())
+                    .limit(1)
+                )
+                if existing_approval is None:
+                    raise QfError(
+                        "CANDIDATE_APPROVAL_MISSING",
+                        "Idempotent Candidate exists without its Approval Snapshot.",
+                        500,
+                    )
+                selected = existing_candidate.members[0] if existing_candidate.members else {}
+                try:
+                    selected_alpha_id = UUID(str(selected.get("alpha_qualification_id")))
+                except (TypeError, ValueError) as exc:
+                    raise QfError(
+                        "CANDIDATE_ALPHA_LINEAGE_MISSING",
+                        "Idempotent Candidate lost its selected Alpha lineage.",
+                        500,
+                    ) from exc
+                return CandidatePromotion(
+                    candidate_id=existing_candidate.id,
+                    approval_id=existing_approval.id,
+                    simulation_experiment_id=simulation_experiment_id,
+                    selected_alpha_id=selected_alpha_id,
+                )
         alpha, source, request = _load_portfolio_source(session, alpha_ids)
+        mandate = _bound_mandate(session, portfolio_program)
+        mandate_constraints = _validate_mandate_before_simulation(mandate, alpha)
+        mandate_id = mandate.id
         simulation_request = request.model_copy(
             update={
-                "experiment_id": uuid4(),
+                "experiment_id": experiment_id,
                 "mode": ExperimentMode.PORTFOLIO,
                 "tags": {
                     **request.tags,
@@ -381,6 +679,7 @@ def simulate_portfolio_candidate(
         sealed=False,
     )
     simulation_evidence = _require_real_transaction_evidence(simulation)
+    _validate_mandate_after_simulation(mandate_constraints, simulation_evidence)
 
     with factory() as session, session.begin():
         portfolio_program = session.execute(
@@ -390,6 +689,26 @@ def simulate_portfolio_candidate(
         ).scalar_one_or_none()
         if portfolio_program is None:
             raise QfError("PORTFOLIO_PROGRAM_NOT_FOUND", "Portfolio Program disappeared.", 500)
+        persisted_mandate = session.get(PortfolioMandate, mandate_id)
+        if (
+            persisted_mandate is None
+            or not persisted_mandate.enabled
+            or persisted_mandate.state != "ACTIVE"
+            or persisted_mandate.latest_version_id != portfolio_program.mandate_version_id
+        ):
+            raise QfError(
+                "PORTFOLIO_MANDATE_CHANGED",
+                "The bound Portfolio Mandate changed during transaction-level simulation.",
+                409,
+            )
+        current_constraints = _validate_mandate_before_simulation(persisted_mandate, alpha)
+        if current_constraints != mandate_constraints:
+            raise QfError(
+                "PORTFOLIO_MANDATE_CHANGED",
+                "The bound Portfolio Mandate constraints changed during simulation.",
+                409,
+            )
+        _validate_mandate_after_simulation(current_constraints, simulation_evidence)
         persisted_alpha = session.get(AlphaQualification, alpha_id)
         if (
             persisted_alpha is None
@@ -417,6 +736,11 @@ def simulate_portfolio_candidate(
             ],
             metrics={
                 "search_adjusted_quality": alpha_quality,
+                "mandate": {
+                    "mandate_id": str(persisted_mandate.id),
+                    "mandate_version_id": str(portfolio_program.mandate_version_id),
+                    "constraints": current_constraints,
+                },
                 "optimizer": {
                     "name": "MAX_SEARCH_ADJUSTED_QUALITY_V1",
                     "considered_alpha_ids": [str(item) for item in alpha_ids],

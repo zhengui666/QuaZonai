@@ -15,6 +15,7 @@ from db.models import (
     ApprovalSnapshot,
     CandidateBundle,
     DatasetRevision,
+    DegradationFollowup,
     DownstreamSystem,
     ForwardEvidenceEpisode,
     GovernedDataSource,
@@ -127,6 +128,7 @@ def main() -> None:
     now = datetime.now(UTC)
     with factory() as session, session.begin():
         for model in (
+            DegradationFollowup,
             ForwardEvidenceEpisode,
             HandoffOffer,
             CandidateBundle,

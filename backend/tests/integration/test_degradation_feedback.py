@@ -9,6 +9,8 @@ from db.models import (
     AlphaQualification,
     ApprovalSnapshot,
     CandidateBundle,
+    DatasetRevision,
+    DegradationFollowup,
     DownstreamSystem,
     ForwardEvidenceEpisode,
     HandoffOffer,
@@ -19,6 +21,7 @@ from db.models import (
     ResearchCharter,
     ResearchMission,
     ResearchProgram,
+    SearchLedgerEntry,
 )
 from db.session import create_session_factory
 from quant_runtime.degradation import schedule_degradation_missions
@@ -55,6 +58,61 @@ def test_explicit_degradation_feedback_queues_research_only(engine: Engine) -> N
             state="ACTIVE",
             created_at=now,
         )
+        session.add(root_branch)
+        session.flush()
+        dataset = DatasetRevision(
+            universe_name="FX",
+            revision_no=1,
+            event_start=now - timedelta(days=30),
+            event_end=now - timedelta(days=20),
+            available_start=now - timedelta(days=30),
+            available_end=now - timedelta(days=20),
+            row_count=100,
+            quality_state="VALID",
+            point_in_time_state="VALID",
+            partition="DISCOVERY",
+            created_at=now,
+            provider_name="test",
+            source_license="test",
+            catalog_uri="nautilus-catalog://degradation-source",
+            nautilus_data_type="QuoteTick",
+            instrument_scope=["EUR/USD.SIM"],
+            schema_revision="quote-v2",
+            quality_result={"state": "VALID"},
+            point_in_time_result={"state": "VALID"},
+            ingested_at=now,
+        )
+        session.add(dataset)
+        session.flush()
+        source_experiment_id = uuid4()
+        source = SearchLedgerEntry(
+            id=source_experiment_id,
+            program_id=program.id,
+            branch_id=root_branch.id,
+            mission_id=None,
+            dataset_revision_id=dataset.id,
+            parent_entry_id=None,
+            mode="DISCOVERY",
+            state="SUCCEEDED",
+            runtime_name="NAUTILUS_TRADER",
+            runtime_version="1.231.0",
+            remote_run_id="degradation-source",
+            request_json={},
+            evidence_json={"orders": [{}], "fills": [{}], "positions": [{}], "pnl": {}, "statistics": {}},
+            disclosure_json={},
+            started_at=now,
+            finished_at=now,
+        )
+        unrelated_branch = ResearchBranch(
+            program_id=program.id,
+            parent_branch_id=root_branch.id,
+            derivation_type="ALTERNATIVE",
+            hypothesis="Unrelated later branch.",
+            changed_assumptions=[],
+            preserved_constraints=[],
+            state="ACTIVE",
+            created_at=now + timedelta(seconds=1),
+        )
         alpha = AlphaQualification(
             program_id=program.id,
             universe="FX",
@@ -67,6 +125,7 @@ def test_explicit_degradation_feedback_queues_research_only(engine: Engine) -> N
             metrics={"search_adjusted_quality": 0.8},
             lineage=[],
             created_at=now,
+            source_experiment_id=source_experiment_id,
         )
         portfolio_program = PortfolioProgram(
             mandate_version_id=uuid4(),
@@ -83,7 +142,7 @@ def test_explicit_degradation_feedback_queues_research_only(engine: Engine) -> N
             preflight_state="READY",
             public_config={},
         )
-        session.add_all([root_branch, alpha, portfolio_program, downstream])
+        session.add_all([source, unrelated_branch, alpha, portfolio_program, downstream])
         session.flush()
         candidate = PortfolioCandidate(
             portfolio_program_id=portfolio_program.id,
@@ -160,6 +219,8 @@ def test_explicit_degradation_feedback_queues_research_only(engine: Engine) -> N
         episode_id = episode.id
         alpha_id = alpha.id
         program_id = program.id
+        root_branch_id = root_branch.id
+        handoff_id = handoff.id
 
     with factory() as session, session.begin():
         assert schedule_degradation_missions(session) == 1
@@ -180,7 +241,17 @@ def test_explicit_degradation_feedback_queues_research_only(engine: Engine) -> N
         branch = session.get(ResearchBranch, mission.branch_id)
         assert branch is not None
         assert branch.derivation_type == "FORWARD_DEGRADATION"
+        assert branch.parent_branch_id == root_branch_id
         assert "NO_LIVE_CONTROL" in branch.preserved_constraints
+        followup = session.scalar(
+            select(DegradationFollowup).where(
+                DegradationFollowup.alpha_qualification_id == alpha_id,
+                DegradationFollowup.forward_evidence_episode_id == episode_id,
+            )
+        )
+        assert followup is not None
+        assert followup.source_experiment_id == alpha.source_experiment_id
+        assert followup.mission_id == mission.id
         job = session.scalar(
             select(Job).where(Job.kind == "RESEARCH_MISSION", Job.resource_id == mission.id)
         )
@@ -195,3 +266,19 @@ def test_explicit_degradation_feedback_queues_research_only(engine: Engine) -> N
 
     with factory() as session, session.begin():
         assert schedule_degradation_missions(session) == 0
+        second = ForwardEvidenceEpisode(
+            handoff_id=handoff_id,
+            state="FEEDBACK_COMPLETE",
+            evidence={"degraded": True, "degradation_state": "DEGRADED"},
+            observation_start=now - timedelta(days=1),
+            observation_end=now,
+            sample_size=50,
+            created_at=now + timedelta(seconds=2),
+        )
+        session.add(second)
+
+    with factory() as session, session.begin():
+        assert schedule_degradation_missions(session) == 1
+    with factory() as session, session.begin():
+        assert schedule_degradation_missions(session) == 0
+        assert session.scalar(select(func.count()).select_from(DegradationFollowup)) == 2

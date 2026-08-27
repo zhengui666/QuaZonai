@@ -9,7 +9,9 @@ from db.models import (
     AlphaQualification,
     ApprovalSnapshot,
     DatasetRevision,
+    MarketUniverseVersion,
     PortfolioCandidate,
+    PortfolioMandate,
     PortfolioProgram,
     ResearchBranch,
     ResearchCharter,
@@ -67,12 +69,23 @@ def _evidence(experiment_id: object) -> dict:
 def _seed(engine: Engine) -> tuple[object, object, object]:
     factory = create_session_factory(engine)
     now = datetime.now(UTC)
+    universe_id = uuid4()
+    mandate_version_id = uuid4()
     with factory() as session, session.begin():
+        universe = MarketUniverseVersion(
+            id=universe_id,
+            universe_key="FX",
+            version_no=1,
+            name="FX",
+            state="ACTIVE",
+            spec_json={},
+            created_at=now,
+        )
         charter = ResearchCharter(
             original_idea_text="Test a governed FX alpha.",
             research_question="Does the source-bundle strategy survive sealed evaluation?",
             market_scope=["FX"],
-            universe_version_ids=[],
+            universe_version_ids=[str(universe_id)],
             prediction_horizon="1D",
             allowed_data_domains=["quotes"],
             explicit_exclusions=[],
@@ -80,7 +93,7 @@ def _seed(engine: Engine) -> tuple[object, object, object]:
             system_assumptions=[],
             created_at=now,
         )
-        session.add(charter)
+        session.add_all([universe, charter])
         session.flush()
         program = ResearchProgram(charter_id=charter.id, title="Governed FX alpha", state="ACTIVE")
         session.add(program)
@@ -95,6 +108,7 @@ def _seed(engine: Engine) -> tuple[object, object, object]:
             created_at=now,
         )
         discovery = DatasetRevision(
+            universe_version_id=universe_id,
             universe_name="FX",
             revision_no=1,
             event_start=now - timedelta(days=30),
@@ -117,6 +131,7 @@ def _seed(engine: Engine) -> tuple[object, object, object]:
             ingested_at=now,
         )
         sealed = DatasetRevision(
+            universe_version_id=universe_id,
             universe_name="FX",
             revision_no=2,
             event_start=now - timedelta(days=20),
@@ -138,12 +153,25 @@ def _seed(engine: Engine) -> tuple[object, object, object]:
             point_in_time_result={"state": "VALID", "replay_order": "TS_INIT"},
             ingested_at=now,
         )
+        mandate = PortfolioMandate(
+            key=f"TEST-{mandate_version_id}",
+            name="Research Portfolio",
+            enabled=True,
+            latest_version_id=mandate_version_id,
+            spec_json={
+                "constraints": {
+                    "max_single_alpha_weight": 1.0,
+                    "allowed_universe_version_ids": [str(universe_id)],
+                }
+            },
+            state="ACTIVE",
+        )
         portfolio = PortfolioProgram(
-            mandate_version_id=uuid4(),
+            mandate_version_id=mandate_version_id,
             mandate_name="Research Portfolio",
             state="ACTIVE",
         )
-        session.add_all([branch, discovery, sealed, portfolio])
+        session.add_all([branch, discovery, sealed, mandate, portfolio])
         session.flush()
         experiment_id = uuid4()
         request = BacktestExperimentRequest(
@@ -191,6 +219,7 @@ def test_real_evidence_promotes_through_alpha_and_portfolio(
         branch_id,
         request: BacktestExperimentRequest,
         sealed: bool = False,
+        parent_entry_id=None,
     ) -> SearchLedgerEntry:
         del self, mission_id
         now = datetime.now(UTC)
@@ -201,7 +230,7 @@ def test_real_evidence_promotes_through_alpha_and_portfolio(
                 branch_id=branch_id,
                 mission_id=None,
                 dataset_revision_id=request.dataset_revision_id,
-                parent_entry_id=None,
+                parent_entry_id=parent_entry_id,
                 mode=ExperimentMode.SEALED.value if sealed else request.mode.value,
                 state="SUCCEEDED",
                 runtime_name="NAUTILUS_TRADER",

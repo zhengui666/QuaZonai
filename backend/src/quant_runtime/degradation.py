@@ -12,16 +12,19 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from db.models import (
     AlphaQualification,
+    DegradationFollowup,
     ForwardEvidenceEpisode,
     HandoffOffer,
     PortfolioCandidate,
     ResearchBranch,
     ResearchMission,
     ResearchProgram,
+    SearchLedgerEntry,
 )
 from events import append_event
 from jobs import enqueue_job
@@ -54,18 +57,6 @@ def _member_alpha_ids(candidate: PortfolioCandidate) -> list[UUID]:
     return result
 
 
-def _latest_branch(session: Session, program_id: UUID) -> ResearchBranch | None:
-    return session.scalar(
-        select(ResearchBranch)
-        .where(ResearchBranch.program_id == program_id)
-        .order_by(ResearchBranch.created_at.desc())
-        .limit(1)
-    )
-
-
-def _already_scheduled(alpha: AlphaQualification, episode_id: UUID) -> bool:
-    return str((alpha.metrics or {}).get("degradation_followup_episode_id", "")) == str(episode_id)
-
 
 def schedule_degradation_missions(session: Session) -> int:
     """Create at most one research Mission per Alpha and degraded feedback episode."""
@@ -89,13 +80,32 @@ def schedule_degradation_missions(session: Session) -> int:
             continue
         for alpha_id in _member_alpha_ids(candidate):
             alpha = session.get(AlphaQualification, alpha_id)
-            if alpha is None or alpha.program_id is None or _already_scheduled(alpha, episode.id):
+            if alpha is None or alpha.program_id is None or alpha.source_experiment_id is None:
                 continue
             program = session.get(ResearchProgram, alpha.program_id)
             if program is None or program.state in {"PAUSED", "ARCHIVED"}:
                 continue
-            parent = _latest_branch(session, program.id)
-            if parent is None:
+            source = session.get(SearchLedgerEntry, alpha.source_experiment_id)
+            if (
+                source is None
+                or source.program_id != program.id
+                or source.branch_id is None
+            ):
+                continue
+            parent = session.get(ResearchBranch, source.branch_id)
+            if parent is None or parent.program_id != program.id:
+                continue
+            followup = DegradationFollowup(
+                alpha_qualification_id=alpha.id,
+                forward_evidence_episode_id=episode.id,
+                source_experiment_id=source.id,
+                created_at=_now(),
+            )
+            try:
+                with session.begin_nested():
+                    session.add(followup)
+                    session.flush()
+            except IntegrityError:
                 continue
             branch = ResearchBranch(
                 program_id=program.id,
@@ -131,6 +141,8 @@ def schedule_degradation_missions(session: Session) -> int:
             )
             session.add(mission)
             session.flush()
+            followup.branch_id = branch.id
+            followup.mission_id = mission.id
             job = enqueue_job(
                 session,
                 kind="RESEARCH_MISSION",
@@ -144,6 +156,7 @@ def schedule_degradation_missions(session: Session) -> int:
                     "trigger": "EXPLICIT_DEGRADATION",
                 },
             )
+            followup.job_id = job.id
             alpha.degradation_state = "DEGRADED"
             alpha.metrics = {
                 **(alpha.metrics or {}),

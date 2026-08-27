@@ -312,7 +312,7 @@ def run_mission(settings: Settings, job_id: UUID) -> None:
     mission_id, program_id, context = _load_mission_context(settings, job_id)
     workspace = _prepare_worktree(settings, program_id, mission_id)
     (workspace / "MISSION.md").write_text(context, encoding="utf-8")
-    prepare_experiment_workspace(settings, workspace=workspace)
+    prepare_experiment_workspace(settings, workspace=workspace, mission_id=mission_id)
 
     engine = create_database_engine(settings)
     factory = create_session_factory(engine)

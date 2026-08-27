@@ -258,7 +258,13 @@ class PortfolioProgram(Base, TimestampMixin):
 
 class PortfolioCandidate(Base):
     __tablename__ = "portfolio_candidates"
-    __table_args__ = (Index("ix_portfolio_candidate_program", "portfolio_program_id"),)
+    __table_args__ = (
+        Index("ix_portfolio_candidate_program", "portfolio_program_id"),
+        UniqueConstraint(
+            "simulation_experiment_id",
+            name="uq_portfolio_candidate_simulation_experiment",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     candidate_family_id: Mapped[UUID | None] = mapped_column(Uuid)
@@ -423,6 +429,7 @@ __all__ = [
     "CandidateBundle",
     "HandoffOffer",
     "ForwardEvidenceEpisode",
+    "DegradationFollowup",
 ]
 
 
@@ -460,3 +467,38 @@ class SearchLedgerEntry(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, nullable=False
     )
+
+
+class DegradationFollowup(Base):
+    """Exactly-once research wake-up for one Alpha/Forward-Evidence episode."""
+
+    __tablename__ = "degradation_followups"
+    __table_args__ = (
+        UniqueConstraint(
+            "alpha_qualification_id",
+            "forward_evidence_episode_id",
+            name="uq_degradation_followup_alpha_episode",
+        ),
+        Index("ix_degradation_followup_episode", "forward_evidence_episode_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    alpha_qualification_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("alpha_qualifications.id", ondelete="CASCADE"), nullable=False
+    )
+    forward_evidence_episode_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("forward_evidence_episodes.id", ondelete="CASCADE"), nullable=False
+    )
+    source_experiment_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("search_ledger_entries.id", ondelete="RESTRICT"), nullable=False
+    )
+    branch_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("research_branches.id", ondelete="SET NULL")
+    )
+    mission_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("research_missions.id", ondelete="SET NULL")
+    )
+    job_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("jobs.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
