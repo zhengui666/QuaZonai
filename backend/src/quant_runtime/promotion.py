@@ -418,7 +418,7 @@ def _candidate_quality(candidate: PortfolioCandidate) -> float:
             422,
         )
     try:
-        value = float(raw)  # type: ignore[arg-type]
+        value = float(raw)
     except (TypeError, ValueError) as exc:
         raise QfError(
             "CANDIDATE_BASELINE_EVIDENCE_MISSING",
