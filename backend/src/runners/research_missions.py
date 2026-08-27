@@ -23,9 +23,9 @@ from sqlalchemy import select
 from db.models import Event, Job, ResearchBranch, ResearchCharter, ResearchMission, ResearchProgram
 from db.session import create_database_engine, create_session_factory
 from errors import QfError
+from quant_runtime.workspace import execute_workspace_experiments, prepare_experiment_workspace
 from runtime_config import load_effective_settings
 from settings import Settings
-from quant_runtime.workspace import execute_workspace_experiments
 
 CUSTOM_CODEX_PROVIDER_ID = "quazonai_configured"
 DEFAULT_OPENAI_API_BASE_URL = "https://api.openai.com/v1"
@@ -312,6 +312,7 @@ def run_mission(settings: Settings, job_id: UUID) -> None:
     mission_id, program_id, context = _load_mission_context(settings, job_id)
     workspace = _prepare_worktree(settings, program_id, mission_id)
     (workspace / "MISSION.md").write_text(context, encoding="utf-8")
+    prepare_experiment_workspace(settings, workspace=workspace)
 
     engine = create_database_engine(settings)
     factory = create_session_factory(engine)
@@ -335,9 +336,13 @@ def run_mission(settings: Settings, job_id: UUID) -> None:
                     },
                     developer_instructions=(
                         "You are a QuaZonai Research Mission worker. Work only inside this Mission worktree. "
-                        "Read MISSION.md, perform the bounded research task, and write durable findings to RESULT.md. "
-                        "Do not request approvals, do not access external networks, do not place trades, do not manage "
-                        "broker state, and do not alter the frozen Research Charter."
+                        "Read MISSION.md, DATASETS.json, EXPERIMENT_CONTRACT.schema.json, and "
+                        "NAUTILUS_EXPERIMENTS.md before making quantitative claims. Use only governed Discovery "
+                        "datasets listed there and declare bounded SOURCE_BUNDLE Nautilus experiments under "
+                        "experiments/ when evidence is available. The parent worker, not you, executes those "
+                        "contracts against the independent remote runtime. Do not request approvals, do not access "
+                        "external networks, do not place trades, do not manage broker state, and do not alter the "
+                        "frozen Research Charter."
                     ),
                 )
                 with factory() as session, session.begin():
@@ -369,8 +374,11 @@ def run_mission(settings: Settings, job_id: UUID) -> None:
                     )
 
                 result = thread.run(
-                    "Execute the Mission in MISSION.md. Produce RESULT.md with the evidence, assumptions, limitations, "
-                    "and concrete next research actions. Return a concise completion summary."
+                    "Execute the Mission in MISSION.md. First read NAUTILUS_EXPERIMENTS.md, DATASETS.json, and "
+                    "EXPERIMENT_CONTRACT.schema.json. If governed data are available, back quantitative claims "
+                    "with bounded SOURCE_BUNDLE contracts in experiments/. If no usable governed dataset exists, "
+                    "record that evidence blocker instead of fabricating results. Produce RESULT.md with evidence, "
+                    "assumptions, limitations, and concrete next research actions. Return a concise completion summary."
                 )
                 if mission.branch_id is None:
                     raise QfError(
