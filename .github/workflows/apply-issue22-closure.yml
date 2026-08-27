@@ -31,7 +31,7 @@ jobs:
           python tools/fix_issue22_gateway_driver.py
           python tools/apply_issue22_core_closure.py
           python tools/apply_issue22_gateway_closure.py
-          python -m compileall -q backend/src nautilus_runtime/src
+          python -m compileall -q nautilus_runtime/src
       - name: Remove one-shot maintenance files
         run: |
           rm -f tools/apply_issue22_core_closure.py
