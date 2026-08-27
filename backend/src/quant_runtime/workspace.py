@@ -8,7 +8,9 @@ from typing import Any
 from uuid import UUID
 
 from pydantic import ValidationError
+from sqlalchemy import select
 
+from db.models import DatasetRevision
 from db.session import create_database_engine, create_session_factory
 from errors import QfError
 from quant_runtime.contracts import BacktestExperimentRequest, ExperimentMode
@@ -16,6 +18,115 @@ from quant_runtime.ledger import ExperimentCoordinator, write_evidence
 from settings import Settings
 
 MAX_EXPERIMENTS_PER_ROUND = 20
+CATALOG_URI_PREFIX = "nautilus-catalog://"
+
+
+def prepare_experiment_workspace(settings: Settings, *, workspace: Path) -> int:
+    """Publish only governed Discovery datasets and the executable contract to a Mission.
+
+    The files contain no database credentials or remote-runtime token.  The child
+    Agent can propose source-bundle strategies and experiment requests, while the
+    parent worker remains the only process able to validate and execute them.
+    """
+    engine = create_database_engine(settings)
+    factory = create_session_factory(engine)
+    try:
+        with factory() as session:
+            revisions = list(
+                session.scalars(
+                    select(DatasetRevision)
+                    .where(
+                        DatasetRevision.partition == "DISCOVERY",
+                        DatasetRevision.quality_state == "VALID",
+                        DatasetRevision.point_in_time_state == "VALID",
+                        DatasetRevision.catalog_uri.is_not(None),
+                    )
+                    .order_by(DatasetRevision.created_at.desc())
+                )
+            )
+        datasets: list[dict[str, Any]] = []
+        for revision in revisions:
+            catalog_uri = revision.catalog_uri or ""
+            if not catalog_uri.startswith(CATALOG_URI_PREFIX):
+                continue
+            catalog_key = catalog_uri.removeprefix(CATALOG_URI_PREFIX)
+            if not catalog_key or not revision.instrument_scope:
+                continue
+            datasets.append(
+                {
+                    "dataset_revision_id": str(revision.id),
+                    "catalog_key": catalog_key,
+                    "catalog_uri": catalog_uri,
+                    "provider_name": revision.provider_name,
+                    "source_license": revision.source_license,
+                    "nautilus_data_type": revision.nautilus_data_type,
+                    "instrument_scope": revision.instrument_scope,
+                    "event_start": revision.event_start,
+                    "event_end": revision.event_end,
+                    "available_start": revision.available_start,
+                    "available_end": revision.available_end,
+                    "row_count": revision.row_count,
+                    "schema_revision": revision.schema_revision,
+                    "quality_result": revision.quality_result,
+                    "point_in_time_result": revision.point_in_time_result,
+                }
+            )
+    finally:
+        engine.dispose()
+
+    (workspace / "DATASETS.json").write_text(
+        json.dumps(
+            {
+                "policy": "GOVERNED_DISCOVERY_ONLY",
+                "datasets": datasets,
+            },
+            ensure_ascii=False,
+            indent=2,
+            default=str,
+        ),
+        encoding="utf-8",
+    )
+    (workspace / "EXPERIMENT_CONTRACT.schema.json").write_text(
+        json.dumps(
+            BacktestExperimentRequest.model_json_schema(),
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    experiments_root = workspace / "experiments"
+    experiments_root.mkdir(parents=True, exist_ok=True)
+    (workspace / "NAUTILUS_EXPERIMENTS.md").write_text(
+        """# Governed Nautilus experiment interface
+
+QuaZonai Core does **not** execute your Python directly and does not expose database or
+runtime credentials. The parent Mission worker validates JSON contracts in `experiments/`
+and sends accepted requests to the separately deployed NautilusTrader runtime.
+
+## Required workflow
+
+1. Read `DATASETS.json`. You may use only a listed `dataset_revision_id`, its exact
+   `catalog_key`, and instruments within that revision's `instrument_scope`.
+2. Read `EXPERIMENT_CONTRACT.schema.json`.
+3. For quantitative claims, write one or more `experiments/<experiment-uuid>.json` files.
+   A round may contain at most 20 contracts.
+4. Mission experiments must use `mode` `DISCOVERY` or `PORTFOLIO` and must provide a
+   `strategy.kind` of `SOURCE_BUNDLE`. Put the complete Python strategy/config source in
+   `strategy.source_files`; paths must be relative and traversal-free.
+5. `strategy.strategy_path` and `strategy.config_path` must resolve inside that source
+   bundle. The strategy must be a real NautilusTrader `Strategy` and its config a real
+   `StrategyConfig`. Pin only the validated `nautilus_trader==1.231.0` runtime dependency.
+6. Do not invent fills, PnL, positions, statistics, or DatasetRevision metadata. The parent
+   worker executes accepted contracts and writes canonical results to `evidence/*.json`.
+7. The exact successful `StrategyArtifact` is immutable research lineage and is what a
+   promoted Candidate Bundle must reuse for downstream paper/live Nautilus runtimes.
+
+If `DATASETS.json` contains no usable dataset, document the blocked evidence requirement in
+`RESULT.md`; do not fabricate a backtest.
+""",
+        encoding="utf-8",
+    )
+    return len(datasets)
 
 
 def _load_contract(path: Path) -> BacktestExperimentRequest:
@@ -73,6 +184,13 @@ def execute_workspace_experiments(
                     "Research Missions may submit Discovery or Portfolio simulation only.",
                     422,
                     {"mode": contract.mode.value, "path": path.name},
+                )
+            if contract.strategy.kind != "SOURCE_BUNDLE":
+                raise QfError(
+                    "EXPERIMENT_STRATEGY_ARTIFACT_REQUIRED",
+                    "Research Missions must submit a self-contained SOURCE_BUNDLE strategy artifact.",
+                    422,
+                    {"path": path.name},
                 )
             entry = coordinator.execute(
                 mission_id=mission_id,
