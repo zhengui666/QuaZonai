@@ -83,19 +83,24 @@ def run_once(
     owner: str,
     factory: SessionFactory,
 ) -> tuple[bool, float]:
-    """Admit degradation follow-ups, then claim at most one durable job.
+    """Admit degradation follow-ups, then claim at most one durable finite-worker job.
 
     Runtime configuration is loaded in the same short transaction that claims the
     next job. Explicit degraded Forward Evidence can enqueue a bounded research
-    Mission in this transaction; the worker may then claim it immediately. This
-    feedback loop only creates research work and never mutates downstream runtime
-    or broker state.
+    Mission in this transaction; the worker may then claim it immediately. The
+    explicit HANDLERS capability set prevents this worker from ever leasing sealed
+    evaluation work or any future privileged worker kind.
     """
     with factory.begin() as session:
         settings = effective_settings(session, base_settings)
         release_expired_leases(session)
         schedule_degradation_missions(session)
-        job = claim_next_job(session, owner=owner, lease_seconds=settings.job_lease_seconds)
+        job = claim_next_job(
+            session,
+            owner=owner,
+            lease_seconds=settings.job_lease_seconds,
+            kinds=HANDLERS.keys(),
+        )
         if job is None:
             return False, settings.job_poll_seconds
         append_event(
