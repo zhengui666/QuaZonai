@@ -95,6 +95,13 @@ services:
 
   finite-worker:
     <<: *core-service
+    environment:
+      <<: *core-env
+      QUAZONAI_NAUTILUS_RESEARCH_URL: ${QUAZONAI_NAUTILUS_RESEARCH_URL:-}
+      QUAZONAI_NAUTILUS_RESEARCH_TOKEN: ${QUAZONAI_NAUTILUS_RESEARCH_TOKEN:-}
+      QUAZONAI_NAUTILUS_SEALED_URL: ${QUAZONAI_NAUTILUS_SEALED_URL:-}
+      QUAZONAI_NAUTILUS_SEALED_TOKEN: ${QUAZONAI_NAUTILUS_SEALED_TOKEN:-}
+      QUAZONAI_NAUTILUS_TIMEOUT_SECONDS: ${QUAZONAI_NAUTILUS_TIMEOUT_SECONDS:-120}
     depends_on:
       migrate:
         condition: service_completed_successfully
