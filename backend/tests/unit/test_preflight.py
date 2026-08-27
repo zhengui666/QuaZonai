@@ -35,10 +35,11 @@ def test_current_revision_is_allowed() -> None:
     check_engine_schema(_engine_at_revision(current_revision()))
 
 
-def test_previous_owned_revision_is_allowed_for_upgrade() -> None:
+def test_previous_owned_revision_requires_fresh_volume() -> None:
     revisions = owned_revisions()
     assert "0001_initial" in revisions
-    check_engine_schema(_engine_at_revision("0001_initial"))
+    with pytest.raises(QfError, match="OLD_SCHEMA_REQUIRES_NEW_VOLUME"):
+        check_engine_schema(_engine_at_revision("0001_initial"))
 
 
 def test_unknown_revision_is_rejected() -> None:
