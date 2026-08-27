@@ -249,9 +249,12 @@ def main() -> None:
             state="CANDIDATE_READY",
             current_candidate_id=CANDIDATE_ID,
         )
-        session.add_all(
-            [universe, data_source, discovery, mandate, paper, live, portfolio_program]
-        )
+        # DatasetRevision carries scalar FK identifiers rather than ORM
+        # relationships, so make the governed parents durable before the
+        # revision is flushed on PostgreSQL.
+        session.add_all([universe, data_source])
+        session.flush()
+        session.add_all([discovery, mandate, paper, live, portfolio_program])
         session.flush()
 
         alpha = AlphaQualification(
