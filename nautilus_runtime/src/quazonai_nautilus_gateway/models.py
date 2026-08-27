@@ -2,12 +2,50 @@
 
 from __future__ import annotations
 
+import ast
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+_SAFE_SOURCE_IMPORTS = {
+    "collections",
+    "dataclasses",
+    "decimal",
+    "enum",
+    "math",
+    "statistics",
+    "typing",
+    "nautilus_trader.config",
+    "nautilus_trader.examples.strategies.ema_cross",
+    "nautilus_trader.indicators",
+    "nautilus_trader.model.data",
+    "nautilus_trader.model.enums",
+    "nautilus_trader.model.identifiers",
+    "nautilus_trader.model.objects",
+    "nautilus_trader.trading.strategy",
+}
+_FORBIDDEN_SOURCE_NAMES = {
+    "__import__",
+    "breakpoint",
+    "compile",
+    "delattr",
+    "dir",
+    "eval",
+    "exec",
+    "exit",
+    "getattr",
+    "globals",
+    "help",
+    "input",
+    "locals",
+    "open",
+    "quit",
+    "setattr",
+    "vars",
+}
 
 
 class StrictModel(BaseModel):
@@ -17,6 +55,39 @@ class StrictModel(BaseModel):
 def _require_aware_datetime(value: datetime, *, field_name: str) -> None:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError(f"{field_name} must be timezone-aware")
+
+
+def _validate_restricted_strategy_source(path: str, source: str) -> None:
+    """Keep Mission-authored Python inside the remote runtime capability boundary.
+
+    SOURCE_BUNDLE code executes in a disposable process with a sanitized environment and no
+    network.  This AST gate additionally prevents it from obtaining filesystem/process/reflection
+    capabilities which could inspect a held-out catalog or forge the trusted runner result.
+    """
+    try:
+        tree = ast.parse(source, filename=path)
+    except SyntaxError as exc:
+        raise ValueError(f"strategy source {path!r} is not valid Python") from exc
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name not in _SAFE_SOURCE_IMPORTS:
+                    raise ValueError(
+                        f"strategy source import {alias.name!r} is outside the runtime allowlist"
+                    )
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                continue
+            module = node.module or ""
+            if module not in _SAFE_SOURCE_IMPORTS:
+                raise ValueError(
+                    f"strategy source import {module!r} is outside the runtime allowlist"
+                )
+        elif isinstance(node, ast.Name):
+            if node.id in _FORBIDDEN_SOURCE_NAMES or node.id.startswith("__"):
+                raise ValueError(f"strategy source name {node.id!r} is not permitted")
+        elif isinstance(node, ast.Attribute) and node.attr.startswith("__"):
+            raise ValueError(f"strategy source attribute {node.attr!r} is not permitted")
 
 
 class ExperimentMode(StrEnum):
@@ -77,10 +148,11 @@ class StrategyArtifact(StrictModel):
             raise ValueError("SOURCE_BUNDLE strategies require source_files")
         if self.kind == "IMPORTABLE" and self.source_files:
             raise ValueError("IMPORTABLE strategies cannot include source_files")
-        for path in self.source_files:
+        for path, source in self.source_files.items():
             parts = path.replace("\\", "/").split("/")
             if path.startswith(("/", "\\")) or ".." in parts:
                 raise ValueError("strategy source paths must be relative and traversal-free")
+            _validate_restricted_strategy_source(path, source)
         return self
 
 
