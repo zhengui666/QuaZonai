@@ -66,6 +66,11 @@ HANDLERS: dict[str, Handler] = {
         "run",
         timeout_attribute="mission_job_timeout_seconds",
     ),
+    "SEALED_EVALUATION": _child_handler(
+        "runners.sealed_evaluator",
+        "run",
+        timeout_attribute="mission_job_timeout_seconds",
+    ),
 }
 
 
