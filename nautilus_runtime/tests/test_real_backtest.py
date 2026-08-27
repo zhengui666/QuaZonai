@@ -107,27 +107,28 @@ def _candidate_wheel() -> bytes:
         "Version: 0.0.1\n"
         "Requires-Dist: nautilus_trader (==1.231.0)\n\n"
     )
-    source = (
-        "from nautilus_trader.examples.strategies.ema_cross import "
-        "EMACross as CandidateStrategy, EMACrossConfig as CandidateConfig\n"
-    )
     with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("candidate_strategy.py", source)
+        archive.writestr("one_shot.py", _ONE_SHOT_SOURCE)
         archive.writestr("quazonai_candidate_strategy-0.0.1.dist-info/METADATA", metadata)
     return stream.getvalue()
 
 
+def _ingest_fixture(engine: NautilusGatewayEngine) -> dict:
+    return engine.ingest(
+        CatalogIngestRequest(
+            catalog_key="integration-fx-quotes",
+            provider="CI_GENERATED_CSV_EQUIVALENT",
+            source="fixture://deterministic-eur-usd-quotes.csv",
+            source_license="CC0-1.0",
+            instrument_id="EUR/USD.SIM",
+            rows=_rows(),
+        )
+    )
+
+
 def test_real_catalog_backtest_and_sealed_disclosure(tmp_path: Path) -> None:
     engine = NautilusGatewayEngine(tmp_path)
-    ingest_request = CatalogIngestRequest(
-        catalog_key="integration-fx-quotes",
-        provider="CI_GENERATED_CSV_EQUIVALENT",
-        source="fixture://deterministic-eur-usd-quotes.csv",
-        source_license="CC0-1.0",
-        instrument_id="EUR/USD.SIM",
-        rows=_rows(),
-    )
-    first = engine.ingest(ingest_request)
+    first = _ingest_fixture(engine)
     assert first["catalog_uri"] == "nautilus-catalog://integration-fx-quotes"
     assert first["row_count"] == 360
     assert first["schema_revision"] == "nautilus.quote_tick.v2"
@@ -135,7 +136,7 @@ def test_real_catalog_backtest_and_sealed_disclosure(tmp_path: Path) -> None:
     assert first["point_in_time_result"]["replay_order"] == "TS_INIT"
     assert first["available_time_start"] > first["event_time_start"]
 
-    replay = engine.ingest(ingest_request)
+    replay = _ingest_fixture(engine)
     assert replay == first
     with pytest.raises(GatewayContractError, match="immutable"):
         engine.ingest(
@@ -182,8 +183,13 @@ def test_real_catalog_backtest_and_sealed_disclosure(tmp_path: Path) -> None:
     assert sealed["disclosure"]["fill_count"] > 0
 
 
-def test_candidate_bundle_v2_conformance_uses_same_nautilus_strategy(tmp_path: Path) -> None:
+def test_candidate_bundle_v2_replays_exact_wheel_against_reference_fixture(tmp_path: Path) -> None:
     engine = NautilusGatewayEngine(tmp_path)
+    _ingest_fixture(engine)
+    reference_request = _request()
+    reference = engine.run_backtest(
+        reference_request.model_copy(update={"mode": ExperimentMode.PORTFOLIO})
+    )
     candidate_id = uuid4()
     manifest = {
         "contract": "QUAZONAI_NAUTILUS_CANDIDATE_BUNDLE",
@@ -197,28 +203,57 @@ def test_candidate_bundle_v2_conformance_uses_same_nautilus_strategy(tmp_path: P
             "paper_live_reuse": "SAME_STRATEGY_WHEEL_AND_CONFIG",
         },
         "strategy": {
-            "artifact_id": "source-bundle-1",
+            "artifact_id": reference_request.strategy.artifact_id,
             "wheel": "strategy/strategy.whl",
-            "strategy_path": "candidate_strategy:CandidateStrategy",
-            "config_path": "candidate_strategy:CandidateConfig",
+            "strategy_path": "one_shot:OneShotStrategy",
+            "config_path": "one_shot:OneShotConfig",
         },
         "data": {},
         "runtime_config": {},
         "validation": {},
         "evidence": {},
         "lineage": {},
-        "target_weights": [],
+        "target_weights": [{"instrument_id": "EUR/USD.SIM", "target_weight": "1.0"}],
+    }
+    fixture = {
+        "dataset_revision_id": str(reference_request.dataset_revision_id),
+        "strategy_config": reference_request.strategy.config,
+        "instrument_scope": reference_request.instrument_ids,
+        "backtest_run_config": {
+            "catalog_key": reference_request.catalog_key,
+            "mode": "PORTFOLIO",
+            "start_time": None,
+            "end_time": None,
+        },
+        "venue_config": reference_request.venue_config,
+        "risk_config": reference_request.risk_config,
+        "orders": reference["orders"],
+        "fills": reference["fills"],
+        "positions": reference["positions"],
+        "statistics": reference["statistics"],
     }
     verified = engine.verify_candidate(
         CandidateVerificationRequest(
             candidate_id=UUID(str(candidate_id)),
             manifest=manifest,
             strategy_wheel_b64=base64.b64encode(_candidate_wheel()).decode(),
-            fixture={"orders": [], "positions": [], "statistics": {}},
+            fixture=fixture,
         )
     )
     assert verified["compatible"] is True, verified["findings"]
     assert verified["runtime_version"] == "1.231.0"
+
+    tampered = {**fixture, "orders": []}
+    rejected = engine.verify_candidate(
+        CandidateVerificationRequest(
+            candidate_id=UUID(str(candidate_id)),
+            manifest=manifest,
+            strategy_wheel_b64=base64.b64encode(_candidate_wheel()).decode(),
+            fixture=tampered,
+        )
+    )
+    assert rejected["compatible"] is False
+    assert any(item["code"] == "CONFORMANCE_REFERENCE_MISMATCH" for item in rejected["findings"])
 
 
 def test_protocol_rejects_naive_timestamps() -> None:
