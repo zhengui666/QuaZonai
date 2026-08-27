@@ -23,9 +23,16 @@ class ExperimentMode(StrEnum):
 
 class QuoteRow(StrictModel):
     timestamp: datetime
+    available_at: datetime
     bid_price: str
     ask_price: str
     volume: str | None = None
+
+    @model_validator(mode="after")
+    def validate_availability(self) -> QuoteRow:
+        if self.available_at < self.timestamp:
+            raise ValueError("available_at cannot precede the market event timestamp")
+        return self
 
 
 class CatalogIngestRequest(StrictModel):
@@ -66,9 +73,7 @@ class StrategyArtifact(StrictModel):
         for path in self.source_files:
             parts = path.replace("\\", "/").split("/")
             if path.startswith(("/", "\\")) or ".." in parts:
-                raise ValueError(
-                    "strategy source paths must be relative and traversal-free"
-                )
+                raise ValueError("strategy source paths must be relative and traversal-free")
         return self
 
 
