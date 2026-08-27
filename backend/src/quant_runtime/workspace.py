@@ -18,6 +18,7 @@ from db.models import (
     ResearchCharter,
     ResearchMission,
     ResearchProgram,
+    SearchLedgerEntry,
 )
 from db.session import create_database_engine, create_session_factory
 from errors import QfError
@@ -268,31 +269,82 @@ def execute_workspace_experiments(
     executed: list[UUID] = []
     try:
         for path in paths:
-            contract = _load_contract(path, root=contracts_root)
+            try:
+                contract = _load_contract(path, root=contracts_root)
+            except QfError as exc:
+                write_workspace_json(
+                    workspace,
+                    f"evidence/rejected-{path.stem}.json",
+                    {
+                        "state": "REJECTED",
+                        "contract_file": path.name,
+                        "failure_code": exc.code,
+                        "failure_message": exc.message,
+                    },
+                )
+                continue
             if contract.experiment_id in already_executed:
                 continue
             if contract.mode not in {ExperimentMode.DISCOVERY, ExperimentMode.PORTFOLIO}:
-                raise QfError(
-                    "EXPERIMENT_MODE_NOT_PERMITTED",
-                    "Research Missions may submit Discovery or Portfolio simulation only.",
-                    422,
-                    {"mode": contract.mode.value, "path": path.name},
+                write_workspace_json(
+                    workspace,
+                    f"evidence/rejected-{contract.experiment_id}.json",
+                    {
+                        "experiment_id": str(contract.experiment_id),
+                        "state": "REJECTED",
+                        "failure_code": "EXPERIMENT_MODE_NOT_PERMITTED",
+                        "failure_message": (
+                            "Research Missions may submit Discovery or Portfolio simulation only."
+                        ),
+                    },
                 )
+                already_executed.add(contract.experiment_id)
+                executed.append(contract.experiment_id)
+                continue
             if contract.strategy.kind != "SOURCE_BUNDLE":
-                raise QfError(
-                    "EXPERIMENT_STRATEGY_ARTIFACT_REQUIRED",
-                    "Research Missions must submit a self-contained SOURCE_BUNDLE strategy artifact.",
-                    422,
-                    {"path": path.name},
+                write_workspace_json(
+                    workspace,
+                    f"evidence/rejected-{contract.experiment_id}.json",
+                    {
+                        "experiment_id": str(contract.experiment_id),
+                        "state": "REJECTED",
+                        "failure_code": "EXPERIMENT_STRATEGY_ARTIFACT_REQUIRED",
+                        "failure_message": (
+                            "Research Missions must submit a self-contained SOURCE_BUNDLE strategy artifact."
+                        ),
+                    },
                 )
-            entry = coordinator.execute(
-                mission_id=mission_id,
-                program_id=program_id,
-                branch_id=branch_id,
-                request=contract,
-                sealed=False,
-            )
-            write_evidence(workspace, entry)
+                already_executed.add(contract.experiment_id)
+                executed.append(contract.experiment_id)
+                continue
+            try:
+                entry = coordinator.execute(
+                    mission_id=mission_id,
+                    program_id=program_id,
+                    branch_id=branch_id,
+                    request=contract,
+                    sealed=False,
+                )
+            except QfError as exc:
+                with factory() as evidence_session:
+                    entry = evidence_session.get(SearchLedgerEntry, contract.experiment_id)
+                    if entry is not None:
+                        evidence_session.expunge(entry)
+                if entry is not None:
+                    write_evidence(workspace, entry)
+                else:
+                    write_workspace_json(
+                        workspace,
+                        f"evidence/rejected-{contract.experiment_id}.json",
+                        {
+                            "experiment_id": str(contract.experiment_id),
+                            "state": "REJECTED",
+                            "failure_code": exc.code,
+                            "failure_message": exc.message,
+                        },
+                    )
+            else:
+                write_evidence(workspace, entry)
             already_executed.add(contract.experiment_id)
             executed.append(contract.experiment_id)
     finally:

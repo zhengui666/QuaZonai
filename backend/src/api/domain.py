@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from candidate_bundles import (
     BUNDLE_CONTRACT_VERSION,
     build_candidate_bundle,
+    build_candidate_verification_request,
     resolve_bundle_archive,
 )
 from db.models import (
@@ -42,6 +43,7 @@ from db.models import (
 from downstream_auth import authenticate_downstream, install_service_token, issue_service_token
 from errors import QfError
 from jobs import enqueue_job
+from quant_runtime.client import NautilusQuantRuntime, RemoteNautilusConfig
 from quant_runtime.data_scope import dataset_revision_domains, market_scope_matches_universe
 
 router = APIRouter(prefix="/api/v1", tags=["domain"])
@@ -1369,6 +1371,21 @@ def _feedback_contract_snapshot(downstream: DownstreamSystem, purpose: str) -> d
     }
 
 
+def _verify_candidate_bundle_remotely(built: Any, *, candidate_id: UUID) -> None:
+    verification_request = build_candidate_verification_request(
+        built, candidate_id=candidate_id
+    )
+    with NautilusQuantRuntime(RemoteNautilusConfig.from_env()) as runtime:
+        result = runtime.verify_candidate(verification_request)
+    if not result.compatible:
+        raise QfError(
+            "CANDIDATE_CONFORMANCE_FAILED",
+            "Remote Nautilus reference-fixture verification rejected the Candidate Bundle.",
+            422,
+            {"findings": result.findings},
+        )
+
+
 @router.post("/approvals/{approval_id}/approve", response_model=ApprovalView)
 def approve_candidate(
     approval_id: UUID,
@@ -1394,6 +1411,15 @@ def approve_candidate(
                     409,
                     {"expected": payload.expected_state, "actual": approval.state},
                 )
+            if (
+                approval.downstream_system_id is None
+                or approval.downstream_system_id != payload.downstream_system_id
+            ):
+                raise QfError(
+                    "APPROVAL_DOWNSTREAM_MISMATCH",
+                    "Approval is frozen to a different Paper/Live downstream dependency.",
+                    409,
+                )
             downstream = session.get(DownstreamSystem, payload.downstream_system_id)
             if (
                 downstream is None
@@ -1416,13 +1442,19 @@ def approve_candidate(
             candidate = session.get(PortfolioCandidate, approval.candidate_id)
             if candidate is None:
                 raise QfError("CANDIDATE_NOT_FOUND", "Approval candidate was not found.", 500)
+            approval.state = "APPROVED"
+            approval.revision += 1
+            bundle_id = uuid4()
             built = build_candidate_bundle(
                 request.app.state.settings,
                 approval=approval,
                 candidate=candidate,
                 downstream=downstream,
+                bundle_id=bundle_id,
             )
+            _verify_candidate_bundle_remotely(built, candidate_id=candidate.id)
             package = CandidateBundle(
+                id=bundle_id,
                 approval_id=approval.id,
                 candidate_id=candidate.id,
                 contract_version=BUNDLE_CONTRACT_VERSION,
@@ -1448,9 +1480,6 @@ def approve_candidate(
             )
             session.add(handoff)
             session.flush()
-            approval.state = "APPROVED"
-            approval.downstream_system_id = downstream.id
-            approval.revision += 1
             _event(
                 session,
                 "APPROVAL_APPROVED",

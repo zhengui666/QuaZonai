@@ -22,7 +22,11 @@ from uuid import UUID, uuid4
 import zipfile
 
 from errors import QfError
-from quant_runtime.contracts import PINNED_NAUTILUS_VERSION, StrategyArtifact
+from quant_runtime.contracts import (
+    PINNED_NAUTILUS_VERSION,
+    CandidateVerificationRequest,
+    StrategyArtifact,
+)
 
 BUNDLE_CONTRACT_VERSION = "2"
 BUNDLE_FILENAME = "candidate-bundle.zip"
@@ -485,11 +489,41 @@ def build_candidate_bundle(
     )
 
 
+def build_candidate_verification_request(
+    built: BuiltCandidateBundle, *, candidate_id: UUID
+) -> CandidateVerificationRequest:
+    """Extract the exact immutable wheel/reference fixture for the remote conformance gate."""
+    with zipfile.ZipFile(io.BytesIO(built.archive_bytes)) as archive:
+        fixture = {
+            "orders": json.loads(archive.read("validation/expected-orders.json")),
+            "fills": json.loads(archive.read("validation/expected-fills.json")),
+            "positions": json.loads(archive.read("validation/expected-positions.json")),
+            "statistics": json.loads(archive.read("validation/expected-statistics.json")),
+        }
+        wheel = archive.read("strategy/strategy.whl")
+    return CandidateVerificationRequest(
+        candidate_id=candidate_id,
+        manifest=built.manifest,
+        strategy_wheel_b64=base64.b64encode(wheel).decode("ascii"),
+        fixture=fixture,
+    )
+
+
 def _has_secret_value(value: Any, *, key: str = "") -> bool:
     normalized = key.casefold().replace("-", "_")
     secret_key = any(
         marker in normalized
-        for marker in ("password", "private_key", "api_key", "broker_token", "broker_secret")
+        for marker in (
+            "password",
+            "private_key",
+            "api_key",
+            "secret",
+            "credential",
+            "access_token",
+            "auth_token",
+            "broker_token",
+            "broker_secret",
+        )
     )
     if secret_key and value not in (None, "", "INJECT_AT_REMOTE_RUNTIME_ONLY"):
         return True

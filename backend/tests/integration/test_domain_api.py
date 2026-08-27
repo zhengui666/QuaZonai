@@ -343,6 +343,7 @@ def _seed_candidate_approval(
             candidate_id=candidate.id,
             purpose="PAPER",
             state="PENDING",
+            downstream_system_id=downstream.id,
             valid_until=datetime.now(UTC)
             + (-timedelta(minutes=1) if expired else timedelta(days=7)),
             recommendation_rationale="Independent evidence materially improves the frontier.",
@@ -362,7 +363,12 @@ def _seed_candidate_approval(
 def test_approval_builds_package_and_authenticated_handoff_feedback(
     engine: Engine,
     settings: Settings,
+    monkeypatch,
 ) -> None:
+    monkeypatch.setattr(
+        "api.domain._verify_candidate_bundle_remotely",
+        lambda *args, **kwargs: None,
+    )
     approval_id, downstream_id, token = _seed_candidate_approval(engine, settings)
     client = _client(engine, settings)
     headers = {"Idempotency-Key": "approve-1"}

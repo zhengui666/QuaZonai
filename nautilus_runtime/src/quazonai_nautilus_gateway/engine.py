@@ -43,6 +43,7 @@ from quazonai_nautilus_gateway.models import (
     CatalogIngestRequest,
     CatalogValidationRequest,
     ExperimentMode,
+    _validate_restricted_strategy_source,
 )
 
 CANDIDATE_BUNDLE_CONTRACT = "QUAZONAI_NAUTILUS_CANDIDATE_BUNDLE"
@@ -209,7 +210,7 @@ class NautilusGatewayEngine:
                     child_root / "catalogs" / catalog_key,
                 )
             input_path = workspace / "input.json"
-            output_path = workspace / "output.json"
+            output_path = workspace / ".trusted-result.json"
             input_path.write_text(json.dumps(_jsonable(payload)), encoding="utf-8")
             completed = subprocess.run(
                 [
@@ -220,7 +221,6 @@ class NautilusGatewayEngine:
                     operation,
                     str(child_root),
                     str(input_path),
-                    str(output_path),
                 ],
                 cwd=workspace,
                 env=_sanitized_child_environment(),
@@ -820,6 +820,14 @@ class NautilusGatewayEngine:
     def _verify_wheel_inline(wheel: bytes, manifest: dict[str, Any]) -> None:
         with zipfile.ZipFile(io.BytesIO(wheel)) as archive:
             names = archive.namelist()
+            for name in names:
+                if not name.endswith(".py"):
+                    continue
+                try:
+                    source = archive.read(name).decode("utf-8")
+                except UnicodeDecodeError as exc:
+                    raise GatewayContractError("wheel Python source must be UTF-8") from exc
+                _validate_restricted_strategy_source(name, source)
             if not names or any(
                 Path(name).is_absolute() or ".." in Path(name).parts for name in names
             ):

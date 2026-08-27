@@ -299,6 +299,7 @@ def main() -> None:
             candidate_id=CANDIDATE_ID,
             purpose="PAPER",
             state="PENDING",
+            downstream_system_id=PAPER_DOWNSTREAM_ID,
             valid_until=now + timedelta(days=7),
             recommendation_rationale=(
                 "Independent evidence is stable and the candidate materially improves the current frontier."

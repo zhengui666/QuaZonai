@@ -10,6 +10,7 @@ from db.models import (
     AlphaQualification,
     ApprovalSnapshot,
     DatasetRevision,
+    DownstreamSystem,
     MarketUniverseVersion,
     PortfolioCandidate,
     PortfolioMandate,
@@ -173,7 +174,17 @@ def _seed(engine: Engine) -> tuple[object, object, object]:
             mandate_name="Research Portfolio",
             state="ACTIVE",
         )
-        session.add_all([branch, discovery, sealed, mandate, portfolio])
+        downstream = DownstreamSystem(
+            name=f"Paper {mandate_version_id}",
+            environment_type="PAPER",
+            enabled=True,
+            package_contract_version="2",
+            feedback_contract_version="1",
+            compatibility=[],
+            preflight_state="READY",
+            public_config={},
+        )
+        session.add_all([branch, discovery, sealed, mandate, portfolio, downstream])
         session.flush()
         experiment_id = uuid4()
         request = BacktestExperimentRequest(

@@ -21,6 +21,7 @@ from db.models import (
     AlphaQualification,
     ApprovalSnapshot,
     DatasetRevision,
+    DownstreamSystem,
     PortfolioCandidate,
     PortfolioMandate,
     PortfolioProgram,
@@ -908,6 +909,41 @@ def simulate_portfolio_candidate(
         )
         request_json = BacktestExperimentRequest.model_validate(simulation.request_json)
         strategy = StrategyArtifact.model_validate(request_json.strategy)
+        instrument_ids = list(dict.fromkeys(request_json.instrument_ids))
+        if not instrument_ids:
+            raise QfError(
+                "PORTFOLIO_INSTRUMENT_SCOPE_EMPTY",
+                "Portfolio simulation produced no governed instrument scope.",
+                500,
+            )
+        instrument_weight = 1.0 / len(instrument_ids)
+        downstreams = list(
+            session.scalars(
+                select(DownstreamSystem)
+                .where(
+                    DownstreamSystem.environment_type == "PAPER",
+                    DownstreamSystem.enabled.is_(True),
+                    DownstreamSystem.preflight_state == "READY",
+                    DownstreamSystem.package_contract_version == "2",
+                )
+                .order_by(DownstreamSystem.name, DownstreamSystem.id)
+            )
+        )
+        paper_downstream = next(
+            (
+                downstream
+                for downstream in downstreams
+                if not downstream.compatibility
+                or persisted_alpha.universe in downstream.compatibility
+            ),
+            None,
+        )
+        if paper_downstream is None:
+            raise QfError(
+                "PAPER_DOWNSTREAM_NOT_READY",
+                "No ready Candidate Bundle v2 Paper downstream matches the selected Alpha.",
+                409,
+            )
         candidate = PortfolioCandidate(
             portfolio_program_id=portfolio_program.id,
             mandate_version_id=portfolio_program.mandate_version_id,
@@ -919,10 +955,11 @@ def simulate_portfolio_candidate(
                     "alpha_qualification_id": str(persisted_alpha.id),
                     "alpha_name": alpha_name,
                     "role": persisted_alpha.role,
-                    "target_weight": 1.0,
+                    "target_weight": instrument_weight,
                     "universe": alpha_universe,
-                    "instrument_ids": request_json.instrument_ids,
+                    "instrument_id": instrument_id,
                 }
+                for instrument_id in instrument_ids
             ],
             metrics={
                 "search_adjusted_quality": alpha_quality,
@@ -936,6 +973,9 @@ def simulate_portfolio_candidate(
                     "considered_alpha_ids": [str(item) for item in requested_alpha_ids],
                     "selected_alpha_id": str(persisted_alpha.id),
                     "target_weight": 1.0,
+                    "instrument_weights": {
+                        instrument_id: instrument_weight for instrument_id in instrument_ids
+                    },
                 },
                 "nautilus": {
                     "strategy_artifact": strategy.model_dump(mode="json"),
@@ -975,6 +1015,7 @@ def simulate_portfolio_candidate(
             candidate_id=candidate.id,
             purpose="PAPER",
             state="PENDING",
+            downstream_system_id=paper_downstream.id,
             valid_until=_now() + timedelta(days=7),
             recommendation_rationale=(
                 "Candidate passed sealed Alpha qualification and a real Nautilus transaction-level "
