@@ -35,9 +35,16 @@ class RuntimeCapabilities(StrictModel):
 
 class QuoteRow(StrictModel):
     timestamp: datetime
+    available_at: datetime
     bid_price: str
     ask_price: str
     volume: str | None = None
+
+    @model_validator(mode="after")
+    def validate_availability(self) -> QuoteRow:
+        if self.available_at < self.timestamp:
+            raise ValueError("available_at cannot precede the market event timestamp")
+        return self
 
 
 class CatalogIngestRequest(StrictModel):
@@ -61,6 +68,8 @@ class CatalogIngestResult(StrictModel):
     instrument_scope: list[str]
     event_time_start: datetime
     event_time_end: datetime
+    available_time_start: datetime
+    available_time_end: datetime
     row_count: int = Field(ge=0)
     schema_revision: str
     quality_result: dict[str, Any]
@@ -85,6 +94,8 @@ class CatalogValidationResult(StrictModel):
     row_count: int = Field(ge=0)
     event_time_start: datetime | None = None
     event_time_end: datetime | None = None
+    available_time_start: datetime | None = None
+    available_time_end: datetime | None = None
     findings: list[dict[str, Any]] = Field(default_factory=list)
 
 
