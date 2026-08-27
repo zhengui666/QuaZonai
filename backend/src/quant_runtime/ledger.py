@@ -45,6 +45,15 @@ class ExperimentCoordinator:
                 return existing
             dataset = session.get(DatasetRevision, request.dataset_revision_id)
             self._validate_dataset(dataset, sealed=sealed)
+            assert dataset is not None
+            requested_catalog_uri = f"nautilus-catalog://{request.catalog_key}"
+            if dataset.catalog_uri != requested_catalog_uri:
+                raise QfError(
+                    "DATASET_CATALOG_MISMATCH",
+                    "Experiment catalog does not match the governed Dataset Revision.",
+                    422,
+                    {"expected": dataset.catalog_uri, "requested": requested_catalog_uri},
+                )
             if mission_id is not None:
                 mission = session.get(ResearchMission, mission_id)
                 if mission is None or mission.program_id != program_id:
@@ -107,7 +116,6 @@ class ExperimentCoordinator:
             entry.runtime_version = result.runtime_version
             entry.remote_run_id = result.remote_run_id
             if isinstance(result, SealedBacktestResult):
-                # The sealed process never persists raw orders/fills/positions in Core.
                 entry.evidence_json = {}
                 entry.disclosure_json = result.disclosure
             else:
@@ -139,6 +147,18 @@ class ExperimentCoordinator:
             raise QfError(
                 "NAUTILUS_CATALOG_MISSING",
                 "Dataset Revision is not linked to a remote Nautilus catalog.",
+                422,
+            )
+        if dataset.available_start is None or dataset.available_end is None:
+            raise QfError(
+                "DATASET_AVAILABILITY_MISSING",
+                "Dataset Revision must preserve point-in-time availability bounds.",
+                422,
+            )
+        if dataset.event_start and dataset.available_start < dataset.event_start:
+            raise QfError(
+                "DATASET_POINT_IN_TIME_INVALID",
+                "Dataset availability cannot precede its event-time range.",
                 422,
             )
 
