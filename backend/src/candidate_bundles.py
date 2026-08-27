@@ -148,20 +148,57 @@ def _first(item: Any, names: tuple[str, ...], default: Any = None) -> Any:
 def _member_payload(candidate: Any) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for index, member in enumerate(list(_value(candidate, "members", []) or [])):
-        rows.append(
-            {
-                "alpha_id": str(_value(member, "alpha_id", "")) or None,
-                "instrument_id": str(
-                    _first(
-                        member,
-                        ("instrument_id", "symbol", "asset", "id"),
-                        f"member-{index + 1}",
-                    )
-                ),
-                "target_weight": str(_first(member, ("target_weight", "weight"), "0")),
-            }
+        alpha_id = _first(member, ("alpha_qualification_id", "alpha_id"))
+        if alpha_id in (None, ""):
+            raise QfError(
+                "CANDIDATE_MEMBER_LINEAGE_MISSING",
+                "Every Candidate member must retain its Alpha Qualification id.",
+                422,
+                {"member_index": index},
+            )
+        raw_instruments = _value(member, "instrument_ids")
+        if raw_instruments is None:
+            singular = _first(member, ("instrument_id", "symbol", "asset", "id"))
+            instruments = [singular] if singular not in (None, "") else []
+        elif isinstance(raw_instruments, (list, tuple, set)):
+            instruments = list(raw_instruments)
+        else:
+            raise QfError(
+                "CANDIDATE_MEMBER_INSTRUMENTS_INVALID",
+                "Candidate member instrument_ids must be a list.",
+                422,
+                {"member_index": index},
+            )
+        normalized_instruments = list(
+            dict.fromkeys(
+                str(value).strip()
+                for value in instruments
+                if value is not None and str(value).strip()
+            )
         )
-    return sorted(rows, key=lambda row: (row["instrument_id"], row["alpha_id"] or ""))
+        if not normalized_instruments:
+            raise QfError(
+                "CANDIDATE_MEMBER_INSTRUMENTS_MISSING",
+                "Every Candidate member must retain at least one governed instrument.",
+                422,
+                {"member_index": index},
+            )
+        target_weight = str(_first(member, ("target_weight", "weight"), "0"))
+        for instrument_id in normalized_instruments:
+            rows.append(
+                {
+                    "alpha_qualification_id": str(alpha_id),
+                    "instrument_id": instrument_id,
+                    "target_weight": target_weight,
+                }
+            )
+    return sorted(
+        rows,
+        key=lambda row: (
+            row["instrument_id"],
+            row["alpha_qualification_id"],
+        ),
+    )
 
 
 def _approval_summary(approval: Any | None, *, candidate_id: UUID) -> dict[str, Any]:

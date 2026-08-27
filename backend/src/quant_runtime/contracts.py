@@ -17,6 +17,11 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+def _require_aware_datetime(value: datetime, *, field_name: str) -> None:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError(f"{field_name} must be timezone-aware")
+
+
 class ExperimentMode(StrEnum):
     DISCOVERY = "DISCOVERY"
     SEALED = "SEALED"
@@ -42,6 +47,8 @@ class QuoteRow(StrictModel):
 
     @model_validator(mode="after")
     def validate_availability(self) -> QuoteRow:
+        _require_aware_datetime(self.timestamp, field_name="timestamp")
+        _require_aware_datetime(self.available_at, field_name="available_at")
         if self.available_at < self.timestamp:
             raise ValueError("available_at cannot precede the market event timestamp")
         return self
@@ -148,7 +155,17 @@ class BacktestExperimentRequest(StrictModel):
     tags: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def reject_unapplied_configuration(self) -> BacktestExperimentRequest:
+    def validate_v1_configuration(self) -> BacktestExperimentRequest:
+        if self.start_time is not None:
+            _require_aware_datetime(self.start_time, field_name="start_time")
+        if self.end_time is not None:
+            _require_aware_datetime(self.end_time, field_name="end_time")
+        if (
+            self.start_time is not None
+            and self.end_time is not None
+            and self.start_time >= self.end_time
+        ):
+            raise ValueError("start_time must precede end_time")
         if self.data_config:
             raise ValueError(
                 "data_config is reserved until protocol v1 explicitly applies its fields; use the "

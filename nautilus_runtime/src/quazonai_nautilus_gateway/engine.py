@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import importlib
 import io
 import json
+import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import zipfile
@@ -45,6 +47,7 @@ from quazonai_nautilus_gateway.models import (
 
 CANDIDATE_BUNDLE_CONTRACT = "QUAZONAI_NAUTILUS_CANDIDATE_BUNDLE"
 CANDIDATE_BUNDLE_CONTRACT_VERSION = "2"
+QUOTE_TICK_SCHEMA_REVISION = "nautilus.quote_tick.v2"
 
 
 class GatewayContractError(ValueError):
@@ -104,9 +107,30 @@ def _safe_rel_path(path: str) -> Path:
 
 def _parse_time(value: str | datetime) -> datetime:
     parsed = value if isinstance(value, datetime) else datetime.fromisoformat(value)
-    if parsed.tzinfo is None:
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise GatewayContractError("catalog timestamps must be timezone-aware")
     return parsed.astimezone(UTC)
+
+
+def _sanitized_child_environment() -> dict[str, str]:
+    allowed = {
+        "PATH",
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "TZ",
+        "TMPDIR",
+        "PYTHONUTF8",
+        "PYTHONHOME",
+        "VIRTUAL_ENV",
+        "CONDA_PREFIX",
+        "LD_LIBRARY_PATH",
+        "DYLD_LIBRARY_PATH",
+        "SSL_CERT_FILE",
+    }
+    result = {key: value for key, value in os.environ.items() if key in allowed}
+    result["QUAZONAI_NAUTILUS_ISOLATED_CHILD"] = "1"
+    return result
 
 
 class NautilusGatewayEngine:
@@ -144,6 +168,80 @@ class NautilusGatewayEngine:
         return path
 
     @staticmethod
+    def _manifest_result(manifest: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "protocol_version": manifest["protocol_version"],
+            "runtime_version": manifest["runtime_version"],
+            "catalog_key": manifest["catalog_key"],
+            "catalog_uri": f"nautilus-catalog://{manifest['catalog_key']}",
+            "nautilus_data_type": manifest["nautilus_data_type"],
+            "instrument_scope": manifest["instrument_scope"],
+            "event_time_start": _parse_time(manifest["event_time_start"]),
+            "event_time_end": _parse_time(manifest["event_time_end"]),
+            "available_time_start": _parse_time(manifest["available_time_start"]),
+            "available_time_end": _parse_time(manifest["available_time_end"]),
+            "row_count": int(manifest["row_count"]),
+            "schema_revision": manifest["schema_revision"],
+            "quality_result": manifest["quality_result"],
+            "point_in_time_result": manifest["point_in_time_result"],
+            "ingested_at": _parse_time(manifest["ingested_at"]),
+        }
+
+    def _isolated_operation(
+        self,
+        operation: str,
+        payload: dict[str, Any],
+        *,
+        catalog_key: str | None = None,
+    ) -> dict[str, Any]:
+        with tempfile.TemporaryDirectory(
+            prefix="qz-isolated-", dir=self._artifact_root
+        ) as directory:
+            workspace = Path(directory)
+            child_root = workspace / "runtime"
+            (child_root / "catalogs").mkdir(parents=True)
+            if catalog_key is not None:
+                source_catalog = self._catalog_path(catalog_key)
+                if not source_catalog.is_dir():
+                    raise GatewayContractError("selected catalog is unavailable")
+                shutil.copytree(
+                    source_catalog,
+                    child_root / "catalogs" / catalog_key,
+                )
+            input_path = workspace / "input.json"
+            output_path = workspace / "output.json"
+            input_path.write_text(json.dumps(_jsonable(payload)), encoding="utf-8")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    "-m",
+                    "quazonai_nautilus_gateway.isolated_runner",
+                    operation,
+                    str(child_root),
+                    str(input_path),
+                    str(output_path),
+                ],
+                cwd=workspace,
+                env=_sanitized_child_environment(),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=900,
+                check=False,
+            )
+            if completed.returncode != 0 or not output_path.is_file():
+                raise GatewayContractError("isolated Nautilus operation failed")
+            try:
+                result = json.loads(output_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                raise GatewayContractError("isolated Nautilus result is invalid") from exc
+            if not isinstance(result, dict):
+                raise GatewayContractError("isolated Nautilus result is invalid")
+            return result
+
+    @staticmethod
     def _instrument(requested_id: str) -> Any:
         symbol = requested_id.split(".", 1)[0]
         instrument = TestInstrumentProvider.default_fx_ccy(symbol)
@@ -157,6 +255,27 @@ class NautilusGatewayEngine:
     def ingest(self, request: CatalogIngestRequest) -> dict[str, Any]:
         if request.protocol_version != PROTOCOL_VERSION:
             raise GatewayContractError("unsupported protocol version")
+        catalog_path = self._catalog_path(request.catalog_key)
+        manifest_path = catalog_path / "quazonai-catalog-manifest.json"
+        request_path = catalog_path / "quazonai-ingest-request.json"
+        canonical_request = request.model_dump(mode="json")
+        if manifest_path.exists():
+            if not request_path.exists():
+                raise GatewayContractError(
+                    "catalog key is immutable and its ingest contract is missing"
+                )
+            existing_request = json.loads(request_path.read_text(encoding="utf-8"))
+            if existing_request != canonical_request:
+                raise GatewayContractError(
+                    "catalog key is immutable and already bound to another ingest contract"
+                )
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            return self._manifest_result(manifest)
+        if catalog_path.exists() and any(catalog_path.iterdir()):
+            raise GatewayContractError(
+                "catalog key is immutable and contains an incomplete prior ingest"
+            )
+
         instrument = self._instrument(request.instrument_id)
         rows = sorted(request.rows, key=lambda row: row.timestamp)
         event_times = [row.timestamp.astimezone(UTC) for row in rows]
@@ -198,7 +317,6 @@ class NautilusGatewayEngine:
         if any(tick.ts_init < tick.ts_event for tick in ticks):
             raise GatewayContractError("availability timestamp cannot precede event timestamp")
 
-        catalog_path = self._catalog_path(request.catalog_key)
         catalog_path.mkdir(parents=True, exist_ok=True)
         catalog = ParquetDataCatalog(path=str(catalog_path))
         catalog.write_data([instrument])
@@ -209,15 +327,9 @@ class NautilusGatewayEngine:
         availability_times = [row.available_at.astimezone(UTC) for row in rows]
         available_start = min(availability_times)
         available_end = max(availability_times)
-        schema_revision = hashlib.sha256(
-            b"QuoteTick:ts_event,ts_init,bid_price,ask_price,bid_size,ask_size:v2"
-        ).hexdigest()
-        manifest_path = catalog_path / "quazonai-catalog-manifest.json"
-        existing: dict[str, Any] = {}
-        if manifest_path.exists():
-            existing = json.loads(manifest_path.read_text(encoding="utf-8"))
-        instrument_records = dict(existing.get("instruments", {}))
-        instrument_records[str(instrument.id)] = {
+        schema_revision = QUOTE_TICK_SCHEMA_REVISION
+        instrument_records = {
+            str(instrument.id): {
             "provider": request.provider,
             "source": request.source,
             "source_license": request.source_license,
@@ -225,7 +337,8 @@ class NautilusGatewayEngine:
             "event_time_start": event_start.isoformat(),
             "event_time_end": event_end.isoformat(),
             "available_time_start": available_start.isoformat(),
-            "available_time_end": available_end.isoformat(),
+                "available_time_end": available_end.isoformat(),
+            }
         }
         instrument_scope = sorted(str(item.id) for item in catalog.instruments())
         all_records = list(instrument_records.values())
@@ -265,6 +378,10 @@ class NautilusGatewayEngine:
             "ingested_at": _utc_now().isoformat(),
         }
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        request_path.write_text(
+            json.dumps(canonical_request, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
         return {
             "protocol_version": PROTOCOL_VERSION,
             "runtime_version": nautilus_version,
@@ -406,9 +523,20 @@ class NautilusGatewayEngine:
                 result[key] = Decimal(str(result[key]))
         return result
 
-    def run_backtest(self, request: BacktestExperimentRequest) -> dict[str, Any]:
+    def run_backtest(
+        self,
+        request: BacktestExperimentRequest,
+        *,
+        _source_isolated: bool = False,
+    ) -> dict[str, Any]:
         if request.protocol_version != PROTOCOL_VERSION:
             raise GatewayContractError("unsupported protocol version")
+        if request.strategy.kind == "SOURCE_BUNDLE" and not _source_isolated:
+            return self._isolated_operation(
+                "backtest",
+                {"request": request.model_dump(mode="json")},
+                catalog_key=request.catalog_key,
+            )
         validation = self.validate_catalog(
             CatalogValidationRequest(
                 catalog_key=request.catalog_key,
@@ -600,7 +728,13 @@ class NautilusGatewayEngine:
             findings.append({"code": "STRATEGY_WHEEL_BASE64_INVALID"})
         if wheel:
             try:
-                self._verify_wheel(wheel, request.manifest)
+                self._isolated_operation(
+                    "verify-wheel",
+                    {
+                        "wheel_b64": base64.b64encode(wheel).decode("ascii"),
+                        "manifest": request.manifest,
+                    },
+                )
             except (
                 GatewayContractError,
                 ImportError,
@@ -683,7 +817,7 @@ class NautilusGatewayEngine:
         }
 
     @staticmethod
-    def _verify_wheel(wheel: bytes, manifest: dict[str, Any]) -> None:
+    def _verify_wheel_inline(wheel: bytes, manifest: dict[str, Any]) -> None:
         with zipfile.ZipFile(io.BytesIO(wheel)) as archive:
             names = archive.namelist()
             if not names or any(

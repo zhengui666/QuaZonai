@@ -3,7 +3,7 @@
 > 架构基线：2026-08-25  
 > 文档地位：**QuaZonai 唯一完整的产品与架构事实源**  
 > 目标：Codex Harness 驱动的单用户、自托管、持续自治量化研究与策略组合工作台  
-> 当前状态：**目标方案已锁定；现有代码仍包含旧 Nautilus 执行控制路径，尚未 conforming / release-ready**
+> 当前状态：**远程 Nautilus-first 边界是当前实现基线；完成状态以最终 CI 与独立审查为准**
 
 `OPERATIONS.md` 只展开用户运行视图；`CLI.md` 只展开 CLI、Codex Runtime 和 Agent Tool 合同；`README.md` 只做入口与当前状态摘要；代码、测试、聊天记录和临时决策文件不得静默改写本文。
 
@@ -37,7 +37,7 @@ Idea
   → Portfolio Candidate
   → Independent Evaluation
   → Human Approval
-  → Candidate Package
+  → Candidate Bundle
   → Handoff Registry
   → Independent Downstream Runtime
   → Forward Evidence
@@ -66,7 +66,7 @@ V1 是 **单用户、自托管、私有工作台**。不建设 tenant、organiza
 - 系统只在出现有实际决策价值的唯一推荐 Candidate 时打扰用户；
 - Paper 和 Live 分开审批；Paper 批准绝不预授权 Live；
 - 所有研究、候选、审批、Package 和证据均可追溯且历史不可重写；
-- 下游运行完全独立，QZ 只交付标准 Candidate Package 并接收反馈。
+- 下游运行完全独立，QZ 只交付标准 Candidate Bundle 并接收反馈。
 
 ### 1.3 非目标
 
@@ -230,7 +230,7 @@ CapitalContextVersion
 PortfolioProgram
 PortfolioCandidate
 ApprovalSnapshot
-CandidatePackage
+CandidateBundle
 DownstreamSystem
 DownstreamConnectionVersion
 HandoffOffer
@@ -757,7 +757,7 @@ Portfolio Candidate 永久不可变。任何下列变化都产生新 Candidate�
 - Risk/Cost/Capacity Model；
 - Constraint Set；
 - Rebalance policy；
-- Candidate Package contract。
+- Candidate Bundle contract。
 
 Candidate 至少冻结：
 
@@ -846,7 +846,7 @@ PENDING → APPROVED
 
 终态不可恢复。
 
-Snapshot 冻结：Candidate Package、Evidence Set、Alpha/Calibration、Mandate、Capital Context、Portfolio Policy、Risk/Cost/Capacity/Constraint、目标 downstream、downstream connection version、Package/Feedback Contract、compatibility preflight、validity policy。
+Snapshot 冻结：Candidate Bundle、Evidence Set、Alpha/Calibration、Mandate、Capital Context、Portfolio Policy、Risk/Cost/Capacity/Constraint、目标 downstream、downstream connection version、Package/Feedback Contract、compatibility preflight、validity policy。
 
 ### 23.1 STALE / EXPIRED
 
@@ -877,44 +877,50 @@ OTHER
 
 Codex 只能看到 policy 允许的 reason code 和用户 note，不能看到 Level 2 Sealed 明细。
 
-## 24. Candidate Package
+## 24. Candidate Bundle v2
 
-V1 标准格式：
+Issue 22 起，唯一标准交付物是 Nautilus-native `Candidate Bundle v2`。旧的自定义
+Feature/Alpha/Calibration/Portfolio 四轮 Package 合同已经废止，不再是实现或验收依据。
 
 ```text
-candidate-package/
+candidate-bundle/
   manifest.json
-  schemas/
+  requirements.lock
+  strategy/
+    strategy.whl
+    strategy-config.json
+    actor-config.json
+  data/
+    requirements.json
+    instrument-scope.json
+    custom-data-schemas/
   runtime/
-    feature_pipeline.whl
-    alpha_model.whl
-    calibration.whl
-    portfolio_policy.whl
-  fixtures/
-    input.arrow
-    expected_alpha.arrow
-    expected_portfolio.arrow
+    nautilus-version.json
+    backtest-run-config.json
+    venue-config.json
+    risk-config.json
+    live-node-template.json
+  validation/
+    fixture-catalog/
+    expected-orders.json
+    expected-fills.json
+    expected-positions.json
+    expected-statistics.json
   evidence/
-    approval-summary.json
+    discovery-summary.json
+    sealed-summary.json
+    robustness-summary.json
+    portfolio-simulation.json
   lineage.json
 ```
 
-Python Reference Runtime 是正式参考实现：
+Bundle 冻结研究、Sealed Evaluation 与 Portfolio simulation 使用的同一
+`strategy.whl`、配置、Dataset/Alpha/Experiment lineage 和真实验证证据。独立 Paper/Live
+Runtime 复用该 wheel 与配置；broker adapter、账户、凭据和任何可执行订单指令只属于下游
+Runtime，绝不进入 Bundle 或 QuaZonai Core。
 
-```text
-canonical input
-→ Feature Pipeline
-→ Alpha
-→ Calibration
-→ Portfolio Policy
-→ TargetPortfolioFrame
-```
-
-它不连接行情源、broker 或 wallet，不提交订单。
-
-Package 禁止包含：broker URL、API key、private key、account ID、order type、TIF、order id、recovery、heartbeat 或 execution retry。
-
-QZ 不为 Package 创建应用级 hash/checksum/fingerprint。完整性与兼容性依赖：显式 artifact ID/version、文件名/长度、wheel/package metadata、schema validation、Reference Fixture 执行结果与 contract version。
+QZ 不为 Bundle 创建应用级 hash/checksum/fingerprint。兼容性依赖显式 UUID/version、
+wheel metadata、schema validation、隔离的 conformance 执行结果与 contract version。
 
 ## 25. Handoff Registry
 
@@ -1437,11 +1443,11 @@ Production 构建后 SPA 静态资产由 FastAPI 提供，减少额外运行服�
 
 | 表 | 关键字段 |
 |---|---|
-| `candidate_packages` | `id`, `candidate_id`, `contract_version`, `state`, `manifest_json`, `relative_path`, `created_at` |
+| `candidate_bundles` | `id`, `candidate_id`, `contract_version`, `state`, `manifest_json`, `relative_path`, `created_at` |
 | `downstream_systems` | `id`, `name`, `environment_type`, `enabled`, `created_at` |
 | `downstream_connection_versions` | `id`, `downstream_system_id`, `version_no`, `plugin_release_id`, `public_config`, `credential_set_id`, `state`, `created_at` |
 | `feedback_contract_versions` | `id`, `version_no`, `purpose`, `spec_json`, `created_at` |
-| `approvals` | `id`, `type`, `candidate_id`, `candidate_package_id`, `downstream_system_id`, `downstream_connection_version_id`, `feedback_contract_version_id`, `state`, `evidence_snapshot_json`, `dependency_snapshot_json`, `valid_until`, `reason_code`, `note`, `created_at`, `decided_at` |
+| `approvals` | `id`, `type`, `candidate_id`, `candidate_bundle_id`, `downstream_system_id`, `downstream_connection_version_id`, `feedback_contract_version_id`, `state`, `evidence_snapshot_json`, `dependency_snapshot_json`, `valid_until`, `reason_code`, `note`, `created_at`, `decided_at` |
 | `handoff_offers` | `id`, `approval_id`, `state`, `claim_deadline`, `claimed_at`, `accepted_at`, `revoked_at`, `expired_at`, `created_at` |
 | `feedback_packages` | `id`, `handoff_offer_id`, `state`, `observation_start`, `observation_end`, `sample_size`, `summary_json`, `relative_path`, `received_at` |
 | `forward_evidence_episodes` | `id`, `feedback_package_id`, `state`, `evaluation_summary`, `created_at` |
@@ -1816,7 +1822,7 @@ QuaZonai/
 ### P6 — Approval + Package + Handoff
 
 - Approval Snapshot staleness/expiry；
-- Candidate Package builder / Reference Runtime；
+- Candidate Bundle builder / Reference Runtime；
 - downstream registry/service auth；
 - claim/revoke；
 - Feedback Contract；
@@ -1908,7 +1914,7 @@ QuaZonai/
 
 ## 50. 当前实现状态与迁移原则
 
-截至本基线，仓库代码仍主要实现旧的 QZ+Nautilus execution control-plane。它与本文冲突，不能称为 conforming。
+当前实现以本节的远程 Nautilus-first 研究控制平面为基线；旧 execution control-plane 不再保留兼容路径。
 
 迁移原则：
 

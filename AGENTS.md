@@ -27,7 +27,7 @@ QuaZonai 只拥有：
 - Portfolio Mandate / Portfolio Program / Portfolio Candidate；
 - Independent Evaluation；
 - Approval Snapshot；
-- Candidate Package；
+- Candidate Bundle；
 - Handoff Registry / Feedback / Forward Evidence；
 - Degradation Monitoring；
 - Codex Harness 研究运行时与 Web 工作台。
@@ -64,7 +64,7 @@ Pause/Resume/Archive/Restore、数据授权、Codex 登录、Mandate/Universe/Do
 - Capital Context Version；
 - Portfolio Candidate；
 - Approval Snapshot；
-- Candidate Package；
+- Candidate Bundle；
 - Handoff Offer 的历史终态。
 
 改变依赖就创建新 Version/Candidate/Snapshot，而不是 patch 旧事实。
@@ -143,7 +143,7 @@ Agent 输出必须通过 schema、artifact validation 和 Domain Validator 才�
 
 ## 6. Handoff / Downstream 边界
 
-- Candidate Package 只输出 TargetPortfolioFrame，不输出订单；
+- Candidate Bundle 只输出 TargetPortfolioFrame，不输出订单；
 - Approval 绑定一个逻辑 downstream system；
 - Paper 与 Live 分开审批；
 - 未领取 Offer 可 revoke；`CLAIMED` 后 QZ 无 stop/revoke runtime 权限；
@@ -245,7 +245,7 @@ HANDOFF_CONNECTOR
 - Sealed raw data 不可达；
 - PostgreSQL concurrency/idempotency；
 - plugin wheel install/entry point/process isolation；
-- Candidate Package Reference Fixture conformance；
+- Candidate Bundle Reference Fixture conformance；
 - Handoff claim vs revoke 原子竞争；
 - event replay / SSE reconnect。
 

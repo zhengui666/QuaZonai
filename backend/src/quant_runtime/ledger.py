@@ -165,6 +165,19 @@ class ExperimentCoordinator:
                     )
                 else:
                     result = runtime.run_backtest(request)
+            expected_mode = ExperimentMode.SEALED if sealed else request.mode
+            if result.experiment_id != request.experiment_id or result.mode != expected_mode:
+                raise QfError(
+                    "NAUTILUS_RUNTIME_RESULT_IDENTITY_MISMATCH",
+                    "Remote result does not match the immutable experiment id and mode.",
+                    502,
+                    {
+                        "expected_experiment_id": str(request.experiment_id),
+                        "received_experiment_id": str(result.experiment_id),
+                        "expected_mode": expected_mode.value,
+                        "received_mode": str(result.mode),
+                    },
+                )
         except Exception as exc:
             with self._factory() as session, session.begin():
                 entry = session.execute(

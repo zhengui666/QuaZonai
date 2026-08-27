@@ -443,7 +443,10 @@ def _infer_scope(idea: str) -> str:
 def _infer_horizon(idea: str) -> str:
     match = re.search(r"\b(\d+)\s*(minute|min|hour|hr|day|d|h|m)s?\b", idea.lower())
     if not match:
-        return "System inferred"
+        # A frozen Charter must never carry an unresolved sentinel into
+        # qualification. Daily is the explicit V1 default when the Idea does
+        # not state a horizon; users can state another concrete horizon.
+        return "1D"
     number, unit = match.groups()
     return f"{number}{unit[0].upper()}"
 
@@ -946,7 +949,7 @@ def create_program(
                 session,
                 program=program,
                 branch=branch,
-                objective=f"Test the Charter hypothesis within {preview.market_scope}.",
+                objective=f"Test the Charter hypothesis within {market_scope}.",
             )
             _event(
                 session,

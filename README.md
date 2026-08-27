@@ -1,6 +1,6 @@
 # QuaZonai
 
-QuaZonai is a single-user, self-hosted autonomous quantitative **research and portfolio construction** workbench. It uses the official OpenAI Codex App Server SDK for finite research Missions, an independent sealed evaluator for promotion evidence, and downstream-neutral Candidate Packages for Paper/Live handoff.
+QuaZonai is a single-user, self-hosted autonomous quantitative **research and portfolio construction** workbench. It uses the official OpenAI Codex App Server SDK for finite research Missions, an independent sealed evaluator for promotion evidence, and downstream-neutral Candidate Bundles for Paper/Live handoff.
 
 QuaZonai does **not** own broker credentials, orders, fills, positions, accounts, NAV, TradingNode, live execution, execution risk, heartbeat, recovery, or downstream stop/undeploy.
 
@@ -10,7 +10,7 @@ QuaZonai does **not** own broker credentials, orders, fills, positions, accounts
 Idea → frozen Research Charter → autonomous Mission DAG → Alpha qualification
 → independent Sealed Evaluation → Alpha Library → Portfolio Mandate
 → Portfolio Candidate → independent portfolio evaluation → human Paper/Live Approval
-→ Candidate Package → Handoff Registry → independent downstream feedback
+→ Candidate Bundle → Handoff Registry → independent downstream feedback
 → Forward Evidence → Degradation Monitoring → research wake-up
 ```
 
@@ -96,7 +96,7 @@ After startup, open **Administration → Runtime configuration** to configure th
 
 Research Program creation persists a `READY` Mission and durable job. The finite Worker starts the official Codex App Server in an exclusive git worktree; only after App Server admission succeeds does the Mission transition to `RUNNING`. If Codex authentication is unavailable, the job and Mission fail explicitly instead of being left falsely Running.
 
-Registering a Downstream System returns its Bearer service token once. Store that token in the downstream system's secret store; QuaZonai keeps only an AES-GCM encrypted-at-rest copy bound to that Downstream System. Claim, accept, reject, Candidate Package download, and feedback calls require that Bearer token. These downstream credentials remain separate from Operator browser authentication and the CLI machine token.
+Registering a Downstream System returns its Bearer service token once. Store that token in the downstream system's secret store; QuaZonai keeps only an AES-GCM encrypted-at-rest copy bound to that Downstream System. Claim, accept, reject, Candidate Bundle download, and feedback calls require that Bearer token. These downstream credentials remain separate from Operator browser authentication and the CLI machine token.
 
 ## Agent Skill
 
@@ -151,7 +151,7 @@ make build
 make compose-smoke
 ```
 
-GitHub Actions additionally runs PostgreSQL 18 row-lock/idempotency integration, Candidate Package Reference Runtime conformance, frontend typecheck/test/build, backend and production image builds, and a core Compose smoke test that verifies both API health and the served Web client.
+GitHub Actions additionally runs PostgreSQL 18 row-lock/idempotency integration, Candidate Bundle Reference Runtime conformance, frontend typecheck/test/build, backend and production image builds, and a core Compose smoke test that verifies both API health and the served Web client.
 
 ## Source of truth
 

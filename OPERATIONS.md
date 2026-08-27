@@ -78,7 +78,7 @@ QuaZonai V1 是单用户、自托管私有工作台。正常 Research Program �
 - Portfolio Assembly；
 - Material Improvement Gate；
 - Approval freshness；
-- Candidate Package；
+- Candidate Bundle；
 - Handoff state；
 - Feedback validation；
 - Degradation Monitoring / Research Wake-up。

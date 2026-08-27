@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+import pytest
 from sqlalchemy import Engine, select
 
 from db.models import (
@@ -19,6 +20,7 @@ from db.models import (
     SearchLedgerEntry,
 )
 from db.session import create_session_factory
+from errors import QfError
 from quant_runtime.contracts import (
     PINNED_NAUTILUS_VERSION,
     BacktestExperimentRequest,
@@ -303,3 +305,69 @@ def test_real_evidence_promotes_through_alpha_and_portfolio(
         assert candidate.metrics["nautilus"]["evidence"]["fills"]
         assert approval.state == "PENDING"
         assert approval.purpose == "PAPER"
+
+
+def test_unresolved_horizon_cannot_qualify(
+    engine: Engine,
+    monkeypatch,
+) -> None:
+    factory = create_session_factory(engine)
+    source_id, sealed_dataset_id, _ = _seed(engine)
+    with factory() as session, session.begin():
+        source = session.get(SearchLedgerEntry, source_id)
+        assert source is not None
+        program = session.get(ResearchProgram, source.program_id)
+        assert program is not None
+        charter = session.get(ResearchCharter, program.charter_id)
+        assert charter is not None
+        charter.prediction_horizon = "System inferred"
+
+    def should_not_execute(*args, **kwargs):
+        raise AssertionError("sealed runtime must not run for unresolved horizons")
+
+    monkeypatch.setattr(ExperimentCoordinator, "execute", should_not_execute)
+    with pytest.raises(QfError) as raised:
+        qualify_alpha(
+            factory,
+            source_experiment_id=source_id,
+            sealed_dataset_revision_id=sealed_dataset_id,
+        )
+    assert raised.value.code == "ALPHA_HORIZON_UNRESOLVED"
+
+
+def test_shadow_alpha_cannot_form_candidate(engine: Engine) -> None:
+    factory = create_session_factory(engine)
+    source_id, _, portfolio_program_id = _seed(engine)
+    with factory() as session, session.begin():
+        source = session.get(SearchLedgerEntry, source_id)
+        assert source is not None
+        dataset = session.get(DatasetRevision, source.dataset_revision_id)
+        assert dataset is not None
+        alpha = AlphaQualification(
+            program_id=source.program_id,
+            universe_version_id=dataset.universe_version_id,
+            universe="FX",
+            horizon="1D",
+            role="SHADOW_ALPHA",
+            state="ACTIVE",
+            name="shadow",
+            degradation_state="HEALTHY",
+            metrics={
+                "search_adjusted_quality": 0.8,
+                "sealed_disclosure": {"passed": True},
+            },
+            lineage=[],
+            scope_json={},
+            created_at=datetime.now(UTC),
+            source_experiment_id=source.id,
+        )
+        session.add(alpha)
+        session.flush()
+        alpha_id = alpha.id
+    with pytest.raises(QfError) as raised:
+        simulate_portfolio_candidate(
+            factory,
+            portfolio_program_id=portfolio_program_id,
+            alpha_ids=[alpha_id],
+        )
+    assert raised.value.code == "SHADOW_ALPHA_NOT_HANDOFF_ELIGIBLE"

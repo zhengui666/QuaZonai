@@ -100,6 +100,7 @@ def test_bundle_matches_issue_22_nautilus_native_contract(tmp_path: Path) -> Non
         "runtime/live-node-template.json",
         "validation/fixture-catalog/manifest.json",
         "validation/expected-orders.json",
+        "validation/expected-fills.json",
         "validation/expected-positions.json",
         "validation/expected-statistics.json",
         "evidence/discovery-summary.json",
@@ -152,3 +153,28 @@ def test_bundle_rejects_embedded_broker_secret() -> None:
     with pytest.raises(QfError) as raised:
         build_candidate_bundle(object(), candidate=candidate)
     assert raised.value.code == "CANDIDATE_BUNDLE_INVALID"
+
+
+def test_bundle_preserves_production_alpha_lineage_and_every_instrument() -> None:
+    candidate = _candidate()
+    alpha_id = uuid4()
+    candidate.members = [
+        {
+            "alpha_qualification_id": str(alpha_id),
+            "instrument_ids": ["AAPL.XNAS", "MSFT.XNAS"],
+            "target_weight": 1.0,
+        }
+    ]  # type: ignore[assignment]
+    built = build_candidate_bundle(object(), candidate=candidate)
+    assert built.manifest["target_weights"] == [
+        {
+            "alpha_qualification_id": str(alpha_id),
+            "instrument_id": "AAPL.XNAS",
+            "target_weight": "1.0",
+        },
+        {
+            "alpha_qualification_id": str(alpha_id),
+            "instrument_id": "MSFT.XNAS",
+            "target_weight": "1.0",
+        },
+    ]

@@ -7,7 +7,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from quazonai_nautilus_gateway.engine import NautilusGatewayEngine
+import pytest
+
+from quazonai_nautilus_gateway.engine import GatewayContractError, NautilusGatewayEngine
 from quazonai_nautilus_gateway.models import (
     BacktestExperimentRequest,
     CandidateVerificationRequest,
@@ -81,7 +83,7 @@ def _request() -> BacktestExperimentRequest:
         mode=ExperimentMode.DISCOVERY,
         dataset_revision_id=uuid4(),
         catalog_key="integration-fx-quotes",
-        instrument_ids=["EUR/USD.SIM", "GBP/USD.SIM"],
+        instrument_ids=["EUR/USD.SIM"],
         strategy=StrategyArtifact(
             artifact_id="one-shot-source-bundle-v1",
             kind="SOURCE_BUNDLE",
@@ -117,57 +119,58 @@ def _candidate_wheel() -> bytes:
 
 def test_real_catalog_backtest_and_sealed_disclosure(tmp_path: Path) -> None:
     engine = NautilusGatewayEngine(tmp_path)
-    first = engine.ingest(
-        CatalogIngestRequest(
-            catalog_key="integration-fx-quotes",
-            provider="CI_GENERATED_CSV_EQUIVALENT",
-            source="fixture://deterministic-eur-usd-quotes.csv",
-            source_license="CC0-1.0",
-            instrument_id="EUR/USD.SIM",
-            rows=_rows(),
-        )
+    ingest_request = CatalogIngestRequest(
+        catalog_key="integration-fx-quotes",
+        provider="CI_GENERATED_CSV_EQUIVALENT",
+        source="fixture://deterministic-eur-usd-quotes.csv",
+        source_license="CC0-1.0",
+        instrument_id="EUR/USD.SIM",
+        rows=_rows(),
     )
+    first = engine.ingest(ingest_request)
     assert first["catalog_uri"] == "nautilus-catalog://integration-fx-quotes"
     assert first["row_count"] == 360
+    assert first["schema_revision"] == "nautilus.quote_tick.v2"
     assert first["quality_result"]["state"] == "VALID"
     assert first["point_in_time_result"]["replay_order"] == "TS_INIT"
     assert first["available_time_start"] > first["event_time_start"]
 
-    second = engine.ingest(
-        CatalogIngestRequest(
-            catalog_key="integration-fx-quotes",
-            provider="CI_GENERATED_CSV_EQUIVALENT",
-            source="fixture://deterministic-gbp-usd-quotes.csv",
-            source_license="CC0-1.0",
-            instrument_id="GBP/USD.SIM",
-            rows=_rows(base=1.27),
+    replay = engine.ingest(ingest_request)
+    assert replay == first
+    with pytest.raises(GatewayContractError, match="immutable"):
+        engine.ingest(
+            CatalogIngestRequest(
+                catalog_key="integration-fx-quotes",
+                provider="CI_GENERATED_CSV_EQUIVALENT",
+                source="fixture://different-contract.csv",
+                source_license="CC0-1.0",
+                instrument_id="EUR/USD.SIM",
+                rows=_rows(base=1.27),
+            )
         )
-    )
-    assert second["row_count"] == 720
-    assert second["instrument_scope"] == ["EUR/USD.SIM", "GBP/USD.SIM"]
 
     validated = engine.validate_catalog(
         CatalogValidationRequest(
             catalog_key="integration-fx-quotes",
-            instrument_ids=["EUR/USD.SIM", "GBP/USD.SIM"],
+            instrument_ids=["EUR/USD.SIM"],
             nautilus_data_type="QuoteTick",
         )
     )
     assert validated["valid"] is True
-    assert validated["row_count"] == 720
+    assert validated["row_count"] == 360
 
     request = _request()
     evidence = engine.run_backtest(request)
     assert evidence["runtime_version"] == "1.231.0"
     # BacktestResult.total_events counts domain events, not loaded market data;
-    # iterations is the direct proof that both 360-row QuoteTick streams ran.
-    assert evidence["statistics"]["iterations"] >= 720
+    # iterations proves the immutable 360-row QuoteTick stream ran in the child.
+    assert evidence["statistics"]["iterations"] >= 360
     assert evidence["statistics"]["total_orders"] > 0
     assert evidence["orders"]
     assert evidence["fills"]
     assert evidence["positions"]
     assert isinstance(evidence["pnl"], dict)
-    assert evidence["diagnostics"]["loaded_instrument_count"] == 2
+    assert evidence["diagnostics"]["loaded_instrument_count"] == 1
 
     sealed = engine.run_sealed_backtest(
         request.model_copy(update={"mode": ExperimentMode.SEALED})
@@ -216,3 +219,14 @@ def test_candidate_bundle_v2_conformance_uses_same_nautilus_strategy(tmp_path: P
     )
     assert verified["compatible"] is True, verified["findings"]
     assert verified["runtime_version"] == "1.231.0"
+
+
+def test_protocol_rejects_naive_timestamps() -> None:
+    naive = datetime(2024, 1, 2)
+    with pytest.raises(ValueError, match="timezone-aware"):
+        QuoteRow(
+            timestamp=naive,
+            available_at=naive + timedelta(seconds=2),
+            bid_price="1.0000",
+            ask_price="1.0001",
+        )

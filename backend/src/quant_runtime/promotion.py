@@ -38,6 +38,23 @@ from quant_runtime.contracts import (
 from quant_runtime.ledger import ExperimentCoordinator
 
 CATALOG_URI_PREFIX = "nautilus-catalog://"
+_UNRESOLVED_HORIZONS = {
+    "",
+    "system inferred",
+    "system_inferred",
+    "unknown",
+    "unspecified",
+    "tbd",
+}
+_RECOGNIZED_ALPHA_ROLES = {
+    "PRIMARY_ALPHA",
+    "DIVERSIFIER_ALPHA",
+    "HEDGE_ALPHA",
+    "REGIME_SIGNAL",
+    "RISK_MODULATOR",
+    "SHADOW_ALPHA",
+}
+_PROMOTABLE_ALPHA_ROLES = _RECOGNIZED_ALPHA_ROLES - {"SHADOW_ALPHA"}
 
 
 def _now() -> datetime:
@@ -56,6 +73,18 @@ def _require_real_transaction_evidence(entry: SearchLedgerEntry) -> dict[str, An
             422,
         )
     evidence = entry.evidence_json or {}
+    if str(evidence.get("experiment_id", "")) != str(entry.id):
+        raise QfError(
+            "NAUTILUS_EVIDENCE_IDENTITY_MISMATCH",
+            "Nautilus evidence is not bound to its Search Ledger experiment id.",
+            422,
+        )
+    if str(evidence.get("mode", "")) != entry.mode:
+        raise QfError(
+            "NAUTILUS_EVIDENCE_MODE_MISMATCH",
+            "Nautilus evidence mode does not match its Search Ledger entry.",
+            422,
+        )
     missing = [
         name
         for name in ("orders", "fills", "positions", "pnl", "statistics")
@@ -172,6 +201,30 @@ def _select_sealed_dataset(
     return dataset
 
 
+def _sealed_dataset_bounds(dataset: DatasetRevision) -> tuple[datetime, datetime]:
+    start = dataset.event_start
+    end = dataset.event_end
+    if start is None or end is None:
+        raise QfError(
+            "SEALED_DATASET_TIME_RANGE_MISSING",
+            "Sealed evaluation requires explicit immutable event-time bounds.",
+            422,
+        )
+    if (
+        start.tzinfo is None
+        or start.utcoffset() is None
+        or end.tzinfo is None
+        or end.utcoffset() is None
+        or start >= end
+    ):
+        raise QfError(
+            "SEALED_DATASET_TIME_RANGE_INVALID",
+            "Sealed Dataset Revision has invalid event-time bounds.",
+            422,
+        )
+    return start, end
+
+
 def qualify_alpha(
     factory: sessionmaker[Session],
     *,
@@ -214,10 +267,10 @@ def qualify_alpha(
                 422,
             )
         source_horizon = (charter.prediction_horizon or "").strip()
-        if not source_horizon:
+        if source_horizon.casefold().replace("-", "_") in _UNRESOLVED_HORIZONS:
             raise QfError(
-                "ALPHA_HORIZON_MISSING",
-                "Alpha Qualification requires a frozen non-empty prediction horizon.",
+                "ALPHA_HORIZON_UNRESOLVED",
+                "Alpha Qualification requires a concrete frozen prediction horizon.",
                 422,
             )
         if source_dataset.universe_version_id is None:
@@ -239,12 +292,15 @@ def qualify_alpha(
                 422,
             )
         sealed_dataset = _select_sealed_dataset(session, source_dataset, sealed_dataset_revision_id)
+        sealed_start, sealed_end = _sealed_dataset_bounds(sealed_dataset)
         sealed_request = source_request.model_copy(
             update={
                 "experiment_id": uuid4(),
                 "mode": ExperimentMode.SEALED,
                 "dataset_revision_id": sealed_dataset.id,
                 "catalog_key": _catalog_key(sealed_dataset),
+                "start_time": sealed_start,
+                "end_time": sealed_end,
             }
         )
         source_program_id = source.program_id
@@ -349,6 +405,79 @@ def _alpha_score(alpha: AlphaQualification) -> float:
         return 0.0
 
 
+def _canonical_alpha_ids(alpha_ids: list[UUID]) -> list[UUID]:
+    return sorted(set(alpha_ids), key=str)
+
+
+def _candidate_quality(candidate: PortfolioCandidate) -> float:
+    raw = (candidate.metrics or {}).get("search_adjusted_quality")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise QfError(
+            "CANDIDATE_BASELINE_EVIDENCE_MISSING",
+            "Current Candidate lacks a numeric search-adjusted quality baseline.",
+            422,
+        ) from exc
+    if value != value or value in {float("inf"), float("-inf")}:
+        raise QfError(
+            "CANDIDATE_BASELINE_EVIDENCE_INVALID",
+            "Current Candidate quality baseline must be finite.",
+            422,
+        )
+    return value
+
+
+def _material_improvement_delta(mandate: PortfolioMandate) -> float:
+    spec = mandate.spec_json or {}
+    configured = spec.get("material_improvement_gate", {})
+    if configured is None:
+        configured = {}
+    if not isinstance(configured, dict):
+        raise QfError(
+            "MATERIAL_IMPROVEMENT_POLICY_INVALID",
+            "material_improvement_gate must be an object.",
+            422,
+        )
+    raw = configured.get(
+        "min_search_adjusted_quality_delta",
+        spec.get("min_search_adjusted_quality_delta", 0.0),
+    )
+    delta = _number(raw, key="min_search_adjusted_quality_delta")
+    if delta < 0:
+        raise QfError(
+            "MATERIAL_IMPROVEMENT_POLICY_INVALID",
+            "Material Improvement delta cannot be negative.",
+            422,
+        )
+    return delta
+
+
+def _require_material_improvement(
+    current: PortfolioCandidate | None,
+    *,
+    proposed_quality: float,
+    mandate: PortfolioMandate,
+) -> None:
+    if current is None:
+        return
+    baseline = _candidate_quality(current)
+    minimum_delta = _material_improvement_delta(mandate)
+    required = baseline + minimum_delta
+    if proposed_quality <= required:
+        raise QfError(
+            "CANDIDATE_NOT_MATERIALLY_IMPROVED",
+            "Simulation evidence does not materially improve the current Candidate.",
+            422,
+            {
+                "current_quality": baseline,
+                "proposed_quality": proposed_quality,
+                "minimum_delta": minimum_delta,
+                "required_quality_exclusive": required,
+            },
+        )
+
+
 def _load_portfolio_source(
     session: Session,
     alpha_ids: list[UUID],
@@ -368,6 +497,28 @@ def _load_portfolio_source(
         raise QfError(
             "ALPHA_NOT_PORTFOLIO_READY",
             "Every selected Alpha must be active, healthy, and qualified.",
+            422,
+        )
+    invalid_roles = sorted(
+        {item.role for item in alphas if item.role not in _RECOGNIZED_ALPHA_ROLES}
+    )
+    if invalid_roles:
+        raise QfError(
+            "ALPHA_ROLE_INVALID",
+            "Portfolio promotion encountered an unrecognized Alpha role.",
+            422,
+            {"roles": invalid_roles},
+        )
+    if any(item.role == "SHADOW_ALPHA" for item in alphas):
+        raise QfError(
+            "SHADOW_ALPHA_NOT_HANDOFF_ELIGIBLE",
+            "Shadow Alpha cannot directly form a promotable Handoff Candidate.",
+            422,
+        )
+    if any(item.role not in _PROMOTABLE_ALPHA_ROLES for item in alphas):
+        raise QfError(
+            "ALPHA_ROLE_NOT_PROMOTABLE",
+            "Selected Alpha role is not eligible for Candidate promotion.",
             422,
         )
     selected = max(alphas, key=lambda item: (_alpha_score(item), str(item.id)))
@@ -604,6 +755,9 @@ def simulate_portfolio_candidate(
     simulation_experiment_id: UUID | None = None,
 ) -> CandidatePromotion:
     """Optimize Alpha selection, run a real PORTFOLIO simulation, and freeze approval facts."""
+    requested_alpha_ids = _canonical_alpha_ids(alpha_ids)
+    if not requested_alpha_ids:
+        raise QfError("ALPHA_SELECTION_EMPTY", "At least one qualified Alpha is required.", 422)
     with factory() as session:
         portfolio_program = session.get(PortfolioProgram, portfolio_program_id)
         if portfolio_program is None:
@@ -616,6 +770,26 @@ def simulate_portfolio_candidate(
                 )
             )
             if existing_candidate is not None:
+                optimizer = (existing_candidate.metrics or {}).get("optimizer", {})
+                stored_ids: list[UUID] = []
+                for raw_id in optimizer.get("considered_alpha_ids", []):
+                    try:
+                        stored_ids.append(UUID(str(raw_id)))
+                    except (TypeError, ValueError) as exc:
+                        raise QfError(
+                            "CANDIDATE_ALPHA_LINEAGE_MISSING",
+                            "Idempotent Candidate lost its considered Alpha lineage.",
+                            500,
+                        ) from exc
+                if (
+                    existing_candidate.portfolio_program_id != portfolio_program_id
+                    or _canonical_alpha_ids(stored_ids) != requested_alpha_ids
+                ):
+                    raise QfError(
+                        "CANDIDATE_SIMULATION_IDENTITY_MISMATCH",
+                        "Simulation id is bound to a different Portfolio/Alpha contract.",
+                        409,
+                    )
                 existing_approval = session.scalar(
                     select(ApprovalSnapshot)
                     .where(ApprovalSnapshot.candidate_id == existing_candidate.id)
@@ -643,7 +817,7 @@ def simulate_portfolio_candidate(
                     simulation_experiment_id=simulation_experiment_id,
                     selected_alpha_id=selected_alpha_id,
                 )
-        alpha, source, request = _load_portfolio_source(session, alpha_ids)
+        alpha, source, request = _load_portfolio_source(session, requested_alpha_ids)
         mandate = _bound_mandate(session, portfolio_program)
         mandate_constraints = _validate_mandate_before_simulation(mandate, alpha)
         mandate_id = mandate.id
@@ -716,6 +890,16 @@ def simulate_portfolio_candidate(
                 409,
             )
         _validate_mandate_after_simulation(current_constraints, simulation_evidence)
+        current_candidate = (
+            session.get(PortfolioCandidate, portfolio_program.current_candidate_id)
+            if portfolio_program.current_candidate_id is not None
+            else None
+        )
+        _require_material_improvement(
+            current_candidate,
+            proposed_quality=alpha_quality,
+            mandate=persisted_mandate,
+        )
         request_json = BacktestExperimentRequest.model_validate(simulation.request_json)
         strategy = StrategyArtifact.model_validate(request_json.strategy)
         candidate = PortfolioCandidate(
@@ -743,7 +927,7 @@ def simulate_portfolio_candidate(
                 },
                 "optimizer": {
                     "name": "MAX_SEARCH_ADJUSTED_QUALITY_V1",
-                    "considered_alpha_ids": [str(item) for item in alpha_ids],
+                    "considered_alpha_ids": [str(item) for item in requested_alpha_ids],
                     "selected_alpha_id": str(persisted_alpha.id),
                     "target_weight": 1.0,
                 },
