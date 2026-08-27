@@ -12,7 +12,7 @@ dependencies = [
   "httpx>=0.28,<1",
   "nautilus_trader==1.231.0",
   "pandas>=2.2,<3",
-  "pyarrow>=16,<22",
+  "pyarrow>=25,<26",
   "pydantic>=2.11,<3",
   "uvicorn[standard]>=0.35,<1",
 ]
