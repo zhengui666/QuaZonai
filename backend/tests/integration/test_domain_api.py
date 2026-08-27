@@ -28,6 +28,80 @@ def _client(engine: Engine, settings: Settings) -> TestClient:
     return TestClient(create_app(settings=settings, engine=engine))
 
 
+def _nautilus_candidate_metrics(experiment_id: UUID) -> dict:
+    strategy_source = (
+        "from nautilus_trader.examples.strategies.ema_cross import "
+        "EMACross as CandidateStrategy, EMACrossConfig as CandidateConfig\n"
+    )
+    return {
+        "search_adjusted_quality": 0.78,
+        "nautilus": {
+            "strategy_artifact": {
+                "artifact_id": "candidate-ema-cross-v1",
+                "kind": "SOURCE_BUNDLE",
+                "strategy_path": "candidate_strategy:CandidateStrategy",
+                "config_path": "candidate_strategy:CandidateConfig",
+                "config": {
+                    "instrument_id": "EUR/USD.SIM",
+                    "bar_type": "EUR/USD.SIM-1-MINUTE-BID-INTERNAL",
+                    "trade_size": "100000",
+                    "fast_ema_period": 3,
+                    "slow_ema_period": 8,
+                },
+                "source_files": {"candidate_strategy.py": strategy_source},
+                "requirements": ["nautilus_trader==1.231.0"],
+            },
+            "evidence": {
+                "experiment_id": str(experiment_id),
+                "orders": [
+                    {
+                        "order_id": "O-1",
+                        "instrument_id": "EUR/USD.SIM",
+                        "side": "BUY",
+                        "order_type": "MARKET",
+                        "status": "FILLED",
+                        "quantity": "100000",
+                        "filled_quantity": "100000",
+                    }
+                ],
+                "fills": [
+                    {
+                        "trade_id": "T-1",
+                        "order_id": "O-1",
+                        "instrument_id": "EUR/USD.SIM",
+                        "side": "BUY",
+                        "quantity": "100000",
+                        "price": "1.10000",
+                    }
+                ],
+                "positions": [
+                    {
+                        "position_id": "P-1",
+                        "instrument_id": "EUR/USD.SIM",
+                        "side": "LONG",
+                        "quantity": "100000",
+                    }
+                ],
+                "pnl": {"realized": "250 USD"},
+                "statistics": {"total_orders": 1, "total_fills": 1, "total_positions": 1},
+            },
+            "dataset_revision_ids": [],
+            "alpha_qualification_ids": [],
+            "instrument_scope": ["EUR/USD.SIM", "GBP/USD.SIM"],
+            "data_requirements": {"nautilus_data_type": "QuoteTick"},
+            "backtest_run_config": {
+                "catalog_uri": "nautilus-catalog://integration-fx-quotes",
+                "mode": "PORTFOLIO",
+            },
+            "venue_config": {"name": "SIM", "oms_type": "HEDGING", "account_type": "MARGIN"},
+            "risk_config": {"bypass": False},
+            "discovery_summary": {"source": "search-ledger"},
+            "sealed_summary": {"raw_evidence_withheld": True},
+            "robustness_summary": {"status": "PASS"},
+        },
+    }
+
+
 def test_program_creation_is_idempotent_and_queues_a_durable_mission(
     engine: Engine,
     settings: Settings,
@@ -122,7 +196,7 @@ def _seed_candidate_approval(
             name=f"Paper Lab {downstream_id.hex[:8]}",
             environment_type="PAPER",
             enabled=True,
-            package_contract_version="1",
+            package_contract_version="2",
             feedback_contract_version="1",
             compatibility=[],
             preflight_state="READY",
@@ -142,16 +216,17 @@ def _seed_candidate_approval(
         )
         session.add_all([downstream, program])
         session.flush()
+        experiment_id = uuid4()
         candidate = PortfolioCandidate(
             portfolio_program_id=program.id,
             mandate_version_id=program.mandate_version_id,
             mandate_name=program.mandate_name,
             state="READY",
             members=[
-                {"instrument_id": "AAPL", "target_weight": 0.6},
-                {"instrument_id": "MSFT", "target_weight": 0.4},
+                {"instrument_id": "EUR/USD.SIM", "target_weight": 0.6},
+                {"instrument_id": "GBP/USD.SIM", "target_weight": 0.4},
             ],
-            metrics={"search_adjusted_quality": 0.78},
+            metrics=_nautilus_candidate_metrics(experiment_id),
             created_at=datetime.now(UTC),
         )
         session.add(candidate)
@@ -223,20 +298,39 @@ def test_approval_builds_package_and_authenticated_handoff_feedback(
         names = set(archive.namelist())
         required = {
             "manifest.json",
-            "schemas/canonical-input.schema.json",
-            "schemas/raw-alpha.schema.json",
-            "schemas/target-portfolio-frame.schema.json",
-            "fixtures/input.arrow",
-            "fixtures/expected_alpha.arrow",
-            "fixtures/expected_portfolio.arrow",
-            "evidence/approval-summary.json",
+            "requirements.lock",
+            "strategy/strategy.whl",
+            "strategy/strategy-config.json",
+            "strategy/actor-config.json",
+            "data/requirements.json",
+            "data/instrument-scope.json",
+            "runtime/nautilus-version.json",
+            "runtime/backtest-run-config.json",
+            "runtime/venue-config.json",
+            "runtime/risk-config.json",
+            "runtime/live-node-template.json",
+            "validation/fixture-catalog/manifest.json",
+            "validation/expected-orders.json",
+            "validation/expected-fills.json",
+            "validation/expected-positions.json",
+            "validation/expected-statistics.json",
+            "evidence/discovery-summary.json",
+            "evidence/sealed-summary.json",
+            "evidence/robustness-summary.json",
+            "evidence/portfolio-simulation.json",
             "lineage.json",
         }
         assert required <= names
         manifest = json.loads(archive.read("manifest.json"))
-        for runtime_path in manifest["runtime"].values():
-            if isinstance(runtime_path, str):
-                assert runtime_path in names
+        assert manifest["contract"] == "QUAZONAI_NAUTILUS_CANDIDATE_BUNDLE"
+        assert manifest["contract_version"] == "2"
+        assert manifest["runtime"] == {
+            "name": "NAUTILUS_TRADER",
+            "version": "1.231.0",
+            "deployment": "REMOTE_INDEPENDENT_RUNTIME",
+            "paper_live_reuse": "SAME_STRATEGY_WHEEL_AND_CONFIG",
+        }
+        assert manifest["strategy"]["wheel"] == "strategy/strategy.whl"
 
     accepted = client.post(
         f"/api/v1/handoffs/{handoff['id']}/accept",
