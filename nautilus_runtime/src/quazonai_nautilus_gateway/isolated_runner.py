@@ -1,4 +1,4 @@
-"""Disposable child process for untrusted strategy and wheel imports."""
+"""Disposable child process for constrained strategy and wheel imports."""
 
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ from typing import Any
 
 from quazonai_nautilus_gateway.engine import NautilusGatewayEngine, _jsonable
 from quazonai_nautilus_gateway.models import BacktestExperimentRequest
+
+_TRUSTED_RESULT_NAME = ".trusted-result.json"
 
 
 def _deny_external_network() -> None:
@@ -37,14 +39,18 @@ def _deny_external_network() -> None:
 
 
 def main() -> None:
-    if len(sys.argv) != 5:
+    if len(sys.argv) != 4:
         raise SystemExit(2)
-    operation, root_raw, input_raw, output_raw = sys.argv[1:]
+    operation, root_raw, input_raw = sys.argv[1:]
     root = Path(root_raw).resolve()
     input_path = Path(input_raw).resolve()
-    output_path = Path(output_raw).resolve()
-    if os.getenv("QUAZONAI_NAUTILUS_ISOLATED_CHILD") != "1":
+    if input_path.parent != root.parent:
         raise SystemExit(3)
+    # The strategy never receives the trusted result pathname through argv, input, or env.
+    # SOURCE_BUNDLE AST validation also denies filesystem/dynamic-import capabilities.
+    output_path = root.parent / _TRUSTED_RESULT_NAME
+    if os.getenv("QUAZONAI_NAUTILUS_ISOLATED_CHILD") != "1":
+        raise SystemExit(4)
     os.chdir(root)
     _deny_external_network()
     payload = json.loads(input_path.read_text(encoding="utf-8"))
@@ -57,7 +63,7 @@ def main() -> None:
         engine._verify_wheel_inline(wheel, payload["manifest"])
         result = {"verified": True}
     else:
-        raise SystemExit(4)
+        raise SystemExit(5)
     output_path.write_text(json.dumps(_jsonable(result)), encoding="utf-8")
 
 
