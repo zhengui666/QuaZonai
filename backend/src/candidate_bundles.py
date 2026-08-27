@@ -28,15 +28,27 @@ BUNDLE_CONTRACT_VERSION = "2"
 BUNDLE_FILENAME = "candidate-bundle.zip"
 
 
+def _json_safe(value: Any) -> Any:
+    """Normalize bundle metadata for both archive JSON and JSONB persistence."""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, Mapping):
+        return {str(key): _json_safe(child) for key, child in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(child) for child in value]
+    return value
+
+
 def _json_bytes(value: Any) -> bytes:
     return (
         json.dumps(
-            value,
+            _json_safe(value),
             ensure_ascii=False,
             indent=2,
             sort_keys=True,
             separators=(",", ": "),
-            default=str,
         ).encode("utf-8")
         + b"\n"
     )
@@ -155,19 +167,21 @@ def _member_payload(candidate: Any) -> list[dict[str, Any]]:
 def _approval_summary(approval: Any | None, *, candidate_id: UUID) -> dict[str, Any]:
     if approval is None:
         return {"candidate_id": str(candidate_id)}
-    return {
-        "approval_id": str(_value(approval, "id", "")) or None,
-        "candidate_id": str(candidate_id),
-        "purpose": _value(approval, "purpose"),
-        "state": _value(approval, "state"),
-        "valid_until": _value(approval, "valid_until"),
-        "evidence_summary": _value(approval, "evidence_summary", {}),
-        "capital_context": _value(approval, "capital_context", {}),
-        "risk_summary": _value(approval, "risk_summary", {}),
-        "cost_summary": _value(approval, "cost_summary", {}),
-        "capacity_summary": _value(approval, "capacity_summary", {}),
-        "changes_summary": _value(approval, "changes_summary", {}),
-    }
+    return _json_safe(
+        {
+            "approval_id": str(_value(approval, "id", "")) or None,
+            "candidate_id": str(candidate_id),
+            "purpose": _value(approval, "purpose"),
+            "state": _value(approval, "state"),
+            "valid_until": _value(approval, "valid_until"),
+            "evidence_summary": _value(approval, "evidence_summary", {}),
+            "capital_context": _value(approval, "capital_context", {}),
+            "risk_summary": _value(approval, "risk_summary", {}),
+            "cost_summary": _value(approval, "cost_summary", {}),
+            "capacity_summary": _value(approval, "capacity_summary", {}),
+            "changes_summary": _value(approval, "changes_summary", {}),
+        }
+    )
 
 
 def _candidate_lineage(candidate: Any) -> dict[str, Any]:
@@ -184,7 +198,7 @@ def _candidate_lineage(candidate: Any) -> dict[str, Any]:
         "constraint_set_version",
         "rebalance_policy_version",
     )
-    return {name: _value(candidate, name) for name in fields}
+    return _json_safe({name: _value(candidate, name) for name in fields})
 
 
 def _runtime_payload(candidate: Any) -> tuple[dict[str, Any], StrategyArtifact, dict[str, Any]]:
@@ -213,7 +227,7 @@ def _runtime_payload(candidate: Any) -> tuple[dict[str, Any], StrategyArtifact, 
             422,
             {"required": sorted(required)},
         )
-    return runtime, artifact, evidence
+    return runtime, artifact, _json_safe(evidence)
 
 
 def _custom_schema_files(raw: Any) -> dict[str, bytes]:
@@ -330,55 +344,58 @@ def build_candidate_bundle(
         },
     )
 
-    manifest: dict[str, Any] = {
-        "contract": "QUAZONAI_NAUTILUS_CANDIDATE_BUNDLE",
-        "contract_version": BUNDLE_CONTRACT_VERSION,
-        "bundle_id": str(bundle_id),
-        "candidate_id": str(candidate_id),
-        "created_at": datetime.now(UTC).isoformat(),
-        "purpose": _value(approval, "purpose") if approval is not None else None,
-        "downstream_system_id": str(_value(downstream, "id", "")) or None,
-        "runtime": {
-            "name": "NAUTILUS_TRADER",
-            "version": PINNED_NAUTILUS_VERSION,
-            "deployment": "REMOTE_INDEPENDENT_RUNTIME",
-            "paper_live_reuse": "SAME_STRATEGY_WHEEL_AND_CONFIG",
-        },
-        "strategy": {
-            "artifact_id": artifact.artifact_id,
-            "wheel": "strategy/strategy.whl",
-            "strategy_path": artifact.strategy_path,
-            "config_path": artifact.config_path,
-            "strategy_config": "strategy/strategy-config.json",
-            "actor_config": "strategy/actor-config.json",
-        },
-        "data": {
-            "requirements": "data/requirements.json",
-            "instrument_scope": "data/instrument-scope.json",
-            "custom_data_schemas": "data/custom-data-schemas/",
-        },
-        "runtime_config": {
-            "nautilus_version": "runtime/nautilus-version.json",
-            "backtest_run": "runtime/backtest-run-config.json",
-            "venue": "runtime/venue-config.json",
-            "risk": "runtime/risk-config.json",
-            "live_node_template": "runtime/live-node-template.json",
-        },
-        "validation": {
-            "fixture_catalog": "validation/fixture-catalog/",
-            "expected_orders": "validation/expected-orders.json",
-            "expected_positions": "validation/expected-positions.json",
-            "expected_statistics": "validation/expected-statistics.json",
-        },
-        "evidence": {
-            "discovery": "evidence/discovery-summary.json",
-            "sealed": "evidence/sealed-summary.json",
-            "robustness": "evidence/robustness-summary.json",
-            "portfolio_simulation": "evidence/portfolio-simulation.json",
-        },
-        "lineage": "lineage.json",
-        "target_weights": target_weights,
-    }
+    manifest: dict[str, Any] = _json_safe(
+        {
+            "contract": "QUAZONAI_NAUTILUS_CANDIDATE_BUNDLE",
+            "contract_version": BUNDLE_CONTRACT_VERSION,
+            "bundle_id": str(bundle_id),
+            "candidate_id": str(candidate_id),
+            "created_at": datetime.now(UTC).isoformat(),
+            "purpose": _value(approval, "purpose") if approval is not None else None,
+            "downstream_system_id": str(_value(downstream, "id", "")) or None,
+            "runtime": {
+                "name": "NAUTILUS_TRADER",
+                "version": PINNED_NAUTILUS_VERSION,
+                "deployment": "REMOTE_INDEPENDENT_RUNTIME",
+                "paper_live_reuse": "SAME_STRATEGY_WHEEL_AND_CONFIG",
+            },
+            "strategy": {
+                "artifact_id": artifact.artifact_id,
+                "wheel": "strategy/strategy.whl",
+                "strategy_path": artifact.strategy_path,
+                "config_path": artifact.config_path,
+                "strategy_config": "strategy/strategy-config.json",
+                "actor_config": "strategy/actor-config.json",
+            },
+            "data": {
+                "requirements": "data/requirements.json",
+                "instrument_scope": "data/instrument-scope.json",
+                "custom_data_schemas": "data/custom-data-schemas/",
+            },
+            "runtime_config": {
+                "nautilus_version": "runtime/nautilus-version.json",
+                "backtest_run": "runtime/backtest-run-config.json",
+                "venue": "runtime/venue-config.json",
+                "risk": "runtime/risk-config.json",
+                "live_node_template": "runtime/live-node-template.json",
+            },
+            "validation": {
+                "fixture_catalog": "validation/fixture-catalog/",
+                "expected_orders": "validation/expected-orders.json",
+                "expected_fills": "validation/expected-fills.json",
+                "expected_positions": "validation/expected-positions.json",
+                "expected_statistics": "validation/expected-statistics.json",
+            },
+            "evidence": {
+                "discovery": "evidence/discovery-summary.json",
+                "sealed": "evidence/sealed-summary.json",
+                "robustness": "evidence/robustness-summary.json",
+                "portfolio_simulation": "evidence/portfolio-simulation.json",
+            },
+            "lineage": "lineage.json",
+            "target_weights": target_weights,
+        }
+    )
 
     files: dict[str, bytes] = {
         "manifest.json": _json_bytes(manifest),
@@ -413,7 +430,7 @@ def build_candidate_bundle(
         for path, payload in sorted(files.items()):
             archive.writestr(path, payload)
     archive_bytes = stream.getvalue()
-    validation_summary = validate_candidate_bundle(archive_bytes)
+    validation_summary = _json_safe(validate_candidate_bundle(archive_bytes))
     if not validation_summary["valid"]:
         raise QfError(
             "CANDIDATE_BUNDLE_INVALID",
@@ -465,6 +482,7 @@ def validate_candidate_bundle(archive_bytes: bytes) -> dict[str, Any]:
         "runtime/live-node-template.json",
         "validation/fixture-catalog/manifest.json",
         "validation/expected-orders.json",
+        "validation/expected-fills.json",
         "validation/expected-positions.json",
         "validation/expected-statistics.json",
         "evidence/discovery-summary.json",
