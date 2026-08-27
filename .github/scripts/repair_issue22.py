@@ -63,6 +63,13 @@ def load_original() -> object | None:
     return module
 
 
+def ensure_pyproject_syntax() -> None:
+    path = ROOT / "backend/pyproject.toml"
+    text = path.read_text(encoding="utf-8")
+    text = text.replace('"runners*"\n  "quant_runtime*",', '"runners*",\n  "quant_runtime*",')
+    path.write_text(text, encoding="utf-8")
+
+
 def ensure_models_export() -> None:
     model_file = next(
         path
@@ -119,6 +126,7 @@ def main() -> None:
         if original is None:
             raise RuntimeError("original migration did not run and its script is unavailable")
         original.main()
+    ensure_pyproject_syntax()
     migrations = ROOT / "backend/migrations/versions"
     if not migrations.exists():
         migrations = ROOT / "backend/alembic/versions"
