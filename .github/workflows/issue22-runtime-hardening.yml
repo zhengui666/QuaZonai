@@ -1,0 +1,35 @@
+name: Issue 22 runtime hardening
+
+on:
+  push:
+    branches:
+      - issue-22-nautilus-first-remote-runtime
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.head_commit.message != 'fix: harden remote Nautilus experiment boundary'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: issue-22-nautilus-first-remote-runtime
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - run: python scripts/harden_issue22_runtime.py
+      - run: python -m pip install 'ruff>=0.15,<1'
+      - run: ruff format --config backend/pyproject.toml backend/src backend/tests scripts/harden_issue22_runtime.py
+      - run: ruff check --fix --config backend/pyproject.toml backend/src backend/tests scripts/harden_issue22_runtime.py
+      - run: python -m compileall -q backend/src backend/tests scripts/harden_issue22_runtime.py
+      - name: Commit hardening
+        run: |
+          git config user.name 'QuaZonai Issue 22 Worker'
+          git config user.email 'quazonai-issue22@localhost'
+          git rm scripts/harden_issue22_runtime.py .github/workflows/issue22-runtime-hardening.yml
+          git add -A
+          git commit -m 'fix: harden remote Nautilus experiment boundary'
+          git push origin HEAD:issue-22-nautilus-first-remote-runtime
