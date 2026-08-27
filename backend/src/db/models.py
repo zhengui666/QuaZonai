@@ -32,6 +32,12 @@ from db.plugin_models import (
     PluginRuntimeBundle,
     PluginRuntimeBundleMember,
 )
+from db.quant_runtime_models import (
+    EvaluationEpisode,
+    NautilusCatalogBinding,
+    QuantRuntimeRun,
+    SearchLedgerEntry,
+)
 from db.runtime_models import Event, Job, RuntimeConfiguration
 
 __all__ = [
@@ -55,6 +61,10 @@ __all__ = [
     "MarketUniverseVersion",
     "GovernedDataSource",
     "DatasetRevision",
+    "NautilusCatalogBinding",
+    "QuantRuntimeRun",
+    "EvaluationEpisode",
+    "SearchLedgerEntry",
     "AlphaQualification",
     "PortfolioMandate",
     "PortfolioProgram",
