@@ -7,6 +7,7 @@ on:
     paths:
       - tools/apply_issue22_core_closure.py
       - tools/apply_issue22_gateway_closure.py
+      - tools/fix_issue22_patch_driver.py
       - .github/workflows/apply-issue22-closure.yml
 
 permissions:
@@ -25,6 +26,7 @@ jobs:
           python-version: "3.12"
       - name: Apply closure patches
         run: |
+          python tools/fix_issue22_patch_driver.py
           python tools/apply_issue22_core_closure.py
           python tools/apply_issue22_gateway_closure.py
           python -m compileall -q backend/src nautilus_runtime/src
@@ -32,6 +34,7 @@ jobs:
         run: |
           rm -f tools/apply_issue22_core_closure.py
           rm -f tools/apply_issue22_gateway_closure.py
+          rm -f tools/fix_issue22_patch_driver.py
           rm -f .github/workflows/apply-issue22-closure.yml
       - name: Commit closure
         run: |
