@@ -122,6 +122,7 @@ services:
     build:
       context: .
       dockerfile: deploy/Dockerfile.backend
+      target: sealed-runtime
     environment:
       QUAZONAI_ENV: ${QUAZONAI_ENV:-development}
       QUAZONAI_DATABASE_URL: ${QUAZONAI_DATABASE_URL:-postgresql+psycopg://quazonai:quazonai-local@postgres:5432/quazonai}
