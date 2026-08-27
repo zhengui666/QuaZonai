@@ -54,6 +54,17 @@ class QuoteRow(StrictModel):
         return self
 
 
+class InstrumentQuoteBatch(StrictModel):
+    instrument_id: str = Field(min_length=3, max_length=200)
+    instrument_type: str = Field(
+        min_length=1,
+        max_length=80,
+        pattern=r"^[A-Za-z][A-Za-z0-9_]*$",
+    )
+    instrument_definition: dict[str, Any]
+    rows: list[QuoteRow] = Field(min_length=2, max_length=1_000_000)
+
+
 class CatalogIngestRequest(StrictModel):
     protocol_version: str = QUANT_RUNTIME_PROTOCOL_VERSION
     request_id: UUID = Field(default_factory=uuid4)
@@ -65,9 +76,17 @@ class CatalogIngestRequest(StrictModel):
     provider: str = Field(min_length=1, max_length=200)
     source: str = Field(min_length=1, max_length=500)
     source_license: str | None = Field(default=None, max_length=500)
-    instrument_id: str = Field(min_length=3, max_length=200)
     nautilus_data_type: Literal["QuoteTick"] = "QuoteTick"
-    rows: list[QuoteRow] = Field(min_length=2, max_length=1_000_000)
+    instruments: list[InstrumentQuoteBatch] = Field(min_length=1, max_length=10_000)
+
+    @model_validator(mode="after")
+    def validate_instrument_batches(self) -> CatalogIngestRequest:
+        ids = [item.instrument_id for item in self.instruments]
+        if len(ids) != len(set(ids)):
+            raise ValueError("catalog ingest instrument_ids must be unique")
+        if sum(len(item.rows) for item in self.instruments) > 1_000_000:
+            raise ValueError("catalog ingest is limited to 1,000,000 QuoteTicks per revision")
+        return self
 
 
 class CatalogIngestResult(StrictModel):

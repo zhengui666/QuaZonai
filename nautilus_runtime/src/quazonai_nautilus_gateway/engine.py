@@ -31,9 +31,9 @@ from nautilus_trader.backtest.config import (
 from nautilus_trader.backtest.node import BacktestNode
 from nautilus_trader.config import ImportableStrategyConfig, StrategyConfig
 from nautilus_trader.model.data import QuoteTick
+from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.persistence.catalog.parquet import ParquetDataCatalog
 from nautilus_trader.persistence.wranglers import QuoteTickDataWrangler
-from nautilus_trader.test_kit.providers import TestInstrumentProvider
 from nautilus_trader.trading.strategy import Strategy
 
 from quazonai_nautilus_gateway import PROTOCOL_VERSION, VALIDATED_NAUTILUS_VERSION
@@ -53,6 +53,104 @@ QUOTE_TICK_SCHEMA_REVISION = "nautilus.quote_tick.v2"
 
 class GatewayContractError(ValueError):
     pass
+
+
+def _finite_metric(value: Any) -> float | None:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    if result != result or result in {float("inf"), float("-inf")}:
+        return None
+    return result
+
+
+def _metric_by_fragment(value: Any, fragment: str) -> float | None:
+    normalized_fragment = fragment.casefold()
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if normalized_fragment in str(key).casefold():
+                metric = _finite_metric(item)
+                if metric is not None:
+                    return metric
+            nested = _metric_by_fragment(item, fragment)
+            if nested is not None:
+                return nested
+    elif isinstance(value, list):
+        for item in value:
+            nested = _metric_by_fragment(item, fragment)
+            if nested is not None:
+                return nested
+    return None
+
+
+def _pnl_totals(value: Any) -> dict[str, float]:
+    if not isinstance(value, dict):
+        return {}
+    totals: dict[str, float] = {}
+    for currency, stats in value.items():
+        metric = _metric_by_fragment(stats, "pnl (total)")
+        if metric is None and not isinstance(stats, dict):
+            metric = _finite_metric(stats)
+        if metric is not None:
+            totals[str(currency)] = metric
+    if not totals:
+        metric = _metric_by_fragment(value, "pnl (total)")
+        if metric is not None:
+            totals["BASE"] = metric
+    return totals
+
+
+def _sealed_performance_disclosure(raw: dict[str, Any]) -> dict[str, Any]:
+    statistics = raw.get("statistics") if isinstance(raw.get("statistics"), dict) else {}
+    returns = statistics.get("returns") if isinstance(statistics, dict) else {}
+    general = statistics.get("general") if isinstance(statistics, dict) else {}
+    pnl_totals = _pnl_totals(raw.get("pnl"))
+    sharpe = _metric_by_fragment(returns, "sharpe ratio")
+    max_drawdown = _metric_by_fragment(returns, "max drawdown")
+    profit_factor = _metric_by_fragment(raw.get("pnl"), "profit factor")
+    if profit_factor is None:
+        profit_factor = _metric_by_fragment(general, "profit factor")
+
+    trade_evidence = bool(raw.get("orders") and raw.get("fills") and raw.get("positions"))
+    pnl_pass = bool(pnl_totals) and all(value > 0.0 for value in pnl_totals.values())
+    sharpe_pass = sharpe is None or sharpe >= 0.0
+    drawdown_pass = max_drawdown is None or max_drawdown >= -0.50
+    profit_factor_pass = profit_factor is None or profit_factor >= 1.0
+    passed = trade_evidence and pnl_pass and sharpe_pass and drawdown_pass and profit_factor_pass
+
+    quality_score = 0.0
+    if passed:
+        quality_score = 0.60
+        if sharpe is not None and sharpe >= 1.0:
+            quality_score += 0.10
+        if max_drawdown is not None and max_drawdown >= -0.10:
+            quality_score += 0.05
+        if profit_factor is not None and profit_factor >= 1.50:
+            quality_score += 0.05
+        quality_score = min(0.80, quality_score)
+
+    return {
+        "passed": passed,
+        "quality_score": quality_score,
+        "performance": {
+            "pnl_totals": pnl_totals,
+            "sharpe_ratio": sharpe,
+            "max_drawdown": max_drawdown,
+            "profit_factor": profit_factor,
+        },
+        "order_count": len(raw.get("orders") or []),
+        "fill_count": len(raw.get("fills") or []),
+        "position_count": len(raw.get("positions") or []),
+        "policy_checks": {
+            "transaction_evidence": trade_evidence,
+            "positive_total_pnl": pnl_pass,
+            "non_negative_sharpe_when_available": sharpe_pass,
+            "max_drawdown_floor": drawdown_pass,
+            "profit_factor_floor_when_available": profit_factor_pass,
+        },
+        "policy": "SEALED_PERFORMANCE_RISK_V1",
+    }
 
 
 def _utc_now() -> datetime:
@@ -242,49 +340,75 @@ class NautilusGatewayEngine:
             return result
 
     @staticmethod
-    def _instrument(requested_id: str) -> Any:
-        symbol = requested_id.split(".", 1)[0]
-        instrument = TestInstrumentProvider.default_fx_ccy(symbol)
-        if str(instrument.id) != requested_id:
+    def _instrument_from_definition(batch: Any) -> Any:
+        try:
+            instrument_module = importlib.import_module("nautilus_trader.model.instruments")
+            instrument_class = getattr(instrument_module, batch.instrument_type)
+            from_dict = getattr(instrument_class, "from_dict")
+            instrument = from_dict(dict(batch.instrument_definition))
+        except (AttributeError, ImportError, KeyError, TypeError, ValueError) as exc:
             raise GatewayContractError(
-                f"this reference gateway resolves {requested_id!r} as {instrument.id!s}; "
-                "production providers must install the matching instrument definition"
+                f"invalid governed Nautilus instrument definition for {batch.instrument_id!r}"
+            ) from exc
+        if str(instrument.id) != batch.instrument_id:
+            raise GatewayContractError(
+                "governed instrument definition id does not match the requested instrument_id"
             )
         return instrument
 
-    def ingest(self, request: CatalogIngestRequest) -> dict[str, Any]:
-        if request.protocol_version != PROTOCOL_VERSION:
-            raise GatewayContractError("unsupported protocol version")
-        catalog_path = self._catalog_path(request.catalog_key)
+    @staticmethod
+    def _catalog_instruments(catalog: ParquetDataCatalog, requested_ids: list[str]) -> list[Any]:
+        available = {str(item.id): item for item in catalog.instruments()}
+        missing = sorted(set(requested_ids).difference(available))
+        if missing:
+            raise GatewayContractError(
+                f"governed catalog is missing instrument definitions: {missing!r}"
+            )
+        return [available[item] for item in requested_ids]
+
+    @staticmethod
+    def _canonical_ingest_request(request: CatalogIngestRequest) -> dict[str, Any]:
+        canonical = request.model_dump(mode="json", exclude={"request_id"})
+        batches = list(canonical["instruments"])
+        for batch in batches:
+            batch["rows"] = sorted(
+                batch["rows"],
+                key=lambda row: (str(row["timestamp"]), str(row["available_at"])),
+            )
+        canonical["instruments"] = sorted(batches, key=lambda item: item["instrument_id"])
+        return canonical
+
+    def _existing_ingest_result(
+        self,
+        *,
+        catalog_path: Path,
+        canonical_request: dict[str, Any],
+    ) -> dict[str, Any] | None:
         manifest_path = catalog_path / "quazonai-catalog-manifest.json"
         request_path = catalog_path / "quazonai-ingest-request.json"
-        # request_id identifies a transport attempt, not the immutable dataset contract.
-        # Retried ingestion of byte-for-byte equivalent governed data must therefore
-        # resolve to the same catalog revision even when the caller uses a new request UUID.
-        canonical_request = request.model_dump(mode="json", exclude={"request_id"})
-        if manifest_path.exists():
-            if not request_path.exists():
-                raise GatewayContractError(
-                    "catalog key is immutable and its ingest contract is missing"
-                )
-            existing_request = json.loads(request_path.read_text(encoding="utf-8"))
-            if existing_request != canonical_request:
-                raise GatewayContractError(
-                    "catalog key is immutable and already bound to another ingest contract"
-                )
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            return self._manifest_result(manifest)
-        if catalog_path.exists() and any(catalog_path.iterdir()):
+        if not catalog_path.exists():
+            return None
+        if not manifest_path.exists() or not request_path.exists():
             raise GatewayContractError(
                 "catalog key is immutable and contains an incomplete prior ingest"
             )
+        existing_request = json.loads(request_path.read_text(encoding="utf-8"))
+        if existing_request != canonical_request:
+            raise GatewayContractError(
+                "catalog key is immutable and already bound to another ingest contract"
+            )
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        return self._manifest_result(manifest)
 
-        instrument = self._instrument(request.instrument_id)
-        rows = sorted(request.rows, key=lambda row: row.timestamp)
+    @staticmethod
+    def _batch_ticks(batch: Any) -> tuple[Any, list[QuoteTick], dict[str, Any]]:
+        instrument = NautilusGatewayEngine._instrument_from_definition(batch)
+        rows = sorted(batch.rows, key=lambda row: row.timestamp)
         event_times = [row.timestamp.astimezone(UTC) for row in rows]
         if len(set(event_times)) != len(event_times):
-            raise GatewayContractError("event timestamps must be unique")
-
+            raise GatewayContractError(
+                f"event timestamps must be unique for {batch.instrument_id}"
+            )
         try:
             frame = pd.DataFrame(
                 {
@@ -319,89 +443,118 @@ class NautilusGatewayEngine:
         ]
         if any(tick.ts_init < tick.ts_event for tick in ticks):
             raise GatewayContractError("availability timestamp cannot precede event timestamp")
-
-        catalog_path.mkdir(parents=True, exist_ok=True)
-        catalog = ParquetDataCatalog(path=str(catalog_path))
-        catalog.write_data([instrument])
-        catalog.write_data(ticks)
-
-        event_start = min(event_times)
-        event_end = max(event_times)
         availability_times = [row.available_at.astimezone(UTC) for row in rows]
-        available_start = min(availability_times)
-        available_end = max(availability_times)
-        schema_revision = QUOTE_TICK_SCHEMA_REVISION
-        instrument_records = {
-            str(instrument.id): {
-            "provider": request.provider,
-            "source": request.source,
-            "source_license": request.source_license,
+        record = {
+            "instrument_type": batch.instrument_type,
             "row_count": len(ticks),
-            "event_time_start": event_start.isoformat(),
-            "event_time_end": event_end.isoformat(),
-            "available_time_start": available_start.isoformat(),
+            "event_time_start": min(event_times).isoformat(),
+            "event_time_end": max(event_times).isoformat(),
+            "available_time_start": min(availability_times).isoformat(),
+            "available_time_end": max(availability_times).isoformat(),
+        }
+        return instrument, ticks, record
+
+    def ingest(self, request: CatalogIngestRequest) -> dict[str, Any]:
+        if request.protocol_version != PROTOCOL_VERSION:
+            raise GatewayContractError("unsupported protocol version")
+        catalog_path = self._catalog_path(request.catalog_key)
+        canonical_request = self._canonical_ingest_request(request)
+        existing = self._existing_ingest_result(
+            catalog_path=catalog_path,
+            canonical_request=canonical_request,
+        )
+        if existing is not None:
+            return existing
+
+        lock_path = (self._catalog_root / f".{request.catalog_key}.ingest.lock").resolve()
+        if lock_path.parent != self._catalog_root:
+            raise GatewayContractError("catalog lock escaped the configured root")
+        try:
+            lock_fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError as exc:
+            raise GatewayContractError("catalog ingest is already in progress") from exc
+        staging_path: Path | None = None
+        try:
+            existing = self._existing_ingest_result(
+                catalog_path=catalog_path,
+                canonical_request=canonical_request,
+            )
+            if existing is not None:
+                return existing
+
+            staging_path = Path(
+                tempfile.mkdtemp(prefix=f".{request.catalog_key}.staging-", dir=self._catalog_root)
+            )
+            catalog = ParquetDataCatalog(path=str(staging_path))
+            instrument_records: dict[str, dict[str, Any]] = {}
+            for batch in sorted(request.instruments, key=lambda item: item.instrument_id):
+                instrument, ticks, record = self._batch_ticks(batch)
+                catalog.write_data([instrument])
+                catalog.write_data(ticks)
+                instrument_records[str(instrument.id)] = {
+                    "provider": request.provider,
+                    "source": request.source,
+                    "source_license": request.source_license,
+                    **record,
+                }
+
+            instrument_scope = sorted(str(item.id) for item in catalog.instruments())
+            expected_scope = sorted(item.instrument_id for item in request.instruments)
+            if instrument_scope != expected_scope:
+                raise GatewayContractError(
+                    "persisted Nautilus instrument scope differs from the governed ingest contract"
+                )
+            all_records = list(instrument_records.values())
+            event_start = min(_parse_time(item["event_time_start"]) for item in all_records)
+            event_end = max(_parse_time(item["event_time_end"]) for item in all_records)
+            available_start = min(
+                _parse_time(item["available_time_start"]) for item in all_records
+            )
+            available_end = max(
+                _parse_time(item["available_time_end"]) for item in all_records
+            )
+            manifest = {
+                "protocol_version": PROTOCOL_VERSION,
+                "runtime_version": nautilus_version,
+                "catalog_key": request.catalog_key,
+                "nautilus_data_type": request.nautilus_data_type,
+                "instrument_scope": instrument_scope,
+                "instruments": instrument_records,
+                "event_time_start": event_start.isoformat(),
+                "event_time_end": event_end.isoformat(),
+                "available_time_start": available_start.isoformat(),
                 "available_time_end": available_end.isoformat(),
+                "row_count": sum(int(item["row_count"]) for item in all_records),
+                "schema_revision": QUOTE_TICK_SCHEMA_REVISION,
+                "quality_result": {
+                    "state": "VALID",
+                    "duplicate_timestamps": 0,
+                    "crossed_quotes": 0,
+                    "sorted": True,
+                },
+                "point_in_time_result": {
+                    "state": "VALID",
+                    "replay_order": "TS_INIT",
+                    "event_time_preserved": True,
+                    "availability_time_preserved": True,
+                },
+                "ingested_at": _utc_now().isoformat(),
             }
-        }
-        instrument_scope = sorted(str(item.id) for item in catalog.instruments())
-        all_records = list(instrument_records.values())
-        catalog_event_start = min(_parse_time(item["event_time_start"]) for item in all_records)
-        catalog_event_end = max(_parse_time(item["event_time_end"]) for item in all_records)
-        catalog_available_start = min(
-            _parse_time(item["available_time_start"]) for item in all_records
-        )
-        catalog_available_end = max(
-            _parse_time(item["available_time_end"]) for item in all_records
-        )
-        manifest = {
-            "protocol_version": PROTOCOL_VERSION,
-            "runtime_version": nautilus_version,
-            "catalog_key": request.catalog_key,
-            "nautilus_data_type": request.nautilus_data_type,
-            "instrument_scope": instrument_scope,
-            "instruments": instrument_records,
-            "event_time_start": catalog_event_start.isoformat(),
-            "event_time_end": catalog_event_end.isoformat(),
-            "available_time_start": catalog_available_start.isoformat(),
-            "available_time_end": catalog_available_end.isoformat(),
-            "row_count": sum(int(item["row_count"]) for item in all_records),
-            "schema_revision": schema_revision,
-            "quality_result": {
-                "state": "VALID",
-                "duplicate_timestamps": 0,
-                "crossed_quotes": 0,
-                "sorted": True,
-            },
-            "point_in_time_result": {
-                "state": "VALID",
-                "replay_order": "TS_INIT",
-                "event_time_preserved": True,
-                "availability_time_preserved": True,
-            },
-            "ingested_at": _utc_now().isoformat(),
-        }
-        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-        request_path.write_text(
-            json.dumps(canonical_request, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-        return {
-            "protocol_version": PROTOCOL_VERSION,
-            "runtime_version": nautilus_version,
-            "catalog_key": request.catalog_key,
-            "catalog_uri": f"nautilus-catalog://{request.catalog_key}",
-            "nautilus_data_type": request.nautilus_data_type,
-            "instrument_scope": instrument_scope,
-            "event_time_start": catalog_event_start,
-            "event_time_end": catalog_event_end,
-            "available_time_start": catalog_available_start,
-            "available_time_end": catalog_available_end,
-            "row_count": manifest["row_count"],
-            "schema_revision": schema_revision,
-            "quality_result": manifest["quality_result"],
-            "point_in_time_result": manifest["point_in_time_result"],
-            "ingested_at": datetime.fromisoformat(manifest["ingested_at"]),
-        }
+            (staging_path / "quazonai-catalog-manifest.json").write_text(
+                json.dumps(manifest, indent=2), encoding="utf-8"
+            )
+            (staging_path / "quazonai-ingest-request.json").write_text(
+                json.dumps(canonical_request, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+            os.rename(staging_path, catalog_path)
+            staging_path = None
+            return self._manifest_result(manifest)
+        finally:
+            os.close(lock_fd)
+            lock_path.unlink(missing_ok=True)
+            if staging_path is not None and staging_path.exists():
+                shutil.rmtree(staging_path, ignore_errors=True)
 
     def validate_catalog(self, request: CatalogValidationRequest) -> dict[str, Any]:
         if request.protocol_version != PROTOCOL_VERSION:
@@ -435,26 +588,92 @@ class NautilusGatewayEngine:
             findings.append({"code": "CATALOG_MANIFEST_SCOPE_MISMATCH"})
         if (
             request.nautilus_data_type
-            and request.nautilus_data_type != manifest["nautilus_data_type"]
+            and request.nautilus_data_type != manifest.get("nautilus_data_type")
         ):
             findings.append(
                 {
                     "code": "DATA_TYPE_MISMATCH",
                     "expected": request.nautilus_data_type,
-                    "actual": manifest["nautilus_data_type"],
+                    "actual": manifest.get("nautilus_data_type"),
                 }
             )
+
+        ticks: list[Any] = []
+        if scope:
+            try:
+                ticks = list(catalog.query_quote_ticks(identifiers=scope))
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                findings.append({"code": "CATALOG_DATA_QUERY_FAILED", "detail": str(exc)})
+        if not ticks:
+            findings.append({"code": "CATALOG_QUOTE_DATA_MISSING"})
+
+        actual_row_count = len(ticks)
+        actual_event_start: datetime | None = None
+        actual_event_end: datetime | None = None
+        actual_available_start: datetime | None = None
+        actual_available_end: datetime | None = None
+        if ticks:
+            tick_scope = sorted({str(tick.instrument_id) for tick in ticks})
+            if tick_scope != scope:
+                findings.append(
+                    {
+                        "code": "CATALOG_DATA_SCOPE_MISMATCH",
+                        "instrument_scope": scope,
+                        "quote_scope": tick_scope,
+                    }
+                )
+            event_values = [int(tick.ts_event) for tick in ticks]
+            init_values = [int(tick.ts_init) for tick in ticks]
+            actual_event_start = datetime.fromtimestamp(min(event_values) / 1_000_000_000, UTC)
+            actual_event_end = datetime.fromtimestamp(max(event_values) / 1_000_000_000, UTC)
+            actual_available_start = datetime.fromtimestamp(min(init_values) / 1_000_000_000, UTC)
+            actual_available_end = datetime.fromtimestamp(max(init_values) / 1_000_000_000, UTC)
+            if any(init < event for init, event in zip(init_values, event_values, strict=True)):
+                findings.append({"code": "CATALOG_POINT_IN_TIME_ORDER_INVALID"})
+
+        if actual_row_count != int(manifest.get("row_count", -1)):
+            findings.append(
+                {
+                    "code": "CATALOG_MANIFEST_ROW_COUNT_MISMATCH",
+                    "manifest": manifest.get("row_count"),
+                    "actual": actual_row_count,
+                }
+            )
+        bounds = {
+            "event_time_start": actual_event_start,
+            "event_time_end": actual_event_end,
+            "available_time_start": actual_available_start,
+            "available_time_end": actual_available_end,
+        }
+        for key, actual in bounds.items():
+            if actual is None:
+                continue
+            try:
+                expected = _parse_time(manifest[key])
+            except (GatewayContractError, KeyError, TypeError, ValueError):
+                findings.append({"code": "CATALOG_MANIFEST_TIME_INVALID", "field": key})
+                continue
+            if actual != expected:
+                findings.append(
+                    {
+                        "code": "CATALOG_MANIFEST_TIME_MISMATCH",
+                        "field": key,
+                        "manifest": expected.isoformat(),
+                        "actual": actual.isoformat(),
+                    }
+                )
+
         return {
             "protocol_version": PROTOCOL_VERSION,
             "runtime_version": nautilus_version,
             "catalog_key": request.catalog_key,
-            "valid": not findings and bool(instruments),
+            "valid": not findings and bool(instruments) and bool(ticks),
             "instrument_scope": scope,
-            "row_count": manifest["row_count"],
-            "event_time_start": manifest["event_time_start"],
-            "event_time_end": manifest["event_time_end"],
-            "available_time_start": manifest["available_time_start"],
-            "available_time_end": manifest["available_time_end"],
+            "row_count": actual_row_count,
+            "event_time_start": actual_event_start,
+            "event_time_end": actual_event_end,
+            "available_time_start": actual_available_start,
+            "available_time_end": actual_available_end,
             "findings": findings,
         }
 
@@ -510,9 +729,7 @@ class NautilusGatewayEngine:
         config: dict[str, Any], request: BacktestExperimentRequest
     ) -> dict[str, Any]:
         result = dict(config)
-        instruments = [
-            NautilusGatewayEngine._instrument(item).id for item in request.instrument_ids
-        ]
+        instruments = [InstrumentId.from_str(item) for item in request.instrument_ids]
         if "instrument_id" in result:
             result["instrument_id"] = instruments[0]
         if "instrument_ids" in result:
@@ -552,7 +769,8 @@ class NautilusGatewayEngine:
                 f"catalog validation failed: {validation['findings']!r}"
             )
         catalog_path = self._catalog_path(request.catalog_key)
-        instruments = [self._instrument(item) for item in request.instrument_ids]
+        catalog = ParquetDataCatalog(path=str(catalog_path))
+        instruments = self._catalog_instruments(catalog, request.instrument_ids)
         venue_names = sorted({str(instrument.id).rsplit(".", 1)[-1] for instrument in instruments})
         started_at = _utc_now()
 
@@ -702,16 +920,7 @@ class NautilusGatewayEngine:
     def run_sealed_backtest(self, request: BacktestExperimentRequest) -> dict[str, Any]:
         sealed = request.model_copy(update={"mode": ExperimentMode.SEALED})
         raw = self.run_backtest(sealed)
-        statistics = raw["statistics"]
-        disclosure = {
-            "passed": bool(raw["fills"] and raw["positions"]),
-            "statistics": statistics,
-            "pnl_summary": raw["pnl"],
-            "order_count": len(raw["orders"]),
-            "fill_count": len(raw["fills"]),
-            "position_count": len(raw["positions"]),
-            "policy": "AGGREGATES_ONLY_V1",
-        }
+        disclosure = _sealed_performance_disclosure(raw)
         return {
             "protocol_version": PROTOCOL_VERSION,
             "runtime_version": nautilus_version,
