@@ -38,11 +38,11 @@ class QuoteRow(StrictModel):
 class CatalogIngestRequest(StrictModel):
     protocol_version: str = "1"
     request_id: UUID = Field(default_factory=uuid4)
-    catalog_key: str = Field(pattern=r"^[A-Za-z0-9._-]+$")
-    provider: str
-    source: str
-    source_license: str | None = None
-    instrument_id: str
+    catalog_key: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    provider: str = Field(min_length=1, max_length=200)
+    source: str = Field(min_length=1, max_length=500)
+    source_license: str | None = Field(default=None, max_length=500)
+    instrument_id: str = Field(min_length=3, max_length=200)
     nautilus_data_type: Literal["QuoteTick"] = "QuoteTick"
     rows: list[QuoteRow] = Field(min_length=2, max_length=1_000_000)
 
@@ -50,16 +50,16 @@ class CatalogIngestRequest(StrictModel):
 class CatalogValidationRequest(StrictModel):
     protocol_version: str = "1"
     request_id: UUID = Field(default_factory=uuid4)
-    catalog_key: str
+    catalog_key: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
     instrument_ids: list[str] = Field(default_factory=list)
     nautilus_data_type: str | None = None
 
 
 class StrategyArtifact(StrictModel):
-    artifact_id: str
+    artifact_id: str = Field(min_length=1, max_length=240)
     kind: Literal["IMPORTABLE", "SOURCE_BUNDLE"]
-    strategy_path: str
-    config_path: str
+    strategy_path: str = Field(min_length=3, max_length=500)
+    config_path: str = Field(min_length=3, max_length=500)
     config: dict[str, Any] = Field(default_factory=dict)
     source_files: dict[str, str] = Field(default_factory=dict)
     requirements: list[str] = Field(default_factory=list)
@@ -82,7 +82,7 @@ class BacktestExperimentRequest(StrictModel):
     experiment_id: UUID = Field(default_factory=uuid4)
     mode: ExperimentMode = ExperimentMode.DISCOVERY
     dataset_revision_id: UUID
-    catalog_key: str
+    catalog_key: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
     instrument_ids: list[str] = Field(min_length=1)
     strategy: StrategyArtifact
     start_time: datetime | None = None
@@ -91,6 +91,20 @@ class BacktestExperimentRequest(StrictModel):
     data_config: dict[str, Any] = Field(default_factory=dict)
     risk_config: dict[str, Any] = Field(default_factory=dict)
     tags: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def reject_unapplied_configuration(self) -> BacktestExperimentRequest:
+        if self.data_config:
+            raise ValueError(
+                "data_config is reserved until protocol v1 explicitly applies its fields; use the "
+                "top-level catalog/instrument/time contract instead"
+            )
+        if self.risk_config:
+            raise ValueError(
+                "risk_config is reserved until protocol v1 explicitly applies a Nautilus RiskEngine "
+                "configuration"
+            )
+        return self
 
 
 class CandidateVerificationRequest(StrictModel):
