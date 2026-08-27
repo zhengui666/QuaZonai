@@ -22,11 +22,18 @@ from quazonai_nautilus_gateway.models import (
 def _rows(*, base: float = 1.09) -> list[QuoteRow]:
     started = datetime(2024, 1, 2, tzinfo=UTC)
     result: list[QuoteRow] = []
-    # Repeated trends force more than one fast/slow EMA crossing.
+    # Hold stable regimes and then step sharply between them. Once both EMAs are
+    # initialized, each regime change deterministically flips fast-vs-slow and
+    # therefore submits a real market order through Nautilus's matching engine.
     for index in range(360):
-        phase = index % 90
-        offset = phase if phase < 45 else 90 - phase
-        mid = base + (offset - 22) * 0.0001
+        if index < 60:
+            mid = base - 0.01
+        elif index < 180:
+            mid = base + 0.01
+        elif index < 300:
+            mid = base - 0.01
+        else:
+            mid = base + 0.01
         timestamp = started + timedelta(minutes=index)
         result.append(
             QuoteRow(
@@ -126,7 +133,9 @@ def test_real_catalog_backtest_and_sealed_disclosure(tmp_path: Path) -> None:
     request = _request()
     evidence = engine.run_backtest(request)
     assert evidence["runtime_version"] == "1.231.0"
-    assert evidence["statistics"]["total_events"] > 0
+    # BacktestResult.total_events counts domain events, not loaded market data;
+    # iterations is the direct proof that both 360-row QuoteTick streams ran.
+    assert evidence["statistics"]["iterations"] >= 720
     assert evidence["statistics"]["total_orders"] > 0
     assert evidence["orders"]
     assert evidence["fills"]
