@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from uuid import UUID
@@ -62,12 +63,18 @@ def claim_next_job(
     owner: str,
     lease_seconds: int,
     now: datetime | None = None,
+    kinds: Collection[str] | None = None,
 ) -> Job | None:
+    """Claim one ready job, optionally constrained to an explicit worker capability set."""
     current = now or datetime.now(UTC)
+    query = select(Job).where(Job.state == "READY", Job.available_at <= current)
+    if kinds is not None:
+        allowed = tuple(sorted(set(kinds)))
+        if not allowed:
+            return None
+        query = query.where(Job.kind.in_(allowed))
     job = session.execute(
-        select(Job)
-        .where(Job.state == "READY", Job.available_at <= current)
-        .order_by(Job.available_at.asc(), Job.created_at.asc())
+        query.order_by(Job.available_at.asc(), Job.created_at.asc())
         .limit(1)
         .with_for_update(skip_locked=True)
     ).scalar_one_or_none()
