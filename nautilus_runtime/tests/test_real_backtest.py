@@ -2,20 +2,27 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import zipfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
+from nautilus_trader.test_kit.providers import TestInstrumentProvider
 
-from quazonai_nautilus_gateway.engine import GatewayContractError, NautilusGatewayEngine
+from quazonai_nautilus_gateway.engine import (
+    GatewayContractError,
+    NautilusGatewayEngine,
+    _sealed_performance_disclosure,
+)
 from quazonai_nautilus_gateway.models import (
     BacktestExperimentRequest,
     CandidateVerificationRequest,
     CatalogIngestRequest,
     CatalogValidationRequest,
     ExperimentMode,
+    InstrumentQuoteBatch,
     QuoteRow,
     StrategyArtifact,
 )
@@ -38,24 +45,35 @@ class OneShotConfig(StrategyConfig, frozen=True):
 class OneShotStrategy(Strategy):
     def __init__(self, config: OneShotConfig):
         super().__init__(config)
-        self._submitted = False
+        self._entered = False
+        self._closed = False
+        self._ticks = 0
 
     def on_start(self) -> None:
         self.subscribe_quote_ticks(self.config.instrument_id)
 
     def on_quote_tick(self, tick: QuoteTick) -> None:
-        if self._submitted:
-            return
+        self._ticks += 1
         instrument = self.cache.instrument(self.config.instrument_id)
         if instrument is None:
             raise RuntimeError(f"instrument unavailable: {self.config.instrument_id}")
-        order = self.order_factory.market(
-            instrument_id=self.config.instrument_id,
-            order_side=OrderSide.BUY,
-            quantity=instrument.make_qty(self.config.trade_size),
-        )
-        self.submit_order(order)
-        self._submitted = True
+        if not self._entered:
+            order = self.order_factory.market(
+                instrument_id=self.config.instrument_id,
+                order_side=OrderSide.BUY,
+                quantity=instrument.make_qty(self.config.trade_size),
+            )
+            self.submit_order(order)
+            self._entered = True
+            return
+        if not self._closed and self._ticks >= 20:
+            order = self.order_factory.market(
+                instrument_id=self.config.instrument_id,
+                order_side=OrderSide.SELL,
+                quantity=instrument.make_qty(self.config.trade_size),
+            )
+            self.submit_order(order)
+            self._closed = True
 '''.lstrip()
 
 
@@ -77,13 +95,24 @@ def _rows(*, base: float = 1.09) -> list[QuoteRow]:
     return result
 
 
+def _batch(instrument_id: str, *, base: float) -> InstrumentQuoteBatch:
+    instrument = TestInstrumentProvider.default_fx_ccy(instrument_id.split(".", 1)[0])
+    assert str(instrument.id) == instrument_id
+    return InstrumentQuoteBatch(
+        instrument_id=instrument_id,
+        instrument_type=type(instrument).__name__,
+        instrument_definition=instrument.to_dict(),
+        rows=_rows(base=base),
+    )
+
+
 def _request() -> BacktestExperimentRequest:
     return BacktestExperimentRequest(
         experiment_id=uuid4(),
         mode=ExperimentMode.DISCOVERY,
         dataset_revision_id=uuid4(),
         catalog_key="integration-fx-quotes",
-        instrument_ids=["EUR/USD.SIM"],
+        instrument_ids=["EUR/USD.SIM", "GBP/USD.SIM"],
         strategy=StrategyArtifact(
             artifact_id="one-shot-source-bundle-v1",
             kind="SOURCE_BUNDLE",
@@ -96,6 +125,7 @@ def _request() -> BacktestExperimentRequest:
             source_files={"one_shot.py": _ONE_SHOT_SOURCE},
             requirements=["nautilus_trader==1.231.0"],
         ),
+        venue_config={"oms_type": "NETTING"},
     )
 
 
@@ -117,11 +147,13 @@ def _ingest_fixture(engine: NautilusGatewayEngine) -> dict:
     return engine.ingest(
         CatalogIngestRequest(
             catalog_key="integration-fx-quotes",
-            provider="CI_GENERATED_CSV_EQUIVALENT",
-            source="fixture://deterministic-eur-usd-quotes.csv",
+            provider="CI_GENERATED_GOVERNED_QUOTES",
+            source="fixture://deterministic-multi-fx-quotes",
             source_license="CC0-1.0",
-            instrument_id="EUR/USD.SIM",
-            rows=_rows(),
+            instruments=[
+                _batch("EUR/USD.SIM", base=1.09),
+                _batch("GBP/USD.SIM", base=1.27),
+            ],
         )
     )
 
@@ -130,7 +162,8 @@ def test_real_catalog_backtest_and_sealed_disclosure(tmp_path: Path) -> None:
     engine = NautilusGatewayEngine(tmp_path)
     first = _ingest_fixture(engine)
     assert first["catalog_uri"] == "nautilus-catalog://integration-fx-quotes"
-    assert first["row_count"] == 360
+    assert first["row_count"] == 720
+    assert first["instrument_scope"] == ["EUR/USD.SIM", "GBP/USD.SIM"]
     assert first["schema_revision"] == "nautilus.quote_tick.v2"
     assert first["quality_result"]["state"] == "VALID"
     assert first["point_in_time_result"]["replay_order"] == "TS_INIT"
@@ -142,36 +175,36 @@ def test_real_catalog_backtest_and_sealed_disclosure(tmp_path: Path) -> None:
         engine.ingest(
             CatalogIngestRequest(
                 catalog_key="integration-fx-quotes",
-                provider="CI_GENERATED_CSV_EQUIVALENT",
-                source="fixture://different-contract.csv",
+                provider="CI_GENERATED_GOVERNED_QUOTES",
+                source="fixture://different-contract",
                 source_license="CC0-1.0",
-                instrument_id="EUR/USD.SIM",
-                rows=_rows(base=1.27),
+                instruments=[
+                    _batch("EUR/USD.SIM", base=1.09),
+                    _batch("GBP/USD.SIM", base=1.28),
+                ],
             )
         )
 
     validated = engine.validate_catalog(
         CatalogValidationRequest(
             catalog_key="integration-fx-quotes",
-            instrument_ids=["EUR/USD.SIM"],
+            instrument_ids=["EUR/USD.SIM", "GBP/USD.SIM"],
             nautilus_data_type="QuoteTick",
         )
     )
-    assert validated["valid"] is True
-    assert validated["row_count"] == 360
+    assert validated["valid"] is True, validated["findings"]
+    assert validated["row_count"] == 720
 
     request = _request()
     evidence = engine.run_backtest(request)
     assert evidence["runtime_version"] == "1.231.0"
-    # BacktestResult.total_events counts domain events, not loaded market data;
-    # iterations proves the immutable 360-row QuoteTick stream ran in the child.
-    assert evidence["statistics"]["iterations"] >= 360
-    assert evidence["statistics"]["total_orders"] > 0
+    assert evidence["statistics"]["iterations"] >= 720
+    assert evidence["statistics"]["total_orders"] >= 2
     assert evidence["orders"]
     assert evidence["fills"]
     assert evidence["positions"]
     assert isinstance(evidence["pnl"], dict)
-    assert evidence["diagnostics"]["loaded_instrument_count"] == 1
+    assert evidence["diagnostics"]["loaded_instrument_count"] == 2
 
     sealed = engine.run_sealed_backtest(
         request.model_copy(update={"mode": ExperimentMode.SEALED})
@@ -180,7 +213,49 @@ def test_real_catalog_backtest_and_sealed_disclosure(tmp_path: Path) -> None:
     assert "orders" not in sealed
     assert "fills" not in sealed
     assert "positions" not in sealed
-    assert sealed["disclosure"]["fill_count"] > 0
+    disclosure = sealed["disclosure"]
+    assert disclosure["policy"] == "SEALED_PERFORMANCE_RISK_V1"
+    assert disclosure["passed"] is True, disclosure
+    assert disclosure["quality_score"] >= 0.60
+    assert disclosure["fill_count"] >= 2
+    assert "statistics" not in disclosure
+    assert "pnl_summary" not in disclosure
+
+
+def test_catalog_validation_reads_parquet_instead_of_trusting_manifest(tmp_path: Path) -> None:
+    engine = NautilusGatewayEngine(tmp_path)
+    _ingest_fixture(engine)
+    manifest_path = (
+        tmp_path / "catalogs" / "integration-fx-quotes" / "quazonai-catalog-manifest.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["row_count"] = 999_999
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    validation = engine.validate_catalog(
+        CatalogValidationRequest(catalog_key="integration-fx-quotes")
+    )
+    assert validation["valid"] is False
+    assert validation["row_count"] == 720
+    assert any(
+        item["code"] == "CATALOG_MANIFEST_ROW_COUNT_MISMATCH"
+        for item in validation["findings"]
+    )
+
+
+def test_sealed_policy_rejects_trading_activity_with_negative_performance() -> None:
+    disclosure = _sealed_performance_disclosure(
+        {
+            "orders": [{"order_id": "1"}],
+            "fills": [{"trade_id": "1"}],
+            "positions": [{"position_id": "1"}],
+            "pnl": {"USD": {"PnL (total)": -10.0, "Profit Factor": 0.5}},
+            "statistics": {"returns": {"Sharpe Ratio (252 days)": -0.2}, "general": {}},
+        }
+    )
+    assert disclosure["passed"] is False
+    assert disclosure["quality_score"] == 0.0
+    assert disclosure["policy_checks"]["positive_total_pnl"] is False
 
 
 def test_candidate_bundle_v2_replays_exact_wheel_against_reference_fixture(tmp_path: Path) -> None:
@@ -213,7 +288,10 @@ def test_candidate_bundle_v2_replays_exact_wheel_against_reference_fixture(tmp_p
         "validation": {},
         "evidence": {},
         "lineage": {},
-        "target_weights": [{"instrument_id": "EUR/USD.SIM", "target_weight": "1.0"}],
+        "target_weights": [
+            {"instrument_id": "EUR/USD.SIM", "target_weight": "0.5"},
+            {"instrument_id": "GBP/USD.SIM", "target_weight": "0.5"},
+        ],
     }
     fixture = {
         "dataset_revision_id": str(reference_request.dataset_revision_id),
