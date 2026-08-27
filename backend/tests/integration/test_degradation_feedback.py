@@ -103,6 +103,8 @@ def test_explicit_degradation_feedback_queues_research_only(engine: Engine) -> N
             started_at=now,
             finished_at=now,
         )
+        session.add(source)
+        session.flush()
         unrelated_branch = ResearchBranch(
             program_id=program.id,
             parent_branch_id=root_branch.id,
@@ -142,7 +144,7 @@ def test_explicit_degradation_feedback_queues_research_only(engine: Engine) -> N
             preflight_state="READY",
             public_config={},
         )
-        session.add_all([source, unrelated_branch, alpha, portfolio_program, downstream])
+        session.add_all([unrelated_branch, alpha, portfolio_program, downstream])
         session.flush()
         candidate = PortfolioCandidate(
             portfolio_program_id=portfolio_program.id,

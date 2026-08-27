@@ -574,11 +574,9 @@ def _validate_mandate_after_simulation(
     for key, (aliases, direction) in checks.items():
         if key not in constraints:
             continue
-        actual = abs(
-            _require_evidence_metric(evidence, constraint=key, aliases=aliases)
-            if key == "max_drawdown"
-            else _require_evidence_metric(evidence, constraint=key, aliases=aliases)
-        )
+        actual = _require_evidence_metric(evidence, constraint=key, aliases=aliases)
+        if key == "max_drawdown":
+            actual = abs(actual)
         limit = _number(constraints[key], key=key)
         violated = actual > limit if direction == "max" else actual < limit
         if violated:
@@ -701,14 +699,6 @@ def simulate_portfolio_candidate(
                 "The bound Portfolio Mandate changed during transaction-level simulation.",
                 409,
             )
-        current_constraints = _validate_mandate_before_simulation(persisted_mandate, alpha)
-        if current_constraints != mandate_constraints:
-            raise QfError(
-                "PORTFOLIO_MANDATE_CHANGED",
-                "The bound Portfolio Mandate constraints changed during simulation.",
-                409,
-            )
-        _validate_mandate_after_simulation(current_constraints, simulation_evidence)
         persisted_alpha = session.get(AlphaQualification, alpha_id)
         if (
             persisted_alpha is None
@@ -716,6 +706,16 @@ def simulate_portfolio_candidate(
             or persisted_alpha.degradation_state != "HEALTHY"
         ):
             raise QfError("ALPHA_NOT_PORTFOLIO_READY", "Selected Alpha changed before promotion.", 409)
+        current_constraints = _validate_mandate_before_simulation(
+            persisted_mandate, persisted_alpha
+        )
+        if current_constraints != mandate_constraints:
+            raise QfError(
+                "PORTFOLIO_MANDATE_CHANGED",
+                "The bound Portfolio Mandate constraints changed during simulation.",
+                409,
+            )
+        _validate_mandate_after_simulation(current_constraints, simulation_evidence)
         request_json = BacktestExperimentRequest.model_validate(simulation.request_json)
         strategy = StrategyArtifact.model_validate(request_json.strategy)
         candidate = PortfolioCandidate(
