@@ -179,3 +179,18 @@ def test_gateway_backtest_idempotency_replays_terminal_contract_failure(
     assert first.status_code == 422
     assert replay.status_code == 422
     assert calls == [experiment_id]
+
+def test_sealed_gateway_hides_catalog_validation(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("NAUTILUS_GATEWAY_ALLOW_ANONYMOUS", "true")
+    monkeypatch.delenv("NAUTILUS_GATEWAY_TOKEN", raising=False)
+    client = TestClient(create_app(data_root=tmp_path, role="SEALED"))
+    response = client.post(
+        "/v1/catalogs/validate",
+        json={
+            "request_id": str(uuid4()),
+            "catalog_key": "sealed-private-catalog",
+            "instrument_ids": [],
+        },
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"] == "operation unavailable on this gateway role"

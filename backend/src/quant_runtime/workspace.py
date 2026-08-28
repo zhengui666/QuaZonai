@@ -347,6 +347,20 @@ def _controlled_experiment_root(workspace: Path) -> Path | None:
     return contracts_root
 
 
+class WorkspaceExperimentActivity(list[UUID]):
+    """List-compatible experiment ids plus contract rejections lacking a usable UUID."""
+
+    rejected_contract_count: int
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.rejected_contract_count = 0
+
+    @property
+    def has_activity(self) -> bool:
+        return bool(self) or self.rejected_contract_count > 0
+
+
 def execute_workspace_experiments(
     settings: Settings,
     *,
@@ -355,11 +369,11 @@ def execute_workspace_experiments(
     program_id: UUID,
     branch_id: UUID,
     already_executed: set[UUID],
-) -> list[UUID]:
-    """Execute new Discovery contracts and write structured evidence for the next Codex turn."""
+) -> WorkspaceExperimentActivity:
+    """Execute new Discovery contracts and report all evidence/rejection activity."""
     contracts_root = _controlled_experiment_root(workspace)
     if contracts_root is None:
-        return []
+        return WorkspaceExperimentActivity()
     paths = sorted(path for path in contracts_root.iterdir() if path.suffix == ".json")
     if any(path.is_symlink() or not path.is_file() for path in paths):
         raise QfError(
@@ -378,7 +392,7 @@ def execute_workspace_experiments(
     engine = create_database_engine(settings)
     factory = create_session_factory(engine)
     coordinator = ExperimentCoordinator(factory)
-    executed: list[UUID] = []
+    executed = WorkspaceExperimentActivity()
     try:
         for path in paths:
             try:
@@ -394,6 +408,7 @@ def execute_workspace_experiments(
                         "failure_message": exc.message,
                     },
                 )
+                executed.rejected_contract_count += 1
                 continue
             if contract.experiment_id in already_executed:
                 continue

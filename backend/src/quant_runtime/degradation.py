@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import exists, or_, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -73,9 +73,11 @@ def schedule_degradation_missions(session: Session) -> int:
                 ForwardEvidenceEpisode.state == "FEEDBACK_COMPLETE",
                 or_(
                     ForwardEvidenceEpisode.evidence["degraded"].as_boolean().is_(True),
-                    ForwardEvidenceEpisode.evidence["degradation_state"]
-                    .as_string()
-                    .in_(sorted(_DEGRADATION_STATES)),
+                    func.upper(
+                        func.trim(
+                            ForwardEvidenceEpisode.evidence["degradation_state"].as_string()
+                        )
+                    ).in_(sorted(_DEGRADATION_STATES)),
                 ),
                 ~handled_episode,
             )

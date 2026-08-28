@@ -398,17 +398,16 @@ def run_mission(settings: Settings, job_id: UUID) -> None:
                         500,
                     )
                 executed_experiment_ids: set[UUID] = set()
-                executed_experiment_ids.update(
-                    execute_workspace_experiments(
-                        settings,
-                        workspace=workspace,
-                        mission_id=mission.id,
-                        program_id=mission.program_id,
-                        branch_id=mission.branch_id,
-                        already_executed=executed_experiment_ids,
-                    )
+                experiment_activity = execute_workspace_experiments(
+                    settings,
+                    workspace=workspace,
+                    mission_id=mission.id,
+                    program_id=mission.program_id,
+                    branch_id=mission.branch_id,
+                    already_executed=executed_experiment_ids,
                 )
-                if executed_experiment_ids:
+                executed_experiment_ids.update(experiment_activity)
+                if experiment_activity.has_activity:
                     result = thread.run(
                         "Read evidence/INDEX.json and every new evidence/*.json file. Compare the real "
                         "Nautilus orders, fills, positions, PnL and statistics, then update RESULT.md. "

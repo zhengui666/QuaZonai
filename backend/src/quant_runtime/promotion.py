@@ -64,6 +64,29 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def _evidence_program_lineage_ids(session: Session, program_id: UUID) -> set[UUID]:
+    """Return the complete immutable evidence-inheritance lineage for scoring exposure."""
+    lineage: set[UUID] = set()
+    current_id: UUID | None = program_id
+    while current_id is not None:
+        if current_id in lineage:
+            raise QfError(
+                "RESEARCH_PROGRAM_EVIDENCE_LINEAGE_CYCLE",
+                "Research Program evidence inheritance contains a cycle.",
+                500,
+            )
+        lineage.add(current_id)
+        program = session.get(ResearchProgram, current_id)
+        if program is None:
+            raise QfError(
+                "RESEARCH_PROGRAM_NOT_FOUND",
+                "Research Program in evidence lineage does not exist.",
+                404,
+            )
+        current_id = program.evidence_inherited_from_program_id
+    return lineage
+
+
 def _require_real_transaction_evidence(entry: SearchLedgerEntry) -> dict[str, Any]:
     if (
         entry.state != "SUCCEEDED"
@@ -210,8 +233,8 @@ def _discovery_quality_score(
         score += 0.20 * math.tanh(sharpe / 3.0)
     if total_return is not None:
         score += 0.20 * math.tanh(total_return / 0.25)
-    elif total_pnl is not None:
-        score += 0.12 * math.tanh(total_pnl / 10_000.0)
+    # Absolute PnL is audit evidence only. It is deliberately not a scoring fallback:
+    # account size, trade notional and currency scale are Mission-controlled inputs.
     if profit_factor is not None:
         score += 0.10 * math.tanh((profit_factor - 1.0) / 2.0)
     if max_drawdown is not None:
@@ -222,13 +245,14 @@ def _discovery_quality_score(
     score -= search_penalty
     bounded = round(min(0.99, max(0.01, score)), 8)
     return bounded, {
-        "model": "DISCOVERY_PUBLIC_PERFORMANCE_V1",
+        "model": "DISCOVERY_PUBLIC_PERFORMANCE_V2",
         "score": bounded,
         "sharpe": sharpe,
         "total_return": total_return,
         "max_drawdown": max_drawdown,
         "profit_factor": profit_factor,
         "total_pnl": total_pnl,
+        "absolute_pnl_used_for_scoring": False,
         "fill_count": fill_count,
         "search_attempt_count": attempts,
         "search_exposure_penalty": round(search_penalty, 8),
@@ -280,6 +304,46 @@ def _select_sealed_dataset(
         raise QfError(
             "SEALED_DATASET_SCOPE_MISMATCH",
             "Sealed Dataset Revision does not cover the Discovery instrument scope.",
+            422,
+        )
+    source_catalog_uri = (source_dataset.catalog_uri or "").strip()
+    sealed_catalog_uri = (dataset.catalog_uri or "").strip()
+    if source_catalog_uri and sealed_catalog_uri and source_catalog_uri == sealed_catalog_uri:
+        raise QfError(
+            "SEALED_DATASET_NOT_INDEPENDENT",
+            "Sealed evaluation must use a catalog revision independent from Discovery.",
+            422,
+        )
+
+    source_start = source_dataset.event_start
+    source_end = source_dataset.event_end
+    sealed_start = dataset.event_start
+    sealed_end = dataset.event_end
+    bounds = (source_start, source_end, sealed_start, sealed_end)
+    if any(value is None for value in bounds):
+        raise QfError(
+            "SEALED_DATASET_INDEPENDENCE_UNVERIFIABLE",
+            "Discovery and Sealed revisions require explicit event-time bounds to prove holdout independence.",
+            422,
+        )
+    assert source_start is not None and source_end is not None
+    assert sealed_start is not None and sealed_end is not None
+    if any(value.tzinfo is None or value.utcoffset() is None for value in bounds if value is not None):
+        raise QfError(
+            "SEALED_DATASET_INDEPENDENCE_UNVERIFIABLE",
+            "Discovery and Sealed event-time bounds must be timezone-aware.",
+            422,
+        )
+    if source_start >= source_end or sealed_start >= sealed_end:
+        raise QfError(
+            "SEALED_DATASET_INDEPENDENCE_UNVERIFIABLE",
+            "Discovery and Sealed revisions require valid event-time intervals.",
+            422,
+        )
+    if source_start < sealed_end and sealed_start < source_end:
+        raise QfError(
+            "SEALED_DATASET_TIME_OVERLAP",
+            "Sealed evaluation event-time coverage must not overlap Discovery coverage.",
             422,
         )
     return dataset
@@ -492,12 +556,13 @@ def qualify_alpha(
                 "Sealed Level-1 disclosure did not return a recognized qualification category.",
                 500,
             )
+        evidence_program_ids = _evidence_program_lineage_ids(session, source_program_id)
         search_attempt_count = int(
             session.scalar(
                 select(func.count())
                 .select_from(SearchLedgerEntry)
                 .where(
-                    SearchLedgerEntry.program_id == source_program_id,
+                    SearchLedgerEntry.program_id.in_(evidence_program_ids),
                     SearchLedgerEntry.mode == ExperimentMode.DISCOVERY.value,
                 )
             )

@@ -108,6 +108,7 @@ def create_app(
 
     @app.post("/v1/catalogs/validate", dependencies=[Depends(_authorize)])
     def validate_catalog(request: CatalogValidationRequest) -> dict[str, Any]:
+        _require_role(gateway_role, "RESEARCH")
         return engine().validate_catalog(request)
 
     @app.post("/v1/backtests", dependencies=[Depends(_authorize)])
