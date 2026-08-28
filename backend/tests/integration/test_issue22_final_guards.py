@@ -10,7 +10,7 @@ from sqlalchemy import Engine
 from api import research_runtime
 from errors import QfError
 from main import create_app
-from quant_runtime.promotion import _mandate_constraints, _validate_mandate_after_simulation
+from quant_runtime.promotion import _mandate_constraints
 from settings import Settings
 
 
@@ -71,13 +71,11 @@ def test_capacity_constraint_is_rejected_before_remote_simulation() -> None:
     assert raised.value.code == "PORTFOLIO_MANDATE_CONSTRAINT_UNSUPPORTED"
 
 
-def test_negative_capacity_cannot_satisfy_positive_mandate_floor() -> None:
+def test_top_level_capacity_constraint_is_also_rejected_before_remote_simulation() -> None:
+    mandate = SimpleNamespace(spec_json={"min_capacity_ratio": 0.5})
     with pytest.raises(QfError) as raised:
-        _validate_mandate_after_simulation(
-            {"min_capacity_ratio": 0.5},
-            {"capacity_ratio": -0.6},
-        )
-    assert raised.value.code == "PORTFOLIO_MANDATE_CONSTRAINT_FAILED"
+        _mandate_constraints(mandate)
+    assert raised.value.code == "PORTFOLIO_MANDATE_CONSTRAINT_UNSUPPORTED"
 
 
 def test_duplicate_instrument_ids_are_rejected_by_core_contract() -> None:
