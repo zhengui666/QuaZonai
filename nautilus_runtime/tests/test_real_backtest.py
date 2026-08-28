@@ -321,6 +321,7 @@ def test_candidate_bundle_v2_replays_exact_wheel_against_reference_fixture(tmp_p
         "orders": reference["orders"],
         "fills": reference["fills"],
         "positions": reference["positions"],
+        "pnl": reference["pnl"],
         "statistics": reference["statistics"],
     }
     verified = engine.verify_candidate(
