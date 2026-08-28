@@ -262,8 +262,10 @@ def test_sealed_policy_rejects_trading_activity_with_negative_performance() -> N
         }
     )
     assert disclosure["passed"] is False
-    assert disclosure["quality_score"] == 0.0
+    assert disclosure["quality_tier"] == "REJECTED"
+    assert "TOTAL_PNL_POLICY_FAILED" in disclosure["reason_codes"]
     assert disclosure["policy_checks"]["positive_total_pnl"] is False
+    assert "quality_score" not in disclosure
 
 
 def test_candidate_bundle_v2_replays_exact_wheel_against_reference_fixture(tmp_path: Path) -> None:

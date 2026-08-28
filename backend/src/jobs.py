@@ -89,6 +89,33 @@ def claim_next_job(
     return job
 
 
+def renew_job_lease(
+    session: Session,
+    *,
+    job_id: UUID,
+    owner: str,
+    lease_seconds: int,
+    now: datetime | None = None,
+) -> bool:
+    current = now or datetime.now(UTC)
+    result = cast(
+        CursorResult[Any],
+        session.execute(
+            update(Job)
+            .where(
+                Job.id == job_id,
+                Job.state == "LEASED",
+                Job.lease_owner == owner,
+            )
+            .values(
+                lease_expires_at=current + timedelta(seconds=lease_seconds),
+                updated_at=current,
+            )
+        ),
+    )
+    return int(result.rowcount or 0) == 1
+
+
 def complete_job(session: Session, job: Job) -> None:
     job.state = "SUCCEEDED"
     job.lease_owner = None

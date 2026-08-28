@@ -10,7 +10,7 @@ from sqlalchemy import Engine
 from api import research_runtime
 from errors import QfError
 from main import create_app
-from quant_runtime.promotion import _validate_mandate_after_simulation
+from quant_runtime.promotion import _mandate_constraints, _validate_mandate_after_simulation
 from settings import Settings
 
 
@@ -62,6 +62,13 @@ def test_candidate_simulation_endpoint_replays_idempotently(
     assert collision.status_code == 409, collision.text
     assert collision.json()["error"]["code"] == "IDEMPOTENCY_KEY_REUSED"
     assert len(calls) == 1
+
+
+def test_capacity_constraint_is_rejected_before_remote_simulation() -> None:
+    mandate = SimpleNamespace(spec_json={"constraints": {"min_capacity_ratio": 0.5}})
+    with pytest.raises(QfError) as raised:
+        _mandate_constraints(mandate)
+    assert raised.value.code == "PORTFOLIO_MANDATE_CONSTRAINT_UNSUPPORTED"
 
 
 def test_negative_capacity_cannot_satisfy_positive_mandate_floor() -> None:

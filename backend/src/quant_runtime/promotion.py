@@ -562,7 +562,6 @@ _SUPPORTED_MANDATE_CONSTRAINTS = {
     "max_drawdown",
     "max_turnover",
     "max_cost_bps",
-    "min_capacity_ratio",
     "max_leverage",
     "max_margin_usage",
 }

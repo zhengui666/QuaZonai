@@ -12,14 +12,22 @@ import logging
 import os
 import signal
 import socket
+import threading
 import time
 from collections.abc import Sequence
+from contextlib import contextmanager
 from uuid import UUID
 
 from db.models import Job
 from db.session import SessionFactory, create_database_engine, create_session_factory, ping_database
 from events import append_event
-from jobs import claim_next_job, complete_job, fail_job, release_expired_leases
+from jobs import (
+    claim_next_job,
+    complete_job,
+    fail_job,
+    release_expired_leases,
+    renew_job_lease,
+)
 from logging_utils import configure_logging
 from quant_runtime.client import RemoteNautilusConfig
 from quant_runtime.promotion import qualify_alpha
@@ -68,6 +76,45 @@ def _execute_qualification(factory: SessionFactory, job: Job) -> dict[str, str]:
     }
 
 
+@contextmanager
+def _lease_heartbeat(
+    settings: Settings,
+    *,
+    owner: str,
+    job_id: UUID,
+    factory: SessionFactory,
+):
+    stop = threading.Event()
+    lost = threading.Event()
+    interval = max(1.0, min(float(settings.job_lease_seconds) / 3.0, 15.0))
+
+    def heartbeat() -> None:
+        while not stop.wait(interval):
+            try:
+                with factory.begin() as session:
+                    renewed = renew_job_lease(
+                        session,
+                        job_id=job_id,
+                        owner=owner,
+                        lease_seconds=settings.job_lease_seconds,
+                    )
+                if not renewed:
+                    lost.set()
+                    return
+            except Exception:
+                lost.set()
+                LOGGER.exception("sealed job lease heartbeat failed", extra={"job_id": str(job_id)})
+                return
+
+    thread = threading.Thread(target=heartbeat, name=f"sealed-lease-{job_id}", daemon=True)
+    thread.start()
+    try:
+        yield lost
+    finally:
+        stop.set()
+        thread.join(timeout=max(2.0, interval + 1.0))
+
+
 def run_once(
     settings: Settings,
     *,
@@ -95,11 +142,24 @@ def run_once(
         session.expunge(job)
 
     try:
-        result = _execute_qualification(factory, job)
+        with _lease_heartbeat(
+            settings,
+            owner=owner,
+            job_id=job.id,
+            factory=factory,
+        ) as lease_lost:
+            result = _execute_qualification(factory, job)
+        if lease_lost.is_set():
+            LOGGER.error("sealed job lease ownership was lost", extra={"job_id": str(job.id)})
+            return True, settings.job_poll_seconds
     except Exception as exc:  # noqa: BLE001 - durable privileged job boundary
         with factory.begin() as session:
             current = session.get(Job, job.id)
-            if current is not None:
+            if (
+                current is not None
+                and current.state == "LEASED"
+                and current.lease_owner == owner
+            ):
                 fail_job(session, current, str(exc)[-4000:])
                 append_event(
                     session,
@@ -113,7 +173,11 @@ def run_once(
 
     with factory.begin() as session:
         current = session.get(Job, job.id)
-        if current is not None:
+        if (
+            current is not None
+            and current.state == "LEASED"
+            and current.lease_owner == owner
+        ):
             current.payload = {**dict(current.payload or {}), "result": result}
             complete_job(session, current)
             append_event(

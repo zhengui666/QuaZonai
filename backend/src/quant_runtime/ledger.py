@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import stat
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -13,7 +13,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from db.models import DatasetRevision, ResearchMission, SearchLedgerEntry
+from db.models import DatasetRevision, ResearchMission, ResearchProgram, SearchLedgerEntry
 from errors import QfError
 from quant_runtime.client import NautilusQuantRuntime, RemoteNautilusConfig
 from quant_runtime.contracts import (
@@ -54,6 +54,28 @@ def _same_identity(
     )
 
 
+def _evidence_program_lineage(session: Session, program_id: UUID) -> set[UUID]:
+    lineage: set[UUID] = set()
+    current_id: UUID | None = program_id
+    while current_id is not None:
+        if current_id in lineage:
+            raise QfError(
+                "RESEARCH_PROGRAM_EVIDENCE_LINEAGE_CYCLE",
+                "Research Program evidence inheritance contains a cycle.",
+                500,
+            )
+        lineage.add(current_id)
+        program = session.get(ResearchProgram, current_id)
+        if program is None:
+            raise QfError(
+                "RESEARCH_PROGRAM_NOT_FOUND",
+                "Research Program in evidence lineage does not exist.",
+                404,
+            )
+        current_id = program.evidence_inherited_from_program_id
+    return lineage
+
+
 class ExperimentCoordinator:
     """Executes one remote experiment without holding a DB transaction over the network."""
 
@@ -88,11 +110,20 @@ class ExperimentCoordinator:
                         409,
                     )
                 if existing.state == "RUNNING":
-                    raise QfError(
-                        "EXPERIMENT_ALREADY_RUNNING",
-                        "The exact experiment is already running.",
-                        409,
+                    stale_before = _now() - timedelta(minutes=35)
+                    if existing.started_at is None or existing.started_at >= stale_before:
+                        raise QfError(
+                            "EXPERIMENT_ALREADY_RUNNING",
+                            "The exact experiment is already running.",
+                            409,
+                        )
+                    existing.state = "FAILED"
+                    existing.finished_at = _now()
+                    existing.failure_code = "EXPERIMENT_ATTEMPT_ABANDONED"
+                    existing.failure_message = (
+                        "The prior RUNNING attempt exceeded the remote-runtime recovery window."
                     )
+                    session.flush()
                 session.expunge(existing)
                 return existing
 
@@ -113,16 +144,18 @@ class ExperimentCoordinator:
                     .where(SearchLedgerEntry.id == parent_entry_id)
                     .with_for_update()
                 ).scalar_one_or_none()
-                if parent is None or parent.program_id != program_id:
+                program_lineage = _evidence_program_lineage(session, program_id)
+                if parent is None or parent.program_id not in program_lineage:
                     raise QfError(
                         "EXPERIMENT_PARENT_INVALID",
-                        "Experiment parent does not exist in the requested Program.",
+                        "Experiment parent is outside the requested Program evidence lineage.",
                         422,
                     )
                 if sealed:
                     exposure = session.scalar(
                         select(SearchLedgerEntry).where(
-                            SearchLedgerEntry.parent_entry_id == parent_entry_id,
+                            SearchLedgerEntry.program_id.in_(program_lineage),
+                            SearchLedgerEntry.dataset_revision_id == request.dataset_revision_id,
                             SearchLedgerEntry.mode == ExperimentMode.SEALED.value,
                             SearchLedgerEntry.state.in_(["RUNNING", "SUCCEEDED"]),
                         )

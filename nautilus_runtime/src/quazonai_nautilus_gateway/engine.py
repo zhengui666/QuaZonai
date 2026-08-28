@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import fcntl
 import importlib
 import io
 import json
@@ -464,12 +465,13 @@ class NautilusGatewayEngine:
         lock_path = (self._catalog_root / f".{request.catalog_key}.ingest.lock").resolve()
         if lock_path.parent != self._catalog_root:
             raise GatewayContractError("catalog lock escaped the configured root")
+        lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
         try:
-            lock_fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        except FileExistsError as exc:
-            raise GatewayContractError("catalog ingest is already in progress") from exc
-        staging_path: Path | None = None
-        try:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise GatewayContractError("catalog ingest is already in progress") from exc
+            staging_path: Path | None = None
             existing = self._existing_ingest_result(
                 catalog_path=catalog_path,
                 canonical_request=canonical_request,
@@ -546,8 +548,10 @@ class NautilusGatewayEngine:
             staging_path = None
             return self._manifest_result(manifest)
         finally:
-            os.close(lock_fd)
-            lock_path.unlink(missing_ok=True)
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            finally:
+                os.close(lock_fd)
             if staging_path is not None and staging_path.exists():
                 shutil.rmtree(staging_path, ignore_errors=True)
 
@@ -596,7 +600,7 @@ class NautilusGatewayEngine:
         ticks: list[Any] = []
         if scope:
             try:
-                ticks = list(catalog.query_quote_ticks(identifiers=scope))
+                ticks = list(catalog.quote_ticks(instrument_ids=scope))
             except (OSError, RuntimeError, TypeError, ValueError) as exc:
                 findings.append({"code": "CATALOG_DATA_QUERY_FAILED", "detail": str(exc)})
         if not ticks:
