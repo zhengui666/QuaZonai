@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -22,6 +23,8 @@ from quant_runtime.contracts import (
     ExperimentMode,
     SealedBacktestResult,
 )
+
+_REMOTE_RESULT_UNCERTAIN = "NAUTILUS_RUNTIME_RESULT_UNCERTAIN"
 
 
 def _now() -> datetime:
@@ -113,13 +116,15 @@ class ExperimentCoordinator:
                 if existing.state != "RUNNING":
                     session.expunge(existing)
                     return existing
-                stale_before = _now() - timedelta(minutes=35)
-                if existing.started_at is None or existing.started_at >= stale_before:
-                    raise QfError(
-                        "EXPERIMENT_ALREADY_RUNNING",
-                        "The exact experiment is already running.",
-                        409,
-                    )
+                recover_uncertain_result = existing.failure_code == _REMOTE_RESULT_UNCERTAIN
+                if not recover_uncertain_result:
+                    stale_before = _now() - timedelta(minutes=35)
+                    if existing.started_at is None or existing.started_at >= stale_before:
+                        raise QfError(
+                            "EXPERIMENT_ALREADY_RUNNING",
+                            "The exact experiment is already running.",
+                            409,
+                        )
                 dataset = session.get(DatasetRevision, request.dataset_revision_id)
                 self._validate_dataset(dataset, request=request, sealed=sealed)
                 existing.started_at = _now()
@@ -229,6 +234,23 @@ class ExperimentCoordinator:
                         "received_mode": str(result.mode),
                     },
                 )
+        except httpx.TransportError as exc:
+            # A timeout, disconnect, or protocol interruption is ambiguous: the
+            # Gateway may already have completed and persisted its idempotency
+            # receipt. Keep the immutable ledger attempt recoverable so an exact
+            # retry immediately reuses the same experiment id and reconciles the
+            # Gateway's terminal receipt instead of permanently recording failure.
+            with self._factory() as session, session.begin():
+                entry = session.execute(
+                    select(SearchLedgerEntry)
+                    .where(SearchLedgerEntry.id == request.experiment_id)
+                    .with_for_update()
+                ).scalar_one()
+                entry.state = "RUNNING"
+                entry.finished_at = None
+                entry.failure_code = _REMOTE_RESULT_UNCERTAIN
+                entry.failure_message = str(exc)[-12000:]
+            raise
         except Exception as exc:
             with self._factory() as session, session.begin():
                 entry = session.execute(
