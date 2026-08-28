@@ -340,7 +340,7 @@ def _select_sealed_dataset(
             "Discovery and Sealed revisions require valid event-time intervals.",
             422,
         )
-    if source_start < sealed_end and sealed_start < source_end:
+    if source_start <= sealed_end and sealed_start <= source_end:
         raise QfError(
             "SEALED_DATASET_TIME_OVERLAP",
             "Sealed evaluation event-time coverage must not overlap Discovery coverage.",
@@ -1203,7 +1203,13 @@ def simulate_portfolio_candidate(
                     "alpha_name": alpha_name,
                     "role": persisted_alpha.role,
                     "target_weight": instrument_weight,
+                    "confidence": alpha_quality,
                     "universe": alpha_universe,
+                    "universe_version_id": (
+                        str(persisted_alpha.universe_version_id)
+                        if persisted_alpha.universe_version_id is not None
+                        else None
+                    ),
                     "instrument_id": instrument_id,
                 }
                 for instrument_id in instrument_ids
@@ -1229,6 +1235,11 @@ def simulate_portfolio_candidate(
                     "evidence": simulation_evidence,
                     "dataset_revision_ids": [str(simulation.dataset_revision_id)],
                     "alpha_qualification_ids": [str(persisted_alpha.id)],
+                    "universe_version_id": (
+                        str(persisted_alpha.universe_version_id)
+                        if persisted_alpha.universe_version_id is not None
+                        else None
+                    ),
                     "instrument_scope": request_json.instrument_ids,
                     "data_requirements": {"nautilus_data_type": "QuoteTick"},
                     "backtest_run_config": {

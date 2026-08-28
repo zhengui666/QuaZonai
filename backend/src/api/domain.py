@@ -11,6 +11,7 @@ from fastapi import APIRouter, Header, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from candidate_bundles import (
@@ -2212,6 +2213,174 @@ def _dataset_view(item: DatasetRevision) -> dict[str, Any]:
     ).model_dump(mode="json")
 
 
+_DATASET_INGEST_PENDING_STATUS = 102
+_DATASET_INGEST_STALE_AFTER = timedelta(minutes=35)
+
+
+def _dataset_ingest_identity(
+    source_id: UUID,
+    source: GovernedDataSource,
+    payload: DatasetIngestInput,
+) -> dict[str, Any]:
+    return {
+        "source_id": str(source_id),
+        "source_governance": {
+            "name": source.name,
+            "provider": source.provider,
+            "state": source.state,
+            "preflight_state": source.preflight_state,
+            "universe_scope": list(source.universe_scope or []),
+            "fields": list(source.fields or []),
+            "update_cadence": source.update_cadence,
+            "public_config": dict(source.public_config or {}),
+        },
+        "ingest": payload.model_dump(mode="json", exclude_none=False),
+    }
+
+
+def _dataset_ingest_receipt_matches(
+    receipt: PublicMutationReceipt,
+    *,
+    operation: str,
+    identity: dict[str, Any],
+) -> bool:
+    return receipt.operation_name == operation and receipt.normalized_request == identity
+
+
+def _claim_dataset_ingest_receipt(
+    session: Session,
+    *,
+    key: str,
+    operation: str,
+    identity: dict[str, Any],
+    request_id: UUID,
+) -> tuple[PublicMutationReceipt, bool]:
+    existing = session.execute(
+        select(PublicMutationReceipt)
+        .where(PublicMutationReceipt.idempotency_key == key)
+        .with_for_update()
+    ).scalar_one_or_none()
+    if existing is None:
+        now = _now()
+        receipt = PublicMutationReceipt(
+            idempotency_key=key,
+            operation_name=operation,
+            normalized_request=identity,
+            response_json={
+                "state": "RUNNING",
+                "request_id": str(request_id),
+                "attempt_started_at": now.isoformat(),
+            },
+            status_code=_DATASET_INGEST_PENDING_STATUS,
+            created_at=now,
+        )
+        try:
+            with session.begin_nested():
+                session.add(receipt)
+                session.flush()
+        except IntegrityError as exc:
+            if receipt in session:
+                session.expunge(receipt)
+            session.expire_all()
+            existing = session.execute(
+                select(PublicMutationReceipt)
+                .where(PublicMutationReceipt.idempotency_key == key)
+                .with_for_update()
+            ).scalar_one_or_none()
+            if existing is None:
+                raise QfError(
+                    "IDEMPOTENCY_RECEIPT_CONFLICT",
+                    "Dataset ingest receipt could not be resolved after a concurrent request.",
+                    409,
+                ) from exc
+        else:
+            return receipt, True
+
+    if not _dataset_ingest_receipt_matches(existing, operation=operation, identity=identity):
+        raise QfError(
+            "IDEMPOTENCY_KEY_REUSED",
+            "The idempotency key belongs to a different request.",
+            409,
+        )
+    if existing.status_code == 201:
+        return existing, False
+    if existing.status_code != _DATASET_INGEST_PENDING_STATUS:
+        raise QfError(
+            "IDEMPOTENCY_RECEIPT_INVALID",
+            "Dataset ingest receipt has an unsupported state.",
+            500,
+            {"status_code": existing.status_code},
+        )
+    pending = dict(existing.response_json or {})
+    if str(pending.get("request_id", "")) != str(request_id):
+        raise QfError(
+            "IDEMPOTENCY_RECEIPT_INVALID",
+            "Dataset ingest receipt lost its immutable remote request id.",
+            500,
+        )
+    state = str(pending.get("state", "")).upper()
+    now = _now()
+    stale = False
+    try:
+        started = datetime.fromisoformat(str(pending["attempt_started_at"]))
+        stale = (
+            started.tzinfo is not None
+            and started.utcoffset() is not None
+            and started < now - _DATASET_INGEST_STALE_AFTER
+        )
+    except (KeyError, TypeError, ValueError):
+        stale = True
+    if state != "RETRYABLE" and not stale:
+        raise QfError(
+            "DATASET_INGEST_IN_PROGRESS",
+            "The exact governed Dataset ingest is already running.",
+            409,
+            {"request_id": str(request_id)},
+        )
+    existing.response_json = {
+        "state": "RUNNING",
+        "request_id": str(request_id),
+        "attempt_started_at": now.isoformat(),
+    }
+    existing.status_code = _DATASET_INGEST_PENDING_STATUS
+    session.flush()
+    return existing, True
+
+
+def _mark_dataset_ingest_retryable(
+    factory: Any,
+    *,
+    key: str,
+    operation: str,
+    identity: dict[str, Any],
+    request_id: UUID,
+    exc: Exception,
+) -> None:
+    with factory.begin() as session:
+        receipt = session.execute(
+            select(PublicMutationReceipt)
+            .where(PublicMutationReceipt.idempotency_key == key)
+            .with_for_update()
+        ).scalar_one_or_none()
+        if (
+            receipt is None
+            or not _dataset_ingest_receipt_matches(
+                receipt,
+                operation=operation,
+                identity=identity,
+            )
+            or receipt.status_code != _DATASET_INGEST_PENDING_STATUS
+        ):
+            return
+        receipt.response_json = {
+            "state": "RETRYABLE",
+            "request_id": str(request_id),
+            "attempt_started_at": _now().isoformat(),
+            "last_failure_code": str(getattr(exc, "code", type(exc).__name__))[:100],
+        }
+        session.flush()
+
+
 @router.post(
     "/data-sources/{source_id}/dataset-revisions/ingest",
     response_model=DatasetView,
@@ -2231,15 +2400,11 @@ def ingest_dataset_revision(
             422,
         )
     operation = f"dataset-revision.ingest:{source_id}"
-    identity = {
-        "source_id": str(source_id),
-        "universe_key": payload.universe_key,
-        "catalog_key": payload.catalog_key,
-    }
+    request_id = uuid5(NAMESPACE_URL, f"quazonai:dataset-ingest:{source_id}:{key}")
     factory = request.app.state.session_factory
 
-    # Freeze or reuse the governed Universe before the network call. No database
-    # transaction or row lock is held while the remote Nautilus runtime executes.
+    # Atomically bind the global idempotency key to every governed ingest input
+    # before creating a Universe Version or touching the remote runtime.
     with factory() as session, session.begin():
         source = session.execute(
             select(GovernedDataSource)
@@ -2270,11 +2435,19 @@ def ingest_dataset_revision(
                 "Data Source is not governed for the requested Universe.",
                 422,
             )
+        identity = _dataset_ingest_identity(source_id, source, payload)
+        receipt, claimed = _claim_dataset_ingest_receipt(
+            session,
+            key=key,
+            operation=operation,
+            identity=identity,
+            request_id=request_id,
+        )
+        if not claimed:
+            return dict(receipt.response_json)
+
         if session.bind is not None and session.bind.dialect.name == "postgresql":
-            session.execute(
-                text("SELECT pg_advisory_xact_lock(:lock_key)"),
-                {"lock_key": 220024},
-            )
+            session.execute(text("SELECT pg_advisory_xact_lock(:lock_key)"), {"lock_key": 220024})
         latest = session.scalar(
             select(MarketUniverseVersion)
             .where(MarketUniverseVersion.universe_key == payload.universe_key)
@@ -2303,84 +2476,94 @@ def ingest_dataset_revision(
         source_provider = source.provider or source.name
         universe_id = universe.id
 
-    ingest_request = CatalogIngestRequest(
-        request_id=uuid5(
-            NAMESPACE_URL,
-            f"quazonai:dataset-ingest:{source_id}:{key}",
-        ),
-        catalog_key=payload.catalog_key,
-        provider=source_provider,
-        source=payload.source,
-        source_license=payload.source_license,
-        instruments=payload.instruments,
-    )
-    ingested, validated = _remote_ingest_and_validate(ingest_request)
-    if not validated.valid:
-        raise QfError(
-            "NAUTILUS_CATALOG_VALIDATION_FAILED",
-            "Remote Nautilus catalog did not pass validation.",
-            422,
-            {"findings": validated.findings},
+    try:
+        ingest_request = CatalogIngestRequest(
+            request_id=request_id,
+            catalog_key=payload.catalog_key,
+            provider=source_provider,
+            source=payload.source,
+            source_license=payload.source_license,
+            instruments=payload.instruments,
         )
-    if (
-        ingested.catalog_key != payload.catalog_key
-        or validated.catalog_key != payload.catalog_key
-        or sorted(ingested.instrument_scope) != sorted(validated.instrument_scope)
-        or ingested.row_count != validated.row_count
-        or validated.event_time_start != ingested.event_time_start
-        or validated.event_time_end != ingested.event_time_end
-        or validated.available_time_start != ingested.available_time_start
-        or validated.available_time_end != ingested.available_time_end
-    ):
-        raise QfError(
-            "NAUTILUS_CATALOG_VALIDATION_MISMATCH",
-            "Validated catalog facts differ from the immutable ingest result.",
-            502,
-        )
-    quality_result = dict(ingested.quality_result or {})
-    point_in_time_result = dict(ingested.point_in_time_result or {})
-    if (
-        str(quality_result.get("state", "")).upper() != "VALID"
-        or str(point_in_time_result.get("state", "")).upper() != "VALID"
-    ):
-        raise QfError(
-            "DATASET_GOVERNANCE_FAILED",
-            "Ingested catalog must pass quality and point-in-time governance.",
-            422,
-        )
-
-    # Serialize persistence on the governed source. Replays still visit the
-    # Gateway first, which is the exact canonical-contract collision detector.
-    with factory() as session, session.begin():
-        if session.bind is not None and session.bind.dialect.name == "postgresql":
-            session.execute(
-                text("SELECT pg_advisory_xact_lock(:lock_key)"),
-                {"lock_key": 220027},
+        ingested, validated = _remote_ingest_and_validate(ingest_request)
+        if not validated.valid:
+            raise QfError(
+                "NAUTILUS_CATALOG_VALIDATION_FAILED",
+                "Remote Nautilus catalog did not pass validation.",
+                422,
+                {"findings": validated.findings},
             )
-        source = session.execute(
-            select(GovernedDataSource)
-            .where(GovernedDataSource.id == source_id)
-            .with_for_update()
-        ).scalar_one_or_none()
-        universe = session.get(MarketUniverseVersion, universe_id)
         if (
-            source is None
-            or source.state != "ACTIVE"
-            or source.preflight_state != "READY"
-            or universe is None
-            or universe.state != "ACTIVE"
+            ingested.catalog_key != payload.catalog_key
+            or validated.catalog_key != payload.catalog_key
+            or sorted(ingested.instrument_scope) != sorted(validated.instrument_scope)
+            or ingested.row_count != validated.row_count
+            or validated.event_time_start != ingested.event_time_start
+            or validated.event_time_end != ingested.event_time_end
+            or validated.available_time_start != ingested.available_time_start
+            or validated.available_time_end != ingested.available_time_end
         ):
             raise QfError(
-                "DATASET_GOVERNANCE_CHANGED",
-                "Data Source or Universe changed while the catalog was ingesting.",
-                409,
+                "NAUTILUS_CATALOG_VALIDATION_MISMATCH",
+                "Validated catalog facts differ from the immutable ingest result.",
+                502,
+            )
+        quality_result = dict(ingested.quality_result or {})
+        point_in_time_result = dict(ingested.point_in_time_result or {})
+        if (
+            str(quality_result.get("state", "")).upper() != "VALID"
+            or str(point_in_time_result.get("state", "")).upper() != "VALID"
+        ):
+            raise QfError(
+                "DATASET_GOVERNANCE_FAILED",
+                "Ingested catalog must pass quality and point-in-time governance.",
+                422,
             )
 
-        def action() -> dict[str, Any]:
-            existing = session.scalar(
-                select(DatasetRevision).where(
-                    DatasetRevision.catalog_uri == ingested.catalog_uri
+        with factory() as session, session.begin():
+            if session.bind is not None and session.bind.dialect.name == "postgresql":
+                session.execute(text("SELECT pg_advisory_xact_lock(:lock_key)"), {"lock_key": 220027})
+            receipt = session.execute(
+                select(PublicMutationReceipt)
+                .where(PublicMutationReceipt.idempotency_key == key)
+                .with_for_update()
+            ).scalar_one_or_none()
+            source = session.execute(
+                select(GovernedDataSource)
+                .where(GovernedDataSource.id == source_id)
+                .with_for_update()
+            ).scalar_one_or_none()
+            universe = session.get(MarketUniverseVersion, universe_id)
+            if (
+                receipt is None
+                or not _dataset_ingest_receipt_matches(
+                    receipt,
+                    operation=operation,
+                    identity=identity,
                 )
+                or receipt.status_code != _DATASET_INGEST_PENDING_STATUS
+            ):
+                raise QfError(
+                    "IDEMPOTENCY_RECEIPT_INVALID",
+                    "Dataset ingest receipt changed while the remote runtime was executing.",
+                    409,
+                )
+            if (
+                source is None
+                or source.state != "ACTIVE"
+                or source.preflight_state != "READY"
+                or universe is None
+                or universe.state != "ACTIVE"
+                or _dataset_ingest_identity(source_id, source, payload) != identity
+            ):
+                raise QfError(
+                    "DATASET_GOVERNANCE_CHANGED",
+                    "Data Source or governed ingest identity changed while the catalog was ingesting.",
+                    409,
+                )
+
+            existing = session.scalar(
+                select(DatasetRevision).where(DatasetRevision.catalog_uri == ingested.catalog_uri)
             )
             if existing is not None:
                 if (
@@ -2394,67 +2577,73 @@ def ingest_dataset_revision(
                         "Catalog URI is already bound to different governed facts.",
                         409,
                     )
-                return _dataset_view(existing)
-            revision_no = int(
-                session.scalar(
-                    select(func.max(DatasetRevision.revision_no)).where(
-                        DatasetRevision.data_source_id == source.id,
-                        DatasetRevision.universe_version_id == universe.id,
-                        DatasetRevision.partition == "DISCOVERY",
+                result = _dataset_view(existing)
+            else:
+                revision_no = int(
+                    session.scalar(
+                        select(func.max(DatasetRevision.revision_no)).where(
+                            DatasetRevision.data_source_id == source.id,
+                            DatasetRevision.universe_version_id == universe.id,
+                            DatasetRevision.partition == "DISCOVERY",
+                        )
                     )
+                    or 0
+                ) + 1
+                revision = DatasetRevision(
+                    data_source_id=source.id,
+                    universe_version_id=universe.id,
+                    universe_name=universe.name,
+                    revision_no=revision_no,
+                    schema_version=ingested.schema_revision,
+                    event_start=ingested.event_time_start,
+                    event_end=ingested.event_time_end,
+                    available_start=ingested.available_time_start,
+                    available_end=ingested.available_time_end,
+                    row_count=ingested.row_count,
+                    quality_state="VALID",
+                    point_in_time_state="VALID",
+                    partition="DISCOVERY",
+                    created_at=_now(),
+                    provider_name=source_provider,
+                    source_license=payload.source_license,
+                    catalog_uri=ingested.catalog_uri,
+                    nautilus_data_type=ingested.nautilus_data_type,
+                    instrument_scope=ingested.instrument_scope,
+                    schema_revision=ingested.schema_revision,
+                    quality_result=quality_result,
+                    point_in_time_result=point_in_time_result,
+                    ingested_at=ingested.ingested_at,
                 )
-                or 0
-            ) + 1
-            revision = DatasetRevision(
-                data_source_id=source.id,
-                universe_version_id=universe.id,
-                universe_name=universe.name,
-                revision_no=revision_no,
-                schema_version=ingested.schema_revision,
-                event_start=ingested.event_time_start,
-                event_end=ingested.event_time_end,
-                available_start=ingested.available_time_start,
-                available_end=ingested.available_time_end,
-                row_count=ingested.row_count,
-                quality_state="VALID",
-                point_in_time_state="VALID",
-                partition="DISCOVERY",
-                created_at=_now(),
-                provider_name=source_provider,
-                source_license=payload.source_license,
-                catalog_uri=ingested.catalog_uri,
-                nautilus_data_type=ingested.nautilus_data_type,
-                instrument_scope=ingested.instrument_scope,
-                schema_revision=ingested.schema_revision,
-                quality_result=quality_result,
-                point_in_time_result=point_in_time_result,
-                ingested_at=ingested.ingested_at,
-            )
-            session.add(revision)
+                session.add(revision)
+                session.flush()
+                _event(
+                    session,
+                    "DATASET_REVISION_INGESTED",
+                    "DATASET_REVISION",
+                    revision.id,
+                    {
+                        "data_source_id": str(source.id),
+                        "universe_version_id": str(universe.id),
+                        "catalog_uri": revision.catalog_uri,
+                        "row_count": revision.row_count,
+                    },
+                    actor_kind="HUMAN",
+                )
+                result = _dataset_view(revision)
+            receipt.response_json = result
+            receipt.status_code = 201
             session.flush()
-            _event(
-                session,
-                "DATASET_REVISION_INGESTED",
-                "DATASET_REVISION",
-                revision.id,
-                {
-                    "data_source_id": str(source.id),
-                    "universe_version_id": str(universe.id),
-                    "catalog_uri": revision.catalog_uri,
-                    "row_count": revision.row_count,
-                },
-                actor_kind="HUMAN",
-            )
-            return _dataset_view(revision)
-
-        return _idempotent(
-            session,
-            key,
-            operation,
-            identity,
-            action,
-            status_code=201,
+            return result
+    except Exception as exc:
+        _mark_dataset_ingest_retryable(
+            factory,
+            key=key,
+            operation=operation,
+            identity=identity,
+            request_id=request_id,
+            exc=exc,
         )
+        raise
 
 
 @router.get("/datasets", response_model=list[DatasetView])

@@ -77,7 +77,7 @@ def _record_hash(payload: bytes) -> str:
 
 
 def _strategy_wheel_filename(candidate_id: UUID) -> str:
-    version = f"0.0.{candidate_id.int % 1_000_000}"
+    version = f"0.0.{candidate_id.int}"
     return f"quazonai_candidate_strategy-{version}-py3-none-any.whl"
 
 
@@ -89,7 +89,7 @@ def _strategy_wheel(artifact: StrategyArtifact, *, candidate_id: UUID) -> bytes:
             422,
         )
     distribution = "quazonai_candidate_strategy"
-    version = f"0.0.{candidate_id.int % 1_000_000}"
+    version = f"0.0.{candidate_id.int}"
     dist_info = f"{distribution}-{version}.dist-info"
     files: dict[str, bytes] = {}
     for path, source in artifact.source_files.items():
@@ -158,8 +158,23 @@ def _first(item: Any, names: tuple[str, ...], default: Any = None) -> Any:
     return default
 
 
-def _member_payload(candidate: Any) -> list[dict[str, Any]]:
+def _member_payload(
+    candidate: Any,
+    *,
+    approval: Any | None = None,
+    runtime: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    candidate_id = _value(candidate, "id")
+    metrics = dict(_value(candidate, "metrics", {}) or {})
+    runtime_payload = dict(runtime or {})
+    as_of_time = _value(candidate, "created_at")
+    effective_from = _first(approval, ("updated_at", "created_at"), as_of_time)
+    effective_until = _first(approval, ("valid_until", "expires_at"))
+    portfolio_state = _value(candidate, "state")
+    default_confidence = metrics.get("search_adjusted_quality")
+    default_universe_version_id = runtime_payload.get("universe_version_id")
+
     for index, member in enumerate(list(_value(candidate, "members", []) or [])):
         alpha_id = _first(member, ("alpha_qualification_id", "alpha_id"))
         if alpha_id in (None, ""):
@@ -197,13 +212,30 @@ def _member_payload(candidate: Any) -> list[dict[str, Any]]:
                 {"member_index": index},
             )
         target_weight = str(_first(member, ("target_weight", "weight"), "0"))
+        universe_version_id = _first(
+            member,
+            ("universe_version_id",),
+            default_universe_version_id,
+        )
+        confidence = _first(member, ("confidence",), default_confidence)
         for instrument_id in normalized_instruments:
             rows.append(
-                {
-                    "alpha_qualification_id": str(alpha_id),
-                    "instrument_id": instrument_id,
-                    "target_weight": target_weight,
-                }
+                _json_safe(
+                    {
+                        "as_of_time": as_of_time,
+                        "effective_from": effective_from,
+                        "effective_until": effective_until,
+                        "universe_version_id": (
+                            str(universe_version_id) if universe_version_id not in (None, "") else None
+                        ),
+                        "alpha_qualification_id": str(alpha_id),
+                        "instrument_id": instrument_id,
+                        "target_weight": target_weight,
+                        "confidence": confidence,
+                        "portfolio_state": portfolio_state,
+                        "portfolio_candidate_id": str(candidate_id),
+                    }
+                )
             )
     return sorted(
         rows,
@@ -212,7 +244,6 @@ def _member_payload(candidate: Any) -> list[dict[str, Any]]:
             row["alpha_qualification_id"],
         ),
     )
-
 
 def _approval_summary(approval: Any | None, *, candidate_id: UUID) -> dict[str, Any]:
     if approval is None:
@@ -371,7 +402,7 @@ def build_candidate_bundle(
 
     bundle_id = bundle_id or uuid4()
     strategy_wheel_path = f"strategy/{_strategy_wheel_filename(candidate_id)}"
-    target_weights = _member_payload(candidate)
+    target_weights = _member_payload(candidate, approval=approval, runtime=runtime)
     approval_summary = _approval_summary(approval, candidate_id=candidate_id)
     lineage = {
         "portfolio_simulation_experiment_id": str(simulation_experiment_id),
@@ -440,6 +471,7 @@ def build_candidate_bundle(
                 "requirements": "data/requirements.json",
                 "instrument_scope": "data/instrument-scope.json",
                 "custom_data_schemas": "data/custom-data-schemas/",
+                "target_portfolio_frame": "data/target-portfolio-frame.json",
             },
             "runtime_config": {
                 "nautilus_version": "runtime/nautilus-version.json",
@@ -475,6 +507,7 @@ def build_candidate_bundle(
         "strategy/actor-config.json": _json_bytes(actor_config),
         "data/requirements.json": _json_bytes(data_requirements),
         "data/instrument-scope.json": _json_bytes(instrument_scope),
+        "data/target-portfolio-frame.json": _json_bytes(target_weights),
         "runtime/nautilus-version.json": _json_bytes(
             {"name": "nautilus_trader", "version": PINNED_NAUTILUS_VERSION}
         ),
@@ -599,6 +632,7 @@ def validate_candidate_bundle(archive_bytes: bytes) -> dict[str, Any]:
         "strategy/actor-config.json",
         "data/requirements.json",
         "data/instrument-scope.json",
+        "data/target-portfolio-frame.json",
         "data/custom-data-schemas/index.json",
         "runtime/nautilus-version.json",
         "runtime/backtest-run-config.json",
@@ -644,6 +678,23 @@ def validate_candidate_bundle(archive_bytes: bytes) -> dict[str, Any]:
                     expected_wheel = ""
                 if wheel_path != expected_wheel or wheel_path not in names:
                     findings.append({"code": "STRATEGY_WHEEL_PATH_INVALID"})
+                target_rows = manifest.get("target_weights", [])
+                target_fields = {
+                    "as_of_time",
+                    "effective_from",
+                    "effective_until",
+                    "universe_version_id",
+                    "instrument_id",
+                    "target_weight",
+                    "confidence",
+                    "portfolio_state",
+                    "portfolio_candidate_id",
+                }
+                if not isinstance(target_rows, list) or any(
+                    not isinstance(row, dict) or not target_fields.issubset(row)
+                    for row in target_rows
+                ):
+                    findings.append({"code": "TARGET_PORTFOLIO_FRAME_INVALID"})
             if "requirements.lock" in names:
                 lock = archive.read("requirements.lock").decode("utf-8").strip()
                 if lock != f"nautilus_trader=={PINNED_NAUTILUS_VERSION}":

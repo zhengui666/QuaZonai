@@ -88,6 +88,17 @@ def test_sealed_dataset_must_use_distinct_catalog_and_nonoverlapping_time() -> N
         _select_sealed_dataset(_DatasetSession(overlap), source, overlap.id)
     assert overlap_error.value.code == "SEALED_DATASET_TIME_OVERLAP"
 
+    touching = _revision(
+        partition="SEALED",
+        catalog_uri="nautilus-catalog://sealed-touching",
+        start=source.event_end,
+        end=start + timedelta(days=20),
+        universe_id=universe_id,
+    )
+    with pytest.raises(QfError) as touching_error:
+        _select_sealed_dataset(_DatasetSession(touching), source, touching.id)
+    assert touching_error.value.code == "SEALED_DATASET_TIME_OVERLAP"
+
 
 def test_evidence_lineage_includes_inherited_programs() -> None:
     charter_id = uuid4()

@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import exists, func, or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -61,11 +61,6 @@ def _member_alpha_ids(candidate: PortfolioCandidate) -> list[UUID]:
 def schedule_degradation_missions(session: Session) -> int:
     """Create at most one research Mission per Alpha and degraded feedback episode."""
     created = 0
-    handled_episode = exists(
-        select(DegradationFollowup.id).where(
-            DegradationFollowup.forward_evidence_episode_id == ForwardEvidenceEpisode.id
-        )
-    )
     episodes = list(
         session.scalars(
             select(ForwardEvidenceEpisode)
@@ -79,10 +74,22 @@ def schedule_degradation_missions(session: Session) -> int:
                         )
                     ).in_(sorted(_DEGRADATION_STATES)),
                 ),
-                ~handled_episode,
             )
             .order_by(ForwardEvidenceEpisode.created_at.asc())
         )
+    )
+    episode_ids = [episode.id for episode in episodes]
+    handled_pairs = (
+        set(
+            session.execute(
+                select(
+                    DegradationFollowup.alpha_qualification_id,
+                    DegradationFollowup.forward_evidence_episode_id,
+                ).where(DegradationFollowup.forward_evidence_episode_id.in_(episode_ids))
+            ).all()
+        )
+        if episode_ids
+        else set()
     )
     for episode in episodes:
         evidence = episode.evidence or {}
@@ -95,6 +102,9 @@ def schedule_degradation_missions(session: Session) -> int:
         if candidate is None:
             continue
         for alpha_id in _member_alpha_ids(candidate):
+            pair = (alpha_id, episode.id)
+            if pair in handled_pairs:
+                continue
             alpha = session.get(AlphaQualification, alpha_id)
             if alpha is None or alpha.program_id is None or alpha.source_experiment_id is None:
                 continue
@@ -122,7 +132,9 @@ def schedule_degradation_missions(session: Session) -> int:
                     session.add(followup)
                     session.flush()
             except IntegrityError:
+                handled_pairs.add(pair)
                 continue
+            handled_pairs.add(pair)
             branch = ResearchBranch(
                 program_id=program.id,
                 parent_branch_id=parent.id,

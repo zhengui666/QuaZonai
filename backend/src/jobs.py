@@ -124,6 +124,23 @@ def complete_job(session: Session, job: Job) -> None:
     session.flush()
 
 
+def retry_job(
+    session: Session,
+    job: Job,
+    message: str,
+    *,
+    delay_seconds: float = 0.0,
+    now: datetime | None = None,
+) -> None:
+    current = now or datetime.now(UTC)
+    job.state = "READY"
+    job.lease_owner = None
+    job.lease_expires_at = None
+    job.last_error = message
+    job.available_at = current + timedelta(seconds=max(0.0, float(delay_seconds)))
+    session.flush()
+
+
 def fail_job(session: Session, job: Job, message: str) -> None:
     job.state = "FAILED"
     job.lease_owner = None

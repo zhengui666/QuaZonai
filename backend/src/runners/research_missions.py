@@ -5,13 +5,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shutil
 import socket
 import subprocess
 import sys
 import tempfile
 import threading
 from collections.abc import Iterator
+
+import httpx
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -31,6 +32,12 @@ CUSTOM_CODEX_PROVIDER_ID = "quazonai_configured"
 DEFAULT_OPENAI_API_BASE_URL = "https://api.openai.com/v1"
 BROKER_REQUEST = b"TOKEN\n"
 BROKER_ACCEPT_POLL_SECONDS = 0.25
+RETRYABLE_MISSION_EXIT_CODE = 75
+REMOTE_RESULT_UNCERTAIN = "NAUTILUS_REMOTE_RESULT_UNCERTAIN"
+
+
+class RetryableMissionError(RuntimeError):
+    """The remote result is ambiguous and the same durable Mission must be retried."""
 
 
 def _now() -> datetime:
@@ -93,8 +100,10 @@ def _prepare_worktree(settings: Settings, program_id: UUID, mission_id: UUID) ->
         _git("commit", "-m", "Initialize research program workspace", cwd=repo)
 
     if workspace.exists():
-        _git("worktree", "remove", "--force", str(workspace), cwd=repo, check=False)
-        shutil.rmtree(workspace, ignore_errors=True)
+        # A transport-uncertain runtime result must resume the exact experiment
+        # files which generated its immutable experiment id. Do not rebuild the
+        # worktree and silently replace that contract on a durable retry.
+        return workspace
     _git("branch", "-D", branch, cwd=repo, check=False)
     _git("worktree", "add", "-b", branch, str(workspace), "HEAD", cwd=repo)
     return workspace
@@ -327,6 +336,26 @@ def run_mission(settings: Settings, job_id: UUID) -> None:
     engine = create_database_engine(settings)
     factory = create_session_factory(engine)
     try:
+        # If a previous attempt lost the HTTP response, the worktree still holds
+        # the exact contract. Reconcile it before giving Codex another turn.
+        if (workspace / "experiments").exists():
+            with factory() as session:
+                retry_mission = session.get(ResearchMission, mission_id)
+                retry_branch_id = retry_mission.branch_id if retry_mission is not None else None
+            if retry_branch_id is None:
+                raise QfError(
+                    "MISSION_BRANCH_MISSING",
+                    "Research Mission has no Branch for experiment reconciliation.",
+                    500,
+                )
+            execute_workspace_experiments(
+                settings,
+                workspace=workspace,
+                mission_id=mission_id,
+                program_id=program_id,
+                branch_id=retry_branch_id,
+                already_executed=set(),
+            )
         with _provider_credential_broker(settings.codex_api_key) as credential_socket:
             codex_config, model_provider = _codex_launch_configuration(
                 settings,
@@ -437,6 +466,28 @@ def run_mission(settings: Settings, job_id: UUID) -> None:
                 mission_id=mission_id,
                 payload={"summary": mission.summary},
             )
+    except httpx.TransportError as exc:
+        with factory() as session, session.begin():
+            mission = session.get(ResearchMission, mission_id)
+            if mission is not None and mission.state in {"READY", "RUNNING"}:
+                mission.state = "READY"
+                mission.finished_at = None
+                mission.error_code = REMOTE_RESULT_UNCERTAIN
+                mission.summary = (
+                    "Remote Nautilus result is transport-uncertain; the exact Mission worktree and "
+                    "experiment id are preserved for durable reconciliation."
+                )
+                mission.attempt += 1
+                _event(
+                    session,
+                    kind="MISSION_RETRY_SCHEDULED",
+                    program_id=program_id,
+                    mission_id=mission_id,
+                    payload={"error_code": REMOTE_RESULT_UNCERTAIN},
+                )
+        raise RetryableMissionError(
+            "remote Nautilus result uncertain; retry the same Mission contract"
+        ) from exc
     except Exception as exc:
         with factory() as session, session.begin():
             mission = session.get(ResearchMission, mission_id)
@@ -465,7 +516,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
     settings = load_effective_settings(Settings.from_env())
-    run_mission(settings, UUID(args.job_id))
+    try:
+        run_mission(settings, UUID(args.job_id))
+    except RetryableMissionError:
+        return RETRYABLE_MISSION_EXIT_CODE
     return 0
 
 
