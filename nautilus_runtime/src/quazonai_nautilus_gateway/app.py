@@ -111,6 +111,11 @@ def create_app(
         _require_role(gateway_role, "RESEARCH")
         return engine().validate_catalog(request)
 
+    @app.post("/v1/sealed-catalogs/validate", dependencies=[Depends(_authorize)])
+    def validate_sealed_catalog(request: CatalogValidationRequest) -> dict[str, Any]:
+        _require_role(gateway_role, "SEALED")
+        return engine().validate_catalog(request)
+
     @app.post("/v1/backtests", dependencies=[Depends(_authorize)])
     def run_backtest(
         request: BacktestExperimentRequest,

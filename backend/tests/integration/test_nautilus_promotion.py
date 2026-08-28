@@ -287,6 +287,7 @@ def test_real_evidence_promotes_through_alpha_and_portfolio(
         factory,
         source_experiment_id=source_id,
         sealed_dataset_revision_id=sealed_dataset_id,
+        sealed_experiment_id=uuid4(),
         name="Qualified remote Nautilus alpha",
     )
     assert alpha.source_experiment_id == source_id
@@ -307,10 +308,41 @@ def test_real_evidence_promotes_through_alpha_and_portfolio(
         assert sealed_entry.evidence_json == {}
         assert sealed_entry.disclosure_json["policy"] == "SEALED_LEVEL1_POLICY_V1"
 
+    with factory() as session, session.begin():
+        first_sealed = session.get(DatasetRevision, sealed_dataset_id)
+        assert first_sealed is not None
+        second_start = datetime.now(UTC) - timedelta(days=9)
+        session.add(
+            DatasetRevision(
+                universe_version_id=first_sealed.universe_version_id,
+                universe_name=first_sealed.universe_name,
+                revision_no=3,
+                event_start=second_start,
+                event_end=second_start + timedelta(days=5),
+                available_start=second_start + timedelta(seconds=2),
+                available_end=second_start + timedelta(days=5, seconds=2),
+                row_count=360,
+                quality_state="VALID",
+                point_in_time_state="VALID",
+                partition="SEALED",
+                created_at=datetime.now(UTC),
+                provider_name="CI fixture provider",
+                source_license="CC0-1.0",
+                catalog_uri="nautilus-catalog://promotion-portfolio-sealed",
+                nautilus_data_type="QuoteTick",
+                instrument_scope=["EUR/USD.SIM"],
+                schema_revision="quote-v2",
+                quality_result={"state": "VALID"},
+                point_in_time_result={"state": "VALID"},
+                ingested_at=datetime.now(UTC),
+            )
+        )
     promoted = simulate_portfolio_candidate(
         factory,
         portfolio_program_id=portfolio_program_id,
         alpha_ids=[alpha.id],
+        simulation_experiment_id=uuid4(),
+        portfolio_sealed_experiment_id=uuid4(),
     )
     assert promoted.selected_alpha_id == alpha.id
 
@@ -358,6 +390,7 @@ def test_unresolved_horizon_cannot_qualify(
             factory,
             source_experiment_id=source_id,
             sealed_dataset_revision_id=sealed_dataset_id,
+            sealed_experiment_id=uuid4(),
         )
     assert raised.value.code == "ALPHA_HORIZON_UNRESOLVED"
 
@@ -396,5 +429,7 @@ def test_shadow_alpha_cannot_form_candidate(engine: Engine) -> None:
             factory,
             portfolio_program_id=portfolio_program_id,
             alpha_ids=[alpha_id],
+            simulation_experiment_id=uuid4(),
+            portfolio_sealed_experiment_id=uuid4(),
         )
     assert raised.value.code == "SHADOW_ALPHA_NOT_HANDOFF_ELIGIBLE"

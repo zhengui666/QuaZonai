@@ -18,7 +18,9 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from uuid import UUID
 
-from db.models import Job
+from sqlalchemy import func, select
+
+from db.models import DatasetRevision, GovernedDataSource, Job, MarketUniverseVersion
 from db.session import SessionFactory, create_database_engine, create_session_factory, ping_database
 from events import append_event
 from jobs import (
@@ -29,12 +31,15 @@ from jobs import (
     renew_job_lease,
 )
 from logging_utils import configure_logging
-from quant_runtime.client import RemoteNautilusConfig
+from quant_runtime.client import NautilusQuantRuntime, RemoteNautilusConfig
+from quant_runtime.contracts import CatalogValidationRequest
 from quant_runtime.promotion import qualify_alpha
 from settings import Settings
 
 LOGGER = logging.getLogger("quazonai.sealed_worker")
 SEALED_JOB_KIND = "SEALED_ALPHA_QUALIFICATION"
+SEALED_DATASET_REGISTRATION_JOB_KIND = "SEALED_DATASET_REGISTRATION"
+SEALED_JOB_KINDS = {SEALED_JOB_KIND, SEALED_DATASET_REGISTRATION_JOB_KIND}
 
 
 class StopFlag:
@@ -55,6 +60,7 @@ def _uuid_payload(job: Job, key: str) -> UUID:
 def _execute_qualification(factory: SessionFactory, job: Job) -> dict[str, str]:
     payload = dict(job.payload or {})
     sealed_dataset_revision_id = _uuid_payload(job, "sealed_dataset_revision_id")
+    sealed_experiment_id = _uuid_payload(job, "sealed_experiment_id")
     name_raw = payload.get("name")
     role_raw = payload.get("role", "PRIMARY_ALPHA")
     name = str(name_raw) if name_raw is not None else None
@@ -63,6 +69,7 @@ def _execute_qualification(factory: SessionFactory, job: Job) -> dict[str, str]:
         factory,
         source_experiment_id=job.resource_id,
         sealed_dataset_revision_id=sealed_dataset_revision_id,
+        sealed_experiment_id=sealed_experiment_id,
         name=name,
         role=role,
     )
@@ -74,6 +81,122 @@ def _execute_qualification(factory: SessionFactory, job: Job) -> dict[str, str]:
         "state": alpha.state,
         "degradation_state": alpha.degradation_state,
     }
+
+
+def _execute_sealed_dataset_registration(
+    factory: SessionFactory, job: Job
+) -> dict[str, str]:
+    payload = dict(job.payload or {})
+    universe_version_id = job.resource_id
+    data_source_id = _uuid_payload(job, "data_source_id")
+    catalog_key = str(payload.get("catalog_key") or "")
+    expected = [str(value) for value in payload.get("expected_instrument_ids", [])]
+    if not catalog_key:
+        raise RuntimeError("sealed registration catalog_key is required")
+    with NautilusQuantRuntime(RemoteNautilusConfig.from_env(sealed=True)) as runtime:
+        validation = runtime.validate_sealed_catalog(
+            CatalogValidationRequest(
+                catalog_key=catalog_key,
+                instrument_ids=expected,
+                nautilus_data_type="QuoteTick",
+            )
+        )
+    if not validation.valid:
+        raise RuntimeError("sealed catalog failed remote validation")
+    required = (
+        validation.catalog_uri, validation.nautilus_data_type, validation.schema_revision,
+        validation.event_time_start, validation.event_time_end,
+        validation.available_time_start, validation.available_time_end, validation.ingested_at,
+    )
+    if any(value is None for value in required):
+        raise RuntimeError("sealed catalog validation omitted immutable governance metadata")
+    if str(validation.quality_result.get("state", "")).upper() != "VALID":
+        raise RuntimeError("sealed catalog quality governance is not VALID")
+    if str(validation.point_in_time_result.get("state", "")).upper() != "VALID":
+        raise RuntimeError("sealed catalog point-in-time governance is not VALID")
+
+    with factory.begin() as session:
+        universe = session.execute(
+            select(MarketUniverseVersion)
+            .where(MarketUniverseVersion.id == universe_version_id)
+            .with_for_update()
+        ).scalar_one_or_none()
+        source = session.execute(
+            select(GovernedDataSource)
+            .where(GovernedDataSource.id == data_source_id)
+            .with_for_update()
+        ).scalar_one_or_none()
+        if universe is None or universe.state != "ACTIVE":
+            raise RuntimeError("sealed registration Universe Version is no longer active")
+        if source is None or source.state != "ACTIVE" or source.preflight_state != "READY":
+            raise RuntimeError("sealed registration Data Source is no longer ready")
+        existing = session.scalar(
+            select(DatasetRevision).where(DatasetRevision.catalog_uri == validation.catalog_uri)
+        )
+        if existing is not None:
+            if (
+                existing.partition != "SEALED"
+                or existing.universe_version_id != universe.id
+                or existing.data_source_id != source.id
+                or existing.instrument_scope != validation.instrument_scope
+                or existing.row_count != validation.row_count
+            ):
+                raise RuntimeError("sealed catalog URI is already bound to different governance facts")
+            revision = existing
+        else:
+            revision_no = int(
+                session.scalar(
+                    select(func.max(DatasetRevision.revision_no)).where(
+                        DatasetRevision.data_source_id == source.id,
+                        DatasetRevision.universe_version_id == universe.id,
+                        DatasetRevision.partition == "SEALED",
+                    )
+                )
+                or 0
+            ) + 1
+            revision = DatasetRevision(
+                data_source_id=source.id,
+                universe_version_id=universe.id,
+                universe_name=universe.name,
+                revision_no=revision_no,
+                schema_version=validation.schema_revision,
+                event_start=validation.event_time_start,
+                event_end=validation.event_time_end,
+                available_start=validation.available_time_start,
+                available_end=validation.available_time_end,
+                row_count=validation.row_count,
+                quality_state="VALID",
+                point_in_time_state="VALID",
+                partition="SEALED",
+                provider_name=source.provider or source.name,
+                source_license=(str(payload.get("source_license")) if payload.get("source_license") else None),
+                catalog_uri=validation.catalog_uri,
+                nautilus_data_type=validation.nautilus_data_type,
+                instrument_scope=validation.instrument_scope,
+                schema_revision=validation.schema_revision,
+                quality_result=validation.quality_result,
+                point_in_time_result=validation.point_in_time_result,
+                ingested_at=validation.ingested_at,
+                created_at=validation.ingested_at,
+            )
+            session.add(revision)
+            session.flush()
+            append_event(
+                session,
+                kind="SEALED_DATASET_REVISION_REGISTERED",
+                aggregate_type="dataset_revision",
+                aggregate_id=revision.id,
+                payload={
+                    "universe_version_id": str(universe.id),
+                    "data_source_id": str(source.id),
+                    "catalog_key": catalog_key,
+                },
+            )
+        return {
+            "dataset_revision_id": str(revision.id),
+            "universe_version_id": str(universe.id),
+            "state": "REGISTERED",
+        }
 
 
 @contextmanager
@@ -128,7 +251,7 @@ def run_once(
             session,
             owner=owner,
             lease_seconds=settings.job_lease_seconds,
-            kinds={SEALED_JOB_KIND},
+            kinds=SEALED_JOB_KINDS,
         )
         if job is None:
             return False, settings.job_poll_seconds
@@ -148,7 +271,12 @@ def run_once(
             job_id=job.id,
             factory=factory,
         ) as lease_lost:
-            result = _execute_qualification(factory, job)
+            if job.kind == SEALED_JOB_KIND:
+                result = _execute_qualification(factory, job)
+            elif job.kind == SEALED_DATASET_REGISTRATION_JOB_KIND:
+                result = _execute_sealed_dataset_registration(factory, job)
+            else:
+                raise RuntimeError(f"unsupported sealed job kind: {job.kind}")
         if lease_lost.is_set():
             LOGGER.error("sealed job lease ownership was lost", extra={"job_id": str(job.id)})
             return True, settings.job_poll_seconds

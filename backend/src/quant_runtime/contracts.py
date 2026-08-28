@@ -123,13 +123,19 @@ class CatalogValidationResult(StrictModel):
     protocol_version: str
     runtime_version: str
     catalog_key: str
+    catalog_uri: str | None = None
     valid: bool
+    nautilus_data_type: str | None = None
     instrument_scope: list[str]
     row_count: int = Field(ge=0)
     event_time_start: datetime | None = None
     event_time_end: datetime | None = None
     available_time_start: datetime | None = None
     available_time_end: datetime | None = None
+    schema_revision: str | None = None
+    quality_result: dict[str, Any] = Field(default_factory=dict)
+    point_in_time_result: dict[str, Any] = Field(default_factory=dict)
+    ingested_at: datetime | None = None
     findings: list[dict[str, Any]] = Field(default_factory=list)
 
 

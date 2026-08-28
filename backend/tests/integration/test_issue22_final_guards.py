@@ -31,8 +31,9 @@ def test_candidate_simulation_endpoint_replays_idempotently(
         portfolio_program_id,
         alpha_ids,
         simulation_experiment_id=None,
+        portfolio_sealed_experiment_id=None,
     ):
-        calls.append((portfolio_program_id, tuple(alpha_ids), simulation_experiment_id))
+        calls.append((portfolio_program_id, tuple(alpha_ids), simulation_experiment_id, portfolio_sealed_experiment_id))
         return SimpleNamespace(
             candidate_id=candidate_id,
             approval_id=approval_id,
@@ -53,6 +54,7 @@ def test_candidate_simulation_endpoint_replays_idempotently(
     assert replay.json() == first.json()
     assert len(calls) == 1
     assert calls[0][2] is not None
+    assert calls[0][3] is not None
 
     collision = client.post(
         path,

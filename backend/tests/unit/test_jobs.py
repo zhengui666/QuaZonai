@@ -160,7 +160,10 @@ def test_finite_worker_never_claims_sealed_evaluator_work(
             kind="SEALED_ALPHA_QUALIFICATION",
             resource_type="SEARCH_LEDGER_ENTRY",
             resource_id=uuid4(),
-            payload={"sealed_dataset_revision_id": str(uuid4())},
+            payload={
+                "sealed_dataset_revision_id": str(uuid4()),
+                "sealed_experiment_id": str(uuid4()),
+            },
             available_at=earlier,
         )
         finite = enqueue_job(

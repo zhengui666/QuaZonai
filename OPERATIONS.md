@@ -543,3 +543,12 @@ QuaZonai 的产品体验应始终保持：**用户提出投资研究问题，系
 - 数据接入先调用 catalog ingest/validate，再把 `catalog_uri`、provider/license、Instrument scope、schema revision、quality 与 point-in-time 结果写入 Dataset Revision。
 - 升级 Nautilus 版本时必须同时更新 pin、协议契约、真实 BacktestNode CI、Candidate Bundle conformance fixture；禁止静默漂移。
 - `QUAZONAI_NAUTILUS_SEALED_*` 只能提供给 sealed evaluator worker，不得提供给 Research Mission/Codex 子进程。
+
+
+### Remote Nautilus SOURCE_BUNDLE OS isolation
+
+The remote Nautilus Gateway is a Linux-only execution boundary for Mission-authored `SOURCE_BUNDLE` code. Install `bubblewrap` (`bwrap`) and permit unprivileged user/mount/network namespaces for the Gateway service account. The Gateway fails closed when `bwrap` is unavailable. Each authored strategy runs with an empty network namespace and a mount namespace containing only trusted Python/runtime libraries plus the single disposable operation workspace; the Gateway data root, sibling catalogs, service environment and host home are not mounted. The Python AST gate remains defense-in-depth, not the isolation boundary.
+
+### Sealed catalog provisioning and registration
+
+Sealed observations never transit QuaZonai API, Codex workspaces, ordinary workers or Core job payloads. On the independently deployed SEALED Nautilus host, set `NAUTILUS_GATEWAY_ROLE=SEALED` and provision the typed `CatalogIngestRequest` from a local protected file with `quazonai-nautilus-sealed-provision --input /secure/release.json`. Core then queues metadata-only registration with `POST /api/v1/market-universe-versions/{universe_version_id}/sealed-dataset-revisions/register` (Idempotency-Key required). Only `sealed-evaluator` possesses the sealed Gateway credential; it calls the sealed-only catalog validation route and freezes the validated DatasetRevision metadata as `SEALED`. No sealed QuoteTick row is persisted in Core. Candidate promotion requires a second, non-overlapping sealed revision beyond the Alpha qualification episode and performs an independent portfolio-level sealed disclosure before creating a Paper Approval.

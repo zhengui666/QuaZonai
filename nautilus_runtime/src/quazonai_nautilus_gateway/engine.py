@@ -331,6 +331,57 @@ def _candidate_strategy_wheel_path(candidate_id: UUID) -> str:
     )
 
 
+def _source_bundle_sandbox_command(
+    *, operation: str, workspace: Path
+) -> list[str]:
+    """Build a fail-closed Bubblewrap command for authored Python.
+
+    The child receives only the one disposable operation workspace, trusted
+    Python/runtime libraries, an empty network namespace and fresh /proc,/dev,/tmp.
+    It cannot see the Gateway data root, sibling sealed catalogs, service secrets,
+    host home directories, or host network namespace.
+    """
+    if sys.platform != "linux":
+        raise GatewayContractError("SOURCE_BUNDLE execution requires Linux OS isolation")
+    configured = os.getenv("NAUTILUS_GATEWAY_OS_SANDBOX", "bwrap").strip() or "bwrap"
+    sandbox = shutil.which(configured)
+    if sandbox is None:
+        raise GatewayContractError("SOURCE_BUNDLE OS sandbox is unavailable")
+    command = [
+        sandbox,
+        "--die-with-parent",
+        "--new-session",
+        "--unshare-all",
+        "--proc", "/proc",
+        "--dev", "/dev",
+        "--tmpfs", "/tmp",
+        "--bind", str(workspace), "/sandbox",
+        "--chdir", "/sandbox",
+    ]
+    seen: set[str] = set()
+    for candidate in (
+        Path("/usr"), Path("/lib"), Path("/lib64"), Path("/etc"),
+        Path(sys.base_prefix), Path(sys.prefix),
+    ):
+        resolved = str(candidate.resolve())
+        if candidate.exists() and resolved not in seen:
+            command.extend(["--ro-bind", resolved, resolved])
+            seen.add(resolved)
+    gateway_source = Path(__file__).resolve().parents[2]
+    command.extend(["--ro-bind", str(gateway_source), "/gateway-src"])
+    command.extend([
+        "--setenv", "QUAZONAI_NAUTILUS_ISOLATED_CHILD", "1",
+        "--setenv", "PYTHONDONTWRITEBYTECODE", "1",
+        sys.executable, "-I", "-c",
+        (
+            "import sys; sys.path.insert(0, '/gateway-src'); "
+            "from quazonai_nautilus_gateway.isolated_runner import main; main()"
+        ),
+        operation, "/sandbox/runtime", "/sandbox/input.json",
+    ])
+    return command
+
+
 class NautilusGatewayEngine:
     def __init__(self, data_root: Path) -> None:
         if nautilus_version != VALIDATED_NAUTILUS_VERSION:
@@ -610,15 +661,7 @@ class NautilusGatewayEngine:
             output_path = workspace / ".trusted-result.json"
             input_path.write_text(json.dumps(_jsonable(payload)), encoding="utf-8")
             completed = subprocess.run(
-                [
-                    sys.executable,
-                    "-I",
-                    "-m",
-                    "quazonai_nautilus_gateway.isolated_runner",
-                    operation,
-                    str(child_root),
-                    str(input_path),
-                ],
+                _source_bundle_sandbox_command(operation=operation, workspace=workspace),
                 cwd=workspace,
                 env=_sanitized_child_environment(),
                 stdin=subprocess.DEVNULL,
@@ -1015,13 +1058,19 @@ class NautilusGatewayEngine:
             "protocol_version": PROTOCOL_VERSION,
             "runtime_version": nautilus_version,
             "catalog_key": request.catalog_key,
+            "catalog_uri": f"nautilus-catalog://{request.catalog_key}",
             "valid": not findings and bool(instruments) and bool(ticks),
+            "nautilus_data_type": manifest.get("nautilus_data_type"),
             "instrument_scope": scope,
             "row_count": actual_row_count,
             "event_time_start": actual_event_start,
             "event_time_end": actual_event_end,
             "available_time_start": actual_available_start,
             "available_time_end": actual_available_end,
+            "schema_revision": manifest.get("schema_revision"),
+            "quality_result": manifest.get("quality_result", {}),
+            "point_in_time_result": manifest.get("point_in_time_result", {}),
+            "ingested_at": _parse_time(manifest["ingested_at"]),
             "findings": findings,
         }
 

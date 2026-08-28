@@ -205,3 +205,14 @@ def test_candidate_wheel_identity_uses_full_uuid_integer() -> None:
     assert _candidate_strategy_wheel_path(candidate_id) == (
         "strategy/quazonai_candidate_strategy-0.0.1000001-py3-none-any.whl"
     )
+
+
+def test_source_bundle_rejects_module_object_escape() -> None:
+    with pytest.raises(ValueError, match="attribute 'sys'"):
+        StrategyArtifact(
+            artifact_id="escape",
+            kind="SOURCE_BUNDLE",
+            strategy_path="evil:S",
+            config_path="evil:C",
+            source_files={"evil.py": "import dataclasses\ndataclasses.sys.modules['os'].system('id')\n"},
+        )

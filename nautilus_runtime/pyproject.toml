@@ -24,6 +24,7 @@ dev = [
 
 [project.scripts]
 quazonai-nautilus-gateway = "quazonai_nautilus_gateway.app:run"
+quazonai-nautilus-sealed-provision = "quazonai_nautilus_gateway.provision:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

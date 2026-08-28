@@ -59,6 +59,14 @@ _FORBIDDEN_SOURCE_ATTRIBUTES = {
     "__mro__",
     "__spec__",
     "__subclasses__",
+    "environ",
+    "fork",
+    "modules",
+    "popen",
+    "socket",
+    "spawn",
+    "sys",
+    "system",
 }
 
 

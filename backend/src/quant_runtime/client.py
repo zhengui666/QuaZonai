@@ -38,6 +38,10 @@ class QuantRuntime(Protocol):
 
     def validate_catalog(self, request: CatalogValidationRequest) -> CatalogValidationResult: ...
 
+    def validate_sealed_catalog(
+        self, request: CatalogValidationRequest
+    ) -> CatalogValidationResult: ...
+
     def run_backtest(self, request: BacktestExperimentRequest) -> BacktestEvidence: ...
 
     def run_sealed_backtest(self, request: BacktestExperimentRequest) -> SealedBacktestResult: ...
@@ -217,6 +221,16 @@ class NautilusQuantRuntime:
     def validate_catalog(self, request: CatalogValidationRequest) -> CatalogValidationResult:
         response = self._client.post(
             "v1/catalogs/validate",
+            json=request.model_dump(mode="json"),
+            headers={"Idempotency-Key": str(request.request_id)},
+        )
+        return self._parse(response, CatalogValidationResult)
+
+    def validate_sealed_catalog(
+        self, request: CatalogValidationRequest
+    ) -> CatalogValidationResult:
+        response = self._client.post(
+            "v1/sealed-catalogs/validate",
             json=request.model_dump(mode="json"),
             headers={"Idempotency-Key": str(request.request_id)},
         )

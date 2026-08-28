@@ -411,6 +411,7 @@ def qualify_alpha(
     *,
     source_experiment_id: UUID,
     sealed_dataset_revision_id: UUID,
+    sealed_experiment_id: UUID,
     name: str | None = None,
     role: str = "PRIMARY_ALPHA",
 ) -> AlphaQualification:
@@ -489,7 +490,7 @@ def qualify_alpha(
         sealed_start, sealed_end = _sealed_dataset_bounds(sealed_dataset)
         sealed_request = source_request.model_copy(
             update={
-                "experiment_id": uuid4(),
+                "experiment_id": sealed_experiment_id,
                 "mode": ExperimentMode.SEALED,
                 "dataset_revision_id": sealed_dataset.id,
                 "catalog_key": _catalog_key(sealed_dataset),
@@ -1141,6 +1142,82 @@ def _approval_simulation_summaries(
     }
 
 
+def _pending_program_approval_id(session: Session, program_id: UUID) -> UUID | None:
+    return session.scalar(
+        select(ApprovalSnapshot.id)
+        .join(PortfolioCandidate, ApprovalSnapshot.candidate_id == PortfolioCandidate.id)
+        .where(
+            PortfolioCandidate.portfolio_program_id == program_id,
+            ApprovalSnapshot.state == "PENDING",
+        )
+        .order_by(ApprovalSnapshot.created_at)
+        .limit(1)
+    )
+
+
+def _select_portfolio_sealed_dataset(
+    session: Session,
+    *,
+    alpha: AlphaQualification,
+    source_dataset: DatasetRevision,
+    source_request: BacktestExperimentRequest,
+    program_id: UUID,
+) -> DatasetRevision:
+    qualification = (alpha.metrics or {}).get("qualification_contract", {})
+    try:
+        qualification_sealed_id = UUID(str(qualification["sealed_dataset_revision_id"]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise QfError(
+            "ALPHA_SEALED_LINEAGE_MISSING",
+            "Qualified Alpha lost its sealed Dataset lineage.",
+            500,
+        ) from exc
+    qualification_sealed = session.get(DatasetRevision, qualification_sealed_id)
+    if qualification_sealed is None:
+        raise QfError("DATASET_REVISION_NOT_FOUND", "Alpha sealed Dataset Revision is missing.", 500)
+    lineage_ids = _evidence_program_lineage_ids(session, program_id)
+    consumed = set(
+        session.scalars(
+            select(SearchLedgerEntry.dataset_revision_id).where(
+                SearchLedgerEntry.program_id.in_(lineage_ids),
+                SearchLedgerEntry.mode == ExperimentMode.SEALED.value,
+                SearchLedgerEntry.state.in_(["RUNNING", "SUCCEEDED"]),
+            )
+        )
+    )
+    candidates = list(
+        session.scalars(
+            select(DatasetRevision)
+            .where(
+                DatasetRevision.partition == "SEALED",
+                DatasetRevision.quality_state == "VALID",
+                DatasetRevision.point_in_time_state == "VALID",
+                DatasetRevision.universe_version_id == source_dataset.universe_version_id,
+            )
+            .order_by(DatasetRevision.event_start, DatasetRevision.id)
+        )
+    )
+    q_start, q_end = _sealed_dataset_bounds(qualification_sealed)
+    for candidate in candidates:
+        if candidate.id in consumed or candidate.id == qualification_sealed_id:
+            continue
+        try:
+            _select_sealed_dataset(session, source_dataset, candidate.id)
+            c_start, c_end = _sealed_dataset_bounds(candidate)
+        except QfError:
+            continue
+        if q_start <= c_end and c_start <= q_end:
+            continue
+        if not set(source_request.instrument_ids).issubset(set(candidate.instrument_scope or [])):
+            continue
+        return candidate
+    raise QfError(
+        "PORTFOLIO_SEALED_DATASET_UNAVAILABLE",
+        "Candidate promotion requires a second independent governed SEALED episode.",
+        422,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class CandidatePromotion:
     candidate_id: UUID
@@ -1154,7 +1231,8 @@ def simulate_portfolio_candidate(
     *,
     portfolio_program_id: UUID,
     alpha_ids: list[UUID],
-    simulation_experiment_id: UUID | None = None,
+    simulation_experiment_id: UUID,
+    portfolio_sealed_experiment_id: UUID,
 ) -> CandidatePromotion:
     """Optimize Alpha selection, run a real PORTFOLIO simulation, and freeze approval facts."""
     requested_alpha_ids = _canonical_alpha_ids(alpha_ids)
@@ -1164,7 +1242,7 @@ def simulate_portfolio_candidate(
         portfolio_program = session.get(PortfolioProgram, portfolio_program_id)
         if portfolio_program is None:
             raise QfError("PORTFOLIO_PROGRAM_NOT_FOUND", "Portfolio Program does not exist.", 404)
-        experiment_id = simulation_experiment_id or uuid4()
+        experiment_id = simulation_experiment_id
         if simulation_experiment_id is not None:
             existing_candidate = session.scalar(
                 select(PortfolioCandidate).where(
@@ -1224,6 +1302,19 @@ def simulate_portfolio_candidate(
             session, requested_alpha_ids, mandate
         )
         mandate_constraints = _validate_mandate_before_simulation(mandate, alpha)
+        source_dataset = session.get(DatasetRevision, source.dataset_revision_id)
+        if source_dataset is None:
+            raise QfError("DATASET_REVISION_NOT_FOUND", "Portfolio source Dataset Revision is missing.", 500)
+        portfolio_sealed_dataset = _select_portfolio_sealed_dataset(
+            session,
+            alpha=alpha,
+            source_dataset=source_dataset,
+            source_request=request,
+            program_id=source.program_id,
+        )
+        portfolio_sealed_start, portfolio_sealed_end = _sealed_dataset_bounds(portfolio_sealed_dataset)
+        portfolio_sealed_dataset_id = portfolio_sealed_dataset.id
+        portfolio_sealed_catalog_key = _catalog_key(portfolio_sealed_dataset)
         mandate_id = mandate.id
         simulation_request = request.model_copy(
             update={
@@ -1256,6 +1347,35 @@ def simulate_portfolio_candidate(
     )
     simulation_evidence = _require_real_transaction_evidence(simulation)
     _validate_mandate_after_simulation(mandate_constraints, simulation_evidence)
+    portfolio_sealed_request = simulation_request.model_copy(
+        update={
+            "experiment_id": portfolio_sealed_experiment_id,
+            "mode": ExperimentMode.SEALED,
+            "dataset_revision_id": portfolio_sealed_dataset_id,
+            "catalog_key": portfolio_sealed_catalog_key,
+            "start_time": portfolio_sealed_start,
+            "end_time": portfolio_sealed_end,
+            "tags": {**simulation_request.tags, "evaluation_stage": "PORTFOLIO_SEALED"},
+        }
+    )
+    portfolio_sealed = ExperimentCoordinator(factory).execute(
+        mission_id=None,
+        program_id=source_program_id,
+        branch_id=source_branch_id,
+        request=portfolio_sealed_request,
+        sealed=True,
+        parent_entry_id=simulation.id,
+    )
+    if portfolio_sealed.evidence_json:
+        raise QfError("SEALED_RAW_EVIDENCE_PERSISTED", "Portfolio sealed evaluation crossed the disclosure boundary.", 500)
+    portfolio_sealed_disclosure = dict(portfolio_sealed.disclosure_json or {})
+    if not portfolio_sealed_disclosure.get("passed"):
+        raise QfError(
+            "PORTFOLIO_SEALED_EVALUATION_FAILED",
+            "Constructed portfolio did not pass independent sealed evaluation.",
+            422,
+            {"sealed_experiment_id": str(portfolio_sealed.id)},
+        )
 
     with factory() as session, session.begin():
         portfolio_program = session.execute(
@@ -1295,6 +1415,14 @@ def simulate_portfolio_candidate(
                 409,
             )
         _validate_mandate_after_simulation(current_constraints, simulation_evidence)
+        pending_approval_id = _pending_program_approval_id(session, portfolio_program.id)
+        if pending_approval_id is not None:
+            raise QfError(
+                "PORTFOLIO_APPROVAL_PENDING",
+                "Portfolio Program already has an actionable pending recommendation.",
+                409,
+                {"approval_id": str(pending_approval_id)},
+            )
         current_candidate = (
             session.get(PortfolioCandidate, portfolio_program.current_candidate_id)
             if portfolio_program.current_candidate_id is not None
@@ -1403,6 +1531,9 @@ def simulate_portfolio_candidate(
                     "risk_config": request_json.risk_config,
                     "discovery_summary": discovery_summary,
                     "sealed_summary": sealed_summary,
+                    "portfolio_sealed_disclosure": portfolio_sealed_disclosure,
+                    "portfolio_sealed_experiment_id": str(portfolio_sealed.id),
+                    "portfolio_sealed_dataset_revision_id": str(portfolio_sealed.dataset_revision_id),
                     "robustness_summary": {
                         "status": "PASSED_SEALED_AND_PORTFOLIO_SIMULATION"
                     },
@@ -1439,6 +1570,9 @@ def simulate_portfolio_candidate(
                 "search_adjusted_quality": alpha_quality,
                 "portfolio_simulation_experiment_id": str(simulation.id),
                 "remote_run_id": simulation.remote_run_id,
+                "portfolio_sealed_experiment_id": str(portfolio_sealed.id),
+                "portfolio_sealed_dataset_revision_id": str(portfolio_sealed.dataset_revision_id),
+                "portfolio_sealed_passed": True,
                 "order_count": len(simulation_evidence.get("orders", [])),
                 "fill_count": len(simulation_evidence.get("fills", [])),
                 "position_count": len(simulation_evidence.get("positions", [])),
