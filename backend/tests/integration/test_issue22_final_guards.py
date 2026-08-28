@@ -127,7 +127,7 @@ def test_discovery_quality_model_is_discriminating_and_search_adjusted() -> None
     assert strong > weak
     assert strong_model["sealed_evidence_used_for_scoring"] is False
     assert weak_model["search_exposure_penalty"] > 0
-    assert weak_model["model"] == "DISCOVERY_PUBLIC_PERFORMANCE_V1"
+    assert weak_model["model"] == "DISCOVERY_PUBLIC_PERFORMANCE_V2"
 
 
 def test_mandate_filter_runs_before_quality_ranking() -> None:
