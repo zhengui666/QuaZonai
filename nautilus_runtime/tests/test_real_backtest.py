@@ -233,9 +233,9 @@ def test_real_catalog_backtest_and_sealed_disclosure(tmp_path: Path) -> None:
 def test_catalog_validation_reads_parquet_instead_of_trusting_manifest(tmp_path: Path) -> None:
     engine = NautilusGatewayEngine(tmp_path)
     _ingest_fixture(engine)
-    manifest_path = (
-        tmp_path / "catalogs" / "integration-fx-quotes" / "quazonai-catalog-manifest.json"
-    )
+    catalog_path = engine._catalog_path("integration-fx-quotes")
+    assert catalog_path.name != "integration-fx-quotes"
+    manifest_path = catalog_path / "quazonai-catalog-manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["row_count"] = 999_999
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")

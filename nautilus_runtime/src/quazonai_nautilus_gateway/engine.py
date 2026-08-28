@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import fcntl
 import importlib
+import importlib.abc
+import importlib.util
 import io
 import json
 import os
@@ -15,11 +17,12 @@ import tempfile
 import zipfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pandas as pd
 from nautilus_trader import __version__ as nautilus_version
@@ -193,11 +196,104 @@ def _attr(value: Any, *names: str) -> Any:
     return None
 
 
-def _safe_rel_path(path: str) -> Path:
-    candidate = Path(path)
-    if candidate.is_absolute() or ".." in candidate.parts:
-        raise GatewayContractError("artifact path traversal is forbidden")
-    return candidate
+def _source_module_name(path: str) -> tuple[str, bool]:
+    normalized = path.replace("\\", "/")
+    parts = normalized.split("/")
+    if not parts or any(not part for part in parts) or ".." in parts:
+        raise GatewayContractError("strategy source module path is invalid")
+    leaf = parts[-1]
+    is_package = leaf == "__init__.py"
+    if is_package:
+        module_parts = parts[:-1]
+    elif leaf.endswith(".py"):
+        module_parts = [*parts[:-1], leaf[:-3]]
+    else:
+        raise GatewayContractError("strategy source modules must be Python files")
+    if not module_parts or any(not part.isidentifier() for part in module_parts):
+        raise GatewayContractError("strategy source module path is invalid")
+    return ".".join(module_parts), is_package
+
+
+class _SourceBundleFinder(importlib.abc.MetaPathFinder, importlib.abc.SourceLoader):
+    """Load a validated SOURCE_BUNDLE from memory without filesystem paths."""
+
+    def __init__(self, source_files: dict[str, str]) -> None:
+        parsed: list[tuple[str, bool, str]] = []
+        source_modules: set[str] = set()
+        for relative, source in source_files.items():
+            module_name, is_package = _source_module_name(relative)
+            if module_name in source_modules:
+                raise GatewayContractError("strategy source module names must be unique")
+            source_modules.add(module_name)
+            parsed.append((module_name, is_package, source))
+
+        self._sources = {
+            module_name: source for module_name, _, source in parsed
+        }
+        self._packages = {
+            module_name for module_name, is_package, _ in parsed if is_package
+        }
+        for module_name in source_modules:
+            segments = module_name.split(".")
+            for index in range(1, len(segments)):
+                package_name = ".".join(segments[:index])
+                self._packages.add(package_name)
+                self._sources.setdefault(package_name, "")
+
+        self._filenames = {
+            module_name: f"<quazonai-source-bundle:{index:04d}>"
+            for index, module_name in enumerate(sorted(self._sources))
+        }
+        self._modules_by_filename = {
+            filename: module_name for module_name, filename in self._filenames.items()
+        }
+        self.loaded_modules: set[str] = set()
+
+    @property
+    def module_names(self) -> set[str]:
+        return set(self._sources)
+
+    def find_spec(
+        self,
+        fullname: str,
+        path: Any = None,
+        target: Any = None,
+    ) -> Any:
+        del path, target
+        if fullname not in self._sources:
+            return None
+        return importlib.util.spec_from_loader(
+            fullname,
+            self,
+            is_package=fullname in self._packages,
+        )
+
+    def get_filename(self, fullname: str) -> str:
+        try:
+            return self._filenames[fullname]
+        except KeyError as exc:
+            raise ImportError(fullname) from exc
+
+    def get_data(self, path: str) -> bytes:
+        try:
+            module_name = self._modules_by_filename[path]
+        except KeyError as exc:
+            raise OSError(path) from exc
+        return self._sources[module_name].encode("utf-8")
+
+    def is_package(self, fullname: str) -> bool:
+        return fullname in self._packages
+
+    def get_code(self, fullname: str) -> Any:
+        self.loaded_modules.add(fullname)
+        return super().get_code(fullname)
+
+
+@dataclass(frozen=True, slots=True)
+class _CatalogRecord:
+    catalog_key: str
+    storage_id: UUID
+    state: str
 
 
 def _parse_time(value: str | datetime) -> datetime:
@@ -236,11 +332,14 @@ class NautilusGatewayEngine:
             )
         self._data_root = data_root.resolve()
         self._catalog_root = self._data_root / "catalogs"
+        self._catalog_storage_root = self._catalog_root / "data"
+        self._catalog_registry_path = self._catalog_root / "registry.json"
+        self._catalog_registry_lock_path = self._catalog_root / ".registry.lock"
         self._artifact_root = self._data_root / "artifacts"
         self._run_root = self._data_root / "run-receipts"
         self._run_receipts_path = self._run_root / "receipts.json"
         self._run_lock_path = self._run_root / ".receipts.lock"
-        self._catalog_root.mkdir(parents=True, exist_ok=True)
+        self._catalog_storage_root.mkdir(parents=True, exist_ok=True)
         self._artifact_root.mkdir(parents=True, exist_ok=True)
         self._run_root.mkdir(parents=True, exist_ok=True)
 
@@ -260,10 +359,93 @@ class NautilusGatewayEngine:
             "live_execution_exposed": False,
         }
 
+    def _load_catalog_registry(self) -> list[_CatalogRecord]:
+        if not self._catalog_registry_path.exists():
+            return []
+        try:
+            raw = json.loads(self._catalog_registry_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise GatewayContractError("catalog registry is invalid") from exc
+        if not isinstance(raw, dict) or raw.get("version") != 1:
+            raise GatewayContractError("catalog registry is invalid")
+        entries = raw.get("catalogs")
+        if not isinstance(entries, list):
+            raise GatewayContractError("catalog registry is invalid")
+        records: list[_CatalogRecord] = []
+        seen_keys: set[str] = set()
+        seen_storage_ids: set[UUID] = set()
+        for entry in entries:
+            if not isinstance(entry, dict):
+                raise GatewayContractError("catalog registry is invalid")
+            key = entry.get("catalog_key")
+            state = entry.get("state")
+            try:
+                storage_id = UUID(str(entry.get("storage_id")))
+            except (TypeError, ValueError) as exc:
+                raise GatewayContractError("catalog registry is invalid") from exc
+            if (
+                not isinstance(key, str)
+                or not key
+                or state not in {"STAGING", "READY"}
+                or key in seen_keys
+                or storage_id in seen_storage_ids
+            ):
+                raise GatewayContractError("catalog registry is invalid")
+            seen_keys.add(key)
+            seen_storage_ids.add(storage_id)
+            records.append(
+                _CatalogRecord(catalog_key=key, storage_id=storage_id, state=state)
+            )
+        return records
+
+    def _write_catalog_registry(self, records: list[_CatalogRecord]) -> None:
+        payload = {
+            "version": 1,
+            "catalogs": [
+                {
+                    "catalog_key": record.catalog_key,
+                    "storage_id": str(record.storage_id),
+                    "state": record.state,
+                }
+                for record in sorted(records, key=lambda item: item.catalog_key)
+            ],
+        }
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            prefix=".registry-",
+            dir=self._catalog_root,
+            delete=False,
+        ) as stream:
+            json.dump(payload, stream, ensure_ascii=False, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+            temporary = Path(stream.name)
+        os.replace(temporary, self._catalog_registry_path)
+
+    @staticmethod
+    def _find_catalog_record(
+        records: list[_CatalogRecord], catalog_key: str
+    ) -> _CatalogRecord | None:
+        for record in records:
+            if record.catalog_key == catalog_key:
+                return record
+        return None
+
+    def _catalog_storage_path(self, storage_id: UUID) -> Path:
+        return self._catalog_storage_root / storage_id.hex
+
+    def _catalog_staging_path(self, storage_id: UUID) -> Path:
+        return self._catalog_storage_root / f".{storage_id.hex}.staging"
+
     def _catalog_path(self, key: str) -> Path:
-        path = (self._catalog_root / key).resolve()
-        if path.parent != self._catalog_root:
-            raise GatewayContractError("catalog key escaped the configured root")
+        record = self._find_catalog_record(self._load_catalog_registry(), key)
+        if record is None or record.state != "READY":
+            raise GatewayContractError("selected catalog is unavailable")
+        path = self._catalog_storage_path(record.storage_id)
+        if not path.is_dir():
+            raise GatewayContractError("selected catalog is unavailable")
         return path
 
     @staticmethod
@@ -393,14 +575,29 @@ class NautilusGatewayEngine:
         ) as directory:
             workspace = Path(directory)
             child_root = workspace / "runtime"
-            (child_root / "catalogs").mkdir(parents=True)
+            child_catalog_root = child_root / "catalogs"
+            child_storage_root = child_catalog_root / "data"
+            child_storage_root.mkdir(parents=True)
             if catalog_key is not None:
                 source_catalog = self._catalog_path(catalog_key)
-                if not source_catalog.is_dir():
-                    raise GatewayContractError("selected catalog is unavailable")
-                shutil.copytree(
-                    source_catalog,
-                    child_root / "catalogs" / catalog_key,
+                child_storage_id = UUID("00000000-0000-0000-0000-000000000001")
+                child_catalog_path = child_storage_root / child_storage_id.hex
+                shutil.copytree(source_catalog, child_catalog_path)
+                (child_catalog_root / "registry.json").write_text(
+                    json.dumps(
+                        {
+                            "version": 1,
+                            "catalogs": [
+                                {
+                                    "catalog_key": catalog_key,
+                                    "storage_id": str(child_storage_id),
+                                    "state": "READY",
+                                }
+                            ],
+                        },
+                        sort_keys=True,
+                    ),
+                    encoding="utf-8",
                 )
             input_path = workspace / "input.json"
             output_path = workspace / ".trusted-result.json"
@@ -552,107 +749,153 @@ class NautilusGatewayEngine:
     def ingest(self, request: CatalogIngestRequest) -> dict[str, Any]:
         if request.protocol_version != PROTOCOL_VERSION:
             raise GatewayContractError("unsupported protocol version")
-        catalog_path = self._catalog_path(request.catalog_key)
         canonical_request = self._canonical_ingest_request(request)
-        existing = self._existing_ingest_result(
-            catalog_path=catalog_path,
-            canonical_request=canonical_request,
+        lock_fd = os.open(
+            self._catalog_registry_lock_path, os.O_CREAT | os.O_RDWR, 0o600
         )
-        if existing is not None:
-            return existing
-
-        lock_path = (self._catalog_root / f".{request.catalog_key}.ingest.lock").resolve()
-        if lock_path.parent != self._catalog_root:
-            raise GatewayContractError("catalog lock escaped the configured root")
-        lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
         try:
-            try:
-                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError as exc:
-                raise GatewayContractError("catalog ingest is already in progress") from exc
-            staging_path: Path | None = None
-            existing = self._existing_ingest_result(
-                catalog_path=catalog_path,
-                canonical_request=canonical_request,
-            )
-            if existing is not None:
-                return existing
-
-            staging_path = Path(
-                tempfile.mkdtemp(prefix=f".{request.catalog_key}.staging-", dir=self._catalog_root)
-            )
-            catalog = ParquetDataCatalog(path=str(staging_path))
-            instrument_records: dict[str, dict[str, Any]] = {}
-            for batch in sorted(request.instruments, key=lambda item: item.instrument_id):
-                instrument, ticks, record = self._batch_ticks(batch)
-                catalog.write_data([instrument])
-                catalog.write_data(ticks)
-                instrument_records[str(instrument.id)] = {
-                    "provider": request.provider,
-                    "source": request.source,
-                    "source_license": request.source_license,
-                    **record,
-                }
-
-            instrument_scope = sorted(str(item.id) for item in catalog.instruments())
-            expected_scope = sorted(item.instrument_id for item in request.instruments)
-            if instrument_scope != expected_scope:
-                raise GatewayContractError(
-                    "persisted Nautilus instrument scope differs from the governed ingest contract"
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            records = self._load_catalog_registry()
+            existing_record = self._find_catalog_record(records, request.catalog_key)
+            if existing_record is not None and existing_record.state == "READY":
+                existing = self._existing_ingest_result(
+                    catalog_path=self._catalog_storage_path(existing_record.storage_id),
+                    canonical_request=canonical_request,
                 )
-            all_records = list(instrument_records.values())
-            event_start = min(_parse_time(item["event_time_start"]) for item in all_records)
-            event_end = max(_parse_time(item["event_time_end"]) for item in all_records)
-            available_start = min(
-                _parse_time(item["available_time_start"]) for item in all_records
+                if existing is None:
+                    raise GatewayContractError(
+                        "catalog key is immutable and contains an incomplete prior ingest"
+                    )
+                return existing
+            if existing_record is not None:
+                for candidate in (
+                    self._catalog_staging_path(existing_record.storage_id),
+                    self._catalog_storage_path(existing_record.storage_id),
+                ):
+                    if candidate.exists():
+                        shutil.rmtree(candidate, ignore_errors=True)
+                records = [
+                    record
+                    for record in records
+                    if record.storage_id != existing_record.storage_id
+                ]
+                self._write_catalog_registry(records)
+
+            storage_id = uuid4()
+            staging_record = _CatalogRecord(
+                catalog_key=request.catalog_key,
+                storage_id=storage_id,
+                state="STAGING",
             )
-            available_end = max(
-                _parse_time(item["available_time_end"]) for item in all_records
-            )
-            manifest = {
-                "protocol_version": PROTOCOL_VERSION,
-                "runtime_version": nautilus_version,
-                "catalog_key": request.catalog_key,
-                "nautilus_data_type": request.nautilus_data_type,
-                "instrument_scope": instrument_scope,
-                "instruments": instrument_records,
-                "event_time_start": event_start.isoformat(),
-                "event_time_end": event_end.isoformat(),
-                "available_time_start": available_start.isoformat(),
-                "available_time_end": available_end.isoformat(),
-                "row_count": sum(int(item["row_count"]) for item in all_records),
-                "schema_revision": QUOTE_TICK_SCHEMA_REVISION,
-                "quality_result": {
-                    "state": "VALID",
-                    "duplicate_timestamps": 0,
-                    "crossed_quotes": 0,
-                    "sorted": True,
-                },
-                "point_in_time_result": {
-                    "state": "VALID",
-                    "replay_order": "TS_INIT",
-                    "event_time_preserved": True,
-                    "availability_time_preserved": True,
-                },
-                "ingested_at": _utc_now().isoformat(),
-            }
-            (staging_path / "quazonai-catalog-manifest.json").write_text(
-                json.dumps(manifest, indent=2), encoding="utf-8"
-            )
-            (staging_path / "quazonai-ingest-request.json").write_text(
-                json.dumps(canonical_request, indent=2, sort_keys=True),
-                encoding="utf-8",
-            )
-            os.rename(staging_path, catalog_path)
-            staging_path = None
-            return self._manifest_result(manifest)
+            records.append(staging_record)
+            self._write_catalog_registry(records)
+            staging_path = self._catalog_staging_path(storage_id)
+            catalog_path = self._catalog_storage_path(storage_id)
+            committed = False
+            try:
+                staging_path.mkdir(mode=0o700)
+                catalog = ParquetDataCatalog(path=str(staging_path))
+                instrument_records: dict[str, dict[str, Any]] = {}
+                for batch in sorted(
+                    request.instruments, key=lambda item: item.instrument_id
+                ):
+                    instrument, ticks, record = self._batch_ticks(batch)
+                    catalog.write_data([instrument])
+                    catalog.write_data(ticks)
+                    instrument_records[str(instrument.id)] = {
+                        "provider": request.provider,
+                        "source": request.source,
+                        "source_license": request.source_license,
+                        **record,
+                    }
+
+                instrument_scope = sorted(str(item.id) for item in catalog.instruments())
+                expected_scope = sorted(item.instrument_id for item in request.instruments)
+                if instrument_scope != expected_scope:
+                    raise GatewayContractError(
+                        "persisted Nautilus instrument scope differs from the governed ingest contract"
+                    )
+                all_records = list(instrument_records.values())
+                event_start = min(
+                    _parse_time(item["event_time_start"]) for item in all_records
+                )
+                event_end = max(
+                    _parse_time(item["event_time_end"]) for item in all_records
+                )
+                available_start = min(
+                    _parse_time(item["available_time_start"]) for item in all_records
+                )
+                available_end = max(
+                    _parse_time(item["available_time_end"]) for item in all_records
+                )
+                manifest = {
+                    "protocol_version": PROTOCOL_VERSION,
+                    "runtime_version": nautilus_version,
+                    "catalog_key": request.catalog_key,
+                    "nautilus_data_type": request.nautilus_data_type,
+                    "instrument_scope": instrument_scope,
+                    "instruments": instrument_records,
+                    "event_time_start": event_start.isoformat(),
+                    "event_time_end": event_end.isoformat(),
+                    "available_time_start": available_start.isoformat(),
+                    "available_time_end": available_end.isoformat(),
+                    "row_count": sum(
+                        int(item["row_count"]) for item in all_records
+                    ),
+                    "schema_revision": QUOTE_TICK_SCHEMA_REVISION,
+                    "quality_result": {
+                        "state": "VALID",
+                        "duplicate_timestamps": 0,
+                        "crossed_quotes": 0,
+                        "sorted": True,
+                    },
+                    "point_in_time_result": {
+                        "state": "VALID",
+                        "replay_order": "TS_INIT",
+                        "event_time_preserved": True,
+                        "availability_time_preserved": True,
+                    },
+                    "ingested_at": _utc_now().isoformat(),
+                }
+                (staging_path / "quazonai-catalog-manifest.json").write_text(
+                    json.dumps(manifest, indent=2), encoding="utf-8"
+                )
+                (staging_path / "quazonai-ingest-request.json").write_text(
+                    json.dumps(canonical_request, indent=2, sort_keys=True),
+                    encoding="utf-8",
+                )
+                os.rename(staging_path, catalog_path)
+                records = [
+                    _CatalogRecord(
+                        catalog_key=record.catalog_key,
+                        storage_id=record.storage_id,
+                        state=(
+                            "READY"
+                            if record.storage_id == storage_id
+                            else record.state
+                        ),
+                    )
+                    for record in records
+                ]
+                self._write_catalog_registry(records)
+                committed = True
+                return self._manifest_result(manifest)
+            finally:
+                if not committed:
+                    for candidate in (staging_path, catalog_path):
+                        if candidate.exists():
+                            shutil.rmtree(candidate, ignore_errors=True)
+                    current = [
+                        record
+                        for record in self._load_catalog_registry()
+                        if record.storage_id != storage_id
+                    ]
+                    self._write_catalog_registry(current)
         finally:
             try:
                 fcntl.flock(lock_fd, fcntl.LOCK_UN)
             finally:
                 os.close(lock_fd)
-            if staging_path is not None and staging_path.exists():
-                shutil.rmtree(staging_path, ignore_errors=True)
 
     def validate_catalog(self, request: CatalogValidationRequest) -> dict[str, Any]:
         if request.protocol_version != PROTOCOL_VERSION:
@@ -700,8 +943,8 @@ class NautilusGatewayEngine:
         if scope:
             try:
                 ticks = list(catalog.quote_ticks(instrument_ids=scope))
-            except (OSError, RuntimeError, TypeError, ValueError) as exc:
-                findings.append({"code": "CATALOG_DATA_QUERY_FAILED", "detail": str(exc)})
+            except (OSError, RuntimeError, TypeError, ValueError):
+                findings.append({"code": "CATALOG_DATA_QUERY_FAILED"})
         if not ticks:
             findings.append({"code": "CATALOG_QUOTE_DATA_MISSING"})
 
@@ -797,30 +1040,34 @@ class NautilusGatewayEngine:
             )
             return
 
-        with tempfile.TemporaryDirectory(
-            prefix="qz-strategy-", dir=self._artifact_root
-        ) as directory:
-            root = Path(directory)
-            for relative, content in strategy.source_files.items():
-                destination = root / _safe_rel_path(relative)
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.write_text(content, encoding="utf-8")
-            sys.path.insert(0, str(root))
+        finder = _SourceBundleFinder(strategy.source_files)
+        required_modules = {
+            strategy.strategy_path.split(":", 1)[0],
+            strategy.config_path.split(":", 1)[0],
+        }
+        if not required_modules.issubset(finder.module_names):
+            raise GatewayContractError(
+                "strategy and config import paths must resolve inside the source bundle"
+            )
+        conflicts = sorted(finder.module_names.intersection(sys.modules))
+        if conflicts:
+            raise GatewayContractError(
+                "strategy source module conflicts with an already loaded runtime module"
+            )
+        sys.meta_path.insert(0, finder)
+        importlib.invalidate_caches()
+        try:
+            yield ImportableStrategyConfig(
+                strategy_path=strategy.strategy_path,
+                config_path=strategy.config_path,
+                config=self._materialize_config(strategy.config, request),
+            )
+        finally:
+            if finder in sys.meta_path:
+                sys.meta_path.remove(finder)
+            for module_name in sorted(finder.loaded_modules, reverse=True):
+                sys.modules.pop(module_name, None)
             importlib.invalidate_caches()
-            try:
-                yield ImportableStrategyConfig(
-                    strategy_path=strategy.strategy_path,
-                    config_path=strategy.config_path,
-                    config=self._materialize_config(strategy.config, request),
-                )
-            finally:
-                sys.path.remove(str(root))
-                module_names = {
-                    strategy.strategy_path.split(":", 1)[0],
-                    strategy.config_path.split(":", 1)[0],
-                }
-                for module_name in module_names:
-                    sys.modules.pop(module_name, None)
 
     @staticmethod
     def _materialize_config(
@@ -1151,9 +1398,9 @@ class NautilusGatewayEngine:
                     TypeError,
                     ValueError,
                     zipfile.BadZipFile,
-                ) as exc:
+                ):
                     findings.append(
-                        {"code": "CONFORMANCE_REPLAY_FAILED", "detail": str(exc)}
+                        {"code": "CONFORMANCE_REPLAY_FAILED"}
                     )
 
         def canonical_rows(rows: Any, fields: tuple[str, ...]) -> list[dict[str, Any]]:
