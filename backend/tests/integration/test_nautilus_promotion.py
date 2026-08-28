@@ -133,13 +133,14 @@ def _seed(engine: Engine) -> tuple[object, object, object]:
             point_in_time_result={"state": "VALID", "replay_order": "TS_INIT"},
             ingested_at=now,
         )
+        sealed_start = now - timedelta(days=20) + timedelta(seconds=1)
         sealed = DatasetRevision(
             universe_version_id=universe_id,
             universe_name="FX",
             revision_no=2,
-            event_start=now - timedelta(days=20),
+            event_start=sealed_start,
             event_end=now - timedelta(days=10),
-            available_start=now - timedelta(days=20) + timedelta(seconds=2),
+            available_start=sealed_start + timedelta(seconds=2),
             available_end=now - timedelta(days=10) + timedelta(seconds=2),
             row_count=360,
             quality_state="VALID",
