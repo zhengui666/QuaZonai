@@ -38,7 +38,13 @@ def test_target_portfolio_rows_freeze_canonical_identity_and_validity() -> None:
             }
         ],
     )
-    approval = SimpleNamespace(updated_at=effective, created_at=effective, valid_until=expires)
+    approval = SimpleNamespace(
+        state="APPROVED",
+        updated_at=effective,
+        created_at=as_of,
+        valid_until=effective - (expires - effective),
+        expires_at=expires,
+    )
     row = _member_payload(candidate, approval=approval, runtime={})[0]
     assert row["as_of_time"] == as_of.isoformat()
     assert row["effective_from"] == effective.isoformat()

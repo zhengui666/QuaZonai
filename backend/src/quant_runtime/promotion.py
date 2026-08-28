@@ -798,10 +798,11 @@ _SUPPORTED_MANDATE_CONSTRAINTS = {
     "allowed_universes",
     "max_drawdown",
     "max_turnover",
-    "max_cost_bps",
     "max_leverage",
     "max_margin_usage",
 }
+
+_UNSUPPORTED_MANDATE_CONSTRAINTS = {"max_cost_bps", "min_capacity_ratio"}
 
 
 def _bound_mandate(session: Session, program: PortfolioProgram) -> PortfolioMandate:
@@ -836,7 +837,7 @@ def _mandate_constraints(mandate: PortfolioMandate) -> dict[str, Any]:
             422,
         )
     constraints = dict(declared)
-    for key in _SUPPORTED_MANDATE_CONSTRAINTS:
+    for key in _SUPPORTED_MANDATE_CONSTRAINTS | _UNSUPPORTED_MANDATE_CONSTRAINTS:
         if key in spec and key not in constraints:
             constraints[key] = spec[key]
     unknown = sorted(set(constraints) - _SUPPORTED_MANDATE_CONSTRAINTS)
@@ -951,10 +952,10 @@ def _require_evidence_metric(
     aliases: set[str],
 ) -> float:
     value = _metric_from_evidence(evidence, aliases)
-    if value is None:
+    if value is None or not math.isfinite(value):
         raise QfError(
             "PORTFOLIO_MANDATE_CONSTRAINT_EVIDENCE_MISSING",
-            "Nautilus simulation did not produce evidence required by the Portfolio Mandate.",
+            "Nautilus simulation did not produce finite evidence required by the Portfolio Mandate.",
             422,
             {"constraint": constraint},
         )
@@ -968,8 +969,6 @@ def _validate_mandate_after_simulation(
     checks = {
         "max_drawdown": ({"max_drawdown", "maxdrawdown"}, "max"),
         "max_turnover": ({"turnover", "portfolio_turnover"}, "max"),
-        "max_cost_bps": ({"cost_bps", "transaction_cost_bps", "turnover_cost_bps"}, "max"),
-        "min_capacity_ratio": ({"capacity_ratio"}, "min"),
         "max_leverage": ({"leverage", "gross_leverage"}, "max"),
         "max_margin_usage": ({"margin_usage", "margin_utilization"}, "max"),
     }
@@ -988,6 +987,144 @@ def _validate_mandate_after_simulation(
                 422,
                 {"constraint": key, "actual": actual, "limit": limit},
             )
+
+
+def _evidence_number(value: object) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        result = float(value)
+    elif isinstance(value, str):
+        token = value.strip().replace(",", "").replace("_", "").split()
+        if not token:
+            return None
+        try:
+            result = float(token[0])
+        except ValueError:
+            return None
+    else:
+        return None
+    return result if math.isfinite(result) else None
+
+
+def _executed_instrument_weights(
+    evidence: dict[str, Any],
+    requested_instruments: list[str],
+) -> dict[str, float]:
+    requested = list(dict.fromkeys(str(value) for value in requested_instruments))
+    if not requested:
+        raise QfError(
+            "PORTFOLIO_ALLOCATION_EVIDENCE_MISSING",
+            "Portfolio simulation has no governed instrument scope.",
+            422,
+        )
+    if len(requested) == 1:
+        return {requested[0]: 1.0}
+
+    requested_set = set(requested)
+    last_prices: dict[str, float] = {}
+    fill_notionals = {instrument_id: 0.0 for instrument_id in requested}
+    for fill in evidence.get("fills", []):
+        if not isinstance(fill, dict):
+            continue
+        instrument_id = str(fill.get("instrument_id") or "")
+        quantity = _evidence_number(fill.get("quantity"))
+        price = _evidence_number(fill.get("price"))
+        if instrument_id not in requested_set or quantity is None or price is None:
+            continue
+        last_prices[instrument_id] = price
+        fill_notionals[instrument_id] += abs(quantity * price)
+
+    position_notionals = {instrument_id: 0.0 for instrument_id in requested}
+    for position in evidence.get("positions", []):
+        if not isinstance(position, dict):
+            continue
+        instrument_id = str(position.get("instrument_id") or "")
+        quantity = _evidence_number(position.get("quantity"))
+        price = last_prices.get(instrument_id)
+        if instrument_id not in requested_set or quantity is None or price is None:
+            continue
+        if position.get("closed_at") not in (None, ""):
+            continue
+        position_notionals[instrument_id] += abs(quantity * price)
+
+    notionals = position_notionals if sum(position_notionals.values()) > 0 else fill_notionals
+    positive = {key: value for key, value in notionals.items() if value > 0}
+    total = sum(positive.values())
+    if total <= 0:
+        raise QfError(
+            "PORTFOLIO_ALLOCATION_EVIDENCE_MISSING",
+            "Multi-instrument Candidate requires executed allocation evidence from Nautilus.",
+            422,
+        )
+    return {key: value / total for key, value in positive.items()}
+
+
+def _approval_simulation_summaries(
+    *,
+    constraints: dict[str, Any],
+    evidence: dict[str, Any],
+    request: BacktestExperimentRequest,
+    current_candidate: PortfolioCandidate | None,
+    proposed_quality: float,
+) -> dict[str, dict[str, Any]]:
+    venue = dict(request.venue_config or {})
+    capital_context = {
+        "source": "PINNED_NAUTILUS_VENUE_CONFIG",
+        "base_currency": venue.get("base_currency", "USD"),
+        "starting_balances": venue.get("starting_balances", ["1_000_000 USD"]),
+        "account_type": venue.get("account_type", "MARGIN"),
+    }
+    observed_risk: dict[str, float] = {}
+    for name, aliases in {
+        "max_drawdown": {"max_drawdown", "maxdrawdown"},
+        "turnover": {"turnover", "portfolio_turnover"},
+        "leverage": {"leverage", "gross_leverage"},
+        "margin_usage": {"margin_usage", "margin_utilization"},
+    }.items():
+        value = _metric_from_evidence(evidence, aliases)
+        if value is not None and math.isfinite(value):
+            observed_risk[name] = value
+    risk_limits = {
+        key: constraints[key]
+        for key in ("max_drawdown", "max_turnover", "max_leverage", "max_margin_usage")
+        if key in constraints
+    }
+    commissions = [
+        fill.get("commission")
+        for fill in evidence.get("fills", [])
+        if isinstance(fill, dict) and fill.get("commission") is not None
+    ]
+    previous_quality = None
+    if current_candidate is not None:
+        previous_quality = _evidence_number(
+            (current_candidate.metrics or {}).get("search_adjusted_quality")
+        )
+    return {
+        "capital_context": capital_context,
+        "risk_summary": {
+            "status": "MANDATE_CHECK_PASSED",
+            "mandate_limits": risk_limits,
+            "observed": observed_risk,
+        },
+        "cost_summary": {
+            "status": "COMMISSION_EVIDENCE_ONLY",
+            "fill_commissions": commissions,
+            "bps_cost_constraint_supported": False,
+        },
+        "capacity_summary": {
+            "status": "NOT_GOVERNED_IN_V1",
+            "capacity_constraint_supported": False,
+        },
+        "changes_summary": {
+            "material_improvement_gate": "PASSED",
+            "previous_candidate_id": (
+                str(current_candidate.id) if current_candidate is not None else None
+            ),
+            "previous_search_adjusted_quality": previous_quality,
+            "proposed_search_adjusted_quality": proposed_quality,
+        },
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -1083,7 +1220,7 @@ def simulate_portfolio_candidate(
                     "portfolio_program_id": str(portfolio_program_id),
                     "alpha_qualification_id": str(alpha.id),
                     "optimizer": "MAX_SEARCH_ADJUSTED_QUALITY_V1",
-                    "target_weight": "1.0",
+                    "allocation_policy": "DERIVE_FROM_EXECUTED_NOTIONAL_V1",
                 },
             }
         )
@@ -1156,14 +1293,10 @@ def simulate_portfolio_candidate(
         )
         request_json = BacktestExperimentRequest.model_validate(simulation.request_json)
         strategy = StrategyArtifact.model_validate(request_json.strategy)
-        instrument_ids = list(dict.fromkeys(request_json.instrument_ids))
-        if not instrument_ids:
-            raise QfError(
-                "PORTFOLIO_INSTRUMENT_SCOPE_EMPTY",
-                "Portfolio simulation produced no governed instrument scope.",
-                500,
-            )
-        instrument_weight = 1.0 / len(instrument_ids)
+        executed_instrument_weights = _executed_instrument_weights(
+            simulation_evidence, request_json.instrument_ids
+        )
+        instrument_ids = list(executed_instrument_weights)
         downstreams = list(
             session.scalars(
                 select(DownstreamSystem)
@@ -1202,7 +1335,7 @@ def simulate_portfolio_candidate(
                     "alpha_qualification_id": str(persisted_alpha.id),
                     "alpha_name": alpha_name,
                     "role": persisted_alpha.role,
-                    "target_weight": instrument_weight,
+                    "target_weight": executed_instrument_weights[instrument_id],
                     "confidence": alpha_quality,
                     "universe": alpha_universe,
                     "universe_version_id": (
@@ -1226,9 +1359,8 @@ def simulate_portfolio_candidate(
                     "considered_alpha_ids": [str(item) for item in requested_alpha_ids],
                     "selected_alpha_id": str(persisted_alpha.id),
                     "target_weight": 1.0,
-                    "instrument_weights": {
-                        instrument_id: instrument_weight for instrument_id in instrument_ids
-                    },
+                    "instrument_weights": executed_instrument_weights,
+                    "allocation_policy": "EXECUTED_NOTIONAL_V1",
                 },
                 "nautilus": {
                     "strategy_artifact": strategy.model_dump(mode="json"),
@@ -1269,6 +1401,13 @@ def simulate_portfolio_candidate(
         session.flush()
         portfolio_program.current_candidate_id = candidate.id
         portfolio_program.state = "CANDIDATE_READY"
+        approval_summaries = _approval_simulation_summaries(
+            constraints=current_constraints,
+            evidence=simulation_evidence,
+            request=request_json,
+            current_candidate=current_candidate,
+            proposed_quality=alpha_quality,
+        )
         approval = ApprovalSnapshot(
             candidate_id=candidate.id,
             purpose="PAPER",
@@ -1287,12 +1426,16 @@ def simulate_portfolio_candidate(
                 "search_adjusted_quality": alpha_quality,
                 "portfolio_simulation_experiment_id": str(simulation.id),
                 "remote_run_id": simulation.remote_run_id,
+                "order_count": len(simulation_evidence.get("orders", [])),
+                "fill_count": len(simulation_evidence.get("fills", [])),
+                "position_count": len(simulation_evidence.get("positions", [])),
+                "statistics": simulation_evidence.get("statistics", {}),
             },
-            capital_context={},
-            risk_summary={},
-            cost_summary={},
-            capacity_summary={},
-            changes_summary={},
+            capital_context=approval_summaries["capital_context"],
+            risk_summary=approval_summaries["risk_summary"],
+            cost_summary=approval_summaries["cost_summary"],
+            capacity_summary=approval_summaries["capacity_summary"],
+            changes_summary=approval_summaries["changes_summary"],
         )
         session.add(approval)
         session.flush()

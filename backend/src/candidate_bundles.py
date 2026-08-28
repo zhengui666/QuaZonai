@@ -169,8 +169,15 @@ def _member_payload(
     metrics = dict(_value(candidate, "metrics", {}) or {})
     runtime_payload = dict(runtime or {})
     as_of_time = _value(candidate, "created_at")
-    effective_from = _first(approval, ("updated_at", "created_at"), as_of_time)
-    effective_until = _first(approval, ("valid_until", "expires_at"))
+    approval_state = str(_value(approval, "state", "") or "").upper()
+    effective_from = _value(approval, "updated_at") if approval is not None else None
+    effective_until = _value(approval, "expires_at") if approval is not None else None
+    if approval_state == "APPROVED" and (effective_from is None or effective_until is None):
+        raise QfError(
+            "TARGET_PORTFOLIO_VALIDITY_MISSING",
+            "Approved Candidate Bundle requires a decision time and target-specific expiry.",
+            500,
+        )
     portfolio_state = _value(candidate, "state")
     default_confidence = metrics.get("search_adjusted_quality")
     default_universe_version_id = runtime_payload.get("universe_version_id")
@@ -254,7 +261,9 @@ def _approval_summary(approval: Any | None, *, candidate_id: UUID) -> dict[str, 
             "candidate_id": str(candidate_id),
             "purpose": _value(approval, "purpose"),
             "state": _value(approval, "state"),
-            "valid_until": _value(approval, "valid_until"),
+            "review_valid_until": _value(approval, "valid_until"),
+            "decision_at": _value(approval, "updated_at"),
+            "target_effective_until": _value(approval, "expires_at"),
             "evidence_summary": _value(approval, "evidence_summary", {}),
             "capital_context": _value(approval, "capital_context", {}),
             "risk_summary": _value(approval, "risk_summary", {}),

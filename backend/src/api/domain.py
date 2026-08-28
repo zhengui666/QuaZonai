@@ -519,21 +519,14 @@ def _resolve_frozen_research_scope(
             .order_by(DatasetRevision.created_at.desc())
         )
     )
-    universe_ids = {
-        item.universe_version_id for item in revisions if item.universe_version_id is not None
-    }
     source_ids = {item.data_source_id for item in revisions if item.data_source_id is not None}
-    universes = (
-        list(
-            session.scalars(
-                select(MarketUniverseVersion).where(
-                    MarketUniverseVersion.id.in_(universe_ids),
-                    MarketUniverseVersion.state == "ACTIVE",
-                )
-            )
+    # Resolve latest ACTIVE versions independently of completed Dataset Revisions.
+    # If the latest version has no governed Discovery revision yet, research must
+    # block instead of silently falling back to a superseded revision.
+    universes = list(
+        session.scalars(
+            select(MarketUniverseVersion).where(MarketUniverseVersion.state == "ACTIVE")
         )
-        if universe_ids
-        else []
     )
     sources = (
         list(
@@ -1554,6 +1547,25 @@ def _feedback_contract_snapshot(downstream: DownstreamSystem, purpose: str) -> d
     }
 
 
+def _target_effective_until(downstream: DownstreamSystem, decision_at: datetime) -> datetime:
+    raw = (downstream.public_config or {}).get("target_validity_seconds", 7 * 24 * 60 * 60)
+    try:
+        seconds = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise QfError(
+            "DOWNSTREAM_TARGET_VALIDITY_INVALID",
+            "Downstream target_validity_seconds must be an integer.",
+            422,
+        ) from exc
+    if seconds < 60 or seconds > 90 * 24 * 60 * 60:
+        raise QfError(
+            "DOWNSTREAM_TARGET_VALIDITY_INVALID",
+            "Downstream target validity must be between 60 seconds and 90 days.",
+            422,
+        )
+    return decision_at + timedelta(seconds=seconds)
+
+
 def _verify_candidate_bundle_remotely(built: Any, *, candidate_id: UUID) -> None:
     verification_request = build_candidate_verification_request(
         built, candidate_id=candidate_id
@@ -1630,8 +1642,17 @@ def approve_candidate(
                 candidate = session.get(PortfolioCandidate, approval.candidate_id)
                 if candidate is None:
                     raise QfError("CANDIDATE_NOT_FOUND", "Approval candidate was not found.", 500)
+                decision_at = _now()
                 approval.state = "APPROVED"
                 approval.revision += 1
+                approval.updated_at = decision_at
+                approval.expires_at = _target_effective_until(downstream, decision_at)
+                approval.evidence_summary = {
+                    **(approval.evidence_summary or {}),
+                    "decision_at": decision_at.isoformat(),
+                    "target_effective_until": approval.expires_at.isoformat(),
+                }
+                session.flush()
                 bundle_id = uuid4()
                 built = build_candidate_bundle(
                     request.app.state.settings,
