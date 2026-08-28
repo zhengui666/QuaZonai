@@ -174,3 +174,4 @@ for test_path in ("backend/tests/unit/test_candidate_bundles.py", "backend/tests
     text = text.replace('        assert manifest["strategy"]["wheel"] == "strategy/strategy.whl"\n', '        assert manifest["strategy"]["wheel"] in names\n        assert manifest["strategy"]["wheel"].startswith("strategy/quazonai_candidate_strategy-")\n        assert manifest["strategy"]["wheel"].endswith("-py3-none-any.whl")\n')
     write(test_path, text)
 print("stage2a issue22 bundle closure applied")
+# retrigger maintenance workflow
