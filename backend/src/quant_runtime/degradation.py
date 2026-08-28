@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import exists, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -61,10 +61,24 @@ def _member_alpha_ids(candidate: PortfolioCandidate) -> list[UUID]:
 def schedule_degradation_missions(session: Session) -> int:
     """Create at most one research Mission per Alpha and degraded feedback episode."""
     created = 0
+    handled_episode = exists(
+        select(DegradationFollowup.id).where(
+            DegradationFollowup.forward_evidence_episode_id == ForwardEvidenceEpisode.id
+        )
+    )
     episodes = list(
         session.scalars(
             select(ForwardEvidenceEpisode)
-            .where(ForwardEvidenceEpisode.state == "FEEDBACK_COMPLETE")
+            .where(
+                ForwardEvidenceEpisode.state == "FEEDBACK_COMPLETE",
+                or_(
+                    ForwardEvidenceEpisode.evidence["degraded"].as_boolean().is_(True),
+                    ForwardEvidenceEpisode.evidence["degradation_state"]
+                    .as_string()
+                    .in_(sorted(_DEGRADATION_STATES)),
+                ),
+                ~handled_episode,
+            )
             .order_by(ForwardEvidenceEpisode.created_at.asc())
         )
     )

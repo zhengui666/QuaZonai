@@ -103,9 +103,13 @@ def _strategy_wheel(artifact: StrategyArtifact, *, candidate_id: UUID) -> bytes:
             )
         files[str(safe)] = source.encode("utf-8")
 
-    strategy_module = artifact.strategy_path.split(":", 1)[0].replace(".", "/") + ".py"
-    config_module = artifact.config_path.split(":", 1)[0].replace(".", "/") + ".py"
-    if strategy_module not in files or config_module not in files:
+    def module_source_exists(import_path: str) -> bool:
+        module = import_path.split(":", 1)[0].replace(".", "/")
+        return f"{module}.py" in files or f"{module}/__init__.py" in files
+
+    if not module_source_exists(artifact.strategy_path) or not module_source_exists(
+        artifact.config_path
+    ):
         raise QfError(
             "CANDIDATE_STRATEGY_ARTIFACT_INVALID",
             "Strategy and config import paths must resolve inside the supplied source bundle.",

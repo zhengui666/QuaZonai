@@ -2651,6 +2651,7 @@ def readiness(request: Request) -> dict[str, Any]:
                     DownstreamSystem.environment_type == "PAPER",
                     DownstreamSystem.enabled.is_(True),
                     DownstreamSystem.preflight_state == "READY",
+                    DownstreamSystem.package_contract_version == "2",
                     DownstreamSystem.service_token_ciphertext.is_not(None),
                 )
             )

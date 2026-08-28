@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+import re
 import stat
 from pathlib import Path
 from typing import Any
@@ -35,6 +37,52 @@ from settings import Settings
 
 MAX_EXPERIMENTS_PER_ROUND = 20
 CATALOG_URI_PREFIX = "nautilus-catalog://"
+_DEGRADATION_DISCLOSURE_NUMERICS = {
+    "return",
+    "drawdown",
+    "max_drawdown",
+    "sharpe",
+    "sharpe_ratio",
+    "volatility",
+    "turnover",
+    "tracking_error",
+    "capacity_ratio",
+    "cost",
+    "slippage",
+}
+_DEGRADATION_REASON_CODE = re.compile(r"[A-Z0-9][A-Z0-9_:-]{0,79}")
+
+
+def _degradation_disclosure(evidence: object) -> dict[str, Any]:
+    """Expose only capability-safe, typed forward metrics to the Mission workspace."""
+    if not isinstance(evidence, dict):
+        return {}
+    result: dict[str, Any] = {}
+    degraded = evidence.get("degraded")
+    if isinstance(degraded, bool):
+        result["degraded"] = degraded
+    state = evidence.get("degradation_state")
+    if isinstance(state, str):
+        normalized_state = state.strip().upper()
+        if normalized_state in {"DEGRADED", "FAILED"}:
+            result["degradation_state"] = normalized_state
+    for key in sorted(_DEGRADATION_DISCLOSURE_NUMERICS):
+        value = evidence.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        numeric = float(value)
+        if math.isfinite(numeric):
+            result[key] = value
+    reason_codes = evidence.get("reason_codes")
+    if isinstance(reason_codes, list):
+        safe_codes = [
+            item
+            for item in reason_codes[:50]
+            if isinstance(item, str) and _DEGRADATION_REASON_CODE.fullmatch(item)
+        ]
+        if safe_codes:
+            result["reason_codes"] = safe_codes
+    return result
 
 
 
@@ -182,7 +230,7 @@ def prepare_experiment_workspace(
                         "observation_start": episode.observation_start,
                         "observation_end": episode.observation_end,
                         "sample_size": episode.sample_size,
-                        "evidence": episode.evidence,
+                        "disclosure": _degradation_disclosure(episode.evidence),
                     },
                 }
     finally:
