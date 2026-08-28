@@ -1,3 +1,5 @@
+"""Regression coverage for the final Issue 22 Codex findings."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
