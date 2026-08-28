@@ -238,6 +238,8 @@ class NautilusGatewayEngine:
         self._catalog_root = self._data_root / "catalogs"
         self._artifact_root = self._data_root / "artifacts"
         self._run_root = self._data_root / "run-receipts"
+        self._run_receipts_path = self._run_root / "receipts.json"
+        self._run_lock_path = self._run_root / ".receipts.lock"
         self._catalog_root.mkdir(parents=True, exist_ok=True)
         self._artifact_root.mkdir(parents=True, exist_ok=True)
         self._run_root.mkdir(parents=True, exist_ok=True)
@@ -284,18 +286,30 @@ class NautilusGatewayEngine:
             "ingested_at": _parse_time(manifest["ingested_at"]),
         }
 
-    def _write_run_receipt(
-        self, receipt_path: Path, receipt: dict[str, Any]
-    ) -> None:
+    def _load_run_receipts(self) -> dict[str, dict[str, Any]]:
+        if not self._run_receipts_path.exists():
+            return {}
+        try:
+            raw = json.loads(self._run_receipts_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise GatewayContractError("stored run receipt registry is invalid") from exc
+        if not isinstance(raw, dict) or not all(
+            isinstance(key, str) and isinstance(value, dict)
+            for key, value in raw.items()
+        ):
+            raise GatewayContractError("stored run receipt registry is invalid")
+        return raw
+
+    def _write_run_receipts(self, receipts: dict[str, dict[str, Any]]) -> None:
         with tempfile.NamedTemporaryFile(
             mode="w", encoding="utf-8", dir=self._run_root, delete=False
         ) as stream:
-            json.dump(receipt, stream, ensure_ascii=False, sort_keys=True)
+            json.dump(receipts, stream, ensure_ascii=False, sort_keys=True)
             stream.write("\n")
             stream.flush()
             os.fsync(stream.fileno())
             temporary = Path(stream.name)
-        os.replace(temporary, receipt_path)
+        os.replace(temporary, self._run_receipts_path)
 
     def _idempotent_run(
         self,
@@ -304,18 +318,13 @@ class NautilusGatewayEngine:
         runner: Callable[[BacktestExperimentRequest], dict[str, Any]],
     ) -> dict[str, Any]:
         canonical_request = request.model_dump(mode="json")
-        receipt_path = self._run_root / f"{request.experiment_id}.json"
-        lock_path = self._run_root / f".{request.experiment_id}.lock"
-        if receipt_path.parent != self._run_root or lock_path.parent != self._run_root:
-            raise GatewayContractError("run receipt escaped the configured root")
-        lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        receipt_key = str(request.experiment_id)
+        lock_fd = os.open(self._run_lock_path, os.O_CREAT | os.O_RDWR, 0o600)
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
-            if receipt_path.exists():
-                try:
-                    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-                except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-                    raise GatewayContractError("stored run receipt is invalid") from exc
+            receipts = self._load_run_receipts()
+            receipt = receipts.get(receipt_key)
+            if receipt is not None:
                 if (
                     receipt.get("operation") != operation
                     or receipt.get("request") != canonical_request
@@ -336,27 +345,23 @@ class NautilusGatewayEngine:
                 if not isinstance(result, dict):
                     raise GatewayContractError("backtest terminal result is invalid")
             except GatewayContractError:
-                self._write_run_receipt(
-                    receipt_path,
-                    {
-                        "operation": operation,
-                        "request": canonical_request,
-                        "state": "FAILED",
-                        "failure_code": "CONTRACT_INVALID",
-                        "completed_at": _utc_now().isoformat(),
-                    },
-                )
-                raise
-            self._write_run_receipt(
-                receipt_path,
-                {
+                receipts[receipt_key] = {
                     "operation": operation,
                     "request": canonical_request,
-                    "state": "SUCCEEDED",
-                    "result": result,
+                    "state": "FAILED",
+                    "failure_code": "CONTRACT_INVALID",
                     "completed_at": _utc_now().isoformat(),
-                },
-            )
+                }
+                self._write_run_receipts(receipts)
+                raise
+            receipts[receipt_key] = {
+                "operation": operation,
+                "request": canonical_request,
+                "state": "SUCCEEDED",
+                "result": result,
+                "completed_at": _utc_now().isoformat(),
+            }
+            self._write_run_receipts(receipts)
             return result
         finally:
             try:
