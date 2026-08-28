@@ -14,7 +14,7 @@ import signal
 import socket
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from uuid import UUID
 
@@ -83,7 +83,7 @@ def _lease_heartbeat(
     owner: str,
     job_id: UUID,
     factory: SessionFactory,
-):
+) -> Iterator[threading.Event]:
     stop = threading.Event()
     lost = threading.Event()
     interval = max(1.0, min(float(settings.job_lease_seconds) / 3.0, 15.0))
