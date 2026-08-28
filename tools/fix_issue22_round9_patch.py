@@ -86,4 +86,40 @@ if count != 1:
     raise RuntimeError(f"expected one approval evidence round9 block, found {count}")
 text = text.replace(old, new, 1)
 
+old = '''# Sealed worker qualification unit test payloads need durable id where present.
+for test_path in [
+    "backend/tests/integration/test_issue22_readiness_v2.py",
+    "backend/tests/unit/test_issue22_codex_round5.py",
+    "backend/tests/unit/test_jobs.py",
+]:
+    path = Path(test_path)
+    if path.exists():
+        text = path.read_text(encoding="utf-8")
+        needle = '"sealed_dataset_revision_id": str('
+        if needle in text and '"sealed_experiment_id"' not in text:
+            # Best-effort broad fixture addition after each sealed dataset line.
+            lines = text.splitlines(keepends=True)
+            output: list[str] = []
+            for line in lines:
+                output.append(line)
+                if needle in line:
+                    indent = line[: len(line) - len(line.lstrip())]
+                    output.append(f'{indent}"sealed_experiment_id": str(uuid4()),\\n')
+            path.write_text("".join(output), encoding="utf-8")
+'''
+new = '''# Sealed worker qualification unit fixture keeps the durable child identity in the job payload.
+replace_once(
+    "backend/tests/unit/test_jobs.py",
+    '            payload={"sealed_dataset_revision_id": str(uuid4())},\\n',
+    '            payload={\\n'
+    '                "sealed_dataset_revision_id": str(uuid4()),\\n'
+    '                "sealed_experiment_id": str(uuid4()),\\n'
+    '            },\\n',
+)
+'''
+count = text.count(old)
+if count != 1:
+    raise RuntimeError(f"expected one broad sealed fixture patch, found {count}")
+text = text.replace(old, new, 1)
+
 path.write_text(text, encoding="utf-8")
