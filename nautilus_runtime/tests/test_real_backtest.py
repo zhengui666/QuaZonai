@@ -289,7 +289,10 @@ def test_candidate_bundle_v2_replays_exact_wheel_against_reference_fixture(tmp_p
         },
         "strategy": {
             "artifact_id": reference_request.strategy.artifact_id,
-            "wheel": "strategy/strategy.whl",
+            "wheel": (
+                "strategy/quazonai_candidate_strategy-"
+                f"0.0.{candidate_id.int % 1_000_000}-py3-none-any.whl"
+            ),
             "strategy_path": "one_shot:OneShotStrategy",
             "config_path": "one_shot:OneShotConfig",
         },

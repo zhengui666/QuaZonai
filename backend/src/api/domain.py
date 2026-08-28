@@ -17,6 +17,8 @@ from candidate_bundles import (
     BUNDLE_CONTRACT_VERSION,
     build_candidate_bundle,
     build_candidate_verification_request,
+    discard_candidate_bundle,
+    persist_candidate_bundle,
     resolve_bundle_archive,
 )
 from db.models import (
@@ -1396,111 +1398,130 @@ def approve_candidate(
     if _expire_approval_if_needed(request, approval_id):
         raise QfError("APPROVAL_EXPIRED", "Approval validity window has expired.", 409)
     factory = request.app.state.session_factory
-    with factory() as session, session.begin():
+    persisted_bundle_path: str | None = None
+    try:
+        with factory() as session, session.begin():
 
-        def action() -> dict[str, Any]:
-            approval = session.execute(
-                select(ApprovalSnapshot).where(ApprovalSnapshot.id == approval_id).with_for_update()
-            ).scalar_one_or_none()
-            if approval is None:
-                raise QfError("APPROVAL_NOT_FOUND", "Approval Snapshot was not found.", 404)
-            if approval.state != payload.expected_state or approval.state != "PENDING":
-                raise QfError(
-                    "APPROVAL_STATE_CONFLICT",
-                    "Approval state changed before the decision.",
-                    409,
-                    {"expected": payload.expected_state, "actual": approval.state},
+            def action() -> dict[str, Any]:
+                nonlocal persisted_bundle_path
+                approval = session.execute(
+                    select(ApprovalSnapshot)
+                    .where(ApprovalSnapshot.id == approval_id)
+                    .with_for_update()
+                ).scalar_one_or_none()
+                if approval is None:
+                    raise QfError("APPROVAL_NOT_FOUND", "Approval Snapshot was not found.", 404)
+                if approval.state != payload.expected_state or approval.state != "PENDING":
+                    raise QfError(
+                        "APPROVAL_STATE_CONFLICT",
+                        "Approval state changed before the decision.",
+                        409,
+                        {"expected": payload.expected_state, "actual": approval.state},
+                    )
+                if (
+                    approval.downstream_system_id is None
+                    or approval.downstream_system_id != payload.downstream_system_id
+                ):
+                    raise QfError(
+                        "APPROVAL_DOWNSTREAM_MISMATCH",
+                        "Approval is frozen to a different Paper/Live downstream dependency.",
+                        409,
+                    )
+                downstream = session.get(DownstreamSystem, payload.downstream_system_id)
+                if (
+                    downstream is None
+                    or not downstream.enabled
+                    or downstream.preflight_state != "READY"
+                ):
+                    raise QfError("DOWNSTREAM_NOT_READY", "Selected downstream is not ready.", 409)
+                if downstream.environment_type != approval.purpose:
+                    raise QfError(
+                        "DOWNSTREAM_INCOMPATIBLE",
+                        "Downstream environment does not match Approval purpose.",
+                        409,
+                    )
+                if downstream.service_token_ciphertext is None:
+                    raise QfError(
+                        "DOWNSTREAM_CREDENTIAL_NOT_CONFIGURED",
+                        "Selected downstream has no service credential.",
+                        409,
+                    )
+                candidate = session.get(PortfolioCandidate, approval.candidate_id)
+                if candidate is None:
+                    raise QfError("CANDIDATE_NOT_FOUND", "Approval candidate was not found.", 500)
+                approval.state = "APPROVED"
+                approval.revision += 1
+                bundle_id = uuid4()
+                built = build_candidate_bundle(
+                    request.app.state.settings,
+                    approval=approval,
+                    candidate=candidate,
+                    downstream=downstream,
+                    bundle_id=bundle_id,
+                    persist=False,
                 )
-            if (
-                approval.downstream_system_id is None
-                or approval.downstream_system_id != payload.downstream_system_id
-            ):
-                raise QfError(
-                    "APPROVAL_DOWNSTREAM_MISMATCH",
-                    "Approval is frozen to a different Paper/Live downstream dependency.",
-                    409,
+                _verify_candidate_bundle_remotely(built, candidate_id=candidate.id)
+                persisted_bundle_path = persist_candidate_bundle(
+                    request.app.state.settings,
+                    bundle_id,
+                    built.archive_bytes,
                 )
-            downstream = session.get(DownstreamSystem, payload.downstream_system_id)
-            if (
-                downstream is None
-                or not downstream.enabled
-                or downstream.preflight_state != "READY"
-            ):
-                raise QfError("DOWNSTREAM_NOT_READY", "Selected downstream is not ready.", 409)
-            if downstream.environment_type != approval.purpose:
-                raise QfError(
-                    "DOWNSTREAM_INCOMPATIBLE",
-                    "Downstream environment does not match Approval purpose.",
-                    409,
+                package = CandidateBundle(
+                    id=bundle_id,
+                    approval_id=approval.id,
+                    candidate_id=candidate.id,
+                    contract_version=BUNDLE_CONTRACT_VERSION,
+                    state="AVAILABLE",
+                    manifest_json=built.manifest,
+                    relative_path=persisted_bundle_path,
+                    payload=built.operator_summary,
+                    created_at=_now(),
                 )
-            if downstream.service_token_ciphertext is None:
-                raise QfError(
-                    "DOWNSTREAM_CREDENTIAL_NOT_CONFIGURED",
-                    "Selected downstream has no service credential.",
-                    409,
+                session.add(package)
+                session.flush()
+                contract = _feedback_contract_snapshot(downstream, approval.purpose)
+                handoff = HandoffOffer(
+                    approval_id=approval.id,
+                    candidate_bundle_id=package.id,
+                    candidate_id=candidate.id,
+                    purpose=approval.purpose,
+                    downstream_system_id=downstream.id,
+                    state="AVAILABLE",
+                    claim_deadline=_now() + timedelta(days=7),
+                    feedback_state="PENDING",
+                    feedback_contract_snapshot=contract,
                 )
-            candidate = session.get(PortfolioCandidate, approval.candidate_id)
-            if candidate is None:
-                raise QfError("CANDIDATE_NOT_FOUND", "Approval candidate was not found.", 500)
-            approval.state = "APPROVED"
-            approval.revision += 1
-            bundle_id = uuid4()
-            built = build_candidate_bundle(
-                request.app.state.settings,
-                approval=approval,
-                candidate=candidate,
-                downstream=downstream,
-                bundle_id=bundle_id,
-            )
-            _verify_candidate_bundle_remotely(built, candidate_id=candidate.id)
-            package = CandidateBundle(
-                id=bundle_id,
-                approval_id=approval.id,
-                candidate_id=candidate.id,
-                contract_version=BUNDLE_CONTRACT_VERSION,
-                state="AVAILABLE",
-                manifest_json=built.manifest,
-                relative_path=built.relative_path,
-                payload=built.operator_summary,
-                created_at=_now(),
-            )
-            session.add(package)
-            session.flush()
-            contract = _feedback_contract_snapshot(downstream, approval.purpose)
-            handoff = HandoffOffer(
-                approval_id=approval.id,
-                candidate_bundle_id=package.id,
-                candidate_id=candidate.id,
-                purpose=approval.purpose,
-                downstream_system_id=downstream.id,
-                state="AVAILABLE",
-                claim_deadline=_now() + timedelta(days=7),
-                feedback_state="PENDING",
-                feedback_contract_snapshot=contract,
-            )
-            session.add(handoff)
-            session.flush()
-            _event(
-                session,
-                "APPROVAL_APPROVED",
-                "APPROVAL",
-                approval.id,
-                {"candidate_id": str(candidate.id), "handoff_id": str(handoff.id)},
-                actor_kind="HUMAN",
-            )
-            _event(
-                session,
-                "HANDOFF_AVAILABLE",
-                "HANDOFF",
-                handoff.id,
-                {"candidate_id": str(candidate.id), "approval_id": str(approval.id)},
-            )
-            session.flush()
-            return _approval_view(session, approval).model_dump(mode="json")
+                session.add(handoff)
+                session.flush()
+                _event(
+                    session,
+                    "APPROVAL_APPROVED",
+                    "APPROVAL",
+                    approval.id,
+                    {"candidate_id": str(candidate.id), "handoff_id": str(handoff.id)},
+                    actor_kind="HUMAN",
+                )
+                _event(
+                    session,
+                    "HANDOFF_AVAILABLE",
+                    "HANDOFF",
+                    handoff.id,
+                    {"candidate_id": str(candidate.id), "approval_id": str(approval.id)},
+                )
+                session.flush()
+                return _approval_view(session, approval).model_dump(mode="json")
 
-        return _idempotent(
-            session, idempotency_key, f"approval.approve:{approval_id}", payload, action
-        )
+            return _idempotent(
+                session,
+                idempotency_key,
+                f"approval.approve:{approval_id}",
+                payload,
+                action,
+            )
+    except Exception:
+        if persisted_bundle_path is not None:
+            discard_candidate_bundle(request.app.state.settings, persisted_bundle_path)
+        raise
 
 
 @router.post("/approvals/{approval_id}/reject", response_model=ApprovalView)

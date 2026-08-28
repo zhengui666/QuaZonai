@@ -76,6 +76,11 @@ def _record_hash(payload: bytes) -> str:
     return f"sha256={digest}"
 
 
+def _strategy_wheel_filename(candidate_id: UUID) -> str:
+    version = f"0.0.{candidate_id.int % 1_000_000}"
+    return f"quazonai_candidate_strategy-{version}-py3-none-any.whl"
+
+
 def _strategy_wheel(artifact: StrategyArtifact, *, candidate_id: UUID) -> bytes:
     if artifact.kind != "SOURCE_BUNDLE":
         raise QfError(
@@ -285,7 +290,7 @@ def _custom_schema_files(raw: Any) -> dict[str, bytes]:
     return files
 
 
-def _persist_bundle(settings: Any, bundle_id: UUID, archive_bytes: bytes) -> str:
+def persist_candidate_bundle(settings: Any, bundle_id: UUID, archive_bytes: bytes) -> str:
     relative_path = (Path(str(bundle_id)) / BUNDLE_FILENAME).as_posix()
     package_root = getattr(settings, "package_root", None)
     if package_root is None:
@@ -305,6 +310,23 @@ def _persist_bundle(settings: Any, bundle_id: UUID, archive_bytes: bytes) -> str
         final_dir.rmdir()
         raise
     return relative_path
+
+
+def discard_candidate_bundle(settings: Any, relative_path: str) -> None:
+    package_root = getattr(settings, "package_root", None)
+    if package_root is None:
+        return
+    root = Path(package_root).resolve()
+    candidate = (root / relative_path).resolve()
+    if not candidate.is_relative_to(root):
+        return
+    bundle_dir = candidate.parent
+    if bundle_dir.parent != root:
+        return
+    if candidate.exists():
+        candidate.unlink()
+    if bundle_dir.exists() and not any(bundle_dir.iterdir()):
+        bundle_dir.rmdir()
 
 
 @dataclass(frozen=True, slots=True)
@@ -327,6 +349,7 @@ def build_candidate_bundle(
     approval: Any | None = None,
     downstream: Any | None = None,
     bundle_id: UUID | None = None,
+    persist: bool = True,
 ) -> BuiltCandidateBundle:
     candidate_id = _value(candidate, "id")
     if not isinstance(candidate_id, UUID):
@@ -343,6 +366,7 @@ def build_candidate_bundle(
         )
 
     bundle_id = bundle_id or uuid4()
+    strategy_wheel_path = f"strategy/{_strategy_wheel_filename(candidate_id)}"
     target_weights = _member_payload(candidate)
     approval_summary = _approval_summary(approval, candidate_id=candidate_id)
     lineage = {
@@ -362,7 +386,7 @@ def build_candidate_bundle(
     live_node_template = runtime.get(
         "live_node_template",
         {
-            "strategy_wheel": "strategy/strategy.whl",
+            "strategy_wheel": strategy_wheel_path,
             "strategy_config": "strategy/strategy-config.json",
             "actor_config": "strategy/actor-config.json",
             "broker_adapter": "DOWNSTREAM_RUNTIME_OWNED",
@@ -402,7 +426,7 @@ def build_candidate_bundle(
             },
             "strategy": {
                 "artifact_id": artifact.artifact_id,
-                "wheel": "strategy/strategy.whl",
+                "wheel": strategy_wheel_path,
                 "strategy_path": artifact.strategy_path,
                 "config_path": artifact.config_path,
                 "strategy_config": "strategy/strategy-config.json",
@@ -441,7 +465,7 @@ def build_candidate_bundle(
     files: dict[str, bytes] = {
         "manifest.json": _json_bytes(manifest),
         "requirements.lock": f"nautilus_trader=={PINNED_NAUTILUS_VERSION}\n".encode(),
-        "strategy/strategy.whl": _strategy_wheel(artifact, candidate_id=candidate_id),
+        strategy_wheel_path: _strategy_wheel(artifact, candidate_id=candidate_id),
         "strategy/strategy-config.json": _json_bytes(strategy_config),
         "strategy/actor-config.json": _json_bytes(actor_config),
         "data/requirements.json": _json_bytes(data_requirements),
@@ -479,7 +503,9 @@ def build_candidate_bundle(
             500,
             validation_summary,
         )
-    relative_path = _persist_bundle(settings, bundle_id, archive_bytes)
+    relative_path = (Path(str(bundle_id)) / BUNDLE_FILENAME).as_posix()
+    if persist:
+        relative_path = persist_candidate_bundle(settings, bundle_id, archive_bytes)
     return BuiltCandidateBundle(
         archive_bytes=archive_bytes,
         manifest=manifest,
@@ -515,7 +541,14 @@ def build_candidate_verification_request(
             "positions": json.loads(archive.read("validation/expected-positions.json")),
             "statistics": json.loads(archive.read("validation/expected-statistics.json")),
         }
-        wheel = archive.read("strategy/strategy.whl")
+        wheel_path = str(built.manifest.get("strategy", {}).get("wheel", ""))
+        if not wheel_path:
+            raise QfError(
+                "CANDIDATE_CONFORMANCE_WHEEL_MISSING",
+                "Candidate manifest does not identify its installable strategy wheel.",
+                500,
+            )
+        wheel = archive.read(wheel_path)
     return CandidateVerificationRequest(
         candidate_id=candidate_id,
         manifest=built.manifest,
@@ -555,7 +588,6 @@ def validate_candidate_bundle(archive_bytes: bytes) -> dict[str, Any]:
     required = {
         "manifest.json",
         "requirements.lock",
-        "strategy/strategy.whl",
         "strategy/strategy-config.json",
         "strategy/actor-config.json",
         "data/requirements.json",
@@ -596,7 +628,13 @@ def validate_candidate_bundle(archive_bytes: bytes) -> dict[str, Any]:
                     findings.append({"code": "CONTRACT_VERSION_INVALID"})
                 if manifest.get("runtime", {}).get("version") != PINNED_NAUTILUS_VERSION:
                     findings.append({"code": "NAUTILUS_VERSION_INVALID"})
-                if manifest.get("strategy", {}).get("wheel") != "strategy/strategy.whl":
+                wheel_path = str(manifest.get("strategy", {}).get("wheel", ""))
+                try:
+                    candidate_id = UUID(str(manifest.get("candidate_id")))
+                    expected_wheel = f"strategy/{_strategy_wheel_filename(candidate_id)}"
+                except ValueError:
+                    expected_wheel = ""
+                if wheel_path != expected_wheel or wheel_path not in names:
                     findings.append({"code": "STRATEGY_WHEEL_PATH_INVALID"})
             if "requirements.lock" in names:
                 lock = archive.read("requirements.lock").decode("utf-8").strip()

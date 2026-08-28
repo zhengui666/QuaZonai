@@ -1003,7 +1003,11 @@ class NautilusGatewayEngine:
         if runtime.get("paper_live_reuse") != "SAME_STRATEGY_WHEEL_AND_CONFIG":
             findings.append({"code": "STRATEGY_REUSE_CONTRACT_INVALID"})
         strategy = request.manifest.get("strategy", {})
-        if strategy.get("wheel") != "strategy/strategy.whl":
+        expected_wheel = (
+            "strategy/quazonai_candidate_strategy-"
+            f"0.0.{request.candidate_id.int % 1_000_000}-py3-none-any.whl"
+        )
+        if strategy.get("wheel") != expected_wheel:
             findings.append({"code": "STRATEGY_WHEEL_PATH_INVALID"})
 
         fixture_required = {

@@ -412,7 +412,6 @@ def test_approval_builds_package_and_authenticated_handoff_feedback(
         required = {
             "manifest.json",
             "requirements.lock",
-            "strategy/strategy.whl",
             "strategy/strategy-config.json",
             "strategy/actor-config.json",
             "data/requirements.json",
@@ -443,7 +442,9 @@ def test_approval_builds_package_and_authenticated_handoff_feedback(
             "deployment": "REMOTE_INDEPENDENT_RUNTIME",
             "paper_live_reuse": "SAME_STRATEGY_WHEEL_AND_CONFIG",
         }
-        assert manifest["strategy"]["wheel"] == "strategy/strategy.whl"
+        assert manifest["strategy"]["wheel"] in names
+        assert manifest["strategy"]["wheel"].startswith("strategy/quazonai_candidate_strategy-")
+        assert manifest["strategy"]["wheel"].endswith("-py3-none-any.whl")
 
     accepted = client.post(
         f"/api/v1/handoffs/{handoff['id']}/accept",

@@ -86,7 +86,6 @@ def test_bundle_matches_issue_22_nautilus_native_contract(tmp_path: Path) -> Non
     required = {
         "manifest.json",
         "requirements.lock",
-        "strategy/strategy.whl",
         "strategy/strategy-config.json",
         "strategy/actor-config.json",
         "data/requirements.json",
@@ -116,7 +115,9 @@ def test_bundle_matches_issue_22_nautilus_native_contract(tmp_path: Path) -> Non
         assert manifest["runtime"]["name"] == "NAUTILUS_TRADER"
         assert manifest["runtime"]["version"] == "1.231.0"
         assert manifest["strategy"]["artifact_id"] == "strategy-v1"
-        assert manifest["strategy"]["wheel"] == "strategy/strategy.whl"
+        assert manifest["strategy"]["wheel"] in names
+        assert manifest["strategy"]["wheel"].startswith("strategy/quazonai_candidate_strategy-")
+        assert manifest["strategy"]["wheel"].endswith("-py3-none-any.whl")
         assert archive.read("requirements.lock") == b"nautilus_trader==1.231.0\n"
         lineage = json.loads(archive.read("lineage.json"))
         assert lineage["portfolio_simulation_experiment_id"] == str(
