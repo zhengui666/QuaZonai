@@ -384,6 +384,10 @@ def test_codex_launch_uses_command_auth_without_secret_in_process_configuration(
     assert config.env["CODEX_API_KEY"] == ""
     assert config.env["QUAZONAI_CODEX_API_KEY"] == ""
     assert config.env["QUAZONAI_MASTER_KEY"] == ""
+    assert config.env["QUAZONAI_NAUTILUS_RESEARCH_TOKEN"] == ""
+    assert config.env["QUAZONAI_NAUTILUS_SEALED_TOKEN"] == ""
+    assert config.env["QUAZONAI_NAUTILUS_RESEARCH_URL"] == ""
+    assert config.env["QUAZONAI_NAUTILUS_SEALED_URL"] == ""
     joined = "\n".join(config.config_overrides)
     assert "https://gateway.example.test/v1" in joined
     assert 'wire_api="responses"' in joined

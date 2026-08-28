@@ -119,29 +119,24 @@ def _sealed_performance_disclosure(raw: dict[str, Any]) -> dict[str, Any]:
     profit_factor_pass = profit_factor is None or profit_factor >= 1.0
     passed = trade_evidence and pnl_pass and sharpe_pass and drawdown_pass and profit_factor_pass
 
-    quality_score = 0.0
+    reason_codes: list[str] = []
+    if not trade_evidence:
+        reason_codes.append("TRANSACTION_EVIDENCE_MISSING")
+    if not pnl_pass:
+        reason_codes.append("TOTAL_PNL_POLICY_FAILED")
+    if not sharpe_pass:
+        reason_codes.append("SHARPE_POLICY_FAILED")
+    if not drawdown_pass:
+        reason_codes.append("DRAWDOWN_POLICY_FAILED")
+    if not profit_factor_pass:
+        reason_codes.append("PROFIT_FACTOR_POLICY_FAILED")
     if passed:
-        quality_score = 0.60
-        if sharpe is not None and sharpe >= 1.0:
-            quality_score += 0.10
-        if max_drawdown is not None and max_drawdown >= -0.10:
-            quality_score += 0.05
-        if profit_factor is not None and profit_factor >= 1.50:
-            quality_score += 0.05
-        quality_score = min(0.80, quality_score)
+        reason_codes = ["SEALED_POLICY_PASSED"]
 
     return {
         "passed": passed,
-        "quality_score": quality_score,
-        "performance": {
-            "pnl_totals": pnl_totals,
-            "sharpe_ratio": sharpe,
-            "max_drawdown": max_drawdown,
-            "profit_factor": profit_factor,
-        },
-        "order_count": len(raw.get("orders") or []),
-        "fill_count": len(raw.get("fills") or []),
-        "position_count": len(raw.get("positions") or []),
+        "quality_tier": "QUALIFIED" if passed else "REJECTED",
+        "reason_codes": reason_codes,
         "policy_checks": {
             "transaction_evidence": trade_evidence,
             "positive_total_pnl": pnl_pass,
@@ -149,7 +144,7 @@ def _sealed_performance_disclosure(raw: dict[str, Any]) -> dict[str, Any]:
             "max_drawdown_floor": drawdown_pass,
             "profit_factor_floor_when_available": profit_factor_pass,
         },
-        "policy": "SEALED_PERFORMANCE_RISK_V1",
+        "policy": "SEALED_LEVEL1_POLICY_V1",
     }
 
 
@@ -948,6 +943,7 @@ class NautilusGatewayEngine:
             "credential",
             "access_token",
             "auth_token",
+            "token",
             "broker_token",
             "broker_secret",
         )

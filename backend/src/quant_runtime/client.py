@@ -234,7 +234,14 @@ class NautilusQuantRuntime:
             json=request.model_dump(mode="json"),
             headers={"Idempotency-Key": str(request.experiment_id)},
         )
-        return self._parse(response, BacktestEvidence)
+        result = self._parse(response, BacktestEvidence)
+        if result.experiment_id != request.experiment_id or result.mode != request.mode:
+            raise QfError(
+                "NAUTILUS_RUNTIME_RESULT_IDENTITY_MISMATCH",
+                "Remote backtest result does not match the submitted experiment identity.",
+                502,
+            )
+        return result
 
     def run_sealed_backtest(self, request: BacktestExperimentRequest) -> SealedBacktestResult:
         if request.mode != ExperimentMode.SEALED:
@@ -244,7 +251,14 @@ class NautilusQuantRuntime:
             json=request.model_dump(mode="json"),
             headers={"Idempotency-Key": str(request.experiment_id)},
         )
-        return self._parse(response, SealedBacktestResult)
+        result = self._parse(response, SealedBacktestResult)
+        if result.experiment_id != request.experiment_id or result.mode != ExperimentMode.SEALED:
+            raise QfError(
+                "NAUTILUS_RUNTIME_RESULT_IDENTITY_MISMATCH",
+                "Remote sealed result does not match the submitted experiment identity.",
+                502,
+            )
+        return result
 
     def verify_candidate(
         self, request: CandidateVerificationRequest
@@ -254,4 +268,11 @@ class NautilusQuantRuntime:
             json=request.model_dump(mode="json"),
             headers={"Idempotency-Key": str(request.candidate_id)},
         )
-        return self._parse(response, CandidateVerificationResult)
+        result = self._parse(response, CandidateVerificationResult)
+        if result.candidate_id != request.candidate_id:
+            raise QfError(
+                "NAUTILUS_RUNTIME_CANDIDATE_IDENTITY_MISMATCH",
+                "Remote conformance result does not match the submitted Candidate identity.",
+                502,
+            )
+        return result

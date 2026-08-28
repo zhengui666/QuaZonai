@@ -101,7 +101,7 @@ def _batch(instrument_id: str, *, base: float) -> InstrumentQuoteBatch:
     return InstrumentQuoteBatch(
         instrument_id=instrument_id,
         instrument_type=type(instrument).__name__,
-        instrument_definition=instrument.to_dict(),
+        instrument_definition=type(instrument).to_dict(instrument),
         rows=_rows(base=base),
     )
 
@@ -214,12 +214,20 @@ def test_real_catalog_backtest_and_sealed_disclosure(tmp_path: Path) -> None:
     assert "fills" not in sealed
     assert "positions" not in sealed
     disclosure = sealed["disclosure"]
-    assert disclosure["policy"] == "SEALED_PERFORMANCE_RISK_V1"
+    assert disclosure["policy"] == "SEALED_LEVEL1_POLICY_V1"
     assert disclosure["passed"] is True, disclosure
-    assert disclosure["quality_score"] >= 0.60
-    assert disclosure["fill_count"] >= 2
-    assert "statistics" not in disclosure
-    assert "pnl_summary" not in disclosure
+    assert disclosure["quality_tier"] == "QUALIFIED"
+    assert disclosure["reason_codes"] == ["SEALED_POLICY_PASSED"]
+    for forbidden in (
+        "quality_score",
+        "performance",
+        "order_count",
+        "fill_count",
+        "position_count",
+        "statistics",
+        "pnl_summary",
+    ):
+        assert forbidden not in disclosure
 
 
 def test_catalog_validation_reads_parquet_instead_of_trusting_manifest(tmp_path: Path) -> None:

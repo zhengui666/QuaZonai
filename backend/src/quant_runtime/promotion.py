@@ -355,7 +355,15 @@ def qualify_alpha(
         if existing is not None:
             session.expunge(existing)
             return existing
-        quality = min(1.0, 0.5 + min(float(disclosure.get("fill_count", 0)), 50.0) / 100.0)
+        quality_tier = str(disclosure.get("quality_tier", ""))
+        quality_by_tier = {"QUALIFIED": 0.65}
+        if quality_tier not in quality_by_tier:
+            raise QfError(
+                "SEALED_DISCLOSURE_INVALID",
+                "Sealed Level-1 disclosure did not return a recognized qualification category.",
+                500,
+            )
+        quality = quality_by_tier[quality_tier]
         alpha = AlphaQualification(
             program_id=source_program_id,
             universe_version_id=source_universe_version_id,

@@ -535,6 +535,7 @@ def _has_secret_value(value: Any, *, key: str = "") -> bool:
             "credential",
             "access_token",
             "auth_token",
+            "token",
             "broker_token",
             "broker_secret",
         )

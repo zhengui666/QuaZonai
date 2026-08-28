@@ -258,10 +258,16 @@ def test_real_evidence_promotes_through_alpha_and_portfolio(
                 disclosure_json=(
                     {
                         "passed": True,
-                        "order_count": 1,
-                        "fill_count": 1,
-                        "position_count": 1,
-                        "policy": "AGGREGATES_ONLY_V1",
+                        "quality_tier": "QUALIFIED",
+                        "reason_codes": ["SEALED_POLICY_PASSED"],
+                        "policy_checks": {
+                            "transaction_evidence": True,
+                            "positive_total_pnl": True,
+                            "non_negative_sharpe_when_available": True,
+                            "max_drawdown_floor": True,
+                            "profit_factor_floor_when_available": True,
+                        },
+                        "policy": "SEALED_LEVEL1_POLICY_V1",
                     }
                     if sealed
                     else {}
@@ -293,7 +299,7 @@ def test_real_evidence_promotes_through_alpha_and_portfolio(
         assert sealed_entry is not None
         assert sealed_entry.parent_entry_id == source_id
         assert sealed_entry.evidence_json == {}
-        assert sealed_entry.disclosure_json["policy"] == "AGGREGATES_ONLY_V1"
+        assert sealed_entry.disclosure_json["policy"] == "SEALED_LEVEL1_POLICY_V1"
 
     promoted = simulate_portfolio_candidate(
         factory,
