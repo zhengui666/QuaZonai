@@ -4,11 +4,13 @@ import io
 import json
 import zipfile
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, func, select
 
+from api import domain
 from db.models import (
     ApprovalSnapshot,
     DownstreamSystem,
@@ -426,6 +428,7 @@ def test_approval_builds_package_and_authenticated_handoff_feedback(
             "validation/expected-fills.json",
             "validation/expected-positions.json",
             "validation/expected-statistics.json",
+            "validation/expected-pnl.json",
             "evidence/discovery-summary.json",
             "evidence/sealed-summary.json",
             "evidence/robustness-summary.json",
@@ -548,3 +551,139 @@ def test_data_source_registration_updates_readiness(
     after = client.get("/api/v1/readiness")
     assert after.status_code == 200
     assert after.json()["RESEARCH_READY"] is True
+
+
+
+def test_governed_ingest_creates_executable_discovery_scope(
+    engine: Engine,
+    settings: Settings,
+    monkeypatch,
+) -> None:
+    client = _client(engine, settings)
+    created = client.post(
+        "/api/v1/data-sources",
+        headers={"Idempotency-Key": "ingest-source"},
+        json={
+            "name": "FX PIT Quotes",
+            "provider": "Approved provider",
+            "universe_scope": ["FX"],
+            "fields": ["event_time", "available_time", "bid_price", "ask_price"],
+            "public_config": {"data_domains": ["quotes", "market_data"]},
+        },
+    )
+    assert created.status_code == 201, created.text
+    now = datetime.now(UTC)
+
+    def fake_remote(ingest_request):
+        assert ingest_request.catalog_key == "fx-discovery-v1"
+        ingested = SimpleNamespace(
+            catalog_key="fx-discovery-v1",
+            catalog_uri="nautilus-catalog://fx-discovery-v1",
+            nautilus_data_type="QuoteTick",
+            instrument_scope=["EUR/USD.SIM"],
+            event_time_start=now - timedelta(days=2),
+            event_time_end=now - timedelta(days=1),
+            available_time_start=now - timedelta(days=2) + timedelta(seconds=1),
+            available_time_end=now - timedelta(days=1) + timedelta(seconds=1),
+            row_count=2,
+            schema_revision="nautilus.quote_tick.v2",
+            quality_result={"state": "VALID"},
+            point_in_time_result={"state": "VALID", "replay_order": "TS_INIT"},
+            ingested_at=now,
+        )
+        validated = SimpleNamespace(
+            valid=True,
+            catalog_key="fx-discovery-v1",
+            instrument_scope=["EUR/USD.SIM"],
+            row_count=2,
+            event_time_start=ingested.event_time_start,
+            event_time_end=ingested.event_time_end,
+            available_time_start=ingested.available_time_start,
+            available_time_end=ingested.available_time_end,
+            findings=[],
+        )
+        return ingested, validated
+
+    monkeypatch.setattr(domain, "_remote_ingest_and_validate", fake_remote)
+    response = client.post(
+        f"/api/v1/data-sources/{created.json()['id']}/dataset-revisions/ingest",
+        headers={"Idempotency-Key": "fx-discovery-ingest"},
+        json={
+            "universe_key": "FX",
+            "universe_name": "FX",
+            "catalog_key": "fx-discovery-v1",
+            "source": "s3://approved/fx-discovery-v1",
+            "source_license": "CC0-1.0",
+            "instruments": [
+                {
+                    "instrument_id": "EUR/USD.SIM",
+                    "instrument_type": "CurrencyPair",
+                    "instrument_definition": {"id": "EUR/USD.SIM"},
+                    "rows": [
+                        {
+                            "timestamp": (now - timedelta(days=2)).isoformat(),
+                            "available_at": (
+                                now - timedelta(days=2) + timedelta(seconds=1)
+                            ).isoformat(),
+                            "bid_price": "1.10",
+                            "ask_price": "1.11",
+                        },
+                        {
+                            "timestamp": (now - timedelta(days=1)).isoformat(),
+                            "available_at": (
+                                now - timedelta(days=1) + timedelta(seconds=1)
+                            ).isoformat(),
+                            "bid_price": "1.12",
+                            "ask_price": "1.13",
+                        },
+                    ],
+                }
+            ],
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["quality_state"] == "VALID"
+    program = client.post(
+        "/api/v1/research-programs",
+        headers={"Idempotency-Key": "fx-program-after-ingest"},
+        json={
+            "idea": "Test one day FX momentum after realistic costs.",
+            "answers": {},
+        },
+    )
+    assert program.status_code == 201, program.text
+    assert program.json()["charter"]["universe_version_ids"] == [
+        response.json()["universe_version_id"]
+    ]
+
+
+
+def test_portfolio_mandate_and_program_have_product_creation_workflow(
+    engine: Engine,
+    settings: Settings,
+) -> None:
+    client = _client(engine, settings)
+    mandate = client.post(
+        "/api/v1/portfolio-mandates",
+        headers={"Idempotency-Key": "create-growth-mandate"},
+        json={
+            "key": "GROWTH_V1",
+            "name": "Growth Portfolio",
+            "spec_json": {
+                "constraints": {"max_single_alpha_weight": 1.0}
+            },
+        },
+    )
+    assert mandate.status_code == 201, mandate.text
+    program = client.post(
+        "/api/v1/portfolio-programs",
+        headers={"Idempotency-Key": "create-growth-program"},
+        json={"mandate_id": mandate.json()["id"]},
+    )
+    assert program.status_code == 201, program.text
+    assert program.json()["mandate_version_id"] == mandate.json()[
+        "latest_version_id"
+    ]
+    listed = client.get("/api/v1/portfolio-programs")
+    assert listed.status_code == 200
+    assert [item["id"] for item in listed.json()] == [program.json()["id"]]

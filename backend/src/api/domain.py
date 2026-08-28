@@ -5,12 +5,12 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Any, Callable
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from fastapi import APIRouter, Header, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from candidate_bundles import (
@@ -46,6 +46,13 @@ from downstream_auth import authenticate_downstream, install_service_token, issu
 from errors import QfError
 from jobs import enqueue_job
 from quant_runtime.client import NautilusQuantRuntime, RemoteNautilusConfig
+from quant_runtime.contracts import (
+    CatalogIngestRequest,
+    CatalogIngestResult,
+    CatalogValidationRequest,
+    CatalogValidationResult,
+    InstrumentQuoteBatch,
+)
 from quant_runtime.data_scope import dataset_revision_domains, market_scope_matches_universe
 
 router = APIRouter(prefix="/api/v1", tags=["domain"])
@@ -167,6 +174,18 @@ class MandateView(StrictModel):
     latest_version_id: UUID
     spec_json: dict[str, Any] = Field(default_factory=dict)
     state: str
+
+
+class PortfolioMandateInput(StrictModel):
+    key: str = Field(
+        min_length=1, max_length=120, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    )
+    name: str = Field(min_length=1, max_length=200)
+    spec_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class PortfolioProgramInput(StrictModel):
+    mandate_id: UUID
 
 
 class PortfolioProgramView(StrictModel):
@@ -345,6 +364,20 @@ class DatasetView(StrictModel):
     point_in_time_state: str
     partition: str
     created_at: str
+
+
+class DatasetIngestInput(StrictModel):
+    universe_key: str = Field(
+        min_length=1, max_length=120, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    )
+    universe_name: str = Field(min_length=1, max_length=200)
+    universe_spec: dict[str, Any] = Field(default_factory=dict)
+    catalog_key: str = Field(
+        min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    )
+    source: str = Field(min_length=1, max_length=500)
+    source_license: str | None = Field(default=None, max_length=500)
+    instruments: list[InstrumentQuoteBatch] = Field(min_length=1)
 
 
 def _now() -> datetime:
@@ -1182,6 +1215,153 @@ def get_alpha(qualification_id: UUID, request: Request) -> AlphaView:
         return _alpha_view(item)
 
 
+@router.post(
+    "/portfolio-mandates", response_model=MandateView, status_code=201
+)
+def create_mandate(
+    payload: PortfolioMandateInput,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
+    key = (idempotency_key or "").strip()
+    if not key or len(key) > 200:
+        raise QfError(
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "Portfolio Mandate creation requires a 1..200 character Idempotency-Key.",
+            422,
+        )
+    factory = request.app.state.session_factory
+    with factory() as session, session.begin():
+        if session.bind is not None and session.bind.dialect.name == "postgresql":
+            session.execute(
+                text("SELECT pg_advisory_xact_lock(:lock_key)"),
+                {"lock_key": 220025},
+            )
+
+        def action() -> dict[str, Any]:
+            duplicate = session.scalar(
+                select(PortfolioMandate).where(PortfolioMandate.key == payload.key)
+            )
+            if duplicate is not None:
+                raise QfError(
+                    "MANDATE_KEY_CONFLICT",
+                    "Portfolio Mandate key already exists.",
+                    409,
+                )
+            item = PortfolioMandate(
+                key=payload.key,
+                name=payload.name.strip(),
+                enabled=True,
+                latest_version_id=uuid4(),
+                spec_json=payload.spec_json,
+                state="ACTIVE",
+            )
+            session.add(item)
+            session.flush()
+            _event(
+                session,
+                "MANDATE_CREATED",
+                "PORTFOLIO_MANDATE",
+                item.id,
+                {"mandate_version_id": str(item.latest_version_id)},
+                actor_kind="HUMAN",
+            )
+            return MandateView(
+                id=item.id,
+                key=item.key,
+                name=item.name,
+                enabled=item.enabled,
+                latest_version_id=item.latest_version_id,
+                spec_json=item.spec_json,
+                state=item.state,
+            ).model_dump(mode="json")
+
+        return _idempotent(
+            session,
+            key,
+            "portfolio-mandate.create",
+            payload,
+            action,
+            status_code=201,
+        )
+
+
+@router.post(
+    "/portfolio-programs", response_model=PortfolioProgramView, status_code=201
+)
+def create_portfolio_program(
+    payload: PortfolioProgramInput,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
+    key = (idempotency_key or "").strip()
+    if not key or len(key) > 200:
+        raise QfError(
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "Portfolio Program creation requires a 1..200 character Idempotency-Key.",
+            422,
+        )
+    factory = request.app.state.session_factory
+    with factory() as session, session.begin():
+        if session.bind is not None and session.bind.dialect.name == "postgresql":
+            session.execute(
+                text("SELECT pg_advisory_xact_lock(:lock_key)"),
+                {"lock_key": 220026},
+            )
+
+        def action() -> dict[str, Any]:
+            mandate = session.execute(
+                select(PortfolioMandate)
+                .where(PortfolioMandate.id == payload.mandate_id)
+                .with_for_update()
+            ).scalar_one_or_none()
+            if mandate is None:
+                raise QfError("MANDATE_NOT_FOUND", "Portfolio Mandate was not found.", 404)
+            if not mandate.enabled or mandate.state != "ACTIVE":
+                raise QfError(
+                    "MANDATE_NOT_ACTIVE",
+                    "Portfolio Program requires an active enabled Mandate.",
+                    409,
+                )
+            item = PortfolioProgram(
+                mandate_version_id=mandate.latest_version_id,
+                mandate_name=mandate.name,
+                state="ACTIVE",
+            )
+            session.add(item)
+            session.flush()
+            _event(
+                session,
+                "PORTFOLIO_PROGRAM_CREATED",
+                "PORTFOLIO_PROGRAM",
+                item.id,
+                {
+                    "mandate_id": str(mandate.id),
+                    "mandate_version_id": str(mandate.latest_version_id),
+                },
+                actor_kind="HUMAN",
+            )
+            return PortfolioProgramView(
+                id=item.id,
+                mandate_version_id=item.mandate_version_id,
+                mandate_name=item.mandate_name,
+                state=item.state,
+                created_at=_iso(item.created_at),
+                updated_at=_iso(item.updated_at),
+                candidate_count=0,
+                current_candidate_id=item.current_candidate_id,
+            ).model_dump(mode="json")
+
+        return _idempotent(
+            session,
+            key,
+            "portfolio-program.create",
+            payload,
+            action,
+            status_code=201,
+        )
+
+
 @router.get("/portfolio-mandates", response_model=list[MandateView])
 def list_mandates(request: Request) -> list[MandateView]:
     factory = request.app.state.session_factory
@@ -1991,6 +2171,289 @@ def create_data_source(
 
         return _idempotent(
             session, idempotency_key, "data-source.create", payload, action, status_code=201
+        )
+
+
+def _remote_ingest_and_validate(
+    ingest_request: CatalogIngestRequest,
+) -> tuple[CatalogIngestResult, CatalogValidationResult]:
+    with NautilusQuantRuntime(RemoteNautilusConfig.from_env()) as runtime:
+        ingested = runtime.ingest(ingest_request)
+        validated = runtime.validate_catalog(
+            CatalogValidationRequest(
+                request_id=ingest_request.request_id,
+                catalog_key=ingest_request.catalog_key,
+                instrument_ids=[
+                    item.instrument_id for item in ingest_request.instruments
+                ],
+                nautilus_data_type=ingest_request.nautilus_data_type,
+            )
+        )
+    return ingested, validated
+
+
+def _dataset_view(item: DatasetRevision) -> dict[str, Any]:
+    return DatasetView(
+        id=item.id,
+        data_source_id=item.data_source_id,
+        universe_version_id=item.universe_version_id,
+        universe_name=item.universe_name,
+        revision_no=item.revision_no,
+        schema_version=item.schema_version,
+        event_start=_iso(item.event_start),
+        event_end=_iso(item.event_end),
+        available_start=_iso(item.available_start),
+        available_end=_iso(item.available_end),
+        row_count=item.row_count,
+        quality_state=item.quality_state,
+        point_in_time_state=item.point_in_time_state,
+        partition=item.partition,
+        created_at=_iso(item.created_at) or "",
+    ).model_dump(mode="json")
+
+
+@router.post(
+    "/data-sources/{source_id}/dataset-revisions/ingest",
+    response_model=DatasetView,
+    status_code=201,
+)
+def ingest_dataset_revision(
+    source_id: UUID,
+    payload: DatasetIngestInput,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
+    key = (idempotency_key or "").strip()
+    if not key or len(key) > 200:
+        raise QfError(
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "Dataset ingest requires a 1..200 character Idempotency-Key.",
+            422,
+        )
+    operation = f"dataset-revision.ingest:{source_id}"
+    identity = {
+        "source_id": str(source_id),
+        "universe_key": payload.universe_key,
+        "catalog_key": payload.catalog_key,
+    }
+    factory = request.app.state.session_factory
+
+    # Freeze or reuse the governed Universe before the network call. No database
+    # transaction or row lock is held while the remote Nautilus runtime executes.
+    with factory() as session, session.begin():
+        source = session.execute(
+            select(GovernedDataSource)
+            .where(GovernedDataSource.id == source_id)
+            .with_for_update()
+        ).scalar_one_or_none()
+        if (
+            source is None
+            or source.state != "ACTIVE"
+            or source.preflight_state != "READY"
+        ):
+            raise QfError(
+                "DATA_SOURCE_NOT_READY",
+                "Dataset ingest requires an active ready governed Data Source.",
+                409,
+            )
+        required_fields = {"event_time", "available_time", "bid_price", "ask_price"}
+        if not required_fields.issubset(set(source.fields or [])):
+            raise QfError(
+                "DATA_SOURCE_FIELDS_INCOMPLETE",
+                "QuoteTick ingest requires event/availability and bid/ask fields.",
+                422,
+                {"required_fields": sorted(required_fields)},
+            )
+        if source.universe_scope and payload.universe_name not in source.universe_scope:
+            raise QfError(
+                "DATA_SOURCE_UNIVERSE_SCOPE_MISMATCH",
+                "Data Source is not governed for the requested Universe.",
+                422,
+            )
+        if session.bind is not None and session.bind.dialect.name == "postgresql":
+            session.execute(
+                text("SELECT pg_advisory_xact_lock(:lock_key)"),
+                {"lock_key": 220024},
+            )
+        latest = session.scalar(
+            select(MarketUniverseVersion)
+            .where(MarketUniverseVersion.universe_key == payload.universe_key)
+            .order_by(MarketUniverseVersion.version_no.desc())
+            .limit(1)
+            .with_for_update()
+        )
+        if (
+            latest is not None
+            and latest.state == "ACTIVE"
+            and latest.name == payload.universe_name
+            and latest.spec_json == payload.universe_spec
+        ):
+            universe = latest
+        else:
+            universe = MarketUniverseVersion(
+                universe_key=payload.universe_key,
+                version_no=(latest.version_no + 1) if latest is not None else 1,
+                name=payload.universe_name,
+                state="ACTIVE",
+                spec_json=payload.universe_spec,
+                created_at=_now(),
+            )
+            session.add(universe)
+            session.flush()
+        source_provider = source.provider or source.name
+        universe_id = universe.id
+
+    ingest_request = CatalogIngestRequest(
+        request_id=uuid5(
+            NAMESPACE_URL,
+            f"quazonai:dataset-ingest:{source_id}:{key}",
+        ),
+        catalog_key=payload.catalog_key,
+        provider=source_provider,
+        source=payload.source,
+        source_license=payload.source_license,
+        instruments=payload.instruments,
+    )
+    ingested, validated = _remote_ingest_and_validate(ingest_request)
+    if not validated.valid:
+        raise QfError(
+            "NAUTILUS_CATALOG_VALIDATION_FAILED",
+            "Remote Nautilus catalog did not pass validation.",
+            422,
+            {"findings": validated.findings},
+        )
+    if (
+        ingested.catalog_key != payload.catalog_key
+        or validated.catalog_key != payload.catalog_key
+        or sorted(ingested.instrument_scope) != sorted(validated.instrument_scope)
+        or ingested.row_count != validated.row_count
+        or validated.event_time_start != ingested.event_time_start
+        or validated.event_time_end != ingested.event_time_end
+        or validated.available_time_start != ingested.available_time_start
+        or validated.available_time_end != ingested.available_time_end
+    ):
+        raise QfError(
+            "NAUTILUS_CATALOG_VALIDATION_MISMATCH",
+            "Validated catalog facts differ from the immutable ingest result.",
+            502,
+        )
+    quality_result = dict(ingested.quality_result or {})
+    point_in_time_result = dict(ingested.point_in_time_result or {})
+    if (
+        str(quality_result.get("state", "")).upper() != "VALID"
+        or str(point_in_time_result.get("state", "")).upper() != "VALID"
+    ):
+        raise QfError(
+            "DATASET_GOVERNANCE_FAILED",
+            "Ingested catalog must pass quality and point-in-time governance.",
+            422,
+        )
+
+    # Serialize persistence on the governed source. Replays still visit the
+    # Gateway first, which is the exact canonical-contract collision detector.
+    with factory() as session, session.begin():
+        if session.bind is not None and session.bind.dialect.name == "postgresql":
+            session.execute(
+                text("SELECT pg_advisory_xact_lock(:lock_key)"),
+                {"lock_key": 220027},
+            )
+        source = session.execute(
+            select(GovernedDataSource)
+            .where(GovernedDataSource.id == source_id)
+            .with_for_update()
+        ).scalar_one_or_none()
+        universe = session.get(MarketUniverseVersion, universe_id)
+        if (
+            source is None
+            or source.state != "ACTIVE"
+            or source.preflight_state != "READY"
+            or universe is None
+            or universe.state != "ACTIVE"
+        ):
+            raise QfError(
+                "DATASET_GOVERNANCE_CHANGED",
+                "Data Source or Universe changed while the catalog was ingesting.",
+                409,
+            )
+
+        def action() -> dict[str, Any]:
+            existing = session.scalar(
+                select(DatasetRevision).where(
+                    DatasetRevision.catalog_uri == ingested.catalog_uri
+                )
+            )
+            if existing is not None:
+                if (
+                    existing.data_source_id != source.id
+                    or existing.universe_version_id != universe.id
+                    or existing.instrument_scope != ingested.instrument_scope
+                    or existing.row_count != ingested.row_count
+                ):
+                    raise QfError(
+                        "DATASET_CATALOG_IDENTITY_CONFLICT",
+                        "Catalog URI is already bound to different governed facts.",
+                        409,
+                    )
+                return _dataset_view(existing)
+            revision_no = int(
+                session.scalar(
+                    select(func.max(DatasetRevision.revision_no)).where(
+                        DatasetRevision.data_source_id == source.id,
+                        DatasetRevision.universe_version_id == universe.id,
+                        DatasetRevision.partition == "DISCOVERY",
+                    )
+                )
+                or 0
+            ) + 1
+            revision = DatasetRevision(
+                data_source_id=source.id,
+                universe_version_id=universe.id,
+                universe_name=universe.name,
+                revision_no=revision_no,
+                schema_version=ingested.schema_revision,
+                event_start=ingested.event_time_start,
+                event_end=ingested.event_time_end,
+                available_start=ingested.available_time_start,
+                available_end=ingested.available_time_end,
+                row_count=ingested.row_count,
+                quality_state="VALID",
+                point_in_time_state="VALID",
+                partition="DISCOVERY",
+                created_at=_now(),
+                provider_name=source_provider,
+                source_license=payload.source_license,
+                catalog_uri=ingested.catalog_uri,
+                nautilus_data_type=ingested.nautilus_data_type,
+                instrument_scope=ingested.instrument_scope,
+                schema_revision=ingested.schema_revision,
+                quality_result=quality_result,
+                point_in_time_result=point_in_time_result,
+                ingested_at=ingested.ingested_at,
+            )
+            session.add(revision)
+            session.flush()
+            _event(
+                session,
+                "DATASET_REVISION_INGESTED",
+                "DATASET_REVISION",
+                revision.id,
+                {
+                    "data_source_id": str(source.id),
+                    "universe_version_id": str(universe.id),
+                    "catalog_uri": revision.catalog_uri,
+                    "row_count": revision.row_count,
+                },
+                actor_kind="HUMAN",
+            )
+            return _dataset_view(revision)
+
+        return _idempotent(
+            session,
+            key,
+            operation,
+            identity,
+            action,
+            status_code=201,
         )
 
 

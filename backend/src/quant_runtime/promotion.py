@@ -9,12 +9,13 @@ snapshot is created.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from db.models import (
@@ -151,6 +152,87 @@ def _discovery_summary(entry: SearchLedgerEntry, evidence: dict[str, Any]) -> di
         "position_count": len(evidence.get("positions", [])),
         "statistics": evidence.get("statistics", {}),
         "pnl": evidence.get("pnl", {}),
+    }
+
+
+def _quality_metric(value: Any, aliases: set[str]) -> float | None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            normalized = str(key).casefold().replace(" ", "_").replace("-", "_")
+            if normalized in aliases:
+                try:
+                    metric = float(item)
+                except (TypeError, ValueError):
+                    metric = None
+                if metric is not None and math.isfinite(metric):
+                    return metric
+            nested = _quality_metric(item, aliases)
+            if nested is not None:
+                return nested
+    elif isinstance(value, list):
+        for item in value:
+            nested = _quality_metric(item, aliases)
+            if nested is not None:
+                return nested
+    return None
+
+
+def _discovery_quality_score(
+    evidence: dict[str, Any],
+    *,
+    search_attempt_count: int = 1,
+) -> tuple[float, dict[str, Any]]:
+    """Produce an auditable score from public Discovery evidence and search exposure."""
+    statistics = evidence.get("statistics", {})
+    sharpe = _quality_metric(
+        statistics,
+        {"sharpe", "sharpe_ratio", "sharpe_ratio_(252_days)", "sharpe_ratio_252_days"},
+    )
+    total_return = _quality_metric(
+        statistics,
+        {"return", "total_return", "cumulative_return", "annual_return", "annualized_return"},
+    )
+    max_drawdown = _quality_metric(
+        statistics, {"max_drawdown", "maximum_drawdown", "max_drawdown_(all)"}
+    )
+    profit_factor = _quality_metric(
+        {"statistics": statistics, "pnl": evidence.get("pnl", {})},
+        {"profit_factor"},
+    )
+    total_pnl = _quality_metric(
+        evidence.get("pnl", {}),
+        {"pnl_(total)", "pnl_total", "total_pnl", "net_pnl"},
+    )
+    fill_count = len(evidence.get("fills", []))
+
+    score = 0.50
+    if sharpe is not None:
+        score += 0.20 * math.tanh(sharpe / 3.0)
+    if total_return is not None:
+        score += 0.20 * math.tanh(total_return / 0.25)
+    elif total_pnl is not None:
+        score += 0.12 * math.tanh(total_pnl / 10_000.0)
+    if profit_factor is not None:
+        score += 0.10 * math.tanh((profit_factor - 1.0) / 2.0)
+    if max_drawdown is not None:
+        score -= 0.15 * min(abs(max_drawdown), 1.0)
+    score += 0.05 * math.tanh(math.log1p(fill_count) / 3.0)
+    attempts = max(1, int(search_attempt_count))
+    search_penalty = min(0.20, 0.025 * math.log1p(attempts - 1))
+    score -= search_penalty
+    bounded = round(min(0.99, max(0.01, score)), 8)
+    return bounded, {
+        "model": "DISCOVERY_PUBLIC_PERFORMANCE_V1",
+        "score": bounded,
+        "sharpe": sharpe,
+        "total_return": total_return,
+        "max_drawdown": max_drawdown,
+        "profit_factor": profit_factor,
+        "total_pnl": total_pnl,
+        "fill_count": fill_count,
+        "search_attempt_count": attempts,
+        "search_exposure_penalty": round(search_penalty, 8),
+        "sealed_evidence_used_for_scoring": False,
     }
 
 
@@ -404,14 +486,26 @@ def qualify_alpha(
             session.expunge(existing)
             return existing
         quality_tier = str(disclosure.get("quality_tier", ""))
-        quality_by_tier = {"QUALIFIED": 0.65}
-        if quality_tier not in quality_by_tier:
+        if quality_tier != "QUALIFIED":
             raise QfError(
                 "SEALED_DISCLOSURE_INVALID",
                 "Sealed Level-1 disclosure did not return a recognized qualification category.",
                 500,
             )
-        quality = quality_by_tier[quality_tier]
+        search_attempt_count = int(
+            session.scalar(
+                select(func.count())
+                .select_from(SearchLedgerEntry)
+                .where(
+                    SearchLedgerEntry.program_id == source_program_id,
+                    SearchLedgerEntry.mode == ExperimentMode.DISCOVERY.value,
+                )
+            )
+            or 1
+        )
+        quality, quality_model = _discovery_quality_score(
+            evidence, search_attempt_count=search_attempt_count
+        )
         alpha = AlphaQualification(
             program_id=source_program_id,
             universe_version_id=source_universe_version_id,
@@ -427,6 +521,7 @@ def qualify_alpha(
             degradation_state="HEALTHY",
             metrics={
                 "search_adjusted_quality": quality,
+                "quality_model": quality_model,
                 "discovery": discovery_summary,
                 "sealed_disclosure": disclosure,
                 "strategy_artifact": strategy_artifact,
@@ -542,9 +637,35 @@ def _require_material_improvement(
         )
 
 
+def _select_portfolio_alpha(
+    mandate: PortfolioMandate,
+    alphas: list[AlphaQualification],
+) -> AlphaQualification:
+    eligible: list[AlphaQualification] = []
+    excluded: list[str] = []
+    for alpha in alphas:
+        try:
+            _validate_mandate_before_simulation(mandate, alpha)
+        except QfError as exc:
+            if exc.code == "PORTFOLIO_MANDATE_UNIVERSE_UNSATISFIED":
+                excluded.append(str(alpha.id))
+                continue
+            raise
+        eligible.append(alpha)
+    if not eligible:
+        raise QfError(
+            "PORTFOLIO_MANDATE_NO_ELIGIBLE_ALPHA",
+            "No selected Alpha satisfies the bound Portfolio Mandate.",
+            422,
+            {"excluded_alpha_ids": excluded},
+        )
+    return max(eligible, key=lambda item: (_alpha_score(item), str(item.id)))
+
+
 def _load_portfolio_source(
     session: Session,
     alpha_ids: list[UUID],
+    mandate: PortfolioMandate,
 ) -> tuple[AlphaQualification, SearchLedgerEntry, BacktestExperimentRequest]:
     if not alpha_ids:
         raise QfError("ALPHA_SELECTION_EMPTY", "At least one qualified Alpha is required.", 422)
@@ -587,7 +708,7 @@ def _load_portfolio_source(
             "Selected Alpha role is not eligible for Candidate promotion.",
             422,
         )
-    selected = max(alphas, key=lambda item: (_alpha_score(item), str(item.id)))
+    selected = _select_portfolio_alpha(mandate, alphas)
     if selected.source_experiment_id is None:
         raise QfError("ALPHA_LINEAGE_MISSING", "Qualified Alpha has no source experiment.", 422)
     source = session.get(SearchLedgerEntry, selected.source_experiment_id)
@@ -882,8 +1003,10 @@ def simulate_portfolio_candidate(
                     simulation_experiment_id=simulation_experiment_id,
                     selected_alpha_id=selected_alpha_id,
                 )
-        alpha, source, request = _load_portfolio_source(session, requested_alpha_ids)
         mandate = _bound_mandate(session, portfolio_program)
+        alpha, source, request = _load_portfolio_source(
+            session, requested_alpha_ids, mandate
+        )
         mandate_constraints = _validate_mandate_before_simulation(mandate, alpha)
         mandate_id = mandate.id
         simulation_request = request.model_copy(

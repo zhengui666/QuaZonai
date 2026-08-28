@@ -73,7 +73,11 @@ def request_alpha_qualification(
     factory = request.app.state.session_factory
     requested = _qualification_payload(payload)
     with factory() as session, session.begin():
-        source = session.get(SearchLedgerEntry, source_experiment_id)
+        source = session.execute(
+            select(SearchLedgerEntry)
+            .where(SearchLedgerEntry.id == source_experiment_id)
+            .with_for_update()
+        ).scalar_one_or_none()
         if source is None:
             raise QfError(
                 "SEARCH_LEDGER_ENTRY_NOT_FOUND", "Discovery experiment does not exist.", 404

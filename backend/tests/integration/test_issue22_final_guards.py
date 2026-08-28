@@ -78,3 +78,81 @@ def test_negative_capacity_cannot_satisfy_positive_mandate_floor() -> None:
             {"capacity_ratio": -0.6},
         )
     assert raised.value.code == "PORTFOLIO_MANDATE_CONSTRAINT_FAILED"
+
+
+def test_duplicate_instrument_ids_are_rejected_by_core_contract() -> None:
+    from pydantic import ValidationError
+
+    from quant_runtime.contracts import BacktestExperimentRequest, StrategyArtifact
+
+    strategy = StrategyArtifact(
+        artifact_id="duplicate-instrument-test",
+        kind="IMPORTABLE",
+        strategy_path="module:Strategy",
+        config_path="module:Config",
+    )
+    with pytest.raises(ValidationError):
+        BacktestExperimentRequest(
+            dataset_revision_id=uuid4(),
+            catalog_key="duplicate-instruments",
+            instrument_ids=["EUR/USD.SIM", "EUR/USD.SIM"],
+            strategy=strategy,
+        )
+
+
+def test_discovery_quality_model_is_discriminating_and_search_adjusted() -> None:
+    from quant_runtime.promotion import _discovery_quality_score
+
+    weak, weak_model = _discovery_quality_score(
+        {
+            "fills": [{}],
+            "pnl": {"USD": {"PnL (total)": 10.0}},
+            "statistics": {"returns": {"Sharpe Ratio (252 days)": 0.1}},
+        },
+        search_attempt_count=8,
+    )
+    strong, strong_model = _discovery_quality_score(
+        {
+            "fills": [{}, {}, {}, {}],
+            "pnl": {"USD": {"PnL (total)": 1000.0}},
+            "statistics": {
+                "returns": {
+                    "Sharpe Ratio (252 days)": 2.0,
+                    "Total Return": 0.20,
+                }
+            },
+        },
+        search_attempt_count=1,
+    )
+    assert strong > weak
+    assert strong_model["sealed_evidence_used_for_scoring"] is False
+    assert weak_model["search_exposure_penalty"] > 0
+    assert weak_model["model"] == "DISCOVERY_PUBLIC_PERFORMANCE_V1"
+
+
+def test_mandate_filter_runs_before_quality_ranking() -> None:
+    from types import SimpleNamespace
+
+    from quant_runtime.promotion import _select_portfolio_alpha
+
+    allowed_universe_id = uuid4()
+    mandate = SimpleNamespace(
+        spec_json={
+            "constraints": {
+                "allowed_universe_version_ids": [str(allowed_universe_id)]
+            }
+        }
+    )
+    outside = SimpleNamespace(
+        id=uuid4(),
+        universe_version_id=uuid4(),
+        universe="OUTSIDE",
+        metrics={"search_adjusted_quality": 0.99},
+    )
+    eligible = SimpleNamespace(
+        id=uuid4(),
+        universe_version_id=allowed_universe_id,
+        universe="ELIGIBLE",
+        metrics={"search_adjusted_quality": 0.60},
+    )
+    assert _select_portfolio_alpha(mandate, [outside, eligible]) is eligible

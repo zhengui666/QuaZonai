@@ -111,16 +111,30 @@ def create_app(
         return engine().validate_catalog(request)
 
     @app.post("/v1/backtests", dependencies=[Depends(_authorize)])
-    def run_backtest(request: BacktestExperimentRequest) -> dict[str, Any]:
+    def run_backtest(
+        request: BacktestExperimentRequest,
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> dict[str, Any]:
         _require_role(gateway_role, "RESEARCH")
         if request.mode == ExperimentMode.SEALED:
             raise GatewayContractError("sealed mode is disclosure-only")
-        return engine().run_backtest(request)
+        if idempotency_key != str(request.experiment_id):
+            raise GatewayContractError(
+                "backtest idempotency key must equal experiment_id"
+            )
+        return engine().run_backtest_idempotent(request)
 
     @app.post("/v1/sealed-backtests", dependencies=[Depends(_authorize)])
-    def run_sealed_backtest(request: BacktestExperimentRequest) -> dict[str, Any]:
+    def run_sealed_backtest(
+        request: BacktestExperimentRequest,
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> dict[str, Any]:
         _require_role(gateway_role, "SEALED")
-        return engine().run_sealed_backtest(request)
+        if idempotency_key != str(request.experiment_id):
+            raise GatewayContractError(
+                "sealed backtest idempotency key must equal experiment_id"
+            )
+        return engine().run_sealed_backtest_idempotent(request)
 
     @app.post("/v1/candidates/verify", dependencies=[Depends(_authorize)])
     def verify_candidate(request: CandidateVerificationRequest) -> dict[str, Any]:

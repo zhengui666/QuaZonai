@@ -152,6 +152,17 @@ class ExperimentCoordinator:
                         .with_for_update()
                     ).scalar_one_or_none()
                     program_lineage = _evidence_program_lineage(session, program_id)
+                    # Every lineage shares at least one Program row. Lock all rows in
+                    # deterministic order so two source experiments cannot consume the
+                    # same sealed Dataset Revision concurrently.
+                    list(
+                        session.scalars(
+                            select(ResearchProgram)
+                            .where(ResearchProgram.id.in_(program_lineage))
+                            .order_by(ResearchProgram.id)
+                            .with_for_update()
+                        )
+                    )
                     if parent is None or parent.program_id not in program_lineage:
                         raise QfError(
                             "EXPERIMENT_PARENT_INVALID",
@@ -170,7 +181,7 @@ class ExperimentCoordinator:
                         if exposure is not None:
                             raise QfError(
                                 "SEALED_EXPOSURE_ALREADY_CONSUMED",
-                                "This source experiment already has a sealed evaluation exposure.",
+                                "This Program evidence lineage already consumed the sealed Dataset Revision.",
                                 409,
                                 {"sealed_experiment_id": str(exposure.id)},
                             )

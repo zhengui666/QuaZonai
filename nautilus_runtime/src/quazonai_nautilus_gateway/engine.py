@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -237,8 +237,10 @@ class NautilusGatewayEngine:
         self._data_root = data_root.resolve()
         self._catalog_root = self._data_root / "catalogs"
         self._artifact_root = self._data_root / "artifacts"
+        self._run_root = self._data_root / "run-receipts"
         self._catalog_root.mkdir(parents=True, exist_ok=True)
         self._artifact_root.mkdir(parents=True, exist_ok=True)
+        self._run_root.mkdir(parents=True, exist_ok=True)
 
     def capabilities(self) -> dict[str, Any]:
         return {
@@ -281,6 +283,98 @@ class NautilusGatewayEngine:
             "point_in_time_result": manifest["point_in_time_result"],
             "ingested_at": _parse_time(manifest["ingested_at"]),
         }
+
+    def _write_run_receipt(
+        self, receipt_path: Path, receipt: dict[str, Any]
+    ) -> None:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=self._run_root, delete=False
+        ) as stream:
+            json.dump(receipt, stream, ensure_ascii=False, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+            temporary = Path(stream.name)
+        os.replace(temporary, receipt_path)
+
+    def _idempotent_run(
+        self,
+        operation: str,
+        request: BacktestExperimentRequest,
+        runner: Callable[[BacktestExperimentRequest], dict[str, Any]],
+    ) -> dict[str, Any]:
+        canonical_request = request.model_dump(mode="json")
+        receipt_path = self._run_root / f"{request.experiment_id}.json"
+        lock_path = self._run_root / f".{request.experiment_id}.lock"
+        if receipt_path.parent != self._run_root or lock_path.parent != self._run_root:
+            raise GatewayContractError("run receipt escaped the configured root")
+        lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            if receipt_path.exists():
+                try:
+                    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                    raise GatewayContractError("stored run receipt is invalid") from exc
+                if (
+                    receipt.get("operation") != operation
+                    or receipt.get("request") != canonical_request
+                ):
+                    raise GatewayContractError(
+                        "experiment id is already bound to another immutable backtest contract"
+                    )
+                if receipt.get("state") == "FAILED":
+                    raise GatewayContractError(
+                        "the immutable backtest contract previously reached a terminal failure"
+                    )
+                result = receipt.get("result")
+                if receipt.get("state") != "SUCCEEDED" or not isinstance(result, dict):
+                    raise GatewayContractError("stored run receipt has no terminal result")
+                return result
+            try:
+                result = _jsonable(runner(request))
+                if not isinstance(result, dict):
+                    raise GatewayContractError("backtest terminal result is invalid")
+            except GatewayContractError:
+                self._write_run_receipt(
+                    receipt_path,
+                    {
+                        "operation": operation,
+                        "request": canonical_request,
+                        "state": "FAILED",
+                        "failure_code": "CONTRACT_INVALID",
+                        "completed_at": _utc_now().isoformat(),
+                    },
+                )
+                raise
+            self._write_run_receipt(
+                receipt_path,
+                {
+                    "operation": operation,
+                    "request": canonical_request,
+                    "state": "SUCCEEDED",
+                    "result": result,
+                    "completed_at": _utc_now().isoformat(),
+                },
+            )
+            return result
+        finally:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            finally:
+                os.close(lock_fd)
+
+    def run_backtest_idempotent(
+        self, request: BacktestExperimentRequest
+    ) -> dict[str, Any]:
+        return self._idempotent_run("BACKTEST", request, self.run_backtest)
+
+    def run_sealed_backtest_idempotent(
+        self, request: BacktestExperimentRequest
+    ) -> dict[str, Any]:
+        return self._idempotent_run(
+            "SEALED_BACKTEST", request, self.run_sealed_backtest
+        )
 
     def _isolated_operation(
         self,
@@ -1021,6 +1115,7 @@ class NautilusGatewayEngine:
             "fills",
             "positions",
             "statistics",
+            "pnl",
         }
         fixture_missing = sorted(fixture_required.difference(request.fixture))
         if fixture_missing:
@@ -1103,17 +1198,40 @@ class NautilusGatewayEngine:
                             "actual": actual_rows,
                         }
                     )
+            expected_pnl = _jsonable(request.fixture.get("pnl", {}))
+            actual_pnl = _jsonable(replay.get("pnl", {}))
+            if actual_pnl != expected_pnl:
+                findings.append(
+                    {
+                        "code": "CONFORMANCE_REFERENCE_MISMATCH",
+                        "section": "pnl",
+                        "expected": expected_pnl,
+                        "actual": actual_pnl,
+                    }
+                )
             expected_stats = request.fixture.get("statistics", {})
             actual_stats = replay.get("statistics", {})
-            for key in ("total_orders", "total_positions", "iterations"):
+            for key in (
+                "returns",
+                "general",
+                "total_orders",
+                "total_positions",
+                "iterations",
+            ):
                 if isinstance(expected_stats, dict) and key in expected_stats:
-                    if actual_stats.get(key) != expected_stats.get(key):
+                    if not isinstance(actual_stats, dict) or _jsonable(
+                        actual_stats.get(key)
+                    ) != _jsonable(expected_stats.get(key)):
                         findings.append(
                             {
                                 "code": "CONFORMANCE_REFERENCE_MISMATCH",
                                 "section": f"statistics.{key}",
                                 "expected": expected_stats.get(key),
-                                "actual": actual_stats.get(key),
+                                "actual": (
+                                    actual_stats.get(key)
+                                    if isinstance(actual_stats, dict)
+                                    else None
+                                ),
                             }
                         )
 

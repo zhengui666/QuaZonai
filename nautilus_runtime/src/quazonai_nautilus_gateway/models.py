@@ -206,6 +206,10 @@ class BacktestExperimentRequest(StrictModel):
 
     @model_validator(mode="after")
     def validate_v1_configuration(self) -> BacktestExperimentRequest:
+        if any(value != value.strip() or not value for value in self.instrument_ids):
+            raise ValueError("instrument_ids must be non-blank and whitespace-free")
+        if len(self.instrument_ids) != len(set(self.instrument_ids)):
+            raise ValueError("instrument_ids must be unique")
         if self.start_time is not None:
             _require_aware_datetime(self.start_time, field_name="start_time")
         if self.end_time is not None:

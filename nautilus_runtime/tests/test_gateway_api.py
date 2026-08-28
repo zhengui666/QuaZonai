@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 import pytest
 
 from quazonai_nautilus_gateway.app import create_app
-from quazonai_nautilus_gateway.models import StrategyArtifact
+from quazonai_nautilus_gateway.engine import GatewayContractError, NautilusGatewayEngine
+from quazonai_nautilus_gateway.models import (
+    BacktestExperimentRequest,
+    StrategyArtifact,
+)
 
 
 def test_gateway_requires_service_token(monkeypatch, tmp_path: Path) -> None:
@@ -64,3 +69,113 @@ def test_source_bundle_allows_normal_strategy_initialization() -> None:
 def test_source_bundle_rejects_filesystem_process_and_reflection_capabilities(source: str) -> None:
     with pytest.raises(ValidationError):
         _source_artifact(source)
+
+
+
+def test_gateway_rejects_duplicate_instrument_ids() -> None:
+    strategy = StrategyArtifact(
+        artifact_id="duplicate-gateway-instruments",
+        kind="IMPORTABLE",
+        strategy_path="module:Strategy",
+        config_path="module:Config",
+    )
+    with pytest.raises(ValidationError):
+        BacktestExperimentRequest(
+            dataset_revision_id=uuid4(),
+            catalog_key="duplicate-gateway-instruments",
+            instrument_ids=["EUR/USD.SIM", "EUR/USD.SIM"],
+            strategy=strategy,
+        )
+
+
+def test_gateway_backtest_idempotency_replays_terminal_result(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("NAUTILUS_GATEWAY_ALLOW_ANONYMOUS", "true")
+    monkeypatch.delenv("NAUTILUS_GATEWAY_TOKEN", raising=False)
+    calls: list[object] = []
+
+    def fake_backtest(self, request, *, _source_isolated=False):
+        del self, _source_isolated
+        calls.append(request.experiment_id)
+        return {
+            "experiment_id": str(request.experiment_id),
+            "mode": request.mode.value,
+            "terminal": "SUCCEEDED",
+        }
+
+    monkeypatch.setattr(NautilusGatewayEngine, "run_backtest", fake_backtest)
+    experiment_id = uuid4()
+    request = BacktestExperimentRequest(
+        experiment_id=experiment_id,
+        dataset_revision_id=uuid4(),
+        catalog_key="idempotent-backtest",
+        instrument_ids=["EUR/USD.SIM"],
+        strategy=StrategyArtifact(
+            artifact_id="idempotent-backtest",
+            kind="IMPORTABLE",
+            strategy_path="module:Strategy",
+            config_path="module:Config",
+        ),
+    )
+    client = TestClient(create_app(data_root=tmp_path))
+    missing = client.post("/v1/backtests", json=request.model_dump(mode="json"))
+    assert missing.status_code == 422
+    headers = {"Idempotency-Key": str(experiment_id)}
+    first = client.post(
+        "/v1/backtests", headers=headers, json=request.model_dump(mode="json")
+    )
+    replay = client.post(
+        "/v1/backtests", headers=headers, json=request.model_dump(mode="json")
+    )
+    assert first.status_code == 200, first.text
+    assert replay.json() == first.json()
+    assert calls == [experiment_id]
+    collision_request = request.model_copy(update={"tags": {"changed": "true"}})
+    collision = client.post(
+        "/v1/backtests",
+        headers=headers,
+        json=collision_request.model_dump(mode="json"),
+    )
+    assert collision.status_code == 422
+    assert calls == [experiment_id]
+
+
+
+def test_gateway_backtest_idempotency_replays_terminal_contract_failure(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("NAUTILUS_GATEWAY_ALLOW_ANONYMOUS", "true")
+    monkeypatch.delenv("NAUTILUS_GATEWAY_TOKEN", raising=False)
+    calls: list[object] = []
+
+    def fail_backtest(self, request, *, _source_isolated=False):
+        del self, _source_isolated
+        calls.append(request.experiment_id)
+        raise GatewayContractError("deterministic contract failure")
+
+    monkeypatch.setattr(NautilusGatewayEngine, "run_backtest", fail_backtest)
+    experiment_id = uuid4()
+    request = BacktestExperimentRequest(
+        experiment_id=experiment_id,
+        dataset_revision_id=uuid4(),
+        catalog_key="failed-idempotent-backtest",
+        instrument_ids=["EUR/USD.SIM"],
+        strategy=StrategyArtifact(
+            artifact_id="failed-idempotent-backtest",
+            kind="IMPORTABLE",
+            strategy_path="module:Strategy",
+            config_path="module:Config",
+        ),
+    )
+    client = TestClient(create_app(data_root=tmp_path))
+    headers = {"Idempotency-Key": str(experiment_id)}
+    first = client.post(
+        "/v1/backtests", headers=headers, json=request.model_dump(mode="json")
+    )
+    replay = client.post(
+        "/v1/backtests", headers=headers, json=request.model_dump(mode="json")
+    )
+    assert first.status_code == 422
+    assert replay.status_code == 422
+    assert calls == [experiment_id]

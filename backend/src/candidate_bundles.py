@@ -450,6 +450,7 @@ def build_candidate_bundle(
                 "expected_fills": "validation/expected-fills.json",
                 "expected_positions": "validation/expected-positions.json",
                 "expected_statistics": "validation/expected-statistics.json",
+                "expected_pnl": "validation/expected-pnl.json",
             },
             "evidence": {
                 "discovery": "evidence/discovery-summary.json",
@@ -481,6 +482,7 @@ def build_candidate_bundle(
         "validation/expected-orders.json": _json_bytes(evidence["orders"]),
         "validation/expected-positions.json": _json_bytes(evidence["positions"]),
         "validation/expected-statistics.json": _json_bytes(evidence["statistics"]),
+        "validation/expected-pnl.json": _json_bytes(evidence["pnl"]),
         "validation/expected-fills.json": _json_bytes(evidence["fills"]),
         "evidence/discovery-summary.json": _json_bytes(discovery_summary),
         "evidence/sealed-summary.json": _json_bytes(sealed_summary),
@@ -540,6 +542,7 @@ def build_candidate_verification_request(
             "fills": json.loads(archive.read("validation/expected-fills.json")),
             "positions": json.loads(archive.read("validation/expected-positions.json")),
             "statistics": json.loads(archive.read("validation/expected-statistics.json")),
+            "pnl": json.loads(archive.read("validation/expected-pnl.json")),
         }
         wheel_path = str(built.manifest.get("strategy", {}).get("wheel", ""))
         if not wheel_path:
@@ -603,6 +606,7 @@ def validate_candidate_bundle(archive_bytes: bytes) -> dict[str, Any]:
         "validation/expected-fills.json",
         "validation/expected-positions.json",
         "validation/expected-statistics.json",
+        "validation/expected-pnl.json",
         "evidence/discovery-summary.json",
         "evidence/sealed-summary.json",
         "evidence/robustness-summary.json",

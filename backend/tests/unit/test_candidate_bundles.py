@@ -12,6 +12,7 @@ import pytest
 
 from candidate_bundles import (
     build_candidate_bundle,
+    build_candidate_verification_request,
     resolve_bundle_archive,
     validate_candidate_bundle,
 )
@@ -36,6 +37,7 @@ class Candidate:
 
 def _candidate() -> Candidate:
     experiment_id = uuid4()
+    dataset_revision_id = uuid4()
     strategy_source = """from nautilus_trader.config import StrategyConfig\nfrom nautilus_trader.trading.strategy import Strategy\n\nclass ExampleConfig(StrategyConfig, frozen=True):\n    pass\n\nclass ExampleStrategy(Strategy):\n    def __init__(self, config: ExampleConfig):\n        super().__init__(config)\n"""
     return Candidate(
         id=uuid4(),
@@ -62,10 +64,14 @@ def _candidate() -> Candidate:
                     "pnl": {"USD": {"PnL": "12.5"}},
                     "statistics": {"Sharpe Ratio (252 days)": 1.2},
                 },
+                "dataset_revision_ids": [str(dataset_revision_id)],
                 "instrument_scope": ["EUR/USD.SIM"],
                 "data_requirements": {"data_type": "QuoteTick"},
                 "custom_data_schemas": {"signal": {"type": "object"}},
-                "backtest_run_config": {"catalog_uri": "catalog://prices-v1"},
+                "backtest_run_config": {
+                    "catalog_key": "prices-v1",
+                    "catalog_uri": "nautilus-catalog://prices-v1",
+                },
                 "venue_config": {"name": "SIM"},
                 "risk_config": {"max_notional": "100000"},
                 "discovery_summary": {"accepted_runs": 4},
@@ -102,6 +108,7 @@ def test_bundle_matches_issue_22_nautilus_native_contract(tmp_path: Path) -> Non
         "validation/expected-fills.json",
         "validation/expected-positions.json",
         "validation/expected-statistics.json",
+        "validation/expected-pnl.json",
         "evidence/discovery-summary.json",
         "evidence/sealed-summary.json",
         "evidence/robustness-summary.json",
@@ -124,6 +131,10 @@ def test_bundle_matches_issue_22_nautilus_native_contract(tmp_path: Path) -> Non
             candidate.simulation_experiment_id
         )
         assert b"broker_token" not in built.archive_bytes
+        verification = build_candidate_verification_request(
+            built, candidate_id=candidate.id
+        )
+        assert verification.fixture["pnl"] == {"USD": {"PnL": "12.5"}}
 
 
 def test_bundle_supports_real_candidate_member_dicts() -> None:

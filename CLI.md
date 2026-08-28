@@ -758,3 +758,15 @@ V1 不建设旧式远程 OAuth MCP Gateway、SSH transport、JSONL 隧道或通�
 ## Remote Nautilus contract artifacts
 
 Research Mission 在 `experiments/*.json` 写 protocol-v1 `BacktestExperimentRequest`，在 `strategy/` 写同一 StrategyArtifact source bundle。父 Worker 执行后写 `evidence/<experiment-id>.json` 和 `evidence/INDEX.json`。Gateway 运维入口为独立包 `nautilus_runtime/` 的 `quazonai-nautilus-gateway`；它不是 QuaZonai Core 子命令，也不得由 Core 启停。
+
+## Governed Nautilus bootstrap API
+
+A fresh deployment does not require direct database seeding for executable research or portfolio construction. The Operator API supports the complete governed lifecycle:
+
+1. `POST /api/v1/data-sources` registers an active governed source.
+2. `POST /api/v1/data-sources/{source_id}/dataset-revisions/ingest` sends the typed QuoteTick release to the configured remote Research Gateway, validates the immutable catalog, and freezes a Discovery `DatasetRevision`.
+3. `POST /api/v1/research-programs` can then resolve the Idea to that executable Universe/Data Domain and queue its Mission.
+4. `POST /api/v1/portfolio-mandates` creates the governed optimization and promotion constraints.
+5. `POST /api/v1/portfolio-programs` binds an active Mandate Version and returns the Program UUID accepted by `POST /api/v1/portfolio-programs/{portfolio_program_id}/simulate-candidate`.
+
+Every mutation uses `Idempotency-Key`. Catalog identity and exact ingest replay are enforced by the independent Nautilus Gateway; QuaZonai persists only the governed catalog reference and validation facts.
