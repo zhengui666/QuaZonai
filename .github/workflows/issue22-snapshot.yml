@@ -1,29 +1,33 @@
-name: Issue 22 source snapshot
+name: Issue 22 CodeQL hardening patch
 
 on:
   push:
     branches:
       - feat/issue-22-remote-nautilus-runtime
     paths:
-      - .github/workflows/issue22-snapshot.yml
-      - tools/issue22_snapshot_request.txt
+      - tools/issue22_patch.py
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  snapshot:
+  apply:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
           ref: feat/issue-22-remote-nautilus-runtime
-          fetch-depth: 1
-      - uses: actions/upload-artifact@v4
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
         with:
-          name: issue22-current-source-${{ github.sha }}
-          path: |
-            .
-            !.git/**
-          include-hidden-files: true
-          retention-days: 1
+          python-version: "3.12"
+      - name: Apply reviewed source patch
+        run: |
+          python tools/issue22_patch.py
+          rm -f tools/issue22_patch.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix(runtime): harden catalog and strategy paths"
+          git push origin HEAD:feat/issue-22-remote-nautilus-runtime
