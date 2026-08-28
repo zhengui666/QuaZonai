@@ -1007,6 +1007,15 @@ def _evidence_number(value: object) -> float | None:
     return result if math.isfinite(result) else None
 
 
+def _exposure_side_sign(value: object) -> float | None:
+    token = str(value or "").strip().upper()
+    if token in {"LONG", "BUY"}:
+        return 1.0
+    if token in {"SHORT", "SELL"}:
+        return -1.0
+    return None
+
+
 def _executed_instrument_weights(
     evidence: dict[str, Any],
     requested_instruments: list[str],
@@ -1033,7 +1042,9 @@ def _executed_instrument_weights(
         if instrument_id not in requested_set or quantity is None or price is None:
             continue
         last_prices[instrument_id] = price
-        fill_notionals[instrument_id] += abs(quantity * price)
+        side_sign = _exposure_side_sign(fill.get("side"))
+        signed_quantity = abs(quantity) * side_sign if side_sign is not None else quantity
+        fill_notionals[instrument_id] += signed_quantity * price
 
     position_notionals = {instrument_id: 0.0 for instrument_id in requested}
     for position in evidence.get("positions", []):
@@ -1046,18 +1057,21 @@ def _executed_instrument_weights(
             continue
         if position.get("closed_at") not in (None, ""):
             continue
-        position_notionals[instrument_id] += abs(quantity * price)
+        side_sign = _exposure_side_sign(position.get("side"))
+        signed_quantity = abs(quantity) * side_sign if side_sign is not None else quantity
+        position_notionals[instrument_id] += signed_quantity * price
 
-    notionals = position_notionals if sum(position_notionals.values()) > 0 else fill_notionals
-    positive = {key: value for key, value in notionals.items() if value > 0}
-    total = sum(positive.values())
-    if total <= 0:
+    position_gross = sum(abs(value) for value in position_notionals.values())
+    notionals = position_notionals if position_gross > 0 else fill_notionals
+    nonzero = {key: value for key, value in notionals.items() if abs(value) > 0}
+    gross = sum(abs(value) for value in nonzero.values())
+    if gross <= 0:
         raise QfError(
             "PORTFOLIO_ALLOCATION_EVIDENCE_MISSING",
-            "Multi-instrument Candidate requires executed allocation evidence from Nautilus.",
+            "Multi-instrument Candidate requires executed signed allocation evidence from Nautilus.",
             422,
         )
-    return {key: value / total for key, value in positive.items()}
+    return {key: value / gross for key, value in nonzero.items()}
 
 
 def _approval_simulation_summaries(
@@ -1399,7 +1413,6 @@ def simulate_portfolio_candidate(
         )
         session.add(candidate)
         session.flush()
-        portfolio_program.current_candidate_id = candidate.id
         portfolio_program.state = "CANDIDATE_READY"
         approval_summaries = _approval_simulation_summaries(
             constraints=current_constraints,

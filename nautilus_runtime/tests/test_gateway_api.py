@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 import pytest
 
 from quazonai_nautilus_gateway.app import create_app
-from quazonai_nautilus_gateway.engine import GatewayContractError, NautilusGatewayEngine
+from quazonai_nautilus_gateway.engine import (
+    GatewayContractError,
+    NautilusGatewayEngine,
+    _candidate_strategy_wheel_path,
+)
 from quazonai_nautilus_gateway.models import (
     BacktestExperimentRequest,
     StrategyArtifact,
@@ -194,3 +198,10 @@ def test_sealed_gateway_hides_catalog_validation(monkeypatch, tmp_path: Path) ->
     )
     assert response.status_code == 404
     assert response.json()["detail"] == "operation unavailable on this gateway role"
+
+
+def test_candidate_wheel_identity_uses_full_uuid_integer() -> None:
+    candidate_id = UUID(int=1_000_001)
+    assert _candidate_strategy_wheel_path(candidate_id) == (
+        "strategy/quazonai_candidate_strategy-0.0.1000001-py3-none-any.whl"
+    )

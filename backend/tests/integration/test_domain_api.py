@@ -301,6 +301,7 @@ def _seed_candidate_approval(
             compatibility=[],
             preflight_state="READY",
             public_config={
+                "target_validity_seconds": 120,
                 "feedback_contract": {
                     "minimum_observation_duration_seconds": 60,
                     "minimum_valid_sample_size": 10,
@@ -340,7 +341,6 @@ def _seed_candidate_approval(
         )
         session.add(candidate)
         session.flush()
-        program.current_candidate_id = candidate.id
         approval = ApprovalSnapshot(
             candidate_id=candidate.id,
             purpose="PAPER",
@@ -349,7 +349,10 @@ def _seed_candidate_approval(
             valid_until=datetime.now(UTC)
             + (-timedelta(minutes=1) if expired else timedelta(days=7)),
             recommendation_rationale="Independent evidence materially improves the frontier.",
-            human_report={},
+            human_report={
+                "summary": "Reviewed Paper recommendation.",
+                "selected_alpha_id": str(alpha_id),
+            },
             evidence_summary={"search_adjusted_quality": 0.78},
             capital_context={"base_currency": "USD", "deployable_capital": 100000},
             risk_summary={},
@@ -389,6 +392,19 @@ def test_approval_builds_package_and_authenticated_handoff_feedback(
     assert len(handoffs.json()) == 1
     handoff = handoffs.json()[0]
     assert handoff["state"] == "AVAILABLE"
+    assert datetime.fromisoformat(handoff["claim_deadline"]) == datetime.fromisoformat(
+        approved.json()["expires_at"]
+    )
+
+    factory = create_session_factory(engine)
+    with factory() as session:
+        approval_row = session.get(ApprovalSnapshot, UUID(approval_id))
+        assert approval_row is not None
+        candidate_row = session.get(PortfolioCandidate, approval_row.candidate_id)
+        assert candidate_row is not None
+        program_row = session.get(PortfolioProgram, candidate_row.portfolio_program_id)
+        assert program_row is not None
+        assert program_row.current_candidate_id == candidate_row.id
 
     unauthorized = client.post(
         f"/api/v1/handoffs/{handoff['id']}/claim",
@@ -520,6 +536,17 @@ def test_resource_id_is_part_of_idempotency_identity(
 
     first = client.post(f"/api/v1/approvals/{first_id}/reject", headers=headers, json=body)
     assert first.status_code == 200, first.text
+    assert first.json()["human_report"]["summary"] == "Reviewed Paper recommendation."
+    assert first.json()["changes_summary"]["approval_decision"]["outcome"] == "REJECT"
+    factory = create_session_factory(engine)
+    with factory() as session:
+        rejected = session.get(ApprovalSnapshot, UUID(first_id))
+        assert rejected is not None
+        rejected_candidate = session.get(PortfolioCandidate, rejected.candidate_id)
+        assert rejected_candidate is not None
+        rejected_program = session.get(PortfolioProgram, rejected_candidate.portfolio_program_id)
+        assert rejected_program is not None
+        assert rejected_program.current_candidate_id is None
     second = client.post(f"/api/v1/approvals/{second_id}/reject", headers=headers, json=body)
     assert second.status_code == 409
     assert second.json()["error"]["code"] == "IDEMPOTENCY_KEY_REUSED"

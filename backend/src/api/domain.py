@@ -1566,6 +1566,29 @@ def _target_effective_until(downstream: DownstreamSystem, decision_at: datetime)
     return decision_at + timedelta(seconds=seconds)
 
 
+def _handoff_claim_deadline(
+    decision_at: datetime, target_effective_until: datetime
+) -> datetime:
+    return min(decision_at + timedelta(days=7), target_effective_until)
+
+
+def _apply_rejection_decision(
+    approval: ApprovalSnapshot, payload: ApprovalRejectInput, decision_at: datetime
+) -> None:
+    approval.state = "REJECTED"
+    approval.revision += 1
+    approval.updated_at = decision_at
+    approval.changes_summary = {
+        **(approval.changes_summary or {}),
+        "approval_decision": {
+            "outcome": "REJECT",
+            "reason_code": payload.reason_code,
+            "note": payload.note,
+            "decided_at": decision_at.isoformat(),
+        },
+    }
+
+
 def _verify_candidate_bundle_remotely(built: Any, *, candidate_id: UUID) -> None:
     verification_request = build_candidate_verification_request(
         built, candidate_id=candidate_id
@@ -1668,6 +1691,18 @@ def approve_candidate(
                     bundle_id,
                     built.archive_bytes,
                 )
+                portfolio_program = session.execute(
+                    select(PortfolioProgram)
+                    .where(PortfolioProgram.id == candidate.portfolio_program_id)
+                    .with_for_update()
+                ).scalar_one_or_none()
+                if portfolio_program is None:
+                    raise QfError(
+                        "PORTFOLIO_PROGRAM_NOT_FOUND",
+                        "Approved Candidate lost its Portfolio Program.",
+                        500,
+                    )
+                portfolio_program.current_candidate_id = candidate.id
                 package = CandidateBundle(
                     id=bundle_id,
                     approval_id=approval.id,
@@ -1689,7 +1724,9 @@ def approve_candidate(
                     purpose=approval.purpose,
                     downstream_system_id=downstream.id,
                     state="AVAILABLE",
-                    claim_deadline=_now() + timedelta(days=7),
+                    claim_deadline=_handoff_claim_deadline(
+                        decision_at, approval.expires_at
+                    ),
                     feedback_state="PENDING",
                     feedback_contract_snapshot=contract,
                 )
@@ -1746,13 +1783,7 @@ def reject_candidate(
                 raise QfError("APPROVAL_NOT_FOUND", "Approval Snapshot was not found.", 404)
             if approval.state != payload.expected_state or approval.state != "PENDING":
                 raise QfError("APPROVAL_STATE_CONFLICT", "Approval state changed.", 409)
-            approval.state = "REJECTED"
-            approval.revision += 1
-            approval.human_report = {
-                "decision": "REJECT",
-                "reason_code": payload.reason_code,
-                "note": payload.note,
-            }
+            _apply_rejection_decision(approval, payload, _now())
             _event(
                 session,
                 "APPROVAL_REJECTED",

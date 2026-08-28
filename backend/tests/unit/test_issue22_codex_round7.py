@@ -115,6 +115,25 @@ def test_multi_instrument_weights_come_from_executed_notional() -> None:
     assert sum(weights.values()) == pytest.approx(1.0)
 
 
+def test_short_exposure_sign_is_preserved_in_published_weights() -> None:
+    weights = _executed_instrument_weights(
+        {
+            "fills": [
+                {"instrument_id": "A.SIM", "quantity": "10", "price": "100", "side": "BUY"},
+                {"instrument_id": "B.SIM", "quantity": "5", "price": "100", "side": "SELL"},
+            ],
+            "positions": [
+                {"instrument_id": "A.SIM", "quantity": "10", "side": "LONG", "closed_at": None},
+                {"instrument_id": "B.SIM", "quantity": "5", "side": "SHORT", "closed_at": None},
+            ],
+        },
+        ["A.SIM", "B.SIM"],
+    )
+    assert weights["A.SIM"] == pytest.approx(2 / 3)
+    assert weights["B.SIM"] == pytest.approx(-1 / 3)
+    assert sum(abs(value) for value in weights.values()) == pytest.approx(1.0)
+
+
 def test_approval_freezes_real_simulation_summaries() -> None:
     request = BacktestExperimentRequest(
         experiment_id=uuid4(),

@@ -324,6 +324,13 @@ def _sanitized_child_environment() -> dict[str, str]:
     return result
 
 
+def _candidate_strategy_wheel_path(candidate_id: UUID) -> str:
+    return (
+        "strategy/quazonai_candidate_strategy-"
+        f"0.0.{candidate_id.int}-py3-none-any.whl"
+    )
+
+
 class NautilusGatewayEngine:
     def __init__(self, data_root: Path) -> None:
         if nautilus_version != VALIDATED_NAUTILUS_VERSION:
@@ -1349,10 +1356,7 @@ class NautilusGatewayEngine:
         if runtime.get("paper_live_reuse") != "SAME_STRATEGY_WHEEL_AND_CONFIG":
             findings.append({"code": "STRATEGY_REUSE_CONTRACT_INVALID"})
         strategy = request.manifest.get("strategy", {})
-        expected_wheel = (
-            "strategy/quazonai_candidate_strategy-"
-            f"0.0.{request.candidate_id.int % 1_000_000}-py3-none-any.whl"
-        )
+        expected_wheel = _candidate_strategy_wheel_path(request.candidate_id)
         if strategy.get("wheel") != expected_wheel:
             findings.append({"code": "STRATEGY_WHEEL_PATH_INVALID"})
 
