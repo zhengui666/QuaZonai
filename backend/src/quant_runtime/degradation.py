@@ -57,7 +57,6 @@ def _member_alpha_ids(candidate: PortfolioCandidate) -> list[UUID]:
     return result
 
 
-
 def schedule_degradation_missions(session: Session) -> int:
     """Create at most one research Mission per Alpha and degraded feedback episode."""
     created = 0
@@ -79,18 +78,15 @@ def schedule_degradation_missions(session: Session) -> int:
         )
     )
     episode_ids = [episode.id for episode in episodes]
-    handled_pairs = (
-        set(
-            session.execute(
-                select(
-                    DegradationFollowup.alpha_qualification_id,
-                    DegradationFollowup.forward_evidence_episode_id,
-                ).where(DegradationFollowup.forward_evidence_episode_id.in_(episode_ids))
-            ).all()
-        )
-        if episode_ids
-        else set()
-    )
+    handled_pairs: set[tuple[UUID, UUID]] = set()
+    if episode_ids:
+        handled_rows = session.execute(
+            select(
+                DegradationFollowup.alpha_qualification_id,
+                DegradationFollowup.forward_evidence_episode_id,
+            ).where(DegradationFollowup.forward_evidence_episode_id.in_(episode_ids))
+        ).all()
+        handled_pairs = {(row[0], row[1]) for row in handled_rows}
     for episode in episodes:
         evidence = episode.evidence or {}
         if not _is_explicit_degradation(evidence):
