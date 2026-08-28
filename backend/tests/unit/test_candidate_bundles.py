@@ -96,6 +96,7 @@ def test_bundle_matches_issue_22_nautilus_native_contract(tmp_path: Path) -> Non
         "strategy/actor-config.json",
         "data/requirements.json",
         "data/instrument-scope.json",
+        "data/target-portfolio-frame.json",
         "data/custom-data-schemas/index.json",
         "data/custom-data-schemas/signal.json",
         "runtime/nautilus-version.json",
@@ -126,6 +127,9 @@ def test_bundle_matches_issue_22_nautilus_native_contract(tmp_path: Path) -> Non
         assert manifest["strategy"]["wheel"].startswith("strategy/quazonai_candidate_strategy-")
         assert manifest["strategy"]["wheel"].endswith("-py3-none-any.whl")
         assert archive.read("requirements.lock") == b"nautilus_trader==1.231.0\n"
+        assert json.loads(archive.read("data/target-portfolio-frame.json")) == manifest[
+            "target_weights"
+        ]
         lineage = json.loads(archive.read("lineage.json"))
         assert lineage["portfolio_simulation_experiment_id"] == str(
             candidate.simulation_experiment_id
@@ -170,23 +174,34 @@ def test_bundle_rejects_embedded_broker_secret() -> None:
 def test_bundle_preserves_production_alpha_lineage_and_every_instrument() -> None:
     candidate = _candidate()
     alpha_id = uuid4()
+    universe_version_id = uuid4()
     candidate.members = [
         {
             "alpha_qualification_id": str(alpha_id),
+            "universe_version_id": str(universe_version_id),
             "instrument_ids": ["AAPL.XNAS", "MSFT.XNAS"],
             "target_weight": 1.0,
+            "confidence": 0.82,
         }
     ]  # type: ignore[assignment]
     built = build_candidate_bundle(object(), candidate=candidate)
-    assert built.manifest["target_weights"] == [
-        {
-            "alpha_qualification_id": str(alpha_id),
-            "instrument_id": "AAPL.XNAS",
-            "target_weight": "1.0",
-        },
-        {
-            "alpha_qualification_id": str(alpha_id),
-            "instrument_id": "MSFT.XNAS",
-            "target_weight": "1.0",
-        },
-    ]
+    rows = built.manifest["target_weights"]
+    assert [row["instrument_id"] for row in rows] == ["AAPL.XNAS", "MSFT.XNAS"]
+    for row in rows:
+        assert set(row) >= {
+            "as_of_time",
+            "effective_from",
+            "effective_until",
+            "universe_version_id",
+            "alpha_qualification_id",
+            "instrument_id",
+            "target_weight",
+            "confidence",
+            "portfolio_state",
+            "portfolio_candidate_id",
+        }
+        assert row["alpha_qualification_id"] == str(alpha_id)
+        assert row["universe_version_id"] == str(universe_version_id)
+        assert row["target_weight"] == "1.0"
+        assert row["confidence"] == 0.82
+        assert row["portfolio_candidate_id"] == str(candidate.id)
