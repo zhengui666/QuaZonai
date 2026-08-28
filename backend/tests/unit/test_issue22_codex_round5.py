@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# Regression coverage for the final Issue 22 Codex findings.
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
