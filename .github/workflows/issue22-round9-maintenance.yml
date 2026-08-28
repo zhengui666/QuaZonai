@@ -7,6 +7,7 @@ on:
     paths:
       - tools/issue22_round9_patch.py
       - tools/fix_issue22_round9_patch.py
+      - tools/fix_issue22_round9_workflow_patch.py
       - .github/workflows/issue22-round9-maintenance.yml
 
 permissions:
@@ -26,10 +27,11 @@ jobs:
       - name: Apply transparent closure patch
         run: |
           python tools/fix_issue22_round9_patch.py
+          python tools/fix_issue22_round9_workflow_patch.py
           python tools/issue22_round9_patch.py
           python -m compileall -q backend/src backend/tests nautilus_runtime/src nautilus_runtime/tests
           git diff --check
-          rm tools/fix_issue22_round9_patch.py tools/issue22_round9_patch.py .github/workflows/issue22-round9-maintenance.yml
+          rm tools/fix_issue22_round9_patch.py tools/fix_issue22_round9_workflow_patch.py tools/issue22_round9_patch.py
           git config user.name 'Zheng UI'
           git config user.email 'aa64966298@163.com'
           git add -A
