@@ -88,10 +88,15 @@ def test_target_validity_is_a_separate_downstream_contract() -> None:
 
 
 def test_max_cost_bps_is_rejected_before_remote_simulation() -> None:
-    mandate = SimpleNamespace(spec_json={"constraints": {"max_cost_bps": 5}})
-    with pytest.raises(QfError) as raised:
-        _mandate_constraints(mandate)
-    assert raised.value.code == "PORTFOLIO_MANDATE_CONSTRAINT_UNSUPPORTED"
+    nested = SimpleNamespace(spec_json={"constraints": {"max_cost_bps": 5}})
+    with pytest.raises(QfError) as nested_error:
+        _mandate_constraints(nested)
+    assert nested_error.value.code == "PORTFOLIO_MANDATE_CONSTRAINT_UNSUPPORTED"
+
+    top_level = SimpleNamespace(spec_json={"max_cost_bps": 5})
+    with pytest.raises(QfError) as top_level_error:
+        _mandate_constraints(top_level)
+    assert top_level_error.value.code == "PORTFOLIO_MANDATE_CONSTRAINT_UNSUPPORTED"
 
 
 def test_multi_instrument_weights_come_from_executed_notional() -> None:
