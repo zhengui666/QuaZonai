@@ -1,0 +1,29 @@
+name: Issue 22 source snapshot
+
+on:
+  push:
+    branches:
+      - feat/issue-22-remote-nautilus-runtime
+    paths:
+      - .github/workflows/issue22-snapshot.yml
+      - tools/issue22_snapshot_request.txt
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/issue-22-remote-nautilus-runtime
+          fetch-depth: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: issue22-current-source-${{ github.sha }}
+          path: |
+            .
+            !.git/**
+          include-hidden-files: true
+          retention-days: 1
