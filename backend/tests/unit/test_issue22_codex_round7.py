@@ -9,6 +9,7 @@ from sqlalchemy import Engine
 
 from api.domain import (
     CharterView,
+    _handoff_claim_deadline,
     _resolve_frozen_research_scope,
     _target_effective_until,
 )
@@ -85,6 +86,14 @@ def test_target_validity_is_a_separate_downstream_contract() -> None:
     decision = datetime(2026, 8, 28, tzinfo=UTC)
     downstream = SimpleNamespace(public_config={"target_validity_seconds": 3600})
     assert _target_effective_until(downstream, decision) == decision + timedelta(hours=1)
+
+
+def test_handoff_claim_deadline_never_outlives_target() -> None:
+    decision = datetime(2026, 8, 28, tzinfo=UTC)
+    short_target = decision + timedelta(minutes=2)
+    long_target = decision + timedelta(days=30)
+    assert _handoff_claim_deadline(decision, short_target) == short_target
+    assert _handoff_claim_deadline(decision, long_target) == decision + timedelta(days=7)
 
 
 def test_max_cost_bps_is_rejected_before_remote_simulation() -> None:
