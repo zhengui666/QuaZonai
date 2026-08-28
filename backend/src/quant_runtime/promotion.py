@@ -21,6 +21,7 @@ from db.models import (
     AlphaQualification,
     ApprovalSnapshot,
     DatasetRevision,
+    DegradationFollowup,
     DownstreamSystem,
     PortfolioCandidate,
     PortfolioMandate,
@@ -226,6 +227,39 @@ def _sealed_dataset_bounds(dataset: DatasetRevision) -> tuple[datetime, datetime
     return start, end
 
 
+def _qualification_contract(
+    *,
+    sealed_dataset_revision_id: UUID,
+    name: str | None,
+    role: str,
+) -> dict[str, Any]:
+    return {
+        "sealed_dataset_revision_id": str(sealed_dataset_revision_id),
+        "requested_name": name,
+        "role": role,
+    }
+
+
+def _assert_qualification_replay(
+    existing: AlphaQualification,
+    contract: dict[str, Any],
+) -> None:
+    if (existing.metrics or {}).get("qualification_contract") != contract:
+        raise QfError(
+            "ALPHA_QUALIFICATION_CONTRACT_REUSED",
+            "Existing Alpha Qualification is bound to a different immutable qualification request.",
+            409,
+        )
+
+
+def _has_degradation_observation(session: Session, alpha_id: UUID) -> bool:
+    return session.scalar(
+        select(DegradationFollowup.id)
+        .where(DegradationFollowup.alpha_qualification_id == alpha_id)
+        .limit(1)
+    ) is not None
+
+
 def qualify_alpha(
     factory: sessionmaker[Session],
     *,
@@ -235,6 +269,18 @@ def qualify_alpha(
     role: str = "PRIMARY_ALPHA",
 ) -> AlphaQualification:
     """Run independent sealed evaluation and promote the real Discovery evidence."""
+    if role not in _RECOGNIZED_ALPHA_ROLES:
+        raise QfError(
+            "ALPHA_ROLE_INVALID",
+            "Alpha Qualification role is not recognized by the governed V1 contract.",
+            422,
+            {"role": role},
+        )
+    qualification_contract = _qualification_contract(
+        sealed_dataset_revision_id=sealed_dataset_revision_id,
+        name=name,
+        role=role,
+    )
     with factory() as session:
         existing = session.scalar(
             select(AlphaQualification).where(
@@ -243,6 +289,7 @@ def qualify_alpha(
             )
         )
         if existing is not None:
+            _assert_qualification_replay(existing, qualification_contract)
             session.expunge(existing)
             return existing
         source = session.get(SearchLedgerEntry, source_experiment_id)
@@ -353,6 +400,7 @@ def qualify_alpha(
             )
         )
         if existing is not None:
+            _assert_qualification_replay(existing, qualification_contract)
             session.expunge(existing)
             return existing
         quality_tier = str(disclosure.get("quality_tier", ""))
@@ -382,6 +430,7 @@ def qualify_alpha(
                 "discovery": discovery_summary,
                 "sealed_disclosure": disclosure,
                 "strategy_artifact": strategy_artifact,
+                "qualification_contract": qualification_contract,
             },
             lineage=[
                 {
@@ -508,10 +557,12 @@ def _load_portfolio_source(
             )
         )
     )
-    if len(alphas) != len(set(alpha_ids)):
+    if len(alphas) != len(set(alpha_ids)) or any(
+        _has_degradation_observation(session, item.id) for item in alphas
+    ):
         raise QfError(
             "ALPHA_NOT_PORTFOLIO_READY",
-            "Every selected Alpha must be active, healthy, and qualified.",
+            "Every selected Alpha must be active, qualified, and free of degradation observations.",
             422,
         )
     invalid_roles = sorted(
@@ -892,6 +943,7 @@ def simulate_portfolio_candidate(
             persisted_alpha is None
             or persisted_alpha.state != "ACTIVE"
             or persisted_alpha.degradation_state != "HEALTHY"
+            or _has_degradation_observation(session, alpha_id)
         ):
             raise QfError("ALPHA_NOT_PORTFOLIO_READY", "Selected Alpha changed before promotion.", 409)
         current_constraints = _validate_mandate_before_simulation(

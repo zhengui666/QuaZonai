@@ -237,9 +237,10 @@ def test_explicit_degradation_feedback_queues_research_only(engine: Engine) -> N
         )
         assert alpha is not None
         assert mission is not None
-        assert alpha.degradation_state == "DEGRADED"
-        assert alpha.metrics["degradation_followup_episode_id"] == str(episode_id)
+        assert alpha.degradation_state == "HEALTHY"
+        assert "degradation_followup_episode_id" not in alpha.metrics
         assert mission.state == "READY"
+        assert mission.dependencies == [str(alpha.source_experiment_id), str(episode_id)]
         branch = session.get(ResearchBranch, mission.branch_id)
         assert branch is not None
         assert branch.derivation_type == "FORWARD_DEGRADATION"

@@ -14,6 +14,8 @@ from sqlalchemy import select
 
 from db.models import (
     DatasetRevision,
+    DegradationFollowup,
+    ForwardEvidenceEpisode,
     GovernedDataSource,
     ResearchCharter,
     ResearchMission,
@@ -50,6 +52,7 @@ def prepare_experiment_workspace(
     """
     engine = create_database_engine(settings)
     factory = create_session_factory(engine)
+    degradation_context: dict[str, Any] | None = None
     try:
         with factory() as session:
             mission = session.get(ResearchMission, mission_id)
@@ -135,8 +138,66 @@ def prepare_experiment_workspace(
                         "point_in_time_result": revision.point_in_time_result,
                     }
                 )
+            if mission.type == "ALPHA_DEGRADATION_RESEARCH":
+                followup = session.scalar(
+                    select(DegradationFollowup).where(DegradationFollowup.mission_id == mission.id)
+                )
+                if followup is None:
+                    raise QfError(
+                        "DEGRADATION_CONTEXT_MISSING",
+                        "Degradation Mission has no immutable follow-up record.",
+                        500,
+                    )
+                source_entry = session.get(SearchLedgerEntry, followup.source_experiment_id)
+                episode = session.get(
+                    ForwardEvidenceEpisode,
+                    followup.forward_evidence_episode_id,
+                )
+                if (
+                    source_entry is None
+                    or source_entry.program_id != program.id
+                    or episode is None
+                ):
+                    raise QfError(
+                        "DEGRADATION_CONTEXT_MISSING",
+                        "Degradation Mission source evidence is incomplete.",
+                        500,
+                    )
+                try:
+                    source_request = BacktestExperimentRequest.model_validate(source_entry.request_json)
+                except ValueError as exc:
+                    raise QfError(
+                        "DEGRADATION_SOURCE_CONTRACT_INVALID",
+                        "Degradation source experiment contract is invalid.",
+                        500,
+                    ) from exc
+                degradation_context = {
+                    "policy": "READ_ONLY_DEGRADATION_EVIDENCE_V1",
+                    "alpha_qualification_id": str(followup.alpha_qualification_id),
+                    "source_experiment_id": str(source_entry.id),
+                    "strategy_artifact": source_request.strategy.model_dump(mode="json"),
+                    "discovery_evidence": source_entry.evidence_json,
+                    "forward_evidence": {
+                        "episode_id": str(episode.id),
+                        "observation_start": episode.observation_start,
+                        "observation_end": episode.observation_end,
+                        "sample_size": episode.sample_size,
+                        "evidence": episode.evidence,
+                    },
+                }
     finally:
         engine.dispose()
+
+    if degradation_context is not None:
+        (workspace / "DEGRADATION_CONTEXT.json").write_text(
+            json.dumps(
+                degradation_context,
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            ),
+            encoding="utf-8",
+        )
 
     (workspace / "DATASETS.json").write_text(
         json.dumps(
@@ -179,9 +240,12 @@ and sends accepted requests to the separately deployed NautilusTrader runtime.
    `StrategyConfig`. Pin only the validated `nautilus_trader==1.231.0` runtime dependency.
 6. `data_config` and `risk_config` are reserved and must remain empty until an explicit
    contract version applies them. Do not claim assumptions the remote runtime ignores.
-7. Do not invent fills, PnL, positions, statistics, or DatasetRevision metadata. The parent
+7. For degradation-triggered Missions, read `DEGRADATION_CONTEXT.json` when present. It is a
+   read-only projection of the exact source StrategyArtifact, Discovery evidence, and triggering
+   Forward Evidence episode; do not alter or reinterpret it as sealed raw evidence.
+8. Do not invent fills, PnL, positions, statistics, or DatasetRevision metadata. The parent
    worker executes accepted contracts and writes canonical results to `evidence/*.json`.
-8. The exact successful `StrategyArtifact` is immutable research lineage and is what a
+9. The exact successful `StrategyArtifact` is immutable research lineage and is what a
    promoted Candidate Bundle must reuse for downstream paper/live Nautilus runtimes.
 
 If `DATASETS.json` contains no usable dataset, document the blocked evidence requirement in

@@ -291,6 +291,11 @@ def test_real_evidence_promotes_through_alpha_and_portfolio(
     assert alpha.source_experiment_id == source_id
     assert alpha.metrics["sealed_disclosure"]["passed"] is True
     assert alpha.metrics["strategy_artifact"]["artifact_id"] == _STRATEGY.artifact_id
+    assert alpha.metrics["qualification_contract"] == {
+        "sealed_dataset_revision_id": str(sealed_dataset_id),
+        "requested_name": "Qualified remote Nautilus alpha",
+        "role": "PRIMARY_ALPHA",
+    }
 
     with factory() as session:
         sealed_entry = session.scalar(

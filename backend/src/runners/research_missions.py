@@ -347,7 +347,8 @@ def run_mission(settings: Settings, job_id: UUID) -> None:
                     developer_instructions=(
                         "You are a QuaZonai Research Mission worker. Work only inside this Mission worktree. "
                         "Read MISSION.md, DATASETS.json, EXPERIMENT_CONTRACT.schema.json, and "
-                        "NAUTILUS_EXPERIMENTS.md before making quantitative claims. Use only governed Discovery "
+                        "NAUTILUS_EXPERIMENTS.md before making quantitative claims. If DEGRADATION_CONTEXT.json "
+                        "exists, read it as immutable prior Strategy/Discovery/Forward Evidence context. Use only governed Discovery "
                         "datasets listed there and declare bounded SOURCE_BUNDLE Nautilus experiments under "
                         "experiments/ when evidence is available. The parent worker, not you, executes those "
                         "contracts against the independent remote runtime. Do not request approvals, do not access "

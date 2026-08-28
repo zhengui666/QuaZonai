@@ -135,7 +135,7 @@ def schedule_degradation_missions(session: Session) -> int:
                     f"Forward Evidence episode {episode.id}; propose a new independently evaluated "
                     "candidate rather than modifying downstream runtime state."
                 ),
-                dependencies=[],
+                dependencies=[str(source.id), str(episode.id)],
                 attempt=1,
                 summary="Degradation-triggered Mission is ready for the Agent Worker.",
             )
@@ -157,14 +157,6 @@ def schedule_degradation_missions(session: Session) -> int:
                 },
             )
             followup.job_id = job.id
-            alpha.degradation_state = "DEGRADED"
-            alpha.metrics = {
-                **(alpha.metrics or {}),
-                "degradation_followup_episode_id": str(episode.id),
-                "degradation_followup_mission_id": str(mission.id),
-                "degradation_followup_job_id": str(job.id),
-                "latest_forward_evidence": evidence,
-            }
             append_event(
                 session,
                 kind="DEGRADATION_MISSION_READY",

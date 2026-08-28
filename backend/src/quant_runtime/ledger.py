@@ -92,6 +92,7 @@ class ExperimentCoordinator:
         sealed: bool = False,
         parent_entry_id: UUID | None = None,
     ) -> SearchLedgerEntry:
+        recovered_existing = False
         with self._factory() as session, session.begin():
             existing = session.get(SearchLedgerEntry, request.experiment_id)
             if existing is not None:
@@ -109,85 +110,91 @@ class ExperimentCoordinator:
                         "Experiment id is already bound to a different immutable contract or lineage.",
                         409,
                     )
-                if existing.state == "RUNNING":
-                    stale_before = _now() - timedelta(minutes=35)
-                    if existing.started_at is None or existing.started_at >= stale_before:
-                        raise QfError(
-                            "EXPERIMENT_ALREADY_RUNNING",
-                            "The exact experiment is already running.",
-                            409,
-                        )
-                    existing.state = "FAILED"
-                    existing.finished_at = _now()
-                    existing.failure_code = "EXPERIMENT_ATTEMPT_ABANDONED"
-                    existing.failure_message = (
-                        "The prior RUNNING attempt exceeded the remote-runtime recovery window."
-                    )
-                    session.flush()
-                session.expunge(existing)
-                return existing
-
-            dataset = session.get(DatasetRevision, request.dataset_revision_id)
-            self._validate_dataset(dataset, request=request, sealed=sealed)
-            if mission_id is not None:
-                mission = session.get(ResearchMission, mission_id)
-                if mission is None or mission.program_id != program_id:
+                if existing.state != "RUNNING":
+                    session.expunge(existing)
+                    return existing
+                stale_before = _now() - timedelta(minutes=35)
+                if existing.started_at is None or existing.started_at >= stale_before:
                     raise QfError(
-                        "MISSION_NOT_FOUND",
-                        "Experiment Mission does not exist in the requested Program.",
-                        404,
+                        "EXPERIMENT_ALREADY_RUNNING",
+                        "The exact experiment is already running.",
+                        409,
                     )
+                dataset = session.get(DatasetRevision, request.dataset_revision_id)
+                self._validate_dataset(dataset, request=request, sealed=sealed)
+                existing.started_at = _now()
+                existing.finished_at = None
+                existing.runtime_version = None
+                existing.remote_run_id = None
+                existing.evidence_json = {}
+                existing.disclosure_json = {}
+                existing.failure_code = None
+                existing.failure_message = None
+                recovered_existing = True
+                session.flush()
 
-            if parent_entry_id is not None:
-                parent = session.execute(
-                    select(SearchLedgerEntry)
-                    .where(SearchLedgerEntry.id == parent_entry_id)
-                    .with_for_update()
-                ).scalar_one_or_none()
-                program_lineage = _evidence_program_lineage(session, program_id)
-                if parent is None or parent.program_id not in program_lineage:
-                    raise QfError(
-                        "EXPERIMENT_PARENT_INVALID",
-                        "Experiment parent is outside the requested Program evidence lineage.",
-                        422,
-                    )
-                if sealed:
-                    exposure = session.scalar(
-                        select(SearchLedgerEntry).where(
-                            SearchLedgerEntry.program_id.in_(program_lineage),
-                            SearchLedgerEntry.dataset_revision_id == request.dataset_revision_id,
-                            SearchLedgerEntry.mode == ExperimentMode.SEALED.value,
-                            SearchLedgerEntry.state.in_(["RUNNING", "SUCCEEDED"]),
-                        )
-                    )
-                    if exposure is not None:
+            if not recovered_existing:
+                dataset = session.get(DatasetRevision, request.dataset_revision_id)
+                self._validate_dataset(dataset, request=request, sealed=sealed)
+                if mission_id is not None:
+                    mission = session.get(ResearchMission, mission_id)
+                    if mission is None or mission.program_id != program_id:
                         raise QfError(
-                            "SEALED_EXPOSURE_ALREADY_CONSUMED",
-                            "This source experiment already has a sealed evaluation exposure.",
-                            409,
-                            {"sealed_experiment_id": str(exposure.id)},
+                            "MISSION_NOT_FOUND",
+                            "Experiment Mission does not exist in the requested Program.",
+                            404,
                         )
 
-            entry = SearchLedgerEntry(
-                id=request.experiment_id,
-                program_id=program_id,
-                branch_id=branch_id,
-                mission_id=mission_id,
-                dataset_revision_id=request.dataset_revision_id,
-                parent_entry_id=parent_entry_id,
-                mode=ExperimentMode.SEALED.value if sealed else request.mode.value,
-                state="RUNNING",
-                runtime_name="NAUTILUS_TRADER",
-                runtime_version=None,
-                request_json=_normalized_request(request),
-                evidence_json={},
-                disclosure_json={},
-                started_at=_now(),
-                finished_at=None,
-                failure_code=None,
-                failure_message=None,
-            )
-            session.add(entry)
+                if parent_entry_id is not None:
+                    parent = session.execute(
+                        select(SearchLedgerEntry)
+                        .where(SearchLedgerEntry.id == parent_entry_id)
+                        .with_for_update()
+                    ).scalar_one_or_none()
+                    program_lineage = _evidence_program_lineage(session, program_id)
+                    if parent is None or parent.program_id not in program_lineage:
+                        raise QfError(
+                            "EXPERIMENT_PARENT_INVALID",
+                            "Experiment parent is outside the requested Program evidence lineage.",
+                            422,
+                        )
+                    if sealed:
+                        exposure = session.scalar(
+                            select(SearchLedgerEntry).where(
+                                SearchLedgerEntry.program_id.in_(program_lineage),
+                                SearchLedgerEntry.dataset_revision_id == request.dataset_revision_id,
+                                SearchLedgerEntry.mode == ExperimentMode.SEALED.value,
+                                SearchLedgerEntry.state.in_(["RUNNING", "SUCCEEDED"]),
+                            )
+                        )
+                        if exposure is not None:
+                            raise QfError(
+                                "SEALED_EXPOSURE_ALREADY_CONSUMED",
+                                "This source experiment already has a sealed evaluation exposure.",
+                                409,
+                                {"sealed_experiment_id": str(exposure.id)},
+                            )
+
+                entry = SearchLedgerEntry(
+                    id=request.experiment_id,
+                    program_id=program_id,
+                    branch_id=branch_id,
+                    mission_id=mission_id,
+                    dataset_revision_id=request.dataset_revision_id,
+                    parent_entry_id=parent_entry_id,
+                    mode=ExperimentMode.SEALED.value if sealed else request.mode.value,
+                    state="RUNNING",
+                    runtime_name="NAUTILUS_TRADER",
+                    runtime_version=None,
+                    request_json=_normalized_request(request),
+                    evidence_json={},
+                    disclosure_json={},
+                    started_at=_now(),
+                    finished_at=None,
+                    failure_code=None,
+                    failure_message=None,
+                )
+                session.add(entry)
 
         try:
             config = RemoteNautilusConfig.from_env(sealed=sealed)
