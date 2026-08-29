@@ -17,6 +17,7 @@ import os
 import re
 import secrets
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -28,7 +29,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 from uuid import uuid4
 
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
@@ -64,6 +65,19 @@ _FORBIDDEN_BUNDLE_KEYS = {
     "account_id",
 }
 _CANDIDATE_BUNDLE_CONTRACT_VERSION = "1"
+_ISOLATED_ENVIRONMENT_KEYS = {
+    "LANG",
+    "LC_ALL",
+    "PATH",
+    "PYTHONHOME",
+    "PYTHONPATH",
+    "PYTHONUNBUFFERED",
+    "PYTHONIOENCODING",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "TZ",
+}
 _FORBIDDEN_BUNDLE_PATH_PARTS = {
     "orders",
     "fills",
@@ -502,26 +516,44 @@ def _execute_once(experiment: ExperimentSpec, mode: RunMode) -> RunEvidence:
             node.dispose()
 
 
-def _execute_sealed_child(
+def _prepare_isolated_child() -> None:
+    """Leave only non-secret runtime bootstrap values in a generated-code child."""
+    inherited = {
+        name: value
+        for name, value in os.environ.items()
+        if name in _ISOLATED_ENVIRONMENT_KEYS
+    }
+    os.environ.clear()
+    os.environ.update(inherited)
+
+    def blocked_network(*_: Any, **__: Any) -> Any:
+        raise PermissionError("generated strategy network access is disabled")
+
+    class BlockedSocket:
+        def __init__(self, *_: Any, **__: Any) -> None:
+            raise PermissionError("generated strategy network access is disabled")
+
+    socket.socket = BlockedSocket  # type: ignore[assignment]
+    socket.create_connection = blocked_network  # type: ignore[assignment]
+    socket.getaddrinfo = blocked_network  # type: ignore[assignment]
+    socket.socketpair = blocked_network  # type: ignore[assignment]
+
+
+def _execute_isolated_child(
     experiment_payload: dict[str, Any],
     mode: RunMode,
     catalog_root: str,
     connection: Any,
 ) -> None:
-    """Execute generated strategy code without the service token or other catalogs."""
-    for name in (
-        "QUAZONAI_NAUTILUS_RUNTIME_TOKEN",
-        "QUAZONAI_NAUTILUS_SEALED_RUNTIME_TOKEN",
-        "QUAZONAI_API_TOKEN",
-        "QUAZONAI_MASTER_KEY",
-    ):
-        os.environ.pop(name, None)
+    """Execute generated strategy code in a credential-free, network-disabled child."""
+    _prepare_isolated_child()
     os.environ["QUAZONAI_NAUTILUS_CATALOG_ROOT"] = catalog_root
     try:
         evidence = _execute_once(ExperimentSpec.model_validate(experiment_payload), mode)
         payload = evidence.model_dump(mode="json")
-        for key in ("orders", "fills", "positions", "account"):
-            payload.pop(key, None)
+        if mode == "SEALED":
+            for key in ("orders", "fills", "positions", "account"):
+                payload.pop(key, None)
         connection.send(payload)
     except BaseException as exc:  # noqa: BLE001 - parent turns child failures into protocol failures
         connection.send({"__error__": type(exc).__name__})
@@ -530,20 +562,18 @@ def _execute_sealed_child(
 
 
 def _execute(experiment: ExperimentSpec, mode: RunMode) -> RunEvidence:
-    """Serialize runs and isolate Sealed strategy code from the service process."""
+    """Serialize runs and isolate all generated strategy code from the service process."""
     with _EXECUTION_LOCK:
-        if mode != "SEALED":
-            return _execute_once(experiment, mode)
-
         catalog_path = _catalog_path(experiment.catalog_uri)
         if not catalog_path.is_dir():
-            raise HTTPException(status_code=404, detail="sealed catalog does not exist")
-        with tempfile.TemporaryDirectory(prefix="quazonai-sealed-catalog-") as root:
+            raise HTTPException(status_code=404, detail="catalog does not exist")
+        with tempfile.TemporaryDirectory(prefix="quazonai-isolated-catalog-") as root:
             isolated_path = Path(root) / experiment.catalog_uri.removeprefix(_CATALOG_PREFIX)
             shutil.copytree(catalog_path, isolated_path)
-            parent, child = multiprocessing.get_context("spawn").Pipe(duplex=False)
-            process = multiprocessing.get_context("spawn").Process(
-                target=_execute_sealed_child,
+            context = multiprocessing.get_context("spawn")
+            parent, child = context.Pipe(duplex=False)
+            process = context.Process(
+                target=_execute_isolated_child,
                 args=(experiment.model_dump(mode="json"), mode, root, child),
             )
             process.start()
@@ -565,14 +595,14 @@ def _execute(experiment: ExperimentSpec, mode: RunMode) -> RunEvidence:
                 process.join(5)
                 receiver.join(5)
                 parent.close()
-                raise HTTPException(status_code=504, detail="sealed strategy execution timed out")
+                raise HTTPException(status_code=504, detail="strategy execution timed out")
             receiver.join()
             parent.close()
             if received is None:
-                raise HTTPException(status_code=502, detail="sealed strategy child returned no evidence")
+                raise HTTPException(status_code=502, detail="isolated strategy child returned no evidence")
             payload = received
             if "__error__" in payload:
-                raise HTTPException(status_code=502, detail="sealed strategy child failed")
+                raise HTTPException(status_code=502, detail="isolated strategy child failed")
             return RunEvidence.model_validate(payload)
 
 
@@ -589,7 +619,7 @@ def _bundle_contains_secret(value: object) -> bool:
     return False
 
 
-def _verify_bundle(data: bytes) -> dict[str, Any]:
+def _verify_bundle(data: bytes | BinaryIO) -> dict[str, Any]:
     required = {
         "manifest.json",
         "requirements.lock",
@@ -612,7 +642,8 @@ def _verify_bundle(data: bytes) -> dict[str, Any]:
         "lineage.json",
     }
     try:
-        with zipfile.ZipFile(BytesIO(data)) as bundle:
+        source = BytesIO(data) if isinstance(data, bytes) else data
+        with zipfile.ZipFile(source) as bundle:
             names = set(bundle.namelist())
             if any(
                 part.casefold() in _FORBIDDEN_BUNDLE_PATH_PARTS
@@ -840,10 +871,16 @@ def create_app() -> FastAPI:
 
     @app.post("/v1/candidates/verify")
     async def verify_candidate(bundle: UploadFile = File(...)) -> dict[str, Any]:
-        data = await bundle.read()
-        if len(data) > 256 * 1024 * 1024:
-            raise HTTPException(status_code=413, detail="Candidate Bundle exceeds 256 MiB")
-        result = _verify_bundle(data)
+        maximum_size = 256 * 1024 * 1024
+        total_size = 0
+        with tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024, mode="w+b") as staged:
+            while chunk := await bundle.read(1024 * 1024):
+                total_size += len(chunk)
+                if total_size > maximum_size:
+                    raise HTTPException(status_code=413, detail="Candidate Bundle exceeds 256 MiB")
+                staged.write(chunk)
+            staged.seek(0)
+            result = _verify_bundle(staged)
         if result.get("valid") is not True:
             raise HTTPException(status_code=422, detail=result)
         return result

@@ -213,6 +213,23 @@ def test_idea_to_remote_nautilus_paper_feedback_vertical_e2e(
         )
 
     discovery = _ingest(client, name="ci-discovery", seed=41, sealed=False)
+    changed_catalog_input = client.post(
+        "/api/v1/quant-runtime/catalogs/ingest",
+        json={
+            "catalog_name": "ci-discovery",
+            "provider": "QuaZonai CI synthetic provider",
+            "source_license": "CI-only generated data",
+            "universe_name": "FX",
+            "sealed": False,
+            "source_spec": {
+                "kind": "synthetic_fx_quotes",
+                "instrument": "EUR/USD",
+                "rows": 3000,
+                "seed": 42,
+            },
+        },
+    )
+    assert changed_catalog_input.status_code == 409, changed_catalog_input.text
     # Seed 1 produces a positive independent sealed result under the fixed
     # server-owned promotion policy; the test must not rely on a Mission gate.
     _ingest(client, name="ci-sealed", seed=1, sealed=True)

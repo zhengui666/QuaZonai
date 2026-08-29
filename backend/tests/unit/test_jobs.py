@@ -6,7 +6,7 @@ from uuid import uuid4
 from sqlalchemy.orm import sessionmaker
 
 from db.models import Job
-from jobs import claim_next_job, enqueue_job, release_expired_leases
+from jobs import claim_next_job, enqueue_job, release_expired_leases, renew_job_lease
 from runners.finite_worker import run_once
 
 
@@ -69,3 +69,46 @@ def test_worker_run_once_uses_shared_factory_and_completes_job(
         assert job.state == "SUCCEEDED"
         assert job.lease_owner is None
         assert job.lease_expires_at is None
+
+
+def test_renew_job_lease_extends_only_the_current_owner(
+    engine,  # type: ignore[no-untyped-def]
+) -> None:
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    with factory.begin() as session:
+        created = enqueue_job(
+            session,
+            kind="SYSTEM_NOOP",
+            resource_type="system",
+            resource_id=uuid4(),
+        )
+        job_id = created.id
+
+    now = datetime.now(UTC)
+    with factory.begin() as session:
+        claim_next_job(session, owner="worker-a", lease_seconds=1, now=now)
+
+    renewed_at = now + timedelta(seconds=2)
+    with factory.begin() as session:
+        assert renew_job_lease(
+            session,
+            job_id=job_id,
+            owner="worker-a",
+            lease_seconds=60,
+            now=renewed_at,
+        )
+
+    with factory.begin() as session:
+        assert not renew_job_lease(
+            session,
+            job_id=job_id,
+            owner="worker-b",
+            lease_seconds=60,
+            now=renewed_at,
+        )
+
+    with factory() as session:
+        job = session.get(Job, job_id)
+        assert job is not None
+        assert job.lease_owner == "worker-a"
+        assert job.lease_expires_at == renewed_at + timedelta(seconds=60)

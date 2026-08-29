@@ -152,6 +152,33 @@ def _safe_run_evidence(item: QuantRuntimeRun) -> dict[str, Any]:
     return item.evidence
 
 
+def _catalog_binding_input_conflict(
+    session: Any,
+    item: NautilusCatalogBinding,
+    payload: CatalogIngestInput,
+    universe_id: UUID,
+) -> bool:
+    revision = session.get(DatasetRevision, item.dataset_revision_id)
+    source = (
+        session.get(GovernedDataSource, revision.data_source_id)
+        if revision is not None and revision.data_source_id is not None
+        else None
+    )
+    public_config = source.public_config if source is not None else {}
+    stored_source_spec = public_config.get("source_spec") if isinstance(public_config, dict) else None
+    return any(
+        (
+            revision is None,
+            revision is not None and revision.universe_version_id != universe_id,
+            revision is not None and revision.universe_name != payload.universe_name,
+            item.provider != payload.provider,
+            item.source_license != payload.source_license,
+            item.sealed != payload.sealed,
+            not isinstance(stored_source_spec, dict) or stored_source_spec != payload.source_spec,
+        )
+    )
+
+
 def _run_view(item: QuantRuntimeRun) -> RunView:
     error_code = item.error_code
     error_message = item.error_message
@@ -194,13 +221,6 @@ def ingest_catalog(payload: CatalogIngestInput, request: Request) -> CatalogView
     factory = request.app.state.session_factory
     remote_catalog_uri = f"catalog://{_remote_catalog_name(payload)}"
     with factory() as session:
-        existing = session.scalar(
-            select(NautilusCatalogBinding).where(
-                NautilusCatalogBinding.catalog_uri == remote_catalog_uri
-            )
-        )
-        if existing is not None:
-            return _catalog_view(existing)
         universe = session.scalar(
             select(MarketUniverseVersion)
             .where(
@@ -217,6 +237,20 @@ def ingest_catalog(payload: CatalogIngestInput, request: Request) -> CatalogView
                 {"universe_name": payload.universe_name},
             )
         universe_id = universe.id
+        existing = session.scalar(
+            select(NautilusCatalogBinding).where(
+                NautilusCatalogBinding.catalog_uri == remote_catalog_uri
+            )
+        )
+        if existing is not None:
+            if _catalog_binding_input_conflict(session, existing, payload, universe_id):
+                raise QfError(
+                    "CATALOG_REVISION_INPUT_CONFLICT",
+                    "Catalog identity is already bound to different immutable ingestion inputs.",
+                    409,
+                    {"catalog_uri": remote_catalog_uri},
+                )
+            return _catalog_view(existing)
 
     descriptor = _runtime(sealed=payload.sealed).ingest(
         CatalogIngestSpec(
@@ -234,6 +268,13 @@ def ingest_catalog(payload: CatalogIngestInput, request: Request) -> CatalogView
             )
         )
         if existing is not None:
+            if _catalog_binding_input_conflict(session, existing, payload, universe_id):
+                raise QfError(
+                    "CATALOG_REVISION_INPUT_CONFLICT",
+                    "Catalog identity is already bound to different immutable ingestion inputs.",
+                    409,
+                    {"catalog_uri": descriptor.catalog_uri},
+                )
             return _catalog_view(existing)
 
         source = GovernedDataSource(
@@ -247,6 +288,7 @@ def ingest_catalog(payload: CatalogIngestInput, request: Request) -> CatalogView
             public_config={
                 "catalog_uri": descriptor.catalog_uri,
                 "source_license": descriptor.source_license,
+                "source_spec": payload.source_spec,
                 "remote_runtime": "NautilusTrader",
                 "runtime_profile": "sealed" if payload.sealed else "research",
             },
