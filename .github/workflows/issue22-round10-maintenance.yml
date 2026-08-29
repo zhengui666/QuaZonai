@@ -1,0 +1,39 @@
+name: Issue 22 round10 maintenance
+
+on:
+  push:
+    branches:
+      - feat/issue-22-remote-nautilus-runtime
+    paths:
+      - tools/issue22_round10_patch.py
+      - .github/workflows/issue22-round10-maintenance.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/issue-22-remote-nautilus-runtime
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply transparent closure patch
+        run: python tools/issue22_round10_patch.py
+      - name: Validate patch syntax and whitespace
+        run: |
+          python -m compileall -q backend/src backend/tests nautilus_runtime/src nautilus_runtime/tests
+          git diff --check
+      - name: Commit product changes and remove maintenance files
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm tools/issue22_round10_patch.py .github/workflows/issue22-round10-maintenance.yml
+          git add -A
+          git commit -m 'fix(runtime): close final Issue 22 review gaps'
+          git push origin HEAD:feat/issue-22-remote-nautilus-runtime
