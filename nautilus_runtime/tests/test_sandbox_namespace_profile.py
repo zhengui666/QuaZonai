@@ -40,3 +40,10 @@ def test_source_bundle_sandbox_uses_minimal_supported_namespaces(
     ]
     assert "/tmp" in tmpfs_targets
     assert str(data_root.resolve()) not in tmpfs_targets
+    resolved_targets = [Path(value) for value in tmpfs_targets]
+    assert all(
+        not child.is_relative_to(parent)
+        for index, parent in enumerate(resolved_targets)
+        for child in resolved_targets[index + 1 :]
+        if child != parent
+    )
