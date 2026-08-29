@@ -325,6 +325,16 @@ def build_candidate_package(
                 "actual": downstream.package_contract_version,
             },
         )
+    if PINNED_NAUTILUS_VERSION not in {
+        str(item).removeprefix("NAUTILUS_TRADER_")
+        for item in downstream.compatibility
+    }:
+        raise QfError(
+            "CANDIDATE_BUNDLE_RUNTIME_INCOMPATIBLE",
+            "The selected downstream has not declared support for the pinned NautilusTrader runtime.",
+            422,
+            {"expected": f"NAUTILUS_TRADER_{PINNED_NAUTILUS_VERSION}"},
+        )
     rows = _member_rows(candidate)
     artifact, portfolio_evidence, runtime_data = _runtime_payload(candidate)
     requirements = _requirements(artifact)

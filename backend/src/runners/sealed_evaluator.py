@@ -518,6 +518,7 @@ def _promote_alpha_and_candidate(
             portfolio_run = session.get(QuantRuntimeRun, portfolio_run_id)
             capital = session.get(CapitalContextVersion, plan["capital_context_id"])
             mandate = session.get(PortfolioMandate, plan["mandate_id"])
+            frozen_mandate_version_id = plan.get("mandate_version_id")
             if discovery is None:
                 raise QfError("PROMOTION_CONTEXT_MISSING", "Discovery context is incomplete.", 500)
             binding = session.scalar(
@@ -541,9 +542,16 @@ def _promote_alpha_and_candidate(
                 or mandate is None
                 or revision is None
                 or universe is None
+                or not isinstance(frozen_mandate_version_id, UUID)
                 or episode.state != "SEALED_PENDING"
             ):
                 raise QfError("PROMOTION_CONTEXT_MISSING", "Promotion context is incomplete.", 500)
+            if mandate.latest_version_id != frozen_mandate_version_id:
+                raise QfError(
+                    "MANDATE_VERSION_CHANGED",
+                    "The selected Portfolio Mandate version changed during evaluation.",
+                    409,
+                )
             if not _mandate_is_eligible(
                 mandate,
                 universe_version_id=universe.id,
@@ -571,7 +579,7 @@ def _promote_alpha_and_candidate(
                 if (
                     isinstance(raw, dict)
                     and raw.get("candidate_family") == discovery.family
-                    and candidate.mandate_version_id == mandate.latest_version_id
+                    and candidate.mandate_version_id == frozen_mandate_version_id
                     and candidate.universe_set_json == [str(universe.id)]
                 ):
                     family_candidates.append(candidate)
@@ -583,7 +591,13 @@ def _promote_alpha_and_candidate(
             ).all():
                 pending_candidate = session.get(PortfolioCandidate, approval.candidate_id)
                 raw = pending_candidate.metrics.get("nautilus") if pending_candidate else None
-                if isinstance(raw, dict) and raw.get("candidate_family") == discovery.family:
+                if (
+                    isinstance(raw, dict)
+                    and raw.get("candidate_family") == discovery.family
+                    and pending_candidate is not None
+                    and pending_candidate.mandate_version_id == frozen_mandate_version_id
+                    and pending_candidate.universe_set_json == [str(universe.id)]
+                ):
                     _apply_sealed_decision(
                         session,
                         episode=episode,
@@ -644,7 +658,7 @@ def _promote_alpha_and_candidate(
             session.flush()
 
             portfolio_program = PortfolioProgram(
-                mandate_version_id=mandate.latest_version_id,
+                mandate_version_id=frozen_mandate_version_id,
                 mandate_name=mandate.name,
                 state="CANDIDATE_READY",
             )
@@ -655,7 +669,7 @@ def _promote_alpha_and_candidate(
                 id=plan["candidate_id"],
                 candidate_family_id=family_id,
                 portfolio_program_id=portfolio_program.id,
-                mandate_version_id=mandate.latest_version_id,
+                mandate_version_id=frozen_mandate_version_id,
                 mandate_name=mandate.name,
                 capital_context_version_id=capital.id,
                 universe_set_json=[str(universe.id)],

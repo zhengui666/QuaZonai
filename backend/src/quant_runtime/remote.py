@@ -147,13 +147,33 @@ class NautilusQuantRuntime:
 
     def ingest(self, spec: CatalogIngestSpec) -> CatalogDescriptor:
         self.capabilities()
-        return CatalogDescriptor.model_validate(
+        descriptor = CatalogDescriptor.model_validate(
             self._request_json(
                 "POST",
                 "/v1/catalogs/ingest",
                 json_body=spec.model_dump(mode="json"),
             )
         )
+        expected_uri = f"catalog://{spec.catalog_name}"
+        mismatches: list[str] = []
+        if descriptor.catalog_uri != expected_uri:
+            mismatches.append("catalog_uri")
+        if descriptor.provider != spec.provider:
+            mismatches.append("provider")
+        if descriptor.source_license != spec.source_license:
+            mismatches.append("source_license")
+        if descriptor.source_spec != spec.source_spec:
+            mismatches.append("source_spec")
+        if descriptor.sealed != spec.sealed:
+            mismatches.append("sealed")
+        if mismatches:
+            raise QfError(
+                "NAUTILUS_RUNTIME_DESCRIPTOR_MISMATCH",
+                "The remote catalog descriptor does not match the requested dataset.",
+                502,
+                {"fields": mismatches},
+            )
+        return descriptor
 
     def validate_catalog(self, catalog_uri: str) -> CatalogDescriptor:
         self.capabilities()

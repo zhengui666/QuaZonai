@@ -75,7 +75,10 @@ def test_candidate_bundle_is_nautilus_native_and_secret_free(settings: Settings)
         capacity_summary={},
         changes_summary={},
     )
-    downstream = SimpleNamespace(package_contract_version="1")
+    downstream = SimpleNamespace(
+        package_contract_version="1",
+        compatibility=["NAUTILUS_TRADER_1.231.0"],
+    )
 
     built = build_candidate_package(
         settings,

@@ -323,17 +323,24 @@ def _catalog_validation_changed(
         return True
     expected_event = _normalized_range(revision.event_start, revision.event_end)
     expected_available = _normalized_range(revision.available_start, revision.available_end)
-    actual_event = _normalized_range(
+    stored_event = _normalized_range(
         item.event_time_range.get("start"), item.event_time_range.get("end")
     )
-    actual_available = _normalized_range(
+    stored_available = _normalized_range(
         item.available_time_range.get("start"), item.available_time_range.get("end")
     )
+    actual_event = _normalized_range(descriptor.event_start, descriptor.event_end)
+    actual_available = _normalized_range(descriptor.available_start, descriptor.available_end)
     return any(
         (
+            item.catalog_uri != descriptor.catalog_uri,
+            item.provider != descriptor.provider,
+            item.source_license != descriptor.source_license,
             item.instrument_scope != descriptor.instrument_scope,
             item.nautilus_data_type != descriptor.nautilus_data_type,
             item.schema_revision != descriptor.schema_revision,
+            stored_event != expected_event,
+            stored_available != expected_available,
             actual_event != expected_event,
             actual_available != expected_available,
             revision.row_count != descriptor.row_count,

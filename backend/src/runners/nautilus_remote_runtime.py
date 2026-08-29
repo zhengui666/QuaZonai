@@ -208,80 +208,92 @@ def _write_catalog(spec: CatalogIngestSpec) -> CatalogDescriptor:
                 )
             return existing
 
-        import numpy as np
-        import pandas as pd
+        staging_path = Path(
+            tempfile.mkdtemp(prefix=f".{spec.catalog_name}.staging-", dir=path.parent)
+        )
+        try:
+            import numpy as np
+            import pandas as pd
 
-        from nautilus_trader.persistence.catalog import ParquetDataCatalog
-        from nautilus_trader.persistence.wranglers import QuoteTickDataWrangler
-        from nautilus_trader.test_kit.providers import TestInstrumentProvider
+            from nautilus_trader.persistence.catalog import ParquetDataCatalog
+            from nautilus_trader.persistence.wranglers import QuoteTickDataWrangler
+            from nautilus_trader.test_kit.providers import TestInstrumentProvider
 
-        source_kind = str(spec.source_spec.get("kind", ""))
-        if source_kind != "synthetic_fx_quotes":
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "The reference service accepts source_spec.kind=synthetic_fx_quotes only; "
-                    "production runtimes should provide approved provider adapters."
-                ),
+            source_kind = str(spec.source_spec.get("kind", ""))
+            if source_kind != "synthetic_fx_quotes":
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "The reference service accepts source_spec.kind=synthetic_fx_quotes only; "
+                        "production runtimes should provide approved provider adapters."
+                    ),
+                )
+            instrument_name = str(spec.source_spec.get("instrument", "EUR/USD"))
+            if instrument_name != "EUR/USD":
+                raise HTTPException(status_code=422, detail="reference service supports EUR/USD only")
+            rows = int(spec.source_spec.get("rows", 3000))
+            seed = int(spec.source_spec.get("seed", 42))
+            if rows < 500 or rows > 100_000:
+                raise HTTPException(status_code=422, detail="rows must be between 500 and 100000")
+
+            instrument = TestInstrumentProvider.default_fx_ccy(instrument_name)
+            rng = np.random.default_rng(seed)
+            mid = 1.10 + np.cumsum(rng.normal(0, 0.00015, rows))
+            spread = np.maximum(0.00002, np.abs(rng.normal(0.00008, 0.00002, rows)))
+            timestamps = pd.date_range("2024-01-01", periods=rows, freq="1min", tz="UTC")
+            frame = pd.DataFrame(
+                {
+                    "bid_price": mid - spread / 2,
+                    "ask_price": mid + spread / 2,
+                },
+                index=timestamps,
             )
-        instrument_name = str(spec.source_spec.get("instrument", "EUR/USD"))
-        if instrument_name != "EUR/USD":
-            raise HTTPException(status_code=422, detail="reference service supports EUR/USD only")
-        rows = int(spec.source_spec.get("rows", 3000))
-        seed = int(spec.source_spec.get("seed", 42))
-        if rows < 500 or rows > 100_000:
-            raise HTTPException(status_code=422, detail="rows must be between 500 and 100000")
+            ticks = QuoteTickDataWrangler(instrument).process(frame)
+            catalog = ParquetDataCatalog(staging_path)
+            catalog.write_data([instrument])
+            catalog.write_data(ticks)
 
-        instrument = TestInstrumentProvider.default_fx_ccy(instrument_name)
-        rng = np.random.default_rng(seed)
-        mid = 1.10 + np.cumsum(rng.normal(0, 0.00015, rows))
-        spread = np.maximum(0.00002, np.abs(rng.normal(0.00008, 0.00002, rows)))
-        timestamps = pd.date_range("2024-01-01", periods=rows, freq="1min", tz="UTC")
-        frame = pd.DataFrame(
-            {
-                "bid_price": mid - spread / 2,
-                "ask_price": mid + spread / 2,
-            },
-            index=timestamps,
-        )
-        ticks = QuoteTickDataWrangler(instrument).process(frame)
-        path.mkdir(parents=True, exist_ok=False)
-        catalog = ParquetDataCatalog(path)
-        catalog.write_data([instrument])
-        catalog.write_data(ticks)
-
-        first = timestamps[0].to_pydatetime()
-        last = timestamps[-1].to_pydatetime()
-        descriptor = CatalogDescriptor(
-            catalog_uri=catalog_uri,
-            provider=spec.provider,
-            source_license=spec.source_license,
-            source_spec=spec.source_spec,
-            nautilus_data_type="QuoteTick",
-            instrument_scope=[instrument.id.value],
-            event_start=first,
-            event_end=last,
-            available_start=first,
-            available_end=last,
-            row_count=len(ticks),
-            schema_revision="nautilus-quote-tick-v1",
-            quality_result={
-                "valid": True,
-                "sorted": True,
-                "unique_timestamps": True,
-                "non_crossed_quotes": True,
-            },
-            point_in_time_result={
-                "valid": True,
-                "available_time_preserved": True,
-            },
-            sealed=spec.sealed,
-        )
-        _metadata_path(path).write_text(
-            descriptor.model_dump_json(indent=2),
-            encoding="utf-8",
-        )
-        return descriptor
+            first = timestamps[0].to_pydatetime()
+            last = timestamps[-1].to_pydatetime()
+            descriptor = CatalogDescriptor(
+                catalog_uri=catalog_uri,
+                provider=spec.provider,
+                source_license=spec.source_license,
+                source_spec=spec.source_spec,
+                nautilus_data_type="QuoteTick",
+                instrument_scope=[instrument.id.value],
+                event_start=first,
+                event_end=last,
+                available_start=first,
+                available_end=last,
+                row_count=len(ticks),
+                schema_revision="nautilus-quote-tick-v1",
+                quality_result={
+                    "valid": True,
+                    "sorted": True,
+                    "unique_timestamps": True,
+                    "non_crossed_quotes": True,
+                },
+                point_in_time_result={
+                    "valid": True,
+                    "available_time_preserved": True,
+                },
+                sealed=spec.sealed,
+            )
+            _metadata_path(staging_path).write_text(
+                descriptor.model_dump_json(indent=2),
+                encoding="utf-8",
+            )
+            if path.exists():
+                raise HTTPException(
+                    status_code=409,
+                    detail="catalog identity is already occupied",
+                )
+            os.replace(staging_path, path)
+            return descriptor
+        except BaseException:
+            shutil.rmtree(staging_path, ignore_errors=True)
+            raise
 
 
 def _instrument(catalog_uri: str, instrument_id: str) -> tuple[Any, Path]:
@@ -535,15 +547,29 @@ def _execute(experiment: ExperimentSpec, mode: RunMode) -> RunEvidence:
             )
             process.start()
             child.close()
+            received: dict[str, Any] | None = None
+
+            def receive_payload() -> None:
+                nonlocal received
+                try:
+                    received = parent.recv()
+                except (EOFError, OSError):
+                    received = None
+
+            receiver = threading.Thread(target=receive_payload, daemon=True)
+            receiver.start()
             process.join(300)
             if process.is_alive():
                 process.terminate()
                 process.join(5)
+                receiver.join(5)
+                parent.close()
                 raise HTTPException(status_code=504, detail="sealed strategy execution timed out")
-            if not parent.poll():
-                raise HTTPException(status_code=502, detail="sealed strategy child returned no evidence")
-            payload = parent.recv()
+            receiver.join()
             parent.close()
+            if received is None:
+                raise HTTPException(status_code=502, detail="sealed strategy child returned no evidence")
+            payload = received
             if "__error__" in payload:
                 raise HTTPException(status_code=502, detail="sealed strategy child failed")
             return RunEvidence.model_validate(payload)

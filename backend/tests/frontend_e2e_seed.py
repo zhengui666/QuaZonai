@@ -98,7 +98,7 @@ def main() -> None:
             enabled=True,
             package_contract_version="1",
             feedback_contract_version="1",
-            compatibility=["US_EQUITIES"],
+            compatibility=["US_EQUITIES", "NAUTILUS_TRADER_1.231.0"],
             preflight_state="READY",
             public_config={},
         )
@@ -109,7 +109,7 @@ def main() -> None:
             enabled=True,
             package_contract_version="1",
             feedback_contract_version="1",
-            compatibility=["US_EQUITIES"],
+            compatibility=["US_EQUITIES", "NAUTILUS_TRADER_1.231.0"],
             preflight_state="READY",
             public_config={},
         )
