@@ -142,8 +142,11 @@ def _catalog_path(catalog_uri: str) -> Path:
         character.isalnum() or character in "._-" for character in key
     ):
         raise HTTPException(status_code=422, detail="catalog key is invalid")
+    safe_key = os.path.basename(key)
+    if safe_key != key:
+        raise HTTPException(status_code=422, detail="catalog key is invalid")
     root = _catalog_root().resolve()
-    path = (root / key).resolve()
+    path = (root / safe_key).resolve()
     if not path.is_relative_to(root):
         raise HTTPException(status_code=422, detail="catalog path escapes the runtime root")
     return path
@@ -208,9 +211,7 @@ def _write_catalog(spec: CatalogIngestSpec) -> CatalogDescriptor:
                 )
             return existing
 
-        staging_path = Path(
-            tempfile.mkdtemp(prefix=f".{spec.catalog_name}.staging-", dir=path.parent)
-        )
+        staging_path = Path(tempfile.mkdtemp(prefix=".catalog-staging-", dir=_catalog_root()))
         try:
             import numpy as np
             import pandas as pd
