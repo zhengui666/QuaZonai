@@ -22,11 +22,12 @@ from db.models import (
 from errors import QfError
 from jobs import enqueue_job
 from quant_runtime.contracts import ExperimentMode
-from quant_runtime.promotion import simulate_portfolio_candidate
+from quant_runtime.promotion import prepare_portfolio_simulation
 
 router = APIRouter(prefix="/api/v1", tags=["research-runtime"])
 SEALED_JOB_KIND = "SEALED_ALPHA_QUALIFICATION"
 SEALED_DATASET_REGISTRATION_JOB_KIND = "SEALED_DATASET_REGISTRATION"
+SEALED_PORTFOLIO_PROMOTION_JOB_KIND = "SEALED_PORTFOLIO_PROMOTION"
 _SIMULATION_PENDING_STATUS = 102
 _SIMULATION_STALE_AFTER = timedelta(minutes=35)
 
@@ -64,10 +65,13 @@ class PortfolioSimulationInput(StrictModel):
 
 
 class PortfolioSimulationResult(StrictModel):
-    candidate_id: UUID
-    approval_id: UUID
+    job_id: UUID
+    state: str
     simulation_experiment_id: UUID
+    portfolio_sealed_experiment_id: UUID
     selected_alpha_id: UUID
+    candidate_id: UUID | None = None
+    approval_id: UUID | None = None
 
 
 def _qualification_payload(payload: AlphaQualificationInput) -> dict[str, object]:
@@ -175,8 +179,8 @@ def _claim_simulation_receipt(
     experiment_id, portfolio_sealed_experiment_id = _pending_simulation_experiment_ids(
         existing, require_portfolio_sealed=existing.status_code != 200
     )
-    if existing.status_code == 200:
-        return existing, False, experiment_id, None
+    if existing.status_code in {200, 202}:
+        return existing, False, experiment_id, portfolio_sealed_experiment_id
     if existing.status_code != _SIMULATION_PENDING_STATUS:
         raise QfError(
             "IDEMPOTENCY_RECEIPT_INVALID",
@@ -374,6 +378,14 @@ def register_sealed_dataset(
             raise QfError("UNIVERSE_VERSION_NOT_ACTIVE", "Sealed registration requires an active Universe Version.", 409)
         if source is None or source.state != "ACTIVE" or source.preflight_state != "READY":
             raise QfError("DATA_SOURCE_NOT_READY", "Sealed registration requires an active ready Data Source.", 409)
+        source_scope = {str(value) for value in (source.universe_scope or []) if str(value)}
+        if source_scope and universe.name not in source_scope:
+            raise QfError(
+                "DATA_SOURCE_UNIVERSE_SCOPE_MISMATCH",
+                "Sealed registration Data Source is not governed for this Universe Version.",
+                422,
+                {"universe": universe.name},
+            )
         jobs = list(session.scalars(
             select(Job)
             .where(
@@ -407,6 +419,7 @@ def register_sealed_dataset(
 @router.post(
     "/portfolio-programs/{portfolio_program_id}/simulate-candidate",
     response_model=PortfolioSimulationResult,
+    status_code=202,
 )
 def simulate_candidate(
     portfolio_program_id: UUID,
@@ -437,15 +450,18 @@ def simulate_candidate(
         if not claimed:
             return PortfolioSimulationResult.model_validate(receipt.response_json)
 
+    if portfolio_sealed_experiment_id is None:
+        raise QfError(
+            "IDEMPOTENCY_RECEIPT_INVALID",
+            "Candidate simulation receipt is missing its portfolio sealed identity.",
+            500,
+        )
     try:
-        if portfolio_sealed_experiment_id is None:
-            raise QfError("IDEMPOTENCY_RECEIPT_INVALID", "Missing portfolio sealed experiment id.", 500)
-        result = simulate_portfolio_candidate(
+        prepared = prepare_portfolio_simulation(
             factory,
             portfolio_program_id=portfolio_program_id,
             alpha_ids=payload.alpha_ids,
             simulation_experiment_id=experiment_id,
-            portfolio_sealed_experiment_id=portfolio_sealed_experiment_id,
         )
     except Exception as exc:
         _mark_simulation_retryable(
@@ -458,13 +474,6 @@ def simulate_candidate(
         )
         raise
 
-    response = PortfolioSimulationResult(
-        candidate_id=result.candidate_id,
-        approval_id=result.approval_id,
-        simulation_experiment_id=result.simulation_experiment_id,
-        selected_alpha_id=result.selected_alpha_id,
-    )
-    response_json = response.model_dump(mode="json")
     with factory.begin() as session:
         receipt = session.execute(
             select(PublicMutationReceipt)
@@ -472,27 +481,49 @@ def simulate_candidate(
             .with_for_update()
         ).scalar_one_or_none()
         if receipt is None or not _simulation_receipt_matches(
-            receipt,
-            operation=operation,
-            normalized=normalized,
+            receipt, operation=operation, normalized=normalized
         ):
             raise QfError(
                 "IDEMPOTENCY_RECEIPT_CONFLICT",
-                "Candidate simulation receipt changed before completion.",
+                "Candidate simulation receipt changed before sealed finalization was queued.",
                 409,
             )
-        if receipt.status_code == 200:
+        if receipt.status_code == 200 or receipt.status_code == 202:
             return PortfolioSimulationResult.model_validate(receipt.response_json)
-        receipt_simulation_id, _ = _pending_simulation_experiment_ids(
+        receipt_simulation_id, receipt_sealed_id = _pending_simulation_experiment_ids(
             receipt, require_portfolio_sealed=True
         )
-        if receipt_simulation_id != experiment_id:
+        if (
+            receipt_simulation_id != experiment_id
+            or receipt_sealed_id != portfolio_sealed_experiment_id
+        ):
             raise QfError(
                 "IDEMPOTENCY_RECEIPT_CONFLICT",
                 "Candidate simulation receipt changed experiment identity.",
                 409,
             )
-        receipt.response_json = response_json
-        receipt.status_code = 200
+        job = enqueue_job(
+            session,
+            kind=SEALED_PORTFOLIO_PROMOTION_JOB_KIND,
+            resource_type="PORTFOLIO_PROGRAM",
+            resource_id=portfolio_program_id,
+            payload={
+                "alpha_ids": normalized["alpha_ids"],
+                "simulation_experiment_id": str(experiment_id),
+                "portfolio_sealed_experiment_id": str(portfolio_sealed_experiment_id),
+                "idempotency_key": key,
+                "idempotency_operation": operation,
+                "idempotency_normalized": normalized,
+            },
+        )
+        response = PortfolioSimulationResult(
+            job_id=job.id,
+            state=job.state,
+            simulation_experiment_id=prepared.simulation_experiment_id,
+            portfolio_sealed_experiment_id=portfolio_sealed_experiment_id,
+            selected_alpha_id=prepared.selected_alpha_id,
+        )
+        receipt.response_json = response.model_dump(mode="json")
+        receipt.status_code = 202
         session.flush()
-    return response
+        return response

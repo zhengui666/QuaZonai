@@ -17,6 +17,7 @@ from db.models import (
     DatasetRevision,
     ForwardEvidenceEpisode,
     GovernedDataSource,
+    HandoffOffer,
     Job,
     MarketUniverseVersion,
     PortfolioCandidate,
@@ -486,6 +487,11 @@ def test_approval_builds_package_and_authenticated_handoff_feedback(
         assert session.scalar(select(func.count()).select_from(ForwardEvidenceEpisode)) == 0
 
     start = datetime.now(UTC) - timedelta(minutes=10)
+    factory = create_session_factory(engine)
+    with factory() as session, session.begin():
+        persisted_handoff = session.get(HandoffOffer, UUID(handoff["id"]))
+        assert persisted_handoff is not None
+        persisted_handoff.accepted_at = start - timedelta(minutes=1)
     feedback = client.post(
         f"/api/v1/handoffs/{handoff['id']}/feedback",
         headers={**auth, "Idempotency-Key": "feedback-1"},

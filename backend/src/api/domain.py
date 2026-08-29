@@ -2020,7 +2020,7 @@ def get_handoff_package(
 
 
 def _validate_complete_feedback(
-    handoff: HandoffOffer, payload: FeedbackInput
+    handoff: HandoffOffer, payload: FeedbackInput, *, received_at: datetime
 ) -> tuple[datetime, datetime, int]:
     problems: list[str] = []
     if payload.observation_start is None:
@@ -2041,12 +2041,41 @@ def _validate_complete_feedback(
     assert payload.sample_size is not None
     start = payload.observation_start
     end = payload.observation_end
-    if end <= start:
+    if start.tzinfo is None or start.utcoffset() is None:
+        problems.append("observation_start must be timezone-aware")
+    if end.tzinfo is None or end.utcoffset() is None:
+        problems.append("observation_end must be timezone-aware")
+    accepted_at = handoff.accepted_at
+    if accepted_at is None:
+        problems.append("Handoff must be accepted before complete forward feedback")
+    else:
+        if accepted_at.tzinfo is None or accepted_at.utcoffset() is None:
+            accepted_at = accepted_at.replace(tzinfo=UTC)
+        if start.tzinfo is not None and start.utcoffset() is not None and start < accepted_at:
+            problems.append("observation_start cannot predate downstream acceptance")
+    if received_at.tzinfo is None or received_at.utcoffset() is None:
+        raise QfError("FEEDBACK_CONTRACT_INVALID", "Feedback receipt timestamp must be timezone-aware.", 500)
+    if end.tzinfo is not None and end.utcoffset() is not None and end > received_at:
+        problems.append("observation_end cannot be in the future")
+    if (
+        start.tzinfo is not None
+        and start.utcoffset() is not None
+        and end.tzinfo is not None
+        and end.utcoffset() is not None
+        and end <= start
+    ):
         problems.append("observation_end must be after observation_start")
     contract = handoff.feedback_contract_snapshot or {}
     minimum_duration = int(contract.get("minimum_observation_duration_seconds", 1))
     minimum_sample = int(contract.get("minimum_valid_sample_size", 1))
-    if end > start and (end - start).total_seconds() < minimum_duration:
+    if (
+        start.tzinfo is not None
+        and start.utcoffset() is not None
+        and end.tzinfo is not None
+        and end.utcoffset() is not None
+        and end > start
+        and (end - start).total_seconds() < minimum_duration
+    ):
         problems.append(f"observation duration must be at least {minimum_duration} seconds")
     if payload.sample_size < minimum_sample:
         problems.append(f"sample_size must be at least {minimum_sample}")
@@ -2102,7 +2131,10 @@ def submit_feedback(
             if payload.state not in allowed:
                 raise QfError("FEEDBACK_STATE_INVALID", "Feedback state is invalid.", 422)
             if payload.state == "FEEDBACK_COMPLETE":
-                start, end, sample_size = _validate_complete_feedback(handoff, payload)
+                received_at = _now()
+                start, end, sample_size = _validate_complete_feedback(
+                    handoff, payload, received_at=received_at
+                )
                 episode = ForwardEvidenceEpisode(
                     handoff_id=handoff.id,
                     state="FEEDBACK_COMPLETE",
@@ -2110,7 +2142,7 @@ def submit_feedback(
                     observation_start=start,
                     observation_end=end,
                     sample_size=sample_size,
-                    created_at=_now(),
+                    created_at=received_at,
                 )
                 session.add(episode)
                 session.flush()

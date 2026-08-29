@@ -9,7 +9,7 @@ import re
 import stat
 from pathlib import Path
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -51,6 +51,64 @@ _DEGRADATION_DISCLOSURE_NUMERICS = {
     "slippage",
 }
 _DEGRADATION_REASON_CODE = re.compile(r"[A-Z0-9][A-Z0-9_:-]{0,79}")
+
+
+def write_parent_owned_workspace_file(path: Path, content: str) -> None:
+    """Atomically replace a fixed parent-owned file without following Mission links."""
+    parent = path.parent.resolve(strict=True)
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    directory_fd = os.open(parent, directory_flags)
+    temporary_name = f".{path.name}.parent-{uuid4().hex}.tmp"
+    try:
+        try:
+            current = os.stat(path.name, dir_fd=directory_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            current = None
+        if current is not None and not stat.S_ISREG(current.st_mode):
+            raise QfError(
+                "MISSION_WORKSPACE_PATH_UNSAFE",
+                "Parent-owned Mission workspace files must be regular files, not links.",
+                422,
+                {"path": path.name},
+            )
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(temporary_name, flags, 0o600, dir_fd=directory_fd)
+        try:
+            payload = content.encode("utf-8")
+            offset = 0
+            while offset < len(payload):
+                offset += os.write(fd, payload[offset:])
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.replace(
+            temporary_name,
+            path.name,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+        )
+        os.fsync(directory_fd)
+    finally:
+        try:
+            os.unlink(temporary_name, dir_fd=directory_fd)
+        except FileNotFoundError:
+            pass
+        os.close(directory_fd)
+
+
+def _ensure_parent_owned_directory(path: Path) -> None:
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        path.mkdir(mode=0o700, parents=False)
+        info = os.lstat(path)
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        raise QfError(
+            "MISSION_WORKSPACE_PATH_UNSAFE",
+            "Parent-owned Mission workspace directory must not be a link.",
+            422,
+            {"path": path.name},
+        )
 
 
 def _degradation_disclosure(evidence: object) -> dict[str, Any]:
@@ -237,36 +295,37 @@ def prepare_experiment_workspace(
         engine.dispose()
 
     if degradation_context is not None:
-        (workspace / "DEGRADATION_CONTEXT.json").write_text(
+        write_parent_owned_workspace_file(
+            workspace / "DEGRADATION_CONTEXT.json",
             json.dumps(
                 degradation_context,
                 ensure_ascii=False,
                 indent=2,
                 default=str,
             ),
-            encoding="utf-8",
         )
 
-    (workspace / "DATASETS.json").write_text(
+    write_parent_owned_workspace_file(
+        workspace / "DATASETS.json",
         json.dumps(
             {"policy": "GOVERNED_DISCOVERY_ONLY", "datasets": datasets},
             ensure_ascii=False,
             indent=2,
             default=str,
         ),
-        encoding="utf-8",
     )
-    (workspace / "EXPERIMENT_CONTRACT.schema.json").write_text(
+    write_parent_owned_workspace_file(
+        workspace / "EXPERIMENT_CONTRACT.schema.json",
         json.dumps(
             BacktestExperimentRequest.model_json_schema(),
             ensure_ascii=False,
             indent=2,
         ),
-        encoding="utf-8",
     )
     experiments_root = workspace / "experiments"
-    experiments_root.mkdir(parents=True, exist_ok=True)
-    (workspace / "NAUTILUS_EXPERIMENTS.md").write_text(
+    _ensure_parent_owned_directory(experiments_root)
+    write_parent_owned_workspace_file(
+        workspace / "NAUTILUS_EXPERIMENTS.md",
         """# Governed Nautilus experiment interface
 
 QuaZonai Core does **not** execute your Python directly and does not expose database or
@@ -299,7 +358,6 @@ and sends accepted requests to the separately deployed NautilusTrader runtime.
 If `DATASETS.json` contains no usable dataset, document the blocked evidence requirement in
 `RESULT.md`; do not fabricate a backtest.
 """,
-        encoding="utf-8",
     )
     return len(datasets)
 

@@ -8,6 +8,8 @@ home, Mission workspace, plugin storage, or research-runtime credential.
 from __future__ import annotations
 
 import argparse
+
+import httpx
 import logging
 import os
 import signal
@@ -20,7 +22,13 @@ from uuid import UUID
 
 from sqlalchemy import func, select
 
-from db.models import DatasetRevision, GovernedDataSource, Job, MarketUniverseVersion
+from db.models import (
+    DatasetRevision,
+    GovernedDataSource,
+    Job,
+    MarketUniverseVersion,
+    PublicMutationReceipt,
+)
 from db.session import SessionFactory, create_database_engine, create_session_factory, ping_database
 from events import append_event
 from jobs import (
@@ -29,17 +37,23 @@ from jobs import (
     fail_job,
     release_expired_leases,
     renew_job_lease,
+    retry_job,
 )
 from logging_utils import configure_logging
 from quant_runtime.client import NautilusQuantRuntime, RemoteNautilusConfig
 from quant_runtime.contracts import CatalogValidationRequest
-from quant_runtime.promotion import qualify_alpha
+from quant_runtime.promotion import qualify_alpha, simulate_portfolio_candidate
 from settings import Settings
 
 LOGGER = logging.getLogger("quazonai.sealed_worker")
 SEALED_JOB_KIND = "SEALED_ALPHA_QUALIFICATION"
 SEALED_DATASET_REGISTRATION_JOB_KIND = "SEALED_DATASET_REGISTRATION"
-SEALED_JOB_KINDS = {SEALED_JOB_KIND, SEALED_DATASET_REGISTRATION_JOB_KIND}
+SEALED_PORTFOLIO_PROMOTION_JOB_KIND = "SEALED_PORTFOLIO_PROMOTION"
+SEALED_JOB_KINDS = {
+    SEALED_JOB_KIND,
+    SEALED_DATASET_REGISTRATION_JOB_KIND,
+    SEALED_PORTFOLIO_PROMOTION_JOB_KIND,
+}
 
 
 class StopFlag:
@@ -81,6 +95,59 @@ def _execute_qualification(factory: SessionFactory, job: Job) -> dict[str, str]:
         "state": alpha.state,
         "degradation_state": alpha.degradation_state,
     }
+
+
+
+def _execute_portfolio_promotion(factory: SessionFactory, job: Job) -> dict[str, str]:
+    payload = dict(job.payload or {})
+    simulation_experiment_id = _uuid_payload(job, "simulation_experiment_id")
+    portfolio_sealed_experiment_id = _uuid_payload(job, "portfolio_sealed_experiment_id")
+    alpha_ids_raw = payload.get("alpha_ids", [])
+    if not isinstance(alpha_ids_raw, list):
+        raise RuntimeError("sealed portfolio job alpha_ids must be a list")
+    try:
+        alpha_ids = [UUID(str(value)) for value in alpha_ids_raw]
+    except ValueError as exc:
+        raise RuntimeError("sealed portfolio job alpha_ids must contain UUIDs") from exc
+    result = simulate_portfolio_candidate(
+        factory,
+        portfolio_program_id=job.resource_id,
+        alpha_ids=alpha_ids,
+        simulation_experiment_id=simulation_experiment_id,
+        portfolio_sealed_experiment_id=portfolio_sealed_experiment_id,
+    )
+    response = {
+        "job_id": str(job.id),
+        "state": "SUCCEEDED",
+        "candidate_id": str(result.candidate_id),
+        "approval_id": str(result.approval_id),
+        "simulation_experiment_id": str(result.simulation_experiment_id),
+        "portfolio_sealed_experiment_id": str(portfolio_sealed_experiment_id),
+        "selected_alpha_id": str(result.selected_alpha_id),
+    }
+    key = str(payload.get("idempotency_key") or "")
+    operation = str(payload.get("idempotency_operation") or "")
+    normalized = payload.get("idempotency_normalized")
+    if not key or not operation or not isinstance(normalized, dict):
+        raise RuntimeError("sealed portfolio job lost its public idempotency receipt identity")
+    with factory.begin() as session:
+        receipt = session.execute(
+            select(PublicMutationReceipt)
+            .where(PublicMutationReceipt.idempotency_key == key)
+            .with_for_update()
+        ).scalar_one_or_none()
+        if receipt is None:
+            raise RuntimeError("sealed portfolio job public idempotency receipt is missing")
+        if receipt.operation_name != operation or receipt.normalized_request != normalized:
+            raise RuntimeError("sealed portfolio job public idempotency receipt identity changed")
+        persisted_simulation = str((receipt.response_json or {}).get("simulation_experiment_id") or "")
+        persisted_sealed = str((receipt.response_json or {}).get("portfolio_sealed_experiment_id") or "")
+        if persisted_simulation != str(simulation_experiment_id) or persisted_sealed != str(portfolio_sealed_experiment_id):
+            raise RuntimeError("sealed portfolio job experiment identity changed")
+        receipt.response_json = response
+        receipt.status_code = 200
+        session.flush()
+    return response
 
 
 def _execute_sealed_dataset_registration(
@@ -130,6 +197,9 @@ def _execute_sealed_dataset_registration(
             raise RuntimeError("sealed registration Universe Version is no longer active")
         if source is None or source.state != "ACTIVE" or source.preflight_state != "READY":
             raise RuntimeError("sealed registration Data Source is no longer ready")
+        source_scope = {str(value) for value in (source.universe_scope or []) if str(value)}
+        if source_scope and universe.name not in source_scope:
+            raise RuntimeError("sealed registration Data Source no longer covers this Universe")
         existing = session.scalar(
             select(DatasetRevision).where(DatasetRevision.catalog_uri == validation.catalog_uri)
         )
@@ -275,11 +345,39 @@ def run_once(
                 result = _execute_qualification(factory, job)
             elif job.kind == SEALED_DATASET_REGISTRATION_JOB_KIND:
                 result = _execute_sealed_dataset_registration(factory, job)
+            elif job.kind == SEALED_PORTFOLIO_PROMOTION_JOB_KIND:
+                result = _execute_portfolio_promotion(factory, job)
             else:
                 raise RuntimeError(f"unsupported sealed job kind: {job.kind}")
         if lease_lost.is_set():
             LOGGER.error("sealed job lease ownership was lost", extra={"job_id": str(job.id)})
             return True, settings.job_poll_seconds
+    except httpx.TransportError as exc:
+        with factory.begin() as session:
+            current = session.get(Job, job.id)
+            if (
+                current is not None
+                and current.state == "LEASED"
+                and current.lease_owner == owner
+            ):
+                retry_job(
+                    session,
+                    current,
+                    "sealed remote result is transport-uncertain; retrying the same durable experiment",
+                    delay_seconds=min(max(settings.job_poll_seconds, 1.0), 30.0),
+                )
+                append_event(
+                    session,
+                    kind="SEALED_JOB_RETRYABLE",
+                    aggregate_type="job",
+                    aggregate_id=current.id,
+                    payload={
+                        "error_code": type(exc).__name__,
+                        "experiment_id": str((current.payload or {}).get("sealed_experiment_id") or (current.payload or {}).get("portfolio_sealed_experiment_id") or ""),
+                    },
+                )
+        LOGGER.warning("sealed job remote result is uncertain; durable retry retained", extra={"job_id": str(job.id)})
+        return True, settings.job_poll_seconds
     except Exception as exc:  # noqa: BLE001 - durable privileged job boundary
         with factory.begin() as session:
             current = session.get(Job, job.id)

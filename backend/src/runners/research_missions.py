@@ -25,7 +25,11 @@ from sqlalchemy import select
 from db.models import Event, Job, ResearchBranch, ResearchCharter, ResearchMission, ResearchProgram
 from db.session import create_database_engine, create_session_factory
 from errors import QfError
-from quant_runtime.workspace import execute_workspace_experiments, prepare_experiment_workspace
+from quant_runtime.workspace import (
+    execute_workspace_experiments,
+    prepare_experiment_workspace,
+    write_parent_owned_workspace_file,
+)
 from runtime_config import load_effective_settings
 from settings import Settings
 
@@ -343,7 +347,7 @@ def run_mission(settings: Settings, job_id: UUID) -> None:
 
     mission_id, program_id, context = _load_mission_context(settings, job_id)
     workspace = _prepare_worktree(settings, program_id, mission_id)
-    (workspace / "MISSION.md").write_text(context, encoding="utf-8")
+    write_parent_owned_workspace_file(workspace / "MISSION.md", context)
     prepare_experiment_workspace(settings, workspace=workspace, mission_id=mission_id)
 
     engine = create_database_engine(settings)

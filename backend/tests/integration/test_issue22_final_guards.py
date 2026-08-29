@@ -20,8 +20,6 @@ def test_candidate_simulation_endpoint_replays_idempotently(
     monkeypatch,
 ) -> None:
     calls: list[object] = []
-    candidate_id = uuid4()
-    approval_id = uuid4()
     selected_alpha_id = uuid4()
     portfolio_program_id = uuid4()
 
@@ -35,26 +33,26 @@ def test_candidate_simulation_endpoint_replays_idempotently(
     ):
         calls.append((portfolio_program_id, tuple(alpha_ids), simulation_experiment_id, portfolio_sealed_experiment_id))
         return SimpleNamespace(
-            candidate_id=candidate_id,
-            approval_id=approval_id,
             simulation_experiment_id=simulation_experiment_id,
             selected_alpha_id=selected_alpha_id,
         )
 
-    monkeypatch.setattr(research_runtime, "simulate_portfolio_candidate", fake_simulation)
+    monkeypatch.setattr(research_runtime, "prepare_portfolio_simulation", fake_simulation)
     client = TestClient(create_app(settings=settings, engine=engine))
     path = f"/api/v1/portfolio-programs/{portfolio_program_id}/simulate-candidate"
     headers = {"Idempotency-Key": "issue22-candidate-simulation"}
     payload = {"alpha_ids": [str(selected_alpha_id)]}
 
     first = client.post(path, headers=headers, json=payload)
-    assert first.status_code == 200, first.text
+    assert first.status_code == 202, first.text
     replay = client.post(path, headers=headers, json=payload)
-    assert replay.status_code == 200, replay.text
+    assert replay.status_code == 202, replay.text
     assert replay.json() == first.json()
+    assert first.json()["state"] == "READY"
+    assert first.json()["job_id"]
     assert len(calls) == 1
     assert calls[0][2] is not None
-    assert calls[0][3] is not None
+    assert calls[0][3] is None
 
     collision = client.post(
         path,

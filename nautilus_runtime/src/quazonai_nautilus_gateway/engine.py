@@ -559,55 +559,100 @@ class NautilusGatewayEngine:
     ) -> dict[str, Any]:
         canonical_request = request.model_dump(mode="json")
         receipt_key = str(request.experiment_id)
-        lock_fd = os.open(self._run_lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        experiment_lock_path = self._run_root / f"{request.experiment_id.hex}.lock"
+        experiment_lock_fd = os.open(experiment_lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+
+        def registry_lock() -> int:
+            fd = os.open(self._run_lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            return fd
+
+        def registry_unlock(fd: int) -> None:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
+
         try:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
-            receipts = self._load_run_receipts()
-            receipt = receipts.get(receipt_key)
-            if receipt is not None:
-                if (
-                    receipt.get("operation") != operation
-                    or receipt.get("request") != canonical_request
-                ):
-                    raise GatewayContractError(
-                        "experiment id is already bound to another immutable backtest contract"
-                    )
-                if receipt.get("state") == "FAILED":
-                    raise GatewayContractError(
-                        "the immutable backtest contract previously reached a terminal failure"
-                    )
-                result = receipt.get("result")
-                if receipt.get("state") != "SUCCEEDED" or not isinstance(result, dict):
-                    raise GatewayContractError("stored run receipt has no terminal result")
-                return result
+            # Only identical experiment ids serialize for the duration of BacktestNode.
+            # The global receipt registry lock is held only while reading/writing JSON.
+            fcntl.flock(experiment_lock_fd, fcntl.LOCK_EX)
+            global_fd = registry_lock()
+            try:
+                receipts = self._load_run_receipts()
+                receipt = receipts.get(receipt_key)
+                if receipt is not None:
+                    if (
+                        receipt.get("operation") != operation
+                        or receipt.get("request") != canonical_request
+                    ):
+                        raise GatewayContractError(
+                            "experiment id is already bound to another immutable backtest contract"
+                        )
+                    if receipt.get("state") == "FAILED":
+                        raise GatewayContractError(
+                            "the immutable backtest contract previously reached a terminal failure"
+                        )
+                    result = receipt.get("result")
+                    if receipt.get("state") == "SUCCEEDED" and isinstance(result, dict):
+                        return result
+                    if receipt.get("state") not in {"RUNNING", "SUCCEEDED"}:
+                        raise GatewayContractError("stored run receipt has an invalid state")
+                receipts[receipt_key] = {
+                    "operation": operation,
+                    "request": canonical_request,
+                    "state": "RUNNING",
+                    "started_at": _utc_now().isoformat(),
+                }
+                self._write_run_receipts(receipts)
+            finally:
+                registry_unlock(global_fd)
+
             try:
                 result = _jsonable(runner(request))
                 if not isinstance(result, dict):
                     raise GatewayContractError("backtest terminal result is invalid")
             except GatewayContractError:
+                global_fd = registry_lock()
+                try:
+                    receipts = self._load_run_receipts()
+                    receipts[receipt_key] = {
+                        "operation": operation,
+                        "request": canonical_request,
+                        "state": "FAILED",
+                        "failure_code": "CONTRACT_INVALID",
+                        "completed_at": _utc_now().isoformat(),
+                    }
+                    self._write_run_receipts(receipts)
+                finally:
+                    registry_unlock(global_fd)
+                raise
+
+            global_fd = registry_lock()
+            try:
+                receipts = self._load_run_receipts()
+                receipt = receipts.get(receipt_key)
+                if receipt is not None and (
+                    receipt.get("operation") != operation
+                    or receipt.get("request") != canonical_request
+                ):
+                    raise GatewayContractError("stored run receipt identity changed during execution")
                 receipts[receipt_key] = {
                     "operation": operation,
                     "request": canonical_request,
-                    "state": "FAILED",
-                    "failure_code": "CONTRACT_INVALID",
+                    "state": "SUCCEEDED",
+                    "result": result,
                     "completed_at": _utc_now().isoformat(),
                 }
                 self._write_run_receipts(receipts)
-                raise
-            receipts[receipt_key] = {
-                "operation": operation,
-                "request": canonical_request,
-                "state": "SUCCEEDED",
-                "result": result,
-                "completed_at": _utc_now().isoformat(),
-            }
-            self._write_run_receipts(receipts)
+            finally:
+                registry_unlock(global_fd)
             return result
         finally:
             try:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                fcntl.flock(experiment_lock_fd, fcntl.LOCK_UN)
             finally:
-                os.close(lock_fd)
+                os.close(experiment_lock_fd)
 
     def run_backtest_idempotent(
         self, request: BacktestExperimentRequest

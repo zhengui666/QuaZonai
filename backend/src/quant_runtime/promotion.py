@@ -13,7 +13,7 @@ import math
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -1215,6 +1215,70 @@ def _select_portfolio_sealed_dataset(
         "PORTFOLIO_SEALED_DATASET_UNAVAILABLE",
         "Candidate promotion requires a second independent governed SEALED episode.",
         422,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class PortfolioSimulationPreparation:
+    simulation_experiment_id: UUID
+    selected_alpha_id: UUID
+
+
+def prepare_portfolio_simulation(
+    factory: sessionmaker[Session],
+    *,
+    portfolio_program_id: UUID,
+    alpha_ids: list[UUID],
+    simulation_experiment_id: UUID,
+) -> PortfolioSimulationPreparation:
+    """Run only the research-visible transaction simulation before sealed finalization.
+
+    This function deliberately never performs a SEALED call. The API process may use
+    only the ordinary research runtime credential; the independently deployed sealed
+    worker later reuses this exact immutable simulation id and performs the second
+    holdout run with its sealed-only credential.
+    """
+    requested_alpha_ids = _canonical_alpha_ids(alpha_ids)
+    if not requested_alpha_ids:
+        raise QfError("ALPHA_SELECTION_EMPTY", "At least one qualified Alpha is required.", 422)
+    with factory() as session:
+        portfolio_program = session.get(PortfolioProgram, portfolio_program_id)
+        if portfolio_program is None:
+            raise QfError("PORTFOLIO_PROGRAM_NOT_FOUND", "Portfolio Program does not exist.", 404)
+        mandate = _bound_mandate(session, portfolio_program)
+        alpha, source, request = _load_portfolio_source(
+            session, requested_alpha_ids, mandate
+        )
+        constraints = _validate_mandate_before_simulation(mandate, alpha)
+        simulation_request = request.model_copy(
+            update={
+                "experiment_id": simulation_experiment_id,
+                "mode": ExperimentMode.PORTFOLIO,
+                "tags": {
+                    **request.tags,
+                    "portfolio_program_id": str(portfolio_program_id),
+                    "alpha_qualification_id": str(alpha.id),
+                    "optimizer": "MAX_SEARCH_ADJUSTED_QUALITY_V1",
+                    "allocation_policy": "DERIVE_FROM_EXECUTED_NOTIONAL_V1",
+                },
+            }
+        )
+        source_program_id = source.program_id
+        source_branch_id = source.branch_id
+        alpha_id = alpha.id
+
+    simulation = ExperimentCoordinator(factory).execute(
+        mission_id=None,
+        program_id=source_program_id,
+        branch_id=source_branch_id,
+        request=simulation_request,
+        sealed=False,
+    )
+    simulation_evidence = _require_real_transaction_evidence(simulation)
+    _validate_mandate_after_simulation(constraints, simulation_evidence)
+    return PortfolioSimulationPreparation(
+        simulation_experiment_id=simulation.id,
+        selected_alpha_id=alpha_id,
     )
 
 
