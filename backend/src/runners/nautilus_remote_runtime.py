@@ -533,10 +533,10 @@ def _prepare_isolated_child() -> None:
         def __init__(self, *_: Any, **__: Any) -> None:
             raise PermissionError("generated strategy network access is disabled")
 
-    setattr(socket, "socket", BlockedSocket)
-    setattr(socket, "create_connection", blocked_network)
-    setattr(socket, "getaddrinfo", blocked_network)
-    setattr(socket, "socketpair", blocked_network)
+    setattr(socket, "socket", BlockedSocket)  # noqa: B010 - intentional child network barrier
+    setattr(socket, "create_connection", blocked_network)  # noqa: B010 - intentional child network barrier
+    setattr(socket, "getaddrinfo", blocked_network)  # noqa: B010 - intentional child network barrier
+    setattr(socket, "socketpair", blocked_network)  # noqa: B010 - intentional child network barrier
 
 
 def _execute_isolated_child(
