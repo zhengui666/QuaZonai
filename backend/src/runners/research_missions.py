@@ -23,6 +23,10 @@ from sqlalchemy import select
 from db.models import Event, Job, ResearchBranch, ResearchCharter, ResearchMission, ResearchProgram
 from db.session import create_database_engine, create_session_factory
 from errors import QfError
+from quant_runtime.mission_execution import (
+    build_mission_quant_context,
+    execute_mission_experiments,
+)
 from runtime_config import load_effective_settings
 from settings import Settings
 
@@ -234,7 +238,7 @@ def _codex_launch_configuration(
         "OPENAI_API_KEY": "",
         "CODEX_API_KEY": "",
         "QUAZONAI_CODEX_API_KEY": "",
-        # The App Server does not need Core bootstrap or Operator credentials.
+        # The App Server does not need Core bootstrap, Operator, or quant-runtime secrets.
         # Explicitly clear them from the environment inherited by Mission-owned
         # child processes, including non-Compose local launches.
         "QUAZONAI_MASTER_KEY": "",
@@ -251,6 +255,15 @@ def _codex_launch_configuration(
         "QUAZONAI_AUTH_SESSION_TTL_SECONDS": "",
         "QUAZONAI_AUTH_TRUSTED_BROWSER_TTL_DAYS": "",
         "QUAZONAI_AUTH_TRUSTED_PROXY_CIDRS": "",
+        "QUAZONAI_NAUTILUS_RUNTIME_URL": "",
+        "QUAZONAI_NAUTILUS_RUNTIME_TOKEN": "",
+        "QUAZONAI_NAUTILUS_SEALED_RUNTIME_URL": "",
+        "QUAZONAI_NAUTILUS_SEALED_RUNTIME_TOKEN": "",
+        "QUAZONAI_NAUTILUS_VERSION": "",
+        "QUAZONAI_NAUTILUS_CONTRACT_VERSION": "",
+        "QUAZONAI_NAUTILUS_RUNTIME_TIMEOUT_SECONDS": "",
+        "QUAZONAI_NAUTILUS_RUNTIME_POLL_SECONDS": "",
+        "QUAZONAI_NAUTILUS_RUNTIME_VERIFY_TLS": "",
     }
     overrides = [
         'shell_environment_policy.inherit="core"',
@@ -307,6 +320,7 @@ def run_mission(settings: Settings, job_id: UUID) -> None:
         ) from exc
 
     mission_id, program_id, context = _load_mission_context(settings, job_id)
+    context += build_mission_quant_context(settings)
     workspace = _prepare_worktree(settings, program_id, mission_id)
     (workspace / "MISSION.md").write_text(context, encoding="utf-8")
 
@@ -332,9 +346,11 @@ def run_mission(settings: Settings, job_id: UUID) -> None:
                     },
                     developer_instructions=(
                         "You are a QuaZonai Research Mission worker. Work only inside this Mission worktree. "
-                        "Read MISSION.md, perform the bounded research task, and write durable findings to RESULT.md. "
-                        "Do not request approvals, do not access external networks, do not place trades, do not manage "
-                        "broker state, and do not alter the frozen Research Charter."
+                        "Read MISSION.md and perform the bounded research task. Always write durable findings "
+                        "to RESULT.md. For ALPHA_DISCOVERY, also write the typed EXPERIMENTS.json requested in "
+                        "MISSION.md; do not invent performance, orders, fills, positions, PnL, or statistics. "
+                        "The trusted parent executes experiments after your turn. Do not request approvals, "
+                        "access external networks, place trades, manage broker state, or alter the Charter."
                     ),
                 )
                 with factory() as session, session.begin():
@@ -364,16 +380,29 @@ def run_mission(settings: Settings, job_id: UUID) -> None:
                     )
 
                 result = thread.run(
-                    "Execute the Mission in MISSION.md. Produce RESULT.md with the evidence, assumptions, limitations, "
-                    "and concrete next research actions. Return a concise completion summary."
+                    "Execute the Mission in MISSION.md. Produce RESULT.md with assumptions, limitations, "
+                    "and next actions. For ALPHA_DISCOVERY, produce the required EXPERIMENTS.json without "
+                    "claiming results. Return a concise completion summary."
                 )
 
+        quant_result = execute_mission_experiments(
+            settings,
+            mission_id=mission_id,
+            workspace=workspace,
+        )
         _git("add", "-A", cwd=workspace)
         status = _git("status", "--porcelain", cwd=workspace).stdout.strip()
         if status:
             _git("commit", "-m", f"Complete research mission {mission_id}", cwd=workspace)
 
         final_response = (result.final_response or "Mission completed without a textual summary.").strip()
+        if quant_result is not None:
+            selected = quant_result.get("selected_discovery_run_id")
+            promotion = quant_result.get("promotion")
+            final_response = (
+                f"{final_response}\n\nCanonical quant runtime: selected run {selected}; "
+                f"promotion state {promotion}."
+            )
         with factory() as session, session.begin():
             mission = session.execute(
                 select(ResearchMission)
@@ -389,7 +418,10 @@ def run_mission(settings: Settings, job_id: UUID) -> None:
                 kind="MISSION_SUCCEEDED",
                 program_id=program_id,
                 mission_id=mission_id,
-                payload={"summary": mission.summary},
+                payload={
+                    "summary": mission.summary,
+                    "quant_runtime_executed": quant_result is not None,
+                },
             )
     except Exception as exc:
         with factory() as session, session.begin():

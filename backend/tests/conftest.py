@@ -15,7 +15,7 @@ from settings import Settings
 
 def _test_database_url() -> str:
     configured = os.environ.get("QUAZONAI_DATABASE_URL", "")
-    if configured.startswith("postgresql"):
+    if configured.startswith(("postgresql", "sqlite")):
         return configured
     return "sqlite+pysqlite:///:memory:"
 

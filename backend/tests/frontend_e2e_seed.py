@@ -98,7 +98,7 @@ def main() -> None:
             enabled=True,
             package_contract_version="1",
             feedback_contract_version="1",
-            compatibility=["US_EQUITIES"],
+            compatibility=["US_EQUITIES", "NAUTILUS_TRADER_1.231.0"],
             preflight_state="READY",
             public_config={},
         )
@@ -109,7 +109,7 @@ def main() -> None:
             enabled=True,
             package_contract_version="1",
             feedback_contract_version="1",
-            compatibility=["US_EQUITIES"],
+            compatibility=["US_EQUITIES", "NAUTILUS_TRADER_1.231.0"],
             preflight_state="READY",
             public_config={},
         )
@@ -152,11 +152,58 @@ def main() -> None:
                     "instrument_id": "AAPL",
                     "alpha_name": "PEAD residual drift",
                     "role": "PRIMARY_ALPHA",
-                    "target_weight": 0.45,
+                    "target_weight": 1.0,
                     "universe": "US Equities",
                 }
             ],
-            metrics={"search_adjusted_quality": 0.78},
+            metrics={
+                "search_adjusted_quality": 0.78,
+                "nautilus": {
+                    "strategy_artifact": {
+                        "strategy_path": "strategy.example:ExampleStrategy",
+                        "config_path": "strategy.example:ExampleConfig",
+                        "config": {"instrument_id": "AAPL.SIM", "trade_size": "1"},
+                        "source_files": {
+                            "strategy/__init__.py": "",
+                            "strategy/example.py": (
+                                "class ExampleConfig:\n    pass\n\n"
+                                "class ExampleStrategy:\n    pass\n"
+                            ),
+                        },
+                        "requirements": ["nautilus-trader==1.231.0"],
+                    },
+                    "portfolio_evidence": {
+                        "external_run_id": "fixture-portfolio-run",
+                        "state": "SUCCEEDED",
+                        "mode": "PORTFOLIO",
+                        "runtime_name": "NautilusTrader",
+                        "nautilus_version": "1.231.0",
+                        "contract_version": "1",
+                        "catalog_uri": "catalog://frontend-fixture",
+                        "strategy_artifact": {
+                            "strategy_path": "strategy.example:ExampleStrategy",
+                            "config_path": "strategy.example:ExampleConfig",
+                            "config": {"instrument_id": "AAPL.SIM", "trade_size": "1"},
+                            "source_files": {
+                                "strategy/__init__.py": "",
+                                "strategy/example.py": (
+                                    "class ExampleConfig:\n    pass\n\n"
+                                    "class ExampleStrategy:\n    pass\n"
+                                ),
+                            },
+                            "requirements": ["nautilus-trader==1.231.0"],
+                        },
+                        "orders": [{"instrument_id": "AAPL.SIM", "side": "BUY", "account_id": "SIM-001"}],
+                        "fills": [{"instrument_id": "AAPL.SIM"}],
+                        "positions": [{"instrument_id": "AAPL.SIM", "account_id": "SIM-001"}],
+                        "account": [{"currency": "USD", "balance": "100000"}],
+                        "statistics": {"total_orders": 1, "sharpe_ratio": 0.8},
+                    },
+                    "discovery_run_id": "fixture-discovery-run",
+                    "sealed_run_id": "fixture-sealed-run",
+                    "portfolio_run_id": "fixture-portfolio-run",
+                },
+            },
             created_at=now,
         )
         session.add_all([alpha, candidate])

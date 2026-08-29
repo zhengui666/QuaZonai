@@ -11,11 +11,19 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable, Sequence
+from threading import Event, Thread
+from uuid import UUID
 
 from db.models import Job
 from db.session import SessionFactory, create_database_engine, create_session_factory, ping_database
 from events import append_event
-from jobs import claim_next_job, complete_job, fail_job, release_expired_leases
+from jobs import (
+    claim_next_job,
+    complete_job,
+    fail_job,
+    release_expired_leases,
+    renew_job_lease,
+)
 from logging_utils import configure_logging
 from runtime_config import effective_settings
 from settings import Settings
@@ -66,7 +74,47 @@ HANDLERS: dict[str, Handler] = {
         "run",
         timeout_attribute="mission_job_timeout_seconds",
     ),
+    "SEALED_EVALUATION": _child_handler(
+        "runners.sealed_evaluator",
+        "run",
+        timeout_attribute="mission_job_timeout_seconds",
+    ),
 }
+
+
+def _start_lease_renewer(
+    factory: SessionFactory,
+    *,
+    job_id: UUID,
+    owner: str,
+    lease_seconds: int,
+) -> tuple[Event, Thread]:
+    stop = Event()
+    interval = max(0.1, min(30.0, lease_seconds / 3))
+
+    def renew() -> None:
+        while not stop.wait(interval):
+            try:
+                with factory.begin() as session:
+                    renewed = renew_job_lease(
+                        session,
+                        job_id=job_id,
+                        owner=owner,
+                        lease_seconds=lease_seconds,
+                    )
+                if not renewed:
+                    LOGGER.error("job lease was lost", extra={"job_id": str(job_id)})
+                    return
+            except Exception:  # noqa: BLE001 - heartbeat must keep retrying transient DB failures
+                LOGGER.exception("job lease renewal failed", extra={"job_id": str(job_id)})
+
+    thread = Thread(
+        target=renew,
+        name=f"job-lease-renewer-{job_id}",
+        daemon=True,
+    )
+    thread.start()
+    return stop, thread
 
 
 class StopFlag:
@@ -104,29 +152,45 @@ def run_once(
         session.expunge(job)
 
     handler = HANDLERS.get(job.kind)
+    lease_stop: Event | None = None
+    lease_thread: Thread | None = None
     try:
         if handler is None:
             raise RuntimeError(f"Unsupported job kind: {job.kind}")
+        lease_stop, lease_thread = _start_lease_renewer(
+            factory,
+            job_id=job.id,
+            owner=owner,
+            lease_seconds=settings.job_lease_seconds,
+        )
         handler(settings, job)
     except Exception as exc:  # noqa: BLE001 - durable job failure boundary
+        if lease_stop is not None:
+            lease_stop.set()
+        if lease_thread is not None:
+            lease_thread.join()
         with factory.begin() as session:
             current = session.get(Job, job.id)
             if current is not None:
-                fail_job(session, current, str(exc)[-4000:])
-                append_event(
-                    session,
-                    kind="JOB_FAILED",
-                    aggregate_type="job",
-                    aggregate_id=current.id,
-                    payload={"error_code": type(exc).__name__},
-                )
+                if fail_job(session, current, str(exc)[-4000:], owner=owner):
+                    append_event(
+                        session,
+                        kind="JOB_FAILED",
+                        aggregate_type="job",
+                        aggregate_id=current.id,
+                        payload={"error_code": type(exc).__name__},
+                    )
         LOGGER.exception("job failed", extra={"job_id": str(job.id)})
         return True, settings.job_poll_seconds
 
+    if lease_stop is not None:
+        lease_stop.set()
+    if lease_thread is not None:
+        lease_thread.join()
+
     with factory.begin() as session:
         current = session.get(Job, job.id)
-        if current is not None:
-            complete_job(session, current)
+        if current is not None and complete_job(session, current, owner=owner):
             append_event(
                 session,
                 kind="JOB_SUCCEEDED",

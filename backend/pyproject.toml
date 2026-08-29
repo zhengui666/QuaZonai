@@ -28,11 +28,17 @@ dependencies = [
 [project.optional-dependencies]
 research = ["optuna==4.9.0", "pyarrow==25.0.1"]
 agent = ["openai-codex==0.144.4"]
+nautilus-runtime = [
+  "nautilus-trader==1.231.0",
+  "numpy>=2.3,<3",
+  "pandas>=2.3,<4",
+]
 dev = ["mypy>=1.18,<2", "pytest>=9,<10", "ruff>=0.15,<1"]
 
 [project.scripts]
 quazonai = "cli.main:main"
 quazonai-finite-worker = "runners.finite_worker:main"
+quazonai-nautilus-runtime = "runners.nautilus_remote_runtime:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -40,7 +46,7 @@ py-modules = ["quazonai", "candidate_packages", "crypto", "downstream_auth", "er
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["api*", "cli*", "db*", "plugins*", "runners*"]
+include = ["api*", "cli*", "db*", "plugins*", "quant_runtime*", "runners*"]
 
 [tool.ruff]
 target-version = "py314"
@@ -72,3 +78,6 @@ disable_error_code = ["assignment"]
 pythonpath = ["src"]
 testpaths = ["tests"]
 addopts = "-ra"
+markers = [
+  "nautilus: tests requiring an independently running NautilusTrader runtime",
+]

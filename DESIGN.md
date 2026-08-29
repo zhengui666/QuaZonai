@@ -1,9 +1,9 @@
 # QuaZonai 产品需求与技术架构设计
 
-> 架构基线：2026-08-25  
+> 架构基线：2026-08-29（Issue #22 Nautilus-first）
 > 文档地位：**QuaZonai 唯一完整的产品与架构事实源**  
 > 目标：Codex Harness 驱动的单用户、自托管、持续自治量化研究与策略组合工作台  
-> 当前状态：**目标方案已锁定；现有代码仍包含旧 Nautilus 执行控制路径，尚未 conforming / release-ready**
+> 当前状态：**Nautilus-first 远程量化运行边界已进入实现验收；合并前以 CI、Review 与独立复核为准**
 
 `OPERATIONS.md` 只展开用户运行视图；`CLI.md` 只展开 CLI、Codex Runtime 和 Agent Tool 合同；`README.md` 只做入口与当前状态摘要；代码、测试、聊天记录和临时决策文件不得静默改写本文。
 
@@ -485,30 +485,72 @@ point_in_time_state
 
 数据质量失败是 Data Evidence，不得被解释为 Alpha 失败。
 
-## 11. Canonical Research Engine
+## 11. Canonical Quant Runtime：Remote NautilusTrader
 
-QZ Research Engine 与 NautilusTrader 完全无关。
+QZ 不再自建平行的向量化交易模拟器。NautilusTrader `1.231.0` 是首个、默认且正式支持的 Canonical Quant Runtime。
 
-技术基线：
+### 11.1 Thin Quant Runtime Adapter
 
-- Canonical columnar format：Apache Arrow / Parquet；
-- Feature computation：Polars Lazy；
-- 参数与多目标搜索：Optuna；
-- Portfolio optimization：CVXPY；
-- Canonical evaluator：QZ 自有最小确定性、向量化 target-weight evaluator；
-- 可选第三方 research adapters 不成为业务事实源。
+Core 只依赖薄 HTTP 合同 `NautilusQuantRuntime`，负责 capabilities、Catalog ingest/validate、Discovery/Sealed/Portfolio run 和 Candidate Bundle conformance verification。它不 import NautilusTrader，不维护订单/仓位账本，也不提供 Paper/Live 控制。
 
-Research Engine 模拟：
+### 11.2 远程独立实例
 
 ```text
-signals
-→ target exposure / weight
-→ rebalance
-→ cost/slippage/capacity assumptions
-→ returns/risk/turnover
+QZ Control Plane
+  API / PostgreSQL / finite-worker / Durable Jobs
+          |
+          | typed HTTP experiment contract
+          v
+Remote Nautilus Research Runtime
+  ParquetDataCatalog / Strategy / BacktestNode
+  Simulated Venue / Matching / Fee / Fill / Latency
+  Cache / Portfolio / Positions / PnL / Reports
+          |
+          | structured aggregate run evidence
+          v
+QZ Evaluation Governance
+          |
+          | sealed contract, separate endpoint/token/catalog
+          v
+Remote Sealed Nautilus Runtime
+          |
+          | evaluator-only raw evidence and deterministic decision
+          v
+Alpha / Portfolio / Approval / Candidate Bundle
 ```
 
-不模拟 broker session、order lifecycle、partial fill、venue protocol、credentials、recovery 或真实账户状态。
+Core production image 不安装 `nautilus_trader`；该依赖只存在于独立 remote-runtime image 和真实 integration tests。Research 与 Sealed runtime 可以运行在另一台主机/集群，不依赖共享本地路径、Docker socket、QZ 子进程或固定 `localhost`。
+
+### 11.3 Nautilus-first data and evidence
+
+Remote runtime 使用 Nautilus Instrument model、Quote/Trade/Bar/OrderBook/CustomData、loader/wrangler/adapter 与 `ParquetDataCatalog`。QZ PostgreSQL 只保存治理元数据和受控的结构化聚合运行证据；订单、成交、仓位和账户报告留在独立 runtime，不进入 QZ 的持久化事实：
+
+```text
+dataset_revision_id / catalog_uri / source_license
+nautilus_data_type / instrument_scope
+event_time_range / available_time_range / schema_revision
+quality_result / point_in_time_result
+runtime_name / runtime_version / run mode / aggregate run evidence
+```
+
+Agent 只能引用已治理、未封存的 Dataset Revision。受信 Mission runner 校验 Catalog binding、instrument scope、quality 与 point-in-time 状态。Discovery 的成功与失败均进入 Search Ledger；Sealed raw evidence 只在 evaluator 子进程边界短暂存在，QZ 只保存 deterministic disclosure 和聚合统计，API 不返回 runtime 错误细节。
+
+### 11.4 Research Mission、Sealed 与 Portfolio
+
+Codex 在隔离 worktree 中生成 `EXPERIMENTS.json`，但不获得 DB、runtime endpoint/token、Sealed data 或 broker credential。受信 runner 校验 contract 后调用 Remote Research Runtime，并把每个结果持久化为 `QuantRuntimeRun` 与 `SearchLedgerEntry`。
+
+Discovery 成功后创建新的 Sealed Evaluation Episode，由独立 Sealed endpoint/token/catalog 使用相同 pinned runtime 和 Strategy artifact 执行。Sealed 通过 deterministic classification 进入治理；只有通过后，才冻结适用的 Universe Version、Mandate Version、Capital Context Version 与 TargetPortfolioFrame，再在 Research runtime 的 discovery catalog 上执行 Portfolio simulation，并产生 Alpha、Portfolio Candidate 与 Paper Approval。Promotion threshold 不属于 Mission 输出；所有 Sealed classification 和 promotion policy 均由 server-owned policy 决定。
+
+### 11.5 Portfolio 与 Risk ownership
+
+```text
+Alpha selection / Mandate / target-weight optimization -> QuaZonai
+Target weights -> strategy / rebalance / orders         -> NautilusTrader
+Positions / PnL / margin / execution risk               -> NautilusTrader
+Research / promotion / overfitting risk                 -> QuaZonai
+```
+
+Candidate 最终必须通过 Nautilus transaction-level simulation。QZ 不提交、修改或撤销真实订单，不启动、停止或恢复 Paper/Live runtime。
 
 ## 12. Alpha Contract
 
@@ -877,42 +919,42 @@ OTHER
 
 Codex 只能看到 policy 允许的 reason code 和用户 note，不能看到 Level 2 Sealed 明细。
 
-## 24. Candidate Package
+## 24. Nautilus-native Candidate Bundle
 
 V1 标准格式：
 
 ```text
-candidate-package/
+candidate-bundle/
   manifest.json
-  schemas/
+  requirements.lock
+  strategy/
+    strategy.whl
+    strategy-config.json
+    actor-config.json
+  data/
+    requirements.json
+    instrument-scope.json
+    custom-data-schemas/
   runtime/
-    feature_pipeline.whl
-    alpha_model.whl
-    calibration.whl
-    portfolio_policy.whl
-  fixtures/
-    input.arrow
-    expected_alpha.arrow
-    expected_portfolio.arrow
+    nautilus-version.json
+    backtest-run-config.json
+    venue-config.json
+    risk-config.json
+    live-node-template.json
+  validation/
+    fixture-catalog/
+    target-portfolio-frame.json
+    expected-statistics.json
   evidence/
-    approval-summary.json
+    discovery-summary.json
+    sealed-summary.json
+    robustness-summary.json
   lineage.json
 ```
 
-Python Reference Runtime 是正式参考实现：
+`requirements.lock` 精确固定 `nautilus-trader==1.231.0` 及所有其他依赖。Bundle 不包含真实 broker/provider/runtime credential、private key、account secret、账户/执行报告或 execution-control endpoint；`live-node-template.json` 只是 downstream-owned 配置模板，QZ 不启动或控制节点。Bundle 只传递脱敏后的 `TargetPortfolioFrame` 和聚合统计，conformance 依赖显式 artifact/version、wheel metadata、schema、required files、fixture/report/statistics 与 remote `verify_candidate`，不新增应用级 hash/checksum/fingerprint gate。
 
-```text
-canonical input
-→ Feature Pipeline
-→ Alpha
-→ Calibration
-→ Portfolio Policy
-→ TargetPortfolioFrame
-```
-
-它不连接行情源、broker 或 wallet，不提交订单。
-
-Package 禁止包含：broker URL、API key、private key、account ID、order type、TIF、order id、recovery、heartbeat 或 execution retry。
+Package 禁止包含：broker URL、API key、private key、account ID、order type、TIF、order id、recovery、heartbeat 或 execution retry。`validation/` 只包含脱敏后的 Reference Fixture 与预期报告，不包含运行时账户数据。
 
 QZ 不为 Package 创建应用级 hash/checksum/fingerprint。完整性与兼容性依赖：显式 artifact ID/version、文件名/长度、wheel/package metadata、schema validation、Reference Fixture 执行结果与 contract version。
 
@@ -1283,16 +1325,25 @@ ACTIVE → DRAINING → INACTIVE → REMOVING → REMOVED
 
 ## 37. 运行拓扑
 
-Production Compose 最小服务：
+QuaZonai Core production Compose 最小服务：
 
 ```text
 postgres
 migrate
 api                 # FastAPI + built React static assets + SSE
-worker              # jobs: data/plugin/package/handoff/degradation
-agent-worker        # Codex App Server child + Mission lifecycle
-evaluator           # Sealed Promotion evaluator, no Codex workspace access
+finite-worker       # Mission + remote Discovery/Sealed durable jobs
 ```
+
+外部独立部署：
+
+```text
+remote-nautilus-research-runtime
+remote-nautilus-sealed-runtime
+nautilus-paper-node
+nautilus-live-node
+```
+
+`deploy/Dockerfile.nautilus-runtime` 是 reference remote runtime image；`deploy/nautilus-runtime.compose.example.yml` 仅用于在另一主机部署示例，不加入 Core Compose。Research 与 Sealed 使用不同 endpoint/token/catalog。Core API image 必须证明未安装 NautilusTrader。
 
 不引入 Redis、Celery、Kafka 或 Kubernetes。使用 PostgreSQL durable jobs + `FOR UPDATE SKIP LOCKED`，事件表 + `LISTEN/NOTIFY` 仅做唤醒。
 
@@ -1908,7 +1959,7 @@ QuaZonai/
 
 ## 50. 当前实现状态与迁移原则
 
-截至本基线，仓库代码仍主要实现旧的 QZ+Nautilus execution control-plane。它与本文冲突，不能称为 conforming。
+截至本基线，Issue #22 的 Nautilus-first 远程运行主链已落入实现：Core 通过 typed HTTP contract 使用独立 Research/Sealed Nautilus runtime，Candidate Bundle 由 pinned runtime conformance 校验。CI、真实双 runtime integration test、Codex Review 与独立架构复核仍是合并和 release readiness 的必要证据。
 
 迁移原则：
 
