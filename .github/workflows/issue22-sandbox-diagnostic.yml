@@ -39,6 +39,38 @@ jobs:
             sudo apparmor_parser -r /etc/apparmor.d/bwrap
           fi
           python -m pip install -e 'nautilus_runtime[dev]'
+      - name: Inspect interpreter and exact sandbox command
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+          import tempfile
+          from pathlib import Path
+          from quazonai_nautilus_gateway.engine import _source_bundle_sandbox_command
+
+          executable = Path(sys.executable)
+          print('EXECUTABLE', executable)
+          print('EXEC_EXISTS', executable.exists(), 'IS_SYMLINK', executable.is_symlink())
+          print('EXEC_REALPATH', executable.resolve())
+          print('PREFIX', sys.prefix)
+          print('BASE_PREFIX', sys.base_prefix)
+          subprocess.run(['ls', '-l', str(executable)], check=False)
+          subprocess.run(['file', str(executable)], check=False)
+          subprocess.run(['ldd', str(executable)], check=False)
+          subprocess.run(['readelf', '-l', str(executable)], check=False)
+          with tempfile.TemporaryDirectory() as tmp:
+              workspace = Path(tmp)
+              (workspace / 'runtime').mkdir()
+              command = _source_bundle_sandbox_command(operation='backtest', workspace=workspace)
+              print('COMMAND', json.dumps(command))
+              probe = command[:-3] + [str(sys.executable), '-I', '-c', "import sys; print(sys.executable); print('probe-ok')"]
+              completed = subprocess.run(probe, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+              print('PROBE_RETURN', completed.returncode)
+              print('PROBE_STDOUT', repr(completed.stdout))
+              print('PROBE_STDERR', repr(completed.stderr))
+          PY
       - name: Expose sandbox stderr only inside this diagnostic checkout
         run: |
           python - <<'PY'
