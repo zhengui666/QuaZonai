@@ -152,7 +152,7 @@ def main() -> None:
                     "instrument_id": "AAPL",
                     "alpha_name": "PEAD residual drift",
                     "role": "PRIMARY_ALPHA",
-                    "target_weight": 0.45,
+                    "target_weight": 1.0,
                     "universe": "US Equities",
                 }
             ],
