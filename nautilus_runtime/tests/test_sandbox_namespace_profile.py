@@ -28,8 +28,12 @@ def test_source_bundle_sandbox_uses_minimal_supported_namespaces(
     ):
         assert flag in command
 
+    root_bind_index = command.index("--ro-bind")
+    assert command[root_bind_index + 1 : root_bind_index + 3] == ["/", "/"]
+
     sandbox_dir_index = command.index("/sandbox")
     sandbox_bind_index = command.index("/sandbox", sandbox_dir_index + 1)
+    assert root_bind_index < sandbox_dir_index
     assert command[sandbox_dir_index - 1] == "--dir"
     assert command[sandbox_bind_index - 2] == "--bind"
     assert sandbox_dir_index < sandbox_bind_index
