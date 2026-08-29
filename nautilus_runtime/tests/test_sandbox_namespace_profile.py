@@ -28,7 +28,17 @@ def test_source_bundle_sandbox_uses_minimal_supported_namespaces(
     ):
         assert flag in command
 
-    gateway_mount_index = command.index("/gateway-src")
+    sandbox_dir_index = command.index("/sandbox")
+    sandbox_bind_index = command.index("/sandbox", sandbox_dir_index + 1)
+    assert command[sandbox_dir_index - 1] == "--dir"
+    assert command[sandbox_bind_index - 2] == "--bind"
+    assert sandbox_dir_index < sandbox_bind_index
+
+    gateway_dir_index = command.index("/gateway-src")
+    gateway_mount_index = command.index("/gateway-src", gateway_dir_index + 1)
+    assert command[gateway_dir_index - 1] == "--dir"
+    assert command[gateway_mount_index - 2] == "--ro-bind"
+    assert gateway_dir_index < gateway_mount_index
     gateway_package_root = Path(command[gateway_mount_index - 1])
     assert gateway_package_root.name == "src"
     assert (gateway_package_root / "quazonai_nautilus_gateway").is_dir()
