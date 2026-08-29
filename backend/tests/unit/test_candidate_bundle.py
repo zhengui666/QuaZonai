@@ -45,6 +45,7 @@ def test_candidate_bundle_is_nautilus_native_and_secret_free(settings: Settings)
         portfolio_program_id=uuid4(),
         mandate_version_id=uuid4(),
         capital_context_version_id=None,
+        universe_set_json=[str(uuid4())],
         evaluation_episode_id=uuid4(),
         policy_version="POLICY_V1",
         risk_model_version="RISK_V1",
@@ -74,7 +75,7 @@ def test_candidate_bundle_is_nautilus_native_and_secret_free(settings: Settings)
         capacity_summary={},
         changes_summary={},
     )
-    downstream = SimpleNamespace(package_contract_version="2")
+    downstream = SimpleNamespace(package_contract_version="1")
 
     built = build_candidate_package(
         settings,
@@ -91,13 +92,13 @@ def test_candidate_bundle_is_nautilus_native_and_secret_free(settings: Settings)
             "strategy/strategy.whl",
             "runtime/nautilus-version.json",
             "runtime/live-node-template.json",
-            "validation/expected-orders.json",
+            "validation/target-portfolio-frame.json",
             "evidence/discovery-summary.json",
             "evidence/sealed-summary.json",
             "lineage.json",
         } <= names
         manifest = json.loads(archive.read("manifest.json"))
-        assert manifest["candidate_bundle_contract_version"] == "2"
+        assert manifest["candidate_bundle_contract_version"] == "1"
         assert manifest["canonical_runtime"] == {
             "name": "NautilusTrader",
             "version": "1.231.0",
@@ -105,9 +106,9 @@ def test_candidate_bundle_is_nautilus_native_and_secret_free(settings: Settings)
         }
         assert manifest["execution_secret_material"] == "excluded"
         assert b"api_key" not in archive.read("manifest.json")
-        assert b"account_id" not in archive.read("validation/expected-orders.json")
-        assert b"account_id" not in archive.read("validation/expected-positions.json")
         assert b"account.SIM.id" not in archive.read("validation/expected-statistics.json")
+        assert b"order" not in archive.read("validation/target-portfolio-frame.json").lower()
+        assert b"position" not in archive.read("validation/target-portfolio-frame.json").lower()
         assert archive.read("requirements.lock") == b"nautilus-trader==1.231.0\n"
 
     assert built.operator_summary["approval_id"] == str(approval.id)

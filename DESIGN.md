@@ -506,7 +506,7 @@ Remote Nautilus Research Runtime
   Simulated Venue / Matching / Fee / Fill / Latency
   Cache / Portfolio / Positions / PnL / Reports
           |
-          | structured run evidence
+          | structured aggregate run evidence
           v
 QZ Evaluation Governance
           |
@@ -523,23 +523,23 @@ Core production image 不安装 `nautilus_trader`；该依赖只存在于独立 
 
 ### 11.3 Nautilus-first data and evidence
 
-Remote runtime 使用 Nautilus Instrument model、Quote/Trade/Bar/OrderBook/CustomData、loader/wrangler/adapter 与 `ParquetDataCatalog`。QZ PostgreSQL 只保存治理元数据和受控的结构化运行证据：
+Remote runtime 使用 Nautilus Instrument model、Quote/Trade/Bar/OrderBook/CustomData、loader/wrangler/adapter 与 `ParquetDataCatalog`。QZ PostgreSQL 只保存治理元数据和受控的结构化聚合运行证据；订单、成交、仓位和账户报告留在独立 runtime，不进入 QZ 的持久化事实：
 
 ```text
 dataset_revision_id / catalog_uri / source_license
 nautilus_data_type / instrument_scope
 event_time_range / available_time_range / schema_revision
 quality_result / point_in_time_result
-runtime_name / runtime_version / run mode / run evidence
+runtime_name / runtime_version / run mode / aggregate run evidence
 ```
 
-Agent 只能引用已治理、未封存的 Dataset Revision。受信 Mission runner 校验 Catalog binding、instrument scope、quality 与 point-in-time 状态。Discovery 的成功与失败均进入 Search Ledger；Sealed raw evidence 只在 evaluator 边界保存，API 只返回受控 disclosure。
+Agent 只能引用已治理、未封存的 Dataset Revision。受信 Mission runner 校验 Catalog binding、instrument scope、quality 与 point-in-time 状态。Discovery 的成功与失败均进入 Search Ledger；Sealed raw evidence 只在 evaluator 子进程边界短暂存在，QZ 只保存 deterministic disclosure 和聚合统计，API 不返回 runtime 错误细节。
 
 ### 11.4 Research Mission、Sealed 与 Portfolio
 
 Codex 在隔离 worktree 中生成 `EXPERIMENTS.json`，但不获得 DB、runtime endpoint/token、Sealed data 或 broker credential。受信 runner 校验 contract 后调用 Remote Research Runtime，并把每个结果持久化为 `QuantRuntimeRun` 与 `SearchLedgerEntry`。
 
-Discovery 成功后创建新的 Sealed Evaluation Episode，由独立 Sealed endpoint/token/catalog 使用相同 pinned runtime 和 Strategy artifact 执行。Sealed 通过 deterministic classification 进入治理；只有通过后，才在 Research runtime 的 discovery catalog 上执行 Portfolio simulation，并产生 Alpha、Portfolio Candidate 与 Paper Approval。Portfolio simulation 不是 Sealed evidence。
+Discovery 成功后创建新的 Sealed Evaluation Episode，由独立 Sealed endpoint/token/catalog 使用相同 pinned runtime 和 Strategy artifact 执行。Sealed 通过 deterministic classification 进入治理；只有通过后，才冻结适用的 Universe Version、Mandate Version、Capital Context Version 与 TargetPortfolioFrame，再在 Research runtime 的 discovery catalog 上执行 Portfolio simulation，并产生 Alpha、Portfolio Candidate 与 Paper Approval。Promotion threshold 不属于 Mission 输出；所有 Sealed classification 和 promotion policy 均由 server-owned policy 决定。
 
 ### 11.5 Portfolio 与 Risk ownership
 
@@ -943,8 +943,7 @@ candidate-bundle/
     live-node-template.json
   validation/
     fixture-catalog/
-    expected-orders.json
-    expected-positions.json
+    target-portfolio-frame.json
     expected-statistics.json
   evidence/
     discovery-summary.json
@@ -953,7 +952,7 @@ candidate-bundle/
   lineage.json
 ```
 
-`requirements.lock` 精确固定 `nautilus-trader==1.231.0`。Bundle 不包含真实 broker/provider/runtime credential、private key、account secret 或 execution-control endpoint；`live-node-template.json` 只是 downstream-owned 配置模板，QZ 不启动或控制节点。Bundle conformance 依赖显式 artifact/version、wheel metadata、schema、required files、fixture/report/statistics 与 remote `verify_candidate`，不新增应用级 hash/checksum/fingerprint gate。
+`requirements.lock` 精确固定 `nautilus-trader==1.231.0` 及所有其他依赖。Bundle 不包含真实 broker/provider/runtime credential、private key、account secret、账户/执行报告或 execution-control endpoint；`live-node-template.json` 只是 downstream-owned 配置模板，QZ 不启动或控制节点。Bundle 只传递脱敏后的 `TargetPortfolioFrame` 和聚合统计，conformance 依赖显式 artifact/version、wheel metadata、schema、required files、fixture/report/statistics 与 remote `verify_candidate`，不新增应用级 hash/checksum/fingerprint gate。
 
 Package 禁止包含：broker URL、API key、private key、account ID、order type、TIF、order id、recovery、heartbeat 或 execution retry。`validation/` 只包含脱敏后的 Reference Fixture 与预期报告，不包含运行时账户数据。
 

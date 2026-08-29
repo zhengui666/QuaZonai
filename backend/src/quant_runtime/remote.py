@@ -14,6 +14,7 @@ from quant_runtime.contracts import (
     CatalogDescriptor,
     CatalogIngestSpec,
     ExperimentSpec,
+    RunMode,
     RunEvidence,
     RuntimeCapabilities,
 )
@@ -129,6 +130,13 @@ class NautilusQuantRuntime:
                 "The configured remote service is not a NautilusTrader runtime.",
                 503,
             )
+        if capabilities.candidate_contract_version != "1":
+            raise QfError(
+                "NAUTILUS_RUNTIME_CANDIDATE_CONTRACT_MISMATCH",
+                "The remote runtime does not support the Candidate Bundle contract.",
+                503,
+                {"expected": "1", "actual": capabilities.candidate_contract_version},
+            )
 
     def capabilities(self) -> RuntimeCapabilities:
         capabilities = RuntimeCapabilities.model_validate(
@@ -157,7 +165,7 @@ class NautilusQuantRuntime:
             )
         )
 
-    def _run(self, experiment: ExperimentSpec, mode: str) -> RunEvidence:
+    def _run(self, experiment: ExperimentSpec, mode: RunMode) -> RunEvidence:
         self.capabilities()
         payload = self._request_json(
             "POST",
@@ -187,6 +195,32 @@ class NautilusQuantRuntime:
             payload = self._request_json("GET", f"/v1/runs/{run_id}")
 
         evidence = RunEvidence.model_validate(payload)
+        expected_artifact = experiment.strategy.model_dump(mode="json")
+        if evidence.runtime_name != "NautilusTrader":
+            raise QfError(
+                "NAUTILUS_RUNTIME_IDENTITY_MISMATCH",
+                "Run evidence was produced by an unexpected runtime.",
+                502,
+            )
+        if evidence.mode != mode:
+            raise QfError(
+                "NAUTILUS_RUNTIME_MODE_MISMATCH",
+                "Run evidence mode does not match the requested run.",
+                502,
+                {"expected": mode, "actual": evidence.mode},
+            )
+        if evidence.catalog_uri != experiment.catalog_uri:
+            raise QfError(
+                "NAUTILUS_RUNTIME_CATALOG_MISMATCH",
+                "Run evidence references a different catalog than requested.",
+                502,
+            )
+        if evidence.strategy_artifact != expected_artifact:
+            raise QfError(
+                "NAUTILUS_RUNTIME_STRATEGY_MISMATCH",
+                "Run evidence references a different strategy artifact than requested.",
+                502,
+            )
         if evidence.nautilus_version != self.config.pinned_version:
             raise QfError(
                 "NAUTILUS_RUNTIME_VERSION_MISMATCH",

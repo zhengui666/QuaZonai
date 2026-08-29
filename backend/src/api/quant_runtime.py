@@ -13,6 +13,7 @@ from sqlalchemy import select
 from db.models import (
     DatasetRevision,
     GovernedDataSource,
+    MarketUniverseVersion,
     NautilusCatalogBinding,
     QuantRuntimeRun,
     SearchLedgerEntry,
@@ -33,7 +34,7 @@ class CatalogIngestInput(StrictModel):
     catalog_name: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$")
     provider: str = Field(min_length=1, max_length=200)
     source_license: str = Field(min_length=1, max_length=500)
-    universe_name: str | None = Field(default=None, max_length=200)
+    universe_name: str = Field(min_length=1, max_length=200)
     sealed: bool = False
     source_spec: dict[str, Any]
 
@@ -89,6 +90,24 @@ class SearchLedgerView(StrictModel):
     created_at: str
 
 
+def _normalized_time(value: object) -> str | None:
+    if value is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value) if isinstance(value, str) else value
+        if not isinstance(parsed, datetime):
+            return str(value)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC).isoformat()
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _normalized_range(start: object, end: object) -> dict[str, str | None]:
+    return {"start": _normalized_time(start), "end": _normalized_time(end)}
+
+
 def _runtime(*, sealed: bool = False) -> NautilusQuantRuntime:
     config = RemoteNautilusConfig.from_env(
         required=True,
@@ -96,6 +115,11 @@ def _runtime(*, sealed: bool = False) -> NautilusQuantRuntime:
     )
     assert config is not None
     return NautilusQuantRuntime(config)
+
+
+def _remote_catalog_name(payload: CatalogIngestInput) -> str:
+    profile = "sealed" if payload.sealed else "research"
+    return f"{profile}-{payload.catalog_name}"
 
 
 def _catalog_view(item: NautilusCatalogBinding) -> CatalogView:
@@ -129,6 +153,16 @@ def _safe_run_evidence(item: QuantRuntimeRun) -> dict[str, Any]:
 
 
 def _run_view(item: QuantRuntimeRun) -> RunView:
+    error_code = item.error_code
+    error_message = item.error_message
+    if item.mode == "SEALED":
+        persisted = item.evidence
+        state = str(persisted.get("state", item.state)) if isinstance(persisted, dict) else item.state
+        error_code, error_message = (
+            ("SEALED_RUNTIME_FAILURE", "Sealed runtime failure; disclosure withheld.")
+            if state == "FAILED"
+            else (None, None)
+        )
     return RunView(
         id=item.id,
         program_id=item.program_id,
@@ -144,8 +178,8 @@ def _run_view(item: QuantRuntimeRun) -> RunView:
         contract_version=item.contract_version,
         parameters=item.parameters,
         evidence=_safe_run_evidence(item),
-        error_code=item.error_code,
-        error_message=item.error_message,
+        error_code=error_code,
+        error_message=error_message,
         created_at=item.created_at.isoformat() if item.created_at else None,
     )
 
@@ -157,16 +191,42 @@ def quant_runtime_capabilities() -> dict[str, Any]:
 
 @router.post("/quant-runtime/catalogs/ingest", response_model=CatalogView, status_code=201)
 def ingest_catalog(payload: CatalogIngestInput, request: Request) -> CatalogView:
+    factory = request.app.state.session_factory
+    remote_catalog_uri = f"catalog://{_remote_catalog_name(payload)}"
+    with factory() as session:
+        existing = session.scalar(
+            select(NautilusCatalogBinding).where(
+                NautilusCatalogBinding.catalog_uri == remote_catalog_uri
+            )
+        )
+        if existing is not None:
+            return _catalog_view(existing)
+        universe = session.scalar(
+            select(MarketUniverseVersion)
+            .where(
+                MarketUniverseVersion.name == payload.universe_name,
+                MarketUniverseVersion.state == "ACTIVE",
+            )
+            .order_by(MarketUniverseVersion.version_no.desc())
+        )
+        if universe is None:
+            raise QfError(
+                "UNIVERSE_NOT_GOVERNED",
+                "Catalog ingestion requires an active governed Universe Version.",
+                422,
+                {"universe_name": payload.universe_name},
+            )
+        universe_id = universe.id
+
     descriptor = _runtime(sealed=payload.sealed).ingest(
         CatalogIngestSpec(
-            catalog_name=payload.catalog_name,
+            catalog_name=_remote_catalog_name(payload),
             provider=payload.provider,
             source_license=payload.source_license,
             sealed=payload.sealed,
             source_spec=payload.source_spec,
         )
     )
-    factory = request.app.state.session_factory
     with factory.begin() as session:
         existing = session.scalar(
             select(NautilusCatalogBinding).where(
@@ -177,7 +237,7 @@ def ingest_catalog(payload: CatalogIngestInput, request: Request) -> CatalogView
             return _catalog_view(existing)
 
         source = GovernedDataSource(
-            name=f"Nautilus catalog {payload.catalog_name}",
+            name=f"Nautilus {'sealed' if payload.sealed else 'research'} catalog {payload.catalog_name}",
             provider=descriptor.provider,
             state="ACTIVE",
             universe_scope=[payload.universe_name] if payload.universe_name else [],
@@ -188,12 +248,14 @@ def ingest_catalog(payload: CatalogIngestInput, request: Request) -> CatalogView
                 "catalog_uri": descriptor.catalog_uri,
                 "source_license": descriptor.source_license,
                 "remote_runtime": "NautilusTrader",
+                "runtime_profile": "sealed" if payload.sealed else "research",
             },
         )
         session.add(source)
         session.flush()
         revision = DatasetRevision(
             data_source_id=source.id,
+            universe_version_id=universe_id,
             universe_name=payload.universe_name,
             revision_no=1,
             schema_version=descriptor.schema_revision,
@@ -252,6 +314,38 @@ def list_catalogs(request: Request) -> list[CatalogView]:
         return [_catalog_view(item) for item in items]
 
 
+def _catalog_validation_changed(
+    item: NautilusCatalogBinding,
+    revision: DatasetRevision | None,
+    descriptor: Any,
+) -> bool:
+    if revision is None:
+        return True
+    expected_event = _normalized_range(revision.event_start, revision.event_end)
+    expected_available = _normalized_range(revision.available_start, revision.available_end)
+    actual_event = _normalized_range(
+        item.event_time_range.get("start"), item.event_time_range.get("end")
+    )
+    actual_available = _normalized_range(
+        item.available_time_range.get("start"), item.available_time_range.get("end")
+    )
+    return any(
+        (
+            item.instrument_scope != descriptor.instrument_scope,
+            item.nautilus_data_type != descriptor.nautilus_data_type,
+            item.schema_revision != descriptor.schema_revision,
+            actual_event != expected_event,
+            actual_available != expected_available,
+            revision.row_count != descriptor.row_count,
+            item.quality_result != descriptor.quality_result,
+            item.point_in_time_result != descriptor.point_in_time_result,
+            item.quality_state != ("VALID" if descriptor.quality_result.get("valid") else "INVALID"),
+            item.point_in_time_state
+            != ("VALID" if descriptor.point_in_time_result.get("valid") else "INVALID"),
+        )
+    )
+
+
 @router.post("/quant-runtime/catalogs/{catalog_id}/validate", response_model=CatalogView)
 def validate_catalog(catalog_id: UUID, request: Request) -> CatalogView:
     factory = request.app.state.session_factory
@@ -260,18 +354,14 @@ def validate_catalog(catalog_id: UUID, request: Request) -> CatalogView:
         if item is None:
             raise QfError("CATALOG_NOT_FOUND", "Nautilus catalog binding does not exist.", 404)
         descriptor = _runtime(sealed=item.sealed).validate_catalog(item.catalog_uri)
-        item.quality_result = descriptor.quality_result
-        item.quality_state = "VALID" if descriptor.quality_result.get("valid") else "INVALID"
-        item.point_in_time_result = descriptor.point_in_time_result
-        item.point_in_time_state = (
-            "VALID" if descriptor.point_in_time_result.get("valid") else "INVALID"
-        )
         revision = session.get(DatasetRevision, item.dataset_revision_id)
-        if revision is not None:
-            revision.quality_state = item.quality_state
-            revision.point_in_time_state = item.point_in_time_state
-            revision.row_count = descriptor.row_count
-        session.flush()
+        if _catalog_validation_changed(item, revision, descriptor):
+            raise QfError(
+                "CATALOG_REVISION_CHANGED",
+                "Validation facts changed; ingest a new named catalog revision instead of mutating this Dataset Revision.",
+                409,
+                {"catalog_uri": item.catalog_uri, "dataset_revision_id": str(item.dataset_revision_id)},
+            )
         return _catalog_view(item)
 
 

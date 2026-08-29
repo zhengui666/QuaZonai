@@ -33,6 +33,7 @@ from db.plugin_models import (
     PluginRuntimeBundleMember,
 )
 from db.quant_runtime_models import (
+    CapitalContextVersion,
     EvaluationEpisode,
     NautilusCatalogBinding,
     QuantRuntimeRun,
@@ -64,6 +65,7 @@ __all__ = [
     "NautilusCatalogBinding",
     "QuantRuntimeRun",
     "EvaluationEpisode",
+    "CapitalContextVersion",
     "SearchLedgerEntry",
     "AlphaQualification",
     "PortfolioMandate",

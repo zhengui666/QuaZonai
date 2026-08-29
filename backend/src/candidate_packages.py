@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+import re
 import shutil
 import zipfile
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -31,6 +34,8 @@ _FORBIDDEN_SECRET_FIELDS = {
     "wallet_seed",
     "broker_url",
 }
+_CANDIDATE_BUNDLE_CONTRACT_VERSION = "1"
+_EXACT_REQUIREMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*==[^\s;,]+$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +81,13 @@ def _member_rows(candidate: PortfolioCandidate) -> list[dict[str, Any]]:
                 422,
                 {"member_index": index},
             ) from exc
+        if not math.isfinite(weight) or not 0.0 <= weight <= 1.0:
+            raise QfError(
+                "CANDIDATE_BUNDLE_INVALID",
+                "Candidate target weights must be finite values between zero and one.",
+                422,
+                {"member_index": index},
+            )
         rows.append(
             {
                 "instrument_id": str(instrument),
@@ -87,6 +99,17 @@ def _member_rows(candidate: PortfolioCandidate) -> list[dict[str, Any]]:
         raise QfError(
             "CANDIDATE_BUNDLE_INVALID",
             "A Nautilus Candidate Bundle requires at least one target instrument.",
+            422,
+        )
+    if not math.isclose(
+        sum(row["target_weight"] for row in rows),
+        1.0,
+        rel_tol=0.0,
+        abs_tol=1e-9,
+    ):
+        raise QfError(
+            "CANDIDATE_BUNDLE_INVALID",
+            "Candidate target weights must sum to one.",
             422,
         )
     return rows
@@ -160,6 +183,12 @@ def _runtime_payload(
                 "actual": portfolio_evidence.nautilus_version,
             },
         )
+    if portfolio_evidence.strategy_artifact != artifact.model_dump(mode="json"):
+        raise QfError(
+            "CANDIDATE_BUNDLE_EVIDENCE_INVALID",
+            "Candidate evidence does not reference the frozen strategy artifact.",
+            422,
+        )
     _reject_secret_fields(raw)
     return artifact, portfolio_evidence, raw
 
@@ -178,6 +207,13 @@ def _requirements(artifact: StrategyArtifact) -> list[str]:
                 422,
                 {"requirement": clean},
             )
+        if not _EXACT_REQUIREMENT.fullmatch(clean):
+            raise QfError(
+                "CANDIDATE_BUNDLE_REQUIREMENT_INVALID",
+                "Every Candidate Bundle dependency must use an exact package version.",
+                422,
+                {"requirement": clean},
+            )
         if "://" in clean or clean.startswith(("git+", "-e ", "--editable")):
             raise QfError(
                 "CANDIDATE_BUNDLE_REQUIREMENT_INVALID",
@@ -187,7 +223,7 @@ def _requirements(artifact: StrategyArtifact) -> list[str]:
             )
         if clean not in result:
             result.append(clean)
-    return result
+    return sorted(set(result))
 
 
 def _write_strategy_wheel(path: Path, artifact: StrategyArtifact) -> None:
@@ -256,8 +292,7 @@ def _bundle_manifest(
         },
         "validation": {
             "fixture_catalog": "validation/fixture-catalog/",
-            "expected_orders": "validation/expected-orders.json",
-            "expected_positions": "validation/expected-positions.json",
+            "target_portfolio_frame": "validation/target-portfolio-frame.json",
             "expected_statistics": "validation/expected-statistics.json",
         },
         "evidence": {
@@ -280,6 +315,16 @@ def build_candidate_package(
     downstream: DownstreamSystem,
 ) -> BuiltCandidatePackage:
     """Freeze an approved Candidate into a Nautilus-native, remotely verified bundle."""
+    if downstream.package_contract_version != _CANDIDATE_BUNDLE_CONTRACT_VERSION:
+        raise QfError(
+            "CANDIDATE_BUNDLE_CONTRACT_UNSUPPORTED",
+            "The configured downstream Candidate Bundle contract is not supported.",
+            422,
+            {
+                "expected": _CANDIDATE_BUNDLE_CONTRACT_VERSION,
+                "actual": downstream.package_contract_version,
+            },
+        )
     rows = _member_rows(candidate)
     artifact, portfolio_evidence, runtime_data = _runtime_payload(candidate)
     requirements = _requirements(artifact)
@@ -379,14 +424,33 @@ def build_candidate_package(
                 "purpose": "candidate conformance fixture reference",
             },
         )
-        _write_json(
-            staging / "validation" / "expected-orders.json",
-            _without_runtime_account_data(portfolio_evidence.orders),
+        stored_frame = runtime_data.get("target_portfolio_frame")
+        target_frame = dict(stored_frame) if isinstance(stored_frame, dict) else {}
+        target_frame.update(
+            {
+                "schema_version": "1",
+                "portfolio_candidate_id": str(candidate.id),
+                "portfolio_state": "READY",
+                "rows": [
+                    {
+                        "instrument_id": row["instrument_id"],
+                        "target_weight": row["target_weight"],
+                        "alpha_qualification_id": row.get("alpha_qualification_id"),
+                        "confidence": 1.0,
+                    }
+                    for row in rows
+                ],
+            }
         )
-        _write_json(
-            staging / "validation" / "expected-positions.json",
-            _without_runtime_account_data(portfolio_evidence.positions),
-        )
+        universe_set = candidate.universe_set_json
+        if "universe_version_id" not in target_frame and isinstance(universe_set, list):
+            if universe_set and universe_set[0] is not None:
+                target_frame["universe_version_id"] = str(universe_set[0])
+        frame_time = datetime.now(UTC).isoformat()
+        target_frame.setdefault("as_of_time", frame_time)
+        target_frame.setdefault("effective_from", frame_time)
+        target_frame.setdefault("effective_until", None)
+        _write_json(staging / "validation" / "target-portfolio-frame.json", target_frame)
         _write_json(
             staging / "validation" / "expected-statistics.json",
             _without_runtime_account_data(portfolio_evidence.statistics),
@@ -412,9 +476,7 @@ def build_candidate_package(
             {
                 "portfolio_run_id": runtime_data.get("portfolio_run_id"),
                 "transaction_level_simulation": True,
-                "orders": len(portfolio_evidence.orders),
-                "fills": len(portfolio_evidence.fills),
-                "positions": len(portfolio_evidence.positions),
+                "target_frame_rows": len(rows),
             },
         )
 

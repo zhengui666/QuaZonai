@@ -15,6 +15,7 @@ from sqlalchemy import Engine, func, select
 from db.models import (
     AlphaQualification,
     ApprovalSnapshot,
+    CapitalContextVersion,
     DownstreamSystem,
     ForwardEvidenceEpisode,
     Job,
@@ -22,6 +23,7 @@ from db.models import (
     PortfolioMandate,
     QuantRuntimeRun,
     SearchLedgerEntry,
+    MarketUniverseVersion,
 )
 from db.session import create_session_factory
 from downstream_auth import install_service_token, issue_service_token
@@ -166,7 +168,17 @@ def _seed_mandate_and_downstream(
             },
         )
         install_service_token(downstream, issued)
-        session.add_all([mandate, downstream])
+        session.add_all([
+            mandate,
+            downstream,
+            CapitalContextVersion(
+                source_type="ADMIN",
+                base_currency="USD",
+                deployable_capital=100_000,
+                observed_at=datetime.now(UTC),
+                valid_until=datetime.now(UTC) + timedelta(days=7),
+            ),
+        ])
         return str(downstream.id), issued.token
 
 
@@ -187,8 +199,23 @@ def test_idea_to_remote_nautilus_paper_feedback_vertical_e2e(
         "candidate_contract_version": "1",
     }
 
+    factory = create_session_factory(engine)
+    with factory.begin() as session:
+        session.add(
+            MarketUniverseVersion(
+                universe_key="FX",
+                version_no=1,
+                name="FX",
+                state="ACTIVE",
+                spec_json={"currency": "USD"},
+                created_at=datetime.now(UTC),
+            )
+        )
+
     discovery = _ingest(client, name="ci-discovery", seed=41, sealed=False)
-    _ingest(client, name="ci-sealed", seed=73, sealed=True)
+    # Seed 1 produces a positive independent sealed result under the fixed
+    # server-owned promotion policy; the test must not rely on a Mission gate.
+    _ingest(client, name="ci-sealed", seed=1, sealed=True)
     validated = client.post(
         f"/api/v1/quant-runtime/catalogs/{discovery['id']}/validate"
     )
@@ -239,11 +266,13 @@ def test_idea_to_remote_nautilus_paper_feedback_vertical_e2e(
                         "family": "EMA_CROSS",
                         "catalog_uri": discovery["catalog_uri"],
                         "strategy": artifact,
-                        "parameters": {"fast": 3, "slow": 8},
-                        "promotion_gate": {
-                            "minimum_orders": 1,
-                            "minimum_sharpe": -100.0,
-                            "maximum_drawdown": 1000000.0,
+                        "parameters": {
+                            "fast": 3,
+                            "slow": 8,
+                            "alpha_output_contract": {
+                                "kind": "score",
+                                "fields": ["score", "expected_return", "uncertainty"],
+                            },
                         },
                     },
                     {
@@ -258,11 +287,13 @@ def test_idea_to_remote_nautilus_paper_feedback_vertical_e2e(
                                 "slow_ema_period": 12,
                             },
                         },
-                        "parameters": {"fast": 4, "slow": 12},
-                        "promotion_gate": {
-                            "minimum_orders": 1,
-                            "minimum_sharpe": -100.0,
-                            "maximum_drawdown": 1000000.0,
+                        "parameters": {
+                            "fast": 4,
+                            "slow": 12,
+                            "alpha_output_contract": {
+                                "kind": "score",
+                                "fields": ["score", "expected_return", "uncertainty"],
+                            },
                         },
                     },
                 ]
@@ -332,8 +363,7 @@ def test_idea_to_remote_nautilus_paper_feedback_vertical_e2e(
             "strategy/strategy.whl",
             "strategy/strategy-config.json",
             "runtime/live-node-template.json",
-            "validation/expected-orders.json",
-            "validation/expected-positions.json",
+            "validation/target-portfolio-frame.json",
             "validation/expected-statistics.json",
             "evidence/discovery-summary.json",
             "evidence/sealed-summary.json",

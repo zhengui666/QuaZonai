@@ -33,7 +33,9 @@ services:
       QUAZONAI_NAUTILUS_HOST: 0.0.0.0
       QUAZONAI_NAUTILUS_PORT: 8011
     volumes:
-      - sealed-catalogs:/var/lib/nautilus/sealed-catalogs:ro
+      # Ingestion is an explicit trusted provisioning action; evaluation reads
+      # only the catalog selected for the current episode.
+      - sealed-catalogs:/var/lib/nautilus/sealed-catalogs
     ports:
       - "127.0.0.1:8012:8011"
     read_only: true

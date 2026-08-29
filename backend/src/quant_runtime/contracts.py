@@ -123,7 +123,6 @@ class ExperimentSpec(StrictModel):
     catalog_uri: str
     strategy: StrategyArtifact
     parameters: dict[str, Any] = Field(default_factory=dict)
-    promotion_gate: dict[str, float | int] = Field(default_factory=dict)
 
     @field_validator("catalog_uri")
     @classmethod

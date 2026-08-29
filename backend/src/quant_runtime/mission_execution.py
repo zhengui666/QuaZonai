@@ -12,10 +12,13 @@ from sqlalchemy import select
 
 from db.models import (
     EvaluationEpisode,
+    DatasetRevision,
     Event,
     NautilusCatalogBinding,
     QuantRuntimeRun,
     ResearchMission,
+    ResearchProgram,
+    ResearchCharter,
     SearchLedgerEntry,
 )
 from db.session import create_database_engine, create_session_factory
@@ -24,6 +27,7 @@ from jobs import enqueue_job
 from optimization import TrialPoint, select_compromise
 from quant_runtime.config import RemoteNautilusConfig
 from quant_runtime.contracts import ExperimentSpec, MissionExperimentEnvelope, RunEvidence
+from quant_runtime.evidence import extract_statistics, persistable_evidence
 from quant_runtime.remote import NautilusQuantRuntime
 from settings import Settings
 
@@ -35,55 +39,39 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _as_float(value: object, default: float = 0.0) -> float:
-    if isinstance(value, bool):
-        return default
-    try:
-        return float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return default
-
-
 def _statistics(evidence: RunEvidence) -> tuple[float, float, float, int]:
-    stats = evidence.statistics
-    raw_returns = stats.get("returns")
-    raw_general = stats.get("general")
-    returns: dict[str, Any] = raw_returns if isinstance(raw_returns, dict) else {}
-    general: dict[str, Any] = raw_general if isinstance(raw_general, dict) else {}
-    sharpe = _as_float(
-        stats.get("sharpe_ratio", returns.get("Sharpe Ratio", returns.get("SharpeRatio", 0.0)))
-    )
-    max_drawdown = abs(
-        _as_float(
-            stats.get(
-                "max_drawdown",
-                returns.get("Max Drawdown", returns.get("MaxDrawdown", 0.0)),
-            )
+    metrics = extract_statistics(evidence)
+    if metrics is None:
+        raise QfError(
+            "INVALID_RUNTIME_STATISTICS",
+            "Nautilus evidence is missing complete finite statistics.",
+            422,
         )
-    )
-    turnover = _as_float(
-        stats.get("turnover", general.get("Turnover", len(evidence.fills)))
-    )
-    total_orders = int(
-        _as_float(stats.get("total_orders", general.get("Total Orders", len(evidence.orders))))
-    )
-    return sharpe, max_drawdown, turnover, total_orders
+    return metrics[:4]
 
 
 def _summary(evidence: RunEvidence) -> dict[str, Any]:
-    sharpe, max_drawdown, turnover, total_orders = _statistics(evidence)
-    return {
+    metrics = extract_statistics(evidence)
+    summary: dict[str, Any] = {
         "state": evidence.state,
         "mode": evidence.mode,
         "external_run_id": evidence.external_run_id,
         "nautilus_version": evidence.nautilus_version,
-        "total_orders": total_orders,
+        "metrics_valid": metrics is not None,
         "total_fills": len(evidence.fills),
         "total_positions": len(evidence.positions),
-        "sharpe_ratio": sharpe,
-        "max_drawdown": max_drawdown,
-        "turnover": turnover,
     }
+    if metrics is not None:
+        sharpe, max_drawdown, turnover, total_orders, _ = metrics
+        summary.update(
+            {
+                "total_orders": total_orders,
+                "sharpe_ratio": sharpe,
+                "max_drawdown": max_drawdown,
+                "turnover": turnover,
+            }
+        )
+    return summary
 
 
 def build_mission_quant_context(settings: Settings) -> str:
@@ -146,11 +134,6 @@ def build_mission_quant_context(settings: Settings) -> str:
                     "requirements": ["nautilus-trader==1.231.0"],
                 },
                 "parameters": {"hypothesis": "bounded experiment description"},
-                "promotion_gate": {
-                    "minimum_orders": 1,
-                    "minimum_sharpe": -10.0,
-                    "maximum_drawdown": 1.0,
-                },
             }
         ]
     }
@@ -190,7 +173,6 @@ def _persist_started_run(
                 runtime_name="NautilusTrader",
                 strategy_artifact=experiment.strategy.model_dump(mode="json"),
                 parameters=experiment.parameters,
-                promotion_gate=experiment.promotion_gate,
                 started_at=_now(),
             )
             session.add(run)
@@ -222,12 +204,25 @@ def _finish_run(
                 run.runtime_name = evidence.runtime_name
                 run.runtime_version = evidence.nautilus_version
                 run.contract_version = evidence.contract_version
-                run.evidence = evidence.model_dump(mode="json")
+                run.evidence = persistable_evidence(evidence)
                 run.error_code = evidence.error_code
                 run.error_message = evidence.error_message
-                outcome = "SUCCEEDED" if evidence.state == "SUCCEEDED" else "FAILED"
-                failure_code = evidence.error_code
+                metrics = extract_statistics(evidence)
+                unusable = evidence.state == "SUCCEEDED" and (
+                    metrics is None or metrics[3] == 0
+                )
+                outcome = "SUCCEEDED" if evidence.state == "SUCCEEDED" and not unusable else "FAILED"
+                failure_code = (
+                    "INVALID_RUNTIME_STATISTICS"
+                    if metrics is None
+                    else "NO_TRADING_EVIDENCE"
+                    if unusable
+                    else evidence.error_code
+                )
                 evidence_summary = _summary(evidence)
+                if unusable:
+                    evidence_summary["state"] = "FAILED"
+                    evidence_summary["error_code"] = failure_code
             else:
                 run.state = "FAILED"
                 run.error_code = str(getattr(error, "code", type(error).__name__))[:100]
@@ -267,15 +262,25 @@ def _load_mission_and_catalogs(
             if mission is None:
                 raise QfError("MISSION_NOT_FOUND", "Research Mission does not exist.", 404)
             session.expunge(mission)
-            discovery = set(
-                session.scalars(
-                    select(NautilusCatalogBinding.catalog_uri).where(
-                        NautilusCatalogBinding.sealed.is_(False),
-                        NautilusCatalogBinding.quality_state == "VALID",
-                        NautilusCatalogBinding.point_in_time_state == "VALID",
-                    )
-                ).all()
-            )
+            program = session.get(ResearchProgram, mission.program_id)
+            charter = session.get(ResearchCharter, program.charter_id) if program else None
+            discovery = set()
+            for binding in session.scalars(
+                select(NautilusCatalogBinding).where(
+                    NautilusCatalogBinding.sealed.is_(False),
+                    NautilusCatalogBinding.quality_state == "VALID",
+                    NautilusCatalogBinding.point_in_time_state == "VALID",
+                )
+            ).all():
+                revision = session.get(DatasetRevision, binding.dataset_revision_id)
+                if revision is None or charter is None:
+                    continue
+                allowed_ids = {str(value) for value in charter.universe_version_ids}
+                if allowed_ids and str(revision.universe_version_id) not in allowed_ids:
+                    continue
+                if not allowed_ids and charter.market_scope != "System inferred" and revision.universe_name != charter.market_scope:
+                    continue
+                discovery.add(binding.catalog_uri)
             sealed = session.scalar(
                 select(NautilusCatalogBinding)
                 .where(
@@ -302,10 +307,56 @@ def _queue_sealed_evaluation(
     try:
         factory = create_session_factory(engine)
         with factory.begin() as session:
+            discovery = session.get(QuantRuntimeRun, discovery_run_id)
+            if discovery is None:
+                raise QfError("DISCOVERY_RUN_NOT_FOUND", "Selected discovery run does not exist.", 500)
+            discovery_binding = session.scalar(
+                select(NautilusCatalogBinding).where(
+                    NautilusCatalogBinding.catalog_uri == discovery.catalog_uri,
+                    NautilusCatalogBinding.sealed.is_(False),
+                    NautilusCatalogBinding.quality_state == "VALID",
+                    NautilusCatalogBinding.point_in_time_state == "VALID",
+                )
+            )
+            if discovery_binding is None:
+                raise QfError(
+                    "DISCOVERY_DATASET_NOT_FOUND",
+                    "Selected discovery run is not bound to a Dataset Revision.",
+                    422,
+                )
+            discovery_revision = session.get(DatasetRevision, discovery_binding.dataset_revision_id)
+            sealed_bindings = session.scalars(
+                select(NautilusCatalogBinding).where(
+                    NautilusCatalogBinding.sealed.is_(True),
+                    NautilusCatalogBinding.quality_state == "VALID",
+                    NautilusCatalogBinding.point_in_time_state == "VALID",
+                )
+            ).all()
+            sealed_revision_id: UUID | None = None
+            discovery_scope = set(discovery_binding.instrument_scope)
+            for binding in sealed_bindings:
+                revision = session.get(DatasetRevision, binding.dataset_revision_id)
+                if (
+                    discovery_revision is not None
+                    and revision is not None
+                    and discovery_revision.universe_version_id is not None
+                    and revision.universe_version_id == discovery_revision.universe_version_id
+                    and set(binding.instrument_scope) == discovery_scope
+                    and binding.nautilus_data_type == discovery_binding.nautilus_data_type
+                ):
+                    sealed_revision_id = revision.id
+                    break
+            if sealed_revision_id is None:
+                raise QfError(
+                    "SEALED_CATALOG_INCOMPATIBLE",
+                    "No valid sealed Dataset Revision matches the selected discovery scope.",
+                    422,
+                )
             episode = EvaluationEpisode(
                 program_id=mission.program_id,
                 branch_id=mission.branch_id,
                 discovery_run_id=discovery_run_id,
+                sealed_dataset_revision_id=sealed_revision_id,
                 state="SEALED_PENDING",
                 disclosure={},
             )
@@ -394,6 +445,7 @@ def execute_mission_experiments(
             )
             continue
         _finish_run(settings, run_id=run_id, evidence=evidence, error=None)
+        metrics = extract_statistics(evidence) if evidence.state == "SUCCEEDED" else None
         if evidence.state != "SUCCEEDED":
             failures.append(
                 {
@@ -401,7 +453,14 @@ def execute_mission_experiments(
                     "error_code": evidence.error_code or "NAUTILUS_RUN_FAILED",
                 }
             )
-        elif _statistics(evidence)[3] > 0:
+        elif metrics is None:
+            failures.append(
+                {
+                    "experiment_key": experiment.experiment_key,
+                    "error_code": "INVALID_RUNTIME_STATISTICS",
+                }
+            )
+        elif metrics[3] > 0:
             completed.append((run_id, evidence))
         else:
             failures.append(

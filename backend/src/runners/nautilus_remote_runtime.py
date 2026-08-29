@@ -12,9 +12,12 @@ import importlib
 import importlib.metadata
 import json
 import math
+import multiprocessing
 import os
+import re
 import secrets
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -59,6 +62,14 @@ _FORBIDDEN_BUNDLE_KEYS = {
     "wallet_seed",
     "broker_url",
     "account_id",
+}
+_CANDIDATE_BUNDLE_CONTRACT_VERSION = "1"
+_FORBIDDEN_BUNDLE_PATH_PARTS = {
+    "orders",
+    "fills",
+    "positions",
+    "account",
+    "accounts",
 }
 
 
@@ -334,6 +345,28 @@ def _named_statistic(values: Mapping[str, Any], *needles: str) -> float:
     return 0.0
 
 
+def _validate_portfolio_frame(experiment: ExperimentSpec) -> None:
+    frame = experiment.parameters.get("portfolio_target_frame")
+    if not isinstance(frame, dict) or frame.get("schema_version") != "1":
+        raise HTTPException(status_code=422, detail="PORTFOLIO requires a frozen target frame")
+    rows = frame.get("rows")
+    if not isinstance(rows, list) or not rows:
+        raise HTTPException(status_code=422, detail="PORTFOLIO target frame is empty")
+    total = 0.0
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("instrument_id"), str):
+            raise HTTPException(status_code=422, detail="PORTFOLIO target frame is invalid")
+        try:
+            weight = float(row["target_weight"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="PORTFOLIO target frame is invalid") from exc
+        if not math.isfinite(weight) or weight < 0.0 or weight > 1.0:
+            raise HTTPException(status_code=422, detail="PORTFOLIO target frame weight is invalid")
+        total += weight
+    if not math.isclose(total, 1.0, rel_tol=0.0, abs_tol=1e-9):
+        raise HTTPException(status_code=422, detail="PORTFOLIO target frame weights must sum to one")
+
+
 def _execute_once(experiment: ExperimentSpec, mode: RunMode) -> RunEvidence:
     from nautilus_trader.backtest.node import BacktestDataConfig
     from nautilus_trader.backtest.node import BacktestEngineConfig
@@ -345,6 +378,8 @@ def _execute_once(experiment: ExperimentSpec, mode: RunMode) -> RunEvidence:
     from nautilus_trader.model.identifiers import Venue
 
     descriptor = _read_catalog_descriptor(experiment.catalog_uri)
+    if mode == "PORTFOLIO":
+        _validate_portfolio_frame(experiment)
     if mode == "SEALED" and not descriptor.sealed:
         raise HTTPException(status_code=422, detail="SEALED mode requires a sealed catalog")
     if mode != "SEALED" and descriptor.sealed:
@@ -406,6 +441,10 @@ def _execute_once(experiment: ExperimentSpec, mode: RunMode) -> RunEvidence:
                     _named_statistic(result.stats_returns, "max", "drawdown")
                 ),
                 "turnover": float(len(fills)),
+                "capacity_envelope": {
+                    "max_deployable_capital": 1_000_000.0,
+                    "source": "frozen simulated starting balance",
+                },
                 "summary": _jsonable(result.summary),
                 "returns": returns,
                 "pnls": pnls,
@@ -450,10 +489,64 @@ def _execute_once(experiment: ExperimentSpec, mode: RunMode) -> RunEvidence:
             node.dispose()
 
 
+def _execute_sealed_child(
+    experiment_payload: dict[str, Any],
+    mode: RunMode,
+    catalog_root: str,
+    connection: Any,
+) -> None:
+    """Execute generated strategy code without the service token or other catalogs."""
+    for name in (
+        "QUAZONAI_NAUTILUS_RUNTIME_TOKEN",
+        "QUAZONAI_NAUTILUS_SEALED_RUNTIME_TOKEN",
+        "QUAZONAI_API_TOKEN",
+        "QUAZONAI_MASTER_KEY",
+    ):
+        os.environ.pop(name, None)
+    os.environ["QUAZONAI_NAUTILUS_CATALOG_ROOT"] = catalog_root
+    try:
+        evidence = _execute_once(ExperimentSpec.model_validate(experiment_payload), mode)
+        payload = evidence.model_dump(mode="json")
+        for key in ("orders", "fills", "positions", "account"):
+            payload.pop(key, None)
+        connection.send(payload)
+    except BaseException as exc:  # noqa: BLE001 - parent turns child failures into protocol failures
+        connection.send({"__error__": type(exc).__name__})
+    finally:
+        connection.close()
+
+
 def _execute(experiment: ExperimentSpec, mode: RunMode) -> RunEvidence:
-    """Serialize runs because strategy imports use a temporary module namespace."""
+    """Serialize runs and isolate Sealed strategy code from the service process."""
     with _EXECUTION_LOCK:
-        return _execute_once(experiment, mode)
+        if mode != "SEALED":
+            return _execute_once(experiment, mode)
+
+        catalog_path = _catalog_path(experiment.catalog_uri)
+        if not catalog_path.is_dir():
+            raise HTTPException(status_code=404, detail="sealed catalog does not exist")
+        with tempfile.TemporaryDirectory(prefix="quazonai-sealed-catalog-") as root:
+            isolated_path = Path(root) / experiment.catalog_uri.removeprefix(_CATALOG_PREFIX)
+            shutil.copytree(catalog_path, isolated_path)
+            parent, child = multiprocessing.get_context("spawn").Pipe(duplex=False)
+            process = multiprocessing.get_context("spawn").Process(
+                target=_execute_sealed_child,
+                args=(experiment.model_dump(mode="json"), mode, root, child),
+            )
+            process.start()
+            child.close()
+            process.join(300)
+            if process.is_alive():
+                process.terminate()
+                process.join(5)
+                raise HTTPException(status_code=504, detail="sealed strategy execution timed out")
+            if not parent.poll():
+                raise HTTPException(status_code=502, detail="sealed strategy child returned no evidence")
+            payload = parent.recv()
+            parent.close()
+            if "__error__" in payload:
+                raise HTTPException(status_code=502, detail="sealed strategy child failed")
+            return RunEvidence.model_validate(payload)
 
 
 def _bundle_contains_secret(value: object) -> bool:
@@ -483,8 +576,8 @@ def _verify_bundle(data: bytes) -> dict[str, Any]:
         "runtime/venue-config.json",
         "runtime/risk-config.json",
         "runtime/live-node-template.json",
-        "validation/expected-orders.json",
-        "validation/expected-positions.json",
+        "validation/fixture-catalog/catalog-descriptor.json",
+        "validation/target-portfolio-frame.json",
         "validation/expected-statistics.json",
         "evidence/discovery-summary.json",
         "evidence/sealed-summary.json",
@@ -494,6 +587,12 @@ def _verify_bundle(data: bytes) -> dict[str, Any]:
     try:
         with zipfile.ZipFile(BytesIO(data)) as bundle:
             names = set(bundle.namelist())
+            if any(
+                part.casefold() in _FORBIDDEN_BUNDLE_PATH_PARTS
+                for name in names
+                for part in Path(name).parts
+            ):
+                return {"valid": False, "errors": ["bundle contains execution reports"]}
             missing = sorted(required - names)
             if missing:
                 return {"valid": False, "errors": [f"missing files: {', '.join(missing)}"]}
@@ -501,11 +600,35 @@ def _verify_bundle(data: bytes) -> dict[str, Any]:
             runtime = json.loads(bundle.read("runtime/nautilus-version.json"))
             strategy_config = json.loads(bundle.read("strategy/strategy-config.json"))
             data_requirements = json.loads(bundle.read("data/requirements.json"))
+            instrument_scope = json.loads(bundle.read("data/instrument-scope.json"))
+            fixture_descriptor = json.loads(
+                bundle.read("validation/fixture-catalog/catalog-descriptor.json")
+            )
+            target_frame = json.loads(bundle.read("validation/target-portfolio-frame.json"))
             requirements = bundle.read("requirements.lock").decode("utf-8").splitlines()
-            if _bundle_contains_secret(manifest) or _bundle_contains_secret(strategy_config):
+            if any(
+                name.endswith(".json")
+                and _bundle_contains_secret(json.loads(bundle.read(name)))
+                for name in names
+                if name.endswith(".json")
+            ):
                 return {"valid": False, "errors": ["bundle contains a secret-bearing field"]}
+            if manifest.get("candidate_bundle_contract_version") != _CANDIDATE_BUNDLE_CONTRACT_VERSION:
+                return {"valid": False, "errors": ["unsupported Candidate Bundle contract version"]}
+            if manifest.get("strategy", {}).get("wheel") != "strategy/strategy.whl":
+                return {"valid": False, "errors": ["manifest strategy wheel path is invalid"]}
+            if manifest.get("validation", {}).get("target_portfolio_frame") != (
+                "validation/target-portfolio-frame.json"
+            ):
+                return {"valid": False, "errors": ["manifest target frame path is invalid"]}
             if runtime.get("version") != PINNED_NAUTILUS_VERSION:
                 return {"valid": False, "errors": ["pinned NautilusTrader version mismatch"]}
+            if any(
+                not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*==[^\s;,]+", item)
+                for item in requirements
+                if item
+            ) or any(not item for item in requirements) or len(requirements) != len(set(requirements)):
+                return {"valid": False, "errors": ["requirements.lock contains unpinned or duplicate dependencies"]}
             if f"nautilus-trader=={PINNED_NAUTILUS_VERSION}" not in requirements:
                 return {"valid": False, "errors": ["requirements.lock does not pin NautilusTrader"]}
             wheel_bytes = bundle.read("strategy/strategy.whl")
@@ -521,8 +644,84 @@ def _verify_bundle(data: bytes) -> dict[str, Any]:
                             "valid": False,
                             "errors": [f"strategy wheel cannot import {module}"],
                         }
-            if not str(data_requirements.get("catalog_uri", "")).startswith("catalog://"):
+                with tempfile.TemporaryDirectory(prefix="quazonai-candidate-verify-") as root:
+                    wheel.extractall(root)
+                    script = (
+                        "import importlib, sys\n"
+                        "root, strategy_ref, config_ref = sys.argv[1:]\n"
+                        "sys.path.insert(0, root)\n"
+                        "for ref in (strategy_ref, config_ref):\n"
+                        "    module_name, separator, attribute = ref.partition(':')\n"
+                        "    if not separator or not attribute:\n"
+                        "        raise ValueError('invalid import reference')\n"
+                        "    module = importlib.import_module(module_name)\n"
+                        "    getattr(module, attribute)\n"
+                    )
+                    result = subprocess.run(
+                        [
+                            sys.executable,
+                            "-I",
+                            "-c",
+                            script,
+                            root,
+                            str(strategy_config["strategy_path"]),
+                            str(strategy_config["config_path"]),
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                        env={"PATH": os.environ.get("PATH", "")},
+                    )
+                    if result.returncode != 0:
+                        return {"valid": False, "errors": ["strategy conformance import failed"]}
+            catalog_uri = str(data_requirements.get("catalog_uri", ""))
+            if not catalog_uri.startswith("catalog://"):
                 return {"valid": False, "errors": ["bundle catalog URI is invalid"]}
+            if fixture_descriptor.get("catalog_uri") != catalog_uri:
+                return {"valid": False, "errors": ["fixture catalog does not match data requirements"]}
+            scoped_instruments = instrument_scope.get("instruments")
+            if not isinstance(scoped_instruments, list) or not scoped_instruments:
+                return {"valid": False, "errors": ["instrument scope fixture is invalid"]}
+            scoped_ids = {
+                str(item.get("instrument_id"))
+                for item in scoped_instruments
+                if isinstance(item, dict) and item.get("instrument_id") is not None
+            }
+            rows = target_frame.get("rows")
+            required_frame_fields = {
+                "as_of_time",
+                "effective_from",
+                "effective_until",
+                "portfolio_candidate_id",
+                "portfolio_state",
+                "universe_version_id",
+            }
+            if (
+                target_frame.get("schema_version") != "1"
+                or not required_frame_fields.issubset(target_frame)
+                or not isinstance(rows, list)
+                or not rows
+            ):
+                return {"valid": False, "errors": ["target portfolio frame is invalid"]}
+            total_weight = 0.0
+            for row in rows:
+                try:
+                    weight = float(row["target_weight"]) if isinstance(row, dict) else float("nan")
+                except (KeyError, TypeError, ValueError):
+                    weight = float("nan")
+                if (
+                    not isinstance(row, dict)
+                    or not isinstance(row.get("instrument_id"), str)
+                    or not math.isfinite(weight)
+                    or not 0.0 <= weight <= 1.0
+                ):
+                    return {"valid": False, "errors": ["target portfolio frame contains invalid weights"]}
+                total_weight += weight
+            if not math.isclose(total_weight, 1.0, rel_tol=0.0, abs_tol=1e-9):
+                return {"valid": False, "errors": ["target portfolio frame weights must sum to one"]}
+            target_ids = {str(row["instrument_id"]) for row in rows}
+            if not target_ids.issubset(scoped_ids):
+                return {"valid": False, "errors": ["target frame exceeds the instrument scope fixture"]}
             return {
                 "valid": True,
                 "runtime_name": "NautilusTrader",

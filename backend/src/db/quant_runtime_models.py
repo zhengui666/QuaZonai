@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime, ForeignKey, Index, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
-from db.base import Base, JSON_VALUE, TimestampMixin
+from db.base import Base, JSON_VALUE, MONEY, TimestampMixin
 
 
 class NautilusCatalogBinding(Base, TimestampMixin):
@@ -96,9 +97,6 @@ class QuantRuntimeRun(Base, TimestampMixin):
         JSON_VALUE, nullable=False, default=dict
     )
     parameters: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, nullable=False, default=dict)
-    promotion_gate: Mapped[dict[str, Any]] = mapped_column(
-        JSON_VALUE, nullable=False, default=dict
-    )
     evidence: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, nullable=False, default=dict)
     error_code: Mapped[str | None] = mapped_column(String(100))
     error_message: Mapped[str | None] = mapped_column(Text)
@@ -130,9 +128,32 @@ class EvaluationEpisode(Base, TimestampMixin):
         Uuid,
         ForeignKey("quant_runtime_runs.id", ondelete="SET NULL"),
     )
+    sealed_dataset_revision_id: Mapped[UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("dataset_revisions.id", ondelete="RESTRICT"),
+    )
     state: Mapped[str] = mapped_column(String(40), nullable=False, default="SEALED_PENDING")
     disclosure: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, nullable=False, default=dict)
     failure_code: Mapped[str | None] = mapped_column(String(100))
+
+
+class CapitalContextVersion(Base, TimestampMixin):
+    """Versioned research capital scale; never an account or position ledger."""
+
+    __tablename__ = "capital_context_versions"
+    __table_args__ = (Index("ix_capital_context_validity", "valid_until", "observed_at"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    source_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    source_downstream_system_id: Mapped[UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("downstream_systems.id", ondelete="RESTRICT"),
+    )
+    base_currency: Mapped[str] = mapped_column(String(20), nullable=False)
+    deployable_capital: Mapped[Decimal] = mapped_column(MONEY, nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    valid_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
 
 
 class SearchLedgerEntry(Base):
@@ -179,5 +200,6 @@ __all__ = [
     "NautilusCatalogBinding",
     "QuantRuntimeRun",
     "EvaluationEpisode",
+    "CapitalContextVersion",
     "SearchLedgerEntry",
 ]
