@@ -363,18 +363,22 @@ def _source_bundle_sandbox_command(
         "--proc", "/proc",
         "--dev", "/dev",
     ]
-    masked: set[str] = set()
-    for candidate in (Path("/tmp"), Path("/run"), Path("/root"), data_root.resolve()):
-        resolved = str(candidate.resolve())
-        if candidate.exists() and resolved not in {"/", str(workspace.resolve())} and resolved not in masked:
-            command.extend(["--tmpfs", resolved])
-            masked.add(resolved)
     home = Path.home().resolve()
     executable = Path(sys.executable).resolve()
+    mask_candidates = [Path("/tmp"), Path("/run"), Path("/root"), data_root.resolve()]
     if home.exists() and home != Path("/") and not executable.is_relative_to(home):
-        resolved_home = str(home)
-        if resolved_home not in masked:
-            command.extend(["--tmpfs", resolved_home])
+        mask_candidates.append(home)
+    masked_paths: list[Path] = []
+    for candidate in sorted(
+        {item.resolve() for item in mask_candidates if item.exists()},
+        key=lambda item: (len(item.parts), str(item)),
+    ):
+        if candidate == Path("/") or candidate == workspace.resolve():
+            continue
+        if any(candidate == parent or candidate.is_relative_to(parent) for parent in masked_paths):
+            continue
+        command.extend(["--tmpfs", str(candidate)])
+        masked_paths.append(candidate)
     command.extend([
         "--chdir", "/sandbox",
         "--setenv", "QUAZONAI_NAUTILUS_ISOLATED_CHILD", "1",
