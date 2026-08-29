@@ -15,5 +15,9 @@ def test_gateway_instance_identity_is_stable_per_data_root_and_unique_across_roo
     replay_id = UUID(str(replay.capabilities()["gateway_instance_id"]))
     second_id = UUID(str(second.capabilities()["gateway_instance_id"]))
 
+    identity_file = first_root / ".gateway-instance-id"
+    assert identity_file.is_file()
+    assert not identity_file.is_symlink()
+    assert UUID(identity_file.read_text(encoding="ascii").strip()) == first_id
     assert replay_id == first_id
     assert second_id != first_id
