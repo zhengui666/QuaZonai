@@ -467,6 +467,8 @@ def _capacity_limit(evidence: RunEvidence) -> float | None:
     if not isinstance(raw, dict):
         return None
     value = raw.get("max_deployable_capital")
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
     try:
         result = float(value)
     except (TypeError, ValueError):
