@@ -718,9 +718,15 @@ class NautilusGatewayEngine:
             child_catalog_root = child_root / "catalogs"
             child_storage_root = child_catalog_root / "data"
             child_storage_root.mkdir(parents=True)
+            (child_root / ".gateway-instance-id").write_text(
+                f"{self._gateway_instance_id}\n", encoding="ascii"
+            )
             if catalog_key is not None:
                 source_catalog = self._catalog_path(catalog_key)
-                child_storage_id = UUID("00000000-0000-0000-0000-000000000001")
+                record = self._find_catalog_record(self._load_catalog_registry(), catalog_key)
+                if record is None or record.state != "READY":
+                    raise GatewayContractError("selected catalog is unavailable")
+                child_storage_id = record.storage_id
                 child_catalog_path = child_storage_root / child_storage_id.hex
                 shutil.copytree(source_catalog, child_catalog_path)
                 (child_catalog_root / "registry.json").write_text(
@@ -1161,8 +1167,8 @@ class NautilusGatewayEngine:
             "runtime_version": nautilus_version,
             "catalog_key": request.catalog_key,
             "catalog_uri": f"nautilus-catalog://{request.catalog_key}",
-            "gateway_instance_id": str(self._gateway_instance_id),
-            "catalog_release_id": str(record.storage_id),
+            "gateway_instance_id": self._gateway_instance_id,
+            "catalog_release_id": record.storage_id,
             "valid": not findings and bool(instruments) and bool(ticks),
             "nautilus_data_type": manifest.get("nautilus_data_type"),
             "instrument_scope": scope,

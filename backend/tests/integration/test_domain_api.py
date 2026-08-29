@@ -609,9 +609,13 @@ def test_governed_ingest_creates_executable_discovery_scope(
 
     def fake_remote(ingest_request):
         assert ingest_request.catalog_key == "fx-discovery-v1"
+        gateway_instance_id = uuid4()
+        catalog_release_id = uuid4()
         ingested = SimpleNamespace(
             catalog_key="fx-discovery-v1",
             catalog_uri="nautilus-catalog://fx-discovery-v1",
+            gateway_instance_id=gateway_instance_id,
+            catalog_release_id=catalog_release_id,
             nautilus_data_type="QuoteTick",
             instrument_scope=["EUR/USD.SIM"],
             event_time_start=now - timedelta(days=2),
@@ -627,6 +631,8 @@ def test_governed_ingest_creates_executable_discovery_scope(
         validated = SimpleNamespace(
             valid=True,
             catalog_key="fx-discovery-v1",
+            gateway_instance_id=gateway_instance_id,
+            catalog_release_id=catalog_release_id,
             instrument_scope=["EUR/USD.SIM"],
             row_count=2,
             event_time_start=ingested.event_time_start,

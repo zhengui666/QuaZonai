@@ -14,6 +14,7 @@ def test_source_bundle_sandbox_uses_minimal_supported_namespaces(
     command = gateway_engine._source_bundle_sandbox_command(
         operation="backtest",
         workspace=tmp_path,
+        data_root=tmp_path / "gateway-data",
     )
     assert "--unshare-all" not in command
     for flag in (
