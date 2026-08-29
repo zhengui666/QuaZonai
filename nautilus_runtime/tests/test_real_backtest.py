@@ -162,6 +162,8 @@ def test_real_catalog_backtest_and_sealed_disclosure(tmp_path: Path) -> None:
     engine = NautilusGatewayEngine(tmp_path)
     first = _ingest_fixture(engine)
     assert first["catalog_uri"] == "nautilus-catalog://integration-fx-quotes"
+    assert UUID(str(first["gateway_instance_id"]))
+    assert UUID(str(first["catalog_release_id"]))
     assert first["row_count"] == 720
     assert first["instrument_scope"] == ["EUR/USD.SIM", "GBP/USD.SIM"]
     assert first["schema_revision"] == "nautilus.quote_tick.v2"
@@ -193,6 +195,8 @@ def test_real_catalog_backtest_and_sealed_disclosure(tmp_path: Path) -> None:
         )
     )
     assert validated["valid"] is True, validated["findings"]
+    assert validated["gateway_instance_id"] == first["gateway_instance_id"]
+    assert validated["catalog_release_id"] == first["catalog_release_id"]
     assert validated["row_count"] == 720
 
     request = _request()

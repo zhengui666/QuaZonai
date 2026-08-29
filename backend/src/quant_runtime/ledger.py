@@ -20,6 +20,7 @@ from quant_runtime.client import NautilusQuantRuntime, RemoteNautilusConfig
 from quant_runtime.contracts import (
     BacktestEvidence,
     BacktestExperimentRequest,
+    CatalogValidationRequest,
     ExperimentMode,
     SealedBacktestResult,
 )
@@ -213,8 +214,40 @@ class ExperimentCoordinator:
                 session.add(entry)
 
         try:
+            with self._factory() as session:
+                immutable_dataset = session.get(DatasetRevision, request.dataset_revision_id)
+                if immutable_dataset is None:
+                    raise QfError("DATASET_REVISION_NOT_FOUND", "Dataset Revision does not exist.", 404)
+                expected_gateway_instance_id = immutable_dataset.gateway_instance_id
+                expected_catalog_release_id = immutable_dataset.catalog_release_id
+            if expected_gateway_instance_id is None or expected_catalog_release_id is None:
+                raise QfError(
+                    "NAUTILUS_CATALOG_IDENTITY_MISSING",
+                    "Dataset Revision is not bound to an immutable Gateway catalog release.",
+                    422,
+                )
             config = RemoteNautilusConfig.from_env(sealed=sealed)
             with NautilusQuantRuntime(config) as runtime:
+                validation_request = CatalogValidationRequest(
+                    catalog_key=request.catalog_key,
+                    instrument_ids=request.instrument_ids,
+                    nautilus_data_type="QuoteTick",
+                )
+                remote_catalog = (
+                    runtime.validate_sealed_catalog(validation_request)
+                    if sealed
+                    else runtime.validate_catalog(validation_request)
+                )
+                if (
+                    not remote_catalog.valid
+                    or remote_catalog.gateway_instance_id != expected_gateway_instance_id
+                    or remote_catalog.catalog_release_id != expected_catalog_release_id
+                ):
+                    raise QfError(
+                        "NAUTILUS_CATALOG_IDENTITY_MISMATCH",
+                        "Remote Gateway catalog release no longer matches the immutable Dataset Revision.",
+                        409,
+                    )
                 if sealed:
                     result: BacktestEvidence | SealedBacktestResult = runtime.run_sealed_backtest(
                         request

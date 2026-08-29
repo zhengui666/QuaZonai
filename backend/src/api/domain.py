@@ -254,6 +254,11 @@ class ApprovalRejectInput(StrictModel):
     expected_state: str
 
 
+class LivePromotionInput(StrictModel):
+    downstream_system_id: UUID
+    expected_handoff_state: str = "FEEDBACK_COMPLETE"
+
+
 class HandoffView(StrictModel):
     id: UUID
     approval_id: UUID
@@ -364,6 +369,8 @@ class DatasetView(StrictModel):
     quality_state: str
     point_in_time_state: str
     partition: str
+    gateway_instance_id: UUID | None = None
+    catalog_release_id: UUID | None = None
     created_at: str
 
 
@@ -2173,6 +2180,180 @@ def submit_feedback(
         )
 
 
+@router.post(
+    "/handoffs/{handoff_id}/promote-live",
+    response_model=ApprovalView,
+    status_code=201,
+)
+def promote_paper_handoff_to_live(
+    handoff_id: UUID,
+    payload: LivePromotionInput,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
+    """Create a human-gated LIVE Approval only from complete valid Paper evidence."""
+    factory = request.app.state.session_factory
+    with factory() as session, session.begin():
+
+        def action() -> dict[str, Any]:
+            handoff = session.execute(
+                select(HandoffOffer).where(HandoffOffer.id == handoff_id).with_for_update()
+            ).scalar_one_or_none()
+            if handoff is None:
+                raise QfError("HANDOFF_NOT_FOUND", "Paper Handoff was not found.", 404)
+            if handoff.purpose != "PAPER" or handoff.state != payload.expected_handoff_state or handoff.state != "FEEDBACK_COMPLETE":
+                raise QfError(
+                    "LIVE_PROMOTION_FORWARD_EVIDENCE_REQUIRED",
+                    "Live promotion requires a completed Paper Handoff with valid Forward Evidence.",
+                    409,
+                )
+            episode = session.scalar(
+                select(ForwardEvidenceEpisode)
+                .where(
+                    ForwardEvidenceEpisode.handoff_id == handoff.id,
+                    ForwardEvidenceEpisode.state == "FEEDBACK_COMPLETE",
+                )
+                .order_by(ForwardEvidenceEpisode.created_at.desc(), ForwardEvidenceEpisode.id.desc())
+                .limit(1)
+            )
+            if episode is None:
+                raise QfError(
+                    "LIVE_PROMOTION_FORWARD_EVIDENCE_REQUIRED",
+                    "Live promotion requires an immutable completed Forward Evidence episode.",
+                    409,
+                )
+            forward = dict(episode.evidence or {})
+            degradation_state = str(forward.get("degradation_state", "")).strip().upper()
+            if forward.get("degraded") is True or degradation_state in {"DEGRADED", "FAILED"}:
+                raise QfError(
+                    "LIVE_PROMOTION_DEGRADED",
+                    "Degraded Paper evidence cannot be promoted to Live.",
+                    422,
+                )
+            candidate = session.get(PortfolioCandidate, handoff.candidate_id)
+            paper_approval = session.get(ApprovalSnapshot, handoff.approval_id)
+            downstream = session.get(DownstreamSystem, payload.downstream_system_id)
+            if candidate is None or paper_approval is None:
+                raise QfError("LIVE_PROMOTION_LINEAGE_MISSING", "Paper promotion lineage is incomplete.", 500)
+            if (
+                downstream is None
+                or downstream.environment_type != "LIVE"
+                or not downstream.enabled
+                or downstream.preflight_state != "READY"
+                or downstream.package_contract_version != "2"
+                or downstream.service_token_ciphertext is None
+            ):
+                raise QfError(
+                    "LIVE_DOWNSTREAM_NOT_READY",
+                    "Live promotion requires a ready authenticated Candidate Bundle v2 downstream.",
+                    409,
+                )
+            universes = (
+                [str(value) for value in candidate.universe_set_json]
+                if isinstance(candidate.universe_set_json, list)
+                else []
+            )
+            if downstream.compatibility and not any(
+                universe in downstream.compatibility for universe in universes
+            ):
+                raise QfError(
+                    "LIVE_DOWNSTREAM_INCOMPATIBLE",
+                    "Live downstream does not support the Candidate universe.",
+                    409,
+                )
+            for member in candidate.members or []:
+                raw_alpha_id = member.get("alpha_qualification_id") if isinstance(member, dict) else None
+                try:
+                    alpha_id = UUID(str(raw_alpha_id))
+                except (TypeError, ValueError) as exc:
+                    raise QfError("LIVE_PROMOTION_LINEAGE_MISSING", "Candidate lost Alpha lineage.", 500) from exc
+                alpha = session.get(AlphaQualification, alpha_id)
+                if alpha is None or alpha.state != "ACTIVE" or alpha.degradation_state != "HEALTHY":
+                    raise QfError(
+                        "LIVE_PROMOTION_DEGRADED",
+                        "Candidate Alpha is no longer healthy enough for Live promotion.",
+                        422,
+                    )
+            duplicate = session.scalar(
+                select(ApprovalSnapshot)
+                .where(
+                    ApprovalSnapshot.candidate_id == candidate.id,
+                    ApprovalSnapshot.purpose == "LIVE",
+                    ApprovalSnapshot.state.in_(["PENDING", "APPROVED"]),
+                )
+                .order_by(ApprovalSnapshot.created_at.desc())
+                .limit(1)
+            )
+            if duplicate is not None:
+                raise QfError(
+                    "LIVE_APPROVAL_ALREADY_EXISTS",
+                    "Candidate already has an active Live Approval.",
+                    409,
+                    {"approval_id": str(duplicate.id)},
+                )
+            now = _now()
+            approval = ApprovalSnapshot(
+                candidate_id=candidate.id,
+                purpose="LIVE",
+                state="PENDING",
+                downstream_system_id=downstream.id,
+                valid_until=now + timedelta(days=7),
+                recommendation_rationale=(
+                    "Paper Handoff completed its frozen Forward Evidence contract without degradation; "
+                    "Live remains subject to an explicit human Approval and Candidate Bundle conformance."
+                ),
+                human_report={
+                    "summary": "Forward-evidence-gated Live promotion is ready for human review.",
+                    "paper_handoff_id": str(handoff.id),
+                    "forward_evidence_episode_id": str(episode.id),
+                },
+                evidence_summary={
+                    **(paper_approval.evidence_summary or {}),
+                    "paper_handoff_id": str(handoff.id),
+                    "forward_evidence_episode_id": str(episode.id),
+                    "observation_start": episode.observation_start.isoformat(),
+                    "observation_end": episode.observation_end.isoformat(),
+                    "sample_size": episode.sample_size,
+                },
+                capital_context=dict(paper_approval.capital_context or {}),
+                risk_summary=dict(paper_approval.risk_summary or {}),
+                cost_summary=dict(paper_approval.cost_summary or {}),
+                capacity_summary=dict(paper_approval.capacity_summary or {}),
+                changes_summary={
+                    **(paper_approval.changes_summary or {}),
+                    "live_promotion": {
+                        "paper_handoff_id": str(handoff.id),
+                        "forward_evidence_episode_id": str(episode.id),
+                        "created_at": now.isoformat(),
+                    },
+                },
+            )
+            session.add(approval)
+            session.flush()
+            _event(
+                session,
+                "LIVE_APPROVAL_CREATED",
+                "APPROVAL",
+                approval.id,
+                {
+                    "candidate_id": str(candidate.id),
+                    "paper_handoff_id": str(handoff.id),
+                    "forward_evidence_episode_id": str(episode.id),
+                },
+                actor_kind="SYSTEM",
+            )
+            return _approval_view(session, approval).model_dump(mode="json")
+
+        return _idempotent(
+            session,
+            idempotency_key,
+            f"handoff.promote-live:{handoff_id}",
+            payload,
+            action,
+            status_code=201,
+        )
+
+
 @router.get("/data-sources", response_model=list[DataSourceView])
 def list_data_sources(request: Request) -> list[DataSourceView]:
     factory = request.app.state.session_factory
@@ -2293,6 +2474,8 @@ def _dataset_view(item: DatasetRevision) -> dict[str, Any]:
         quality_state=item.quality_state,
         point_in_time_state=item.point_in_time_state,
         partition=item.partition,
+        gateway_instance_id=item.gateway_instance_id,
+        catalog_release_id=item.catalog_release_id,
         created_at=_iso(item.created_at) or "",
     ).model_dump(mode="json")
 
@@ -2586,6 +2769,8 @@ def ingest_dataset_revision(
             or validated.event_time_end != ingested.event_time_end
             or validated.available_time_start != ingested.available_time_start
             or validated.available_time_end != ingested.available_time_end
+            or validated.gateway_instance_id != ingested.gateway_instance_id
+            or validated.catalog_release_id != ingested.catalog_release_id
         ):
             raise QfError(
                 "NAUTILUS_CATALOG_VALIDATION_MISMATCH",
@@ -2655,6 +2840,8 @@ def ingest_dataset_revision(
                     or existing.universe_version_id != universe.id
                     or existing.instrument_scope != ingested.instrument_scope
                     or existing.row_count != ingested.row_count
+                    or existing.gateway_instance_id != ingested.gateway_instance_id
+                    or existing.catalog_release_id != ingested.catalog_release_id
                 ):
                     raise QfError(
                         "DATASET_CATALOG_IDENTITY_CONFLICT",
@@ -2691,6 +2878,8 @@ def ingest_dataset_revision(
                     provider_name=source_provider,
                     source_license=payload.source_license,
                     catalog_uri=ingested.catalog_uri,
+                    gateway_instance_id=ingested.gateway_instance_id,
+                    catalog_release_id=ingested.catalog_release_id,
                     nautilus_data_type=ingested.nautilus_data_type,
                     instrument_scope=ingested.instrument_scope,
                     schema_revision=ingested.schema_revision,
@@ -2750,6 +2939,8 @@ def list_datasets(request: Request) -> list[DatasetView]:
                 quality_state=item.quality_state,
                 point_in_time_state=item.point_in_time_state,
                 partition=item.partition,
+                gateway_instance_id=item.gateway_instance_id,
+                catalog_release_id=item.catalog_release_id,
                 created_at=_iso(item.created_at) or "",
             )
             for item in session.scalars(

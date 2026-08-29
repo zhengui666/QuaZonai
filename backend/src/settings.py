@@ -457,7 +457,7 @@ class Settings:
             return False
         try:
             decoded = base64.b64decode(self.master_key, validate=True)
-        except binascii.Error, ValueError:
+        except (binascii.Error, ValueError):
             return False
         return len(decoded) == 32
 

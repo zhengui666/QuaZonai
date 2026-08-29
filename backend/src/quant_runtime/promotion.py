@@ -1155,6 +1155,31 @@ def _pending_program_approval_id(session: Session, program_id: UUID) -> UUID | N
     )
 
 
+def _ready_candidate_downstream(
+    session: Session, *, environment_type: str, universe: str | None
+) -> DownstreamSystem | None:
+    downstreams = list(
+        session.scalars(
+            select(DownstreamSystem)
+            .where(
+                DownstreamSystem.environment_type == environment_type,
+                DownstreamSystem.enabled.is_(True),
+                DownstreamSystem.preflight_state == "READY",
+                DownstreamSystem.package_contract_version == "2",
+            )
+            .order_by(DownstreamSystem.name, DownstreamSystem.id)
+        )
+    )
+    return next(
+        (
+            downstream
+            for downstream in downstreams
+            if not downstream.compatibility or universe in downstream.compatibility
+        ),
+        None,
+    )
+
+
 def _select_portfolio_sealed_dataset(
     session: Session,
     *,
@@ -1250,6 +1275,14 @@ def prepare_portfolio_simulation(
             session, requested_alpha_ids, mandate
         )
         constraints = _validate_mandate_before_simulation(mandate, alpha)
+        if _ready_candidate_downstream(
+            session, environment_type="PAPER", universe=alpha.universe
+        ) is None:
+            raise QfError(
+                "PAPER_DOWNSTREAM_NOT_READY",
+                "A ready compatible Candidate Bundle v2 Paper downstream is required before simulation.",
+                409,
+            )
         simulation_request = request.model_copy(
             update={
                 "experiment_id": simulation_experiment_id,
@@ -1369,6 +1402,16 @@ def simulate_portfolio_candidate(
         source_dataset = session.get(DatasetRevision, source.dataset_revision_id)
         if source_dataset is None:
             raise QfError("DATASET_REVISION_NOT_FOUND", "Portfolio source Dataset Revision is missing.", 500)
+        paper_downstream = _ready_candidate_downstream(
+            session, environment_type="PAPER", universe=alpha.universe
+        )
+        if paper_downstream is None:
+            raise QfError(
+                "PAPER_DOWNSTREAM_NOT_READY",
+                "A ready compatible Candidate Bundle v2 Paper downstream is required before consuming sealed evidence.",
+                409,
+            )
+        paper_downstream_id = paper_downstream.id
         portfolio_sealed_dataset = _select_portfolio_sealed_dataset(
             session,
             alpha=alpha,
@@ -1503,32 +1546,12 @@ def simulate_portfolio_candidate(
             simulation_evidence, request_json.instrument_ids
         )
         instrument_ids = list(executed_instrument_weights)
-        downstreams = list(
-            session.scalars(
-                select(DownstreamSystem)
-                .where(
-                    DownstreamSystem.environment_type == "PAPER",
-                    DownstreamSystem.enabled.is_(True),
-                    DownstreamSystem.preflight_state == "READY",
-                    DownstreamSystem.package_contract_version == "2",
-                )
-                .order_by(DownstreamSystem.name, DownstreamSystem.id)
-            )
-        )
-        paper_downstream = next(
-            (
-                downstream
-                for downstream in downstreams
-                if not downstream.compatibility
-                or persisted_alpha.universe in downstream.compatibility
-            ),
-            None,
-        )
+        paper_downstream = session.get(DownstreamSystem, paper_downstream_id)
         if paper_downstream is None:
             raise QfError(
-                "PAPER_DOWNSTREAM_NOT_READY",
-                "No ready Candidate Bundle v2 Paper downstream matches the selected Alpha.",
-                409,
+                "PAPER_DOWNSTREAM_DISAPPEARED",
+                "The Paper downstream frozen before sealed evaluation no longer exists.",
+                500,
             )
         candidate = PortfolioCandidate(
             portfolio_program_id=portfolio_program.id,

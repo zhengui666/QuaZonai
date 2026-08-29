@@ -356,6 +356,7 @@ def register_sealed_dataset(
         )
     expected = list(dict.fromkeys(item.strip() for item in payload.expected_instrument_ids if item.strip()))
     normalized: dict[str, object] = {
+        "universe_version_id": str(universe_version_id),
         "data_source_id": str(payload.data_source_id),
         "catalog_key": payload.catalog_key,
         "source_license": payload.source_license,
@@ -386,31 +387,76 @@ def register_sealed_dataset(
                 422,
                 {"universe": universe.name},
             )
-        jobs = list(session.scalars(
-            select(Job)
-            .where(
-                Job.kind == SEALED_DATASET_REGISTRATION_JOB_KIND,
-                Job.resource_id == universe_version_id,
-                Job.state.in_(["READY", "LEASED", "SUCCEEDED"]),
+        operation = "SEALED_DATASET_REGISTRATION"
+        receipt = session.execute(
+            select(PublicMutationReceipt)
+            .where(PublicMutationReceipt.idempotency_key == key)
+            .with_for_update()
+        ).scalar_one_or_none()
+        if receipt is None:
+            receipt = PublicMutationReceipt(
+                idempotency_key=key,
+                operation_name=operation,
+                normalized_request=normalized,
+                response_json={"state": "CLAIMING"},
+                status_code=202,
+                created_at=datetime.now(UTC),
             )
-            .order_by(Job.created_at.desc())
-        ))
-        for existing in jobs:
-            existing_payload = dict(existing.payload or {})
-            if existing_payload.get("idempotency_key") != key:
-                continue
-            if any(existing_payload.get(name) != value for name, value in normalized.items()):
-                raise QfError("IDEMPOTENCY_KEY_REUSED", "The sealed registration key belongs to another request.", 409)
-            return SealedDatasetRegistrationJobResult(
-                job_id=existing.id, universe_version_id=universe_version_id, state=existing.state
+            try:
+                with session.begin_nested():
+                    session.add(receipt)
+                    session.flush()
+            except IntegrityError as exc:
+                if receipt in session:
+                    session.expunge(receipt)
+                session.expire_all()
+                receipt = session.execute(
+                    select(PublicMutationReceipt)
+                    .where(PublicMutationReceipt.idempotency_key == key)
+                    .with_for_update()
+                ).scalar_one_or_none()
+                if receipt is None:
+                    raise QfError(
+                        "IDEMPOTENCY_RECEIPT_CONFLICT",
+                        "Sealed registration receipt could not be resolved after a concurrent request.",
+                        409,
+                    ) from exc
+            else:
+                job = enqueue_job(
+                    session,
+                    kind=SEALED_DATASET_REGISTRATION_JOB_KIND,
+                    resource_type="MARKET_UNIVERSE_VERSION",
+                    resource_id=universe_version_id,
+                    payload={**normalized, "idempotency_key": key},
+                )
+                receipt.response_json = {
+                    "job_id": str(job.id),
+                    "universe_version_id": str(universe_version_id),
+                }
+                return SealedDatasetRegistrationJobResult(
+                    job_id=job.id, universe_version_id=universe_version_id, state=job.state
+                )
+        if receipt.operation_name != operation or receipt.normalized_request != normalized:
+            raise QfError(
+                "IDEMPOTENCY_KEY_REUSED",
+                "The idempotency key belongs to a different public mutation.",
+                409,
             )
-        job = enqueue_job(
-            session,
-            kind=SEALED_DATASET_REGISTRATION_JOB_KIND,
-            resource_type="MARKET_UNIVERSE_VERSION",
-            resource_id=universe_version_id,
-            payload=normalized,
-        )
+        try:
+            job_id = UUID(str((receipt.response_json or {})["job_id"]))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise QfError(
+                "IDEMPOTENCY_RECEIPT_INVALID",
+                "Sealed registration receipt lost its durable job identity.",
+                500,
+            ) from exc
+        job = session.get(Job, job_id)
+        if job is None or job.kind != SEALED_DATASET_REGISTRATION_JOB_KIND:
+            raise QfError(
+                "IDEMPOTENCY_RECEIPT_INVALID",
+                "Sealed registration receipt points to a missing job.",
+                500,
+            )
         return SealedDatasetRegistrationJobResult(
             job_id=job.id, universe_version_id=universe_version_id, state=job.state
         )

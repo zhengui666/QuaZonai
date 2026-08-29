@@ -33,6 +33,7 @@ class RuntimeCapabilities(StrictModel):
     protocol_version: str
     runtime_name: Literal["NAUTILUS_TRADER"] = "NAUTILUS_TRADER"
     runtime_version: str
+    gateway_instance_id: UUID
     catalog_kind: Literal["PARQUET_DATA_CATALOG"] = "PARQUET_DATA_CATALOG"
     supported_operations: list[str]
     live_execution_exposed: bool = False
@@ -94,6 +95,8 @@ class CatalogIngestResult(StrictModel):
     runtime_version: str
     catalog_key: str
     catalog_uri: str
+    gateway_instance_id: UUID
+    catalog_release_id: UUID
     nautilus_data_type: str
     instrument_scope: list[str]
     event_time_start: datetime
@@ -124,6 +127,8 @@ class CatalogValidationResult(StrictModel):
     runtime_version: str
     catalog_key: str
     catalog_uri: str | None = None
+    gateway_instance_id: UUID | None = None
+    catalog_release_id: UUID | None = None
     valid: bool
     nautilus_data_type: str | None = None
     instrument_scope: list[str]

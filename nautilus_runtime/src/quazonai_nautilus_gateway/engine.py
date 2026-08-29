@@ -332,14 +332,14 @@ def _candidate_strategy_wheel_path(candidate_id: UUID) -> str:
 
 
 def _source_bundle_sandbox_command(
-    *, operation: str, workspace: Path
+    *, operation: str, workspace: Path, data_root: Path
 ) -> list[str]:
     """Build a fail-closed Bubblewrap command for authored Python.
 
-    The child receives only the one disposable operation workspace, trusted
-    Python/runtime libraries, an empty network namespace and fresh /proc,/dev,/tmp.
-    It cannot see the Gateway data root, sibling sealed catalogs, service secrets,
-    host home directories, or host network namespace.
+    Start from a read-only host root so the interpreter and its native Nautilus
+    dependencies remain executable on normal Linux distributions and hosted CI.
+    Then mask the Gateway data root and common host-secret locations, bind only
+    the disposable operation workspace back at /sandbox, and unshare networking.
     """
     if sys.platform != "linux":
         raise GatewayContractError("SOURCE_BUNDLE execution requires Linux OS isolation")
@@ -347,6 +347,7 @@ def _source_bundle_sandbox_command(
     sandbox = shutil.which(configured)
     if sandbox is None:
         raise GatewayContractError("SOURCE_BUNDLE OS sandbox is unavailable")
+    gateway_source = Path(__file__).resolve().parents[1]
     command = [
         sandbox,
         "--die-with-parent",
@@ -356,24 +357,26 @@ def _source_bundle_sandbox_command(
         "--unshare-pid",
         "--unshare-net",
         "--unshare-uts",
+        "--ro-bind", "/", "/",
+        "--bind", str(workspace), "/sandbox",
+        "--ro-bind", str(gateway_source), "/gateway-src",
         "--proc", "/proc",
         "--dev", "/dev",
-        "--tmpfs", "/tmp",
-        "--bind", str(workspace), "/sandbox",
-        "--chdir", "/sandbox",
     ]
-    seen: set[str] = set()
-    for candidate in (
-        Path("/usr"), Path("/lib"), Path("/lib64"), Path("/etc"),
-        Path(sys.base_prefix), Path(sys.prefix),
-    ):
+    masked: set[str] = set()
+    for candidate in (Path("/tmp"), Path("/run"), Path("/root"), data_root.resolve()):
         resolved = str(candidate.resolve())
-        if candidate.exists() and resolved not in seen:
-            command.extend(["--ro-bind", resolved, resolved])
-            seen.add(resolved)
-    gateway_source = Path(__file__).resolve().parents[1]
-    command.extend(["--ro-bind", str(gateway_source), "/gateway-src"])
+        if candidate.exists() and resolved not in {"/", str(workspace.resolve())} and resolved not in masked:
+            command.extend(["--tmpfs", resolved])
+            masked.add(resolved)
+    home = Path.home().resolve()
+    executable = Path(sys.executable).resolve()
+    if home.exists() and home != Path("/") and not executable.is_relative_to(home):
+        resolved_home = str(home)
+        if resolved_home not in masked:
+            command.extend(["--tmpfs", resolved_home])
     command.extend([
+        "--chdir", "/sandbox",
         "--setenv", "QUAZONAI_NAUTILUS_ISOLATED_CHILD", "1",
         "--setenv", "PYTHONDONTWRITEBYTECODE", "1",
         sys.executable, "-I", "-c",
@@ -393,6 +396,7 @@ class NautilusGatewayEngine:
                 f"validated Nautilus version is {VALIDATED_NAUTILUS_VERSION}, got {nautilus_version}"
             )
         self._data_root = data_root.resolve()
+        self._gateway_instance_path = self._data_root / ".gateway-instance-id"
         self._catalog_root = self._data_root / "catalogs"
         self._catalog_storage_root = self._catalog_root / "data"
         self._catalog_registry_path = self._catalog_root / "registry.json"
@@ -404,12 +408,39 @@ class NautilusGatewayEngine:
         self._catalog_storage_root.mkdir(parents=True, exist_ok=True)
         self._artifact_root.mkdir(parents=True, exist_ok=True)
         self._run_root.mkdir(parents=True, exist_ok=True)
+        self._gateway_instance_id = self._load_or_create_gateway_instance_id()
+
+    def _load_or_create_gateway_instance_id(self) -> UUID:
+        path = self._gateway_instance_path
+        if path.exists() or path.is_symlink():
+            if path.is_symlink() or not path.is_file():
+                raise GatewayContractError("gateway instance identity path is invalid")
+            try:
+                return UUID(path.read_text(encoding="ascii").strip())
+            except (OSError, UnicodeError, ValueError) as exc:
+                raise GatewayContractError("gateway instance identity is invalid") from exc
+        candidate = uuid4()
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(path, flags, 0o600)
+        except FileExistsError:
+            try:
+                return UUID(path.read_text(encoding="ascii").strip())
+            except (OSError, UnicodeError, ValueError) as exc:
+                raise GatewayContractError("gateway instance identity is invalid") from exc
+        try:
+            os.write(fd, f"{candidate}\n".encode("ascii"))
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        return candidate
 
     def capabilities(self) -> dict[str, Any]:
         return {
             "protocol_version": PROTOCOL_VERSION,
             "runtime_name": "NAUTILUS_TRADER",
             "runtime_version": nautilus_version,
+            "gateway_instance_id": str(self._gateway_instance_id),
             "catalog_kind": "PARQUET_DATA_CATALOG",
             "supported_operations": [
                 "CATALOG_INGEST",
@@ -517,6 +548,8 @@ class NautilusGatewayEngine:
             "runtime_version": manifest["runtime_version"],
             "catalog_key": manifest["catalog_key"],
             "catalog_uri": f"nautilus-catalog://{manifest['catalog_key']}",
+            "gateway_instance_id": UUID(str(manifest["gateway_instance_id"])),
+            "catalog_release_id": UUID(str(manifest["catalog_release_id"])),
             "nautilus_data_type": manifest["nautilus_data_type"],
             "instrument_scope": manifest["instrument_scope"],
             "event_time_start": _parse_time(manifest["event_time_start"]),
@@ -710,7 +743,9 @@ class NautilusGatewayEngine:
             output_path = workspace / ".trusted-result.json"
             input_path.write_text(json.dumps(_jsonable(payload)), encoding="utf-8")
             completed = subprocess.run(
-                _source_bundle_sandbox_command(operation=operation, workspace=workspace),
+                _source_bundle_sandbox_command(
+                    operation=operation, workspace=workspace, data_root=self._data_root
+                ),
                 cwd=workspace,
                 env=_sanitized_child_environment(),
                 stdin=subprocess.DEVNULL,
@@ -789,6 +824,15 @@ class NautilusGatewayEngine:
                 "catalog key is immutable and already bound to another ingest contract"
             )
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        try:
+            storage_id = UUID(hex=catalog_path.name)
+        except ValueError as exc:
+            raise GatewayContractError("catalog storage identity is invalid") from exc
+        if (
+            str(manifest.get("gateway_instance_id")) != str(self._gateway_instance_id)
+            or str(manifest.get("catalog_release_id")) != str(storage_id)
+        ):
+            raise GatewayContractError("catalog release identity does not match this Gateway")
         return self._manifest_result(manifest)
 
     @staticmethod
@@ -930,6 +974,8 @@ class NautilusGatewayEngine:
                 manifest = {
                     "protocol_version": PROTOCOL_VERSION,
                     "runtime_version": nautilus_version,
+                    "gateway_instance_id": str(self._gateway_instance_id),
+                    "catalog_release_id": str(storage_id),
                     "catalog_key": request.catalog_key,
                     "nautilus_data_type": request.nautilus_data_type,
                     "instrument_scope": instrument_scope,
@@ -1000,6 +1046,9 @@ class NautilusGatewayEngine:
         if request.protocol_version != PROTOCOL_VERSION:
             raise GatewayContractError("unsupported protocol version")
         catalog_path = self._catalog_path(request.catalog_key)
+        record = self._find_catalog_record(self._load_catalog_registry(), request.catalog_key)
+        if record is None or record.state != "READY":
+            raise GatewayContractError("selected catalog is unavailable")
         manifest_path = catalog_path / "quazonai-catalog-manifest.json"
         findings: list[dict[str, Any]] = []
         if not manifest_path.exists():
@@ -1013,6 +1062,10 @@ class NautilusGatewayEngine:
                 "findings": [{"code": "CATALOG_MANIFEST_MISSING"}],
             }
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if str(manifest.get("gateway_instance_id")) != str(self._gateway_instance_id):
+            findings.append({"code": "GATEWAY_INSTANCE_ID_MISMATCH"})
+        if str(manifest.get("catalog_release_id")) != str(record.storage_id):
+            findings.append({"code": "CATALOG_RELEASE_ID_MISMATCH"})
         catalog = ParquetDataCatalog(path=str(catalog_path))
         instruments = catalog.instruments()
         scope = sorted(str(instrument.id) for instrument in instruments)
@@ -1108,6 +1161,8 @@ class NautilusGatewayEngine:
             "runtime_version": nautilus_version,
             "catalog_key": request.catalog_key,
             "catalog_uri": f"nautilus-catalog://{request.catalog_key}",
+            "gateway_instance_id": str(self._gateway_instance_id),
+            "catalog_release_id": str(record.storage_id),
             "valid": not findings and bool(instruments) and bool(ticks),
             "nautilus_data_type": manifest.get("nautilus_data_type"),
             "instrument_scope": scope,

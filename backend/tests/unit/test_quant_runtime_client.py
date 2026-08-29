@@ -75,6 +75,7 @@ def test_client_rejects_runtime_version_drift() -> None:
                 "protocol_version": "1",
                 "runtime_name": "NAUTILUS_TRADER",
                 "runtime_version": "9.9.9",
+                "gateway_instance_id": str(uuid4()),
                 "catalog_kind": "PARQUET_DATA_CATALOG",
                 "supported_operations": [],
                 "live_execution_exposed": False,

@@ -171,7 +171,8 @@ def _execute_sealed_dataset_registration(
     if not validation.valid:
         raise RuntimeError("sealed catalog failed remote validation")
     required = (
-        validation.catalog_uri, validation.nautilus_data_type, validation.schema_revision,
+        validation.catalog_uri, validation.gateway_instance_id, validation.catalog_release_id,
+        validation.nautilus_data_type, validation.schema_revision,
         validation.event_time_start, validation.event_time_end,
         validation.available_time_start, validation.available_time_end, validation.ingested_at,
     )
@@ -210,6 +211,8 @@ def _execute_sealed_dataset_registration(
                 or existing.data_source_id != source.id
                 or existing.instrument_scope != validation.instrument_scope
                 or existing.row_count != validation.row_count
+                or existing.gateway_instance_id != validation.gateway_instance_id
+                or existing.catalog_release_id != validation.catalog_release_id
             ):
                 raise RuntimeError("sealed catalog URI is already bound to different governance facts")
             revision = existing
@@ -241,6 +244,8 @@ def _execute_sealed_dataset_registration(
                 provider_name=source.provider or source.name,
                 source_license=(str(payload.get("source_license")) if payload.get("source_license") else None),
                 catalog_uri=validation.catalog_uri,
+                gateway_instance_id=validation.gateway_instance_id,
+                catalog_release_id=validation.catalog_release_id,
                 nautilus_data_type=validation.nautilus_data_type,
                 instrument_scope=validation.instrument_scope,
                 schema_revision=validation.schema_revision,

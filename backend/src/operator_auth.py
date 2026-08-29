@@ -560,7 +560,7 @@ def _read_cookie(
             cookie_issuance_epoch=cookie_issuance_epoch,
             browser_epoch=browser_epoch,
         )
-    except ValueError, TypeError, json.JSONDecodeError, _InvalidCookie:
+    except (ValueError, TypeError, json.JSONDecodeError, _InvalidCookie):
         return None
     except Exception:  # noqa: BLE001 - invalid/tampered cookies collapse to anonymous
         return None

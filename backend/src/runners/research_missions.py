@@ -215,7 +215,7 @@ def _provider_credential_broker(api_key: str | None) -> Iterator[Path | None]:
                 if bytes(request) != BROKER_REQUEST:
                     return
                 connection.sendall(api_key.encode("utf-8"))
-        except OSError, TimeoutError:
+        except (OSError, TimeoutError):
             return
         finally:
             try:

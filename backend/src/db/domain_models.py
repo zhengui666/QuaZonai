@@ -196,6 +196,8 @@ class DatasetRevision(Base):
     provider_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     source_license: Mapped[str | None] = mapped_column(Text, nullable=True)
     catalog_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
+    gateway_instance_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    catalog_release_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     nautilus_data_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
     instrument_scope: Mapped[list[str]] = mapped_column(JSON_VALUE, default=list, nullable=False)
     schema_revision: Mapped[str | None] = mapped_column(String(128), nullable=True)
