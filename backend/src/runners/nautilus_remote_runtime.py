@@ -29,7 +29,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, cast
 from uuid import uuid4
 
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
@@ -533,10 +533,10 @@ def _prepare_isolated_child() -> None:
         def __init__(self, *_: Any, **__: Any) -> None:
             raise PermissionError("generated strategy network access is disabled")
 
-    socket.socket = BlockedSocket  # type: ignore[assignment]
-    socket.create_connection = blocked_network  # type: ignore[assignment]
-    socket.getaddrinfo = blocked_network  # type: ignore[assignment]
-    socket.socketpair = blocked_network  # type: ignore[assignment]
+    setattr(socket, "socket", BlockedSocket)
+    setattr(socket, "create_connection", blocked_network)
+    setattr(socket, "getaddrinfo", blocked_network)
+    setattr(socket, "socketpair", blocked_network)
 
 
 def _execute_isolated_child(
@@ -880,7 +880,7 @@ def create_app() -> FastAPI:
                     raise HTTPException(status_code=413, detail="Candidate Bundle exceeds 256 MiB")
                 staged.write(chunk)
             staged.seek(0)
-            result = _verify_bundle(staged)
+            result = _verify_bundle(cast(BinaryIO, staged))
         if result.get("valid") is not True:
             raise HTTPException(status_code=422, detail=result)
         return result
