@@ -955,20 +955,7 @@ candidate-bundle/
 
 `requirements.lock` 精确固定 `nautilus-trader==1.231.0`。Bundle 不包含真实 broker/provider/runtime credential、private key、account secret 或 execution-control endpoint；`live-node-template.json` 只是 downstream-owned 配置模板，QZ 不启动或控制节点。Bundle conformance 依赖显式 artifact/version、wheel metadata、schema、required files、fixture/report/statistics 与 remote `verify_candidate`，不新增应用级 hash/checksum/fingerprint gate。
 
-Python Reference Runtime 是正式参考实现：
-
-```text
-canonical input
-→ Feature Pipeline
-→ Alpha
-→ Calibration
-→ Portfolio Policy
-→ TargetPortfolioFrame
-```
-
-它不连接行情源、broker 或 wallet，不提交订单。
-
-Package 禁止包含：broker URL、API key、private key、account ID、order type、TIF、order id、recovery、heartbeat 或 execution retry。
+Package 禁止包含：broker URL、API key、private key、account ID、order type、TIF、order id、recovery、heartbeat 或 execution retry。`validation/` 只包含脱敏后的 Reference Fixture 与预期报告，不包含运行时账户数据。
 
 QZ 不为 Package 创建应用级 hash/checksum/fingerprint。完整性与兼容性依赖：显式 artifact ID/version、文件名/长度、wheel/package metadata、schema validation、Reference Fixture 执行结果与 contract version。
 
