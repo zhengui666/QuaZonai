@@ -371,7 +371,7 @@ def _source_bundle_sandbox_command(
         if candidate.exists() and resolved not in seen:
             command.extend(["--ro-bind", resolved, resolved])
             seen.add(resolved)
-    gateway_source = Path(__file__).resolve().parents[2]
+    gateway_source = Path(__file__).resolve().parents[1]
     command.extend(["--ro-bind", str(gateway_source), "/gateway-src"])
     command.extend([
         "--setenv", "QUAZONAI_NAUTILUS_ISOLATED_CHILD", "1",
