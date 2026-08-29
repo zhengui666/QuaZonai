@@ -24,3 +24,8 @@ def test_source_bundle_sandbox_uses_minimal_supported_namespaces(
         "--unshare-uts",
     ):
         assert flag in command
+
+    gateway_mount_index = command.index("/gateway-src")
+    gateway_package_root = Path(command[gateway_mount_index - 1])
+    assert gateway_package_root.name == "src"
+    assert (gateway_package_root / "quazonai_nautilus_gateway").is_dir()
