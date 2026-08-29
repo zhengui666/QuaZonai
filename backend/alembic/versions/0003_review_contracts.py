@@ -111,20 +111,23 @@ def upgrade() -> None:
             sa.Column("service_token_key_version", sa.Integer(), nullable=True),
         )
 
-    package_columns = _columns(bind, "candidate_packages")
-    if "state" not in package_columns:
+    # Issue #22 is a clean schema boundary: only the Nautilus-native Candidate
+    # Bundle table exists.  There is deliberately no Candidate Package fallback
+    # or in-place conversion path for pre-boundary databases.
+    bundle_columns = _columns(bind, "candidate_bundles")
+    if "state" not in bundle_columns:
         op.add_column(
-            "candidate_packages",
+            "candidate_bundles",
             sa.Column(
                 "state",
                 sa.String(length=40),
                 nullable=False,
-                server_default="LEGACY_NON_EXECUTABLE",
+                server_default="AVAILABLE",
             ),
         )
-    if "manifest_json" not in package_columns:
+    if "manifest_json" not in bundle_columns:
         op.add_column(
-            "candidate_packages",
+            "candidate_bundles",
             sa.Column(
                 "manifest_json",
                 _json_type(bind),
@@ -132,16 +135,10 @@ def upgrade() -> None:
                 server_default=sa.text("'{}'"),
             ),
         )
-    if "relative_path" not in package_columns:
+    if "relative_path" not in bundle_columns:
         op.add_column(
-            "candidate_packages",
+            "candidate_bundles",
             sa.Column("relative_path", sa.Text(), nullable=False, server_default=""),
-        )
-        op.execute(
-            "UPDATE handoff_offers SET state = 'REVOKED', "
-            "stale_reason = 'Legacy Candidate Package is not executable under the current contract' "
-            "WHERE candidate_package_id IN (SELECT id FROM candidate_packages) "
-            "AND state IN ('APPROVED','PUBLISHING','AVAILABLE')"
         )
 
     handoff_columns = _columns(bind, "handoff_offers")
@@ -191,5 +188,5 @@ def upgrade() -> None:
 def downgrade() -> None:
     raise RuntimeError(
         "0003_review_contracts is intentionally irreversible because it establishes "
-        "credential, package, lineage, and validated-forward-evidence contracts."
+        "credential, bundle, lineage, and validated-forward-evidence contracts."
     )

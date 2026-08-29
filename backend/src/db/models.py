@@ -7,8 +7,9 @@ from db.base import Base, TimestampMixin
 from db.domain_models import (
     AlphaQualification,
     ApprovalSnapshot,
-    CandidatePackage,
+    CandidateBundle,
     DatasetRevision,
+    DegradationFollowup,
     DownstreamSystem,
     ForwardEvidenceEpisode,
     GovernedDataSource,
@@ -23,6 +24,7 @@ from db.domain_models import (
     ResearchCharter,
     ResearchMission,
     ResearchProgram,
+    SearchLedgerEntry,
 )
 from db.plugin_models import (
     CredentialSecret,
@@ -55,13 +57,15 @@ __all__ = [
     "MarketUniverseVersion",
     "GovernedDataSource",
     "DatasetRevision",
+    "DegradationFollowup",
     "AlphaQualification",
     "PortfolioMandate",
     "PortfolioProgram",
     "PortfolioCandidate",
     "DownstreamSystem",
     "ApprovalSnapshot",
-    "CandidatePackage",
+    "CandidateBundle",
     "HandoffOffer",
     "ForwardEvidenceEpisode",
+    "SearchLedgerEntry",
 ]

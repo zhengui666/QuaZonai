@@ -12,6 +12,8 @@ import sys
 import tempfile
 import threading
 from collections.abc import Iterator
+
+import httpx
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -23,6 +25,11 @@ from sqlalchemy import select
 from db.models import Event, Job, ResearchBranch, ResearchCharter, ResearchMission, ResearchProgram
 from db.session import create_database_engine, create_session_factory
 from errors import QfError
+from quant_runtime.workspace import (
+    execute_workspace_experiments,
+    prepare_experiment_workspace,
+    write_parent_owned_workspace_file,
+)
 from runtime_config import load_effective_settings
 from settings import Settings
 
@@ -30,6 +37,12 @@ CUSTOM_CODEX_PROVIDER_ID = "quazonai_configured"
 DEFAULT_OPENAI_API_BASE_URL = "https://api.openai.com/v1"
 BROKER_REQUEST = b"TOKEN\n"
 BROKER_ACCEPT_POLL_SECONDS = 0.25
+RETRYABLE_MISSION_EXIT_CODE = 75
+REMOTE_RESULT_UNCERTAIN = "NAUTILUS_REMOTE_RESULT_UNCERTAIN"
+
+
+class RetryableMissionError(RuntimeError):
+    """The remote result is ambiguous and the same durable Mission must be retried."""
 
 
 def _now() -> datetime:
@@ -56,7 +69,9 @@ def _event(
     )
 
 
-def _git(*args: str, cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
+def _git(
+    *args: str, cwd: Path | None = None, check: bool = True
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args],
         cwd=cwd,
@@ -90,8 +105,10 @@ def _prepare_worktree(settings: Settings, program_id: UUID, mission_id: UUID) ->
         _git("commit", "-m", "Initialize research program workspace", cwd=repo)
 
     if workspace.exists():
-        _git("worktree", "remove", "--force", str(workspace), cwd=repo, check=False)
-        shutil.rmtree(workspace, ignore_errors=True)
+        # A transport-uncertain runtime result must resume the exact experiment
+        # files which generated its immutable experiment id. Do not rebuild the
+        # worktree and silently replace that contract on a durable retry.
+        return workspace
     _git("branch", "-D", branch, cwd=repo, check=False)
     _git("worktree", "add", "-b", branch, str(workspace), "HEAD", cwd=repo)
     return workspace
@@ -251,6 +268,16 @@ def _codex_launch_configuration(
         "QUAZONAI_AUTH_SESSION_TTL_SECONDS": "",
         "QUAZONAI_AUTH_TRUSTED_BROWSER_TTL_DAYS": "",
         "QUAZONAI_AUTH_TRUSTED_PROXY_CIDRS": "",
+        "QUAZONAI_NAUTILUS_RESEARCH_URL": "",
+        "QUAZONAI_NAUTILUS_RESEARCH_TOKEN": "",
+        "QUAZONAI_NAUTILUS_RESEARCH_EXPECTED_VERSION": "",
+        "QUAZONAI_NAUTILUS_RESEARCH_TIMEOUT_SECONDS": "",
+        "QUAZONAI_NAUTILUS_RESEARCH_ALLOW_INSECURE_HTTP": "",
+        "QUAZONAI_NAUTILUS_SEALED_URL": "",
+        "QUAZONAI_NAUTILUS_SEALED_TOKEN": "",
+        "QUAZONAI_NAUTILUS_SEALED_EXPECTED_VERSION": "",
+        "QUAZONAI_NAUTILUS_SEALED_TIMEOUT_SECONDS": "",
+        "QUAZONAI_NAUTILUS_SEALED_ALLOW_INSECURE_HTTP": "",
     }
     overrides = [
         'shell_environment_policy.inherit="core"',
@@ -263,9 +290,9 @@ def _codex_launch_configuration(
         base_url = settings.codex_base_url or DEFAULT_OPENAI_API_BASE_URL
         overrides.extend(
             [
-                f"model_providers.{provider_id}.name=\"QuaZonai configured provider\"",
+                f'model_providers.{provider_id}.name="QuaZonai configured provider"',
                 f"model_providers.{provider_id}.base_url={json.dumps(base_url)}",
-                f"model_providers.{provider_id}.wire_api=\"responses\"",
+                f'model_providers.{provider_id}.wire_api="responses"',
             ]
         )
         if settings.codex_api_key:
@@ -295,6 +322,18 @@ def _codex_launch_configuration(
     )
 
 
+def _open_codex_thread(
+    codex: Any,
+    *,
+    persisted_thread_id: str | None,
+    options: dict[str, Any],
+) -> Any:
+    """Start a Mission thread once; durable retries resume that exact thread."""
+    if persisted_thread_id:
+        return codex.thread_resume(persisted_thread_id, **options)
+    return codex.thread_start(**options)
+
+
 def run_mission(settings: Settings, job_id: UUID) -> None:
     """Start app-server first, then atomically admit the Mission into RUNNING."""
     try:
@@ -308,11 +347,49 @@ def run_mission(settings: Settings, job_id: UUID) -> None:
 
     mission_id, program_id, context = _load_mission_context(settings, job_id)
     workspace = _prepare_worktree(settings, program_id, mission_id)
-    (workspace / "MISSION.md").write_text(context, encoding="utf-8")
+    write_parent_owned_workspace_file(workspace / "MISSION.md", context)
+    prepare_experiment_workspace(settings, workspace=workspace, mission_id=mission_id)
 
     engine = create_database_engine(settings)
     factory = create_session_factory(engine)
     try:
+        retry_thread_id: str | None = None
+        # If a previous attempt lost the HTTP response, the worktree still holds
+        # the exact contract and Codex thread. Reconcile the immutable experiment
+        # before resuming that same conversation.
+        if (workspace / "experiments").exists():
+            with factory() as session:
+                retry_mission = session.get(ResearchMission, mission_id)
+                retry_branch_id = retry_mission.branch_id if retry_mission is not None else None
+                if (
+                    retry_mission is not None
+                    and retry_mission.error_code == REMOTE_RESULT_UNCERTAIN
+                ):
+                    retry_thread_id = retry_mission.codex_thread_id
+            if retry_branch_id is None:
+                raise QfError(
+                    "MISSION_BRANCH_MISSING",
+                    "Research Mission has no Branch for experiment reconciliation.",
+                    500,
+                )
+            if (
+                retry_mission is not None
+                and retry_mission.error_code == REMOTE_RESULT_UNCERTAIN
+                and not retry_thread_id
+            ):
+                raise QfError(
+                    "MISSION_RETRY_CONTEXT_MISSING",
+                    "Transport-uncertain Mission lost its persisted Codex thread id.",
+                    500,
+                )
+            execute_workspace_experiments(
+                settings,
+                workspace=workspace,
+                mission_id=mission_id,
+                program_id=program_id,
+                branch_id=retry_branch_id,
+                already_executed=set(),
+            )
         with _provider_credential_broker(settings.codex_api_key) as credential_socket:
             codex_config, model_provider = _codex_launch_configuration(
                 settings,
@@ -320,22 +397,32 @@ def run_mission(settings: Settings, job_id: UUID) -> None:
                 credential_socket=credential_socket,
             )
             with Codex(codex_config) as codex:
-                thread = codex.thread_start(
-                    approval_mode=ApprovalMode.deny_all,
-                    sandbox=Sandbox.workspace_write,
-                    cwd=str(workspace),
-                    model=settings.codex_model,
-                    model_provider=model_provider,
-                    config={
-                        "sandbox_workspace_write": {"network_access": False},
-                        "web_search": "disabled",
+                developer_instructions = (
+                    "You are a QuaZonai Research Mission worker. Work only inside this Mission worktree. "
+                    "Read MISSION.md, DATASETS.json, EXPERIMENT_CONTRACT.schema.json, and "
+                    "NAUTILUS_EXPERIMENTS.md before making quantitative claims. If DEGRADATION_CONTEXT.json "
+                    "exists, read it as immutable prior Strategy/Discovery/Forward Evidence context. Use only governed Discovery "
+                    "datasets listed there and declare bounded SOURCE_BUNDLE Nautilus experiments under "
+                    "experiments/ when evidence is available. The parent worker, not you, executes those "
+                    "contracts against the independent remote runtime. Do not request approvals, do not access "
+                    "external networks, do not place trades, do not manage broker state, and do not alter the "
+                    "frozen Research Charter."
+                )
+                thread = _open_codex_thread(
+                    codex,
+                    persisted_thread_id=retry_thread_id,
+                    options={
+                        "approval_mode": ApprovalMode.deny_all,
+                        "sandbox": Sandbox.workspace_write,
+                        "cwd": str(workspace),
+                        "model": settings.codex_model,
+                        "model_provider": model_provider,
+                        "config": {
+                            "sandbox_workspace_write": {"network_access": False},
+                            "web_search": "disabled",
+                        },
+                        "developer_instructions": developer_instructions,
                     },
-                    developer_instructions=(
-                        "You are a QuaZonai Research Mission worker. Work only inside this Mission worktree. "
-                        "Read MISSION.md, perform the bounded research task, and write durable findings to RESULT.md. "
-                        "Do not request approvals, do not access external networks, do not place trades, do not manage "
-                        "broker state, and do not alter the frozen Research Charter."
-                    ),
                 )
                 with factory() as session, session.begin():
                     mission = session.execute(
@@ -351,34 +438,72 @@ def run_mission(settings: Settings, job_id: UUID) -> None:
                             {"state": mission.state},
                         )
                     mission.state = "RUNNING"
-                    mission.started_at = _now()
+                    if mission.started_at is None:
+                        mission.started_at = _now()
                     mission.codex_thread_id = thread.id
                     mission.workspace_path = str(workspace)
-                    mission.summary = "Codex app-server admitted the Mission and started the research turn."
+                    mission.summary = (
+                        "Codex app-server resumed the transport-uncertain Mission thread."
+                        if retry_thread_id
+                        else "Codex app-server admitted the Mission and started the research turn."
+                    )
                     _event(
                         session,
-                        kind="MISSION_STARTED",
+                        kind="MISSION_RESUMED" if retry_thread_id else "MISSION_STARTED",
                         program_id=program_id,
                         mission_id=mission_id,
                         payload={"codex_thread_id": thread.id},
                     )
 
-                result = thread.run(
-                    "Execute the Mission in MISSION.md. Produce RESULT.md with the evidence, assumptions, limitations, "
-                    "and concrete next research actions. Return a concise completion summary."
-                )
+                if retry_thread_id:
+                    result = thread.run(
+                        "The preserved remote Nautilus experiment has now been reconciled. Read "
+                        "evidence/INDEX.json and every evidence/*.json file, compare the real orders, "
+                        "fills, positions, PnL and statistics, and update RESULT.md. Do not rerun the "
+                        "research turn and do not create additional experiment contracts."
+                    )
+                else:
+                    result = thread.run(
+                        "Execute the Mission in MISSION.md. First read NAUTILUS_EXPERIMENTS.md, DATASETS.json, and "
+                        "EXPERIMENT_CONTRACT.schema.json. If governed data are available, back quantitative claims "
+                        "with bounded SOURCE_BUNDLE contracts in experiments/. If no usable governed dataset exists, "
+                        "record that evidence blocker instead of fabricating results. Produce RESULT.md with evidence, "
+                        "assumptions, limitations, and concrete next research actions. Return a concise completion summary."
+                    )
+                    if mission.branch_id is None:
+                        raise QfError(
+                            "MISSION_BRANCH_MISSING",
+                            "Research Mission has no Branch for experiment lineage.",
+                            500,
+                        )
+                    executed_experiment_ids: set[UUID] = set()
+                    experiment_activity = execute_workspace_experiments(
+                        settings,
+                        workspace=workspace,
+                        mission_id=mission.id,
+                        program_id=mission.program_id,
+                        branch_id=mission.branch_id,
+                        already_executed=executed_experiment_ids,
+                    )
+                    executed_experiment_ids.update(experiment_activity)
+                    if experiment_activity.has_activity:
+                        result = thread.run(
+                            "Read evidence/INDEX.json and every new evidence/*.json file. Compare the real "
+                            "Nautilus orders, fills, positions, PnL and statistics, then update RESULT.md. "
+                            "Do not create additional experiment contracts in this final evidence turn."
+                        )
 
         _git("add", "-A", cwd=workspace)
         status = _git("status", "--porcelain", cwd=workspace).stdout.strip()
         if status:
             _git("commit", "-m", f"Complete research mission {mission_id}", cwd=workspace)
 
-        final_response = (result.final_response or "Mission completed without a textual summary.").strip()
+        final_response = (
+            result.final_response or "Mission completed without a textual summary."
+        ).strip()
         with factory() as session, session.begin():
             mission = session.execute(
-                select(ResearchMission)
-                .where(ResearchMission.id == mission_id)
-                .with_for_update()
+                select(ResearchMission).where(ResearchMission.id == mission_id).with_for_update()
             ).scalar_one()
             mission.state = "SUCCEEDED"
             mission.finished_at = _now()
@@ -391,6 +516,28 @@ def run_mission(settings: Settings, job_id: UUID) -> None:
                 mission_id=mission_id,
                 payload={"summary": mission.summary},
             )
+    except httpx.TransportError as exc:
+        with factory() as session, session.begin():
+            mission = session.get(ResearchMission, mission_id)
+            if mission is not None and mission.state in {"READY", "RUNNING"}:
+                mission.state = "READY"
+                mission.finished_at = None
+                mission.error_code = REMOTE_RESULT_UNCERTAIN
+                mission.summary = (
+                    "Remote Nautilus result is transport-uncertain; the exact Mission worktree and "
+                    "experiment id are preserved for durable reconciliation."
+                )
+                mission.attempt += 1
+                _event(
+                    session,
+                    kind="MISSION_RETRY_SCHEDULED",
+                    program_id=program_id,
+                    mission_id=mission_id,
+                    payload={"error_code": REMOTE_RESULT_UNCERTAIN},
+                )
+        raise RetryableMissionError(
+            "remote Nautilus result uncertain; retry the same Mission contract"
+        ) from exc
     except Exception as exc:
         with factory() as session, session.begin():
             mission = session.get(ResearchMission, mission_id)
@@ -419,7 +566,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
     settings = load_effective_settings(Settings.from_env())
-    run_mission(settings, UUID(args.job_id))
+    try:
+        run_mission(settings, UUID(args.job_id))
+    except RetryableMissionError:
+        return RETRYABLE_MISSION_EXIT_CODE
     return 0
 
 

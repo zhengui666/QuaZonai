@@ -20,13 +20,16 @@ def test_secret_is_bound_to_credential_release_and_field() -> None:
         field_name="api_secret",
     )
 
-    assert decrypt_secret(
-        encrypted,
-        master_key=key,
-        credential_set_id=credential_id,
-        plugin_release_id=release_id,
-        field_name="api_secret",
-    ) == "secret-value"
+    assert (
+        decrypt_secret(
+            encrypted,
+            master_key=key,
+            credential_set_id=credential_id,
+            plugin_release_id=release_id,
+            field_name="api_secret",
+        )
+        == "secret-value"
+    )
 
     with pytest.raises(QfError):
         decrypt_secret(

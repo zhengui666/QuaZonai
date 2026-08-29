@@ -5,19 +5,27 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Any, Callable
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from fastapi import APIRouter, Header, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from candidate_packages import build_candidate_package, resolve_package_archive
+from candidate_bundles import (
+    BUNDLE_CONTRACT_VERSION,
+    build_candidate_bundle,
+    build_candidate_verification_request,
+    discard_candidate_bundle,
+    persist_candidate_bundle,
+    resolve_bundle_archive,
+)
 from db.models import (
     AlphaQualification,
     ApprovalSnapshot,
-    CandidatePackage,
+    CandidateBundle,
     DatasetRevision,
     DownstreamSystem,
     Event,
@@ -38,6 +46,15 @@ from db.models import (
 from downstream_auth import authenticate_downstream, install_service_token, issue_service_token
 from errors import QfError
 from jobs import enqueue_job
+from quant_runtime.client import NautilusQuantRuntime, RemoteNautilusConfig
+from quant_runtime.contracts import (
+    CatalogIngestRequest,
+    CatalogIngestResult,
+    CatalogValidationRequest,
+    CatalogValidationResult,
+    InstrumentQuoteBatch,
+)
+from quant_runtime.data_scope import dataset_revision_domains, market_scope_matches_universe
 
 router = APIRouter(prefix="/api/v1", tags=["domain"])
 
@@ -160,6 +177,18 @@ class MandateView(StrictModel):
     state: str
 
 
+class PortfolioMandateInput(StrictModel):
+    key: str = Field(
+        min_length=1, max_length=120, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    )
+    name: str = Field(min_length=1, max_length=200)
+    spec_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class PortfolioProgramInput(StrictModel):
+    mandate_id: UUID
+
+
 class PortfolioProgramView(StrictModel):
     id: UUID
     mandate_version_id: UUID
@@ -225,10 +254,15 @@ class ApprovalRejectInput(StrictModel):
     expected_state: str
 
 
+class LivePromotionInput(StrictModel):
+    downstream_system_id: UUID
+    expected_handoff_state: str = "FEEDBACK_COMPLETE"
+
+
 class HandoffView(StrictModel):
     id: UUID
     approval_id: UUID
-    candidate_package_id: UUID
+    candidate_bundle_id: UUID
     candidate_id: UUID
     purpose: str
     downstream_system_id: UUID
@@ -285,7 +319,7 @@ class DownstreamInput(StrictModel):
     name: str = Field(min_length=1, max_length=200)
     environment_type: str
     enabled: bool = True
-    package_contract_version: str = "1"
+    package_contract_version: str = "2"
     feedback_contract_version: str = "1"
     compatibility: list[str] = Field(default_factory=list)
     public_config: dict[str, Any] = Field(default_factory=dict)
@@ -335,7 +369,23 @@ class DatasetView(StrictModel):
     quality_state: str
     point_in_time_state: str
     partition: str
+    gateway_instance_id: UUID | None = None
+    catalog_release_id: UUID | None = None
     created_at: str
+
+
+class DatasetIngestInput(StrictModel):
+    universe_key: str = Field(
+        min_length=1, max_length=120, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    )
+    universe_name: str = Field(min_length=1, max_length=200)
+    universe_spec: dict[str, Any] = Field(default_factory=dict)
+    catalog_key: str = Field(
+        min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    )
+    source: str = Field(min_length=1, max_length=500)
+    source_license: str | None = Field(default=None, max_length=500)
+    instruments: list[InstrumentQuoteBatch] = Field(min_length=1)
 
 
 def _now() -> datetime:
@@ -438,7 +488,10 @@ def _infer_scope(idea: str) -> str:
 def _infer_horizon(idea: str) -> str:
     match = re.search(r"\b(\d+)\s*(minute|min|hour|hr|day|d|h|m)s?\b", idea.lower())
     if not match:
-        return "System inferred"
+        # A frozen Charter must never carry an unresolved sentinel into
+        # qualification. Daily is the explicit V1 default when the Idea does
+        # not state a horizon; users can state another concrete horizon.
+        return "1D"
     number, unit = match.groups()
     return f"{number}{unit[0].upper()}"
 
@@ -452,6 +505,103 @@ def _charter_preview(idea: str) -> CharterView:
         prediction_horizon=_infer_horizon(clean),
         system_assumptions=["Implementation details are selected by the research system."],
     )
+
+
+def _resolve_frozen_research_scope(
+    session: Session,
+    preview: CharterView,
+) -> tuple[list[UUID], list[str], str | list[str]]:
+    """Resolve an Idea to concrete executable governed Discovery scope."""
+    revisions = list(
+        session.scalars(
+            select(DatasetRevision)
+            .where(
+                DatasetRevision.partition == "DISCOVERY",
+                DatasetRevision.quality_state == "VALID",
+                DatasetRevision.point_in_time_state == "VALID",
+                DatasetRevision.catalog_uri.is_not(None),
+                DatasetRevision.universe_version_id.is_not(None),
+                DatasetRevision.data_source_id.is_not(None),
+            )
+            .order_by(DatasetRevision.created_at.desc())
+        )
+    )
+    source_ids = {item.data_source_id for item in revisions if item.data_source_id is not None}
+    # Resolve latest ACTIVE versions independently of completed Dataset Revisions.
+    # If the latest version has no governed Discovery revision yet, research must
+    # block instead of silently falling back to a superseded revision.
+    universes = list(
+        session.scalars(
+            select(MarketUniverseVersion).where(MarketUniverseVersion.state == "ACTIVE")
+        )
+    )
+    sources = (
+        list(
+            session.scalars(
+                select(GovernedDataSource).where(
+                    GovernedDataSource.id.in_(source_ids),
+                    GovernedDataSource.state == "ACTIVE",
+                    GovernedDataSource.preflight_state == "READY",
+                )
+            )
+        )
+        if source_ids
+        else []
+    )
+    latest_by_key: dict[str, MarketUniverseVersion] = {}
+    for universe in universes:
+        if (
+            universe.universe_key not in latest_by_key
+            or universe.version_no > latest_by_key[universe.universe_key].version_no
+        ):
+            latest_by_key[universe.universe_key] = universe
+    active_universes = {item.id: item for item in latest_by_key.values()}
+    active_sources = {item.id: item for item in sources}
+
+    eligible: list[tuple[DatasetRevision, MarketUniverseVersion, set[str]]] = []
+    for revision in revisions:
+        if revision.universe_version_id is None or revision.data_source_id is None:
+            continue
+        matched_universe = active_universes.get(revision.universe_version_id)
+        matched_source = active_sources.get(revision.data_source_id)
+        if matched_universe is None or matched_source is None:
+            continue
+        if not market_scope_matches_universe(preview.market_scope, matched_universe):
+            continue
+        catalog_uri = revision.catalog_uri or ""
+        if not catalog_uri.startswith("nautilus-catalog://") or not revision.instrument_scope:
+            continue
+        domains = dataset_revision_domains(revision, matched_source)
+        if not domains:
+            continue
+        eligible.append((revision, matched_universe, domains))
+
+    if not eligible:
+        raise QfError(
+            "RESEARCH_SCOPE_UNAVAILABLE",
+            "No executable governed Discovery dataset matches the inferred Research scope.",
+            422,
+            {"market_scope": preview.market_scope},
+        )
+
+    concrete_universes = {universe.id: universe for _, universe, _ in eligible}
+    requested_scope = preview.market_scope
+    if requested_scope is None or requested_scope == "System inferred":
+        names = sorted({item.name for item in concrete_universes.values()})
+        if len(names) != 1:
+            raise QfError(
+                "RESEARCH_SCOPE_AMBIGUOUS",
+                "The Idea does not resolve to one configured executable market scope.",
+                422,
+                {"available_market_scopes": names},
+            )
+        frozen_market_scope: str | list[str] = names[0]
+    else:
+        frozen_market_scope = requested_scope
+
+    frozen_universe_ids = sorted(concrete_universes, key=str)
+    frozen_domains = sorted({domain for _, _, domains in eligible for domain in domains})
+    return frozen_universe_ids, frozen_domains, frozen_market_scope
 
 
 def _charter_view(item: ResearchCharter) -> CharterView:
@@ -510,10 +660,14 @@ def _program_view(session: Session, item: ResearchProgram) -> ResearchProgramVie
         select(func.count()).select_from(ResearchBranch).where(ResearchBranch.program_id == item.id)
     )
     mission_count = session.scalar(
-        select(func.count()).select_from(ResearchMission).where(ResearchMission.program_id == item.id)
+        select(func.count())
+        .select_from(ResearchMission)
+        .where(ResearchMission.program_id == item.id)
     )
     alpha_count = session.scalar(
-        select(func.count()).select_from(AlphaQualification).where(AlphaQualification.program_id == item.id)
+        select(func.count())
+        .select_from(AlphaQualification)
+        .where(AlphaQualification.program_id == item.id)
     )
     return ResearchProgramView(
         id=item.id,
@@ -609,7 +763,7 @@ def _approval_view(session: Session, item: ApprovalSnapshot) -> ApprovalView:
 
 def _handoff_view(session: Session, item: HandoffOffer) -> HandoffView:
     downstream = session.get(DownstreamSystem, item.downstream_system_id)
-    package = session.get(CandidatePackage, item.candidate_package_id)
+    package = session.get(CandidateBundle, item.candidate_bundle_id)
     package_version = package.contract_version if package else "1"
     contract = item.feedback_contract_snapshot or {}
     feedback_version = str(
@@ -621,7 +775,7 @@ def _handoff_view(session: Session, item: HandoffOffer) -> HandoffView:
     return HandoffView(
         id=item.id,
         approval_id=item.approval_id,
-        candidate_package_id=item.candidate_package_id,
+        candidate_bundle_id=item.candidate_bundle_id,
         candidate_id=item.candidate_id,
         purpose=item.purpose,
         downstream_system_id=item.downstream_system_id,
@@ -639,7 +793,9 @@ def _handoff_view(session: Session, item: HandoffOffer) -> HandoffView:
 
 def _find_duplicate_program(session: Session, idea: str) -> ResearchProgram | None:
     normalized = idea.strip().casefold()
-    for program in session.scalars(select(ResearchProgram).order_by(ResearchProgram.created_at.desc())):
+    for program in session.scalars(
+        select(ResearchProgram).order_by(ResearchProgram.created_at.desc())
+    ):
         charter = session.get(ResearchCharter, program.charter_id)
         if charter and charter.original_idea_text.strip().casefold() == normalized:
             return program
@@ -726,6 +882,7 @@ def create_program(
         raise QfError("OVERLAP_ACTION_INVALID", "Overlap action is invalid.", 422)
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
+
         def action() -> dict[str, Any]:
             duplicate = _find_duplicate_program(session, payload.idea)
             if duplicate is not None and payload.overlap_action in {None, "recommended"}:
@@ -773,17 +930,23 @@ def create_program(
                 return _program_view(session, duplicate).model_dump(mode="json")
 
             preview = _charter_preview(payload.idea)
+            universe_version_ids, allowed_data_domains, market_scope = (
+                _resolve_frozen_research_scope(session, preview)
+            )
             now = _now()
             charter = ResearchCharter(
                 original_idea_text=preview.original_idea_text,
                 research_question=preview.research_question or preview.original_idea_text,
-                market_scope=preview.market_scope or "System inferred",
-                universe_version_ids=[],
+                market_scope=market_scope,
+                universe_version_ids=[str(value) for value in universe_version_ids],
                 prediction_horizon=preview.prediction_horizon,
-                allowed_data_domains=[],
+                allowed_data_domains=allowed_data_domains,
                 explicit_exclusions=preview.explicit_exclusions,
                 material_assumptions=preview.material_assumptions,
-                system_assumptions=preview.system_assumptions,
+                system_assumptions=[
+                    *preview.system_assumptions,
+                    "Universe Versions and data domains were frozen from executable governed Discovery revisions at Program creation.",
+                ],
                 created_at=now,
             )
             session.add(charter)
@@ -824,7 +987,7 @@ def create_program(
                 session,
                 program=program,
                 branch=branch,
-                objective=f"Test the Charter hypothesis within {preview.market_scope}.",
+                objective=f"Test the Charter hypothesis within {market_scope}.",
             )
             _event(
                 session,
@@ -869,7 +1032,9 @@ def list_programs(request: Request) -> list[ResearchProgramView]:
     with factory() as session:
         return [
             _program_view(session, item)
-            for item in session.scalars(select(ResearchProgram).order_by(ResearchProgram.created_at.desc()))
+            for item in session.scalars(
+                select(ResearchProgram).order_by(ResearchProgram.created_at.desc())
+            )
         ]
 
 
@@ -898,6 +1063,7 @@ def _program_action(
     }
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
+
         def action() -> dict[str, Any]:
             item = session.execute(
                 select(ResearchProgram).where(ResearchProgram.id == program_id).with_for_update()
@@ -941,22 +1107,42 @@ def _program_action(
 
 
 @router.post("/research-programs/{program_id}/pause", response_model=ResearchProgramView)
-def pause_program(program_id: UUID, payload: ProgramActionInput, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def pause_program(
+    program_id: UUID,
+    payload: ProgramActionInput,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     return _program_action(program_id, payload, request, idempotency_key, "pause")
 
 
 @router.post("/research-programs/{program_id}/resume", response_model=ResearchProgramView)
-def resume_program(program_id: UUID, payload: ProgramActionInput, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def resume_program(
+    program_id: UUID,
+    payload: ProgramActionInput,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     return _program_action(program_id, payload, request, idempotency_key, "resume")
 
 
 @router.post("/research-programs/{program_id}/archive", response_model=ResearchProgramView)
-def archive_program(program_id: UUID, payload: ProgramActionInput, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def archive_program(
+    program_id: UUID,
+    payload: ProgramActionInput,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     return _program_action(program_id, payload, request, idempotency_key, "archive")
 
 
 @router.post("/research-programs/{program_id}/restore", response_model=ResearchProgramView)
-def restore_program(program_id: UUID, payload: ProgramActionInput, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def restore_program(
+    program_id: UUID,
+    payload: ProgramActionInput,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     return _program_action(program_id, payload, request, idempotency_key, "restore")
 
 
@@ -1024,8 +1210,157 @@ def get_alpha(qualification_id: UUID, request: Request) -> AlphaView:
     with factory() as session:
         item = session.get(AlphaQualification, qualification_id)
         if item is None:
-            raise QfError("ALPHA_QUALIFICATION_NOT_FOUND", "Alpha Qualification was not found.", 404)
+            raise QfError(
+                "ALPHA_QUALIFICATION_NOT_FOUND", "Alpha Qualification was not found.", 404
+            )
         return _alpha_view(item)
+
+
+@router.post(
+    "/portfolio-mandates", response_model=MandateView, status_code=201
+)
+def create_mandate(
+    payload: PortfolioMandateInput,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
+    key = (idempotency_key or "").strip()
+    if not key or len(key) > 200:
+        raise QfError(
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "Portfolio Mandate creation requires a 1..200 character Idempotency-Key.",
+            422,
+        )
+    factory = request.app.state.session_factory
+    with factory() as session, session.begin():
+        if session.bind is not None and session.bind.dialect.name == "postgresql":
+            session.execute(
+                text("SELECT pg_advisory_xact_lock(:lock_key)"),
+                {"lock_key": 220025},
+            )
+
+        def action() -> dict[str, Any]:
+            duplicate = session.scalar(
+                select(PortfolioMandate).where(PortfolioMandate.key == payload.key)
+            )
+            if duplicate is not None:
+                raise QfError(
+                    "MANDATE_KEY_CONFLICT",
+                    "Portfolio Mandate key already exists.",
+                    409,
+                )
+            item = PortfolioMandate(
+                key=payload.key,
+                name=payload.name.strip(),
+                enabled=True,
+                latest_version_id=uuid4(),
+                spec_json=payload.spec_json,
+                state="ACTIVE",
+            )
+            session.add(item)
+            session.flush()
+            _event(
+                session,
+                "MANDATE_CREATED",
+                "PORTFOLIO_MANDATE",
+                item.id,
+                {"mandate_version_id": str(item.latest_version_id)},
+                actor_kind="HUMAN",
+            )
+            return MandateView(
+                id=item.id,
+                key=item.key,
+                name=item.name,
+                enabled=item.enabled,
+                latest_version_id=item.latest_version_id,
+                spec_json=item.spec_json,
+                state=item.state,
+            ).model_dump(mode="json")
+
+        return _idempotent(
+            session,
+            key,
+            "portfolio-mandate.create",
+            payload,
+            action,
+            status_code=201,
+        )
+
+
+@router.post(
+    "/portfolio-programs", response_model=PortfolioProgramView, status_code=201
+)
+def create_portfolio_program(
+    payload: PortfolioProgramInput,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
+    key = (idempotency_key or "").strip()
+    if not key or len(key) > 200:
+        raise QfError(
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "Portfolio Program creation requires a 1..200 character Idempotency-Key.",
+            422,
+        )
+    factory = request.app.state.session_factory
+    with factory() as session, session.begin():
+        if session.bind is not None and session.bind.dialect.name == "postgresql":
+            session.execute(
+                text("SELECT pg_advisory_xact_lock(:lock_key)"),
+                {"lock_key": 220026},
+            )
+
+        def action() -> dict[str, Any]:
+            mandate = session.execute(
+                select(PortfolioMandate)
+                .where(PortfolioMandate.id == payload.mandate_id)
+                .with_for_update()
+            ).scalar_one_or_none()
+            if mandate is None:
+                raise QfError("MANDATE_NOT_FOUND", "Portfolio Mandate was not found.", 404)
+            if not mandate.enabled or mandate.state != "ACTIVE":
+                raise QfError(
+                    "MANDATE_NOT_ACTIVE",
+                    "Portfolio Program requires an active enabled Mandate.",
+                    409,
+                )
+            item = PortfolioProgram(
+                mandate_version_id=mandate.latest_version_id,
+                mandate_name=mandate.name,
+                state="ACTIVE",
+            )
+            session.add(item)
+            session.flush()
+            _event(
+                session,
+                "PORTFOLIO_PROGRAM_CREATED",
+                "PORTFOLIO_PROGRAM",
+                item.id,
+                {
+                    "mandate_id": str(mandate.id),
+                    "mandate_version_id": str(mandate.latest_version_id),
+                },
+                actor_kind="HUMAN",
+            )
+            return PortfolioProgramView(
+                id=item.id,
+                mandate_version_id=item.mandate_version_id,
+                mandate_name=item.mandate_name,
+                state=item.state,
+                created_at=_iso(item.created_at),
+                updated_at=_iso(item.updated_at),
+                candidate_count=0,
+                current_candidate_id=item.current_candidate_id,
+            ).model_dump(mode="json")
+
+        return _idempotent(
+            session,
+            key,
+            "portfolio-program.create",
+            payload,
+            action,
+            status_code=201,
+        )
 
 
 @router.get("/portfolio-mandates", response_model=list[MandateView])
@@ -1046,28 +1381,62 @@ def list_mandates(request: Request) -> list[MandateView]:
         ]
 
 
-def _toggle_mandate(mandate_id: UUID, request: Request, idempotency_key: str | None, enabled: bool) -> dict[str, Any]:
+def _toggle_mandate(
+    mandate_id: UUID, request: Request, idempotency_key: str | None, enabled: bool
+) -> dict[str, Any]:
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
+
         def action() -> dict[str, Any]:
-            item = session.execute(select(PortfolioMandate).where(PortfolioMandate.id == mandate_id).with_for_update()).scalar_one_or_none()
+            item = session.execute(
+                select(PortfolioMandate).where(PortfolioMandate.id == mandate_id).with_for_update()
+            ).scalar_one_or_none()
             if item is None:
                 raise QfError("MANDATE_NOT_FOUND", "Portfolio Mandate was not found.", 404)
             item.enabled = enabled
-            _event(session, "MANDATE_ENABLED" if enabled else "MANDATE_DISABLED", "PORTFOLIO_MANDATE", item.id, {}, actor_kind="HUMAN")
+            _event(
+                session,
+                "MANDATE_ENABLED" if enabled else "MANDATE_DISABLED",
+                "PORTFOLIO_MANDATE",
+                item.id,
+                {},
+                actor_kind="HUMAN",
+            )
             session.flush()
-            return MandateView(id=item.id, key=item.key, name=item.name, enabled=item.enabled, latest_version_id=item.latest_version_id, spec_json=item.spec_json, state=item.state).model_dump(mode="json")
+            return MandateView(
+                id=item.id,
+                key=item.key,
+                name=item.name,
+                enabled=item.enabled,
+                latest_version_id=item.latest_version_id,
+                spec_json=item.spec_json,
+                state=item.state,
+            ).model_dump(mode="json")
 
-        return _idempotent(session, idempotency_key, f"portfolio-mandate.{'enable' if enabled else 'disable'}:{mandate_id}", {}, action)
+        return _idempotent(
+            session,
+            idempotency_key,
+            f"portfolio-mandate.{'enable' if enabled else 'disable'}:{mandate_id}",
+            {},
+            action,
+        )
 
 
 @router.post("/portfolio-mandates/{mandate_id}/enable", response_model=MandateView)
-def enable_mandate(mandate_id: UUID, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def enable_mandate(
+    mandate_id: UUID,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     return _toggle_mandate(mandate_id, request, idempotency_key, True)
 
 
 @router.post("/portfolio-mandates/{mandate_id}/disable", response_model=MandateView)
-def disable_mandate(mandate_id: UUID, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def disable_mandate(
+    mandate_id: UUID,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     return _toggle_mandate(mandate_id, request, idempotency_key, False)
 
 
@@ -1076,9 +1445,26 @@ def list_portfolio_programs(request: Request) -> list[PortfolioProgramView]:
     factory = request.app.state.session_factory
     with factory() as session:
         result: list[PortfolioProgramView] = []
-        for item in session.scalars(select(PortfolioProgram).order_by(PortfolioProgram.created_at.desc())):
-            count = session.scalar(select(func.count()).select_from(PortfolioCandidate).where(PortfolioCandidate.portfolio_program_id == item.id))
-            result.append(PortfolioProgramView(id=item.id, mandate_version_id=item.mandate_version_id, mandate_name=item.mandate_name, state=item.state, created_at=_iso(item.created_at), updated_at=_iso(item.updated_at), candidate_count=int(count or 0), current_candidate_id=item.current_candidate_id))
+        for item in session.scalars(
+            select(PortfolioProgram).order_by(PortfolioProgram.created_at.desc())
+        ):
+            count = session.scalar(
+                select(func.count())
+                .select_from(PortfolioCandidate)
+                .where(PortfolioCandidate.portfolio_program_id == item.id)
+            )
+            result.append(
+                PortfolioProgramView(
+                    id=item.id,
+                    mandate_version_id=item.mandate_version_id,
+                    mandate_name=item.mandate_name,
+                    state=item.state,
+                    created_at=_iso(item.created_at),
+                    updated_at=_iso(item.updated_at),
+                    candidate_count=int(count or 0),
+                    current_candidate_id=item.current_candidate_id,
+                )
+            )
         return result
 
 
@@ -1096,7 +1482,12 @@ def get_candidate(candidate_id: UUID, request: Request) -> CandidateView:
 def list_approvals(request: Request) -> list[ApprovalView]:
     factory = request.app.state.session_factory
     with factory() as session:
-        return [_approval_view(session, item) for item in session.scalars(select(ApprovalSnapshot).order_by(ApprovalSnapshot.created_at.desc()))]
+        return [
+            _approval_view(session, item)
+            for item in session.scalars(
+                select(ApprovalSnapshot).order_by(ApprovalSnapshot.created_at.desc())
+            )
+        ]
 
 
 @router.get("/approvals/{approval_id}", response_model=ApprovalView)
@@ -1112,7 +1503,9 @@ def get_approval(approval_id: UUID, request: Request) -> ApprovalView:
 def _expire_approval_if_needed(request: Request, approval_id: UUID) -> bool:
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
-        approval = session.execute(select(ApprovalSnapshot).where(ApprovalSnapshot.id == approval_id).with_for_update()).scalar_one_or_none()
+        approval = session.execute(
+            select(ApprovalSnapshot).where(ApprovalSnapshot.id == approval_id).with_for_update()
+        ).scalar_one_or_none()
         if approval is None:
             return False
         if approval.state == "PENDING" and _is_past(approval.valid_until):
@@ -1128,13 +1521,21 @@ def _feedback_contract_snapshot(downstream: DownstreamSystem, purpose: str) -> d
     if not isinstance(configured, dict):
         configured = {}
     required_fields = configured.get("required_fields", [])
-    if not isinstance(required_fields, list) or not all(isinstance(item, str) for item in required_fields):
-        raise QfError("FEEDBACK_CONTRACT_INVALID", "feedback_contract.required_fields must be a list of strings.", 422)
+    if not isinstance(required_fields, list) or not all(
+        isinstance(item, str) for item in required_fields
+    ):
+        raise QfError(
+            "FEEDBACK_CONTRACT_INVALID",
+            "feedback_contract.required_fields must be a list of strings.",
+            422,
+        )
     try:
         minimum_duration = int(configured.get("minimum_observation_duration_seconds", 1))
         minimum_sample = int(configured.get("minimum_valid_sample_size", 1))
     except (TypeError, ValueError) as exc:
-        raise QfError("FEEDBACK_CONTRACT_INVALID", "Feedback contract minimums must be integers.", 422) from exc
+        raise QfError(
+            "FEEDBACK_CONTRACT_INVALID", "Feedback contract minimums must be integers.", 422
+        ) from exc
     if minimum_duration < 0 or minimum_sample < 1:
         raise QfError("FEEDBACK_CONTRACT_INVALID", "Feedback contract minimums are invalid.", 422)
     return {
@@ -1143,121 +1544,324 @@ def _feedback_contract_snapshot(downstream: DownstreamSystem, purpose: str) -> d
         "minimum_observation_duration_seconds": minimum_duration,
         "minimum_valid_sample_size": minimum_sample,
         "required_fields": required_fields,
-        "accepted_package_contracts": configured.get("accepted_package_contracts", [downstream.package_contract_version]),
-        "accepted_arrow_contracts": configured.get("accepted_arrow_contracts", ["arrow-ipc-file-v1"]),
+        "accepted_package_contracts": configured.get(
+            "accepted_package_contracts", [downstream.package_contract_version]
+        ),
+        "accepted_arrow_contracts": configured.get(
+            "accepted_arrow_contracts", ["arrow-ipc-file-v1"]
+        ),
         "disclosure_policy": configured.get("disclosure_policy", "FULL"),
     }
 
 
+def _target_effective_until(downstream: DownstreamSystem, decision_at: datetime) -> datetime:
+    raw = (downstream.public_config or {}).get("target_validity_seconds", 7 * 24 * 60 * 60)
+    try:
+        seconds = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise QfError(
+            "DOWNSTREAM_TARGET_VALIDITY_INVALID",
+            "Downstream target_validity_seconds must be an integer.",
+            422,
+        ) from exc
+    if seconds < 60 or seconds > 90 * 24 * 60 * 60:
+        raise QfError(
+            "DOWNSTREAM_TARGET_VALIDITY_INVALID",
+            "Downstream target validity must be between 60 seconds and 90 days.",
+            422,
+        )
+    return decision_at + timedelta(seconds=seconds)
+
+
+def _handoff_claim_deadline(
+    decision_at: datetime, target_effective_until: datetime
+) -> datetime:
+    return min(decision_at + timedelta(days=7), target_effective_until)
+
+
+def _apply_rejection_decision(
+    approval: ApprovalSnapshot, payload: ApprovalRejectInput, decision_at: datetime
+) -> None:
+    approval.state = "REJECTED"
+    approval.revision += 1
+    approval.updated_at = decision_at
+    approval.changes_summary = {
+        **(approval.changes_summary or {}),
+        "approval_decision": {
+            "outcome": "REJECT",
+            "reason_code": payload.reason_code,
+            "note": payload.note,
+            "decided_at": decision_at.isoformat(),
+        },
+    }
+
+
+def _verify_candidate_bundle_remotely(built: Any, *, candidate_id: UUID) -> None:
+    verification_request = build_candidate_verification_request(
+        built, candidate_id=candidate_id
+    )
+    with NautilusQuantRuntime(RemoteNautilusConfig.from_env()) as runtime:
+        result = runtime.verify_candidate(verification_request)
+    if not result.compatible:
+        raise QfError(
+            "CANDIDATE_CONFORMANCE_FAILED",
+            "Remote Nautilus reference-fixture verification rejected the Candidate Bundle.",
+            422,
+            {"findings": result.findings},
+        )
+
+
 @router.post("/approvals/{approval_id}/approve", response_model=ApprovalView)
-def approve_candidate(approval_id: UUID, payload: ApprovalApproveInput, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def approve_candidate(
+    approval_id: UUID,
+    payload: ApprovalApproveInput,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     if _expire_approval_if_needed(request, approval_id):
         raise QfError("APPROVAL_EXPIRED", "Approval validity window has expired.", 409)
     factory = request.app.state.session_factory
-    with factory() as session, session.begin():
-        def action() -> dict[str, Any]:
-            approval = session.execute(select(ApprovalSnapshot).where(ApprovalSnapshot.id == approval_id).with_for_update()).scalar_one_or_none()
-            if approval is None:
-                raise QfError("APPROVAL_NOT_FOUND", "Approval Snapshot was not found.", 404)
-            if approval.state != payload.expected_state or approval.state != "PENDING":
-                raise QfError("APPROVAL_STATE_CONFLICT", "Approval state changed before the decision.", 409, {"expected": payload.expected_state, "actual": approval.state})
-            downstream = session.get(DownstreamSystem, payload.downstream_system_id)
-            if downstream is None or not downstream.enabled or downstream.preflight_state != "READY":
-                raise QfError("DOWNSTREAM_NOT_READY", "Selected downstream is not ready.", 409)
-            if downstream.environment_type != approval.purpose:
-                raise QfError("DOWNSTREAM_INCOMPATIBLE", "Downstream environment does not match Approval purpose.", 409)
-            if downstream.service_token_ciphertext is None:
-                raise QfError("DOWNSTREAM_CREDENTIAL_NOT_CONFIGURED", "Selected downstream has no service credential.", 409)
-            candidate = session.get(PortfolioCandidate, approval.candidate_id)
-            if candidate is None:
-                raise QfError("CANDIDATE_NOT_FOUND", "Approval candidate was not found.", 500)
-            built = build_candidate_package(request.app.state.settings, approval=approval, candidate=candidate, downstream=downstream)
-            package = CandidatePackage(
-                approval_id=approval.id,
-                candidate_id=candidate.id,
-                contract_version=downstream.package_contract_version,
-                state="AVAILABLE",
-                manifest_json=built.manifest,
-                relative_path=built.relative_path,
-                payload=built.operator_summary,
-                created_at=_now(),
-            )
-            session.add(package)
-            session.flush()
-            contract = _feedback_contract_snapshot(downstream, approval.purpose)
-            handoff = HandoffOffer(
-                approval_id=approval.id,
-                candidate_package_id=package.id,
-                candidate_id=candidate.id,
-                purpose=approval.purpose,
-                downstream_system_id=downstream.id,
-                state="AVAILABLE",
-                claim_deadline=_now() + timedelta(days=7),
-                feedback_state="PENDING",
-                feedback_contract_snapshot=contract,
-            )
-            session.add(handoff)
-            session.flush()
-            approval.state = "APPROVED"
-            approval.downstream_system_id = downstream.id
-            approval.revision += 1
-            _event(session, "APPROVAL_APPROVED", "APPROVAL", approval.id, {"candidate_id": str(candidate.id), "handoff_id": str(handoff.id)}, actor_kind="HUMAN")
-            _event(session, "HANDOFF_AVAILABLE", "HANDOFF", handoff.id, {"candidate_id": str(candidate.id), "approval_id": str(approval.id)})
-            session.flush()
-            return _approval_view(session, approval).model_dump(mode="json")
+    persisted_bundle_path: str | None = None
+    try:
+        with factory() as session, session.begin():
 
-        return _idempotent(session, idempotency_key, f"approval.approve:{approval_id}", payload, action)
+            def action() -> dict[str, Any]:
+                nonlocal persisted_bundle_path
+                approval = session.execute(
+                    select(ApprovalSnapshot)
+                    .where(ApprovalSnapshot.id == approval_id)
+                    .with_for_update()
+                ).scalar_one_or_none()
+                if approval is None:
+                    raise QfError("APPROVAL_NOT_FOUND", "Approval Snapshot was not found.", 404)
+                if approval.state != payload.expected_state or approval.state != "PENDING":
+                    raise QfError(
+                        "APPROVAL_STATE_CONFLICT",
+                        "Approval state changed before the decision.",
+                        409,
+                        {"expected": payload.expected_state, "actual": approval.state},
+                    )
+                if (
+                    approval.downstream_system_id is None
+                    or approval.downstream_system_id != payload.downstream_system_id
+                ):
+                    raise QfError(
+                        "APPROVAL_DOWNSTREAM_MISMATCH",
+                        "Approval is frozen to a different Paper/Live downstream dependency.",
+                        409,
+                    )
+                downstream = session.get(DownstreamSystem, payload.downstream_system_id)
+                if (
+                    downstream is None
+                    or not downstream.enabled
+                    or downstream.preflight_state != "READY"
+                ):
+                    raise QfError("DOWNSTREAM_NOT_READY", "Selected downstream is not ready.", 409)
+                if downstream.environment_type != approval.purpose:
+                    raise QfError(
+                        "DOWNSTREAM_INCOMPATIBLE",
+                        "Downstream environment does not match Approval purpose.",
+                        409,
+                    )
+                if downstream.service_token_ciphertext is None:
+                    raise QfError(
+                        "DOWNSTREAM_CREDENTIAL_NOT_CONFIGURED",
+                        "Selected downstream has no service credential.",
+                        409,
+                    )
+                candidate = session.get(PortfolioCandidate, approval.candidate_id)
+                if candidate is None:
+                    raise QfError("CANDIDATE_NOT_FOUND", "Approval candidate was not found.", 500)
+                decision_at = _now()
+                approval.state = "APPROVED"
+                approval.revision += 1
+                approval.updated_at = decision_at
+                approval.expires_at = _target_effective_until(downstream, decision_at)
+                approval.evidence_summary = {
+                    **(approval.evidence_summary or {}),
+                    "decision_at": decision_at.isoformat(),
+                    "target_effective_until": approval.expires_at.isoformat(),
+                }
+                session.flush()
+                bundle_id = uuid4()
+                built = build_candidate_bundle(
+                    request.app.state.settings,
+                    approval=approval,
+                    candidate=candidate,
+                    downstream=downstream,
+                    bundle_id=bundle_id,
+                    persist=False,
+                )
+                _verify_candidate_bundle_remotely(built, candidate_id=candidate.id)
+                persisted_bundle_path = persist_candidate_bundle(
+                    request.app.state.settings,
+                    bundle_id,
+                    built.archive_bytes,
+                )
+                portfolio_program = session.execute(
+                    select(PortfolioProgram)
+                    .where(PortfolioProgram.id == candidate.portfolio_program_id)
+                    .with_for_update()
+                ).scalar_one_or_none()
+                if portfolio_program is None:
+                    raise QfError(
+                        "PORTFOLIO_PROGRAM_NOT_FOUND",
+                        "Approved Candidate lost its Portfolio Program.",
+                        500,
+                    )
+                portfolio_program.current_candidate_id = candidate.id
+                package = CandidateBundle(
+                    id=bundle_id,
+                    approval_id=approval.id,
+                    candidate_id=candidate.id,
+                    contract_version=BUNDLE_CONTRACT_VERSION,
+                    state="AVAILABLE",
+                    manifest_json=built.manifest,
+                    relative_path=persisted_bundle_path,
+                    payload=built.operator_summary,
+                    created_at=_now(),
+                )
+                session.add(package)
+                session.flush()
+                contract = _feedback_contract_snapshot(downstream, approval.purpose)
+                handoff = HandoffOffer(
+                    approval_id=approval.id,
+                    candidate_bundle_id=package.id,
+                    candidate_id=candidate.id,
+                    purpose=approval.purpose,
+                    downstream_system_id=downstream.id,
+                    state="AVAILABLE",
+                    claim_deadline=_handoff_claim_deadline(
+                        decision_at, approval.expires_at
+                    ),
+                    feedback_state="PENDING",
+                    feedback_contract_snapshot=contract,
+                )
+                session.add(handoff)
+                session.flush()
+                _event(
+                    session,
+                    "APPROVAL_APPROVED",
+                    "APPROVAL",
+                    approval.id,
+                    {"candidate_id": str(candidate.id), "handoff_id": str(handoff.id)},
+                    actor_kind="HUMAN",
+                )
+                _event(
+                    session,
+                    "HANDOFF_AVAILABLE",
+                    "HANDOFF",
+                    handoff.id,
+                    {"candidate_id": str(candidate.id), "approval_id": str(approval.id)},
+                )
+                session.flush()
+                return _approval_view(session, approval).model_dump(mode="json")
+
+            return _idempotent(
+                session,
+                idempotency_key,
+                f"approval.approve:{approval_id}",
+                payload,
+                action,
+            )
+    except Exception:
+        if persisted_bundle_path is not None:
+            discard_candidate_bundle(request.app.state.settings, persisted_bundle_path)
+        raise
 
 
 @router.post("/approvals/{approval_id}/reject", response_model=ApprovalView)
-def reject_candidate(approval_id: UUID, payload: ApprovalRejectInput, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def reject_candidate(
+    approval_id: UUID,
+    payload: ApprovalRejectInput,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     if _expire_approval_if_needed(request, approval_id):
         raise QfError("APPROVAL_EXPIRED", "Approval validity window has expired.", 409)
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
+
         def action() -> dict[str, Any]:
-            approval = session.execute(select(ApprovalSnapshot).where(ApprovalSnapshot.id == approval_id).with_for_update()).scalar_one_or_none()
+            approval = session.execute(
+                select(ApprovalSnapshot).where(ApprovalSnapshot.id == approval_id).with_for_update()
+            ).scalar_one_or_none()
             if approval is None:
                 raise QfError("APPROVAL_NOT_FOUND", "Approval Snapshot was not found.", 404)
             if approval.state != payload.expected_state or approval.state != "PENDING":
                 raise QfError("APPROVAL_STATE_CONFLICT", "Approval state changed.", 409)
-            approval.state = "REJECTED"
-            approval.revision += 1
-            approval.human_report = {"decision": "REJECT", "reason_code": payload.reason_code, "note": payload.note}
-            _event(session, "APPROVAL_REJECTED", "APPROVAL", approval.id, {"reason_code": payload.reason_code}, actor_kind="HUMAN")
+            _apply_rejection_decision(approval, payload, _now())
+            _event(
+                session,
+                "APPROVAL_REJECTED",
+                "APPROVAL",
+                approval.id,
+                {"reason_code": payload.reason_code},
+                actor_kind="HUMAN",
+            )
             session.flush()
             return _approval_view(session, approval).model_dump(mode="json")
 
-        return _idempotent(session, idempotency_key, f"approval.reject:{approval_id}", payload, action)
+        return _idempotent(
+            session, idempotency_key, f"approval.reject:{approval_id}", payload, action
+        )
 
 
 @router.get("/handoffs", response_model=list[HandoffView])
 def list_handoffs(request: Request) -> list[HandoffView]:
     factory = request.app.state.session_factory
     with factory() as session:
-        return [_handoff_view(session, item) for item in session.scalars(select(HandoffOffer).order_by(HandoffOffer.created_at.desc()))]
+        return [
+            _handoff_view(session, item)
+            for item in session.scalars(
+                select(HandoffOffer).order_by(HandoffOffer.created_at.desc())
+            )
+        ]
 
 
 @router.post("/handoffs/{handoff_id}/revoke", response_model=HandoffView)
-def revoke_handoff(handoff_id: UUID, payload: HandoffRevokeInput, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def revoke_handoff(
+    handoff_id: UUID,
+    payload: HandoffRevokeInput,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
+
         def action() -> dict[str, Any]:
-            handoff = session.execute(select(HandoffOffer).where(HandoffOffer.id == handoff_id).with_for_update()).scalar_one_or_none()
+            handoff = session.execute(
+                select(HandoffOffer).where(HandoffOffer.id == handoff_id).with_for_update()
+            ).scalar_one_or_none()
             if handoff is None:
                 raise QfError("HANDOFF_NOT_FOUND", "Handoff was not found.", 404)
             if handoff.state not in {"APPROVED", "PUBLISHING", "AVAILABLE"}:
-                raise QfError("HANDOFF_ALREADY_OWNED", "Claimed or terminal Handoff cannot be revoked by QuaZonai.", 409)
+                raise QfError(
+                    "HANDOFF_ALREADY_OWNED",
+                    "Claimed or terminal Handoff cannot be revoked by QuaZonai.",
+                    409,
+                )
             handoff.state = "REVOKED"
             handoff.stale_reason = payload.reason_code
-            _event(session, "HANDOFF_REVOKED", "HANDOFF", handoff.id, {"reason_code": payload.reason_code}, actor_kind="HUMAN")
+            _event(
+                session,
+                "HANDOFF_REVOKED",
+                "HANDOFF",
+                handoff.id,
+                {"reason_code": payload.reason_code},
+                actor_kind="HUMAN",
+            )
             session.flush()
             return _handoff_view(session, handoff).model_dump(mode="json")
 
-        return _idempotent(session, idempotency_key, f"handoff.revoke:{handoff_id}", payload, action)
+        return _idempotent(
+            session, idempotency_key, f"handoff.revoke:{handoff_id}", payload, action
+        )
 
 
-def _authenticate_handoff(session: Session, request: Request, handoff: HandoffOffer, authorization: str | None) -> DownstreamSystem:
+def _authenticate_handoff(
+    session: Session, request: Request, handoff: HandoffOffer, authorization: str | None
+) -> DownstreamSystem:
     downstream = session.get(DownstreamSystem, handoff.downstream_system_id)
     if downstream is None:
         raise QfError("DOWNSTREAM_NOT_FOUND", "Handoff Downstream System is missing.", 500)
@@ -1268,7 +1872,9 @@ def _authenticate_handoff(session: Session, request: Request, handoff: HandoffOf
 def _expire_handoff_if_needed(request: Request, handoff_id: UUID) -> bool:
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
-        handoff = session.execute(select(HandoffOffer).where(HandoffOffer.id == handoff_id).with_for_update()).scalar_one_or_none()
+        handoff = session.execute(
+            select(HandoffOffer).where(HandoffOffer.id == handoff_id).with_for_update()
+        ).scalar_one_or_none()
         if handoff is None:
             return False
         if handoff.state == "AVAILABLE" and _is_past(handoff.claim_deadline):
@@ -1279,18 +1885,29 @@ def _expire_handoff_if_needed(request: Request, handoff_id: UUID) -> bool:
 
 
 @router.post("/handoffs/{handoff_id}/claim", response_model=HandoffView)
-def claim_handoff(handoff_id: UUID, payload: HandoffStateInput, request: Request, authorization: str | None = Header(default=None, alias="Authorization"), idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def claim_handoff(
+    handoff_id: UUID,
+    payload: HandoffStateInput,
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     if _expire_handoff_if_needed(request, handoff_id):
         raise QfError("HANDOFF_EXPIRED", "Handoff claim deadline expired.", 409)
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
+
         def action() -> dict[str, Any]:
-            handoff = session.execute(select(HandoffOffer).where(HandoffOffer.id == handoff_id).with_for_update()).scalar_one_or_none()
+            handoff = session.execute(
+                select(HandoffOffer).where(HandoffOffer.id == handoff_id).with_for_update()
+            ).scalar_one_or_none()
             if handoff is None:
                 raise QfError("HANDOFF_NOT_FOUND", "Handoff was not found.", 404)
             _authenticate_handoff(session, request, handoff, authorization)
             if handoff.state != "AVAILABLE":
-                raise QfError("HANDOFF_STATE_CONFLICT", "Only Available Handoffs can be claimed.", 409)
+                raise QfError(
+                    "HANDOFF_STATE_CONFLICT", "Only Available Handoffs can be claimed.", 409
+                )
             if payload.expected_state and payload.expected_state != handoff.state:
                 raise QfError("HANDOFF_STATE_CONFLICT", "Handoff state changed before claim.", 409)
             handoff.state = "CLAIMED"
@@ -1303,18 +1920,31 @@ def claim_handoff(handoff_id: UUID, payload: HandoffStateInput, request: Request
 
 
 @router.post("/handoffs/{handoff_id}/accept", response_model=HandoffView)
-def accept_handoff(handoff_id: UUID, payload: HandoffStateInput, request: Request, authorization: str | None = Header(default=None, alias="Authorization"), idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def accept_handoff(
+    handoff_id: UUID,
+    payload: HandoffStateInput,
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
+
         def action() -> dict[str, Any]:
-            handoff = session.execute(select(HandoffOffer).where(HandoffOffer.id == handoff_id).with_for_update()).scalar_one_or_none()
+            handoff = session.execute(
+                select(HandoffOffer).where(HandoffOffer.id == handoff_id).with_for_update()
+            ).scalar_one_or_none()
             if handoff is None:
                 raise QfError("HANDOFF_NOT_FOUND", "Handoff was not found.", 404)
             _authenticate_handoff(session, request, handoff, authorization)
             if handoff.state != "CLAIMED":
-                raise QfError("HANDOFF_STATE_CONFLICT", "Only Claimed Handoffs can be accepted.", 409)
+                raise QfError(
+                    "HANDOFF_STATE_CONFLICT", "Only Claimed Handoffs can be accepted.", 409
+                )
             if payload.expected_state and payload.expected_state != handoff.state:
-                raise QfError("HANDOFF_STATE_CONFLICT", "Handoff state changed before acceptance.", 409)
+                raise QfError(
+                    "HANDOFF_STATE_CONFLICT", "Handoff state changed before acceptance.", 409
+                )
             handoff.state = "DOWNSTREAM_ACCEPTED"
             handoff.accepted_at = _now()
             handoff.feedback_state = "FEEDBACK_PENDING"
@@ -1322,15 +1952,26 @@ def accept_handoff(handoff_id: UUID, payload: HandoffStateInput, request: Reques
             session.flush()
             return _handoff_view(session, handoff).model_dump(mode="json")
 
-        return _idempotent(session, idempotency_key, f"handoff.accept:{handoff_id}", payload, action)
+        return _idempotent(
+            session, idempotency_key, f"handoff.accept:{handoff_id}", payload, action
+        )
 
 
 @router.post("/handoffs/{handoff_id}/reject", response_model=HandoffView)
-def downstream_reject_handoff(handoff_id: UUID, payload: HandoffStateInput, request: Request, authorization: str | None = Header(default=None, alias="Authorization"), idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def downstream_reject_handoff(
+    handoff_id: UUID,
+    payload: HandoffStateInput,
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
+
         def action() -> dict[str, Any]:
-            handoff = session.execute(select(HandoffOffer).where(HandoffOffer.id == handoff_id).with_for_update()).scalar_one_or_none()
+            handoff = session.execute(
+                select(HandoffOffer).where(HandoffOffer.id == handoff_id).with_for_update()
+            ).scalar_one_or_none()
             if handoff is None:
                 raise QfError("HANDOFF_NOT_FOUND", "Handoff was not found.", 404)
             _authenticate_handoff(session, request, handoff, authorization)
@@ -1338,31 +1979,56 @@ def downstream_reject_handoff(handoff_id: UUID, payload: HandoffStateInput, requ
                 raise QfError("HANDOFF_STATE_CONFLICT", "Handoff cannot be rejected now.", 409)
             handoff.state = "DOWNSTREAM_REJECTED"
             handoff.stale_reason = payload.reason_code
-            _event(session, "HANDOFF_DOWNSTREAM_REJECTED", "HANDOFF", handoff.id, {"reason_code": payload.reason_code})
+            _event(
+                session,
+                "HANDOFF_DOWNSTREAM_REJECTED",
+                "HANDOFF",
+                handoff.id,
+                {"reason_code": payload.reason_code},
+            )
             session.flush()
             return _handoff_view(session, handoff).model_dump(mode="json")
 
-        return _idempotent(session, idempotency_key, f"handoff.downstream-reject:{handoff_id}", payload, action)
+        return _idempotent(
+            session, idempotency_key, f"handoff.downstream-reject:{handoff_id}", payload, action
+        )
 
 
 @router.get("/handoffs/{handoff_id}/package", response_class=FileResponse)
-def get_handoff_package(handoff_id: UUID, request: Request, authorization: str | None = Header(default=None, alias="Authorization")) -> FileResponse:
+def get_handoff_package(
+    handoff_id: UUID,
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> FileResponse:
     factory = request.app.state.session_factory
     with factory() as session:
         handoff = session.get(HandoffOffer, handoff_id)
         if handoff is None:
             raise QfError("HANDOFF_NOT_FOUND", "Handoff was not found.", 404)
         _authenticate_handoff(session, request, handoff, authorization)
-        if handoff.state not in {"CLAIMED", "DOWNSTREAM_ACCEPTED", "FEEDBACK_PENDING", "FEEDBACK_IN_PROGRESS", "FEEDBACK_PARTIAL", "FEEDBACK_COMPLETE"}:
-            raise QfError("HANDOFF_PACKAGE_UNAVAILABLE", "Package is not available in this state.", 409)
-        package = session.get(CandidatePackage, handoff.candidate_package_id)
+        if handoff.state not in {
+            "CLAIMED",
+            "DOWNSTREAM_ACCEPTED",
+            "FEEDBACK_PENDING",
+            "FEEDBACK_IN_PROGRESS",
+            "FEEDBACK_PARTIAL",
+            "FEEDBACK_COMPLETE",
+        }:
+            raise QfError(
+                "HANDOFF_PACKAGE_UNAVAILABLE", "Package is not available in this state.", 409
+            )
+        package = session.get(CandidateBundle, handoff.candidate_bundle_id)
         if package is None:
             raise QfError("CANDIDATE_PACKAGE_NOT_FOUND", "Candidate Package was not found.", 500)
-        archive = resolve_package_archive(request.app.state.settings, package.relative_path)
-        return FileResponse(archive, media_type="application/zip", filename=f"candidate-package-{package.id}.zip")
+        archive = resolve_bundle_archive(request.app.state.settings, package.relative_path)
+        return FileResponse(
+            archive, media_type="application/zip", filename=f"candidate-bundle-{package.id}.zip"
+        )
 
 
-def _validate_complete_feedback(handoff: HandoffOffer, payload: FeedbackInput) -> tuple[datetime, datetime, int]:
+def _validate_complete_feedback(
+    handoff: HandoffOffer, payload: FeedbackInput, *, received_at: datetime
+) -> tuple[datetime, datetime, int]:
     problems: list[str] = []
     if payload.observation_start is None:
         problems.append("observation_start is required")
@@ -1371,18 +2037,52 @@ def _validate_complete_feedback(handoff: HandoffOffer, payload: FeedbackInput) -
     if payload.sample_size is None:
         problems.append("sample_size is required")
     if problems:
-        raise QfError("FEEDBACK_CONTRACT_INVALID", "Complete feedback does not satisfy the frozen Feedback Contract.", 422, {"problems": problems})
+        raise QfError(
+            "FEEDBACK_CONTRACT_INVALID",
+            "Complete feedback does not satisfy the frozen Feedback Contract.",
+            422,
+            {"problems": problems},
+        )
     assert payload.observation_start is not None
     assert payload.observation_end is not None
     assert payload.sample_size is not None
     start = payload.observation_start
     end = payload.observation_end
-    if end <= start:
+    if start.tzinfo is None or start.utcoffset() is None:
+        problems.append("observation_start must be timezone-aware")
+    if end.tzinfo is None or end.utcoffset() is None:
+        problems.append("observation_end must be timezone-aware")
+    accepted_at = handoff.accepted_at
+    if accepted_at is None:
+        problems.append("Handoff must be accepted before complete forward feedback")
+    else:
+        if accepted_at.tzinfo is None or accepted_at.utcoffset() is None:
+            accepted_at = accepted_at.replace(tzinfo=UTC)
+        if start.tzinfo is not None and start.utcoffset() is not None and start < accepted_at:
+            problems.append("observation_start cannot predate downstream acceptance")
+    if received_at.tzinfo is None or received_at.utcoffset() is None:
+        raise QfError("FEEDBACK_CONTRACT_INVALID", "Feedback receipt timestamp must be timezone-aware.", 500)
+    if end.tzinfo is not None and end.utcoffset() is not None and end > received_at:
+        problems.append("observation_end cannot be in the future")
+    if (
+        start.tzinfo is not None
+        and start.utcoffset() is not None
+        and end.tzinfo is not None
+        and end.utcoffset() is not None
+        and end <= start
+    ):
         problems.append("observation_end must be after observation_start")
     contract = handoff.feedback_contract_snapshot or {}
     minimum_duration = int(contract.get("minimum_observation_duration_seconds", 1))
     minimum_sample = int(contract.get("minimum_valid_sample_size", 1))
-    if end > start and (end - start).total_seconds() < minimum_duration:
+    if (
+        start.tzinfo is not None
+        and start.utcoffset() is not None
+        and end.tzinfo is not None
+        and end.utcoffset() is not None
+        and end > start
+        and (end - start).total_seconds() < minimum_duration
+    ):
         problems.append(f"observation duration must be at least {minimum_duration} seconds")
     if payload.sample_size < minimum_sample:
         problems.append(f"sample_size must be at least {minimum_sample}")
@@ -1390,30 +2090,58 @@ def _validate_complete_feedback(handoff: HandoffOffer, payload: FeedbackInput) -
     if not isinstance(required_fields, list):
         problems.append("frozen required_fields is invalid")
     else:
-        missing = [field for field in required_fields if field not in payload.evidence or payload.evidence[field] is None]
+        missing = [
+            field
+            for field in required_fields
+            if field not in payload.evidence or payload.evidence[field] is None
+        ]
         if missing:
-            problems.append(f"missing required evidence fields: {', '.join(str(item) for item in missing)}")
+            problems.append(
+                f"missing required evidence fields: {', '.join(str(item) for item in missing)}"
+            )
     if problems:
-        raise QfError("FEEDBACK_CONTRACT_INVALID", "Complete feedback does not satisfy the frozen Feedback Contract.", 422, {"problems": problems})
+        raise QfError(
+            "FEEDBACK_CONTRACT_INVALID",
+            "Complete feedback does not satisfy the frozen Feedback Contract.",
+            422,
+            {"problems": problems},
+        )
     return start, end, payload.sample_size
 
 
 @router.post("/handoffs/{handoff_id}/feedback", response_model=HandoffView)
-def submit_feedback(handoff_id: UUID, payload: FeedbackInput, request: Request, authorization: str | None = Header(default=None, alias="Authorization"), idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def submit_feedback(
+    handoff_id: UUID,
+    payload: FeedbackInput,
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
+
         def action() -> dict[str, Any]:
-            handoff = session.execute(select(HandoffOffer).where(HandoffOffer.id == handoff_id).with_for_update()).scalar_one_or_none()
+            handoff = session.execute(
+                select(HandoffOffer).where(HandoffOffer.id == handoff_id).with_for_update()
+            ).scalar_one_or_none()
             if handoff is None:
                 raise QfError("HANDOFF_NOT_FOUND", "Handoff was not found.", 404)
             _authenticate_handoff(session, request, handoff, authorization)
-            if handoff.state not in {"DOWNSTREAM_ACCEPTED", "FEEDBACK_PENDING", "FEEDBACK_IN_PROGRESS", "FEEDBACK_PARTIAL"}:
+            if handoff.state not in {
+                "DOWNSTREAM_ACCEPTED",
+                "FEEDBACK_PENDING",
+                "FEEDBACK_IN_PROGRESS",
+                "FEEDBACK_PARTIAL",
+            }:
                 raise QfError("HANDOFF_STATE_CONFLICT", "Handoff is not accepting feedback.", 409)
             allowed = {"FEEDBACK_IN_PROGRESS", "FEEDBACK_PARTIAL", "FEEDBACK_COMPLETE"}
             if payload.state not in allowed:
                 raise QfError("FEEDBACK_STATE_INVALID", "Feedback state is invalid.", 422)
             if payload.state == "FEEDBACK_COMPLETE":
-                start, end, sample_size = _validate_complete_feedback(handoff, payload)
+                received_at = _now()
+                start, end, sample_size = _validate_complete_feedback(
+                    handoff, payload, received_at=received_at
+                )
                 episode = ForwardEvidenceEpisode(
                     handoff_id=handoff.id,
                     state="FEEDBACK_COMPLETE",
@@ -1421,28 +2149,230 @@ def submit_feedback(handoff_id: UUID, payload: FeedbackInput, request: Request, 
                     observation_start=start,
                     observation_end=end,
                     sample_size=sample_size,
-                    created_at=_now(),
+                    created_at=received_at,
                 )
                 session.add(episode)
                 session.flush()
                 handoff.state = "FEEDBACK_COMPLETE"
                 handoff.feedback_state = "FEEDBACK_COMPLETE"
-                _event(session, "FORWARD_EVIDENCE_RECORDED", "HANDOFF", handoff.id, {"episode_id": str(episode.id), "state": "FEEDBACK_COMPLETE"})
+                _event(
+                    session,
+                    "FORWARD_EVIDENCE_RECORDED",
+                    "HANDOFF",
+                    handoff.id,
+                    {"episode_id": str(episode.id), "state": "FEEDBACK_COMPLETE"},
+                )
             else:
                 handoff.state = payload.state
                 handoff.feedback_state = payload.state
-                _event(session, "HANDOFF_FEEDBACK_STATUS", "HANDOFF", handoff.id, {"state": payload.state})
+                _event(
+                    session,
+                    "HANDOFF_FEEDBACK_STATUS",
+                    "HANDOFF",
+                    handoff.id,
+                    {"state": payload.state},
+                )
             session.flush()
             return _handoff_view(session, handoff).model_dump(mode="json")
 
-        return _idempotent(session, idempotency_key, f"handoff.feedback:{handoff_id}", payload, action)
+        return _idempotent(
+            session, idempotency_key, f"handoff.feedback:{handoff_id}", payload, action
+        )
+
+
+@router.post(
+    "/handoffs/{handoff_id}/promote-live",
+    response_model=ApprovalView,
+    status_code=201,
+)
+def promote_paper_handoff_to_live(
+    handoff_id: UUID,
+    payload: LivePromotionInput,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
+    """Create a human-gated LIVE Approval only from complete valid Paper evidence."""
+    factory = request.app.state.session_factory
+    with factory() as session, session.begin():
+
+        def action() -> dict[str, Any]:
+            handoff = session.execute(
+                select(HandoffOffer).where(HandoffOffer.id == handoff_id).with_for_update()
+            ).scalar_one_or_none()
+            if handoff is None:
+                raise QfError("HANDOFF_NOT_FOUND", "Paper Handoff was not found.", 404)
+            if handoff.purpose != "PAPER" or handoff.state != payload.expected_handoff_state or handoff.state != "FEEDBACK_COMPLETE":
+                raise QfError(
+                    "LIVE_PROMOTION_FORWARD_EVIDENCE_REQUIRED",
+                    "Live promotion requires a completed Paper Handoff with valid Forward Evidence.",
+                    409,
+                )
+            episode = session.scalar(
+                select(ForwardEvidenceEpisode)
+                .where(
+                    ForwardEvidenceEpisode.handoff_id == handoff.id,
+                    ForwardEvidenceEpisode.state == "FEEDBACK_COMPLETE",
+                )
+                .order_by(ForwardEvidenceEpisode.created_at.desc(), ForwardEvidenceEpisode.id.desc())
+                .limit(1)
+            )
+            if episode is None:
+                raise QfError(
+                    "LIVE_PROMOTION_FORWARD_EVIDENCE_REQUIRED",
+                    "Live promotion requires an immutable completed Forward Evidence episode.",
+                    409,
+                )
+            forward = dict(episode.evidence or {})
+            degradation_state = str(forward.get("degradation_state", "")).strip().upper()
+            if forward.get("degraded") is True or degradation_state in {"DEGRADED", "FAILED"}:
+                raise QfError(
+                    "LIVE_PROMOTION_DEGRADED",
+                    "Degraded Paper evidence cannot be promoted to Live.",
+                    422,
+                )
+            candidate = session.get(PortfolioCandidate, handoff.candidate_id)
+            paper_approval = session.get(ApprovalSnapshot, handoff.approval_id)
+            downstream = session.get(DownstreamSystem, payload.downstream_system_id)
+            if candidate is None or paper_approval is None:
+                raise QfError("LIVE_PROMOTION_LINEAGE_MISSING", "Paper promotion lineage is incomplete.", 500)
+            if (
+                downstream is None
+                or downstream.environment_type != "LIVE"
+                or not downstream.enabled
+                or downstream.preflight_state != "READY"
+                or downstream.package_contract_version != "2"
+                or downstream.service_token_ciphertext is None
+            ):
+                raise QfError(
+                    "LIVE_DOWNSTREAM_NOT_READY",
+                    "Live promotion requires a ready authenticated Candidate Bundle v2 downstream.",
+                    409,
+                )
+            universes = (
+                [str(value) for value in candidate.universe_set_json]
+                if isinstance(candidate.universe_set_json, list)
+                else []
+            )
+            if downstream.compatibility and not any(
+                universe in downstream.compatibility for universe in universes
+            ):
+                raise QfError(
+                    "LIVE_DOWNSTREAM_INCOMPATIBLE",
+                    "Live downstream does not support the Candidate universe.",
+                    409,
+                )
+            for member in candidate.members or []:
+                raw_alpha_id = member.get("alpha_qualification_id") if isinstance(member, dict) else None
+                try:
+                    alpha_id = UUID(str(raw_alpha_id))
+                except (TypeError, ValueError) as exc:
+                    raise QfError("LIVE_PROMOTION_LINEAGE_MISSING", "Candidate lost Alpha lineage.", 500) from exc
+                alpha = session.get(AlphaQualification, alpha_id)
+                if alpha is None or alpha.state != "ACTIVE" or alpha.degradation_state != "HEALTHY":
+                    raise QfError(
+                        "LIVE_PROMOTION_DEGRADED",
+                        "Candidate Alpha is no longer healthy enough for Live promotion.",
+                        422,
+                    )
+            duplicate = session.scalar(
+                select(ApprovalSnapshot)
+                .where(
+                    ApprovalSnapshot.candidate_id == candidate.id,
+                    ApprovalSnapshot.purpose == "LIVE",
+                    ApprovalSnapshot.state.in_(["PENDING", "APPROVED"]),
+                )
+                .order_by(ApprovalSnapshot.created_at.desc())
+                .limit(1)
+            )
+            if duplicate is not None:
+                raise QfError(
+                    "LIVE_APPROVAL_ALREADY_EXISTS",
+                    "Candidate already has an active Live Approval.",
+                    409,
+                    {"approval_id": str(duplicate.id)},
+                )
+            now = _now()
+            approval = ApprovalSnapshot(
+                candidate_id=candidate.id,
+                purpose="LIVE",
+                state="PENDING",
+                downstream_system_id=downstream.id,
+                valid_until=now + timedelta(days=7),
+                recommendation_rationale=(
+                    "Paper Handoff completed its frozen Forward Evidence contract without degradation; "
+                    "Live remains subject to an explicit human Approval and Candidate Bundle conformance."
+                ),
+                human_report={
+                    "summary": "Forward-evidence-gated Live promotion is ready for human review.",
+                    "paper_handoff_id": str(handoff.id),
+                    "forward_evidence_episode_id": str(episode.id),
+                },
+                evidence_summary={
+                    **(paper_approval.evidence_summary or {}),
+                    "paper_handoff_id": str(handoff.id),
+                    "forward_evidence_episode_id": str(episode.id),
+                    "observation_start": episode.observation_start.isoformat(),
+                    "observation_end": episode.observation_end.isoformat(),
+                    "sample_size": episode.sample_size,
+                },
+                capital_context=dict(paper_approval.capital_context or {}),
+                risk_summary=dict(paper_approval.risk_summary or {}),
+                cost_summary=dict(paper_approval.cost_summary or {}),
+                capacity_summary=dict(paper_approval.capacity_summary or {}),
+                changes_summary={
+                    **(paper_approval.changes_summary or {}),
+                    "live_promotion": {
+                        "paper_handoff_id": str(handoff.id),
+                        "forward_evidence_episode_id": str(episode.id),
+                        "created_at": now.isoformat(),
+                    },
+                },
+            )
+            session.add(approval)
+            session.flush()
+            _event(
+                session,
+                "LIVE_APPROVAL_CREATED",
+                "APPROVAL",
+                approval.id,
+                {
+                    "candidate_id": str(candidate.id),
+                    "paper_handoff_id": str(handoff.id),
+                    "forward_evidence_episode_id": str(episode.id),
+                },
+                actor_kind="SYSTEM",
+            )
+            return _approval_view(session, approval).model_dump(mode="json")
+
+        return _idempotent(
+            session,
+            idempotency_key,
+            f"handoff.promote-live:{handoff_id}",
+            payload,
+            action,
+            status_code=201,
+        )
 
 
 @router.get("/data-sources", response_model=list[DataSourceView])
 def list_data_sources(request: Request) -> list[DataSourceView]:
     factory = request.app.state.session_factory
     with factory() as session:
-        return [DataSourceView(id=item.id, name=item.name, provider=item.provider, state=item.state, universe_scope=item.universe_scope, fields=item.fields, update_cadence=item.update_cadence, preflight_state=item.preflight_state) for item in session.scalars(select(GovernedDataSource).order_by(GovernedDataSource.name))]
+        return [
+            DataSourceView(
+                id=item.id,
+                name=item.name,
+                provider=item.provider,
+                state=item.state,
+                universe_scope=item.universe_scope,
+                fields=item.fields,
+                update_cadence=item.update_cadence,
+                preflight_state=item.preflight_state,
+            )
+            for item in session.scalars(
+                select(GovernedDataSource).order_by(GovernedDataSource.name)
+            )
+        ]
 
 
 @router.get("/data-sources/{source_id}", response_model=DataSourceView)
@@ -1452,49 +2382,615 @@ def get_data_source(source_id: UUID, request: Request) -> DataSourceView:
         item = session.get(GovernedDataSource, source_id)
         if item is None:
             raise QfError("DATA_SOURCE_NOT_FOUND", "Data Source was not found.", 404)
-        return DataSourceView(id=item.id, name=item.name, provider=item.provider, state=item.state, universe_scope=item.universe_scope, fields=item.fields, update_cadence=item.update_cadence, preflight_state=item.preflight_state)
+        return DataSourceView(
+            id=item.id,
+            name=item.name,
+            provider=item.provider,
+            state=item.state,
+            universe_scope=item.universe_scope,
+            fields=item.fields,
+            update_cadence=item.update_cadence,
+            preflight_state=item.preflight_state,
+        )
 
 
 @router.post("/data-sources", response_model=DataSourceView, status_code=201)
-def create_data_source(payload: DataSourceInput, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def create_data_source(
+    payload: DataSourceInput,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
+
         def action() -> dict[str, Any]:
-            duplicate = session.scalar(select(GovernedDataSource).where(GovernedDataSource.name == payload.name.strip()))
+            duplicate = session.scalar(
+                select(GovernedDataSource).where(GovernedDataSource.name == payload.name.strip())
+            )
             if duplicate:
                 raise QfError("DATA_SOURCE_NAME_CONFLICT", "Data Source name already exists.", 409)
-            item = GovernedDataSource(name=payload.name.strip(), provider=payload.provider, state="ACTIVE", universe_scope=payload.universe_scope, fields=payload.fields, update_cadence=payload.update_cadence, preflight_state="READY", public_config=payload.public_config)
+            item = GovernedDataSource(
+                name=payload.name.strip(),
+                provider=payload.provider,
+                state="ACTIVE",
+                universe_scope=payload.universe_scope,
+                fields=payload.fields,
+                update_cadence=payload.update_cadence,
+                preflight_state="READY",
+                public_config=payload.public_config,
+            )
             session.add(item)
             session.flush()
-            _event(session, "DATA_SOURCE_REGISTERED", "DATA_SOURCE", item.id, {}, actor_kind="HUMAN")
-            return DataSourceView(id=item.id, name=item.name, provider=item.provider, state=item.state, universe_scope=item.universe_scope, fields=item.fields, update_cadence=item.update_cadence, preflight_state=item.preflight_state).model_dump(mode="json")
+            _event(
+                session, "DATA_SOURCE_REGISTERED", "DATA_SOURCE", item.id, {}, actor_kind="HUMAN"
+            )
+            return DataSourceView(
+                id=item.id,
+                name=item.name,
+                provider=item.provider,
+                state=item.state,
+                universe_scope=item.universe_scope,
+                fields=item.fields,
+                update_cadence=item.update_cadence,
+                preflight_state=item.preflight_state,
+            ).model_dump(mode="json")
 
-        return _idempotent(session, idempotency_key, "data-source.create", payload, action, status_code=201)
+        return _idempotent(
+            session, idempotency_key, "data-source.create", payload, action, status_code=201
+        )
+
+
+def _remote_ingest_and_validate(
+    ingest_request: CatalogIngestRequest,
+) -> tuple[CatalogIngestResult, CatalogValidationResult]:
+    with NautilusQuantRuntime(RemoteNautilusConfig.from_env()) as runtime:
+        ingested = runtime.ingest(ingest_request)
+        validated = runtime.validate_catalog(
+            CatalogValidationRequest(
+                request_id=ingest_request.request_id,
+                catalog_key=ingest_request.catalog_key,
+                instrument_ids=[
+                    item.instrument_id for item in ingest_request.instruments
+                ],
+                nautilus_data_type=ingest_request.nautilus_data_type,
+            )
+        )
+    return ingested, validated
+
+
+def _dataset_view(item: DatasetRevision) -> dict[str, Any]:
+    return DatasetView(
+        id=item.id,
+        data_source_id=item.data_source_id,
+        universe_version_id=item.universe_version_id,
+        universe_name=item.universe_name,
+        revision_no=item.revision_no,
+        schema_version=item.schema_version,
+        event_start=_iso(item.event_start),
+        event_end=_iso(item.event_end),
+        available_start=_iso(item.available_start),
+        available_end=_iso(item.available_end),
+        row_count=item.row_count,
+        quality_state=item.quality_state,
+        point_in_time_state=item.point_in_time_state,
+        partition=item.partition,
+        gateway_instance_id=item.gateway_instance_id,
+        catalog_release_id=item.catalog_release_id,
+        created_at=_iso(item.created_at) or "",
+    ).model_dump(mode="json")
+
+
+_DATASET_INGEST_PENDING_STATUS = 102
+_DATASET_INGEST_STALE_AFTER = timedelta(minutes=35)
+
+
+def _dataset_ingest_identity(
+    source_id: UUID,
+    source: GovernedDataSource,
+    payload: DatasetIngestInput,
+) -> dict[str, Any]:
+    return {
+        "source_id": str(source_id),
+        "source_governance": {
+            "name": source.name,
+            "provider": source.provider,
+            "state": source.state,
+            "preflight_state": source.preflight_state,
+            "universe_scope": list(source.universe_scope or []),
+            "fields": list(source.fields or []),
+            "update_cadence": source.update_cadence,
+            "public_config": dict(source.public_config or {}),
+        },
+        "ingest": payload.model_dump(mode="json", exclude_none=False),
+    }
+
+
+def _dataset_ingest_receipt_matches(
+    receipt: PublicMutationReceipt,
+    *,
+    operation: str,
+    identity: dict[str, Any],
+) -> bool:
+    return receipt.operation_name == operation and receipt.normalized_request == identity
+
+
+def _claim_dataset_ingest_receipt(
+    session: Session,
+    *,
+    key: str,
+    operation: str,
+    identity: dict[str, Any],
+    request_id: UUID,
+) -> tuple[PublicMutationReceipt, bool]:
+    existing = session.execute(
+        select(PublicMutationReceipt)
+        .where(PublicMutationReceipt.idempotency_key == key)
+        .with_for_update()
+    ).scalar_one_or_none()
+    if existing is None:
+        now = _now()
+        receipt = PublicMutationReceipt(
+            idempotency_key=key,
+            operation_name=operation,
+            normalized_request=identity,
+            response_json={
+                "state": "RUNNING",
+                "request_id": str(request_id),
+                "attempt_started_at": now.isoformat(),
+            },
+            status_code=_DATASET_INGEST_PENDING_STATUS,
+            created_at=now,
+        )
+        try:
+            with session.begin_nested():
+                session.add(receipt)
+                session.flush()
+        except IntegrityError as exc:
+            if receipt in session:
+                session.expunge(receipt)
+            session.expire_all()
+            existing = session.execute(
+                select(PublicMutationReceipt)
+                .where(PublicMutationReceipt.idempotency_key == key)
+                .with_for_update()
+            ).scalar_one_or_none()
+            if existing is None:
+                raise QfError(
+                    "IDEMPOTENCY_RECEIPT_CONFLICT",
+                    "Dataset ingest receipt could not be resolved after a concurrent request.",
+                    409,
+                ) from exc
+        else:
+            return receipt, True
+
+    if not _dataset_ingest_receipt_matches(existing, operation=operation, identity=identity):
+        raise QfError(
+            "IDEMPOTENCY_KEY_REUSED",
+            "The idempotency key belongs to a different request.",
+            409,
+        )
+    if existing.status_code == 201:
+        return existing, False
+    if existing.status_code != _DATASET_INGEST_PENDING_STATUS:
+        raise QfError(
+            "IDEMPOTENCY_RECEIPT_INVALID",
+            "Dataset ingest receipt has an unsupported state.",
+            500,
+            {"status_code": existing.status_code},
+        )
+    pending = dict(existing.response_json or {})
+    if str(pending.get("request_id", "")) != str(request_id):
+        raise QfError(
+            "IDEMPOTENCY_RECEIPT_INVALID",
+            "Dataset ingest receipt lost its immutable remote request id.",
+            500,
+        )
+    state = str(pending.get("state", "")).upper()
+    now = _now()
+    stale = False
+    try:
+        started = datetime.fromisoformat(str(pending["attempt_started_at"]))
+        stale = (
+            started.tzinfo is not None
+            and started.utcoffset() is not None
+            and started < now - _DATASET_INGEST_STALE_AFTER
+        )
+    except (KeyError, TypeError, ValueError):
+        stale = True
+    if state != "RETRYABLE" and not stale:
+        raise QfError(
+            "DATASET_INGEST_IN_PROGRESS",
+            "The exact governed Dataset ingest is already running.",
+            409,
+            {"request_id": str(request_id)},
+        )
+    existing.response_json = {
+        "state": "RUNNING",
+        "request_id": str(request_id),
+        "attempt_started_at": now.isoformat(),
+    }
+    existing.status_code = _DATASET_INGEST_PENDING_STATUS
+    session.flush()
+    return existing, True
+
+
+def _mark_dataset_ingest_retryable(
+    factory: Any,
+    *,
+    key: str,
+    operation: str,
+    identity: dict[str, Any],
+    request_id: UUID,
+    exc: Exception,
+) -> None:
+    with factory.begin() as session:
+        receipt = session.execute(
+            select(PublicMutationReceipt)
+            .where(PublicMutationReceipt.idempotency_key == key)
+            .with_for_update()
+        ).scalar_one_or_none()
+        if (
+            receipt is None
+            or not _dataset_ingest_receipt_matches(
+                receipt,
+                operation=operation,
+                identity=identity,
+            )
+            or receipt.status_code != _DATASET_INGEST_PENDING_STATUS
+        ):
+            return
+        receipt.response_json = {
+            "state": "RETRYABLE",
+            "request_id": str(request_id),
+            "attempt_started_at": _now().isoformat(),
+            "last_failure_code": str(getattr(exc, "code", type(exc).__name__))[:100],
+        }
+        session.flush()
+
+
+@router.post(
+    "/data-sources/{source_id}/dataset-revisions/ingest",
+    response_model=DatasetView,
+    status_code=201,
+)
+def ingest_dataset_revision(
+    source_id: UUID,
+    payload: DatasetIngestInput,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
+    key = (idempotency_key or "").strip()
+    if not key or len(key) > 200:
+        raise QfError(
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "Dataset ingest requires a 1..200 character Idempotency-Key.",
+            422,
+        )
+    operation = f"dataset-revision.ingest:{source_id}"
+    request_id = uuid5(NAMESPACE_URL, f"quazonai:dataset-ingest:{source_id}:{key}")
+    factory = request.app.state.session_factory
+
+    # Atomically bind the global idempotency key to every governed ingest input
+    # before creating a Universe Version or touching the remote runtime.
+    with factory() as session, session.begin():
+        source = session.execute(
+            select(GovernedDataSource)
+            .where(GovernedDataSource.id == source_id)
+            .with_for_update()
+        ).scalar_one_or_none()
+        if (
+            source is None
+            or source.state != "ACTIVE"
+            or source.preflight_state != "READY"
+        ):
+            raise QfError(
+                "DATA_SOURCE_NOT_READY",
+                "Dataset ingest requires an active ready governed Data Source.",
+                409,
+            )
+        required_fields = {"event_time", "available_time", "bid_price", "ask_price"}
+        if not required_fields.issubset(set(source.fields or [])):
+            raise QfError(
+                "DATA_SOURCE_FIELDS_INCOMPLETE",
+                "QuoteTick ingest requires event/availability and bid/ask fields.",
+                422,
+                {"required_fields": sorted(required_fields)},
+            )
+        if source.universe_scope and payload.universe_name not in source.universe_scope:
+            raise QfError(
+                "DATA_SOURCE_UNIVERSE_SCOPE_MISMATCH",
+                "Data Source is not governed for the requested Universe.",
+                422,
+            )
+        identity = _dataset_ingest_identity(source_id, source, payload)
+        receipt, claimed = _claim_dataset_ingest_receipt(
+            session,
+            key=key,
+            operation=operation,
+            identity=identity,
+            request_id=request_id,
+        )
+        if not claimed:
+            return dict(receipt.response_json)
+
+        if session.bind is not None and session.bind.dialect.name == "postgresql":
+            session.execute(text("SELECT pg_advisory_xact_lock(:lock_key)"), {"lock_key": 220024})
+        latest = session.scalar(
+            select(MarketUniverseVersion)
+            .where(MarketUniverseVersion.universe_key == payload.universe_key)
+            .order_by(MarketUniverseVersion.version_no.desc())
+            .limit(1)
+            .with_for_update()
+        )
+        if (
+            latest is not None
+            and latest.state == "ACTIVE"
+            and latest.name == payload.universe_name
+            and latest.spec_json == payload.universe_spec
+        ):
+            universe = latest
+        else:
+            universe = MarketUniverseVersion(
+                universe_key=payload.universe_key,
+                version_no=(latest.version_no + 1) if latest is not None else 1,
+                name=payload.universe_name,
+                state="ACTIVE",
+                spec_json=payload.universe_spec,
+                created_at=_now(),
+            )
+            session.add(universe)
+            session.flush()
+        source_provider = source.provider or source.name
+        universe_id = universe.id
+
+    try:
+        ingest_request = CatalogIngestRequest(
+            request_id=request_id,
+            catalog_key=payload.catalog_key,
+            provider=source_provider,
+            source=payload.source,
+            source_license=payload.source_license,
+            instruments=payload.instruments,
+        )
+        ingested, validated = _remote_ingest_and_validate(ingest_request)
+        if not validated.valid:
+            raise QfError(
+                "NAUTILUS_CATALOG_VALIDATION_FAILED",
+                "Remote Nautilus catalog did not pass validation.",
+                422,
+                {"findings": validated.findings},
+            )
+        if (
+            ingested.catalog_key != payload.catalog_key
+            or validated.catalog_key != payload.catalog_key
+            or sorted(ingested.instrument_scope) != sorted(validated.instrument_scope)
+            or ingested.row_count != validated.row_count
+            or validated.event_time_start != ingested.event_time_start
+            or validated.event_time_end != ingested.event_time_end
+            or validated.available_time_start != ingested.available_time_start
+            or validated.available_time_end != ingested.available_time_end
+            or validated.gateway_instance_id != ingested.gateway_instance_id
+            or validated.catalog_release_id != ingested.catalog_release_id
+        ):
+            raise QfError(
+                "NAUTILUS_CATALOG_VALIDATION_MISMATCH",
+                "Validated catalog facts differ from the immutable ingest result.",
+                502,
+            )
+        quality_result = dict(ingested.quality_result or {})
+        point_in_time_result = dict(ingested.point_in_time_result or {})
+        if (
+            str(quality_result.get("state", "")).upper() != "VALID"
+            or str(point_in_time_result.get("state", "")).upper() != "VALID"
+        ):
+            raise QfError(
+                "DATASET_GOVERNANCE_FAILED",
+                "Ingested catalog must pass quality and point-in-time governance.",
+                422,
+            )
+
+        with factory() as session, session.begin():
+            if session.bind is not None and session.bind.dialect.name == "postgresql":
+                session.execute(text("SELECT pg_advisory_xact_lock(:lock_key)"), {"lock_key": 220027})
+            receipt = session.execute(
+                select(PublicMutationReceipt)
+                .where(PublicMutationReceipt.idempotency_key == key)
+                .with_for_update()
+            ).scalar_one_or_none()
+            source = session.execute(
+                select(GovernedDataSource)
+                .where(GovernedDataSource.id == source_id)
+                .with_for_update()
+            ).scalar_one_or_none()
+            universe = session.get(MarketUniverseVersion, universe_id)
+            if (
+                receipt is None
+                or not _dataset_ingest_receipt_matches(
+                    receipt,
+                    operation=operation,
+                    identity=identity,
+                )
+                or receipt.status_code != _DATASET_INGEST_PENDING_STATUS
+            ):
+                raise QfError(
+                    "IDEMPOTENCY_RECEIPT_INVALID",
+                    "Dataset ingest receipt changed while the remote runtime was executing.",
+                    409,
+                )
+            if (
+                source is None
+                or source.state != "ACTIVE"
+                or source.preflight_state != "READY"
+                or universe is None
+                or universe.state != "ACTIVE"
+                or _dataset_ingest_identity(source_id, source, payload) != identity
+            ):
+                raise QfError(
+                    "DATASET_GOVERNANCE_CHANGED",
+                    "Data Source or governed ingest identity changed while the catalog was ingesting.",
+                    409,
+                )
+
+            existing = session.scalar(
+                select(DatasetRevision).where(DatasetRevision.catalog_uri == ingested.catalog_uri)
+            )
+            if existing is not None:
+                if (
+                    existing.data_source_id != source.id
+                    or existing.universe_version_id != universe.id
+                    or existing.instrument_scope != ingested.instrument_scope
+                    or existing.row_count != ingested.row_count
+                    or existing.gateway_instance_id != ingested.gateway_instance_id
+                    or existing.catalog_release_id != ingested.catalog_release_id
+                ):
+                    raise QfError(
+                        "DATASET_CATALOG_IDENTITY_CONFLICT",
+                        "Catalog URI is already bound to different governed facts.",
+                        409,
+                    )
+                result = _dataset_view(existing)
+            else:
+                revision_no = int(
+                    session.scalar(
+                        select(func.max(DatasetRevision.revision_no)).where(
+                            DatasetRevision.data_source_id == source.id,
+                            DatasetRevision.universe_version_id == universe.id,
+                            DatasetRevision.partition == "DISCOVERY",
+                        )
+                    )
+                    or 0
+                ) + 1
+                revision = DatasetRevision(
+                    data_source_id=source.id,
+                    universe_version_id=universe.id,
+                    universe_name=universe.name,
+                    revision_no=revision_no,
+                    schema_version=ingested.schema_revision,
+                    event_start=ingested.event_time_start,
+                    event_end=ingested.event_time_end,
+                    available_start=ingested.available_time_start,
+                    available_end=ingested.available_time_end,
+                    row_count=ingested.row_count,
+                    quality_state="VALID",
+                    point_in_time_state="VALID",
+                    partition="DISCOVERY",
+                    created_at=_now(),
+                    provider_name=source_provider,
+                    source_license=payload.source_license,
+                    catalog_uri=ingested.catalog_uri,
+                    gateway_instance_id=ingested.gateway_instance_id,
+                    catalog_release_id=ingested.catalog_release_id,
+                    nautilus_data_type=ingested.nautilus_data_type,
+                    instrument_scope=ingested.instrument_scope,
+                    schema_revision=ingested.schema_revision,
+                    quality_result=quality_result,
+                    point_in_time_result=point_in_time_result,
+                    ingested_at=ingested.ingested_at,
+                )
+                session.add(revision)
+                session.flush()
+                _event(
+                    session,
+                    "DATASET_REVISION_INGESTED",
+                    "DATASET_REVISION",
+                    revision.id,
+                    {
+                        "data_source_id": str(source.id),
+                        "universe_version_id": str(universe.id),
+                        "catalog_uri": revision.catalog_uri,
+                        "row_count": revision.row_count,
+                    },
+                    actor_kind="HUMAN",
+                )
+                result = _dataset_view(revision)
+            receipt.response_json = result
+            receipt.status_code = 201
+            session.flush()
+            return result
+    except Exception as exc:
+        _mark_dataset_ingest_retryable(
+            factory,
+            key=key,
+            operation=operation,
+            identity=identity,
+            request_id=request_id,
+            exc=exc,
+        )
+        raise
 
 
 @router.get("/datasets", response_model=list[DatasetView])
 def list_datasets(request: Request) -> list[DatasetView]:
     factory = request.app.state.session_factory
     with factory() as session:
-        return [DatasetView(id=item.id, data_source_id=item.data_source_id, universe_version_id=item.universe_version_id, universe_name=item.universe_name, revision_no=item.revision_no, schema_version=item.schema_version, event_start=_iso(item.event_start), event_end=_iso(item.event_end), available_start=_iso(item.available_start), available_end=_iso(item.available_end), row_count=item.row_count, quality_state=item.quality_state, point_in_time_state=item.point_in_time_state, partition=item.partition, created_at=_iso(item.created_at) or "") for item in session.scalars(select(DatasetRevision).order_by(DatasetRevision.created_at.desc()))]
+        return [
+            DatasetView(
+                id=item.id,
+                data_source_id=item.data_source_id,
+                universe_version_id=item.universe_version_id,
+                universe_name=item.universe_name,
+                revision_no=item.revision_no,
+                schema_version=item.schema_version,
+                event_start=_iso(item.event_start),
+                event_end=_iso(item.event_end),
+                available_start=_iso(item.available_start),
+                available_end=_iso(item.available_end),
+                row_count=item.row_count,
+                quality_state=item.quality_state,
+                point_in_time_state=item.point_in_time_state,
+                partition=item.partition,
+                gateway_instance_id=item.gateway_instance_id,
+                catalog_release_id=item.catalog_release_id,
+                created_at=_iso(item.created_at) or "",
+            )
+            for item in session.scalars(
+                select(DatasetRevision).order_by(DatasetRevision.created_at.desc())
+            )
+        ]
 
 
 @router.get("/universes", response_model=list[UniverseView])
 def list_universes(request: Request) -> list[UniverseView]:
     factory = request.app.state.session_factory
     with factory() as session:
-        return [UniverseView(id=item.id, universe_key=item.universe_key, version_no=item.version_no, name=item.name, state=item.state, spec_json=item.spec_json) for item in session.scalars(select(MarketUniverseVersion).order_by(MarketUniverseVersion.universe_key, MarketUniverseVersion.version_no.desc()))]
+        return [
+            UniverseView(
+                id=item.id,
+                universe_key=item.universe_key,
+                version_no=item.version_no,
+                name=item.name,
+                state=item.state,
+                spec_json=item.spec_json,
+            )
+            for item in session.scalars(
+                select(MarketUniverseVersion).order_by(
+                    MarketUniverseVersion.universe_key, MarketUniverseVersion.version_no.desc()
+                )
+            )
+        ]
 
 
 def _downstream_view(item: DownstreamSystem) -> DownstreamView:
-    return DownstreamView(id=item.id, name=item.name, environment_type=item.environment_type, enabled=item.enabled, package_contract_version=item.package_contract_version, feedback_contract_version=item.feedback_contract_version, compatibility=item.compatibility, preflight_state=item.preflight_state)
+    return DownstreamView(
+        id=item.id,
+        name=item.name,
+        environment_type=item.environment_type,
+        enabled=item.enabled,
+        package_contract_version=item.package_contract_version,
+        feedback_contract_version=item.feedback_contract_version,
+        compatibility=item.compatibility,
+        preflight_state=item.preflight_state,
+    )
 
 
 @router.get("/downstream-systems", response_model=list[DownstreamView])
 def list_downstreams(request: Request) -> list[DownstreamView]:
     factory = request.app.state.session_factory
     with factory() as session:
-        return [_downstream_view(item) for item in session.scalars(select(DownstreamSystem).order_by(DownstreamSystem.name))]
+        return [
+            _downstream_view(item)
+            for item in session.scalars(select(DownstreamSystem).order_by(DownstreamSystem.name))
+        ]
 
 
 @router.get("/downstream-systems/{downstream_id}", response_model=DownstreamView)
@@ -1508,50 +3004,148 @@ def get_downstream(downstream_id: UUID, request: Request) -> DownstreamView:
 
 
 @router.post("/downstream-systems", response_model=DownstreamRegistrationView, status_code=201)
-def create_downstream(payload: DownstreamInput, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+def create_downstream(
+    payload: DownstreamInput,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     if payload.environment_type not in {"PAPER", "LIVE", "EXTERNAL_BACKTEST"}:
         raise QfError("DOWNSTREAM_ENVIRONMENT_INVALID", "Downstream environment is invalid.", 422)
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
+
         def action() -> dict[str, Any]:
-            duplicate = session.scalar(select(DownstreamSystem).where(DownstreamSystem.name == payload.name.strip()))
+            duplicate = session.scalar(
+                select(DownstreamSystem).where(DownstreamSystem.name == payload.name.strip())
+            )
             if duplicate:
                 raise QfError("DOWNSTREAM_NAME_CONFLICT", "Downstream name already exists.", 409)
             downstream_id = uuid4()
             issued = issue_service_token(request.app.state.settings, downstream_id)
-            item = DownstreamSystem(id=downstream_id, name=payload.name.strip(), environment_type=payload.environment_type, enabled=payload.enabled, package_contract_version=payload.package_contract_version, feedback_contract_version=payload.feedback_contract_version, compatibility=payload.compatibility, preflight_state="READY", public_config=payload.public_config)
+            item = DownstreamSystem(
+                id=downstream_id,
+                name=payload.name.strip(),
+                environment_type=payload.environment_type,
+                enabled=payload.enabled,
+                package_contract_version=payload.package_contract_version,
+                feedback_contract_version=payload.feedback_contract_version,
+                compatibility=payload.compatibility,
+                preflight_state="READY",
+                public_config=payload.public_config,
+            )
             install_service_token(item, issued)
             _feedback_contract_snapshot(item, payload.environment_type)
             session.add(item)
             session.flush()
-            _event(session, "DOWNSTREAM_REGISTERED", "DOWNSTREAM_SYSTEM", item.id, {}, actor_kind="HUMAN")
-            return DownstreamRegistrationView(**_downstream_view(item).model_dump(), service_token=issued.token).model_dump(mode="json")
+            _event(
+                session,
+                "DOWNSTREAM_REGISTERED",
+                "DOWNSTREAM_SYSTEM",
+                item.id,
+                {},
+                actor_kind="HUMAN",
+            )
+            return DownstreamRegistrationView(
+                **_downstream_view(item).model_dump(), service_token=issued.token
+            ).model_dump(mode="json")
 
-        return _idempotent(session, idempotency_key, "downstream.create", payload, action, status_code=201)
+        return _idempotent(
+            session, idempotency_key, "downstream.create", payload, action, status_code=201
+        )
 
 
-@router.post("/downstream-systems/{downstream_id}/rotate-service-token", response_model=DownstreamTokenView)
-def rotate_downstream_token(downstream_id: UUID, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+@router.post(
+    "/downstream-systems/{downstream_id}/rotate-service-token", response_model=DownstreamTokenView
+)
+def rotate_downstream_token(
+    downstream_id: UUID,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
+
         def action() -> dict[str, Any]:
-            item = session.execute(select(DownstreamSystem).where(DownstreamSystem.id == downstream_id).with_for_update()).scalar_one_or_none()
+            item = session.execute(
+                select(DownstreamSystem)
+                .where(DownstreamSystem.id == downstream_id)
+                .with_for_update()
+            ).scalar_one_or_none()
             if item is None:
                 raise QfError("DOWNSTREAM_NOT_FOUND", "Downstream System was not found.", 404)
             issued = issue_service_token(request.app.state.settings, item.id)
             install_service_token(item, issued)
-            _event(session, "DOWNSTREAM_SERVICE_TOKEN_ROTATED", "DOWNSTREAM_SYSTEM", item.id, {}, actor_kind="HUMAN")
-            return DownstreamTokenView(downstream_system_id=item.id, service_token=issued.token).model_dump(mode="json")
+            _event(
+                session,
+                "DOWNSTREAM_SERVICE_TOKEN_ROTATED",
+                "DOWNSTREAM_SYSTEM",
+                item.id,
+                {},
+                actor_kind="HUMAN",
+            )
+            return DownstreamTokenView(
+                downstream_system_id=item.id, service_token=issued.token
+            ).model_dump(mode="json")
 
-        return _idempotent(session, idempotency_key, f"downstream.rotate-service-token:{downstream_id}", {}, action)
+        return _idempotent(
+            session, idempotency_key, f"downstream.rotate-service-token:{downstream_id}", {}, action
+        )
 
 
 @router.get("/readiness", response_model=dict[str, Any])
 def readiness(request: Request) -> dict[str, Any]:
     factory = request.app.state.session_factory
     with factory() as session:
-        data_ready = bool(session.scalar(select(func.count()).select_from(GovernedDataSource).where(GovernedDataSource.state == "ACTIVE", GovernedDataSource.preflight_state == "READY")) or session.scalar(select(func.count()).select_from(DatasetRevision)))
-        paper_ready = bool(session.scalar(select(func.count()).select_from(DownstreamSystem).where(DownstreamSystem.environment_type == "PAPER", DownstreamSystem.enabled.is_(True), DownstreamSystem.preflight_state == "READY", DownstreamSystem.service_token_ciphertext.is_not(None))))
-        live_downstream_ready = bool(session.scalar(select(func.count()).select_from(DownstreamSystem).where(DownstreamSystem.environment_type == "LIVE", DownstreamSystem.enabled.is_(True), DownstreamSystem.preflight_state == "READY", DownstreamSystem.service_token_ciphertext.is_not(None))))
-        paper_feedback_ready = bool(session.scalar(select(func.count()).select_from(ForwardEvidenceEpisode).join(HandoffOffer, ForwardEvidenceEpisode.handoff_id == HandoffOffer.id).where(HandoffOffer.purpose == "PAPER", ForwardEvidenceEpisode.state == "FEEDBACK_COMPLETE")))
-        return {"SYSTEM_READY": True, "RESEARCH_READY": data_ready, "PAPER_HANDOFF_READY": paper_ready, "LIVE_HANDOFF_READY": live_downstream_ready and paper_feedback_ready}
+        data_ready = bool(
+            session.scalar(
+                select(func.count())
+                .select_from(GovernedDataSource)
+                .where(
+                    GovernedDataSource.state == "ACTIVE",
+                    GovernedDataSource.preflight_state == "READY",
+                )
+            )
+            or session.scalar(select(func.count()).select_from(DatasetRevision))
+        )
+        paper_ready = bool(
+            session.scalar(
+                select(func.count())
+                .select_from(DownstreamSystem)
+                .where(
+                    DownstreamSystem.environment_type == "PAPER",
+                    DownstreamSystem.enabled.is_(True),
+                    DownstreamSystem.preflight_state == "READY",
+                    DownstreamSystem.package_contract_version == "2",
+                    DownstreamSystem.service_token_ciphertext.is_not(None),
+                )
+            )
+        )
+        live_downstream_ready = bool(
+            session.scalar(
+                select(func.count())
+                .select_from(DownstreamSystem)
+                .where(
+                    DownstreamSystem.environment_type == "LIVE",
+                    DownstreamSystem.enabled.is_(True),
+                    DownstreamSystem.preflight_state == "READY",
+                    DownstreamSystem.service_token_ciphertext.is_not(None),
+                )
+            )
+        )
+        paper_feedback_ready = bool(
+            session.scalar(
+                select(func.count())
+                .select_from(ForwardEvidenceEpisode)
+                .join(HandoffOffer, ForwardEvidenceEpisode.handoff_id == HandoffOffer.id)
+                .where(
+                    HandoffOffer.purpose == "PAPER",
+                    ForwardEvidenceEpisode.state == "FEEDBACK_COMPLETE",
+                )
+            )
+        )
+        return {
+            "SYSTEM_READY": True,
+            "RESEARCH_READY": data_ready,
+            "PAPER_HANDOFF_READY": paper_ready,
+            "LIVE_HANDOFF_READY": live_downstream_ready and paper_feedback_ready,
+        }

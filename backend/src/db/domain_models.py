@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -28,7 +28,9 @@ class PublicMutationReceipt(Base):
 
     idempotency_key: Mapped[str] = mapped_column(String(200), primary_key=True)
     operation_name: Mapped[str] = mapped_column(String(240), nullable=False)
-    normalized_request: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, nullable=False, default=dict)
+    normalized_request: Mapped[dict[str, Any]] = mapped_column(
+        JSON_VALUE, nullable=False, default=dict
+    )
     response_json: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, nullable=False, default=dict)
     status_code: Mapped[int] = mapped_column(Integer, nullable=False, default=200)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -41,11 +43,17 @@ class ResearchCharter(Base):
     original_idea_text: Mapped[str] = mapped_column(Text, nullable=False)
     research_question: Mapped[str] = mapped_column(Text, nullable=False)
     market_scope: Mapped[Any] = mapped_column(JSON_VALUE, nullable=False, default=list)
-    universe_version_ids: Mapped[list[str]] = mapped_column(JSON_VALUE, nullable=False, default=list)
+    universe_version_ids: Mapped[list[str]] = mapped_column(
+        JSON_VALUE, nullable=False, default=list
+    )
     prediction_horizon: Mapped[str | None] = mapped_column(String(100))
-    allowed_data_domains: Mapped[list[str]] = mapped_column(JSON_VALUE, nullable=False, default=list)
+    allowed_data_domains: Mapped[list[str]] = mapped_column(
+        JSON_VALUE, nullable=False, default=list
+    )
     explicit_exclusions: Mapped[list[str]] = mapped_column(JSON_VALUE, nullable=False, default=list)
-    material_assumptions: Mapped[list[str]] = mapped_column(JSON_VALUE, nullable=False, default=list)
+    material_assumptions: Mapped[list[str]] = mapped_column(
+        JSON_VALUE, nullable=False, default=list
+    )
     system_assumptions: Mapped[list[str]] = mapped_column(JSON_VALUE, nullable=False, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -100,7 +108,9 @@ class ResearchBranch(Base):
     derivation_type: Mapped[str] = mapped_column(String(80), nullable=False, default="ROOT")
     hypothesis: Mapped[str] = mapped_column(Text, nullable=False)
     changed_assumptions: Mapped[list[str]] = mapped_column(JSON_VALUE, nullable=False, default=list)
-    preserved_constraints: Mapped[list[str]] = mapped_column(JSON_VALUE, nullable=False, default=list)
+    preserved_constraints: Mapped[list[str]] = mapped_column(
+        JSON_VALUE, nullable=False, default=list
+    )
     state: Mapped[str] = mapped_column(String(40), nullable=False, default="ACTIVE")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -183,6 +193,17 @@ class DatasetRevision(Base):
     point_in_time_state: Mapped[str] = mapped_column(String(40), nullable=False, default="VALID")
     partition: Mapped[str] = mapped_column(String(40), nullable=False, default="DISCOVERY")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    provider_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    source_license: Mapped[str | None] = mapped_column(Text, nullable=True)
+    catalog_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
+    gateway_instance_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    catalog_release_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    nautilus_data_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    instrument_scope: Mapped[list[str]] = mapped_column(JSON_VALUE, default=list, nullable=False)
+    schema_revision: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    quality_result: Mapped[dict] = mapped_column(JSON_VALUE, default=dict, nullable=False)
+    point_in_time_result: Mapped[dict] = mapped_column(JSON_VALUE, default=dict, nullable=False)
+    ingested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AlphaQualification(Base):
@@ -209,6 +230,9 @@ class AlphaQualification(Base):
     metrics: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, nullable=False, default=dict)
     lineage: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VALUE, nullable=False, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source_experiment_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("search_ledger_entries.id", ondelete="RESTRICT"), nullable=True
+    )
 
 
 class PortfolioMandate(Base, TimestampMixin):
@@ -236,7 +260,13 @@ class PortfolioProgram(Base, TimestampMixin):
 
 class PortfolioCandidate(Base):
     __tablename__ = "portfolio_candidates"
-    __table_args__ = (Index("ix_portfolio_candidate_program", "portfolio_program_id"),)
+    __table_args__ = (
+        Index("ix_portfolio_candidate_program", "portfolio_program_id"),
+        UniqueConstraint(
+            "simulation_experiment_id",
+            name="uq_portfolio_candidate_simulation_experiment",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     candidate_family_id: Mapped[UUID | None] = mapped_column(Uuid)
@@ -258,6 +288,9 @@ class PortfolioCandidate(Base):
     members: Mapped[list[dict[str, Any]]] = mapped_column(JSON_VALUE, nullable=False, default=list)
     metrics: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    simulation_experiment_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("search_ledger_entries.id", ondelete="RESTRICT"), nullable=True
+    )
 
 
 class DownstreamSystem(Base, TimestampMixin):
@@ -268,7 +301,7 @@ class DownstreamSystem(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     environment_type: Mapped[str] = mapped_column(String(40), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    package_contract_version: Mapped[str] = mapped_column(String(40), nullable=False, default="1")
+    package_contract_version: Mapped[str] = mapped_column(String(40), nullable=False, default="2")
     feedback_contract_version: Mapped[str] = mapped_column(String(40), nullable=False, default="1")
     compatibility: Mapped[list[str]] = mapped_column(JSON_VALUE, nullable=False, default=list)
     preflight_state: Mapped[str] = mapped_column(String(40), nullable=False, default="READY")
@@ -296,17 +329,25 @@ class ApprovalSnapshot(Base, TimestampMixin):
     stale_reason: Mapped[str | None] = mapped_column(Text)
     recommendation_rationale: Mapped[str | None] = mapped_column(Text)
     human_report: Mapped[Any] = mapped_column(JSON_VALUE)
-    evidence_summary: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, nullable=False, default=dict)
-    capital_context: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, nullable=False, default=dict)
+    evidence_summary: Mapped[dict[str, Any]] = mapped_column(
+        JSON_VALUE, nullable=False, default=dict
+    )
+    capital_context: Mapped[dict[str, Any]] = mapped_column(
+        JSON_VALUE, nullable=False, default=dict
+    )
     risk_summary: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, nullable=False, default=dict)
     cost_summary: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, nullable=False, default=dict)
-    capacity_summary: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, nullable=False, default=dict)
-    changes_summary: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, nullable=False, default=dict)
+    capacity_summary: Mapped[dict[str, Any]] = mapped_column(
+        JSON_VALUE, nullable=False, default=dict
+    )
+    changes_summary: Mapped[dict[str, Any]] = mapped_column(
+        JSON_VALUE, nullable=False, default=dict
+    )
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
 
-class CandidatePackage(Base):
-    __tablename__ = "candidate_packages"
+class CandidateBundle(Base):
+    __tablename__ = "candidate_bundles"
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     approval_id: Mapped[UUID] = mapped_column(
@@ -334,8 +375,8 @@ class HandoffOffer(Base, TimestampMixin):
     approval_id: Mapped[UUID] = mapped_column(
         Uuid, ForeignKey("approval_snapshots.id", ondelete="RESTRICT"), nullable=False
     )
-    candidate_package_id: Mapped[UUID] = mapped_column(
-        Uuid, ForeignKey("candidate_packages.id", ondelete="RESTRICT"), nullable=False
+    candidate_bundle_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("candidate_bundles.id", ondelete="RESTRICT"), nullable=False
     )
     candidate_id: Mapped[UUID] = mapped_column(
         Uuid, ForeignKey("portfolio_candidates.id", ondelete="RESTRICT"), nullable=False
@@ -387,7 +428,79 @@ __all__ = [
     "PortfolioCandidate",
     "DownstreamSystem",
     "ApprovalSnapshot",
-    "CandidatePackage",
+    "CandidateBundle",
     "HandoffOffer",
     "ForwardEvidenceEpisode",
+    "DegradationFollowup",
 ]
+
+
+class SearchLedgerEntry(Base):
+    __tablename__ = "search_ledger_entries"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    program_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("research_programs.id", ondelete="CASCADE"), nullable=False
+    )
+    branch_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("research_branches.id", ondelete="SET NULL"), nullable=True
+    )
+    mission_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("research_missions.id", ondelete="SET NULL"), nullable=True
+    )
+    dataset_revision_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("dataset_revisions.id", ondelete="RESTRICT"), nullable=False
+    )
+    parent_entry_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("search_ledger_entries.id", ondelete="SET NULL"), nullable=True
+    )
+    mode: Mapped[str] = mapped_column(String(30), nullable=False)
+    state: Mapped[str] = mapped_column(String(30), nullable=False)
+    runtime_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    runtime_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    remote_run_id: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    request_json: Mapped[dict] = mapped_column(JSON_VALUE, default=dict, nullable=False)
+    evidence_json: Mapped[dict] = mapped_column(JSON_VALUE, default=dict, nullable=False)
+    disclosure_json: Mapped[dict] = mapped_column(JSON_VALUE, default=dict, nullable=False)
+    failure_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    failure_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
+class DegradationFollowup(Base):
+    """Exactly-once research wake-up for one Alpha/Forward-Evidence episode."""
+
+    __tablename__ = "degradation_followups"
+    __table_args__ = (
+        UniqueConstraint(
+            "alpha_qualification_id",
+            "forward_evidence_episode_id",
+            name="uq_degradation_followup_alpha_episode",
+        ),
+        Index("ix_degradation_followup_episode", "forward_evidence_episode_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    alpha_qualification_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("alpha_qualifications.id", ondelete="CASCADE"), nullable=False
+    )
+    forward_evidence_episode_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("forward_evidence_episodes.id", ondelete="CASCADE"), nullable=False
+    )
+    source_experiment_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("search_ledger_entries.id", ondelete="RESTRICT"), nullable=False
+    )
+    branch_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("research_branches.id", ondelete="SET NULL")
+    )
+    mission_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("research_missions.id", ondelete="SET NULL")
+    )
+    job_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("jobs.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

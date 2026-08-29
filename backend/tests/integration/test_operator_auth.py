@@ -270,7 +270,9 @@ def test_machine_token_can_make_operator_mutation_without_browser_origin(
     assert response.status_code == 200
 
 
-def test_password_totp_login_sets_strict_http_only_cookies(settings: Settings, engine: Engine) -> None:
+def test_password_totp_login_sets_strict_http_only_cookies(
+    settings: Settings, engine: Engine
+) -> None:
     secured = _enabled_settings(settings)
     client = TestClient(create_app(settings=secured, engine=engine))
 
@@ -491,7 +493,9 @@ def test_cookie_key_rotation_revokes_session_and_trusted_browser(
     assert response.json()["error"]["code"] == "AUTH_REQUIRED"
 
 
-def test_logout_requires_origin_and_forgets_trusted_browser(settings: Settings, engine: Engine) -> None:
+def test_logout_requires_origin_and_forgets_trusted_browser(
+    settings: Settings, engine: Engine
+) -> None:
     secured = _enabled_settings(settings)
     client = TestClient(create_app(settings=secured, engine=engine))
     assert _login(client, secured, trust_browser=True).status_code == 200

@@ -4,18 +4,25 @@ import io
 import json
 import zipfile
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, func, select
 
+from api import domain
 from db.models import (
     ApprovalSnapshot,
     DownstreamSystem,
+    DatasetRevision,
     ForwardEvidenceEpisode,
+    GovernedDataSource,
+    HandoffOffer,
     Job,
+    MarketUniverseVersion,
     PortfolioCandidate,
     PortfolioProgram,
+    ResearchCharter,
     ResearchProgram,
 )
 from db.session import create_session_factory
@@ -28,10 +35,145 @@ def _client(engine: Engine, settings: Settings) -> TestClient:
     return TestClient(create_app(settings=settings, engine=engine))
 
 
+def _seed_research_scope(
+    engine: Engine,
+    *,
+    name: str = "US Equities",
+    key: str = "US_EQUITIES",
+    instrument_id: str = "AAPL.XNAS",
+) -> UUID:
+    factory = create_session_factory(engine)
+    now = datetime.now(UTC)
+    universe_id = uuid4()
+    with factory() as session, session.begin():
+        universe = MarketUniverseVersion(
+            id=universe_id,
+            universe_key=f"{key}_{universe_id.hex[:8]}",
+            version_no=1,
+            name=name,
+            state="ACTIVE",
+            spec_json={},
+            created_at=now,
+        )
+        source = GovernedDataSource(
+            name=f"Governed quotes {universe_id}",
+            provider="Integration provider",
+            state="ACTIVE",
+            universe_scope=[name],
+            fields=["event_time", "available_time", "bid_price", "ask_price"],
+            preflight_state="READY",
+            public_config={"data_domains": ["quotes", "market_data"]},
+        )
+        session.add_all([universe, source])
+        session.flush()
+        session.add(
+            DatasetRevision(
+                data_source_id=source.id,
+                universe_version_id=universe.id,
+                universe_name=name,
+                revision_no=1,
+                event_start=now - timedelta(days=30),
+                event_end=now - timedelta(days=20),
+                available_start=now - timedelta(days=30),
+                available_end=now - timedelta(days=20),
+                row_count=100,
+                quality_state="VALID",
+                point_in_time_state="VALID",
+                partition="DISCOVERY",
+                created_at=now,
+                provider_name="Integration provider",
+                source_license="integration-test",
+                catalog_uri=f"nautilus-catalog://scope-{universe_id.hex}",
+                nautilus_data_type="QuoteTick",
+                instrument_scope=[instrument_id],
+                schema_revision="quote-v2",
+                quality_result={"state": "VALID"},
+                point_in_time_result={"state": "VALID"},
+                ingested_at=now,
+            )
+        )
+    return universe_id
+
+
+def _nautilus_candidate_metrics(experiment_id: UUID, alpha_id: UUID) -> dict:
+    strategy_source = (
+        "from nautilus_trader.examples.strategies.ema_cross import "
+        "EMACross as CandidateStrategy, EMACrossConfig as CandidateConfig\n"
+    )
+    return {
+        "search_adjusted_quality": 0.78,
+        "nautilus": {
+            "strategy_artifact": {
+                "artifact_id": "candidate-ema-cross-v1",
+                "kind": "SOURCE_BUNDLE",
+                "strategy_path": "candidate_strategy:CandidateStrategy",
+                "config_path": "candidate_strategy:CandidateConfig",
+                "config": {
+                    "instrument_id": "EUR/USD.SIM",
+                    "bar_type": "EUR/USD.SIM-1-MINUTE-BID-INTERNAL",
+                    "trade_size": "100000",
+                    "fast_ema_period": 3,
+                    "slow_ema_period": 8,
+                },
+                "source_files": {"candidate_strategy.py": strategy_source},
+                "requirements": ["nautilus_trader==1.231.0"],
+            },
+            "evidence": {
+                "experiment_id": str(experiment_id),
+                "orders": [
+                    {
+                        "order_id": "O-1",
+                        "instrument_id": "EUR/USD.SIM",
+                        "side": "BUY",
+                        "order_type": "MARKET",
+                        "status": "FILLED",
+                        "quantity": "100000",
+                        "filled_quantity": "100000",
+                    }
+                ],
+                "fills": [
+                    {
+                        "trade_id": "T-1",
+                        "order_id": "O-1",
+                        "instrument_id": "EUR/USD.SIM",
+                        "side": "BUY",
+                        "quantity": "100000",
+                        "price": "1.10000",
+                    }
+                ],
+                "positions": [
+                    {
+                        "position_id": "P-1",
+                        "instrument_id": "EUR/USD.SIM",
+                        "side": "LONG",
+                        "quantity": "100000",
+                    }
+                ],
+                "pnl": {"realized": "250 USD"},
+                "statistics": {"total_orders": 1, "total_fills": 1, "total_positions": 1},
+            },
+            "dataset_revision_ids": [],
+            "alpha_qualification_ids": [str(alpha_id)],
+            "instrument_scope": ["EUR/USD.SIM", "GBP/USD.SIM"],
+            "data_requirements": {"nautilus_data_type": "QuoteTick"},
+            "backtest_run_config": {
+                "catalog_uri": "nautilus-catalog://integration-fx-quotes",
+                "mode": "PORTFOLIO",
+            },
+            "venue_config": {"name": "SIM", "oms_type": "HEDGING", "account_type": "MARGIN"},
+            "risk_config": {"bypass": False},
+            "discovery_summary": {"source": "search-ledger"},
+            "sealed_summary": {"raw_evidence_withheld": True},
+            "robustness_summary": {"status": "PASS"},
+        },
+    }
+
+
 def test_program_creation_is_idempotent_and_queues_a_durable_mission(
     engine: Engine,
     settings: Settings,
 ) -> None:
+    universe_id = _seed_research_scope(engine)
     client = _client(engine, settings)
     headers = {"Idempotency-Key": "program-create-1"}
     payload = {
@@ -44,6 +186,15 @@ def test_program_creation_is_idempotent_and_queues_a_durable_mission(
     program = created.json()
     assert program["state"] == "ACTIVE"
     assert program["mission_count"] == 1
+    assert program["charter"]["universe_version_ids"] == [str(universe_id)]
+    assert set(program["charter"]["allowed_data_domains"]) >= {"quotes", "market_data"}
+
+    factory = create_session_factory(engine)
+    with factory() as session:
+        charter = session.get(ResearchCharter, UUID(program["charter_id"]))
+        assert charter is not None
+        assert charter.universe_version_ids == [str(universe_id)]
+        assert set(charter.allowed_data_domains) >= {"quotes", "market_data"}
 
     replay = client.post("/api/v1/research-programs", headers=headers, json=payload)
     assert replay.status_code == 201, replay.text
@@ -68,7 +219,6 @@ def test_program_creation_is_idempotent_and_queues_a_durable_mission(
     assert {event["kind"] for event in activity.json()} >= {"PROGRAM_CREATED", "MISSION_READY"}
     assert "MISSION_STARTED" not in {event["kind"] for event in activity.json()}
 
-    factory = create_session_factory(engine)
     with factory() as session:
         job = session.scalar(
             select(Job).where(
@@ -84,6 +234,7 @@ def test_duplicate_idea_uses_contribution_instead_of_copying_program(
     engine: Engine,
     settings: Settings,
 ) -> None:
+    _seed_research_scope(engine)
     client = _client(engine, settings)
     idea = "Test short-horizon momentum in liquid US equities after realistic costs."
     first = client.post(
@@ -110,7 +261,33 @@ def test_duplicate_idea_uses_contribution_instead_of_copying_program(
         assert session.scalar(select(func.count()).select_from(ResearchProgram)) == 1
 
 
-def _seed_candidate_approval(engine: Engine, settings: Settings, *, expired: bool = False) -> tuple[str, str, str]:
+def test_program_creation_rejects_unavailable_inferred_scope(
+    engine: Engine,
+    settings: Settings,
+) -> None:
+    _seed_research_scope(engine, name="US Equities", key="US_EQUITIES")
+    client = _client(engine, settings)
+
+    response = client.post(
+        "/api/v1/research-programs",
+        headers={"Idempotency-Key": "scope-unavailable"},
+        json={
+            "idea": "Test crypto spot momentum after realistic costs and liquidity filters.",
+            "answers": {},
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["code"] == "RESEARCH_SCOPE_UNAVAILABLE"
+
+    factory = create_session_factory(engine)
+    with factory() as session:
+        assert session.scalar(select(func.count()).select_from(ResearchProgram)) == 0
+        assert session.scalar(select(func.count()).select_from(ResearchCharter)) == 0
+
+
+def _seed_candidate_approval(
+    engine: Engine, settings: Settings, *, expired: bool = False
+) -> tuple[str, str, str]:
     factory = create_session_factory(engine)
     with factory() as session, session.begin():
         downstream_id = uuid4()
@@ -120,11 +297,12 @@ def _seed_candidate_approval(engine: Engine, settings: Settings, *, expired: boo
             name=f"Paper Lab {downstream_id.hex[:8]}",
             environment_type="PAPER",
             enabled=True,
-            package_contract_version="1",
+            package_contract_version="2",
             feedback_contract_version="1",
             compatibility=[],
             preflight_state="READY",
             public_config={
+                "target_validity_seconds": 120,
                 "feedback_contract": {
                     "minimum_observation_duration_seconds": 60,
                     "minimum_valid_sample_size": 10,
@@ -140,28 +318,42 @@ def _seed_candidate_approval(engine: Engine, settings: Settings, *, expired: boo
         )
         session.add_all([downstream, program])
         session.flush()
+        experiment_id = uuid4()
+        alpha_id = uuid4()
         candidate = PortfolioCandidate(
             portfolio_program_id=program.id,
             mandate_version_id=program.mandate_version_id,
             mandate_name=program.mandate_name,
             state="READY",
             members=[
-                {"instrument_id": "AAPL", "target_weight": 0.6},
-                {"instrument_id": "MSFT", "target_weight": 0.4},
+                {
+                    "alpha_qualification_id": str(alpha_id),
+                    "instrument_id": "EUR/USD.SIM",
+                    "target_weight": 0.6,
+                },
+                {
+                    "alpha_qualification_id": str(alpha_id),
+                    "instrument_id": "GBP/USD.SIM",
+                    "target_weight": 0.4,
+                },
             ],
-            metrics={"search_adjusted_quality": 0.78},
+            metrics=_nautilus_candidate_metrics(experiment_id, alpha_id),
             created_at=datetime.now(UTC),
         )
         session.add(candidate)
         session.flush()
-        program.current_candidate_id = candidate.id
         approval = ApprovalSnapshot(
             candidate_id=candidate.id,
             purpose="PAPER",
             state="PENDING",
-            valid_until=datetime.now(UTC) + (-timedelta(minutes=1) if expired else timedelta(days=7)),
+            downstream_system_id=downstream.id,
+            valid_until=datetime.now(UTC)
+            + (-timedelta(minutes=1) if expired else timedelta(days=7)),
             recommendation_rationale="Independent evidence materially improves the frontier.",
-            human_report={},
+            human_report={
+                "summary": "Reviewed Paper recommendation.",
+                "selected_alpha_id": str(alpha_id),
+            },
             evidence_summary={"search_adjusted_quality": 0.78},
             capital_context={"base_currency": "USD", "deployable_capital": 100000},
             risk_summary={},
@@ -177,7 +369,12 @@ def _seed_candidate_approval(engine: Engine, settings: Settings, *, expired: boo
 def test_approval_builds_package_and_authenticated_handoff_feedback(
     engine: Engine,
     settings: Settings,
+    monkeypatch,
 ) -> None:
+    monkeypatch.setattr(
+        "api.domain._verify_candidate_bundle_remotely",
+        lambda *args, **kwargs: None,
+    )
     approval_id, downstream_id, token = _seed_candidate_approval(engine, settings)
     client = _client(engine, settings)
     headers = {"Idempotency-Key": "approve-1"}
@@ -196,6 +393,19 @@ def test_approval_builds_package_and_authenticated_handoff_feedback(
     assert len(handoffs.json()) == 1
     handoff = handoffs.json()[0]
     assert handoff["state"] == "AVAILABLE"
+    assert datetime.fromisoformat(handoff["claim_deadline"]) == datetime.fromisoformat(
+        approved.json()["expires_at"]
+    )
+
+    factory = create_session_factory(engine)
+    with factory() as session:
+        approval_row = session.get(ApprovalSnapshot, UUID(approval_id))
+        assert approval_row is not None
+        candidate_row = session.get(PortfolioCandidate, approval_row.candidate_id)
+        assert candidate_row is not None
+        program_row = session.get(PortfolioProgram, candidate_row.portfolio_program_id)
+        assert program_row is not None
+        assert program_row.current_candidate_id == candidate_row.id
 
     unauthorized = client.post(
         f"/api/v1/handoffs/{handoff['id']}/claim",
@@ -220,20 +430,41 @@ def test_approval_builds_package_and_authenticated_handoff_feedback(
         names = set(archive.namelist())
         required = {
             "manifest.json",
-            "schemas/canonical-input.schema.json",
-            "schemas/raw-alpha.schema.json",
-            "schemas/target-portfolio-frame.schema.json",
-            "fixtures/input.arrow",
-            "fixtures/expected_alpha.arrow",
-            "fixtures/expected_portfolio.arrow",
-            "evidence/approval-summary.json",
+            "requirements.lock",
+            "strategy/strategy-config.json",
+            "strategy/actor-config.json",
+            "data/requirements.json",
+            "data/instrument-scope.json",
+            "runtime/nautilus-version.json",
+            "runtime/backtest-run-config.json",
+            "runtime/venue-config.json",
+            "runtime/risk-config.json",
+            "runtime/live-node-template.json",
+            "validation/fixture-catalog/manifest.json",
+            "validation/expected-orders.json",
+            "validation/expected-fills.json",
+            "validation/expected-positions.json",
+            "validation/expected-statistics.json",
+            "validation/expected-pnl.json",
+            "evidence/discovery-summary.json",
+            "evidence/sealed-summary.json",
+            "evidence/robustness-summary.json",
+            "evidence/portfolio-simulation.json",
             "lineage.json",
         }
         assert required <= names
         manifest = json.loads(archive.read("manifest.json"))
-        for runtime_path in manifest["runtime"].values():
-            if isinstance(runtime_path, str):
-                assert runtime_path in names
+        assert manifest["contract"] == "QUAZONAI_NAUTILUS_CANDIDATE_BUNDLE"
+        assert manifest["contract_version"] == "2"
+        assert manifest["runtime"] == {
+            "name": "NAUTILUS_TRADER",
+            "version": "1.231.0",
+            "deployment": "REMOTE_INDEPENDENT_RUNTIME",
+            "paper_live_reuse": "SAME_STRATEGY_WHEEL_AND_CONFIG",
+        }
+        assert manifest["strategy"]["wheel"] in names
+        assert manifest["strategy"]["wheel"].startswith("strategy/quazonai_candidate_strategy-")
+        assert manifest["strategy"]["wheel"].endswith("-py3-none-any.whl")
 
     accepted = client.post(
         f"/api/v1/handoffs/{handoff['id']}/accept",
@@ -256,6 +487,11 @@ def test_approval_builds_package_and_authenticated_handoff_feedback(
         assert session.scalar(select(func.count()).select_from(ForwardEvidenceEpisode)) == 0
 
     start = datetime.now(UTC) - timedelta(minutes=10)
+    factory = create_session_factory(engine)
+    with factory() as session, session.begin():
+        persisted_handoff = session.get(HandoffOffer, UUID(handoff["id"]))
+        assert persisted_handoff is not None
+        persisted_handoff.accepted_at = start - timedelta(minutes=1)
     feedback = client.post(
         f"/api/v1/handoffs/{handoff['id']}/feedback",
         headers={**auth, "Idempotency-Key": "feedback-1"},
@@ -306,6 +542,17 @@ def test_resource_id_is_part_of_idempotency_identity(
 
     first = client.post(f"/api/v1/approvals/{first_id}/reject", headers=headers, json=body)
     assert first.status_code == 200, first.text
+    assert first.json()["human_report"]["summary"] == "Reviewed Paper recommendation."
+    assert first.json()["changes_summary"]["approval_decision"]["outcome"] == "REJECT"
+    factory = create_session_factory(engine)
+    with factory() as session:
+        rejected = session.get(ApprovalSnapshot, UUID(first_id))
+        assert rejected is not None
+        rejected_candidate = session.get(PortfolioCandidate, rejected.candidate_id)
+        assert rejected_candidate is not None
+        rejected_program = session.get(PortfolioProgram, rejected_candidate.portfolio_program_id)
+        assert rejected_program is not None
+        assert rejected_program.current_candidate_id is None
     second = client.post(f"/api/v1/approvals/{second_id}/reject", headers=headers, json=body)
     assert second.status_code == 409
     assert second.json()["error"]["code"] == "IDEMPOTENCY_KEY_REUSED"
@@ -337,3 +584,145 @@ def test_data_source_registration_updates_readiness(
     after = client.get("/api/v1/readiness")
     assert after.status_code == 200
     assert after.json()["RESEARCH_READY"] is True
+
+
+
+def test_governed_ingest_creates_executable_discovery_scope(
+    engine: Engine,
+    settings: Settings,
+    monkeypatch,
+) -> None:
+    client = _client(engine, settings)
+    created = client.post(
+        "/api/v1/data-sources",
+        headers={"Idempotency-Key": "ingest-source"},
+        json={
+            "name": "FX PIT Quotes",
+            "provider": "Approved provider",
+            "universe_scope": ["FX"],
+            "fields": ["event_time", "available_time", "bid_price", "ask_price"],
+            "public_config": {"data_domains": ["quotes", "market_data"]},
+        },
+    )
+    assert created.status_code == 201, created.text
+    now = datetime.now(UTC)
+
+    def fake_remote(ingest_request):
+        assert ingest_request.catalog_key == "fx-discovery-v1"
+        gateway_instance_id = uuid4()
+        catalog_release_id = uuid4()
+        ingested = SimpleNamespace(
+            catalog_key="fx-discovery-v1",
+            catalog_uri="nautilus-catalog://fx-discovery-v1",
+            gateway_instance_id=gateway_instance_id,
+            catalog_release_id=catalog_release_id,
+            nautilus_data_type="QuoteTick",
+            instrument_scope=["EUR/USD.SIM"],
+            event_time_start=now - timedelta(days=2),
+            event_time_end=now - timedelta(days=1),
+            available_time_start=now - timedelta(days=2) + timedelta(seconds=1),
+            available_time_end=now - timedelta(days=1) + timedelta(seconds=1),
+            row_count=2,
+            schema_revision="nautilus.quote_tick.v2",
+            quality_result={"state": "VALID"},
+            point_in_time_result={"state": "VALID", "replay_order": "TS_INIT"},
+            ingested_at=now,
+        )
+        validated = SimpleNamespace(
+            valid=True,
+            catalog_key="fx-discovery-v1",
+            gateway_instance_id=gateway_instance_id,
+            catalog_release_id=catalog_release_id,
+            instrument_scope=["EUR/USD.SIM"],
+            row_count=2,
+            event_time_start=ingested.event_time_start,
+            event_time_end=ingested.event_time_end,
+            available_time_start=ingested.available_time_start,
+            available_time_end=ingested.available_time_end,
+            findings=[],
+        )
+        return ingested, validated
+
+    monkeypatch.setattr(domain, "_remote_ingest_and_validate", fake_remote)
+    response = client.post(
+        f"/api/v1/data-sources/{created.json()['id']}/dataset-revisions/ingest",
+        headers={"Idempotency-Key": "fx-discovery-ingest"},
+        json={
+            "universe_key": "FX",
+            "universe_name": "FX",
+            "catalog_key": "fx-discovery-v1",
+            "source": "s3://approved/fx-discovery-v1",
+            "source_license": "CC0-1.0",
+            "instruments": [
+                {
+                    "instrument_id": "EUR/USD.SIM",
+                    "instrument_type": "CurrencyPair",
+                    "instrument_definition": {"id": "EUR/USD.SIM"},
+                    "rows": [
+                        {
+                            "timestamp": (now - timedelta(days=2)).isoformat(),
+                            "available_at": (
+                                now - timedelta(days=2) + timedelta(seconds=1)
+                            ).isoformat(),
+                            "bid_price": "1.10",
+                            "ask_price": "1.11",
+                        },
+                        {
+                            "timestamp": (now - timedelta(days=1)).isoformat(),
+                            "available_at": (
+                                now - timedelta(days=1) + timedelta(seconds=1)
+                            ).isoformat(),
+                            "bid_price": "1.12",
+                            "ask_price": "1.13",
+                        },
+                    ],
+                }
+            ],
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["quality_state"] == "VALID"
+    program = client.post(
+        "/api/v1/research-programs",
+        headers={"Idempotency-Key": "fx-program-after-ingest"},
+        json={
+            "idea": "Test one day FX momentum after realistic costs.",
+            "answers": {},
+        },
+    )
+    assert program.status_code == 201, program.text
+    assert program.json()["charter"]["universe_version_ids"] == [
+        response.json()["universe_version_id"]
+    ]
+
+
+
+def test_portfolio_mandate_and_program_have_product_creation_workflow(
+    engine: Engine,
+    settings: Settings,
+) -> None:
+    client = _client(engine, settings)
+    mandate = client.post(
+        "/api/v1/portfolio-mandates",
+        headers={"Idempotency-Key": "create-growth-mandate"},
+        json={
+            "key": "GROWTH_V1",
+            "name": "Growth Portfolio",
+            "spec_json": {
+                "constraints": {"max_single_alpha_weight": 1.0}
+            },
+        },
+    )
+    assert mandate.status_code == 201, mandate.text
+    program = client.post(
+        "/api/v1/portfolio-programs",
+        headers={"Idempotency-Key": "create-growth-program"},
+        json={"mandate_id": mandate.json()["id"]},
+    )
+    assert program.status_code == 201, program.text
+    assert program.json()["mandate_version_id"] == mandate.json()[
+        "latest_version_id"
+    ]
+    listed = client.get("/api/v1/portfolio-programs")
+    assert listed.status_code == 200
+    assert [item["id"] for item in listed.json()] == [program.json()["id"]]

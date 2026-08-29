@@ -70,9 +70,7 @@ def test_stage_release_streams_wheels_and_enqueues_install(
         assert release is not None
         artifacts = list(
             session.scalars(
-                select(PluginArtifact).where(
-                    PluginArtifact.plugin_release_id == release.id
-                )
+                select(PluginArtifact).where(PluginArtifact.plugin_release_id == release.id)
             )
         )
         assert release.version == "1.0.0"

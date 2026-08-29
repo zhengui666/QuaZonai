@@ -78,7 +78,7 @@ QuaZonai V1 是单用户、自托管私有工作台。正常 Research Program �
 - Portfolio Assembly；
 - Material Improvement Gate；
 - Approval freshness；
-- Candidate Package；
+- Candidate Bundle；
 - Handoff state；
 - Feedback validation；
 - Degradation Monitoring / Research Wake-up。
@@ -535,3 +535,30 @@ QZ 只验证 Handoff/Feedback contract，不检查其交易节点内部状态。
 ---
 
 QuaZonai 的产品体验应始终保持：**用户提出投资研究问题，系统自治完成研究与组合，只有真正需要资本决策时再把一个可解释、不可变、经过独立验证的 Candidate 交给用户审批。**
+
+## Remote Nautilus runtime operations (Issue 22)
+
+- Research 与 Sealed Gateway 必须独立部署，分别配置 URL/token；生产环境必须使用 HTTPS/mTLS 边界，Core 中的 token 只能调用 research-only API。
+- Gateway 镜像必须精确安装 `nautilus_trader==1.231.0`，持久化 ParquetDataCatalog，禁止暴露 live/order-management endpoint。
+- 数据接入先调用 catalog ingest/validate，再把 `catalog_uri`、provider/license、Instrument scope、schema revision、quality 与 point-in-time 结果写入 Dataset Revision。
+- 升级 Nautilus 版本时必须同时更新 pin、协议契约、真实 BacktestNode CI、Candidate Bundle conformance fixture；禁止静默漂移。
+- `QUAZONAI_NAUTILUS_SEALED_*` 只能提供给 sealed evaluator worker，不得提供给 Research Mission/Codex 子进程。
+
+
+### Remote Nautilus SOURCE_BUNDLE OS isolation
+
+The remote Nautilus Gateway is a Linux-only execution boundary for Mission-authored `SOURCE_BUNDLE` code. Install `bubblewrap` (`bwrap`) and permit unprivileged user/mount/network namespaces for the Gateway service account. The Gateway fails closed when `bwrap` is unavailable. Each authored strategy runs with an empty network namespace and a mount namespace containing only trusted Python/runtime libraries plus the single disposable operation workspace; the Gateway data root, sibling catalogs, service environment and host home are not mounted. The Python AST gate remains defense-in-depth, not the isolation boundary.
+
+### Sealed catalog provisioning and registration
+
+Sealed observations never transit QuaZonai API, Codex workspaces, ordinary workers or Core job payloads. On the independently deployed SEALED Nautilus host, set `NAUTILUS_GATEWAY_ROLE=SEALED` and provision the typed `CatalogIngestRequest` from a local protected file with `quazonai-nautilus-sealed-provision --input /secure/release.json`. Core then queues metadata-only registration with `POST /api/v1/market-universe-versions/{universe_version_id}/sealed-dataset-revisions/register` (Idempotency-Key required). Only `sealed-evaluator` possesses the sealed Gateway credential; it calls the sealed-only catalog validation route and freezes the validated DatasetRevision metadata as `SEALED`. No sealed QuoteTick row is persisted in Core. Candidate promotion requires a second, non-overlapping sealed revision beyond the Alpha qualification episode and performs an independent portfolio-level sealed disclosure before creating a Paper Approval.
+
+
+### SOURCE_BUNDLE OS sandbox prerequisite
+
+Remote Nautilus Gateway hosts that execute `SOURCE_BUNDLE` artifacts must be Linux hosts with
+Bubblewrap available. On Ubuntu 24.04, keep the system-wide AppArmor unprivileged-user-namespace
+restriction enabled and load the `bwrap-userns-restrict` AppArmor profile (from
+`apparmor-profiles`) before starting the Gateway. QuaZonai fails closed when the OS sandbox cannot
+create its isolated user/network/pid namespaces; do not work around this by granting the Gateway
+Docker socket access or by exposing sealed catalogs to the ordinary research runtime.

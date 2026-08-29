@@ -23,7 +23,11 @@ from db.session import SessionFactory, create_database_engine, create_session_fa
 from errors import QfError
 from events import append_event
 from plugins.contract import DescriptorSnapshot
-from plugins.runtime import build_bundle_environment, resolve_plugin_path, validate_release_environment
+from plugins.runtime import (
+    build_bundle_environment,
+    resolve_plugin_path,
+    validate_release_environment,
+)
 from plugins.wheel_metadata import inspect_wheel, validate_wheel_set
 from runtime_config import load_effective_settings
 from settings import Settings
@@ -82,14 +86,20 @@ def install_plugin(settings: Settings, job_id: UUID) -> None:
                 )
             )
             if not artifacts:
-                raise QfError("PLUGIN_ARTIFACT_INVALID", "Plugin release has no wheel artifacts.", 422)
+                raise QfError(
+                    "PLUGIN_ARTIFACT_INVALID", "Plugin release has no wheel artifacts.", 422
+                )
 
-        resolved = [resolve_plugin_path(settings.plugin_root, item.relative_path) for item in artifacts]
+        resolved = [
+            resolve_plugin_path(settings.plugin_root, item.relative_path) for item in artifacts
+        ]
         primary_index = next(
             (index for index, item in enumerate(artifacts) if item.role == "PRIMARY"), None
         )
         if primary_index is None:
-            raise QfError("PLUGIN_ARTIFACT_INVALID", "Plugin release is missing primary wheel.", 422)
+            raise QfError(
+                "PLUGIN_ARTIFACT_INVALID", "Plugin release is missing primary wheel.", 422
+            )
         metadata = [inspect_wheel(path) for path in resolved]
         primary_metadata = metadata[primary_index]
         dependency_metadata = tuple(

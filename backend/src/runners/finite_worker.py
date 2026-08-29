@@ -15,13 +15,19 @@ from collections.abc import Callable, Sequence
 from db.models import Job
 from db.session import SessionFactory, create_database_engine, create_session_factory, ping_database
 from events import append_event
-from jobs import claim_next_job, complete_job, fail_job, release_expired_leases
+from jobs import claim_next_job, complete_job, fail_job, release_expired_leases, retry_job
 from logging_utils import configure_logging
+from quant_runtime.degradation import schedule_degradation_missions
 from runtime_config import effective_settings
 from settings import Settings
 
 LOGGER = logging.getLogger("quazonai.finite_worker")
 Handler = Callable[[Settings, Job], None]
+RETRYABLE_CHILD_EXIT_CODE = 75
+
+
+class RetryableJobError(RuntimeError):
+    """A child preserved its immutable work and asks the durable queue to retry it."""
 
 
 def _noop_handler(_: Settings, __: Job) -> None:
@@ -49,6 +55,10 @@ def _child_handler(
             raise RuntimeError(f"{job.kind} child exceeded its time limit") from exc
         except subprocess.CalledProcessError as exc:
             message = (exc.stderr or "").strip()[-2000:]
+            if exc.returncode == RETRYABLE_CHILD_EXIT_CODE:
+                raise RetryableJobError(
+                    f"{job.kind} child requested retry: {message or 'remote result reconciliation pending'}"
+                ) from exc
             raise RuntimeError(
                 f"{job.kind} child failed with exit code {exc.returncode}: {message}"
             ) from exc
@@ -82,16 +92,24 @@ def run_once(
     owner: str,
     factory: SessionFactory,
 ) -> tuple[bool, float]:
-    """Claim at most one job using the worker's shared database pool.
+    """Admit degradation follow-ups, then claim at most one durable finite-worker job.
 
     Runtime configuration is loaded in the same short transaction that claims the
-    next job. This preserves the rule that every newly admitted job freezes the
-    latest effective settings while avoiding per-poll Engine construction.
+    next job. Explicit degraded Forward Evidence can enqueue a bounded research
+    Mission in this transaction; the worker may then claim it immediately. The
+    explicit HANDLERS capability set prevents this worker from ever leasing sealed
+    evaluation work or any future privileged worker kind.
     """
     with factory.begin() as session:
         settings = effective_settings(session, base_settings)
         release_expired_leases(session)
-        job = claim_next_job(session, owner=owner, lease_seconds=settings.job_lease_seconds)
+        schedule_degradation_missions(session)
+        job = claim_next_job(
+            session,
+            owner=owner,
+            lease_seconds=settings.job_lease_seconds,
+            kinds=HANDLERS.keys(),
+        )
         if job is None:
             return False, settings.job_poll_seconds
         append_event(
@@ -108,6 +126,25 @@ def run_once(
         if handler is None:
             raise RuntimeError(f"Unsupported job kind: {job.kind}")
         handler(settings, job)
+    except RetryableJobError as exc:
+        with factory.begin() as session:
+            current = session.get(Job, job.id)
+            if current is not None:
+                retry_job(
+                    session,
+                    current,
+                    str(exc)[-4000:],
+                    delay_seconds=max(1.0, settings.job_poll_seconds),
+                )
+                append_event(
+                    session,
+                    kind="JOB_RETRY_SCHEDULED",
+                    aggregate_type="job",
+                    aggregate_id=current.id,
+                    payload={"kind": current.kind, "attempt": current.attempt},
+                )
+        LOGGER.warning("job retry scheduled", extra={"job_id": str(job.id)})
+        return True, settings.job_poll_seconds
     except Exception as exc:  # noqa: BLE001 - durable job failure boundary
         with factory.begin() as session:
             current = session.get(Job, job.id)

@@ -178,9 +178,7 @@ def update_runtime_configuration(
             )
         item.revision += 1
 
-    next_base_url = (
-        codex_base_url.strip() if codex_base_url and codex_base_url.strip() else None
-    )
+    next_base_url = codex_base_url.strip() if codex_base_url and codex_base_url.strip() else None
     replacement_key = codex_api_key.strip() if codex_api_key and codex_api_key.strip() else None
     if (
         item.codex_base_url != next_base_url

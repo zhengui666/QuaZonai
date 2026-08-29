@@ -15,6 +15,7 @@ from api.credentials import router as credentials_router
 from api.domain import router as domain_router
 from api.events import router as events_router
 from api.plugins import router as plugins_router
+from api.research_runtime import router as research_runtime_router
 from api.system import router as system_router
 from db.session import create_database_engine, create_session_factory
 from errors import QfError, install_error_handlers
@@ -181,6 +182,7 @@ def create_app(*, settings: Settings | None = None, engine: Engine | None = None
     app.include_router(auth_router)
     app.include_router(system_router)
     app.include_router(domain_router)
+    app.include_router(research_runtime_router)
     app.include_router(plugins_router)
     app.include_router(credentials_router)
     app.include_router(events_router)

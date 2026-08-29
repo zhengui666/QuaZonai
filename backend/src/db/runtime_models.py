@@ -129,9 +129,7 @@ class Event(Base):
     aggregate_type: Mapped[str] = mapped_column(String(100), nullable=False)
     aggregate_id: Mapped[UUID | None] = mapped_column(Uuid)
     actor_kind: Mapped[str] = mapped_column(String(40), nullable=False, default="SYSTEM")
-    actor_metadata: Mapped[dict[str, Any]] = mapped_column(
-        JSON_VALUE, nullable=False, default=dict
-    )
+    actor_metadata: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, nullable=False, default=dict)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

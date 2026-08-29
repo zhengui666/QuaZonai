@@ -1,4 +1,4 @@
-"""Refuse unowned schemas while allowing supported QuaZonai migrations."""
+"""Enforce the single supported QuaZonai schema revision."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ def _script_directory() -> ScriptDirectory:
 
 
 def owned_revisions() -> set[str]:
-    """Return every revision on the single supported upgrade lineage."""
+    """Return revisions present in this source tree for diagnostics only."""
     script = _script_directory()
     heads = script.get_heads()
     if len(heads) != 1:
@@ -46,9 +46,9 @@ def check_engine_schema(engine: Engine) -> None:
     if "alembic_version" not in tables:
         raise QfError(
             code="OLD_SCHEMA_REQUIRES_NEW_VOLUME",
-            message="Database contains tables outside the QuaZonai migration lineage.",
+            message="Database contains tables outside the supported QuaZonai schema.",
             status_code=409,
-            details={"table_count": len(tables)},
+            details={"table_count": len(tables), "required_revision": current_revision()},
         )
 
     with engine.connect() as connection:
@@ -56,16 +56,19 @@ def check_engine_schema(engine: Engine) -> None:
             text("SELECT version_num FROM alembic_version")
         ).scalar_one_or_none()
 
-    allowed = owned_revisions()
-    if revision not in allowed:
+    required = current_revision()
+    if revision != required:
         raise QfError(
             code="OLD_SCHEMA_REQUIRES_NEW_VOLUME",
-            message="Database Alembic revision is not on the supported QuaZonai upgrade lineage.",
+            message=(
+                "This QuaZonai release requires a fresh database volume at the current schema "
+                "revision; in-place compatibility upgrades are intentionally unsupported."
+            ),
             status_code=409,
             details={
                 "revision": revision,
-                "current_revision": current_revision(),
-                "owned_revisions": sorted(allowed),
+                "required_revision": required,
+                "source_tree_revisions": sorted(owned_revisions()),
             },
         )
 

@@ -52,8 +52,7 @@ class DescriptorSnapshot(BaseModel):
         missing = sorted(set(self.required_secret_names) - set(properties))
         if missing:
             raise ValueError(
-                "required_secret_names are absent from secret_config_schema: "
-                + ", ".join(missing)
+                "required_secret_names are absent from secret_config_schema: " + ", ".join(missing)
             )
         return self
 

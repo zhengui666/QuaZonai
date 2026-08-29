@@ -157,9 +157,9 @@ def _impact(session: Session, release_id: UUID) -> PluginImpactView:
         plugin_release_id=release_id,
         runtime_bundles=int(
             session.scalar(
-                select(func.count(func.distinct(PluginRuntimeBundleMember.runtime_bundle_id))).where(
-                    PluginRuntimeBundleMember.plugin_release_id == release_id
-                )
+                select(
+                    func.count(func.distinct(PluginRuntimeBundleMember.runtime_bundle_id))
+                ).where(PluginRuntimeBundleMember.plugin_release_id == release_id)
             )
             or 0
         ),
@@ -197,7 +197,9 @@ async def stage_release(
     with factory() as configuration_session:
         runtime = get_runtime_configuration(configuration_session)
         max_upload_bytes = (
-            runtime.max_plugin_wheel_bytes if runtime is not None else settings.max_plugin_wheel_bytes
+            runtime.max_plugin_wheel_bytes
+            if runtime is not None
+            else settings.max_plugin_wheel_bytes
         )
     release_id = uuid4()
     staging_dir = settings.plugin_root / "staging" / str(release_id)
@@ -360,7 +362,9 @@ def remove_release(
     return _job_view(job)
 
 
-@router.post("/plugin-runtime-bundles/prewarm", response_model=BundlePrewarmResponse, status_code=202)
+@router.post(
+    "/plugin-runtime-bundles/prewarm", response_model=BundlePrewarmResponse, status_code=202
+)
 def prewarm_bundle(
     payload: BundlePrewarmRequest,
     session: Session = Depends(get_session),
@@ -369,13 +373,17 @@ def prewarm_bundle(
     with session.begin():
         releases_by_id = {
             item.id: item
-            for item in session.scalars(select(PluginRelease).where(PluginRelease.id.in_(release_ids)))
+            for item in session.scalars(
+                select(PluginRelease).where(PluginRelease.id.in_(release_ids))
+            )
         }
         if set(releases_by_id) != release_ids:
             raise QfError("PLUGIN_UNKNOWN", "Runtime bundle references missing releases.", 404)
         for item in releases_by_id.values():
             if item.state not in {"STAGED", "ACTIVE", "DRAINING", "INACTIVE"}:
-                raise QfError("PLUGIN_INVALID_STATE", "Runtime bundle requires validated releases.", 409)
+                raise QfError(
+                    "PLUGIN_INVALID_STATE", "Runtime bundle requires validated releases.", 409
+                )
             require_research_data_release(item)
 
         compatibility_keys = {

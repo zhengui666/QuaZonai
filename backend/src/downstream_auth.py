@@ -80,11 +80,15 @@ def authenticate_downstream(
             403,
         )
     try:
-        expected = AESGCM(settings.master_key_bytes()).decrypt(
-            downstream.service_token_nonce,
-            downstream.service_token_ciphertext,
-            _aad(downstream.id, downstream.service_token_key_version),
-        ).decode("utf-8")
+        expected = (
+            AESGCM(settings.master_key_bytes())
+            .decrypt(
+                downstream.service_token_nonce,
+                downstream.service_token_ciphertext,
+                _aad(downstream.id, downstream.service_token_key_version),
+            )
+            .decode("utf-8")
+        )
     except Exception as exc:  # noqa: BLE001 - authentication boundary must not leak crypto detail
         raise QfError(
             "DOWNSTREAM_CREDENTIAL_INVALID",

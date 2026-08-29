@@ -43,6 +43,9 @@ jobs:
       QUAZONAI_DATABASE_URL: postgresql+psycopg://quazonai:quazonai@127.0.0.1:5432/quazonai_frontend
       QUAZONAI_ALEMBIC_URL: postgresql+psycopg://quazonai:quazonai@127.0.0.1:5432/quazonai_frontend
       QUAZONAI_MASTER_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      QUAZONAI_NAUTILUS_RESEARCH_URL: http://127.0.0.1:18081
+      QUAZONAI_NAUTILUS_RESEARCH_ALLOW_INSECURE_HTTP: 'true'
+      QUAZONAI_NAUTILUS_RESEARCH_EXPECTED_VERSION: '1.231.0'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -62,6 +65,20 @@ jobs:
           python -m db.preflight
       - name: Seed browser-test domain facts
         run: python backend/tests/frontend_e2e_seed.py
+      - name: Start remote Candidate verifier stub
+        run: |
+          nohup python backend/tests/fake_candidate_verify_gateway.py >/tmp/quazonai-candidate-verify.log 2>&1 &
+          echo $! >/tmp/quazonai-candidate-verify.pid
+          for attempt in $(seq 1 30); do
+            if kill -0 "$(cat /tmp/quazonai-candidate-verify.pid)" 2>/dev/null; then
+              exit 0
+            fi
+            if [ "$attempt" = 30 ]; then
+              cat /tmp/quazonai-candidate-verify.log
+              exit 1
+            fi
+            sleep 1
+          done
       - name: Start real FastAPI
         run: |
           nohup uvicorn main:create_app --factory --no-proxy-headers --host 127.0.0.1 --port 8000 >/tmp/quazonai-api.log 2>&1 &
@@ -109,10 +126,13 @@ jobs:
           name: playwright-report
           path: frontend/playwright-report
           if-no-files-found: ignore
-      - name: Show API log on failure
+      - name: Show service logs on failure
         if: failure()
-        run: cat /tmp/quazonai-api.log || true
-      - name: Stop FastAPI
+        run: |
+          cat /tmp/quazonai-api.log || true
+          cat /tmp/quazonai-candidate-verify.log || true
+      - name: Stop test services
         if: always()
         run: |
           if [ -f /tmp/quazonai-api.pid ]; then kill "$(cat /tmp/quazonai-api.pid)" || true; fi
+          if [ -f /tmp/quazonai-candidate-verify.pid ]; then kill "$(cat /tmp/quazonai-candidate-verify.pid)" || true; fi

@@ -6,27 +6,42 @@ RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
-FROM python:3.14-slim AS runtime
+FROM python:3.14-slim AS runtime-base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PATH=/opt/venv/bin:$PATH \
-    QUAZONAI_FRONTEND_DIST=/workspace/frontend-dist \
-    CODEX_HOME=/home/quazonai/.codex
+    PATH=/opt/venv/bin:$PATH
 
 RUN groupadd --system quazonai \
     && useradd --system --gid quazonai --home-dir /home/quazonai \
        --create-home --shell /usr/sbin/nologin quazonai \
     && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
-       ca-certificates git libpq5 \
+       ca-certificates libpq5 \
     && rm -rf /var/lib/apt/lists/* \
     && python -m venv /opt/venv
 
 WORKDIR /workspace
 COPY backend/ /workspace/backend/
-RUN /opt/venv/bin/python -m pip install --no-cache-dir "/workspace/backend[research,agent]"
+
+FROM runtime-base AS sealed-runtime
+
+RUN /opt/venv/bin/python -m pip install --no-cache-dir "/workspace/backend[research]" \
+    && chown -R quazonai:quazonai /workspace /home/quazonai
+
+WORKDIR /workspace/backend
+USER quazonai
+
+FROM runtime-base AS core-runtime
+
+ENV QUAZONAI_FRONTEND_DIST=/workspace/frontend-dist \
+    CODEX_HOME=/home/quazonai/.codex
+
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/* \
+    && /opt/venv/bin/python -m pip install --no-cache-dir "/workspace/backend[research,agent]"
 COPY --from=frontend-builder /workspace/frontend/dist /workspace/frontend-dist
 
 RUN mkdir -p \

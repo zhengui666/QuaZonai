@@ -56,10 +56,7 @@ def _read_events(request: Request, after_id: int, limit: int) -> list[EventView]
     with factory() as session:
         items = list(
             session.scalars(
-                select(Event)
-                .where(Event.id > after_id)
-                .order_by(Event.id.asc())
-                .limit(limit)
+                select(Event).where(Event.id > after_id).order_by(Event.id.asc()).limit(limit)
             )
         )
         return [_view(item) for item in items]

@@ -27,7 +27,7 @@ QuaZonai 只拥有：
 - Portfolio Mandate / Portfolio Program / Portfolio Candidate；
 - Independent Evaluation；
 - Approval Snapshot；
-- Candidate Package；
+- Candidate Bundle；
 - Handoff Registry / Feedback / Forward Evidence；
 - Degradation Monitoring；
 - Codex Harness 研究运行时与 Web 工作台。
@@ -64,7 +64,7 @@ Pause/Resume/Archive/Restore、数据授权、Codex 登录、Mandate/Universe/Do
 - Capital Context Version；
 - Portfolio Candidate；
 - Approval Snapshot；
-- Candidate Package；
+- Candidate Bundle；
 - Handoff Offer 的历史终态。
 
 改变依赖就创建新 Version/Candidate/Snapshot，而不是 patch 旧事实。
@@ -143,7 +143,7 @@ Agent 输出必须通过 schema、artifact validation 和 Domain Validator 才�
 
 ## 6. Handoff / Downstream 边界
 
-- Candidate Package 只输出 TargetPortfolioFrame，不输出订单；
+- Candidate Bundle 只输出 TargetPortfolioFrame，不输出订单；
 - Approval 绑定一个逻辑 downstream system；
 - Paper 与 Live 分开审批；
 - 未领取 Offer 可 revoke；`CLAIMED` 后 QZ 无 stop/revoke runtime 权限；
@@ -245,7 +245,7 @@ HANDOFF_CONNECTOR
 - Sealed raw data 不可达；
 - PostgreSQL concurrency/idempotency；
 - plugin wheel install/entry point/process isolation；
-- Candidate Package Reference Fixture conformance；
+- Candidate Bundle Reference Fixture conformance；
 - Handoff claim vs revoke 原子竞争；
 - event replay / SSE reconnect。
 
@@ -279,3 +279,7 @@ HANDOFF_CONNECTOR
 - 实现报告与独立复核报告均已提交。
 
 未满足任一项，只能标记为部分完成，不得宣称 conforming/release-ready。
+
+## Issue 22 effective Nautilus ownership boundary
+
+本节覆盖旧版“禁止 Nautilus”或“仅输出 TargetPortfolioFrame”的描述。允许在协议、文档、Candidate Bundle 与独立 `nautilus_runtime/` 服务中使用 NautilusTrader；`backend/src` 可调用远程 Gateway，但严禁导入 `nautilus_trader` 或拥有 live broker/order/account control。唯一可晋级证据来自 Search Ledger 中真实远程 Nautilus 运行；Candidate Bundle 必须复用相同 StrategyArtifact。`tools/check_quant_runtime_boundary.py` 是精确 AST ownership 检查，禁止恢复全仓字符串黑名单。
