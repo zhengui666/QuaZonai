@@ -22,7 +22,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'
-      - name: Apply transparent reviewed patch
+      - name: Apply transparent reviewed source patch
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -69,7 +69,10 @@ jobs:
           path.write_text(text, encoding="utf-8")
           PY
           python tools/issue22_round9_patch.py
-          rm tools/issue22_round9_patch.py .github/workflows/issue22-round9-maintenance.yml
+          # GitHub Actions' token may not update workflow files. Restore CI here;
+          # the connector applies that reviewed workflow change separately.
+          git checkout -- .github/workflows/ci.yml
+          rm tools/issue22_round9_patch.py
           git diff --check
           python -m compileall -q backend/src nautilus_runtime/src
           git config user.name 'github-actions[bot]'
