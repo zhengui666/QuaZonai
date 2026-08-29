@@ -30,10 +30,14 @@ from quant_runtime.mission_execution import execute_mission_experiments
 from runners.sealed_evaluator import run_sealed_evaluation
 from settings import Settings
 
-pytestmark = pytest.mark.skipif(
-    not os.environ.get("QUAZONAI_NAUTILUS_RUNTIME_URL"),
-    reason="real remote NautilusTrader runtime is not configured",
-)
+pytestmark = [
+    pytest.mark.nautilus,
+    pytest.mark.skipif(
+        not os.environ.get("QUAZONAI_NAUTILUS_RUNTIME_URL")
+        or not os.environ.get("QUAZONAI_NAUTILUS_SEALED_RUNTIME_URL"),
+        reason="real remote Research and Sealed NautilusTrader runtimes are not configured",
+    ),
+]
 
 _STRATEGY_SOURCE = '''from decimal import Decimal
 

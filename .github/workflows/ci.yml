@@ -55,7 +55,7 @@ jobs:
           for path in $imports; do
             test "$path" = "$allowed" || { echo "NautilusTrader import escaped remote runtime boundary: $path"; exit 1; }
           done
-          ! grep -R -n -E 'TradingNode|LiveNode|submit_order|cancel_order|modify_order' backend/src/api backend/src/quant_runtime.py backend/src/runners/quant_experiments.py
+          ! grep -R -n -E 'TradingNode|LiveNode|submit_order|cancel_order|modify_order' backend/src/api backend/src/quant_runtime
       - name: Install product and test runtimes
         run: python -m pip install -e 'backend[dev,research,agent,nautilus-runtime]'
       - name: Compile
@@ -84,20 +84,32 @@ jobs:
         run: pytest -q -m 'not nautilus' backend/tests
       - name: Remote Nautilus integration
         env:
+          QUAZONAI_NAUTILUS_RUNTIME_URL: http://127.0.0.1:8011
           QUAZONAI_NAUTILUS_RUNTIME_TOKEN: ci-remote-nautilus-token
+          QUAZONAI_NAUTILUS_SEALED_RUNTIME_URL: http://127.0.0.1:8012
+          QUAZONAI_NAUTILUS_SEALED_RUNTIME_TOKEN: ci-sealed-nautilus-token
           QUAZONAI_NAUTILUS_CATALOG_ROOT: /tmp/quazonai-nautilus-catalogs
-          QUAZONAI_NAUTILUS_HOST: 127.0.0.1
-          QUAZONAI_NAUTILUS_PORT: 8011
-          QUAZONAI_NAUTILUS_TEST_URL: http://127.0.0.1:8011
-          QUAZONAI_NAUTILUS_TEST_TOKEN: ci-remote-nautilus-token
+          QUAZONAI_NAUTILUS_VERSION: 1.231.0
+          QUAZONAI_NAUTILUS_CONTRACT_VERSION: '1'
+          QUAZONAI_NAUTILUS_RUNTIME_VERIFY_TLS: 'false'
         run: |
           rm -rf "$QUAZONAI_NAUTILUS_CATALOG_ROOT"
-          quazonai-nautilus-runtime > /tmp/nautilus-runtime.log 2>&1 &
-          runtime_pid=$!
-          cleanup() { kill "$runtime_pid" 2>/dev/null || true; cat /tmp/nautilus-runtime.log; }
+          QUAZONAI_NAUTILUS_RUNTIME_TOKEN=ci-remote-nautilus-token QUAZONAI_NAUTILUS_CATALOG_ROOT="$QUAZONAI_NAUTILUS_CATALOG_ROOT/research" QUAZONAI_NAUTILUS_PORT=8011 quazonai-nautilus-runtime > /tmp/nautilus-research-runtime.log 2>&1 &
+          research_pid=$!
+          QUAZONAI_NAUTILUS_RUNTIME_TOKEN=ci-sealed-nautilus-token QUAZONAI_NAUTILUS_CATALOG_ROOT="$QUAZONAI_NAUTILUS_CATALOG_ROOT/sealed" QUAZONAI_NAUTILUS_PORT=8012 quazonai-nautilus-runtime > /tmp/nautilus-sealed-runtime.log 2>&1 &
+          sealed_pid=$!
+          cleanup() {
+            kill "$research_pid" "$sealed_pid" 2>/dev/null || true
+            cat /tmp/nautilus-research-runtime.log
+            cat /tmp/nautilus-sealed-runtime.log
+          }
           trap cleanup EXIT
           for attempt in $(seq 1 60); do
-            if curl --fail --silent -H "Authorization: Bearer $QUAZONAI_NAUTILUS_RUNTIME_TOKEN" http://127.0.0.1:8011/v1/health > /tmp/nautilus-health.json; then
+            research_ok=0
+            sealed_ok=0
+            curl --fail --silent -H 'Authorization: Bearer ci-remote-nautilus-token' http://127.0.0.1:8011/v1/capabilities > /tmp/nautilus-research-capabilities.json && research_ok=1
+            curl --fail --silent -H 'Authorization: Bearer ci-sealed-nautilus-token' http://127.0.0.1:8012/v1/capabilities > /tmp/nautilus-sealed-capabilities.json && sealed_ok=1
+            if [ "$research_ok" = 1 ] && [ "$sealed_ok" = 1 ]; then
               break
             fi
             if [ "$attempt" = 60 ]; then
@@ -105,13 +117,7 @@ jobs:
             fi
             sleep 1
           done
-          python - <<'PY'
-          import json
-          health = json.load(open('/tmp/nautilus-health.json', encoding='utf-8'))
-          assert health['ready'] is True
-          assert health['runtime_version'] == '1.231.0'
-          PY
-          pytest -q -m nautilus backend/tests/integration/test_remote_nautilus_runtime.py
+          pytest -q -m nautilus backend/tests/integration/test_nautilus_remote_runtime.py
       - name: Compose configuration
         run: docker compose --env-file .env.example config --quiet
       - name: Production control-plane image build

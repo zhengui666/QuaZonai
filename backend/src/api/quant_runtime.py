@@ -89,8 +89,11 @@ class SearchLedgerView(StrictModel):
     created_at: str
 
 
-def _runtime() -> NautilusQuantRuntime:
-    config = RemoteNautilusConfig.from_env(required=True)
+def _runtime(*, sealed: bool = False) -> NautilusQuantRuntime:
+    config = RemoteNautilusConfig.from_env(
+        required=True,
+        profile="sealed" if sealed else "research",
+    )
     assert config is not None
     return NautilusQuantRuntime(config)
 
@@ -154,7 +157,7 @@ def quant_runtime_capabilities() -> dict[str, Any]:
 
 @router.post("/quant-runtime/catalogs/ingest", response_model=CatalogView, status_code=201)
 def ingest_catalog(payload: CatalogIngestInput, request: Request) -> CatalogView:
-    descriptor = _runtime().ingest(
+    descriptor = _runtime(sealed=payload.sealed).ingest(
         CatalogIngestSpec(
             catalog_name=payload.catalog_name,
             provider=payload.provider,
@@ -256,7 +259,7 @@ def validate_catalog(catalog_id: UUID, request: Request) -> CatalogView:
         item = session.get(NautilusCatalogBinding, catalog_id)
         if item is None:
             raise QfError("CATALOG_NOT_FOUND", "Nautilus catalog binding does not exist.", 404)
-        descriptor = _runtime().validate_catalog(item.catalog_uri)
+        descriptor = _runtime(sealed=item.sealed).validate_catalog(item.catalog_uri)
         item.quality_result = descriptor.quality_result
         item.quality_state = "VALID" if descriptor.quality_result.get("valid") else "INVALID"
         item.point_in_time_result = descriptor.point_in_time_result

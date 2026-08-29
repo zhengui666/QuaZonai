@@ -29,13 +29,14 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 from quant_runtime.config import CONTRACT_VERSION, PINNED_NAUTILUS_VERSION
 from quant_runtime.contracts import (
     CatalogDescriptor,
     CatalogIngestSpec,
     ExperimentSpec,
+    RunMode,
     RunEvidence,
     RuntimeCapabilities,
     StrategyArtifact,
@@ -43,6 +44,8 @@ from quant_runtime.contracts import (
 
 _RUNS: dict[str, dict[str, Any]] = {}
 _RUNS_LOCK = threading.Lock()
+_CATALOG_LOCK = threading.Lock()
+_EXECUTION_LOCK = threading.Lock()
 _CATALOG_PREFIX = "catalog://"
 _FORBIDDEN_BUNDLE_KEYS = {
     "api_key",
@@ -68,7 +71,7 @@ class CatalogValidationInput(StrictModel):
 
 
 class RunInput(StrictModel):
-    mode: str
+    mode: RunMode
     experiment: ExperimentSpec
 
 
@@ -167,83 +170,107 @@ def _read_catalog_descriptor(catalog_uri: str) -> CatalogDescriptor:
 
 
 def _write_catalog(spec: CatalogIngestSpec) -> CatalogDescriptor:
-    import numpy as np
-    import pandas as pd
-
-    from nautilus_trader.persistence.catalog import ParquetDataCatalog
-    from nautilus_trader.persistence.wranglers import QuoteTickDataWrangler
-    from nautilus_trader.test_kit.providers import TestInstrumentProvider
-
-    source_kind = str(spec.source_spec.get("kind", ""))
-    if source_kind != "synthetic_fx_quotes":
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "The reference service accepts source_spec.kind=synthetic_fx_quotes only; "
-                "production runtimes should provide approved provider adapters."
-            ),
-        )
-    instrument_name = str(spec.source_spec.get("instrument", "EUR/USD"))
-    if instrument_name != "EUR/USD":
-        raise HTTPException(status_code=422, detail="reference service supports EUR/USD only")
-    rows = int(spec.source_spec.get("rows", 3000))
-    seed = int(spec.source_spec.get("seed", 42))
-    if rows < 500 or rows > 100_000:
-        raise HTTPException(status_code=422, detail="rows must be between 500 and 100000")
-
-    instrument = TestInstrumentProvider.default_fx_ccy(instrument_name)
-    rng = np.random.default_rng(seed)
-    mid = 1.10 + np.cumsum(rng.normal(0, 0.00015, rows))
-    spread = np.maximum(0.00002, np.abs(rng.normal(0.00008, 0.00002, rows)))
-    timestamps = pd.date_range("2024-01-01", periods=rows, freq="1min", tz="UTC")
-    frame = pd.DataFrame(
-        {
-            "bid_price": mid - spread / 2,
-            "ask_price": mid + spread / 2,
-        },
-        index=timestamps,
-    )
-    ticks = QuoteTickDataWrangler(instrument).process(frame)
     catalog_uri = f"catalog://{spec.catalog_name}"
     path = _catalog_path(catalog_uri)
-    if path.exists():
-        shutil.rmtree(path)
-    path.mkdir(parents=True, exist_ok=False)
-    catalog = ParquetDataCatalog(path)
-    catalog.write_data([instrument])
-    catalog.write_data(ticks)
+    with _CATALOG_LOCK:
+        if path.exists():
+            if not path.is_dir():
+                raise HTTPException(status_code=409, detail="catalog identity is already occupied")
+            try:
+                existing = _read_catalog_descriptor(catalog_uri)
+            except HTTPException as exc:
+                if exc.status_code == 404:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="catalog exists without an immutable ingestion descriptor",
+                    ) from exc
+                raise
+            if (
+                existing.provider != spec.provider
+                or existing.source_license != spec.source_license
+                or existing.source_spec != spec.source_spec
+                or existing.sealed != spec.sealed
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail="catalog identity is already bound to a different dataset revision",
+                )
+            return existing
 
-    first = timestamps[0].to_pydatetime()
-    last = timestamps[-1].to_pydatetime()
-    descriptor = CatalogDescriptor(
-        catalog_uri=catalog_uri,
-        provider=spec.provider,
-        source_license=spec.source_license,
-        nautilus_data_type="QuoteTick",
-        instrument_scope=[instrument.id.value],
-        event_start=first,
-        event_end=last,
-        available_start=first,
-        available_end=last,
-        row_count=len(ticks),
-        schema_revision="nautilus-quote-tick-v1",
-        quality_result={
-            "valid": True,
-            "sorted": True,
-            "unique_timestamps": True,
-            "non_crossed_quotes": True,
-        },
-        point_in_time_result={
-            "valid": True,
-            "available_time_preserved": True,
-        },
-        sealed=spec.sealed,
-    )
-    _metadata_path(path).write_text(
-        descriptor.model_dump_json(indent=2),
-        encoding="utf-8",
-    )
-    return descriptor
+        import numpy as np
+        import pandas as pd
+
+        from nautilus_trader.persistence.catalog import ParquetDataCatalog
+        from nautilus_trader.persistence.wranglers import QuoteTickDataWrangler
+        from nautilus_trader.test_kit.providers import TestInstrumentProvider
+
+        source_kind = str(spec.source_spec.get("kind", ""))
+        if source_kind != "synthetic_fx_quotes":
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "The reference service accepts source_spec.kind=synthetic_fx_quotes only; "
+                    "production runtimes should provide approved provider adapters."
+                ),
+            )
+        instrument_name = str(spec.source_spec.get("instrument", "EUR/USD"))
+        if instrument_name != "EUR/USD":
+            raise HTTPException(status_code=422, detail="reference service supports EUR/USD only")
+        rows = int(spec.source_spec.get("rows", 3000))
+        seed = int(spec.source_spec.get("seed", 42))
+        if rows < 500 or rows > 100_000:
+            raise HTTPException(status_code=422, detail="rows must be between 500 and 100000")
+
+        instrument = TestInstrumentProvider.default_fx_ccy(instrument_name)
+        rng = np.random.default_rng(seed)
+        mid = 1.10 + np.cumsum(rng.normal(0, 0.00015, rows))
+        spread = np.maximum(0.00002, np.abs(rng.normal(0.00008, 0.00002, rows)))
+        timestamps = pd.date_range("2024-01-01", periods=rows, freq="1min", tz="UTC")
+        frame = pd.DataFrame(
+            {
+                "bid_price": mid - spread / 2,
+                "ask_price": mid + spread / 2,
+            },
+            index=timestamps,
+        )
+        ticks = QuoteTickDataWrangler(instrument).process(frame)
+        path.mkdir(parents=True, exist_ok=False)
+        catalog = ParquetDataCatalog(path)
+        catalog.write_data([instrument])
+        catalog.write_data(ticks)
+
+        first = timestamps[0].to_pydatetime()
+        last = timestamps[-1].to_pydatetime()
+        descriptor = CatalogDescriptor(
+            catalog_uri=catalog_uri,
+            provider=spec.provider,
+            source_license=spec.source_license,
+            source_spec=spec.source_spec,
+            nautilus_data_type="QuoteTick",
+            instrument_scope=[instrument.id.value],
+            event_start=first,
+            event_end=last,
+            available_start=first,
+            available_end=last,
+            row_count=len(ticks),
+            schema_revision="nautilus-quote-tick-v1",
+            quality_result={
+                "valid": True,
+                "sorted": True,
+                "unique_timestamps": True,
+                "non_crossed_quotes": True,
+            },
+            point_in_time_result={
+                "valid": True,
+                "available_time_preserved": True,
+            },
+            sealed=spec.sealed,
+        )
+        _metadata_path(path).write_text(
+            descriptor.model_dump_json(indent=2),
+            encoding="utf-8",
+        )
+        return descriptor
 
 
 def _instrument(catalog_uri: str, instrument_id: str) -> tuple[Any, Path]:
@@ -307,7 +334,7 @@ def _named_statistic(values: Mapping[str, Any], *needles: str) -> float:
     return 0.0
 
 
-def _execute(experiment: ExperimentSpec, mode: str) -> RunEvidence:
+def _execute_once(experiment: ExperimentSpec, mode: RunMode) -> RunEvidence:
     from nautilus_trader.backtest.node import BacktestDataConfig
     from nautilus_trader.backtest.node import BacktestEngineConfig
     from nautilus_trader.backtest.node import BacktestNode
@@ -315,6 +342,7 @@ def _execute(experiment: ExperimentSpec, mode: str) -> RunEvidence:
     from nautilus_trader.backtest.node import BacktestVenueConfig
     from nautilus_trader.config import ImportableStrategyConfig
     from nautilus_trader.model import QuoteTick
+    from nautilus_trader.model.identifiers import Venue
 
     descriptor = _read_catalog_descriptor(experiment.catalog_uri)
     if mode == "SEALED" and not descriptor.sealed:
@@ -335,7 +363,6 @@ def _execute(experiment: ExperimentSpec, mode: str) -> RunEvidence:
                 config=_normalize_strategy_config(experiment.strategy, instrument),
             )
             run_config = BacktestRunConfig(
-                id=external_run_id,
                 engine=BacktestEngineConfig(strategies=[strategy]),
                 data=[
                     BacktestDataConfig(
@@ -362,12 +389,13 @@ def _execute(experiment: ExperimentSpec, mode: str) -> RunEvidence:
                 raise RuntimeError("Nautilus BacktestNode returned an unexpected result count")
             result = results[0]
             config_id = result.run_config_id or run_config.id
-            orders = _records(node.generate_orders_report(config_id))
-            fills = _records(node.generate_fills_report(config_id))
-            positions = _records(node.generate_positions_report(config_id))
-            account = _records(node.generate_account_report(config_id))
+            engine = node.get_engine(config_id)
+            assert engine is not None
+            orders = _records(engine.trader.generate_orders_report())
+            fills = _records(engine.trader.generate_fills_report())
+            positions = _records(engine.trader.generate_positions_report())
+            account = _records(engine.trader.generate_account_report(venue=Venue("SIM")))
             returns = _jsonable(result.stats_returns)
-            general = _jsonable(result.stats_general)
             pnls = _jsonable(result.stats_pnls)
             statistics = {
                 "total_events": int(result.total_events),
@@ -380,7 +408,6 @@ def _execute(experiment: ExperimentSpec, mode: str) -> RunEvidence:
                 "turnover": float(len(fills)),
                 "summary": _jsonable(result.summary),
                 "returns": returns,
-                "general": general,
                 "pnls": pnls,
             }
             return RunEvidence(
@@ -421,6 +448,12 @@ def _execute(experiment: ExperimentSpec, mode: str) -> RunEvidence:
     finally:
         if node is not None:
             node.dispose()
+
+
+def _execute(experiment: ExperimentSpec, mode: RunMode) -> RunEvidence:
+    """Serialize runs because strategy imports use a temporary module namespace."""
+    with _EXECUTION_LOCK:
+        return _execute_once(experiment, mode)
 
 
 def _bundle_contains_secret(value: object) -> bool:

@@ -96,6 +96,7 @@ class CatalogDescriptor(StrictModel):
     catalog_uri: str
     provider: str
     source_license: str
+    source_spec: dict[str, Any] = Field(default_factory=dict)
     nautilus_data_type: str
     instrument_scope: list[str]
     event_start: datetime | None = None

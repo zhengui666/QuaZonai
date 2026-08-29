@@ -46,8 +46,10 @@ def _as_float(value: object, default: float = 0.0) -> float:
 
 def _statistics(evidence: RunEvidence) -> tuple[float, float, float, int]:
     stats = evidence.statistics
-    returns = stats.get("returns") if isinstance(stats.get("returns"), dict) else {}
-    general = stats.get("general") if isinstance(stats.get("general"), dict) else {}
+    raw_returns = stats.get("returns")
+    raw_general = stats.get("general")
+    returns: dict[str, Any] = raw_returns if isinstance(raw_returns, dict) else {}
+    general: dict[str, Any] = raw_general if isinstance(raw_general, dict) else {}
     sharpe = _as_float(
         stats.get("sharpe_ratio", returns.get("Sharpe Ratio", returns.get("SharpeRatio", 0.0)))
     )
@@ -392,11 +394,29 @@ def execute_mission_experiments(
             )
             continue
         _finish_run(settings, run_id=run_id, evidence=evidence, error=None)
-        if evidence.state == "SUCCEEDED" and _statistics(evidence)[3] > 0:
+        if evidence.state != "SUCCEEDED":
+            failures.append(
+                {
+                    "experiment_key": experiment.experiment_key,
+                    "error_code": evidence.error_code or "NAUTILUS_RUN_FAILED",
+                }
+            )
+        elif _statistics(evidence)[3] > 0:
             completed.append((run_id, evidence))
+        else:
+            failures.append(
+                {
+                    "experiment_key": experiment.experiment_key,
+                    "error_code": "NO_TRADING_EVIDENCE",
+                }
+            )
 
     if not completed:
-        result = {"runs": [], "failures": failures, "promotion": "NO_COMPLETED_RUN"}
+        result: dict[str, Any] = {
+            "runs": [],
+            "failures": failures,
+            "promotion": "NO_COMPLETED_RUN",
+        }
         (workspace / _EVIDENCE_FILE).write_text(
             json.dumps(result, ensure_ascii=False, indent=2),
             encoding="utf-8",

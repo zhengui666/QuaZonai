@@ -78,3 +78,6 @@ disable_error_code = ["assignment"]
 pythonpath = ["src"]
 testpaths = ["tests"]
 addopts = "-ra"
+markers = [
+  "nautilus: tests requiring an independently running NautilusTrader runtime",
+]

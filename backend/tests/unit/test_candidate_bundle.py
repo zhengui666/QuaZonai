@@ -11,42 +11,68 @@ from settings import Settings
 
 
 def test_candidate_bundle_is_nautilus_native_and_secret_free(settings: Settings) -> None:
+    artifact = {
+        "strategy_path": "strategy.example:ExampleStrategy",
+        "config_path": "strategy.example:ExampleConfig",
+        "config": {"instrument_id": "AAPL.SIM", "trade_size": "1"},
+        "source_files": {
+            "strategy/__init__.py": "",
+            "strategy/example.py": (
+                "class ExampleConfig:\n    pass\n\n"
+                "class ExampleStrategy:\n    pass\n"
+            ),
+        },
+        "requirements": ["nautilus-trader==1.231.0"],
+    }
+    portfolio_evidence = {
+        "external_run_id": "fixture-portfolio-run",
+        "state": "SUCCEEDED",
+        "mode": "PORTFOLIO",
+        "runtime_name": "NautilusTrader",
+        "nautilus_version": "1.231.0",
+        "contract_version": "1",
+        "catalog_uri": "catalog://discovery-eurusd",
+        "strategy_artifact": artifact,
+        "orders": [{"instrument_id": "AAPL.SIM", "side": "BUY", "account_id": "SIM-001"}],
+        "fills": [{"instrument_id": "AAPL.SIM"}],
+        "positions": [{"instrument_id": "AAPL.SIM", "account_id": "SIM-001"}],
+        "account": [],
+        "statistics": {"total_orders": 1, "summary": {"account.SIM.id": "SIM-001"}},
+    }
     candidate = SimpleNamespace(
         id=uuid4(),
         candidate_family_id=uuid4(),
         portfolio_program_id=uuid4(),
+        mandate_version_id=uuid4(),
+        capital_context_version_id=None,
         evaluation_episode_id=uuid4(),
-        members=[{"instrument_id": "EUR/USD.SIM", "target_weight": 1.0}],
+        policy_version="POLICY_V1",
+        risk_model_version="RISK_V1",
+        cost_model_version="COST_V1",
+        capacity_model_version="CAPACITY_V1",
+        constraint_set_version="CONSTRAINTS_V1",
+        rebalance_policy_version="REBALANCE_V1",
+        members=[{"instrument_id": "AAPL.SIM", "target_weight": 1.0}],
         metrics={
-            "strategy_artifact": {
-                "artifact_id": str(uuid4()),
-                "strategy_path": "nautilus_trader.examples.strategies.ema_cross:EMACross",
-                "config_path": "nautilus_trader.examples.strategies.ema_cross:EMACrossConfig",
-                "config": {"fast_ema_period": 3, "slow_ema_period": 8},
+            "nautilus": {
+                "strategy_artifact": artifact,
+                "portfolio_evidence": portfolio_evidence,
+                "discovery_run_id": "fixture-discovery-run",
+                "sealed_run_id": "fixture-sealed-run",
+                "portfolio_run_id": "fixture-portfolio-run",
             },
-            "quant_evidence": {
-                "discovery": {
-                    "catalog_uri": "catalog://discovery-eurusd",
-                    "statistics": {"returns": {"Sharpe Ratio (252 days)": 1.0}},
-                    "reports": {
-                        "orders": [{"client_order_id": "O-1"}],
-                        "positions": [{"instrument_id": "EUR/USD.SIM"}],
-                    },
-                },
-                "sealed": {
-                    "disclosure": {"decision": "PASS"},
-                    "reports": {},
-                },
-            },
+            "sealed_statistics": {"sharpe_ratio": 1.0},
         },
     )
     approval = SimpleNamespace(
         id=uuid4(),
         purpose="PAPER",
         evidence_summary={"decision": "PASS"},
+        capital_context={},
         risk_summary={},
         cost_summary={},
         capacity_summary={},
+        changes_summary={},
     )
     downstream = SimpleNamespace(package_contract_version="2")
 
@@ -71,11 +97,18 @@ def test_candidate_bundle_is_nautilus_native_and_secret_free(settings: Settings)
             "lineage.json",
         } <= names
         manifest = json.loads(archive.read("manifest.json"))
-        assert manifest["bundle_kind"] == "NAUTILUS_NATIVE_CANDIDATE"
-        assert manifest["runtime"] == {"name": "NAUTILUS_TRADER", "version": "1.231.0"}
-        assert manifest["contains_broker_credentials"] is False
+        assert manifest["candidate_bundle_contract_version"] == "2"
+        assert manifest["canonical_runtime"] == {
+            "name": "NautilusTrader",
+            "version": "1.231.0",
+            "quant_contract_version": "1",
+        }
+        assert manifest["execution_secret_material"] == "excluded"
         assert b"api_key" not in archive.read("manifest.json")
-        assert archive.read("requirements.lock") == b"nautilus_trader==1.231.0\n"
+        assert b"account_id" not in archive.read("validation/expected-orders.json")
+        assert b"account_id" not in archive.read("validation/expected-positions.json")
+        assert b"account.SIM.id" not in archive.read("validation/expected-statistics.json")
+        assert archive.read("requirements.lock") == b"nautilus-trader==1.231.0\n"
 
     assert built.operator_summary["approval_id"] == str(approval.id)
     assert datetime.now(UTC).year >= 2026

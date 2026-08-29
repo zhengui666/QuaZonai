@@ -46,8 +46,10 @@ def _as_float(value: object, default: float = 0.0) -> float:
 
 def _statistics(evidence: RunEvidence) -> dict[str, float | int]:
     stats = evidence.statistics
-    returns = stats.get("returns") if isinstance(stats.get("returns"), dict) else {}
-    general = stats.get("general") if isinstance(stats.get("general"), dict) else {}
+    raw_returns = stats.get("returns")
+    raw_general = stats.get("general")
+    returns: dict[str, Any] = raw_returns if isinstance(raw_returns, dict) else {}
+    general: dict[str, Any] = raw_general if isinstance(raw_general, dict) else {}
     return {
         "sharpe_ratio": _as_float(
             stats.get(
@@ -479,9 +481,12 @@ def _promote_alpha_and_candidate(
 
 def run_sealed_evaluation(settings: Settings, job_id: UUID) -> None:
     episode, discovery, sealed_catalog = _load_episode(settings, job_id)
-    config = RemoteNautilusConfig.from_env(required=True)
-    assert config is not None
-    runtime = NautilusQuantRuntime(config)
+    sealed_config = RemoteNautilusConfig.from_env(required=True, profile="sealed")
+    research_config = RemoteNautilusConfig.from_env(required=True, profile="research")
+    assert sealed_config is not None
+    assert research_config is not None
+    sealed_runtime = NautilusQuantRuntime(sealed_config)
+    research_runtime = NautilusQuantRuntime(research_config)
     sealed_experiment = _experiment(discovery, sealed_catalog.catalog_uri)
     sealed_run_id = _create_remote_run(
         settings,
@@ -491,22 +496,29 @@ def run_sealed_evaluation(settings: Settings, job_id: UUID) -> None:
         catalog_uri=sealed_catalog.catalog_uri,
     )
     try:
-        sealed_evidence = runtime.run_sealed_backtest(sealed_experiment)
+        sealed_evidence = sealed_runtime.run_sealed_backtest(sealed_experiment)
         _complete_remote_run(settings, run_id=sealed_run_id, evidence=sealed_evidence)
+        if sealed_evidence.state != "SUCCEEDED":
+            raise QfError(
+                "SEALED_RUNTIME_RUN_FAILED",
+                "The independent Sealed Nautilus runtime did not complete successfully.",
+                503,
+                {"error_code": sealed_evidence.error_code},
+            )
     except Exception as exc:
         _fail_remote_run(settings, run_id=sealed_run_id, exc=exc)
         raise
 
     sealed_statistics = _statistics(sealed_evidence)
     passed, classification = _classification(sealed_statistics, discovery.promotion_gate)
-    _record_sealed_decision(
-        settings,
-        episode_id=episode.id,
-        sealed_run_id=sealed_run_id,
-        passed=passed,
-        classification=classification,
-    )
     if not passed:
+        _record_sealed_decision(
+            settings,
+            episode_id=episode.id,
+            sealed_run_id=sealed_run_id,
+            passed=False,
+            classification=classification,
+        )
         return
 
     portfolio_run_id = _create_remote_run(
@@ -517,7 +529,7 @@ def run_sealed_evaluation(settings: Settings, job_id: UUID) -> None:
         catalog_uri=discovery.catalog_uri,
     )
     try:
-        portfolio_evidence = runtime.run_portfolio_backtest(
+        portfolio_evidence = research_runtime.run_portfolio_backtest(
             _experiment(discovery, discovery.catalog_uri)
         )
         _complete_remote_run(settings, run_id=portfolio_run_id, evidence=portfolio_evidence)
@@ -531,6 +543,13 @@ def run_sealed_evaluation(settings: Settings, job_id: UUID) -> None:
             422,
         )
 
+    _record_sealed_decision(
+        settings,
+        episode_id=episode.id,
+        sealed_run_id=sealed_run_id,
+        passed=True,
+        classification=classification,
+    )
     _promote_alpha_and_candidate(
         settings,
         episode_id=episode.id,

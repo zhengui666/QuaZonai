@@ -19,6 +19,20 @@ from quant_runtime.remote import NautilusQuantRuntime
 from settings import Settings
 
 
+_FORBIDDEN_SECRET_FIELDS = {
+    "api_key",
+    "apikey",
+    "private_key",
+    "secret_key",
+    "service_token",
+    "access_token",
+    "refresh_token",
+    "account_password",
+    "wallet_seed",
+    "broker_url",
+}
+
+
 @dataclass(frozen=True, slots=True)
 class BuiltCandidatePackage:
     manifest: dict[str, Any]
@@ -54,7 +68,7 @@ def _member_rows(candidate: PortfolioCandidate) -> list[dict[str, Any]]:
                 {"member_index": index},
             )
         try:
-            weight = float(member.get("target_weight", member.get("weight")))
+            weight = float(str(member.get("target_weight", member.get("weight"))))
         except (TypeError, ValueError) as exc:
             raise QfError(
                 "CANDIDATE_BUNDLE_INVALID",
@@ -79,23 +93,10 @@ def _member_rows(candidate: PortfolioCandidate) -> list[dict[str, Any]]:
 
 
 def _reject_secret_fields(value: object, path: str = "$") -> None:
-    forbidden = {
-        "api_key",
-        "apikey",
-        "private_key",
-        "secret_key",
-        "service_token",
-        "access_token",
-        "refresh_token",
-        "account_password",
-        "wallet_seed",
-        "broker_url",
-        "account_id",
-    }
     if isinstance(value, dict):
         for key, item in value.items():
             normalized = str(key).casefold()
-            if normalized in forbidden or normalized.endswith("_secret"):
+            if normalized in _FORBIDDEN_SECRET_FIELDS or normalized.endswith("_secret"):
                 raise QfError(
                     "CANDIDATE_BUNDLE_CONTAINS_SECRET",
                     "Candidate Bundle data contains a forbidden execution credential field.",
@@ -106,6 +107,22 @@ def _reject_secret_fields(value: object, path: str = "$") -> None:
     elif isinstance(value, list):
         for index, item in enumerate(value):
             _reject_secret_fields(item, f"{path}[{index}]")
+
+
+def _without_runtime_account_data(value: object) -> object:
+    """Keep validation reports useful without exporting runtime account data."""
+    if isinstance(value, dict):
+        return {
+            str(key): _without_runtime_account_data(item)
+            for key, item in value.items()
+            if (
+                str(key).casefold() not in {"account", "account_id"}
+                and not str(key).casefold().startswith("account.")
+            )
+        }
+    if isinstance(value, list):
+        return [_without_runtime_account_data(item) for item in value]
+    return value
 
 
 def _runtime_payload(
@@ -364,15 +381,15 @@ def build_candidate_package(
         )
         _write_json(
             staging / "validation" / "expected-orders.json",
-            portfolio_evidence.orders,
+            _without_runtime_account_data(portfolio_evidence.orders),
         )
         _write_json(
             staging / "validation" / "expected-positions.json",
-            portfolio_evidence.positions,
+            _without_runtime_account_data(portfolio_evidence.positions),
         )
         _write_json(
             staging / "validation" / "expected-statistics.json",
-            portfolio_evidence.statistics,
+            _without_runtime_account_data(portfolio_evidence.statistics),
         )
 
         _write_json(

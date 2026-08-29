@@ -180,6 +180,22 @@ quazonai plugin remove RELEASE_ID [--force]
 
 Plugin command 只管理 DATA/RESEARCH/HANDOFF capability。
 
+## Remote Nautilus Quant Runtime Contract
+
+Core API 的远程量化运行接口为：
+
+```text
+POST /api/v1/quant-runtime/catalogs/ingest
+GET  /api/v1/quant-runtime/catalogs
+POST /api/v1/quant-runtime/catalogs/{catalog_id}/validate
+GET  /api/v1/research-programs/{program_id}/quant-runs
+GET  /api/v1/research-programs/{program_id}/search-ledger
+```
+
+`ALPHA_DISCOVERY` Mission 在自己的 worktree 中写入 `EXPERIMENTS.json`。受信 finite-worker 只接受 `catalog://` 引用和严格的 `StrategyArtifact`/`ExperimentSpec` 合同，然后调用 pinned NautilusTrader `1.231.0` Remote Research Runtime；每次成功或失败都写入 `QuantRuntimeRun` 与 `SearchLedgerEntry`。Sealed Evaluation 使用独立 endpoint/token/catalog，Agent 只能看到受控结果，不能读取 Sealed raw evidence。
+
+批准后的 Candidate Bundle 固定 Strategy wheel、config、runtime pin、data requirements、Nautilus validation reports、evidence 和 lineage。Bundle 不含 broker/provider/runtime secret，也不输出订单命令；下游负责 Paper/Live runtime 的启动、停止、撤单、平仓和恢复。
+
 ---
 
 # Part I — Codex App Server Adapter

@@ -1,8 +1,8 @@
 # QuaZonai
 
-QuaZonai is a single-user, self-hosted autonomous quantitative **research and portfolio construction** workbench. It uses the official OpenAI Codex App Server SDK for finite research Missions, an independent sealed evaluator for promotion evidence, and downstream-neutral Candidate Packages for Paper/Live handoff.
+QuaZonai is a single-user, self-hosted AI quantitative research and governance **Control Plane**. It uses the official OpenAI Codex App Server SDK for finite Missions and a pinned remote NautilusTrader `1.231.0` runtime for canonical market-data catalogs, strategy execution, backtesting, matching, order/fill/position/PnL evidence and sealed evaluation.
 
-QuaZonai does **not** own broker credentials, orders, fills, positions, accounts, NAV, TradingNode, live execution, execution risk, heartbeat, recovery, or downstream stop/undeploy.
+The NautilusTrader instances run independently, typically on another host. QuaZonai calls them through a typed HTTP contract and does not import NautilusTrader in the Core API/worker image. QuaZonai still does **not** own broker credentials, real orders, fills, positions, accounts, NAV, TradingNode/LiveNode, execution risk, heartbeat, recovery, or downstream stop/undeploy.
 
 ## Product loop
 
@@ -98,6 +98,21 @@ Research Program creation persists a `READY` Mission and durable job. The finite
 
 Registering a Downstream System returns its Bearer service token once. Store that token in the downstream system's secret store; QuaZonai keeps only an AES-GCM encrypted-at-rest copy bound to that Downstream System. Claim, accept, reject, Candidate Package download, and feedback calls require that Bearer token. These downstream credentials remain separate from Operator browser authentication and the CLI machine token.
 
+## Remote Nautilus runtime
+
+Deploy the pinned reference service from [`deploy/Dockerfile.nautilus-runtime`](deploy/Dockerfile.nautilus-runtime). [`deploy/nautilus-runtime.compose.example.yml`](deploy/nautilus-runtime.compose.example.yml) demonstrates separate Research and Sealed instances. Configure the Core deployment with independent endpoints and service tokens:
+
+```dotenv
+QUAZONAI_NAUTILUS_RUNTIME_URL=https://research-runtime.example
+QUAZONAI_NAUTILUS_RUNTIME_TOKEN=<research-runtime-service-token>
+QUAZONAI_NAUTILUS_SEALED_RUNTIME_URL=https://sealed-runtime.example
+QUAZONAI_NAUTILUS_SEALED_RUNTIME_TOKEN=<sealed-runtime-service-token>
+QUAZONAI_NAUTILUS_VERSION=1.231.0
+QUAZONAI_NAUTILUS_CONTRACT_VERSION=1
+```
+
+These service tokens are not broker credentials. Keep them at the trusted Core deployment boundary; Codex Mission children never receive them. A governed Dataset Revision must have an immutable Nautilus Catalog binding before a Mission experiment can run. Discovery evidence enters the Search Ledger; Sealed evaluation uses a separate endpoint/catalog and returns controlled disclosure only. Approved output is a Nautilus-native Candidate Bundle.
+
 ## Agent Skill
 
 [`skills/quazonai/`](skills/quazonai/) is the portable Agent Skills package for operating a running QuaZonai instance through the local `quazonai` CLI. Install the entire directory, not only `SKILL.md`, so the bundled command reference and workflows remain available.
@@ -163,4 +178,4 @@ GitHub Actions additionally runs PostgreSQL 18 row-lock/idempotency integration,
 
 ## Status
 
-`codex/production-rebuild` is the implementation branch for the autonomous research architecture. It is release-ready only when the branch CI is green; documentation alone does not constitute implementation evidence.
+The Nautilus-first remote runtime architecture is implemented behind the independent runtime contract. It is release-ready only when CI, real Research/Sealed runtime tests, and independent review are green; documentation alone does not constitute implementation evidence.

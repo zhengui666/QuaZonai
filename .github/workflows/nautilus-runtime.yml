@@ -33,6 +33,8 @@ jobs:
       QUAZONAI_MASTER_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
       QUAZONAI_NAUTILUS_RUNTIME_URL: http://127.0.0.1:9010
       QUAZONAI_NAUTILUS_RUNTIME_TOKEN: ci-nautilus-runtime-token
+      QUAZONAI_NAUTILUS_SEALED_RUNTIME_URL: http://127.0.0.1:9011
+      QUAZONAI_NAUTILUS_SEALED_RUNTIME_TOKEN: ci-sealed-nautilus-runtime-token
       QUAZONAI_NAUTILUS_VERSION: 1.231.0
       QUAZONAI_NAUTILUS_CONTRACT_VERSION: '1'
       QUAZONAI_NAUTILUS_RUNTIME_TIMEOUT_SECONDS: '180'
@@ -59,24 +61,21 @@ jobs:
           python -m db.preflight
       - name: Start independent remote runtime
         run: |
-          quazonai-nautilus-runtime > /tmp/quazonai-nautilus-runtime.log 2>&1 &
-          echo $! > /tmp/quazonai-nautilus-runtime.pid
+          QUAZONAI_NAUTILUS_RUNTIME_TOKEN=ci-nautilus-runtime-token QUAZONAI_NAUTILUS_CATALOG_ROOT="$QUAZONAI_NAUTILUS_CATALOG_ROOT/research" QUAZONAI_NAUTILUS_PORT=9010 quazonai-nautilus-runtime > /tmp/quazonai-nautilus-research.log 2>&1 &
+          echo $! > /tmp/quazonai-nautilus-research.pid
+          QUAZONAI_NAUTILUS_RUNTIME_TOKEN=ci-sealed-nautilus-runtime-token QUAZONAI_NAUTILUS_CATALOG_ROOT="$QUAZONAI_NAUTILUS_CATALOG_ROOT/sealed" QUAZONAI_NAUTILUS_PORT=9011 quazonai-nautilus-runtime > /tmp/quazonai-nautilus-sealed.log 2>&1 &
+          echo $! > /tmp/quazonai-nautilus-sealed.pid
           for attempt in $(seq 1 90); do
-            if curl --fail --silent \
-              -H 'Authorization: Bearer ci-nautilus-runtime-token' \
-              -H 'X-QuaZonai-Quant-Contract: 1' \
-              http://127.0.0.1:9010/v1/capabilities > /tmp/capabilities.json; then
-              python - <<'PY'
-          import json
-          payload = json.load(open('/tmp/capabilities.json', encoding='utf-8'))
-          assert payload['runtime_name'] == 'NautilusTrader'
-          assert payload['nautilus_version'] == '1.231.0'
-          assert payload['contract_version'] == '1'
-          PY
-              exit 0
+            research_ok=0
+            sealed_ok=0
+            curl --fail --silent -H 'Authorization: Bearer ci-nautilus-runtime-token' -H 'X-QuaZonai-Quant-Contract: 1' http://127.0.0.1:9010/v1/capabilities > /tmp/research-capabilities.json && research_ok=1
+            curl --fail --silent -H 'Authorization: Bearer ci-sealed-nautilus-runtime-token' -H 'X-QuaZonai-Quant-Contract: 1' http://127.0.0.1:9011/v1/capabilities > /tmp/sealed-capabilities.json && sealed_ok=1
+            if [ "$research_ok" = 1 ] && [ "$sealed_ok" = 1 ]; then
+              break
             fi
             if [ "$attempt" = 90 ]; then
-              cat /tmp/quazonai-nautilus-runtime.log
+              cat /tmp/quazonai-nautilus-research.log
+              cat /tmp/quazonai-nautilus-sealed.log
               exit 1
             fi
             sleep 2
@@ -87,10 +86,15 @@ jobs:
         run: docker build --file deploy/Dockerfile.nautilus-runtime --tag quazonai-nautilus-runtime-ci .
       - name: Runtime logs
         if: always()
-        run: cat /tmp/quazonai-nautilus-runtime.log || true
+        run: |
+          cat /tmp/quazonai-nautilus-research.log || true
+          cat /tmp/quazonai-nautilus-sealed.log || true
       - name: Stop independent runtime
         if: always()
         run: |
-          if test -f /tmp/quazonai-nautilus-runtime.pid; then
-            kill "$(cat /tmp/quazonai-nautilus-runtime.pid)" || true
+          if test -f /tmp/quazonai-nautilus-research.pid; then
+            kill "$(cat /tmp/quazonai-nautilus-research.pid)" || true
+          fi
+          if test -f /tmp/quazonai-nautilus-sealed.pid; then
+            kill "$(cat /tmp/quazonai-nautilus-sealed.pid)" || true
           fi

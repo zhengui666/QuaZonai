@@ -502,6 +502,36 @@ QZ 只验证 Handoff/Feedback contract，不检查其交易节点内部状态。
 
 只允许 Data/Research/Handoff plugins。运行时 side-by-side install/activate/drain/remove，不允许 execution broker plugins。
 
+### 14.10 Remote Nautilus quant runtime
+
+QuaZonai Core 与 NautilusTrader 分开部署。管理员在 Core 的受信部署边界配置独立的 Research 与 Sealed runtime endpoint/token；Codex Mission child 不会继承这些值。
+
+```dotenv
+QUAZONAI_NAUTILUS_RUNTIME_URL=https://research-runtime.example
+QUAZONAI_NAUTILUS_RUNTIME_TOKEN=<research-runtime-service-token>
+QUAZONAI_NAUTILUS_SEALED_RUNTIME_URL=https://sealed-runtime.example
+QUAZONAI_NAUTILUS_SEALED_RUNTIME_TOKEN=<sealed-runtime-service-token>
+QUAZONAI_NAUTILUS_VERSION=1.231.0
+QUAZONAI_NAUTILUS_CONTRACT_VERSION=1
+```
+
+运行顺序：
+
+```text
+远程 Nautilus Catalog ingest/validate
+→ QZ 创建 immutable Dataset Revision + Catalog binding
+→ Idea / Mission 生成 EXPERIMENTS.json
+→ finite-worker 调用 Remote Research Runtime
+→ 每个 run 的结构化 evidence 进入 QuantRuntimeRun / Search Ledger
+→ 独立 Sealed Runtime 执行 promotion evaluation
+→ PASS 后在 discovery catalog 上执行 Portfolio simulation
+→ 产生 Alpha / Candidate / Paper Approval
+→ 批准后生成 Nautilus-native Candidate Bundle
+→ 独立 Paper/Live runtime claim 并回传 Forward Evidence
+```
+
+Remote runtime 不可用时，run 保留失败 evidence 并由 durable job policy 处理重试；不得退回 QZ 自研模拟器。Sealed endpoint/token/catalog 必须独立，Sealed raw report 不展示给 Agent。QZ 不启动、停止、撤单、平仓或恢复任何 downstream runtime。
+
 ## 15. 故障呈现原则
 
 产品必须区分：

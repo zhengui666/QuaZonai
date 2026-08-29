@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import Literal
 from urllib.parse import urlparse
 
 from errors import QfError
@@ -12,6 +13,7 @@ PINNED_NAUTILUS_VERSION = "1.231.0"
 CONTRACT_VERSION = "1"
 _DEFAULT_TIMEOUT_SECONDS = 120.0
 _DEFAULT_POLL_SECONDS = 0.25
+RuntimeProfile = Literal["research", "sealed"]
 
 
 def _optional_env(name: str) -> str | None:
@@ -59,25 +61,25 @@ def _bool_env(name: str, default: bool) -> bool:
     )
 
 
-def _validate_url(value: str) -> str:
+def _validate_url(value: str, *, variable_name: str) -> str:
     parsed = urlparse(value)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise QfError(
             "NAUTILUS_RUNTIME_CONFIGURATION_INVALID",
-            "QUAZONAI_NAUTILUS_RUNTIME_URL must be an absolute HTTP(S) URL.",
+            f"{variable_name} must be an absolute HTTP(S) URL.",
             500,
         )
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise QfError(
             "NAUTILUS_RUNTIME_CONFIGURATION_INVALID",
-            "The Nautilus runtime URL must not contain credentials, query parameters, or a fragment.",
+            f"{variable_name} must not contain credentials, query parameters, or a fragment.",
             500,
         )
     environment = (_optional_env("QUAZONAI_ENV") or "development").casefold()
     if environment == "production" and parsed.scheme != "https":
         raise QfError(
             "NAUTILUS_RUNTIME_CONFIGURATION_INVALID",
-            "A production remote Nautilus runtime must use HTTPS.",
+            f"A production {variable_name} must use HTTPS.",
             500,
         )
     return value.rstrip("/")
@@ -100,30 +102,38 @@ class RemoteNautilusConfig:
     verify_tls: bool = True
 
     @classmethod
-    def from_env(cls, *, required: bool = False) -> RemoteNautilusConfig | None:
-        raw_url = _optional_env("QUAZONAI_NAUTILUS_RUNTIME_URL")
+    def from_env(
+        cls,
+        *,
+        required: bool = False,
+        profile: RuntimeProfile = "research",
+    ) -> RemoteNautilusConfig | None:
+        prefix = "" if profile == "research" else "SEALED_"
+        url_name = f"QUAZONAI_NAUTILUS_{prefix}RUNTIME_URL"
+        token_name = f"QUAZONAI_NAUTILUS_{prefix}RUNTIME_TOKEN"
+        raw_url = _optional_env(url_name)
         if raw_url is None:
             if required:
                 raise QfError(
                     "NAUTILUS_RUNTIME_NOT_CONFIGURED",
-                    "A remote NautilusTrader runtime is required for quant research.",
+                    f"A remote NautilusTrader {profile} runtime is required.",
                     503,
                 )
             return None
 
-        token = _optional_env("QUAZONAI_NAUTILUS_RUNTIME_TOKEN")
+        token = _optional_env(token_name)
         environment = (_optional_env("QUAZONAI_ENV") or "development").casefold()
         if environment == "production" and token is None:
             raise QfError(
                 "NAUTILUS_RUNTIME_CONFIGURATION_INVALID",
-                "QUAZONAI_NAUTILUS_RUNTIME_TOKEN is required in production.",
+                f"{token_name} is required in production.",
                 500,
             )
 
         pinned = _optional_env("QUAZONAI_NAUTILUS_VERSION") or PINNED_NAUTILUS_VERSION
         contract = _optional_env("QUAZONAI_NAUTILUS_CONTRACT_VERSION") or CONTRACT_VERSION
         return cls(
-            base_url=_validate_url(raw_url),
+            base_url=_validate_url(raw_url, variable_name=url_name),
             service_token=token,
             pinned_version=pinned,
             contract_version=contract,
