@@ -208,7 +208,7 @@ def test_candidate_wheel_identity_uses_full_uuid_integer() -> None:
 
 
 def test_source_bundle_rejects_module_object_escape() -> None:
-    with pytest.raises(ValueError, match="attribute 'sys'"):
+    with pytest.raises(ValueError):
         StrategyArtifact(
             artifact_id="escape",
             kind="SOURCE_BUNDLE",

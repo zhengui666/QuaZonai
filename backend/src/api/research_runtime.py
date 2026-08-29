@@ -133,7 +133,7 @@ def _claim_simulation_receipt(
     ).scalar_one_or_none()
     if existing is None:
         experiment_id = uuid4()
-        portfolio_sealed_experiment_id = uuid4()
+        portfolio_sealed_experiment_id: UUID | None = uuid4()
         now = datetime.now(UTC)
         receipt = PublicMutationReceipt(
             idempotency_key=key,
@@ -355,7 +355,7 @@ def register_sealed_dataset(
             422,
         )
     expected = list(dict.fromkeys(item.strip() for item in payload.expected_instrument_ids if item.strip()))
-    normalized = {
+    normalized: dict[str, object] = {
         "data_source_id": str(payload.data_source_id),
         "catalog_key": payload.catalog_key,
         "source_license": payload.source_license,
