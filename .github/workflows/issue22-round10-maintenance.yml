@@ -25,6 +25,31 @@ jobs:
           python-version: '3.12'
       - name: Apply transparent closure patch
         run: python tools/issue22_round10_patch.py
+      - name: Repair malformed exception tuples already present on the branch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          repairs = {
+              'backend/src/operator_auth.py': (
+                  'except ValueError, TypeError, json.JSONDecodeError, _InvalidCookie:',
+                  'except (ValueError, TypeError, json.JSONDecodeError, _InvalidCookie):',
+              ),
+              'backend/src/runners/research_missions.py': (
+                  'except OSError, TimeoutError:',
+                  'except (OSError, TimeoutError):',
+              ),
+              'backend/src/settings.py': (
+                  'except binascii.Error, ValueError:',
+                  'except (binascii.Error, ValueError):',
+              ),
+          }
+          for name, (old, new) in repairs.items():
+              path = Path(name)
+              text = path.read_text(encoding='utf-8')
+              if text.count(old) != 1:
+                  raise SystemExit(f'{name}: malformed exception tuple count != 1')
+              path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
       - name: Validate patch syntax and whitespace
         run: |
           python -m compileall -q backend/src backend/tests nautilus_runtime/src nautilus_runtime/tests
