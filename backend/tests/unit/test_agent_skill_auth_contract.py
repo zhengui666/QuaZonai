@@ -65,17 +65,19 @@ def test_portable_skill_documents_operator_machine_authentication() -> None:
 
 def test_portable_skill_directly_forbids_browser_secret_access() -> None:
     skill = SKILL_PATH.read_text(encoding="utf-8")
-
-    assert (
+    prohibition = (
         "never request, read, infer, capture, copy, print, or store the browser "
         "TOTP setup secret, one-time authenticator code, session cookie, or "
         "trusted-browser cookie"
-    ) in skill
-    assert "those credentials are outside the Skill and CLI boundary" in skill
-    assert (
+    )
+    authentication_reference = (
         "Read [references/authentication.md](references/authentication.md) before "
         "diagnosing an authentication failure or credential boundary."
-    ) in skill
+    )
+
+    assert skill.count(prohibition) == 1
+    assert "those credentials are outside the Skill and CLI boundary" in skill
+    assert skill.count(authentication_reference) == 1
 
 
 def test_skill_does_not_advertise_browser_credentials_as_cli_authentication() -> None:
