@@ -140,6 +140,7 @@ jobs:
           QUAZONAI_DATABASE_URL: postgresql+psycopg://quazonai:quazonai-local@postgres:5432/quazonai
           QUAZONAI_ALEMBIC_URL: postgresql+psycopg://quazonai:quazonai-local@postgres:5432/quazonai
         run: |
+          docker network inspect quazonai-runtime >/dev/null 2>&1 || docker network create quazonai-runtime
           docker compose --env-file .env.example up --detach --build
           for attempt in $(seq 1 60); do
             if curl --fail --silent http://127.0.0.1:8000/api/v1/system/health > /tmp/quazonai-health.json; then
