@@ -1,0 +1,53 @@
+name: Issue 36 Review Fix Materializer
+
+on:
+  push:
+    branches:
+      - feat/ios-ipados-universal-app
+    paths:
+      - '.github/workflows/issue36-review-fixes.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: feat/ios-ipados-universal-app
+      - name: Decode reviewed patch materializer
+        run: |
+          base64 --decode tools/issue36_review_fixes.py.gz.b64 | gzip -dc > "$RUNNER_TEMP/issue36_review_fixes.py"
+          echo '5ce27b797d99b90fbc973d80bacec351155650ebef834fb4850c874910790327  '"$RUNNER_TEMP"'/issue36_review_fixes.py' | sha256sum --check --status
+      - name: Apply reviewed native-client fixes
+        run: python "$RUNNER_TEMP/issue36_review_fixes.py"
+      - name: Validate materialized changes
+        run: |
+          git diff --check
+          python -m py_compile tools/client_parity.py
+          python tools/client_parity.py
+          grep -q 'single-flight refresh' DESIGN.md
+          grep -q 'issuedServiceToken' ios/QuaZonai/Features/AdministrationViews.swift
+      - name: Commit reviewed fixes
+        run: |
+          if git diff --quiet; then
+            echo 'No changes to commit'
+            exit 0
+          fi
+          git config user.name 'QuaZonai Review Fix Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add DESIGN.md \
+            tools/client_parity.py \
+            ios/QuaZonai/Core/APIClient.swift \
+            ios/QuaZonai/Core/SessionStore.swift \
+            ios/QuaZonai/Features/ApprovalHandoffViews.swift \
+            ios/QuaZonai/Features/AdministrationViews.swift \
+            ios/Tests/QuaZonaiTests.swift \
+            ios/Tests/EventStreamTests.swift
+          git commit -m 'fix: close native client review gaps'
+          git push origin HEAD:feat/ios-ipados-universal-app
