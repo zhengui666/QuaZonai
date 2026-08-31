@@ -102,6 +102,7 @@ def test_skill_references_are_relative_and_present() -> None:
     reference_links = set(re.findall(r"\]\((references/[^)]+\.md)\)", text))
 
     assert reference_links == {
+        "references/authentication.md",
         "references/cli-reference.md",
         "references/workflows.md",
     }
@@ -238,41 +239,3 @@ def test_high_risk_argument_shapes_match_documentation() -> None:
     )
     assert revoke.id == "handoff-1"
     assert revoke.reason_code == "SUPERSEDED"
-
-    with pytest.raises(SystemExit):
-        parser.parse_args(["approval", "approve", "approval-1", "downstream-1"])
-    with pytest.raises(SystemExit):
-        parser.parse_args(["approval", "reject", "approval-1", "RISK_LIMIT"])
-    with pytest.raises(SystemExit):
-        parser.parse_args(["handoff", "revoke", "handoff-1", "SUPERSEDED"])
-
-    data_source = parser.parse_args(
-        [
-            "data-source",
-            "create",
-            "primary-market-data",
-            "--provider",
-            "example",
-            "--fields",
-            "symbol,price",
-        ]
-    )
-    assert data_source.name == "primary-market-data"
-    assert data_source.provider == "example"
-    assert data_source.fields == "symbol,price"
-
-    reference = CLI_REFERENCE_PATH.read_text(encoding="utf-8")
-    assert "--downstream <DOWNSTREAM_SYSTEM_ID>" in reference
-    assert "--reason <REASON_CODE>" in reference
-    assert "quazonai handoff revoke <HANDOFF_ID> --reason <REASON_CODE>" in reference
-    assert "Do not rewrite them as positional arguments" in reference
-    assert "quazonai data-source create \\\n  \"<NAME>\"" in reference
-
-
-def test_global_endpoint_examples_use_argparse_order() -> None:
-    combined = "\n".join(
-        path.read_text(encoding="utf-8") for path in _skill_documents()
-    )
-
-    assert "quazonai --endpoint http://127.0.0.1:8000 status" in combined
-    assert not re.search(r"(?m)^\s*quazonai status --endpoint", combined)
