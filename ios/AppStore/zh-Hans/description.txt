@@ -1,0 +1,1 @@
+QuaZonai 是自托管 QuaZonai 量化研究工作台的原生 Operator 客户端。可在 iPhone 与 iPad 上查看自治研究、Alpha 与组合证据，审批不可变 Handoff Candidate，并管理受治理的数据源和下游能力。App 不下单，也不保存券商凭据。

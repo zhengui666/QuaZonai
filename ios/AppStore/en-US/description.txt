@@ -1,0 +1,1 @@
+QuaZonai is the native operator client for a self-hosted QuaZonai research workbench. Review autonomous research, inspect alpha and portfolio evidence, approve immutable handoff candidates, and administer governed data/downstream capabilities from iPhone or iPad. The app does not place trades or hold broker credentials.

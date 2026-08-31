@@ -1,0 +1,85 @@
+name: QuaZonai
+options:
+  minimumXcodeGenVersion: 2.42.0
+  deploymentTarget:
+    iOS: "18.0"
+packages:
+  QuaZonaiAPI:
+    path: Packages/QuaZonaiAPI
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: targeted
+    IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+targets:
+  QuaZonai:
+    type: application
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: QuaZonai
+    resources:
+      - path: Resources
+    dependencies:
+      - package: QuaZonaiAPI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.quazonai.operator
+        PRODUCT_NAME: QuaZonai
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        SUPPORTS_MACCATALYST: NO
+        ENABLE_USER_SCRIPT_SANDBOXING: YES
+    info:
+      path: Config/Info.plist
+      properties:
+        CFBundleDisplayName: QuaZonai
+        CFBundleShortVersionString: "1.0.0"
+        CFBundleVersion: "100"
+        ITSAppUsesNonExemptEncryption: false
+        NSFaceIDUsageDescription: QuaZonai uses Face ID to unlock a trusted-device credential and confirm sensitive operator actions.
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+  QuaZonaiTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: Tests
+    dependencies:
+      - target: QuaZonai
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.quazonai.operator.tests
+  QuaZonaiUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: UITests
+    dependencies:
+      - target: QuaZonai
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.quazonai.operator.uitests
+schemes:
+  QuaZonai:
+    build:
+      targets:
+        QuaZonai: all
+    test:
+      gatherCoverageData: true
+      targets:
+        - QuaZonaiTests
+        - QuaZonaiUITests
+    archive:
+      config: Release
