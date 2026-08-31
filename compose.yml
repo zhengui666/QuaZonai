@@ -160,6 +160,10 @@ volumes:
   codex-data:
 
 networks:
+  # Stable name lets an independently deployed runtime proxy join the Core
+  # network without attaching the API container to the runtime bridge.
+  default:
+    name: quazonai-core
   nautilus-runtime:
     external: true
     name: quazonai-runtime

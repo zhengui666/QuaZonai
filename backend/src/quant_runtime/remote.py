@@ -208,7 +208,10 @@ class NautilusQuantRuntime:
                 "POST",
                 "/v1/archive-manifests/inspect",
                 json_body=spec.model_dump(mode="json"),
-                timeout_seconds=max(self.config.timeout_seconds, 300.0),
+                # The runtime bounds a maximum one-year scan at 900 seconds;
+                # the client must not abandon a completed scan before that
+                # contract deadline.
+                timeout_seconds=max(self.config.timeout_seconds, 900.0),
             )
         )
         expected_uri = f"manifest://{spec.manifest_name}"

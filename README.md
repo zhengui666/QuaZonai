@@ -100,7 +100,7 @@ Registering a Downstream System returns its Bearer service token once. Store tha
 
 ## Remote Nautilus runtime
 
-Deploy the pinned reference service from [`deploy/Dockerfile.nautilus-runtime`](deploy/Dockerfile.nautilus-runtime). [`deploy/nautilus-runtime.compose.example.yml`](deploy/nautilus-runtime.compose.example.yml) demonstrates separate Research and Sealed instances. Core Compose keeps the API off the runtime bridge and uses its narrow `nautilus-runtime-proxy` for the two runtime endpoints. Configure the Core deployment with independent endpoints and service tokens:
+Deploy the pinned reference service from [`deploy/Dockerfile.nautilus-runtime`](deploy/Dockerfile.nautilus-runtime). [`deploy/nautilus-runtime.compose.example.yml`](deploy/nautilus-runtime.compose.example.yml) demonstrates separate Research and Sealed instances plus a same-host narrow proxy on the stable `quazonai-core` network. Core Compose keeps the API off the runtime bridge and uses a narrow `nautilus-runtime-proxy` for the two runtime endpoints. Configure the Core deployment with independent endpoints and service tokens:
 
 ```dotenv
 QUAZONAI_NAUTILUS_RUNTIME_URL=https://research-runtime.example

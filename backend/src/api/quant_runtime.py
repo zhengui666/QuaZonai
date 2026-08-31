@@ -43,6 +43,7 @@ class CatalogIngestInput(StrictModel):
     universe_name: str = Field(min_length=1, max_length=200)
     sealed: bool = False
     source_spec: dict[str, Any]
+    universe_version_id: UUID | None = None
     plugin_release_id: UUID | None = None
     plugin_runtime_bundle_id: UUID | None = None
 
@@ -341,6 +342,8 @@ def _manifest_input_conflict(
 def _resolve_plugin_binding(
     session: Any,
     payload: CatalogIngestInput | ArchiveManifestInspectInput,
+    *,
+    allow_draining: bool = False,
 ) -> dict[str, str] | None:
     source_kind = payload.source_spec.get("kind")
     supplied_ids = (payload.plugin_release_id, payload.plugin_runtime_bundle_id)
@@ -359,7 +362,10 @@ def _resolve_plugin_binding(
             422,
         )
     release = session.get(PluginRelease, payload.plugin_release_id)
-    if release is None or release.state != "ACTIVE":
+    allowed_release_states = {"ACTIVE"}
+    if allow_draining:
+        allowed_release_states.add("DRAINING")
+    if release is None or release.state not in allowed_release_states:
         raise QfError(
             "PLUGIN_RELEASE_NOT_ACTIVE",
             "Catalog ingest requires an ACTIVE plugin release.",
@@ -452,19 +458,34 @@ def _ingest_catalog(
     request: Request,
     *,
     source_shards: list[dict[str, Any]] | None = None,
+    allow_draining_plugin: bool = False,
 ) -> CatalogView:
     factory = request.app.state.session_factory
     remote_catalog_uri = f"catalog://{_remote_catalog_name(payload)}"
     with factory() as session:
-        plugin_binding = _resolve_plugin_binding(session, payload)
-        universe = session.scalar(
-            select(MarketUniverseVersion)
-            .where(
-                MarketUniverseVersion.name == payload.universe_name,
-                MarketUniverseVersion.state == "ACTIVE",
-            )
-            .order_by(MarketUniverseVersion.version_no.desc())
+        plugin_binding = _resolve_plugin_binding(
+            session,
+            payload,
+            allow_draining=allow_draining_plugin,
         )
+        if payload.universe_version_id is not None:
+            universe = session.get(MarketUniverseVersion, payload.universe_version_id)
+            if universe is None or universe.name != payload.universe_name:
+                raise QfError(
+                    "UNIVERSE_VERSION_NOT_FOUND",
+                    "The pinned Universe Version does not exist for this catalog.",
+                    422,
+                    {"universe_version_id": str(payload.universe_version_id)},
+                )
+        else:
+            universe = session.scalar(
+                select(MarketUniverseVersion)
+                .where(
+                    MarketUniverseVersion.name == payload.universe_name,
+                    MarketUniverseVersion.state == "ACTIVE",
+                )
+                .order_by(MarketUniverseVersion.version_no.desc())
+            )
         if universe is None:
             raise QfError(
                 "UNIVERSE_NOT_GOVERNED",
@@ -932,12 +953,18 @@ def materialize_archive_manifest(
             provider=manifest.provider,
             source_license=manifest.source_license,
             universe_name=universe.name,
+            universe_version_id=manifest.universe_version_id,
             sealed=False,
             source_spec=materialized_source_spec,
             plugin_release_id=plugin_release_id,
             plugin_runtime_bundle_id=plugin_bundle_id,
         )
-    return _ingest_catalog(catalog_payload, request, source_shards=selected_shards)
+    return _ingest_catalog(
+        catalog_payload,
+        request,
+        source_shards=selected_shards,
+        allow_draining_plugin=True,
+    )
 
 
 @router.get("/quant-runtime/catalogs", response_model=list[CatalogView])

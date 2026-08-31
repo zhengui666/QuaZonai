@@ -18,6 +18,7 @@ from quant_runtime.contracts import CatalogDescriptor
 
 _MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
 _MAX_MATERIALIZATION_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024
+_MAX_MATERIALIZATION_TOTAL_BYTES = 20 * 1024 * 1024 * 1024
 _MAX_SOURCE_ROWS = 2_000_000
 _MAX_MANIFEST_HOURS = 24 * 370
 _MAX_MATERIALIZATION_SHARDS = 168
@@ -135,6 +136,17 @@ def _top_json_level(value: Any, *, bids: bool) -> tuple[float, float] | None:
     return max(levels) if bids else min(levels, key=lambda item: item[0])
 
 
+def _explicitly_empty_book_side(value: Any) -> bool:
+    """Return whether a source row explicitly says that a book side is empty."""
+
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return False
+    return isinstance(value, list) and not value
+
+
 def _top_kalshi_level(value: Any) -> tuple[float, float] | None:
     if not isinstance(value, list):
         return None
@@ -187,13 +199,17 @@ def _polymarket_quotes(
 
         bid = _top_json_level(row.get("bids"), bids=True)
         ask = _top_json_level(row.get("asks"), bids=False)
-        if bid is not None:
+        if _explicitly_empty_book_side(row.get("bids")):
+            state["bid"] = None
+        elif bid is not None:
             state["bid"] = bid
         elif row.get("best_bid") is not None:
             best_bid = _as_float(row.get("best_bid"))
             if best_bid is not None:
                 state["bid"] = (best_bid, _as_size(row.get("size")) or 0.0)
-        if ask is not None:
+        if _explicitly_empty_book_side(row.get("asks")):
+            state["ask"] = None
+        elif ask is not None:
             state["ask"] = ask
         elif row.get("best_ask") is not None:
             best_ask = _as_float(row.get("best_ask"))
@@ -277,7 +293,11 @@ def _polymarket_quotes_by_shard(
             if shard_start > previous_end:
                 state = {"bid": None, "ask": None}
                 stats["order_book_state_reset_count"] += 1
-        shard_quotes, _ = _polymarket_quotes(rows, state=state, stats=stats)
+        ordered_rows = sorted(
+            rows,
+            key=lambda row: _timestamp_ns(row.get("timestamp_received")) or 0,
+        )
+        shard_quotes, _ = _polymarket_quotes(ordered_rows, state=state, stats=stats)
         quote_rows.extend(shard_quotes)
         previous_end = shard_end
     return quote_rows, stats
@@ -404,7 +424,8 @@ def _download(
     destination: Path,
     *,
     max_bytes: int = _MAX_ARCHIVE_BYTES,
-) -> None:
+    expected_size: int | None = None,
+) -> int:
     opener = build_opener(_NoRedirect)
     request = Request(url, headers={"User-Agent": "QuaZonai-PMXT-Archive/1.0"})
     try:
@@ -419,6 +440,8 @@ def _download(
                     raise ValueError("PMXT Archive file size header is invalid") from exc
                 if advertised_size < 0 or advertised_size > max_bytes:
                     raise ValueError("PMXT Archive file exceeds the size limit")
+                if expected_size is not None and advertised_size != expected_size:
+                    raise ValueError("PMXT Archive file size changed after manifest inspection")
             downloaded = 0
             with destination.open("wb") as output:
                 while True:
@@ -429,6 +452,9 @@ def _download(
                     if downloaded > max_bytes:
                         raise ValueError("PMXT Archive file exceeds the size limit")
                     output.write(chunk)
+            if expected_size is not None and downloaded != expected_size:
+                raise ValueError("PMXT Archive file size changed after manifest inspection")
+            return downloaded
     except (HTTPError, URLError) as exc:
         if isinstance(exc, HTTPError) and exc.code in {301, 302, 303, 307, 308}:
             raise ValueError("PMXT Archive redirects are not allowed") from exc
@@ -690,6 +716,7 @@ class PMXTArchiveImporter:
         rows: list[dict[str, Any]] = []
         shard_rows: list[tuple[datetime, list[dict[str, Any]]]] = []
         estimated_bytes = 0
+        downloaded_bytes = 0
         staging_path = Path(catalog_path)
         seen_shard_keys: set[str] = set()
         seen_coverage: set[datetime] = set()
@@ -723,15 +750,22 @@ class PMXTArchiveImporter:
             if size_bytes < 0 or size_bytes > _MAX_MATERIALIZATION_ARCHIVE_BYTES:
                 raise ValueError("archive shard exceeds the materialization size limit")
             estimated_bytes += size_bytes
-            if estimated_bytes > 20 * 1024 * 1024 * 1024:
+            if estimated_bytes > _MAX_MATERIALIZATION_TOTAL_BYTES:
                 raise ValueError("materialization source estimate exceeds 20 GiB")
             download_path = staging_path / f"source-{index:03d}.parquet"
             try:
-                _download(
+                downloaded = _download(
                     source_url,
                     download_path,
-                    max_bytes=_MAX_MATERIALIZATION_ARCHIVE_BYTES,
+                    max_bytes=min(
+                        _MAX_MATERIALIZATION_ARCHIVE_BYTES,
+                        _MAX_MATERIALIZATION_TOTAL_BYTES - downloaded_bytes,
+                    ),
+                    expected_size=size_bytes,
                 )
+                downloaded_bytes += downloaded
+                if downloaded_bytes > _MAX_MATERIALIZATION_TOTAL_BYTES:
+                    raise ValueError("materialization download exceeds 20 GiB")
                 shard_data = self._read_rows(download_path)
                 rows.extend(shard_data)
                 shard_rows.append((shard_start, shard_data))
@@ -767,8 +801,6 @@ class PMXTArchiveImporter:
         while current < end:
             hours.append(current)
             current += timedelta(hours=1)
-        observed_at = datetime.now(UTC)
-
         def probe(hour: datetime) -> dict[str, Any]:
             source_url = _archive_url_for(self.config["venue"], hour)
             state, size = _probe_archive_url(source_url)
@@ -779,7 +811,7 @@ class PMXTArchiveImporter:
                 "coverage_end": hour + timedelta(hours=1),
                 "size_bytes": size,
                 "state": state,
-                "observed_at": observed_at,
+                "observed_at": datetime.now(UTC),
             }
 
         with ThreadPoolExecutor(max_workers=64, thread_name_prefix="pmxt-probe") as pool:
@@ -792,7 +824,7 @@ class PMXTArchiveImporter:
             "source_spec": source_spec,
             "coverage_start": start,
             "coverage_end": end,
-            "scanned_until": observed_at,
+            "scanned_until": datetime.now(UTC),
             "shard_count": len(shards),
             "total_bytes": sum(item["size_bytes"] or 0 for item in available),
             "missing_shard_count": sum(item["state"] == "MISSING" for item in shards),
@@ -813,7 +845,7 @@ class PMXTArchivePlugin:
     def descriptor() -> DescriptorSnapshot:
         return DescriptorSnapshot(
             plugin_id="pmxt_archive",
-            version="1.1.2",
+            version="1.1.3",
             capabilities={Capability.HISTORICAL_IMPORT},
             compatibility_key="prediction-market-data-v1",
             requires_python=">=3.14,<3.15",

@@ -508,6 +508,8 @@ QZ 只验证 Handoff/Feedback contract，不检查其交易节点内部状态。
 
 QuaZonai Core 与 NautilusTrader 分开部署。管理员在 Core 的受信部署边界配置独立的 Research 与 Sealed runtime endpoint/token；Codex Mission child 不会继承这些值。Core Compose 的 API 不加入 runtime bridge，而是通过只转发到两个 runtime endpoint 的 `nautilus-runtime-proxy` 访问它们；不要把 API 直接接入 runtime network。
 
+同一 Docker 主机运行 `deploy/nautilus-runtime.compose.example.yml` 时，先让 Core Compose 创建稳定的 `quazonai-core` network，再启动 runtime 示例；示例中的 proxy 是唯一同时加入 Core network 与 `quazonai-runtime` 的服务。跨主机部署不要共享 Docker network，改用受信 HTTPS endpoint/token。
+
 ```dotenv
 QUAZONAI_NAUTILUS_RUNTIME_URL=https://research-runtime.example
 QUAZONAI_NAUTILUS_RUNTIME_TOKEN=<research-runtime-service-token>

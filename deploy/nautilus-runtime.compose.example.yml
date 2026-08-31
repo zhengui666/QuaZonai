@@ -21,6 +21,9 @@ services:
       - /tmp:rw,noexec,nosuid,size=512m
     security_opt:
       - no-new-privileges:true
+      # bubblewrap requires the namespace syscalls allowed by this checked-in
+      # profile; capabilities remain dropped and no privileged flag is used.
+      - seccomp=./seccomp/codex-worker.json
     cap_drop:
       - ALL
     restart: unless-stopped
@@ -47,9 +50,32 @@ services:
       - /tmp:rw,noexec,nosuid,size=512m
     security_opt:
       - no-new-privileges:true
+      - seccomp=./seccomp/codex-worker.json
     cap_drop:
       - ALL
     restart: unless-stopped
+
+  # Same-host reference boundary for a Core deployment. The proxy is the only
+  # runtime-stack service that joins the Core network; Core API never joins the
+  # runtime bridge directly. For a separate host, use the HTTPS endpoints
+  # documented in OPERATIONS.md instead.
+  nautilus-runtime-proxy:
+    image: nginx:1.29-alpine
+    volumes:
+      - ./nautilus-runtime-proxy.conf:/etc/nginx/nginx.conf:ro
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:rw,noexec,nosuid,size=16m
+      - /var/run:rw,noexec,nosuid,size=2m
+      - /tmp:rw,noexec,nosuid,size=8m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    networks:
+      - default
+      - quazonai-core
 
 volumes:
   research-catalogs:
@@ -61,3 +87,6 @@ volumes:
 networks:
   default:
     name: quazonai-runtime
+  quazonai-core:
+    external: true
+    name: quazonai-core

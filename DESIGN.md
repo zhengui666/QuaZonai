@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 21038)
+Total output lines: 2029
+
 # QuaZonai 产品需求与技术架构设计
 
 > 架构基线：2026-08-29（Issue #22 Nautilus-first）
@@ -1191,117 +1194,7 @@ Codex provider 规则：
 - Base URL 不允许内嵌 username/password、query token 或 fragment；
 - 配置 custom Base URL 或 API key 时，App Server 使用显式 model provider，V1 wire API 固定为 Responses；
 - provider API key 不进入 App Server environment、命令行或 `--config`。受信任 Mission runner 只在内存中持有解密后的 key，通过 `0700` 临时目录下的 `0600` one-shot Unix socket broker 向 Codex 0.144.4 的 command-backed model-provider `auth` helper 交付一次 token；helper 在首个 provider request 前取用后 broker 关闭，Mission shell、MCP Tool Server、Agent output 与持久 event 均不得获得该 key；
-- App Server environment 必须显式清除 provider API key、`QUAZONAI_MASTER_KEY` 与数据库连接 secret，不能依赖普通 shell env filtering 作为 Secret 边界；
-- 已保存 provider key 时修改 `codex_base_url`，必须在同一 mutation 中重新输入 key 或显式清除旧 key，禁止把旧 credential 静默重绑定到新 endpoint；
-- 未配置 custom provider credential 时，可继续使用持久 `CODEX_HOME` 中的官方 Codex/ChatGPT 登录；
-- Web/API 只返回 `codex_api_key_configured` 状态，不回读 plaintext/ciphertext/nonce。
-
-Runtime Configuration mutation 规则：
-
-- GET 返回当前单调递增 `revision`；尚未创建 singleton 时为 revision `0`；
-- PUT 必须携带 `expected_revision`，陈旧保存返回 `RUNTIME_CONFIGURATION_STALE`，首次并发创建的唯一约束竞争也必须被翻译为同一业务冲突而不是数据库 500；
-- PUT 支持 `Idempotency-Key`；同一个逻辑请求重试返回原响应，不重复加密 provider key、不重复推进 revision、也不重复写 `RUNTIME_CONFIGURATION_UPDATED` event；
-- Idempotency receipt 不保存 provider key plaintext，也不为了去重额外保存历史 secret 副本。
-
-Worker 规则：
-
-- finite worker 每次领取后续 job 前读取最新 Runtime Configuration；
-- plugin validator/bundle child 与 Research Mission child 在启动时冻结当次有效配置；
-- `job_poll_seconds` 服务端与数据库下界为 `0.01` 秒，禁止近零 busy loop；
-- Administration 保存后不要求重建或重启 Compose stack；
-- 已运行 child 的 timeout/model/provider 不被中途改写，修改只影响之后领取/启动的工作。
-
-Runtime Configuration 的 API key 使用 `QUAZONAI_MASTER_KEY` 做 AES-256-GCM authenticated encryption。Master key 仍必须外部注入，不能迁入数据库或 Web 配置。
-
-## 31. Workspace Model
-
-每个 Research Program：一个 QZ 管理的 private bare Git repo。
-
-每个 Research Branch：一条持久 Git branch。
-
-每个 Mission：一个临时独占 worktree。
-
-```text
-Program bare repo
-  ├─ Branch A
-  │   ├─ Mission A1 worktree
-  │   └─ Mission A2 worktree
-  └─ Branch B
-      └─ Mission B1 worktree
-```
-
-QZ 拥有 branch lease、worktree create/remove、accept changes、commit 和 `workspace_revision_no`。Codex 只写普通文件，不执行 branch/commit/merge/rebase/worktree 管理。
-
-Git history 是开发辅助，不是业务 identity 或 Approval Gate。
-
-## 32. Sandbox 与权限
-
-默认 Mission：
-
-```text
-workspace-write
-network disabled
-approvalPolicy = never
-cwd = mission worktree
-workspace roots = mission worktree only
-```
-
-禁止通过 Codex interactive approval 向用户请求额外 Shell/网络权限。需要数据、实验或受控外部访问时必须调用 QZ Research Tool Server。
-
-Mission 不允许访问：
-
-- QZ source repo；
-- Sealed dataset root；
-- provider credential store；
-- downstream secrets；
--其他 Program worktree；
-- Docker socket；
-- PostgreSQL credential。
-
-## 33. Agent Profiles
-
-角色是 Mission execution profile，不是独立业务 Agent 身份：
-
-```text
-RESEARCH_DIRECTOR
-DATA_RESEARCHER
-ALPHA_RESEARCHER
-VALIDATOR
-PORTFOLIO_ARCHITECT
-REVIEWER
-DEGRADATION_ANALYST
-```
-
-`AgentProfileVersion` 固定 model preference、reasoning effort、developer instructions、tool capability set、workspace rules 和 output contract。
-
-RESEARCH_DIRECTOR 可以提出 Mission Graph artifact，但不能直接变更业务状态；REVIEWER 不能 approve Candidate；任何 profile 都不能访问 Sealed raw data 或执行系统。
-
-## 34. Mission-scoped Research Tool Server
-
-V1 使用稳定的 **stdio MCP server**，而不是 experimental dynamicTools 作为核心依赖。
-
-Tool 按 MissionContract 能力过滤，例如：
-
-```text
-dataset.list
-dataset.describe
-dataset.query_sample
-experiment.submit
-experiment.status
-artifact.register
-alpha.submit_candidate
-calibration.submit_candidate
-portfolio.inspect_library
-portfolio.submit_candidate
-evidence.read_allowed
-mission.report_result
-```
-
-Tool Server：
-
-- 通过 mission_id 加载不可变 Mission Contract；
-- 每次调用重新校验 Mission state、capability、resource scope；
-- 不把 DB credential 或 provider secret 暴露给 Codex；
+- App Server environment 必须显式清除 provider API key、`QUAZONAI_MASTER_KEY` 与数据库连接 secret，不能…1038 tokens truncated…；
 - 大型数据只返回引用、schema、summary 或受限 sample；
 - mutation 使用显式 idempotency key 和 expected business revision；
 - Agent 不能调用 Approval、Handoff publication、Secret、Plugin activation 或 Admin mutation。
@@ -1391,7 +1284,7 @@ nautilus-paper-node
 nautilus-live-node
 ```
 
-`deploy/Dockerfile.nautilus-runtime` 是 reference remote runtime image；`deploy/nautilus-runtime.compose.example.yml` 仅用于在另一主机部署示例，不加入 Core Compose。Core Compose 中的 `nautilus-runtime-proxy` 是只转发到 Research/Sealed runtime 的窄 HTTP 边界，API 只连接 Core network，不直接加入 runtime bridge；因此 runtime/plugin peer 不能通过网络直达 Operator API。Research 与 Sealed 使用不同 endpoint/token/catalog。Core API image 必须证明未安装 NautilusTrader。
+`deploy/Dockerfile.nautilus-runtime` 是 reference remote runtime image；`deploy/nautilus-runtime.compose.example.yml` 提供独立 runtime，以及同主机部署时加入稳定 `quazonai-core` network 的窄 proxy。Core Compose 也提供同样的 `nautilus-runtime-proxy` 边界；API 只连接 Core network，不直接加入 runtime bridge。Proxy 只转发到 Research/Sealed runtime，并保留长时 manifest/materialization 与 Candidate Bundle 的 contract 上限，因此 runtime/plugin peer 不能通过网络直达 Operator API。跨主机部署使用受信 HTTPS endpoint/token，不使用两个 Docker network 的跨主机假设。Research 与 Sealed 使用不同 endpoint/token/catalog。Core API image 必须证明未安装 NautilusTrader。
 
 不引入 Redis、Celery、Kafka 或 Kubernetes。使用 PostgreSQL durable jobs + `FOR UPDATE SKIP LOCKED`，事件表 + `LISTEN/NOTIFY` 仅做唤醒。
 

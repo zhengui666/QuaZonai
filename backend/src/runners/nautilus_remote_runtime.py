@@ -23,6 +23,7 @@ import sys
 import tempfile
 import threading
 import zipfile
+import weakref
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -51,7 +52,8 @@ from quant_runtime.contracts import (
 
 _RUNS: dict[str, dict[str, Any]] = {}
 _RUNS_LOCK = threading.Lock()
-_CATALOG_LOCK = threading.Lock()
+_CATALOG_LOCKS: weakref.WeakValueDictionary[str, threading.Lock] = weakref.WeakValueDictionary()
+_CATALOG_LOCKS_GUARD = threading.Lock()
 _EXECUTION_LOCK = threading.Lock()
 _CATALOG_PREFIX = "catalog://"
 _PLUGIN_ROOT = Path(
@@ -94,6 +96,7 @@ _FORBIDDEN_BUNDLE_PATH_PARTS = {
 _PLUGIN_SANDBOX_CATALOG_PATH = "/workspace/catalog"
 _PLUGIN_DOWNLOAD_TIMEOUT_SECONDS = 180
 _PLUGIN_IMPORT_MIN_TIMEOUT_SECONDS = 600
+_MANIFEST_SCAN_TIMEOUT_SECONDS = 900
 
 
 class StrictModel(BaseModel):
@@ -177,6 +180,13 @@ def _catalog_path(catalog_uri: str) -> Path:
 
 def _metadata_path(catalog_path: Path) -> Path:
     return catalog_path / "quazonai-catalog.json"
+
+
+def _catalog_lock(catalog_uri: str) -> threading.Lock:
+    """Return an identity-scoped lock without serializing unrelated catalogs."""
+
+    with _CATALOG_LOCKS_GUARD:
+        return _CATALOG_LOCKS.setdefault(catalog_uri, threading.Lock())
 
 
 def _authorize(
@@ -311,7 +321,12 @@ def _reject_staged_symlinks(root: Path) -> None:
                 )
 
 
-def _validate_staged_catalog(staging_path: Path, descriptor: CatalogDescriptor) -> None:
+def _validate_staged_catalog(
+    staging_path: Path,
+    descriptor: CatalogDescriptor,
+    *,
+    availability_coverage: list[tuple[datetime, datetime]] | None = None,
+) -> None:
     """Check the plugin's actual Parquet output before it reaches an immutable catalog."""
 
     try:
@@ -348,6 +363,19 @@ def _validate_staged_catalog(staging_path: Path, descriptor: CatalogDescriptor) 
             raise ValueError("plugin catalog event bounds do not match its descriptor")
         if (min(available_ns), max(available_ns)) != expected_available:
             raise ValueError("plugin catalog availability bounds do not match its descriptor")
+        if availability_coverage:
+            coverage_ns = [
+                (
+                    int(start.timestamp() * 1_000_000_000),
+                    int(end.timestamp() * 1_000_000_000),
+                )
+                for start, end in availability_coverage
+            ]
+            if any(
+                not any(start <= timestamp < end for start, end in coverage_ns)
+                for timestamp in available_ns
+            ):
+                raise ValueError("plugin catalog availability is outside selected archive shards")
     except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
         raise HTTPException(
             status_code=502,
@@ -374,7 +402,20 @@ def _write_plugin_catalog(spec: CatalogIngestSpec, staging_path: Path) -> Catalo
     source_config = spec.source_spec.get("config")
     if not isinstance(source_config, dict):
         raise HTTPException(status_code=422, detail="plugin source_spec.config must be an object")
-    with tempfile.TemporaryDirectory(prefix="quazonai-plugin-catalog-") as workspace:
+    availability_coverage = [
+        (shard.coverage_start, shard.coverage_end)
+        for shard in (
+            [ArchiveShardDescriptor.model_validate(item) for item in spec.source_shards]
+            if spec.source_shards is not None
+            else []
+        )
+    ]
+    # Keep potentially multi-gigabyte archive staging off the runtime's small
+    # /tmp tmpfs. The sandbox still sees only this directory and the bundle.
+    with tempfile.TemporaryDirectory(
+        prefix="quazonai-plugin-catalog-",
+        dir=_catalog_root(),
+    ) as workspace:
         request = {
             "plugin_id": spec.plugin_id,
             "plugin_version": spec.plugin_version,
@@ -441,9 +482,17 @@ def _write_plugin_catalog(spec: CatalogIngestSpec, staging_path: Path) -> Catalo
         ):
             raise HTTPException(status_code=502, detail="plugin catalog descriptor does not match request")
         _reject_staged_symlinks(Path(workspace))
-        _validate_staged_catalog(Path(workspace), descriptor)
+        _validate_staged_catalog(
+            Path(workspace),
+            descriptor,
+            availability_coverage=availability_coverage,
+        )
         shutil.copytree(workspace, staging_path, dirs_exist_ok=True)
-    _validate_staged_catalog(staging_path, descriptor)
+    _validate_staged_catalog(
+        staging_path,
+        descriptor,
+        availability_coverage=availability_coverage,
+    )
     return descriptor
 
 
@@ -489,7 +538,7 @@ def _inspect_plugin_manifest(spec: ArchiveManifestSpec) -> ArchiveManifestDescri
                 text=True,
                 cwd=workspace,
                 env=child_environment,
-                timeout=900,
+                timeout=_MANIFEST_SCAN_TIMEOUT_SECONDS,
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
@@ -516,7 +565,7 @@ def _inspect_plugin_manifest(spec: ArchiveManifestSpec) -> ArchiveManifestDescri
 def _write_catalog(spec: CatalogIngestSpec) -> CatalogDescriptor:
     catalog_uri = f"catalog://{spec.catalog_name}"
     path = _catalog_path(catalog_uri)
-    with _CATALOG_LOCK:
+    with _catalog_lock(catalog_uri):
         if path.exists():
             if not path.is_dir():
                 raise HTTPException(status_code=409, detail="catalog identity is already occupied")

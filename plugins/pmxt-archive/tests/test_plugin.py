@@ -15,7 +15,7 @@ def test_descriptor_is_historical_import_only() -> None:
     descriptor = PMXTArchivePlugin.descriptor()
 
     assert descriptor.plugin_id == "pmxt_archive"
-    assert descriptor.version == "1.1.2"
+    assert descriptor.version == "1.1.3"
     assert descriptor.capabilities == {"HISTORICAL_IMPORT"}
     assert descriptor.secret_config_schema["properties"] == {}
 
@@ -92,6 +92,29 @@ def test_polymarket_quotes_keep_top_of_book_sizes() -> None:
     assert quotes[0]["bid_size"] == 12.0
     assert quotes[0]["ask_size"] == 8.0
     assert stats["skipped_rows"] == 0
+
+
+def test_polymarket_quotes_clear_explicitly_empty_book_sides() -> None:
+    timestamp = datetime(2026, 8, 10, 0, 1, tzinfo=UTC)
+    quotes, stats = _polymarket_quotes(
+        [
+            {
+                "timestamp_received": timestamp,
+                "timestamp": timestamp,
+                "bids": '[["0.42", "12"]]',
+                "asks": '[["0.58", "8"]]',
+            },
+            {
+                "timestamp_received": timestamp.replace(minute=2),
+                "timestamp": timestamp.replace(minute=2),
+                "bids": [],
+                "asks": '[["0.59", "8"]]',
+            },
+        ]
+    )
+
+    assert len(quotes) == 1
+    assert stats["skipped_rows"] == 1
 
 
 def test_polymarket_quotes_reset_state_after_a_manifest_gap() -> None:
@@ -177,9 +200,16 @@ def test_instrument_history_import_validates_manifest_selected_shards(
     importer = PMXTArchivePlugin().build_catalog_importer(config)
     captured: dict[str, object] = {}
 
-    def fake_download(url: str, destination, *, max_bytes: int) -> None:
+    def fake_download(
+        url: str,
+        destination,
+        *,
+        max_bytes: int,
+        expected_size: int | None = None,
+    ) -> int:
         captured.setdefault("urls", []).append(url)
         destination.write_bytes(b"test")
+        return expected_size or 0
 
     monkeypatch.setattr(plugin_module, "_download", fake_download)
     monkeypatch.setattr(importer, "_read_rows", lambda path: [])
