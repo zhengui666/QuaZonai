@@ -21,7 +21,7 @@ public actor EventStreamActor {
     private let session: URLSession
     private let persistCursor: @Sendable (Int) async -> Void
     private var task: Task<Void, Never>?
-    private var eventCursor: EventCursor
+    private var eventCursor: EventSequenceCursor
 
     public init(
         client: APIClient,
@@ -30,7 +30,7 @@ public actor EventStreamActor {
         persistCursor: @escaping @Sendable (Int) async -> Void = { _ in }
     ) {
         self.client = client
-        self.eventCursor = EventCursor(cursor)
+        self.eventCursor = EventSequenceCursor(cursor)
         self.session = session
         self.persistCursor = persistCursor
     }
