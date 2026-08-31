@@ -1,0 +1,143 @@
+name: Complete Verified Pull Request
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted, edited]
+
+permissions:
+  actions: read
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: complete-verified-pr-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  merge-after-codex:
+    if: >-
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request) ||
+      github.event_name == 'pull_request_review'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify latest-head CI and Codex verdict, then merge
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const number = context.eventName === 'issue_comment'
+              ? context.payload.issue.number
+              : context.payload.pull_request.number;
+            const pull = (await github.rest.pulls.get({owner, repo, pull_number: number})).data;
+            if (pull.state !== 'open' || pull.draft) {
+              core.info('Pull request is not an open, reviewable PR.');
+              return;
+            }
+            const headSha = pull.head.sha;
+            const requestMarker = `<!-- quazonai-codex-review:${headSha} -->`;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number: number, per_page: 100,
+            });
+            const request = comments
+              .filter((comment) => comment.body?.includes(requestMarker))
+              .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0];
+            if (!request) {
+              core.info('No Codex review request exists for the latest HEAD.');
+              return;
+            }
+            const requestTime = Date.parse(request.created_at);
+            const reviews = await github.paginate(github.rest.pulls.listReviews, {
+              owner, repo, pull_number: number, per_page: 100,
+            });
+            const codexAuthor = (login) => /codex|openai/i.test(login || '');
+            const positive = (body) => {
+              const text = String(body || '').toLowerCase();
+              return /\blgtm\b|\blooks good\b|\bno (?:actionable )?(?:issues|findings|problems)(?: found)?\b|\bdid not find any (?:issues|findings|problems)\b|未发现.{0,12}(问题|缺陷)|没有.{0,8}问题|无问题/.test(text);
+            };
+            const approvedReview = reviews.some((review) =>
+              codexAuthor(review.user?.login) &&
+              Date.parse(review.submitted_at || 0) >= requestTime &&
+              (!review.commit_id || review.commit_id === headSha) &&
+              (review.state === 'APPROVED' || positive(review.body))
+            );
+            const positiveComment = comments.some((comment) =>
+              codexAuthor(comment.user?.login) &&
+              Date.parse(comment.created_at) >= requestTime &&
+              positive(comment.body)
+            );
+            if (!approvedReview && !positiveComment) {
+              core.info('The latest HEAD does not yet have an explicit positive Codex verdict.');
+              return;
+            }
+
+            const runResponse = await github.rest.actions.listWorkflowRunsForRepo({
+              owner, repo, event: 'pull_request', head_sha: headSha, per_page: 100,
+            });
+            const latest = new Map();
+            for (const run of runResponse.data.workflow_runs) {
+              if (run.head_sha !== headSha || run.name === 'Complete Verified Pull Request') continue;
+              const previous = latest.get(run.name);
+              if (!previous || Date.parse(run.created_at) > Date.parse(previous.created_at)) {
+                latest.set(run.name, run);
+              }
+            }
+            const runs = [...latest.values()];
+            const requiredCategories = [
+              /(^|\s)CI($|\s)/i,
+              /Frontend/i,
+              /Operator Auth/i,
+              /Nautilus/i,
+              /Client Parity/i,
+              /iOS Universal Client/i,
+              /iOS Release Contract/i,
+              /Codex Review Gate/i,
+            ];
+            const missing = requiredCategories.filter(
+              (pattern) => !runs.some((run) => pattern.test(run.name))
+            );
+            const incomplete = runs.filter((run) => run.status !== 'completed');
+            const failed = runs.filter((run) =>
+              run.status === 'completed' && !['success', 'neutral', 'skipped'].includes(run.conclusion)
+            );
+            if (missing.length || incomplete.length || failed.length) {
+              core.setFailed(JSON.stringify({
+                missing: missing.map(String),
+                incomplete: incomplete.map((run) => run.name),
+                failed: failed.map((run) => `${run.name}:${run.conclusion}`),
+              }));
+              return;
+            }
+
+            const merge = await github.rest.pulls.merge({
+              owner,
+              repo,
+              pull_number: number,
+              merge_method: 'squash',
+              sha: headSha,
+              commit_title: `${pull.title} (#${number})`,
+              commit_message: `Closes #36\n\nVerified on ${headSha}: all PR CI passed and Codex reported no issues.`,
+            });
+            if (!merge.data.merged) {
+              core.setFailed(`GitHub declined the merge: ${merge.data.message}`);
+              return;
+            }
+            await github.rest.repos.createDispatchEvent({
+              owner,
+              repo,
+              event_type: 'quazonai-main-verification',
+              client_payload: {
+                pull_number: number,
+                source_head_sha: headSha,
+                merged_sha: merge.data.sha,
+              },
+            });
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: number,
+              body: `<!-- quazonai-merged:${merge.data.sha} -->\nMerged after all CI checks passed and Codex reported no issues. Main verification was dispatched for \`${merge.data.sha}\`.`,
+            });
