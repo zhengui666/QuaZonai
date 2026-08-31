@@ -300,6 +300,7 @@ public actor APIClient {
     public func requestJSON(
         path: String,
         method: HTTPMethod = .get,
+        queryItems: [URLQueryItem] = [],
         body: JSONValue? = nil,
         idempotencyKey: String? = nil,
         allowRefresh: Bool = true
@@ -309,6 +310,7 @@ public actor APIClient {
         var (data, response) = try await perform(
             path: path,
             method: method,
+            queryItems: queryItems,
             body: encoded,
             authorization: accessToken,
             idempotencyKey: stableKey
@@ -318,6 +320,7 @@ public actor APIClient {
             (data, response) = try await perform(
                 path: path,
                 method: method,
+                queryItems: queryItems,
                 body: encoded,
                 authorization: accessToken,
                 idempotencyKey: stableKey
@@ -387,11 +390,12 @@ public actor APIClient {
     private func perform(
         path: String,
         method: HTTPMethod,
+        queryItems: [URLQueryItem] = [],
         body: Data? = nil,
         authorization: String? = nil,
         idempotencyKey: String? = nil
     ) async throws -> (Data, HTTPURLResponse) {
-        var request = URLRequest(url: try endpoint(path: path))
+        var request = URLRequest(url: try endpoint(path: path, queryItems: queryItems))
         request.httpMethod = method.rawValue
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 45
