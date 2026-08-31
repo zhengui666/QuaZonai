@@ -22,44 +22,13 @@ on:
       - '.github/workflows/operator-auth-e2e.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: operator-auth-e2e-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  repair-contract:
-    if: >-
-      github.event_name == 'pull_request' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.head.ref == 'fix/issue-37-totp-only-auth'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
-          fetch-depth: 0
-      - name: Remove stale username/password login contract
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path('DESIGN.md')
-          old = '- 输入单 Operator username、password 和 6 位 authenticator code；'
-          new = '- 只输入 Google Authenticator-compatible 6 位 TOTP 动态码，不展示、缓存或提交 username/password；'
-          text = path.read_text(encoding='utf-8')
-          if text.count(old) != 1:
-              raise SystemExit(f'expected exactly one stale login-contract line, found {text.count(old)}')
-          path.write_text(text.replace(old, new), encoding='utf-8')
-          PY
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add DESIGN.md
-          git commit -m 'docs(auth): remove stale browser login factors'
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
-
   verify:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
