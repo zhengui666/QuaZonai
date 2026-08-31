@@ -169,6 +169,16 @@ jobs:
             fi
             sleep 2
           done
+          for proxy_attempt in $(seq 1 15); do
+            proxy_status=$(docker inspect "$proxy_id" --format '{{.State.Status}}')
+            proxy_restarts=$(docker inspect "$proxy_id" --format '{{.RestartCount}}')
+            if [ "$proxy_status" != running ] || [ "$proxy_restarts" != 0 ]; then
+              docker compose --env-file .env.example ps
+              docker compose --env-file .env.example logs --no-color nautilus-runtime-proxy
+              exit 1
+            fi
+            sleep 2
+          done
           curl --fail --silent http://127.0.0.1:8000/ | grep -q '<div id="root"'
           docker compose --env-file .env.example ps
       - name: Stop Compose
