@@ -1,0 +1,82 @@
+name: Issue 37 Skill review fix
+
+on:
+  push:
+    branches:
+      - fix/issue-37-totp-only-auth
+    paths:
+      - .github/workflows/issue37-skill-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-37-totp-only-auth
+          fetch-depth: 0
+
+      - name: Restore portable browser-secret prohibition
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          skill_path = Path("skills/quazonai/SKILL.md")
+          skill = skill_path.read_text(encoding="utf-8")
+          old_skill = (
+              "   If the API returns `AUTH_REQUIRED`, do not attempt an interactive browser login through the Agent. "
+              "Treat a missing token as an environment prerequisite; treat a rejected token as a credential-rotation/configuration mismatch.\n"
+          )
+          new_skill = old_skill + (
+              "\n"
+              "   Never request, read, infer, copy, store, or expose `QUAZONAI_AUTH_TOTP_SECRET`, "
+              "any one-time TOTP code, a browser session cookie, or a trusted-browser cookie. "
+              "These browser credentials are outside the CLI/Agent identity boundary even when the user offers them.\n"
+              "\n"
+              "   Read [references/authentication.md](references/authentication.md) before diagnosing Operator Authentication.\n"
+          )
+          if skill.count(old_skill) != 1:
+              raise SystemExit(f"expected one Skill insertion point, found {skill.count(old_skill)}")
+          skill_path.write_text(skill.replace(old_skill, new_skill), encoding="utf-8")
+
+          test_path = Path("backend/tests/unit/test_agent_skill_auth_contract.py")
+          test = test_path.read_text(encoding="utf-8")
+          insertion_point = (
+              "\n\ndef test_skill_does_not_advertise_browser_credentials_as_cli_authentication() -> None:\n"
+          )
+          added_test = (
+              "\n\ndef test_standalone_skill_forbids_browser_authentication_secret_access() -> None:\n"
+              "    skill = SKILL_PATH.read_text(encoding=\"utf-8\")\n\n"
+              "    assert \"Never request, read, infer, copy, store, or expose\" in skill\n"
+              "    assert \"[references/authentication.md](references/authentication.md)\" in skill\n"
+              "    for browser_secret in (\n"
+              "        \"QUAZONAI_AUTH_TOTP_SECRET\",\n"
+              "        \"one-time TOTP code\",\n"
+              "        \"browser session cookie\",\n"
+              "        \"trusted-browser cookie\",\n"
+              "    ):\n"
+              "        assert browser_secret in skill\n"
+          )
+          if test.count(insertion_point) != 1:
+              raise SystemExit(
+                  f"expected one test insertion point, found {test.count(insertion_point)}"
+              )
+          test_path.write_text(
+              test.replace(insertion_point, added_test + insertion_point),
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Commit focused review fix and remove one-shot workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/issue37-skill-fix.yml
+          git add skills/quazonai/SKILL.md backend/tests/unit/test_agent_skill_auth_contract.py
+          git diff --cached --check
+          git commit -m "fix(skill): restore browser-secret prohibition"
+          git push origin HEAD:fix/issue-37-totp-only-auth
