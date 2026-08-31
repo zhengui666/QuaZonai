@@ -1,6 +1,6 @@
 name: Issue 36 Follow-up Review Fixes
 
-# Retry after satisfying the native observability release contract.
+# Source and generated contracts are committed here; workflow hardening is applied separately.
 on:
   push:
     branches:
@@ -56,8 +56,9 @@ jobs:
           grep -q 'openMoreDestination("Portfolio")' ios/UITests/QuaZonaiUITests.swift
           grep -q 'DownstreamBearer' contracts/openapi/quazonai-v1.json
           grep -q '#/components/schemas/ErrorEnvelope' contracts/openapi/quazonai-v1.json
-      - name: Commit reviewed fixes
+      - name: Commit reviewed source and generated fixes
         run: |
+          git restore --source=HEAD -- .github/workflows/ios-client.yml
           if git diff --quiet; then
             echo 'No changes to commit'
             exit 0
@@ -65,7 +66,6 @@ jobs:
           git config user.name 'QuaZonai Review Fix Bot'
           git config user.email 'actions@users.noreply.github.com'
           git add \
-            .github/workflows/ios-client.yml \
             backend/src/mobile_auth.py \
             backend/src/api/mobile_auth.py \
             backend/src/main.py \
