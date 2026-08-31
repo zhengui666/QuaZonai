@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+"""Append Issue #36 native-client facts without replacing existing documentation."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+
+def append_once(path: str, marker: str, section: str) -> None:
+    target = Path(path)
+    text = target.read_text(encoding="utf-8")
+    if marker in text:
+        return
+    target.write_text(text.rstrip() + "\n\n" + section.strip() + "\n", encoding="utf-8")
+
+
+def main() -> int:
+    append_once(
+        "DESIGN.md",
+        "# Part XV — Native Operator Clients",
+        """
+# Part XV — Native Operator Clients
+
+## 51. iPhone / iPad Universal App
+
+QuaZonai 提供与 Web Operator Workbench 业务能力等价的原生 SwiftUI Universal App。Native App 是新的 Operator Client，不改变 Core ownership：领域状态机、审批 Gate、幂等、并发控制和事实仍只在 FastAPI / Domain / PostgreSQL；App 不拥有 broker/exchange credential、order/fill/position、account/NAV、TradingNode/LiveNode、execution risk，也不提供 downstream runtime stop/recovery、平仓或强制下线。
+
+技术基线：Swift 6、SwiftUI、iOS/iPadOS 18、Swift OpenAPI Generator、URLSession + Swift Concurrency、SwiftData、Keychain、LocalAuthentication、Swift Charts、OSLog、Swift Package Manager。全站 WKWebView、Capacitor、React Native、Flutter、JWT/PyJWT、Native 使用 QUAZONAI_API_TOKEN、忽略 TLS 错误均不属于实现。
+
+iPhone 使用 Home / Research / Approvals / Portfolio / More 五 Tab；More 提供 Idea Composer、Alpha Library、Handoff & Feedback、Administration、Language、Appearance、Account / Device Security。iPad 使用 NavigationSplitView，Sidebar 覆盖 Home、Idea Composer、Research Observatory、Alpha Library、Portfolio Lab、Approval Inbox、Handoff & Feedback、Administration；窗口尺寸、Split View、Stage Manager、横竖屏只改变布局，不减少服务器能力。
+
+Native 和 Web 共用 `/api/v1/openapi.json` wire contract。FastAPI 导出的规范固化到 `contracts/openapi/quazonai-v1.json`，同一规范驱动 Swift OpenAPI generated client。`contracts/client-capabilities.yaml` 是跨客户端 capability registry，CI 要求 Web、iPhone、iPad 对每个 read/mutation/sensitive_mutation 都有入口和测试引用。Bootstrap 返回 `operator_client_capability_epoch`、`minimum_ios_capability_epoch` 与 `minimum_ios_app_version`；App epoch 落后时 fail closed，不能进入残缺工作台。
+
+## 52. Native TOTP-only Operator Authentication
+
+Browser Operator 暂时保留 legacy username/password/TOTP Cookie flow；Native Operator 从第一天只使用当前有效 TOTP 首次认证，Mobile Login schema **不得**包含 username/password。Browser 与 Native 复用同一 RFC 6238 verification core、严格 6 位解析、±1 time-step、恒定时间比较、source rate limiting 和 replay consumption；未来 Browser 删除 username/password 时直接复用该核心。
+
+Native API：
+
+```text
+GET  /api/v1/client/bootstrap
+POST /api/v1/auth/mobile/login
+POST /api/v1/auth/mobile/refresh
+POST /api/v1/auth/mobile/logout
+GET  /api/v1/auth/mobile/session
+GET  /api/v1/auth/mobile/devices
+POST /api/v1/auth/mobile/devices/{id}/revoke
+```
+
+Mobile Access Credential 是短期内存 Bearer；Trust Device 的 Refresh Credential 使用独立 native credential class，只保存在 `kSecAttrAccessibleWhenUnlockedThisDeviceOnly + biometryCurrentSet` Keychain，且每次 refresh 旋转 generation。Server 只持久化 device/generation/expiry/revocation 元数据，不持久化 Bearer material，不把 username 作为 mobile identity 主键。TOTP code 不写 Keychain、SwiftData、日志或事件。Logout/revoke 会推进 generation，使旧 Access/Refresh/SSE 失效。Face ID/Touch ID 只保护本地 trusted-device credential 与敏感操作，不能替代首次服务器 TOTP。
+
+`QUAZONAI_AUTH_ENABLED=false` 时 Bootstrap 明确返回 direct-access，App 显示安全警告且提供完整 Operator 能力；服务器随后启用认证时，401 会回到 TOTP-only flow。Machine Automation 继续使用 `QUAZONAI_API_TOKEN`，Native 不读取也不发送该 token；Downstream credential 继续只属于对应 Handoff/Feedback service boundary。
+
+## 53. Native Sync / Offline / Security
+
+Native EventStreamActor 先用 `GET /events?after_id=` 按 cursor 补齐，再建立 `/events/stream?cursor=` SSE；保留 Last-Event-ID、指数退避 + jitter、网络/前后台重连、auth refresh 与 duplicate-id protection。SwiftData 只保存 server-profile-isolated read cache、event cursor 与本地 Idea Draft，绝不是 Domain truth source。
+
+离线允许读取已有 cache、编辑 Idea Draft；Start Research、Program action、Approve/Reject、Handoff revoke、Runtime Configuration、Data Source/Downstream mutation 等全部 fail closed。Mutation 使用稳定 Idempotency-Key；401 最多 refresh/retry 一次；409 原样呈现，不自动覆盖服务端状态。
+
+Production Server URL 默认要求 HTTPS，HTTP 只允许 localhost development；无 Trust-All/TLS bypass。Authorization、TOTP、Codex API Key 不进入日志。Codex API Key 在 App 中只使用 SecureField 临时内存输入，请求结束即清空，不进入 Keychain/SwiftData。App 进入后台显示 privacy cover。
+
+Native 支持 English、简体中文、繁體中文、日本語、한국어、Español、العربية；Arabic 使用 RTL。Dynamic Type、VoiceOver、状态非纯颜色表达、图表文字摘要、iPad 键盘/指针/动态窗口均属于客户端验收。
+""",
+    )
+    append_once(
+        "OPERATIONS.md",
+        "## Native iPhone / iPad Operator Client",
+        """
+## Native iPhone / iPad Operator Client
+
+iPhone/iPad App 直接连接同一 QuaZonai Server URL。生产实例使用 HTTPS；HTTP 只允许 localhost 开发。首次连接先读取 `/api/v1/client/bootstrap`：若 Operator Authentication 关闭，App 显示 Direct Access 警告后进入完整工作台；若开启，只输入当前 6 位 TOTP，不输入 Username/Password。
+
+勾选 Trust Device 时，首次 TOTP 成功后长期 Refresh Credential 仅进入本机生物识别保护的 Keychain，并在每次 refresh 后旋转；未勾选时 App 结束后下次重新输入 TOTP。Administration → Account / Device Security 可查看并撤销 Native Device。Native App 不使用 `QUAZONAI_API_TOKEN`。
+
+iPhone 的 More 与 iPad Sidebar 都可以进入完整 Administration：Runtime Configuration（Codex API Key 为 write-only SecureField）、Mandate、Data Source、Dataset、Universe、Downstream、Plugin Release、Capital Context、Mobile Devices。App 断网时只读缓存和 Idea Draft 可用，所有 Operator mutation 被阻止。
+""",
+    )
+    append_once(
+        "README.md",
+        "## Native iOS / iPadOS",
+        """
+## Native iOS / iPadOS
+
+`ios/` 提供 Swift 6 + SwiftUI Universal Operator App（minimum iOS/iPadOS 18），覆盖 Web Workbench 的 Home、Idea、Research、Alpha、Portfolio、Approval、Handoff 与 Administration 能力。Native Authentication 在认证开启时是 **TOTP-only**；App 不收集 Username/Password，也不使用 `QUAZONAI_API_TOKEN`。
+
+Wire contract 由 FastAPI OpenAPI 单一生成：`contracts/openapi/quazonai-v1.json` 同步到 Swift OpenAPI Generator；`contracts/client-capabilities.yaml` 与 CI 阻止 Web/iPhone/iPad capability drift。工程使用 `ios/project.yml`（XcodeGen）生成 Xcode project；GitHub Actions 在 iPhone/iPad Simulator 运行 unit/UI parity tests，并执行无签名 Release archive 以验证 TestFlight build readiness。
+""",
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
