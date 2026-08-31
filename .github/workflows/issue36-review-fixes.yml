@@ -67,7 +67,7 @@ jobs:
       - name: Validate compatibility restoration
         run: |
           git diff --check
-          test "$(grep -c 'queryItems: queryItems' ios/QuaZonai/Core/APIClient.swift)" -eq 3
+          test "$(grep -c 'queryItems: queryItems' ios/QuaZonai/Core/APIClient.swift)" -eq 4
           python tools/client_parity.py
       - name: Commit compatibility fix
         run: |
