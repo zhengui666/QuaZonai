@@ -57,7 +57,7 @@ _RUNS: dict[str, dict[str, Any]] = {}
 _RUNS_LOCK = threading.Lock()
 _CATALOG_LOCKS: weakref.WeakValueDictionary[str, threading.Lock] = weakref.WeakValueDictionary()
 _CATALOG_LOCKS_GUARD = threading.Lock()
-_PLUGIN_STAGING_LOCK = threading.Lock()
+_PLUGIN_CHILD_LOCK = threading.Lock()
 _EXECUTION_LOCK = threading.Lock()
 _CATALOG_PREFIX = "catalog://"
 _PLUGIN_ROOT = Path(
@@ -571,7 +571,7 @@ def _write_plugin_catalog(spec: CatalogIngestSpec, staging_path: Path) -> Catalo
     ]
     # Keep potentially multi-gigabyte archive staging in a per-import quota-backed
     # volume. The sandbox still sees only this directory and the bundle.
-    with _PLUGIN_STAGING_LOCK, tempfile.TemporaryDirectory(
+    with _PLUGIN_CHILD_LOCK, tempfile.TemporaryDirectory(
         prefix="quazonai-plugin-catalog-",
         dir=_plugin_staging_root(),
     ) as workspace:
@@ -666,7 +666,9 @@ def _inspect_plugin_manifest(spec: ArchiveManifestSpec) -> ArchiveManifestDescri
     source_config = spec.source_spec.get("config")
     if not isinstance(source_config, dict):
         raise HTTPException(status_code=422, detail="plugin source_spec.config must be an object")
-    with tempfile.TemporaryDirectory(prefix="quazonai-plugin-manifest-") as workspace:
+    with _PLUGIN_CHILD_LOCK, tempfile.TemporaryDirectory(
+        prefix="quazonai-plugin-manifest-"
+    ) as workspace:
         request = {
             "plugin_id": spec.plugin_id,
             "plugin_version": spec.plugin_version,
