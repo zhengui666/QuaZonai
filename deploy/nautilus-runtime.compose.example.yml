@@ -8,14 +8,16 @@ services:
     environment:
       QUAZONAI_NAUTILUS_RUNTIME_TOKEN: ${QUAZONAI_NAUTILUS_RUNTIME_TOKEN:?required}
       QUAZONAI_NAUTILUS_CATALOG_ROOT: /var/lib/nautilus/catalogs
+      QUAZONAI_NAUTILUS_PLUGIN_STAGING_ROOT: /var/lib/nautilus/plugin-staging
       QUAZONAI_NAUTILUS_PLUGIN_ROOT: /var/lib/quazonai/plugins
       QUAZONAI_NAUTILUS_HOST: 0.0.0.0
       QUAZONAI_NAUTILUS_PORT: 8011
     volumes:
       - research-catalogs:/var/lib/nautilus/catalogs
+      - research-plugin-staging:/var/lib/nautilus/plugin-staging
       - plugin-data:/var/lib/quazonai/plugins:ro
-    # Keep the runtime container above the connector-child address-space limit
-    # while bounding the whole service independently.
+    # A separate per-instance tmpfs prevents an importer from filling the
+    # immutable catalog volume; its 6 GiB quota is above the 4 GiB output cap.
     mem_limit: 10g
     ports:
       - "127.0.0.1:8011:8011"
@@ -38,6 +40,7 @@ services:
     environment:
       QUAZONAI_NAUTILUS_RUNTIME_TOKEN: ${QUAZONAI_NAUTILUS_SEALED_RUNTIME_TOKEN:?required}
       QUAZONAI_NAUTILUS_CATALOG_ROOT: /var/lib/nautilus/sealed-catalogs
+      QUAZONAI_NAUTILUS_PLUGIN_STAGING_ROOT: /var/lib/nautilus/plugin-staging
       QUAZONAI_NAUTILUS_PLUGIN_ROOT: /var/lib/quazonai/plugins
       QUAZONAI_NAUTILUS_HOST: 0.0.0.0
       QUAZONAI_NAUTILUS_PORT: 8011
@@ -45,6 +48,7 @@ services:
       # Ingestion is an explicit trusted provisioning action; evaluation reads
       # only the catalog selected for the current episode.
       - sealed-catalogs:/var/lib/nautilus/sealed-catalogs
+      - sealed-plugin-staging:/var/lib/nautilus/plugin-staging
       - plugin-data:/var/lib/quazonai/plugins:ro
     mem_limit: 10g
     ports:
@@ -83,7 +87,19 @@ services:
 
 volumes:
   research-catalogs:
+  research-plugin-staging:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=6g,mode=1777
   sealed-catalogs:
+  sealed-plugin-staging:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=6g,mode=1777
   plugin-data:
     external: true
     name: quazonai_plugin-data
