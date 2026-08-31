@@ -497,6 +497,8 @@ PMXT plugin 支持 Polymarket v2 与 Kalshi orderbook 到 Nautilus `QuoteTick` �
 
 PMXT plugin 不保存或请求 provider secret，不调用 PMXT 交易接口，不输出 order、fill、position、account 或 NAV，也不授予 QZ 启停、撤单、平仓或恢复任何 downstream 的能力。未来其他历史数据源必须复用同一通用 plugin/importer contract，不得在 Core 或 Nautilus runtime 增加 provider-specific 分支。
 
+每个 materialization 使用与 immutable Catalog 分离、每实例 6 GiB 配额的 tmpfs 暂存区；单次导入最多发布 4 GiB、10,000 个常规 Parquet 文件，插件 stdout/stderr 通过流式有界读取并拒绝超限，避免第三方 importer 把持久卷或 runtime 内存耗尽。上述限制属于通用 plugin runner 边界，不是 PMXT 特例。
+
 ### 10.2 Dataset Revision
 
 每份 Dataset Revision 显式记录：
