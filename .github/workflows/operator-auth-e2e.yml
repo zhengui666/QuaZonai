@@ -13,6 +13,7 @@ on:
       - 'compose.yml'
       - '.github/workflows/operator-auth-e2e.yml'
       - '.github/scripts/issue37_migrate.py'
+      - '.github/scripts/issue37_migrate_v2.py'
   push:
     branches: [main]
     paths:
@@ -42,7 +43,7 @@ jobs:
       - id: migrate
         name: Apply Issue 37 migration once
         run: |
-          python .github/scripts/issue37_migrate.py
+          python .github/scripts/issue37_migrate_v2.py
           if git diff --quiet; then
             echo 'changed=false' >> "$GITHUB_OUTPUT"
             exit 0
