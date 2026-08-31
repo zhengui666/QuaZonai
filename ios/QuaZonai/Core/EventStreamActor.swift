@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
@@ -17,6 +18,8 @@ public struct ServerEvent: Sendable, Equatable {
 }
 
 public actor EventStreamActor {
+    private static let logger = Logger(subsystem: "QuaZonai", category: "EventStream")
+
     private let client: APIClient
     private let session: URLSession
     private let persistCursor: @Sendable (Int) async -> Void
@@ -68,6 +71,7 @@ public actor EventStreamActor {
             } catch {
                 if Task.isCancelled { return }
                 attempt += 1
+                Self.logger.error("Event stream disconnected; scheduling reconnect attempt \(attempt)")
                 await onState(.reconnecting(attempt))
                 if case APIClientError.authenticationRequired = error {
                     _ = try? await client.refreshIfPossible()
