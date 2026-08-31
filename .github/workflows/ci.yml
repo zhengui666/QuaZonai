@@ -184,3 +184,6 @@ jobs:
       - name: Stop Compose
         if: always()
         run: docker compose --env-file .env.example down --volumes --remove-orphans
+
+  ios-client:
+    uses: ./.github/workflows/ios-client.yml
