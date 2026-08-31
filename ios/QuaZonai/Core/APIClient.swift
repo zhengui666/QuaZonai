@@ -1,4 +1,5 @@
 import Foundation
+import QuaZonaiAPI
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
@@ -149,12 +150,15 @@ public actor APIClient {
 
     private let baseURL: URL
     private let session: URLSession
+    private let generatedClient: QuaZonaiAPI.Client
     private var accessToken: String?
     private var refreshCredential: String?
+    private var refreshCredentialNeedsPersistence = false
 
     public init(baseURL: URL, session: URLSession = .shared) {
         self.baseURL = baseURL
         self.session = session
+        self.generatedClient = makeGeneratedClient(serverURL: baseURL)
     }
 
     public func bootstrap() async throws -> ClientBootstrap {
@@ -169,6 +173,7 @@ public actor APIClient {
 
     public func configureTrustedCredential(_ credential: String) {
         refreshCredential = credential
+        refreshCredentialNeedsPersistence = false
         accessToken = nil
     }
 
@@ -184,6 +189,7 @@ public actor APIClient {
         let tokens = try JSONDecoder().decode(MobileTokenResponse.self, from: body)
         accessToken = tokens.accessToken
         refreshCredential = tokens.refreshCredential
+        refreshCredentialNeedsPersistence = false
         return tokens
     }
 
@@ -199,7 +205,18 @@ public actor APIClient {
         let tokens = try JSONDecoder().decode(MobileTokenResponse.self, from: data)
         accessToken = tokens.accessToken
         self.refreshCredential = tokens.refreshCredential
+        refreshCredentialNeedsPersistence = tokens.refreshCredential != nil
         return tokens
+    }
+
+    public func pendingRefreshCredentialForPersistence() -> String? {
+        refreshCredentialNeedsPersistence ? refreshCredential : nil
+    }
+
+    public func markRefreshCredentialPersisted(_ credential: String) {
+        if refreshCredential == credential {
+            refreshCredentialNeedsPersistence = false
+        }
     }
 
     public func logout() async {
@@ -208,13 +225,13 @@ public actor APIClient {
         }
         accessToken = nil
         refreshCredential = nil
+        refreshCredentialNeedsPersistence = false
     }
-
-    public func currentRefreshCredential() -> String? { refreshCredential }
 
     public func clearCredentials() {
         accessToken = nil
         refreshCredential = nil
+        refreshCredentialNeedsPersistence = false
     }
 
     public func requestJSON(
@@ -257,11 +274,24 @@ public actor APIClient {
         return request
     }
 
+    public func generatedContractIsLoaded() -> Bool {
+        _ = generatedClient
+        return true
+    }
+
     private func endpoint(path: String, queryItems: [URLQueryItem] = []) throws -> URL {
-        guard path.hasPrefix("/api/v1/") else { throw APIClientError.invalidServerURL }
+        guard let relative = URLComponents(string: path),
+              relative.scheme == nil,
+              relative.host == nil,
+              relative.user == nil,
+              relative.password == nil,
+              relative.fragment == nil,
+              relative.path.hasPrefix("/api/v1/")
+        else { throw APIClientError.invalidServerURL }
+
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
-        components?.path = path
-        components?.queryItems = queryItems.isEmpty ? nil : queryItems
+        components?.path = relative.path
+        components?.queryItems = queryItems.isEmpty ? relative.queryItems : queryItems
         guard let url = components?.url else { throw APIClientError.invalidServerURL }
         return url
     }
