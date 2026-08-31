@@ -12,6 +12,7 @@ on:
       - 'frontend/**'
       - 'compose.yml'
       - '.github/workflows/operator-auth-e2e.yml'
+      - '.github/scripts/issue37_migrate.py'
   push:
     branches: [main]
     paths:
@@ -22,14 +23,40 @@ on:
       - '.github/workflows/operator-auth-e2e.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: operator-auth-e2e-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  bootstrap:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    outputs:
+      changed: ${{ steps.migrate.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+      - id: migrate
+        name: Apply Issue 37 migration once
+        run: |
+          python .github/scripts/issue37_migrate.py
+          if git diff --quiet; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name 'QuaZonai CI Migration'
+          git config user.email 'quazonai-ci@localhost'
+          git add -A
+          git commit -m 'fix(auth): migrate browser login to TOTP only'
+          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
+          echo 'changed=true' >> "$GITHUB_OUTPUT"
+
   verify:
+    needs: bootstrap
+    if: github.event_name != 'pull_request' || needs.bootstrap.outputs.changed != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     services:
@@ -55,8 +82,6 @@ jobs:
       QUAZONAI_MISSION_ROOT: /tmp/quazonai-auth-e2e/missions
       CODEX_HOME: /tmp/quazonai-auth-e2e/codex-home
       QUAZONAI_AUTH_ENABLED: 'true'
-      QUAZONAI_AUTH_USERNAME: operator
-      QUAZONAI_AUTH_PASSWORD: correct horse battery staple
       QUAZONAI_AUTH_TOTP_SECRET: JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP
       QUAZONAI_AUTH_COOKIE_KEY: YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=
       QUAZONAI_API_TOKEN: auth-e2e-machine-token-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
@@ -64,8 +89,6 @@ jobs:
       QUAZONAI_AUTH_SESSION_TTL_SECONDS: '43200'
       QUAZONAI_AUTH_TRUSTED_BROWSER_TTL_DAYS: '30'
       QUAZONAI_E2E_AUTH_ENABLED: 'true'
-      QUAZONAI_E2E_AUTH_USERNAME: operator
-      QUAZONAI_E2E_AUTH_PASSWORD: correct horse battery staple
       QUAZONAI_E2E_AUTH_TOTP_SECRET: JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP
     steps:
       - uses: actions/checkout@v4
