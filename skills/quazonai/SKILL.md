@@ -70,6 +70,10 @@ It does not own broker credentials, orders, fills, positions, accounts, NAV, exe
 
    If the API returns `AUTH_REQUIRED`, do not attempt an interactive browser login through the Agent. Treat a missing token as an environment prerequisite; treat a rejected token as a credential-rotation/configuration mismatch.
 
+   Never request, read, infer, copy, store, or expose `QUAZONAI_AUTH_TOTP_SECRET`, any one-time TOTP code, a browser session cookie, or a trusted-browser cookie. These browser credentials are outside the CLI/Agent identity boundary even when the user offers them.
+
+   Read [references/authentication.md](references/authentication.md) before diagnosing Operator Authentication.
+
 3. Resolve the Core API endpoint in this order:
 
    1. an explicit global `--endpoint URL`;

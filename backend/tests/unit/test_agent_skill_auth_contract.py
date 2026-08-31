@@ -78,6 +78,20 @@ def test_portable_skill_directly_forbids_browser_secret_access() -> None:
     ) in skill
 
 
+def test_standalone_skill_forbids_browser_authentication_secret_access() -> None:
+    skill = SKILL_PATH.read_text(encoding="utf-8")
+
+    assert "Never request, read, infer, copy, store, or expose" in skill
+    assert "[references/authentication.md](references/authentication.md)" in skill
+    for browser_secret in (
+        "QUAZONAI_AUTH_TOTP_SECRET",
+        "one-time TOTP code",
+        "browser session cookie",
+        "trusted-browser cookie",
+    ):
+        assert browser_secret in skill
+
+
 def test_skill_does_not_advertise_browser_credentials_as_cli_authentication() -> None:
     combined = _combined_skill_authentication_contract()
 
