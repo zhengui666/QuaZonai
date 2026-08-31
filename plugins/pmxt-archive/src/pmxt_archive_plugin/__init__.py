@@ -338,7 +338,7 @@ def _probe_archive_url(url: str) -> tuple[str, int | None]:
                 return "PROBE_ERROR", None
             content_length = response.headers.get("Content-Length")
             if content_length is None:
-                return "AVAILABLE", None
+                return "PROBE_ERROR", None
             try:
                 size = int(content_length)
             except ValueError:
