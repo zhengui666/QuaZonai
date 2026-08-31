@@ -1,0 +1,99 @@
+name: Codex Review Gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  actions: read
+  checks: read
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: codex-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  request-review-after-ci:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Wait for every required workflow on this exact HEAD
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const expected = new Set([
+              'CI',
+              'Frontend',
+              'Nautilus Runtime',
+              'Operator Auth E2E',
+              'Client Parity',
+              'iOS Universal Client',
+              'iOS Release Contract',
+            ]);
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const headSha = context.payload.pull_request.head.sha;
+            const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+            for (let attempt = 0; attempt < 90; attempt += 1) {
+              const response = await github.rest.actions.listWorkflowRunsForRepo({
+                owner,
+                repo,
+                event: 'pull_request',
+                head_sha: headSha,
+                per_page: 100,
+              });
+              const current = response.data.workflow_runs.filter((run) => run.head_sha === headSha);
+              const latest = new Map();
+              for (const run of current) {
+                const previous = latest.get(run.name);
+                if (!previous || Date.parse(run.created_at) > Date.parse(previous.created_at)) {
+                  latest.set(run.name, run);
+                }
+              }
+              const missing = [...expected].filter((name) => !latest.has(name));
+              const incomplete = [...expected].filter((name) => latest.get(name)?.status !== 'completed');
+              const failed = [...expected].filter((name) => {
+                const run = latest.get(name);
+                return run?.status === 'completed' && !['success', 'neutral', 'skipped'].includes(run.conclusion);
+              });
+              core.info(JSON.stringify({attempt, missing, incomplete, failed}));
+              if (failed.length > 0) {
+                core.setFailed(`Required workflows failed: ${failed.join(', ')}`);
+                return;
+              }
+              if (missing.length === 0 && incomplete.length === 0) {
+                return;
+              }
+              await sleep(20_000);
+            }
+            core.setFailed('Timed out before every required workflow completed on the exact PR HEAD.');
+      - name: Request one Codex review for the verified HEAD
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const issue_number = context.issue.number;
+            const headSha = context.payload.pull_request.head.sha;
+            const marker = `<!-- quazonai-codex-review:${headSha} -->`;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            });
+            if (comments.some((comment) => comment.body?.includes(marker))) {
+              core.info('Codex review was already requested for this exact HEAD.');
+              return;
+            }
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number,
+              body: `${marker}\n@codex review`,
+            });
