@@ -1,0 +1,30 @@
+name: iOS Release Contract
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  release-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Validate localization accessibility security and App Store metadata
+        run: python tools/ios_release_contract.py
+      - name: Validate JSON and property-list resources
+        run: |
+          python -m json.tool ios/Resources/ClientParity.xcstrings >/dev/null
+          python -m json.tool ios/AppStore/metadata.json >/dev/null
+          python - <<'PY'
+          import plistlib
+          from pathlib import Path
+          plistlib.loads(Path('ios/Resources/PrivacyInfo.xcprivacy').read_bytes())
+          PY
