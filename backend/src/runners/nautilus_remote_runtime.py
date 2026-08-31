@@ -59,6 +59,8 @@ _CATALOG_PREFIX = "catalog://"
 _PLUGIN_ROOT = Path(
     os.environ.get("QUAZONAI_NAUTILUS_PLUGIN_ROOT", "/var/lib/quazonai/plugins")
 ).resolve()
+_PLUGIN_PRLIMIT_PATH = "/usr/bin/prlimit"
+_PLUGIN_CHILD_MEMORY_LIMIT_BYTES = 8 * 1024 * 1024 * 1024
 _FORBIDDEN_BUNDLE_KEYS = {
     "api_key",
     "apikey",
@@ -251,9 +253,17 @@ def _plugin_child_command(bundle_path: str, workspace: Path) -> list[str]:
             status_code=503,
             detail="plugin imports require the bubblewrap sandbox in the runtime image",
         )
+    if not Path(_PLUGIN_PRLIMIT_PATH).is_file():
+        raise HTTPException(
+            status_code=503,
+            detail="plugin imports require the prlimit sandbox helper in the runtime image",
+        )
     python_path = _plugin_python(bundle_path)
     bundle_root = python_path.parent.parent
     return [
+        _PLUGIN_PRLIMIT_PATH,
+        f"--as={_PLUGIN_CHILD_MEMORY_LIMIT_BYTES}:{_PLUGIN_CHILD_MEMORY_LIMIT_BYTES}",
+        "--",
         bubblewrap,
         "--die-with-parent",
         "--new-session",
