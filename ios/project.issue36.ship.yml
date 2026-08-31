@@ -1,0 +1,88 @@
+name: QuaZonai
+options:
+  bundleIdPrefix: ai.quazonai
+  deploymentTarget:
+    iOS: "18.0"
+  xcodeVersion: "16.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+packages:
+  QuaZonaiAPI:
+    path: Issue36Packages/QuaZonaiAPIFinal
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: ""
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    SWIFT_EMIT_LOC_STRINGS: YES
+targets:
+  QuaZonaiIssue36:
+    type: application
+    platform: iOS
+    sources:
+      - path: Issue36App/QuaZonaiApp.swift
+      - path: Issue36Final/Core.swift
+      - path: Issue36Final/SharedViews.swift
+      - path: Issue36Final/RootView.swift
+      - path: Issue36App/ResearchViews.swift
+      - path: Issue36App/MarketViews.swift
+      - path: Issue36Final/AdministrationViews.swift
+    resources:
+      - path: Issue36Resources
+        excludes:
+          - Info.plist
+          - Info.release.plist
+    info:
+      path: Issue36Resources/Info.release.plist
+    dependencies:
+      - package: QuaZonaiAPI
+    settings:
+      base:
+        PRODUCT_NAME: QuaZonai
+        PRODUCT_MODULE_NAME: QuaZonaiIssue36
+        PRODUCT_BUNDLE_IDENTIFIER: ai.quazonai.operator
+        MARKETING_VERSION: 1.0.0
+        CURRENT_PROJECT_VERSION: 100
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        SUPPORTS_MACCATALYST: NO
+        GENERATE_INFOPLIST_FILE: NO
+  QuaZonaiIssue36Tests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Issue36Tests
+    dependencies:
+      - target: QuaZonaiIssue36
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.quazonai.operator.tests
+        GENERATE_INFOPLIST_FILE: YES
+  QuaZonaiIssue36UITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: Issue36UITests
+    dependencies:
+      - target: QuaZonaiIssue36
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.quazonai.operator.uitests
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  QuaZonai:
+    build:
+      targets:
+        QuaZonaiIssue36: all
+        QuaZonaiIssue36Tests: [test]
+        QuaZonaiIssue36UITests: [test]
+    test:
+      gatherCoverageData: true
+      targets:
+        - name: QuaZonaiIssue36Tests
+        - name: QuaZonaiIssue36UITests
+    archive:
+      config: Release
