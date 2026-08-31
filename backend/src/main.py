@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.routing import APIRoute
 from sqlalchemy import Engine
 
 from quazonai import __version__
@@ -14,11 +18,13 @@ from api.auth import router as auth_router
 from api.credentials import router as credentials_router
 from api.domain import router as domain_router
 from api.events import router as events_router
+from api.mobile_auth import router as mobile_auth_router
 from api.plugins import router as plugins_router
 from api.quant_runtime import router as quant_runtime_router
 from api.system import router as system_router
 from db.session import create_database_engine, create_session_factory
 from errors import QfError, install_error_handlers
+from mobile_auth import authenticate_mobile_access
 from operator_auth import (
     OperatorAuthRuntime,
     STREAM_ADMISSION_GENERATION_STATE_ATTRIBUTE,
@@ -36,6 +42,81 @@ _WORKBENCH_FRAME_HEADERS = {
     "X-Frame-Options": "DENY",
 }
 _BROWSER_PROTECTED_CACHE_CONTROL = "private, no-store"
+_NATIVE_PUBLIC_ROUTES = frozenset(
+    {
+        ("GET", "/api/v1/client/bootstrap"),
+        ("POST", "/api/v1/auth/mobile/login"),
+        ("POST", "/api/v1/auth/mobile/refresh"),
+    }
+)
+
+
+def _stable_operation_id(route: APIRoute) -> str:
+    """Generate wire-stable operation IDs from method and canonical route path."""
+    method = sorted(route.methods or {"GET"})[0].lower()
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", route.path_format).strip("_")
+    return f"{method}_{slug}"
+
+
+def _install_openapi_contract(app: FastAPI) -> None:
+    def custom_openapi() -> dict[str, Any]:
+        if app.openapi_schema is not None:
+            return app.openapi_schema
+        schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
+        components = schema.setdefault("components", {})
+        schemes = components.setdefault("securitySchemes", {})
+        schemes.update(
+            {
+                "BrowserSession": {
+                    "type": "apiKey",
+                    "in": "cookie",
+                    "name": "quazonai_session",
+                },
+                "MachineBearer": {
+                    "type": "http",
+                    "scheme": "bearer",
+                    "description": "QUAZONAI_API_TOKEN for machine automation only.",
+                },
+                "MobileAccessBearer": {
+                    "type": "http",
+                    "scheme": "bearer",
+                    "description": "Short-lived native operator access credential.",
+                },
+                "MobileRefreshBearer": {
+                    "type": "http",
+                    "scheme": "bearer",
+                    "description": "Rotating trusted-device refresh credential.",
+                },
+            }
+        )
+        for path, path_item in schema.get("paths", {}).items():
+            if not isinstance(path_item, dict):
+                continue
+            for method, operation in path_item.items():
+                if method.upper() not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+                    continue
+                if not isinstance(operation, dict):
+                    continue
+                pair = (method.upper(), path)
+                if pair in _NATIVE_PUBLIC_ROUTES or pair in {
+                    ("GET", "/api/v1/system/health"),
+                    ("POST", "/api/v1/auth/login"),
+                    ("GET", "/api/v1/auth/session"),
+                    ("POST", "/api/v1/auth/logout"),
+                }:
+                    operation["security"] = []
+                elif pair == ("POST", "/api/v1/auth/mobile/refresh"):
+                    operation["security"] = [{"MobileRefreshBearer": []}]
+                else:
+                    operation["security"] = [
+                        {"BrowserSession": []},
+                        {"MachineBearer": []},
+                        {"MobileAccessBearer": []},
+                    ]
+        app.openapi_schema = schema
+        return schema
+
+    app.openapi = custom_openapi  # type: ignore[method-assign]
 
 
 def _install_frontend(app: FastAPI, frontend_dist: Path) -> None:
@@ -76,12 +157,6 @@ def _response_already_prevents_storage(response: Response) -> bool:
 
 
 def _prevent_shared_caching_of_browser_response(response: Response) -> None:
-    """Mark a browser-authenticated API response as ineligible for shared storage.
-
-    Streaming endpoints already supply ``no-store`` together with transport-specific
-    headers. Leave those responses untouched so this middleware does not dilute their
-    streaming cache semantics.
-    """
     if _response_already_prevents_storage(response):
         return
     response.headers["Cache-Control"] = _BROWSER_PROTECTED_CACHE_CONTROL
@@ -99,32 +174,32 @@ def _install_operator_auth(app: FastAPI) -> None:
     ) -> Response:
         settings: Settings = request.app.state.settings
         path = request.url.path
+        pair = (request.method.upper(), path)
         if (
             not settings.auth_enabled
             or not path.startswith("/api/v1/")
+            or pair in _NATIVE_PUBLIC_ROUTES
             or is_operator_auth_exempt(request.method, path)
         ):
             return await call_next(request)
 
         runtime: OperatorAuthRuntime = request.app.state.operator_auth_runtime
-        # Capture this before credential validation. A logout that occurs after
-        # validation but before the endpoint starts must still invalidate an
-        # already-admitted EventSource request on its next poll.
         admission_generation = runtime.stream_generation()
-        # A credentialed logout invalidates process-wide browser issuance; every
-        # logout also changes only its caller's sealed browser epoch. Capture the
-        # latter from this request so a delayed renewal can never become valid in
-        # that browser after its own logout.
         renewal_cookie_issuance = runtime.cookie_issuance()
         renewal_browser_epoch = browser_cookie_epoch(request, settings)
         authorization = request.headers.get("authorization")
         if authorization is not None:
-            machine_identity = authenticate_machine(settings, authorization)
-            if machine_identity is None:
+            mobile_identity = authenticate_mobile_access(
+                settings,
+                request.app.state.session_factory,
+                authorization,
+            )
+            identity = mobile_identity or authenticate_machine(settings, authorization)
+            if identity is None:
                 return _auth_error_response(
                     QfError("AUTH_REQUIRED", "Operator authentication is required.", 401)
                 )
-            request.state.operator = machine_identity
+            request.state.operator = identity
             setattr(
                 request.state,
                 STREAM_ADMISSION_GENERATION_STATE_ATTRIBUTE,
@@ -171,6 +246,7 @@ def create_app(*, settings: Settings | None = None, engine: Engine | None = None
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
+        generate_unique_id_function=_stable_operation_id,
     )
     app.state.settings = runtime_settings
     app.state.engine = runtime_engine
@@ -180,12 +256,14 @@ def create_app(*, settings: Settings | None = None, engine: Engine | None = None
     install_error_handlers(app)
     _install_operator_auth(app)
     app.include_router(auth_router)
+    app.include_router(mobile_auth_router)
     app.include_router(system_router)
     app.include_router(domain_router)
     app.include_router(quant_runtime_router)
     app.include_router(plugins_router)
     app.include_router(credentials_router)
     app.include_router(events_router)
+    _install_openapi_contract(app)
 
     @app.get("/api/v1/openapi.json", include_in_schema=False)
     def openapi_schema() -> dict[str, object]:

@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
 from db.models import Event
+from mobile_auth import authenticate_mobile_access
 from operator_auth import (
     OperatorAuthRuntime,
     STREAM_ADMISSION_GENERATION_STATE_ATTRIBUTE,
@@ -74,7 +75,13 @@ def _stream_authorized(request: Request, generation: int) -> bool:
         return False
     authorization = request.headers.get("authorization")
     if authorization is not None:
-        return authenticate_machine(settings, authorization) is not None
+        mobile_identity = authenticate_mobile_access(
+            settings,
+            request.app.state.session_factory,
+            authorization,
+            touch=False,
+        )
+        return mobile_identity is not None or authenticate_machine(settings, authorization) is not None
     return authenticate_browser(request, settings) is not None
 
 
@@ -123,9 +130,6 @@ def stream_events(
         None,
     )
     if admission_generation is None:
-        # Direct endpoint calls in focused tests do not run the middleware. In
-        # production, the auth middleware has already captured this value when
-        # it successfully admitted the request.
         admission_generation = runtime.stream_generation()
     return StreamingResponse(
         _stream(request, start, admission_generation),

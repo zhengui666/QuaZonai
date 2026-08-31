@@ -11,7 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
-_AUTH_LOGIN_PATH = "/api/v1/auth/login"
+_AUTH_LOGIN_PATHS = frozenset({"/api/v1/auth/login", "/api/v1/auth/mobile/login"})
 _AUTH_PATH_PREFIX = "/api/v1/auth/"
 _NO_STORE_HEADERS = {"Cache-Control": "no-store", "Pragma": "no-cache"}
 
@@ -80,10 +80,7 @@ def install_error_handlers(app: FastAPI) -> None:
         request: Request,
         exc: RequestValidationError,
     ) -> Response:
-        if request.url.path == _AUTH_LOGIN_PATH:
-            # FastAPI's default validation envelope may include rejected input values.
-            # Login failures must not echo password or TOTP material or reveal which
-            # authentication factor failed validation.
+        if request.url.path in _AUTH_LOGIN_PATHS:
             return _error_response(
                 code="AUTH_INVALID",
                 message="Invalid operator credentials.",

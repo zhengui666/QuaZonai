@@ -9,7 +9,6 @@ from errors import QfError
 from operator_auth import (
     OperatorAuthRuntime,
     authenticate_browser,
-    authenticate_login,
     browser_cookie_epoch,
     has_valid_trusted_browser,
     login_source_key,
@@ -20,6 +19,7 @@ from settings import (
     MAX_OPERATOR_USERNAME_CHARACTERS,
     Settings,
 )
+from totp_core import constant_time_text_equal, verify_totp_once
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -69,23 +69,22 @@ def login(payload: LoginInput, request: Request, response: Response) -> SessionV
         )
 
     runtime: OperatorAuthRuntime = request.app.state.operator_auth_runtime
-    # Snapshot before credential verification. A logout that completes while the
-    # factors are being checked must prevent this request from clearing its
-    # barrier or minting a replacement browser session.
     login_cookie_issuance = runtime.cookie_issuance()
     login_browser_epoch = browser_cookie_epoch(request, settings)
     source = login_source_key(request, settings)
     if not runtime.login_limiter.allow_attempt(source):
         raise _invalid_credentials()
-    if not authenticate_login(
-        settings,
-        runtime,
-        username=payload.username,
-        password=payload.password,
-        totp_code=payload.totp_code,
-    ):
+
+    assert settings.operator_username is not None
+    assert settings.operator_password is not None
+    primary_factors_valid = constant_time_text_equal(
+        payload.username,
+        settings.operator_username,
+    ) and constant_time_text_equal(payload.password, settings.operator_password)
+    if not primary_factors_valid or not verify_totp_once(settings, runtime, payload.totp_code):
         runtime.login_limiter.record_failure(source)
         raise _invalid_credentials()
+
     if not runtime.complete_login_if_current(
         response,
         settings,
@@ -93,11 +92,8 @@ def login(payload: LoginInput, request: Request, response: Response) -> SessionV
         browser_epoch=login_browser_epoch,
         trust_browser=payload.trust_browser,
     ):
-        # Keep the public failure shape identical to incorrect credentials. In
-        # particular, do not return a successful SessionView without its cookie.
         raise _invalid_credentials()
     runtime.login_limiter.record_success(source)
-    assert settings.operator_username is not None
     return SessionView(
         authenticated=True,
         username=settings.operator_username,
@@ -118,8 +114,6 @@ def session(request: Request, response: Response) -> SessionView:
             auth_enabled=False,
         )
     runtime: OperatorAuthRuntime = request.app.state.operator_auth_runtime
-    # Snapshot before parsing the trusted credential. If logout wins while this
-    # request is authenticating, its renewal must not write a fresh session cookie.
     renewal_cookie_issuance = runtime.cookie_issuance()
     renewal_browser_epoch = browser_cookie_epoch(request, settings)
     identity = authenticate_browser(request, settings)
@@ -136,9 +130,6 @@ def session(request: Request, response: Response) -> SessionView:
             cookie_issuance=renewal_cookie_issuance,
             browser_epoch=renewal_browser_epoch,
         ):
-            # A logout revoked this trusted-browser credential after it was
-            # parsed. Do not report a usable session when its renewal lost the
-            # revocation race: AuthGate treats successful probes as current.
             raise QfError(
                 "AUTH_REQUIRED",
                 "Operator authentication is required.",
@@ -159,10 +150,6 @@ def logout(request: Request, response: Response) -> None:
     require_same_origin(request, settings)
     browser_identity = authenticate_browser(request, settings)
     runtime: OperatorAuthRuntime = request.app.state.operator_auth_runtime
-    # This also covers an anonymous request or a request that authenticated a
-    # trusted-browser credential just before expiry. `complete_logout` commits
-    # the barrier and cookie epoch atomically, while only a valid browser
-    # identity revokes active streams.
     runtime.complete_logout(
         response,
         settings,
