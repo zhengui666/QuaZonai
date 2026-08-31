@@ -232,7 +232,7 @@ def test_login_backoff_uses_same_generic_failure_and_recovers(
     throttled = client.post(
         "/api/v1/auth/login",
         headers={"Origin": "http://testserver"},
-        json=_payload(secured, password="correct horse battery staple"),
+        json=_payload(secured),
     )
 
     assert invalid.status_code == 401
@@ -243,7 +243,7 @@ def test_login_backoff_uses_same_generic_failure_and_recovers(
     recovered = client.post(
         "/api/v1/auth/login",
         headers={"Origin": "http://testserver"},
-        json=_payload(secured, password="correct horse battery staple"),
+        json=_payload(secured),
     )
     assert recovered.status_code == 200
 
@@ -304,7 +304,7 @@ def test_trusted_proxy_separates_login_backoff_sources(
             "Origin": "http://testserver",
             "X-Forwarded-For": "203.0.113.12, 10.20.30.3",
         },
-        json=_payload(secured, password="correct horse battery staple"),
+        json=_payload(secured),
     )
 
     assert rejected.status_code == 401
@@ -322,7 +322,7 @@ def test_logout_terminates_preexisting_stream_authorization(
     login = client.post(
         "/api/v1/auth/login",
         headers={"Origin": "http://testserver"},
-        json=_payload(secured, password="correct horse battery staple"),
+        json=_payload(secured),
     )
     assert login.status_code == 200
     session_cookie = client.cookies.get(SESSION_COOKIE_NAME)
@@ -949,7 +949,7 @@ def test_authenticated_logout_invalidates_older_browser_cookie_generation(
     login = logout_client.post(
         "/api/v1/auth/login",
         headers={"Origin": "http://testserver"},
-        json=_payload(secured, password="correct horse battery staple"),
+        json=_payload(secured),
     )
     assert login.status_code == 200
     session_cookie = logout_client.cookies.get(SESSION_COOKIE_NAME)
@@ -1318,7 +1318,7 @@ def test_stream_admission_generation_captured_by_middleware_closes_logout_race(
     login = client.post(
         "/api/v1/auth/login",
         headers={"Origin": "http://testserver"},
-        json=_payload(secured, password="correct horse battery staple"),
+        json=_payload(secured),
     )
     assert login.status_code == 200
     session_cookie = client.cookies.get(SESSION_COOKIE_NAME)
@@ -1354,7 +1354,7 @@ def test_middleware_captures_stream_generation_before_authentication_race(
     login = client.post(
         "/api/v1/auth/login",
         headers={"Origin": "http://testserver"},
-        json=_payload(secured, password="correct horse battery staple"),
+        json=_payload(secured),
     )
     assert login.status_code == 200
 
@@ -1398,7 +1398,7 @@ def test_stream_revalidation_observes_cookie_key_rotation(
     login = client.post(
         "/api/v1/auth/login",
         headers={"Origin": "http://testserver"},
-        json=_payload(secured, password="correct horse battery staple"),
+        json=_payload(secured),
     )
     assert login.status_code == 200
     session_cookie = client.cookies.get(SESSION_COOKIE_NAME)
