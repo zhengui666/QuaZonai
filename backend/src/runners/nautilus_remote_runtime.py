@@ -70,11 +70,13 @@ _PLUGIN_STAGING_ROOT = Path(
     )
 ).resolve()
 _PLUGIN_PRLIMIT_PATH = "/usr/bin/prlimit"
-_PLUGIN_CHILD_MEMORY_LIMIT_BYTES = 8 * 1024 * 1024 * 1024
-_PLUGIN_STAGED_OUTPUT_LIMIT_BYTES = 4 * 1024 * 1024 * 1024
+_PLUGIN_CHILD_MEMORY_LIMIT_BYTES = 6 * 1024 * 1024 * 1024
+_PLUGIN_STAGED_OUTPUT_LIMIT_BYTES = 2 * 1024 * 1024 * 1024
 _PLUGIN_STAGED_FILE_LIMIT = 10_000
 _PLUGIN_CHILD_OUTPUT_LIMIT_BYTES = 8 * 1024 * 1024
 _PLUGIN_CHILD_TOTAL_OUTPUT_LIMIT_BYTES = 32 * 1024 * 1024
+_PLUGIN_VALIDATION_BATCH_ROWS = 16_384
+_PLUGIN_VALIDATION_BATCH_BYTES = 64 * 1024 * 1024
 _FORBIDDEN_BUNDLE_KEYS = {
     "api_key",
     "apikey",
@@ -420,15 +422,17 @@ def _run_plugin_child(
     buffers = {"stdout": bytearray(), "stderr": bytearray()}
     total_output = 0
     deadline = time.monotonic() + timeout_seconds
+    request_bytes = json.dumps(request).encode("utf-8")
+    input_offset = 0
     try:
-        if process.stdin is not None:
-            try:
-                process.stdin.write(json.dumps(request).encode("utf-8"))
-                process.stdin.close()
-            except BrokenPipeError:
-                process.stdin.close()
         if process.stdout is None or process.stderr is None:
             raise _PluginChildLimit("plugin child protocol pipes are unavailable")
+        if process.stdin is not None:
+            os.set_blocking(process.stdin.fileno(), False)
+            if request_bytes:
+                selector.register(process.stdin, selectors.EVENT_WRITE, "stdin")
+            else:
+                process.stdin.close()
         selector.register(process.stdout, selectors.EVENT_READ, "stdout")
         selector.register(process.stderr, selectors.EVENT_READ, "stderr")
         while selector.get_map():
@@ -442,6 +446,26 @@ def _run_plugin_child(
             if remaining <= 0:
                 raise subprocess.TimeoutExpired(command, timeout_seconds)
             for key, _ in selector.select(min(0.25, remaining)):
+                if key.data == "stdin":
+                    try:
+                        written = os.write(key.fd, request_bytes[input_offset:])
+                    except BlockingIOError:
+                        continue
+                    except BrokenPipeError:
+                        file_object = key.fileobj
+                        selector.unregister(file_object)
+                        close = getattr(file_object, "close", None)
+                        if callable(close):
+                            close()
+                        continue
+                    input_offset += written
+                    if input_offset == len(request_bytes):
+                        file_object = key.fileobj
+                        selector.unregister(file_object)
+                        close = getattr(file_object, "close", None)
+                        if callable(close):
+                            close()
+                    continue
                 chunk = os.read(key.fd, 64 * 1024)
                 if not chunk:
                     file_object = key.fileobj
@@ -501,15 +525,18 @@ def _validate_staged_catalog(
         expected_instruments = set(descriptor.instrument_scope)
         if not expected_instruments or instruments != expected_instruments:
             raise ValueError("plugin catalog instruments do not match its descriptor")
-        data = catalog.query(data_class, identifiers=sorted(expected_instruments))
-        if not data or len(data) != descriptor.row_count:
-            raise ValueError("plugin catalog row count does not match its descriptor")
+        data_files = catalog._query_files(
+            data_class,
+            sorted(expected_instruments),
+            None,
+            None,
+        )
+        if not data_files:
+            raise ValueError("plugin catalog contains no data files")
         if descriptor.event_start is None or descriptor.event_end is None:
             raise ValueError("plugin catalog descriptor is missing event bounds")
         if descriptor.available_start is None or descriptor.available_end is None:
             raise ValueError("plugin catalog descriptor is missing availability bounds")
-        event_ns = [int(item.ts_event) for item in data]
-        available_ns = [int(item.ts_init) for item in data]
         expected_event = (
             int(descriptor.event_start.timestamp() * 1_000_000_000),
             int(descriptor.event_end.timestamp() * 1_000_000_000),
@@ -518,24 +545,62 @@ def _validate_staged_catalog(
             int(descriptor.available_start.timestamp() * 1_000_000_000),
             int(descriptor.available_end.timestamp() * 1_000_000_000),
         )
-        if (min(event_ns), max(event_ns)) != expected_event:
-            raise ValueError("plugin catalog event bounds do not match its descriptor")
-        if (min(available_ns), max(available_ns)) != expected_available:
-            raise ValueError("plugin catalog availability bounds do not match its descriptor")
-        if availability_coverage:
-            coverage_ns = [
-                (
-                    int(start.timestamp() * 1_000_000_000),
-                    int(end.timestamp() * 1_000_000_000),
-                )
-                for start, end in availability_coverage
-            ]
-            if any(
-                not any(start <= timestamp < end for start, end in coverage_ns)
-                for timestamp in available_ns
+        coverage_ns = [
+            (
+                int(start.timestamp() * 1_000_000_000),
+                int(end.timestamp() * 1_000_000_000),
+            )
+            for start, end in availability_coverage or []
+        ]
+        import pyarrow.dataset as pa_dataset
+
+        dataset = pa_dataset.dataset(data_files, filesystem=catalog.fs)
+        observed_rows = 0
+        event_min: int | None = None
+        event_max: int | None = None
+        available_min: int | None = None
+        available_max: int | None = None
+        scanner = dataset.scanner(
+            columns=["ts_event", "ts_init"],
+            batch_size=_PLUGIN_VALIDATION_BATCH_ROWS,
+            batch_readahead=1,
+            fragment_readahead=1,
+            use_threads=False,
+            cache_metadata=False,
+        )
+        for batch in scanner.to_batches():
+            if (
+                batch.num_rows > _PLUGIN_VALIDATION_BATCH_ROWS
+                or batch.nbytes > _PLUGIN_VALIDATION_BATCH_BYTES
             ):
-                raise ValueError("plugin catalog availability is outside selected archive shards")
-    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                raise ValueError("plugin catalog validation batch exceeds its size limit")
+            for row in batch.to_pylist():
+                event_timestamp = int(row["ts_event"])
+                available_timestamp = int(row["ts_init"])
+                observed_rows += 1
+                event_min = event_timestamp if event_min is None else min(event_min, event_timestamp)
+                event_max = event_timestamp if event_max is None else max(event_max, event_timestamp)
+                available_min = (
+                    available_timestamp
+                    if available_min is None
+                    else min(available_min, available_timestamp)
+                )
+                available_max = (
+                    available_timestamp
+                    if available_max is None
+                    else max(available_max, available_timestamp)
+                )
+                if coverage_ns and not any(
+                    start <= available_timestamp < end for start, end in coverage_ns
+                ):
+                    raise ValueError("plugin catalog availability is outside selected archive shards")
+        if observed_rows != descriptor.row_count or event_min is None or available_min is None:
+            raise ValueError("plugin catalog row count does not match its descriptor")
+        if (event_min, event_max) != expected_event:
+            raise ValueError("plugin catalog event bounds do not match its descriptor")
+        if (available_min, available_max) != expected_available:
+            raise ValueError("plugin catalog availability bounds do not match its descriptor")
+    except Exception as exc:
         raise HTTPException(
             status_code=502,
             detail="plugin catalog contents do not match its descriptor",
