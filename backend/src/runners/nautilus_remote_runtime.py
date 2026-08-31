@@ -203,22 +203,29 @@ def _read_catalog_descriptor(catalog_uri: str) -> CatalogDescriptor:
         raise HTTPException(status_code=500, detail="catalog metadata is invalid") from exc
 
 
+def _approved_plugin_pythons() -> dict[str, Path]:
+    """Index immutable bundle interpreters discovered from the server-owned root."""
+
+    bundle_root = _PLUGIN_ROOT / "bundles"
+    if not bundle_root.is_dir():
+        return {}
+    python_relative_path = "Scripts/python.exe" if os.name == "nt" else "bin/python"
+    approved: dict[str, Path] = {}
+    for bundle_dir in bundle_root.iterdir():
+        if bundle_dir.is_symlink() or not bundle_dir.is_dir():
+            continue
+        python_path = bundle_dir / python_relative_path
+        if python_path.is_file():
+            approved[f"bundles/{bundle_dir.name}"] = python_path
+    return approved
+
+
 def _plugin_python(bundle_path: str) -> Path:
     """Resolve only a prewarmed, immutable plugin bundle under the plugin root."""
 
-    relative = Path(bundle_path)
-    candidate = (_PLUGIN_ROOT / relative).resolve()
-    if (
-        relative.is_absolute()
-        or not relative.parts
-        or relative.parts[0] != "bundles"
-        or ".." in relative.parts
-        or not candidate.is_relative_to(_PLUGIN_ROOT)
-    ):
+    python_path = _approved_plugin_pythons().get(bundle_path)
+    if python_path is None:
         raise HTTPException(status_code=422, detail="plugin bundle path is invalid")
-    python_path = candidate / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-    if not python_path.is_file():
-        raise HTTPException(status_code=409, detail="plugin runtime bundle is unavailable")
     return python_path
 
 
