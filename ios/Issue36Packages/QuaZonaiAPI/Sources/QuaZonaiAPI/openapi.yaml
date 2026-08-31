@@ -1,0 +1,577 @@
+openapi: 3.0.3
+info:
+  title: QuaZonai Operator API
+  version: 1.0.0
+  description: Stable wire contract shared by Web, iPhone, and iPad operator clients.
+servers:
+  - url: /
+tags:
+  - name: client
+  - name: mobile-auth
+  - name: operator
+  - name: events
+paths:
+  /api/v1/client/bootstrap:
+    get:
+      tags: [client]
+      operationId: getClientBootstrap
+      responses:
+        '200':
+          description: Client compatibility and authentication bootstrap.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientBootstrap'
+  /api/v1/auth/mobile/login:
+    post:
+      tags: [mobile-auth]
+      operationId: mobileOperatorLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MobileLoginRequest'
+      responses:
+        '200':
+          description: Mobile operator session.
+          headers:
+            Cache-Control:
+              schema: {type: string}
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MobileAuthResponse'
+        '401': {$ref: '#/components/responses/AuthError'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+  /api/v1/auth/mobile/refresh:
+    post:
+      tags: [mobile-auth]
+      operationId: refreshMobileOperatorSession
+      security:
+        - mobileOrMachineBearer: []
+      responses:
+        '200':
+          description: Rotated mobile operator session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MobileAuthResponse'
+        '401': {$ref: '#/components/responses/AuthError'}
+  /api/v1/auth/mobile/logout:
+    post:
+      tags: [mobile-auth]
+      operationId: logoutMobileOperatorSession
+      security:
+        - mobileOrMachineBearer: []
+      responses:
+        '204': {description: Logged out and device session revoked.}
+        '401': {$ref: '#/components/responses/AuthError'}
+  /api/v1/auth/mobile/session:
+    get:
+      tags: [mobile-auth]
+      operationId: getMobileOperatorSession
+      security:
+        - mobileOrMachineBearer: []
+      responses:
+        '200':
+          description: Current native session.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ArbitraryObject'}
+        '401': {$ref: '#/components/responses/AuthError'}
+  /api/v1/auth/mobile/devices:
+    get:
+      tags: [mobile-auth]
+      operationId: listMobileOperatorDevices
+      security:
+        - mobileOrMachineBearer: []
+      responses:
+        '200':
+          description: Registered native devices.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectList'}
+        '401': {$ref: '#/components/responses/AuthError'}
+  /api/v1/auth/mobile/devices/{id}/revoke:
+    post:
+      tags: [mobile-auth]
+      operationId: revokeMobileOperatorDevice
+      security:
+        - mobileOrMachineBearer: []
+      parameters:
+        - $ref: '#/components/parameters/ResourceID'
+      responses:
+        '204': {description: Device revoked.}
+        '401': {$ref: '#/components/responses/AuthError'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /api/v1/readiness:
+    get:
+      tags: [operator]
+      operationId: getReadiness
+      security: &operatorSecurity
+        - mobileOrMachineBearer: []
+        - browserSession: []
+      responses:
+        '200': {$ref: '#/components/responses/ObjectResponse'}
+        '401': {$ref: '#/components/responses/AuthError'}
+  /api/v1/system/health:
+    get:
+      tags: [operator]
+      operationId: getSystemHealth
+      responses:
+        '200': {$ref: '#/components/responses/ObjectResponse'}
+  /api/v1/system/runtime-configuration:
+    get:
+      tags: [operator]
+      operationId: getRuntimeConfiguration
+      security: *operatorSecurity
+      responses:
+        '200': {$ref: '#/components/responses/ObjectResponse'}
+        '401': {$ref: '#/components/responses/AuthError'}
+    put:
+      tags: [operator]
+      operationId: updateRuntimeConfiguration
+      security: *operatorSecurity
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody: {$ref: '#/components/requestBodies/ObjectBody'}
+      responses:
+        '200': {$ref: '#/components/responses/ObjectResponse'}
+        '401': {$ref: '#/components/responses/AuthError'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+  /api/v1/ideas/preview:
+    post:
+      tags: [operator]
+      operationId: previewIdea
+      security: *operatorSecurity
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody: {$ref: '#/components/requestBodies/ObjectBody'}
+      responses:
+        '200': {$ref: '#/components/responses/ObjectResponse'}
+        '401': {$ref: '#/components/responses/AuthError'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+  /api/v1/research-programs:
+    get:
+      tags: [operator]
+      operationId: listResearchPrograms
+      security: *operatorSecurity
+      responses:
+        '200': {$ref: '#/components/responses/ListResponse'}
+        '401': {$ref: '#/components/responses/AuthError'}
+    post:
+      tags: [operator]
+      operationId: createResearchProgram
+      security: *operatorSecurity
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody: {$ref: '#/components/requestBodies/ObjectBody'}
+      responses:
+        '200': {$ref: '#/components/responses/ObjectResponse'}
+        '201': {$ref: '#/components/responses/ObjectResponse'}
+        '401': {$ref: '#/components/responses/AuthError'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+  /api/v1/research-programs/{id}:
+    get:
+      tags: [operator]
+      operationId: getResearchProgram
+      security: *operatorSecurity
+      parameters:
+        - $ref: '#/components/parameters/ResourceID'
+      responses:
+        '200': {$ref: '#/components/responses/ObjectResponse'}
+        '401': {$ref: '#/components/responses/AuthError'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /api/v1/research-programs/{id}/missions:
+    get:
+      tags: [operator]
+      operationId: listResearchProgramMissions
+      security: *operatorSecurity
+      parameters:
+        - $ref: '#/components/parameters/ResourceID'
+      responses:
+        '200': {$ref: '#/components/responses/ListResponse'}
+        '401': {$ref: '#/components/responses/AuthError'}
+  /api/v1/research-programs/{id}/activity:
+    get:
+      tags: [operator]
+      operationId: listResearchProgramActivity
+      security: *operatorSecurity
+      parameters:
+        - $ref: '#/components/parameters/ResourceID'
+      responses:
+        '200': {$ref: '#/components/responses/ListResponse'}
+        '401': {$ref: '#/components/responses/AuthError'}
+  /api/v1/research-programs/{id}/pause:
+    post: &programAction
+      tags: [operator]
+      operationId: pauseResearchProgram
+      security: *operatorSecurity
+      parameters:
+        - $ref: '#/components/parameters/ResourceID'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody: {$ref: '#/components/requestBodies/ObjectBody'}
+      responses:
+        '200': {$ref: '#/components/responses/ObjectResponse'}
+        '204': {description: State changed.}
+        '401': {$ref: '#/components/responses/AuthError'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /api/v1/research-programs/{id}/resume:
+    post:
+      <<: *programAction
+      operationId: resumeResearchProgram
+  /api/v1/research-programs/{id}/archive:
+    post:
+      <<: *programAction
+      operationId: archiveResearchProgram
+  /api/v1/research-programs/{id}/restore:
+    post:
+      <<: *programAction
+      operationId: restoreResearchProgram
+  /api/v1/alpha-library:
+    get:
+      tags: [operator]
+      operationId: listAlphaLibrary
+      security: *operatorSecurity
+      responses:
+        '200': {$ref: '#/components/responses/ListResponse'}
+        '401': {$ref: '#/components/responses/AuthError'}
+  /api/v1/alpha-library/{id}:
+    get:
+      tags: [operator]
+      operationId: getAlphaQualification
+      security: *operatorSecurity
+      parameters:
+        - $ref: '#/components/parameters/ResourceID'
+      responses:
+        '200': {$ref: '#/components/responses/ObjectResponse'}
+        '401': {$ref: '#/components/responses/AuthError'}
+  /api/v1/portfolio-mandates:
+    get:
+      tags: [operator]
+      operationId: listPortfolioMandates
+      security: *operatorSecurity
+      responses:
+        '200': {$ref: '#/components/responses/ListResponse'}
+        '401': {$ref: '#/components/responses/AuthError'}
+  /api/v1/portfolio-mandates/{id}/enable:
+    post: &mandateAction
+      tags: [operator]
+      operationId: enablePortfolioMandate
+      security: *operatorSecurity
+      parameters:
+        - $ref: '#/components/parameters/ResourceID'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody: {$ref: '#/components/requestBodies/ObjectBody'}
+      responses:
+        '200': {$ref: '#/components/responses/ObjectResponse'}
+        '204': {description: State changed.}
+        '401': {$ref: '#/components/responses/AuthError'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /api/v1/portfolio-mandates/{id}/disable:
+    post:
+      <<: *mandateAction
+      operationId: disablePortfolioMandate
+  /api/v1/portfolio-programs:
+    get:
+      tags: [operator]
+      operationId: listPortfolioPrograms
+      security: *operatorSecurity
+      responses:
+        '200': {$ref: '#/components/responses/ListResponse'}
+        '401': {$ref: '#/components/responses/AuthError'}
+  /api/v1/portfolio-candidates/{id}:
+    get:
+      tags: [operator]
+      operationId: getPortfolioCandidate
+      security: *operatorSecurity
+      parameters:
+        - $ref: '#/components/parameters/ResourceID'
+      responses:
+        '200': {$ref: '#/components/responses/ObjectResponse'}
+        '401': {$ref: '#/components/responses/AuthError'}
+  /api/v1/approvals:
+    get:
+      tags: [operator]
+      operationId: listApprovals
+      security: *operatorSecurity
+      responses:
+        '200': {$ref: '#/components/responses/ListResponse'}
+        '401': {$ref: '#/components/responses/AuthError'}
+  /api/v1/approvals/{id}/approve:
+    post: &approvalAction
+      tags: [operator]
+      operationId: approveCandidate
+      security: *operatorSecurity
+      parameters:
+        - $ref: '#/components/parameters/ResourceID'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody: {$ref: '#/components/requestBodies/ObjectBody'}
+      responses:
+        '200': {$ref: '#/components/responses/ObjectResponse'}
+        '204': {description: Decision recorded.}
+        '401': {$ref: '#/components/responses/AuthError'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+  /api/v1/approvals/{id}/reject:
+    post:
+      <<: *approvalAction
+      operationId: rejectCandidate
+  /api/v1/handoffs:
+    get:
+      tags: [operator]
+      operationId: listHandoffs
+      security: *operatorSecurity
+      responses:
+        '200': {$ref: '#/components/responses/ListResponse'}
+        '401': {$ref: '#/components/responses/AuthError'}
+  /api/v1/handoffs/{id}/revoke:
+    post:
+      tags: [operator]
+      operationId: revokeHandoff
+      security: *operatorSecurity
+      parameters:
+        - $ref: '#/components/parameters/ResourceID'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody: {$ref: '#/components/requestBodies/ObjectBody'}
+      responses:
+        '200': {$ref: '#/components/responses/ObjectResponse'}
+        '204': {description: Handoff revoked.}
+        '401': {$ref: '#/components/responses/AuthError'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /api/v1/universes:
+    get:
+      tags: [operator]
+      operationId: listUniverses
+      security: *operatorSecurity
+      responses:
+        '200': {$ref: '#/components/responses/ListResponse'}
+        '401': {$ref: '#/components/responses/AuthError'}
+  /api/v1/datasets:
+    get:
+      tags: [operator]
+      operationId: listDatasets
+      security: *operatorSecurity
+      responses:
+        '200': {$ref: '#/components/responses/ListResponse'}
+        '401': {$ref: '#/components/responses/AuthError'}
+  /api/v1/data-sources:
+    get:
+      tags: [operator]
+      operationId: listDataSources
+      security: *operatorSecurity
+      responses:
+        '200': {$ref: '#/components/responses/ListResponse'}
+        '401': {$ref: '#/components/responses/AuthError'}
+    post:
+      tags: [operator]
+      operationId: registerDataSource
+      security: *operatorSecurity
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody: {$ref: '#/components/requestBodies/ObjectBody'}
+      responses:
+        '200': {$ref: '#/components/responses/ObjectResponse'}
+        '201': {$ref: '#/components/responses/ObjectResponse'}
+        '401': {$ref: '#/components/responses/AuthError'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /api/v1/downstream-systems:
+    get:
+      tags: [operator]
+      operationId: listDownstreamSystems
+      security: *operatorSecurity
+      responses:
+        '200': {$ref: '#/components/responses/ListResponse'}
+        '401': {$ref: '#/components/responses/AuthError'}
+    post:
+      tags: [operator]
+      operationId: registerDownstreamSystem
+      security: *operatorSecurity
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody: {$ref: '#/components/requestBodies/ObjectBody'}
+      responses:
+        '200': {$ref: '#/components/responses/ObjectResponse'}
+        '201': {$ref: '#/components/responses/ObjectResponse'}
+        '401': {$ref: '#/components/responses/AuthError'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /api/v1/plugin-releases:
+    get:
+      tags: [operator]
+      operationId: listPluginReleases
+      security: *operatorSecurity
+      responses:
+        '200': {$ref: '#/components/responses/ListResponse'}
+        '401': {$ref: '#/components/responses/AuthError'}
+  /api/v1/events:
+    get:
+      tags: [events]
+      operationId: listEvents
+      security: *operatorSecurity
+      parameters:
+        - name: after_id
+          in: query
+          schema: {type: integer, minimum: 0, default: 0}
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 1000, default: 200}
+      responses:
+        '200': {$ref: '#/components/responses/ListResponse'}
+        '401': {$ref: '#/components/responses/AuthError'}
+  /api/v1/events/stream:
+    get:
+      tags: [events]
+      operationId: streamEvents
+      security: *operatorSecurity
+      parameters:
+        - name: cursor
+          in: query
+          schema: {type: integer, minimum: 0}
+        - name: Last-Event-ID
+          in: header
+          schema: {type: string}
+      responses:
+        '200':
+          description: Ordered Server-Sent Events stream.
+          content:
+            text/event-stream:
+              schema: {type: string}
+        '401': {$ref: '#/components/responses/AuthError'}
+components:
+  securitySchemes:
+    mobileOrMachineBearer:
+      type: http
+      scheme: bearer
+    browserSession:
+      type: apiKey
+      in: cookie
+      name: quazonai_session
+  parameters:
+    ResourceID:
+      name: id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema: {type: string, format: uuid}
+  requestBodies:
+    ObjectBody:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ArbitraryObject'}
+  responses:
+    ObjectResponse:
+      description: Operator resource.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ArbitraryObject'}
+    ListResponse:
+      description: Operator resource list.
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: '#/components/schemas/ObjectList'
+              - type: object
+                required: [items]
+                properties:
+                  items: {$ref: '#/components/schemas/ObjectList'}
+    AuthError:
+      description: Authentication is required or invalid.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorEnvelope'}
+    ValidationError:
+      description: Input validation failed.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorEnvelope'}
+    Conflict:
+      description: Optimistic concurrency or state conflict.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorEnvelope'}
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorEnvelope'}
+  schemas:
+    ArbitraryObject:
+      type: object
+      additionalProperties: true
+    ObjectList:
+      type: array
+      items: {$ref: '#/components/schemas/ArbitraryObject'}
+    ClientBootstrap:
+      type: object
+      additionalProperties: false
+      required:
+        - server_version
+        - auth_enabled
+        - operator_client_capability_epoch
+        - minimum_ios_capability_epoch
+        - minimum_ios_app_version
+      properties:
+        server_version: {type: string}
+        auth_enabled: {type: boolean}
+        operator_client_capability_epoch: {type: integer}
+        minimum_ios_capability_epoch: {type: integer}
+        minimum_ios_app_version: {type: string}
+    MobileLoginRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - totp_code
+        - installation_id
+        - device_name
+        - device_family
+        - os_version
+        - app_version
+        - app_build
+        - trust_device
+      properties:
+        totp_code:
+          type: string
+          pattern: '^[0-9]{6}$'
+          minLength: 6
+          maxLength: 6
+        installation_id: {type: string, format: uuid}
+        device_name: {type: string, minLength: 1, maxLength: 200}
+        device_family: {type: string, enum: [IPHONE, IPAD]}
+        os_version: {type: string, minLength: 1, maxLength: 64}
+        app_version: {type: string, minLength: 1, maxLength: 64}
+        app_build: {type: string, minLength: 1, maxLength: 64}
+        trust_device: {type: boolean}
+    MobileAuthResponse:
+      type: object
+      additionalProperties: false
+      required: [access_token, token_type, access_expires_at, device]
+      properties:
+        access_token: {type: string}
+        token_type: {type: string, enum: [Bearer]}
+        access_expires_at: {type: string, format: date-time}
+        refresh_credential: {type: string, nullable: true}
+        refresh_expires_at: {type: string, format: date-time, nullable: true}
+        device: {$ref: '#/components/schemas/ArbitraryObject'}
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, details]
+          properties:
+            code: {type: string}
+            message: {type: string}
+            details: {$ref: '#/components/schemas/ArbitraryObject'}
