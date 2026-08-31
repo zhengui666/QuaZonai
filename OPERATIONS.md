@@ -575,7 +575,7 @@ PMXT Archive 读取不需要 API key；本地部署也不应填写 PMXT 交易�
 }
 ```
 
-`archive_start`/`archive_end` 是 UTC 小时边界，`archive_end` 不包含在范围内。Manifest 检查只发送固定规则的 HTTPS HEAD 探测；缺失小时和探测错误会被分别记录，不会伪装成连续历史。研究时调用 `POST /api/v1/quant-runtime/archive-manifests/{manifest_id}/materialize`，提交一个 instrument 和 `[start, end)` 小时范围；单次最多 168 小时、估算源文件最多 20 GiB，且每个 AVAILABLE 分片必须有已知大小，插件只下载并过滤选中的分片，生成新的 immutable Dataset Revision。Core 会校验请求范围逐小时无重叠/缺口；缺失小时与探测错误会进入 quality evidence，不会伪装成连续数据，也不会直接判定 Alpha 失败。不能把整库下载到本机。PMXT v2 当前可用历史的起点由归档源决定，不等于 Polymarket 的全部历史。
+`archive_start`/`archive_end` 是 UTC 小时边界，`archive_end` 不包含在范围内。Manifest 检查只发送固定规则的 HTTPS HEAD 探测；缺失小时和探测错误会被分别记录，不会伪装成连续历史。研究时调用 `POST /api/v1/quant-runtime/archive-manifests/{manifest_id}/materialize`，提交一个 instrument 和 `[start, end)` 小时范围；单次最多 168 小时、估算源文件最多 20 GiB，且每个 AVAILABLE 分片必须有已知大小，插件只下载并过滤选中的分片，使用分批 Parquet 解码（最多 16,384 行/批、64 MiB/批、累计解码输入 4 GiB），在独立 child 的 8 GiB address-space 与 runtime 容器的 10 GiB memory 上限内生成新的 immutable Dataset Revision。Core 会校验请求范围逐小时无重叠/缺口；缺失小时与探测错误会进入 quality evidence，不会伪装成连续数据，也不会直接判定 Alpha 失败。不能把整库下载到本机。PMXT v2 当前可用历史的起点由归档源决定，不等于 Polymarket 的全部历史。
 
 ## 15. 故障呈现原则
 
