@@ -56,6 +56,13 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def normalize_utc(value: datetime) -> datetime:
+    """Return a timezone-aware UTC timestamp for persisted domain datetimes."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _mobile_key(settings: Settings) -> bytes:
     """Derive a key-separated native credential key from the cookie root key."""
     return HKDF(

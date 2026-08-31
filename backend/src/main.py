@@ -51,6 +51,22 @@ _NATIVE_PUBLIC_ROUTES = frozenset(
     }
 )
 
+_AUTH_LOGIN_ROUTES = frozenset(
+    {
+        ("POST", "/api/v1/auth/login"),
+        ("POST", "/api/v1/auth/mobile/login"),
+    }
+)
+_DOWNSTREAM_BEARER_ROUTES = frozenset(
+    {
+        ("POST", "/api/v1/handoffs/{handoff_id}/claim"),
+        ("POST", "/api/v1/handoffs/{handoff_id}/accept"),
+        ("POST", "/api/v1/handoffs/{handoff_id}/reject"),
+        ("GET", "/api/v1/handoffs/{handoff_id}/package"),
+        ("POST", "/api/v1/handoffs/{handoff_id}/feedback"),
+    }
+)
+
 
 def _stable_operation_id(route: APIRoute) -> str:
     """Generate wire-stable operation IDs from method and canonical route path."""
@@ -65,6 +81,35 @@ def _install_openapi_contract(app: FastAPI) -> None:
             return app.openapi_schema
         schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
         components = schema.setdefault("components", {})
+        schemas = components.setdefault("schemas", {})
+        schemas.update(
+            {
+                "ErrorBody": {
+                    "properties": {
+                        "code": {"type": "string", "title": "Code"},
+                        "message": {"type": "string", "title": "Message"},
+                        "details": {
+                            "type": "object",
+                            "additionalProperties": True,
+                            "title": "Details",
+                        },
+                    },
+                    "additionalProperties": False,
+                    "type": "object",
+                    "required": ["code", "message"],
+                    "title": "ErrorBody",
+                },
+                "ErrorEnvelope": {
+                    "properties": {
+                        "error": {"$ref": "#/components/schemas/ErrorBody"},
+                    },
+                    "additionalProperties": False,
+                    "type": "object",
+                    "required": ["error"],
+                    "title": "ErrorEnvelope",
+                },
+            }
+        )
         schemes = components.setdefault("securitySchemes", {})
         schemes.update(
             {
@@ -88,6 +133,11 @@ def _install_openapi_contract(app: FastAPI) -> None:
                     "scheme": "bearer",
                     "description": "Rotating trusted-device refresh credential.",
                 },
+                "DownstreamBearer": {
+                    "type": "http",
+                    "scheme": "bearer",
+                    "description": "Service token issued once to the selected downstream system.",
+                },
             }
         )
         for path, path_item in schema.get("paths", {}).items():
@@ -101,6 +151,8 @@ def _install_openapi_contract(app: FastAPI) -> None:
                 pair = (method.upper(), path)
                 if pair == ("POST", "/api/v1/auth/mobile/refresh"):
                     operation["security"] = [{"MobileRefreshBearer": []}]
+                elif pair in _DOWNSTREAM_BEARER_ROUTES:
+                    operation["security"] = [{"DownstreamBearer": []}]
                 elif pair in _NATIVE_PUBLIC_ROUTES or pair in {
                     ("GET", "/api/v1/system/health"),
                     ("POST", "/api/v1/auth/login"),
@@ -114,6 +166,29 @@ def _install_openapi_contract(app: FastAPI) -> None:
                         {"MachineBearer": []},
                         {"MobileAccessBearer": []},
                     ]
+
+                responses = operation.setdefault("responses", {})
+                if pair in _AUTH_LOGIN_ROUTES:
+                    responses.pop("422", None)
+                    responses["401"] = {
+                        "description": "Invalid operator credentials.",
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/ErrorEnvelope"}
+                            }
+                        },
+                    }
+                elif "422" in responses:
+                    responses["422"] = {
+                        "description": "Request validation failed.",
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/ErrorEnvelope"}
+                            }
+                        },
+                    }
+        schemas.pop("HTTPValidationError", None)
+        schemas.pop("ValidationError", None)
         app.openapi_schema = schema
         return schema
 

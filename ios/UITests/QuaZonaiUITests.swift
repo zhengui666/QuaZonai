@@ -41,8 +41,23 @@ final class QuaZonaiUITests: XCTestCase {
 
     func testProgramActions() { testResearch() }
     func testAlpha() { openMoreDestination("Alpha Library"); XCTAssertTrue(app.navigationBars["Alpha Library"].waitForExistence(timeout: 6)) }
-    func testPortfolio() { if app.tabBars.buttons["Portfolio"].exists { app.tabBars.buttons["Portfolio"].tap() }; XCTAssertTrue(app.navigationBars["Portfolio"].waitForExistence(timeout: 6)) }
-    func testApproval() { if app.tabBars.buttons["Approvals"].exists { app.tabBars.buttons["Approvals"].tap() }; XCTAssertTrue(app.navigationBars["Approvals"].waitForExistence(timeout: 6)) }
+    func testPortfolio() {
+        if app.tabBars.buttons["Portfolio"].exists {
+            app.tabBars.buttons["Portfolio"].tap()
+        } else {
+            openMoreDestination("Portfolio")
+        }
+        XCTAssertTrue(app.navigationBars["Portfolio"].waitForExistence(timeout: 6))
+    }
+
+    func testApproval() {
+        if app.tabBars.buttons["Approvals"].exists {
+            app.tabBars.buttons["Approvals"].tap()
+        } else {
+            openMoreDestination("Approvals")
+        }
+        XCTAssertTrue(app.navigationBars["Approvals"].waitForExistence(timeout: 6))
+    }
     func testReject() { testApproval(); XCTAssertTrue(app.buttons["Reject"].firstMatch.waitForExistence(timeout: 6)) }
     func testHandoff() { openMoreDestination("Handoff & Feedback"); XCTAssertTrue(app.navigationBars["Handoff & Feedback"].waitForExistence(timeout: 6)) }
     func testHandoffRevoke() { testHandoff() }

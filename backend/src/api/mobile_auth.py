@@ -18,6 +18,7 @@ from mobile_auth import (
     credential_from_authorization,
     issue_mobile_credential,
     load_mobile_device_for_update,
+    normalize_utc,
     utc_now,
 )
 from operator_auth import OperatorAuthRuntime, login_source_key
@@ -251,12 +252,17 @@ def mobile_refresh(request: Request, response: Response) -> MobileTokenView:
     now = utc_now()
     with factory() as session:
         device = load_mobile_device_for_update(session, claims.device_id)
+        refresh_expires_at = (
+            normalize_utc(device.refresh_expires_at)
+            if device is not None and device.refresh_expires_at is not None
+            else None
+        )
         if (
             device is None
             or device.revoked_at is not None
             or device.credential_generation != claims.generation
-            or device.refresh_expires_at is None
-            or device.refresh_expires_at <= now
+            or refresh_expires_at is None
+            or refresh_expires_at <= now
         ):
             raise _invalid()
         device.credential_generation += 1

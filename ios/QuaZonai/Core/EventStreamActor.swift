@@ -23,6 +23,7 @@ public actor EventStreamActor {
     private let client: APIClient
     private let session: URLSession
     private let persistCursor: @Sendable (Int) async -> Void
+    private let persistRefreshCredential: @Sendable () async -> Void
     private var task: Task<Void, Never>?
     private var eventCursor: EventSequenceCursor
 
@@ -30,12 +31,14 @@ public actor EventStreamActor {
         client: APIClient,
         cursor: Int = 0,
         session: URLSession = .shared,
-        persistCursor: @escaping @Sendable (Int) async -> Void = { _ in }
+        persistCursor: @escaping @Sendable (Int) async -> Void = { _ in },
+        persistRefreshCredential: @escaping @Sendable () async -> Void = {}
     ) {
         self.client = client
         self.eventCursor = EventSequenceCursor(cursor)
         self.session = session
         self.persistCursor = persistCursor
+        self.persistRefreshCredential = persistRefreshCredential
     }
 
     deinit { task?.cancel() }
@@ -73,8 +76,9 @@ public actor EventStreamActor {
                 attempt += 1
                 Self.logger.error("Event stream disconnected; scheduling reconnect attempt \(attempt)")
                 await onState(.reconnecting(attempt))
-                if case APIClientError.authenticationRequired = error {
-                    _ = try? await client.refreshIfPossible()
+                if case APIClientError.authenticationRequired = error,
+                   (try? await client.refreshIfPossible()) != nil {
+                    await persistRefreshCredential()
                 }
                 let delay = EventStreamBackoff.delaySeconds(
                     attempt: attempt,

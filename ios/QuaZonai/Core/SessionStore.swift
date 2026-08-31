@@ -12,6 +12,28 @@ enum SessionPhase: Equatable {
     case incompatible(String)
 }
 
+
+struct MutationIdempotencyRegistry {
+    private var pending: [String: String] = [:]
+
+    mutating func key(for fingerprint: String) -> String {
+        if let existing = pending[fingerprint] { return existing }
+        let generated = UUID().uuidString
+        pending[fingerprint] = generated
+        return generated
+    }
+
+    mutating func finish(fingerprint: String, key: String) {
+        if pending[fingerprint] == key {
+            pending.removeValue(forKey: fingerprint)
+        }
+    }
+
+    mutating func removeAll() {
+        pending.removeAll()
+    }
+}
+
 @MainActor
 final class SessionStore: ObservableObject {
     @Published var phase: SessionPhase = .serverSetup
@@ -31,6 +53,7 @@ final class SessionStore: ObservableObject {
     private(set) var authEnabled = false
     private var client: APIClient?
     private var eventStream: EventStreamActor?
+    private var mutationKeys = MutationIdempotencyRegistry()
 
     private let serverKey = "quazonai.server-url"
     private let languageKey = "quazonai.language"
@@ -67,6 +90,7 @@ final class SessionStore: ObservableObject {
             profile = baseURL.absoluteString
             defaults.set(profile, forKey: serverKey)
             client = next
+            mutationKeys.removeAll()
             authEnabled = bootstrap.authEnabled
             directAccessWarning = !bootstrap.authEnabled
             if bootstrap.authEnabled {
@@ -183,28 +207,40 @@ final class SessionStore: ObservableObject {
         path: String,
         method: HTTPMethod = .post,
         body: JSONValue = .object([:]),
-        idempotencyKey: String = UUID().uuidString
+        idempotencyKey: String? = nil
     ) async throws -> JSONValue {
         guard connectivity.isOnline else {
             throw APIClientError.http(status: 0, code: "OFFLINE_MUTATION_BLOCKED", message: "Mutations are disabled while offline.")
         }
         guard let client else { throw APIClientError.invalidServerURL }
+        let fingerprint = try mutationFingerprint(path: path, method: method, body: body)
+        let tracksGeneratedKey = idempotencyKey == nil
+        let stableKey = idempotencyKey ?? mutationKeys.key(for: fingerprint)
         do {
             let value = try await client.requestJSON(
                 path: path,
                 method: method,
                 body: body,
-                idempotencyKey: idempotencyKey
+                idempotencyKey: stableKey
             )
             await persistRotatedRefreshCredentialIfNeeded()
+            if tracksGeneratedKey {
+                mutationKeys.finish(fingerprint: fingerprint, key: stableKey)
+            }
             return value
         } catch APIClientError.authenticationRequired {
             await persistRotatedRefreshCredentialIfNeeded()
+            if tracksGeneratedKey {
+                mutationKeys.finish(fingerprint: fingerprint, key: stableKey)
+            }
             phase = .loginRequired
             stopEvents()
             throw APIClientError.authenticationRequired
         } catch {
             await persistRotatedRefreshCredentialIfNeeded()
+            if tracksGeneratedKey && !shouldRetainMutationKey(after: error) {
+                mutationKeys.finish(fingerprint: fingerprint, key: stableKey)
+            }
             throw error
         }
     }
@@ -213,6 +249,7 @@ final class SessionStore: ObservableObject {
         stopEvents()
         if let client { await client.logout() }
         try? keychain.delete(account: profile)
+        mutationKeys.removeAll()
         phase = authEnabled ? .loginRequired : .serverSetup
     }
 
@@ -221,6 +258,7 @@ final class SessionStore: ObservableObject {
         if let client { await client.logout() }
         try? keychain.delete(account: profile)
         defaults.removeObject(forKey: serverKey)
+        mutationKeys.removeAll()
         client = nil
         profile = ""
         phase = .serverSetup
@@ -234,6 +272,25 @@ final class SessionStore: ObservableObject {
     func setAppearance(_ value: AppAppearance) {
         appearance = value
         defaults.set(value.rawValue, forKey: appearanceKey)
+    }
+
+    private func mutationFingerprint(
+        path: String,
+        method: HTTPMethod,
+        body: JSONValue
+    ) throws -> String {
+        let canonicalBody = String(decoding: try body.encodedData(pretty: true), as: UTF8.self)
+        return "\(profile)\n\(method.rawValue)\n\(path)\n\(canonicalBody)"
+    }
+
+    private func shouldRetainMutationKey(after error: Error) -> Bool {
+        if error is URLError || error is CancellationError || error is DecodingError {
+            return true
+        }
+        if let apiError = error as? APIClientError, apiError == .invalidResponse {
+            return true
+        }
+        return (error as NSError).domain == NSURLErrorDomain
     }
 
     private func cachedFallback(
@@ -272,9 +329,16 @@ final class SessionStore: ObservableObject {
         guard eventStream == nil, let client else { return }
         let startingCursor = cache?.cursor(profile: profile) ?? 0
         let currentProfile = profile
-        let stream = EventStreamActor(client: client, cursor: startingCursor) { [weak self] id in
-            await MainActor.run { self?.cache?.saveCursor(id, profile: currentProfile) }
-        }
+        let stream = EventStreamActor(
+            client: client,
+            cursor: startingCursor,
+            persistCursor: { [weak self] id in
+                await MainActor.run { self?.cache?.saveCursor(id, profile: currentProfile) }
+            },
+            persistRefreshCredential: { [weak self] in
+                await self?.persistRotatedRefreshCredentialIfNeeded()
+            }
+        )
         eventStream = stream
         Task {
             await stream.start(

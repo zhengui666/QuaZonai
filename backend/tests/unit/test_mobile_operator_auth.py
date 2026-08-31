@@ -72,6 +72,24 @@ def test_bootstrap_and_openapi_expose_totp_only_native_login(settings: Settings,
         refresh_security = schema["paths"]["/api/v1/auth/mobile/refresh"]["post"]["security"]
         assert refresh_security == [{"MobileRefreshBearer": []}]
 
+        schemes = schema["components"]["securitySchemes"]
+        assert "DownstreamBearer" in schemes
+        downstream_operations = {
+            ("post", "/api/v1/handoffs/{handoff_id}/claim"),
+            ("post", "/api/v1/handoffs/{handoff_id}/accept"),
+            ("post", "/api/v1/handoffs/{handoff_id}/reject"),
+            ("get", "/api/v1/handoffs/{handoff_id}/package"),
+            ("post", "/api/v1/handoffs/{handoff_id}/feedback"),
+        }
+        for method, path in downstream_operations:
+            assert schema["paths"][path][method]["security"] == [{"DownstreamBearer": []}]
+
+        claim_responses = schema["paths"]["/api/v1/handoffs/{handoff_id}/claim"]["post"]["responses"]
+        assert claim_responses["422"]["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/ErrorEnvelope"
+        }
+        assert "422" not in schema["paths"]["/api/v1/auth/mobile/login"]["post"]["responses"]
+
         rejected = _login_payload()
         rejected["username"] = "operator@example.test"
         rejected["password"] = "must-not-be-accepted"

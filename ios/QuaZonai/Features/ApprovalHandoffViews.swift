@@ -1,5 +1,16 @@
 import SwiftUI
 
+private struct IdentifiedApproval: Identifiable {
+    let id: String
+    let value: JSONValue
+
+    init?(_ value: JSONValue) {
+        guard let id = value.stableID else { return nil }
+        self.id = id
+        self.value = value
+    }
+}
+
 private let approvalRejectReasons = [
     "RESEARCH_EVIDENCE_INSUFFICIENT",
     "RISK_PROFILE_UNACCEPTABLE",
@@ -36,8 +47,8 @@ struct ApprovalInboxView: View {
         List {
             if let error { Text(error).foregroundStyle(.red) }
             if approvals.isEmpty && error == nil { ContentUnavailableView(L10n.text(.empty, session.language), systemImage: "checkmark.seal") }
-            ForEach(Array(visible.enumerated()), id: \.offset) { _, approval in
-                ApprovalCard(approval: approval, downstreams: downstreams) { await reload() }
+            ForEach(visible.compactMap(IdentifiedApproval.init)) { item in
+                ApprovalCard(approval: item.value, downstreams: downstreams) { await reload() }
             }
         }
         .navigationTitle(L10n.text(.approvals, session.language))
@@ -124,11 +135,9 @@ private struct ApprovalCard: View {
     }
 
     private func approve() async {
-        if purpose == "LIVE" {
-            guard await BiometricGate.authorize(reason: "Approve a Live handoff candidate") else {
-                error = "Biometric confirmation was not completed."
-                return
-            }
+        guard await BiometricGate.authorize(reason: "Approve this portfolio handoff candidate") else {
+            error = "Biometric confirmation was not completed."
+            return
         }
         guard let id = approval.stableID else { return }
         busy = true; defer { busy = false }
