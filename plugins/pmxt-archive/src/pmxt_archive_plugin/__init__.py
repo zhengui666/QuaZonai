@@ -20,6 +20,9 @@ _MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
 _MAX_MATERIALIZATION_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024
 _MAX_MATERIALIZATION_TOTAL_BYTES = 20 * 1024 * 1024 * 1024
 _MAX_SOURCE_ROWS = 2_000_000
+_MAX_PARQUET_BATCH_ROWS = 16_384
+_MAX_DECODED_BATCH_BYTES = 64 * 1024 * 1024
+_MAX_DECODED_SOURCE_BYTES = 4 * 1024 * 1024 * 1024
 _MAX_MANIFEST_HOURS = 24 * 370
 _MAX_MATERIALIZATION_SHARDS = 168
 _MANIFEST_SCHEMA_REVISION = "pmxt-archive-manifest-v1"
@@ -37,6 +40,10 @@ _VENUE_RULES: dict[str, tuple[str, re.Pattern[str], str]] = {
 }
 _INSTRUMENT_SYMBOL = re.compile(r"[A-Za-z0-9][-A-Za-z0-9._:]{0,119}")
 _KALSHI_TICKER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,119}")
+
+
+class _SourceResourceLimit(ValueError):
+    pass
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -464,12 +471,14 @@ def _download(
 class PMXTArchiveImporter:
     def __init__(self, public_config: dict[str, Any]):
         self.config = _validate_public_config(public_config)
+        self._last_decoded_bytes = 0
 
     def preflight(self) -> None:
         _validate_public_config(self.config)
 
     def _read_rows(self, path: Path) -> list[dict[str, Any]]:
-        import pyarrow.parquet as parquet
+        import pyarrow as pa
+        from pyarrow import dataset
 
         target_field = _VENUE_RULES[self.config["venue"]][2]
         columns = (
@@ -500,13 +509,39 @@ class PMXTArchiveImporter:
             ]
         )
         try:
-            table = parquet.read_table(
-                path,
+            source = dataset.dataset(path, format="parquet")
+            scanner = source.scanner(
                 columns=columns,
-                filters=[[(target_field, "=", self.config["instrument"])]],
+                filter=dataset.field(target_field) == self.config["instrument"],
+                batch_size=_MAX_PARQUET_BATCH_ROWS,
+                batch_readahead=1,
+                fragment_readahead=1,
+                use_threads=False,
+                cache_metadata=False,
             )
-            return table.to_pylist()
-        except (OSError, ValueError, RuntimeError) as exc:
+            rows: list[dict[str, Any]] = []
+            decoded_bytes = 0
+            source_row_count = 0
+            for batch in scanner.to_batches():
+                batch_rows = int(batch.num_rows)
+                if source_row_count + batch_rows > _MAX_SOURCE_ROWS:
+                    raise _SourceResourceLimit("PMXT instrument slice exceeds the row limit")
+                batch_bytes = int(batch.nbytes)
+                if (
+                    batch_bytes > _MAX_DECODED_BATCH_BYTES
+                    or decoded_bytes + batch_bytes > _MAX_DECODED_SOURCE_BYTES
+                ):
+                    raise _SourceResourceLimit(
+                        "PMXT instrument slice exceeds the decoded size limit"
+                    )
+                rows.extend(batch.to_pylist())
+                source_row_count += batch_rows
+                decoded_bytes += batch_bytes
+            self._last_decoded_bytes = decoded_bytes
+            return rows
+        except _SourceResourceLimit:
+            raise
+        except (OSError, ValueError, RuntimeError, pa.ArrowException) as exc:
             raise ValueError("PMXT Archive Parquet schema is invalid") from exc
 
     def _catalog_from_rows(
@@ -655,6 +690,7 @@ class PMXTArchiveImporter:
         download_path = staging_path / "source.parquet"
         try:
             _download(source_url, download_path)
+            self._last_decoded_bytes = 0
             rows = self._read_rows(download_path)
         finally:
             download_path.unlink(missing_ok=True)
@@ -717,6 +753,7 @@ class PMXTArchiveImporter:
         shard_rows: list[tuple[datetime, list[dict[str, Any]]]] = []
         estimated_bytes = 0
         downloaded_bytes = 0
+        decoded_bytes = 0
         staging_path = Path(catalog_path)
         seen_shard_keys: set[str] = set()
         seen_coverage: set[datetime] = set()
@@ -766,7 +803,11 @@ class PMXTArchiveImporter:
                 downloaded_bytes += downloaded
                 if downloaded_bytes > _MAX_MATERIALIZATION_TOTAL_BYTES:
                     raise ValueError("materialization download exceeds 20 GiB")
+                self._last_decoded_bytes = 0
                 shard_data = self._read_rows(download_path)
+                decoded_bytes += self._last_decoded_bytes
+                if decoded_bytes > _MAX_DECODED_SOURCE_BYTES:
+                    raise ValueError("materialization decoded source exceeds 4 GiB")
                 rows.extend(shard_data)
                 shard_rows.append((shard_start, shard_data))
             finally:
