@@ -1652,7 +1652,7 @@ Operator Authentication 启用时，Operator API 要求 authenticated browser se
 ### Operator Login（仅在 `QUAZONAI_AUTH_ENABLED=true` 时）
 
 - 未认证浏览器只显示登录门，不加载研究工作台数据；
-- 输入单 Operator username、password 和 6 位 authenticator code；
+- 只输入 Google Authenticator-compatible 6 位 TOTP 动态码，不展示、缓存或提交 username/password；
 - 提供 `Trust this browser` 选项，并明确其会在当前浏览器保存长期 HttpOnly device credential；
 - trusted-browser credential 有效时自动恢复会话，不要求再次输入 TOTP；
 - 登录失败使用统一错误，不暴露哪一项凭证错误；
