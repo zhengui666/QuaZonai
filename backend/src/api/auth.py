@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import operator_auth as operator_auth_module
 from fastapi import APIRouter, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -19,7 +20,7 @@ from settings import (
     MAX_OPERATOR_USERNAME_CHARACTERS,
     Settings,
 )
-from totp_core import constant_time_text_equal, verify_totp_once
+from totp_core import constant_time_text_equal, matching_totp_step
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -55,6 +56,38 @@ def _invalid_credentials() -> QfError:
     )
 
 
+def authenticate_login(
+    settings: Settings,
+    runtime: OperatorAuthRuntime,
+    *,
+    username: str,
+    password: str,
+    totp_code: str,
+) -> bool:
+    """Verify legacy browser factors through the shared TOTP core.
+
+    Keep this endpoint-level function as a stable test/concurrency seam. The
+    browser contract remains username/password/TOTP until its separate removal,
+    while native clients never call it and use TOTP-only mobile authentication.
+    """
+    if not settings.auth_enabled:
+        return False
+    assert settings.operator_username is not None
+    assert settings.operator_password is not None
+
+    username_valid = constant_time_text_equal(username, settings.operator_username)
+    password_valid = constant_time_text_equal(password, settings.operator_password)
+    matched_step = matching_totp_step(
+        settings,
+        totp_code,
+        wall_clock=operator_auth_module.time.time,
+    )
+    if not username_valid or not password_valid or matched_step is None:
+        return False
+    step, current_step = matched_step
+    return runtime.consume_totp_step(step, current_step=current_step)
+
+
 @router.post("/login", response_model=SessionView)
 def login(payload: LoginInput, request: Request, response: Response) -> SessionView:
     settings: Settings = request.app.state.settings
@@ -75,13 +108,13 @@ def login(payload: LoginInput, request: Request, response: Response) -> SessionV
     if not runtime.login_limiter.allow_attempt(source):
         raise _invalid_credentials()
 
-    assert settings.operator_username is not None
-    assert settings.operator_password is not None
-    primary_factors_valid = constant_time_text_equal(
-        payload.username,
-        settings.operator_username,
-    ) and constant_time_text_equal(payload.password, settings.operator_password)
-    if not primary_factors_valid or not verify_totp_once(settings, runtime, payload.totp_code):
+    if not authenticate_login(
+        settings,
+        runtime,
+        username=payload.username,
+        password=payload.password,
+        totp_code=payload.totp_code,
+    ):
         runtime.login_limiter.record_failure(source)
         raise _invalid_credentials()
 
@@ -94,6 +127,7 @@ def login(payload: LoginInput, request: Request, response: Response) -> SessionV
     ):
         raise _invalid_credentials()
     runtime.login_limiter.record_success(source)
+    assert settings.operator_username is not None
     return SessionView(
         authenticated=True,
         username=settings.operator_username,
