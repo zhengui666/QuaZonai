@@ -1,6 +1,6 @@
 name: Issue 36 Follow-up Review Fixes
 
-# Retry after replacing the materializer with a locally verified payload.
+# Retry after satisfying the native observability release contract.
 on:
   push:
     branches:
