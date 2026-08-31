@@ -6,7 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     QUAZONAI_NAUTILUS_CATALOG_ROOT=/var/lib/quazonai-nautilus/catalogs
 
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y bubblewrap \
+    && apt-get install --no-install-recommends -y bubblewrap util-linux \
     && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --system quazonai-nautilus \
