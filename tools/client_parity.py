@@ -26,7 +26,9 @@ REQUIRED_KEYS = {
     "offline_readable",
 }
 NATIVE_REFERENCE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\.(test[A-Za-z0-9_]*)$")
-TEST_CLASS = re.compile(r"\b(?:final\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*XCTestCase\b")
+TEST_CLASS = re.compile(
+    r"\b(?:final\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*XCTestCase\b[^\{]*\{"
+)
 TEST_METHOD = re.compile(r"\bfunc\s+(test[A-Za-z0-9_]*)\s*\(")
 
 
@@ -43,6 +45,61 @@ def repository_file(raw: object, *, capability_id: str, field: str) -> Path:
     return candidate
 
 
+def balanced_class_body(text: str, opening_brace: int, *, path: Path) -> str:
+    """Return one XCTestCase body while ignoring braces inside comments and strings."""
+    depth = 0
+    index = opening_brace
+    state = "code"
+    while index < len(text):
+        character = text[index]
+        following = text[index + 1] if index + 1 < len(text) else ""
+
+        if state == "code":
+            if character == "/" and following == "/":
+                state = "line-comment"
+                index += 2
+                continue
+            if character == "/" and following == "*":
+                state = "block-comment"
+                index += 2
+                continue
+            if character == '"':
+                if text.startswith('"""', index):
+                    state = "multiline-string"
+                    index += 3
+                    continue
+                state = "string"
+                index += 1
+                continue
+            if character == "{":
+                depth += 1
+            elif character == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[opening_brace + 1 : index]
+        elif state == "line-comment":
+            if character == "\n":
+                state = "code"
+        elif state == "block-comment":
+            if character == "*" and following == "/":
+                state = "code"
+                index += 2
+                continue
+        elif state == "string":
+            if character == "\\":
+                index += 2
+                continue
+            if character == '"':
+                state = "code"
+        elif state == "multiline-string":
+            if text.startswith('"""', index):
+                state = "code"
+                index += 3
+                continue
+        index += 1
+    raise SystemExit(f"unterminated XCTestCase declaration in {path.relative_to(ROOT)}")
+
+
 def native_test_index() -> dict[str, set[str]]:
     manifest = IOS_PROJECT.read_text(encoding="utf-8")
     for source in ("Tests", "UITests"):
@@ -55,10 +112,11 @@ def native_test_index() -> dict[str, set[str]]:
             raise SystemExit(f"missing native test source directory: {root.relative_to(ROOT)}")
         for path in root.rglob("*.swift"):
             text = path.read_text(encoding="utf-8")
-            classes = TEST_CLASS.findall(text)
-            methods = set(TEST_METHOD.findall(text))
-            for class_name in classes:
-                index.setdefault(class_name, set()).update(methods)
+            for declaration in TEST_CLASS.finditer(text):
+                class_name = declaration.group(1)
+                opening_brace = declaration.end() - 1
+                body = balanced_class_body(text, opening_brace, path=path)
+                index.setdefault(class_name, set()).update(TEST_METHOD.findall(body))
     if not index:
         raise SystemExit("no XCTestCase symbols were found in native test sources")
     return index
