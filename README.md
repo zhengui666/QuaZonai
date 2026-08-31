@@ -183,3 +183,9 @@ GitHub Actions additionally runs PostgreSQL 18 row-lock/idempotency integration,
 ## Status
 
 The Nautilus-first remote runtime architecture is implemented behind the independent runtime contract. It is release-ready only when CI, real Research/Sealed runtime tests, and independent review are green; documentation alone does not constitute implementation evidence.
+
+## Native iOS / iPadOS
+
+`ios/` 提供 Swift 6 + SwiftUI Universal Operator App（minimum iOS/iPadOS 18），覆盖 Web Workbench 的 Home、Idea、Research、Alpha、Portfolio、Approval、Handoff 与 Administration 能力。Native Authentication 在认证开启时是 **TOTP-only**；App 不收集 Username/Password，也不使用 `QUAZONAI_API_TOKEN`。
+
+Wire contract 由 FastAPI OpenAPI 单一生成：`contracts/openapi/quazonai-v1.json` 同步到 Swift OpenAPI Generator；`contracts/client-capabilities.yaml` 与 CI 阻止 Web/iPhone/iPad capability drift。工程使用 `ios/project.yml`（XcodeGen）生成 Xcode project；GitHub Actions 在 iPhone/iPad Simulator 运行 unit/UI parity tests，并执行无签名 Release archive 以验证 TestFlight build readiness。

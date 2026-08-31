@@ -612,3 +612,11 @@ PMXT Archive 读取不需要 API key；本地部署也不应填写 PMXT 交易�
 ---
 
 QuaZonai 的产品体验应始终保持：**用户提出投资研究问题，系统自治完成研究与组合，只有真正需要资本决策时再把一个可解释、不可变、经过独立验证的 Candidate 交给用户审批。**
+
+## Native iPhone / iPad Operator Client
+
+iPhone/iPad App 直接连接同一 QuaZonai Server URL。生产实例使用 HTTPS；HTTP 只允许 localhost 开发。首次连接先读取 `/api/v1/client/bootstrap`：若 Operator Authentication 关闭，App 显示 Direct Access 警告后进入完整工作台；若开启，只输入当前 6 位 TOTP，不输入 Username/Password。
+
+勾选 Trust Device 时，首次 TOTP 成功后长期 Refresh Credential 仅进入本机生物识别保护的 Keychain，并在每次 refresh 后旋转；未勾选时 App 结束后下次重新输入 TOTP。Administration → Account / Device Security 可查看并撤销 Native Device。Native App 不使用 `QUAZONAI_API_TOKEN`。
+
+iPhone 的 More 与 iPad Sidebar 都可以进入完整 Administration：Runtime Configuration（Codex API Key 为 write-only SecureField）、Mandate、Data Source、Dataset、Universe、Downstream、Plugin Release、Capital Context、Mobile Devices。App 断网时只读缓存和 Idea Draft 可用，所有 Operator mutation 被阻止。
