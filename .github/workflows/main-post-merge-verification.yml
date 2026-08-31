@@ -1,0 +1,170 @@
+name: Main post-merge verification
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  backend-parity:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: quazonai
+          POSTGRES_USER: quazonai
+          POSTGRES_PASSWORD: quazonai
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U quazonai -d quazonai"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      QUAZONAI_ENV: test
+      QUAZONAI_DATABASE_URL: postgresql+psycopg://quazonai:quazonai@127.0.0.1:5432/quazonai
+      QUAZONAI_ALEMBIC_URL: postgresql+psycopg://quazonai:quazonai@127.0.0.1:5432/quazonai
+      QUAZONAI_MASTER_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Install backend runtimes
+        run: python -m pip install -e 'backend[dev,research,agent]'
+      - name: Compile lint and type-check
+        run: |
+          python -m compileall -q backend/src
+          ruff check --config backend/pyproject.toml backend/src backend/tests tools/client_parity_issue36.py
+          mypy --config-file backend/pyproject.toml backend/src
+      - name: Database migration and backend tests
+        run: |
+          python -m db.preflight
+          alembic -c backend/alembic.ini upgrade head
+          python -m db.preflight
+          pytest -q -m 'not nautilus' backend/tests
+      - name: Cross-client parity
+        run: python tools/client_parity_issue36.py
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install and verify Web client
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run lint
+          npm run test -- --run
+          npm run build
+
+  ios-ipados:
+    runs-on: macos-15
+    timeout-minutes: 75
+    env:
+      QUAZONAI_ENV: test
+      QUAZONAI_DATABASE_URL: sqlite+pysqlite:////tmp/quazonai-main-ios.db
+      QUAZONAI_ALEMBIC_URL: sqlite+pysqlite:////tmp/quazonai-main-ios.db
+      QUAZONAI_FRONTEND_DIST: /tmp/quazonai-empty-frontend
+      QUAZONAI_UI_TEST_SERVER_URL: http://127.0.0.1:8000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Install toolchains
+        run: |
+          brew install xcodegen
+          python -m pip install -e 'backend[dev]'
+      - name: Generate and resolve Universal App
+        run: |
+          python ios/Issue36Tools/materialize_assets.py
+          cd ios
+          xcodegen generate --spec project.issue36.release.yml
+          xcodebuild -resolvePackageDependencies -project QuaZonai.xcodeproj -scheme QuaZonai
+          swift test --package-path Issue36Packages/QuaZonaiAPIFinal
+      - name: Start real FastAPI fixture
+        run: |
+          rm -f /tmp/quazonai-main-ios.db
+          mkdir -p /tmp/quazonai-empty-frontend
+          alembic -c backend/alembic.ini upgrade head
+          python backend/tests/frontend_e2e_seed.py
+          python -m uvicorn main:app --host 127.0.0.1 --port 8000 > /tmp/quazonai-main-ios-fastapi.log 2>&1 &
+          echo $! > /tmp/quazonai-main-ios-fastapi.pid
+          for attempt in $(seq 1 60); do
+            curl --fail --silent http://127.0.0.1:8000/api/v1/client/bootstrap >/tmp/quazonai-main-bootstrap.json && break
+            if [ "$attempt" = 60 ]; then cat /tmp/quazonai-main-ios-fastapi.log; exit 1; fi
+            sleep 1
+          done
+      - name: Allocate iPhone and iPad simulators
+        run: |
+          python - <<'PY' > /tmp/quazonai-main-simulators.env
+          import json
+          import subprocess
+          runtimes = json.loads(subprocess.check_output(['xcrun','simctl','list','runtimes','-j']))['runtimes']
+          ios = [r for r in runtimes if r.get('isAvailable') and r['identifier'].startswith('com.apple.CoreSimulator.SimRuntime.iOS-')]
+          runtime = sorted(ios, key=lambda r: tuple(int(p) for p in r.get('version','0').split('.')), reverse=True)[0]['identifier']
+          types = json.loads(subprocess.check_output(['xcrun','simctl','list','devicetypes','-j']))['devicetypes']
+          iphones = [d for d in types if 'iPhone' in d['name'] and 'SE' not in d['name']]
+          ipads = [d for d in types if 'iPad Pro' in d['name']]
+          print(f'RUNTIME={runtime}')
+          print(f'IPHONE_TYPE={iphones[-1]["identifier"]}')
+          print(f'IPAD_TYPE={ipads[-1]["identifier"]}')
+          PY
+          source /tmp/quazonai-main-simulators.env
+          echo "MAIN_IPHONE_UDID=$(xcrun simctl create QuaZonai-Main-iPhone "$IPHONE_TYPE" "$RUNTIME")" >> "$GITHUB_ENV"
+          echo "MAIN_IPAD_UDID=$(xcrun simctl create QuaZonai-Main-iPad "$IPAD_TYPE" "$RUNTIME")" >> "$GITHUB_ENV"
+      - name: Main iPhone verification
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild test -project QuaZonai.xcodeproj -scheme QuaZonai \
+            -destination "platform=iOS Simulator,id=$MAIN_IPHONE_UDID" \
+            -resultBundlePath /tmp/QuaZonai-Main-iPhone.xcresult \
+            CODE_SIGNING_ALLOWED=NO | tee /tmp/QuaZonai-Main-iPhone.log
+      - name: Main iPad verification
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild test -project QuaZonai.xcodeproj -scheme QuaZonai \
+            -destination "platform=iOS Simulator,id=$MAIN_IPAD_UDID" \
+            -resultBundlePath /tmp/QuaZonai-Main-iPad.xcresult \
+            CODE_SIGNING_ALLOWED=NO | tee /tmp/QuaZonai-Main-iPad.log
+      - name: Main unsigned release archive
+        working-directory: ios
+        run: |
+          xcodebuild archive -project QuaZonai.xcodeproj -scheme QuaZonai \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -archivePath /tmp/QuaZonai-Main.xcarchive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+          test -d /tmp/QuaZonai-Main.xcarchive/Products/Applications/QuaZonai.app
+          test -f /tmp/QuaZonai-Main.xcarchive/Products/Applications/QuaZonai.app/PrivacyInfo.xcprivacy
+      - name: Upload main diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-ios-verification-diagnostics
+          if-no-files-found: ignore
+          path: |
+            /tmp/QuaZonai-Main-iPhone.xcresult
+            /tmp/QuaZonai-Main-iPad.xcresult
+            /tmp/QuaZonai-Main-iPhone.log
+            /tmp/QuaZonai-Main-iPad.log
+            /tmp/quazonai-main-ios-fastapi.log
+      - name: Cleanup
+        if: always()
+        run: |
+          test ! -f /tmp/quazonai-main-ios-fastapi.pid || kill "$(cat /tmp/quazonai-main-ios-fastapi.pid)" 2>/dev/null || true
+          test -z "${MAIN_IPHONE_UDID:-}" || xcrun simctl delete "$MAIN_IPHONE_UDID" || true
+          test -z "${MAIN_IPAD_UDID:-}" || xcrun simctl delete "$MAIN_IPAD_UDID" || true
