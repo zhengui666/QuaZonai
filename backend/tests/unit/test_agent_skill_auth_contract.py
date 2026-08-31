@@ -21,7 +21,7 @@ def test_portable_skill_documents_operator_machine_authentication() -> None:
     assert "AUTH_REQUIRED" in combined
     assert 'test -n "${QUAZONAI_API_TOKEN:-}"' in combined
     assert "never print" in combined
-    assert "Operator password" in combined
+    assert "TOTP setup secret" in combined
     assert "TOTP setup secret" in combined
     assert "downstream Handoff service token" in combined
 

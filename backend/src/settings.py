@@ -32,9 +32,6 @@ MIN_AUTH_SESSION_TTL_SECONDS = 5 * 60
 MAX_AUTH_SESSION_TTL_SECONDS = 24 * 60 * 60
 MIN_AUTH_TRUSTED_BROWSER_TTL_DAYS = 1
 MAX_AUTH_TRUSTED_BROWSER_TTL_DAYS = 365
-MAX_OPERATOR_USERNAME_CHARACTERS = 200
-MIN_OPERATOR_PASSWORD_CHARACTERS = 12
-MAX_OPERATOR_PASSWORD_CHARACTERS = 4096
 MIN_MACHINE_TOKEN_CHARACTERS = 32
 MAX_MACHINE_TOKEN_CHARACTERS = 4096
 _DEFAULT_ORIGIN_PORTS = {"http": 80, "https": 443}
@@ -194,12 +191,6 @@ def _contains_non_ascii_whitespace(value: str) -> bool:
     """Reject whitespace which WHATWG URL parsing does not trim as URL space."""
     return any(character.isspace() and ord(character) > 127 for character in value)
 
-
-def _validate_utf8_text(value: str, *, name: str) -> None:
-    try:
-        value.encode("utf-8")
-    except UnicodeEncodeError as exc:
-        raise SettingsError(f"{name} must contain valid Unicode text") from exc
 
 
 def validate_machine_api_token(value: str) -> None:
@@ -377,8 +368,6 @@ class Settings:
     mission_job_timeout_seconds: int = DEFAULT_MISSION_JOB_TIMEOUT_SECONDS
     frontend_dist: Path = Path("/workspace/frontend-dist")
     operator_auth_enabled: bool = False
-    operator_username: str | None = None
-    operator_password: str | None = None
     operator_totp_secret: str | None = None
     auth_cookie_key: str | None = None
     api_token: str | None = None
@@ -399,6 +388,16 @@ class Settings:
         )
         alembic_url = os.environ.get("QUAZONAI_ALEMBIC_URL", database_url)
         operator_auth_enabled = _env_bool("QUAZONAI_AUTH_ENABLED", False)
+        legacy_auth_variables = tuple(
+            name
+            for name in ("QUAZONAI_AUTH_USERNAME", "QUAZONAI_AUTH_PASSWORD")
+            if _optional_raw_env(name) is not None
+        )
+        if operator_auth_enabled and legacy_auth_variables:
+            raise SettingsError(
+                "Operator authentication no longer supports the deprecated "
+                "username/password variables; remove: " + ", ".join(legacy_auth_variables)
+            )
         totp_secret = _optional_env("QUAZONAI_AUTH_TOTP_SECRET")
         if totp_secret is not None:
             totp_secret = "".join(totp_secret.split()).upper()
@@ -450,8 +449,6 @@ class Settings:
                 os.environ.get("QUAZONAI_FRONTEND_DIST", "/workspace/frontend-dist")
             ),
             operator_auth_enabled=operator_auth_enabled,
-            operator_username=_optional_raw_env("QUAZONAI_AUTH_USERNAME"),
-            operator_password=_optional_raw_env("QUAZONAI_AUTH_PASSWORD"),
             operator_totp_secret=totp_secret,
             auth_cookie_key=_optional_raw_env("QUAZONAI_AUTH_COOKIE_KEY"),
             api_token=_optional_raw_env("QUAZONAI_API_TOKEN"),
@@ -526,8 +523,6 @@ class Settings:
         _validate_trusted_proxy_cidrs(self.auth_trusted_proxy_cidrs)
 
         fields = {
-            "QUAZONAI_AUTH_USERNAME": self.operator_username,
-            "QUAZONAI_AUTH_PASSWORD": self.operator_password,
             "QUAZONAI_AUTH_TOTP_SECRET": self.operator_totp_secret,
             "QUAZONAI_AUTH_COOKIE_KEY": self.auth_cookie_key,
             "QUAZONAI_API_TOKEN": self.api_token,
@@ -540,37 +535,10 @@ class Settings:
                 + ", ".join(missing)
             )
 
-        assert self.operator_username is not None
-        assert self.operator_password is not None
         assert self.operator_totp_secret is not None
         assert self.api_token is not None
         assert self.auth_public_origin is not None
 
-        _validate_utf8_text(self.operator_username, name="QUAZONAI_AUTH_USERNAME")
-        _validate_utf8_text(self.operator_password, name="QUAZONAI_AUTH_PASSWORD")
-        for name, credential in (
-            ("QUAZONAI_AUTH_USERNAME", self.operator_username),
-            ("QUAZONAI_AUTH_PASSWORD", self.operator_password),
-        ):
-            if "\r" in credential or "\n" in credential:
-                raise SettingsError(
-                    f"{name} must not contain carriage returns or line feeds"
-                )
-        if len(self.operator_username) > MAX_OPERATOR_USERNAME_CHARACTERS:
-            raise SettingsError(
-                f"QUAZONAI_AUTH_USERNAME must contain at most "
-                f"{MAX_OPERATOR_USERNAME_CHARACTERS} characters"
-            )
-        if not (
-            MIN_OPERATOR_PASSWORD_CHARACTERS
-            <= len(self.operator_password)
-            <= MAX_OPERATOR_PASSWORD_CHARACTERS
-        ):
-            raise SettingsError(
-                "QUAZONAI_AUTH_PASSWORD must contain between "
-                f"{MIN_OPERATOR_PASSWORD_CHARACTERS} and "
-                f"{MAX_OPERATOR_PASSWORD_CHARACTERS} characters"
-            )
         validate_machine_api_token(self.api_token)
 
         cookie_key = self.auth_cookie_key_bytes()

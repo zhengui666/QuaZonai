@@ -247,6 +247,8 @@ def _codex_launch_configuration(
         "QUAZONAI_ALEMBIC_URL": "",
         "POSTGRES_PASSWORD": "",
         "QUAZONAI_AUTH_ENABLED": "",
+        # Deprecated browser credentials are still scrubbed so stale host secrets
+        # can never leak into Mission-owned child processes.
         "QUAZONAI_AUTH_USERNAME": "",
         "QUAZONAI_AUTH_PASSWORD": "",
         "QUAZONAI_AUTH_TOTP_SECRET": "",

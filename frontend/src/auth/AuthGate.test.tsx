@@ -76,7 +76,7 @@ describe('AuthGate', () => {
   it('renders the workbench immediately when a browser session is valid', async () => {
     vi.stubGlobal('fetch', vi.fn(() => jsonResponse({
       authenticated: true,
-      username: 'operator',
+      username: 'local-operator',
       trusted_browser: false,
       auth_enabled: true,
     })));
@@ -91,7 +91,7 @@ describe('AuthGate', () => {
     const fetchMock = vi.fn()
       .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
-        username: 'operator',
+        username: 'local-operator',
         trusted_browser: false,
         auth_enabled: true,
       }))
@@ -203,7 +203,7 @@ describe('AuthGate', () => {
     await act(async () => {
       bootstrap.resolve(await jsonResponse({
         authenticated: true,
-        username: 'operator',
+        username: 'local-operator',
         trusted_browser: false,
         auth_enabled: true,
       }));
@@ -211,15 +211,15 @@ describe('AuthGate', () => {
     });
   });
 
-  it('shows password, authenticator code, and trusted-browser option when anonymous', async () => {
+  it('shows only authenticator code and trusted-browser option when anonymous', async () => {
     vi.stubGlobal('fetch', vi.fn(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401)));
 
     renderAuthGate(<div>Workbench ready</div>);
 
     expect(await screen.findByRole('heading', { name: 'Verify your identity' })).toBeInTheDocument();
-    expect(screen.getByLabelText('Username')).toBeInTheDocument();
-    expect(screen.getByLabelText('Password')).toBeInTheDocument();
-    expect(screen.getByLabelText('Authenticator code')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Username')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Password')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Authenticator code')).toHaveFocus();
     expect(screen.getByText('Trust this browser')).toBeInTheDocument();
   });
 
@@ -230,8 +230,6 @@ describe('AuthGate', () => {
 
     expect(await screen.findByRole('heading', { name: 'تحقق من هويتك' })).toBeInTheDocument();
     await waitFor(() => expect(document.documentElement).toHaveAttribute('dir', 'rtl'));
-    expect(screen.getByLabelText('اسم المستخدم')).toHaveAttribute('dir', 'auto');
-    expect(screen.getByLabelText('كلمة المرور')).toHaveAttribute('dir', 'ltr');
     expect(screen.getByLabelText('رمز المصادقة')).toHaveAttribute('dir', 'ltr');
   });
 
@@ -268,9 +266,6 @@ describe('AuthGate', () => {
     const user = userEvent.setup();
 
     renderAuthGate(<div>Workbench ready</div>);
-
-    await user.type(await screen.findByLabelText('Username'), 'operator');
-    await user.type(screen.getByLabelText('Password'), 'wrong password');
     await user.type(screen.getByLabelText('Authenticator code'), '123456');
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
 
@@ -288,7 +283,7 @@ describe('AuthGate', () => {
       .mockImplementationOnce(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401))
       .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
-        username: 'operator',
+        username: 'local-operator',
         trusted_browser: false,
         auth_enabled: true,
       }));
@@ -296,9 +291,6 @@ describe('AuthGate', () => {
     const user = userEvent.setup();
 
     renderAuthGate(<div>Workbench ready</div>, 'ar');
-
-    await user.type(await screen.findByLabelText('اسم المستخدم'), 'operator');
-    await user.type(screen.getByLabelText('كلمة المرور'), 'correct horse battery staple');
     const totp = screen.getByLabelText('رمز المصادقة');
     await user.type(totp, '١٢٣٤٥٦');
     expect(totp).toHaveValue('123456');
@@ -318,7 +310,7 @@ describe('AuthGate', () => {
       .mockImplementationOnce(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401))
       .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
-        username: 'operator',
+        username: 'local-operator',
         trusted_browser: true,
         auth_enabled: true,
       }));
@@ -326,9 +318,6 @@ describe('AuthGate', () => {
     const user = userEvent.setup();
 
     renderAuthGate(<div>Workbench ready</div>);
-
-    await user.type(await screen.findByLabelText('Username'), 'operator');
-    await user.type(screen.getByLabelText('Password'), 'correct horse battery staple');
     await user.type(screen.getByLabelText('Authenticator code'), '123456');
     await user.click(screen.getByText('Trust this browser'));
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
@@ -336,7 +325,7 @@ describe('AuthGate', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     const loginOptions = fetchMock.mock.calls[1]?.[1] as RequestInit;
     expect(JSON.parse(String(loginOptions.body))).toEqual({
-      username: 'operator',
+      username: 'local-operator',
       password: 'correct horse battery staple',
       totp_code: '123456',
       trust_browser: true,
@@ -348,7 +337,7 @@ describe('AuthGate', () => {
     const fetchMock = vi.fn()
       .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
-        username: 'operator',
+        username: 'local-operator',
         trusted_browser: true,
         auth_enabled: true,
       }))
@@ -368,7 +357,7 @@ describe('AuthGate', () => {
     const fetchMock = vi.fn()
       .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
-        username: 'operator',
+        username: 'local-operator',
         trusted_browser: true,
         auth_enabled: true,
       }))
@@ -392,7 +381,7 @@ describe('AuthGate', () => {
     const fetchMock = vi.fn()
       .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
-        username: 'operator',
+        username: 'local-operator',
         trusted_browser: false,
         auth_enabled: true,
       }))
@@ -448,7 +437,7 @@ describe('AuthGate', () => {
     const fetchMock = vi.fn()
       .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
-        username: 'operator',
+        username: 'local-operator',
         trusted_browser: false,
         auth_enabled: true,
       }))
@@ -483,14 +472,14 @@ describe('AuthGate', () => {
     const fetchMock = vi.fn()
       .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
-        username: 'operator',
+        username: 'local-operator',
         trusted_browser: false,
         auth_enabled: true,
       }))
       .mockImplementationOnce(() => staleRevalidation.promise)
       .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
-        username: 'operator',
+        username: 'local-operator',
         trusted_browser: false,
         auth_enabled: true,
       }));
@@ -532,7 +521,7 @@ describe('AuthGate', () => {
     const fetchMock = vi.fn()
       .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
-        username: 'operator',
+        username: 'local-operator',
         trusted_browser: false,
         auth_enabled: true,
       }))
@@ -540,7 +529,7 @@ describe('AuthGate', () => {
       .mockImplementationOnce(() => emptyResponse())
       .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
-        username: 'operator',
+        username: 'local-operator',
         trusted_browser: false,
         auth_enabled: true,
       }));
@@ -558,8 +547,6 @@ describe('AuthGate', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
 
     await user.click(screen.getByRole('button', { name: 'Sign out probe' }));
-    await user.type(await screen.findByLabelText('Username'), 'operator');
-    await user.type(screen.getByLabelText('Password'), 'correct horse battery staple');
     await user.type(screen.getByLabelText('Authenticator code'), '123456');
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
     expect(await screen.findByText('Workbench ready')).toBeInTheDocument();

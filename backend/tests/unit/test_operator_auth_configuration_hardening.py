@@ -159,8 +159,6 @@ def test_from_env_preserves_invalid_machine_token_for_fail_closed_validation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("QUAZONAI_AUTH_ENABLED", "true")
-    monkeypatch.setenv("QUAZONAI_AUTH_USERNAME", "operator")
-    monkeypatch.setenv("QUAZONAI_AUTH_PASSWORD", "correct horse battery staple")
     monkeypatch.setenv(
         "QUAZONAI_AUTH_TOTP_SECRET",
         "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",

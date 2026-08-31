@@ -401,35 +401,29 @@ Live handoff
 
 ### 14.2 Operator Authentication
 
+升级到 TOTP-only 认证时：保留现有 TOTP setup key、cookie key、machine API token、public origin 与 TTL 配置；从 `.env`/部署 Secrets 中删除旧浏览器用户名和密码变量后重启 API。旧 session/trusted-browser cookie 会失效，使用当前 TOTP 重新登录并按需重新勾选 `Trust this browser`。无需数据库迁移；TOTP setup key 不变时无需重新绑定 Google Authenticator。
+
 QuaZonai V1 只有一个部署 Operator。它不是业务用户系统、tenant 或 RBAC。`QUAZONAI_AUTH_ENABLED=false` 保留 direct access；只有显式设为 `true` 才启用下述登录门。
 
-认证启用后的 Web 登录输入：
-
-```text
-QUAZONAI_AUTH_ENABLED=true
-+ QUAZONAI_AUTH_USERNAME
-+ QUAZONAI_AUTH_PASSWORD
-+ Google Authenticator-compatible 6-digit TOTP
-```
+认证启用后的 Web 登录输入只有 Google Authenticator-compatible 6-digit TOTP。登录页不再展示或提交用户名/密码；`Trust this browser` 行为保持不变。
 
 TOTP setup key 来自 `.env` 的 `QUAZONAI_AUTH_TOTP_SECRET`。在 Google Authenticator 中选择 **Enter a setup key**，使用该值并选择 **Time based**。TOTP secret、Operator password、cookie key 和 machine API token 都属于启动级 secret，不能放进聊天、截图、事件或日志。`QUAZONAI_AUTH_COOKIE_KEY` 必须独立生成且不能与 `QUAZONAI_MASTER_KEY` 相同；`QUAZONAI_API_TOKEN` 必须使用 RFC 6750 `b64token` 可安全写入 Authorization header 的 ASCII 字符集。
 
-登录时可以勾选 **Trust this browser**。选中后服务器在当前浏览器 profile 写入长期 HttpOnly trusted-browser credential；短期 session 过期后，只要该 trusted credential 仍有效，就会自动恢复新 session，用户不再输入 password/TOTP。默认 trusted-browser 有效期 30 天，默认短 session 为 12 小时。
+登录时可以勾选 **Trust this browser**。选中后服务器在当前浏览器 profile 写入长期 HttpOnly trusted-browser credential；短期 session 过期后，只要该 trusted credential 仍有效，就会自动恢复新 session，用户不再重复输入 TOTP。默认 trusted-browser 有效期 30 天，默认短 session 为 12 小时。
 
-只应信任自己控制的浏览器 profile。公共/共享电脑不要勾选。正常 Sign out 会同时清除 session 与 trusted-browser credential、写入当前浏览器 profile 的 `HttpOnly`/`SameSite=Strict` logout barrier 和 sealed local issuance epoch，并使当前 API 进程中已经打开的事件流在下一轮认证检查时停止。下一次成功的 password + TOTP 登录只清除 barrier，保留 epoch 并把新 cookie 绑定到它，因此 logout 已先应用而旧 login/trusted-browser renewal response 后到时，旧 cookie 仍不能恢复访问。已认证退出还推进当前 API 进程的 global browser-cookie issuance generation；匿名/public logout 仅改变请求者浏览器的 local barrier/epoch，不会阻塞其他浏览器登录或续期。浏览器 credential 还绑定每个 API runtime 新生成的随机 issuance epoch，因此 API 重启会有意使所有已有 browser session/trusted-browser credential 失效，避免重置后的 generation 重新接受退出前 credential。退出请求失败时 UI 不会伪装成已退出。
+只应信任自己控制的浏览器 profile。公共/共享电脑不要勾选。正常 Sign out 会同时清除 session 与 trusted-browser credential、写入当前浏览器 profile 的 `HttpOnly`/`SameSite=Strict` logout barrier 和 sealed local issuance epoch，并使当前 API 进程中已经打开的事件流在下一轮认证检查时停止。下一次成功的 TOTP 登录只清除 barrier，保留 epoch 并把新 cookie 绑定到它，因此 logout 已先应用而旧 login/trusted-browser renewal response 后到时，旧 cookie 仍不能恢复访问。已认证退出还推进当前 API 进程的 global browser-cookie issuance generation；匿名/public logout 仅改变请求者浏览器的 local barrier/epoch，不会阻塞其他浏览器登录或续期。浏览器 credential 还绑定每个 API runtime 新生成的随机 issuance epoch，因此 API 重启会有意使所有已有 browser session/trusted-browser credential 失效，避免重置后的 generation 重新接受退出前 credential。退出请求失败时 UI 不会伪装成已退出。
 
 失窃/不再可信设备的处置：
 
 1. 立即轮换 `.env` 中 `QUAZONAI_AUTH_COOKIE_KEY`；
 2. 重启 API；
 3. 全部现有 session 与 trusted-browser credential 随即失效；
-4. 所有浏览器必须重新执行 password + TOTP 登录。
+4. 所有浏览器必须重新执行 TOTP 登录。
 
 其他 credential 轮换：
 
 - `QUAZONAI_AUTH_TOTP_SECRET`：所有旧 Authenticator code 失效，需要重新配置 Authenticator；
 - `QUAZONAI_API_TOKEN`：旧 CLI/automation Bearer token 失效；
-- `QUAZONAI_AUTH_PASSWORD`：之后的完整登录使用新密码，但已有 cookie 仍由 cookie key 控制，所以设备级紧急撤销应轮换 cookie key。
 
 `QUAZONAI_ENV` 只能为 `development`、`test` 或 `production`（忽略大小写与首尾空白）。认证启用时，`QUAZONAI_AUTH_PUBLIC_ORIGIN` 与浏览器 `Origin` 都按 browser-origin 规则 canonicalize 后精确比较：scheme/host 小写、Unicode host 使用 IDNA ASCII、IPv6 压缩并保留 brackets、默认端口省略、非默认端口保留。production 必须为 HTTPS，反向代理/Tunnel 应在可信 TLS 层终止 HTTPS，并把该外部 Origin 写入 `.env`。
 
@@ -458,7 +452,7 @@ Linux Docker 部署还会在 `finite-worker` 启动检查中执行一次真实 C
 
 Codex API key 由 `QUAZONAI_MASTER_KEY` 使用 AES-256-GCM 加密后保存到 PostgreSQL。Secret/token 不在 Web 展示，也不写入事件 payload；运行时通过受信任 runner 的 one-shot credential broker 交给 Codex provider auth，不进入 App Server/Mission 环境变量。
 
-`.env` 只负责启动级基础设施与 Operator access：运行环境、PostgreSQL、master key、`QUAZONAI_AUTH_ENABLED`、Operator username/password/TOTP、browser cookie key、CLI machine token、public origin、存储根目录和 HTTP port。Codex model/API key/Base URL 不由 `.env` 配置。
+`.env` 只负责启动级基础设施与 Operator access：运行环境、PostgreSQL、master key、`QUAZONAI_AUTH_ENABLED`、Operator username/TOTP、browser cookie key、CLI machine token、public origin、存储根目录和 HTTP port。Codex model/API key/Base URL 不由 `.env` 配置。
 
 Runtime Configuration 使用 revision + 幂等 mutation：页面保存携带当前 revision，若其他请求已先更新则返回冲突并要求刷新，不覆盖较新配置；网络重试复用同一个 `Idempotency-Key`，不会重复修改 revision、重复写事件或重复保存 secret。
 

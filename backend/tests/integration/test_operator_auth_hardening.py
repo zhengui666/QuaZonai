@@ -39,8 +39,6 @@ def _enabled_settings(settings: Settings) -> Settings:
     return replace(
         settings,
         operator_auth_enabled=True,
-        operator_username="operator",
-        operator_password="correct horse battery staple",
         operator_totp_secret=pyotp.random_base32(),
         auth_cookie_key=base64.b64encode(b"a" * 32).decode("ascii"),
         api_token="machine-token-" + "x" * 32,
@@ -51,17 +49,20 @@ def _enabled_settings(settings: Settings) -> Settings:
 def _payload(
     settings: Settings,
     *,
-    password: str,
     totp_code: str | None = None,
     trust_browser: bool = False,
 ) -> dict[str, object]:
     assert settings.operator_totp_secret is not None
     return {
-        "username": "operator",
-        "password": password,
         "totp_code": totp_code or pyotp.TOTP(settings.operator_totp_secret).now(),
         "trust_browser": trust_browser,
     }
+
+
+def _wrong_totp(settings: Settings) -> str:
+    assert settings.operator_totp_secret is not None
+    current = pyotp.TOTP(settings.operator_totp_secret).now()
+    return "000000" if current != "000000" else "000001"
 
 
 def _request_with_session(app: object, session_cookie: str) -> Request:
@@ -127,7 +128,6 @@ def _login_trusted_browser(
         headers={"Origin": origin},
         json=_payload(
             settings,
-            password="correct horse battery staple",
             trust_browser=True,
         ),
     )
@@ -218,7 +218,7 @@ def test_login_backoff_uses_same_generic_failure_and_recovers(
         clock=lambda: now[0],
         minimum_interval_seconds=1.0,
         base_backoff_seconds=1.0,
-        maximum_backoff_seconds=5.0,
+        maximum_backoff_seconds=30.0,
     )
     app = create_app(settings=secured, engine=engine)
     app.state.operator_auth_runtime = OperatorAuthRuntime(login_limiter=limiter)
@@ -227,7 +227,7 @@ def test_login_backoff_uses_same_generic_failure_and_recovers(
     invalid = client.post(
         "/api/v1/auth/login",
         headers={"Origin": "http://testserver"},
-        json=_payload(secured, password="wrong-password-value"),
+        json=_payload(secured, totp_code=_wrong_totp(secured)),
     )
     throttled = client.post(
         "/api/v1/auth/login",
@@ -254,17 +254,17 @@ def test_login_backoff_is_bounded_without_durable_lockout() -> None:
         clock=lambda: now[0],
         minimum_interval_seconds=1.0,
         base_backoff_seconds=1.0,
-        maximum_backoff_seconds=5.0,
+        maximum_backoff_seconds=30.0,
     )
 
     for _ in range(8):
         assert limiter.allow_attempt("203.0.113.10")
         limiter.record_failure("203.0.113.10")
-        now[0] += 5.01
+        now[0] += 30.01
 
     assert limiter.allow_attempt("203.0.113.10")
     limiter.record_failure("203.0.113.10")
-    now[0] += 4.99
+    now[0] += 29.99
     assert not limiter.allow_attempt("203.0.113.10")
     now[0] += 0.02
     assert limiter.allow_attempt("203.0.113.10")
@@ -283,7 +283,7 @@ def test_trusted_proxy_separates_login_backoff_sources(
         clock=lambda: now[0],
         minimum_interval_seconds=1.0,
         base_backoff_seconds=1.0,
-        maximum_backoff_seconds=5.0,
+        maximum_backoff_seconds=30.0,
     )
     app = create_app(settings=secured, engine=engine)
     app.state.operator_auth_runtime = OperatorAuthRuntime(login_limiter=limiter)
@@ -296,7 +296,7 @@ def test_trusted_proxy_separates_login_backoff_sources(
             "Origin": "http://testserver",
             "X-Forwarded-For": "198.51.100.11, 10.20.30.3",
         },
-        json=_payload(secured, password="wrong-password-value"),
+        json=_payload(secured, totp_code=_wrong_totp(secured)),
     )
     accepted = operator.post(
         "/api/v1/auth/login",
@@ -467,7 +467,6 @@ def test_logout_barrier_rejects_late_automatic_renewal_cookies(
         headers={"Origin": "http://testserver"},
         json=_payload(
             secured,
-            password="correct horse battery staple",
             totp_code=pyotp.TOTP(secured.operator_totp_secret).at(
                 int(time.time()) + pyotp.TOTP(secured.operator_totp_secret).interval
             ),
@@ -645,7 +644,6 @@ def test_login_ignores_forged_parent_domain_barrier_left_after_host_clear(
         headers={"Origin": origin},
         json=_payload(
             secured,
-            password="correct horse battery staple",
             totp_code=totp.at(int(time.time()) + totp.interval),
         ),
     )
@@ -681,7 +679,6 @@ def test_anonymous_logout_does_not_block_an_already_admitted_trusted_renewal_in_
         headers={"Origin": "http://testserver"},
         json=_payload(
             secured,
-            password="correct horse battery staple",
             totp_code=pyotp.TOTP(secured.operator_totp_secret).at(int(now[0])),
             trust_browser=True,
         ),
@@ -756,21 +753,17 @@ def test_anonymous_logout_does_not_block_a_concurrent_login_in_another_browser(
     logout_client = TestClient(app)
     login_authorized = Event()
     release_login = Event()
-    original_authenticate_login = auth_module.authenticate_login
+    original_authenticate_totp_login = auth_module.authenticate_totp_login
 
     def authenticate_then_wait(
         configured: Settings,
         configured_runtime: OperatorAuthRuntime,
         *,
-        username: str,
-        password: str,
         totp_code: str,
     ) -> bool:
-        accepted = original_authenticate_login(
+        accepted = original_authenticate_totp_login(
             configured,
             configured_runtime,
-            username=username,
-            password=password,
             totp_code=totp_code,
         )
         if accepted:
@@ -778,7 +771,7 @@ def test_anonymous_logout_does_not_block_a_concurrent_login_in_another_browser(
             release_login.wait(timeout=5)
         return accepted
 
-    monkeypatch.setattr(auth_module, "authenticate_login", authenticate_then_wait)
+    monkeypatch.setattr(auth_module, "authenticate_totp_login", authenticate_then_wait)
     totp = pyotp.TOTP(secured.operator_totp_secret)
     login_thread, responses, errors = _start_request_in_thread(
         lambda: login_client.post(
@@ -786,7 +779,6 @@ def test_anonymous_logout_does_not_block_a_concurrent_login_in_another_browser(
             headers={"Origin": "http://testserver"},
             json=_payload(
                 secured,
-                password="correct horse battery staple",
                 totp_code=totp.at(int(now[0])),
                 trust_browser=True,
             ),
@@ -825,7 +817,6 @@ def test_anonymous_logout_does_not_block_a_concurrent_login_in_another_browser(
         headers={"Origin": "http://testserver"},
         json=_payload(
             secured,
-            password="correct horse battery staple",
             totp_code=totp.at(int(now[0])),
         ),
     )
@@ -861,7 +852,6 @@ def test_full_login_cannot_override_a_concurrent_authenticated_logout(
         headers={"Origin": "http://testserver"},
         json=_payload(
             secured,
-            password="correct horse battery staple",
             totp_code=totp.at(int(now[0])),
         ),
     )
@@ -874,21 +864,17 @@ def test_full_login_cannot_override_a_concurrent_authenticated_logout(
     login_client = TestClient(app)
     login_authorized = Event()
     release_login = Event()
-    original_authenticate_login = auth_module.authenticate_login
+    original_authenticate_totp_login = auth_module.authenticate_totp_login
 
     def authenticate_then_wait(
         configured: Settings,
         configured_runtime: OperatorAuthRuntime,
         *,
-        username: str,
-        password: str,
         totp_code: str,
     ) -> bool:
-        accepted = original_authenticate_login(
+        accepted = original_authenticate_totp_login(
             configured,
             configured_runtime,
-            username=username,
-            password=password,
             totp_code=totp_code,
         )
         if accepted:
@@ -896,7 +882,7 @@ def test_full_login_cannot_override_a_concurrent_authenticated_logout(
             release_login.wait(timeout=5)
         return accepted
 
-    monkeypatch.setattr(auth_module, "authenticate_login", authenticate_then_wait)
+    monkeypatch.setattr(auth_module, "authenticate_totp_login", authenticate_then_wait)
     now[0] += totp.interval
     login_thread, responses, errors = _start_request_in_thread(
         lambda: login_client.post(
@@ -904,7 +890,6 @@ def test_full_login_cannot_override_a_concurrent_authenticated_logout(
             headers={"Origin": "http://testserver"},
             json=_payload(
                 secured,
-                password="correct horse battery staple",
                 totp_code=totp.at(int(now[0])),
                 trust_browser=True,
             ),
@@ -946,7 +931,6 @@ def test_full_login_cannot_override_a_concurrent_authenticated_logout(
         headers={"Origin": "http://testserver"},
         json=_payload(
             secured,
-            password="correct horse battery staple",
             totp_code=totp.at(int(now[0])),
         ),
     )
@@ -1012,7 +996,6 @@ def test_restart_cannot_revive_pre_logout_browser_credentials_with_same_local_ep
         headers={"Origin": "http://testserver"},
         json=_payload(
             secured,
-            password="correct horse battery staple",
             trust_browser=True,
         ),
     )
@@ -1064,7 +1047,6 @@ def test_restart_cannot_revive_pre_logout_browser_credentials_with_same_local_ep
         headers={"Origin": "http://testserver"},
         json=_payload(
             secured,
-            password="correct horse battery staple",
             trust_browser=True,
         ),
     )
@@ -1088,7 +1070,6 @@ def test_network_reordered_login_response_cannot_restore_after_anonymous_logout(
         headers={"Origin": "http://testserver"},
         json=_payload(
             secured,
-            password="correct horse battery staple",
             totp_code=pyotp.TOTP(secured.operator_totp_secret).at(int(now[0])),
             trust_browser=True,
         ),
@@ -1133,7 +1114,6 @@ def test_network_reordered_login_response_cannot_restore_after_anonymous_logout(
         headers={"Origin": "http://testserver"},
         json=_payload(
             secured,
-            password="correct horse battery staple",
             totp_code=pyotp.TOTP(secured.operator_totp_secret).at(int(now[0])),
             trust_browser=True,
         ),
@@ -1162,7 +1142,6 @@ def test_network_reordered_trusted_renewal_cannot_restore_after_anonymous_logout
         headers={"Origin": "http://testserver"},
         json=_payload(
             secured,
-            password="correct horse battery staple",
             totp_code=pyotp.TOTP(secured.operator_totp_secret).at(int(now[0])),
             trust_browser=True,
         ),
@@ -1219,7 +1198,6 @@ def test_network_reordered_trusted_renewal_cannot_restore_after_anonymous_logout
         headers={"Origin": "http://testserver"},
         json=_payload(
             secured,
-            password="correct horse battery staple",
             totp_code=pyotp.TOTP(secured.operator_totp_secret).at(int(now[0])),
         ),
     )
@@ -1254,7 +1232,6 @@ def test_forged_browser_epoch_cookie_cannot_shadow_the_valid_host_epoch(
         headers={"Origin": "http://testserver"},
         json=_payload(
             secured,
-            password="correct horse battery staple",
             trust_browser=True,
         ),
     )
@@ -1455,7 +1432,6 @@ def test_stream_revalidation_observes_session_expiry(
         headers={"Origin": "http://testserver"},
         json=_payload(
             secured,
-            password="correct horse battery staple",
             totp_code=pyotp.TOTP(secured.operator_totp_secret).at(int(now[0])),
         ),
     )

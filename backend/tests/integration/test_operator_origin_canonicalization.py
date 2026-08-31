@@ -17,8 +17,6 @@ def _enabled_settings(settings: Settings, *, origin: str) -> Settings:
     return replace(
         settings,
         operator_auth_enabled=True,
-        operator_username="operator",
-        operator_password="correct horse battery staple",
         operator_totp_secret=pyotp.random_base32(),
         auth_cookie_key=base64.b64encode(b"a" * 32).decode("ascii"),
         api_token=secrets.token_urlsafe(32),
@@ -32,8 +30,6 @@ def _login(client: TestClient, settings: Settings, *, origin: str):
         "/api/v1/auth/login",
         headers={"Origin": origin},
         json={
-            "username": "operator",
-            "password": "correct horse battery staple",
             "totp_code": pyotp.TOTP(settings.operator_totp_secret).now(),
             "trust_browser": False,
         },

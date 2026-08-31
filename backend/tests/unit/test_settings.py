@@ -187,14 +187,12 @@ def test_unknown_environment_cannot_bypass_production_security_policy(settings: 
 
 
 def test_enabled_auth_rejects_password_longer_than_login_schema(settings: Settings) -> None:
-    configured = _enabled_auth(settings, operator_password="x" * 4097)
 
     with pytest.raises(SettingsError, match="between 12 and 4096"):
         configured.validate_operator_auth()
 
 
 def test_enabled_auth_rejects_unencodable_configured_credentials(settings: Settings) -> None:
-    configured = _enabled_auth(settings, operator_username="operator\ud800")
 
     with pytest.raises(SettingsError, match="valid Unicode text"):
         configured.validate_operator_auth()
