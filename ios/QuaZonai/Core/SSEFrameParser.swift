@@ -65,7 +65,7 @@ struct SSEFrameParser: Sendable {
     }
 }
 
-struct EventCursor: Equatable, Sendable {
+struct EventSequenceCursor: Equatable, Sendable {
     private(set) var value: Int
 
     init(_ value: Int = 0) {
