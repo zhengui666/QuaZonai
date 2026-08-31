@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, UniqueConstraint, Uuid
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base, JSON_VALUE, MONEY, TimestampMixin
@@ -50,6 +50,68 @@ class NautilusCatalogBinding(Base, TimestampMixin):
         JSON_VALUE, nullable=False, default=dict
     )
     sealed: Mapped[bool] = mapped_column(nullable=False, default=False)
+
+
+class ArchiveManifest(Base, TimestampMixin):
+    """Immutable register of remote archive shards; raw files stay outside QZ."""
+
+    __tablename__ = "archive_manifests"
+    __table_args__ = (
+        UniqueConstraint("manifest_uri", name="uq_archive_manifest_uri"),
+        Index("ix_archive_manifest_universe", "universe_version_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    manifest_uri: Mapped[str] = mapped_column(Text, nullable=False)
+    data_source_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("governed_data_sources.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    universe_version_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("market_universe_versions.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    provider: Mapped[str] = mapped_column(String(200), nullable=False)
+    source_license: Mapped[str] = mapped_column(Text, nullable=False)
+    source_spec: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, nullable=False, default=dict)
+    coverage_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    coverage_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    scanned_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    shard_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    missing_shard_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    probe_error_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    schema_revision: Mapped[str] = mapped_column(String(100), nullable=False)
+    state: Mapped[str] = mapped_column(String(40), nullable=False, default="ACTIVE")
+    point_in_time_result: Mapped[dict[str, Any]] = mapped_column(
+        JSON_VALUE, nullable=False, default=dict
+    )
+
+
+class ArchiveManifestShard(Base):
+    """One deterministic UTC archive shard, including gaps and probe failures."""
+
+    __tablename__ = "archive_manifest_shards"
+    __table_args__ = (
+        UniqueConstraint("manifest_id", "shard_key", name="uq_archive_manifest_shard_key"),
+        Index("ix_archive_manifest_shard_range", "manifest_id", "coverage_start"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    manifest_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("archive_manifests.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    shard_key: Mapped[str] = mapped_column(String(40), nullable=False)
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    coverage_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    coverage_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    state: Mapped[str] = mapped_column(String(40), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class QuantRuntimeRun(Base, TimestampMixin):
@@ -198,6 +260,8 @@ class SearchLedgerEntry(Base):
 
 __all__ = [
     "NautilusCatalogBinding",
+    "ArchiveManifest",
+    "ArchiveManifestShard",
     "QuantRuntimeRun",
     "EvaluationEpisode",
     "CapitalContextVersion",

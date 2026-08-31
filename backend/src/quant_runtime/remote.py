@@ -11,6 +11,8 @@ import httpx
 from errors import QfError
 from quant_runtime.config import RemoteNautilusConfig
 from quant_runtime.contracts import (
+    ArchiveManifestDescriptor,
+    ArchiveManifestSpec,
     CatalogDescriptor,
     CatalogIngestSpec,
     ExperimentSpec,
@@ -24,6 +26,8 @@ class QuantRuntime(Protocol):
     def capabilities(self) -> RuntimeCapabilities: ...
 
     def ingest(self, spec: CatalogIngestSpec) -> CatalogDescriptor: ...
+
+    def inspect_archive_manifest(self, spec: ArchiveManifestSpec) -> ArchiveManifestDescriptor: ...
 
     def validate_catalog(self, catalog_uri: str) -> CatalogDescriptor: ...
 
@@ -58,11 +62,12 @@ class NautilusQuantRuntime:
         *,
         json_body: dict[str, Any] | None = None,
         files: dict[str, tuple[str, bytes, str]] | None = None,
+        timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
         url = f"{self.config.base_url}{path}"
         try:
             with httpx.Client(
-                timeout=self.config.timeout_seconds,
+                timeout=timeout_seconds or self.config.timeout_seconds,
                 verify=self.config.verify_tls,
                 headers=self._headers(),
             ) as client:
@@ -184,6 +189,35 @@ class NautilusQuantRuntime:
                 json_body={"catalog_uri": catalog_uri},
             )
         )
+
+    def inspect_archive_manifest(self, spec: ArchiveManifestSpec) -> ArchiveManifestDescriptor:
+        self.capabilities()
+        descriptor = ArchiveManifestDescriptor.model_validate(
+            self._request_json(
+                "POST",
+                "/v1/archive-manifests/inspect",
+                json_body=spec.model_dump(mode="json"),
+                timeout_seconds=max(self.config.timeout_seconds, 300.0),
+            )
+        )
+        expected_uri = f"manifest://{spec.manifest_name}"
+        mismatches: list[str] = []
+        if descriptor.manifest_uri != expected_uri:
+            mismatches.append("manifest_uri")
+        if descriptor.provider != spec.provider:
+            mismatches.append("provider")
+        if descriptor.source_license != spec.source_license:
+            mismatches.append("source_license")
+        if descriptor.source_spec != spec.source_spec:
+            mismatches.append("source_spec")
+        if mismatches:
+            raise QfError(
+                "NAUTILUS_RUNTIME_MANIFEST_MISMATCH",
+                "The remote archive manifest does not match the requested source.",
+                502,
+                {"fields": mismatches},
+            )
+        return descriptor
 
     def _run(self, experiment: ExperimentSpec, mode: RunMode) -> RunEvidence:
         self.capabilities()

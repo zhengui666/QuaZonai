@@ -83,14 +83,102 @@ class CatalogIngestSpec(StrictModel):
     source_license: str = Field(min_length=1, max_length=500)
     sealed: bool = False
     source_spec: dict[str, Any]
+    source_shards: list[dict[str, Any]] | None = Field(default=None, max_length=168)
+    plugin_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{1,63}$")
+    plugin_version: str | None = Field(default=None, max_length=100)
+    plugin_bundle_path: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_plugin_binding(self) -> CatalogIngestSpec:
+        values = (self.plugin_id, self.plugin_version, self.plugin_bundle_path)
+        if any(value is not None for value in values) and not all(value is not None for value in values):
+            raise ValueError("plugin_id, plugin_version and plugin_bundle_path must be provided together")
+        return self
 
     @model_validator(mode="after")
     def reject_credentials(self) -> CatalogIngestSpec:
-        found = _secret_path(self.source_spec)
+        found = _secret_path(
+            {
+                "source_spec": self.source_spec,
+                "source_shards": self.source_shards,
+            }
+        )
         if found is not None:
             raise ValueError(f"Catalog source spec contains a forbidden credential field at {found}")
+        if self.source_shards is not None:
+            for shard in self.source_shards:
+                ArchiveShardDescriptor.model_validate(shard)
+                if shard.get("state") != "AVAILABLE":
+                    raise ValueError("Catalog materialization may only use AVAILABLE archive shards")
         return self
 
+
+class ArchiveManifestSpec(StrictModel):
+    """Request for a plugin-owned remote archive shard inventory."""
+
+    manifest_name: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$")
+    provider: str = Field(min_length=1, max_length=200)
+    source_license: str = Field(min_length=1, max_length=500)
+    source_spec: dict[str, Any]
+    plugin_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{1,63}$")
+    plugin_version: str | None = Field(default=None, max_length=100)
+    plugin_bundle_path: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_plugin_binding(self) -> ArchiveManifestSpec:
+        values = (self.plugin_id, self.plugin_version, self.plugin_bundle_path)
+        if any(value is not None for value in values) and not all(value is not None for value in values):
+            raise ValueError("plugin_id, plugin_version and plugin_bundle_path must be provided together")
+        if self.source_spec.get("kind") != "plugin":
+            raise ValueError("archive manifest inspection requires source_spec.kind=plugin")
+        found = _secret_path(self.source_spec)
+        if found is not None:
+            raise ValueError(f"Archive manifest source spec contains a forbidden credential field at {found}")
+        return self
+
+
+class ArchiveShardDescriptor(StrictModel):
+    shard_key: str = Field(min_length=1, max_length=40)
+    source_url: str = Field(min_length=1, max_length=500)
+    coverage_start: datetime
+    coverage_end: datetime
+    size_bytes: int | None = Field(default=None, ge=0)
+    state: Literal["AVAILABLE", "MISSING", "PROBE_ERROR"]
+    observed_at: datetime
+
+
+class ArchiveManifestDescriptor(StrictModel):
+    manifest_uri: str
+    provider: str
+    source_license: str
+    source_spec: dict[str, Any]
+    coverage_start: datetime
+    coverage_end: datetime
+    scanned_until: datetime
+    shard_count: int = Field(ge=0)
+    total_bytes: int = Field(ge=0)
+    missing_shard_count: int = Field(ge=0)
+    probe_error_count: int = Field(ge=0)
+    schema_revision: str
+    point_in_time_result: dict[str, Any]
+    shards: list[ArchiveShardDescriptor] = Field(max_length=200_000)
+
+    @field_validator("manifest_uri")
+    @classmethod
+    def require_opaque_manifest_uri(cls, value: str) -> str:
+        if not value.startswith("manifest://"):
+            raise ValueError("Archive manifest references must use manifest://")
+        return value
+
+    @model_validator(mode="after")
+    def validate_counts(self) -> ArchiveManifestDescriptor:
+        if self.shard_count != len(self.shards):
+            raise ValueError("Archive manifest shard_count does not match shards")
+        if self.missing_shard_count != sum(item.state == "MISSING" for item in self.shards):
+            raise ValueError("Archive manifest missing_shard_count does not match shards")
+        if self.probe_error_count != sum(item.state == "PROBE_ERROR" for item in self.shards):
+            raise ValueError("Archive manifest probe_error_count does not match shards")
+        return self
 
 class CatalogDescriptor(StrictModel):
     catalog_uri: str

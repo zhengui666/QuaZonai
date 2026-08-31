@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -15,12 +15,17 @@ from db.models import (
     GovernedDataSource,
     MarketUniverseVersion,
     NautilusCatalogBinding,
+    ArchiveManifest,
+    ArchiveManifestShard,
+    PluginRelease,
+    PluginRuntimeBundle,
+    PluginRuntimeBundleMember,
     QuantRuntimeRun,
     SearchLedgerEntry,
 )
 from errors import QfError
 from quant_runtime.config import RemoteNautilusConfig
-from quant_runtime.contracts import CatalogIngestSpec
+from quant_runtime.contracts import ArchiveManifestSpec, CatalogIngestSpec
 from quant_runtime.remote import NautilusQuantRuntime
 
 router = APIRouter(prefix="/api/v1", tags=["quant-runtime"])
@@ -37,6 +42,26 @@ class CatalogIngestInput(StrictModel):
     universe_name: str = Field(min_length=1, max_length=200)
     sealed: bool = False
     source_spec: dict[str, Any]
+    plugin_release_id: UUID | None = None
+    plugin_runtime_bundle_id: UUID | None = None
+
+
+class ArchiveManifestInspectInput(StrictModel):
+    manifest_name: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$")
+    provider: str = Field(min_length=1, max_length=200)
+    source_license: str = Field(min_length=1, max_length=500)
+    universe_name: str = Field(min_length=1, max_length=200)
+    source_spec: dict[str, Any]
+    plugin_release_id: UUID | None = None
+    plugin_runtime_bundle_id: UUID | None = None
+
+
+class ArchiveManifestMaterializeInput(StrictModel):
+    catalog_name: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$")
+    instrument: str = Field(min_length=1, max_length=200)
+    instrument_symbol: str | None = Field(default=None, min_length=1, max_length=120)
+    start: datetime
+    end: datetime
 
 
 class CatalogView(StrictModel):
@@ -56,6 +81,39 @@ class CatalogView(StrictModel):
     point_in_time_result: dict[str, Any]
     sealed: bool
     created_at: str | None = None
+
+
+class ArchiveManifestView(StrictModel):
+    id: UUID
+    manifest_uri: str
+    data_source_id: UUID
+    universe_version_id: UUID
+    provider: str
+    source_license: str
+    source_spec: dict[str, Any]
+    coverage_start: str
+    coverage_end: str
+    scanned_until: str
+    shard_count: int
+    total_bytes: int
+    missing_shard_count: int
+    probe_error_count: int
+    schema_revision: str
+    state: str
+    point_in_time_result: dict[str, Any]
+    created_at: str | None = None
+
+
+class ArchiveManifestShardView(StrictModel):
+    id: UUID
+    manifest_id: UUID
+    shard_key: str
+    source_url: str
+    coverage_start: str
+    coverage_end: str
+    size_bytes: int | None
+    state: str
+    observed_at: str
 
 
 class RunView(StrictModel):
@@ -122,6 +180,10 @@ def _remote_catalog_name(payload: CatalogIngestInput) -> str:
     return f"{profile}-{payload.catalog_name}"
 
 
+def _remote_manifest_name(payload: ArchiveManifestInspectInput) -> str:
+    return f"research-{payload.manifest_name}"
+
+
 def _catalog_view(item: NautilusCatalogBinding) -> CatalogView:
     return CatalogView(
         id=item.id,
@@ -143,6 +205,43 @@ def _catalog_view(item: NautilusCatalogBinding) -> CatalogView:
     )
 
 
+def _manifest_view(item: ArchiveManifest) -> ArchiveManifestView:
+    return ArchiveManifestView(
+        id=item.id,
+        manifest_uri=item.manifest_uri,
+        data_source_id=item.data_source_id,
+        universe_version_id=item.universe_version_id,
+        provider=item.provider,
+        source_license=item.source_license,
+        source_spec=item.source_spec,
+        coverage_start=item.coverage_start.isoformat(),
+        coverage_end=item.coverage_end.isoformat(),
+        scanned_until=item.scanned_until.isoformat(),
+        shard_count=item.shard_count,
+        total_bytes=item.total_bytes,
+        missing_shard_count=item.missing_shard_count,
+        probe_error_count=item.probe_error_count,
+        schema_revision=item.schema_revision,
+        state=item.state,
+        point_in_time_result=item.point_in_time_result,
+        created_at=item.created_at.isoformat() if item.created_at else None,
+    )
+
+
+def _manifest_shard_view(item: ArchiveManifestShard) -> ArchiveManifestShardView:
+    return ArchiveManifestShardView(
+        id=item.id,
+        manifest_id=item.manifest_id,
+        shard_key=item.shard_key,
+        source_url=item.source_url,
+        coverage_start=item.coverage_start.isoformat(),
+        coverage_end=item.coverage_end.isoformat(),
+        size_bytes=item.size_bytes,
+        state=item.state,
+        observed_at=item.observed_at.isoformat(),
+    )
+
+
 def _safe_run_evidence(item: QuantRuntimeRun) -> dict[str, Any]:
     if item.mode == "SEALED":
         return {
@@ -157,6 +256,7 @@ def _catalog_binding_input_conflict(
     item: NautilusCatalogBinding,
     payload: CatalogIngestInput,
     universe_id: UUID,
+    plugin_binding: dict[str, str] | None,
 ) -> bool:
     revision = session.get(DatasetRevision, item.dataset_revision_id)
     source = (
@@ -166,6 +266,9 @@ def _catalog_binding_input_conflict(
     )
     public_config = source.public_config if source is not None else {}
     stored_source_spec = public_config.get("source_spec") if isinstance(public_config, dict) else None
+    stored_plugin_binding = (
+        public_config.get("plugin_binding") if isinstance(public_config, dict) else None
+    )
     return any(
         (
             revision is None,
@@ -175,8 +278,99 @@ def _catalog_binding_input_conflict(
             item.source_license != payload.source_license,
             item.sealed != payload.sealed,
             not isinstance(stored_source_spec, dict) or stored_source_spec != payload.source_spec,
+            stored_plugin_binding != plugin_binding,
         )
     )
+
+
+def _manifest_input_conflict(
+    session: Any,
+    item: ArchiveManifest,
+    payload: ArchiveManifestInspectInput,
+    universe_id: UUID,
+    plugin_binding: dict[str, str] | None,
+) -> bool:
+    source = session.get(GovernedDataSource, item.data_source_id)
+    public_config = source.public_config if source is not None else {}
+    stored_plugin_binding = (
+        public_config.get("plugin_binding") if isinstance(public_config, dict) else None
+    )
+    return any(
+        (
+            item.universe_version_id != universe_id,
+            item.provider != payload.provider,
+            item.source_license != payload.source_license,
+            item.source_spec != payload.source_spec,
+            stored_plugin_binding != plugin_binding,
+        )
+    )
+
+
+def _resolve_plugin_binding(
+    session: Any,
+    payload: CatalogIngestInput | ArchiveManifestInspectInput,
+) -> dict[str, str] | None:
+    source_kind = payload.source_spec.get("kind")
+    supplied_ids = (payload.plugin_release_id, payload.plugin_runtime_bundle_id)
+    if source_kind != "plugin":
+        if any(value is not None for value in supplied_ids):
+            raise QfError(
+                "PLUGIN_BINDING_INVALID",
+                "A plugin release and runtime bundle are only valid for source_spec.kind=plugin.",
+                422,
+            )
+        return None
+    if payload.plugin_release_id is None or payload.plugin_runtime_bundle_id is None:
+        raise QfError(
+            "PLUGIN_BINDING_REQUIRED",
+            "Plugin Catalog ingest requires an active release and a ready runtime bundle.",
+            422,
+        )
+    release = session.get(PluginRelease, payload.plugin_release_id)
+    if release is None or release.state != "ACTIVE":
+        raise QfError(
+            "PLUGIN_RELEASE_NOT_ACTIVE",
+            "Catalog ingest requires an ACTIVE plugin release.",
+            409,
+            {"plugin_release_id": str(payload.plugin_release_id)},
+        )
+    capabilities = release.descriptor_snapshot.get("capabilities", [])
+    if "HISTORICAL_IMPORT" not in capabilities:
+        raise QfError(
+            "PLUGIN_CAPABILITY_FORBIDDEN",
+            "The selected plugin release does not provide historical import.",
+            422,
+            {"plugin_id": release.plugin_id, "version": release.version},
+        )
+    bundle = session.get(PluginRuntimeBundle, payload.plugin_runtime_bundle_id)
+    if bundle is None or bundle.state != "READY":
+        raise QfError(
+            "PLUGIN_BUNDLE_NOT_READY",
+            "Catalog ingest requires a READY plugin runtime bundle.",
+            409,
+            {"plugin_runtime_bundle_id": str(payload.plugin_runtime_bundle_id)},
+        )
+    member = session.scalar(
+        select(PluginRuntimeBundleMember).where(
+            PluginRuntimeBundleMember.runtime_bundle_id == bundle.id,
+            PluginRuntimeBundleMember.plugin_release_id == release.id,
+            PluginRuntimeBundleMember.member_role == "IMPORTER",
+        )
+    )
+    if member is None:
+        raise QfError(
+            "PLUGIN_BUNDLE_MEMBER_REQUIRED",
+            "The READY plugin runtime bundle must contain the release as an IMPORTER.",
+            422,
+            {"plugin_release_id": str(release.id), "bundle_id": str(bundle.id)},
+        )
+    return {
+        "plugin_release_id": str(release.id),
+        "plugin_runtime_bundle_id": str(bundle.id),
+        "plugin_id": release.plugin_id,
+        "plugin_version": release.version,
+        "plugin_bundle_path": bundle.environment_path,
+    }
 
 
 def _run_view(item: QuantRuntimeRun) -> RunView:
@@ -218,9 +412,19 @@ def quant_runtime_capabilities() -> dict[str, Any]:
 
 @router.post("/quant-runtime/catalogs/ingest", response_model=CatalogView, status_code=201)
 def ingest_catalog(payload: CatalogIngestInput, request: Request) -> CatalogView:
+    return _ingest_catalog(payload, request)
+
+
+def _ingest_catalog(
+    payload: CatalogIngestInput,
+    request: Request,
+    *,
+    source_shards: list[dict[str, Any]] | None = None,
+) -> CatalogView:
     factory = request.app.state.session_factory
     remote_catalog_uri = f"catalog://{_remote_catalog_name(payload)}"
     with factory() as session:
+        plugin_binding = _resolve_plugin_binding(session, payload)
         universe = session.scalar(
             select(MarketUniverseVersion)
             .where(
@@ -243,7 +447,9 @@ def ingest_catalog(payload: CatalogIngestInput, request: Request) -> CatalogView
             )
         )
         if existing is not None:
-            if _catalog_binding_input_conflict(session, existing, payload, universe_id):
+            if _catalog_binding_input_conflict(
+                session, existing, payload, universe_id, plugin_binding
+            ):
                 raise QfError(
                     "CATALOG_REVISION_INPUT_CONFLICT",
                     "Catalog identity is already bound to different immutable ingestion inputs.",
@@ -259,6 +465,10 @@ def ingest_catalog(payload: CatalogIngestInput, request: Request) -> CatalogView
             source_license=payload.source_license,
             sealed=payload.sealed,
             source_spec=payload.source_spec,
+            source_shards=source_shards,
+            plugin_id=plugin_binding["plugin_id"] if plugin_binding else None,
+            plugin_version=plugin_binding["plugin_version"] if plugin_binding else None,
+            plugin_bundle_path=plugin_binding["plugin_bundle_path"] if plugin_binding else None,
         )
     )
     with factory.begin() as session:
@@ -268,7 +478,9 @@ def ingest_catalog(payload: CatalogIngestInput, request: Request) -> CatalogView
             )
         )
         if existing is not None:
-            if _catalog_binding_input_conflict(session, existing, payload, universe_id):
+            if _catalog_binding_input_conflict(
+                session, existing, payload, universe_id, plugin_binding
+            ):
                 raise QfError(
                     "CATALOG_REVISION_INPUT_CONFLICT",
                     "Catalog identity is already bound to different immutable ingestion inputs.",
@@ -289,6 +501,7 @@ def ingest_catalog(payload: CatalogIngestInput, request: Request) -> CatalogView
                 "catalog_uri": descriptor.catalog_uri,
                 "source_license": descriptor.source_license,
                 "source_spec": payload.source_spec,
+                "plugin_binding": plugin_binding,
                 "remote_runtime": "NautilusTrader",
                 "runtime_profile": "sealed" if payload.sealed else "research",
             },
@@ -344,6 +557,319 @@ def ingest_catalog(payload: CatalogIngestInput, request: Request) -> CatalogView
         session.add(binding)
         session.flush()
         return _catalog_view(binding)
+
+
+@router.post(
+    "/quant-runtime/archive-manifests/inspect",
+    response_model=ArchiveManifestView,
+    status_code=201,
+)
+def inspect_archive_manifest(
+    payload: ArchiveManifestInspectInput,
+    request: Request,
+) -> ArchiveManifestView:
+    factory = request.app.state.session_factory
+    manifest_uri = f"manifest://{_remote_manifest_name(payload)}"
+    with factory() as session:
+        plugin_binding = _resolve_plugin_binding(session, payload)
+        universe = session.scalar(
+            select(MarketUniverseVersion)
+            .where(
+                MarketUniverseVersion.name == payload.universe_name,
+                MarketUniverseVersion.state == "ACTIVE",
+            )
+            .order_by(MarketUniverseVersion.version_no.desc())
+        )
+        if universe is None:
+            raise QfError(
+                "UNIVERSE_NOT_GOVERNED",
+                "Archive manifest inspection requires an active governed Universe Version.",
+                422,
+                {"universe_name": payload.universe_name},
+            )
+        existing = session.scalar(
+            select(ArchiveManifest).where(ArchiveManifest.manifest_uri == manifest_uri)
+        )
+        if existing is not None:
+            if _manifest_input_conflict(session, existing, payload, universe.id, plugin_binding):
+                raise QfError(
+                    "ARCHIVE_MANIFEST_INPUT_CONFLICT",
+                    "Manifest identity is already bound to different immutable inspection inputs.",
+                    409,
+                    {"manifest_uri": manifest_uri},
+                )
+            return _manifest_view(existing)
+
+    descriptor = _runtime().inspect_archive_manifest(
+        ArchiveManifestSpec(
+            manifest_name=_remote_manifest_name(payload),
+            provider=payload.provider,
+            source_license=payload.source_license,
+            source_spec=payload.source_spec,
+            plugin_id=plugin_binding["plugin_id"] if plugin_binding else None,
+            plugin_version=plugin_binding["plugin_version"] if plugin_binding else None,
+            plugin_bundle_path=plugin_binding["plugin_bundle_path"] if plugin_binding else None,
+        )
+    )
+    with factory.begin() as session:
+        existing = session.scalar(
+            select(ArchiveManifest).where(ArchiveManifest.manifest_uri == descriptor.manifest_uri)
+        )
+        if existing is not None:
+            if _manifest_input_conflict(session, existing, payload, universe.id, plugin_binding):
+                raise QfError(
+                    "ARCHIVE_MANIFEST_INPUT_CONFLICT",
+                    "Manifest identity is already bound to different immutable inspection inputs.",
+                    409,
+                    {"manifest_uri": descriptor.manifest_uri},
+                )
+            return _manifest_view(existing)
+
+        source = GovernedDataSource(
+            name=f"Archive manifest {payload.manifest_name}",
+            provider=descriptor.provider,
+            state="ACTIVE",
+            universe_scope=[payload.universe_name],
+            fields=["archive_shard_metadata"],
+            update_cadence="on-demand manifest inspection",
+            preflight_state="READY",
+            public_config={
+                "source_spec": payload.source_spec,
+                "plugin_binding": plugin_binding,
+                "manifest_uri": descriptor.manifest_uri,
+            },
+        )
+        session.add(source)
+        session.flush()
+        manifest = ArchiveManifest(
+            manifest_uri=descriptor.manifest_uri,
+            data_source_id=source.id,
+            universe_version_id=universe.id,
+            provider=descriptor.provider,
+            source_license=descriptor.source_license,
+            source_spec=descriptor.source_spec,
+            coverage_start=descriptor.coverage_start,
+            coverage_end=descriptor.coverage_end,
+            scanned_until=descriptor.scanned_until,
+            shard_count=descriptor.shard_count,
+            total_bytes=descriptor.total_bytes,
+            missing_shard_count=descriptor.missing_shard_count,
+            probe_error_count=descriptor.probe_error_count,
+            schema_revision=descriptor.schema_revision,
+            state="ACTIVE",
+            point_in_time_result=descriptor.point_in_time_result,
+        )
+        session.add(manifest)
+        session.flush()
+        session.add_all(
+            [
+                ArchiveManifestShard(
+                    manifest_id=manifest.id,
+                    shard_key=shard.shard_key,
+                    source_url=shard.source_url,
+                    coverage_start=shard.coverage_start,
+                    coverage_end=shard.coverage_end,
+                    size_bytes=shard.size_bytes,
+                    state=shard.state,
+                    observed_at=shard.observed_at,
+                )
+                for shard in descriptor.shards
+            ]
+        )
+        session.flush()
+        return _manifest_view(manifest)
+
+
+@router.get(
+    "/quant-runtime/archive-manifests",
+    response_model=list[ArchiveManifestView],
+)
+def list_archive_manifests(request: Request) -> list[ArchiveManifestView]:
+    factory = request.app.state.session_factory
+    with factory() as session:
+        items = session.scalars(
+            select(ArchiveManifest).order_by(ArchiveManifest.created_at.desc())
+        ).all()
+        return [_manifest_view(item) for item in items]
+
+
+@router.get(
+    "/quant-runtime/archive-manifests/{manifest_id}/shards",
+    response_model=list[ArchiveManifestShardView],
+)
+def list_archive_manifest_shards(
+    manifest_id: UUID,
+    request: Request,
+) -> list[ArchiveManifestShardView]:
+    factory = request.app.state.session_factory
+    with factory() as session:
+        if session.get(ArchiveManifest, manifest_id) is None:
+            raise QfError("ARCHIVE_MANIFEST_NOT_FOUND", "Archive manifest does not exist.", 404)
+        items = session.scalars(
+            select(ArchiveManifestShard)
+            .where(ArchiveManifestShard.manifest_id == manifest_id)
+            .order_by(ArchiveManifestShard.coverage_start.asc())
+        ).all()
+        return [_manifest_shard_view(item) for item in items]
+
+
+@router.post(
+    "/quant-runtime/archive-manifests/{manifest_id}/materialize",
+    response_model=CatalogView,
+    status_code=201,
+)
+def materialize_archive_manifest(
+    manifest_id: UUID,
+    payload: ArchiveManifestMaterializeInput,
+    request: Request,
+) -> CatalogView:
+    """Materialize one bounded instrument/time slice from an immutable manifest."""
+
+    def utc_hour(value: datetime, field_name: str) -> datetime:
+        normalized = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+        if normalized.minute or normalized.second or normalized.microsecond:
+            raise QfError(
+                "ARCHIVE_RANGE_NOT_ALIGNED",
+                f"{field_name} must be aligned to a UTC hour.",
+                422,
+            )
+        return normalized
+
+    start = utc_hour(payload.start, "start")
+    end = utc_hour(payload.end, "end")
+    if end <= start:
+        raise QfError("ARCHIVE_RANGE_INVALID", "end must be after start.", 422)
+    requested_hours = int((end - start) / timedelta(hours=1))
+    if requested_hours > 168:
+        raise QfError(
+            "ARCHIVE_MATERIALIZATION_TOO_LARGE",
+            "One materialization may cover at most 168 UTC hours.",
+            422,
+            {"requested_hours": requested_hours, "max_hours": 168},
+        )
+
+    factory = request.app.state.session_factory
+    with factory() as session:
+        manifest = session.get(ArchiveManifest, manifest_id)
+        if manifest is None:
+            raise QfError("ARCHIVE_MANIFEST_NOT_FOUND", "Archive manifest does not exist.", 404)
+        if manifest.state != "ACTIVE":
+            raise QfError("ARCHIVE_MANIFEST_NOT_ACTIVE", "Archive manifest is not active.", 409)
+        if start < manifest.coverage_start or end > manifest.coverage_end:
+            raise QfError(
+                "ARCHIVE_RANGE_OUTSIDE_MANIFEST",
+                "The requested UTC range is outside the immutable manifest coverage.",
+                422,
+                {
+                    "manifest_start": manifest.coverage_start.isoformat(),
+                    "manifest_end": manifest.coverage_end.isoformat(),
+                },
+            )
+        source = session.get(GovernedDataSource, manifest.data_source_id)
+        universe = session.get(MarketUniverseVersion, manifest.universe_version_id)
+        public_config = source.public_config if source is not None else {}
+        stored_binding = public_config.get("plugin_binding") if isinstance(public_config, dict) else None
+        if universe is None or not isinstance(stored_binding, dict):
+            raise QfError(
+                "ARCHIVE_MANIFEST_BINDING_INVALID",
+                "The manifest is missing its governed Universe or plugin binding.",
+                409,
+            )
+        manifest_source_spec = manifest.source_spec
+        if (
+            not isinstance(manifest_source_spec, dict)
+            or manifest_source_spec.get("kind") != "plugin"
+            or not isinstance(manifest_source_spec.get("config"), dict)
+        ):
+            raise QfError(
+                "ARCHIVE_MANIFEST_SOURCE_INVALID",
+                "The manifest source specification is not a plugin source.",
+                409,
+            )
+        range_shards = session.scalars(
+            select(ArchiveManifestShard)
+            .where(
+                ArchiveManifestShard.manifest_id == manifest.id,
+                ArchiveManifestShard.coverage_start >= start,
+                ArchiveManifestShard.coverage_end <= end,
+            )
+            .order_by(ArchiveManifestShard.coverage_start.asc())
+        ).all()
+        if len(range_shards) != requested_hours:
+            raise QfError(
+                "ARCHIVE_MANIFEST_RANGE_INCOMPLETE",
+                "The manifest does not contain one hourly descriptor for the requested range.",
+                409,
+                {"expected_hours": requested_hours, "described_hours": len(range_shards)},
+            )
+        available_shards = [item for item in range_shards if item.state == "AVAILABLE"]
+        if not available_shards:
+            raise QfError(
+                "ARCHIVE_RANGE_HAS_NO_DATA",
+                "No AVAILABLE archive shard exists in the requested range.",
+                422,
+            )
+        estimated_bytes = sum(item.size_bytes or 0 for item in available_shards)
+        if estimated_bytes > 20 * 1024 * 1024 * 1024:
+            raise QfError(
+                "ARCHIVE_MATERIALIZATION_TOO_LARGE",
+                "The selected archive shards exceed the 20 GiB materialization limit.",
+                422,
+                {"estimated_source_bytes": estimated_bytes, "max_source_bytes": 20 * 1024 * 1024 * 1024},
+            )
+        try:
+            plugin_release_id = UUID(str(stored_binding["plugin_release_id"]))
+            plugin_bundle_id = UUID(str(stored_binding["plugin_runtime_bundle_id"]))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise QfError(
+                "ARCHIVE_MANIFEST_BINDING_INVALID",
+                "The manifest plugin binding is malformed.",
+                409,
+            ) from exc
+        base_config = dict(manifest_source_spec["config"])
+        base_config["selection"] = "instrument_history"
+        base_config["instrument"] = payload.instrument
+        if payload.instrument_symbol is not None:
+            base_config["instrument_symbol"] = payload.instrument_symbol
+        base_config["archive_start"] = start.isoformat()
+        base_config["archive_end"] = end.isoformat()
+        selected_shards = [
+            {
+                "shard_key": item.shard_key,
+                "source_url": item.source_url,
+                "coverage_start": item.coverage_start.isoformat(),
+                "coverage_end": item.coverage_end.isoformat(),
+                "size_bytes": item.size_bytes,
+                "state": item.state,
+                "observed_at": item.observed_at.isoformat(),
+            }
+            for item in available_shards
+        ]
+        materialized_source_spec = {
+            "kind": "plugin",
+            "config": base_config,
+            "manifest_uri": manifest.manifest_uri,
+            "shard_keys": [item.shard_key for item in available_shards],
+            "materialization": {
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "source_shard_count": len(available_shards),
+                "requested_shard_count": len(range_shards),
+                "missing_shard_count": len(range_shards) - len(available_shards),
+                "estimated_source_bytes": estimated_bytes,
+            },
+        }
+        catalog_payload = CatalogIngestInput(
+            catalog_name=payload.catalog_name,
+            provider=manifest.provider,
+            source_license=manifest.source_license,
+            universe_name=universe.name,
+            sealed=False,
+            source_spec=materialized_source_spec,
+            plugin_release_id=plugin_release_id,
+            plugin_runtime_bundle_id=plugin_bundle_id,
+        )
+    return _ingest_catalog(catalog_payload, request, source_shards=selected_shards)
 
 
 @router.get("/quant-runtime/catalogs", response_model=list[CatalogView])

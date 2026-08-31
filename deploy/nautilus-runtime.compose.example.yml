@@ -8,10 +8,12 @@ services:
     environment:
       QUAZONAI_NAUTILUS_RUNTIME_TOKEN: ${QUAZONAI_NAUTILUS_RUNTIME_TOKEN:?required}
       QUAZONAI_NAUTILUS_CATALOG_ROOT: /var/lib/nautilus/catalogs
+      QUAZONAI_NAUTILUS_PLUGIN_ROOT: /var/lib/quazonai/plugins
       QUAZONAI_NAUTILUS_HOST: 0.0.0.0
       QUAZONAI_NAUTILUS_PORT: 8011
     volumes:
       - research-catalogs:/var/lib/nautilus/catalogs
+      - plugin-data:/var/lib/quazonai/plugins:ro
     ports:
       - "127.0.0.1:8011:8011"
     read_only: true
@@ -30,12 +32,14 @@ services:
     environment:
       QUAZONAI_NAUTILUS_RUNTIME_TOKEN: ${QUAZONAI_NAUTILUS_SEALED_RUNTIME_TOKEN:?required}
       QUAZONAI_NAUTILUS_CATALOG_ROOT: /var/lib/nautilus/sealed-catalogs
+      QUAZONAI_NAUTILUS_PLUGIN_ROOT: /var/lib/quazonai/plugins
       QUAZONAI_NAUTILUS_HOST: 0.0.0.0
       QUAZONAI_NAUTILUS_PORT: 8011
     volumes:
       # Ingestion is an explicit trusted provisioning action; evaluation reads
       # only the catalog selected for the current episode.
       - sealed-catalogs:/var/lib/nautilus/sealed-catalogs
+      - plugin-data:/var/lib/quazonai/plugins:ro
     ports:
       - "127.0.0.1:8012:8011"
     read_only: true
@@ -50,3 +54,10 @@ services:
 volumes:
   research-catalogs:
   sealed-catalogs:
+  plugin-data:
+    external: true
+    name: quazonai_plugin-data
+
+networks:
+  default:
+    name: quazonai-runtime

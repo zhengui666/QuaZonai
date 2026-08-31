@@ -37,6 +37,9 @@ from pydantic import BaseModel, ConfigDict
 
 from quant_runtime.config import CONTRACT_VERSION, PINNED_NAUTILUS_VERSION
 from quant_runtime.contracts import (
+    ArchiveManifestDescriptor,
+    ArchiveManifestSpec,
+    ArchiveShardDescriptor,
     CatalogDescriptor,
     CatalogIngestSpec,
     ExperimentSpec,
@@ -51,6 +54,9 @@ _RUNS_LOCK = threading.Lock()
 _CATALOG_LOCK = threading.Lock()
 _EXECUTION_LOCK = threading.Lock()
 _CATALOG_PREFIX = "catalog://"
+_PLUGIN_ROOT = Path(
+    os.environ.get("QUAZONAI_NAUTILUS_PLUGIN_ROOT", "/var/lib/quazonai/plugins")
+).resolve()
 _FORBIDDEN_BUNDLE_KEYS = {
     "api_key",
     "apikey",
@@ -197,6 +203,169 @@ def _read_catalog_descriptor(catalog_uri: str) -> CatalogDescriptor:
         raise HTTPException(status_code=500, detail="catalog metadata is invalid") from exc
 
 
+def _plugin_python(bundle_path: str) -> Path:
+    """Resolve only a prewarmed, immutable plugin bundle under the plugin root."""
+
+    relative = Path(bundle_path)
+    candidate = (_PLUGIN_ROOT / relative).resolve()
+    if (
+        relative.is_absolute()
+        or not relative.parts
+        or relative.parts[0] != "bundles"
+        or ".." in relative.parts
+        or not candidate.is_relative_to(_PLUGIN_ROOT)
+    ):
+        raise HTTPException(status_code=422, detail="plugin bundle path is invalid")
+    python_path = candidate / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    if not python_path.is_file():
+        raise HTTPException(status_code=409, detail="plugin runtime bundle is unavailable")
+    return python_path
+
+
+def _write_plugin_catalog(spec: CatalogIngestSpec, staging_path: Path) -> CatalogDescriptor:
+    """Invoke one validated historical-import plugin in a short-lived child."""
+
+    if not spec.plugin_id or not spec.plugin_version or not spec.plugin_bundle_path:
+        raise HTTPException(
+            status_code=422,
+            detail="plugin Catalog ingest requires an id, version and runtime bundle",
+        )
+    source_config = spec.source_spec.get("config")
+    if not isinstance(source_config, dict):
+        raise HTTPException(status_code=422, detail="plugin source_spec.config must be an object")
+    request = {
+        "plugin_id": spec.plugin_id,
+        "plugin_version": spec.plugin_version,
+        "action": "import_catalog",
+        "public_config": source_config,
+        "secret_config": {},
+        "source_url": source_config.get("archive_url"),
+        "source_shards": (
+            [
+                ArchiveShardDescriptor.model_validate(shard).model_dump(mode="json")
+                for shard in spec.source_shards
+            ]
+            if spec.source_shards is not None
+            else None
+        ),
+        "catalog_path": str(staging_path),
+        "instrument_id": source_config.get("instrument"),
+        "metadata": {
+            "catalog_uri": f"{_CATALOG_PREFIX}{spec.catalog_name}",
+            "provider": spec.provider,
+            "source_license": spec.source_license,
+            "source_spec": spec.source_spec,
+            "sealed": spec.sealed,
+        },
+    }
+    child_environment = {
+        name: value for name, value in os.environ.items() if name in _ISOLATED_ENVIRONMENT_KEYS
+    }
+    child_environment.update(
+        {
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+    )
+    try:
+        result = subprocess.run(
+            [str(_plugin_python(spec.plugin_bundle_path)), "-m", "plugins.runtime_call"],
+            input=json.dumps(request),
+            capture_output=True,
+            text=True,
+            cwd=staging_path,
+            env=child_environment,
+            timeout=600,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(status_code=504, detail="plugin catalog import timed out") from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "plugin catalog import failed")[-2000:]
+        raise HTTPException(status_code=422, detail=detail)
+    try:
+        response = json.loads(result.stdout)
+        summary = response["summary"]
+        descriptor = CatalogDescriptor.model_validate(summary["descriptor"])
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=502, detail="plugin returned an invalid catalog descriptor") from exc
+    expected_uri = f"{_CATALOG_PREFIX}{spec.catalog_name}"
+    if (
+        descriptor.catalog_uri != expected_uri
+        or descriptor.provider != spec.provider
+        or descriptor.source_license != spec.source_license
+        or descriptor.source_spec != spec.source_spec
+        or descriptor.sealed != spec.sealed
+    ):
+        raise HTTPException(status_code=502, detail="plugin catalog descriptor does not match request")
+    return descriptor
+
+
+def _inspect_plugin_manifest(spec: ArchiveManifestSpec) -> ArchiveManifestDescriptor:
+    """Ask a short-lived plugin child to enumerate remote archive shards."""
+
+    if not spec.plugin_id or not spec.plugin_version or not spec.plugin_bundle_path:
+        raise HTTPException(
+            status_code=422,
+            detail="plugin manifest inspection requires an id, version and runtime bundle",
+        )
+    source_config = spec.source_spec.get("config")
+    if not isinstance(source_config, dict):
+        raise HTTPException(status_code=422, detail="plugin source_spec.config must be an object")
+    request = {
+        "plugin_id": spec.plugin_id,
+        "plugin_version": spec.plugin_version,
+        "action": "scan_manifest",
+        "public_config": source_config,
+        "secret_config": {},
+        "metadata": {
+            "manifest_uri": f"manifest://{spec.manifest_name}",
+            "provider": spec.provider,
+            "source_license": spec.source_license,
+            "source_spec": spec.source_spec,
+        },
+    }
+    child_environment = {
+        name: value for name, value in os.environ.items() if name in _ISOLATED_ENVIRONMENT_KEYS
+    }
+    child_environment.update(
+        {
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+    )
+    try:
+        result = subprocess.run(
+            [str(_plugin_python(spec.plugin_bundle_path)), "-m", "plugins.runtime_call"],
+            input=json.dumps(request),
+            capture_output=True,
+            text=True,
+            cwd=_catalog_root(),
+            env=child_environment,
+            timeout=900,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(status_code=504, detail="plugin archive manifest scan timed out") from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "plugin archive manifest scan failed")[-2000:]
+        raise HTTPException(status_code=422, detail=detail)
+    try:
+        response = json.loads(result.stdout)
+        descriptor = ArchiveManifestDescriptor.model_validate(response["summary"])
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=502, detail="plugin returned an invalid archive manifest") from exc
+    expected_uri = f"manifest://{spec.manifest_name}"
+    if (
+        descriptor.manifest_uri != expected_uri
+        or descriptor.provider != spec.provider
+        or descriptor.source_license != spec.source_license
+        or descriptor.source_spec != spec.source_spec
+    ):
+        raise HTTPException(status_code=502, detail="plugin archive manifest does not match request")
+    return descriptor
+
+
 def _write_catalog(spec: CatalogIngestSpec) -> CatalogDescriptor:
     catalog_uri = f"catalog://{spec.catalog_name}"
     path = _catalog_path(catalog_uri)
@@ -235,12 +404,25 @@ def _write_catalog(spec: CatalogIngestSpec) -> CatalogDescriptor:
             from nautilus_trader.test_kit.providers import TestInstrumentProvider
 
             source_kind = str(spec.source_spec.get("kind", ""))
+            if source_kind == "plugin":
+                descriptor = _write_plugin_catalog(spec, staging_path)
+                _metadata_path(staging_path).write_text(
+                    descriptor.model_dump_json(indent=2),
+                    encoding="utf-8",
+                )
+                if path.exists():
+                    raise HTTPException(
+                        status_code=409,
+                        detail="catalog identity is already occupied",
+                    )
+                os.replace(staging_path, path)
+                return descriptor
             if source_kind != "synthetic_fx_quotes":
                 raise HTTPException(
                     status_code=422,
                     detail=(
-                        "The reference service accepts source_spec.kind=synthetic_fx_quotes only; "
-                        "production runtimes should provide approved provider adapters."
+                        "The reference service accepts source_spec.kind=plugin or "
+                        "synthetic_fx_quotes."
                     ),
                 )
             instrument_name = str(spec.source_spec.get("instrument", "EUR/USD"))
@@ -350,12 +532,19 @@ def _strategy_import_root(artifact: StrategyArtifact) -> Iterator[None]:
         shutil.rmtree(root, ignore_errors=True)
 
 
-def _normalize_strategy_config(artifact: StrategyArtifact, instrument: Any) -> dict[str, Any]:
+def _normalize_strategy_config(
+    artifact: StrategyArtifact,
+    instrument: Any,
+    config_type: Any | None = None,
+) -> dict[str, Any]:
     config = dict(artifact.config)
     config["instrument_id"] = instrument.id
-    config.setdefault("bar_type", f"{instrument.id.value}-5-MINUTE-BID-INTERNAL")
-    if "trade_size" in config:
-        config["trade_size"] = Decimal(str(config["trade_size"]))
+    if isinstance(config.get("trade_size"), str):
+        expected_type = getattr(config_type, "__annotations__", {}).get("trade_size")
+        if expected_type is float or expected_type == "float":
+            config["trade_size"] = float(config["trade_size"])
+        else:
+            config["trade_size"] = Decimal(str(config["trade_size"]))
     return config
 
 
@@ -402,7 +591,6 @@ def _execute_once(experiment: ExperimentSpec, mode: RunMode) -> RunEvidence:
     from nautilus_trader.backtest.node import BacktestVenueConfig
     from nautilus_trader.config import ImportableStrategyConfig
     from nautilus_trader.model import QuoteTick
-    from nautilus_trader.model.identifiers import Venue
 
     descriptor = _read_catalog_descriptor(experiment.catalog_uri)
     if mode == "PORTFOLIO":
@@ -419,10 +607,20 @@ def _execute_once(experiment: ExperimentSpec, mode: RunMode) -> RunEvidence:
     node: Any | None = None
     try:
         with _strategy_import_root(experiment.strategy):
+            config_module, separator, config_name = experiment.strategy.config_path.partition(":")
+            config_type = (
+                getattr(importlib.import_module(config_module), config_name)
+                if separator and config_name
+                else None
+            )
             strategy = ImportableStrategyConfig(
                 strategy_path=experiment.strategy.strategy_path,
                 config_path=experiment.strategy.config_path,
-                config=_normalize_strategy_config(experiment.strategy, instrument),
+                config=_normalize_strategy_config(
+                    experiment.strategy,
+                    instrument,
+                    config_type=config_type,
+                ),
             )
             run_config = BacktestRunConfig(
                 engine=BacktestEngineConfig(strategies=[strategy]),
@@ -435,7 +633,11 @@ def _execute_once(experiment: ExperimentSpec, mode: RunMode) -> RunEvidence:
                 ],
                 venues=[
                     BacktestVenueConfig(
-                        name="SIM",
+                        # The simulated venue must match the instrument's venue.
+                        # Catalogs are not limited to the EUR/USD.SIM fixture;
+                        # using a fixed SIM config makes PMXT instruments fail
+                        # before the strategy receives any data.
+                        name=instrument.id.venue.value,
                         oms_type="HEDGING",
                         account_type="MARGIN",
                         base_currency="USD",
@@ -456,7 +658,9 @@ def _execute_once(experiment: ExperimentSpec, mode: RunMode) -> RunEvidence:
             orders = _records(engine.trader.generate_orders_report())
             fills = _records(engine.trader.generate_fills_report())
             positions = _records(engine.trader.generate_positions_report())
-            account = _records(engine.trader.generate_account_report(venue=Venue("SIM")))
+            account = _records(
+                engine.trader.generate_account_report(venue=instrument.id.venue)
+            )
             returns = _jsonable(result.stats_returns)
             pnls = _jsonable(result.stats_pnls)
             statistics = {
@@ -851,6 +1055,10 @@ def create_app() -> FastAPI:
                 "quality_result": {**descriptor.quality_result, "valid": True},
             }
         )
+
+    @app.post("/v1/archive-manifests/inspect", response_model=ArchiveManifestDescriptor)
+    def inspect_archive_manifest(spec: ArchiveManifestSpec) -> ArchiveManifestDescriptor:
+        return _inspect_plugin_manifest(spec)
 
     @app.post("/v1/runs", response_model=RunEvidence)
     def run(payload: RunInput) -> RunEvidence:

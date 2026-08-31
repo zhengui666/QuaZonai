@@ -59,6 +59,41 @@ class DescriptorSnapshot(BaseModel):
 
 
 @runtime_checkable
+class CatalogImporter(Protocol):
+    """Short-lived historical importer invoked by the generic runtime bridge."""
+
+    def import_source(
+        self,
+        *,
+        source_url: str,
+        catalog_path: str,
+        instrument_id: str,
+        metadata: dict[str, Any],
+    ) -> dict[str, Any]: ...
+
+
+@runtime_checkable
+class ArchiveSliceImporter(Protocol):
+    """Short-lived importer for a bounded, manifest-selected archive slice."""
+
+    def import_sources(
+        self,
+        *,
+        source_shards: list[dict[str, Any]],
+        catalog_path: str,
+        instrument_id: str,
+        metadata: dict[str, Any],
+    ) -> dict[str, Any]: ...
+
+
+@runtime_checkable
+class ArchiveManifestScanner(Protocol):
+    """Short-lived scanner that returns only a bounded remote shard register."""
+
+    def scan_manifest(self, *, metadata: dict[str, Any]) -> dict[str, Any]: ...
+
+
+@runtime_checkable
 class RuntimePlugin(Protocol):
     """Runtime-only plugin object loaded inside validator/worker child processes."""
 
@@ -66,6 +101,6 @@ class RuntimePlugin(Protocol):
 
     def build_data_config(self, public_config: dict[str, Any]) -> object: ...
 
-    def build_catalog_importer(self, public_config: dict[str, Any]) -> object: ...
+    def build_catalog_importer(self, public_config: dict[str, Any]) -> CatalogImporter: ...
 
     def build_research_tool(self, public_config: dict[str, Any]) -> object: ...

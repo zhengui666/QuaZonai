@@ -452,6 +452,8 @@ Administration 是 Codex runtime 配置的事实入口，显示并允许修改�
 - App Server preflight；
 - Agent worker health。
 
+Linux Docker 部署还会在 `finite-worker` 启动检查中执行一次真实 Codex workspace sandbox preflight。若宿主 Docker seccomp 不允许用户 namespace，worker 会保持未就绪并拒绝领取 Mission；不要通过 `privileged` 或关闭 Codex sandbox 绕过。Compose 为 worker 单独使用专用 seccomp profile，同时保留 no-new-privileges、capability drop、只读根文件系统和 Mission 网络隔离。
+
 自定义 Base URL 必须是绝对 HTTP(S) URL，不能把 username/password、query token 或 fragment 嵌入 URL。配置了 Base URL/API key 时，Mission 使用独立 Codex model provider；未配置时继续使用持久 `CODEX_HOME` 中的标准 Codex 登录。已有 API key 时更改 Base URL，必须重新输入该 endpoint 对应的 key 或显式清除旧 key。
 
 Codex API key 由 `QUAZONAI_MASTER_KEY` 使用 AES-256-GCM 加密后保存到 PostgreSQL。Secret/token 不在 Web 展示，也不写入事件 payload；运行时通过受信任 runner 的 one-shot credential broker 交给 Codex provider auth，不进入 App Server/Mission 环境变量。
@@ -531,6 +533,45 @@ QUAZONAI_NAUTILUS_CONTRACT_VERSION=1
 ```
 
 Remote runtime 不可用时，run 保留失败 evidence 并由 durable job policy 处理重试；不得退回 QZ 自研模拟器。Sealed endpoint/token/catalog 必须独立，Sealed raw report 不展示给 Agent。QZ 不启动、停止、撤单、平仓或恢复任何 downstream runtime。
+
+### 14.11 PMXT Archive 历史数据
+
+PMXT Archive 以公开 HTTPS 小时 Parquet 提供 Polymarket v2 与 Kalshi 的历史 orderbook。管理员在已批准的 Data Source / Universe 边界内，可以为单个小时文件和 `asset_id`/`market_ticker` 建立 Catalog ingest，也可以为全市场历史建立 `ArchiveManifest`；Core 只保存 source specification、Manifest/ Dataset Revision 和受控引用，具体探测、按需下载与 Parquet 转换在独立 Remote Nautilus runtime 中完成。
+
+示例 `source_spec`（插件 release 与 runtime bundle 由管理员先激活/预热）：
+
+```json
+{
+  "kind": "plugin",
+  "config": {
+    "venue": "kalshi",
+    "archive_url": "https://r2kalshi.pmxt.dev/kalshi_orderbook_2026-06-11T03.parquet",
+    "instrument": "<market_ticker>"
+  }
+}
+```
+
+请求同时绑定 `plugin_release_id` 与 `plugin_runtime_bundle_id`；当前 PMXT primary wheel
+的 plugin id 为 `pmxt_archive`。该绑定只允许 `ACTIVE` release 和 `READY` 的 `IMPORTER`
+bundle，具体下载与 Parquet 转换由独立 runtime 的通用 connector-runner child 完成。
+
+PMXT Archive 读取不需要 API key；本地部署也不应填写 PMXT 交易凭据。单个 Polymarket v2 小时文件可能较大，因此先按 instrument 过滤，避免把全市场文件载入 Research Catalog。PMXT 接入完成只代表历史研究数据可用，不代表已连接交易系统。
+
+全市场全历史使用下面的清单配置，不下载整库：
+
+```json
+{
+  "kind": "plugin",
+  "config": {
+    "venue": "polymarket_v2",
+    "selection": "all_markets",
+    "archive_start": "2026-04-13T19:00:00Z",
+    "archive_end": "2026-08-31T03:00:00Z"
+  }
+}
+```
+
+`archive_start`/`archive_end` 是 UTC 小时边界，`archive_end` 不包含在范围内。Manifest 检查只发送固定规则的 HTTPS HEAD 探测；缺失小时和探测错误会被记录，不会伪装成连续历史。研究时调用 `POST /api/v1/quant-runtime/archive-manifests/{manifest_id}/materialize`，提交一个 instrument 和 `[start, end)` 小时范围；单次最多 168 小时、估算源文件最多 20 GiB，插件只下载并过滤选中的分片，生成新的 immutable Dataset Revision。缺失小时会进入 quality evidence，不会伪装成连续数据，也不会直接判定 Alpha 失败。不能把整库下载到本机。PMXT v2 当前可用历史的起点由归档源决定，不等于 Polymarket 的全部历史。
 
 ## 15. 故障呈现原则
 

@@ -78,27 +78,42 @@ def create_validation_environment(
 
     root = staging_root / f"validation-{release_id}-{uuid4()}"
     root.parent.mkdir(parents=True, exist_ok=True)
-    _run(
-        [uv, "venv", str(root), "--python", sys.executable, "--system-site-packages"],
-        timeout_seconds=timeout_seconds,
-    )
-    python = _venv_python(root)
-    _run(
-        [
-            uv,
-            "pip",
-            "install",
-            "--python",
-            str(python),
-            "--offline",
-            "--no-index",
-            "--no-deps",
-            *[str(path) for path in wheel_paths],
-        ],
-        timeout_seconds=timeout_seconds,
-    )
-    _run([uv, "pip", "check", "--python", str(python)], timeout_seconds=timeout_seconds)
-    return ValidationEnvironment(root=root, python=python)
+    cache_root = staging_root / f".uv-cache-{uuid4()}"
+    uv_environment = os.environ.copy()
+    uv_environment["UV_CACHE_DIR"] = str(cache_root)
+    try:
+        _run(
+            [uv, "venv", str(root), "--python", sys.executable, "--system-site-packages"],
+            timeout_seconds=timeout_seconds,
+            env=uv_environment,
+        )
+        python = _venv_python(root)
+        _run(
+            [
+                uv,
+                "pip",
+                "install",
+                "--python",
+                str(python),
+                "--offline",
+                "--no-index",
+                "--no-deps",
+                *[str(path) for path in wheel_paths],
+            ],
+            timeout_seconds=timeout_seconds,
+            env=uv_environment,
+        )
+        _run(
+            [uv, "pip", "check", "--python", str(python)],
+            timeout_seconds=timeout_seconds,
+            env=uv_environment,
+        )
+        return ValidationEnvironment(root=root, python=python)
+    except Exception:
+        shutil.rmtree(root, ignore_errors=True)
+        raise
+    finally:
+        shutil.rmtree(cache_root, ignore_errors=True)
 
 
 def validate_installed_plugin(

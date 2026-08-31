@@ -113,6 +113,8 @@ QUAZONAI_NAUTILUS_CONTRACT_VERSION=1
 
 These service tokens are not broker credentials. Keep them at the trusted Core deployment boundary; Codex Mission children never receive them. A governed Dataset Revision must have an immutable Nautilus Catalog binding before a Mission experiment can run. Discovery evidence enters the Search Ledger; Sealed evaluation uses a separate endpoint/catalog and returns controlled disclosure only. Approved output is a Nautilus-native Candidate Bundle.
 
+PMXT Archive is available as the `quazonai-pmxt-archive` historical `DATA_CONNECTOR` plugin for Polymarket v2 and Kalshi. It supports either one fixed hourly Parquet URL plus one target `asset_id`/`market_ticker`, or a generic immutable `ArchiveManifest` for a bounded all-market history range. The manifest path probes the fixed PMXT URL space without bulk downloading and records gaps; `POST /api/v1/quant-runtime/archive-manifests/{manifest_id}/materialize` then materializes one instrument and a bounded UTC slice into a new immutable Dataset Revision. This path requires no PMXT API key and has no order or execution capability.
+
 ## Agent Skill
 
 [`skills/quazonai/`](skills/quazonai/) is the portable Agent Skills package for operating a running QuaZonai instance through the local `quazonai` CLI. Install the entire directory, not only `SKILL.md`, so the bundled command reference and workflows remain available.

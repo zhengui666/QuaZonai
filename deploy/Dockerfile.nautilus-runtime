@@ -9,8 +9,10 @@ RUN groupadd --system quazonai-nautilus \
     && useradd --system --gid quazonai-nautilus --home-dir /home/quazonai-nautilus \
        --create-home quazonai-nautilus \
     && mkdir -p /workspace /var/lib/quazonai-nautilus/catalogs \
+       /var/lib/nautilus/catalogs /var/lib/nautilus/sealed-catalogs \
+       /var/lib/quazonai/plugins \
     && chown -R quazonai-nautilus:quazonai-nautilus \
-       /workspace /var/lib/quazonai-nautilus /home/quazonai-nautilus
+       /workspace /var/lib/quazonai-nautilus /var/lib/nautilus /home/quazonai-nautilus
 
 WORKDIR /workspace
 COPY backend /workspace/backend

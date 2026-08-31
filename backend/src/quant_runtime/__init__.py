@@ -6,6 +6,9 @@ from quant_runtime.config import (
     RemoteNautilusConfig,
 )
 from quant_runtime.contracts import (
+    ArchiveManifestDescriptor,
+    ArchiveManifestSpec,
+    ArchiveShardDescriptor,
     CatalogDescriptor,
     CatalogIngestSpec,
     ExperimentSpec,
@@ -27,4 +30,7 @@ __all__ = [
     "StrategyArtifact",
     "NautilusQuantRuntime",
     "QuantRuntime",
+    "ArchiveManifestDescriptor",
+    "ArchiveManifestSpec",
+    "ArchiveShardDescriptor",
 ]

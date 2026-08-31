@@ -42,6 +42,10 @@ def resolve_plugin_path(plugin_root: Path, relative_path: str) -> Path:
 
 def _remove_write_permissions(root: Path) -> None:
     for path in sorted(root.rglob("*"), key=lambda item: len(item.parts), reverse=True):
+        if path.is_symlink():
+            # venv launchers point at the image interpreter; changing the target
+            # would mutate the read-only base image instead of this bundle.
+            continue
         try:
             current = stat.S_IMODE(path.stat().st_mode)
             path.chmod(current & ~0o222)

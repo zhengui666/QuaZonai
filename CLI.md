@@ -188,11 +188,17 @@ Core API 的远程量化运行接口为：
 POST /api/v1/quant-runtime/catalogs/ingest
 GET  /api/v1/quant-runtime/catalogs
 POST /api/v1/quant-runtime/catalogs/{catalog_id}/validate
+POST /api/v1/quant-runtime/archive-manifests/inspect
+GET  /api/v1/quant-runtime/archive-manifests
+GET  /api/v1/quant-runtime/archive-manifests/{manifest_id}/shards
+POST /api/v1/quant-runtime/archive-manifests/{manifest_id}/materialize
 GET  /api/v1/research-programs/{program_id}/quant-runs
 GET  /api/v1/research-programs/{program_id}/search-ledger
 ```
 
 `ALPHA_DISCOVERY` Mission 在自己的 worktree 中写入 `EXPERIMENTS.json`。受信 finite-worker 只接受 `catalog://` 引用和严格的 `StrategyArtifact`/`ExperimentSpec` 合同，然后调用 pinned NautilusTrader `1.231.0` Remote Research Runtime；每次成功或失败都写入 `QuantRuntimeRun` 与 `SearchLedgerEntry`。Sealed Evaluation 使用独立 endpoint/token/catalog，Agent 只能看到受控结果，不能读取 Sealed raw evidence。
+
+`StrategyArtifact.source_files` 必须提供可导入且可执行的完整 strategy/config 实现，并与 `strategy_path`、`config_path` 及配置字段一致；不得用 placeholder、TODO 或“由 parent runtime 实现”替代实验逻辑。Parent 只执行已提交 artifact，不会代补缺失的因子实现；不可运行的 artifact 会作为失败尝试记录。
 
 批准后的 Candidate Bundle 固定 Strategy wheel、config、runtime pin、data requirements、TargetPortfolioFrame conformance fixture、aggregate evidence 和 lineage。Bundle 不含 broker/provider/runtime secret，也不输出订单命令；下游负责 Paper/Live runtime 的启动、停止、撤单、平仓和恢复。
 
@@ -330,6 +336,8 @@ QZ 外层 Mission isolation 必须保证 Codex command subprocess 无法读取�
 不得只依赖 developer instruction 来保护这些路径。具体 Linux/macOS enforcement 可以随平台实现，但 `codex preflight` 必须用真实 command tool 验证 forbidden paths 不可达。
 
 Mission 默认无任意网络。Agent 不通过 interactive approval 请求用户开放网络；数据和外部能力走 QZ Tool Server。
+
+在 Linux 容器中，`finite-worker` 使用专用 seccomp profile 允许 Codex bundled bubblewrap 创建用户、挂载和网络 namespace。该 profile 只解决 namespace bootstrap；worker 仍保持 `no-new-privileges`、`cap_drop: ALL`、只读根文件系统和 Mission 沙箱。不得改用 `privileged`、`CAP_SYS_ADMIN` 或 `--dangerously-bypass-approvals-and-sandbox`。Worker 的 `--check` 会执行真实 sandbox preflight；preflight 失败时不能领取 Mission。
 
 Codex command 可以：
 

@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quazonai-pmxt-archive"
+version = "1.1.2"
+description = "QuaZonai historical PMXT Archive data connector"
+requires-python = ">=3.14,<3.15"
+dependencies = []
+
+[project.entry-points."quazonai.plugins"]
+pmxt_archive = "pmxt_archive_plugin:plugin"
+
+[tool.setuptools.packages.find]
+where = ["src"]
