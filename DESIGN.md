@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 21038)
-Total output lines: 2029
-
 # QuaZonai 产品需求与技术架构设计
 
 > 架构基线：2026-08-29（Issue #22 Nautilus-first）
@@ -490,7 +487,7 @@ PMXT Archive 以 `DATA_CONNECTOR` / `HISTORICAL_IMPORT` runtime plugin 形式提
 
 Manifest 只登记插件根据固定官方 URL 规则探测到的小时分片（URL、UTC 小时范围、大小、存在/缺失/探测错误状态和探测时间），不下载原始 Parquet。缺失小时必须保留在清单中并作为研究数据间隔；清单本身是不可变的，重新扫描或范围变化创建新的 Manifest。Research runtime 按研究请求选择分片和 instrument，在有界缓存中按需物化临时 Nautilus Catalog；缓存淘汰不改变 Manifest 或 Dataset Revision，也不使用应用级 hash/checksum 身份。
 
-Manifest 的按需物化使用同一通用 `CatalogIngestSpec`，增加可选的 `source_shards` 列表和 `source_spec.materialization` 描述。Core 只允许选择单一 instrument、UTC 小时对齐的 `[start, end)` 范围和 Manifest 中状态为 `AVAILABLE` 的固定分片；单次请求最多 168 个小时、估算源文件最多 20 GiB。缺失/探测错误小时留在 materialization quality evidence 中，不被当成 Alpha failure。Core 不下载、不解析 provider 数据，也不为 PMXT 增加特殊分支；独立 runtime 将选定分片传给对应 `DATA_CONNECTOR` plugin child，由插件逐个下载、按 instrument 过滤、按 `timestamp_received` 合并状态并写出新的 Catalog。每个 materialization 都创建新的 immutable Dataset Revision，不能向既有 Catalog 原地追加。Reference runtime 拒绝 plugin 直接写入 `sealed=true` Catalog；sealed raw data 必须先由受信 provisioning/import path 写入独立 sealed Catalog，再供 evaluator 只读验证。
+Manifest 的按需物化使用同一通用 `CatalogIngestSpec`，增加可选的 `source_shards` 列表和 `source_spec.materialization` 描述。Core 只允许选择单一 instrument、UTC 小时对齐的 `[start, end)` 范围和 Manifest 中状态为 `AVAILABLE` 的固定分片；单次请求最多 168 个小时、估算源文件最多 20 GiB。缺失/探测错误小时留在 materialization quality evidence 中，不被当成 Alpha failure。Core 不下载、不解析 provider 数据，也不为 PMXT 增加特殊分支；独立 runtime 将选定分片传给对应 `DATA_CONNECTOR` plugin child，由插件逐个下载、以最多 16,384 行和 64 MiB 解码批次按 instrument 过滤，累计解码输入最多 4 GiB，按 `timestamp_received` 合并状态并写出新的 Catalog。plugin child 还必须继承 8 GiB address-space 上限，reference Research/Sealed runtime 容器各自设置 10 GiB memory 上限。每个 materialization 都创建新的 immutable Dataset Revision，不能向既有 Catalog 原地追加。Reference runtime 拒绝 plugin 直接写入 `sealed=true` Catalog；sealed raw data 必须先由受信 provisioning/import path 写入独立 sealed Catalog，再供 evaluator 只读验证。
 
 `plugin_release_id` 与 `plugin_runtime_bundle_id` 是 Operator Catalog ingest 请求的受治理绑定；Core 校验 release 为 ACTIVE、bundle 为 READY 且包含该 release 的 `IMPORTER` member，再向独立 Nautilus runtime 传递不含 secret 的 plugin id/version 和 bundle path。runtime 只通过通用 connector-runner child 调用 plugin entry point；API、worker、agent-worker、evaluator 长进程不 import plugin。
 
@@ -1194,7 +1191,117 @@ Codex provider 规则：
 - Base URL 不允许内嵌 username/password、query token 或 fragment；
 - 配置 custom Base URL 或 API key 时，App Server 使用显式 model provider，V1 wire API 固定为 Responses；
 - provider API key 不进入 App Server environment、命令行或 `--config`。受信任 Mission runner 只在内存中持有解密后的 key，通过 `0700` 临时目录下的 `0600` one-shot Unix socket broker 向 Codex 0.144.4 的 command-backed model-provider `auth` helper 交付一次 token；helper 在首个 provider request 前取用后 broker 关闭，Mission shell、MCP Tool Server、Agent output 与持久 event 均不得获得该 key；
-- App Server environment 必须显式清除 provider API key、`QUAZONAI_MASTER_KEY` 与数据库连接 secret，不能…1038 tokens truncated…；
+- App Server environment 必须显式清除 provider API key、`QUAZONAI_MASTER_KEY` 与数据库连接 secret，不能依赖普通 shell env filtering 作为 Secret 边界；
+- 已保存 provider key 时修改 `codex_base_url`，必须在同一 mutation 中重新输入 key 或显式清除旧 key，禁止把旧 credential 静默重绑定到新 endpoint；
+- 未配置 custom provider credential 时，可继续使用持久 `CODEX_HOME` 中的官方 Codex/ChatGPT 登录；
+- Web/API 只返回 `codex_api_key_configured` 状态，不回读 plaintext/ciphertext/nonce。
+
+Runtime Configuration mutation 规则：
+
+- GET 返回当前单调递增 `revision`；尚未创建 singleton 时为 revision `0`；
+- PUT 必须携带 `expected_revision`，陈旧保存返回 `RUNTIME_CONFIGURATION_STALE`，首次并发创建的唯一约束竞争也必须被翻译为同一业务冲突而不是数据库 500；
+- PUT 支持 `Idempotency-Key`；同一个逻辑请求重试返回原响应，不重复加密 provider key、不重复推进 revision、也不重复写 `RUNTIME_CONFIGURATION_UPDATED` event；
+- Idempotency receipt 不保存 provider key plaintext，也不为了去重额外保存历史 secret 副本。
+
+Worker 规则：
+
+- finite worker 每次领取后续 job 前读取最新 Runtime Configuration；
+- plugin validator/bundle child 与 Research Mission child 在启动时冻结当次有效配置；
+- `job_poll_seconds` 服务端与数据库下界为 `0.01` 秒，禁止近零 busy loop；
+- Administration 保存后不要求重建或重启 Compose stack；
+- 已运行 child 的 timeout/model/provider 不被中途改写，修改只影响之后领取/启动的工作。
+
+Runtime Configuration 的 API key 使用 `QUAZONAI_MASTER_KEY` 做 AES-256-GCM authenticated encryption。Master key 仍必须外部注入，不能迁入数据库或 Web 配置。
+
+## 31. Workspace Model
+
+每个 Research Program：一个 QZ 管理的 private bare Git repo。
+
+每个 Research Branch：一条持久 Git branch。
+
+每个 Mission：一个临时独占 worktree。
+
+```text
+Program bare repo
+  ├─ Branch A
+  │   ├─ Mission A1 worktree
+  │   └─ Mission A2 worktree
+  └─ Branch B
+      └─ Mission B1 worktree
+```
+
+QZ 拥有 branch lease、worktree create/remove、accept changes、commit 和 `workspace_revision_no`。Codex 只写普通文件，不执行 branch/commit/merge/rebase/worktree 管理。
+
+Git history 是开发辅助，不是业务 identity 或 Approval Gate。
+
+## 32. Sandbox 与权限
+
+默认 Mission：
+
+```text
+workspace-write
+network disabled
+approvalPolicy = never
+cwd = mission worktree
+workspace roots = mission worktree only
+```
+
+禁止通过 Codex interactive approval 向用户请求额外 Shell/网络权限。需要数据、实验或受控外部访问时必须调用 QZ Research Tool Server。
+
+Mission 不允许访问：
+
+- QZ source repo；
+- Sealed dataset root；
+- provider credential store；
+- downstream secrets；
+-其他 Program worktree；
+- Docker socket；
+- PostgreSQL credential。
+
+## 33. Agent Profiles
+
+角色是 Mission execution profile，不是独立业务 Agent 身份：
+
+```text
+RESEARCH_DIRECTOR
+DATA_RESEARCHER
+ALPHA_RESEARCHER
+VALIDATOR
+PORTFOLIO_ARCHITECT
+REVIEWER
+DEGRADATION_ANALYST
+```
+
+`AgentProfileVersion` 固定 model preference、reasoning effort、developer instructions、tool capability set、workspace rules 和 output contract。
+
+RESEARCH_DIRECTOR 可以提出 Mission Graph artifact，但不能直接变更业务状态；REVIEWER 不能 approve Candidate；任何 profile 都不能访问 Sealed raw data 或执行系统。
+
+## 34. Mission-scoped Research Tool Server
+
+V1 使用稳定的 **stdio MCP server**，而不是 experimental dynamicTools 作为核心依赖。
+
+Tool 按 MissionContract 能力过滤，例如：
+
+```text
+dataset.list
+dataset.describe
+dataset.query_sample
+experiment.submit
+experiment.status
+artifact.register
+alpha.submit_candidate
+calibration.submit_candidate
+portfolio.inspect_library
+portfolio.submit_candidate
+evidence.read_allowed
+mission.report_result
+```
+
+Tool Server：
+
+- 通过 mission_id 加载不可变 Mission Contract；
+- 每次调用重新校验 Mission state、capability、resource scope；
+- 不把 DB credential 或 provider secret 暴露给 Codex；
 - 大型数据只返回引用、schema、summary 或受限 sample；
 - mutation 使用显式 idempotency key 和 expected business revision；
 - Agent 不能调用 Approval、Handoff publication、Secret、Plugin activation 或 Admin mutation。
