@@ -5,8 +5,6 @@ import re
 import shlex
 from pathlib import Path
 
-import pytest
-
 from cli.main import build_parser
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
