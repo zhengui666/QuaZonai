@@ -1,0 +1,162 @@
+name: iOS and iPadOS Universal App
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    runs-on: macos-15
+    timeout-minutes: 75
+    env:
+      QUAZONAI_ENV: test
+      QUAZONAI_DATABASE_URL: sqlite+pysqlite:////tmp/quazonai-ios-ci.db
+      QUAZONAI_ALEMBIC_URL: sqlite+pysqlite:////tmp/quazonai-ios-ci.db
+      QUAZONAI_FRONTEND_DIST: /tmp/quazonai-empty-frontend
+      QUAZONAI_UI_TEST_SERVER_URL: http://127.0.0.1:8000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          brew install xcodegen
+          python -m pip install -e 'backend[dev]'
+      - name: Materialize deterministic App Store assets
+        run: python ios/Issue36Tools/materialize_assets.py
+      - name: Generate Universal App project
+        working-directory: ios
+        run: xcodegen generate --spec project.issue36.final.yml
+      - name: Resolve and compile Swift OpenAPI generated client
+        working-directory: ios
+        run: |
+          xcodebuild -resolvePackageDependencies -project QuaZonai.xcodeproj -scheme QuaZonai
+          swift test --package-path Issue36Packages/QuaZonaiAPI
+      - name: Native security and parity contract
+        run: |
+          python tools/client_parity.py
+          ! grep -R -n --include='*.swift' -E 'WKWebView|QUAZONAI_API_TOKEN|allowsAnyHTTPSCertificate|serverTrust|trustAllCertificate' ios/Issue36Final ios/Issue36App/QuaZonaiApp.swift ios/Issue36App/ResearchViews.swift ios/Issue36App/MarketViews.swift
+      - name: Start real FastAPI and PostgreSQL-compatible fixture
+        run: |
+          rm -f /tmp/quazonai-ios-ci.db
+          mkdir -p /tmp/quazonai-empty-frontend
+          alembic -c backend/alembic.ini upgrade head
+          python backend/tests/frontend_e2e_seed.py
+          python -m uvicorn main:app --host 127.0.0.1 --port 8000 > /tmp/quazonai-ios-fastapi.log 2>&1 &
+          echo $! > /tmp/quazonai-ios-fastapi.pid
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:8000/api/v1/client/bootstrap > /tmp/quazonai-bootstrap.json; then
+              break
+            fi
+            if [ "$attempt" = 60 ]; then
+              cat /tmp/quazonai-ios-fastapi.log
+              exit 1
+            fi
+            sleep 1
+          done
+          python - <<'PY'
+          import json
+          data = json.load(open('/tmp/quazonai-bootstrap.json', encoding='utf-8'))
+          assert data['auth_enabled'] is False
+          assert data['minimum_ios_capability_epoch'] <= 1
+          PY
+      - name: Create deterministic iPhone and iPad simulators
+        run: |
+          python - <<'PY' > /tmp/quazonai-simulators.env
+          import json
+          import subprocess
+
+          runtimes = json.loads(subprocess.check_output([
+              'xcrun', 'simctl', 'list', 'runtimes', '-j'
+          ]))['runtimes']
+          ios = [
+              item for item in runtimes
+              if item.get('isAvailable')
+              and item['identifier'].startswith('com.apple.CoreSimulator.SimRuntime.iOS-')
+          ]
+          if not ios:
+              raise SystemExit('No available iOS simulator runtime')
+          runtime = sorted(
+              ios,
+              key=lambda item: tuple(int(part) for part in item.get('version', '0').split('.')),
+              reverse=True,
+          )[0]['identifier']
+
+          types = json.loads(subprocess.check_output([
+              'xcrun', 'simctl', 'list', 'devicetypes', '-j'
+          ]))['devicetypes']
+          iphone_candidates = [
+              item for item in types
+              if 'iPhone' in item['name'] and 'SE' not in item['name']
+          ]
+          ipad_candidates = [item for item in types if 'iPad Pro' in item['name']]
+          if not iphone_candidates or not ipad_candidates:
+              raise SystemExit('Missing iPhone or iPad Pro simulator device type')
+          print(f'RUNTIME={runtime}')
+          print(f'IPHONE_TYPE={iphone_candidates[-1]["identifier"]}')
+          print(f'IPAD_TYPE={ipad_candidates[-1]["identifier"]}')
+          PY
+          source /tmp/quazonai-simulators.env
+          echo "IPHONE_UDID=$(xcrun simctl create QuaZonai-CI-iPhone "$IPHONE_TYPE" "$RUNTIME")" >> "$GITHUB_ENV"
+          echo "IPAD_UDID=$(xcrun simctl create QuaZonai-CI-iPad "$IPAD_TYPE" "$RUNTIME")" >> "$GITHUB_ENV"
+      - name: iPhone unit and full capability UI tests
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project QuaZonai.xcodeproj \
+            -scheme QuaZonai \
+            -destination "platform=iOS Simulator,id=$IPHONE_UDID" \
+            -resultBundlePath /tmp/QuaZonai-iPhone.xcresult \
+            CODE_SIGNING_ALLOWED=NO | tee /tmp/QuaZonai-iPhone.log
+      - name: iPad unit and full capability UI tests
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project QuaZonai.xcodeproj \
+            -scheme QuaZonai \
+            -destination "platform=iOS Simulator,id=$IPAD_UDID" \
+            -resultBundlePath /tmp/QuaZonai-iPad.xcresult \
+            CODE_SIGNING_ALLOWED=NO | tee /tmp/QuaZonai-iPad.log
+      - name: Unsigned TestFlight-ready release archive
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project QuaZonai.xcodeproj \
+            -scheme QuaZonai \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath /tmp/QuaZonai.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO | tee /tmp/QuaZonai-archive.log
+          test -d /tmp/QuaZonai.xcarchive/Products/Applications/QuaZonai.app
+      - name: Upload native diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-issue36-diagnostics
+          if-no-files-found: ignore
+          path: |
+            /tmp/QuaZonai-iPhone.xcresult
+            /tmp/QuaZonai-iPad.xcresult
+            /tmp/QuaZonai-iPhone.log
+            /tmp/QuaZonai-iPad.log
+            /tmp/QuaZonai-archive.log
+            /tmp/quazonai-ios-fastapi.log
+            /tmp/quazonai-bootstrap.json
+      - name: Stop fixture and delete simulators
+        if: always()
+        run: |
+          test ! -f /tmp/quazonai-ios-fastapi.pid || kill "$(cat /tmp/quazonai-ios-fastapi.pid)" 2>/dev/null || true
+          test -z "${IPHONE_UDID:-}" || xcrun simctl delete "$IPHONE_UDID" || true
+          test -z "${IPAD_UDID:-}" || xcrun simctl delete "$IPAD_UDID" || true
