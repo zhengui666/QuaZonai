@@ -63,6 +63,21 @@ def test_portable_skill_documents_operator_machine_authentication() -> None:
     assert "downstream Handoff service token" in combined
 
 
+def test_portable_skill_directly_forbids_browser_secret_access() -> None:
+    skill = SKILL_PATH.read_text(encoding="utf-8")
+
+    assert (
+        "never request, read, infer, capture, copy, print, or store the browser "
+        "TOTP setup secret, one-time authenticator code, session cookie, or "
+        "trusted-browser cookie"
+    ) in skill
+    assert "those credentials are outside the Skill and CLI boundary" in skill
+    assert (
+        "Read [references/authentication.md](references/authentication.md) before "
+        "diagnosing an authentication failure or credential boundary."
+    ) in skill
+
+
 def test_skill_does_not_advertise_browser_credentials_as_cli_authentication() -> None:
     combined = _combined_skill_authentication_contract()
 
