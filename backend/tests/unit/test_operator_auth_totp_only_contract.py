@@ -5,6 +5,7 @@ import json
 import secrets
 import time
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -19,6 +20,13 @@ from operator_auth import (
     authenticate_machine,
 )
 from settings import Settings, SettingsError
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+COMPOSE_PATH = REPO_ROOT / "compose.yml"
+LEGACY_AUTH_ENV_MARKERS = (
+    ("QUAZONAI_AUTH_USERNAME", "QUAZONAI_AUTH_LEGACY_USERNAME_PRESENT"),
+    ("QUAZONAI_AUTH_PASSWORD", "QUAZONAI_AUTH_LEGACY_PASSWORD_PRESENT"),
+)
 
 
 def _enabled_settings(settings: Settings) -> Settings:
@@ -78,13 +86,7 @@ def test_enabled_auth_rejects_nonempty_legacy_browser_credentials_without_echo(
     assert legacy_value not in message
 
 
-@pytest.mark.parametrize(
-    ("legacy_name", "presence_marker"),
-    [
-        ("QUAZONAI_AUTH_USERNAME", "QUAZONAI_AUTH_LEGACY_USERNAME_PRESENT"),
-        ("QUAZONAI_AUTH_PASSWORD", "QUAZONAI_AUTH_LEGACY_PASSWORD_PRESENT"),
-    ],
-)
+@pytest.mark.parametrize(("legacy_name", "presence_marker"), LEGACY_AUTH_ENV_MARKERS)
 def test_enabled_auth_rejects_compose_names_only_legacy_markers(
     monkeypatch: pytest.MonkeyPatch,
     legacy_name: str,
@@ -133,6 +135,15 @@ def test_disabled_auth_keeps_legacy_values_dormant(
     assert configured.auth_enabled is False
     assert not hasattr(configured, "operator_username")
     assert not hasattr(configured, "operator_password")
+
+
+def test_compose_converts_legacy_values_to_names_only_presence_markers() -> None:
+    compose = COMPOSE_PATH.read_text(encoding="utf-8")
+
+    for legacy_name, presence_marker in LEGACY_AUTH_ENV_MARKERS:
+        expected = f'      {presence_marker}: "${{{legacy_name}:+true}}"'
+        assert expected in compose
+        assert f"      {legacy_name}:" not in compose
 
 
 def test_machine_authentication_uses_fixed_operator_subject(settings: Settings) -> None:
