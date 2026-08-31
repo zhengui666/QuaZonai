@@ -97,6 +97,10 @@ public actor EventStreamActor {
                 URLQueryItem(name: "limit", value: "1000"),
             ]
         )
+        // requestJSON may transparently rotate a trusted-device refresh credential.
+        // Persist that rotation before processing events so app suspension cannot leave
+        // Keychain holding the previous, now-invalid generation.
+        await persistRefreshCredential()
         guard let items = result.arrayValue else { return }
         for item in items {
             guard let object = item.objectValue,
