@@ -276,25 +276,28 @@ public actor APIClient {
         }
     }
 
-    public func logout() async {
+    public func logout() async throws {
         if accessToken != nil || refreshCredential != nil {
-            _ = try? await requestJSON(
-                path: "/api/v1/auth/mobile/logout",
-                method: .post,
-                allowRefresh: true
-            )
+            do {
+                _ = try await requestJSON(
+                    path: "/api/v1/auth/mobile/logout",
+                    method: .post,
+                    allowRefresh: true
+                )
+            } catch APIClientError.authenticationRequired {
+                // A deterministic 401 means the server no longer accepts either
+                // credential, which is equivalent to an already-revoked session.
+            } catch {
+                // Preserve the current access token and any rotated refresh
+                // credential so the caller can persist and retry revocation.
+                throw error
+            }
         }
-        cancelRefreshFlight()
-        accessToken = nil
-        refreshCredential = nil
-        refreshCredentialNeedsPersistence = false
+        clearCredentialState()
     }
 
     public func clearCredentials() {
-        cancelRefreshFlight()
-        accessToken = nil
-        refreshCredential = nil
-        refreshCredentialNeedsPersistence = false
+        clearCredentialState()
     }
 
     public func requestJSON(
@@ -368,6 +371,13 @@ public actor APIClient {
     private func cancelRefreshFlight() {
         refreshFlight?.task.cancel()
         refreshFlight = nil
+    }
+
+    private func clearCredentialState() {
+        cancelRefreshFlight()
+        accessToken = nil
+        refreshCredential = nil
+        refreshCredentialNeedsPersistence = false
     }
 
     private func endpoint(path: String, queryItems: [URLQueryItem] = []) throws -> URL {

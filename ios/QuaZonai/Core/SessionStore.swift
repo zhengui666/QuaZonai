@@ -246,22 +246,48 @@ final class SessionStore: ObservableObject {
     }
 
     func logout() async {
+        errorMessage = nil
         stopEvents()
-        if let client { await client.logout() }
-        try? keychain.delete(account: profile)
+        do {
+            if let client { try await client.logout() }
+        } catch {
+            await persistRotatedRefreshCredentialIfNeeded()
+            errorMessage = "Could not revoke the server session. The trusted-device credential was kept so logout can be retried. \(error.localizedDescription)"
+            startEvents()
+            return
+        }
+        do {
+            try keychain.delete(account: profile)
+        } catch {
+            errorMessage = "The server session was revoked, but the local trusted-device credential could not be removed."
+        }
         mutationKeys.removeAll()
         phase = authEnabled ? .loginRequired : .serverSetup
     }
 
     func forgetServer() async {
+        errorMessage = nil
         stopEvents()
-        if let client { await client.logout() }
-        try? keychain.delete(account: profile)
+        do {
+            if let client { try await client.logout() }
+        } catch {
+            await persistRotatedRefreshCredentialIfNeeded()
+            errorMessage = "Could not revoke the server session. The server profile and trusted-device credential were kept. \(error.localizedDescription)"
+            startEvents()
+            return
+        }
+        var cleanupMessage: String?
+        do {
+            try keychain.delete(account: profile)
+        } catch {
+            cleanupMessage = "The server session was revoked, but the local trusted-device credential could not be removed."
+        }
         defaults.removeObject(forKey: serverKey)
         mutationKeys.removeAll()
         client = nil
         profile = ""
         phase = .serverSetup
+        errorMessage = cleanupMessage
     }
 
     func setLanguage(_ value: AppLanguage) {
