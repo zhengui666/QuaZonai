@@ -57,7 +57,10 @@ It does not own broker credentials, orders, fills, positions, accounts, NAV, exe
 
    - when Operator Authentication is enabled, the CLI reads `QUAZONAI_API_TOKEN` from its process environment and sends it as a Bearer machine credential;
    - never substitute the machine token for a downstream system's Handoff service token;
+   - never request, read, infer, capture, copy, print, or store the browser TOTP setup secret, one-time authenticator code, session cookie, or trusted-browser cookie; those credentials are outside the Skill and CLI boundary;
    - when authentication is disabled, the CLI retains direct loopback access and does not require the machine token.
+
+   Read [references/authentication.md](references/authentication.md) before diagnosing an authentication failure or credential boundary.
 
    Check only whether the machine token is present; never print its value:
 
