@@ -98,15 +98,15 @@ def _install_openapi_contract(app: FastAPI) -> None:
                 if not isinstance(operation, dict):
                     continue
                 pair = (method.upper(), path)
-                if pair in _NATIVE_PUBLIC_ROUTES or pair in {
+                if pair == ("POST", "/api/v1/auth/mobile/refresh"):
+                    operation["security"] = [{"MobileRefreshBearer": []}]
+                elif pair in _NATIVE_PUBLIC_ROUTES or pair in {
                     ("GET", "/api/v1/system/health"),
                     ("POST", "/api/v1/auth/login"),
                     ("GET", "/api/v1/auth/session"),
                     ("POST", "/api/v1/auth/logout"),
                 }:
                     operation["security"] = []
-                elif pair == ("POST", "/api/v1/auth/mobile/refresh"):
-                    operation["security"] = [{"MobileRefreshBearer": []}]
                 else:
                     operation["security"] = [
                         {"BrowserSession": []},

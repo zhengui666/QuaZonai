@@ -22,6 +22,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from db.auth_models import MobileOperatorDevice
 from db.session import SessionFactory
@@ -209,18 +210,8 @@ def authenticate_mobile_access(
         )
 
 
-def current_mobile_device(
-    factory: SessionFactory,
-    identity: MobileOperatorIdentity,
-) -> MobileOperatorDevice | None:
-    if identity.device_id is None:
-        return None
-    with factory() as session:
-        return session.get(MobileOperatorDevice, identity.device_id)
-
-
 def load_mobile_device_for_update(
-    session: object,
+    session: Session,
     device_id: uuid.UUID,
 ) -> MobileOperatorDevice | None:
     """Load one device row under a DB row lock where the backend supports it."""
