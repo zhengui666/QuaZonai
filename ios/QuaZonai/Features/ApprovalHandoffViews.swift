@@ -125,7 +125,12 @@ private struct ApprovalCard: View {
     }
 
     private func approve() async {
-        if purpose == "LIVE" && !(await BiometricGate.authorize(reason: "Approve a Live handoff candidate")) { error = "Biometric confirmation was not completed."; return }
+        if purpose == "LIVE" {
+            guard await BiometricGate.authorize(reason: "Approve a Live handoff candidate") else {
+                error = "Biometric confirmation was not completed."
+                return
+            }
+        }
         guard let id = approval.stableID else { return }
         busy = true; defer { busy = false }
         do {

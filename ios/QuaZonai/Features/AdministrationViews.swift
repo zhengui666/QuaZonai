@@ -173,7 +173,12 @@ private struct RuntimeConfigurationEditor: View {
 
     private func save() async {
         guard let object = configuration.objectValue, let revision = object.number("revision") else { return }
-        if (!apiKey.isEmpty || clearAPIKey) && !(await BiometricGate.authorize(reason: "Change the Codex provider credential")) { error = "Biometric confirmation was not completed."; return }
+        if !apiKey.isEmpty || clearAPIKey {
+            guard await BiometricGate.authorize(reason: "Change the Codex provider credential") else {
+                error = "Biometric confirmation was not completed."
+                return
+            }
+        }
         busy = true
         defer { busy = false; apiKey = "" }
         var payload: [String: JSONValue] = [
@@ -243,7 +248,12 @@ private struct DownstreamRegistrationSheet: View {
         }
     }
     private func submit() async {
-        if environment == "LIVE" && !(await BiometricGate.authorize(reason: "Register a Live downstream")) { error = "Biometric confirmation was not completed."; return }
+        if environment == "LIVE" {
+            guard await BiometricGate.authorize(reason: "Register a Live downstream") else {
+                error = "Biometric confirmation was not completed."
+                return
+            }
+        }
         var payload: [String: JSONValue] = ["name": .string(name.trimmingCharacters(in: .whitespacesAndNewlines)), "environment_type": .string(environment), "enabled": .bool(true)]
         if !packageContract.isEmpty { payload["package_contract_version"] = .string(packageContract) }
         if !feedbackContract.isEmpty { payload["feedback_contract_version"] = .string(feedbackContract) }
