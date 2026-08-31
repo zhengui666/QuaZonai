@@ -1,0 +1,132 @@
+name: iOS release parity
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 75
+    env:
+      QUAZONAI_ENV: test
+      QUAZONAI_DATABASE_URL: sqlite+pysqlite:////tmp/quazonai-ios-release.db
+      QUAZONAI_ALEMBIC_URL: sqlite+pysqlite:////tmp/quazonai-ios-release.db
+      QUAZONAI_FRONTEND_DIST: /tmp/quazonai-empty-frontend
+      QUAZONAI_UI_TEST_SERVER_URL: http://127.0.0.1:8000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Install toolchains
+        run: |
+          brew install xcodegen
+          python -m pip install -e 'backend[dev]'
+          xcodebuild -version
+          swift --version
+      - name: Materialize assets and generate project
+        run: |
+          python ios/Issue36Tools/materialize_assets.py
+          cd ios
+          xcodegen generate --spec project.issue36.release.yml
+      - name: Resolve and compile anchor-free Swift OpenAPI client
+        working-directory: ios
+        run: |
+          xcodebuild -resolvePackageDependencies -project QuaZonai.xcodeproj -scheme QuaZonai
+          swift test --package-path Issue36Packages/QuaZonaiAPIFinal
+      - name: Verify contracts before simulator allocation
+        run: |
+          pytest -q backend/tests/unit/test_issue36_mobile_revoke_contract.py
+          python tools/client_parity_issue36.py
+      - name: Seed and start real FastAPI fixture
+        run: |
+          rm -f /tmp/quazonai-ios-release.db
+          mkdir -p /tmp/quazonai-empty-frontend
+          alembic -c backend/alembic.ini upgrade head
+          python backend/tests/frontend_e2e_seed.py
+          python -m uvicorn main:app --host 127.0.0.1 --port 8000 > /tmp/quazonai-ios-release-fastapi.log 2>&1 &
+          echo $! > /tmp/quazonai-ios-release-fastapi.pid
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:8000/api/v1/client/bootstrap > /tmp/quazonai-ios-release-bootstrap.json; then
+              break
+            fi
+            if [ "$attempt" = 60 ]; then
+              cat /tmp/quazonai-ios-release-fastapi.log
+              exit 1
+            fi
+            sleep 1
+          done
+      - name: Create current iPhone and iPad simulators
+        run: |
+          python - <<'PY' > /tmp/quazonai-release-simulators.env
+          import json
+          import subprocess
+
+          runtimes = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'runtimes', '-j']))['runtimes']
+          candidates = [r for r in runtimes if r.get('isAvailable') and r['identifier'].startswith('com.apple.CoreSimulator.SimRuntime.iOS-')]
+          runtime = sorted(candidates, key=lambda r: tuple(int(p) for p in r.get('version', '0').split('.')), reverse=True)[0]['identifier']
+          types = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devicetypes', '-j']))['devicetypes']
+          iphones = [d for d in types if 'iPhone' in d['name'] and 'SE' not in d['name']]
+          ipads = [d for d in types if 'iPad Pro' in d['name']]
+          if not iphones or not ipads:
+              raise SystemExit('No current iPhone/iPad simulator types')
+          print(f'RUNTIME={runtime}')
+          print(f'IPHONE_TYPE={iphones[-1]["identifier"]}')
+          print(f'IPAD_TYPE={ipads[-1]["identifier"]}')
+          PY
+          source /tmp/quazonai-release-simulators.env
+          echo "RELEASE_IPHONE_UDID=$(xcrun simctl create QuaZonai-Release-iPhone "$IPHONE_TYPE" "$RUNTIME")" >> "$GITHUB_ENV"
+          echo "RELEASE_IPAD_UDID=$(xcrun simctl create QuaZonai-Release-iPad "$IPAD_TYPE" "$RUNTIME")" >> "$GITHUB_ENV"
+      - name: iPhone tests
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild test -project QuaZonai.xcodeproj -scheme QuaZonai \
+            -destination "platform=iOS Simulator,id=$RELEASE_IPHONE_UDID" \
+            -resultBundlePath /tmp/QuaZonai-Release-iPhone.xcresult \
+            CODE_SIGNING_ALLOWED=NO | tee /tmp/QuaZonai-Release-iPhone.log
+      - name: iPad tests
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild test -project QuaZonai.xcodeproj -scheme QuaZonai \
+            -destination "platform=iOS Simulator,id=$RELEASE_IPAD_UDID" \
+            -resultBundlePath /tmp/QuaZonai-Release-iPad.xcresult \
+            CODE_SIGNING_ALLOWED=NO | tee /tmp/QuaZonai-Release-iPad.log
+      - name: Unsigned release archive
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild archive -project QuaZonai.xcodeproj -scheme QuaZonai \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -archivePath /tmp/QuaZonai-Release.xcarchive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            | tee /tmp/QuaZonai-Release-archive.log
+          test -d /tmp/QuaZonai-Release.xcarchive/Products/Applications/QuaZonai.app
+          test -f /tmp/QuaZonai-Release.xcarchive/Products/Applications/QuaZonai.app/PrivacyInfo.xcprivacy
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-issue36-release-diagnostics
+          if-no-files-found: ignore
+          path: |
+            /tmp/QuaZonai-Release-iPhone.xcresult
+            /tmp/QuaZonai-Release-iPad.xcresult
+            /tmp/QuaZonai-Release-iPhone.log
+            /tmp/QuaZonai-Release-iPad.log
+            /tmp/QuaZonai-Release-archive.log
+            /tmp/quazonai-ios-release-fastapi.log
+            /tmp/quazonai-ios-release-bootstrap.json
+      - name: Cleanup
+        if: always()
+        run: |
+          test ! -f /tmp/quazonai-ios-release-fastapi.pid || kill "$(cat /tmp/quazonai-ios-release-fastapi.pid)" 2>/dev/null || true
+          test -z "${RELEASE_IPHONE_UDID:-}" || xcrun simctl delete "$RELEASE_IPHONE_UDID" || true
+          test -z "${RELEASE_IPAD_UDID:-}" || xcrun simctl delete "$RELEASE_IPAD_UDID" || true
