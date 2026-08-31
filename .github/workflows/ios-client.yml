@@ -38,9 +38,9 @@ jobs:
     timeout-minutes: 20
     env:
       QUAZONAI_ENV: test
-      QUAZONAI_DATABASE_URL: sqlite+pysqlite:///:memory:
-      QUAZONAI_ALEMBIC_URL: sqlite+pysqlite:///:memory:
-      QUAZONAI_MASTER_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      QUAZONAI_DATABASE_URL: 'sqlite+pysqlite:///:memory:'
+      QUAZONAI_ALEMBIC_URL: 'sqlite+pysqlite:///:memory:'
+      QUAZONAI_MASTER_KEY: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -48,8 +48,8 @@ jobs:
           python-version: '3.14'
       - name: Install backend contract runtime
         run: python -m pip install -e 'backend[dev]'
-      - name: Export canonical OpenAPI contract
-        run: python tools/export_openapi.py --write
+      - name: Check canonical OpenAPI contract
+        run: python tools/export_openapi.py --check
       - name: Validate native authentication and operation IDs
         run: |
           python - <<'PY'
@@ -84,10 +84,11 @@ jobs:
           assert len(operation_ids) == len(set(operation_ids)), 'duplicate operationId'
           schemes = schema['components']['securitySchemes']
           assert {'BrowserSession', 'MobileAccessBearer', 'MobileRefreshBearer', 'MachineBearer'} <= set(schemes)
+          assert paths['/api/v1/auth/mobile/refresh']['post']['security'] == [{'MobileRefreshBearer': []}]
           PY
       - name: Cross-client capability gate
         run: python tools/client_parity.py
-      - name: Upload generated wire contracts
+      - name: Upload canonical wire contracts
         uses: actions/upload-artifact@v4
         with:
           name: quazonai-openapi-${{ github.sha }}
@@ -166,6 +167,8 @@ jobs:
             -archivePath "${RUNNER_TEMP}/QuaZonai.xcarchive" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO
+          test -f "${RUNNER_TEMP}/QuaZonai.xcarchive/Info.plist"
+          test -f "${RUNNER_TEMP}/QuaZonai.xcarchive/Products/Applications/QuaZonai.app/PrivacyInfo.xcprivacy"
           ditto -c -k --sequesterRsrc --keepParent "${RUNNER_TEMP}/QuaZonai.xcarchive" "${RUNNER_TEMP}/QuaZonai.xcarchive.zip"
       - name: Upload release archive
         uses: actions/upload-artifact@v4
@@ -200,8 +203,8 @@ jobs:
             label: iPad
     env:
       QUAZONAI_ENV: test
-      QUAZONAI_MASTER_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-      QUAZONAI_UI_SERVER: http://127.0.0.1:8000
+      QUAZONAI_MASTER_KEY: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
+      QUAZONAI_UI_SERVER: 'http://127.0.0.1:8000'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
