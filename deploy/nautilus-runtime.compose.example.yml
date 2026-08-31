@@ -17,7 +17,7 @@ services:
       - research-plugin-staging:/var/lib/nautilus/plugin-staging
       - plugin-data:/var/lib/quazonai/plugins:ro
     # A separate per-instance tmpfs prevents an importer from filling the
-    # immutable catalog volume; its 6 GiB quota is above the 4 GiB output cap.
+    # immutable catalog volume; its 3 GiB quota is above the 2 GiB output cap.
     mem_limit: 10g
     ports:
       - "127.0.0.1:8011:8011"
@@ -92,14 +92,14 @@ volumes:
     driver_opts:
       type: tmpfs
       device: tmpfs
-      o: size=6g,mode=1777
+      o: size=3g,mode=1777
   sealed-catalogs:
   sealed-plugin-staging:
     driver: local
     driver_opts:
       type: tmpfs
       device: tmpfs
-      o: size=6g,mode=1777
+      o: size=3g,mode=1777
   plugin-data:
     external: true
     name: quazonai_plugin-data
