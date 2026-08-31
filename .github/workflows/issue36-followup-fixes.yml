@@ -1,0 +1,80 @@
+name: Issue 36 Follow-up Review Fixes
+
+on:
+  push:
+    branches:
+      - feat/ios-ipados-universal-app
+    paths:
+      - '.github/workflows/issue36-followup-fixes.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      QUAZONAI_ENV: test
+      QUAZONAI_DATABASE_URL: 'sqlite+pysqlite:///:memory:'
+      QUAZONAI_ALEMBIC_URL: 'sqlite+pysqlite:///:memory:'
+      QUAZONAI_MASTER_KEY: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: feat/ios-ipados-universal-app
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Decode reviewed materializer
+        run: |
+          base64 --decode tools/issue36_followup_fixes.py.gz.b64 | gzip -dc > "$RUNNER_TEMP/issue36_followup_fixes.py"
+          echo '3d3f6e3779e28bb8144bc82e2a802bb71c335063dedd0505931c2acd338e4dd2  '"$RUNNER_TEMP"'/issue36_followup_fixes.py' | sha256sum --check --status
+      - name: Install backend test runtime
+        run: python -m pip install -e 'backend[dev]'
+      - name: Apply follow-up review fixes
+        run: python "$RUNNER_TEMP/issue36_followup_fixes.py"
+      - name: Regenerate canonical OpenAPI clients
+        run: python tools/export_openapi.py --write
+      - name: Validate backend and contracts
+        run: |
+          git diff --check
+          python -m compileall -q backend/src backend/tests/unit/test_mobile_operator_auth.py
+          ruff check backend/src/mobile_auth.py backend/src/api/mobile_auth.py backend/src/main.py backend/tests/unit/test_mobile_operator_auth.py
+          pytest -q backend/tests/unit/test_mobile_operator_auth.py backend/tests/unit/test_mobile_auth_contract.py
+          python tools/export_openapi.py --check
+          python tools/client_parity.py
+          python tools/ios_release_contract.py
+      - name: Validate native review invariants
+        run: |
+          grep -q 'persistRefreshCredential' ios/QuaZonai/Core/EventStreamActor.swift
+          grep -q 'MutationIdempotencyRegistry' ios/QuaZonai/Core/SessionStore.swift
+          grep -q 'visible.compactMap(IdentifiedApproval.init)' ios/QuaZonai/Features/ApprovalHandoffViews.swift
+          grep -q 'openMoreDestination("Portfolio")' ios/UITests/QuaZonaiUITests.swift
+          grep -q 'DownstreamBearer' contracts/openapi/quazonai-v1.json
+          grep -q '#/components/schemas/ErrorEnvelope' contracts/openapi/quazonai-v1.json
+      - name: Commit reviewed fixes
+        run: |
+          if git diff --quiet; then
+            echo 'No changes to commit'
+            exit 0
+          fi
+          git config user.name 'QuaZonai Review Fix Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add \
+            .github/workflows/ios-client.yml \
+            backend/src/mobile_auth.py \
+            backend/src/api/mobile_auth.py \
+            backend/src/main.py \
+            backend/tests/unit/test_mobile_operator_auth.py \
+            contracts/openapi/quazonai-v1.json \
+            ios/Packages/QuaZonaiAPI/Sources/QuaZonaiAPI/openapi.yaml \
+            ios/QuaZonai/Core/EventStreamActor.swift \
+            ios/QuaZonai/Core/SessionStore.swift \
+            ios/QuaZonai/Features/ApprovalHandoffViews.swift \
+            ios/Tests/QuaZonaiTests.swift \
+            ios/UITests/QuaZonaiUITests.swift
+          git commit -m 'fix: close follow-up native review gaps'
+          git push origin HEAD:feat/ios-ipados-universal-app
