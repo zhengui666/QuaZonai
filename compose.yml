@@ -112,11 +112,14 @@ services:
     image: nginx:1.29-alpine
     volumes:
       - ./deploy/nautilus-runtime-proxy.conf:/etc/nginx/nginx.conf:ro
+    # The nginx:alpine worker is UID/GID 101. Run it as that user so the
+    # read-only, capability-free container does not need setuid/setgid/chown.
+    user: "101:101"
     read_only: true
     tmpfs:
-      - /var/cache/nginx:rw,noexec,nosuid,size=16m
-      - /var/run:rw,noexec,nosuid,size=2m
-      - /tmp:rw,noexec,nosuid,size=8m
+      - /var/cache/nginx:rw,noexec,nosuid,size=16m,uid=101,gid=101,mode=0755
+      - /var/run:rw,noexec,nosuid,size=2m,uid=101,gid=101,mode=0755
+      - /tmp:rw,noexec,nosuid,size=8m,uid=101,gid=101,mode=0755
     security_opt:
       - no-new-privileges:true
     cap_drop:

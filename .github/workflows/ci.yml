@@ -148,6 +148,10 @@ jobs:
         run: |
           docker network inspect quazonai-runtime >/dev/null 2>&1 || docker network create quazonai-runtime
           docker compose --env-file .env.example up --detach --build
+          proxy_id=$(docker compose --env-file .env.example ps -q nautilus-runtime-proxy)
+          test -n "$proxy_id"
+          test "$(docker inspect "$proxy_id" --format '{{.State.Status}}')" = running
+          test "$(docker inspect "$proxy_id" --format '{{.RestartCount}}')" = 0
           for attempt in $(seq 1 60); do
             if curl --fail --silent http://127.0.0.1:8000/api/v1/system/health > /tmp/quazonai-health.json; then
               python - <<'PY'
@@ -161,6 +165,16 @@ jobs:
             if [ "$attempt" = 60 ]; then
               docker compose --env-file .env.example ps
               docker compose --env-file .env.example logs --no-color
+              exit 1
+            fi
+            sleep 2
+          done
+          for proxy_attempt in $(seq 1 15); do
+            proxy_status=$(docker inspect "$proxy_id" --format '{{.State.Status}}')
+            proxy_restarts=$(docker inspect "$proxy_id" --format '{{.RestartCount}}')
+            if [ "$proxy_status" != running ] || [ "$proxy_restarts" != 0 ]; then
+              docker compose --env-file .env.example ps
+              docker compose --env-file .env.example logs --no-color nautilus-runtime-proxy
               exit 1
             fi
             sleep 2
