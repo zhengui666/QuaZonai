@@ -115,6 +115,8 @@ These service tokens are not broker credentials. Keep them at the trusted Core d
 
 PMXT Archive is available as the `quazonai-pmxt-archive` historical `DATA_CONNECTOR` plugin for Polymarket v2 and Kalshi. It supports either one fixed hourly Parquet URL plus one target `asset_id`/`market_ticker`, or a generic immutable `ArchiveManifest` for a bounded all-market history range. The manifest path probes the fixed PMXT URL space without bulk downloading and records missing/probe-error gaps; `POST /api/v1/quant-runtime/archive-manifests/{manifest_id}/materialize` then validates exact hourly coverage and known shard sizes before materializing one instrument and a bounded UTC slice into a new immutable Dataset Revision. Materialization uses bounded Parquet batches and isolated runtime memory limits. This path requires no PMXT API key and has no order or execution capability.
 
+The generic plugin runner also uses a per-instance quota-backed staging tmpfs and bounded protocol output, so third-party imports cannot fill the immutable Catalog volume or unboundedly buffer runtime memory.
+
 ## Agent Skill
 
 [`skills/quazonai/`](skills/quazonai/) is the portable Agent Skills package for operating a running QuaZonai instance through the local `quazonai` CLI. Install the entire directory, not only `SKILL.md`, so the bundled command reference and workflows remain available.
