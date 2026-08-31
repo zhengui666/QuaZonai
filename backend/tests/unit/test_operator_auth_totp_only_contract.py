@@ -78,6 +78,30 @@ def test_enabled_auth_rejects_nonempty_legacy_browser_credentials_without_echo(
     assert legacy_value not in message
 
 
+@pytest.mark.parametrize(
+    ("legacy_name", "presence_marker"),
+    [
+        ("QUAZONAI_AUTH_USERNAME", "QUAZONAI_AUTH_LEGACY_USERNAME_PRESENT"),
+        ("QUAZONAI_AUTH_PASSWORD", "QUAZONAI_AUTH_LEGACY_PASSWORD_PRESENT"),
+    ],
+)
+def test_enabled_auth_rejects_compose_names_only_legacy_markers(
+    monkeypatch: pytest.MonkeyPatch,
+    legacy_name: str,
+    presence_marker: str,
+) -> None:
+    _configure_enabled_env(monkeypatch)
+    monkeypatch.delenv(legacy_name, raising=False)
+    monkeypatch.setenv(presence_marker, "true")
+
+    with pytest.raises(SettingsError) as raised:
+        Settings.from_env()
+
+    message = str(raised.value)
+    assert legacy_name in message
+    assert presence_marker not in message
+
+
 @pytest.mark.parametrize("legacy_name", ["QUAZONAI_AUTH_USERNAME", "QUAZONAI_AUTH_PASSWORD"])
 def test_empty_legacy_browser_credentials_do_not_enter_settings(
     monkeypatch: pytest.MonkeyPatch,
@@ -101,6 +125,8 @@ def test_disabled_auth_keeps_legacy_values_dormant(
     monkeypatch.setenv("QUAZONAI_AUTH_ENABLED", "false")
     monkeypatch.setenv("QUAZONAI_AUTH_USERNAME", "legacy-user")
     monkeypatch.setenv("QUAZONAI_AUTH_PASSWORD", "legacy-password")
+    monkeypatch.setenv("QUAZONAI_AUTH_LEGACY_USERNAME_PRESENT", "true")
+    monkeypatch.setenv("QUAZONAI_AUTH_LEGACY_PASSWORD_PRESENT", "true")
 
     configured = Settings.from_env()
 

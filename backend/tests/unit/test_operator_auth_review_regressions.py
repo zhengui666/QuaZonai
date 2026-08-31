@@ -180,6 +180,24 @@ def test_trusted_proxy_falls_back_to_direct_peer_for_ambiguous_forwarded_headers
     assert login_source_key(request, configured) == "10.20.0.5"
 
 
+def test_compose_preserves_names_only_legacy_auth_detection() -> None:
+    compose = (REPO_ROOT / "compose.yml").read_text(encoding="utf-8")
+    api_environment = compose.split("\n  api:", maxsplit=1)[1].split(
+        "\n    extra_hosts:", maxsplit=1
+    )[0]
+
+    assert "\n      QUAZONAI_AUTH_USERNAME:" not in api_environment
+    assert "\n      QUAZONAI_AUTH_PASSWORD:" not in api_environment
+    assert (
+        'QUAZONAI_AUTH_LEGACY_USERNAME_PRESENT: "${QUAZONAI_AUTH_USERNAME:+true}"'
+        in api_environment
+    )
+    assert (
+        'QUAZONAI_AUTH_LEGACY_PASSWORD_PRESENT: "${QUAZONAI_AUTH_PASSWORD:+true}"'
+        in api_environment
+    )
+
+
 def test_compose_disables_uvicorn_proxy_header_rewriting() -> None:
     compose = (REPO_ROOT / "compose.yml").read_text(encoding="utf-8")
     api_service = compose.split("\n  finite-worker:", maxsplit=1)[0]

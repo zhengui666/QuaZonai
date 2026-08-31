@@ -1405,7 +1405,7 @@ nautilus-live-node
 
 Operator Authentication 是部署/访问边界，不是新的业务用户、tenant 或 RBAC Domain。V1 只有一个固定 Operator，身份 subject 为 `local-operator`，不得由客户端或环境变量覆盖。浏览器登录是 TOTP-only 单因素认证；Machine API Token 是独立的自动化凭据，不是浏览器登录因子。
 
-旧浏览器 username/password 环境变量已退出受支持配置。认证启用时只要检测到任一非空旧变量，API 必须在启动阶段 fail closed，并且错误只指出变量名而不输出其值；这些旧值不得进入 `Settings`、日志、API、Cookie 或登录验证逻辑。认证关闭时仍保持 direct access，旧变量仅作为 dormant process environment 被忽略。
+旧浏览器 username/password 环境变量已退出受支持配置。认证启用时只要检测到任一非空旧变量，API 必须在启动阶段 fail closed，并且错误只指出变量名而不输出其值；这些旧值不得进入 `Settings`、日志、API、Cookie 或登录验证逻辑。Compose 只把旧变量的非空状态转换为内部 names-only presence marker，绝不把旧值注入 API container；API 将 marker 映射回对应旧变量名并执行同一 fail-closed 错误。认证关闭时仍保持 direct access，旧变量与 presence marker 都视为 dormant process environment。
 
 `.env` / process environment 配置：
 

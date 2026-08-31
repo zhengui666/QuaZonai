@@ -19,6 +19,8 @@ def test_codex_child_environment_scrubs_operator_auth_configuration(
     legacy_password = "operator-secret-password"
     monkeypatch.setenv("QUAZONAI_AUTH_USERNAME", legacy_username)
     monkeypatch.setenv("QUAZONAI_AUTH_PASSWORD", legacy_password)
+    monkeypatch.setenv("QUAZONAI_AUTH_LEGACY_USERNAME_PRESENT", "true")
+    monkeypatch.setenv("QUAZONAI_AUTH_LEGACY_PASSWORD_PRESENT", "true")
     configured = replace(
         settings,
         operator_auth_enabled=True,
@@ -36,6 +38,8 @@ def test_codex_child_environment_scrubs_operator_auth_configuration(
         "QUAZONAI_AUTH_ENABLED",
         "QUAZONAI_AUTH_USERNAME",
         "QUAZONAI_AUTH_PASSWORD",
+        "QUAZONAI_AUTH_LEGACY_USERNAME_PRESENT",
+        "QUAZONAI_AUTH_LEGACY_PASSWORD_PRESENT",
         "QUAZONAI_AUTH_TOTP_SECRET",
         "QUAZONAI_AUTH_COOKIE_KEY",
         "QUAZONAI_API_TOKEN",

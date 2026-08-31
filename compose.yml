@@ -75,6 +75,10 @@ services:
     environment:
       <<: [*core-env, *nautilus-env]
       QUAZONAI_AUTH_ENABLED: ${QUAZONAI_AUTH_ENABLED:-false}
+      # Convert deprecated non-empty secrets to names-only presence markers.
+      # The legacy values themselves never enter the API container.
+      QUAZONAI_AUTH_LEGACY_USERNAME_PRESENT: "${QUAZONAI_AUTH_USERNAME:+true}"
+      QUAZONAI_AUTH_LEGACY_PASSWORD_PRESENT: "${QUAZONAI_AUTH_PASSWORD:+true}"
       QUAZONAI_AUTH_TOTP_SECRET: ${QUAZONAI_AUTH_TOTP_SECRET:-}
       QUAZONAI_AUTH_COOKIE_KEY: ${QUAZONAI_AUTH_COOKIE_KEY:-}
       QUAZONAI_API_TOKEN: ${QUAZONAI_API_TOKEN:-}

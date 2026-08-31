@@ -36,6 +36,10 @@ MIN_MACHINE_TOKEN_CHARACTERS = 32
 MAX_MACHINE_TOKEN_CHARACTERS = 4096
 _DEFAULT_ORIGIN_PORTS = {"http": 80, "https": 443}
 _ALLOWED_ENVIRONMENTS = frozenset({"development", "production", "test"})
+_LEGACY_OPERATOR_AUTH_ENV_MARKERS = (
+    ("QUAZONAI_AUTH_USERNAME", "QUAZONAI_AUTH_LEGACY_USERNAME_PRESENT"),
+    ("QUAZONAI_AUTH_PASSWORD", "QUAZONAI_AUTH_LEGACY_PASSWORD_PRESENT"),
+)
 TrustedProxyNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
 _BEARER_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9\-._~+/]+={0,}", re.ASCII)
 _WHATWG_IPV4_NUMBER_PATTERN = re.compile(
@@ -389,9 +393,12 @@ class Settings:
         alembic_url = os.environ.get("QUAZONAI_ALEMBIC_URL", database_url)
         operator_auth_enabled = _env_bool("QUAZONAI_AUTH_ENABLED", False)
         legacy_auth_variables = tuple(
-            name
-            for name in ("QUAZONAI_AUTH_USERNAME", "QUAZONAI_AUTH_PASSWORD")
-            if _optional_raw_env(name) is not None
+            legacy_name
+            for legacy_name, presence_marker in _LEGACY_OPERATOR_AUTH_ENV_MARKERS
+            if (
+                _optional_raw_env(legacy_name) is not None
+                or _optional_env(presence_marker) is not None
+            )
         )
         if operator_auth_enabled and legacy_auth_variables:
             raise SettingsError(
