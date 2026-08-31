@@ -19,7 +19,7 @@ final class EventStreamTests: XCTestCase {
         XCTAssertEqual(decoded.objectValue?.number("id"), 10)
         XCTAssertEqual(decoded.objectValue?.string("kind"), "MISSION_SUCCEEDED")
 
-        var cursor = EventCursor(9)
+        var cursor = EventSequenceCursor(9)
         XCTAssertTrue(cursor.accept(10))
         XCTAssertFalse(cursor.accept(10), "duplicate Last-Event-ID must not be delivered twice")
         XCTAssertFalse(cursor.accept(8), "older replayed events must be ignored")
