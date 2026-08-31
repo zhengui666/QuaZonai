@@ -325,8 +325,6 @@ describe('AuthGate', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     const loginOptions = fetchMock.mock.calls[1]?.[1] as RequestInit;
     expect(JSON.parse(String(loginOptions.body))).toEqual({
-      username: 'local-operator',
-      password: 'correct horse battery staple',
       totp_code: '123456',
       trust_browser: true,
     });
