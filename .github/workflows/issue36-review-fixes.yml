@@ -40,11 +40,14 @@ jobs:
           propagated = 0
           index = request_start
           while index < request_end:
-              if lines[index] == "            method: method," and lines[index + 1] != "            queryItems: queryItems,":
-                  lines.insert(index + 1, "            queryItems: queryItems,")
-                  request_end += 1
-                  propagated += 1
-                  index += 1
+              if lines[index].strip() == "method: method,":
+                  indentation = lines[index][:-len(lines[index].lstrip())]
+                  expected = f"{indentation}queryItems: queryItems,"
+                  if lines[index + 1] != expected:
+                      lines.insert(index + 1, expected)
+                      request_end += 1
+                      propagated += 1
+                      index += 1
               index += 1
           if propagated != 2:
               raise SystemExit(f"expected to restore two request retry call sites, restored {propagated}")
