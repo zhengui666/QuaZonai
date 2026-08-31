@@ -186,4 +186,155 @@ jobs:
         run: docker compose --env-file .env.example down --volumes --remove-orphans
 
   ios-client:
-    uses: ./.github/workflows/ios-client.yml
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      QUAZONAI_ENV: test
+      QUAZONAI_DATABASE_URL: sqlite+pysqlite:///${{ runner.temp }}/quazonai-ios.db
+      QUAZONAI_ALEMBIC_URL: sqlite+pysqlite:///${{ runner.temp }}/quazonai-ios.db
+      QUAZONAI_MASTER_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      QUAZONAI_PACKAGE_ROOT: ${{ runner.temp }}/quazonai-packages
+      QUAZONAI_MISSION_ROOT: ${{ runner.temp }}/quazonai-missions
+      CODEX_HOME: ${{ runner.temp }}/codex-home
+      QUAZONAI_UI_SERVER: http://127.0.0.1:8000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Install backend contract and fixture runtime
+        run: python -m pip install -e 'backend[dev,research]'
+      - name: Export and validate cross-client contracts
+        run: |
+          python tools/export_openapi.py --write
+          python tools/client_parity.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          schema = json.loads(Path('contracts/openapi/quazonai-v1.json').read_text(encoding='utf-8'))
+          login = schema['components']['schemas']['MobileLoginInput']
+          properties = set(login['properties'])
+          assert 'totp_code' in properties
+          assert 'username' not in properties
+          assert 'password' not in properties
+          assert login.get('additionalProperties') is False
+          operation_ids = []
+          for path, item in schema['paths'].items():
+              for method, operation in item.items():
+                  if method.lower() in {'get', 'post', 'put', 'patch', 'delete'}:
+                      operation_id = operation.get('operationId')
+                      assert operation_id, f'missing operationId: {method.upper()} {path}'
+                      operation_ids.append(operation_id)
+          assert len(operation_ids) == len(set(operation_ids))
+          schemes = schema['components']['securitySchemes']
+          assert {'BrowserSession', 'MobileAccessBearer', 'MobileRefreshBearer', 'MachineBearer'} <= set(schemes)
+          PY
+      - name: Install XcodeGen and generate project
+        run: |
+          brew install xcodegen
+          python3 tools/generate_ios_assets.py
+          xcodegen generate --spec ios/project.yml
+          xcodebuild -version
+          xcodebuild -project ios/QuaZonai.xcodeproj -scheme QuaZonai -resolvePackageDependencies
+      - name: Select iPhone and iPad simulators
+        run: |
+          python3 - <<'PY' >> "$GITHUB_ENV"
+          import json
+          import re
+          import subprocess
+          payload = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '-j']))
+          devices = []
+          for runtime, values in payload['devices'].items():
+              version = tuple(int(part) for part in re.findall(r'\d+', runtime))
+              for device in values:
+                  if device.get('isAvailable'):
+                      devices.append((version, device['name'], device['udid']))
+          for family, prefix in [('IPHONE', 'iPhone'), ('IPAD', 'iPad')]:
+              matches = sorted(item for item in devices if item[1].startswith(prefix))
+              if not matches:
+                  raise SystemExit(f'No available {prefix} simulator')
+              print(f'{family}_UDID={matches[-1][2]}')
+          PY
+      - name: Swift unit tests
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project ios/QuaZonai.xcodeproj \
+            -scheme QuaZonai \
+            -destination "platform=iOS Simulator,id=${IPHONE_UDID}" \
+            -only-testing:QuaZonaiTests \
+            -resultBundlePath "${RUNNER_TEMP}/QuaZonai-unit.xcresult" \
+            CODE_SIGNING_ALLOWED=NO
+      - name: Start real FastAPI fixture
+        run: |
+          python - <<'PY'
+          from db.models import Base
+          from db.session import create_database_engine
+          from settings import Settings
+          Base.metadata.create_all(create_database_engine(Settings.from_env()))
+          PY
+          python backend/tests/frontend_e2e_seed.py
+          nohup uvicorn main:create_app --factory --no-proxy-headers --host 127.0.0.1 --port 8000 >"${RUNNER_TEMP}/quazonai-ios-api.log" 2>&1 &
+          echo $! >"${RUNNER_TEMP}/quazonai-ios-api.pid"
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:8000/api/v1/system/health >/dev/null; then
+              exit 0
+            fi
+            if [ "$attempt" = 60 ]; then
+              cat "${RUNNER_TEMP}/quazonai-ios-api.log"
+              exit 1
+            fi
+            sleep 1
+          done
+      - name: iPhone Operator UI tests
+        run: |
+          xcodebuild test \
+            -project ios/QuaZonai.xcodeproj \
+            -scheme QuaZonai \
+            -destination "platform=iOS Simulator,id=${IPHONE_UDID}" \
+            -only-testing:QuaZonaiUITests \
+            -resultBundlePath "${RUNNER_TEMP}/QuaZonai-iPhone.xcresult" \
+            CODE_SIGNING_ALLOWED=NO
+      - name: iPad Operator UI tests
+        run: |
+          xcodebuild test \
+            -project ios/QuaZonai.xcodeproj \
+            -scheme QuaZonai \
+            -destination "platform=iOS Simulator,id=${IPAD_UDID}" \
+            -only-testing:QuaZonaiUITests \
+            -resultBundlePath "${RUNNER_TEMP}/QuaZonai-iPad.xcresult" \
+            CODE_SIGNING_ALLOWED=NO
+      - name: Release archive without signing
+        run: |
+          xcodebuild archive \
+            -project ios/QuaZonai.xcodeproj \
+            -scheme QuaZonai \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "${RUNNER_TEMP}/QuaZonai.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO
+          ditto -c -k --sequesterRsrc --keepParent "${RUNNER_TEMP}/QuaZonai.xcarchive" "${RUNNER_TEMP}/QuaZonai.xcarchive.zip"
+      - name: Upload iOS release archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: quazonai-ios-archive-${{ github.sha }}
+          path: ${{ runner.temp }}/QuaZonai.xcarchive.zip
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload iOS diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quazonai-ios-diagnostics-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/*.xcresult
+            ${{ runner.temp }}/quazonai-ios-api.log
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Stop FastAPI
+        if: always()
+        run: |
+          if [ -f "${RUNNER_TEMP}/quazonai-ios-api.pid" ]; then
+            kill "$(cat "${RUNNER_TEMP}/quazonai-ios-api.pid")" || true
+          fi
