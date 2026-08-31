@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -83,6 +85,22 @@ def test_plugin_child_caps_each_protocol_stream(tmp_path: Path) -> None:
             env=os.environ.copy(),
             timeout_seconds=5,
         )
+
+
+def test_plugin_child_input_is_deadline_bound(tmp_path: Path) -> None:
+    command = [sys.executable, "-c", "import time; time.sleep(2)"]
+    started = time.monotonic()
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        runtime._run_plugin_child(
+            command,
+            {"payload": "x" * (2 * 1024 * 1024)},
+            cwd=tmp_path,
+            env=os.environ.copy(),
+            timeout_seconds=0,
+        )
+
+    assert time.monotonic() - started < 1.5
 
 
 def _manifest_shard(size_bytes: int | None) -> ArchiveShardDescriptor:
