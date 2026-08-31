@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "name": "QuaZonai",
+  "subtitle": "Operator research workbench",
+  "bundle_identifier": "com.quazonai.operator",
+  "primary_category": "FINANCE",
+  "secondary_category": "PRODUCTIVITY",
+  "minimum_os_version": "18.0",
+  "supports_iphone": true,
+  "supports_ipad": true,
+  "supported_locales": ["en", "zh-Hans", "zh-Hant", "ja", "ko", "es", "ar"],
+  "privacy_policy_url": "https://github.com/zhengui666/QuaZonai/blob/main/ios/AppStore/PRIVACY.md",
+  "support_url": "https://github.com/zhengui666/QuaZonai/issues",
+  "export_compliance_uses_non_exempt_encryption": false,
+  "tracking": false,
+  "collected_data_types": [],
+  "review_notes": "QuaZonai is a self-hosted single-Operator client. Review requires a test server URL and a current six-digit TOTP supplied through App Store Connect review credentials. The app does not contain broker credentials, submit orders, or control downstream trading runtimes."
+}
