@@ -1,8 +1,7 @@
 from datetime import UTC, datetime
 
-import pytest
 import pmxt_archive_plugin as plugin_module
-
+import pytest
 from pmxt_archive_plugin import (
     PMXTArchivePlugin,
     _kalshi_quotes,
