@@ -12,9 +12,6 @@ on:
       - 'frontend/**'
       - 'compose.yml'
       - '.github/workflows/operator-auth-e2e.yml'
-      - '.github/scripts/issue37_migrate.py'
-      - '.github/scripts/issue37_migrate_v2.py'
-      - '.github/scripts/issue37_migrate_v3.py'
   push:
     branches: [main]
     paths:
@@ -25,40 +22,14 @@ on:
       - '.github/workflows/operator-auth-e2e.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: operator-auth-e2e-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  bootstrap:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-24.04
-    outputs:
-      changed: ${{ steps.migrate.outputs.changed }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
-      - id: migrate
-        name: Apply Issue 37 migration once
-        run: |
-          python .github/scripts/issue37_migrate_v3.py
-          if git diff --quiet; then
-            echo 'changed=false' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          git config user.name 'QuaZonai CI Migration'
-          git config user.email 'quazonai-ci@localhost'
-          git add -A
-          git commit -m 'fix(auth): migrate browser login to TOTP only'
-          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
-          echo 'changed=true' >> "$GITHUB_OUTPUT"
-
   verify:
-    needs: bootstrap
-    if: github.event_name != 'pull_request' || needs.bootstrap.outputs.changed != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     services:
