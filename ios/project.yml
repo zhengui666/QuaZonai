@@ -39,6 +39,9 @@ targets:
         CFBundleVersion: "100"
         ITSAppUsesNonExemptEncryption: false
         NSFaceIDUsageDescription: QuaZonai uses Face ID to unlock a trusted-device credential and confirm sensitive operator actions.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: false
+          NSAllowsLocalNetworking: true
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
