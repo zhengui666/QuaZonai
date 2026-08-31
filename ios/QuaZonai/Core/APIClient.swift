@@ -221,7 +221,11 @@ public actor APIClient {
 
     public func logout() async {
         if accessToken != nil {
-            _ = try? await requestJSON(path: "/api/v1/auth/mobile/logout", method: .post, allowRefresh: false)
+            _ = try? await requestJSON(
+                path: "/api/v1/auth/mobile/logout",
+                method: .post,
+                allowRefresh: false
+            )
         }
         accessToken = nil
         refreshCredential = nil
@@ -237,6 +241,7 @@ public actor APIClient {
     public func requestJSON(
         path: String,
         method: HTTPMethod = .get,
+        queryItems: [URLQueryItem] = [],
         body: JSONValue? = nil,
         idempotencyKey: String? = nil,
         allowRefresh: Bool = true
@@ -246,6 +251,7 @@ public actor APIClient {
         var (data, response) = try await perform(
             path: path,
             method: method,
+            queryItems: queryItems,
             body: encoded,
             authorization: accessToken,
             idempotencyKey: stableKey
@@ -255,6 +261,7 @@ public actor APIClient {
             (data, response) = try await perform(
                 path: path,
                 method: method,
+                queryItems: queryItems,
                 body: encoded,
                 authorization: accessToken,
                 idempotencyKey: stableKey
@@ -265,12 +272,17 @@ public actor APIClient {
         return try JSONDecoder().decode(JSONValue.self, from: data)
     }
 
-    public func authorizedRequest(path: String, queryItems: [URLQueryItem] = []) throws -> URLRequest {
+    public func authorizedRequest(
+        path: String,
+        queryItems: [URLQueryItem] = []
+    ) throws -> URLRequest {
         var request = URLRequest(url: try endpoint(path: path, queryItems: queryItems))
         request.httpMethod = HTTPMethod.get.rawValue
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        if let accessToken { request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization") }
+        if let accessToken {
+            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        }
         return request
     }
 
@@ -299,21 +311,28 @@ public actor APIClient {
     private func perform(
         path: String,
         method: HTTPMethod,
+        queryItems: [URLQueryItem] = [],
         body: Data? = nil,
         authorization: String? = nil,
         idempotencyKey: String? = nil
     ) async throws -> (Data, HTTPURLResponse) {
-        var request = URLRequest(url: try endpoint(path: path))
+        var request = URLRequest(url: try endpoint(path: path, queryItems: queryItems))
         request.httpMethod = method.rawValue
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 45
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
-        if let authorization { request.setValue("Bearer \(authorization)", forHTTPHeaderField: "Authorization") }
-        if let idempotencyKey { request.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key") }
+        if let authorization {
+            request.setValue("Bearer \(authorization)", forHTTPHeaderField: "Authorization")
+        }
+        if let idempotencyKey {
+            request.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key")
+        }
         request.httpBody = body
         let (data, rawResponse) = try await session.data(for: request)
-        guard let response = rawResponse as? HTTPURLResponse else { throw APIClientError.invalidResponse }
+        guard let response = rawResponse as? HTTPURLResponse else {
+            throw APIClientError.invalidResponse
+        }
         return (data, response)
     }
 
@@ -322,8 +341,13 @@ public actor APIClient {
             if response.statusCode == 401 { throw APIClientError.authenticationRequired }
             let envelope = try? JSONDecoder().decode(JSONValue.self, from: data)
             let error = envelope?["error"]?.objectValue
-            let message = error?.string("message") ?? HTTPURLResponse.localizedString(forStatusCode: response.statusCode)
-            throw APIClientError.http(status: response.statusCode, code: error?.string("code"), message: message)
+            let message = error?.string("message")
+                ?? HTTPURLResponse.localizedString(forStatusCode: response.statusCode)
+            throw APIClientError.http(
+                status: response.statusCode,
+                code: error?.string("code"),
+                message: message
+            )
         }
     }
 }
