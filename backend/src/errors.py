@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi import FastAPI, Request
-from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
@@ -63,6 +62,21 @@ def _error_response(
     )
 
 
+def _validation_details(exc: RequestValidationError) -> dict[str, Any]:
+    """Return stable validation metadata without echoing rejected input values."""
+    fields: list[dict[str, Any]] = []
+    for item in exc.errors():
+        location = item.get("loc", ())
+        fields.append(
+            {
+                "location": [str(component) for component in location],
+                "type": str(item.get("type", "validation_error")),
+                "message": str(item.get("msg", "Invalid value")),
+            }
+        )
+    return {"fields": fields}
+
+
 def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(QfError)
     async def handle_qf_error(request: Request, exc: QfError) -> JSONResponse:
@@ -87,4 +101,9 @@ def install_error_handlers(app: FastAPI) -> None:
                 status_code=401,
                 headers=_NO_STORE_HEADERS,
             )
-        return await request_validation_exception_handler(request, exc)
+        return _error_response(
+            code="REQUEST_VALIDATION_ERROR",
+            message="Request validation failed.",
+            status_code=422,
+            details=_validation_details(exc),
+        )
