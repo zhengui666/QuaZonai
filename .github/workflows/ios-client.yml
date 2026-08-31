@@ -119,7 +119,7 @@ jobs:
           python3 tools/generate_ios_assets.py
           xcodegen generate --spec ios/project.yml
       - name: Resolve Swift packages
-        run: xcodebuild -project ios/QuaZonai.xcodeproj -scheme QuaZonai -resolvePackageDependencies
+        run: xcodebuild -skipPackagePluginValidation -project ios/QuaZonai.xcodeproj -scheme QuaZonai -resolvePackageDependencies
       - name: Select simulators
         run: |
           python3 - <<'PY' >> "$GITHUB_ENV"
@@ -144,6 +144,7 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild test \
+            -skipPackagePluginValidation \
             -project ios/QuaZonai.xcodeproj \
             -scheme QuaZonai \
             -destination "platform=iOS Simulator,id=${IPHONE_UDID}" \
@@ -153,6 +154,7 @@ jobs:
       - name: Compile iPad application
         run: |
           xcodebuild build \
+            -skipPackagePluginValidation \
             -project ios/QuaZonai.xcodeproj \
             -scheme QuaZonai \
             -destination "platform=iOS Simulator,id=${IPAD_UDID}" \
@@ -160,6 +162,7 @@ jobs:
       - name: Release archive without signing
         run: |
           xcodebuild archive \
+            -skipPackagePluginValidation \
             -project ios/QuaZonai.xcodeproj \
             -scheme QuaZonai \
             -configuration Release \
@@ -272,6 +275,7 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild test \
+            -skipPackagePluginValidation \
             -project ios/QuaZonai.xcodeproj \
             -scheme QuaZonai \
             -destination "platform=iOS Simulator,id=${DEVICE_UDID}" \
