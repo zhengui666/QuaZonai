@@ -1,4 +1,4 @@
-name: Issue 36 Review Fix Materializer
+name: Issue 36 API Client Compatibility Fix
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 jobs:
-  materialize:
+  restore-query-items:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -20,20 +20,96 @@ jobs:
         with:
           fetch-depth: 0
           ref: feat/ios-ipados-universal-app
-      - name: Decode reviewed patch materializer
+      - name: Restore API query-item propagation
+        shell: bash
         run: |
-          base64 --decode tools/issue36_review_fixes.py.gz.b64 | gzip -dc > "$RUNNER_TEMP/issue36_review_fixes.py"
-          echo '5ce27b797d99b90fbc973d80bacec351155650ebef834fb4850c874910790327  '"$RUNNER_TEMP"'/issue36_review_fixes.py' | sha256sum --check --status
-      - name: Apply reviewed native-client fixes
-        run: python "$RUNNER_TEMP/issue36_review_fixes.py"
-      - name: Validate materialized changes
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('ios/QuaZonai/Core/APIClient.swift')
+          text = path.read_text(encoding='utf-8')
+
+          replacements = [
+              (
+                  '''    public func requestJSON(
+                  path: String,
+                  method: HTTPMethod = .get,
+                  body: JSONValue? = nil,
+          ''',
+                  '''    public func requestJSON(
+                  path: String,
+                  method: HTTPMethod = .get,
+                  queryItems: [URLQueryItem] = [],
+                  body: JSONValue? = nil,
+          ''',
+                  1,
+              ),
+              (
+                  '''        var (data, response) = try await perform(
+                  path: path,
+                  method: method,
+                  body: encoded,
+          ''',
+                  '''        var (data, response) = try await perform(
+                  path: path,
+                  method: method,
+                  queryItems: queryItems,
+                  body: encoded,
+          ''',
+                  1,
+              ),
+              (
+                  '''            (data, response) = try await perform(
+                      path: path,
+                      method: method,
+                      body: encoded,
+          ''',
+                  '''            (data, response) = try await perform(
+                      path: path,
+                      method: method,
+                      queryItems: queryItems,
+                      body: encoded,
+          ''',
+                  1,
+              ),
+              (
+                  '''    private func perform(
+                  path: String,
+                  method: HTTPMethod,
+                  body: Data? = nil,
+          ''',
+                  '''    private func perform(
+                  path: String,
+                  method: HTTPMethod,
+                  queryItems: [URLQueryItem] = [],
+                  body: Data? = nil,
+          ''',
+                  1,
+              ),
+              (
+                  '''        var request = URLRequest(url: try endpoint(path: path))
+          ''',
+                  '''        var request = URLRequest(url: try endpoint(path: path, queryItems: queryItems))
+          ''',
+                  1,
+              ),
+          ]
+
+          for old, new, expected in replacements:
+              count = text.count(old)
+              if count != expected:
+                  raise SystemExit(f'expected {expected} occurrence(s), found {count}: {old!r}')
+              text = text.replace(old, new, expected)
+
+          path.write_text(text, encoding='utf-8')
+          PY
+      - name: Validate compatibility restoration
         run: |
           git diff --check
-          python -m py_compile tools/client_parity.py
+          grep -q 'queryItems: \[URLQueryItem\] = \[\]' ios/QuaZonai/Core/APIClient.swift
+          grep -q 'queryItems: queryItems' ios/QuaZonai/Core/APIClient.swift
           python tools/client_parity.py
-          grep -q 'single-flight refresh' DESIGN.md
-          grep -q 'issuedServiceToken' ios/QuaZonai/Features/AdministrationViews.swift
-      - name: Commit reviewed fixes
+      - name: Commit compatibility fix
         run: |
           if git diff --quiet; then
             echo 'No changes to commit'
@@ -41,13 +117,6 @@ jobs:
           fi
           git config user.name 'QuaZonai Review Fix Bot'
           git config user.email 'actions@users.noreply.github.com'
-          git add DESIGN.md \
-            tools/client_parity.py \
-            ios/QuaZonai/Core/APIClient.swift \
-            ios/QuaZonai/Core/SessionStore.swift \
-            ios/QuaZonai/Features/ApprovalHandoffViews.swift \
-            ios/QuaZonai/Features/AdministrationViews.swift \
-            ios/Tests/QuaZonaiTests.swift \
-            ios/Tests/EventStreamTests.swift
-          git commit -m 'fix: close native client review gaps'
+          git add ios/QuaZonai/Core/APIClient.swift
+          git commit -m 'fix: preserve API query items across retries'
           git push origin HEAD:feat/ios-ipados-universal-app
