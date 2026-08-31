@@ -105,8 +105,26 @@ private struct WorkbenchShell: View {
         Group {
             if sizeClass == .regular {
                 NavigationSplitView(columnVisibility: $columns) {
-                    List(AppSection.allCases, selection: $selectedSection) { section in
-                        Label(L10n.text(section.titleKey, session.language), systemImage: section.icon).tag(section)
+                    List(AppSection.allCases) { section in
+                        Button {
+                            selectedSection = section
+                        } label: {
+                            Label(
+                                L10n.text(section.titleKey, session.language),
+                                systemImage: section.icon
+                            )
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .listRowBackground(
+                            selectedSection == section
+                                ? Color.accentColor.opacity(0.14)
+                                : Color.clear
+                        )
+                        .accessibilityAddTraits(
+                            selectedSection == section ? .isSelected : []
+                        )
                     }
                     .navigationTitle("QuaZonai")
                 } content: {
@@ -122,12 +140,46 @@ private struct WorkbenchShell: View {
                 }
             } else {
                 TabView(selection: $compactTab) {
-                    NavigationStack { HomeView(navigate: navigateCompact) }.tabItem { Label(L10n.text(.home, session.language), systemImage: "house") }.tag(CompactTab.home)
-                    NavigationStack { ResearchListView() }.tabItem { Label(L10n.text(.research, session.language), systemImage: "point.3.connected.trianglepath.dotted") }.tag(CompactTab.research)
-                    NavigationStack { ApprovalInboxView() }.tabItem { Label(L10n.text(.approvals, session.language), systemImage: "checkmark.seal") }.tag(CompactTab.approvals)
-                    NavigationStack { PortfolioLabView() }.tabItem { Label(L10n.text(.portfolio, session.language), systemImage: "chart.pie") }.tag(CompactTab.portfolio)
-                    NavigationStack(path: $morePath) { MoreView().navigationDestination(for: AppSection.self) { section in sectionView(section) } }
-                        .tabItem { Label(L10n.text(.more, session.language), systemImage: "ellipsis") }.tag(CompactTab.more)
+                    Tab(
+                        L10n.text(.home, session.language),
+                        systemImage: "house",
+                        value: CompactTab.home
+                    ) {
+                        NavigationStack { HomeView(navigate: navigateCompact) }
+                    }
+                    Tab(
+                        L10n.text(.research, session.language),
+                        systemImage: "point.3.connected.trianglepath.dotted",
+                        value: CompactTab.research
+                    ) {
+                        NavigationStack { ResearchListView() }
+                    }
+                    Tab(
+                        L10n.text(.approvals, session.language),
+                        systemImage: "checkmark.seal",
+                        value: CompactTab.approvals
+                    ) {
+                        NavigationStack { ApprovalInboxView() }
+                    }
+                    Tab(
+                        L10n.text(.portfolio, session.language),
+                        systemImage: "chart.pie",
+                        value: CompactTab.portfolio
+                    ) {
+                        NavigationStack { PortfolioLabView() }
+                    }
+                    Tab(
+                        L10n.text(.more, session.language),
+                        systemImage: "ellipsis",
+                        value: CompactTab.more
+                    ) {
+                        NavigationStack(path: $morePath) {
+                            MoreView()
+                                .navigationDestination(for: AppSection.self) { section in
+                                    sectionView(section)
+                                }
+                        }
+                    }
                 }
             }
         }
