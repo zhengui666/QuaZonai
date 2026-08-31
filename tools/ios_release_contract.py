@@ -150,14 +150,20 @@ def validate_project_baseline() -> None:
     if not candidates:
         fail("Xcode project or project generator specification is missing")
     text = "\n".join(path.read_text(encoding="utf-8") for path in candidates)
-    if not re.search(r"(IPHONEOS_DEPLOYMENT_TARGET\s*=\s*18(\.0)?|deploymentTarget:\s*18(\.0)?|\.iOS\(\.v18\))", text):
-        fail("minimum iOS deployment target is not 18")
-    universal = (
-        re.search(r'TARGETED_DEVICE_FAMILY\s*=\s*"?1,2"?', text)
-        or re.search(r"deviceFamilies:\s*\[[^]]*1[^]]*2[^]]*\]", text)
-        or ("supports_iphone" in (IOS / "AppStore/metadata.json").read_text() and "supports_ipad" in (IOS / "AppStore/metadata.json").read_text())
+
+    deployment_patterns = (
+        r"IPHONEOS_DEPLOYMENT_TARGET\s*[:=]\s*[\"']?18(?:\.0)?[\"']?",
+        r"deploymentTarget\s*:\s*[\"']?18(?:\.0)?[\"']?",
+        r"\.iOS\(\.v18\)",
     )
-    if not universal:
+    if not any(re.search(pattern, text) for pattern in deployment_patterns):
+        fail("minimum iOS deployment target is not 18")
+
+    universal_patterns = (
+        r"TARGETED_DEVICE_FAMILY\s*[:=]\s*[\"']?1,2[\"']?",
+        r"deviceFamilies\s*:\s*\[[^\]]*1[^\]]*2[^\]]*\]",
+    )
+    if not any(re.search(pattern, text) for pattern in universal_patterns):
         fail("Universal iPhone/iPad target declaration is missing")
 
 
