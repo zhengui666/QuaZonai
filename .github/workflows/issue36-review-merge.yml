@@ -1,0 +1,325 @@
+name: Issue 36 review and merge
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: issue36-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  actions: write
+  checks: read
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  review-and-merge:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'feat/ios-ipados-universal-app' &&
+      github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      CURRENT_RUN_ID: ${{ github.run_id }}
+    steps:
+      - name: Wait for every pull-request CI workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          required_paths=(
+            '.github/workflows/ci.yml'
+            '.github/workflows/frontend.yml'
+            '.github/workflows/nautilus-runtime.yml'
+            '.github/workflows/operator-auth-e2e.yml'
+            '.github/workflows/client-parity.yml'
+            '.github/workflows/ios-issue36.yml'
+            '.github/workflows/ios-issue36-release.yml'
+          )
+          sleep 45
+          for attempt in $(seq 1 180); do
+            runs=$(gh api "repos/$REPOSITORY/actions/runs?head_sha=$HEAD_SHA&event=pull_request&per_page=100")
+            missing=0
+            pending=0
+            failed=0
+            for path in "${required_paths[@]}"; do
+              run=$(jq -c --arg path "$path" '[.workflow_runs[] | select(.path == $path)] | sort_by(.run_number) | last // empty' <<<"$runs")
+              if [ -z "$run" ]; then
+                echo "Waiting for workflow registration: $path"
+                missing=1
+                continue
+              fi
+              status=$(jq -r '.status' <<<"$run")
+              conclusion=$(jq -r '.conclusion // ""' <<<"$run")
+              url=$(jq -r '.html_url' <<<"$run")
+              if [ "$status" != completed ]; then
+                echo "Pending: $path ($status) $url"
+                pending=1
+              elif [ "$conclusion" != success ]; then
+                echo "Failed: $path ($conclusion) $url"
+                failed=1
+              fi
+            done
+
+            unexpected_failed=$(jq -r --argjson current "$CURRENT_RUN_ID" '
+              [.workflow_runs[]
+                | select(.id != $current)
+                | select(.status == "completed")
+                | select((.conclusion // "") != "success" and (.conclusion // "") != "skipped" and (.conclusion // "") != "neutral")
+                | "\(.path) \(.conclusion) \(.html_url)"] | .[]?' <<<"$runs")
+            if [ -n "$unexpected_failed" ]; then
+              echo "A pull-request workflow failed:"
+              echo "$unexpected_failed"
+              failed=1
+            fi
+            unexpected_pending=$(jq -r --argjson current "$CURRENT_RUN_ID" '
+              [.workflow_runs[]
+                | select(.id != $current)
+                | select(.status != "completed")
+                | "\(.path) \(.status) \(.html_url)"] | .[]?' <<<"$runs")
+            if [ -n "$unexpected_pending" ]; then
+              echo "Other pull-request workflows are still running:"
+              echo "$unexpected_pending"
+              pending=1
+            fi
+
+            if [ "$failed" = 1 ]; then
+              exit 1
+            fi
+            if [ "$missing" = 0 ] && [ "$pending" = 0 ]; then
+              echo "All pull-request CI workflows passed for $HEAD_SHA"
+              break
+            fi
+            if [ "$attempt" = 180 ]; then
+              echo "Timed out waiting for pull-request CI"
+              exit 1
+            fi
+            sleep 30
+          done
+
+      - name: Request Codex review only after CI is green
+        id: request
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit_time=$(gh api "repos/$REPOSITORY/commits/$HEAD_SHA" --jq '.commit.committer.date')
+          comments=$(gh api --paginate "repos/$REPOSITORY/issues/$PR_NUMBER/comments?per_page=100")
+          marker_time=$(jq -sr --arg commit_time "$commit_time" '
+            [.[].[]
+              | select((.user.login // "") == "github-actions[bot]")
+              | select(.body == "@codex review")
+              | select(.created_at >= $commit_time)
+              | .created_at] | sort | last // empty' <<<"$comments")
+          if [ -z "$marker_time" ]; then
+            gh pr comment "$PR_NUMBER" --repo "$REPOSITORY" --body '@codex review'
+            marker_time=$(gh api "repos/$REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" --jq '
+              [.[]
+                | select((.user.login // "") == "github-actions[bot]")
+                | select(.body == "@codex review")
+                | .created_at] | sort | last')
+          fi
+          test -n "$marker_time"
+          echo "marker_time=$marker_time" >> "$GITHUB_OUTPUT"
+
+      - name: Require an explicit no-issues Codex result
+        shell: bash
+        env:
+          MARKER_TIME: ${{ steps.request.outputs.marker_time }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 90); do
+            issue_comments=$(gh api --paginate "repos/$REPOSITORY/issues/$PR_NUMBER/comments?per_page=100")
+            reviews=$(gh api --paginate "repos/$REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100")
+            inline_comments=$(gh api --paginate "repos/$REPOSITORY/pulls/$PR_NUMBER/comments?per_page=100")
+
+            inline_count=$(jq -sr --arg marker "$MARKER_TIME" '
+              [.[].[]
+                | select(((.user.login // "") | test("codex"; "i")))
+                | select(.created_at > $marker)] | length' <<<"$inline_comments")
+            changes_requested=$(jq -sr --arg marker "$MARKER_TIME" '
+              [.[].[]
+                | select(((.user.login // "") | test("codex"; "i")))
+                | select(.submitted_at > $marker)
+                | select(.state == "CHANGES_REQUESTED")] | length' <<<"$reviews")
+            approved=$(jq -sr --arg marker "$MARKER_TIME" '
+              [.[].[]
+                | select(((.user.login // "") | test("codex"; "i")))
+                | select(.submitted_at > $marker)
+                | select(.state == "APPROVED")] | length' <<<"$reviews")
+            bodies=$(
+              {
+                jq -sr --arg marker "$MARKER_TIME" -r '
+                  .[].[]
+                  | select(((.user.login // "") | test("codex"; "i")))
+                  | select(.created_at > $marker)
+                  | .body // empty' <<<"$issue_comments"
+                jq -sr --arg marker "$MARKER_TIME" -r '
+                  .[].[]
+                  | select(((.user.login // "") | test("codex"; "i")))
+                  | select(.submitted_at > $marker)
+                  | .body // empty' <<<"$reviews"
+              } | sed '/^[[:space:]]*$/d'
+            )
+
+            if [ "$inline_count" -gt 0 ] || [ "$changes_requested" -gt 0 ]; then
+              echo "Codex reported review findings; implementation must be fixed before another review."
+              printf '%s\n' "$bodies"
+              exit 1
+            fi
+
+            verdict=$(CODEX_BODIES="$bodies" CODEX_APPROVED="$approved" python - <<'PY'
+          import os
+          import re
+
+          text = os.environ.get("CODEX_BODIES", "").casefold()
+          approved = int(os.environ.get("CODEX_APPROVED", "0")) > 0
+          positive = approved or any(
+              phrase in text
+              for phrase in (
+                  "no issues",
+                  "no problems",
+                  "no findings",
+                  "nothing to flag",
+                  "looks good",
+                  "lgtm",
+                  "did not find any",
+                  "didn't find any",
+                  "未发现问题",
+                  "没有问题",
+              )
+          )
+          cleaned = text
+          for phrase in (
+              "no issues found",
+              "no issues",
+              "no problems found",
+              "no problems",
+              "no findings",
+              "nothing to flag",
+          ):
+              cleaned = cleaned.replace(phrase, "")
+          negative = bool(re.search(
+              r"\[(?:p|s)[0-3]\]|changes requested|blocking|must fix|needs? (?:a )?fix|"
+              r"found \d+ (?:issue|problem|finding)|(?:issue|problem|finding)s? found|"
+              r"security vulnerability|regression",
+              cleaned,
+          ))
+          if positive and not negative:
+              print("positive")
+          elif text or approved:
+              print("negative")
+          else:
+              print("pending")
+          PY
+            )
+            if [ "$verdict" = positive ]; then
+              echo "Codex explicitly reported no issues."
+              printf '%s\n' "$bodies"
+              break
+            fi
+            if [ "$verdict" = negative ]; then
+              echo "Codex response was not an explicit no-issues result."
+              printf '%s\n' "$bodies"
+              exit 1
+            fi
+            if [ "$attempt" = 90 ]; then
+              echo "Timed out waiting for Codex review"
+              exit 1
+            fi
+            sleep 30
+          done
+
+      - name: Reconfirm unchanged head and green CI
+        shell: bash
+        run: |
+          set -euo pipefail
+          current=$(gh pr view "$PR_NUMBER" --repo "$REPOSITORY" --json headRefOid --jq '.headRefOid')
+          test "$current" = "$HEAD_SHA"
+          runs=$(gh api "repos/$REPOSITORY/actions/runs?head_sha=$HEAD_SHA&event=pull_request&per_page=100")
+          bad=$(jq -r --argjson current "$CURRENT_RUN_ID" '
+            [.workflow_runs[]
+              | select(.id != $current)
+              | select(.status != "completed" or .conclusion != "success")
+              | "\(.path) status=\(.status) conclusion=\(.conclusion // "")"] | .[]?' <<<"$runs")
+          if [ -n "$bad" ]; then
+            echo "$bad"
+            exit 1
+          fi
+
+      - name: Squash merge the reviewed commit
+        id: merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          response=$(gh api --method PUT "repos/$REPOSITORY/pulls/$PR_NUMBER/merge" \
+            -f merge_method=squash \
+            -f sha="$HEAD_SHA")
+          merged=$(jq -r '.merged' <<<"$response")
+          message=$(jq -r '.message' <<<"$response")
+          echo "$message"
+          test "$merged" = true
+          merge_sha=$(jq -r '.sha' <<<"$response")
+          test -n "$merge_sha"
+          echo "merge_sha=$merge_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch independent main verification
+        id: dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          dispatched_after=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          for attempt in $(seq 1 30); do
+            if gh workflow run main-post-merge-verification.yml --repo "$REPOSITORY" --ref main; then
+              break
+            fi
+            if [ "$attempt" = 30 ]; then exit 1; fi
+            sleep 10
+          done
+          echo "dispatched_after=$dispatched_after" >> "$GITHUB_OUTPUT"
+
+      - name: Verify main CI passes
+        shell: bash
+        env:
+          DISPATCHED_AFTER: ${{ steps.dispatch.outputs.dispatched_after }}
+          MERGE_SHA: ${{ steps.merge.outputs.merge_sha }}
+        run: |
+          set -euo pipefail
+          run_id=''
+          for attempt in $(seq 1 60); do
+            data=$(gh api "repos/$REPOSITORY/actions/workflows/main-post-merge-verification.yml/runs?event=workflow_dispatch&branch=main&per_page=20")
+            run_id=$(jq -r --arg after "$DISPATCHED_AFTER" --arg sha "$MERGE_SHA" '
+              [.workflow_runs[]
+                | select(.created_at >= $after)
+                | select(.head_sha == $sha)]
+              | sort_by(.created_at)
+              | first.id // empty' <<<"$data")
+            [ -n "$run_id" ] && break
+            if [ "$attempt" = 60 ]; then
+              echo "Main verification run did not appear"
+              exit 1
+            fi
+            sleep 10
+          done
+          for attempt in $(seq 1 180); do
+            run=$(gh api "repos/$REPOSITORY/actions/runs/$run_id")
+            status=$(jq -r '.status' <<<"$run")
+            conclusion=$(jq -r '.conclusion // ""' <<<"$run")
+            url=$(jq -r '.html_url' <<<"$run")
+            echo "Main verification: $status $conclusion $url"
+            if [ "$status" = completed ]; then
+              test "$conclusion" = success
+              exit 0
+            fi
+            if [ "$attempt" = 180 ]; then
+              echo "Timed out waiting for main verification"
+              exit 1
+            fi
+            sleep 30
+          done
