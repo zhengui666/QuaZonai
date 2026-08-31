@@ -15,7 +15,17 @@ from settings import Settings
 
 
 def _script_directory() -> ScriptDirectory:
-    backend_root = Path(__file__).resolve().parents[2]
+    candidates = (
+        Path.cwd(),
+        Path(__file__).resolve().parents[2],
+        Path("/workspace/backend"),
+    )
+    backend_root = next(
+        (candidate for candidate in candidates if (candidate / "alembic.ini").is_file()),
+        None,
+    )
+    if backend_root is None:
+        raise RuntimeError("QuaZonai Alembic configuration was not found")
     config = Config(str(backend_root / "alembic.ini"))
     return ScriptDirectory.from_config(config)
 

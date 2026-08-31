@@ -33,6 +33,8 @@ from db.plugin_models import (
     PluginRuntimeBundleMember,
 )
 from db.quant_runtime_models import (
+    ArchiveManifest,
+    ArchiveManifestShard,
     CapitalContextVersion,
     EvaluationEpisode,
     NautilusCatalogBinding,
@@ -63,6 +65,8 @@ __all__ = [
     "GovernedDataSource",
     "DatasetRevision",
     "NautilusCatalogBinding",
+    "ArchiveManifest",
+    "ArchiveManifestShard",
     "QuantRuntimeRun",
     "EvaluationEpisode",
     "CapitalContextVersion",

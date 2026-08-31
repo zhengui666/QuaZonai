@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from errors import QfError
 
 PINNED_NAUTILUS_VERSION = "1.231.0"
-CONTRACT_VERSION = "1"
+CONTRACT_VERSION = "2"
 _DEFAULT_TIMEOUT_SECONDS = 120.0
 _DEFAULT_POLL_SECONDS = 0.25
 RuntimeProfile = Literal["research", "sealed"]

@@ -148,6 +148,14 @@ def build_mission_quant_context(settings: Settings) -> str:
         f"```json\n{json.dumps(catalog_rows, ensure_ascii=False, indent=2)}\n```\n\n"
         "Required artifact shape:\n\n"
         f"```json\n{json.dumps(example, ensure_ascii=False, indent=2)}\n```\n"
+        "\nExecutable artifact rules:\n"
+        "- `strategy_path` and `config_path` must resolve to complete, importable Nautilus strategy and config implementations in `source_files`.\n"
+        "- Do not submit comments, TODOs, or text such as `parent runtime must implement`; the trusted parent only validates and executes the submitted artifact and does not fill in missing factor logic.\n"
+        "- Every config value must be compatible with the declared Nautilus config type; trade sizes must be numeric values that the instrument can quantize.\n"
+        "- For QuoteTick factor research, implement the factor calculation and trading/evaluation behavior in the strategy source, and state any sample-size limitation in `RESULT.md`; never invent results.\n"
+        "- Discovery strategies must submit genuine orders to the simulated Nautilus venue when their signal is executable; virtual-only counters or dummy orders do not count as runtime evidence.\n"
+        "- Use the pinned Nautilus Python API exactly; for market orders use positional arguments `(instrument_id, order_side, quantity)` because the binding may reject keyword arguments.\n"
+        "- Before finishing, run `python -m json.tool EXPERIMENTS.json` and a Python syntax compile over every source file; fix any trailing comma or malformed JSON before returning.\n"
     )
 
 

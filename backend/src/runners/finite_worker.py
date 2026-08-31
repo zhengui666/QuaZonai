@@ -26,6 +26,7 @@ from jobs import (
 )
 from logging_utils import configure_logging
 from runtime_config import effective_settings
+from runners.codex_sandbox import codex_sandbox_preflight
 from settings import Settings
 
 LOGGER = logging.getLogger("quazonai.finite_worker")
@@ -217,6 +218,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     factory = create_session_factory(engine)
     try:
         if args.check:
+            codex_sandbox_preflight()
             ping_database(engine)
             return 0
 

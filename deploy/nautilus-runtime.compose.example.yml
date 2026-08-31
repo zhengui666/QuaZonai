@@ -8,10 +8,17 @@ services:
     environment:
       QUAZONAI_NAUTILUS_RUNTIME_TOKEN: ${QUAZONAI_NAUTILUS_RUNTIME_TOKEN:?required}
       QUAZONAI_NAUTILUS_CATALOG_ROOT: /var/lib/nautilus/catalogs
+      QUAZONAI_NAUTILUS_PLUGIN_STAGING_ROOT: /var/lib/nautilus/plugin-staging
+      QUAZONAI_NAUTILUS_PLUGIN_ROOT: /var/lib/quazonai/plugins
       QUAZONAI_NAUTILUS_HOST: 0.0.0.0
       QUAZONAI_NAUTILUS_PORT: 8011
     volumes:
       - research-catalogs:/var/lib/nautilus/catalogs
+      - research-plugin-staging:/var/lib/nautilus/plugin-staging
+      - plugin-data:/var/lib/quazonai/plugins:ro
+    # A separate per-instance tmpfs prevents an importer from filling the
+    # immutable catalog volume; its 3 GiB quota is above the 2 GiB output cap.
+    mem_limit: 10g
     ports:
       - "127.0.0.1:8011:8011"
     read_only: true
@@ -19,6 +26,9 @@ services:
       - /tmp:rw,noexec,nosuid,size=512m
     security_opt:
       - no-new-privileges:true
+      # bubblewrap requires the namespace syscalls allowed by this checked-in
+      # profile; capabilities remain dropped and no privileged flag is used.
+      - seccomp=./seccomp/codex-worker.json
     cap_drop:
       - ALL
     restart: unless-stopped
@@ -30,12 +40,17 @@ services:
     environment:
       QUAZONAI_NAUTILUS_RUNTIME_TOKEN: ${QUAZONAI_NAUTILUS_SEALED_RUNTIME_TOKEN:?required}
       QUAZONAI_NAUTILUS_CATALOG_ROOT: /var/lib/nautilus/sealed-catalogs
+      QUAZONAI_NAUTILUS_PLUGIN_STAGING_ROOT: /var/lib/nautilus/plugin-staging
+      QUAZONAI_NAUTILUS_PLUGIN_ROOT: /var/lib/quazonai/plugins
       QUAZONAI_NAUTILUS_HOST: 0.0.0.0
       QUAZONAI_NAUTILUS_PORT: 8011
     volumes:
       # Ingestion is an explicit trusted provisioning action; evaluation reads
       # only the catalog selected for the current episode.
       - sealed-catalogs:/var/lib/nautilus/sealed-catalogs
+      - sealed-plugin-staging:/var/lib/nautilus/plugin-staging
+      - plugin-data:/var/lib/quazonai/plugins:ro
+    mem_limit: 10g
     ports:
       - "127.0.0.1:8012:8011"
     read_only: true
@@ -43,10 +58,55 @@ services:
       - /tmp:rw,noexec,nosuid,size=512m
     security_opt:
       - no-new-privileges:true
+      - seccomp=./seccomp/codex-worker.json
     cap_drop:
       - ALL
     restart: unless-stopped
 
+  # Same-host reference boundary for a Core deployment. The proxy is the only
+  # runtime-stack service that joins the Core network; Core API never joins the
+  # runtime bridge directly. For a separate host, use the HTTPS endpoints
+  # documented in OPERATIONS.md instead.
+  nautilus-runtime-proxy:
+    image: nginx:1.29-alpine
+    volumes:
+      - ./nautilus-runtime-proxy.conf:/etc/nginx/nginx.conf:ro
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:rw,noexec,nosuid,size=16m
+      - /var/run:rw,noexec,nosuid,size=2m
+      - /tmp:rw,noexec,nosuid,size=8m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    networks:
+      - default
+      - quazonai-core
+
 volumes:
   research-catalogs:
+  research-plugin-staging:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=3g,mode=1777
   sealed-catalogs:
+  sealed-plugin-staging:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=3g,mode=1777
+  plugin-data:
+    external: true
+    name: quazonai_plugin-data
+
+networks:
+  default:
+    name: quazonai-runtime
+  quazonai-core:
+    external: true
+    name: quazonai-core

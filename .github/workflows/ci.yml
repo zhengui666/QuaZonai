@@ -58,6 +58,12 @@ jobs:
           ! grep -R -n -E 'TradingNode|LiveNode|submit_order|cancel_order|modify_order' backend/src/api backend/src/quant_runtime
       - name: Install product and test runtimes
         run: python -m pip install -e 'backend[dev,research,agent,nautilus-runtime]'
+      - name: PMXT plugin regression tests
+        run: |
+          mkdir -p /tmp/quazonai-pmxt-wheel
+          python -m pip wheel --no-deps --wheel-dir /tmp/quazonai-pmxt-wheel plugins/pmxt-archive
+          python -m pip install --no-deps /tmp/quazonai-pmxt-wheel/*.whl
+          pytest -q plugins/pmxt-archive/tests
       - name: Compile
         run: python -m compileall -q backend/src
       - name: Lint
@@ -90,7 +96,7 @@ jobs:
           QUAZONAI_NAUTILUS_SEALED_RUNTIME_TOKEN: ci-sealed-nautilus-token
           QUAZONAI_NAUTILUS_CATALOG_ROOT: /tmp/quazonai-nautilus-catalogs
           QUAZONAI_NAUTILUS_VERSION: 1.231.0
-          QUAZONAI_NAUTILUS_CONTRACT_VERSION: '1'
+          QUAZONAI_NAUTILUS_CONTRACT_VERSION: '2'
           QUAZONAI_NAUTILUS_RUNTIME_VERIFY_TLS: 'false'
         run: |
           rm -rf "$QUAZONAI_NAUTILUS_CATALOG_ROOT"
@@ -107,8 +113,8 @@ jobs:
           for attempt in $(seq 1 60); do
             research_ok=0
             sealed_ok=0
-            curl --fail --silent -H 'Authorization: Bearer ci-remote-nautilus-token' http://127.0.0.1:8011/v1/capabilities > /tmp/nautilus-research-capabilities.json && research_ok=1
-            curl --fail --silent -H 'Authorization: Bearer ci-sealed-nautilus-token' http://127.0.0.1:8012/v1/capabilities > /tmp/nautilus-sealed-capabilities.json && sealed_ok=1
+            curl --fail --silent -H 'Authorization: Bearer ci-remote-nautilus-token' -H 'X-QuaZonai-Quant-Contract: 2' http://127.0.0.1:8011/v1/capabilities > /tmp/nautilus-research-capabilities.json && research_ok=1
+            curl --fail --silent -H 'Authorization: Bearer ci-sealed-nautilus-token' -H 'X-QuaZonai-Quant-Contract: 2' http://127.0.0.1:8012/v1/capabilities > /tmp/nautilus-sealed-capabilities.json && sealed_ok=1
             if [ "$research_ok" = 1 ] && [ "$sealed_ok" = 1 ]; then
               break
             fi
@@ -140,6 +146,7 @@ jobs:
           QUAZONAI_DATABASE_URL: postgresql+psycopg://quazonai:quazonai-local@postgres:5432/quazonai
           QUAZONAI_ALEMBIC_URL: postgresql+psycopg://quazonai:quazonai-local@postgres:5432/quazonai
         run: |
+          docker network inspect quazonai-runtime >/dev/null 2>&1 || docker network create quazonai-runtime
           docker compose --env-file .env.example up --detach --build
           for attempt in $(seq 1 60); do
             if curl --fail --silent http://127.0.0.1:8000/api/v1/system/health > /tmp/quazonai-health.json; then

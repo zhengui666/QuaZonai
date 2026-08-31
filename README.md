@@ -100,7 +100,7 @@ Registering a Downstream System returns its Bearer service token once. Store tha
 
 ## Remote Nautilus runtime
 
-Deploy the pinned reference service from [`deploy/Dockerfile.nautilus-runtime`](deploy/Dockerfile.nautilus-runtime). [`deploy/nautilus-runtime.compose.example.yml`](deploy/nautilus-runtime.compose.example.yml) demonstrates separate Research and Sealed instances. Configure the Core deployment with independent endpoints and service tokens:
+Deploy the pinned reference service from [`deploy/Dockerfile.nautilus-runtime`](deploy/Dockerfile.nautilus-runtime). [`deploy/nautilus-runtime.compose.example.yml`](deploy/nautilus-runtime.compose.example.yml) demonstrates separate Research and Sealed instances plus a same-host narrow proxy on the stable `quazonai-core` network. Core Compose keeps the API off the runtime bridge and uses a narrow `nautilus-runtime-proxy` for the two runtime endpoints. Configure the Core deployment with independent endpoints and service tokens:
 
 ```dotenv
 QUAZONAI_NAUTILUS_RUNTIME_URL=https://research-runtime.example
@@ -108,10 +108,14 @@ QUAZONAI_NAUTILUS_RUNTIME_TOKEN=<research-runtime-service-token>
 QUAZONAI_NAUTILUS_SEALED_RUNTIME_URL=https://sealed-runtime.example
 QUAZONAI_NAUTILUS_SEALED_RUNTIME_TOKEN=<sealed-runtime-service-token>
 QUAZONAI_NAUTILUS_VERSION=1.231.0
-QUAZONAI_NAUTILUS_CONTRACT_VERSION=1
+QUAZONAI_NAUTILUS_CONTRACT_VERSION=2
 ```
 
 These service tokens are not broker credentials. Keep them at the trusted Core deployment boundary; Codex Mission children never receive them. A governed Dataset Revision must have an immutable Nautilus Catalog binding before a Mission experiment can run. Discovery evidence enters the Search Ledger; Sealed evaluation uses a separate endpoint/catalog and returns controlled disclosure only. Approved output is a Nautilus-native Candidate Bundle.
+
+PMXT Archive is available as the `quazonai-pmxt-archive` historical `DATA_CONNECTOR` plugin for Polymarket v2 and Kalshi. It supports either one fixed hourly Parquet URL plus one target `asset_id`/`market_ticker`, or a generic immutable `ArchiveManifest` for a bounded all-market history range. The manifest path probes the fixed PMXT URL space without bulk downloading and records missing/probe-error gaps; `POST /api/v1/quant-runtime/archive-manifests/{manifest_id}/materialize` then validates exact hourly coverage and known shard sizes before materializing one instrument and a bounded UTC slice into a new immutable Dataset Revision. Materialization uses bounded Parquet batches and isolated runtime memory limits. This path requires no PMXT API key and has no order or execution capability.
+
+The generic plugin runner also uses a per-instance quota-backed staging tmpfs and bounded protocol output, so third-party imports cannot fill the immutable Catalog volume or unboundedly buffer runtime memory.
 
 ## Agent Skill
 

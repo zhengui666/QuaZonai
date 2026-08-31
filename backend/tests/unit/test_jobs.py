@@ -111,4 +111,8 @@ def test_renew_job_lease_extends_only_the_current_owner(
         job = session.get(Job, job_id)
         assert job is not None
         assert job.lease_owner == "worker-a"
-        assert job.lease_expires_at == renewed_at + timedelta(seconds=60)
+        stored_expiry = job.lease_expires_at
+        assert stored_expiry is not None
+        if stored_expiry.tzinfo is None:
+            stored_expiry = stored_expiry.replace(tzinfo=UTC)
+        assert stored_expiry == renewed_at + timedelta(seconds=60)

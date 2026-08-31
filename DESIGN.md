@@ -453,6 +453,52 @@ Codex 可以自主声明 Data Requirement、查询已批准能力和请求 inges
 
 互联网检索只能用于允许的定性假设形成；进入 Research Engine 的定量数据必须通过批准 Connector。
 
+### 10.1.1 PMXT Archive historical connector plugin
+
+PMXT Archive 以 `DATA_CONNECTOR` / `HISTORICAL_IMPORT` runtime plugin 形式提供只读历史市场数据能力，不是交易 venue、broker 或 downstream runtime。PMXT 的 primary wheel 为 `quazonai-pmxt-archive`，通过唯一 `quazonai.plugins` entry point 注册 `pmxt_archive`；Core 不包含 PMXT-specific dispatch 分支。
+
+通用 Catalog ingest 使用已验证并激活的 plugin release/runtime bundle，`source_spec` 只保存 connector 的公开配置：
+
+```json
+{
+  "kind": "plugin",
+  "config": {
+    "venue": "polymarket_v2 | kalshi",
+    "archive_url": "https://r2v2.pmxt.dev/polymarket_orderbook_YYYY-MM-DDTHH.parquet",
+    "instrument": "<asset_id 或 market_ticker>",
+    "instrument_symbol": "<可选的本地 BinaryOption symbol>"
+  }
+}
+```
+
+当研究范围是整个市场和整个归档历史时，使用通用 `ArchiveManifest`，而不是把所有小时文件拼成一个本地 Catalog：
+
+```json
+{
+  "kind": "plugin",
+  "config": {
+    "venue": "polymarket_v2",
+    "selection": "all_markets",
+    "archive_start": "2026-04-13T19:00:00Z",
+    "archive_end": "2026-08-31T03:00:00Z"
+  }
+}
+```
+
+Manifest 只登记插件根据固定官方 URL 规则探测到的小时分片（URL、UTC 小时范围、大小、存在/缺失/探测错误状态和探测时间），不下载原始 Parquet。缺失小时必须保留在清单中并作为研究数据间隔；清单本身是不可变的，重新扫描或范围变化创建新的 Manifest。Research runtime 按研究请求选择分片和 instrument，在有界缓存中按需物化临时 Nautilus Catalog；缓存淘汰不改变 Manifest 或 Dataset Revision，也不使用应用级 hash/checksum 身份。
+
+Manifest 的按需物化使用同一通用 `CatalogIngestSpec`，增加可选的 `source_shards` 列表和 `source_spec.materialization` 描述。Core 只允许选择单一 instrument、UTC 小时对齐的 `[start, end)` 范围和 Manifest 中状态为 `AVAILABLE` 的固定分片；单次请求最多 168 个小时、估算源文件最多 20 GiB。缺失/探测错误小时留在 materialization quality evidence 中，不被当成 Alpha failure。Core 不下载、不解析 provider 数据，也不为 PMXT 增加特殊分支；独立 runtime 将选定分片传给对应 `DATA_CONNECTOR` plugin child，由插件逐个下载、以最多 16,384 行和 64 MiB 解码批次按 instrument 过滤，累计解码输入最多 4 GiB，按 `timestamp_received` 合并状态并写出新的 Catalog。runtime 对生成的 Catalog 只用最多 16,384 行和 64 MiB 的 Arrow 批次扫描时间列完成边界校验，不把整库 materialize 到内存；plugin child 还必须继承 6 GiB address-space 上限，reference Research/Sealed runtime 容器各自设置 10 GiB memory 上限。子进程地址空间与暂存输出配额合计低于容器上限并留有 runtime headroom。每个 materialization 都创建新的 immutable Dataset Revision，不能向既有 Catalog 原地追加。Reference runtime 拒绝 plugin 直接写入 `sealed=true` Catalog；sealed raw data 必须先由受信 provisioning/import path 写入独立 sealed Catalog，再供 evaluator 只读验证。
+
+`plugin_release_id` 与 `plugin_runtime_bundle_id` 是 Operator Catalog ingest 请求的受治理绑定；Core 校验 release 为 ACTIVE、bundle 为 READY 且包含该 release 的 `IMPORTER` member，再向独立 Nautilus runtime 传递不含 secret 的 plugin id/version 和 bundle path。runtime 只通过通用 connector-runner child 调用 plugin entry point；API、worker、agent-worker、evaluator 长进程不 import plugin。
+
+PMXT plugin 只接受 PMXT Archive 公布的、与 venue 匹配的固定小时 Parquet URL，并拒绝重定向、凭据、任意 host、查询参数和非 Parquet 路径；Manifest 扫描只从受约束的 UTC 小时范围生成这些 URL，不从网页抓取链接。每次“一个小时文件 + 一个 instrument”导入都创建新的 immutable Dataset Revision，不能把后续文件原地追加到旧 Revision；Manifest 物化出的每个研究切片同样必须创建新的 immutable Dataset Revision。
+
+PMXT plugin 支持 Polymarket v2 与 Kalshi orderbook 到 Nautilus `QuoteTick` 的历史转换，instrument 以 PMXT `BinaryOption` 表示，导入结果只用于 Research/Sealed Catalog。PMXT 的 `timestamp_received` 作为 point-in-time `available_at`；当源文件缺失事件时间时使用接收时间作为事件时间，并在 quality evidence 中记录 fallback 计数；事件时钟晚于接收时钟也只记录异常，不得改写可用时间。跨 Manifest 缺口时必须重置重建盘口状态。源数据的 bids/asks、排序、交叉报价、缺失和转换跳过行必须进入 Dataset quality evidence。
+
+PMXT plugin 不保存或请求 provider secret，不调用 PMXT 交易接口，不输出 order、fill、position、account 或 NAV，也不授予 QZ 启停、撤单、平仓或恢复任何 downstream 的能力。未来其他历史数据源必须复用同一通用 plugin/importer contract，不得在 Core 或 Nautilus runtime 增加 provider-specific 分支。
+
+每个 materialization 使用与 immutable Catalog 分离、每实例 3 GiB 配额的 tmpfs 暂存区；单次导入最多发布 2 GiB、10,000 个常规 Parquet 文件，插件 child 继承 6 GiB address-space 上限，runtime 只以有界 Arrow 批次校验已发布字段，插件 stdout/stderr 通过流式有界读取并拒绝超限，避免第三方 importer 把持久卷或 runtime 内存耗尽。上述限制属于通用 plugin runner 边界，不是 PMXT 特例。
+
 ### 10.2 Dataset Revision
 
 每份 Dataset Revision 显式记录：
@@ -538,6 +584,10 @@ Agent 只能引用已治理、未封存的 Dataset Revision。受信 Mission run
 ### 11.4 Research Mission、Sealed 与 Portfolio
 
 Codex 在隔离 worktree 中生成 `EXPERIMENTS.json`，但不获得 DB、runtime endpoint/token、Sealed data 或 broker credential。受信 runner 校验 contract 后调用 Remote Research Runtime，并把每个结果持久化为 `QuantRuntimeRun` 与 `SearchLedgerEntry`。
+
+`EXPERIMENTS.json` 是可执行的 StrategyArtifact 合同：每个 artifact 的 `source_files` 必须包含与 `strategy_path`、`config_path` 对应的完整、可导入 Nautilus strategy/config 实现，配置字段也必须与实现兼容。Agent 不得提交“由 parent runtime 实现”、TODO、注释占位或不可解析的交易参数；受信 parent 只校验并执行 artifact，不代替实验补全缺失的因子逻辑。不可运行的 artifact 作为失败 Search Ledger 尝试记录，不能被包装成研究成功。
+
+Mission 的 `workspace-write` 依赖 Codex bundled bubblewrap 创建用户、挂载和网络 namespace。Core Compose 的 `finite-worker` 必须使用允许这些 namespace syscall 的专用 seccomp profile；`no-new-privileges`、`cap_drop: ALL`、只读根文件系统、无任意 Mission 网络和 QZ 外层 worktree/volume 边界仍保持不变。禁止用 `privileged`、增加 `CAP_SYS_ADMIN` 或 bypass Codex sandbox 解决启动问题。Worker preflight 必须实际执行一次隔离命令并在失败时阻止 `RESEARCH_READY`。
 
 Discovery 成功后创建新的 Sealed Evaluation Episode，由独立 Sealed endpoint/token/catalog 使用相同 pinned runtime 和 Strategy artifact 执行。Sealed 通过 deterministic classification 进入治理；只有通过后，才冻结适用的 Universe Version、Mandate Version、Capital Context Version 与 TargetPortfolioFrame，再在 Research runtime 的 discovery catalog 上执行 Portfolio simulation，并产生 Alpha、Portfolio Candidate 与 Paper Approval。Promotion threshold 不属于 Mission 输出；所有 Sealed classification 和 promotion policy 均由 server-owned policy 决定。
 
@@ -1343,7 +1393,7 @@ nautilus-paper-node
 nautilus-live-node
 ```
 
-`deploy/Dockerfile.nautilus-runtime` 是 reference remote runtime image；`deploy/nautilus-runtime.compose.example.yml` 仅用于在另一主机部署示例，不加入 Core Compose。Research 与 Sealed 使用不同 endpoint/token/catalog。Core API image 必须证明未安装 NautilusTrader。
+`deploy/Dockerfile.nautilus-runtime` 是 reference remote runtime image；`deploy/nautilus-runtime.compose.example.yml` 提供独立 runtime，以及同主机部署时加入稳定 `quazonai-core` network 的窄 proxy。Core Compose 也提供同样的 `nautilus-runtime-proxy` 边界；API 只连接 Core network，不直接加入 runtime bridge。Proxy 只转发到 Research/Sealed runtime，并保留长时 manifest/materialization 与 Candidate Bundle 的 contract 上限，因此 runtime/plugin peer 不能通过网络直达 Operator API。跨主机部署使用受信 HTTPS endpoint/token，不使用两个 Docker network 的跨主机假设。Research 与 Sealed 使用不同 endpoint/token/catalog。Core API image 必须证明未安装 NautilusTrader。
 
 不引入 Redis、Celery、Kafka 或 Kubernetes。使用 PostgreSQL durable jobs + `FOR UPDATE SKIP LOCKED`，事件表 + `LISTEN/NOTIFY` 仅做唤醒。
 
@@ -1505,6 +1555,8 @@ Production 构建后 SPA 静态资产由 FastAPI 提供，减少额外运行服�
 | `plugin_releases` | `id`, `plugin_id`, `version`, `api_version`, `capabilities`, `state`, `descriptor_snapshot`, `created_at`, `activated_at`, `removed_at` |
 | `plugin_artifacts` | `id`, `plugin_release_id`, `role`, `filename`, `relative_path`, `package_name`, `package_version`, `size_bytes` |
 | `plugin_runtimes` | `id`, `plugin_release_id`, `state`, `python_version`, `environment_path`, `created_at`, `ready_at` |
+| `archive_manifests` | `id`, `manifest_uri`, `data_source_id`, `universe_version_id`, `provider`, `source_license`, `source_spec`, `coverage_start`, `coverage_end`, `scanned_until`, `shard_count`, `total_bytes`, `missing_shard_count`, `probe_error_count`, `state`, `point_in_time_result`, `created_at`, `updated_at` |
+| `archive_manifest_shards` | `id`, `manifest_id`, `shard_key`, `source_url`, `coverage_start`, `coverage_end`, `size_bytes`, `state`, `observed_at` |
 | `credential_sets` | `id`, `purpose`, `owner_resource_type`, `owner_resource_id`, `public_config`, `created_at`, `updated_at` |
 | `credential_secrets` | `credential_set_id`, `field_name`, `ciphertext`, `nonce`, `key_version` |
 | `runtime_configurations` | `id`, `scope`, `revision`, `codex_model`, `codex_base_url`, `codex_api_key_ciphertext`, `codex_api_key_nonce`, `codex_api_key_key_version`, `max_plugin_wheel_bytes`, `plugin_validation_timeout_seconds`, `bundle_build_timeout_seconds`, `plugin_job_timeout_seconds`, `mission_job_timeout_seconds`, `job_poll_seconds`, `job_lease_seconds`, `created_at`, `updated_at` |
@@ -1560,6 +1612,10 @@ GET      /api/v1/readiness
 GET      /api/v1/events/stream
 GET      /api/v1/system/health                   # public healthcheck
 GET/PUT  /api/v1/system/runtime-configuration
+POST   /api/v1/quant-runtime/archive-manifests/inspect
+GET    /api/v1/quant-runtime/archive-manifests
+GET    /api/v1/quant-runtime/archive-manifests/{manifest_id}/shards
+POST   /api/v1/quant-runtime/archive-manifests/{manifest_id}/materialize
 ```
 
 Operator Authentication 启用时，Operator API 要求 authenticated browser session/trusted-browser credential 或 machine API token；认证入口和 healthcheck 是明确例外。认证关闭时保留 direct access。下游 service credential 只授权其自身 Handoff/Feedback 资源，不形成业务用户/RBAC 域，也不被 Operator auth 替代。
@@ -1922,6 +1978,7 @@ QuaZonai/
 - [ ] Codex provider API key 不回读、不写事件、不进入 App Server env/命令行，也不会进入 Mission shell；
 - [ ] Runtime Configuration stale revision 与并发首次创建返回业务冲突，幂等重试不重复写入；
 - [ ] Worker limits 修改无需重启，并只影响之后领取/启动的工作。
+- [ ] finite-worker preflight 可实际创建 Codex workspace sandbox namespace；默认 seccomp 不可用时必须 fail closed，不能把 Mission 降级为无沙箱执行。
 
 ### Research / Evidence
 

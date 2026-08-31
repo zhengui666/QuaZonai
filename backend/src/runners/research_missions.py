@@ -28,6 +28,7 @@ from quant_runtime.mission_execution import (
     execute_mission_experiments,
 )
 from runtime_config import load_effective_settings
+from runners.codex_sandbox import codex_sandbox_preflight
 from settings import Settings
 
 CUSTOM_CODEX_PROVIDER_ID = "quazonai_configured"
@@ -320,6 +321,7 @@ def run_mission(settings: Settings, job_id: UUID) -> None:
         ) from exc
 
     mission_id, program_id, context = _load_mission_context(settings, job_id)
+    codex_sandbox_preflight()
     context += build_mission_quant_context(settings)
     workspace = _prepare_worktree(settings, program_id, mission_id)
     (workspace / "MISSION.md").write_text(context, encoding="utf-8")
@@ -348,7 +350,17 @@ def run_mission(settings: Settings, job_id: UUID) -> None:
                         "You are a QuaZonai Research Mission worker. Work only inside this Mission worktree. "
                         "Read MISSION.md and perform the bounded research task. Always write durable findings "
                         "to RESULT.md. For ALPHA_DISCOVERY, also write the typed EXPERIMENTS.json requested in "
-                        "MISSION.md; do not invent performance, orders, fills, positions, PnL, or statistics. "
+                        "MISSION.md. Every StrategyArtifact must contain complete importable strategy and "
+                        "config source matching its paths; never submit a placeholder, TODO, or ask the parent "
+                        "runtime to implement missing factor logic. Use only config values compatible with "
+                        "Nautilus types and numeric trade sizes. Do not invent performance, orders, fills, "
+                        "positions, PnL, or statistics. Before finishing, parse EXPERIMENTS.json with "
+                        "python -m json.tool and syntax-check every source file; fix malformed JSON or "
+                        "trailing commas before returning. Discovery strategies must submit genuine orders "
+                        "to the simulated venue when signals are executable; virtual-only counters and dummy "
+                        "orders are not acceptable runtime evidence. Use positional arguments "
+                        "(instrument_id, order_side, quantity) for Nautilus market orders; its binding may "
+                        "reject keyword arguments. "
                         "The trusted parent executes experiments after your turn. Do not request approvals, "
                         "access external networks, place trades, manage broker state, or alter the Charter."
                     ),

@@ -115,6 +115,8 @@ It does not own broker credentials, orders, fills, positions, accounts, NAV, exe
 
 Use only commands listed in [references/cli-reference.md](references/cli-reference.md). In particular, no implemented CLI command exists for `handoff show`, `feedback show`, manual Alpha activation, manual portfolio weight editing, broker execution, downstream runtime stop, or plugin administration.
 
+PMXT Archive is historical DATA only and is installed as the `pmxt_archive` `DATA_CONNECTOR` plugin. For one instrument, use the generic `source_spec.kind=plugin` contract with a fixed venue-matched PMXT HTTPS Parquet URL. For all-market history, use the generic archive-manifest inspection contract with `selection=all_markets` and UTC `archive_start`/`archive_end` hour bounds; it registers remote shards and gaps without bulk download. Both paths require an ACTIVE plugin release and READY runtime bundle; do not request PMXT credentials or treat the source as a broker/downstream connection.
+
 ## Read operations
 
 Execute read operations directly when they answer the user's request. Use IDs returned by the CLI; never guess an ID from a name or reuse an ID from old conversation state without re-reading the relevant list.

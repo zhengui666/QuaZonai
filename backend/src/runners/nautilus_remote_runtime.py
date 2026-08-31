@@ -16,13 +16,17 @@ import multiprocessing
 import os
 import re
 import secrets
+import selectors
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import zipfile
+import weakref
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -37,6 +41,9 @@ from pydantic import BaseModel, ConfigDict
 
 from quant_runtime.config import CONTRACT_VERSION, PINNED_NAUTILUS_VERSION
 from quant_runtime.contracts import (
+    ArchiveManifestDescriptor,
+    ArchiveManifestSpec,
+    ArchiveShardDescriptor,
     CatalogDescriptor,
     CatalogIngestSpec,
     ExperimentSpec,
@@ -48,9 +55,28 @@ from quant_runtime.contracts import (
 
 _RUNS: dict[str, dict[str, Any]] = {}
 _RUNS_LOCK = threading.Lock()
-_CATALOG_LOCK = threading.Lock()
+_CATALOG_LOCKS: weakref.WeakValueDictionary[str, threading.Lock] = weakref.WeakValueDictionary()
+_CATALOG_LOCKS_GUARD = threading.Lock()
+_PLUGIN_CHILD_LOCK = threading.Lock()
 _EXECUTION_LOCK = threading.Lock()
 _CATALOG_PREFIX = "catalog://"
+_PLUGIN_ROOT = Path(
+    os.environ.get("QUAZONAI_NAUTILUS_PLUGIN_ROOT", "/var/lib/quazonai/plugins")
+).resolve()
+_PLUGIN_STAGING_ROOT = Path(
+    os.environ.get(
+        "QUAZONAI_NAUTILUS_PLUGIN_STAGING_ROOT",
+        "/var/lib/nautilus/plugin-staging",
+    )
+).resolve()
+_PLUGIN_PRLIMIT_PATH = "/usr/bin/prlimit"
+_PLUGIN_CHILD_MEMORY_LIMIT_BYTES = 6 * 1024 * 1024 * 1024
+_PLUGIN_STAGED_OUTPUT_LIMIT_BYTES = 2 * 1024 * 1024 * 1024
+_PLUGIN_STAGED_FILE_LIMIT = 10_000
+_PLUGIN_CHILD_OUTPUT_LIMIT_BYTES = 8 * 1024 * 1024
+_PLUGIN_CHILD_TOTAL_OUTPUT_LIMIT_BYTES = 32 * 1024 * 1024
+_PLUGIN_VALIDATION_BATCH_ROWS = 16_384
+_PLUGIN_VALIDATION_BATCH_BYTES = 64 * 1024 * 1024
 _FORBIDDEN_BUNDLE_KEYS = {
     "api_key",
     "apikey",
@@ -85,6 +111,10 @@ _FORBIDDEN_BUNDLE_PATH_PARTS = {
     "account",
     "accounts",
 }
+_PLUGIN_SANDBOX_CATALOG_PATH = "/workspace/catalog"
+_PLUGIN_DOWNLOAD_TIMEOUT_SECONDS = 180
+_PLUGIN_IMPORT_MIN_TIMEOUT_SECONDS = 600
+_MANIFEST_SCAN_TIMEOUT_SECONDS = 900
 
 
 class StrictModel(BaseModel):
@@ -148,6 +178,11 @@ def _catalog_root() -> Path:
     return root
 
 
+def _plugin_staging_root() -> Path:
+    _PLUGIN_STAGING_ROOT.mkdir(parents=True, exist_ok=True)
+    return _PLUGIN_STAGING_ROOT
+
+
 def _catalog_path(catalog_uri: str) -> Path:
     if not catalog_uri.startswith(_CATALOG_PREFIX):
         raise HTTPException(status_code=422, detail="catalog_uri must use catalog://")
@@ -168,6 +203,13 @@ def _catalog_path(catalog_uri: str) -> Path:
 
 def _metadata_path(catalog_path: Path) -> Path:
     return catalog_path / "quazonai-catalog.json"
+
+
+def _catalog_lock(catalog_uri: str) -> threading.Lock:
+    """Return an identity-scoped lock without serializing unrelated catalogs."""
+
+    with _CATALOG_LOCKS_GUARD:
+        return _CATALOG_LOCKS.setdefault(catalog_uri, threading.Lock())
 
 
 def _authorize(
@@ -197,10 +239,558 @@ def _read_catalog_descriptor(catalog_uri: str) -> CatalogDescriptor:
         raise HTTPException(status_code=500, detail="catalog metadata is invalid") from exc
 
 
+def _approved_plugin_pythons() -> dict[str, Path]:
+    """Index immutable bundle interpreters discovered from the server-owned root."""
+
+    bundle_root = _PLUGIN_ROOT / "bundles"
+    if not bundle_root.is_dir():
+        return {}
+    python_relative_path = "Scripts/python.exe" if os.name == "nt" else "bin/python"
+    approved: dict[str, Path] = {}
+    for bundle_dir in bundle_root.iterdir():
+        if bundle_dir.is_symlink() or not bundle_dir.is_dir():
+            continue
+        python_path = bundle_dir / python_relative_path
+        if python_path.is_file():
+            approved[f"bundles/{bundle_dir.name}"] = python_path
+    return approved
+
+
+def _plugin_python(bundle_path: str) -> Path:
+    """Resolve only a prewarmed, immutable plugin bundle under the plugin root."""
+
+    python_path = _approved_plugin_pythons().get(bundle_path)
+    if python_path is None:
+        raise HTTPException(status_code=422, detail="plugin bundle path is invalid")
+    return python_path
+
+
+def _plugin_child_command(bundle_path: str, workspace: Path) -> list[str]:
+    """Run a plugin in a mount namespace containing only its bundle and staging area."""
+
+    bubblewrap = shutil.which("bwrap")
+    if bubblewrap is None:
+        raise HTTPException(
+            status_code=503,
+            detail="plugin imports require the bubblewrap sandbox in the runtime image",
+        )
+    if not Path(_PLUGIN_PRLIMIT_PATH).is_file():
+        raise HTTPException(
+            status_code=503,
+            detail="plugin imports require the prlimit sandbox helper in the runtime image",
+        )
+    python_path = _plugin_python(bundle_path)
+    bundle_root = python_path.parent.parent
+    return [
+        _PLUGIN_PRLIMIT_PATH,
+        f"--as={_PLUGIN_CHILD_MEMORY_LIMIT_BYTES}:{_PLUGIN_CHILD_MEMORY_LIMIT_BYTES}",
+        f"--fsize={_PLUGIN_STAGED_OUTPUT_LIMIT_BYTES}:{_PLUGIN_STAGED_OUTPUT_LIMIT_BYTES}",
+        "--",
+        bubblewrap,
+        "--die-with-parent",
+        "--new-session",
+        "--unshare-pid",
+        "--unshare-uts",
+        "--unshare-ipc",
+        "--unshare-cgroup-try",
+        "--share-net",
+        "--ro-bind",
+        "/usr",
+        "/usr",
+        "--ro-bind",
+        "/bin",
+        "/bin",
+        "--ro-bind",
+        "/lib",
+        "/lib",
+        "--ro-bind",
+        "/lib64",
+        "/lib64",
+        "--ro-bind",
+        "/etc",
+        "/etc",
+        "--proc",
+        "/proc",
+        "--dev",
+        "/dev",
+        "--tmpfs",
+        "/tmp",
+        "--dir",
+        "/workspace",
+        "--bind",
+        str(workspace),
+        _PLUGIN_SANDBOX_CATALOG_PATH,
+        "--dir",
+        "/opt",
+        "--dir",
+        "/opt/quazonai",
+        "--ro-bind",
+        str(bundle_root),
+        "/opt/quazonai/plugin-bundle",
+        "--chdir",
+        _PLUGIN_SANDBOX_CATALOG_PATH,
+        "/opt/quazonai/plugin-bundle/bin/python",
+        "-m",
+        "plugins.runtime_call",
+    ]
+
+
+def _plugin_import_timeout(source_shards: list[dict[str, Any]] | None) -> int:
+    shard_count = len(source_shards) if source_shards else 1
+    return max(
+        _PLUGIN_IMPORT_MIN_TIMEOUT_SECONDS,
+        _PLUGIN_DOWNLOAD_TIMEOUT_SECONDS * shard_count + 60,
+    )
+
+
+class _PluginChildLimit(RuntimeError):
+    pass
+
+
+def _staged_file_usage(root: Path) -> tuple[int, list[Path]]:
+    total_bytes = 0
+    files: list[Path] = []
+    try:
+        for directory, directories, filenames in os.walk(root, followlinks=False):
+            for name in [*directories, *filenames]:
+                path = Path(directory) / name
+                if path.is_symlink():
+                    raise _PluginChildLimit(
+                        "plugin catalog output must not contain symbolic links"
+                    )
+            for name in filenames:
+                path = Path(directory) / name
+                file_stat = path.stat(follow_symlinks=False)
+                if not stat.S_ISREG(file_stat.st_mode):
+                    raise _PluginChildLimit(
+                        "plugin catalog output must contain regular files only"
+                    )
+                files.append(path)
+                total_bytes += file_stat.st_size
+    except OSError as exc:
+        raise _PluginChildLimit("plugin catalog output could not be inspected") from exc
+    return total_bytes, files
+
+
+def _validate_staged_output(root: Path, descriptor: CatalogDescriptor) -> None:
+    try:
+        total_bytes, files = _staged_file_usage(root)
+    except _PluginChildLimit as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if total_bytes > _PLUGIN_STAGED_OUTPUT_LIMIT_BYTES:
+        raise HTTPException(status_code=502, detail="plugin catalog output exceeds its size limit")
+    if len(files) > _PLUGIN_STAGED_FILE_LIMIT:
+        raise HTTPException(status_code=502, detail="plugin catalog output contains too many files")
+    data_directories = {"Bar": "bar", "QuoteTick": "quote_tick", "TradeTick": "trade_tick"}
+    expected_data_directory = data_directories.get(descriptor.nautilus_data_type)
+    if expected_data_directory is None:
+        raise HTTPException(status_code=502, detail="plugin returned an unsupported catalog data type")
+    for path in files:
+        relative = path.relative_to(root)
+        if (
+            len(relative.parts) < 3
+            or relative.parts[0] != "data"
+            or relative.parts[1] != expected_data_directory
+            or path.suffix != ".parquet"
+        ):
+            raise HTTPException(
+                status_code=502,
+                detail="plugin catalog output contains an unexpected file",
+            )
+
+
+def _run_plugin_child(
+    command: list[str],
+    request: dict[str, Any],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    timeout_seconds: int,
+    staged_root: Path | None = None,
+) -> tuple[int, str, str]:
+    """Run a plugin child with bounded protocol output and optional staging quota."""
+
+    process = subprocess.Popen(
+        command,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=cwd,
+        env=env,
+    )
+    selector = selectors.DefaultSelector()
+    buffers = {"stdout": bytearray(), "stderr": bytearray()}
+    total_output = 0
+    deadline = time.monotonic() + timeout_seconds
+    request_bytes = json.dumps(request).encode("utf-8")
+    input_offset = 0
+    try:
+        if process.stdout is None or process.stderr is None:
+            raise _PluginChildLimit("plugin child protocol pipes are unavailable")
+        if process.stdin is not None:
+            os.set_blocking(process.stdin.fileno(), False)
+            if request_bytes:
+                selector.register(process.stdin, selectors.EVENT_WRITE, "stdin")
+            else:
+                process.stdin.close()
+        selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+        selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+        while selector.get_map():
+            if staged_root is not None:
+                staged_bytes, staged_files = _staged_file_usage(staged_root)
+                if staged_bytes > _PLUGIN_STAGED_OUTPUT_LIMIT_BYTES:
+                    raise _PluginChildLimit("plugin catalog output exceeds its size limit")
+                if len(staged_files) > _PLUGIN_STAGED_FILE_LIMIT:
+                    raise _PluginChildLimit("plugin catalog output contains too many files")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(command, timeout_seconds)
+            for key, _ in selector.select(min(0.25, remaining)):
+                if key.data == "stdin":
+                    try:
+                        written = os.write(key.fd, request_bytes[input_offset:])
+                    except BlockingIOError:
+                        continue
+                    except BrokenPipeError:
+                        file_object = key.fileobj
+                        selector.unregister(file_object)
+                        close = getattr(file_object, "close", None)
+                        if callable(close):
+                            close()
+                        continue
+                    input_offset += written
+                    if input_offset == len(request_bytes):
+                        file_object = key.fileobj
+                        selector.unregister(file_object)
+                        close = getattr(file_object, "close", None)
+                        if callable(close):
+                            close()
+                    continue
+                chunk = os.read(key.fd, 64 * 1024)
+                if not chunk:
+                    file_object = key.fileobj
+                    selector.unregister(file_object)
+                    close = getattr(file_object, "close", None)
+                    if callable(close):
+                        close()
+                    continue
+                buffer = buffers[key.data]
+                if len(buffer) + len(chunk) > _PLUGIN_CHILD_OUTPUT_LIMIT_BYTES:
+                    raise _PluginChildLimit("plugin child output exceeds its size limit")
+                total_output += len(chunk)
+                if total_output > _PLUGIN_CHILD_TOTAL_OUTPUT_LIMIT_BYTES:
+                    raise _PluginChildLimit("plugin child output exceeds its total size limit")
+                buffer.extend(chunk)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(command, timeout_seconds)
+        returncode = process.wait(timeout=remaining)
+        return (
+            returncode,
+            bytes(buffers["stdout"]).decode("utf-8", errors="replace"),
+            bytes(buffers["stderr"]).decode("utf-8", errors="replace"),
+        )
+    finally:
+        selector.close()
+        if process.poll() is None:
+            process.kill()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+        for stream in (process.stdin, process.stdout, process.stderr):
+            if stream is not None:
+                stream.close()
+
+
+def _validate_staged_catalog(
+    staging_path: Path,
+    descriptor: CatalogDescriptor,
+    *,
+    availability_coverage: list[tuple[datetime, datetime]] | None = None,
+) -> None:
+    """Check the plugin's actual Parquet output before it reaches an immutable catalog."""
+
+    try:
+        from nautilus_trader.model.data import Bar, QuoteTick, TradeTick
+        from nautilus_trader.persistence.catalog import ParquetDataCatalog
+
+        data_classes = {"Bar": Bar, "QuoteTick": QuoteTick, "TradeTick": TradeTick}
+        data_class = data_classes.get(descriptor.nautilus_data_type)
+        if data_class is None:
+            raise ValueError("plugin returned an unsupported catalog data type")
+        catalog = ParquetDataCatalog(staging_path)
+        instruments = {instrument.id.value for instrument in catalog.instruments()}
+        expected_instruments = set(descriptor.instrument_scope)
+        if not expected_instruments or instruments != expected_instruments:
+            raise ValueError("plugin catalog instruments do not match its descriptor")
+        data_files = catalog._query_files(
+            data_class,
+            sorted(expected_instruments),
+            None,
+            None,
+        )
+        if not data_files:
+            raise ValueError("plugin catalog contains no data files")
+        if descriptor.event_start is None or descriptor.event_end is None:
+            raise ValueError("plugin catalog descriptor is missing event bounds")
+        if descriptor.available_start is None or descriptor.available_end is None:
+            raise ValueError("plugin catalog descriptor is missing availability bounds")
+        expected_event = (
+            int(descriptor.event_start.timestamp() * 1_000_000_000),
+            int(descriptor.event_end.timestamp() * 1_000_000_000),
+        )
+        expected_available = (
+            int(descriptor.available_start.timestamp() * 1_000_000_000),
+            int(descriptor.available_end.timestamp() * 1_000_000_000),
+        )
+        coverage_ns = [
+            (
+                int(start.timestamp() * 1_000_000_000),
+                int(end.timestamp() * 1_000_000_000),
+            )
+            for start, end in availability_coverage or []
+        ]
+        import pyarrow.dataset as pa_dataset
+
+        dataset = pa_dataset.dataset(data_files, filesystem=catalog.fs)
+        observed_rows = 0
+        event_min: int | None = None
+        event_max: int | None = None
+        available_min: int | None = None
+        available_max: int | None = None
+        scanner = dataset.scanner(
+            columns=["ts_event", "ts_init"],
+            batch_size=_PLUGIN_VALIDATION_BATCH_ROWS,
+            batch_readahead=1,
+            fragment_readahead=1,
+            use_threads=False,
+            cache_metadata=False,
+        )
+        for batch in scanner.to_batches():
+            if (
+                batch.num_rows > _PLUGIN_VALIDATION_BATCH_ROWS
+                or batch.nbytes > _PLUGIN_VALIDATION_BATCH_BYTES
+            ):
+                raise ValueError("plugin catalog validation batch exceeds its size limit")
+            for row in batch.to_pylist():
+                event_timestamp = int(row["ts_event"])
+                available_timestamp = int(row["ts_init"])
+                observed_rows += 1
+                event_min = event_timestamp if event_min is None else min(event_min, event_timestamp)
+                event_max = event_timestamp if event_max is None else max(event_max, event_timestamp)
+                available_min = (
+                    available_timestamp
+                    if available_min is None
+                    else min(available_min, available_timestamp)
+                )
+                available_max = (
+                    available_timestamp
+                    if available_max is None
+                    else max(available_max, available_timestamp)
+                )
+                if coverage_ns and not any(
+                    start <= available_timestamp < end for start, end in coverage_ns
+                ):
+                    raise ValueError("plugin catalog availability is outside selected archive shards")
+        if observed_rows != descriptor.row_count or event_min is None or available_min is None:
+            raise ValueError("plugin catalog row count does not match its descriptor")
+        if (event_min, event_max) != expected_event:
+            raise ValueError("plugin catalog event bounds do not match its descriptor")
+        if (available_min, available_max) != expected_available:
+            raise ValueError("plugin catalog availability bounds do not match its descriptor")
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="plugin catalog contents do not match its descriptor",
+        ) from exc
+
+
+def _write_plugin_catalog(spec: CatalogIngestSpec, staging_path: Path) -> CatalogDescriptor:
+    """Invoke one validated historical-import plugin in a short-lived child."""
+
+    if not spec.plugin_id or not spec.plugin_version or not spec.plugin_bundle_path:
+        raise HTTPException(
+            status_code=422,
+            detail="plugin Catalog ingest requires an id, version and runtime bundle",
+        )
+    if spec.sealed:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "sealed Catalog ingest cannot execute a plugin; provision the sealed catalog "
+                "through a trusted importer before evaluation"
+            ),
+        )
+    source_config = spec.source_spec.get("config")
+    if not isinstance(source_config, dict):
+        raise HTTPException(status_code=422, detail="plugin source_spec.config must be an object")
+    availability_coverage = [
+        (shard.coverage_start, shard.coverage_end)
+        for shard in (
+            [ArchiveShardDescriptor.model_validate(item) for item in spec.source_shards]
+            if spec.source_shards is not None
+            else []
+        )
+    ]
+    # Keep potentially multi-gigabyte archive staging in a per-import quota-backed
+    # volume. The sandbox still sees only this directory and the bundle.
+    with _PLUGIN_CHILD_LOCK, tempfile.TemporaryDirectory(
+        prefix="quazonai-plugin-catalog-",
+        dir=_plugin_staging_root(),
+    ) as workspace:
+        request = {
+            "plugin_id": spec.plugin_id,
+            "plugin_version": spec.plugin_version,
+            "action": "import_catalog",
+            "public_config": source_config,
+            "secret_config": {},
+            "source_url": source_config.get("archive_url"),
+            "source_shards": (
+                [
+                    ArchiveShardDescriptor.model_validate(shard).model_dump(mode="json")
+                    for shard in spec.source_shards
+                ]
+                if spec.source_shards is not None
+                else None
+            ),
+            "catalog_path": _PLUGIN_SANDBOX_CATALOG_PATH,
+            "instrument_id": source_config.get("instrument"),
+            "metadata": {
+                "catalog_uri": f"{_CATALOG_PREFIX}{spec.catalog_name}",
+                "provider": spec.provider,
+                "source_license": spec.source_license,
+                "source_spec": spec.source_spec,
+                "sealed": spec.sealed,
+            },
+        }
+        child_environment = {
+            name: value for name, value in os.environ.items() if name in _ISOLATED_ENVIRONMENT_KEYS
+        }
+        child_environment.update(
+            {
+                "PYTHONNOUSERSITE": "1",
+                "PYTHONDONTWRITEBYTECODE": "1",
+            }
+        )
+        try:
+            returncode, stdout, stderr = _run_plugin_child(
+                _plugin_child_command(spec.plugin_bundle_path, Path(workspace)),
+                request,
+                cwd=Path(workspace),
+                env=child_environment,
+                timeout_seconds=_plugin_import_timeout(spec.source_shards),
+                staged_root=Path(workspace),
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise HTTPException(status_code=504, detail="plugin catalog import timed out") from exc
+        except _PluginChildLimit as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if returncode != 0:
+            detail = (stderr or stdout or "plugin catalog import failed")[-2000:]
+            raise HTTPException(status_code=422, detail=detail)
+        try:
+            response = json.loads(stdout)
+            summary = response["summary"]
+            descriptor = CatalogDescriptor.model_validate(summary["descriptor"])
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=502, detail="plugin returned an invalid catalog descriptor") from exc
+        expected_uri = f"{_CATALOG_PREFIX}{spec.catalog_name}"
+        if (
+            descriptor.catalog_uri != expected_uri
+            or descriptor.provider != spec.provider
+            or descriptor.source_license != spec.source_license
+            or descriptor.source_spec != spec.source_spec
+            or descriptor.sealed != spec.sealed
+        ):
+            raise HTTPException(status_code=502, detail="plugin catalog descriptor does not match request")
+        _validate_staged_output(Path(workspace), descriptor)
+        _validate_staged_catalog(
+            Path(workspace),
+            descriptor,
+            availability_coverage=availability_coverage,
+        )
+        shutil.copytree(workspace, staging_path, dirs_exist_ok=True)
+    _validate_staged_catalog(
+        staging_path,
+        descriptor,
+        availability_coverage=availability_coverage,
+    )
+    return descriptor
+
+
+def _inspect_plugin_manifest(spec: ArchiveManifestSpec) -> ArchiveManifestDescriptor:
+    """Ask a short-lived plugin child to enumerate remote archive shards."""
+
+    if not spec.plugin_id or not spec.plugin_version or not spec.plugin_bundle_path:
+        raise HTTPException(
+            status_code=422,
+            detail="plugin manifest inspection requires an id, version and runtime bundle",
+        )
+    source_config = spec.source_spec.get("config")
+    if not isinstance(source_config, dict):
+        raise HTTPException(status_code=422, detail="plugin source_spec.config must be an object")
+    with _PLUGIN_CHILD_LOCK, tempfile.TemporaryDirectory(
+        prefix="quazonai-plugin-manifest-"
+    ) as workspace:
+        request = {
+            "plugin_id": spec.plugin_id,
+            "plugin_version": spec.plugin_version,
+            "action": "scan_manifest",
+            "public_config": source_config,
+            "secret_config": {},
+            "metadata": {
+                "manifest_uri": f"manifest://{spec.manifest_name}",
+                "provider": spec.provider,
+                "source_license": spec.source_license,
+                "source_spec": spec.source_spec,
+            },
+        }
+        child_environment = {
+            name: value for name, value in os.environ.items() if name in _ISOLATED_ENVIRONMENT_KEYS
+        }
+        child_environment.update(
+            {
+                "PYTHONNOUSERSITE": "1",
+                "PYTHONDONTWRITEBYTECODE": "1",
+            }
+        )
+        try:
+            returncode, stdout, stderr = _run_plugin_child(
+                _plugin_child_command(spec.plugin_bundle_path, Path(workspace)),
+                request,
+                cwd=Path(workspace),
+                env=child_environment,
+                timeout_seconds=_MANIFEST_SCAN_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise HTTPException(status_code=504, detail="plugin archive manifest scan timed out") from exc
+        except _PluginChildLimit as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if returncode != 0:
+            detail = (stderr or stdout or "plugin archive manifest scan failed")[-2000:]
+            raise HTTPException(status_code=422, detail=detail)
+        try:
+            response = json.loads(stdout)
+            descriptor = ArchiveManifestDescriptor.model_validate(response["summary"])
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=502, detail="plugin returned an invalid archive manifest") from exc
+    expected_uri = f"manifest://{spec.manifest_name}"
+    if (
+        descriptor.manifest_uri != expected_uri
+        or descriptor.provider != spec.provider
+        or descriptor.source_license != spec.source_license
+        or descriptor.source_spec != spec.source_spec
+    ):
+        raise HTTPException(status_code=502, detail="plugin archive manifest does not match request")
+    return descriptor
+
+
 def _write_catalog(spec: CatalogIngestSpec) -> CatalogDescriptor:
     catalog_uri = f"catalog://{spec.catalog_name}"
     path = _catalog_path(catalog_uri)
-    with _CATALOG_LOCK:
+    with _catalog_lock(catalog_uri):
         if path.exists():
             if not path.is_dir():
                 raise HTTPException(status_code=409, detail="catalog identity is already occupied")
@@ -235,12 +825,25 @@ def _write_catalog(spec: CatalogIngestSpec) -> CatalogDescriptor:
             from nautilus_trader.test_kit.providers import TestInstrumentProvider
 
             source_kind = str(spec.source_spec.get("kind", ""))
+            if source_kind == "plugin":
+                descriptor = _write_plugin_catalog(spec, staging_path)
+                _metadata_path(staging_path).write_text(
+                    descriptor.model_dump_json(indent=2),
+                    encoding="utf-8",
+                )
+                if path.exists():
+                    raise HTTPException(
+                        status_code=409,
+                        detail="catalog identity is already occupied",
+                    )
+                os.replace(staging_path, path)
+                return descriptor
             if source_kind != "synthetic_fx_quotes":
                 raise HTTPException(
                     status_code=422,
                     detail=(
-                        "The reference service accepts source_spec.kind=synthetic_fx_quotes only; "
-                        "production runtimes should provide approved provider adapters."
+                        "The reference service accepts source_spec.kind=plugin or "
+                        "synthetic_fx_quotes."
                     ),
                 )
             instrument_name = str(spec.source_spec.get("instrument", "EUR/USD"))
@@ -350,12 +953,19 @@ def _strategy_import_root(artifact: StrategyArtifact) -> Iterator[None]:
         shutil.rmtree(root, ignore_errors=True)
 
 
-def _normalize_strategy_config(artifact: StrategyArtifact, instrument: Any) -> dict[str, Any]:
+def _normalize_strategy_config(
+    artifact: StrategyArtifact,
+    instrument: Any,
+    config_type: Any | None = None,
+) -> dict[str, Any]:
     config = dict(artifact.config)
     config["instrument_id"] = instrument.id
-    config.setdefault("bar_type", f"{instrument.id.value}-5-MINUTE-BID-INTERNAL")
-    if "trade_size" in config:
-        config["trade_size"] = Decimal(str(config["trade_size"]))
+    if isinstance(config.get("trade_size"), str):
+        expected_type = getattr(config_type, "__annotations__", {}).get("trade_size")
+        if expected_type is float or expected_type == "float":
+            config["trade_size"] = float(config["trade_size"])
+        else:
+            config["trade_size"] = Decimal(str(config["trade_size"]))
     return config
 
 
@@ -402,7 +1012,6 @@ def _execute_once(experiment: ExperimentSpec, mode: RunMode) -> RunEvidence:
     from nautilus_trader.backtest.node import BacktestVenueConfig
     from nautilus_trader.config import ImportableStrategyConfig
     from nautilus_trader.model import QuoteTick
-    from nautilus_trader.model.identifiers import Venue
 
     descriptor = _read_catalog_descriptor(experiment.catalog_uri)
     if mode == "PORTFOLIO":
@@ -419,10 +1028,20 @@ def _execute_once(experiment: ExperimentSpec, mode: RunMode) -> RunEvidence:
     node: Any | None = None
     try:
         with _strategy_import_root(experiment.strategy):
+            config_module, separator, config_name = experiment.strategy.config_path.partition(":")
+            config_type = (
+                getattr(importlib.import_module(config_module), config_name)
+                if separator and config_name
+                else None
+            )
             strategy = ImportableStrategyConfig(
                 strategy_path=experiment.strategy.strategy_path,
                 config_path=experiment.strategy.config_path,
-                config=_normalize_strategy_config(experiment.strategy, instrument),
+                config=_normalize_strategy_config(
+                    experiment.strategy,
+                    instrument,
+                    config_type=config_type,
+                ),
             )
             run_config = BacktestRunConfig(
                 engine=BacktestEngineConfig(strategies=[strategy]),
@@ -435,7 +1054,11 @@ def _execute_once(experiment: ExperimentSpec, mode: RunMode) -> RunEvidence:
                 ],
                 venues=[
                     BacktestVenueConfig(
-                        name="SIM",
+                        # The simulated venue must match the instrument's venue.
+                        # Catalogs are not limited to the EUR/USD.SIM fixture;
+                        # using a fixed SIM config makes PMXT instruments fail
+                        # before the strategy receives any data.
+                        name=instrument.id.venue.value,
                         oms_type="HEDGING",
                         account_type="MARGIN",
                         base_currency="USD",
@@ -456,7 +1079,9 @@ def _execute_once(experiment: ExperimentSpec, mode: RunMode) -> RunEvidence:
             orders = _records(engine.trader.generate_orders_report())
             fills = _records(engine.trader.generate_fills_report())
             positions = _records(engine.trader.generate_positions_report())
-            account = _records(engine.trader.generate_account_report(venue=Venue("SIM")))
+            account = _records(
+                engine.trader.generate_account_report(venue=instrument.id.venue)
+            )
             returns = _jsonable(result.stats_returns)
             pnls = _jsonable(result.stats_pnls)
             statistics = {
@@ -851,6 +1476,10 @@ def create_app() -> FastAPI:
                 "quality_result": {**descriptor.quality_result, "valid": True},
             }
         )
+
+    @app.post("/v1/archive-manifests/inspect", response_model=ArchiveManifestDescriptor)
+    def inspect_archive_manifest(spec: ArchiveManifestSpec) -> ArchiveManifestDescriptor:
+        return _inspect_plugin_manifest(spec)
 
     @app.post("/v1/runs", response_model=RunEvidence)
     def run(payload: RunInput) -> RunEvidence:
