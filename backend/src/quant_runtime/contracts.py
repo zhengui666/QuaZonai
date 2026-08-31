@@ -178,6 +178,13 @@ class ArchiveManifestDescriptor(StrictModel):
             raise ValueError("Archive manifest missing_shard_count does not match shards")
         if self.probe_error_count != sum(item.state == "PROBE_ERROR" for item in self.shards):
             raise ValueError("Archive manifest probe_error_count does not match shards")
+        available_sizes = [
+            item.size_bytes for item in self.shards if item.state == "AVAILABLE"
+        ]
+        if any(size is None for size in available_sizes):
+            raise ValueError("Archive manifest AVAILABLE shard sizes must be known")
+        if self.total_bytes != sum(size for size in available_sizes if size is not None):
+            raise ValueError("Archive manifest total_bytes does not match available shard sizes")
         return self
 
 class CatalogDescriptor(StrictModel):
