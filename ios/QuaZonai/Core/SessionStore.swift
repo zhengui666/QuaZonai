@@ -95,6 +95,7 @@ final class SessionStore: ObservableObject {
             let rotated = try await client.refreshIfPossible()
             if let credential = rotated.refreshCredential {
                 try keychain.save(credential, account: profile)
+                await client.markRefreshCredentialPersisted(credential)
             }
             phase = .ready
             startEvents()
@@ -113,6 +114,13 @@ final class SessionStore: ObservableObject {
             errorMessage = "Enter the current 6-digit TOTP code."
             return false
         }
+        if trustDevice {
+            guard await BiometricGate.authorize(reason: "Protect the QuaZonai trusted-device credential") else {
+                errorMessage = "Trusted-device protection requires successful device-owner authentication."
+                return false
+            }
+        }
+
         let bundle = Bundle.main
         let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0"
         let build = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "100"
@@ -138,6 +146,7 @@ final class SessionStore: ObservableObject {
             startEvents()
             return true
         } catch {
+            await client.clearCredentials()
             errorMessage = error.localizedDescription
             return false
         }
@@ -147,16 +156,16 @@ final class SessionStore: ObservableObject {
         guard let client else { throw APIClientError.invalidServerURL }
         do {
             let value = try await client.requestJSON(path: path)
+            await persistRotatedRefreshCredentialIfNeeded()
             if let cacheKey { try? cache?.save(value, key: cacheKey, profile: profile) }
-            if let rotated = await client.currentRefreshCredential(), keychain.exists(account: profile) {
-                try? keychain.save(rotated, account: profile)
-            }
             return value
         } catch APIClientError.authenticationRequired {
+            await persistRotatedRefreshCredentialIfNeeded()
             phase = .loginRequired
             stopEvents()
             throw APIClientError.authenticationRequired
         } catch {
+            await persistRotatedRefreshCredentialIfNeeded()
             if offlineReadable, let cacheKey, let cached = cache?.load(key: cacheKey, profile: profile) {
                 return cached
             }
@@ -181,14 +190,16 @@ final class SessionStore: ObservableObject {
                 body: body,
                 idempotencyKey: idempotencyKey
             )
-            if let rotated = await client.currentRefreshCredential(), keychain.exists(account: profile) {
-                try? keychain.save(rotated, account: profile)
-            }
+            await persistRotatedRefreshCredentialIfNeeded()
             return value
         } catch APIClientError.authenticationRequired {
+            await persistRotatedRefreshCredentialIfNeeded()
             phase = .loginRequired
             stopEvents()
             throw APIClientError.authenticationRequired
+        } catch {
+            await persistRotatedRefreshCredentialIfNeeded()
+            throw error
         }
     }
 
@@ -224,6 +235,17 @@ final class SessionStore: ObservableObject {
         let value = UUID()
         defaults.set(value.uuidString, forKey: installationKey)
         return value
+    }
+
+    private func persistRotatedRefreshCredentialIfNeeded() async {
+        guard let client, keychain.exists(account: profile),
+              let rotated = await client.pendingRefreshCredentialForPersistence() else { return }
+        do {
+            try keychain.save(rotated, account: profile)
+            await client.markRefreshCredentialPersisted(rotated)
+        } catch {
+            errorMessage = "The trusted-device credential rotated but could not be stored securely. Sign in again before restarting the app."
+        }
     }
 
     private func startEvents() {
