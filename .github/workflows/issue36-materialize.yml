@@ -13,9 +13,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       QUAZONAI_ENV: test
-      QUAZONAI_DATABASE_URL: sqlite+pysqlite:///:memory:
-      QUAZONAI_ALEMBIC_URL: sqlite+pysqlite:///:memory:
-      QUAZONAI_MASTER_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      QUAZONAI_DATABASE_URL: 'sqlite+pysqlite:///:memory:'
+      QUAZONAI_ALEMBIC_URL: 'sqlite+pysqlite:///:memory:'
+      QUAZONAI_MASTER_KEY: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
     steps:
       - uses: actions/checkout@v4
         with:
