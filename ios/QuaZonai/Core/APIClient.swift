@@ -106,6 +106,7 @@ public enum APIClientError: Error, LocalizedError, Sendable, Equatable {
     case invalidServerURL
     case insecureServerURL
     case incompatibleClient(requiredEpoch: Int)
+    case incompatibleAppVersion(requiredVersion: String)
     case authenticationRequired
     case http(status: Int, code: String?, message: String)
     case invalidResponse
@@ -115,11 +116,44 @@ public enum APIClientError: Error, LocalizedError, Sendable, Equatable {
         case .invalidServerURL: return "The server URL is invalid."
         case .insecureServerURL: return "Use HTTPS. HTTP is accepted only for localhost development."
         case let .incompatibleClient(requiredEpoch): return "This server requires client capability epoch \(requiredEpoch)."
+        case let .incompatibleAppVersion(requiredVersion): return "This server requires QuaZonai \(requiredVersion) or later."
         case .authenticationRequired: return "Operator authentication is required."
         case let .http(_, _, message): return message
         case .invalidResponse: return "The server returned an invalid response."
         }
     }
+}
+
+public func isAppVersion(_ current: String, atLeast minimum: String) -> Bool {
+    func numericComponents(_ raw: String) -> [Int]? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let release = trimmed.split(
+            separator: "-",
+            maxSplits: 1,
+            omittingEmptySubsequences: false
+        )[0]
+        let core = release.split(
+            separator: "+",
+            maxSplits: 1,
+            omittingEmptySubsequences: false
+        )[0]
+        let components = core.split(separator: ".", omittingEmptySubsequences: false)
+        guard !components.isEmpty,
+              components.allSatisfy({ !$0.isEmpty && $0.allSatisfy({ $0.isNumber }) })
+        else { return nil }
+        return components.compactMap { Int($0) }
+    }
+
+    guard var installed = numericComponents(current),
+          var required = numericComponents(minimum)
+    else { return false }
+    let width = max(installed.count, required.count)
+    installed.append(contentsOf: repeatElement(0, count: width - installed.count))
+    required.append(contentsOf: repeatElement(0, count: width - required.count))
+    for (left, right) in zip(installed, required) {
+        if left != right { return left > right }
+    }
+    return true
 }
 
 public func normalizeServerURL(_ rawValue: String) throws -> URL {
@@ -148,17 +182,27 @@ public func normalizeServerURL(_ rawValue: String) throws -> URL {
 public actor APIClient {
     public static let capabilityEpoch = 1
 
+    private struct RefreshFlight {
+        let id: UUID
+        let task: Task<MobileTokenResponse, Error>
+    }
+
     private let baseURL: URL
     private let session: URLSession
     private let generatedClient: QuaZonaiAPI.Client
+    private let currentAppVersion: String
     private var accessToken: String?
     private var refreshCredential: String?
     private var refreshCredentialNeedsPersistence = false
+    private var refreshFlight: RefreshFlight?
 
-    public init(baseURL: URL, session: URLSession = .shared) {
+    public init(baseURL: URL, session: URLSession = .shared, appVersion: String? = nil) {
         self.baseURL = baseURL
         self.session = session
         self.generatedClient = makeGeneratedClient(serverURL: baseURL)
+        self.currentAppVersion = appVersion
+            ?? (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String)
+            ?? "0"
     }
 
     public func bootstrap() async throws -> ClientBootstrap {
@@ -168,16 +212,21 @@ public actor APIClient {
         guard value.minimumIOSCapabilityEpoch <= Self.capabilityEpoch else {
             throw APIClientError.incompatibleClient(requiredEpoch: value.minimumIOSCapabilityEpoch)
         }
+        guard isAppVersion(currentAppVersion, atLeast: value.minimumIOSAppVersion) else {
+            throw APIClientError.incompatibleAppVersion(requiredVersion: value.minimumIOSAppVersion)
+        }
         return value
     }
 
     public func configureTrustedCredential(_ credential: String) {
+        cancelRefreshFlight()
         refreshCredential = credential
         refreshCredentialNeedsPersistence = false
         accessToken = nil
     }
 
     public func login(_ payload: MobileLoginRequest) async throws -> MobileTokenResponse {
+        cancelRefreshFlight()
         let data = try JSONEncoder().encode(payload)
         let (body, response) = try await perform(
             path: "/api/v1/auth/mobile/login",
@@ -195,18 +244,26 @@ public actor APIClient {
 
     @discardableResult
     public func refreshIfPossible() async throws -> MobileTokenResponse {
-        guard let refreshCredential else { throw APIClientError.authenticationRequired }
-        let (data, response) = try await perform(
-            path: "/api/v1/auth/mobile/refresh",
-            method: .post,
-            authorization: refreshCredential
-        )
-        try validate(response: response, data: data)
-        let tokens = try JSONDecoder().decode(MobileTokenResponse.self, from: data)
-        accessToken = tokens.accessToken
-        self.refreshCredential = tokens.refreshCredential
-        refreshCredentialNeedsPersistence = tokens.refreshCredential != nil
-        return tokens
+        if let flight = refreshFlight {
+            return try await flight.task.value
+        }
+        guard let credential = refreshCredential else {
+            throw APIClientError.authenticationRequired
+        }
+
+        let id = UUID()
+        let task = Task { [self] in
+            try await performRefresh(using: credential)
+        }
+        refreshFlight = RefreshFlight(id: id, task: task)
+        do {
+            let tokens = try await task.value
+            clearRefreshFlight(id: id)
+            return tokens
+        } catch {
+            clearRefreshFlight(id: id)
+            throw error
+        }
     }
 
     public func pendingRefreshCredentialForPersistence() -> String? {
@@ -220,19 +277,21 @@ public actor APIClient {
     }
 
     public func logout() async {
-        if accessToken != nil {
+        if accessToken != nil || refreshCredential != nil {
             _ = try? await requestJSON(
                 path: "/api/v1/auth/mobile/logout",
                 method: .post,
-                allowRefresh: false
+                allowRefresh: true
             )
         }
+        cancelRefreshFlight()
         accessToken = nil
         refreshCredential = nil
         refreshCredentialNeedsPersistence = false
     }
 
     public func clearCredentials() {
+        cancelRefreshFlight()
         accessToken = nil
         refreshCredential = nil
         refreshCredentialNeedsPersistence = false
@@ -241,7 +300,6 @@ public actor APIClient {
     public func requestJSON(
         path: String,
         method: HTTPMethod = .get,
-        queryItems: [URLQueryItem] = [],
         body: JSONValue? = nil,
         idempotencyKey: String? = nil,
         allowRefresh: Bool = true
@@ -251,7 +309,6 @@ public actor APIClient {
         var (data, response) = try await perform(
             path: path,
             method: method,
-            queryItems: queryItems,
             body: encoded,
             authorization: accessToken,
             idempotencyKey: stableKey
@@ -261,7 +318,6 @@ public actor APIClient {
             (data, response) = try await perform(
                 path: path,
                 method: method,
-                queryItems: queryItems,
                 body: encoded,
                 authorization: accessToken,
                 idempotencyKey: stableKey
@@ -272,23 +328,43 @@ public actor APIClient {
         return try JSONDecoder().decode(JSONValue.self, from: data)
     }
 
-    public func authorizedRequest(
-        path: String,
-        queryItems: [URLQueryItem] = []
-    ) throws -> URLRequest {
+    public func authorizedRequest(path: String, queryItems: [URLQueryItem] = []) throws -> URLRequest {
         var request = URLRequest(url: try endpoint(path: path, queryItems: queryItems))
         request.httpMethod = HTTPMethod.get.rawValue
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        if let accessToken {
-            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        }
+        if let accessToken { request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization") }
         return request
     }
 
     public func generatedContractIsLoaded() -> Bool {
         _ = generatedClient
         return true
+    }
+
+    private func performRefresh(using credential: String) async throws -> MobileTokenResponse {
+        let (data, response) = try await perform(
+            path: "/api/v1/auth/mobile/refresh",
+            method: .post,
+            authorization: credential
+        )
+        try validate(response: response, data: data)
+        let tokens = try JSONDecoder().decode(MobileTokenResponse.self, from: data)
+        accessToken = tokens.accessToken
+        refreshCredential = tokens.refreshCredential
+        refreshCredentialNeedsPersistence = tokens.refreshCredential != nil
+        return tokens
+    }
+
+    private func clearRefreshFlight(id: UUID) {
+        if refreshFlight?.id == id {
+            refreshFlight = nil
+        }
+    }
+
+    private func cancelRefreshFlight() {
+        refreshFlight?.task.cancel()
+        refreshFlight = nil
     }
 
     private func endpoint(path: String, queryItems: [URLQueryItem] = []) throws -> URL {
@@ -311,28 +387,21 @@ public actor APIClient {
     private func perform(
         path: String,
         method: HTTPMethod,
-        queryItems: [URLQueryItem] = [],
         body: Data? = nil,
         authorization: String? = nil,
         idempotencyKey: String? = nil
     ) async throws -> (Data, HTTPURLResponse) {
-        var request = URLRequest(url: try endpoint(path: path, queryItems: queryItems))
+        var request = URLRequest(url: try endpoint(path: path))
         request.httpMethod = method.rawValue
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 45
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
-        if let authorization {
-            request.setValue("Bearer \(authorization)", forHTTPHeaderField: "Authorization")
-        }
-        if let idempotencyKey {
-            request.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key")
-        }
+        if let authorization { request.setValue("Bearer \(authorization)", forHTTPHeaderField: "Authorization") }
+        if let idempotencyKey { request.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key") }
         request.httpBody = body
         let (data, rawResponse) = try await session.data(for: request)
-        guard let response = rawResponse as? HTTPURLResponse else {
-            throw APIClientError.invalidResponse
-        }
+        guard let response = rawResponse as? HTTPURLResponse else { throw APIClientError.invalidResponse }
         return (data, response)
     }
 
@@ -341,13 +410,8 @@ public actor APIClient {
             if response.statusCode == 401 { throw APIClientError.authenticationRequired }
             let envelope = try? JSONDecoder().decode(JSONValue.self, from: data)
             let error = envelope?["error"]?.objectValue
-            let message = error?.string("message")
-                ?? HTTPURLResponse.localizedString(forStatusCode: response.statusCode)
-            throw APIClientError.http(
-                status: response.statusCode,
-                code: error?.string("code"),
-                message: message
-            )
+            let message = error?.string("message") ?? HTTPURLResponse.localizedString(forStatusCode: response.statusCode)
+            throw APIClientError.http(status: response.statusCode, code: error?.string("code"), message: message)
         }
     }
 }

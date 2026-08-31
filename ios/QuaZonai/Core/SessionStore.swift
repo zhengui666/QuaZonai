@@ -77,6 +77,8 @@ final class SessionStore: ObservableObject {
             }
         } catch APIClientError.incompatibleClient(let epoch) {
             phase = .incompatible("Capability epoch \(epoch) is required.")
+        } catch APIClientError.incompatibleAppVersion(let version) {
+            phase = .incompatible("QuaZonai \(version) or later is required.")
         } catch {
             phase = .serverSetup
             errorMessage = error.localizedDescription
@@ -166,7 +168,11 @@ final class SessionStore: ObservableObject {
             throw APIClientError.authenticationRequired
         } catch {
             await persistRotatedRefreshCredentialIfNeeded()
-            if offlineReadable, let cacheKey, let cached = cache?.load(key: cacheKey, profile: profile) {
+            if let cached = cachedFallback(
+                for: error,
+                cacheKey: cacheKey,
+                offlineReadable: offlineReadable
+            ) {
                 return cached
             }
             throw error
@@ -228,6 +234,20 @@ final class SessionStore: ObservableObject {
     func setAppearance(_ value: AppAppearance) {
         appearance = value
         defaults.set(value.rawValue, forKey: appearanceKey)
+    }
+
+    private func cachedFallback(
+        for error: Error,
+        cacheKey: String?,
+        offlineReadable: Bool
+    ) -> JSONValue? {
+        guard offlineReadable, let cacheKey else { return nil }
+        let nsError = error as NSError
+        let transportUnavailable = !connectivity.isOnline
+            || error is URLError
+            || nsError.domain == NSURLErrorDomain
+        guard transportUnavailable else { return nil }
+        return cache?.load(key: cacheKey, profile: profile)
     }
 
     private func installationID() -> UUID {

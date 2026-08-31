@@ -40,6 +40,14 @@ final class QuaZonaiTests: XCTestCase {
         XCTAssertTrue(AppLanguage.arabic.isRTL)
     }
 
+    func testMinimumAppVersionComparison() {
+        XCTAssertTrue(isAppVersion("1.0.0", atLeast: "1.0.0"))
+        XCTAssertTrue(isAppVersion("1.2", atLeast: "1.1.9"))
+        XCTAssertTrue(isAppVersion("2.0.0", atLeast: "1.99.99"))
+        XCTAssertFalse(isAppVersion("0.9.9", atLeast: "1.0.0"))
+        XCTAssertFalse(isAppVersion("invalid", atLeast: "1.0.0"))
+    }
+
     func testSwiftOpenAPIGeneratedClientIsLinked() {
         _ = GeneratedQuaZonaiClient.self
     }

@@ -76,8 +76,7 @@ private struct ApprovalCard: View {
     private var compatible: [JSONValue] {
         downstreams.filter { item in
             guard let value = item.objectValue, value.bool("enabled") != false else { return false }
-            if let preflight = value.string("preflight_state"), !preflight.isEmpty,
-               preflight.range(of: "READY|PASS|VALID", options: .regularExpression) == nil { return false }
+            guard value.string("preflight_state") == "READY" else { return false }
             if purpose == "PAPER" { return value.string("environment_type") == "PAPER" }
             if purpose == "LIVE" { return value.string("environment_type") == "LIVE" }
             return true

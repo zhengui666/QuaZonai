@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct AdministrationView: View {
     @EnvironmentObject private var session: SessionStore
@@ -233,20 +234,54 @@ private struct DownstreamRegistrationSheet: View {
     @State private var environment = "PAPER"
     @State private var packageContract = ""
     @State private var feedbackContract = ""
+    @State private var issuedServiceToken: String?
+    @State private var busy = false
     @State private var error: String?
+
     var body: some View {
         NavigationStack {
             Form {
-                TextField("Name", text: $name)
-                Picker("Environment", selection: $environment) { ForEach(["PAPER", "LIVE", "EXTERNAL_BACKTEST"], id: \.self) { Text($0).tag($0) } }
-                TextField("Package Contract Version", text: $packageContract)
-                TextField("Feedback Contract Version", text: $feedbackContract)
+                if let issuedServiceToken {
+                    Section("Service token — shown once") {
+                        Text("Copy this credential now. QuaZonai will not display the plaintext token again.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        Text(issuedServiceToken)
+                            .font(.system(.footnote, design: .monospaced))
+                            .textSelection(.enabled)
+                            .accessibilityIdentifier("Issued Downstream Service Token")
+                        Button("Copy Service Token") {
+                            UIPasteboard.general.string = issuedServiceToken
+                        }
+                    }
+                } else {
+                    TextField("Name", text: $name)
+                    Picker("Environment", selection: $environment) {
+                        ForEach(["PAPER", "LIVE", "EXTERNAL_BACKTEST"], id: \.self) {
+                            Text($0).tag($0)
+                        }
+                    }
+                    TextField("Package Contract Version", text: $packageContract)
+                    TextField("Feedback Contract Version", text: $feedbackContract)
+                }
                 if let error { Text(error).foregroundStyle(.red) }
-            }.navigationTitle("Register Downstream").toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button(L10n.text(.register, session.language)) { Task { await submit() } }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
+            }
+            .navigationTitle(issuedServiceToken == nil ? "Register Downstream" : "Downstream Registered")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    if issuedServiceToken == nil {
+                        Button(L10n.text(.register, session.language)) { Task { await submit() } }
+                            .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || busy)
+                    } else {
+                        Button("Done") { Task { await completed() } }
+                    }
+                }
             }
         }
+        .interactiveDismissDisabled(issuedServiceToken != nil)
+        .onDisappear { issuedServiceToken = nil }
     }
+
     private func submit() async {
         if environment == "LIVE" {
             guard await BiometricGate.authorize(reason: "Register a Live downstream") else {
@@ -254,11 +289,28 @@ private struct DownstreamRegistrationSheet: View {
                 return
             }
         }
-        var payload: [String: JSONValue] = ["name": .string(name.trimmingCharacters(in: .whitespacesAndNewlines)), "environment_type": .string(environment), "enabled": .bool(true)]
+        var payload: [String: JSONValue] = [
+            "name": .string(name.trimmingCharacters(in: .whitespacesAndNewlines)),
+            "environment_type": .string(environment),
+            "enabled": .bool(true),
+        ]
         if !packageContract.isEmpty { payload["package_contract_version"] = .string(packageContract) }
         if !feedbackContract.isEmpty { payload["feedback_contract_version"] = .string(feedbackContract) }
-        do { _ = try await session.mutate(path: "/api/v1/downstream-systems", body: .object(payload)); await completed() }
-        catch { self.error = error.localizedDescription }
+        busy = true
+        defer { busy = false }
+        do {
+            let result = try await session.mutate(
+                path: "/api/v1/downstream-systems",
+                body: .object(payload)
+            )
+            guard let token = result["service_token"]?.stringValue, !token.isEmpty else {
+                throw APIClientError.invalidResponse
+            }
+            issuedServiceToken = token
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
     }
 }
 

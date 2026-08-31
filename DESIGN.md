@@ -47,6 +47,37 @@ Idea
 
 ---
 
+## 0.1 原生 iOS / iPadOS Operator Client 与设备认证
+
+原生 SwiftUI Universal App 是新的 **Operator Client**，不是新的业务域或执行层。它与 Web 调用同一 `/api/v1` Operator API、遵守同一 Domain 状态机、审批 Gate、幂等和并发规则；它不得保存 broker/exchange credential，不得拥有订单、成交、仓位、账户、NAV、TradingNode/LiveNode、执行风险或下游启动/停止/恢复能力。
+
+认证通道必须严格分离：
+
+```text
+Browser Operator    → 现有遗留 browser cookie 流程
+Native Operator     → TOTP-only mobile device session
+Machine Automation  → QUAZONAI_API_TOKEN
+Downstream          → per-downstream service credential
+```
+
+Native 登录请求只允许 `totp_code`、installation/device metadata 与 `trust_device`；协议和 App 中都不得出现 `username`、`password` 或 `QUAZONAI_API_TOKEN`。Browser 与 Native 复用同一 TOTP 验证、replay protection 和来源限流核心，但各自拥有独立 session transport。
+
+Native device lifecycle 与安全不变量：
+
+- 服务端以 durable `MobileOperatorDevice` 记录 installation ID、device family、client/build/OS version、credential generation、last seen、refresh expiry 与 revoke time；设备记录属于 Operator authentication infrastructure，不是新的用户/RBAC 模型。
+- 登录签发短期 access credential；只有用户选择 trusted device 时才签发 refresh credential。refresh credential 只存入受设备所有者认证保护的 iOS Keychain，不进入 SwiftData、日志、UserDefaults、分析事件或 crash payload。
+- 每次 refresh 必须在数据库行锁内校验当前 generation、递增 generation 并轮换 credential；旧 generation 立即失效。客户端必须把并发 401 合并为 single-flight refresh，禁止同一 refresh credential 并发重放。
+- Logout 必须在清除本地 Keychain 前完成服务端 revoke；access 过期时先用 refresh 取得当前 access，再调用 logout。Administration 的 device revoke 同样递增 generation、清空 refresh expiry，并使该设备所有旧 access/refresh credential 失效。
+- 未启用认证时 App 可以进入明确标注的 direct-access 模式；启用认证时，除 bootstrap、mobile login、mobile refresh 与 canonical OpenAPI 外，Operator API 均要求有效的 current-generation native access bearer。
+- Bootstrap 同时发布 capability epoch 与 `minimum_ios_app_version`。App 必须在进入登录或 Operator surface 前同时通过两个兼容性 Gate；版本过低时只显示升级要求，不允许继续使用可能存在漏洞或不兼容的客户端。
+- SSE 首次连接和重连先按持久化 cursor 调用 replay，再通过 `Last-Event-ID`/cursor 恢复 stream。查询参数必须作为 URL query item 编码，不能拼入 path。
+- SwiftData 只缓存声明为 offline-readable 的只读响应。缓存回退仅允许真实离线或 URL transport failure；在线 4xx/5xx、领域冲突和 schema 错误必须原样显示，不能被旧缓存伪装为成功。Mutation 始终 online-only。
+- Codex API key、Live approval、Live downstream 注册和其他敏感动作继续遵守 secure input、内存清除与设备所有者确认要求；App 不绕过后端最终 Gate。
+
+Web、iPhone 与 iPad 的业务功能等价由 `contracts/client-capabilities.yaml` 声明，并由 CI 将每个 Web reference 解析到真实仓库文件、每个 Native reference 解析到真实 XCTest symbol；仅有非空标签不得通过 parity Gate。
+
+---
+
 # Part I — PRD
 
 ## 1. 产品定位与成功标准
