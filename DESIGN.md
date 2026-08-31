@@ -487,7 +487,7 @@ PMXT Archive 以 `DATA_CONNECTOR` / `HISTORICAL_IMPORT` runtime plugin 形式提
 
 Manifest 只登记插件根据固定官方 URL 规则探测到的小时分片（URL、UTC 小时范围、大小、存在/缺失/探测错误状态和探测时间），不下载原始 Parquet。缺失小时必须保留在清单中并作为研究数据间隔；清单本身是不可变的，重新扫描或范围变化创建新的 Manifest。Research runtime 按研究请求选择分片和 instrument，在有界缓存中按需物化临时 Nautilus Catalog；缓存淘汰不改变 Manifest 或 Dataset Revision，也不使用应用级 hash/checksum 身份。
 
-Manifest 的按需物化使用同一通用 `CatalogIngestSpec`，增加可选的 `source_shards` 列表和 `source_spec.materialization` 描述。Core 只允许选择单一 instrument、UTC 小时对齐的 `[start, end)` 范围和 Manifest 中状态为 `AVAILABLE` 的固定分片；单次请求最多 168 个小时、估算源文件最多 20 GiB。缺失/探测错误小时留在 materialization quality evidence 中，不被当成 Alpha failure。Core 不下载、不解析 provider 数据，也不为 PMXT 增加特殊分支；独立 runtime 将选定分片传给对应 `DATA_CONNECTOR` plugin child，由插件逐个下载、以最多 16,384 行和 64 MiB 解码批次按 instrument 过滤，累计解码输入最多 4 GiB，按 `timestamp_received` 合并状态并写出新的 Catalog。plugin child 还必须继承 8 GiB address-space 上限，reference Research/Sealed runtime 容器各自设置 10 GiB memory 上限。每个 materialization 都创建新的 immutable Dataset Revision，不能向既有 Catalog 原地追加。Reference runtime 拒绝 plugin 直接写入 `sealed=true` Catalog；sealed raw data 必须先由受信 provisioning/import path 写入独立 sealed Catalog，再供 evaluator 只读验证。
+Manifest 的按需物化使用同一通用 `CatalogIngestSpec`，增加可选的 `source_shards` 列表和 `source_spec.materialization` 描述。Core 只允许选择单一 instrument、UTC 小时对齐的 `[start, end)` 范围和 Manifest 中状态为 `AVAILABLE` 的固定分片；单次请求最多 168 个小时、估算源文件最多 20 GiB。缺失/探测错误小时留在 materialization quality evidence 中，不被当成 Alpha failure。Core 不下载、不解析 provider 数据，也不为 PMXT 增加特殊分支；独立 runtime 将选定分片传给对应 `DATA_CONNECTOR` plugin child，由插件逐个下载、以最多 16,384 行和 64 MiB 解码批次按 instrument 过滤，累计解码输入最多 4 GiB，按 `timestamp_received` 合并状态并写出新的 Catalog。runtime 对生成的 Catalog 只用最多 16,384 行和 64 MiB 的 Arrow 批次扫描时间列完成边界校验，不把整库 materialize 到内存；plugin child 还必须继承 6 GiB address-space 上限，reference Research/Sealed runtime 容器各自设置 10 GiB memory 上限。子进程地址空间与暂存输出配额合计低于容器上限并留有 runtime headroom。每个 materialization 都创建新的 immutable Dataset Revision，不能向既有 Catalog 原地追加。Reference runtime 拒绝 plugin 直接写入 `sealed=true` Catalog；sealed raw data 必须先由受信 provisioning/import path 写入独立 sealed Catalog，再供 evaluator 只读验证。
 
 `plugin_release_id` 与 `plugin_runtime_bundle_id` 是 Operator Catalog ingest 请求的受治理绑定；Core 校验 release 为 ACTIVE、bundle 为 READY 且包含该 release 的 `IMPORTER` member，再向独立 Nautilus runtime 传递不含 secret 的 plugin id/version 和 bundle path。runtime 只通过通用 connector-runner child 调用 plugin entry point；API、worker、agent-worker、evaluator 长进程不 import plugin。
 
@@ -497,7 +497,7 @@ PMXT plugin 支持 Polymarket v2 与 Kalshi orderbook 到 Nautilus `QuoteTick` �
 
 PMXT plugin 不保存或请求 provider secret，不调用 PMXT 交易接口，不输出 order、fill、position、account 或 NAV，也不授予 QZ 启停、撤单、平仓或恢复任何 downstream 的能力。未来其他历史数据源必须复用同一通用 plugin/importer contract，不得在 Core 或 Nautilus runtime 增加 provider-specific 分支。
 
-每个 materialization 使用与 immutable Catalog 分离、每实例 6 GiB 配额的 tmpfs 暂存区；单次导入最多发布 4 GiB、10,000 个常规 Parquet 文件，插件 stdout/stderr 通过流式有界读取并拒绝超限，避免第三方 importer 把持久卷或 runtime 内存耗尽。上述限制属于通用 plugin runner 边界，不是 PMXT 特例。
+每个 materialization 使用与 immutable Catalog 分离、每实例 3 GiB 配额的 tmpfs 暂存区；单次导入最多发布 2 GiB、10,000 个常规 Parquet 文件，插件 child 继承 6 GiB address-space 上限，runtime 只以有界 Arrow 批次校验已发布字段，插件 stdout/stderr 通过流式有界读取并拒绝超限，避免第三方 importer 把持久卷或 runtime 内存耗尽。上述限制属于通用 plugin runner 边界，不是 PMXT 特例。
 
 ### 10.2 Dataset Revision
 
