@@ -19,8 +19,6 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 def _enabled_settings(settings: Settings, **overrides: object) -> Settings:
     values: dict[str, object] = {
         "operator_auth_enabled": True,
-        "operator_username": "operator",
-        "operator_password": "correct horse battery staple",
         "operator_totp_secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
         "auth_cookie_key": base64.b64encode(b"a" * 32).decode("ascii"),
         "api_token": "machine-token-" + "x" * 32,

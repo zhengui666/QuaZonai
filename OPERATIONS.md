@@ -433,9 +433,9 @@ TOTP setup key 来自 `.env` 的 `QUAZONAI_AUTH_TOTP_SECRET`。在 Google Authen
 
 QuaZonai 提供的 Web workbench 会返回 `Content-Security-Policy: frame-ancestors 'none'` 和 `X-Frame-Options: DENY`，不能嵌入任何 iframe。反向代理不得移除或放宽这两个响应头；这项控制补充而不取代 cookie `SameSite` 和 Origin 校验。
 
-`QUAZONAI_AUTH_ENABLED=false` 在所有环境保留 direct access，此时 auth credential/TTL 值均 dormant，应保持 loopback-only 或使用另一个明确可信的访问边界。设为 `true` 后，任一 Operator auth 必需值缺失或非法都会使 API fail closed；启用认证的 production 还要求 HTTPS 并自动使用 Secure cookie。连续失败登录会触发 1–5 秒的短退避，但不会形成持久账户锁定；被限制的请求仍显示统一的无效凭据错误。
+`QUAZONAI_AUTH_ENABLED=false` 在所有环境保留 direct access，此时 auth credential/TTL 值均 dormant，应保持 loopback-only 或使用另一个明确可信的访问边界。设为 `true` 后，任一 Operator auth 必需值缺失或非法都会使 API fail closed；启用认证的 production 还要求 HTTPS 并自动使用 Secure cookie。连续失败登录会触发最长 30 秒的有界短退避，但不会形成持久账户锁定；被限制的请求仍显示统一的认证失败。
 
-Operator Authentication 启用时，CLI/automation 不使用 Web cookie、密码或 TOTP，而是从环境读取符合 RFC 6750 `b64token` 语法的 `QUAZONAI_API_TOKEN`；认证关闭时不要求该 token。Downstream consumer 的 Bearer service token 仍独立，只能操作其自身 Handoff/Feedback 合同。
+Operator Authentication 启用时，CLI/automation 不使用 Web cookie、浏览器 TOTP 或已废弃的用户名/密码，而是从环境读取符合 RFC 6750 `b64token` 语法的 `QUAZONAI_API_TOKEN`；认证关闭时不要求该 token。Downstream consumer 的 Bearer service token 仍独立，只能操作其自身 Handoff/Feedback 合同。
 
 ### 14.3 Codex / Runtime Configuration
 
