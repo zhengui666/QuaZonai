@@ -407,7 +407,9 @@ QuaZonai V1 只有一个部署 Operator。它不是业务用户系统、tenant �
 
 认证启用后的 Web 登录输入只有 Google Authenticator-compatible 6-digit TOTP。登录页不再展示或提交用户名/密码；`Trust this browser` 行为保持不变。
 
-TOTP setup key 来自 `.env` 的 `QUAZONAI_AUTH_TOTP_SECRET`。在 Google Authenticator 中选择 **Enter a setup key**，使用该值并选择 **Time based**。TOTP secret、Operator password、cookie key 和 machine API token 都属于启动级 secret，不能放进聊天、截图、事件或日志。`QUAZONAI_AUTH_COOKIE_KEY` 必须独立生成且不能与 `QUAZONAI_MASTER_KEY` 相同；`QUAZONAI_API_TOKEN` 必须使用 RFC 6750 `b64token` 可安全写入 Authorization header 的 ASCII 字符集。
+TOTP-only 是单因素登录，抗在线猜测能力弱于密码 + TOTP；若把 Web/API 暴露到公网，仍必须使用 HTTPS、窄化可信代理 CIDR，并优先叠加部署侧网络访问控制。
+
+TOTP setup key 来自 `.env` 的 `QUAZONAI_AUTH_TOTP_SECRET`。在 Google Authenticator 中选择 **Enter a setup key**，使用该值并选择 **Time based**。TOTP secret、cookie key 和 machine API token 都属于启动级 secret，不能放进聊天、截图、事件或日志。`QUAZONAI_AUTH_COOKIE_KEY` 必须独立生成且不能与 `QUAZONAI_MASTER_KEY` 相同；`QUAZONAI_API_TOKEN` 必须使用 RFC 6750 `b64token` 可安全写入 Authorization header 的 ASCII 字符集。
 
 登录时可以勾选 **Trust this browser**。选中后服务器在当前浏览器 profile 写入长期 HttpOnly trusted-browser credential；短期 session 过期后，只要该 trusted credential 仍有效，就会自动恢复新 session，用户不再重复输入 TOTP。默认 trusted-browser 有效期 30 天，默认短 session 为 12 小时。
 
@@ -452,7 +454,7 @@ Linux Docker 部署还会在 `finite-worker` 启动检查中执行一次真实 C
 
 Codex API key 由 `QUAZONAI_MASTER_KEY` 使用 AES-256-GCM 加密后保存到 PostgreSQL。Secret/token 不在 Web 展示，也不写入事件 payload；运行时通过受信任 runner 的 one-shot credential broker 交给 Codex provider auth，不进入 App Server/Mission 环境变量。
 
-`.env` 只负责启动级基础设施与 Operator access：运行环境、PostgreSQL、master key、`QUAZONAI_AUTH_ENABLED`、Operator username/TOTP、browser cookie key、CLI machine token、public origin、存储根目录和 HTTP port。Codex model/API key/Base URL 不由 `.env` 配置。
+`.env` 只负责启动级基础设施与 Operator access：运行环境、PostgreSQL、master key、`QUAZONAI_AUTH_ENABLED`、Operator TOTP、browser cookie key、CLI machine token、public origin、存储根目录和 HTTP port。Codex model/API key/Base URL 不由 `.env` 配置。
 
 Runtime Configuration 使用 revision + 幂等 mutation：页面保存携带当前 revision，若其他请求已先更新则返回冲突并要求刷新，不覆盖较新配置；网络重试复用同一个 `Idempotency-Key`，不会重复修改 revision、重复写事件或重复保存 secret。
 

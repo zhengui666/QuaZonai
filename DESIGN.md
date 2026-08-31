@@ -1404,6 +1404,8 @@ nautilus-live-node
 
 Operator Authentication 是部署/访问边界，不是新的业务用户、tenant 或 RBAC Domain。V1 只有一个固定 Operator，身份 subject 为 `local-operator`，不得由客户端或环境变量覆盖。浏览器登录是 TOTP-only 单因素认证；Machine API Token 是独立的自动化凭据，不是浏览器登录因子。
 
+旧浏览器 username/password 环境变量已退出受支持配置。认证启用时只要检测到任一非空旧变量，API 必须在启动阶段 fail closed，并且错误只指出变量名而不输出其值；这些旧值不得进入 `Settings`、日志、API、Cookie 或登录验证逻辑。认证关闭时仍保持 direct access，旧变量仅作为 dormant process environment 被忽略。
+
 `.env` / process environment 配置：
 
 ```text
@@ -1419,13 +1421,14 @@ QUAZONAI_AUTH_TRUSTED_PROXY_CIDRS          # optional direct reverse-proxy CIDRs
 
 规则：
 
-- `QUAZONAI_AUTH_ENABLED=false` 时在所有环境保留 direct Web/operator API access，不显示登录门，其他 auth credential/TTL/proxy identity 配置均视为 dormant 并忽略；该模式只适合 loopback-only 或另有明确可信访问边界的部署；设为 `true` 时 username/password、TOTP secret、独立 32-byte cookie encryption key、machine API token、public origin 与 bounded TTL 必须全部格式合法，否则启动 fail closed；直接注入的 `Settings` 也必须执行同一 TTL 类型/范围验证；启用认证的 production public origin 必须使用 HTTPS；
-- 正常浏览器登录要求 `username + TOTP`。TOTP 使用 RFC 6238 兼容 Google Authenticator 的标准 30 秒、6 位配置；允许有限 clock-skew window，不自研 OTP/HMAC 协议；
-- 密码、TOTP setup secret、cookie key 与 API token 都是启动级 secret；Web/API 不回读、不写事件、不写日志；
+- `QUAZONAI_AUTH_ENABLED=false` 时在所有环境保留 direct Web/operator API access，不显示登录门，其他 auth credential/TTL/proxy identity 配置均视为 dormant 并忽略；该模式只适合 loopback-only 或另有明确可信访问边界的部署；设为 `true` 时 TOTP secret、独立 32-byte cookie encryption key、machine API token、public origin 与 bounded TTL 必须全部格式合法，否则启动 fail closed；直接注入的 `Settings` 也必须执行同一 TTL 类型/范围验证；启用认证的 production public origin 必须使用 HTTPS；
+- 正常浏览器登录只要求 `TOTP`。TOTP 使用 RFC 6238 兼容 Google Authenticator 的标准 30 秒、6 位配置；允许有限 clock-skew window，不自研 OTP/HMAC 协议；
+- `POST /api/v1/auth/login` 请求体只允许 `totp_code` 与可选 `trust_browser`（默认 `false`）；`totp_code` 必须最终是恰好 6 个 ASCII 数字，Schema `extra=forbid`，旧 username/password 或任意其他字段不得被静默接受；缺失、格式错误、错误、重放或被限流统一返回 `401 / AUTH_INVALID` 与通用失败文案，不回显请求体或动态码；
+- TOTP setup secret、cookie key 与 API token 都是启动级 secret；Web/API 不回读、不写事件、不写日志；
 - `QUAZONAI_AUTH_COOKIE_KEY` 必须与 `QUAZONAI_MASTER_KEY` 使用不同的随机 32-byte key material；两者解码结果相同即启动失败，不能用用途不同代替密钥分离；
 - `QUAZONAI_API_TOKEN` 必须可直接序列化为 RFC 6750 Bearer `b64token`：长度 32–4096，只允许 ASCII 字母、数字、`-._~+/` 与末尾可选 `=`；空白、CR/LF、控制字符、非 ASCII 或其他字符必须在启动时拒绝；
 - 成功登录签发短期 browser session cookie。勾选 **Trust this browser** 时另外签发长期 trusted-browser cookie；两者都使用独立 `QUAZONAI_AUTH_COOKIE_KEY` 做 AES-256-GCM authenticated encryption，Cookie 必须 `HttpOnly`、`SameSite=Strict`，启用认证的 production 必须自动标记 `Secure`，不能把 bearer credential 放入 `localStorage`/`sessionStorage`；每个 credential 还必须绑定签发时的进程内 authenticated-logout generation、当前 API runtime 新生成的随机 process issuance epoch 与当前浏览器 profile 的 sealed local epoch，读取时同时核验三者；process epoch 在每次 API runtime 创建时变化，因此 restart 必须 fail closed 并使所有既有 browser credential 失效，不能让复位 generation 重新接受已退出 cookie；读取每一种 credential 时必须扫描同名 Cookie 的全部 raw 值并只认可该 credential kind 的有效 AEAD token，因此 sibling-domain 注入的重复 cookie 不能以顺序遮蔽 host-only credential；
-- trusted-browser cookie 是长期设备凭证：有效时可在没有密码和 TOTP 的情况下为该浏览器恢复登录；它只存在于浏览器 cookie jar，不形成数据库“用户设备”业务模型；
+- trusted-browser cookie 是长期设备凭证：有效时可无需再次输入 TOTP 即可为该浏览器恢复登录；它只存在于浏览器 cookie jar，不形成数据库“用户设备”业务模型；
 - logout 默认同时删除 session 和 trusted-browser cookie，并在当前 host/browser profile 写入一个 `HttpOnly`、`SameSite=Strict`、host-only、由 `QUAZONAI_AUTH_COOKIE_KEY` AEAD 验证的 browser-local logout barrier 与独立 sealed local epoch，至少持续所有可能 trusted-browser credential 的最长有效期；读取时必须扫描同名 Cookie 的全部值并只认可有效值，因此 sibling-domain 注入的同名值既不能覆盖有效 barrier/epoch，也不能在成功登录清除 host-only barrier 后锁死浏览器。成功 TOTP 登录只清除 barrier、保留 local epoch 并把新 credential 绑定到它；因此 logout response 先到、旧 login/automatic-renewal response 后到时，即使旧 response 清除了新 barrier，其旧 credential 也不能重新验证。已认证 browser logout 还推进进程内 global issuance generation 并停止已打开 stream；credentialless/public logout 只能改变请求者 browser-local barrier/epoch，不能推进该 global generation 或阻塞其他 browser 的登录/续期。所有 browser credential 也必须包含每个 API runtime 唯一的随机 process issuance epoch，API restart 必须创建新 epoch 并使 pre-restart credential 立即不可验证，即使 generation 重置且 cookie key/local epoch 未变。自动续期永不清除 barrier；在途 `/auth/session` trusted-browser probe 若输给 authenticated logout revocation 必须返回 authentication failure，不能报告一个成功 session view；cookie key 轮换必须使全部既有 session/trusted-browser credential 立即不可验证，从而提供全局 revoke；自然到期后也必须重新执行 TOTP；
 - `QUAZONAI_AUTH_PUBLIC_ORIGIN` 必须解析并保存为 canonical browser origin：scheme/host 小写，Unicode hostname 使用浏览器兼容 UTS-46/IDNA 规则转为小写 IDNA ASCII，IPv6 使用压缩后的 bracketed literal，HTTP `:80` / HTTPS `:443` 默认端口省略，非默认端口保留；credential、非根 path、params、query、fragment、非法 host 或非法 port 必须拒绝；非 IP hostname 若按 WHATWG 的 ends-in-a-number 规则会进入 IPv4 parser（例如 `example.127` 或 `example.0x`），也必须在启动时拒绝；
 - browser cookie 认证的 unsafe request 必须把请求 `Origin` 用同一 canonicalizer 解析后再与配置 origin 做恒定时间精确比较；等价浏览器序列化（例如 `https://EXAMPLE.com:443` 与 `https://example.com`）必须匹配，不同 scheme/host/effective port 必须拒绝；启用认证的 production origin 必须使用 HTTPS；`SameSite=Strict` 不是唯一 CSRF 控制；

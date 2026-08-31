@@ -33,7 +33,6 @@ LOGOUT_BARRIER_COOKIE_NAME = "quazonai_logout_barrier"
 BROWSER_EPOCH_COOKIE_NAME = "quazonai_browser_epoch"
 STREAM_ADMISSION_GENERATION_STATE_ATTRIBUTE = "operator_auth_stream_generation"
 OPERATOR_SUBJECT = "local-operator"
-OPERATOR_SUBJECT = "local-operator"
 COOKIE_VERSION = 3
 COOKIE_NONCE_BYTES = 12
 COOKIE_BROWSER_EPOCH_BYTES = 32

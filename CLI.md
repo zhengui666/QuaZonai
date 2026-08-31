@@ -769,7 +769,7 @@ V1 不建设旧式远程 OAuth MCP Gateway、SSH transport、JSONL 隧道或通�
 
 - Web/CLI mutation 使用同一 Core API/Domain logic；
 - auth-enabled CLI 必须发送正确 `QUAZONAI_API_TOKEN`；缺失/错误 machine token 的 Operator API 请求失败；
-- CLI 不读取/存储 Operator password、TOTP secret 或 browser cookies；
+- CLI 不读取/存储 browser TOTP setup secret、TOTP secret 或 browser cookies；
 - CLI machine token 不能替代 downstream service token；
 - CLI 不访问 DB/volume；
 - built-in Codex 不 shell-out CLI 做业务 RPC；
