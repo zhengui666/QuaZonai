@@ -45,6 +45,7 @@ _BROWSER_PROTECTED_CACHE_CONTROL = "private, no-store"
 _NATIVE_PUBLIC_ROUTES = frozenset(
     {
         ("GET", "/api/v1/client/bootstrap"),
+        ("GET", "/api/v1/openapi.json"),
         ("POST", "/api/v1/auth/mobile/login"),
         ("POST", "/api/v1/auth/mobile/refresh"),
     }
