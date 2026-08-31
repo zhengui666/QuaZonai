@@ -185,6 +185,49 @@ def test_all_market_config_rejects_instrument_and_url() -> None:
         )
 
 
+def test_read_rows_rejects_oversized_decoded_batch_before_python_conversion(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    from pyarrow import dataset as pyarrow_dataset
+
+    config = {
+        "venue": "polymarket_v2",
+        "selection": "single_instrument",
+        "archive_url": "https://r2v2.pmxt.dev/polymarket_orderbook_2026-08-10T00.parquet",
+        "instrument": "asset-id",
+    }
+    importer = PMXTArchivePlugin().build_catalog_importer(config)
+    converted = False
+
+    class FakeBatch:
+        num_rows = 1
+        nbytes = plugin_module._MAX_DECODED_BATCH_BYTES + 1
+
+        def to_pylist(self):
+            nonlocal converted
+            converted = True
+            raise AssertionError("oversized Arrow batch must not become Python rows")
+
+    class FakeScanner:
+        def to_batches(self):
+            return iter([FakeBatch()])
+
+    class FakeDataset:
+        def scanner(self, **kwargs):
+            return FakeScanner()
+
+    monkeypatch.setattr(
+        pyarrow_dataset,
+        "dataset",
+        lambda path, format: FakeDataset(),
+    )
+
+    with pytest.raises(ValueError, match="decoded size limit"):
+        importer._read_rows(tmp_path / "source.parquet")
+    assert converted is False
+
+
 def test_instrument_history_import_validates_manifest_selected_shards(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
