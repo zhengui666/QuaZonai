@@ -506,7 +506,7 @@ QZ 只验证 Handoff/Feedback contract，不检查其交易节点内部状态。
 
 ### 14.10 Remote Nautilus quant runtime
 
-QuaZonai Core 与 NautilusTrader 分开部署。管理员在 Core 的受信部署边界配置独立的 Research 与 Sealed runtime endpoint/token；Codex Mission child 不会继承这些值。
+QuaZonai Core 与 NautilusTrader 分开部署。管理员在 Core 的受信部署边界配置独立的 Research 与 Sealed runtime endpoint/token；Codex Mission child 不会继承这些值。Core Compose 的 API 不加入 runtime bridge，而是通过只转发到两个 runtime endpoint 的 `nautilus-runtime-proxy` 访问它们；不要把 API 直接接入 runtime network。
 
 ```dotenv
 QUAZONAI_NAUTILUS_RUNTIME_URL=https://research-runtime.example
@@ -514,7 +514,7 @@ QUAZONAI_NAUTILUS_RUNTIME_TOKEN=<research-runtime-service-token>
 QUAZONAI_NAUTILUS_SEALED_RUNTIME_URL=https://sealed-runtime.example
 QUAZONAI_NAUTILUS_SEALED_RUNTIME_TOKEN=<sealed-runtime-service-token>
 QUAZONAI_NAUTILUS_VERSION=1.231.0
-QUAZONAI_NAUTILUS_CONTRACT_VERSION=1
+QUAZONAI_NAUTILUS_CONTRACT_VERSION=2
 ```
 
 运行顺序：
@@ -573,7 +573,7 @@ PMXT Archive 读取不需要 API key；本地部署也不应填写 PMXT 交易�
 }
 ```
 
-`archive_start`/`archive_end` 是 UTC 小时边界，`archive_end` 不包含在范围内。Manifest 检查只发送固定规则的 HTTPS HEAD 探测；缺失小时和探测错误会被记录，不会伪装成连续历史。研究时调用 `POST /api/v1/quant-runtime/archive-manifests/{manifest_id}/materialize`，提交一个 instrument 和 `[start, end)` 小时范围；单次最多 168 小时、估算源文件最多 20 GiB，插件只下载并过滤选中的分片，生成新的 immutable Dataset Revision。缺失小时会进入 quality evidence，不会伪装成连续数据，也不会直接判定 Alpha 失败。不能把整库下载到本机。PMXT v2 当前可用历史的起点由归档源决定，不等于 Polymarket 的全部历史。
+`archive_start`/`archive_end` 是 UTC 小时边界，`archive_end` 不包含在范围内。Manifest 检查只发送固定规则的 HTTPS HEAD 探测；缺失小时和探测错误会被分别记录，不会伪装成连续历史。研究时调用 `POST /api/v1/quant-runtime/archive-manifests/{manifest_id}/materialize`，提交一个 instrument 和 `[start, end)` 小时范围；单次最多 168 小时、估算源文件最多 20 GiB，且每个 AVAILABLE 分片必须有已知大小，插件只下载并过滤选中的分片，生成新的 immutable Dataset Revision。Core 会校验请求范围逐小时无重叠/缺口；缺失小时与探测错误会进入 quality evidence，不会伪装成连续数据，也不会直接判定 Alpha 失败。不能把整库下载到本机。PMXT v2 当前可用历史的起点由归档源决定，不等于 Polymarket 的全部历史。
 
 ## 15. 故障呈现原则
 

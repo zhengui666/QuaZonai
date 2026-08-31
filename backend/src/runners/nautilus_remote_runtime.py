@@ -91,6 +91,9 @@ _FORBIDDEN_BUNDLE_PATH_PARTS = {
     "account",
     "accounts",
 }
+_PLUGIN_SANDBOX_CATALOG_PATH = "/workspace/catalog"
+_PLUGIN_DOWNLOAD_TIMEOUT_SECONDS = 180
+_PLUGIN_IMPORT_MIN_TIMEOUT_SECONDS = 600
 
 
 class StrictModel(BaseModel):
@@ -229,6 +232,129 @@ def _plugin_python(bundle_path: str) -> Path:
     return python_path
 
 
+def _plugin_child_command(bundle_path: str, workspace: Path) -> list[str]:
+    """Run a plugin in a mount namespace containing only its bundle and staging area."""
+
+    bubblewrap = shutil.which("bwrap")
+    if bubblewrap is None:
+        raise HTTPException(
+            status_code=503,
+            detail="plugin imports require the bubblewrap sandbox in the runtime image",
+        )
+    python_path = _plugin_python(bundle_path)
+    bundle_root = python_path.parent.parent
+    return [
+        bubblewrap,
+        "--die-with-parent",
+        "--new-session",
+        "--unshare-pid",
+        "--unshare-uts",
+        "--unshare-ipc",
+        "--unshare-cgroup-try",
+        "--share-net",
+        "--ro-bind",
+        "/usr",
+        "/usr",
+        "--ro-bind",
+        "/bin",
+        "/bin",
+        "--ro-bind",
+        "/lib",
+        "/lib",
+        "--ro-bind",
+        "/lib64",
+        "/lib64",
+        "--ro-bind",
+        "/etc",
+        "/etc",
+        "--proc",
+        "/proc",
+        "--dev",
+        "/dev",
+        "--tmpfs",
+        "/tmp",
+        "--dir",
+        "/workspace",
+        "--bind",
+        str(workspace),
+        _PLUGIN_SANDBOX_CATALOG_PATH,
+        "--dir",
+        "/opt",
+        "--dir",
+        "/opt/quazonai",
+        "--ro-bind",
+        str(bundle_root),
+        "/opt/quazonai/plugin-bundle",
+        "--chdir",
+        _PLUGIN_SANDBOX_CATALOG_PATH,
+        "/opt/quazonai/plugin-bundle/bin/python",
+        "-m",
+        "plugins.runtime_call",
+    ]
+
+
+def _plugin_import_timeout(source_shards: list[dict[str, Any]] | None) -> int:
+    shard_count = len(source_shards) if source_shards else 1
+    return max(
+        _PLUGIN_IMPORT_MIN_TIMEOUT_SECONDS,
+        _PLUGIN_DOWNLOAD_TIMEOUT_SECONDS * shard_count + 60,
+    )
+
+
+def _reject_staged_symlinks(root: Path) -> None:
+    for directory, directories, files in os.walk(root, followlinks=False):
+        for name in [*directories, *files]:
+            if (Path(directory) / name).is_symlink():
+                raise HTTPException(
+                    status_code=502,
+                    detail="plugin catalog output must not contain symbolic links",
+                )
+
+
+def _validate_staged_catalog(staging_path: Path, descriptor: CatalogDescriptor) -> None:
+    """Check the plugin's actual Parquet output before it reaches an immutable catalog."""
+
+    try:
+        from nautilus_trader.model.data import Bar, QuoteTick, TradeTick
+        from nautilus_trader.persistence.catalog import ParquetDataCatalog
+
+        data_classes = {"Bar": Bar, "QuoteTick": QuoteTick, "TradeTick": TradeTick}
+        data_class = data_classes.get(descriptor.nautilus_data_type)
+        if data_class is None:
+            raise ValueError("plugin returned an unsupported catalog data type")
+        catalog = ParquetDataCatalog(staging_path)
+        instruments = {instrument.id.value for instrument in catalog.instruments()}
+        expected_instruments = set(descriptor.instrument_scope)
+        if not expected_instruments or instruments != expected_instruments:
+            raise ValueError("plugin catalog instruments do not match its descriptor")
+        data = catalog.query(data_class, identifiers=sorted(expected_instruments))
+        if not data or len(data) != descriptor.row_count:
+            raise ValueError("plugin catalog row count does not match its descriptor")
+        if descriptor.event_start is None or descriptor.event_end is None:
+            raise ValueError("plugin catalog descriptor is missing event bounds")
+        if descriptor.available_start is None or descriptor.available_end is None:
+            raise ValueError("plugin catalog descriptor is missing availability bounds")
+        event_ns = [int(item.ts_event) for item in data]
+        available_ns = [int(item.ts_init) for item in data]
+        expected_event = (
+            int(descriptor.event_start.timestamp() * 1_000_000_000),
+            int(descriptor.event_end.timestamp() * 1_000_000_000),
+        )
+        expected_available = (
+            int(descriptor.available_start.timestamp() * 1_000_000_000),
+            int(descriptor.available_end.timestamp() * 1_000_000_000),
+        )
+        if (min(event_ns), max(event_ns)) != expected_event:
+            raise ValueError("plugin catalog event bounds do not match its descriptor")
+        if (min(available_ns), max(available_ns)) != expected_available:
+            raise ValueError("plugin catalog availability bounds do not match its descriptor")
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="plugin catalog contents do not match its descriptor",
+        ) from exc
+
+
 def _write_plugin_catalog(spec: CatalogIngestSpec, staging_path: Path) -> CatalogDescriptor:
     """Invoke one validated historical-import plugin in a short-lived child."""
 
@@ -248,71 +374,76 @@ def _write_plugin_catalog(spec: CatalogIngestSpec, staging_path: Path) -> Catalo
     source_config = spec.source_spec.get("config")
     if not isinstance(source_config, dict):
         raise HTTPException(status_code=422, detail="plugin source_spec.config must be an object")
-    request = {
-        "plugin_id": spec.plugin_id,
-        "plugin_version": spec.plugin_version,
-        "action": "import_catalog",
-        "public_config": source_config,
-        "secret_config": {},
-        "source_url": source_config.get("archive_url"),
-        "source_shards": (
-            [
-                ArchiveShardDescriptor.model_validate(shard).model_dump(mode="json")
-                for shard in spec.source_shards
-            ]
-            if spec.source_shards is not None
-            else None
-        ),
-        "catalog_path": str(staging_path),
-        "instrument_id": source_config.get("instrument"),
-        "metadata": {
-            "catalog_uri": f"{_CATALOG_PREFIX}{spec.catalog_name}",
-            "provider": spec.provider,
-            "source_license": spec.source_license,
-            "source_spec": spec.source_spec,
-            "sealed": spec.sealed,
-        },
-    }
-    child_environment = {
-        name: value for name, value in os.environ.items() if name in _ISOLATED_ENVIRONMENT_KEYS
-    }
-    child_environment.update(
-        {
-            "PYTHONNOUSERSITE": "1",
-            "PYTHONDONTWRITEBYTECODE": "1",
+    with tempfile.TemporaryDirectory(prefix="quazonai-plugin-catalog-") as workspace:
+        request = {
+            "plugin_id": spec.plugin_id,
+            "plugin_version": spec.plugin_version,
+            "action": "import_catalog",
+            "public_config": source_config,
+            "secret_config": {},
+            "source_url": source_config.get("archive_url"),
+            "source_shards": (
+                [
+                    ArchiveShardDescriptor.model_validate(shard).model_dump(mode="json")
+                    for shard in spec.source_shards
+                ]
+                if spec.source_shards is not None
+                else None
+            ),
+            "catalog_path": _PLUGIN_SANDBOX_CATALOG_PATH,
+            "instrument_id": source_config.get("instrument"),
+            "metadata": {
+                "catalog_uri": f"{_CATALOG_PREFIX}{spec.catalog_name}",
+                "provider": spec.provider,
+                "source_license": spec.source_license,
+                "source_spec": spec.source_spec,
+                "sealed": spec.sealed,
+            },
         }
-    )
-    try:
-        result = subprocess.run(
-            [str(_plugin_python(spec.plugin_bundle_path)), "-m", "plugins.runtime_call"],
-            input=json.dumps(request),
-            capture_output=True,
-            text=True,
-            cwd=staging_path,
-            env=child_environment,
-            timeout=600,
-            check=False,
+        child_environment = {
+            name: value for name, value in os.environ.items() if name in _ISOLATED_ENVIRONMENT_KEYS
+        }
+        child_environment.update(
+            {
+                "PYTHONNOUSERSITE": "1",
+                "PYTHONDONTWRITEBYTECODE": "1",
+            }
         )
-    except subprocess.TimeoutExpired as exc:
-        raise HTTPException(status_code=504, detail="plugin catalog import timed out") from exc
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "plugin catalog import failed")[-2000:]
-        raise HTTPException(status_code=422, detail=detail)
-    try:
-        response = json.loads(result.stdout)
-        summary = response["summary"]
-        descriptor = CatalogDescriptor.model_validate(summary["descriptor"])
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise HTTPException(status_code=502, detail="plugin returned an invalid catalog descriptor") from exc
-    expected_uri = f"{_CATALOG_PREFIX}{spec.catalog_name}"
-    if (
-        descriptor.catalog_uri != expected_uri
-        or descriptor.provider != spec.provider
-        or descriptor.source_license != spec.source_license
-        or descriptor.source_spec != spec.source_spec
-        or descriptor.sealed != spec.sealed
-    ):
-        raise HTTPException(status_code=502, detail="plugin catalog descriptor does not match request")
+        try:
+            result = subprocess.run(
+                _plugin_child_command(spec.plugin_bundle_path, Path(workspace)),
+                input=json.dumps(request),
+                capture_output=True,
+                text=True,
+                cwd=workspace,
+                env=child_environment,
+                timeout=_plugin_import_timeout(spec.source_shards),
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise HTTPException(status_code=504, detail="plugin catalog import timed out") from exc
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "plugin catalog import failed")[-2000:]
+            raise HTTPException(status_code=422, detail=detail)
+        try:
+            response = json.loads(result.stdout)
+            summary = response["summary"]
+            descriptor = CatalogDescriptor.model_validate(summary["descriptor"])
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=502, detail="plugin returned an invalid catalog descriptor") from exc
+        expected_uri = f"{_CATALOG_PREFIX}{spec.catalog_name}"
+        if (
+            descriptor.catalog_uri != expected_uri
+            or descriptor.provider != spec.provider
+            or descriptor.source_license != spec.source_license
+            or descriptor.source_spec != spec.source_spec
+            or descriptor.sealed != spec.sealed
+        ):
+            raise HTTPException(status_code=502, detail="plugin catalog descriptor does not match request")
+        _reject_staged_symlinks(Path(workspace))
+        _validate_staged_catalog(Path(workspace), descriptor)
+        shutil.copytree(workspace, staging_path, dirs_exist_ok=True)
+    _validate_staged_catalog(staging_path, descriptor)
     return descriptor
 
 
@@ -327,49 +458,50 @@ def _inspect_plugin_manifest(spec: ArchiveManifestSpec) -> ArchiveManifestDescri
     source_config = spec.source_spec.get("config")
     if not isinstance(source_config, dict):
         raise HTTPException(status_code=422, detail="plugin source_spec.config must be an object")
-    request = {
-        "plugin_id": spec.plugin_id,
-        "plugin_version": spec.plugin_version,
-        "action": "scan_manifest",
-        "public_config": source_config,
-        "secret_config": {},
-        "metadata": {
-            "manifest_uri": f"manifest://{spec.manifest_name}",
-            "provider": spec.provider,
-            "source_license": spec.source_license,
-            "source_spec": spec.source_spec,
-        },
-    }
-    child_environment = {
-        name: value for name, value in os.environ.items() if name in _ISOLATED_ENVIRONMENT_KEYS
-    }
-    child_environment.update(
-        {
-            "PYTHONNOUSERSITE": "1",
-            "PYTHONDONTWRITEBYTECODE": "1",
+    with tempfile.TemporaryDirectory(prefix="quazonai-plugin-manifest-") as workspace:
+        request = {
+            "plugin_id": spec.plugin_id,
+            "plugin_version": spec.plugin_version,
+            "action": "scan_manifest",
+            "public_config": source_config,
+            "secret_config": {},
+            "metadata": {
+                "manifest_uri": f"manifest://{spec.manifest_name}",
+                "provider": spec.provider,
+                "source_license": spec.source_license,
+                "source_spec": spec.source_spec,
+            },
         }
-    )
-    try:
-        result = subprocess.run(
-            [str(_plugin_python(spec.plugin_bundle_path)), "-m", "plugins.runtime_call"],
-            input=json.dumps(request),
-            capture_output=True,
-            text=True,
-            cwd=_catalog_root(),
-            env=child_environment,
-            timeout=900,
-            check=False,
+        child_environment = {
+            name: value for name, value in os.environ.items() if name in _ISOLATED_ENVIRONMENT_KEYS
+        }
+        child_environment.update(
+            {
+                "PYTHONNOUSERSITE": "1",
+                "PYTHONDONTWRITEBYTECODE": "1",
+            }
         )
-    except subprocess.TimeoutExpired as exc:
-        raise HTTPException(status_code=504, detail="plugin archive manifest scan timed out") from exc
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "plugin archive manifest scan failed")[-2000:]
-        raise HTTPException(status_code=422, detail=detail)
-    try:
-        response = json.loads(result.stdout)
-        descriptor = ArchiveManifestDescriptor.model_validate(response["summary"])
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise HTTPException(status_code=502, detail="plugin returned an invalid archive manifest") from exc
+        try:
+            result = subprocess.run(
+                _plugin_child_command(spec.plugin_bundle_path, Path(workspace)),
+                input=json.dumps(request),
+                capture_output=True,
+                text=True,
+                cwd=workspace,
+                env=child_environment,
+                timeout=900,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise HTTPException(status_code=504, detail="plugin archive manifest scan timed out") from exc
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "plugin archive manifest scan failed")[-2000:]
+            raise HTTPException(status_code=422, detail=detail)
+        try:
+            response = json.loads(result.stdout)
+            descriptor = ArchiveManifestDescriptor.model_validate(response["summary"])
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=502, detail="plugin returned an invalid archive manifest") from exc
     expected_uri = f"manifest://{spec.manifest_name}"
     if (
         descriptor.manifest_uri != expected_uri

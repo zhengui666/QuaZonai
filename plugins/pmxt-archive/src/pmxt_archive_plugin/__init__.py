@@ -154,10 +154,25 @@ def _format_decimal(value: float, places: int = 6) -> str:
     return format(decimal, "f")
 
 
-def _polymarket_quotes(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    state: dict[str, tuple[float, float] | None] = {"bid": None, "ask": None}
+def _quote_stats() -> dict[str, int]:
+    return {
+        "event_timestamp_fallback_count": 0,
+        "event_after_received_count": 0,
+        "skipped_rows": 0,
+        "crossed_rows": 0,
+        "order_book_state_reset_count": 0,
+    }
+
+
+def _polymarket_quotes(
+    rows: list[dict[str, Any]],
+    *,
+    state: dict[str, tuple[float, float] | None] | None = None,
+    stats: dict[str, int] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    state = state if state is not None else {"bid": None, "ask": None}
     quote_rows: list[dict[str, Any]] = []
-    stats = {"event_timestamp_fallback_count": 0, "skipped_rows": 0, "crossed_rows": 0}
+    stats = stats if stats is not None else _quote_stats()
     for row in rows:
         received_ns = _timestamp_ns(row.get("timestamp_received"))
         if received_ns is None:
@@ -167,6 +182,8 @@ def _polymarket_quotes(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]]
         if event_ns is None:
             event_ns = received_ns
             stats["event_timestamp_fallback_count"] += 1
+        elif event_ns > received_ns:
+            stats["event_after_received_count"] += 1
 
         bid = _top_json_level(row.get("bids"), bids=True)
         ask = _top_json_level(row.get("asks"), bids=False)
@@ -194,7 +211,7 @@ def _polymarket_quotes(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]]
         quote_rows.append(
             {
                 "event_ns": event_ns,
-                "available_ns": max(received_ns, event_ns),
+                "available_ns": received_ns,
                 "bid_price": bid_price,
                 "ask_price": ask_price,
                 "bid_size": bid_size,
@@ -206,7 +223,7 @@ def _polymarket_quotes(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]]
 
 def _kalshi_quotes(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, int]]:
     quote_rows: list[dict[str, Any]] = []
-    stats = {"event_timestamp_fallback_count": 0, "skipped_rows": 0, "crossed_rows": 0}
+    stats = _quote_stats()
     for row in rows:
         received_ns = _timestamp_ns(row.get("timestamp_received"))
         if received_ns is None:
@@ -216,6 +233,8 @@ def _kalshi_quotes(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], di
         if event_ns is None:
             event_ns = received_ns
             stats["event_timestamp_fallback_count"] += 1
+        elif event_ns > received_ns:
+            stats["event_after_received_count"] += 1
         yes_bid = _top_kalshi_level(row.get("yes_bids"))
         no_bid = _top_kalshi_level(row.get("no_bids"))
         if yes_bid is None or no_bid is None:
@@ -231,13 +250,36 @@ def _kalshi_quotes(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], di
         quote_rows.append(
             {
                 "event_ns": event_ns,
-                "available_ns": max(received_ns, event_ns),
+                "available_ns": received_ns,
                 "bid_price": bid_price,
                 "ask_price": ask_price,
                 "bid_size": bid_size,
                 "ask_size": ask_size,
             }
         )
+    return quote_rows, stats
+
+
+def _polymarket_quotes_by_shard(
+    shard_rows: list[tuple[datetime, list[dict[str, Any]]]],
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Reconstruct each contiguous shard sequence without carrying state across gaps."""
+
+    state: dict[str, tuple[float, float] | None] = {"bid": None, "ask": None}
+    stats = _quote_stats()
+    quote_rows: list[dict[str, Any]] = []
+    previous_end: datetime | None = None
+    for shard_start, rows in sorted(shard_rows, key=lambda item: item[0]):
+        shard_end = shard_start + timedelta(hours=1)
+        if previous_end is not None:
+            if shard_start < previous_end:
+                raise ValueError("materialization contains overlapping archive shards")
+            if shard_start > previous_end:
+                state = {"bid": None, "ask": None}
+                stats["order_book_state_reset_count"] += 1
+        shard_quotes, _ = _polymarket_quotes(rows, state=state, stats=stats)
+        quote_rows.extend(shard_quotes)
+        previous_end = shard_end
     return quote_rows, stats
 
 
@@ -447,6 +489,7 @@ class PMXTArchiveImporter:
         rows: list[dict[str, Any]],
         catalog_path: str,
         metadata: dict[str, Any],
+        quote_result: tuple[list[dict[str, Any]], dict[str, int]] | None = None,
     ) -> dict[str, Any]:
         source_spec = metadata.get("source_spec")
         if not isinstance(source_spec, dict) or source_spec.get("kind") != "plugin":
@@ -460,7 +503,9 @@ class PMXTArchiveImporter:
         if len(rows) > _MAX_SOURCE_ROWS:
             raise ValueError("PMXT instrument slice exceeds the row limit")
         rows.sort(key=lambda row: _timestamp_ns(row.get("timestamp_received")) or 0)
-        if self.config["venue"] == "polymarket_v2":
+        if quote_result is not None:
+            quote_rows, quality_stats = quote_result
+        elif self.config["venue"] == "polymarket_v2":
             quote_rows, quality_stats = _polymarket_quotes(rows)
         else:
             quote_rows, quality_stats = _kalshi_quotes(rows)
@@ -546,7 +591,11 @@ class PMXTArchiveImporter:
                 "quote_tick_count": len(ticks),
                 "source_shard_count": materialization.get("source_shard_count", 1),
                 "missing_shard_count": materialization.get("missing_shard_count", 0),
-                "range_complete": materialization.get("missing_shard_count", 0) == 0,
+                "probe_error_count": materialization.get("probe_error_count", 0),
+                "range_complete": (
+                    materialization.get("missing_shard_count", 0) == 0
+                    and materialization.get("probe_error_count", 0) == 0
+                ),
                 **quality_stats,
             },
             point_in_time_result={
@@ -618,29 +667,62 @@ class PMXTArchiveImporter:
             raise ValueError("materialization shard selection does not match its manifest input")
         start = _parse_utc_hour(self.config["archive_start"], "archive_start")
         end = _parse_utc_hour(self.config["archive_end"], "archive_end")
+        requested_hours = int((end - start) / timedelta(hours=1))
+        materialization = source_spec.get("materialization")
+        if not isinstance(materialization, dict):
+            raise ValueError("materialization evidence is required")
+        try:
+            requested_shard_count = int(materialization["requested_shard_count"])
+            source_shard_count = int(materialization["source_shard_count"])
+            missing_shard_count = int(materialization["missing_shard_count"])
+            probe_error_count = int(materialization["probe_error_count"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("materialization evidence is invalid") from exc
+        if (
+            requested_shard_count != requested_hours
+            or source_shard_count != len(source_shards)
+            or missing_shard_count < 0
+            or probe_error_count < 0
+            or source_shard_count + missing_shard_count + probe_error_count
+            != requested_shard_count
+        ):
+            raise ValueError("materialization shard counts are inconsistent")
         rows: list[dict[str, Any]] = []
+        shard_rows: list[tuple[datetime, list[dict[str, Any]]]] = []
         estimated_bytes = 0
         staging_path = Path(catalog_path)
+        seen_shard_keys: set[str] = set()
+        seen_coverage: set[datetime] = set()
         for index, shard in enumerate(source_shards):
             if not isinstance(shard, dict) or shard.get("state") != "AVAILABLE":
                 raise ValueError("materialization contains a non-available archive shard")
+            shard_key = str(shard.get("shard_key", ""))
+            if shard_key in seen_shard_keys:
+                raise ValueError("materialization contains duplicate archive shards")
+            seen_shard_keys.add(shard_key)
             shard_start = _parse_utc_hour(shard.get("coverage_start"), "coverage_start")
             shard_end = _parse_utc_hour(shard.get("coverage_end"), "coverage_end")
             if shard_end != shard_start + timedelta(hours=1) or shard_start < start or shard_end > end:
                 raise ValueError("archive shard is outside the validated materialization range")
+            if shard_start in seen_coverage:
+                raise ValueError("materialization contains duplicate archive coverage")
+            seen_coverage.add(shard_start)
+            if shard_key != shard_start.strftime("%Y-%m-%dT%H:00:00Z"):
+                raise ValueError("archive shard key does not match its UTC coverage hour")
             source_url = str(shard.get("source_url", ""))
             validate_archive_url(self.config["venue"], source_url)
             if source_url != _archive_url_for(self.config["venue"], shard_start):
                 raise ValueError("archive shard URL does not match its UTC coverage hour")
             size_bytes = shard.get("size_bytes")
-            if size_bytes is not None:
-                try:
-                    size_bytes = int(size_bytes)
-                except (TypeError, ValueError) as exc:
-                    raise ValueError("archive shard size is invalid") from exc
-                if size_bytes < 0 or size_bytes > _MAX_MATERIALIZATION_ARCHIVE_BYTES:
-                    raise ValueError("archive shard exceeds the materialization size limit")
-                estimated_bytes += size_bytes
+            if size_bytes is None:
+                raise ValueError("bounded materialization requires known archive shard sizes")
+            try:
+                size_bytes = int(size_bytes)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("archive shard size is invalid") from exc
+            if size_bytes < 0 or size_bytes > _MAX_MATERIALIZATION_ARCHIVE_BYTES:
+                raise ValueError("archive shard exceeds the materialization size limit")
+            estimated_bytes += size_bytes
             if estimated_bytes > 20 * 1024 * 1024 * 1024:
                 raise ValueError("materialization source estimate exceeds 20 GiB")
             download_path = staging_path / f"source-{index:03d}.parquet"
@@ -650,12 +732,24 @@ class PMXTArchiveImporter:
                     download_path,
                     max_bytes=_MAX_MATERIALIZATION_ARCHIVE_BYTES,
                 )
-                rows.extend(self._read_rows(download_path))
+                shard_data = self._read_rows(download_path)
+                rows.extend(shard_data)
+                shard_rows.append((shard_start, shard_data))
             finally:
                 download_path.unlink(missing_ok=True)
             if len(rows) > _MAX_SOURCE_ROWS:
                 raise ValueError("PMXT materialized instrument slice exceeds the row limit")
-        return self._catalog_from_rows(rows=rows, catalog_path=catalog_path, metadata=metadata)
+        quote_result = (
+            _polymarket_quotes_by_shard(shard_rows)
+            if self.config["venue"] == "polymarket_v2"
+            else None
+        )
+        return self._catalog_from_rows(
+            rows=rows,
+            catalog_path=catalog_path,
+            metadata=metadata,
+            quote_result=quote_result,
+        )
 
     def scan_manifest(self, *, metadata: dict[str, Any]) -> dict[str, Any]:
         if self.config["selection"] != "all_markets":

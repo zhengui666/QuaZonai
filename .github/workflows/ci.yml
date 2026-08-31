@@ -90,7 +90,7 @@ jobs:
           QUAZONAI_NAUTILUS_SEALED_RUNTIME_TOKEN: ci-sealed-nautilus-token
           QUAZONAI_NAUTILUS_CATALOG_ROOT: /tmp/quazonai-nautilus-catalogs
           QUAZONAI_NAUTILUS_VERSION: 1.231.0
-          QUAZONAI_NAUTILUS_CONTRACT_VERSION: '1'
+          QUAZONAI_NAUTILUS_CONTRACT_VERSION: '2'
           QUAZONAI_NAUTILUS_RUNTIME_VERIFY_TLS: 'false'
         run: |
           rm -rf "$QUAZONAI_NAUTILUS_CATALOG_ROOT"
@@ -107,8 +107,8 @@ jobs:
           for attempt in $(seq 1 60); do
             research_ok=0
             sealed_ok=0
-            curl --fail --silent -H 'Authorization: Bearer ci-remote-nautilus-token' http://127.0.0.1:8011/v1/capabilities > /tmp/nautilus-research-capabilities.json && research_ok=1
-            curl --fail --silent -H 'Authorization: Bearer ci-sealed-nautilus-token' http://127.0.0.1:8012/v1/capabilities > /tmp/nautilus-sealed-capabilities.json && sealed_ok=1
+            curl --fail --silent -H 'Authorization: Bearer ci-remote-nautilus-token' -H 'X-QuaZonai-Quant-Contract: 2' http://127.0.0.1:8011/v1/capabilities > /tmp/nautilus-research-capabilities.json && research_ok=1
+            curl --fail --silent -H 'Authorization: Bearer ci-sealed-nautilus-token' -H 'X-QuaZonai-Quant-Contract: 2' http://127.0.0.1:8012/v1/capabilities > /tmp/nautilus-sealed-capabilities.json && sealed_ok=1
             if [ "$research_ok" = 1 ] && [ "$sealed_ok" = 1 ]; then
               break
             fi

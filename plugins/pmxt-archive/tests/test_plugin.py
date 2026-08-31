@@ -53,6 +53,24 @@ def test_kalshi_quotes_use_received_time_when_event_time_is_missing() -> None:
     assert stats["event_timestamp_fallback_count"] == 1
 
 
+def test_quote_availability_preserves_received_time_when_event_clock_is_ahead() -> None:
+    received = datetime(2026, 6, 11, 3, 31, tzinfo=UTC)
+    event = datetime(2026, 6, 11, 3, 32, tzinfo=UTC)
+    quotes, stats = _kalshi_quotes(
+        [
+            {
+                "timestamp_received": received,
+                "timestamp": event,
+                "yes_bids": [{"1": "0.45", "2": "200"}],
+                "no_bids": [{"1": "0.35", "2": "100"}],
+            }
+        ]
+    )
+
+    assert quotes[0]["available_ns"] < quotes[0]["event_ns"]
+    assert stats["event_after_received_count"] == 1
+
+
 def test_polymarket_quotes_keep_top_of_book_sizes() -> None:
     timestamp = datetime(2026, 8, 10, 0, 1, tzinfo=UTC)
     quotes, stats = _polymarket_quotes(
@@ -74,6 +92,34 @@ def test_polymarket_quotes_keep_top_of_book_sizes() -> None:
     assert quotes[0]["bid_size"] == 12.0
     assert quotes[0]["ask_size"] == 8.0
     assert stats["skipped_rows"] == 0
+
+
+def test_polymarket_quotes_reset_state_after_a_manifest_gap() -> None:
+    first_hour = datetime(2026, 8, 10, 0, tzinfo=UTC)
+    first_rows = [
+        {
+            "timestamp_received": first_hour,
+            "timestamp": first_hour,
+            "bids": '[["0.42", "12"]]',
+            "asks": '[["0.58", "8"]]',
+        }
+    ]
+    second_hour = datetime(2026, 8, 10, 2, tzinfo=UTC)
+    second_rows = [
+        {
+            "timestamp_received": second_hour,
+            "timestamp": second_hour,
+            "bids": '[["0.43", "12"]]',
+            "asks": None,
+        }
+    ]
+
+    quotes, stats = plugin_module._polymarket_quotes_by_shard(
+        [(first_hour, first_rows), (second_hour, second_rows)]
+    )
+
+    assert len(quotes) == 1
+    assert stats["order_book_state_reset_count"] == 1
 
 
 def test_plugin_rejects_provider_secrets() -> None:
@@ -178,7 +224,9 @@ def test_instrument_history_import_validates_manifest_selected_shards(
                 "shard_keys": [item["shard_key"] for item in shards],
                 "materialization": {
                     "source_shard_count": 2,
+                    "requested_shard_count": 2,
                     "missing_shard_count": 0,
+                    "probe_error_count": 0,
                 },
             },
             "sealed": False,

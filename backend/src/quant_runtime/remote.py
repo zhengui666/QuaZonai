@@ -25,7 +25,12 @@ from quant_runtime.contracts import (
 class QuantRuntime(Protocol):
     def capabilities(self) -> RuntimeCapabilities: ...
 
-    def ingest(self, spec: CatalogIngestSpec) -> CatalogDescriptor: ...
+    def ingest(
+        self,
+        spec: CatalogIngestSpec,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> CatalogDescriptor: ...
 
     def inspect_archive_manifest(self, spec: ArchiveManifestSpec) -> ArchiveManifestDescriptor: ...
 
@@ -150,13 +155,19 @@ class NautilusQuantRuntime:
         self._assert_capabilities(capabilities)
         return capabilities
 
-    def ingest(self, spec: CatalogIngestSpec) -> CatalogDescriptor:
+    def ingest(
+        self,
+        spec: CatalogIngestSpec,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> CatalogDescriptor:
         self.capabilities()
         descriptor = CatalogDescriptor.model_validate(
             self._request_json(
                 "POST",
                 "/v1/catalogs/ingest",
                 json_body=spec.model_dump(mode="json"),
+                timeout_seconds=timeout_seconds,
             )
         )
         expected_uri = f"catalog://{spec.catalog_name}"

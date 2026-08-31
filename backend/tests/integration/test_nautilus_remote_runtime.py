@@ -193,7 +193,7 @@ def test_idea_to_remote_nautilus_paper_feedback_vertical_e2e(
     assert capabilities.json() == {
         "runtime_name": "NautilusTrader",
         "nautilus_version": "1.231.0",
-        "contract_version": "1",
+        "contract_version": "2",
         "catalog_type": "ParquetDataCatalog",
         "supported_modes": ["DISCOVERY", "SEALED", "PORTFOLIO"],
         "candidate_contract_version": "1",

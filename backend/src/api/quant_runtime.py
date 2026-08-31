@@ -9,6 +9,7 @@ from uuid import UUID
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from db.models import (
     DatasetRevision,
@@ -164,6 +165,37 @@ def _normalized_time(value: object) -> str | None:
 
 def _normalized_range(start: object, end: object) -> dict[str, str | None]:
     return {"start": _normalized_time(start), "end": _normalized_time(end)}
+
+
+def _archive_materialization_timeout(shard_count: int) -> float:
+    """Allow one bounded request to cover the runtime's per-shard download deadline."""
+
+    return max(120.0, 180.0 * shard_count + 60.0)
+
+
+def _validate_archive_range_shards(
+    shards: list[ArchiveManifestShard],
+    *,
+    start: datetime,
+    requested_hours: int,
+) -> None:
+    for index, shard in enumerate(shards):
+        expected_start = start + timedelta(hours=index)
+        expected_end = expected_start + timedelta(hours=1)
+        if shard.coverage_start != expected_start or shard.coverage_end != expected_end:
+            raise QfError(
+                "ARCHIVE_MANIFEST_RANGE_INVALID",
+                "The manifest must contain exactly one UTC-hour descriptor per requested hour.",
+                409,
+                {
+                    "index": index,
+                    "expected_start": expected_start.isoformat(),
+                    "expected_end": expected_end.isoformat(),
+                    "actual_start": shard.coverage_start.isoformat(),
+                    "actual_end": shard.coverage_end.isoformat(),
+                    "requested_hours": requested_hours,
+                },
+            )
 
 
 def _runtime(*, sealed: bool = False) -> NautilusQuantRuntime:
@@ -469,7 +501,12 @@ def _ingest_catalog(
             plugin_id=plugin_binding["plugin_id"] if plugin_binding else None,
             plugin_version=plugin_binding["plugin_version"] if plugin_binding else None,
             plugin_bundle_path=plugin_binding["plugin_bundle_path"] if plugin_binding else None,
-        )
+        ),
+        timeout_seconds=(
+            _archive_materialization_timeout(len(source_shards))
+            if source_shards is not None
+            else None
+        ),
     )
     with factory.begin() as session:
         existing = session.scalar(
@@ -611,73 +648,92 @@ def inspect_archive_manifest(
             plugin_bundle_path=plugin_binding["plugin_bundle_path"] if plugin_binding else None,
         )
     )
-    with factory.begin() as session:
-        existing = session.scalar(
-            select(ArchiveManifest).where(ArchiveManifest.manifest_uri == descriptor.manifest_uri)
-        )
-        if existing is not None:
+    try:
+        with factory.begin() as session:
+            existing = session.scalar(
+                select(ArchiveManifest).where(ArchiveManifest.manifest_uri == descriptor.manifest_uri)
+            )
+            if existing is not None:
+                if _manifest_input_conflict(session, existing, payload, universe.id, plugin_binding):
+                    raise QfError(
+                        "ARCHIVE_MANIFEST_INPUT_CONFLICT",
+                        "Manifest identity is already bound to different immutable inspection inputs.",
+                        409,
+                        {"manifest_uri": descriptor.manifest_uri},
+                    )
+                return _manifest_view(existing)
+
+            source = GovernedDataSource(
+                name=f"Archive manifest {payload.manifest_name}",
+                provider=descriptor.provider,
+                state="ACTIVE",
+                universe_scope=[payload.universe_name],
+                fields=["archive_shard_metadata"],
+                update_cadence="on-demand manifest inspection",
+                preflight_state="READY",
+                public_config={
+                    "source_spec": payload.source_spec,
+                    "plugin_binding": plugin_binding,
+                    "manifest_uri": descriptor.manifest_uri,
+                },
+            )
+            session.add(source)
+            session.flush()
+            manifest = ArchiveManifest(
+                manifest_uri=descriptor.manifest_uri,
+                data_source_id=source.id,
+                universe_version_id=universe.id,
+                provider=descriptor.provider,
+                source_license=descriptor.source_license,
+                source_spec=descriptor.source_spec,
+                coverage_start=descriptor.coverage_start,
+                coverage_end=descriptor.coverage_end,
+                scanned_until=descriptor.scanned_until,
+                shard_count=descriptor.shard_count,
+                total_bytes=descriptor.total_bytes,
+                missing_shard_count=descriptor.missing_shard_count,
+                probe_error_count=descriptor.probe_error_count,
+                schema_revision=descriptor.schema_revision,
+                state="ACTIVE",
+                point_in_time_result=descriptor.point_in_time_result,
+            )
+            session.add(manifest)
+            session.flush()
+            session.add_all(
+                [
+                    ArchiveManifestShard(
+                        manifest_id=manifest.id,
+                        shard_key=shard.shard_key,
+                        source_url=shard.source_url,
+                        coverage_start=shard.coverage_start,
+                        coverage_end=shard.coverage_end,
+                        size_bytes=shard.size_bytes,
+                        state=shard.state,
+                        observed_at=shard.observed_at,
+                    )
+                    for shard in descriptor.shards
+                ]
+            )
+            session.flush()
+            return _manifest_view(manifest)
+    except IntegrityError as exc:
+        # Two operators may scan the same immutable manifest concurrently. The
+        # unique URI is the database arbiter; reload after the losing transaction
+        # rolls back, then verify the original immutable inputs before returning it.
+        with factory() as session:
+            existing = session.scalar(
+                select(ArchiveManifest).where(ArchiveManifest.manifest_uri == descriptor.manifest_uri)
+            )
+            if existing is None:
+                raise
             if _manifest_input_conflict(session, existing, payload, universe.id, plugin_binding):
                 raise QfError(
                     "ARCHIVE_MANIFEST_INPUT_CONFLICT",
                     "Manifest identity is already bound to different immutable inspection inputs.",
                     409,
                     {"manifest_uri": descriptor.manifest_uri},
-                )
+                ) from exc
             return _manifest_view(existing)
-
-        source = GovernedDataSource(
-            name=f"Archive manifest {payload.manifest_name}",
-            provider=descriptor.provider,
-            state="ACTIVE",
-            universe_scope=[payload.universe_name],
-            fields=["archive_shard_metadata"],
-            update_cadence="on-demand manifest inspection",
-            preflight_state="READY",
-            public_config={
-                "source_spec": payload.source_spec,
-                "plugin_binding": plugin_binding,
-                "manifest_uri": descriptor.manifest_uri,
-            },
-        )
-        session.add(source)
-        session.flush()
-        manifest = ArchiveManifest(
-            manifest_uri=descriptor.manifest_uri,
-            data_source_id=source.id,
-            universe_version_id=universe.id,
-            provider=descriptor.provider,
-            source_license=descriptor.source_license,
-            source_spec=descriptor.source_spec,
-            coverage_start=descriptor.coverage_start,
-            coverage_end=descriptor.coverage_end,
-            scanned_until=descriptor.scanned_until,
-            shard_count=descriptor.shard_count,
-            total_bytes=descriptor.total_bytes,
-            missing_shard_count=descriptor.missing_shard_count,
-            probe_error_count=descriptor.probe_error_count,
-            schema_revision=descriptor.schema_revision,
-            state="ACTIVE",
-            point_in_time_result=descriptor.point_in_time_result,
-        )
-        session.add(manifest)
-        session.flush()
-        session.add_all(
-            [
-                ArchiveManifestShard(
-                    manifest_id=manifest.id,
-                    shard_key=shard.shard_key,
-                    source_url=shard.source_url,
-                    coverage_start=shard.coverage_start,
-                    coverage_end=shard.coverage_end,
-                    size_bytes=shard.size_bytes,
-                    state=shard.state,
-                    observed_at=shard.observed_at,
-                )
-                for shard in descriptor.shards
-            ]
-        )
-        session.flush()
-        return _manifest_view(manifest)
 
 
 @router.get(
@@ -802,6 +858,11 @@ def materialize_archive_manifest(
                 409,
                 {"expected_hours": requested_hours, "described_hours": len(range_shards)},
             )
+        _validate_archive_range_shards(
+            range_shards,
+            start=start,
+            requested_hours=requested_hours,
+        )
         available_shards = [item for item in range_shards if item.state == "AVAILABLE"]
         if not available_shards:
             raise QfError(
@@ -809,7 +870,13 @@ def materialize_archive_manifest(
                 "No AVAILABLE archive shard exists in the requested range.",
                 422,
             )
-        estimated_bytes = sum(item.size_bytes or 0 for item in available_shards)
+        if any(item.size_bytes is None for item in available_shards):
+            raise QfError(
+                "ARCHIVE_MATERIALIZATION_SIZE_UNKNOWN",
+                "Bounded materialization requires a known size for every AVAILABLE shard.",
+                409,
+            )
+        estimated_bytes = sum(item.size_bytes for item in available_shards if item.size_bytes is not None)
         if estimated_bytes > 20 * 1024 * 1024 * 1024:
             raise QfError(
                 "ARCHIVE_MATERIALIZATION_TOO_LARGE",
@@ -855,7 +922,8 @@ def materialize_archive_manifest(
                 "end": end.isoformat(),
                 "source_shard_count": len(available_shards),
                 "requested_shard_count": len(range_shards),
-                "missing_shard_count": len(range_shards) - len(available_shards),
+                "missing_shard_count": sum(item.state == "MISSING" for item in range_shards),
+                "probe_error_count": sum(item.state == "PROBE_ERROR" for item in range_shards),
                 "estimated_source_bytes": estimated_bytes,
             },
         }

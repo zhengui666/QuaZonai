@@ -493,7 +493,7 @@ Manifest 的按需物化使用同一通用 `CatalogIngestSpec`，增加可选的
 
 PMXT plugin 只接受 PMXT Archive 公布的、与 venue 匹配的固定小时 Parquet URL，并拒绝重定向、凭据、任意 host、查询参数和非 Parquet 路径；Manifest 扫描只从受约束的 UTC 小时范围生成这些 URL，不从网页抓取链接。每次“一个小时文件 + 一个 instrument”导入都创建新的 immutable Dataset Revision，不能把后续文件原地追加到旧 Revision；Manifest 物化出的每个研究切片同样必须创建新的 immutable Dataset Revision。
 
-PMXT plugin 支持 Polymarket v2 与 Kalshi orderbook 到 Nautilus `QuoteTick` 的历史转换，instrument 以 PMXT `BinaryOption` 表示，导入结果只用于 Research/Sealed Catalog。PMXT 的 `timestamp_received` 作为 point-in-time `available_at`；当源文件缺失事件时间时使用接收时间作为事件时间，并在 quality evidence 中记录 fallback 计数。源数据的 bids/asks、排序、交叉报价、缺失和转换跳过行必须进入 Dataset quality evidence。
+PMXT plugin 支持 Polymarket v2 与 Kalshi orderbook 到 Nautilus `QuoteTick` 的历史转换，instrument 以 PMXT `BinaryOption` 表示，导入结果只用于 Research/Sealed Catalog。PMXT 的 `timestamp_received` 作为 point-in-time `available_at`；当源文件缺失事件时间时使用接收时间作为事件时间，并在 quality evidence 中记录 fallback 计数；事件时钟晚于接收时钟也只记录异常，不得改写可用时间。跨 Manifest 缺口时必须重置重建盘口状态。源数据的 bids/asks、排序、交叉报价、缺失和转换跳过行必须进入 Dataset quality evidence。
 
 PMXT plugin 不保存或请求 provider secret，不调用 PMXT 交易接口，不输出 order、fill、position、account 或 NAV，也不授予 QZ 启停、撤单、平仓或恢复任何 downstream 的能力。未来其他历史数据源必须复用同一通用 plugin/importer contract，不得在 Core 或 Nautilus runtime 增加 provider-specific 分支。
 
@@ -1391,7 +1391,7 @@ nautilus-paper-node
 nautilus-live-node
 ```
 
-`deploy/Dockerfile.nautilus-runtime` 是 reference remote runtime image；`deploy/nautilus-runtime.compose.example.yml` 仅用于在另一主机部署示例，不加入 Core Compose。Research 与 Sealed 使用不同 endpoint/token/catalog。Core API image 必须证明未安装 NautilusTrader。
+`deploy/Dockerfile.nautilus-runtime` 是 reference remote runtime image；`deploy/nautilus-runtime.compose.example.yml` 仅用于在另一主机部署示例，不加入 Core Compose。Core Compose 中的 `nautilus-runtime-proxy` 是只转发到 Research/Sealed runtime 的窄 HTTP 边界，API 只连接 Core network，不直接加入 runtime bridge；因此 runtime/plugin peer 不能通过网络直达 Operator API。Research 与 Sealed 使用不同 endpoint/token/catalog。Core API image 必须证明未安装 NautilusTrader。
 
 不引入 Redis、Celery、Kafka 或 Kubernetes。使用 PostgreSQL durable jobs + `FOR UPDATE SKIP LOCKED`，事件表 + `LISTEN/NOTIFY` 仅做唤醒。
 

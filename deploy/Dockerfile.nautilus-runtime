@@ -5,6 +5,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     QUAZONAI_NAUTILUS_CATALOG_ROOT=/var/lib/quazonai-nautilus/catalogs
 
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y bubblewrap \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN groupadd --system quazonai-nautilus \
     && useradd --system --gid quazonai-nautilus --home-dir /home/quazonai-nautilus \
        --create-home quazonai-nautilus \
