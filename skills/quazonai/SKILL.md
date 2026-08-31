@@ -60,6 +60,8 @@ It does not own broker credentials, orders, fills, positions, accounts, NAV, exe
    - never request, read, infer, capture, copy, print, or store the browser TOTP setup secret, one-time authenticator code, session cookie, or trusted-browser cookie; those credentials are outside the Skill and CLI boundary;
    - when authentication is disabled, the CLI retains direct loopback access and does not require the machine token.
 
+   This browser-credential prohibition applies equally to standalone Skill installations and repository-backed operation.
+
    Read [references/authentication.md](references/authentication.md) before diagnosing an authentication failure or credential boundary.
 
    Check only whether the machine token is present; never print its value:
