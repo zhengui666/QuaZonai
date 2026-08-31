@@ -84,7 +84,14 @@ private struct TrustedUnlockView: View {
                 Image(systemName: "faceid").font(.system(size: 52))
                 Text("A trusted-device refresh credential is protected by this device's Keychain and biometrics.").multilineTextAlignment(.center)
                 Button(L10n.text(.unlock, session.language)) { Task { await session.unlockTrustedDevice() } }.buttonStyle(.borderedProminent)
-                Button("Use TOTP instead") { Task { await session.logout() } }.buttonStyle(.bordered)
+                Button("Use TOTP instead") {
+                    // This is an authentication-path choice, not logout. Keep the
+                    // protected refresh credential until a successful TOTP login
+                    // rotates the server generation and replaces or removes it.
+                    session.errorMessage = nil
+                    session.phase = .loginRequired
+                }
+                .buttonStyle(.bordered)
                 if let error = session.errorMessage { Text(error).foregroundStyle(.red) }
             }.padding().navigationTitle("QuaZonai")
         }
