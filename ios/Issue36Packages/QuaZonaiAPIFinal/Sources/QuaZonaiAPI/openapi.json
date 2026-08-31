@@ -1,0 +1,352 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "QuaZonai Operator API",
+    "version": "1.0.0",
+    "description": "Generated Swift client contract for the Web-equivalent iPhone and iPad operator clients."
+  },
+  "servers": [{"url": "/"}],
+  "paths": {
+    "/api/v1/client/bootstrap": {
+      "get": {
+        "operationId": "getClientBootstrap",
+        "responses": {
+          "200": {
+            "description": "Client compatibility and authentication bootstrap.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ClientBootstrap"}}}
+          }
+        }
+      }
+    },
+    "/api/v1/auth/mobile/login": {
+      "post": {
+        "operationId": "mobileOperatorLogin",
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MobileLoginRequest"}}}
+        },
+        "responses": {
+          "200": {
+            "description": "Native mobile operator session.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MobileAuthResponse"}}}
+          },
+          "401": {"$ref": "#/components/responses/AuthError"},
+          "422": {"$ref": "#/components/responses/ValidationError"}
+        }
+      }
+    },
+    "/api/v1/auth/mobile/refresh": {
+      "post": {
+        "operationId": "refreshMobileOperatorSession",
+        "security": [{"bearerAuth": []}],
+        "responses": {
+          "200": {
+            "description": "Rotated native mobile operator session.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MobileAuthResponse"}}}
+          },
+          "401": {"$ref": "#/components/responses/AuthError"},
+          "409": {"$ref": "#/components/responses/Conflict"}
+        }
+      }
+    },
+    "/api/v1/auth/mobile/logout": {
+      "post": {
+        "operationId": "logoutMobileOperatorSession",
+        "security": [{"bearerAuth": []}],
+        "responses": {
+          "204": {"description": "Native session logged out."},
+          "401": {"$ref": "#/components/responses/AuthError"}
+        }
+      }
+    },
+    "/api/v1/auth/mobile/session": {
+      "get": {
+        "operationId": "getMobileOperatorSession",
+        "security": [{"bearerAuth": []}],
+        "responses": {
+          "200": {"$ref": "#/components/responses/ObjectResponse"},
+          "401": {"$ref": "#/components/responses/AuthError"}
+        }
+      }
+    },
+    "/api/v1/auth/mobile/devices": {
+      "get": {
+        "operationId": "listMobileOperatorDevices",
+        "security": [{"bearerAuth": []}],
+        "responses": {
+          "200": {"$ref": "#/components/responses/ListResponse"},
+          "401": {"$ref": "#/components/responses/AuthError"}
+        }
+      }
+    },
+    "/api/v1/auth/mobile/devices/{id}/revoke": {
+      "parameters": [{"$ref": "#/components/parameters/ResourceID"}],
+      "post": {
+        "operationId": "revokeMobileOperatorDevice",
+        "security": [{"bearerAuth": []}],
+        "responses": {
+          "204": {"description": "Native device revoked."},
+          "401": {"$ref": "#/components/responses/AuthError"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "409": {"$ref": "#/components/responses/Conflict"}
+        }
+      }
+    },
+    "/api/v1/readiness": {
+      "get": {
+        "operationId": "getReadiness",
+        "security": [{"bearerAuth": []}, {"browserSession": []}],
+        "responses": {"200": {"$ref": "#/components/responses/ObjectResponse"}, "401": {"$ref": "#/components/responses/AuthError"}}
+      }
+    },
+    "/api/v1/system/health": {
+      "get": {
+        "operationId": "getSystemHealth",
+        "responses": {"200": {"$ref": "#/components/responses/ObjectResponse"}}
+      }
+    },
+    "/api/v1/system/runtime-configuration": {
+      "get": {
+        "operationId": "getRuntimeConfiguration",
+        "security": [{"bearerAuth": []}, {"browserSession": []}],
+        "responses": {"200": {"$ref": "#/components/responses/ObjectResponse"}, "401": {"$ref": "#/components/responses/AuthError"}}
+      },
+      "put": {
+        "operationId": "updateRuntimeConfiguration",
+        "security": [{"bearerAuth": []}, {"browserSession": []}],
+        "parameters": [{"$ref": "#/components/parameters/IdempotencyKey"}],
+        "requestBody": {"$ref": "#/components/requestBodies/ObjectBody"},
+        "responses": {"200": {"$ref": "#/components/responses/ObjectResponse"}, "401": {"$ref": "#/components/responses/AuthError"}, "409": {"$ref": "#/components/responses/Conflict"}, "422": {"$ref": "#/components/responses/ValidationError"}}
+      }
+    },
+    "/api/v1/ideas/preview": {
+      "post": {
+        "operationId": "previewIdea",
+        "security": [{"bearerAuth": []}, {"browserSession": []}],
+        "parameters": [{"$ref": "#/components/parameters/IdempotencyKey"}],
+        "requestBody": {"$ref": "#/components/requestBodies/ObjectBody"},
+        "responses": {"200": {"$ref": "#/components/responses/ObjectResponse"}, "401": {"$ref": "#/components/responses/AuthError"}, "422": {"$ref": "#/components/responses/ValidationError"}}
+      }
+    },
+    "/api/v1/research-programs": {
+      "get": {
+        "operationId": "listResearchPrograms",
+        "security": [{"bearerAuth": []}, {"browserSession": []}],
+        "responses": {"200": {"$ref": "#/components/responses/ListResponse"}, "401": {"$ref": "#/components/responses/AuthError"}}
+      },
+      "post": {
+        "operationId": "createResearchProgram",
+        "security": [{"bearerAuth": []}, {"browserSession": []}],
+        "parameters": [{"$ref": "#/components/parameters/IdempotencyKey"}],
+        "requestBody": {"$ref": "#/components/requestBodies/ObjectBody"},
+        "responses": {"200": {"$ref": "#/components/responses/ObjectResponse"}, "201": {"$ref": "#/components/responses/ObjectResponse"}, "401": {"$ref": "#/components/responses/AuthError"}, "409": {"$ref": "#/components/responses/Conflict"}, "422": {"$ref": "#/components/responses/ValidationError"}}
+      }
+    },
+    "/api/v1/research-programs/{id}": {
+      "parameters": [{"$ref": "#/components/parameters/ResourceID"}],
+      "get": {
+        "operationId": "getResearchProgram",
+        "security": [{"bearerAuth": []}, {"browserSession": []}],
+        "responses": {"200": {"$ref": "#/components/responses/ObjectResponse"}, "401": {"$ref": "#/components/responses/AuthError"}, "404": {"$ref": "#/components/responses/NotFound"}}
+      }
+    },
+    "/api/v1/research-programs/{id}/missions": {
+      "parameters": [{"$ref": "#/components/parameters/ResourceID"}],
+      "get": {
+        "operationId": "listResearchProgramMissions",
+        "security": [{"bearerAuth": []}, {"browserSession": []}],
+        "responses": {"200": {"$ref": "#/components/responses/ListResponse"}, "401": {"$ref": "#/components/responses/AuthError"}}
+      }
+    },
+    "/api/v1/research-programs/{id}/activity": {
+      "parameters": [{"$ref": "#/components/parameters/ResourceID"}],
+      "get": {
+        "operationId": "listResearchProgramActivity",
+        "security": [{"bearerAuth": []}, {"browserSession": []}],
+        "responses": {"200": {"$ref": "#/components/responses/ListResponse"}, "401": {"$ref": "#/components/responses/AuthError"}}
+      }
+    },
+    "/api/v1/research-programs/{id}/pause": {
+      "parameters": [{"$ref": "#/components/parameters/ResourceID"}, {"$ref": "#/components/parameters/IdempotencyKey"}],
+      "post": {"operationId": "pauseResearchProgram", "security": [{"bearerAuth": []}, {"browserSession": []}], "requestBody": {"$ref": "#/components/requestBodies/ObjectBody"}, "responses": {"200": {"$ref": "#/components/responses/ObjectResponse"}, "204": {"description": "Program paused."}, "401": {"$ref": "#/components/responses/AuthError"}, "409": {"$ref": "#/components/responses/Conflict"}}}
+    },
+    "/api/v1/research-programs/{id}/resume": {
+      "parameters": [{"$ref": "#/components/parameters/ResourceID"}, {"$ref": "#/components/parameters/IdempotencyKey"}],
+      "post": {"operationId": "resumeResearchProgram", "security": [{"bearerAuth": []}, {"browserSession": []}], "requestBody": {"$ref": "#/components/requestBodies/ObjectBody"}, "responses": {"200": {"$ref": "#/components/responses/ObjectResponse"}, "204": {"description": "Program resumed."}, "401": {"$ref": "#/components/responses/AuthError"}, "409": {"$ref": "#/components/responses/Conflict"}}}
+    },
+    "/api/v1/research-programs/{id}/archive": {
+      "parameters": [{"$ref": "#/components/parameters/ResourceID"}, {"$ref": "#/components/parameters/IdempotencyKey"}],
+      "post": {"operationId": "archiveResearchProgram", "security": [{"bearerAuth": []}, {"browserSession": []}], "requestBody": {"$ref": "#/components/requestBodies/ObjectBody"}, "responses": {"200": {"$ref": "#/components/responses/ObjectResponse"}, "204": {"description": "Program archived."}, "401": {"$ref": "#/components/responses/AuthError"}, "409": {"$ref": "#/components/responses/Conflict"}}}
+    },
+    "/api/v1/research-programs/{id}/restore": {
+      "parameters": [{"$ref": "#/components/parameters/ResourceID"}, {"$ref": "#/components/parameters/IdempotencyKey"}],
+      "post": {"operationId": "restoreResearchProgram", "security": [{"bearerAuth": []}, {"browserSession": []}], "requestBody": {"$ref": "#/components/requestBodies/ObjectBody"}, "responses": {"200": {"$ref": "#/components/responses/ObjectResponse"}, "204": {"description": "Program restored."}, "401": {"$ref": "#/components/responses/AuthError"}, "409": {"$ref": "#/components/responses/Conflict"}}}
+    },
+    "/api/v1/alpha-library": {
+      "get": {"operationId": "listAlphaLibrary", "security": [{"bearerAuth": []}, {"browserSession": []}], "responses": {"200": {"$ref": "#/components/responses/ListResponse"}, "401": {"$ref": "#/components/responses/AuthError"}}}
+    },
+    "/api/v1/alpha-library/{id}": {
+      "parameters": [{"$ref": "#/components/parameters/ResourceID"}],
+      "get": {"operationId": "getAlphaQualification", "security": [{"bearerAuth": []}, {"browserSession": []}], "responses": {"200": {"$ref": "#/components/responses/ObjectResponse"}, "401": {"$ref": "#/components/responses/AuthError"}, "404": {"$ref": "#/components/responses/NotFound"}}}
+    },
+    "/api/v1/portfolio-mandates": {
+      "get": {"operationId": "listPortfolioMandates", "security": [{"bearerAuth": []}, {"browserSession": []}], "responses": {"200": {"$ref": "#/components/responses/ListResponse"}, "401": {"$ref": "#/components/responses/AuthError"}}}
+    },
+    "/api/v1/portfolio-mandates/{id}/enable": {
+      "parameters": [{"$ref": "#/components/parameters/ResourceID"}, {"$ref": "#/components/parameters/IdempotencyKey"}],
+      "post": {"operationId": "enablePortfolioMandate", "security": [{"bearerAuth": []}, {"browserSession": []}], "requestBody": {"$ref": "#/components/requestBodies/ObjectBody"}, "responses": {"200": {"$ref": "#/components/responses/ObjectResponse"}, "204": {"description": "Mandate enabled."}, "401": {"$ref": "#/components/responses/AuthError"}, "409": {"$ref": "#/components/responses/Conflict"}}}
+    },
+    "/api/v1/portfolio-mandates/{id}/disable": {
+      "parameters": [{"$ref": "#/components/parameters/ResourceID"}, {"$ref": "#/components/parameters/IdempotencyKey"}],
+      "post": {"operationId": "disablePortfolioMandate", "security": [{"bearerAuth": []}, {"browserSession": []}], "requestBody": {"$ref": "#/components/requestBodies/ObjectBody"}, "responses": {"200": {"$ref": "#/components/responses/ObjectResponse"}, "204": {"description": "Mandate disabled."}, "401": {"$ref": "#/components/responses/AuthError"}, "409": {"$ref": "#/components/responses/Conflict"}}}
+    },
+    "/api/v1/portfolio-programs": {
+      "get": {"operationId": "listPortfolioPrograms", "security": [{"bearerAuth": []}, {"browserSession": []}], "responses": {"200": {"$ref": "#/components/responses/ListResponse"}, "401": {"$ref": "#/components/responses/AuthError"}}}
+    },
+    "/api/v1/portfolio-candidates/{id}": {
+      "parameters": [{"$ref": "#/components/parameters/ResourceID"}],
+      "get": {"operationId": "getPortfolioCandidate", "security": [{"bearerAuth": []}, {"browserSession": []}], "responses": {"200": {"$ref": "#/components/responses/ObjectResponse"}, "401": {"$ref": "#/components/responses/AuthError"}, "404": {"$ref": "#/components/responses/NotFound"}}}
+    },
+    "/api/v1/approvals": {
+      "get": {"operationId": "listApprovals", "security": [{"bearerAuth": []}, {"browserSession": []}], "responses": {"200": {"$ref": "#/components/responses/ListResponse"}, "401": {"$ref": "#/components/responses/AuthError"}}}
+    },
+    "/api/v1/approvals/{id}/approve": {
+      "parameters": [{"$ref": "#/components/parameters/ResourceID"}, {"$ref": "#/components/parameters/IdempotencyKey"}],
+      "post": {"operationId": "approveCandidate", "security": [{"bearerAuth": []}, {"browserSession": []}], "requestBody": {"$ref": "#/components/requestBodies/ObjectBody"}, "responses": {"200": {"$ref": "#/components/responses/ObjectResponse"}, "204": {"description": "Candidate approved."}, "401": {"$ref": "#/components/responses/AuthError"}, "409": {"$ref": "#/components/responses/Conflict"}, "422": {"$ref": "#/components/responses/ValidationError"}}}
+    },
+    "/api/v1/approvals/{id}/reject": {
+      "parameters": [{"$ref": "#/components/parameters/ResourceID"}, {"$ref": "#/components/parameters/IdempotencyKey"}],
+      "post": {"operationId": "rejectCandidate", "security": [{"bearerAuth": []}, {"browserSession": []}], "requestBody": {"$ref": "#/components/requestBodies/ObjectBody"}, "responses": {"200": {"$ref": "#/components/responses/ObjectResponse"}, "204": {"description": "Candidate rejected."}, "401": {"$ref": "#/components/responses/AuthError"}, "409": {"$ref": "#/components/responses/Conflict"}, "422": {"$ref": "#/components/responses/ValidationError"}}}
+    },
+    "/api/v1/handoffs": {
+      "get": {"operationId": "listHandoffs", "security": [{"bearerAuth": []}, {"browserSession": []}], "responses": {"200": {"$ref": "#/components/responses/ListResponse"}, "401": {"$ref": "#/components/responses/AuthError"}}}
+    },
+    "/api/v1/handoffs/{id}/revoke": {
+      "parameters": [{"$ref": "#/components/parameters/ResourceID"}, {"$ref": "#/components/parameters/IdempotencyKey"}],
+      "post": {"operationId": "revokeHandoff", "security": [{"bearerAuth": []}, {"browserSession": []}], "requestBody": {"$ref": "#/components/requestBodies/ObjectBody"}, "responses": {"200": {"$ref": "#/components/responses/ObjectResponse"}, "204": {"description": "Handoff revoked."}, "401": {"$ref": "#/components/responses/AuthError"}, "409": {"$ref": "#/components/responses/Conflict"}}}
+    },
+    "/api/v1/universes": {
+      "get": {"operationId": "listUniverses", "security": [{"bearerAuth": []}, {"browserSession": []}], "responses": {"200": {"$ref": "#/components/responses/ListResponse"}, "401": {"$ref": "#/components/responses/AuthError"}}}
+    },
+    "/api/v1/datasets": {
+      "get": {"operationId": "listDatasets", "security": [{"bearerAuth": []}, {"browserSession": []}], "responses": {"200": {"$ref": "#/components/responses/ListResponse"}, "401": {"$ref": "#/components/responses/AuthError"}}}
+    },
+    "/api/v1/data-sources": {
+      "get": {"operationId": "listDataSources", "security": [{"bearerAuth": []}, {"browserSession": []}], "responses": {"200": {"$ref": "#/components/responses/ListResponse"}, "401": {"$ref": "#/components/responses/AuthError"}}},
+      "post": {"operationId": "registerDataSource", "security": [{"bearerAuth": []}, {"browserSession": []}], "parameters": [{"$ref": "#/components/parameters/IdempotencyKey"}], "requestBody": {"$ref": "#/components/requestBodies/ObjectBody"}, "responses": {"200": {"$ref": "#/components/responses/ObjectResponse"}, "201": {"$ref": "#/components/responses/ObjectResponse"}, "401": {"$ref": "#/components/responses/AuthError"}, "409": {"$ref": "#/components/responses/Conflict"}, "422": {"$ref": "#/components/responses/ValidationError"}}}
+    },
+    "/api/v1/downstream-systems": {
+      "get": {"operationId": "listDownstreamSystems", "security": [{"bearerAuth": []}, {"browserSession": []}], "responses": {"200": {"$ref": "#/components/responses/ListResponse"}, "401": {"$ref": "#/components/responses/AuthError"}}},
+      "post": {"operationId": "registerDownstreamSystem", "security": [{"bearerAuth": []}, {"browserSession": []}], "parameters": [{"$ref": "#/components/parameters/IdempotencyKey"}], "requestBody": {"$ref": "#/components/requestBodies/ObjectBody"}, "responses": {"200": {"$ref": "#/components/responses/ObjectResponse"}, "201": {"$ref": "#/components/responses/ObjectResponse"}, "401": {"$ref": "#/components/responses/AuthError"}, "409": {"$ref": "#/components/responses/Conflict"}, "422": {"$ref": "#/components/responses/ValidationError"}}}
+    },
+    "/api/v1/plugin-releases": {
+      "get": {"operationId": "listPluginReleases", "security": [{"bearerAuth": []}, {"browserSession": []}], "responses": {"200": {"$ref": "#/components/responses/ListResponse"}, "401": {"$ref": "#/components/responses/AuthError"}}}
+    },
+    "/api/v1/events": {
+      "get": {
+        "operationId": "listEvents",
+        "security": [{"bearerAuth": []}, {"browserSession": []}],
+        "parameters": [
+          {"name": "after_id", "in": "query", "schema": {"type": "integer", "minimum": 0, "default": 0}},
+          {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 200}}
+        ],
+        "responses": {"200": {"$ref": "#/components/responses/ListResponse"}, "401": {"$ref": "#/components/responses/AuthError"}}
+      }
+    },
+    "/api/v1/events/stream": {
+      "get": {
+        "operationId": "streamEvents",
+        "security": [{"bearerAuth": []}, {"browserSession": []}],
+        "parameters": [
+          {"name": "cursor", "in": "query", "schema": {"type": "integer", "minimum": 0}},
+          {"name": "Last-Event-ID", "in": "header", "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {"description": "Ordered Server-Sent Events stream.", "content": {"text/event-stream": {"schema": {"type": "string"}}}},
+          "401": {"$ref": "#/components/responses/AuthError"}
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {"type": "http", "scheme": "bearer"},
+      "browserSession": {"type": "apiKey", "in": "cookie", "name": "quazonai_session"}
+    },
+    "parameters": {
+      "ResourceID": {"name": "id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}},
+      "IdempotencyKey": {"name": "Idempotency-Key", "in": "header", "required": false, "schema": {"type": "string", "format": "uuid"}}
+    },
+    "requestBodies": {
+      "ObjectBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/GenericObject"}}}}
+    },
+    "responses": {
+      "ObjectResponse": {"description": "Operator resource.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/GenericObject"}}}},
+      "ListResponse": {"description": "Operator resource list.", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/GenericObject"}}}},
+      "AuthError": {"description": "Authentication is required or invalid.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}}},
+      "ValidationError": {"description": "Input validation failed.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}}},
+      "Conflict": {"description": "Optimistic concurrency or state conflict.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}}},
+      "NotFound": {"description": "Resource not found.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}}}
+    },
+    "schemas": {
+      "GenericObject": {"type": "object", "additionalProperties": true},
+      "ClientBootstrap": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["server_version", "auth_enabled", "operator_client_capability_epoch", "minimum_ios_capability_epoch", "minimum_ios_app_version"],
+        "properties": {
+          "server_version": {"type": "string"},
+          "auth_enabled": {"type": "boolean"},
+          "operator_client_capability_epoch": {"type": "integer"},
+          "minimum_ios_capability_epoch": {"type": "integer"},
+          "minimum_ios_app_version": {"type": "string"}
+        }
+      },
+      "MobileLoginRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["totp_code", "installation_id", "device_name", "device_family", "os_version", "app_version", "app_build", "trust_device"],
+        "properties": {
+          "totp_code": {"type": "string", "pattern": "^[0-9]{6}$", "minLength": 6, "maxLength": 6},
+          "installation_id": {"type": "string", "format": "uuid"},
+          "device_name": {"type": "string", "minLength": 1, "maxLength": 200},
+          "device_family": {"type": "string", "enum": ["IPHONE", "IPAD"]},
+          "os_version": {"type": "string", "minLength": 1, "maxLength": 64},
+          "app_version": {"type": "string", "minLength": 1, "maxLength": 64},
+          "app_build": {"type": "string", "minLength": 1, "maxLength": 64},
+          "trust_device": {"type": "boolean"}
+        }
+      },
+      "MobileAuthResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["access_token", "token_type", "access_expires_at", "device"],
+        "properties": {
+          "access_token": {"type": "string"},
+          "token_type": {"type": "string", "enum": ["Bearer"]},
+          "access_expires_at": {"type": "string", "format": "date-time"},
+          "refresh_credential": {"type": "string", "nullable": true},
+          "refresh_expires_at": {"type": "string", "format": "date-time", "nullable": true},
+          "device": {"$ref": "#/components/schemas/GenericObject"}
+        }
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "message", "details"],
+            "properties": {
+              "code": {"type": "string"},
+              "message": {"type": "string"},
+              "details": {"$ref": "#/components/schemas/GenericObject"}
+            }
+          }
+        }
+      }
+    }
+  }
+}
