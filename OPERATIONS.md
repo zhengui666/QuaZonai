@@ -555,6 +555,8 @@ PMXT Archive 以公开 HTTPS 小时 Parquet 提供 Polymarket v2 与 Kalshi 的�
 的 plugin id 为 `pmxt_archive`。该绑定只允许 `ACTIVE` release 和 `READY` 的 `IMPORTER`
 bundle，具体下载与 Parquet 转换由独立 runtime 的通用 connector-runner child 完成。
 
+Reference Nautilus runtime 不允许第三方 plugin 直接执行 `sealed=true` Catalog ingest；sealed raw data 必须由受信 provisioning/import path 预置到独立 sealed Catalog，之后只读提供给 evaluator。
+
 PMXT Archive 读取不需要 API key；本地部署也不应填写 PMXT 交易凭据。单个 Polymarket v2 小时文件可能较大，因此先按 instrument 过滤，避免把全市场文件载入 Research Catalog。PMXT 接入完成只代表历史研究数据可用，不代表已连接交易系统。
 
 全市场全历史使用下面的清单配置，不下载整库：

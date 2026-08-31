@@ -237,6 +237,14 @@ def _write_plugin_catalog(spec: CatalogIngestSpec, staging_path: Path) -> Catalo
             status_code=422,
             detail="plugin Catalog ingest requires an id, version and runtime bundle",
         )
+    if spec.sealed:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "sealed Catalog ingest cannot execute a plugin; provision the sealed catalog "
+                "through a trusted importer before evaluation"
+            ),
+        )
     source_config = spec.source_spec.get("config")
     if not isinstance(source_config, dict):
         raise HTTPException(status_code=422, detail="plugin source_spec.config must be an object")

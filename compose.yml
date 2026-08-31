@@ -88,7 +88,6 @@ services:
       - "host.docker.internal:host-gateway"
     networks:
       - default
-      - nautilus-runtime
     depends_on:
       migrate:
         condition: service_completed_successfully
