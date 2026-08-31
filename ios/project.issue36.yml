@@ -1,0 +1,72 @@
+name: QuaZonai
+options:
+  bundleIdPrefix: ai.quazonai
+  deploymentTarget:
+    iOS: "18.0"
+  xcodeVersion: "16.0"
+  createIntermediateGroups: true
+packages:
+  QuaZonaiAPI:
+    path: Issue36Packages/QuaZonaiAPI
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: ""
+targets:
+  QuaZonaiIssue36:
+    type: application
+    platform: iOS
+    sources:
+      - path: Issue36App
+    resources:
+      - path: Issue36Resources
+    info:
+      path: Issue36Resources/Info.plist
+    dependencies:
+      - package: QuaZonaiAPI
+    settings:
+      base:
+        PRODUCT_NAME: QuaZonai
+        PRODUCT_BUNDLE_IDENTIFIER: ai.quazonai.operator
+        MARKETING_VERSION: 1.0.0
+        CURRENT_PROJECT_VERSION: 100
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        SUPPORTS_MACCATALYST: NO
+  QuaZonaiIssue36Tests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Issue36Tests
+    dependencies:
+      - target: QuaZonaiIssue36
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.quazonai.operator.tests
+  QuaZonaiIssue36UITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: Issue36UITests
+    dependencies:
+      - target: QuaZonaiIssue36
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.quazonai.operator.uitests
+schemes:
+  QuaZonai:
+    build:
+      targets:
+        QuaZonaiIssue36: all
+        QuaZonaiIssue36Tests: [test]
+        QuaZonaiIssue36UITests: [test]
+    test:
+      gatherCoverageData: true
+      targets:
+        - name: QuaZonaiIssue36Tests
+        - name: QuaZonaiIssue36UITests
+    archive:
+      config: Release
