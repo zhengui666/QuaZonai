@@ -7,11 +7,12 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 from urllib.parse import SplitResult, urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from plugins.contract import Capability, DescriptorSnapshot
 from quant_runtime.contracts import CatalogDescriptor
@@ -641,7 +642,7 @@ class PMXTArchiveImporter:
                 "valid": True,
                 "sorted": all(
                     left["event_ns"] <= right["event_ns"]
-                    for left, right in zip(quote_rows, quote_rows[1:], strict=False)
+                    for left, right in pairwise(quote_rows)
                 ),
                 "unique_timestamps": len({row["event_ns"] for row in quote_rows})
                 == len(quote_rows),
@@ -732,7 +733,7 @@ class PMXTArchiveImporter:
         requested_hours = int((end - start) / timedelta(hours=1))
         materialization = source_spec.get("materialization")
         if not isinstance(materialization, dict):
-            raise ValueError("materialization evidence is required")
+            raise TypeError("materialization evidence is required")
         try:
             requested_shard_count = int(materialization["requested_shard_count"])
             source_shard_count = int(materialization["source_shard_count"])
@@ -887,7 +888,7 @@ class PMXTArchivePlugin:
         return DescriptorSnapshot(
             plugin_id="pmxt_archive",
             version="1.1.3",
-            capabilities={Capability.HISTORICAL_IMPORT},
+            capabilities=frozenset({Capability.HISTORICAL_IMPORT}),
             compatibility_key="prediction-market-data-v1",
             requires_python=">=3.14,<3.15",
             requires_qf=">=0.1,<0.2",
