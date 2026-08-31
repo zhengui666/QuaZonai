@@ -14,6 +14,7 @@ RUN groupadd --system quazonai-nautilus \
        --create-home quazonai-nautilus \
     && mkdir -p /workspace /var/lib/quazonai-nautilus/catalogs \
        /var/lib/nautilus/catalogs /var/lib/nautilus/sealed-catalogs \
+       /var/lib/nautilus/plugin-staging \
        /var/lib/quazonai/plugins \
     && chown -R quazonai-nautilus:quazonai-nautilus \
        /workspace /var/lib/quazonai-nautilus /var/lib/nautilus /home/quazonai-nautilus
