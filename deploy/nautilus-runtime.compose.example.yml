@@ -14,6 +14,9 @@ services:
     volumes:
       - research-catalogs:/var/lib/nautilus/catalogs
       - plugin-data:/var/lib/quazonai/plugins:ro
+    # Keep the runtime container above the connector-child address-space limit
+    # while bounding the whole service independently.
+    mem_limit: 10g
     ports:
       - "127.0.0.1:8011:8011"
     read_only: true
@@ -43,6 +46,7 @@ services:
       # only the catalog selected for the current episode.
       - sealed-catalogs:/var/lib/nautilus/sealed-catalogs
       - plugin-data:/var/lib/quazonai/plugins:ro
+    mem_limit: 10g
     ports:
       - "127.0.0.1:8012:8011"
     read_only: true
