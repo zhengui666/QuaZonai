@@ -82,11 +82,11 @@ def install_error_handlers(app: FastAPI) -> None:
     ) -> Response:
         if request.url.path == _AUTH_LOGIN_PATH:
             # FastAPI's default validation envelope may include rejected input values.
-            # Login failures must not echo password or TOTP material or reveal which
-            # authentication factor failed validation.
+            # Login failures must not echo submitted TOTP or legacy authentication material.
+            # Every schema/format failure intentionally has the same public shape.
             return _error_response(
                 code="AUTH_INVALID",
-                message="Invalid operator credentials.",
+                message="Operator authentication failed.",
                 status_code=401,
                 headers=_NO_STORE_HEADERS,
             )

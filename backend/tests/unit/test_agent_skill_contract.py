@@ -102,6 +102,7 @@ def test_skill_references_are_relative_and_present() -> None:
     reference_links = set(re.findall(r"\]\((references/[^)]+\.md)\)", text))
 
     assert reference_links == {
+        "references/authentication.md",
         "references/cli-reference.md",
         "references/workflows.md",
     }

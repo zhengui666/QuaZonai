@@ -24,8 +24,6 @@ def _enabled_settings(settings: Settings) -> Settings:
     return replace(
         settings,
         operator_auth_enabled=True,
-        operator_username="operator",
-        operator_password="correct horse battery staple",
         operator_totp_secret=pyotp.random_base32(),
         auth_cookie_key=base64.b64encode(b"a" * 32).decode("ascii"),
         api_token="machine-token-" + "x" * 32,
@@ -47,8 +45,6 @@ def _login(
         "/api/v1/auth/login",
         headers={"Origin": origin},
         json={
-            "username": "operator",
-            "password": "correct horse battery staple",
             "totp_code": code,
             "trust_browser": trust_browser,
         },
@@ -270,7 +266,7 @@ def test_machine_token_can_make_operator_mutation_without_browser_origin(
     assert response.status_code == 200
 
 
-def test_password_totp_login_sets_strict_http_only_cookies(settings: Settings, engine: Engine) -> None:
+def test_totp_login_sets_strict_http_only_cookies(settings: Settings, engine: Engine) -> None:
     secured = _enabled_settings(settings)
     client = TestClient(create_app(settings=secured, engine=engine))
 
@@ -279,7 +275,7 @@ def test_password_totp_login_sets_strict_http_only_cookies(settings: Settings, e
     assert response.status_code == 200
     assert response.json() == {
         "authenticated": True,
-        "username": "operator",
+        "username": "local-operator",
         "trusted_browser": True,
         "auth_enabled": True,
     }
@@ -330,88 +326,70 @@ def test_full_login_without_trust_removes_existing_trusted_browser(
     assert TRUSTED_BROWSER_COOKIE_NAME not in client.cookies
 
 
-def test_invalid_login_does_not_reveal_failed_factor(settings: Settings, engine: Engine) -> None:
+def test_invalid_login_does_not_reveal_failed_totp(settings: Settings, engine: Engine) -> None:
     secured = _enabled_settings(settings)
     assert secured.operator_totp_secret is not None
+    client = TestClient(create_app(settings=secured, engine=engine))
+    current = pyotp.TOTP(secured.operator_totp_secret).now()
+    wrong = "000000" if current != "000000" else "000001"
+
+    response = _login(client, secured, totp_code=wrong)
+
+    assert response.status_code == 401
+    assert response.json() == {
+        "error": {
+            "code": "AUTH_INVALID",
+            "message": "Operator authentication failed.",
+            "details": {},
+        }
+    }
+    assert wrong not in response.text
+    assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_non_ascii_totp_returns_generic_auth_failure(
+    settings: Settings,
+    engine: Engine,
+) -> None:
+    secured = _enabled_settings(settings)
     client = TestClient(create_app(settings=secured, engine=engine))
 
     response = client.post(
         "/api/v1/auth/login",
         headers={"Origin": "http://testserver"},
+        json={"totp_code": "１２３４５６", "trust_browser": False},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "AUTH_INVALID"
+    assert "１２３４５６" not in response.text
+
+
+def test_legacy_login_fields_are_forbidden_and_not_echoed(
+    settings: Settings,
+    engine: Engine,
+) -> None:
+    secured = _enabled_settings(settings)
+    assert secured.operator_totp_secret is not None
+    client = TestClient(create_app(settings=secured, engine=engine))
+    legacy_username = "do-not-echo-legacy-user"
+    legacy_password = "do-not-echo-legacy-password"
+
+    response = client.post(
+        "/api/v1/auth/login",
+        headers={"Origin": "http://testserver"},
         json={
-            "username": "operator",
-            "password": "wrong-password-value",
+            "username": legacy_username,
+            "password": legacy_password,
             "totp_code": pyotp.TOTP(secured.operator_totp_secret).now(),
             "trust_browser": False,
         },
     )
 
     assert response.status_code == 401
-    assert response.json() == {
-        "error": {
-            "code": "AUTH_INVALID",
-            "message": "Invalid operator credentials.",
-            "details": {},
-        }
-    }
-    assert response.headers["Cache-Control"] == "no-store"
-
-
-def test_unencodable_login_text_returns_generic_auth_failure(
-    settings: Settings,
-    engine: Engine,
-) -> None:
-    secured = _enabled_settings(settings)
-    assert secured.operator_totp_secret is not None
-    client = TestClient(create_app(settings=secured, engine=engine))
-
-    response = client.post(
-        "/api/v1/auth/login",
-        headers={"Origin": "http://testserver", "Content-Type": "application/json"},
-        content=(
-            '{"username":"\\ud800","password":"correct horse battery staple",'
-            f'"totp_code":"{pyotp.TOTP(secured.operator_totp_secret).now()}",'
-            '"trust_browser":false}'
-        ),
-    )
-
-    assert response.status_code == 401
-    assert response.json() == {
-        "error": {
-            "code": "AUTH_INVALID",
-            "message": "Invalid operator credentials.",
-            "details": {},
-        }
-    }
-
-
-def test_invalid_login_shape_does_not_echo_submitted_secrets(
-    settings: Settings,
-    engine: Engine,
-) -> None:
-    secured = _enabled_settings(settings)
-    client = TestClient(create_app(settings=secured, engine=engine))
-    submitted_password = "do-not-echo-this-password"
-
-    response = client.post(
-        "/api/v1/auth/login",
-        headers={"Origin": "http://testserver"},
-        json={
-            "username": "operator",
-            "password": submitted_password,
-            "trust_browser": False,
-        },
-    )
-
-    assert response.status_code == 401
-    assert response.json() == {
-        "error": {
-            "code": "AUTH_INVALID",
-            "message": "Invalid operator credentials.",
-            "details": {},
-        }
-    }
-    assert submitted_password not in response.text
+    assert response.json()["error"]["code"] == "AUTH_INVALID"
+    assert legacy_username not in response.text
+    assert legacy_password not in response.text
     assert response.headers["Cache-Control"] == "no-store"
 
 
@@ -436,7 +414,7 @@ def test_browser_mutation_requires_configured_origin(settings: Settings, engine:
     assert mismatched.json()["error"]["code"] == "AUTH_ORIGIN_REJECTED"
 
 
-def test_trusted_browser_restores_session_without_password_or_totp(
+def test_trusted_browser_restores_session_without_another_totp(
     settings: Settings,
     engine: Engine,
 ) -> None:
@@ -515,7 +493,6 @@ def test_enabled_auth_requires_complete_configuration(settings: Settings) -> Non
     partial = replace(
         settings,
         operator_auth_enabled=True,
-        operator_username="operator",
     )
 
     with pytest.raises(SettingsError, match="enabled but incomplete"):

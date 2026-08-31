@@ -19,8 +19,6 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 def _enabled_settings(settings: Settings, **overrides: object) -> Settings:
     values: dict[str, object] = {
         "operator_auth_enabled": True,
-        "operator_username": "operator",
-        "operator_password": "correct horse battery staple",
         "operator_totp_secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
         "auth_cookie_key": base64.b64encode(b"a" * 32).decode("ascii"),
         "api_token": "machine-token-" + "x" * 32,
@@ -180,6 +178,24 @@ def test_trusted_proxy_falls_back_to_direct_peer_for_ambiguous_forwarded_headers
     request = _request_from_peer("10.20.0.5", headers)
 
     assert login_source_key(request, configured) == "10.20.0.5"
+
+
+def test_compose_preserves_names_only_legacy_auth_detection() -> None:
+    compose = (REPO_ROOT / "compose.yml").read_text(encoding="utf-8")
+    api_environment = compose.split("\n  api:", maxsplit=1)[1].split(
+        "\n    extra_hosts:", maxsplit=1
+    )[0]
+
+    assert "\n      QUAZONAI_AUTH_USERNAME:" not in api_environment
+    assert "\n      QUAZONAI_AUTH_PASSWORD:" not in api_environment
+    assert (
+        'QUAZONAI_AUTH_LEGACY_USERNAME_PRESENT: "${QUAZONAI_AUTH_USERNAME:+true}"'
+        in api_environment
+    )
+    assert (
+        'QUAZONAI_AUTH_LEGACY_PASSWORD_PRESENT: "${QUAZONAI_AUTH_PASSWORD:+true}"'
+        in api_environment
+    )
 
 
 def test_compose_disables_uvicorn_proxy_header_rewriting() -> None:

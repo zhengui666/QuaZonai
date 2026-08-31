@@ -21,8 +21,6 @@ from settings import (
 def _enabled_auth(settings: Settings, **overrides: object) -> Settings:
     values: dict[str, object] = {
         "operator_auth_enabled": True,
-        "operator_username": "operator",
-        "operator_password": "correct horse battery staple",
         "operator_totp_secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
         "auth_cookie_key": base64.b64encode(b"a" * 32).decode("ascii"),
         "api_token": "machine-token-" + "x" * 32,
@@ -183,20 +181,6 @@ def test_unknown_environment_cannot_bypass_production_security_policy(settings: 
     )
 
     with pytest.raises(SettingsError, match="QUAZONAI_ENV must be one of"):
-        configured.validate_operator_auth()
-
-
-def test_enabled_auth_rejects_password_longer_than_login_schema(settings: Settings) -> None:
-    configured = _enabled_auth(settings, operator_password="x" * 4097)
-
-    with pytest.raises(SettingsError, match="between 12 and 4096"):
-        configured.validate_operator_auth()
-
-
-def test_enabled_auth_rejects_unencodable_configured_credentials(settings: Settings) -> None:
-    configured = _enabled_auth(settings, operator_username="operator\ud800")
-
-    with pytest.raises(SettingsError, match="valid Unicode text"):
         configured.validate_operator_auth()
 
 

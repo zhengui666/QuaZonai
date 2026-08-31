@@ -76,7 +76,7 @@ describe('AuthGate', () => {
   it('renders the workbench immediately when a browser session is valid', async () => {
     vi.stubGlobal('fetch', vi.fn(() => jsonResponse({
       authenticated: true,
-      username: 'operator',
+      username: 'local-operator',
       trusted_browser: false,
       auth_enabled: true,
     })));
@@ -91,7 +91,7 @@ describe('AuthGate', () => {
     const fetchMock = vi.fn()
       .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
-        username: 'operator',
+        username: 'local-operator',
         trusted_browser: false,
         auth_enabled: true,
       }))
@@ -203,7 +203,7 @@ describe('AuthGate', () => {
     await act(async () => {
       bootstrap.resolve(await jsonResponse({
         authenticated: true,
-        username: 'operator',
+        username: 'local-operator',
         trusted_browser: false,
         auth_enabled: true,
       }));
@@ -211,15 +211,15 @@ describe('AuthGate', () => {
     });
   });
 
-  it('shows password, authenticator code, and trusted-browser option when anonymous', async () => {
+  it('shows only authenticator code and trusted-browser option when anonymous', async () => {
     vi.stubGlobal('fetch', vi.fn(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401)));
 
     renderAuthGate(<div>Workbench ready</div>);
 
     expect(await screen.findByRole('heading', { name: 'Verify your identity' })).toBeInTheDocument();
-    expect(screen.getByLabelText('Username')).toBeInTheDocument();
-    expect(screen.getByLabelText('Password')).toBeInTheDocument();
-    expect(screen.getByLabelText('Authenticator code')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Username')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Password')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Authenticator code')).toHaveFocus();
     expect(screen.getByText('Trust this browser')).toBeInTheDocument();
   });
 
@@ -230,8 +230,6 @@ describe('AuthGate', () => {
 
     expect(await screen.findByRole('heading', { name: 'تحقق من هويتك' })).toBeInTheDocument();
     await waitFor(() => expect(document.documentElement).toHaveAttribute('dir', 'rtl'));
-    expect(screen.getByLabelText('اسم المستخدم')).toHaveAttribute('dir', 'auto');
-    expect(screen.getByLabelText('كلمة المرور')).toHaveAttribute('dir', 'ltr');
     expect(screen.getByLabelText('رمز المصادقة')).toHaveAttribute('dir', 'ltr');
   });
 
@@ -268,10 +266,7 @@ describe('AuthGate', () => {
     const user = userEvent.setup();
 
     renderAuthGate(<div>Workbench ready</div>);
-
-    await user.type(await screen.findByLabelText('Username'), 'operator');
-    await user.type(screen.getByLabelText('Password'), 'wrong password');
-    await user.type(screen.getByLabelText('Authenticator code'), '123456');
+    await user.type(await screen.findByLabelText('Authenticator code'), '123456');
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Authentication failed.');
@@ -288,7 +283,7 @@ describe('AuthGate', () => {
       .mockImplementationOnce(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401))
       .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
-        username: 'operator',
+        username: 'local-operator',
         trusted_browser: false,
         auth_enabled: true,
       }));
@@ -296,10 +291,7 @@ describe('AuthGate', () => {
     const user = userEvent.setup();
 
     renderAuthGate(<div>Workbench ready</div>, 'ar');
-
-    await user.type(await screen.findByLabelText('اسم المستخدم'), 'operator');
-    await user.type(screen.getByLabelText('كلمة المرور'), 'correct horse battery staple');
-    const totp = screen.getByLabelText('رمز المصادقة');
+    const totp = await screen.findByLabelText('رمز المصادقة');
     await user.type(totp, '١٢٣٤٥٦');
     expect(totp).toHaveValue('123456');
     await user.clear(totp);
@@ -318,7 +310,7 @@ describe('AuthGate', () => {
       .mockImplementationOnce(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401))
       .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
-        username: 'operator',
+        username: 'local-operator',
         trusted_browser: true,
         auth_enabled: true,
       }));
@@ -326,29 +318,71 @@ describe('AuthGate', () => {
     const user = userEvent.setup();
 
     renderAuthGate(<div>Workbench ready</div>);
-
-    await user.type(await screen.findByLabelText('Username'), 'operator');
-    await user.type(screen.getByLabelText('Password'), 'correct horse battery staple');
-    await user.type(screen.getByLabelText('Authenticator code'), '123456');
+    await user.type(await screen.findByLabelText('Authenticator code'), '123456');
     await user.click(screen.getByText('Trust this browser'));
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     const loginOptions = fetchMock.mock.calls[1]?.[1] as RequestInit;
     expect(JSON.parse(String(loginOptions.body))).toEqual({
-      username: 'operator',
-      password: 'correct horse battery staple',
       totp_code: '123456',
       trust_browser: true,
     });
     expect(await screen.findByText('Workbench ready')).toBeInTheDocument();
   });
 
+  it('requires a complete six-digit authenticator code before submitting', async () => {
+    const fetchMock = vi.fn(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401));
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+
+    renderAuthGate(<div>Workbench ready</div>);
+
+    const totp = await screen.findByLabelText('Authenticator code');
+    const signIn = screen.getByRole('button', { name: 'Sign in' });
+    expect(signIn).toBeDisabled();
+    await user.type(totp, '12345');
+    expect(signIn).toBeDisabled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await user.type(totp, '6');
+    expect(signIn).toBeEnabled();
+  });
+
+  it('disables the login controls while one submission is pending', async () => {
+    const login = deferredResponse();
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401))
+      .mockImplementationOnce(() => login.promise);
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+
+    renderAuthGate(<div>Workbench ready</div>);
+
+    const totp = await screen.findByLabelText('Authenticator code');
+    await user.type(totp, '123456');
+    const signIn = screen.getByRole('button', { name: 'Sign in' });
+    await user.click(signIn);
+
+    expect(signIn).toBeDisabled();
+    expect(totp).toBeDisabled();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      login.resolve(await jsonResponse({
+        authenticated: true,
+        username: 'local-operator',
+        trusted_browser: false,
+        auth_enabled: true,
+      }));
+      await Promise.resolve();
+    });
+  });
+
   it('enters the login gate only after logout succeeds', async () => {
     const fetchMock = vi.fn()
       .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
-        username: 'operator',
+        username: 'local-operator',
         trusted_browser: true,
         auth_enabled: true,
       }))
@@ -368,7 +402,7 @@ describe('AuthGate', () => {
     const fetchMock = vi.fn()
       .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
-        username: 'operator',
+        username: 'local-operator',
         trusted_browser: true,
         auth_enabled: true,
       }))
@@ -392,7 +426,7 @@ describe('AuthGate', () => {
     const fetchMock = vi.fn()
       .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
-        username: 'operator',
+        username: 'local-operator',
         trusted_browser: false,
         auth_enabled: true,
       }))
@@ -448,7 +482,7 @@ describe('AuthGate', () => {
     const fetchMock = vi.fn()
       .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
-        username: 'operator',
+        username: 'local-operator',
         trusted_browser: false,
         auth_enabled: true,
       }))
@@ -483,14 +517,14 @@ describe('AuthGate', () => {
     const fetchMock = vi.fn()
       .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
-        username: 'operator',
+        username: 'local-operator',
         trusted_browser: false,
         auth_enabled: true,
       }))
       .mockImplementationOnce(() => staleRevalidation.promise)
       .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
-        username: 'operator',
+        username: 'local-operator',
         trusted_browser: false,
         auth_enabled: true,
       }));
@@ -532,7 +566,7 @@ describe('AuthGate', () => {
     const fetchMock = vi.fn()
       .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
-        username: 'operator',
+        username: 'local-operator',
         trusted_browser: false,
         auth_enabled: true,
       }))
@@ -540,7 +574,7 @@ describe('AuthGate', () => {
       .mockImplementationOnce(() => emptyResponse())
       .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
-        username: 'operator',
+        username: 'local-operator',
         trusted_browser: false,
         auth_enabled: true,
       }));
@@ -558,9 +592,7 @@ describe('AuthGate', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
 
     await user.click(screen.getByRole('button', { name: 'Sign out probe' }));
-    await user.type(await screen.findByLabelText('Username'), 'operator');
-    await user.type(screen.getByLabelText('Password'), 'correct horse battery staple');
-    await user.type(screen.getByLabelText('Authenticator code'), '123456');
+    await user.type(await screen.findByLabelText('Authenticator code'), '123456');
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
     expect(await screen.findByText('Workbench ready')).toBeInTheDocument();
 

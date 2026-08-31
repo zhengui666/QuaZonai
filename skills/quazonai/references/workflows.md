@@ -30,7 +30,7 @@ Authentication interpretation:
 
 - no `QUAZONAI_API_TOKEN` plus `AUTH_REQUIRED`: the CLI process lacks the required environment prerequisite;
 - token present plus `AUTH_REQUIRED`: the CLI environment and API likely have different token revisions, or the API received no token;
-- never fall back to the Operator password, TOTP setup secret, browser cookies, or a downstream Handoff service token;
+- never fall back to the Operator TOTP setup secret, browser cookies, or a downstream Handoff service token;
 - when authentication is disabled, direct loopback access works without a token.
 
 If the CLI executable is missing and the current directory is a QuaZonai checkout containing `backend/pyproject.toml`:

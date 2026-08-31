@@ -32,14 +32,15 @@ TRUSTED_BROWSER_COOKIE_NAME = "quazonai_trusted_browser"
 LOGOUT_BARRIER_COOKIE_NAME = "quazonai_logout_barrier"
 BROWSER_EPOCH_COOKIE_NAME = "quazonai_browser_epoch"
 STREAM_ADMISSION_GENERATION_STATE_ATTRIBUTE = "operator_auth_stream_generation"
-COOKIE_VERSION = 2
+OPERATOR_SUBJECT = "local-operator"
+COOKIE_VERSION = 3
 COOKIE_NONCE_BYTES = 12
 COOKIE_BROWSER_EPOCH_BYTES = 32
 COOKIE_ISSUANCE_EPOCH_BYTES = 32
 LOGOUT_BARRIER_MAX_AGE_SECONDS = MAX_AUTH_TRUSTED_BROWSER_TTL_DAYS * 24 * 60 * 60
 LOGIN_MIN_INTERVAL_SECONDS = 1.0
 LOGIN_BASE_BACKOFF_SECONDS = 1.0
-LOGIN_MAX_BACKOFF_SECONDS = 5.0
+LOGIN_MAX_BACKOFF_SECONDS = 30.0
 LOGIN_STATE_RETENTION_SECONDS = 15 * 60.0
 LOGIN_MAX_TRACKED_SOURCES = 2048
 MAX_FORWARDED_FOR_HEADER_CHARACTERS = 2048
@@ -76,7 +77,7 @@ class OperatorIdentity:
 class _CookieClaims:
     """Authenticated contents shared by all operator-auth cookies."""
 
-    username: str
+    subject: str
     cookie_generation: int | None
     cookie_issuance_epoch: str | None
     browser_epoch: str | None
@@ -103,7 +104,7 @@ class OperatorLoginLimiter:
     The limiter is deliberately process-local and short-lived: it reduces online
     guessing without creating a durable account lockout that can strand the one
     local operator. Blocked requests receive the same generic login failure as an
-    incorrect factor and never execute password/TOTP verification.
+    incorrect factor and never execute TOTP verification.
     """
 
     def __init__(
@@ -291,7 +292,7 @@ class OperatorAuthRuntime:
     ) -> bool:
         """Finish a full login only when no logout intervened.
 
-        A password + TOTP check can take place concurrently with logout. Keep the
+        A TOTP check can take place concurrently with logout. Keep the
         cookie-generation comparison and every login-related ``Set-Cookie``
         mutation in the same critical section as logout, so an earlier login
         cannot delete a newer logout barrier or restore a session after logout
@@ -300,7 +301,7 @@ class OperatorAuthRuntime:
         with self._stream_lock:
             if not self._cookie_issuance_is_current(cookie_issuance):
                 return False
-            # Only a successful password + TOTP login clears the browser-local
+            # Only a successful TOTP login clears the browser-local
             # logout barrier; automatic trusted-browser renewal intentionally
             # cannot do this. It deliberately leaves the separate browser epoch
             # untouched, so a stale response cannot overwrite a newer logout.
@@ -450,12 +451,11 @@ def _issue_cookie(
     cookie_issuance: CookieIssuance | None = None,
     browser_epoch: str | None = None,
 ) -> str:
-    assert settings.operator_username is not None
     issued_at = int(time.time())
     payload: dict[str, object] = {
         "v": COOKIE_VERSION,
         "kind": kind,
-        "sub": settings.operator_username,
+        "sub": OPERATOR_SUBJECT,
         "iat": issued_at,
         "exp": issued_at + ttl_seconds,
     }
@@ -523,15 +523,13 @@ def _read_cookie(
             raise _InvalidCookie
         if payload.get("v") != COOKIE_VERSION or payload.get("kind") != kind:
             raise _InvalidCookie
-        username = payload.get("sub")
+        subject = payload.get("sub")
         expires_at = payload.get("exp")
-        if not isinstance(username, str) or not isinstance(expires_at, int):
+        if not isinstance(subject, str) or not isinstance(expires_at, int):
             raise _InvalidCookie
         if expires_at <= int(time.time()):
             return None
-        if settings.operator_username is None or not _constant_time_text_equal(
-            username, settings.operator_username
-        ):
+        if not _constant_time_text_equal(subject, OPERATOR_SUBJECT):
             return None
         cookie_generation = payload.get("cookie_generation")
         if cookie_generation is not None and (
@@ -558,7 +556,7 @@ def _read_cookie(
         if browser_epoch is not None and not _valid_browser_epoch(browser_epoch):
             raise _InvalidCookie
         return _CookieClaims(
-            username=username,
+            subject=subject,
             cookie_generation=cookie_generation,
             cookie_issuance_epoch=cookie_issuance_epoch,
             browser_epoch=browser_epoch,
@@ -609,7 +607,7 @@ def browser_cookie_epoch(request: Request, settings: Settings) -> str | None:
     """Return the current sealed caller-local logout epoch, if one exists.
 
     The epoch is deliberately separate from the logout barrier. A successful
-    password + TOTP login clears the short-term barrier but leaves this value in
+    TOTP login clears the short-term barrier but leaves this value in
     place, so a response emitted before a later logout cannot reintroduce a
     credential that validates in this browser profile.
     """
@@ -703,25 +701,19 @@ def _matching_totp_step(settings: Settings, code: str) -> tuple[int, int] | None
     return None
 
 
-def authenticate_login(
+def authenticate_totp_login(
     settings: Settings,
     runtime: OperatorAuthRuntime,
     *,
-    username: str,
-    password: str,
     totp_code: str,
 ) -> bool:
-    """Check all factors and atomically consume the accepted RFC 6238 time step."""
+    """Validate TOTP and atomically consume the accepted RFC 6238 time step."""
     if not settings.auth_enabled:
         return False
-    assert settings.operator_username is not None
-    assert settings.operator_password is not None
     assert settings.operator_totp_secret is not None
 
-    username_valid = _constant_time_text_equal(username, settings.operator_username)
-    password_valid = _constant_time_text_equal(password, settings.operator_password)
     matched_step = _matching_totp_step(settings, totp_code)
-    if not username_valid or not password_valid or matched_step is None:
+    if matched_step is None:
         return False
     step, current_step = matched_step
     return runtime.consume_totp_step(step, current_step=current_step)
@@ -745,8 +737,7 @@ def authenticate_machine(settings: Settings, authorization: str | None) -> Opera
         return None
     if not _constant_time_text_equal(token, settings.api_token):
         return None
-    assert settings.operator_username is not None
-    return OperatorIdentity(username=settings.operator_username, source="machine")
+    return OperatorIdentity(username=OPERATOR_SUBJECT, source="machine")
 
 
 def authenticate_browser(request: Request, settings: Settings) -> OperatorIdentity | None:
@@ -768,7 +759,7 @@ def authenticate_browser(request: Request, settings: Settings) -> OperatorIdenti
         browser_epoch=browser_epoch,
     )
     if session is not None:
-        return OperatorIdentity(username=session.username, source="session")
+        return OperatorIdentity(username=session.subject, source="session")
     trusted_browser = _read_current_browser_credential(
         request,
         settings,
@@ -779,7 +770,7 @@ def authenticate_browser(request: Request, settings: Settings) -> OperatorIdenti
     )
     if trusted_browser is not None:
         return OperatorIdentity(
-            username=trusted_browser.username,
+            username=trusted_browser.subject,
             source="trusted_browser",
             renew_session=True,
         )
