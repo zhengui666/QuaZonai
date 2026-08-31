@@ -16,4 +16,4 @@
 - [ ] Privacy Manifest, AppIcon, Launch Screen, privacy policy, metadata, and screenshot plan are present.
 - [ ] iPhone tests, iPad tests, client parity, unsigned archive, backend, frontend, compose, and remote Nautilus checks are green on the same PR HEAD.
 - [ ] GitHub `@codex review` explicitly reports no issues on that HEAD.
-- [ ] The verified PR is merged and Main Post-Merge Verification passes on the merge SHA.
+- [ ] The verified PR is merged into `main`.
