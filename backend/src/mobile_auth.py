@@ -46,9 +46,9 @@ class MobileCredentialClaims:
 @dataclass(frozen=True, slots=True)
 class MobileOperatorIdentity:
     username: str
+    device_id: uuid.UUID
+    credential_generation: int
     source: Literal["mobile"] = "mobile"
-    device_id: uuid.UUID | None = None
-    credential_generation: int = 0
     renew_session: bool = False
 
 
