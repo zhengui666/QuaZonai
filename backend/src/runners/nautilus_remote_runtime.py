@@ -16,12 +16,15 @@ import multiprocessing
 import os
 import re
 import secrets
+import selectors
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import zipfile
 import weakref
 from collections.abc import Iterator, Mapping
@@ -54,13 +57,24 @@ _RUNS: dict[str, dict[str, Any]] = {}
 _RUNS_LOCK = threading.Lock()
 _CATALOG_LOCKS: weakref.WeakValueDictionary[str, threading.Lock] = weakref.WeakValueDictionary()
 _CATALOG_LOCKS_GUARD = threading.Lock()
+_PLUGIN_STAGING_LOCK = threading.Lock()
 _EXECUTION_LOCK = threading.Lock()
 _CATALOG_PREFIX = "catalog://"
 _PLUGIN_ROOT = Path(
     os.environ.get("QUAZONAI_NAUTILUS_PLUGIN_ROOT", "/var/lib/quazonai/plugins")
 ).resolve()
+_PLUGIN_STAGING_ROOT = Path(
+    os.environ.get(
+        "QUAZONAI_NAUTILUS_PLUGIN_STAGING_ROOT",
+        "/var/lib/nautilus/plugin-staging",
+    )
+).resolve()
 _PLUGIN_PRLIMIT_PATH = "/usr/bin/prlimit"
 _PLUGIN_CHILD_MEMORY_LIMIT_BYTES = 8 * 1024 * 1024 * 1024
+_PLUGIN_STAGED_OUTPUT_LIMIT_BYTES = 4 * 1024 * 1024 * 1024
+_PLUGIN_STAGED_FILE_LIMIT = 10_000
+_PLUGIN_CHILD_OUTPUT_LIMIT_BYTES = 8 * 1024 * 1024
+_PLUGIN_CHILD_TOTAL_OUTPUT_LIMIT_BYTES = 32 * 1024 * 1024
 _FORBIDDEN_BUNDLE_KEYS = {
     "api_key",
     "apikey",
@@ -160,6 +174,11 @@ def _catalog_root() -> Path:
     )
     root.mkdir(parents=True, exist_ok=True)
     return root
+
+
+def _plugin_staging_root() -> Path:
+    _PLUGIN_STAGING_ROOT.mkdir(parents=True, exist_ok=True)
+    return _PLUGIN_STAGING_ROOT
 
 
 def _catalog_path(catalog_uri: str) -> Path:
@@ -263,6 +282,7 @@ def _plugin_child_command(bundle_path: str, workspace: Path) -> list[str]:
     return [
         _PLUGIN_PRLIMIT_PATH,
         f"--as={_PLUGIN_CHILD_MEMORY_LIMIT_BYTES}:{_PLUGIN_CHILD_MEMORY_LIMIT_BYTES}",
+        f"--fsize={_PLUGIN_STAGED_OUTPUT_LIMIT_BYTES}:{_PLUGIN_STAGED_OUTPUT_LIMIT_BYTES}",
         "--",
         bubblewrap,
         "--die-with-parent",
@@ -321,14 +341,143 @@ def _plugin_import_timeout(source_shards: list[dict[str, Any]] | None) -> int:
     )
 
 
-def _reject_staged_symlinks(root: Path) -> None:
-    for directory, directories, files in os.walk(root, followlinks=False):
-        for name in [*directories, *files]:
-            if (Path(directory) / name).is_symlink():
-                raise HTTPException(
-                    status_code=502,
-                    detail="plugin catalog output must not contain symbolic links",
-                )
+class _PluginChildLimit(RuntimeError):
+    pass
+
+
+def _staged_file_usage(root: Path) -> tuple[int, list[Path]]:
+    total_bytes = 0
+    files: list[Path] = []
+    try:
+        for directory, directories, filenames in os.walk(root, followlinks=False):
+            for name in [*directories, *filenames]:
+                path = Path(directory) / name
+                if path.is_symlink():
+                    raise _PluginChildLimit(
+                        "plugin catalog output must not contain symbolic links"
+                    )
+            for name in filenames:
+                path = Path(directory) / name
+                file_stat = path.stat(follow_symlinks=False)
+                if not stat.S_ISREG(file_stat.st_mode):
+                    raise _PluginChildLimit(
+                        "plugin catalog output must contain regular files only"
+                    )
+                files.append(path)
+                total_bytes += file_stat.st_size
+    except OSError as exc:
+        raise _PluginChildLimit("plugin catalog output could not be inspected") from exc
+    return total_bytes, files
+
+
+def _validate_staged_output(root: Path, descriptor: CatalogDescriptor) -> None:
+    try:
+        total_bytes, files = _staged_file_usage(root)
+    except _PluginChildLimit as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if total_bytes > _PLUGIN_STAGED_OUTPUT_LIMIT_BYTES:
+        raise HTTPException(status_code=502, detail="plugin catalog output exceeds its size limit")
+    if len(files) > _PLUGIN_STAGED_FILE_LIMIT:
+        raise HTTPException(status_code=502, detail="plugin catalog output contains too many files")
+    data_directories = {"Bar": "bar", "QuoteTick": "quote_tick", "TradeTick": "trade_tick"}
+    expected_data_directory = data_directories.get(descriptor.nautilus_data_type)
+    if expected_data_directory is None:
+        raise HTTPException(status_code=502, detail="plugin returned an unsupported catalog data type")
+    for path in files:
+        relative = path.relative_to(root)
+        if (
+            len(relative.parts) < 3
+            or relative.parts[0] != "data"
+            or relative.parts[1] != expected_data_directory
+            or path.suffix != ".parquet"
+        ):
+            raise HTTPException(
+                status_code=502,
+                detail="plugin catalog output contains an unexpected file",
+            )
+
+
+def _run_plugin_child(
+    command: list[str],
+    request: dict[str, Any],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    timeout_seconds: int,
+    staged_root: Path | None = None,
+) -> tuple[int, str, str]:
+    """Run a plugin child with bounded protocol output and optional staging quota."""
+
+    process = subprocess.Popen(
+        command,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=cwd,
+        env=env,
+    )
+    selector = selectors.DefaultSelector()
+    buffers = {"stdout": bytearray(), "stderr": bytearray()}
+    total_output = 0
+    deadline = time.monotonic() + timeout_seconds
+    try:
+        if process.stdin is not None:
+            try:
+                process.stdin.write(json.dumps(request).encode("utf-8"))
+                process.stdin.close()
+            except BrokenPipeError:
+                process.stdin.close()
+        if process.stdout is None or process.stderr is None:
+            raise _PluginChildLimit("plugin child protocol pipes are unavailable")
+        selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+        selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+        while selector.get_map():
+            if staged_root is not None:
+                staged_bytes, staged_files = _staged_file_usage(staged_root)
+                if staged_bytes > _PLUGIN_STAGED_OUTPUT_LIMIT_BYTES:
+                    raise _PluginChildLimit("plugin catalog output exceeds its size limit")
+                if len(staged_files) > _PLUGIN_STAGED_FILE_LIMIT:
+                    raise _PluginChildLimit("plugin catalog output contains too many files")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(command, timeout_seconds)
+            for key, _ in selector.select(min(0.25, remaining)):
+                chunk = os.read(key.fd, 64 * 1024)
+                if not chunk:
+                    file_object = key.fileobj
+                    selector.unregister(file_object)
+                    close = getattr(file_object, "close", None)
+                    if callable(close):
+                        close()
+                    continue
+                buffer = buffers[key.data]
+                if len(buffer) + len(chunk) > _PLUGIN_CHILD_OUTPUT_LIMIT_BYTES:
+                    raise _PluginChildLimit("plugin child output exceeds its size limit")
+                total_output += len(chunk)
+                if total_output > _PLUGIN_CHILD_TOTAL_OUTPUT_LIMIT_BYTES:
+                    raise _PluginChildLimit("plugin child output exceeds its total size limit")
+                buffer.extend(chunk)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(command, timeout_seconds)
+        returncode = process.wait(timeout=remaining)
+        return (
+            returncode,
+            bytes(buffers["stdout"]).decode("utf-8", errors="replace"),
+            bytes(buffers["stderr"]).decode("utf-8", errors="replace"),
+        )
+    finally:
+        selector.close()
+        if process.poll() is None:
+            process.kill()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+        for stream in (process.stdin, process.stdout, process.stderr):
+            if stream is not None:
+                stream.close()
 
 
 def _validate_staged_catalog(
@@ -420,11 +569,11 @@ def _write_plugin_catalog(spec: CatalogIngestSpec, staging_path: Path) -> Catalo
             else []
         )
     ]
-    # Keep potentially multi-gigabyte archive staging off the runtime's small
-    # /tmp tmpfs. The sandbox still sees only this directory and the bundle.
-    with tempfile.TemporaryDirectory(
+    # Keep potentially multi-gigabyte archive staging in a per-import quota-backed
+    # volume. The sandbox still sees only this directory and the bundle.
+    with _PLUGIN_STAGING_LOCK, tempfile.TemporaryDirectory(
         prefix="quazonai-plugin-catalog-",
-        dir=_catalog_root(),
+        dir=_plugin_staging_root(),
     ) as workspace:
         request = {
             "plugin_id": spec.plugin_id,
@@ -461,23 +610,23 @@ def _write_plugin_catalog(spec: CatalogIngestSpec, staging_path: Path) -> Catalo
             }
         )
         try:
-            result = subprocess.run(
+            returncode, stdout, stderr = _run_plugin_child(
                 _plugin_child_command(spec.plugin_bundle_path, Path(workspace)),
-                input=json.dumps(request),
-                capture_output=True,
-                text=True,
-                cwd=workspace,
+                request,
+                cwd=Path(workspace),
                 env=child_environment,
-                timeout=_plugin_import_timeout(spec.source_shards),
-                check=False,
+                timeout_seconds=_plugin_import_timeout(spec.source_shards),
+                staged_root=Path(workspace),
             )
         except subprocess.TimeoutExpired as exc:
             raise HTTPException(status_code=504, detail="plugin catalog import timed out") from exc
-        if result.returncode != 0:
-            detail = (result.stderr or result.stdout or "plugin catalog import failed")[-2000:]
+        except _PluginChildLimit as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if returncode != 0:
+            detail = (stderr or stdout or "plugin catalog import failed")[-2000:]
             raise HTTPException(status_code=422, detail=detail)
         try:
-            response = json.loads(result.stdout)
+            response = json.loads(stdout)
             summary = response["summary"]
             descriptor = CatalogDescriptor.model_validate(summary["descriptor"])
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
@@ -491,7 +640,7 @@ def _write_plugin_catalog(spec: CatalogIngestSpec, staging_path: Path) -> Catalo
             or descriptor.sealed != spec.sealed
         ):
             raise HTTPException(status_code=502, detail="plugin catalog descriptor does not match request")
-        _reject_staged_symlinks(Path(workspace))
+        _validate_staged_output(Path(workspace), descriptor)
         _validate_staged_catalog(
             Path(workspace),
             descriptor,
@@ -541,23 +690,22 @@ def _inspect_plugin_manifest(spec: ArchiveManifestSpec) -> ArchiveManifestDescri
             }
         )
         try:
-            result = subprocess.run(
+            returncode, stdout, stderr = _run_plugin_child(
                 _plugin_child_command(spec.plugin_bundle_path, Path(workspace)),
-                input=json.dumps(request),
-                capture_output=True,
-                text=True,
-                cwd=workspace,
+                request,
+                cwd=Path(workspace),
                 env=child_environment,
-                timeout=_MANIFEST_SCAN_TIMEOUT_SECONDS,
-                check=False,
+                timeout_seconds=_MANIFEST_SCAN_TIMEOUT_SECONDS,
             )
         except subprocess.TimeoutExpired as exc:
             raise HTTPException(status_code=504, detail="plugin archive manifest scan timed out") from exc
-        if result.returncode != 0:
-            detail = (result.stderr or result.stdout or "plugin archive manifest scan failed")[-2000:]
+        except _PluginChildLimit as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if returncode != 0:
+            detail = (stderr or stdout or "plugin archive manifest scan failed")[-2000:]
             raise HTTPException(status_code=422, detail=detail)
         try:
-            response = json.loads(result.stdout)
+            response = json.loads(stdout)
             descriptor = ArchiveManifestDescriptor.model_validate(response["summary"])
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise HTTPException(status_code=502, detail="plugin returned an invalid archive manifest") from exc
