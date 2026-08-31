@@ -1,0 +1,19 @@
+name: QuaZonaiReleaseContract
+options:
+  deploymentTarget:
+    iOS: "18.0"
+settings:
+  base:
+    SWIFT_VERSION: 6.0
+    TARGETED_DEVICE_FAMILY: "1,2"
+targets:
+  QuaZonaiReleaseContract:
+    type: framework
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - ReleaseContractEvidence.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.quazonai.operator.releasecontract
+        SKIP_INSTALL: true
