@@ -1,6 +1,7 @@
 name: iOS Client
 
 on:
+  workflow_call:
   pull_request:
     paths:
       - 'backend/**'
@@ -82,7 +83,7 @@ jobs:
                   operation_ids.append(operation_id)
           assert len(operation_ids) == len(set(operation_ids)), 'duplicate operationId'
           schemes = schema['components']['securitySchemes']
-          assert {'BrowserSession', 'MobileBearer', 'MachineBearer'} <= set(schemes)
+          assert {'BrowserSession', 'MobileAccessBearer', 'MobileRefreshBearer', 'MachineBearer'} <= set(schemes)
           PY
       - name: Cross-client capability gate
         run: python tools/client_parity.py
