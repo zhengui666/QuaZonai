@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -9,7 +10,11 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from plugins.contract import Capability, DescriptorSnapshot
-from quant_runtime.contracts import CatalogDescriptor
+from quant_runtime.contracts import (
+    ArchiveManifestDescriptor,
+    ArchiveShardDescriptor,
+    CatalogDescriptor,
+)
 from runners import nautilus_remote_runtime as runtime
 
 
@@ -78,3 +83,49 @@ def test_plugin_child_caps_each_protocol_stream(tmp_path: Path) -> None:
             env=os.environ.copy(),
             timeout_seconds=5,
         )
+
+
+def _manifest_shard(size_bytes: int | None) -> ArchiveShardDescriptor:
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    return ArchiveShardDescriptor(
+        shard_key="2026-01-01T00:00:00Z",
+        source_url="https://example.test/archive.parquet",
+        coverage_start=start,
+        coverage_end=datetime(2026, 1, 1, 1, tzinfo=UTC),
+        size_bytes=size_bytes,
+        state="AVAILABLE",
+        observed_at=start,
+    )
+
+
+def _manifest_descriptor(
+    shard: ArchiveShardDescriptor,
+    total_bytes: int,
+) -> ArchiveManifestDescriptor:
+    start = shard.coverage_start
+    return ArchiveManifestDescriptor(
+        manifest_uri="manifest://pmxt-test",
+        provider="pmxt",
+        source_license="pmxt-public",
+        source_spec={"kind": "plugin", "config": {"venue": "polymarket_v2"}},
+        coverage_start=start,
+        coverage_end=shard.coverage_end,
+        scanned_until=start,
+        shard_count=1,
+        total_bytes=total_bytes,
+        missing_shard_count=0,
+        probe_error_count=0,
+        schema_revision="test",
+        point_in_time_result={},
+        shards=[shard],
+    )
+
+
+def test_manifest_descriptor_requires_exact_available_total_bytes() -> None:
+    with pytest.raises(ValidationError, match="total_bytes"):
+        _manifest_descriptor(_manifest_shard(10), total_bytes=9)
+
+
+def test_manifest_descriptor_rejects_unknown_available_size() -> None:
+    with pytest.raises(ValidationError, match="sizes must be known"):
+        _manifest_descriptor(_manifest_shard(None), total_bytes=0)
