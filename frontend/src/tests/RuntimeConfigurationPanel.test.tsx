@@ -98,7 +98,7 @@ describe('RuntimeConfigurationPanel directionality', () => {
 
     fireEvent.click(screen.getByRole('button', { name: translateKey('en', 'runtime.save') }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    const options = fetchMock.mock.calls[0][1] as RequestInit;
+    const options = fetchMock.mock.calls[fetchMock.mock.calls.length - 1][1] as RequestInit;
     expect(JSON.parse(String(options.body))).toMatchObject({
       codex_use_default_model_settings: true,
       codex_model: 'openai/gpt-5.6-sol',
