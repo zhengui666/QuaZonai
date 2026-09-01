@@ -24,8 +24,6 @@ def _enabled(settings: Settings) -> Settings:
     return replace(
         settings,
         operator_auth_enabled=True,
-        operator_username="operator@example.test",
-        operator_password="correct horse battery staple",
         operator_totp_secret=_TOTP_SECRET,
         auth_cookie_key=_COOKIE_KEY,
         api_token=_MACHINE_TOKEN,
@@ -96,7 +94,11 @@ def test_bootstrap_and_openapi_expose_totp_only_native_login(settings: Settings,
         response = client.post("/api/v1/auth/mobile/login", json=rejected)
         assert response.status_code == 401
         assert response.json() == {
-            "error": {"code": "AUTH_INVALID", "message": "Invalid operator credentials.", "details": {}}
+            "error": {
+                "code": "AUTH_INVALID",
+                "message": "Operator authentication failed.",
+                "details": {},
+            }
         }
 
 
@@ -160,8 +162,6 @@ def test_browser_and_native_share_totp_replay_core(settings: Settings, engine: E
             "/api/v1/auth/login",
             headers={"Origin": "http://testserver"},
             json={
-                "username": "operator@example.test",
-                "password": "correct horse battery staple",
                 "totp_code": code,
                 "trust_browser": False,
             },
