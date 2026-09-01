@@ -76,6 +76,15 @@ function compactAxis(axis: unknown): unknown {
   return { ...axis, axisLabel: { ...axisLabel, fontSize: axisLabel.fontSize ?? 9, width: axisLabel.width ?? (data.length > 5 ? 54 : undefined), overflow: axisLabel.overflow ?? 'truncate' } };
 }
 
+function compactGridMargin(value: unknown, fallback: number): unknown {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.min(value, 72);
+  if (typeof value === 'string' && value.trim().endsWith('px')) {
+    const pixels = Number.parseFloat(value);
+    return Number.isFinite(pixels) ? `${Math.min(pixels, 72)}px` : value;
+  }
+  return value ?? fallback;
+}
+
 /** Apply the shared phone presentation without creating a second chart option. */
 export function compactEChartOption(option: EChartsCoreOption, compact: boolean): EChartsCoreOption {
   if (!compact) return option;
@@ -84,7 +93,7 @@ export function compactEChartOption(option: EChartsCoreOption, compact: boolean)
   const legend = isRecord(source.legend) ? source.legend : undefined;
   return {
     ...source,
-    grid: { ...grid, left: grid.left ?? 34, right: grid.right ?? 12, top: grid.top ?? 14, bottom: grid.bottom ?? 30, containLabel: true },
+    grid: { ...grid, left: compactGridMargin(grid.left, 34), right: compactGridMargin(grid.right, 12), top: grid.top ?? 14, bottom: grid.bottom ?? 30, containLabel: true },
     xAxis: 'xAxis' in source ? compactAxis(source.xAxis) : undefined,
     yAxis: 'yAxis' in source ? compactAxis(source.yAxis) : undefined,
     legend: legend ? { ...legend, type: legend.type ?? 'scroll', bottom: legend.bottom ?? 0, left: legend.left ?? 'center' } : source.legend,

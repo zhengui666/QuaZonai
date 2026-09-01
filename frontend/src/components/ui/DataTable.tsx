@@ -165,7 +165,7 @@ export function DataTable<T>({
 }: DataTableProps<T>) {
   const { locale, t, text, plural } = useI18n();
   const { isPhone } = useResponsiveViewport();
-  const responsiveInitialPageSize = isPhone ? 20 : initialPageSize;
+  const [initialPagination] = useState(() => ({ pageSize: isPhone ? 20 : initialPageSize, pageIndex: 0 }));
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
   useEffect(() => {
@@ -217,16 +217,9 @@ export function DataTable<T>({
     getFilteredRowModel: getFilteredRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
-    initialState: { pagination: { pageSize: responsiveInitialPageSize, pageIndex: 0 } },
+    initialState: { pagination: initialPagination },
     getRowId,
   });
-  useEffect(() => {
-    const desiredPageSize = isPhone ? 20 : initialPageSize;
-    if (table.getState().pagination.pageSize !== desiredPageSize) {
-      table.setPageSize(desiredPageSize);
-      table.setPageIndex(0);
-    }
-  }, [initialPageSize, isPhone, table]);
   const filteredRowCount = table.getFilteredRowModel().rows.length;
   const rows = table.getRowModel().rows;
   const virtualEnabled = !isPhone && enableVirtualization && data.length > 100 && rows.length > 30;

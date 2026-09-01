@@ -356,7 +356,7 @@ describe('DataTable', () => {
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
       dispatchEvent: vi.fn(),
-    }));
+    } as unknown as MediaQueryList));
     try {
       renderApp(<DataTable data={[{ name: 'Alpha', state: 'ACTIVE', summary: 'PIT evidence', count: 12 }, { name: 'Beta', state: 'COOLING', summary: 'Forward evidence', count: 7 }]} columns={mobileColumns} />);
       expect(screen.queryByRole('table')).not.toBeInTheDocument();
@@ -372,6 +372,40 @@ describe('DataTable', () => {
     } finally {
       vi.mocked(window.matchMedia).mockRestore();
       window.matchMedia = previousMatchMedia;
+    }
+  });
+
+  it('preserves an explicitly selected page size across viewport changes', async () => {
+    const previousMatchMedia = window.matchMedia;
+    const previousScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    let isPhone = false;
+    const phoneListeners = new Set<() => void>();
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+    vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
+      get matches() { return query === '(max-width: 780px)' && isPhone; },
+      media: query,
+      onchange: null,
+      addListener: (listener: () => void) => { if (query === '(max-width: 780px)') phoneListeners.add(listener); },
+      removeListener: (listener: () => void) => { phoneListeners.delete(listener); },
+      addEventListener: (_event: string, listener: () => void) => { if (query === '(max-width: 780px)') phoneListeners.add(listener); },
+      removeEventListener: (_event: string, listener: () => void) => { phoneListeners.delete(listener); },
+      dispatchEvent: vi.fn(),
+    } as unknown as MediaQueryList));
+    try {
+      const data = Array.from({ length: 120 }, (_, index) => ({ name: `Row ${index}` }));
+      renderApp(<DataTable data={data} columns={[{ accessorKey: 'name', header: 'Name' }]} />);
+      const pageSize = screen.getByRole('combobox', { name: 'Rows per page' });
+      fireEvent.click(pageSize);
+      fireEvent.click(await screen.findByRole('option', { name: '100 / page' }));
+      expect(pageSize).toHaveTextContent('100 / page');
+
+      isPhone = true;
+      phoneListeners.forEach((listener) => listener());
+      await waitFor(() => expect(pageSize).toHaveTextContent('100 / page'));
+    } finally {
+      vi.mocked(window.matchMedia).mockRestore();
+      window.matchMedia = previousMatchMedia;
+      HTMLElement.prototype.scrollIntoView = previousScrollIntoView;
     }
   });
 });
