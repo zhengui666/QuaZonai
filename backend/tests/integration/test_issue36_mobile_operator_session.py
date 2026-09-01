@@ -16,8 +16,6 @@ def _authenticated_settings(settings: Settings) -> Settings:
     return replace(
         settings,
         operator_auth_enabled=True,
-        operator_username="legacy-browser-operator",
-        operator_password="correct horse battery staple",
         operator_totp_secret=base64.b32encode(b"issue-36-native-totp-secret-material").decode(),
         auth_cookie_key=base64.b64encode(b"c" * 32).decode(),
         api_token="issue36-machine-operator-token-000000000000000000000000000000000000",
