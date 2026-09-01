@@ -16,7 +16,7 @@ test('Flow 2: candidate ready -> approve -> handoff available', async ({ page })
   await page.goto('/approval');
   await expect(page.getByText(/materially improves the current frontier/i)).toBeVisible();
   await expect(page.getByText(/Paper Lab · PAPER/i).first()).toBeVisible();
-  await page.getByRole('button', { name: 'Approve' }).click();
+  await page.getByRole('button', { name: 'Approve' }).first().click();
   await expect(page.getByText('Approved', { exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'Handoff Center' }).click();
   await expect(page.getByText('Available', { exact: true })).toBeVisible();
