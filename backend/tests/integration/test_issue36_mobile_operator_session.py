@@ -185,19 +185,19 @@ def test_mobile_logout_revokes_credential_when_authentication_is_disabled(
     )
     logout = direct_access.post(
         "/api/v1/auth/mobile/logout",
-        headers={"Authorization": f"Bearer {tokens["access_token"]}"},
+        headers={"Authorization": f"Bearer {tokens['access_token']}"},
     )
     assert logout.status_code == 204, logout.text
 
     reenabled = TestClient(create_app(settings=runtime_settings, engine=engine), base_url="http://testserver")
     session = reenabled.get(
         "/api/v1/auth/mobile/session",
-        headers={"Authorization": f"Bearer {tokens["access_token"]}"},
+        headers={"Authorization": f"Bearer {tokens['access_token']}"},
     )
     assert session.status_code == 401
     refresh = reenabled.post(
         "/api/v1/auth/mobile/refresh",
-        headers={"Authorization": f"Bearer {tokens["refresh_credential"]}"},
+        headers={"Authorization": f"Bearer {tokens['refresh_credential']}"},
     )
     assert refresh.status_code == 401
 
