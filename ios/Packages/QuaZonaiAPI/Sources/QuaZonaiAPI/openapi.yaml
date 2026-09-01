@@ -2378,15 +2378,10 @@
       "LoginInput": {
         "additionalProperties": false,
         "properties": {
-          "password": {
-            "maxLength": 4096,
-            "minLength": 1,
-            "title": "Password",
-            "type": "string"
-          },
           "totp_code": {
-            "maxLength": 32,
+            "maxLength": 6,
             "minLength": 6,
+            "pattern": "^[0-9]{6}$",
             "title": "Totp Code",
             "type": "string"
           },
@@ -2394,17 +2389,9 @@
             "default": false,
             "title": "Trust Browser",
             "type": "boolean"
-          },
-          "username": {
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Username",
-            "type": "string"
           }
         },
         "required": [
-          "username",
-          "password",
           "totp_code"
         ],
         "title": "LoginInput",
