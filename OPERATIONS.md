@@ -447,6 +447,7 @@ Administration 是 Codex runtime 配置的事实入口，显示并允许修改�
 - 可选 `model`；
 - 可选 reasoning effort：`minimal`、`low`、`medium`、`high`、`xhigh`；省略/`null` 时沿用 Codex/模型默认值；
 - 可选 Fast mode；启用时只对新 Mission 使用 Codex 原生 `service_tier="fast"`，不写全局 `config.toml`，也不自动降为 Standard；
+- “使用 Codex 默认模型设置”开关；开启时保留已保存的 model/reasoning/Fast 值但不向新 Mission 施加这些覆盖，provider endpoint、API key 与安全策略继续生效；
 - 可选自定义 OpenAI-compatible `Base URL`；
 - 可选 Codex API key；API key 只写、永不回显；
 - App Server preflight；
@@ -460,7 +461,7 @@ Codex API key 由 `QUAZONAI_MASTER_KEY` 使用 AES-256-GCM 加密后保存到 Po
 
 `.env` 只负责启动级基础设施与 Operator access：运行环境、PostgreSQL、master key、`QUAZONAI_AUTH_ENABLED`、Operator TOTP、browser cookie key、CLI machine token、public origin、存储根目录和 HTTP port。Codex model/API key/Base URL 不由 `.env` 配置。
 
-Runtime Configuration 使用 revision + 幂等 mutation：页面保存携带当前 revision，若其他请求已先更新则返回冲突并要求刷新，不覆盖较新配置；网络重试复用同一个 `Idempotency-Key`，不会重复修改 revision、重复写事件或重复保存 secret。
+Runtime Configuration 使用 revision + 幂等 mutation：页面保存携带当前 revision，若其他请求已先更新则返回冲突并要求刷新，不覆盖较新配置；网络重试复用同一个 `Idempotency-Key`，不会重复修改 revision、重复写事件或重复保存 secret。第一方 Web 客户端始终显式发送 default-mode 选择；旧客户端省略该字段时，未改变模型控制的普通保存保留当前模式，实际改变 model/reasoning/Fast 时按修改后的控制集自动推导模式。
 
 reasoning effort 与 Fast mode 相互独立；未来 Mission/Profile 显式值优先于 Runtime Configuration 默认值，Runtime Configuration 又优先于 Codex/模型默认值。保存后的新配置只影响之后启动的 Mission Thread，已运行 Mission 不切换条件。
 

@@ -238,21 +238,32 @@ def update_runtime_configuration(
             409,
         )
 
-    item.codex_model = codex_model.strip() if codex_model and codex_model.strip() else None
-    if replace_codex_reasoning_effort:
-        item.codex_reasoning_effort = codex_reasoning_effort
-    if replace_codex_fast_mode:
-        item.codex_fast_mode = codex_fast_mode
+    next_model = codex_model.strip() if codex_model and codex_model.strip() else None
+    next_reasoning_effort = (
+        codex_reasoning_effort
+        if replace_codex_reasoning_effort
+        else item.codex_reasoning_effort
+    )
+    next_fast_mode = codex_fast_mode if replace_codex_fast_mode else item.codex_fast_mode
+    model_controls_changed = (
+        item.codex_model != next_model
+        or item.codex_reasoning_effort != next_reasoning_effort
+        or item.codex_fast_mode != next_fast_mode
+    )
+
+    item.codex_model = next_model
+    item.codex_reasoning_effort = next_reasoning_effort
+    item.codex_fast_mode = next_fast_mode
     if replace_codex_use_default_model_settings:
         item.codex_use_default_model_settings = codex_use_default_model_settings
-    elif created:
-        # A legacy client creating the singleton does not know about the mode.
-        # Infer the least surprising behavior: explicit model controls remain
-        # active, while a completely blank model configuration follows Codex.
+    elif created or model_controls_changed:
+        # A legacy client cannot represent the umbrella mode. Preserve it
+        # for an unchanged read-and-save, but when model controls actually
+        # change, infer the pre-mode contract from the resulting controls.
         item.codex_use_default_model_settings = (
-            item.codex_model is None
-            and item.codex_reasoning_effort is None
-            and not item.codex_fast_mode
+            next_model is None
+            and next_reasoning_effort is None
+            and not next_fast_mode
         )
     item.codex_base_url = next_base_url
     item.max_plugin_wheel_bytes = max_plugin_wheel_bytes

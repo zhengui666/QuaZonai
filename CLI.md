@@ -311,7 +311,7 @@ V1 不依赖 experimental `runtimeWorkspaceRoots`。Workspace hard boundary 由 
 
 `runtimeWorkspaceRoots`、`permissions` profile、Project/Environment 等 experimental 字段只允许作为未来可替换 hardening/optimization；不能成为业务正确性的前提。
 
-系统级 Runtime Configuration 为新 Mission 提供默认 Codex thread controls：`reasoning_effort` 只接受 `minimal`、`low`、`medium`、`high`、`xhigh`，`null` 时不发送 `model_reasoning_effort`；独立 Fast mode 开启时发送 `service_tier="fast"`，关闭时不发送该 override。未来 `AgentProfileVersion` / Mission 显式值优先于该系统默认值，系统默认值又优先于 Codex/模型默认值；修改只影响之后启动的 Mission Thread，provider 不支持时不得静默降级。
+系统级 Runtime Configuration 为新 Mission 提供默认 Codex thread controls：`reasoning_effort` 只接受 `minimal`、`low`、`medium`、`high`、`xhigh`，`null` 时不发送 `model_reasoning_effort`；独立 Fast mode 开启时发送 `service_tier="fast"`，关闭时不发送该 override。`codex_use_default_model_settings=true` 时不发送 model/reasoning/service-tier 三类 QuaZonai override，但仍保留 provider、sandbox、network 与 approval policy。未来 `AgentProfileVersion` / Mission 显式值优先于系统默认值，系统默认值又优先于 Codex/模型默认值；修改只影响之后启动的 Mission Thread，provider 不支持时不得静默降级。
 
 ## 9. Sandbox and OS isolation
 
