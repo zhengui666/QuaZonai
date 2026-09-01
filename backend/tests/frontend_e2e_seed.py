@@ -184,11 +184,15 @@ def main() -> None:
             state="CANDIDATE_READY",
             current_candidate_id=CANDIDATE_ID,
         )
+        session.add(universe)
+        session.flush()
+        session.add(charter)
+        session.flush()
+        session.add(research_program)
+        session.flush()
+        session.add(research_branch)
+        session.flush()
         session.add_all([
-            universe,
-            charter,
-            research_program,
-            research_branch,
             active_mission,
             finished_mission,
             mandate,
