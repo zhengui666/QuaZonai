@@ -10,13 +10,13 @@ from operator_auth import (
     OPERATOR_SUBJECT,
     OperatorAuthRuntime,
     authenticate_browser,
+    authenticate_totp_login,
     browser_cookie_epoch,
     has_valid_trusted_browser,
     login_source_key,
     require_same_origin,
 )
 from settings import Settings
-from totp_core import verify_totp_once
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -72,7 +72,11 @@ def login(payload: LoginInput, request: Request, response: Response) -> SessionV
     source = login_source_key(request, settings)
     if not runtime.login_limiter.allow_attempt(source):
         raise _invalid_authentication()
-    if not verify_totp_once(settings, runtime, payload.totp_code):
+    if not authenticate_totp_login(
+        settings,
+        runtime,
+        totp_code=payload.totp_code,
+    ):
         runtime.login_limiter.record_failure(source)
         raise _invalid_authentication()
     if not runtime.complete_login_if_current(
