@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from crypto import EncryptedSecret, decrypt_bound_secret, encrypt_bound_secret
-from db.auth_models import OperatorAuthConfiguration
+from db.auth_models import OperatorAuthConfiguration, OperatorAuthInitialization
 from db.session import SessionFactory
 from settings import Settings, SettingsError, normalize_totp_secret
 
@@ -53,6 +53,32 @@ def get_binding(session: Session) -> OperatorAuthConfiguration | None:
     )
 
 
+def get_initialization_marker(session: Session) -> OperatorAuthInitialization | None:
+    """Return the durable marker left after the first successful binding."""
+    return session.scalar(
+        select(OperatorAuthInitialization).where(
+            OperatorAuthInitialization.scope == SYSTEM_SCOPE
+        )
+    )
+
+
+def _ensure_initialization_marker(
+    session: Session,
+    *,
+    initialized_at: datetime | None = None,
+) -> None:
+    if get_initialization_marker(session) is not None:
+        return
+    session.add(
+        OperatorAuthInitialization(
+            id=uuid.uuid4(),
+            scope=SYSTEM_SCOPE,
+            initialized_at=initialized_at or datetime.now(UTC),
+        )
+    )
+    session.flush()
+
+
 def _decrypt_binding(
     binding: OperatorAuthConfiguration,
     settings: Settings,
@@ -75,6 +101,10 @@ def load_canonical_secret(session: Session, settings: Settings) -> str | None:
     """Load and authenticate the canonical secret; never fall back to the env value."""
     binding = get_binding(session)
     if binding is None:
+        if get_initialization_marker(session) is not None:
+            raise SettingsError(
+                "The Operator TOTP binding is missing after initialization"
+            )
         return None
     try:
         return _decrypt_binding(binding, settings)
@@ -110,6 +140,7 @@ def create_binding_if_absent(
     # Flush inside the caller's transaction so an IntegrityError is raised before
     # any session/cookie is issued.  The caller decides how to present the race.
     session.flush()
+    _ensure_initialization_marker(session, initialized_at=binding.bound_at)
     return binding
 
 
@@ -142,6 +173,11 @@ def initialize_operator_auth(
     try:
         with factory.begin() as session:
             binding = get_binding(session)
+            marker = get_initialization_marker(session)
+            if binding is None and marker is not None:
+                raise SettingsError(
+                    "The Operator TOTP binding is missing after initialization"
+                )
             if binding is None and legacy is not None:
                 binding = create_binding_if_absent(session, settings, legacy)
                 logger.warning(
@@ -149,6 +185,7 @@ def initialize_operator_auth(
                     "remove QUAZONAI_AUTH_TOTP_SECRET after verifying the upgrade."
                 )
             elif binding is not None and legacy is not None:
+                _ensure_initialization_marker(session, initialized_at=binding.bound_at)
                 if not _same_as_legacy(binding, settings, legacy):
                     raise SettingsError(
                         "The durable Operator TOTP binding conflicts with "
@@ -158,6 +195,8 @@ def initialize_operator_auth(
                     "QUAZONAI_AUTH_TOTP_SECRET is deprecated; the durable Operator TOTP "
                     "binding remains canonical."
                 )
+            elif binding is not None:
+                _ensure_initialization_marker(session, initialized_at=binding.bound_at)
             return _decrypt_binding(binding, settings) if binding is not None else None
     except IntegrityError:
         # Another API process won a simultaneous legacy import.  Reload the row

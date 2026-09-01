@@ -409,7 +409,7 @@ QuaZonai V1 只有一个部署 Operator。它不是业务用户系统、tenant �
 
 TOTP-only 是单因素登录，抗在线猜测能力弱于密码 + TOTP；若把 Web/API 暴露到公网，仍必须使用 HTTPS、窄化可信代理 CIDR，并优先叠加部署侧网络访问控制。
 
-新安装启用认证时不需要预置 TOTP secret；`QUAZONAI_MASTER_KEY`、`QUAZONAI_AUTH_COOKIE_KEY`、`QUAZONAI_API_TOKEN` 与 `QUAZONAI_AUTH_PUBLIC_ORIGIN` 必须先配置。Web setup 只在数据库不存在 binding 且数据库可用时出现；数据库故障、master key 错误或 binding 解密失败必须保持 fail closed，不会重新打开 setup。既有部署可暂时保留 `QUAZONAI_AUTH_TOTP_SECRET` 作为一次性 legacy importer：启动时原子加密导入缺失 binding，已有 binding 则恒定时间比较，验证后删除该变量；正常登录始终以数据库 binding 为准。所有 TOTP secret、setup candidate、cookie key 和 machine API token 都不能放进聊天、截图、事件或日志。`QUAZONAI_AUTH_COOKIE_KEY` 必须独立生成且不能与 `QUAZONAI_MASTER_KEY` 相同；`QUAZONAI_API_TOKEN` 必须使用 RFC 6750 `b64token` 可安全写入 Authorization header 的 ASCII 字符集。
+新安装启用认证时不需要预置 TOTP secret；`QUAZONAI_MASTER_KEY`、`QUAZONAI_AUTH_COOKIE_KEY`、`QUAZONAI_API_TOKEN` 与 `QUAZONAI_AUTH_PUBLIC_ORIGIN` 必须先配置。Web setup 只在数据库不存在 binding、不存在 initialized marker 且数据库可用时出现；marker 存在但 binding 缺失、数据库故障、master key 错误或 binding 解密失败必须保持 fail closed，不会重新打开 setup。既有部署可暂时保留 `QUAZONAI_AUTH_TOTP_SECRET` 作为一次性 legacy importer：启动时原子加密导入缺失 binding，已有 binding 则恒定时间比较，验证后删除该变量；正常登录始终以数据库 binding 为准。所有 TOTP secret、setup candidate、cookie key 和 machine API token 都不能放进聊天、截图、事件或日志。`QUAZONAI_AUTH_COOKIE_KEY` 必须独立生成且不能与 `QUAZONAI_MASTER_KEY` 相同；`QUAZONAI_API_TOKEN` 必须使用 RFC 6750 `b64token` 可安全写入 Authorization header 的 ASCII 字符集。
 
 登录时可以勾选 **Trust this browser**。选中后服务器在当前浏览器 profile 写入长期 HttpOnly trusted-browser credential；短期 session 过期后，只要该 trusted credential 仍有效，就会自动恢复新 session，用户不再重复输入 TOTP。默认 trusted-browser 有效期 30 天，默认短 session 为 12 小时。
 
@@ -424,7 +424,7 @@ TOTP-only 是单因素登录，抗在线猜测能力弱于密码 + TOTP；若把
 
 其他 credential 轮换：
 
-- `QUAZONAI_AUTH_TOTP_SECRET`：所有旧 Authenticator code 失效，需要重新配置 Authenticator；
+- `QUAZONAI_AUTH_TOTP_SECRET`：仅用于一次性 legacy importer，不是已绑定安装的轮换开关；已有 binding 时修改它会导致启动冲突。当前没有浏览器内 TOTP rotation；验证器丢失或泄露时，应先保持服务在可信私网内，保留当前 master key 与数据库备份，并执行经单独授权的数据库恢复/更换流程，不得删除 binding 来期待 setup 重新开放；
 - `QUAZONAI_API_TOKEN`：旧 CLI/automation Bearer token 失效；
 
 `QUAZONAI_ENV` 只能为 `development`、`test` 或 `production`（忽略大小写与首尾空白）。认证启用时，`QUAZONAI_AUTH_PUBLIC_ORIGIN` 与浏览器 `Origin` 都按 browser-origin 规则 canonicalize 后精确比较：scheme/host 小写、Unicode host 使用 IDNA ASCII、IPv6 压缩并保留 brackets、默认端口省略、非默认端口保留。production 必须为 HTTPS，反向代理/Tunnel 应在可信 TLS 层终止 HTTPS，并把该外部 Origin 写入 `.env`。

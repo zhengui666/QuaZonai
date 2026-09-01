@@ -445,7 +445,11 @@ export function AuthGate({ children }: { children: ReactNode }) {
     setState(nextSession.authenticated ? 'authenticated' : 'anonymous');
   }, [invalidateSessionChecks]);
 
-  const checkSession = useCallback(async () => {
+  const checkSession = useCallback(async (
+    { preserveAuthenticatedOnTransientFailure = false }: {
+      preserveAuthenticatedOnTransientFailure?: boolean;
+    } = {},
+  ) => {
     const generation = sessionCheckGeneration.current + 1;
     sessionCheckGeneration.current = generation;
     sessionCheckAbortController.current?.abort();
@@ -477,6 +481,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     } catch {
       if (!isCurrent()) return;
       setBootstrapError({ kind: 'unreachable' });
+      if (preserveAuthenticatedOnTransientFailure && sessionRef.current?.authenticated) return;
       setSession(null);
       setState('anonymous');
     } finally {
@@ -528,7 +533,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
         setState('setup');
         return;
       }
-      await checkSession();
+      await checkSession({ preserveAuthenticatedOnTransientFailure });
     } catch {
       if (!isCurrent()) return;
       setBootstrapError({ kind: 'unreachable' });

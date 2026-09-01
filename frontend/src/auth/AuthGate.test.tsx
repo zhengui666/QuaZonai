@@ -564,6 +564,41 @@ describe('AuthGate', () => {
     expect(screen.getByText('Alpha library cache')).toBeInTheDocument();
   });
 
+  it('keeps an authenticated session during a transient follow-up session failure', async () => {
+    const setIntervalSpy = vi.spyOn(window, 'setInterval');
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => jsonResponse({
+        auth_enabled: true,
+        setup_required: false,
+      }))
+      .mockImplementationOnce(() => jsonResponse({
+        authenticated: true,
+        username: 'local-operator',
+        trusted_browser: false,
+        auth_enabled: true,
+      }))
+      .mockImplementationOnce(() => jsonResponse({
+        auth_enabled: true,
+        setup_required: false,
+      }))
+      .mockRejectedValueOnce(new Error('offline'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderAuthGate(<div>Alpha library cache</div>);
+
+    expect(await screen.findByText('Alpha library cache')).toBeInTheDocument();
+    const revalidate = setIntervalSpy.mock.calls.find(
+      ([, delay]) => delay === AUTH_SESSION_REVALIDATION_INTERVAL_MS,
+    )?.[0];
+    expect(typeof revalidate).toBe('function');
+    act(() => {
+      if (typeof revalidate === 'function') revalidate();
+    });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+    expect(screen.getByText('Alpha library cache')).toBeInTheDocument();
+  });
+
   it('periodically revalidates a direct-access session when authentication becomes enabled', async () => {
     const setIntervalSpy = vi.spyOn(window, 'setInterval');
     const fetchMock = vi.fn()

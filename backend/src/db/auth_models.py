@@ -47,3 +47,20 @@ class OperatorAuthConfiguration(TimestampMixin, Base):
     totp_secret_nonce: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     totp_secret_key_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     bound_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class OperatorAuthInitialization(TimestampMixin, Base):
+    """Tombstone proving that this installation has completed binding once."""
+
+    __tablename__ = "operator_auth_initializations"
+    __table_args__ = (
+        CheckConstraint(
+            "scope = 'SYSTEM'",
+            name="ck_operator_auth_initialization_scope",
+        ),
+        UniqueConstraint("scope", name="uq_operator_auth_initialization_scope"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    scope: Mapped[str] = mapped_column(String(40), nullable=False, default="SYSTEM")
+    initialized_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

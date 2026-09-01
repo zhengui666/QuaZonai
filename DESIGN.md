@@ -67,14 +67,14 @@ Native device lifecycle 与安全不变量：
 - 服务端以 durable `MobileOperatorDevice` 记录 installation ID、device family、client/build/OS version、credential generation、last seen、refresh expiry 与 revoke time；设备记录属于 Operator authentication infrastructure，不是新的用户/RBAC 模型。
 - 登录签发短期 access credential；只有用户选择 trusted device 时才签发 refresh credential。refresh credential 只存入受设备所有者认证保护的 iOS Keychain，不进入 SwiftData、日志、UserDefaults、分析事件或 crash payload。
 - 每次 refresh 必须在数据库行锁内校验当前 generation、递增 generation 并轮换 credential；旧 generation 立即失效。客户端必须把并发 401 合并为 single-flight refresh，禁止同一 refresh credential 并发重放。
-- Logout 必须在清除本地 Keychain 前完成服务端 revoke；access 过期时先用 refresh 取得当前 access，再调用 logout。Administration 的 device revoke 同样递增 generation、清空 refresh expiry，并使该设备所有旧 access/refresh credential 失效。
+- Logout 必须在清除本地 Keychain 前完成服务端 revoke；access 过期时先用 refresh 取得当前 access，再调用 logout。即使部署暂时关闭认证，带有有效 native access/refresh credential 的 logout 仍必须撤销对应设备；无 credential 的 direct-access logout 不改变设备状态。Administration 的 device revoke 同样递增 generation、清空 refresh expiry，并使该设备所有旧 access/refresh credential 失效。
 - 未启用认证时 App 可以进入明确标注的 direct-access 模式；启用认证时，除 bootstrap、mobile login、mobile refresh 与 canonical OpenAPI 外，Operator API 均要求有效的 current-generation native access bearer。
 - Bootstrap 同时发布 capability epoch 与 `minimum_ios_app_version`。App 必须在进入登录或 Operator surface 前同时通过两个兼容性 Gate；版本过低时只显示升级要求，不允许继续使用可能存在漏洞或不兼容的客户端。
 - SSE 首次连接和重连先按持久化 cursor 调用 replay，再通过 `Last-Event-ID`/cursor 恢复 stream。查询参数必须作为 URL query item 编码，不能拼入 path。
 - SwiftData 只缓存声明为 offline-readable 的只读响应。缓存回退仅允许真实离线或 URL transport failure；在线 4xx/5xx、领域冲突和 schema 错误必须原样显示，不能被旧缓存伪装为成功。Mutation 始终 online-only。
 - Codex API key、Live approval、Live downstream 注册和其他敏感动作继续遵守 secure input、内存清除与设备所有者确认要求；App 不绕过后端最终 Gate。
 
-Web、iPhone 与 iPad 的业务功能等价由 `contracts/client-capabilities.yaml` 声明，并由 CI 将每个 Web reference 解析到真实仓库文件、每个 Native reference 解析到真实 XCTest symbol；仅有非空标签不得通过 parity Gate。
+Web、iPhone 与 iPad 的业务功能等价由 `contracts/client-capabilities.yaml` 声明，并由 CI 将每个 Web reference 解析到真实仓库文件、每个 Native reference 解析到真实 XCTest symbol；仅有非空标签不得通过 parity Gate。Native mutation reference 必须执行实际 UI 控件并验证成功状态或服务端结果，不能只调用导航测试或仅证明 XCTest 符号存在。
 
 ---
 
@@ -1432,7 +1432,7 @@ nautilus-live-node
 
 ### 37.1 Operator Authentication
 
-> 安全语义：TOTP-only 不再是 2FA/MFA，抗在线暴力破解能力弱于密码 + TOTP。公网暴露时必须继续使用 HTTPS、窄化可信代理配置，并优先叠加部署侧网络访问控制。认证因子迁移会升级 Cookie version，因此旧 session/trusted-browser cookie fail closed，升级后需要重新输入一次 TOTP；无需数据库迁移，也无需在 TOTP secret 不变时重新绑定验证器。
+> 安全语义：TOTP-only 不再是 2FA/MFA，抗在线暴力破解能力弱于密码 + TOTP。公网暴露时必须继续使用 HTTPS、窄化可信代理配置，并优先叠加部署侧网络访问控制。认证因子迁移会升级 Cookie version，因此旧 session/trusted-browser cookie fail closed，升级后需要重新输入一次 TOTP；升级必须先运行 Alembic migration `0011_operator_auth_configuration`，已有 TOTP binding 不变时无需重新绑定验证器。
 
 Operator Authentication 是部署/访问边界，不是新的业务用户、tenant 或 RBAC Domain。V1 只有一个固定 Operator，身份 subject 为 `local-operator`，不得由客户端或环境变量覆盖。浏览器登录是 TOTP-only 单因素认证；Machine API Token 是独立的自动化凭据，不是浏览器登录因子。
 
@@ -1451,9 +1451,9 @@ QUAZONAI_AUTH_TRUSTED_BROWSER_TTL_DAYS     # optional, bounded default
 QUAZONAI_AUTH_TRUSTED_PROXY_CIDRS          # optional direct reverse-proxy CIDRs
 ```
 
-认证状态的唯一 durable source 是 PostgreSQL 单例 `operator_auth_configurations` 中 scope=`SYSTEM` 的 `OperatorAuthConfiguration` binding。该 binding 以 UUID、AES-GCM ciphertext/nonce、key version 和 `bound_at` 保存当前 TOTP secret；plaintext、二维码 URI 与 setup candidate 不进入数据库。没有 binding 是 `SETUP_REQUIRED`，存在且可用是 `BOUND`，`AUTH_ENABLED=false` 是 `DIRECT_ACCESS`。binding 不会因 cookie/session 到期、重启、cookie key 轮换、错误动态码、设备丢失、master key 错误或数据库故障而回到 setup；故障必须 fail closed。
+认证状态的 canonical secret 是 PostgreSQL 单例 `operator_auth_configurations` 中 scope=`SYSTEM` 的 `OperatorAuthConfiguration` binding；独立的 `operator_auth_initializations` SYSTEM marker 记录该安装曾经完成过 binding。该 binding 以 UUID、AES-GCM ciphertext/nonce、key version 和 `bound_at` 保存当前 TOTP secret；plaintext、二维码 URI 与 setup candidate 不进入数据库。没有 binding 且没有 marker 的健康新库是 `SETUP_REQUIRED`，存在且可用是 `BOUND`，marker 存在但 binding 缺失是配置损坏并必须 fail closed，`AUTH_ENABLED=false` 是 `DIRECT_ACCESS`。binding 不会因 cookie/session 到期、重启、cookie key 轮换、错误动态码、设备丢失、master key 错误或数据库故障而回到 setup。
 
-认证启用必须提供 `QUAZONAI_MASTER_KEY`、独立的 `QUAZONAI_AUTH_COOKIE_KEY`、`QUAZONAI_API_TOKEN`、`QUAZONAI_AUTH_PUBLIC_ORIGIN` 与合法 TTL。`QUAZONAI_AUTH_TOTP_SECRET` 仅是兼容旧部署的一次性 legacy importer：数据库无 binding 时，在启动事务内校验、用既有 `crypto.encrypt_bound_secret/decrypt_bound_secret` 加密并原子创建；数据库已有 binding 时只用恒定时间比较检查一致性，冲突 fail closed；正常运行永不把环境值当 canonical fallback。启动初始化发生在 session factory 建立后且请求前；数据库不可用、表损坏、ciphertext/AAD/master key 无法解密都不能启动 setup 流程。
+认证启用必须提供 `QUAZONAI_MASTER_KEY`、独立的 `QUAZONAI_AUTH_COOKIE_KEY`、`QUAZONAI_API_TOKEN`、`QUAZONAI_AUTH_PUBLIC_ORIGIN` 与合法 TTL。`QUAZONAI_AUTH_TOTP_SECRET` 仅是兼容旧部署的一次性 legacy importer：数据库无 binding 且无 initialized marker 时，在启动事务内校验、用既有 `crypto.encrypt_bound_secret/decrypt_bound_secret` 加密并原子创建 binding 与 marker；数据库已有 binding 时只用恒定时间比较检查一致性，冲突 fail closed；marker 存在但 binding 缺失时永不重新导入或开放 setup；正常运行永不把环境值当 canonical fallback。启动初始化发生在 session factory 建立后且请求前；数据库不可用、表损坏、ciphertext/AAD/master key 无法解密都不能启动 setup 流程。
 
 首次 binding 使用同源 Web setup：`GET /api/v1/auth/bootstrap` 只返回 `{auth_enabled, setup_required}`；`POST /api/v1/auth/setup/start` 在无 binding 时生成至少 160-bit 的 PyOTP secret，以标准 `otpauth://totp/` URI 返回并把 setup id/secret 放入不超过 10 分钟、`HttpOnly`、`SameSite=Strict`、按 HTTPS 加 `Secure` 的 AEAD setup cookie，不创建 pending DB row；`POST /api/v1/auth/setup/confirm` 只从该 cookie 取 candidate，按现有 limiter/backoff 与 ±1 TOTP window 校验，再以 scope unique constraint 的事务 INSERT 实现 first-claim-wins。成功者复用 browser session/trusted-browser issuance；并发失败者返回 `409 / AUTH_SETUP_ALREADY_COMPLETED`、清除 setup cookie 并重新 bootstrap。setup 响应统一 `Cache-Control: no-store`/`Pragma: no-cache`；secret、二维码 URI 和动态码不进 URL、storage、日志、事件、错误或第三方服务。首次 claim 必须在可信私网/VPN/SSH tunnel/受保护 proxy 后完成，再公开实例。
 
@@ -2086,7 +2086,7 @@ Native 和 Web 共用 `/api/v1/openapi.json` wire contract。FastAPI 导出的�
 
 ## 52. Native TOTP-only Operator Authentication
 
-Browser Operator 暂时保留 legacy username/password/TOTP Cookie flow；Native Operator 从第一天只使用当前有效 TOTP 首次认证，Mobile Login schema **不得**包含 username/password。Browser 与 Native 复用同一 RFC 6238 verification core、严格 6 位解析、±1 time-step、恒定时间比较、source rate limiting 和 replay consumption；未来 Browser 删除 username/password 时直接复用该核心。
+Browser Operator 与 Native Operator 都使用当前有效 TOTP 首次认证；Browser 通过 cookie session，Native 通过 mobile device session，Mobile Login schema **不得**包含 username/password。Browser 与 Native 复用同一 RFC 6238 verification core、严格 6 位解析、±1 time-step、恒定时间比较、source rate limiting 和 replay consumption。
 
 Native API：
 
@@ -2108,7 +2108,7 @@ Mobile Access Credential 是短期内存 Bearer；Trust Device 的 Refresh Crede
 
 Native EventStreamActor 先用 `GET /events?after_id=` 按 cursor 补齐，再建立 `/events/stream?cursor=` SSE；保留 Last-Event-ID、指数退避 + jitter、网络/前后台重连、auth refresh 与 duplicate-id protection。SwiftData 只保存 server-profile-isolated read cache、event cursor 与本地 Idea Draft，绝不是 Domain truth source。
 
-离线允许读取已有 cache、编辑 Idea Draft；Start Research、Program action、Approve/Reject、Handoff revoke、Runtime Configuration、Data Source/Downstream mutation 等全部 fail closed。Mutation 使用稳定 Idempotency-Key；401 最多 refresh/retry 一次；409 原样呈现，不自动覆盖服务端状态。
+离线允许读取已有 cache、编辑 Idea Draft；Start Research、Program action、Approve/Reject、Handoff revoke、Runtime Configuration、Data Source/Downstream mutation 等全部 fail closed。每次用户 mutation submission 在开始时生成显式 Idempotency-Key，并在结果不确定时由同一界面 submission 保留该 key；成功后才生成下一 key。401 最多 refresh/retry 一次；409 原样呈现，不自动覆盖服务端状态。Research Program 的 mission_count 只统计 READY/RUNNING 的活动 mission。
 
 Production Server URL 默认要求 HTTPS，HTTP 只允许 localhost development；无 Trust-All/TLS bypass。Authorization、TOTP、Codex API Key 不进入日志。Codex API Key 在 App 中只使用 SecureField 临时内存输入，请求结束即清空，不进入 Keychain/SwiftData。App 进入后台显示 privacy cover。
 

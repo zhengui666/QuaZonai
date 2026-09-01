@@ -6,7 +6,7 @@ from dataclasses import replace
 import pyotp
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from db.auth_models import OperatorAuthConfiguration
 from main import create_app
@@ -141,6 +141,24 @@ def test_canonical_binding_survives_restart_and_legacy_mismatch_fails_closed(set
 
     with pytest.raises(SettingsError, match="conflicts"):
         create_app(settings=_fresh_auth_settings(settings, secret=pyotp.random_base32()), engine=engine)
+
+
+def test_missing_binding_after_initialization_fails_closed(settings, engine) -> None:
+    configured = _fresh_auth_settings(settings)
+    app = create_app(settings=configured, engine=engine)
+    client = TestClient(app)
+    candidate = client.post("/api/v1/auth/setup/start", headers=_origin()).json()
+    assert client.post(
+        "/api/v1/auth/setup/confirm",
+        headers=_origin(),
+        json={"totp_code": pyotp.TOTP(candidate["manual_key"]).now()},
+    ).status_code == 200
+
+    with app.state.session_factory.begin() as session:
+        session.execute(delete(OperatorAuthConfiguration))
+
+    with pytest.raises(SettingsError, match="missing after initialization"):
+        create_app(settings=configured, engine=engine)
 
 
 def test_no_binding_without_legacy_secret_does_not_allow_normal_login(settings, engine) -> None:
