@@ -35,7 +35,7 @@ test.describe('single-operator authentication', () => {
     await page.getByRole('checkbox', { name: /^Trust this browser/ }).check();
     await page.getByRole('button', { name: 'Confirm and continue', exact: true }).click();
 
-    await expect(page.getByText('Dashboard', { exact: true }).first()).toBeVisible();
+    await expect(page.locator('h1.qz-page-title')).toBeVisible();
 
     const authenticatedCookies = await context.cookies();
     const session = authenticatedCookies.find((cookie) => cookie.name === 'quazonai_session');
@@ -49,7 +49,7 @@ test.describe('single-operator authentication', () => {
 
     await context.clearCookies({ name: 'quazonai_session' });
     await page.reload();
-    await expect(page.getByText('Dashboard', { exact: true }).first()).toBeVisible();
+    await expect(page.locator('h1.qz-page-title')).toBeVisible();
     expect((await context.cookies()).some((cookie) => cookie.name === 'quazonai_session')).toBe(true);
 
     await page.getByRole('button', { name: /sign out|log out/i }).click();

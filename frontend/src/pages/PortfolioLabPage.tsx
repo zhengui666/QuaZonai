@@ -19,11 +19,11 @@ import { formatDateTime, formatNumber } from '../lib/format';
 import { findMatrix, findNamedValues, findTimeSeries } from '../lib/metrics';
 
 const programColumns: ColumnDef<PortfolioProgram, unknown>[] = [
-  { accessorKey: 'mandate_name', header: 'Mandate', cell: ({ row }) => <div><div className="qz-list-title">{row.original.mandate_name ? <bdi dir="auto">{row.original.mandate_name}</bdi> : <bdi dir="ltr">{row.original.mandate_version_id.slice(0, 8)}</bdi>}</div><div className="qz-list-subtitle qz-mono"><bdi dir="ltr">{row.original.id}</bdi></div></div> },
-  { accessorKey: 'state', header: 'State', meta: { localizedSort: true }, cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
+  { accessorKey: 'mandate_name', header: 'Mandate', meta: { mobile: { placement: 'title' } }, cell: ({ row }) => <div><div className="qz-list-title">{row.original.mandate_name ? <bdi dir="auto">{row.original.mandate_name}</bdi> : <bdi dir="ltr">{row.original.mandate_version_id.slice(0, 8)}</bdi>}</div><div className="qz-list-subtitle qz-mono"><bdi dir="ltr">{row.original.id}</bdi></div></div> },
+  { accessorKey: 'state', header: 'State', meta: { localizedSort: true, mobile: { placement: 'badge' } }, cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
   { accessorKey: 'candidate_count', header: 'Candidates', cell: ({ getValue }) => <span className="qz-number">{formatNumber(getValue() as number | undefined)}</span> },
   { accessorKey: 'updated_at', header: 'Updated', cell: ({ getValue }) => formatDateTime(getValue() as string | undefined) },
-  { id: 'candidate', header: '', cell: ({ row }) => row.original.current_candidate_id ? <Button asChild size="1" variant="ghost"><Link to={`/portfolio/candidates/${row.original.current_candidate_id}`}><Translated source="Candidate" /> <ForwardArrowIcon size={12} /></Link></Button> : <span className="qz-section-meta"><Translated source="Researching" /></span> },
+  { id: 'candidate', header: '', meta: { mobile: { placement: 'action' } }, cell: ({ row }) => row.original.current_candidate_id ? <Button asChild size="1" variant="ghost"><Link to={`/portfolio/candidates/${row.original.current_candidate_id}`}><Translated source="Candidate" /> <ForwardArrowIcon size={12} /></Link></Button> : <span className="qz-section-meta"><Translated source="Researching" /></span> },
 ];
 
 export function PortfolioLabPage() {

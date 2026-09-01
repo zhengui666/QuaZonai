@@ -1,4 +1,4 @@
-import { CaretDownIcon, CaretUpDownIcon, CaretUpIcon, ColumnsIcon, MagnifyingGlassIcon } from '@phosphor-icons/react';
+import { ArrowsDownUpIcon, CaretDownIcon, CaretUpDownIcon, CaretUpIcon, ColumnsIcon, MagnifyingGlassIcon } from '@phosphor-icons/react';
 import { Button, DropdownMenu, Select, TextField } from '@radix-ui/themes';
 import {
   flexRender,
@@ -19,10 +19,13 @@ import { localeLabels, useI18n, type Locale, type MessageKey } from '../../i18n'
 import { translateDomainLabel } from '../../i18n/domain';
 import { translateRuntimeLabel } from '../../i18n/runtime';
 import { comparePlainDecimalStrings, formatDateTime, formatPlainDecimalString } from '../../lib/format';
+import { useResponsiveViewport } from '../../lib/useMediaQuery';
 import { EmptyState } from './EmptyState';
 
 type SearchFormat = 'compact' | 'percent';
-type LocalizedColumnMeta = { messageKey?: MessageKey; searchFormat?: SearchFormat; searchDecimals?: number; localizedSort?: boolean };
+export type MobilePlacement = 'title' | 'badge' | 'summary' | 'field' | 'action';
+export type MobileColumnMeta = { placement?: MobilePlacement; priority?: number; hideLabel?: boolean };
+type LocalizedColumnMeta = { messageKey?: MessageKey; searchFormat?: SearchFormat; searchDecimals?: number; localizedSort?: boolean; mobile?: MobileColumnMeta };
 
 function columnMeta(meta: unknown): LocalizedColumnMeta | undefined {
   return meta && typeof meta === 'object' ? meta as LocalizedColumnMeta : undefined;
@@ -161,6 +164,8 @@ export function DataTable<T>({
   enableVirtualization = true,
 }: DataTableProps<T>) {
   const { locale, t, text, plural } = useI18n();
+  const { isPhone } = useResponsiveViewport();
+  const [initialPagination] = useState(() => ({ pageSize: isPhone ? 20 : initialPageSize, pageIndex: 0 }));
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
   useEffect(() => {
@@ -212,12 +217,12 @@ export function DataTable<T>({
     getFilteredRowModel: getFilteredRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
-    initialState: { pagination: { pageSize: initialPageSize, pageIndex: 0 } },
+    initialState: { pagination: initialPagination },
     getRowId,
   });
   const filteredRowCount = table.getFilteredRowModel().rows.length;
   const rows = table.getRowModel().rows;
-  const virtualEnabled = enableVirtualization && data.length > 100 && rows.length > 30;
+  const virtualEnabled = !isPhone && enableVirtualization && data.length > 100 && rows.length > 30;
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => viewportRef.current,
@@ -238,8 +243,8 @@ export function DataTable<T>({
         <TextField.Root className="qz-table-search" dir="auto" size="1" value={globalFilter} onChange={(event) => { setGlobalFilter(event.target.value); table.setPageIndex(0); }} aria-label={text(searchPlaceholder)} placeholder={text(searchPlaceholder)}>
           <TextField.Slot side={localeLabels[locale].dir === 'rtl' ? 'right' : 'left'}><MagnifyingGlassIcon size={14} /></TextField.Slot>
         </TextField.Root>
-        <div className="qz-table-tools">
-          <span className="qz-section-meta qz-number">{plural({
+      <div className="qz-table-tools">
+        <span className="qz-section-meta qz-number">{plural({
             zero: 'table.rows.zero',
             one: 'table.rows.one',
             two: 'table.rows.two',
@@ -247,8 +252,31 @@ export function DataTable<T>({
             many: 'table.rows.many',
             other: 'table.rows.other',
           }, filteredRowCount)}</span>
+          {isPhone ? (
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger><Button size="1" variant="soft"><ArrowsDownUpIcon size={13} />{t('mobile.sort')}</Button></DropdownMenu.Trigger>
+              <DropdownMenu.Content align="end">
+                <DropdownMenu.Item onSelect={() => setSorting([])}>{t('mobile.clearSort')}</DropdownMenu.Item>
+                {table.getAllLeafColumns().filter((column) => column.getCanSort()).map((column) => {
+                  const messageKey = messageKeyFromMeta(column.columnDef.meta);
+                  const label = messageKey ? t(messageKey) : text(String(column.columnDef.header ?? column.id));
+                  const sorted = sorting.find((item) => item.id === column.id);
+                  return (
+                    <DropdownMenu.Sub key={column.id}>
+                      <DropdownMenu.SubTrigger>{label}{sorted ? ` · ${sorted.desc ? t('mobile.descending') : t('mobile.ascending')}` : ''}</DropdownMenu.SubTrigger>
+                      <DropdownMenu.SubContent>
+                        <DropdownMenu.Item onSelect={() => setSorting([{ id: column.id, desc: false }])}>{t('mobile.ascending')}</DropdownMenu.Item>
+                        <DropdownMenu.Item onSelect={() => setSorting([{ id: column.id, desc: true }])}>{t('mobile.descending')}</DropdownMenu.Item>
+                        <DropdownMenu.Item onSelect={() => setSorting((current) => current.filter((item) => item.id !== column.id))}>{t('mobile.clearSort')}</DropdownMenu.Item>
+                      </DropdownMenu.SubContent>
+                    </DropdownMenu.Sub>
+                  );
+                })}
+              </DropdownMenu.Content>
+            </DropdownMenu.Root>
+          ) : null}
           <DropdownMenu.Root>
-            <DropdownMenu.Trigger><Button size="1" variant="soft"><ColumnsIcon size={13} />{t('table.columns')}</Button></DropdownMenu.Trigger>
+            <DropdownMenu.Trigger><Button size="1" variant="soft"><ColumnsIcon size={13} />{isPhone ? t('mobile.fields') : t('table.columns')}</Button></DropdownMenu.Trigger>
             <DropdownMenu.Content align="end">
               {table.getAllLeafColumns().filter((column) => column.getCanHide()).map((column) => {
                 const messageKey = messageKeyFromMeta(column.columnDef.meta);
@@ -263,6 +291,41 @@ export function DataTable<T>({
         </div>
       </div>
       <div ref={viewportRef} className="qz-table-viewport" data-virtualized={virtualEnabled ? 'true' : 'false'}>
+        {isPhone ? (
+          <div className="qz-mobile-card-list" role="list" aria-label={text(ariaLabel)}>
+            {visibleRows.map((row) => {
+              const cells = row.getVisibleCells().map((cell) => {
+                const meta = columnMeta(cell.column.columnDef.meta)?.mobile;
+                return { cell, placement: meta?.placement ?? 'field', priority: meta?.priority ?? 0, hideLabel: meta?.hideLabel ?? false };
+              });
+              const title = cells.find((item) => item.placement === 'title') ?? cells.find((item) => item.placement !== 'action');
+              const badge = cells.find((item) => item.placement === 'badge' && item !== title);
+              const summary = cells.find((item) => item.placement === 'summary' && item !== title && item !== badge);
+              const fieldCells = cells
+                .filter((item) => item !== title && item !== badge && item !== summary && item.placement !== 'action')
+                .sort((left, right) => right.priority - left.priority);
+              const actionCells = cells.filter((item) => item.placement === 'action');
+              const labelFor = (cell: (typeof cells)[number]['cell']) => {
+                const messageKey = messageKeyFromMeta(cell.column.columnDef.meta);
+                return messageKey ? t(messageKey) : typeof cell.column.columnDef.header === 'string' ? text(cell.column.columnDef.header) : cell.column.id;
+              };
+              const rendered = (item: typeof cells[number]) => <span className="qz-mobile-card-value" dir="auto">{flexRender(item.cell.column.columnDef.cell, item.cell.getContext())}</span>;
+              return (
+                <article className="qz-mobile-card" key={row.id} role="listitem" aria-label={text(`${ariaLabel} ${row.id}`)}>
+                  <div className="qz-mobile-card-heading">
+                    <div className="qz-mobile-card-title">{title ? rendered(title) : <span className="qz-mobile-card-value">{row.id}</span>}</div>
+                    {badge ? <div className="qz-mobile-card-badge">{rendered(badge)}</div> : null}
+                  </div>
+                  {summary ? <div className="qz-mobile-card-summary">{rendered(summary)}</div> : null}
+                  <dl className="qz-mobile-card-fields">
+                    {fieldCells.map((item) => <div className="qz-mobile-card-field" key={item.cell.id}><dt>{item.hideLabel ? null : labelFor(item.cell)}</dt><dd>{rendered(item)}</dd></div>)}
+                  </dl>
+                  {actionCells.length ? <div className="qz-mobile-card-actions">{actionCells.map((item) => <span key={item.cell.id}>{rendered(item)}</span>)}</div> : null}
+                </article>
+              );
+            })}
+          </div>
+        ) : (
         <table className="qz-table" aria-label={text(ariaLabel)}>
           <thead>
             {table.getHeaderGroups().map((group) => (
@@ -300,6 +363,7 @@ export function DataTable<T>({
             {paddingBottom > 0 ? <tr aria-hidden="true"><td colSpan={table.getVisibleLeafColumns().length} style={{ height: paddingBottom, padding: 0, border: 0 }} /></tr> : null}
           </tbody>
         </table>
+        )}
       </div>
       <div className="qz-table-pagination">
         <span className="qz-number">{t('table.page', { page: table.getState().pagination.pageIndex + 1, pages: Math.max(1, table.getPageCount()) })}</span>

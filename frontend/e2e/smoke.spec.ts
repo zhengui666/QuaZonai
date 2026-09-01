@@ -6,7 +6,7 @@ test('Flow 1: create idea -> research program -> mission appears', async ({ page
     'Test post-earnings drift in liquid US equities after realistic costs.',
   );
   await page.getByRole('button', { name: 'Preview research charter' }).click();
-  await expect(page.getByText(/post-earnings drift in liquid US equities/i)).toBeVisible();
+  await expect(page.getByText(/post-earnings drift in liquid US equities/i).first()).toBeVisible();
   await page.getByRole('button', { name: 'Start Research' }).click();
   await expect(page).toHaveURL(/\/research\/[0-9a-f-]+$/i);
   await expect(page.getByText(/Alpha Discovery · Ready/i)).toBeVisible();
@@ -15,11 +15,17 @@ test('Flow 1: create idea -> research program -> mission appears', async ({ page
 test('Flow 2: candidate ready -> approve -> handoff available', async ({ page }) => {
   await page.goto('/approval');
   await expect(page.getByText(/materially improves the current frontier/i)).toBeVisible();
-  await expect(page.getByText(/Paper Lab · PAPER/i)).toBeVisible();
-  await page.getByRole('button', { name: 'Approve' }).click();
-  await expect(page.getByText('Approved', { exact: true })).toBeVisible();
-  await page.getByRole('link', { name: 'Handoff Center' }).click();
-  await expect(page.getByText('Available', { exact: true })).toBeVisible();
+  await expect(page.getByText(/Paper Lab · PAPER/i).first()).toBeVisible();
+  await page.locator('button:visible:not([disabled])').filter({ hasText: 'Approve' }).first().click();
+  await expect(page.getByText('Approved', { exact: true }).first()).toBeVisible();
+  const mobileMore = page.getByRole('button', { name: 'More', exact: true });
+  if (await mobileMore.isVisible()) {
+    await mobileMore.click();
+    await page.getByRole('dialog').getByRole('link', { name: 'Handoff Center', exact: true }).click();
+  } else {
+    await page.getByRole('link', { name: 'Handoff Center', exact: true }).click();
+  }
+  await expect(page.getByText('Available', { exact: true }).first()).toBeVisible();
   await expect(page.getByRole('button', { name: /stop|undeploy|close position|buy|sell/i })).toHaveCount(0);
 });
 

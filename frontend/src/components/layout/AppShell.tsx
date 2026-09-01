@@ -1,5 +1,6 @@
 import {
   AtomIcon,
+  ArrowClockwiseIcon,
   BellIcon,
   ChartLineUpIcon,
   CirclesFourIcon,
@@ -7,6 +8,7 @@ import {
   GaugeIcon,
   GearIcon,
   HouseIcon,
+  DownloadSimpleIcon,
   ListIcon,
   MoonIcon,
   PaperPlaneTiltIcon,
@@ -14,12 +16,13 @@ import {
   SunIcon,
   TargetIcon,
 } from '@phosphor-icons/react';
-import { Button, DropdownMenu, Theme } from '@radix-ui/themes';
+import { Button, Dialog, DropdownMenu, Theme } from '@radix-ui/themes';
 import { Direction } from 'radix-ui';
 import { Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { isLogoutError, useOperatorAuth, type LogoutFailure } from '../../auth/AuthGate';
 import { localeLabels, localeOrder, useI18n, type Locale, type MessageKey } from '../../i18n';
+import { usePwa } from '../../pwa/PwaProvider';
 import { PageSkeleton } from '../ui/Skeleton';
 
 const nav: Array<{ to: string; labelKey: MessageKey; mobileKey?: MessageKey; icon: typeof HouseIcon; end?: boolean }> = [
@@ -38,6 +41,7 @@ function useThemeMode() {
   useEffect(() => {
     document.documentElement.dataset.theme = mode;
     localStorage.setItem('qz-theme', mode);
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', mode === 'dark' ? '#0a0f0e' : '#f5f8f7');
   }, [mode]);
   return [mode, setMode] as const;
 }
@@ -53,6 +57,7 @@ export function AppShell() {
   const [signOutError, setSignOutError] = useState<LogoutFailure | null>(null);
   const { locale, setLocale, t } = useI18n();
   const { authEnabled, logout } = useOperatorAuth();
+  const { applyUpdate, canInstall, install, isStandalone, needRefresh } = usePwa();
   const location = useLocation();
   const navigate = useNavigate();
   const current = useMemo(() => {
@@ -81,9 +86,16 @@ export function AppShell() {
     ? signOutError.message
     : signOutError?.kind === 'http'
       ? t('auth.signOutHttpError', { status: signOutError.status })
-      : signOutError === null
+        : signOutError === null
         ? null
         : t('auth.signOutFailed');
+
+  const primaryMobileNav = [
+    { to: '/', labelKey: 'nav.dashboard' as MessageKey, icon: HouseIcon, end: true },
+    { to: '/research', labelKey: 'nav.mobile.research' as MessageKey, icon: AtomIcon },
+    { to: '/approval', labelKey: 'nav.approval' as MessageKey, icon: TargetIcon },
+    { to: '/portfolio', labelKey: 'nav.mobile.portfolio' as MessageKey, icon: CirclesFourIcon },
+  ];
 
   return (
     <Theme appearance={mode} accentColor="jade" grayColor="sage" radius="small" scaling="90%">
@@ -156,11 +168,49 @@ export function AppShell() {
             <div className="qz-content"><Suspense fallback={<PageSkeleton />}><Outlet /></Suspense></div>
           </main>
           <nav className="qz-mobile-nav" aria-label={t('a11y.mobileNavigation')}>
-            {nav.slice(0, 5).map(({ to, labelKey, mobileKey, icon: Icon, end }) => (
+            {primaryMobileNav.map(({ to, labelKey, icon: Icon, end }) => (
               <NavLink key={to} to={to} end={end}>
-                {({ isActive }) => <><Icon size={19} weight={isActive ? 'duotone' : 'regular'} /><span>{t(mobileKey ?? labelKey)}</span></>}
+                {({ isActive }) => <><Icon size={19} weight={isActive ? 'duotone' : 'regular'} /><span>{t(labelKey)}</span></>}
               </NavLink>
             ))}
+            <Dialog.Root>
+              <Dialog.Trigger>
+                <Button className="qz-mobile-more-trigger" size="1" variant="soft"><ListIcon size={19} /><span>{t('mobile.more')}</span></Button>
+              </Dialog.Trigger>
+              <Dialog.Content className="qz-mobile-more-sheet" aria-describedby="qz-mobile-more-description">
+                <Dialog.Title>{t('mobile.more')}</Dialog.Title>
+                <Dialog.Description id="qz-mobile-more-description">{t('mobile.moreDescription')}</Dialog.Description>
+                <div className="qz-mobile-more-links">
+                  {nav.filter(({ to }) => !primaryMobileNav.some((item) => item.to === to)).map(({ to, labelKey, icon: Icon }) => (
+                    <Dialog.Close key={to}>
+                      <NavLink to={to} className="qz-mobile-more-link">
+                        {({ isActive }) => <><Icon size={18} weight={isActive ? 'duotone' : 'regular'} /><span>{t(labelKey)}</span></>}
+                      </NavLink>
+                    </Dialog.Close>
+                  ))}
+                </div>
+                <div className="qz-mobile-more-settings">
+                  <div className="qz-mobile-more-setting-row">
+                    <span>{t('language.change')}</span>
+                    <DropdownMenu.Root>
+                      <DropdownMenu.Trigger><Button size="1" variant="soft">{localeLabels[locale].short}</Button></DropdownMenu.Trigger>
+                      <DropdownMenu.Content align="end">
+                        <DropdownMenu.RadioGroup value={locale} onValueChange={changeLocale}>
+                          {localeOrder.map((code) => <DropdownMenu.RadioItem key={code} value={code}><span lang={code} dir={localeLabels[code].dir}>{localeLabels[code].native}</span></DropdownMenu.RadioItem>)}
+                        </DropdownMenu.RadioGroup>
+                      </DropdownMenu.Content>
+                    </DropdownMenu.Root>
+                  </div>
+                  <Button className="qz-touch-button" size="2" variant="soft" onClick={() => setMode(mode === 'dark' ? 'light' : 'dark')}>
+                    {mode === 'dark' ? <SunIcon size={16} /> : <MoonIcon size={16} />}{mode === 'dark' ? t('theme.light') : t('theme.dark')}
+                  </Button>
+                  {!isStandalone && canInstall ? <Button className="qz-touch-button" size="2" variant="soft" onClick={() => { void install(); }}><DownloadSimpleIcon size={16} />{t('pwa.install')}</Button> : null}
+                  {!isStandalone && !canInstall ? <p className="qz-mobile-more-help">{t('pwa.installHelp')}</p> : null}
+                  {needRefresh ? <Button className="qz-touch-button" size="2" variant="soft" onClick={() => { void applyUpdate(); }}><ArrowClockwiseIcon size={16} />{t('pwa.updateNow')}</Button> : null}
+                  {authEnabled ? <Button className="qz-touch-button" size="2" variant="soft" color="red" disabled={signingOut} onClick={() => { void signOut(); }}><SignOutIcon size={16} />{t('auth.signOut')}</Button> : null}
+                </div>
+              </Dialog.Content>
+            </Dialog.Root>
           </nav>
         </div>
       </LocaleDirectionProvider>

@@ -2,6 +2,8 @@ import { lazy } from 'react';
 import { Route, Routes } from 'react-router-dom';
 import { AuthGate } from '../auth/AuthGate';
 import { AppShell } from '../components/layout/AppShell';
+import { useI18n } from '../i18n';
+import { usePwa } from '../pwa/PwaProvider';
 
 const HomePage = lazy(async () => ({ default: (await import('../pages/HomePage')).HomePage }));
 const IdeaComposerPage = lazy(async () => ({ default: (await import('../pages/IdeaComposerPage')).IdeaComposerPage }));
@@ -16,7 +18,23 @@ const HandoffFeedbackPage = lazy(async () => ({ default: (await import('../pages
 const AdministrationPage = lazy(async () => ({ default: (await import('../pages/AdministrationPage')).AdministrationPage }));
 const NotFoundPage = lazy(async () => ({ default: (await import('../pages/NotFoundPage')).NotFoundPage }));
 
+function OfflineWorkbench() {
+  const { t } = useI18n();
+  return (
+    <main className="qz-offline-shell" aria-labelledby="qz-offline-title">
+      <section className="qz-offline-card">
+        <div className="qz-brand-mark" aria-hidden="true">QZ</div>
+        <h1 id="qz-offline-title">QuaZonai</h1>
+        <p>{t('pwa.offline')}</p>
+        <div>{t('pwa.requiresConnection')}</div>
+      </section>
+    </main>
+  );
+}
+
 export function App() {
+  const { isOnline } = usePwa();
+  if (!isOnline) return <OfflineWorkbench />;
   return (
     <AuthGate>
       <Routes>

@@ -425,6 +425,8 @@ TOTP-only 是单因素登录，抗在线猜测能力弱于密码 + TOTP；若把
 其他 credential 轮换：
 
 - `QUAZONAI_AUTH_TOTP_SECRET`：仅用于一次性 legacy importer，不是已绑定安装的轮换开关；已有 binding 时修改它会导致启动冲突。当前没有浏览器内 TOTP rotation；验证器丢失或泄露时，应先保持服务在可信私网内，保留当前 master key 与数据库备份，并执行经单独授权的数据库恢复/更换流程，不得删除 binding 来期待 setup 重新开放；
+- `QUAZONAI_MASTER_KEY`：没有可用备份时无法解密 durable TOTP binding；恢复原 key 与数据库备份，不能通过重新 setup 绕过；
+- durable Operator TOTP binding：若确需更换 Authenticator，先在受控维护窗口清理并重新绑定对应安装记录，再重新执行私网 first claim；不得通过 cookie/session 过期触发 setup；
 - `QUAZONAI_API_TOKEN`：旧 CLI/automation Bearer token 失效；
 
 `QUAZONAI_ENV` 只能为 `development`、`test` 或 `production`（忽略大小写与首尾空白）。认证启用时，`QUAZONAI_AUTH_PUBLIC_ORIGIN` 与浏览器 `Origin` 都按 browser-origin 规则 canonicalize 后精确比较：scheme/host 小写、Unicode host 使用 IDNA ASCII、IPv6 压缩并保留 brackets、默认端口省略、非默认端口保留。production 必须为 HTTPS，反向代理/Tunnel 应在可信 TLS 层终止 HTTPS，并把该外部 Origin 写入 `.env`。
@@ -608,3 +610,9 @@ PMXT Archive 读取不需要 API key；本地部署也不应填写 PMXT 交易�
 ---
 
 QuaZonai 的产品体验应始终保持：**用户提出投资研究问题，系统自治完成研究与组合，只有真正需要资本决策时再把一个可解释、不可变、经过独立验证的 Candidate 交给用户审批。**
+
+## Mobile Web / PWA
+
+手机浏览器和已安装 PWA 使用与桌面相同的 Web 客户端、路由、字段、校验和 mutation，不需要单独注册或迁移移动端业务。小屏底部导航提供 Home、Research、Approvals、Portfolio；Idea、Alpha、Handoff、Administration、语言、主题、安装/更新和退出在 More 中可达。列表、审批、表单、图表和图谱都使用触控可操作的响应式视图。
+
+在浏览器支持安装提示时，More → Install QuaZonai 由操作者确认安装；Service Worker 更新只在 More → Update 或更新提示中由操作者确认，不自动重载。离线只保证静态壳能够启动；工作台会明确提示需要连接 QuaZonai server，API 查询和所有 mutation 不从本地缓存伪造成功，也不把认证/API 数据写入 PWA 缓存。

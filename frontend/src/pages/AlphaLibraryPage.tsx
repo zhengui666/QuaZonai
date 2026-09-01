@@ -16,12 +16,12 @@ function AlphaName({ alpha }: { alpha: AlphaQualification }) {
   return <><span>{t('alpha.name')}</span>{' '}<bdi dir="ltr">{alpha.id.slice(0, 8)}</bdi></>;
 }
 
-const columns: ColumnDef<AlphaQualification, unknown>[] = [  { accessorKey: 'name', header: 'Alpha', meta: { messageKey: 'alpha.name' }, cell: ({ row }) => <div><div className="qz-list-title"><Link to={`/alpha/${row.original.id}`}><AlphaName alpha={row.original} /></Link></div><div className="qz-list-subtitle qz-mono"><bdi dir="ltr">{row.original.id}</bdi></div></div> },
+const columns: ColumnDef<AlphaQualification, unknown>[] = [  { accessorKey: 'name', header: 'Alpha', meta: { messageKey: 'alpha.name', mobile: { placement: 'title' } }, cell: ({ row }) => <div><div className="qz-list-title"><Link to={`/alpha/${row.original.id}`}><AlphaName alpha={row.original} /></Link></div><div className="qz-list-subtitle qz-mono"><bdi dir="ltr">{row.original.id}</bdi></div></div> },
   { accessorKey: 'universe', header: 'Universe', cell: ({ row }) => row.original.universe ? <span dir="auto">{row.original.universe}</span> : <bdi dir="ltr">{row.original.universe_version_id?.slice(0, 8) ?? '—'}</bdi> },
   { accessorKey: 'horizon', header: 'Horizon', cell: ({ getValue }) => String(getValue() ?? '—') },
   { accessorKey: 'role', header: 'Role', meta: { localizedSort: true }, cell: ({ getValue }) => humanize(String(getValue())) },
-  { accessorKey: 'state', header: 'Qualification', meta: { localizedSort: true }, cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
-  { accessorKey: 'degradation_state', header: 'Health', meta: { localizedSort: true }, cell: ({ getValue }) => <StateBadge state={String(getValue() ?? 'HEALTHY')} /> },
+  { accessorKey: 'state', header: 'Qualification', meta: { localizedSort: true, mobile: { placement: 'badge' } }, cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
+  { accessorKey: 'degradation_state', header: 'Health', meta: { localizedSort: true, mobile: { placement: 'badge', priority: 1 } }, cell: ({ getValue }) => <StateBadge state={String(getValue() ?? 'HEALTHY')} /> },
   { id: 'evidence', accessorFn: (row) => readMetric(row.metrics, ['search_adjusted_quality', 'edge', 'ic']), header: 'Evidence', cell: ({ getValue }) => <span className="qz-number">{formatNumber(getValue() as number | string | null | undefined, { maximumSignificantDigits: 15 })}</span> },
   { accessorKey: 'created_at', header: 'Qualified', cell: ({ getValue }) => formatDateTime(getValue() as string | undefined) },
 ];

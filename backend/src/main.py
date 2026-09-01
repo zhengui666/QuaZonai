@@ -45,14 +45,25 @@ def _install_frontend(app: FastAPI, frontend_dist: Path) -> None:
     if not index.is_file():
         return
 
+    def file_headers(candidate: Path) -> dict[str, str]:
+        headers = dict(_WORKBENCH_FRAME_HEADERS)
+        relative = candidate.relative_to(root)
+        if relative.as_posix() in {"index.html", "sw.js", "manifest.webmanifest"}:
+            headers["Cache-Control"] = "no-cache"
+        elif relative.parts and relative.parts[0] == "assets" and candidate.name:
+            headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return headers
+
     @app.get("/{path:path}", include_in_schema=False)
     def frontend(path: str) -> FileResponse:
-        if path.startswith("api/"):
+        if path == "api" or path.startswith("api/"):
             raise HTTPException(status_code=404, detail="Not Found")
         candidate = (root / path).resolve()
-        if candidate.is_relative_to(root) and candidate.is_file():
-            return FileResponse(candidate, headers=_WORKBENCH_FRAME_HEADERS)
-        return FileResponse(index, headers=_WORKBENCH_FRAME_HEADERS)
+        if not candidate.is_relative_to(root):
+            raise HTTPException(status_code=404, detail="Not Found")
+        if candidate.is_file():
+            return FileResponse(candidate, headers=file_headers(candidate))
+        return FileResponse(index, headers=file_headers(index))
 
 
 def _auth_error_response(exc: QfError) -> JSONResponse:

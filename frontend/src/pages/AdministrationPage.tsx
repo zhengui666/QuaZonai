@@ -10,6 +10,7 @@ import { KpiStrip } from '../components/ui/KpiStrip';
 import { PageHeader } from '../components/ui/PageHeader';
 import { PageSkeleton } from '../components/ui/Skeleton';
 import { StateBadge } from '../components/ui/StateBadge';
+import { ResponsiveDialogContent } from '../components/ui/ResponsiveDialogContent';
 import { Section } from '../components/ui/Section';
 import { useI18n } from '../i18n';
 import {
@@ -97,7 +98,7 @@ function DataSourceDialog() {
   const [name, setName] = useState('');
   const [provider, setProvider] = useState('');
   const [fields, setFields] = useState('');
-  return <Dialog.Root><Dialog.Trigger><Button size="1" variant="soft"><DatabaseIcon size={14} />{t('admin.registerDataSource')}</Button></Dialog.Trigger><Dialog.Content maxWidth="500px"><Dialog.Title>{t('admin.registerGoverned')}</Dialog.Title><Dialog.Description size="2">{t('admin.dataSourceDesc')}</Dialog.Description><div className="qz-form-grid" style={{ marginTop: 18 }}><label className="qz-field"><span className="qz-label">{t('admin.name')}</span><TextField.Root dir="auto" value={name} onChange={(event) => setName(event.target.value)} /></label><label className="qz-field"><span className="qz-label">{t('admin.provider')}</span><TextField.Root dir="auto" value={provider} onChange={(event) => setProvider(event.target.value)} /></label><label className="qz-field"><span className="qz-label">{t('admin.canonicalFields')}</span><TextField.Root dir="ltr" value={fields} onChange={(event) => setFields(event.target.value)} placeholder="event_time, available_time, close, volume" /></label><Button disabled={!name.trim() || mutation.isPending} onClick={() => mutation.mutate({ name: name.trim(), provider: provider.trim(), fields: fields.split(',').map((value) => value.trim()).filter(Boolean), state: 'STAGED' })}>{mutation.isPending ? t('common.registering') : t('admin.register')}</Button></div></Dialog.Content></Dialog.Root>;
+  return <Dialog.Root><Dialog.Trigger><Button size="1" variant="soft"><DatabaseIcon size={14} />{t('admin.registerDataSource')}</Button></Dialog.Trigger><ResponsiveDialogContent maxWidth="500px"><Dialog.Title>{t('admin.registerGoverned')}</Dialog.Title><Dialog.Description size="2">{t('admin.dataSourceDesc')}</Dialog.Description><div className="qz-form-grid" style={{ marginTop: 18 }}><label className="qz-field"><span className="qz-label">{t('admin.name')}</span><TextField.Root dir="auto" value={name} onChange={(event) => setName(event.target.value)} /></label><label className="qz-field"><span className="qz-label">{t('admin.provider')}</span><TextField.Root dir="auto" value={provider} onChange={(event) => setProvider(event.target.value)} /></label><label className="qz-field"><span className="qz-label">{t('admin.canonicalFields')}</span><TextField.Root dir="ltr" value={fields} onChange={(event) => setFields(event.target.value)} placeholder="event_time, available_time, close, volume" /></label><Button disabled={!name.trim() || mutation.isPending} onClick={() => mutation.mutate({ name: name.trim(), provider: provider.trim(), fields: fields.split(',').map((value) => value.trim()).filter(Boolean), state: 'STAGED' })}>{mutation.isPending ? t('common.registering') : t('admin.register')}</Button></div></ResponsiveDialogContent></Dialog.Root>;
 }
 
 function DownstreamDialog() {
@@ -105,7 +106,7 @@ function DownstreamDialog() {
   const mutation = useCreateDownstream();
   const [name, setName] = useState('');
   const [environment, setEnvironment] = useState('PAPER');
-  return <Dialog.Root><Dialog.Trigger><Button size="1" variant="soft"><PlugsConnectedIcon size={14} />{t('admin.registerDownstream')}</Button></Dialog.Trigger><Dialog.Content maxWidth="500px"><Dialog.Title>{t('admin.registerLogical')}</Dialog.Title><Dialog.Description size="2">{t('admin.downstreamDesc')}</Dialog.Description><div className="qz-form-grid" style={{ marginTop: 18 }}><label className="qz-field"><span className="qz-label">{t('admin.name')}</span><TextField.Root dir="auto" value={name} onChange={(event) => setName(event.target.value)} /></label><label className="qz-field"><span className="qz-label">{t('admin.environment')}</span><Select.Root value={environment} onValueChange={setEnvironment}><Select.Trigger /><Select.Content>{['PAPER', 'LIVE', 'EXTERNAL_BACKTEST'].map((value) => <Select.Item key={value} value={value}>{humanize(value)}</Select.Item>)}</Select.Content></Select.Root></label><Button disabled={!name.trim() || mutation.isPending} onClick={() => mutation.mutate({ name: name.trim(), environment_type: environment, enabled: true })}>{mutation.isPending ? t('common.registering') : t('admin.register')}</Button></div></Dialog.Content></Dialog.Root>;
+  return <Dialog.Root><Dialog.Trigger><Button size="1" variant="soft"><PlugsConnectedIcon size={14} />{t('admin.registerDownstream')}</Button></Dialog.Trigger><ResponsiveDialogContent maxWidth="500px"><Dialog.Title>{t('admin.registerLogical')}</Dialog.Title><Dialog.Description size="2">{t('admin.downstreamDesc')}</Dialog.Description><div className="qz-form-grid" style={{ marginTop: 18 }}><label className="qz-field"><span className="qz-label">{t('admin.name')}</span><TextField.Root dir="auto" value={name} onChange={(event) => setName(event.target.value)} /></label><label className="qz-field"><span className="qz-label">{t('admin.environment')}</span><Select.Root value={environment} onValueChange={setEnvironment}><Select.Trigger /><Select.Content>{['PAPER', 'LIVE', 'EXTERNAL_BACKTEST'].map((value) => <Select.Item key={value} value={value}>{humanize(value)}</Select.Item>)}</Select.Content></Select.Root></label><Button disabled={!name.trim() || mutation.isPending} onClick={() => mutation.mutate({ name: name.trim(), environment_type: environment, enabled: true })}>{mutation.isPending ? t('common.registering') : t('admin.register')}</Button></div></ResponsiveDialogContent></Dialog.Root>;
 }
 
 function MandateRow({ mandate }: { mandate: PortfolioMandate }) {
@@ -150,7 +151,7 @@ export function AdministrationPage() {
       <Section title="Mandate templates" meta="Enable only the capital objectives you want researched"><div className="qz-panel qz-panel-pad qz-list">{(mandates.data ?? []).map((mandate) => <MandateRow key={mandate.id} mandate={mandate} />)}</div></Section>
       <Section title="Capability registry">
         <Tabs.Root defaultValue="data">
-          <Tabs.List>
+          <Tabs.List className="qz-admin-tabs-list">
             <Tabs.Trigger value="data">{t('admin.dataSources')}</Tabs.Trigger>
             <Tabs.Trigger value="datasets">{t('admin.datasets')}</Tabs.Trigger>
             <Tabs.Trigger value="universes">{t('admin.universes')}</Tabs.Trigger>

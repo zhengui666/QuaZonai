@@ -7,6 +7,7 @@ import { ErrorPanel } from '../components/ui/ErrorPanel';
 import { PageHeader } from '../components/ui/PageHeader';
 import { PageSkeleton } from '../components/ui/Skeleton';
 import { StateBadge } from '../components/ui/StateBadge';
+import { ResponsiveDialogContent } from '../components/ui/ResponsiveDialogContent';
 import { useI18n, type Locale } from '../i18n';
 import { useApprovalDecision, useApprovals, useDownstreams } from '../lib/api/hooks';
 import type { ApprovalSnapshot, DownstreamSystem } from '../lib/api/types';
@@ -74,7 +75,7 @@ function ApprovalCard({ approval, systems }: { approval: ApprovalSnapshot; syste
         <div style={{ display: 'flex', gap: 8 }}>
           <Dialog.Root>
             <Dialog.Trigger><Button variant="soft" color="red" disabled={!pending}><XIcon size={14} />{t('approval.reject')}</Button></Dialog.Trigger>
-            <Dialog.Content maxWidth="480px">
+            <ResponsiveDialogContent maxWidth="480px">
               <Dialog.Title>{t('approval.rejectTitle')}</Dialog.Title>
               <Dialog.Description size="2">{t('approval.rejectDesc')}</Dialog.Description>
               <div className="qz-form-grid" style={{ marginTop: 16 }}>
@@ -82,7 +83,7 @@ function ApprovalCard({ approval, systems }: { approval: ApprovalSnapshot; syste
                 <label className="qz-field"><span className="qz-label">{t('approval.optionalNote')}</span><TextArea dir="auto" value={note} onChange={(event) => setNote(event.target.value)} /></label>
                 <Button color="red" disabled={!reason || decision.reject.isPending} onClick={() => decision.reject.mutate({ reason_code: reason, note: note || undefined })}>{t('approval.confirmRejection')}</Button>
               </div>
-            </Dialog.Content>
+            </ResponsiveDialogContent>
           </Dialog.Root>
           <Button color="green" disabled={!pending || !downstream || decision.approve.isPending} onClick={() => decision.approve.mutate(downstream)}><CheckIcon size={14} />{decision.approve.isPending ? t('common.approving') : t('approval.approve')}</Button>
         </div>

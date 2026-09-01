@@ -1,6 +1,6 @@
 import type { EChartsCoreOption } from 'echarts/core';
 import { describe, expect, it } from 'vitest';
-import { formatEChartNumber, localizeEChartOption } from '../components/charts/EChart';
+import { compactEChartOption, formatEChartNumber, localizeEChartOption } from '../components/charts/EChart';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -10,6 +10,17 @@ function record(value: unknown): UnknownRecord {
 }
 
 describe('EChart locale formatting', () => {
+  it('caps desktop chart margins in compact mode', () => {
+    const option = {
+      grid: { left: 130, right: '96px', top: 10, bottom: 24 },
+      series: [],
+    } as EChartsCoreOption;
+
+    const compact = record(compactEChartOption(option, true));
+    expect(record(compact.grid)).toMatchObject({ left: 72, right: '72px', containLabel: true });
+    expect(record(option).grid).toEqual({ left: 130, right: '96px', top: 10, bottom: 24 });
+  });
+
   it('formats numeric values with the requested locale and preserves tuple values', () => {
     const numberFormat = new Intl.NumberFormat('es', { maximumSignificantDigits: 15 });
     expect(formatEChartNumber('es', 1234.5)).toBe(numberFormat.format(1234.5));

@@ -13,6 +13,10 @@ build/
 dist/
 *.egg-info/
 target/
+node_modules/
+*.tsbuildinfo
+frontend/test-results/
+frontend/playwright-report/
 
 # Environment and runtime state
 .env

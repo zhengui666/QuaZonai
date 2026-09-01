@@ -2,6 +2,7 @@ import { AreaSeries, ColorType, LineSeries, createChart, type AreaData, type ISe
 import { useEffect, useMemo, useRef } from 'react';
 import { useI18n, type Locale } from '../../i18n';
 import type { TimeValuePoint } from '../../lib/metrics';
+import { useResponsiveViewport } from '../../lib/useMediaQuery';
 
 export interface FinancialSeries { name: string; data: TimeValuePoint[]; kind?: 'line' | 'area'; }
 
@@ -32,6 +33,8 @@ export function formatFinancialTooltipTime(locale: Locale, time: Time): string {
 export function FinancialSeriesChart({ series, ariaLabel, height = 320 }: { series: FinancialSeries[]; ariaLabel: string; height?: number }) {
   const ref = useRef<HTMLDivElement>(null);
   const { locale, text } = useI18n();
+  const { isPhone } = useResponsiveViewport();
+  const chartHeight = isPhone ? Math.min(height, 270) : height;
   const localizedSeries = useMemo(() => series.map((item) => ({ ...item, name: text(item.name) })), [series, text]);
   useEffect(() => {
     if (!ref.current || localizedSeries.every((item) => item.data.length === 0)) return;
@@ -45,7 +48,7 @@ export function FinancialSeriesChart({ series, ariaLabel, height = 320 }: { seri
         timeFormatter: (time: Time) => formatFinancialTooltipTime(locale, time),
       },
       autoSize: true,
-      height,
+      height: chartHeight,
       layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: muted, fontSize: 10 },
       grid: { vertLines: { color: border }, horzLines: { color: border } },
       rightPriceScale: { borderColor: border },
@@ -91,6 +94,6 @@ export function FinancialSeriesChart({ series, ariaLabel, height = 320 }: { seri
     });
     chart.timeScale().fitContent();
     return () => { tooltip.remove(); chart.remove(); };
-  }, [height, locale, localizedSeries]);
-  return <div ref={ref} className="qz-chart-host" style={{ minHeight: height }} role="img" aria-label={text(ariaLabel)} />;
+  }, [chartHeight, locale, localizedSeries]);
+  return <div ref={ref} className="qz-chart-host" style={{ minHeight: chartHeight, height: chartHeight, touchAction: 'pan-x pan-y' }} role="img" aria-label={text(ariaLabel)} />;
 }

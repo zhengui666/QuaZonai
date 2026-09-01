@@ -25,13 +25,13 @@ function Revoke({ offer }: { offer: HandoffOffer }) {
 }
 
 const columns: ColumnDef<HandoffOffer, unknown>[] = [
-  { accessorKey: 'downstream_name', header: 'Downstream', cell: ({ row }) => <div><div className="qz-list-title">{row.original.downstream_name ? <span dir="auto">{row.original.downstream_name}</span> : <bdi dir="ltr">{row.original.downstream_system_id?.slice(0, 8) ?? '—'}</bdi>}</div><div className="qz-list-subtitle"><span dir="auto">{humanize(row.original.purpose)}</span> · <Translated source="Candidate" /> <bdi dir="ltr">{row.original.candidate_id?.slice(0, 8) ?? '—'}</bdi></div></div> },
-  { accessorKey: 'state', header: 'Package / offer', meta: { localizedSort: true }, cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
+  { accessorKey: 'downstream_name', header: 'Downstream', meta: { mobile: { placement: 'title' } }, cell: ({ row }) => <div><div className="qz-list-title">{row.original.downstream_name ? <span dir="auto">{row.original.downstream_name}</span> : <bdi dir="ltr">{row.original.downstream_system_id?.slice(0, 8) ?? '—'}</bdi>}</div><div className="qz-list-subtitle"><span dir="auto">{humanize(row.original.purpose)}</span> · <Translated source="Candidate" /> <bdi dir="ltr">{row.original.candidate_id?.slice(0, 8) ?? '—'}</bdi></div></div> },
+  { accessorKey: 'state', header: 'Package / offer', meta: { localizedSort: true, mobile: { placement: 'badge' } }, cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
   { accessorKey: 'feedback_state', header: 'Forward evidence', meta: { localizedSort: true }, cell: ({ getValue }) => <StateBadge state={String(getValue() ?? 'PENDING')} /> },
   { accessorKey: 'claim_deadline', header: 'Claim deadline', cell: ({ getValue }) => formatDateTime(getValue() as string | null) },
   { accessorKey: 'package_contract_version', header: 'Package contract' },
   { accessorKey: 'feedback_contract_version', header: 'Feedback contract' },
-  { id: 'action', header: '', cell: ({ row }) => <Revoke offer={row.original} />, enableSorting: false },
+  { id: 'action', header: '', meta: { mobile: { placement: 'action' } }, cell: ({ row }) => <Revoke offer={row.original} />, enableSorting: false },
 ];
 
 export function HandoffFeedbackPage() {

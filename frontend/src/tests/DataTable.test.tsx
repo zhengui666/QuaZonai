@@ -1,7 +1,7 @@
 import { Theme } from '@radix-ui/themes';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ColumnDef } from '@tanstack/react-table';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DataTable } from '../components/ui/DataTable';
 import { StateBadge } from '../components/ui/StateBadge';
 import { I18nProvider, useI18n } from '../i18n';
@@ -63,6 +63,15 @@ function LocaleChangeButton() {
 interface OperatorLabelRow { label: string }
 const operatorLabelColumns: ColumnDef<OperatorLabelRow, unknown>[] = [
   { accessorKey: 'label', header: 'Source', cell: ({ getValue }) => <span>{String(getValue())}</span> },
+];
+
+interface MobileRow { name: string; state: string; summary: string; count: number }
+const mobileColumns: ColumnDef<MobileRow, unknown>[] = [
+  { accessorKey: 'name', header: 'Name', meta: { mobile: { placement: 'title' } } },
+  { accessorKey: 'state', header: 'State', meta: { mobile: { placement: 'badge' } }, cell: ({ getValue }) => <StateBadge state={String(getValue())} /> },
+  { accessorKey: 'summary', header: 'Summary', meta: { mobile: { placement: 'summary' } } },
+  { accessorKey: 'count', header: 'Count' },
+  { id: 'action', header: 'Action', meta: { mobile: { placement: 'action' } }, cell: () => <button type="button">Open</button>, enableSorting: false },
 ];
 
 describe('DataTable', () => {
@@ -334,5 +343,69 @@ describe('DataTable', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Deployable' }));
     expect(screen.getAllByText(/2\.(2|10) row/).map((element) => element.textContent)).toEqual(['2.10 row', '2.2 row']);
+  });
+
+  it('renders every visible column as an accessible phone card while reusing table filtering state', () => {
+    const previousMatchMedia = window.matchMedia;
+    vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
+      matches: query === '(max-width: 780px)',
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    } as unknown as MediaQueryList));
+    try {
+      renderApp(<DataTable data={[{ name: 'Alpha', state: 'ACTIVE', summary: 'PIT evidence', count: 12 }, { name: 'Beta', state: 'COOLING', summary: 'Forward evidence', count: 7 }]} columns={mobileColumns} />);
+      expect(screen.queryByRole('table')).not.toBeInTheDocument();
+      expect(screen.getAllByRole('listitem')).toHaveLength(2);
+      expect(screen.getByText('Alpha')).toBeInTheDocument();
+      expect(screen.getByText('PIT evidence')).toBeInTheDocument();
+      expect(screen.getByText('12')).toBeInTheDocument();
+      expect(screen.getAllByRole('button', { name: 'Open' })).toHaveLength(2);
+
+      fireEvent.change(screen.getByRole('textbox', { name: 'Filter rows…' }), { target: { value: 'Forward evidence' } });
+      expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
+      expect(screen.getByText('Beta')).toBeInTheDocument();
+    } finally {
+      vi.mocked(window.matchMedia).mockRestore();
+      window.matchMedia = previousMatchMedia;
+    }
+  });
+
+  it('preserves an explicitly selected page size across viewport changes', async () => {
+    const previousMatchMedia = window.matchMedia;
+    const previousScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    let isPhone = false;
+    const phoneListeners = new Set<() => void>();
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+    vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
+      get matches() { return query === '(max-width: 780px)' && isPhone; },
+      media: query,
+      onchange: null,
+      addListener: (listener: () => void) => { if (query === '(max-width: 780px)') phoneListeners.add(listener); },
+      removeListener: (listener: () => void) => { phoneListeners.delete(listener); },
+      addEventListener: (_event: string, listener: () => void) => { if (query === '(max-width: 780px)') phoneListeners.add(listener); },
+      removeEventListener: (_event: string, listener: () => void) => { phoneListeners.delete(listener); },
+      dispatchEvent: vi.fn(),
+    } as unknown as MediaQueryList));
+    try {
+      const data = Array.from({ length: 120 }, (_, index) => ({ name: `Row ${index}` }));
+      renderApp(<DataTable data={data} columns={[{ accessorKey: 'name', header: 'Name' }]} />);
+      const pageSize = screen.getByRole('combobox', { name: 'Rows per page' });
+      fireEvent.click(pageSize);
+      fireEvent.click(await screen.findByRole('option', { name: '100 / page' }));
+      expect(pageSize).toHaveTextContent('100 / page');
+
+      isPhone = true;
+      phoneListeners.forEach((listener) => listener());
+      await waitFor(() => expect(pageSize).toHaveTextContent('100 / page'));
+    } finally {
+      vi.mocked(window.matchMedia).mockRestore();
+      window.matchMedia = previousMatchMedia;
+      HTMLElement.prototype.scrollIntoView = previousScrollIntoView;
+    }
   });
 });
