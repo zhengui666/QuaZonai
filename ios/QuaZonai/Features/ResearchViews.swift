@@ -49,8 +49,8 @@ struct ResearchDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 if let program {
-                    GroupBox("Frozen Charter / Program") { JSONDocumentView(value: program) }
                     actionPanel(program)
+                    GroupBox("Frozen Charter / Program") { JSONDocumentView(value: program) }
                 }
                 if let missions { GroupBox("Mission DAG") { JSONDocumentView(value: missions) } }
                 if let activity { GroupBox("Experiment, evidence & agent activity") { JSONDocumentView(value: activity) } }
@@ -66,6 +66,9 @@ struct ResearchDetailView: View {
         GroupBox("Program administration") {
             VStack(alignment: .leading, spacing: 10) {
                 TextField("Reason for pause/archive", text: $reason)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(minHeight: 44)
+                    .accessibilityIdentifier("program-action-reason")
                 HStack {
                     if state != "PAUSED" && state != "ARCHIVED" { Button("Pause") { Task { await act("pause", requiresReason: true) } } }
                     if state == "PAUSED" { Button("Resume") { Task { await act("resume", requiresReason: false) } } }

@@ -112,26 +112,39 @@ private struct WorkbenchShell: View {
         Group {
             if sizeClass == .regular {
                 NavigationSplitView(columnVisibility: $columns) {
-                    List(AppSection.allCases) { section in
-                        Button {
-                            selectedSection = section
-                        } label: {
-                            Label(
-                                L10n.text(section.iPadTitleKey, session.language),
-                                systemImage: section.icon
+                    List {
+                        ForEach(AppSection.allCases) { section in
+                            Button {
+                                selectedSection = section
+                            } label: {
+                                Label(
+                                    L10n.text(section.iPadTitleKey, session.language),
+                                    systemImage: section.icon
+                                )
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .listRowBackground(
+                                selectedSection == section
+                                    ? Color.accentColor.opacity(0.14)
+                                    : Color.clear
                             )
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
+                            .accessibilityAddTraits(
+                                selectedSection == section ? .isSelected : []
+                            )
                         }
-                        .buttonStyle(.plain)
-                        .listRowBackground(
-                            selectedSection == section
-                                ? Color.accentColor.opacity(0.14)
-                                : Color.clear
-                        )
-                        .accessibilityAddTraits(
-                            selectedSection == section ? .isSelected : []
-                        )
+                        Section("Account") {
+                            NavigationLink {
+                                DeviceSecurityView()
+                            } label: {
+                                Label(
+                                    L10n.text(.accountSecurity, session.language),
+                                    systemImage: "lock.shield"
+                                )
+                            }
+                            .accessibilityIdentifier("ipad-device-security")
+                        }
                     }
                     .navigationTitle("QuaZonai")
                 } content: {

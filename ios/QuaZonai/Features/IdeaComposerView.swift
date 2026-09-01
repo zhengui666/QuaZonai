@@ -18,10 +18,13 @@ struct IdeaComposerView: View {
     var body: some View {
         Form {
             Section("Research idea") {
-                TextEditor(text: $idea).frame(minHeight: 130).accessibilityLabel("What should the research system investigate?")
+                TextEditor(text: $idea).frame(minHeight: 130)
+                    .accessibilityLabel("What should the research system investigate?")
+                    .accessibilityIdentifier("idea-text")
                 Text("Minimum 12 characters. Drafts are local-only until Start Research.").font(.caption).foregroundStyle(.secondary)
                 Button(L10n.text(.preview, session.language)) { Task { await previewIdea() } }
                     .disabled(idea.trimmingCharacters(in: .whitespacesAndNewlines).count < 12 || loading)
+                    .accessibilityIdentifier("preview-idea")
             }
             if let preview {
                 Section("Charter preview") { JSONDocumentView(value: preview) }
@@ -46,9 +49,18 @@ struct IdeaComposerView: View {
                 Section {
                     Button(L10n.text(.startResearch, session.language)) { Task { await startResearch() } }
                         .disabled(!answersComplete || loading)
+                        .accessibilityIdentifier("start-research")
                 }
             }
-            if let started { Section("Created program") { JSONDocumentView(value: started); Button(L10n.text(.research, session.language)) { navigate(.research) } } }
+            if let started {
+                Section {
+                    Text("Created program")
+                        .font(.headline)
+                        .accessibilityIdentifier("created-program")
+                    JSONDocumentView(value: started)
+                    Button(L10n.text(.research, session.language)) { navigate(.research) }
+                }
+            }
             if let error { Section { Text(error).foregroundStyle(.red) } }
         }
         .navigationTitle(L10n.text(.idea, session.language))

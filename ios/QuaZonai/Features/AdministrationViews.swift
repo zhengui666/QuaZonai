@@ -233,8 +233,11 @@ private struct DataSourceRegistrationSheet: View {
         NavigationStack {
             Form {
                 TextField("Name", text: $name)
+                    .accessibilityIdentifier("data-source-name")
                 TextField("Provider", text: $provider)
+                    .accessibilityIdentifier("data-source-provider")
                 TextField("Canonical Fields", text: $fields, prompt: Text("event_time, available_time, close, volume"))
+                    .accessibilityIdentifier("canonical-fields")
                 if let error { Text(error).foregroundStyle(.red) }
             }.navigationTitle("Register Data Source").toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button(L10n.text(.register, session.language)) { Task { await submit() } }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
@@ -272,7 +275,10 @@ private struct DownstreamRegistrationSheet: View {
         NavigationStack {
             Form {
                 if let issuedServiceToken {
-                    Section("Service token — shown once") {
+                    Section {
+                        Text("Service token — shown once")
+                            .font(.headline)
+                            .accessibilityIdentifier("service-token-shown-once")
                         Text("Copy this credential now. QuaZonai will not display the plaintext token again.")
                             .font(.callout)
                             .foregroundStyle(.secondary)
@@ -286,6 +292,7 @@ private struct DownstreamRegistrationSheet: View {
                     }
                 } else {
                     TextField("Name", text: $name)
+                        .accessibilityIdentifier("downstream-name")
                     Picker("Environment", selection: $environment) {
                         ForEach(["PAPER", "LIVE", "EXTERNAL_BACKTEST"], id: \.self) {
                             Text($0).tag($0)

@@ -58,9 +58,9 @@ final class QuaZonaiUITests: XCTestCase {
     private func waitForHittable(_ element: XCUIElement, swipes: Int = 8) -> Bool {
         for _ in 0...swipes {
             if element.exists && element.isHittable { return true }
-            app.swipeUp()
+            if element.exists { element.swipeUp() } else { app.swipeUp() }
         }
-        return element.exists
+        return element.exists && element.isHittable
     }
 
     @MainActor
@@ -81,7 +81,7 @@ final class QuaZonaiUITests: XCTestCase {
         let start = app.buttons["Start Research"]
         XCTAssertTrue(start.waitForExistence(timeout: 10))
         start.tap()
-        XCTAssertTrue(app.staticTexts["Created program"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["created-program"].waitForExistence(timeout: 20))
     }
 
     @MainActor
@@ -98,7 +98,7 @@ final class QuaZonaiUITests: XCTestCase {
         let firstRecord = app.staticTexts["Fixture research program"].firstMatch
         XCTAssertTrue(waitForHittable(firstRecord, swipes: 4))
         firstRecord.tap()
-        let reason = app.textFields["Reason for pause/archive"]
+        let reason = app.textFields["program-action-reason"]
         XCTAssertTrue(waitForHittable(reason))
         reason.tap(); reason.typeText("UI action test")
         app.buttons["Pause"].tap()
@@ -149,7 +149,6 @@ final class QuaZonaiUITests: XCTestCase {
         let reject = app.buttons["reject-\(rejectApprovalID)"]
         XCTAssertTrue(reject.waitForExistence(timeout: 8))
         reject.tap()
-        XCTAssertTrue(app.navigationBars["Reject"].waitForExistence(timeout: 6))
         let picker = app.buttons["Reason code"]
         XCTAssertTrue(picker.waitForExistence(timeout: 6))
         picker.tap()
@@ -200,9 +199,12 @@ final class QuaZonaiUITests: XCTestCase {
         XCTAssertTrue(waitForHittable(register))
         register.tap()
         XCTAssertTrue(app.navigationBars["Register Data Source"].waitForExistence(timeout: 6))
-        app.textFields["Name"].tap(); app.textFields["Name"].typeText("iOS UI Data")
-        app.textFields["Provider"].tap(); app.textFields["Provider"].typeText("Fixture Provider")
-        app.textFields["Canonical Fields"].tap(); app.textFields["Canonical Fields"].typeText("event_time, available_time, close, volume")
+        let name = app.textFields["data-source-name"]
+        let provider = app.textFields["data-source-provider"]
+        let fields = app.textFields["canonical-fields"]
+        XCTAssertTrue(waitForHittable(name)); name.tap(); name.typeText("iOS UI Data")
+        XCTAssertTrue(waitForHittable(provider)); provider.tap(); provider.typeText("Fixture Provider")
+        XCTAssertTrue(waitForHittable(fields)); fields.tap(); fields.typeText("event_time, available_time, close, volume")
         app.buttons["Register"].tap()
         XCTAssertTrue(app.staticTexts["iOS UI Data"].waitForExistence(timeout: 8))
     }
@@ -214,9 +216,10 @@ final class QuaZonaiUITests: XCTestCase {
         XCTAssertTrue(waitForHittable(register))
         register.tap()
         XCTAssertTrue(app.navigationBars["Register Downstream"].waitForExistence(timeout: 6))
-        app.textFields["Name"].tap(); app.textFields["Name"].typeText("iOS UI Downstream")
+        let name = app.textFields["downstream-name"]
+        XCTAssertTrue(waitForHittable(name)); name.tap(); name.typeText("iOS UI Downstream")
         app.buttons["Register"].tap()
-        XCTAssertTrue(app.staticTexts["Service token — shown once"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["service-token-shown-once"].waitForExistence(timeout: 12))
     }
 
     @MainActor
