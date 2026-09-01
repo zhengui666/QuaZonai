@@ -236,14 +236,58 @@ def _idempotency_shape(payload: RuntimeConfigurationInput) -> dict[str, Any]:
     return normalized
 
 
+_LEGACY_MODEL_CONTROL_FIELDS = (
+    "codex_reasoning_effort",
+    "codex_fast_mode",
+    "codex_use_default_model_settings",
+)
+_LEGACY_RECEIPT_ACTION_FIELDS = (
+    "codex_reasoning_effort_action",
+    "codex_fast_mode_action",
+    "codex_default_model_settings_action",
+)
+
+
+def _legacy_idempotency_shape(payload: RuntimeConfigurationInput) -> dict[str, Any]:
+    normalized = _idempotency_shape(payload)
+    for field in _LEGACY_RECEIPT_ACTION_FIELDS:
+        normalized.pop(field, None)
+    return normalized
+
+
+def _receipt_match_kind(
+    receipt: PublicMutationReceipt,
+    payload: RuntimeConfigurationInput,
+) -> Literal["current", "legacy", "none"]:
+    if receipt.operation_name != RUNTIME_CONFIGURATION_OPERATION:
+        return "none"
+    if receipt.normalized_request == _idempotency_shape(payload):
+        return "current"
+    if any(field in payload.model_fields_set for field in _LEGACY_MODEL_CONTROL_FIELDS):
+        return "none"
+    if receipt.normalized_request == _legacy_idempotency_shape(payload):
+        return "legacy"
+    return "none"
+
+
 def _receipt_matches(
     receipt: PublicMutationReceipt,
     payload: RuntimeConfigurationInput,
 ) -> bool:
-    return (
-        receipt.operation_name == RUNTIME_CONFIGURATION_OPERATION
-        and receipt.normalized_request == _idempotency_shape(payload)
-    )
+    return _receipt_match_kind(receipt, payload) != "none"
+
+
+def _receipt_response(
+    receipt: PublicMutationReceipt,
+    payload: RuntimeConfigurationInput,
+) -> RuntimeConfigurationView:
+    response_json = dict(receipt.response_json)
+    if _receipt_match_kind(receipt, payload) == "legacy":
+        response_json.setdefault("codex_reasoning_effort", None)
+        response_json.setdefault("codex_fast_mode", False)
+        response_json.setdefault("codex_use_default_model_settings", False)
+        receipt.response_json = response_json
+    return RuntimeConfigurationView.model_validate(response_json)
 
 
 def _claim_idempotency_receipt(
@@ -318,7 +362,7 @@ def replace_runtime_configuration(
                             "The idempotency key belongs to a different request.",
                             409,
                         )
-                    return RuntimeConfigurationView.model_validate(receipt.response_json)
+                    return _receipt_response(receipt, payload)
                 claimed_receipt = receipt
 
             item = update_runtime_configuration(

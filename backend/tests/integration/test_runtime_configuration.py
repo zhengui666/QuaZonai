@@ -219,6 +219,57 @@ def test_runtime_configuration_deduplicates_key_retry_without_retaining_secret(
         assert receipt.normalized_request["codex_api_key_action"] == "set"
 
 
+def test_pre_upgrade_runtime_receipt_replays_after_new_controls(
+    engine: Engine,
+    settings: Settings,
+) -> None:
+    client = TestClient(create_app(settings=settings, engine=engine))
+    legacy_payload = _payload()
+    for field in ("codex_reasoning_effort", "codex_fast_mode", "codex_use_default_model_settings"):
+        legacy_payload.pop(field, None)
+    headers = {"Idempotency-Key": "runtime-config-pre-upgrade-retry"}
+
+    first = client.put(
+        "/api/v1/system/runtime-configuration",
+        json=legacy_payload,
+        headers=headers,
+    )
+    assert first.status_code == 200, first.text
+
+    factory = create_session_factory(engine)
+    with factory.begin() as session:
+        receipt = session.get(PublicMutationReceipt, headers["Idempotency-Key"])
+        assert receipt is not None
+        normalized = dict(receipt.normalized_request)
+        for field in (
+            "codex_reasoning_effort_action",
+            "codex_fast_mode_action",
+            "codex_default_model_settings_action",
+        ):
+            normalized.pop(field, None)
+        receipt.normalized_request = normalized
+        response_json = dict(receipt.response_json)
+        response_json.pop("codex_reasoning_effort", None)
+        response_json.pop("codex_fast_mode", None)
+        response_json.pop("codex_use_default_model_settings", None)
+        receipt.response_json = response_json
+
+    replay = client.put(
+        "/api/v1/system/runtime-configuration",
+        json=legacy_payload,
+        headers=headers,
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json() == first.json()
+
+    with factory() as session:
+        receipt = session.get(PublicMutationReceipt, headers["Idempotency-Key"])
+        assert receipt is not None
+        assert receipt.response_json["codex_reasoning_effort"] is None
+        assert receipt.response_json["codex_fast_mode"] is False
+        assert receipt.response_json["codex_use_default_model_settings"] is False
+
+
 def test_key_bearing_receipt_remains_replayable_after_later_update(
     engine: Engine,
     settings: Settings,
