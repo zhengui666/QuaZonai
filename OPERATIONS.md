@@ -401,7 +401,7 @@ Live handoff
 
 ### 14.2 Operator Authentication
 
-启用新认证时：保留并备份 `QUAZONAI_MASTER_KEY`、独立 cookie key、machine API token、public origin 与 TTL 配置；从 `.env`/部署 Secrets 中删除旧浏览器用户名和密码变量，并运行 Alembic migration `0011_operator_auth_configuration`。没有 durable binding 的健康实例首次 Web 访问会进入 setup：在 loopback/VPN/SSH tunnel/受保护 proxy 后打开页面，扫描本地二维码或使用 manual key，在 10 分钟内输入当前动态码完成 first claim，再公开实例。第一次成功确认永久绑定该安装；setup candidate 不写 pending DB row，过期后可重新生成。
+启用新认证时：保留并备份 `QUAZONAI_MASTER_KEY`、独立 cookie key、machine API token、public origin 与 TTL 配置；从 `.env`/部署 Secrets 中删除旧浏览器用户名和密码变量，并运行 Alembic migration `0010_operator_auth_configuration`。没有 durable binding 的健康实例首次 Web 访问会进入 setup：在 loopback/VPN/SSH tunnel/受保护 proxy 后打开页面，扫描本地二维码或使用 manual key，在 10 分钟内输入当前动态码完成 first claim，再公开实例。第一次成功确认永久绑定该安装；setup candidate 不写 pending DB row，过期后可重新生成。
 
 QuaZonai V1 只有一个部署 Operator。它不是业务用户系统、tenant 或 RBAC。`QUAZONAI_AUTH_ENABLED=false` 保留 direct access；只有显式设为 `true` 才启用下述登录门。
 
