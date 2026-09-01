@@ -26,6 +26,7 @@
     "@xyflow/react": "12.11.3",
     "echarts": "6.1.0",
     "lightweight-charts": "5.2.1",
+    "qrcode.react": "4.2.0",
     "react": "19.1.1",
     "react-dom": "19.1.1",
     "react-router-dom": "6.30.6"

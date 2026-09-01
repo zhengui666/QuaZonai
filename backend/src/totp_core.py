@@ -26,14 +26,16 @@ def matching_totp_step(
     settings: Settings,
     code: str,
     *,
+    secret: str | None = None,
     wall_clock: Callable[[], float] = time.time,
 ) -> tuple[int, int] | None:
     """Return the accepted RFC 6238 step within the deployment's ±1 window."""
     if len(code) != 6 or any(character < "0" or character > "9" for character in code):
         return None
-    if settings.operator_totp_secret is None:
+    credential = secret if secret is not None else settings.operator_totp_secret
+    if credential is None:
         return None
-    totp = pyotp.TOTP(settings.operator_totp_secret)
+    totp = pyotp.TOTP(credential)
     current_step = int(wall_clock()) // totp.interval
     supplied = code.encode("ascii")
     for step in (current_step - 1, current_step, current_step + 1):
@@ -53,8 +55,13 @@ def verify_totp_once(
     """Verify a TOTP and atomically consume its time-step exactly once."""
     if not settings.auth_enabled:
         return False
-    matched = matching_totp_step(settings, code, wall_clock=wall_clock)
+    credential = runtime.totp_secret() or settings.operator_totp_secret
+    matched = matching_totp_step(settings, code, secret=credential, wall_clock=wall_clock)
     if matched is None:
         return False
     step, current_step = matched
-    return runtime.consume_totp_step(step, current_step=current_step)
+    return runtime.consume_totp_step(
+        step,
+        current_step=current_step,
+        replay_key=credential or "",
+    )

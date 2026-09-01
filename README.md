@@ -41,14 +41,14 @@ QUAZONAI_AUTH_ENABLED=false
 
 A direct-access deployment should remain loopback-only or sit behind another access boundary you deliberately trust. Enable QuaZonai's own authentication before exposing the workbench through a network/TLS layer.
 
-Generate the TOTP setup secret, browser-cookie key and CLI machine token:
+Generate the master key, browser-cookie key and CLI machine token:
 
 ```bash
 python - <<'PY'
 import base64
 import secrets
 
-print("QUAZONAI_AUTH_TOTP_SECRET=" + base64.b32encode(secrets.token_bytes(20)).decode().rstrip("="))
+print("QUAZONAI_MASTER_KEY=" + base64.b64encode(secrets.token_bytes(32)).decode())
 print("QUAZONAI_AUTH_COOKIE_KEY=" + base64.b64encode(secrets.token_bytes(32)).decode())
 print("QUAZONAI_API_TOKEN=" + secrets.token_urlsafe(32))
 PY
@@ -60,13 +60,13 @@ Copy the generated values into `.env`, then configure the complete authenticatio
 
 ```dotenv
 QUAZONAI_AUTH_ENABLED=true
-QUAZONAI_AUTH_TOTP_SECRET=<generated base32 setup key>
+QUAZONAI_MASTER_KEY=<generated base64 master key>
 QUAZONAI_AUTH_COOKIE_KEY=<generated base64 key>
 QUAZONAI_API_TOKEN=<generated machine token>
 QUAZONAI_AUTH_PUBLIC_ORIGIN=http://127.0.0.1:8000
 ```
 
-Add `QUAZONAI_AUTH_TOTP_SECRET` to Google Authenticator with **Enter a setup key**, account name `QuaZonai`, and **Time based** key type. The browser login then requires only the current 6-digit authenticator code.
+Run the migration and start the stack while it remains behind loopback or a trusted private network. On the first Web visit, the setup page generates a one-time QR/manual key, holds it only in the browser, and binds the first confirmed Google Authenticator-compatible 6-digit code into PostgreSQL. Complete this first claim before exposing the installation publicly; the first successful confirmation wins. The setup candidate expires after 10 minutes and can be regenerated. Existing deployments may set `QUAZONAI_AUTH_TOTP_SECRET` temporarily for the one-time startup importer, then remove it after verifying the durable binding.
 
 `QUAZONAI_ENV` accepts only `development`, `test`, or `production` (case-insensitive and surrounding whitespace is ignored). `QUAZONAI_AUTH_PUBLIC_ORIGIN` is canonicalized with browser-origin semantics before comparison: scheme/host are lower-cased, Unicode hosts use IDNA ASCII, IPv6 is compressed/bracketed, default `:80`/`:443` ports are omitted, and non-default ports are retained. HTTPS origins automatically receive `Secure` browser cookies. When authentication is enabled in `production`, the origin must use HTTPS. A remotely exposed installation should normally set the externally trusted TLS origin, for example `https://quazonai.example.com`.
 
@@ -84,11 +84,11 @@ Open `http://127.0.0.1:8000` for the default local deployment. The production im
 
 When `QUAZONAI_AUTH_ENABLED=true`, QuaZonai V1 protects its Web/operator API with one deployment Operator. This is not a multi-user/RBAC system. Normal browser sign-in requires only an RFC 6238 TOTP code compatible with Google Authenticator. The operator identity is fixed to `local-operator`; browser username/password are not login factors or supported settings.
 
-TOTP-only is single-factor authentication and is weaker against online guessing than password + TOTP. Internet-facing deployments should still use HTTPS, narrowly scoped trusted-proxy configuration, and deployment-level network access controls. Non-empty deprecated browser username/password environment settings fail startup closed when authentication is enabled. This migration also invalidates pre-v3 session/trusted-browser cookies, so upgraded browsers must enter one current TOTP once; no database migration or authenticator re-binding is required when the TOTP setup secret is unchanged.
+TOTP-only is single-factor authentication and is weaker against online guessing than password + TOTP. Internet-facing deployments should still use HTTPS, narrowly scoped trusted-proxy configuration, and deployment-level network access controls. Non-empty deprecated browser username/password environment settings fail startup closed when authentication is enabled. The durable `OperatorAuthConfiguration` binding is canonical; it survives cookie/session expiry and API restarts. A missing binding is setup-required only on a healthy fresh installation; database/master-key/ciphertext failures fail closed and do not reopen setup.
 
 The login form offers **Trust this browser**. When selected, the server stores a long-lived encrypted/authenticated HttpOnly cookie in that browser profile. Once the short session expires, a still-valid trusted-browser credential restores a new session without asking for another TOTP code. The default trusted-browser lifetime is 30 days and can be changed with `QUAZONAI_AUTH_TRUSTED_BROWSER_TTL_DAYS`; the short-session default is 12 hours and can be changed with `QUAZONAI_AUTH_SESSION_TTL_SECONDS`.
 
-Only trust a browser profile you control. Signing out deletes both the current session and trusted-browser credential, then leaves an `HttpOnly`/`SameSite=Strict` browser-local logout barrier plus a sealed local issuance epoch. A subsequent TOTP login clears the barrier but binds new cookies to that retained epoch, so a network-reordered stale login or automatic-renewal response cannot restore access. Authenticated logout also advances the current API process's global browser-cookie issuance generation; anonymous/public logout changes only its caller's local state and cannot block other browsers from logging in or renewing. Browser cookies are additionally bound to a fresh random API-runtime issuance epoch, so restarting the API intentionally invalidates every existing browser session and trusted-browser credential rather than letting a reset logout counter revive one. Rotating `QUAZONAI_AUTH_COOKIE_KEY` invalidates every existing browser session and trusted-browser credential immediately. Rotating `QUAZONAI_AUTH_TOTP_SECRET` requires updating the authenticator entry. Rotating `QUAZONAI_API_TOKEN` invalidates the old CLI/automation credential.
+Only trust a browser profile you control. Signing out deletes both the current session and trusted-browser credential, then leaves an `HttpOnly`/`SameSite=Strict` browser-local logout barrier plus a sealed local issuance epoch. A subsequent TOTP login clears the barrier but binds new cookies to that retained epoch, so a network-reordered stale login or automatic-renewal response cannot restore access. Authenticated logout also advances the current API process's global browser-cookie issuance generation; anonymous/public logout changes only its caller's local state and cannot block other browsers from logging in or renewing. Browser cookies are additionally bound to a fresh random API-runtime issuance epoch, so restarting the API intentionally invalidates every existing browser session and trusted-browser credential rather than letting a reset logout counter revive one. Rotating `QUAZONAI_AUTH_COOKIE_KEY` invalidates every existing browser session and trusted-browser credential immediately. Rotating `QUAZONAI_MASTER_KEY` or corrupting the durable binding fails closed and requires restoring the key/database backup. Rotating `QUAZONAI_API_TOKEN` invalidates the old CLI/automation credential.
 
 When `QUAZONAI_AUTH_ENABLED=false`, the Web/operator API preserves direct access and no login or logout controls are shown. When it is `true`, startup fails closed unless the complete authentication group is valid. Enabled production authentication additionally requires an HTTPS public origin; any HTTPS public origin automatically uses `Secure` cookies.
 

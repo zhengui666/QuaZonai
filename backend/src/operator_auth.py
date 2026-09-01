@@ -9,6 +9,7 @@ import json
 import re
 import secrets
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from threading import Lock
@@ -34,6 +35,9 @@ BROWSER_EPOCH_COOKIE_NAME = "quazonai_browser_epoch"
 STREAM_ADMISSION_GENERATION_STATE_ATTRIBUTE = "operator_auth_stream_generation"
 OPERATOR_SUBJECT = "local-operator"
 COOKIE_VERSION = 3
+SETUP_COOKIE_VERSION = 1
+SETUP_COOKIE_NAME = "quazonai_totp_setup"
+SETUP_COOKIE_TTL_SECONDS = 10 * 60
 COOKIE_NONCE_BYTES = 12
 COOKIE_BROWSER_EPOCH_BYTES = 32
 COOKIE_ISSUANCE_EPOCH_BYTES = 32
@@ -49,9 +53,12 @@ _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 _PUBLIC_OPERATOR_ROUTES = frozenset(
     {
         ("GET", "/api/v1/system/health"),
+        ("GET", "/api/v1/auth/bootstrap"),
         ("POST", "/api/v1/auth/login"),
         ("GET", "/api/v1/auth/session"),
         ("POST", "/api/v1/auth/logout"),
+        ("POST", "/api/v1/auth/setup/start"),
+        ("POST", "/api/v1/auth/setup/confirm"),
     }
 )
 _DOWNSTREAM_ROUTE = re.compile(
@@ -89,6 +96,14 @@ class CookieIssuance:
 
     generation: int
     process_epoch: str
+
+
+@dataclass(frozen=True, slots=True)
+class SetupCookieClaims:
+    """Short-lived enrollment material held only in an authenticated cookie."""
+
+    setup_id: str
+    secret: str
 
 
 @dataclass(slots=True)
@@ -195,8 +210,18 @@ class OperatorAuthRuntime:
         # credential fail closed without requiring durable auth state.
         self._cookie_process_epoch = _new_cookie_issuance_epoch()
         self._stream_lock = Lock()
-        self._accepted_totp_steps: set[int] = set()
+        self._totp_secret: str | None = None
+        self._accepted_totp_steps: set[tuple[str, int]] = set()
         self._totp_lock = Lock()
+
+    def set_totp_secret(self, secret: str | None) -> None:
+        """Set the process-local canonical secret after DB initialization or enrollment."""
+        with self._totp_lock:
+            self._totp_secret = secret
+
+    def totp_secret(self) -> str | None:
+        with self._totp_lock:
+            return self._totp_secret
 
     def stream_generation(self) -> int:
         with self._stream_lock:
@@ -323,19 +348,26 @@ class OperatorAuthRuntime:
                 clear_trusted_browser_cookie(response, settings)
             return True
 
-    def consume_totp_step(self, step: int, *, current_step: int) -> bool:
-        """Atomically accept one RFC 6238 time step at most once per API process."""
+    def consume_totp_step(
+        self,
+        step: int,
+        *,
+        current_step: int,
+        replay_key: str = "",
+    ) -> bool:
+        """Atomically accept one credential-scoped RFC 6238 step per API process."""
         with self._totp_lock:
             # A ±1 verification window can only reference these nearby steps. Keeping
             # two older steps avoids replay after a small clock movement while bounding memory.
             self._accepted_totp_steps = {
                 accepted
                 for accepted in self._accepted_totp_steps
-                if accepted >= current_step - 2
+                if accepted[1] >= current_step - 2
             }
-            if step in self._accepted_totp_steps:
+            candidate = (replay_key, step)
+            if candidate in self._accepted_totp_steps:
                 return False
-            self._accepted_totp_steps.add(step)
+            self._accepted_totp_steps.add(candidate)
             return True
 
 
@@ -424,8 +456,8 @@ def _urlsafe_decode(value: str) -> bytes:
         raise _InvalidCookie from exc
 
 
-def _cookie_aad(kind: str) -> bytes:
-    return f"quazonai|operator-auth|cookie={kind}|version={COOKIE_VERSION}".encode("utf-8")
+def _cookie_aad(kind: str, *, version: int = COOKIE_VERSION) -> bytes:
+    return f"quazonai|operator-auth|cookie={kind}|version={version}".encode("utf-8")
 
 
 def _constant_time_text_equal(left: str, right: str) -> bool:
@@ -450,10 +482,12 @@ def _issue_cookie(
     ttl_seconds: int,
     cookie_issuance: CookieIssuance | None = None,
     browser_epoch: str | None = None,
+    version: int = COOKIE_VERSION,
+    extra_claims: dict[str, object] | None = None,
 ) -> str:
     issued_at = int(time.time())
     payload: dict[str, object] = {
-        "v": COOKIE_VERSION,
+        "v": version,
         "kind": kind,
         "sub": OPERATOR_SUBJECT,
         "iat": issued_at,
@@ -464,6 +498,8 @@ def _issue_cookie(
         payload["cookie_issuance_epoch"] = cookie_issuance.process_epoch
     if browser_epoch is not None:
         payload["browser_epoch"] = browser_epoch
+    if extra_claims:
+        payload.update(extra_claims)
     serialized = json.dumps(
         payload,
         separators=(",", ":"),
@@ -473,7 +509,7 @@ def _issue_cookie(
     ciphertext = AESGCM(settings.auth_cookie_key_bytes()).encrypt(
         nonce,
         serialized,
-        _cookie_aad(kind),
+        _cookie_aad(kind, version=version),
     )
     return _urlsafe_encode(nonce + ciphertext)
 
@@ -504,6 +540,7 @@ def _read_cookie(
     value: str | None,
     *,
     kind: str,
+    version: int = COOKIE_VERSION,
 ) -> _CookieClaims | None:
     if not value:
         return None
@@ -516,12 +553,12 @@ def _read_cookie(
         plaintext = AESGCM(settings.auth_cookie_key_bytes()).decrypt(
             nonce,
             ciphertext,
-            _cookie_aad(kind),
+            _cookie_aad(kind, version=version),
         )
         payload = json.loads(plaintext)
         if not isinstance(payload, dict):
             raise _InvalidCookie
-        if payload.get("v") != COOKIE_VERSION or payload.get("kind") != kind:
+        if payload.get("v") != version or payload.get("kind") != kind:
             raise _InvalidCookie
         subject = payload.get("sub")
         expires_at = payload.get("exp")
@@ -601,6 +638,94 @@ def _read_request_cookie(
         if claims is not None:
             return claims
     return None
+
+
+def set_setup_cookie(
+    response: Response,
+    settings: Settings,
+    *,
+    setup_id: str,
+    secret: str,
+) -> None:
+    """Seal the candidate enrollment secret without persisting it in the DB."""
+    token = _issue_cookie(
+        settings,
+        kind="totp-setup",
+        ttl_seconds=SETUP_COOKIE_TTL_SECONDS,
+        version=SETUP_COOKIE_VERSION,
+        extra_claims={"setup_id": setup_id, "secret": secret},
+    )
+    response.set_cookie(
+        SETUP_COOKIE_NAME,
+        token,
+        max_age=SETUP_COOKIE_TTL_SECONDS,
+        httponly=True,
+        secure=settings.auth_cookie_secure,
+        samesite="strict",
+        path="/api/v1/auth/setup",
+    )
+
+
+def issue_setup_cookie(
+    response: Response,
+    settings: Settings,
+    *,
+    secret: str,
+) -> str:
+    """Create a fresh setup id and seal its candidate secret in the response cookie."""
+    setup_id = str(uuid.uuid4())
+    set_setup_cookie(response, settings, setup_id=setup_id, secret=secret)
+    return setup_id
+
+
+def read_setup_cookie(request: Request, settings: Settings) -> SetupCookieClaims | None:
+    """Read only a valid setup cookie; malformed/tampered values become anonymous."""
+    for value in _request_cookie_values(request, SETUP_COOKIE_NAME):
+        if not value:
+            continue
+        try:
+            encoded = _urlsafe_decode(value)
+            if len(encoded) <= COOKIE_NONCE_BYTES:
+                raise _InvalidCookie
+            plaintext = AESGCM(settings.auth_cookie_key_bytes()).decrypt(
+                encoded[:COOKIE_NONCE_BYTES],
+                encoded[COOKIE_NONCE_BYTES:],
+                _cookie_aad("totp-setup", version=SETUP_COOKIE_VERSION),
+            )
+            payload = json.loads(plaintext)
+            if not isinstance(payload, dict):
+                raise _InvalidCookie
+            if payload.get("v") != SETUP_COOKIE_VERSION or payload.get("kind") != "totp-setup":
+                raise _InvalidCookie
+            expires_at = payload.get("exp")
+            setup_id = payload.get("setup_id")
+            secret = payload.get("secret")
+            if (
+                isinstance(expires_at, bool)
+                or not isinstance(expires_at, int)
+                or expires_at <= int(time.time())
+                or not isinstance(setup_id, str)
+                or str(uuid.UUID(setup_id)) != setup_id
+                or not isinstance(secret, str)
+                or not secret
+            ):
+                raise _InvalidCookie
+            return SetupCookieClaims(setup_id=setup_id, secret=secret)
+        except (ValueError, TypeError, json.JSONDecodeError, _InvalidCookie):
+            continue
+        except Exception:  # noqa: BLE001 - tampered setup cookies fail closed
+            continue
+    return None
+
+
+def clear_setup_cookie(response: Response, settings: Settings) -> None:
+    response.delete_cookie(
+        SETUP_COOKIE_NAME,
+        path="/api/v1/auth/setup",
+        secure=settings.auth_cookie_secure,
+        httponly=True,
+        samesite="strict",
+    )
 
 
 def browser_cookie_epoch(request: Request, settings: Settings) -> str | None:
@@ -688,11 +813,18 @@ def _has_valid_logout_barrier(request: Request, settings: Settings) -> bool:
     )
 
 
-def _matching_totp_step(settings: Settings, code: str) -> tuple[int, int] | None:
+def _matching_totp_step(
+    settings: Settings,
+    code: str,
+    *,
+    secret: str | None = None,
+) -> tuple[int, int] | None:
     if len(code) != 6 or any(character < "0" or character > "9" for character in code):
         return None
-    assert settings.operator_totp_secret is not None
-    totp = pyotp.TOTP(settings.operator_totp_secret)
+    credential = secret if secret is not None else settings.operator_totp_secret
+    if credential is None:
+        return None
+    totp = pyotp.TOTP(credential)
     current_step = int(time.time()) // totp.interval
     for step in (current_step - 1, current_step, current_step + 1):
         expected = totp.at(step * totp.interval)
@@ -710,13 +842,16 @@ def authenticate_totp_login(
     """Validate TOTP and atomically consume the accepted RFC 6238 time step."""
     if not settings.auth_enabled:
         return False
-    assert settings.operator_totp_secret is not None
-
-    matched_step = _matching_totp_step(settings, totp_code)
+    credential = runtime.totp_secret() or settings.operator_totp_secret
+    matched_step = _matching_totp_step(settings, totp_code, secret=credential)
     if matched_step is None:
         return False
     step, current_step = matched_step
-    return runtime.consume_totp_step(step, current_step=current_step)
+    return runtime.consume_totp_step(
+        step,
+        current_step=current_step,
+        replay_key=credential or "",
+    )
 
 
 def authenticate_machine(settings: Settings, authorization: str | None) -> OperatorIdentity | None:

@@ -187,6 +187,23 @@ def _base64_key(value: str | None, *, name: str) -> bytes:
     return decoded
 
 
+def normalize_totp_secret(value: str) -> str:
+    """Canonicalize and validate a legacy or enrollment TOTP setup key."""
+    normalized = "".join(value.split()).upper()
+    padded = normalized + "=" * ((8 - len(normalized) % 8) % 8)
+    try:
+        decoded = base64.b32decode(padded, casefold=True)
+    except (binascii.Error, ValueError) as exc:
+        raise SettingsError(
+            "QUAZONAI_AUTH_TOTP_SECRET must be a valid base32 TOTP setup key"
+        ) from exc
+    if len(decoded) < 20:
+        raise SettingsError(
+            "QUAZONAI_AUTH_TOTP_SECRET must encode at least 20 bytes of secret material"
+        )
+    return normalized
+
+
 def _contains_ascii_control(value: str) -> bool:
     return any(ord(character) < 32 or ord(character) == 127 for character in value)
 
@@ -510,7 +527,7 @@ class Settings:
         return _base64_key(self.auth_cookie_key, name="QUAZONAI_AUTH_COOKIE_KEY")
 
     def validate_operator_auth(self) -> None:
-        """Validate the complete opt-in operator-authentication configuration."""
+        """Validate bootstrap auth config; the durable TOTP binding is DB-owned."""
         environment = _normalize_environment(self.environment)
         if not self.operator_auth_enabled:
             return
@@ -530,7 +547,7 @@ class Settings:
         _validate_trusted_proxy_cidrs(self.auth_trusted_proxy_cidrs)
 
         fields = {
-            "QUAZONAI_AUTH_TOTP_SECRET": self.operator_totp_secret,
+            "QUAZONAI_MASTER_KEY": self.master_key,
             "QUAZONAI_AUTH_COOKIE_KEY": self.auth_cookie_key,
             "QUAZONAI_API_TOKEN": self.api_token,
             "QUAZONAI_AUTH_PUBLIC_ORIGIN": self.auth_public_origin,
@@ -542,34 +559,20 @@ class Settings:
                 + ", ".join(missing)
             )
 
-        assert self.operator_totp_secret is not None
         assert self.api_token is not None
         assert self.auth_public_origin is not None
 
         validate_machine_api_token(self.api_token)
 
+        master_key = self.master_key_bytes()
         cookie_key = self.auth_cookie_key_bytes()
-        if self.master_key_configured and secrets.compare_digest(
-            cookie_key,
-            self.master_key_bytes(),
-        ):
+        if secrets.compare_digest(cookie_key, master_key):
             raise SettingsError(
                 "QUAZONAI_AUTH_COOKIE_KEY must be different from QUAZONAI_MASTER_KEY"
             )
 
-        padded_secret = self.operator_totp_secret + "=" * (
-            (8 - len(self.operator_totp_secret) % 8) % 8
-        )
-        try:
-            decoded_secret = base64.b32decode(padded_secret, casefold=True)
-        except (binascii.Error, ValueError) as exc:
-            raise SettingsError(
-                "QUAZONAI_AUTH_TOTP_SECRET must be a valid base32 TOTP setup key"
-            ) from exc
-        if len(decoded_secret) < 20:
-            raise SettingsError(
-                "QUAZONAI_AUTH_TOTP_SECRET must encode at least 20 bytes of secret material"
-            )
+        if self.operator_totp_secret is not None:
+            normalize_totp_secret(self.operator_totp_secret)
 
         canonical_origin = self.canonical_auth_public_origin
         assert canonical_origin is not None

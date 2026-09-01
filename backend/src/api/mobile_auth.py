@@ -22,6 +22,7 @@ from mobile_auth import (
     utc_now,
 )
 from operator_auth import OperatorAuthRuntime, login_source_key
+from operator_auth_store import load_canonical_secret
 from quazonai import __version__
 from settings import Settings
 from totp_core import verify_totp_once
@@ -184,6 +185,22 @@ def mobile_login(
         return MobileTokenView(authenticated=True, auth_enabled=False)
 
     runtime: OperatorAuthRuntime = request.app.state.operator_auth_runtime
+    try:
+        with request.app.state.session_factory() as session:
+            canonical_secret = load_canonical_secret(session, settings)
+    except Exception as exc:
+        raise QfError(
+            "AUTH_CONFIGURATION_INVALID",
+            "The Operator authentication configuration is unavailable.",
+            500,
+        ) from exc
+    if canonical_secret is None:
+        raise QfError(
+            "AUTH_SETUP_REQUIRED",
+            "Operator authenticator setup is required.",
+            409,
+        )
+    runtime.set_totp_secret(canonical_secret)
     source = login_source_key(request, settings)
     if not runtime.login_limiter.allow_attempt(source):
         raise _invalid()
@@ -277,33 +294,13 @@ def mobile_refresh(request: Request, response: Response) -> MobileTokenView:
 def mobile_logout(request: Request, response: Response) -> None:
     _no_store(response)
     settings: Settings = request.app.state.settings
-    identity = getattr(request.state, "operator", None)
-    if isinstance(identity, MobileOperatorIdentity):
-        device_id = identity.device_id
-        credential_generation = identity.credential_generation
-    else:
-        # Direct-access mode still has to revoke a native credential when the
-        # client presents one. Otherwise a copied refresh credential could be
-        # re-enabled after authentication is turned back on.
-        claims = credential_from_authorization(
-            settings,
-            request.headers.get("authorization"),
-            expected_kind="access",
-        ) or credential_from_authorization(
-            settings,
-            request.headers.get("authorization"),
-            expected_kind="refresh",
-        )
-        if claims is None:
-            if settings.auth_enabled:
-                _require_mobile_identity(request)
-            return
-        device_id = claims.device_id
-        credential_generation = claims.generation
+    if not settings.auth_enabled:
+        return
+    identity = _require_mobile_identity(request)
     factory = request.app.state.session_factory
     with factory() as session:
-        device = load_mobile_device_for_update(session, device_id)
-        if device is not None and device.credential_generation == credential_generation:
+        device = load_mobile_device_for_update(session, identity.device_id)
+        if device is not None and device.credential_generation == identity.credential_generation:
             device.credential_generation += 1
             device.revoked_at = utc_now()
             device.refresh_expires_at = None

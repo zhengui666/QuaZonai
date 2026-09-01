@@ -702,6 +702,25 @@
         "title": "ArchiveManifestView",
         "type": "object"
       },
+      "AuthBootstrapView": {
+        "additionalProperties": false,
+        "properties": {
+          "auth_enabled": {
+            "title": "Auth Enabled",
+            "type": "boolean"
+          },
+          "setup_required": {
+            "title": "Setup Required",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "auth_enabled",
+          "setup_required"
+        ],
+        "title": "AuthBootstrapView",
+        "type": "object"
+      },
       "Body_post_api_v1_plugin_releases": {
         "properties": {
           "dependencies": {
@@ -3648,6 +3667,62 @@
         "title": "SessionView",
         "type": "object"
       },
+      "SetupConfirmInput": {
+        "additionalProperties": false,
+        "properties": {
+          "totp_code": {
+            "maxLength": 6,
+            "minLength": 6,
+            "pattern": "^[0-9]{6}$",
+            "title": "Totp Code",
+            "type": "string"
+          },
+          "trust_browser": {
+            "default": false,
+            "title": "Trust Browser",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "totp_code"
+        ],
+        "title": "SetupConfirmInput",
+        "type": "object"
+      },
+      "SetupStartView": {
+        "additionalProperties": false,
+        "properties": {
+          "account_name": {
+            "title": "Account Name",
+            "type": "string"
+          },
+          "expires_in_seconds": {
+            "title": "Expires In Seconds",
+            "type": "integer"
+          },
+          "issuer": {
+            "title": "Issuer",
+            "type": "string"
+          },
+          "manual_key": {
+            "title": "Manual Key",
+            "type": "string"
+          },
+          "otpauth_uri": {
+            "title": "Otpauth Uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "issuer",
+          "account_name",
+          "otpauth_uri",
+          "manual_key",
+          "expires_in_seconds"
+        ],
+        "title": "SetupStartView",
+        "type": "object"
+      },
       "UniverseView": {
         "additionalProperties": false,
         "properties": {
@@ -4063,6 +4138,28 @@
         ]
       }
     },
+    "/api/v1/auth/bootstrap": {
+      "get": {
+        "operationId": "get_api_v1_auth_bootstrap",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthBootstrapView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [],
+        "summary": "Auth Bootstrap",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/api/v1/auth/login": {
       "post": {
         "operationId": "post_api_v1_auth_login",
@@ -4345,6 +4442,70 @@
         },
         "security": [],
         "summary": "Session",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/setup/confirm": {
+      "post": {
+        "operationId": "post_api_v1_auth_setup_confirm",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupConfirmInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Request validation failed."
+          }
+        },
+        "security": [],
+        "summary": "Setup Confirm",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/setup/start": {
+      "post": {
+        "operationId": "post_api_v1_auth_setup_start",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupStartView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [],
+        "summary": "Setup Start",
         "tags": [
           "auth"
         ]

@@ -3,7 +3,7 @@
 Importing this module registers every table on ``Base.metadata``.
 """
 
-from db.auth_models import MobileOperatorDevice
+from db.auth_models import MobileOperatorDevice, OperatorAuthConfiguration
 from db.base import Base, TimestampMixin
 from db.domain_models import (
     AlphaQualification,
@@ -48,6 +48,7 @@ __all__ = [
     "Base",
     "TimestampMixin",
     "MobileOperatorDevice",
+    "OperatorAuthConfiguration",
     "PluginRelease",
     "PluginArtifact",
     "PluginRuntimeBundle",

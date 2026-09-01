@@ -34,6 +34,7 @@ from operator_auth import (
     is_operator_auth_exempt,
     require_same_origin,
 )
+from operator_auth_store import initialize_operator_auth
 from settings import Settings
 
 
@@ -48,6 +49,17 @@ _NATIVE_PUBLIC_ROUTES = frozenset(
         ("GET", "/api/v1/openapi.json"),
         ("POST", "/api/v1/auth/mobile/login"),
         ("POST", "/api/v1/auth/mobile/refresh"),
+    }
+)
+
+_BROWSER_AUTH_PUBLIC_ROUTES = frozenset(
+    {
+        ("GET", "/api/v1/auth/bootstrap"),
+        ("POST", "/api/v1/auth/login"),
+        ("GET", "/api/v1/auth/session"),
+        ("POST", "/api/v1/auth/logout"),
+        ("POST", "/api/v1/auth/setup/start"),
+        ("POST", "/api/v1/auth/setup/confirm"),
     }
 )
 
@@ -153,7 +165,7 @@ def _install_openapi_contract(app: FastAPI) -> None:
                     operation["security"] = [{"MobileRefreshBearer": []}]
                 elif pair in _DOWNSTREAM_BEARER_ROUTES:
                     operation["security"] = [{"DownstreamBearer": []}]
-                elif pair in _NATIVE_PUBLIC_ROUTES or pair in {
+                elif pair in _NATIVE_PUBLIC_ROUTES or pair in _BROWSER_AUTH_PUBLIC_ROUTES or pair in {
                     ("GET", "/api/v1/system/health"),
                     ("POST", "/api/v1/auth/login"),
                     ("GET", "/api/v1/auth/session"),
@@ -328,6 +340,11 @@ def create_app(*, settings: Settings | None = None, engine: Engine | None = None
     app.state.engine = runtime_engine
     app.state.session_factory = create_session_factory(runtime_engine)
     app.state.operator_auth_runtime = OperatorAuthRuntime()
+    canonical_secret = initialize_operator_auth(
+        app.state.session_factory,
+        runtime_settings,
+    )
+    app.state.operator_auth_runtime.set_totp_secret(canonical_secret)
 
     install_error_handlers(app)
     _install_operator_auth(app)
