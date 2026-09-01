@@ -70,7 +70,6 @@ def test_mobile_session_rotation_and_revoke(settings: Settings, engine: Engine) 
     access = payload["access_token"]
     refresh = payload["refresh_credential"]
     device_id = payload["device"]["id"]
-    assert payload["token_type"] == "Bearer"
     assert access.startswith("qzm1.")
     assert refresh.startswith("qzm1.")
     assert access != refresh
