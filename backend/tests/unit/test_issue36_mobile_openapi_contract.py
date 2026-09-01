@@ -38,7 +38,7 @@ def test_native_auth_and_bootstrap_operations_are_exposed(settings, engine) -> N
         ("/api/v1/auth/mobile/logout", "post"),
         ("/api/v1/auth/mobile/session", "get"),
         ("/api/v1/auth/mobile/devices", "get"),
-        ("/api/v1/auth/mobile/devices/{id}", "post"),
+        ("/api/v1/auth/mobile/devices/{device_id}/revoke", "post"),
     }
     for path, method in required:
         operation = document["paths"][path][method]
