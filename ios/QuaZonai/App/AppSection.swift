@@ -17,6 +17,15 @@ enum AppSection: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
+    var iPadTitleKey: L10nKey {
+        switch self {
+        case .research: .researchObservatory
+        case .portfolio: .portfolioLab
+        case .approvals: .approvalInbox
+        default: titleKey
+        }
+    }
+
     var icon: String {
         switch self {
         case .home: "house"

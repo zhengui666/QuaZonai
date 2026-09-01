@@ -10,6 +10,7 @@ final class QuaZonaiUITests: XCTestCase {
     @MainActor
     private func launchApp() {
         app = XCUIApplication()
+        app.launchArguments += ["--ui-testing", "--fixture-mode", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         app.launchEnvironment["QUAZONAI_UI_SERVER"] = ProcessInfo.processInfo.environment["QUAZONAI_UI_SERVER"] ?? "http://127.0.0.1:8000"
         app.launch()
         XCTAssertTrue(
@@ -20,6 +21,12 @@ final class QuaZonaiUITests: XCTestCase {
 
     @MainActor
     private func openMoreDestination(_ label: String) {
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            let target = app.buttons[label].firstMatch
+            XCTAssertTrue(target.waitForExistence(timeout: 6), "Missing iPad destination: \(label)")
+            target.tap()
+            return
+        }
         if app.tabBars.buttons["More"].exists {
             app.tabBars.buttons["More"].tap()
         }
@@ -31,6 +38,27 @@ final class QuaZonaiUITests: XCTestCase {
         let text = app.staticTexts[label].firstMatch
         XCTAssertTrue(text.waitForExistence(timeout: 4))
         text.tap()
+    }
+
+    @MainActor
+    private func openPrimarySection(phoneLabel: String, iPadLabel: String) {
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            let target = app.buttons[iPadLabel].firstMatch
+            XCTAssertTrue(target.waitForExistence(timeout: 6), "Missing iPad destination: \(iPadLabel)")
+            target.tap()
+        } else {
+            XCTAssertTrue(app.tabBars.buttons[phoneLabel].waitForExistence(timeout: 6))
+            app.tabBars.buttons[phoneLabel].tap()
+        }
+    }
+
+    @MainActor
+    private func waitForHittable(_ element: XCUIElement, swipes: Int = 8) -> Bool {
+        for _ in 0...swipes {
+            if element.exists && element.isHittable { return true }
+            app.swipeUp()
+        }
+        return element.exists
     }
 
     @MainActor
@@ -48,23 +76,38 @@ final class QuaZonaiUITests: XCTestCase {
         editor.tap()
         editor.typeText("Test post-earnings drift in liquid US equities after realistic costs.")
         app.buttons["Preview research charter"].tap()
-        XCTAssertTrue(app.buttons["Start Research"].waitForExistence(timeout: 10))
+        let start = app.buttons["Start Research"]
+        XCTAssertTrue(start.waitForExistence(timeout: 10))
+        start.tap()
+        XCTAssertTrue(app.staticTexts["Created program"].waitForExistence(timeout: 10))
     }
 
     @MainActor
     func testResearch() {
         launchApp()
-        if app.tabBars.buttons["Research"].exists {
-            app.tabBars.buttons["Research"].tap()
-        } else {
-            openMoreDestination("Research")
-        }
+        openPrimarySection(phoneLabel: "Research", iPadLabel: "Research Observatory")
         XCTAssertTrue(app.navigationBars["Research"].waitForExistence(timeout: 6))
     }
 
     @MainActor
     func testProgramActions() {
-        testResearch()
+        launchApp()
+        openPrimarySection(phoneLabel: "Research", iPadLabel: "Research Observatory")
+        let firstRecord = app.staticTexts["Fixture research program"].firstMatch
+        XCTAssertTrue(waitForHittable(firstRecord, swipes: 4))
+        firstRecord.tap()
+        let reason = app.textFields["Reason for pause/archive"]
+        XCTAssertTrue(waitForHittable(reason))
+        reason.tap(); reason.typeText("UI action test")
+        app.buttons["Pause"].tap()
+        XCTAssertTrue(app.buttons["Resume"].waitForExistence(timeout: 8))
+        app.buttons["Resume"].tap()
+        XCTAssertTrue(app.buttons["Pause"].waitForExistence(timeout: 8))
+        reason.tap(); reason.typeText("UI archive test")
+        app.buttons["Archive"].tap()
+        XCTAssertTrue(app.buttons["Restore"].waitForExistence(timeout: 8))
+        app.buttons["Restore"].tap()
+        XCTAssertTrue(app.buttons["Pause"].waitForExistence(timeout: 8))
     }
 
     @MainActor
@@ -77,29 +120,36 @@ final class QuaZonaiUITests: XCTestCase {
     @MainActor
     func testPortfolio() {
         launchApp()
-        if app.tabBars.buttons["Portfolio"].exists {
-            app.tabBars.buttons["Portfolio"].tap()
-        } else {
-            openMoreDestination("Portfolio")
-        }
+        openPrimarySection(phoneLabel: "Portfolio", iPadLabel: "Portfolio Lab")
         XCTAssertTrue(app.navigationBars["Portfolio"].waitForExistence(timeout: 6))
     }
 
     @MainActor
     func testApproval() {
         launchApp()
-        if app.tabBars.buttons["Approvals"].exists {
-            app.tabBars.buttons["Approvals"].tap()
-        } else {
-            openMoreDestination("Approvals")
-        }
+        openPrimarySection(phoneLabel: "Approvals", iPadLabel: "Approval Inbox")
         XCTAssertTrue(app.navigationBars["Approvals"].waitForExistence(timeout: 6))
+        let approve = app.buttons["Approve"].firstMatch
+        XCTAssertTrue(approve.waitForExistence(timeout: 8))
+        approve.tap()
+        XCTAssertTrue(app.staticTexts["APPROVED"].waitForExistence(timeout: 8))
     }
 
     @MainActor
     func testReject() {
-        testApproval()
-        XCTAssertTrue(app.buttons["Reject"].firstMatch.waitForExistence(timeout: 6))
+        launchApp()
+        openPrimarySection(phoneLabel: "Approvals", iPadLabel: "Approval Inbox")
+        let reject = app.buttons["Reject"].firstMatch
+        XCTAssertTrue(reject.waitForExistence(timeout: 8))
+        reject.tap()
+        XCTAssertTrue(app.navigationBars["Reject"].waitForExistence(timeout: 6))
+        let picker = app.buttons["Reason code"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 6))
+        picker.tap()
+        XCTAssertTrue(app.buttons["Risk Profile Unacceptable"].waitForExistence(timeout: 6))
+        app.buttons["Risk Profile Unacceptable"].tap()
+        app.buttons["Reject"].lastMatch.tap()
+        XCTAssertTrue(app.staticTexts["REJECTED"].waitForExistence(timeout: 8))
     }
 
     @MainActor
@@ -111,7 +161,12 @@ final class QuaZonaiUITests: XCTestCase {
 
     @MainActor
     func testHandoffRevoke() {
-        testHandoff()
+        launchApp()
+        openMoreDestination("Handoff & Feedback")
+        let revoke = app.buttons["Revoke"].firstMatch
+        XCTAssertTrue(revoke.waitForExistence(timeout: 8))
+        revoke.tap()
+        XCTAssertTrue(app.staticTexts["REVOKED"].waitForExistence(timeout: 8))
     }
 
     @MainActor
@@ -125,24 +180,44 @@ final class QuaZonaiUITests: XCTestCase {
     func testRuntimeConfiguration() {
         testAdministration()
         XCTAssertTrue(app.secureTextFields["Codex API Key (write only)"].waitForExistence(timeout: 6))
+        let save = app.buttons["Save"]
+        XCTAssertTrue(waitForHittable(save))
+        save.tap()
     }
 
     @MainActor
     func testDataSourceRegistration() {
         testAdministration()
-        XCTAssertTrue(app.buttons["Register Data Source"].waitForExistence(timeout: 6))
+        let register = app.buttons["register-data-source"]
+        XCTAssertTrue(waitForHittable(register))
+        register.tap()
+        XCTAssertTrue(app.navigationBars["Register Data Source"].waitForExistence(timeout: 6))
+        app.textFields["Name"].tap(); app.textFields["Name"].typeText("iOS UI Data")
+        app.textFields["Provider"].tap(); app.textFields["Provider"].typeText("Fixture Provider")
+        app.textFields["Canonical Fields"].tap(); app.textFields["Canonical Fields"].typeText("event_time, available_time, close, volume")
+        app.buttons["Register"].tap()
+        XCTAssertTrue(app.staticTexts["iOS UI Data"].waitForExistence(timeout: 8))
     }
 
     @MainActor
     func testDownstreamRegistration() {
         testAdministration()
-        XCTAssertTrue(app.buttons["Register Downstream"].waitForExistence(timeout: 6))
+        let register = app.buttons["register-downstream"]
+        XCTAssertTrue(waitForHittable(register))
+        register.tap()
+        XCTAssertTrue(app.navigationBars["Register Downstream"].waitForExistence(timeout: 6))
+        app.textFields["Name"].tap(); app.textFields["Name"].typeText("iOS UI Downstream")
+        app.buttons["Register"].tap()
+        XCTAssertTrue(app.staticTexts["Service token — shown once"].waitForExistence(timeout: 8))
     }
 
     @MainActor
     func testMandateToggle() {
         testAdministration()
-        XCTAssertTrue(app.switches.firstMatch.waitForExistence(timeout: 6))
+        let toggle = app.switches.firstMatch
+        XCTAssertTrue(waitForHittable(toggle))
+        toggle.tap()
+        XCTAssertTrue(toggle.waitForExistence(timeout: 8))
     }
 
     @MainActor
@@ -150,6 +225,10 @@ final class QuaZonaiUITests: XCTestCase {
         launchApp()
         openMoreDestination("Account / Device Security")
         XCTAssertTrue(app.navigationBars["Account / Device Security"].waitForExistence(timeout: 6))
+        let revoke = app.buttons["Revoke device"].firstMatch
+        XCTAssertTrue(revoke.waitForExistence(timeout: 8))
+        revoke.tap()
+        XCTAssertTrue(app.staticTexts["REVOKED"].waitForExistence(timeout: 8))
     }
 
     @MainActor

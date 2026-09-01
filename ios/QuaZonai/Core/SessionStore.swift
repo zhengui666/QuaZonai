@@ -13,24 +13,11 @@ enum SessionPhase: Equatable {
 }
 
 
-struct MutationIdempotencyRegistry {
-    private var pending: [String: String] = [:]
+struct MutationSubmission: Equatable, Sendable {
+    let idempotencyKey: String
 
-    mutating func key(for fingerprint: String) -> String {
-        if let existing = pending[fingerprint] { return existing }
-        let generated = UUID().uuidString
-        pending[fingerprint] = generated
-        return generated
-    }
-
-    mutating func finish(fingerprint: String, key: String) {
-        if pending[fingerprint] == key {
-            pending.removeValue(forKey: fingerprint)
-        }
-    }
-
-    mutating func removeAll() {
-        pending.removeAll()
+    init(idempotencyKey: String = UUID().uuidString) {
+        self.idempotencyKey = idempotencyKey
     }
 }
 
@@ -53,7 +40,6 @@ final class SessionStore: ObservableObject {
     private(set) var authEnabled = false
     private var client: APIClient?
     private var eventStream: EventStreamActor?
-    private var mutationKeys = MutationIdempotencyRegistry()
 
     private let serverKey = "quazonai.server-url"
     private let languageKey = "quazonai.language"
@@ -90,7 +76,6 @@ final class SessionStore: ObservableObject {
             profile = baseURL.absoluteString
             defaults.set(profile, forKey: serverKey)
             client = next
-            mutationKeys.removeAll()
             authEnabled = bootstrap.authEnabled
             directAccessWarning = !bootstrap.authEnabled
             if bootstrap.authEnabled {
@@ -207,15 +192,14 @@ final class SessionStore: ObservableObject {
         path: String,
         method: HTTPMethod = .post,
         body: JSONValue = .object([:]),
-        idempotencyKey: String? = nil
+        idempotencyKey: String? = nil,
+        submission: MutationSubmission? = nil
     ) async throws -> JSONValue {
         guard connectivity.isOnline else {
             throw APIClientError.http(status: 0, code: "OFFLINE_MUTATION_BLOCKED", message: "Mutations are disabled while offline.")
         }
         guard let client else { throw APIClientError.invalidServerURL }
-        let fingerprint = try mutationFingerprint(path: path, method: method, body: body)
-        let tracksGeneratedKey = idempotencyKey == nil
-        let stableKey = idempotencyKey ?? mutationKeys.key(for: fingerprint)
+        let stableKey = submission?.idempotencyKey ?? idempotencyKey ?? UUID().uuidString
         do {
             let value = try await client.requestJSON(
                 path: path,
@@ -224,23 +208,14 @@ final class SessionStore: ObservableObject {
                 idempotencyKey: stableKey
             )
             await persistRotatedRefreshCredentialIfNeeded()
-            if tracksGeneratedKey {
-                mutationKeys.finish(fingerprint: fingerprint, key: stableKey)
-            }
             return value
         } catch APIClientError.authenticationRequired {
             await persistRotatedRefreshCredentialIfNeeded()
-            if tracksGeneratedKey {
-                mutationKeys.finish(fingerprint: fingerprint, key: stableKey)
-            }
             phase = .loginRequired
             stopEvents()
             throw APIClientError.authenticationRequired
         } catch {
             await persistRotatedRefreshCredentialIfNeeded()
-            if tracksGeneratedKey && !shouldRetainMutationKey(after: error) {
-                mutationKeys.finish(fingerprint: fingerprint, key: stableKey)
-            }
             throw error
         }
     }
@@ -261,7 +236,6 @@ final class SessionStore: ObservableObject {
         } catch {
             errorMessage = "The server session was revoked, but the local trusted-device credential could not be removed."
         }
-        mutationKeys.removeAll()
         phase = authEnabled ? .loginRequired : .serverSetup
     }
 
@@ -283,7 +257,6 @@ final class SessionStore: ObservableObject {
             cleanupMessage = "The server session was revoked, but the local trusted-device credential could not be removed."
         }
         defaults.removeObject(forKey: serverKey)
-        mutationKeys.removeAll()
         client = nil
         profile = ""
         phase = .serverSetup
@@ -300,25 +273,6 @@ final class SessionStore: ObservableObject {
         defaults.set(value.rawValue, forKey: appearanceKey)
     }
 
-    private func mutationFingerprint(
-        path: String,
-        method: HTTPMethod,
-        body: JSONValue
-    ) throws -> String {
-        let canonicalBody = String(decoding: try body.encodedData(pretty: true), as: UTF8.self)
-        return "\(profile)\n\(method.rawValue)\n\(path)\n\(canonicalBody)"
-    }
-
-    private func shouldRetainMutationKey(after error: Error) -> Bool {
-        if error is URLError || error is CancellationError || error is DecodingError {
-            return true
-        }
-        if let apiError = error as? APIClientError, apiError == .invalidResponse {
-            return true
-        }
-        return (error as NSError).domain == NSURLErrorDomain
-    }
-
     private func cachedFallback(
         for error: Error,
         cacheKey: String?,
@@ -326,8 +280,7 @@ final class SessionStore: ObservableObject {
     ) -> JSONValue? {
         guard offlineReadable, let cacheKey else { return nil }
         let nsError = error as NSError
-        let transportUnavailable = !connectivity.isOnline
-            || error is URLError
+        let transportUnavailable = error is URLError
             || nsError.domain == NSURLErrorDomain
         guard transportUnavailable else { return nil }
         return cache?.load(key: cacheKey, profile: profile)
@@ -363,6 +316,13 @@ final class SessionStore: ObservableObject {
             },
             persistRefreshCredential: { [weak self] in
                 await self?.persistRotatedRefreshCredentialIfNeeded()
+            },
+            onAuthenticationRequired: { [weak self] in
+                await MainActor.run {
+                    guard let self, self.phase == .ready else { return }
+                    self.phase = .loginRequired
+                    self.stopEvents()
+                }
             }
         )
         eventStream = stream

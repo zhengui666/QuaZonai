@@ -34,10 +34,12 @@ enum AppAppearance: String, CaseIterable, Codable, Identifiable {
 
 enum L10nKey: String, CaseIterable {
     case home, research, approvals, portfolio, more, idea, alpha, handoff, administration
+    case researchObservatory, portfolioLab, approvalInbox
     case language, appearance, accountSecurity, server, connect, connecting, totp, trustDevice
     case signIn, unlock, logout, retry, loading, empty, error, search, sort, refresh
     case preview, startResearch, approve, reject, revoke, save, register, cancel, directWarning
     case secureServerHint, incompatible, recentEvents, systemHealth, actionCenter, settings
+    case nativeAuthentication, nativeAuthenticationDescription, trustedDeviceDescription, useTOTP
 }
 
 enum L10n {
@@ -51,6 +53,9 @@ enum L10n {
         .alpha: ["Alpha Library","Alpha 库","Alpha 庫","アルファライブラリ","알파 라이브러리","Biblioteca Alpha","مكتبة ألفا"],
         .handoff: ["Handoff & Feedback","交付与反馈","交付與回饋","引き渡しとフィードバック","핸드오프 및 피드백","Entrega y feedback","التسليم والملاحظات"],
         .administration: ["Administration","管理","管理","管理","관리","Administración","الإدارة"],
+        .researchObservatory: ["Research Observatory","研究观测台","研究觀測台","リサーチ・オブザーバトリー","리서치 관찰소","Observatorio de investigación","مرصد البحث"],
+        .portfolioLab: ["Portfolio Lab","组合实验室","組合實驗室","ポートフォリオ・ラボ","포트폴리오 랩","Laboratorio de carteras","مختبر المحفظة"],
+        .approvalInbox: ["Approval Inbox","审批收件箱","審批收件匣","承認受信箱","승인함","Bandeja de aprobaciones","صندوق الموافقات"],
         .language: ["Language","语言","語言","言語","언어","Idioma","اللغة"],
         .appearance: ["Appearance","外观","外觀","外観","화면 모드","Apariencia","المظهر"],
         .accountSecurity: ["Account / Device Security","账户 / 设备安全","帳戶 / 裝置安全","アカウント / 端末セキュリティ","계정 / 기기 보안","Cuenta / Seguridad del dispositivo","أمان الحساب / الجهاز"],
@@ -84,6 +89,10 @@ enum L10n {
         .systemHealth: ["System Health","系统健康","系統健康","システム状態","시스템 상태","Salud del sistema","حالة النظام"],
         .actionCenter: ["Action Center","行动中心","行動中心","アクションセンター","액션 센터","Centro de acciones","مركز الإجراءات"],
         .settings: ["Settings","设置","設定","設定","설정","Ajustes","الإعدادات"],
+        .nativeAuthentication: ["Native Operator Authentication","原生 Operator 认证","原生 Operator 認證","ネイティブ Operator 認証","네이티브 Operator 인증","Autenticación nativa del operador","مصادقة المشغل الأصلية"],
+        .nativeAuthenticationDescription: ["This app authenticates with the current TOTP only. It never asks for or sends a username or password.","此应用仅使用当前 TOTP 认证，不会请求或发送用户名和密码。","此 App 僅使用目前 TOTP 認證，不會要求或傳送使用者名稱與密碼。","このアプリは現在の TOTP のみで認証し、ユーザー名やパスワードを要求・送信しません。","이 앱은 현재 TOTP만 사용하며 사용자 이름이나 비밀번호를 요청하거나 보내지 않습니다.","Esta app solo se autentica con el TOTP actual; nunca solicita ni envía usuario o contraseña.","يصادق هذا التطبيق باستخدام TOTP الحالي فقط؛ ولا يطلب اسم مستخدم أو كلمة مرور أو يرسلهما."],
+        .trustedDeviceDescription: ["A trusted-device refresh credential is protected by this device's Keychain and biometrics.","受信任设备刷新凭据由此设备的钥匙串和生物识别保护。","受信任裝置更新憑證由此裝置的鑰匙圈與生物辨識保護。","信頼済み端末の更新資格情報は、この端末のキーチェーンと生体認証で保護されます。","신뢰 기기 갱신 자격 증명은 이 기기의 키체인과 생체 인증으로 보호됩니다.","La credencial de renovación del dispositivo confiable está protegida por el llavero y la biometría de este dispositivo.","تحمي سلسلة مفاتيح هذا الجهاز والقياسات الحيوية بيانات اعتماد التحديث للجهاز الموثوق."],
+        .useTOTP: ["Use TOTP instead","改用 TOTP","改用 TOTP","TOTP を使う","TOTP 사용","Usar TOTP","استخدام TOTP بدلاً من ذلك"],
     ]
 
     static func text(_ key: L10nKey, _ language: AppLanguage) -> String {

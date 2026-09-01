@@ -24,6 +24,7 @@ public actor EventStreamActor {
     private let session: URLSession
     private let persistCursor: @Sendable (Int) async -> Void
     private let persistRefreshCredential: @Sendable () async -> Void
+    private let onAuthenticationRequired: @Sendable () async -> Void
     private var task: Task<Void, Never>?
     private var eventCursor: EventSequenceCursor
 
@@ -32,13 +33,15 @@ public actor EventStreamActor {
         cursor: Int = 0,
         session: URLSession = .shared,
         persistCursor: @escaping @Sendable (Int) async -> Void = { _ in },
-        persistRefreshCredential: @escaping @Sendable () async -> Void = {}
+        persistRefreshCredential: @escaping @Sendable () async -> Void = {},
+        onAuthenticationRequired: @escaping @Sendable () async -> Void = {}
     ) {
         self.client = client
         self.eventCursor = EventSequenceCursor(cursor)
         self.session = session
         self.persistCursor = persistCursor
         self.persistRefreshCredential = persistRefreshCredential
+        self.onAuthenticationRequired = onAuthenticationRequired
     }
 
     deinit { task?.cancel() }
@@ -76,9 +79,16 @@ public actor EventStreamActor {
                 attempt += 1
                 Self.logger.error("Event stream disconnected; scheduling reconnect attempt \(attempt)")
                 await onState(.reconnecting(attempt))
-                if case APIClientError.authenticationRequired = error,
-                   (try? await client.refreshIfPossible()) != nil {
-                    await persistRefreshCredential()
+                if case APIClientError.authenticationRequired = error {
+                    do {
+                        _ = try await client.refreshIfPossible()
+                        await persistRefreshCredential()
+                    } catch APIClientError.authenticationRequired {
+                        await onAuthenticationRequired()
+                        return
+                    } catch {
+                        // Network failures remain reconnectable.
+                    }
                 }
                 let delay = EventStreamBackoff.delaySeconds(
                     attempt: attempt,

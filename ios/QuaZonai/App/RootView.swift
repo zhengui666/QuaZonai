@@ -52,8 +52,8 @@ private struct NativeLoginView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Native Operator Authentication") {
-                    Text("This app authenticates with the current TOTP only. It never asks for or sends a username or password.").font(.callout)
+                Section(L10n.text(.nativeAuthentication, session.language)) {
+                    Text(L10n.text(.nativeAuthenticationDescription, session.language)).font(.callout)
                     TextField(L10n.text(.totp, session.language), text: $totp)
                         .keyboardType(.numberPad).textContentType(.oneTimeCode)
                         .accessibilityIdentifier("totp-code")
@@ -82,9 +82,9 @@ private struct TrustedUnlockView: View {
         NavigationStack {
             VStack(spacing: 18) {
                 Image(systemName: "faceid").font(.system(size: 52))
-                Text("A trusted-device refresh credential is protected by this device's Keychain and biometrics.").multilineTextAlignment(.center)
+                Text(L10n.text(.trustedDeviceDescription, session.language)).multilineTextAlignment(.center)
                 Button(L10n.text(.unlock, session.language)) { Task { await session.unlockTrustedDevice() } }.buttonStyle(.borderedProminent)
-                Button("Use TOTP instead") {
+                Button(L10n.text(.useTOTP, session.language)) {
                     // This is an authentication-path choice, not logout. Keep the
                     // protected refresh credential until a successful TOTP login
                     // rotates the server generation and replaces or removes it.
@@ -117,7 +117,7 @@ private struct WorkbenchShell: View {
                             selectedSection = section
                         } label: {
                             Label(
-                                L10n.text(section.titleKey, session.language),
+                                L10n.text(section.iPadTitleKey, session.language),
                                 systemImage: section.icon
                             )
                             .frame(maxWidth: .infinity, alignment: .leading)

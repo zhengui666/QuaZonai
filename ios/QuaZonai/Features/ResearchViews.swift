@@ -43,6 +43,7 @@ struct ResearchDetailView: View {
     @State private var reason = ""
     @State private var error: String?
     @State private var runningAction: String?
+    @State private var mutationSubmission = MutationSubmission()
 
     var body: some View {
         ScrollView {
@@ -81,7 +82,16 @@ struct ResearchDetailView: View {
         if requiresReason && reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { error = "A reason is required."; return }
         runningAction = action; defer { runningAction = nil }
         let body: JSONValue = requiresReason ? .object(["reason": .string(reason.trimmingCharacters(in: .whitespacesAndNewlines))]) : .object([:])
-        do { _ = try await session.mutate(path: "/api/v1/research-programs/\(programID)/\(action)", body: body); reason = ""; await reload() }
+        do {
+            _ = try await session.mutate(
+                path: "/api/v1/research-programs/\(programID)/\(action)",
+                body: body,
+                submission: mutationSubmission
+            )
+            mutationSubmission = MutationSubmission()
+            reason = ""
+            await reload()
+        }
         catch { self.error = error.localizedDescription }
     }
 

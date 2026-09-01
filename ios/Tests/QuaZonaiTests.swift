@@ -48,12 +48,11 @@ final class QuaZonaiTests: XCTestCase {
         XCTAssertFalse(isAppVersion("invalid", atLeast: "1.0.0"))
     }
 
-    func testMutationIdempotencyRegistryRetainsPendingLogicalSubmission() {
-        var registry = MutationIdempotencyRegistry()
-        let first = registry.key(for: "POST\n/api/v1/example\n{}")
-        XCTAssertEqual(first, registry.key(for: "POST\n/api/v1/example\n{}"))
-        registry.finish(fingerprint: "POST\n/api/v1/example\n{}", key: first)
-        XCTAssertNotEqual(first, registry.key(for: "POST\n/api/v1/example\n{}"))
+    func testMutationSubmissionUsesExplicitStableKey() {
+        let first = MutationSubmission(idempotencyKey: "fixture-key")
+        XCTAssertEqual(first.idempotencyKey, "fixture-key")
+        XCTAssertEqual(first, MutationSubmission(idempotencyKey: "fixture-key"))
+        XCTAssertNotEqual(first, MutationSubmission())
     }
 
     func testSwiftOpenAPIGeneratedClientIsLinked() {

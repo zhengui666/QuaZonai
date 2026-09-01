@@ -510,7 +510,12 @@ def _program_view(session: Session, item: ResearchProgram) -> ResearchProgramVie
         select(func.count()).select_from(ResearchBranch).where(ResearchBranch.program_id == item.id)
     )
     mission_count = session.scalar(
-        select(func.count()).select_from(ResearchMission).where(ResearchMission.program_id == item.id)
+        select(func.count())
+        .select_from(ResearchMission)
+        .where(
+            ResearchMission.program_id == item.id,
+            ResearchMission.state.in_(('READY', 'RUNNING')),
+        )
     )
     alpha_count = session.scalar(
         select(func.count()).select_from(AlphaQualification).where(AlphaQualification.program_id == item.id)

@@ -12,6 +12,8 @@ struct IdeaComposerView: View {
     @State private var loading = false
     @State private var error: String?
     @State private var started: JSONValue?
+    @State private var previewSubmission = MutationSubmission()
+    @State private var startSubmission = MutationSubmission()
 
     var body: some View {
         Form {
@@ -65,7 +67,12 @@ struct IdeaComposerView: View {
     private func previewIdea() async {
         loading = true; defer { loading = false }
         do {
-            preview = try await session.mutate(path: "/api/v1/ideas/preview", body: .object(["idea": .string(idea.trimmingCharacters(in: .whitespacesAndNewlines))]))
+            preview = try await session.mutate(
+                path: "/api/v1/ideas/preview",
+                body: .object(["idea": .string(idea.trimmingCharacters(in: .whitespacesAndNewlines))]),
+                submission: previewSubmission
+            )
+            previewSubmission = MutationSubmission()
             error = nil
         } catch { self.error = error.localizedDescription }
     }
@@ -78,7 +85,8 @@ struct IdeaComposerView: View {
                 "idea": .string(idea.trimmingCharacters(in: .whitespacesAndNewlines)),
                 "answers": answerJSON,
                 "overlap_action": .string(overlapAction),
-            ]))
+            ]), submission: startSubmission)
+            startSubmission = MutationSubmission()
             error = nil
         } catch { self.error = error.localizedDescription }
     }

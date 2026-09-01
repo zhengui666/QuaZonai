@@ -11,6 +11,7 @@ final class ClientParityUITests: XCTestCase {
             "-AppleLanguages", "(en)",
             "-AppleLocale", "en_US"
         ]
+        app.launchEnvironment["QUAZONAI_UI_SERVER"] = ProcessInfo.processInfo.environment["QUAZONAI_UI_SERVER"] ?? "http://127.0.0.1:8000"
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
         return app

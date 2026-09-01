@@ -74,7 +74,7 @@ Native device lifecycle 与安全不变量：
 - SwiftData 只缓存声明为 offline-readable 的只读响应。缓存回退仅允许真实离线或 URL transport failure；在线 4xx/5xx、领域冲突和 schema 错误必须原样显示，不能被旧缓存伪装为成功。Mutation 始终 online-only。
 - Codex API key、Live approval、Live downstream 注册和其他敏感动作继续遵守 secure input、内存清除与设备所有者确认要求；App 不绕过后端最终 Gate。
 
-Web、iPhone 与 iPad 的业务功能等价由 `contracts/client-capabilities.yaml` 声明，并由 CI 将每个 Web reference 解析到真实仓库文件、每个 Native reference 解析到真实 XCTest symbol；仅有非空标签不得通过 parity Gate。
+Web、iPhone 与 iPad 的业务功能等价由 `contracts/client-capabilities.yaml` 声明，并由 CI 将每个 Web reference 解析到真实仓库文件、每个 Native reference 解析到真实 XCTest symbol；仅有非空标签不得通过 parity Gate。Native mutation reference 必须执行实际 UI 控件并验证成功状态或服务端结果，不能只调用导航测试或仅证明 XCTest 符号存在。
 
 ---
 
@@ -2100,7 +2100,7 @@ Mobile Access Credential 是短期内存 Bearer；Trust Device 的 Refresh Crede
 
 Native EventStreamActor 先用 `GET /events?after_id=` 按 cursor 补齐，再建立 `/events/stream?cursor=` SSE；保留 Last-Event-ID、指数退避 + jitter、网络/前后台重连、auth refresh 与 duplicate-id protection。SwiftData 只保存 server-profile-isolated read cache、event cursor 与本地 Idea Draft，绝不是 Domain truth source。
 
-离线允许读取已有 cache、编辑 Idea Draft；Start Research、Program action、Approve/Reject、Handoff revoke、Runtime Configuration、Data Source/Downstream mutation 等全部 fail closed。Mutation 使用稳定 Idempotency-Key；401 最多 refresh/retry 一次；409 原样呈现，不自动覆盖服务端状态。
+离线允许读取已有 cache、编辑 Idea Draft；Start Research、Program action、Approve/Reject、Handoff revoke、Runtime Configuration、Data Source/Downstream mutation 等全部 fail closed。每次用户 mutation submission 在开始时生成显式 Idempotency-Key，并在结果不确定时由同一界面 submission 保留该 key；成功后才生成下一 key。401 最多 refresh/retry 一次；409 原样呈现，不自动覆盖服务端状态。Research Program 的 mission_count 只统计 READY/RUNNING 的活动 mission。
 
 Production Server URL 默认要求 HTTPS，HTTP 只允许 localhost development；无 Trust-All/TLS bypass。Authorization、TOTP、Codex API Key 不进入日志。Codex API Key 在 App 中只使用 SecureField 临时内存输入，请求结束即清空，不进入 Keychain/SwiftData。App 进入后台显示 privacy cover。
 

@@ -21,6 +21,7 @@ from db.models import (
     HandoffOffer,
     IdeaContribution,
     MarketUniverseVersion,
+    MobileOperatorDevice,
     PortfolioCandidate,
     PortfolioMandate,
     PortfolioProgram,
@@ -43,6 +44,15 @@ ALPHA_ID = UUID("50000000-0000-0000-0000-000000000001")
 PAPER_DOWNSTREAM_ID = UUID("60000000-0000-0000-0000-000000000001")
 LIVE_DOWNSTREAM_ID = UUID("60000000-0000-0000-0000-000000000002")
 APPROVAL_ID = UUID("70000000-0000-0000-0000-000000000001")
+REJECT_APPROVAL_ID = UUID("70000000-0000-0000-0000-000000000002")
+RESEARCH_CHARTER_ID = UUID("80000000-0000-0000-0000-000000000001")
+RESEARCH_PROGRAM_ID = UUID("80000000-0000-0000-0000-000000000002")
+RESEARCH_BRANCH_ID = UUID("80000000-0000-0000-0000-000000000003")
+ACTIVE_MISSION_ID = UUID("80000000-0000-0000-0000-000000000004")
+FINISHED_MISSION_ID = UUID("80000000-0000-0000-0000-000000000005")
+HANDOFF_PACKAGE_ID = UUID("90000000-0000-0000-0000-000000000001")
+HANDOFF_ID = UUID("90000000-0000-0000-0000-000000000002")
+MOBILE_DEVICE_ID = UUID("a0000000-0000-0000-0000-000000000001")
 
 
 def main() -> None:
@@ -52,6 +62,7 @@ def main() -> None:
     now = datetime.now(UTC)
     with factory() as session, session.begin():
         for model in (
+            MobileOperatorDevice,
             ForwardEvidenceEpisode,
             HandoffOffer,
             CandidatePackage,
@@ -81,6 +92,57 @@ def main() -> None:
             state="ACTIVE",
             spec_json={"calendar": "XNYS", "currency": "USD"},
             created_at=now,
+        )
+        charter = ResearchCharter(
+            id=RESEARCH_CHARTER_ID,
+            original_idea_text="Test post-earnings drift in liquid US equities.",
+            research_question="Does post-earnings drift persist after realistic costs?",
+            market_scope=["US_EQUITIES"],
+            universe_version_ids=[str(UNIVERSE_ID)],
+            prediction_horizon="1D",
+            allowed_data_domains=["market"],
+            explicit_exclusions=[],
+            material_assumptions=[],
+            system_assumptions=[],
+            created_at=now,
+        )
+        research_program = ResearchProgram(
+            id=RESEARCH_PROGRAM_ID,
+            charter_id=RESEARCH_CHARTER_ID,
+            title="Fixture research program",
+            state="ACTIVE",
+        )
+        research_branch = ResearchBranch(
+            id=RESEARCH_BRANCH_ID,
+            program_id=RESEARCH_PROGRAM_ID,
+            parent_branch_id=None,
+            derivation_type="ROOT",
+            hypothesis="Post-earnings drift survives realistic transaction costs.",
+            changed_assumptions=[],
+            preserved_constraints=[],
+            state="ACTIVE",
+            created_at=now,
+        )
+        active_mission = ResearchMission(
+            id=ACTIVE_MISSION_ID,
+            program_id=RESEARCH_PROGRAM_ID,
+            branch_id=RESEARCH_BRANCH_ID,
+            type="DISCOVERY",
+            role="PRIMARY",
+            state="READY",
+            objective="Run the fixture discovery mission.",
+            dependencies=[],
+        )
+        finished_mission = ResearchMission(
+            id=FINISHED_MISSION_ID,
+            program_id=RESEARCH_PROGRAM_ID,
+            branch_id=RESEARCH_BRANCH_ID,
+            type="VALIDATION",
+            role="SECONDARY",
+            state="SUCCEEDED",
+            objective="Historical mission excluded from active count.",
+            dependencies=[],
+            finished_at=now - timedelta(hours=1),
         )
         mandate = PortfolioMandate(
             id=MANDATE_ID,
@@ -122,7 +184,18 @@ def main() -> None:
             state="CANDIDATE_READY",
             current_candidate_id=CANDIDATE_ID,
         )
-        session.add_all([universe, mandate, paper, live, portfolio_program])
+        session.add_all([
+            universe,
+            charter,
+            research_program,
+            research_branch,
+            active_mission,
+            finished_mission,
+            mandate,
+            paper,
+            live,
+            portfolio_program,
+        ])
         session.flush()
 
         alpha = AlphaQualification(
@@ -231,6 +304,57 @@ def main() -> None:
             },
         )
         session.add(approval)
+        reject_approval = ApprovalSnapshot(
+            id=REJECT_APPROVAL_ID,
+            candidate_id=CANDIDATE_ID,
+            purpose="PAPER",
+            state="PENDING",
+            valid_until=now + timedelta(days=7),
+            recommendation_rationale="Fixture approval reserved for the reject action test.",
+            human_report={"summary": "Reject action fixture."},
+            evidence_summary={"search_adjusted_quality": 0.7},
+            risk_summary={},
+            cost_summary={},
+            capacity_summary={},
+            changes_summary={},
+            capital_context={"base_currency": "USD", "deployable_capital": 100000},
+        )
+        package = CandidatePackage(
+            id=HANDOFF_PACKAGE_ID,
+            approval_id=APPROVAL_ID,
+            candidate_id=CANDIDATE_ID,
+            contract_version="1",
+            state="AVAILABLE",
+            manifest_json={},
+            relative_path="fixture/candidate-bundle.zip",
+            payload={},
+            created_at=now,
+        )
+        handoff = HandoffOffer(
+            id=HANDOFF_ID,
+            approval_id=APPROVAL_ID,
+            candidate_package_id=HANDOFF_PACKAGE_ID,
+            candidate_id=CANDIDATE_ID,
+            purpose="PAPER",
+            downstream_system_id=PAPER_DOWNSTREAM_ID,
+            state="AVAILABLE",
+            claim_deadline=now + timedelta(days=7),
+            feedback_state="PENDING",
+            feedback_contract_snapshot={},
+        )
+        device = MobileOperatorDevice(
+            id=MOBILE_DEVICE_ID,
+            installation_id="a0000000-0000-0000-0000-000000000002",
+            display_name="Fixture iPhone",
+            device_family="IPHONE",
+            credential_generation=1,
+            last_seen_at=now,
+            refresh_expires_at=now + timedelta(days=30),
+            client_version="1.0.0",
+            app_build="100",
+            os_version="18.0",
+        )
+        session.add_all([reject_approval, package, handoff, device])
 
     engine.dispose()
 

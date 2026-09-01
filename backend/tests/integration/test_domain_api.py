@@ -16,6 +16,8 @@ from db.models import (
     Job,
     PortfolioCandidate,
     PortfolioProgram,
+    ResearchBranch,
+    ResearchMission,
     ResearchProgram,
 )
 from db.session import create_session_factory
@@ -108,6 +110,42 @@ def test_duplicate_idea_uses_contribution_instead_of_copying_program(
     factory = create_session_factory(engine)
     with factory() as session:
         assert session.scalar(select(func.count()).select_from(ResearchProgram)) == 1
+
+
+def test_program_mission_count_only_includes_active_missions(
+    engine: Engine,
+    settings: Settings,
+) -> None:
+    client = _client(engine, settings)
+    created = client.post(
+        "/api/v1/research-programs",
+        headers={"Idempotency-Key": "active-mission-count"},
+        json={"idea": "Test active mission count excludes historical missions.", "answers": {}},
+    )
+    assert created.status_code == 201, created.text
+    program_id = UUID(created.json()["id"])
+
+    factory = create_session_factory(engine)
+    with factory() as session, session.begin():
+        branch = session.scalar(select(ResearchBranch).where(ResearchBranch.program_id == program_id))
+        assert branch is not None
+        session.add(
+            ResearchMission(
+                program_id=program_id,
+                branch_id=branch.id,
+                type="VALIDATION",
+                role="SECONDARY",
+                state="SUCCEEDED",
+                objective="Historical mission.",
+                dependencies=[],
+                finished_at=datetime.now(UTC),
+            )
+        )
+
+    listed = client.get("/api/v1/research-programs")
+    assert listed.status_code == 200, listed.text
+    item = next(value for value in listed.json() if value["id"] == str(program_id))
+    assert item["mission_count"] == 1
 
 
 def _seed_candidate_approval(

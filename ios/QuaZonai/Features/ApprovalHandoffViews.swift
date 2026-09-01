@@ -80,6 +80,7 @@ private struct ApprovalCard: View {
     @State private var showReject = false
     @State private var error: String?
     @State private var busy = false
+    @State private var mutationSubmission = MutationSubmission()
 
     private var object: [String: JSONValue] { approval.objectValue ?? [:] }
     private var pending: Bool { object.string("state") == "PENDING" }
@@ -145,7 +146,8 @@ private struct ApprovalCard: View {
             _ = try await session.mutate(path: "/api/v1/approvals/\(id)/approve", body: .object([
                 "downstream_system_id": .string(downstreamID),
                 "expected_state": .string("PENDING"),
-            ]))
+            ]), submission: mutationSubmission)
+            mutationSubmission = MutationSubmission()
             await reload()
         } catch { self.error = error.localizedDescription }
     }
@@ -156,7 +158,8 @@ private struct ApprovalCard: View {
         var body: [String: JSONValue] = ["reason_code": .string(rejectReason), "expected_state": .string("PENDING")]
         if !rejectNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { body["note"] = .string(rejectNote.trimmingCharacters(in: .whitespacesAndNewlines)) }
         do {
-            _ = try await session.mutate(path: "/api/v1/approvals/\(id)/reject", body: .object(body))
+            _ = try await session.mutate(path: "/api/v1/approvals/\(id)/reject", body: .object(body), submission: mutationSubmission)
+            mutationSubmission = MutationSubmission()
             showReject = false; rejectReason = ""; rejectNote = ""; await reload()
         } catch { self.error = error.localizedDescription }
     }
@@ -204,12 +207,14 @@ private struct HandoffCard: View {
     let reload: () async -> Void
     @State private var error: String?
     @State private var busy = false
+    @State private var mutationSubmission = MutationSubmission()
     private var state: String { offer.objectValue?.string("state") ?? "" }
     private var revocable: Bool { ["APPROVED", "PUBLISHING", "AVAILABLE"].contains(state) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             RecordRow(item: offer)
+            Text(state).font(.caption).accessibilityIdentifier("handoff-state")
             if revocable {
                 Button(L10n.text(.revoke, session.language), role: .destructive) { Task { await revoke() } }.disabled(busy)
             } else if ["CLAIMED", "DOWNSTREAM_ACCEPTED", "FEEDBACK_PENDING", "FEEDBACK_IN_PROGRESS", "FEEDBACK_PARTIAL", "FEEDBACK_COMPLETE"].contains(state) {
@@ -224,7 +229,15 @@ private struct HandoffCard: View {
         guard let id = offer.stableID else { return }
         guard await BiometricGate.authorize(reason: "Revoke an unclaimed handoff offer") else { error = "Biometric confirmation was not completed."; return }
         busy = true; defer { busy = false }
-        do { _ = try await session.mutate(path: "/api/v1/handoffs/\(id)/revoke", body: .object(["reason_code": .string("OPERATOR_REVOKE")])); await reload() }
+        do {
+            _ = try await session.mutate(
+                path: "/api/v1/handoffs/\(id)/revoke",
+                body: .object(["reason_code": .string("OPERATOR_REVOKE")]),
+                submission: mutationSubmission
+            )
+            mutationSubmission = MutationSubmission()
+            await reload()
+        }
         catch { self.error = error.localizedDescription }
     }
 }

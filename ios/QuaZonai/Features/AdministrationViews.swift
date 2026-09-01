@@ -34,12 +34,14 @@ struct AdministrationView: View {
             }
             Section("Data Sources") {
                 Button("Register Data Source") { showDataSource = true }
+                    .accessibilityIdentifier("register-data-source")
                 JSONRecords(records: sources)
             }
             Section("Datasets") { JSONRecords(records: datasets) }
             Section("Universes") { JSONRecords(records: universes) }
             Section("Downstreams") {
                 Button("Register Downstream") { showDownstream = true }
+                    .accessibilityIdentifier("register-downstream")
                 JSONRecords(records: downstreams)
             }
             Section("Plugin Releases") { JSONRecords(records: plugins) }
@@ -100,6 +102,7 @@ private struct MandateAdminRow: View {
     let reload: () async -> Void
     @State private var busy = false
     @State private var error: String?
+    @State private var mutationSubmission = MutationSubmission()
     var body: some View {
         let enabled = mandate.objectValue?.bool("enabled") ?? false
         VStack(alignment: .leading, spacing: 6) {
@@ -112,7 +115,14 @@ private struct MandateAdminRow: View {
     private func toggle(enabled: Bool) async {
         guard let id = mandate.stableID else { return }
         busy = true; defer { busy = false }
-        do { _ = try await session.mutate(path: "/api/v1/portfolio-mandates/\(id)/\(enabled ? "disable" : "enable")"); await reload() }
+        do {
+            _ = try await session.mutate(
+                path: "/api/v1/portfolio-mandates/\(id)/\(enabled ? "disable" : "enable")",
+                submission: mutationSubmission
+            )
+            mutationSubmission = MutationSubmission()
+            await reload()
+        }
         catch { self.error = error.localizedDescription }
     }
 }
@@ -135,6 +145,7 @@ private struct RuntimeConfigurationEditor: View {
     @State private var initialized = false
     @State private var busy = false
     @State private var error: String?
+    @State private var mutationSubmission = MutationSubmission()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -196,7 +207,16 @@ private struct RuntimeConfigurationEditor: View {
             "job_lease_seconds": .number(Double(leaseSeconds) ?? object.number("job_lease_seconds") ?? 0),
         ]
         if !apiKey.isEmpty { payload["codex_api_key"] = .string(apiKey) }
-        do { _ = try await session.mutate(path: "/api/v1/system/runtime-configuration", method: .put, body: .object(payload)); clearAPIKey = false; error = nil; await reload() }
+        do {
+            _ = try await session.mutate(
+                path: "/api/v1/system/runtime-configuration",
+                method: .put,
+                body: .object(payload),
+                submission: mutationSubmission
+            )
+            mutationSubmission = MutationSubmission()
+            clearAPIKey = false; error = nil; await reload()
+        }
         catch { self.error = error.localizedDescription }
     }
 }
@@ -208,6 +228,7 @@ private struct DataSourceRegistrationSheet: View {
     @State private var provider = ""
     @State private var fields = ""
     @State private var error: String?
+    @State private var mutationSubmission = MutationSubmission()
     var body: some View {
         NavigationStack {
             Form {
@@ -222,7 +243,15 @@ private struct DataSourceRegistrationSheet: View {
     }
     private func submit() async {
         let canonical = fields.split(separator: ",").map { JSONValue.string($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
-        do { _ = try await session.mutate(path: "/api/v1/data-sources", body: .object(["name": .string(name.trimmingCharacters(in: .whitespacesAndNewlines)), "provider": .string(provider.trimmingCharacters(in: .whitespacesAndNewlines)), "fields": .array(canonical), "state": .string("STAGED")])); await completed() }
+        do {
+            _ = try await session.mutate(
+                path: "/api/v1/data-sources",
+                body: .object(["name": .string(name.trimmingCharacters(in: .whitespacesAndNewlines)), "provider": .string(provider.trimmingCharacters(in: .whitespacesAndNewlines)), "fields": .array(canonical), "state": .string("STAGED")]),
+                submission: mutationSubmission
+            )
+            mutationSubmission = MutationSubmission()
+            await completed()
+        }
         catch { self.error = error.localizedDescription }
     }
 }
@@ -237,6 +266,7 @@ private struct DownstreamRegistrationSheet: View {
     @State private var issuedServiceToken: String?
     @State private var busy = false
     @State private var error: String?
+    @State private var mutationSubmission = MutationSubmission()
 
     var body: some View {
         NavigationStack {
@@ -301,12 +331,14 @@ private struct DownstreamRegistrationSheet: View {
         do {
             let result = try await session.mutate(
                 path: "/api/v1/downstream-systems",
-                body: .object(payload)
+                body: .object(payload),
+                submission: mutationSubmission
             )
             guard let token = result["service_token"]?.stringValue, !token.isEmpty else {
                 throw APIClientError.invalidResponse
             }
             issuedServiceToken = token
+            mutationSubmission = MutationSubmission()
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -318,11 +350,14 @@ struct DeviceSecurityView: View {
     @EnvironmentObject private var session: SessionStore
     @State private var devices: [JSONValue] = []
     @State private var error: String?
+    @State private var mutationSubmission = MutationSubmission()
     var body: some View {
         List {
             ForEach(Array(devices.enumerated()), id: \.offset) { _, device in
                 VStack(alignment: .leading, spacing: 6) {
                     RecordRow(item: device)
+                    Text(device.objectValue?.string("revoked_at") == nil ? "ACTIVE" : "REVOKED")
+                        .font(.caption)
                     DisclosureGroup("Session details") { JSONTreeView(value: device) }
                     if device.objectValue?.string("revoked_at") == nil, let id = device.stableID {
                         Button("Revoke device", role: .destructive) { Task { await revoke(id) } }
@@ -339,7 +374,14 @@ struct DeviceSecurityView: View {
     }
     private func revoke(_ id: String) async {
         guard await BiometricGate.authorize(reason: "Revoke a trusted native device") else { error = "Biometric confirmation was not completed."; return }
-        do { _ = try await session.mutate(path: "/api/v1/auth/mobile/devices/\(id)/revoke"); await reload() }
+        do {
+            _ = try await session.mutate(
+                path: "/api/v1/auth/mobile/devices/\(id)/revoke",
+                submission: mutationSubmission
+            )
+            mutationSubmission = MutationSubmission()
+            await reload()
+        }
         catch { self.error = error.localizedDescription }
     }
 }
