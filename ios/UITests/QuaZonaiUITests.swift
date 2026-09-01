@@ -58,7 +58,7 @@ final class QuaZonaiUITests: XCTestCase {
     private func waitForHittable(_ element: XCUIElement, swipes: Int = 8) -> Bool {
         for _ in 0...swipes {
             if element.exists && element.isHittable { return true }
-            if element.exists { element.swipeUp() } else { app.swipeUp() }
+            if element.exists && !element.frame.isEmpty { element.swipeUp() } else { app.swipeUp() }
         }
         return element.exists && element.isHittable
     }
@@ -149,7 +149,7 @@ final class QuaZonaiUITests: XCTestCase {
         let reject = app.buttons["reject-\(rejectApprovalID)"]
         XCTAssertTrue(reject.waitForExistence(timeout: 8))
         reject.tap()
-        let picker = app.buttons["Reason code"]
+        let picker = app.descendants(matching: .any)["reject-reason-code"]
         XCTAssertTrue(picker.waitForExistence(timeout: 6))
         picker.tap()
         XCTAssertTrue(app.buttons["Risk Profile Unacceptable"].waitForExistence(timeout: 6))

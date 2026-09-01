@@ -130,11 +130,12 @@ private struct ApprovalCard: View {
         .sheet(isPresented: $showReject) {
             NavigationStack {
                 Form {
-                    Picker("Reason code", selection: $rejectReason) {
-                        Text("Select reason").tag("")
-                        ForEach(approvalRejectReasons, id: \.self) { Text($0.replacingOccurrences(of: "_", with: " ").capitalized).tag($0) }
-                    }
-                    TextField("Optional note", text: $rejectNote, axis: .vertical)
+                Picker("Reason code", selection: $rejectReason) {
+                    Text("Select reason").tag("")
+                    ForEach(approvalRejectReasons, id: \.self) { Text($0.replacingOccurrences(of: "_", with: " ").capitalized).tag($0) }
+                }
+                .accessibilityIdentifier("reject-reason-code")
+                TextField("Optional note", text: $rejectNote, axis: .vertical)
                 }
                 .navigationTitle(L10n.text(.reject, session.language))
                 .toolbar {
