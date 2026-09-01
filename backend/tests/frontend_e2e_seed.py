@@ -45,6 +45,7 @@ PAPER_DOWNSTREAM_ID = UUID("60000000-0000-0000-0000-000000000001")
 LIVE_DOWNSTREAM_ID = UUID("60000000-0000-0000-0000-000000000002")
 APPROVAL_ID = UUID("70000000-0000-0000-0000-000000000001")
 REJECT_APPROVAL_ID = UUID("70000000-0000-0000-0000-000000000002")
+HANDOFF_APPROVAL_ID = UUID("70000000-0000-0000-0000-000000000003")
 RESEARCH_CHARTER_ID = UUID("80000000-0000-0000-0000-000000000001")
 RESEARCH_PROGRAM_ID = UUID("80000000-0000-0000-0000-000000000002")
 RESEARCH_BRANCH_ID = UUID("80000000-0000-0000-0000-000000000003")
@@ -323,9 +324,25 @@ def main() -> None:
             changes_summary={},
             capital_context={"base_currency": "USD", "deployable_capital": 100000},
         )
+        handoff_approval = ApprovalSnapshot(
+            id=HANDOFF_APPROVAL_ID,
+            candidate_id=CANDIDATE_ID,
+            purpose="PAPER",
+            state="APPROVED",
+            downstream_system_id=PAPER_DOWNSTREAM_ID,
+            valid_until=now + timedelta(days=7),
+            recommendation_rationale="Fixture approval for the pre-seeded handoff.",
+            human_report={"summary": "Pre-seeded handoff fixture."},
+            evidence_summary={"search_adjusted_quality": 0.78},
+            risk_summary={},
+            cost_summary={},
+            capacity_summary={},
+            changes_summary={},
+            capital_context={"base_currency": "USD", "deployable_capital": 100000},
+        )
         package = CandidatePackage(
             id=HANDOFF_PACKAGE_ID,
-            approval_id=REJECT_APPROVAL_ID,
+            approval_id=HANDOFF_APPROVAL_ID,
             candidate_id=CANDIDATE_ID,
             contract_version="1",
             state="AVAILABLE",
@@ -336,7 +353,7 @@ def main() -> None:
         )
         handoff = HandoffOffer(
             id=HANDOFF_ID,
-            approval_id=REJECT_APPROVAL_ID,
+            approval_id=HANDOFF_APPROVAL_ID,
             candidate_package_id=HANDOFF_PACKAGE_ID,
             candidate_id=CANDIDATE_ID,
             purpose="PAPER",
@@ -358,7 +375,7 @@ def main() -> None:
             app_build="100",
             os_version="18.0",
         )
-        session.add_all([reject_approval, package, handoff, device])
+        session.add_all([reject_approval, handoff_approval, package, handoff, device])
 
     engine.dispose()
 
