@@ -11,7 +11,7 @@ from alembic import op
 
 from db.models import RuntimeConfiguration
 
-revision = "0011_codex_model_runtime_controls"
+revision = "0011_codex_runtime_controls"
 down_revision = "0010_operator_auth_configuration"
 branch_labels = None
 depends_on = None
