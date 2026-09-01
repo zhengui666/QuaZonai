@@ -2,10 +2,8 @@ import { execFileSync } from 'node:child_process';
 import { expect, test } from '@playwright/test';
 
 const authEnabled = process.env.QUAZONAI_E2E_AUTH_ENABLED === 'true';
-const totpSecret = process.env.QUAZONAI_E2E_AUTH_TOTP_SECRET ?? '';
-
-function currentTotpCode(): string {
-  if (!totpSecret) throw new Error('QUAZONAI_E2E_AUTH_TOTP_SECRET is required');
+function currentTotpCode(secret: string): string {
+  if (!secret) throw new Error('A setup candidate is required');
   return execFileSync(
     'python',
     [
@@ -14,7 +12,7 @@ function currentTotpCode(): string {
     ],
     {
       encoding: 'utf8',
-      env: { ...process.env, QUAZONAI_E2E_AUTH_TOTP_SECRET: totpSecret },
+      env: { ...process.env, QUAZONAI_E2E_AUTH_TOTP_SECRET: secret },
     },
   ).trim();
 }
@@ -23,19 +21,19 @@ test.describe('single-operator authentication', () => {
   test.skip(!authEnabled, 'Runs only in the dedicated auth-enabled browser workflow.');
   test.describe.configure({ retries: 0 });
 
-  test('TOTP-only login, trusted-browser restore, and logout revocation', async ({
+  test('first-visit TOTP setup, trusted-browser restore, and logout revocation', async ({
     page,
     context,
   }) => {
     await page.goto('/');
 
-    await expect(page.getByLabel('Username', { exact: true })).toHaveCount(0);
-    await expect(page.getByLabel('Password', { exact: true })).toHaveCount(0);
-    const totp = page.getByLabel('Authenticator code', { exact: true });
-    await expect(totp).toBeFocused();
-    await totp.fill(currentTotpCode());
+    await expect(page.getByRole('heading', { name: 'Set up your authenticator' })).toBeVisible();
+    await expect(page.getByLabel('Authenticator setup QR code')).toBeVisible();
+    const setupSecret = await page.locator('.qz-auth-manual-key code').innerText();
+    expect(setupSecret.length).toBeGreaterThanOrEqual(32);
+    await page.getByLabel('Authenticator code', { exact: true }).fill(currentTotpCode(setupSecret));
     await page.getByRole('checkbox', { name: /^Trust this browser/ }).check();
-    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await page.getByRole('button', { name: 'Confirm and continue', exact: true }).click();
 
     await expect(page.getByText('Dashboard', { exact: true }).first()).toBeVisible();
 

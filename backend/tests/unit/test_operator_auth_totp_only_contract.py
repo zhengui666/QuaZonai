@@ -51,6 +51,10 @@ def _configure_enabled_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "QUAZONAI_AUTH_COOKIE_KEY",
         base64.b64encode(b"b" * 32).decode("ascii"),
     )
+    monkeypatch.setenv(
+        "QUAZONAI_MASTER_KEY",
+        base64.b64encode(b"m" * 32).decode("ascii"),
+    )
     monkeypatch.setenv("QUAZONAI_API_TOKEN", "machine-token-" + "x" * 32)
     monkeypatch.setenv("QUAZONAI_AUTH_PUBLIC_ORIGIN", "https://quazonai.example.com")
 
