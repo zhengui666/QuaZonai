@@ -2,6 +2,8 @@ import XCTest
 
 final class QuaZonaiUITests: XCTestCase {
     private var app: XCUIApplication!
+    private let approvalID = "70000000-0000-0000-0000-000000000001"
+    private let rejectApprovalID = "70000000-0000-0000-0000-000000000002"
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -129,17 +131,22 @@ final class QuaZonaiUITests: XCTestCase {
         launchApp()
         openPrimarySection(phoneLabel: "Approvals", iPadLabel: "Approval Inbox")
         XCTAssertTrue(app.navigationBars["Approvals"].waitForExistence(timeout: 6))
-        let approve = app.buttons["Approve"].firstMatch
+        let approve = app.buttons["approve-\(approvalID)"]
         XCTAssertTrue(approve.waitForExistence(timeout: 8))
         approve.tap()
-        XCTAssertTrue(app.staticTexts["APPROVED"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["approval-state-\(approvalID)"].waitForExistence(timeout: 8))
+        XCTAssertEqual(app.staticTexts["approval-state-\(approvalID)"].label, "APPROVED")
+        openMoreDestination("Handoff & Feedback")
+        let createdHandoff = app.staticTexts["handoff-state-for-approval-\(approvalID)"]
+        XCTAssertTrue(createdHandoff.waitForExistence(timeout: 10))
+        XCTAssertEqual(createdHandoff.label, "AVAILABLE")
     }
 
     @MainActor
     func testReject() {
         launchApp()
         openPrimarySection(phoneLabel: "Approvals", iPadLabel: "Approval Inbox")
-        let reject = app.buttons["Reject"].firstMatch
+        let reject = app.buttons["reject-\(rejectApprovalID)"]
         XCTAssertTrue(reject.waitForExistence(timeout: 8))
         reject.tap()
         XCTAssertTrue(app.navigationBars["Reject"].waitForExistence(timeout: 6))
@@ -148,10 +155,9 @@ final class QuaZonaiUITests: XCTestCase {
         picker.tap()
         XCTAssertTrue(app.buttons["Risk Profile Unacceptable"].waitForExistence(timeout: 6))
         app.buttons["Risk Profile Unacceptable"].tap()
-        let rejectButtons = app.buttons.matching(identifier: "Reject")
-        XCTAssertGreaterThan(rejectButtons.count, 1)
-        rejectButtons.element(boundBy: rejectButtons.count - 1).tap()
-        XCTAssertTrue(app.staticTexts["REJECTED"].waitForExistence(timeout: 8))
+        app.buttons["reject-confirm"].tap()
+        XCTAssertTrue(app.staticTexts["approval-state-\(rejectApprovalID)"].waitForExistence(timeout: 8))
+        XCTAssertEqual(app.staticTexts["approval-state-\(rejectApprovalID)"].label, "REJECTED")
     }
 
     @MainActor

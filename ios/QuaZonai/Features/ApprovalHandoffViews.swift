@@ -97,7 +97,14 @@ private struct ApprovalCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack { Text(purpose).font(.caption).bold(); Text(object.string("state") ?? "").font(.caption); Spacer(); Text((object.string("valid_until") ?? object.string("expires_at") ?? "")).font(.caption2).foregroundStyle(.secondary) }
+            HStack {
+                Text(purpose).font(.caption).bold()
+                Text(object.string("state") ?? "").font(.caption)
+                    .accessibilityIdentifier("approval-state-\(approval.stableID ?? "")")
+                Spacer()
+                Text((object.string("valid_until") ?? object.string("expires_at") ?? ""))
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
             Text(object.string("recommendation_rationale") ?? "Candidate \((object.string("candidate_id") ?? "").prefix(8))").font(.headline)
             if pending {
                 Picker("Compatible downstream", selection: $downstreamID) {
@@ -108,8 +115,11 @@ private struct ApprovalCard: View {
                 }
                 .onAppear { if downstreamID.isEmpty { downstreamID = object.string("downstream_system_id") ?? compatible.first?.stableID ?? "" } }
                 HStack {
-                    Button(L10n.text(.reject, session.language), role: .destructive) { showReject = true }.disabled(busy)
+                    Button(L10n.text(.reject, session.language), role: .destructive) { showReject = true }
+                        .accessibilityIdentifier("reject-\(approval.stableID ?? "")")
+                        .disabled(busy)
                     Button(L10n.text(.approve, session.language)) { Task { await approve() } }
+                        .accessibilityIdentifier("approve-\(approval.stableID ?? "")")
                         .buttonStyle(.borderedProminent).disabled(downstreamID.isEmpty || busy)
                 }
             }
@@ -129,7 +139,11 @@ private struct ApprovalCard: View {
                 .navigationTitle(L10n.text(.reject, session.language))
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button(L10n.text(.cancel, session.language)) { showReject = false } }
-                    ToolbarItem(placement: .confirmationAction) { Button(L10n.text(.reject, session.language), role: .destructive) { Task { await reject() } }.disabled(rejectReason.isEmpty) }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button(L10n.text(.reject, session.language), role: .destructive) { Task { await reject() } }
+                            .accessibilityIdentifier("reject-confirm")
+                            .disabled(rejectReason.isEmpty)
+                    }
                 }
             }
         }
@@ -153,6 +167,10 @@ private struct ApprovalCard: View {
     }
 
     private func reject() async {
+        guard await BiometricGate.authorize(reason: "Reject this portfolio handoff candidate") else {
+            error = "Biometric confirmation was not completed."
+            return
+        }
         guard let id = approval.stableID else { return }
         busy = true; defer { busy = false }
         var body: [String: JSONValue] = ["reason_code": .string(rejectReason), "expected_state": .string("PENDING")]
@@ -214,7 +232,8 @@ private struct HandoffCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             RecordRow(item: offer)
-            Text(state).font(.caption).accessibilityIdentifier("handoff-state")
+            Text(state).font(.caption)
+                .accessibilityIdentifier("handoff-state-for-approval-\(offer.objectValue?.string("approval_id") ?? "")")
             if revocable {
                 Button(L10n.text(.revoke, session.language), role: .destructive) { Task { await revoke() } }.disabled(busy)
             } else if ["CLAIMED", "DOWNSTREAM_ACCEPTED", "FEEDBACK_PENDING", "FEEDBACK_IN_PROGRESS", "FEEDBACK_PARTIAL", "FEEDBACK_COMPLETE"].contains(state) {

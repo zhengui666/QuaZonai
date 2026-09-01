@@ -67,7 +67,7 @@ Native device lifecycle 与安全不变量：
 - 服务端以 durable `MobileOperatorDevice` 记录 installation ID、device family、client/build/OS version、credential generation、last seen、refresh expiry 与 revoke time；设备记录属于 Operator authentication infrastructure，不是新的用户/RBAC 模型。
 - 登录签发短期 access credential；只有用户选择 trusted device 时才签发 refresh credential。refresh credential 只存入受设备所有者认证保护的 iOS Keychain，不进入 SwiftData、日志、UserDefaults、分析事件或 crash payload。
 - 每次 refresh 必须在数据库行锁内校验当前 generation、递增 generation 并轮换 credential；旧 generation 立即失效。客户端必须把并发 401 合并为 single-flight refresh，禁止同一 refresh credential 并发重放。
-- Logout 必须在清除本地 Keychain 前完成服务端 revoke；access 过期时先用 refresh 取得当前 access，再调用 logout。Administration 的 device revoke 同样递增 generation、清空 refresh expiry，并使该设备所有旧 access/refresh credential 失效。
+- Logout 必须在清除本地 Keychain 前完成服务端 revoke；access 过期时先用 refresh 取得当前 access，再调用 logout。即使部署暂时关闭认证，带有有效 native access/refresh credential 的 logout 仍必须撤销对应设备；无 credential 的 direct-access logout 不改变设备状态。Administration 的 device revoke 同样递增 generation、清空 refresh expiry，并使该设备所有旧 access/refresh credential 失效。
 - 未启用认证时 App 可以进入明确标注的 direct-access 模式；启用认证时，除 bootstrap、mobile login、mobile refresh 与 canonical OpenAPI 外，Operator API 均要求有效的 current-generation native access bearer。
 - Bootstrap 同时发布 capability epoch 与 `minimum_ios_app_version`。App 必须在进入登录或 Operator surface 前同时通过两个兼容性 Gate；版本过低时只显示升级要求，不允许继续使用可能存在漏洞或不兼容的客户端。
 - SSE 首次连接和重连先按持久化 cursor 调用 replay，再通过 `Last-Event-ID`/cursor 恢复 stream。查询参数必须作为 URL query item 编码，不能拼入 path。
@@ -2078,7 +2078,7 @@ Native 和 Web 共用 `/api/v1/openapi.json` wire contract。FastAPI 导出的�
 
 ## 52. Native TOTP-only Operator Authentication
 
-Browser Operator 暂时保留 legacy username/password/TOTP Cookie flow；Native Operator 从第一天只使用当前有效 TOTP 首次认证，Mobile Login schema **不得**包含 username/password。Browser 与 Native 复用同一 RFC 6238 verification core、严格 6 位解析、±1 time-step、恒定时间比较、source rate limiting 和 replay consumption；未来 Browser 删除 username/password 时直接复用该核心。
+Browser Operator 与 Native Operator 都使用当前有效 TOTP 首次认证；Browser 通过 cookie session，Native 通过 mobile device session，Mobile Login schema **不得**包含 username/password。Browser 与 Native 复用同一 RFC 6238 verification core、严格 6 位解析、±1 time-step、恒定时间比较、source rate limiting 和 replay consumption。
 
 Native API：
 

@@ -165,6 +165,43 @@ def test_untrusted_mobile_login_does_not_issue_refresh_credential(
     assert response.json().get("refresh_expires_at") is None
 
 
+def test_mobile_logout_revokes_credential_when_authentication_is_disabled(
+    settings: Settings,
+    engine: Engine,
+) -> None:
+    runtime_settings = _authenticated_settings(settings)
+    authenticated = TestClient(create_app(settings=runtime_settings, engine=engine), base_url="http://testserver")
+    login = authenticated.post(
+        "/api/v1/auth/mobile/login",
+        json=_login_payload(runtime_settings, trust_device=True),
+    )
+    assert login.status_code == 200, login.text
+    tokens = login.json()
+
+    direct_access_settings = replace(runtime_settings, operator_auth_enabled=False)
+    direct_access = TestClient(
+        create_app(settings=direct_access_settings, engine=engine),
+        base_url="http://testserver",
+    )
+    logout = direct_access.post(
+        "/api/v1/auth/mobile/logout",
+        headers={"Authorization": f"Bearer {tokens["access_token"]}"},
+    )
+    assert logout.status_code == 204, logout.text
+
+    reenabled = TestClient(create_app(settings=runtime_settings, engine=engine), base_url="http://testserver")
+    session = reenabled.get(
+        "/api/v1/auth/mobile/session",
+        headers={"Authorization": f"Bearer {tokens["access_token"]}"},
+    )
+    assert session.status_code == 401
+    refresh = reenabled.post(
+        "/api/v1/auth/mobile/refresh",
+        headers={"Authorization": f"Bearer {tokens["refresh_credential"]}"},
+    )
+    assert refresh.status_code == 401
+
+
 def test_direct_access_bootstrap_remains_full_operator_mode(
     settings: Settings,
     engine: Engine,
