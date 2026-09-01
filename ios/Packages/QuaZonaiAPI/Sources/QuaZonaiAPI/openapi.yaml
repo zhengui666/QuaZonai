@@ -4471,7 +4471,7 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "401": {
             "content": {
               "application/json": {
                 "schema": {
@@ -4479,7 +4479,7 @@
                 }
               }
             },
-            "description": "Request validation failed."
+            "description": "Invalid operator credentials."
           }
         },
         "security": [],

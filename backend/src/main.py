@@ -67,6 +67,7 @@ _AUTH_LOGIN_ROUTES = frozenset(
     {
         ("POST", "/api/v1/auth/login"),
         ("POST", "/api/v1/auth/mobile/login"),
+        ("POST", "/api/v1/auth/setup/confirm"),
     }
 )
 _DOWNSTREAM_BEARER_ROUTES = frozenset(

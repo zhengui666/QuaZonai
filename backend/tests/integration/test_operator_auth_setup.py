@@ -101,6 +101,28 @@ def test_setup_is_first_claim_wins_and_loser_is_rebootstrapped(settings, engine)
     assert "Max-Age=0" in loser.headers["set-cookie"]
 
 
+def test_setup_confirmation_consumes_code_for_canonical_login(settings, engine) -> None:
+    configured = _fresh_auth_settings(settings)
+    client = TestClient(create_app(settings=configured, engine=engine))
+
+    candidate = client.post("/api/v1/auth/setup/start", headers=_origin()).json()
+    code = pyotp.TOTP(candidate["manual_key"]).now()
+    confirm = client.post(
+        "/api/v1/auth/setup/confirm",
+        headers=_origin(),
+        json={"totp_code": code, "trust_browser": False},
+    )
+    assert confirm.status_code == 200
+
+    replay = client.post(
+        "/api/v1/auth/login",
+        headers=_origin(),
+        json={"totp_code": code},
+    )
+    assert replay.status_code == 401
+    assert replay.json()["error"]["code"] == "AUTH_INVALID"
+
+
 def test_canonical_binding_survives_restart_and_legacy_mismatch_fails_closed(settings, engine) -> None:
     secret = pyotp.random_base32()
     configured = _fresh_auth_settings(settings, secret=secret)

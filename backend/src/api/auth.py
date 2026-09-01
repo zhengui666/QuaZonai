@@ -245,6 +245,15 @@ def setup_confirm(
         ) from exc
 
     runtime.set_totp_secret(candidate.secret)
+    # The code that wins enrollment has also authenticated the canonical
+    # credential. Consume the same accepted step under the durable credential
+    # key so it cannot be replayed immediately through ordinary login.
+    if not runtime.consume_totp_step(
+        step,
+        current_step=current_step,
+        replay_key=candidate.secret,
+    ):
+        raise _invalid_authentication()
     if not runtime.complete_login_if_current(
         response,
         settings,

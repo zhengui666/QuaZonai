@@ -294,13 +294,33 @@ def mobile_refresh(request: Request, response: Response) -> MobileTokenView:
 def mobile_logout(request: Request, response: Response) -> None:
     _no_store(response)
     settings: Settings = request.app.state.settings
-    if not settings.auth_enabled:
-        return
-    identity = _require_mobile_identity(request)
+    identity = getattr(request.state, "operator", None)
+    if isinstance(identity, MobileOperatorIdentity):
+        device_id = identity.device_id
+        credential_generation = identity.credential_generation
+    else:
+        # Direct-access mode still has to revoke a native credential when the
+        # client presents one. Otherwise a copied refresh credential could be
+        # re-enabled after authentication is turned back on.
+        claims = credential_from_authorization(
+            settings,
+            request.headers.get("authorization"),
+            expected_kind="access",
+        ) or credential_from_authorization(
+            settings,
+            request.headers.get("authorization"),
+            expected_kind="refresh",
+        )
+        if claims is None:
+            if settings.auth_enabled:
+                _require_mobile_identity(request)
+            return
+        device_id = claims.device_id
+        credential_generation = claims.generation
     factory = request.app.state.session_factory
     with factory() as session:
-        device = load_mobile_device_for_update(session, identity.device_id)
-        if device is not None and device.credential_generation == identity.credential_generation:
+        device = load_mobile_device_for_update(session, device_id)
+        if device is not None and device.credential_generation == credential_generation:
             device.credential_generation += 1
             device.revoked_at = utc_now()
             device.refresh_expires_at = None

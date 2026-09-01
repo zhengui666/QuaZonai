@@ -41,7 +41,7 @@ QUAZONAI_AUTH_ENABLED=false
 
 A direct-access deployment should remain loopback-only or sit behind another access boundary you deliberately trust. Enable QuaZonai's own authentication before exposing the workbench through a network/TLS layer.
 
-Generate the master key, browser-cookie key and CLI machine token:
+For a new installation, generate the master key, browser-cookie key and CLI machine token:
 
 ```bash
 python - <<'PY'
@@ -55,6 +55,8 @@ PY
 ```
 
 Generate `QUAZONAI_AUTH_COOKIE_KEY` independently from `QUAZONAI_MASTER_KEY`; QuaZonai rejects equal decoded 32-byte values. The generated `secrets.token_urlsafe(32)` machine token satisfies the accepted RFC 6750 Bearer `b64token` grammar. Do not add spaces, quotes, line breaks, or other characters to the value.
+
+For an existing installation, retain and back up the current `QUAZONAI_MASTER_KEY`. Do not replace it while enabling browser setup: it already encrypts persisted runtime and plugin secrets. Generate a new master key only when initializing a new installation.
 
 Copy the generated values into `.env`, then configure the complete authentication group:
 

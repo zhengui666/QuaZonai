@@ -484,7 +484,11 @@ export function AuthGate({ children }: { children: ReactNode }) {
     }
   }, [acceptSession]);
 
-  const checkBootstrap = useCallback(async () => {
+  const checkBootstrap = useCallback(async (
+    { preserveAuthenticatedOnTransientFailure = false }: {
+      preserveAuthenticatedOnTransientFailure?: boolean;
+    } = {},
+  ) => {
     const generation = sessionCheckGeneration.current + 1;
     sessionCheckGeneration.current = generation;
     sessionCheckAbortController.current?.abort();
@@ -528,6 +532,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     } catch {
       if (!isCurrent()) return;
       setBootstrapError({ kind: 'unreachable' });
+      if (preserveAuthenticatedOnTransientFailure && sessionRef.current?.authenticated) return;
       setSession(null);
       setState('anonymous');
     } finally {
@@ -569,7 +574,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     if (state !== 'authenticated') return;
     const revalidateSession = async () => {
       try {
-        await checkBootstrap();
+        await checkBootstrap({ preserveAuthenticatedOnTransientFailure: true });
       } catch {
         // A transient network failure is not evidence that the browser credential expired.
       }
