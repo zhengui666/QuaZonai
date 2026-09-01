@@ -91,7 +91,7 @@ describe('RuntimeConfigurationPanel directionality', () => {
     expect(fastSwitch).toBeEnabled();
     fireEvent.click(defaultsSwitch);
     expect(modelInput).toBeDisabled();
-    expect(reasoningSlider).toBeDisabled();
+    expect(reasoningSlider).toHaveAttribute('data-disabled');
     expect(fastSwitch).toBeDisabled();
     expect(providerInput).toBeEnabled();
 
