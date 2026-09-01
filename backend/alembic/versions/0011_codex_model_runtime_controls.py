@@ -1,6 +1,6 @@
-"""Add Codex reasoning effort and Fast service-tier controls.
+"""Add Codex model runtime controls and default-selection mode.
 
-Revision ID: 0011_codex_model_runtime_controls
+Revision ID: 0011_codex_runtime_controls
 Revises: 0010_operator_auth_configuration
 """
 
@@ -44,6 +44,19 @@ def upgrade() -> None:
             "runtime_configurations",
             sa.Column("codex_fast_mode", sa.Boolean(), nullable=False, server_default=sa.false()),
         )
+    if "codex_use_default_model_settings" not in columns:
+        # Existing rows stay in QuaZonai-override mode so an upgrade never
+        # silently disables a configured model. New application-created rows
+        # explicitly opt into Codex defaults.
+        op.add_column(
+            "runtime_configurations",
+            sa.Column(
+                "codex_use_default_model_settings",
+                sa.Boolean(),
+                nullable=False,
+                server_default=sa.false(),
+            ),
+        )
 
     if _check_constraint_exists(bind, _REASONING_CONSTRAINT):
         return
@@ -73,6 +86,8 @@ def downgrade() -> None:
         with op.batch_alter_table("runtime_configurations", recreate="always") as batch:
             if has_constraint:
                 batch.drop_constraint(_REASONING_CONSTRAINT, type_="check")
+            if "codex_use_default_model_settings" in columns:
+                batch.drop_column("codex_use_default_model_settings")
             if "codex_fast_mode" in columns:
                 batch.drop_column("codex_fast_mode")
             if "codex_reasoning_effort" in columns:
@@ -81,6 +96,8 @@ def downgrade() -> None:
 
     if has_constraint:
         op.drop_constraint(_REASONING_CONSTRAINT, "runtime_configurations", type_="check")
+    if "codex_use_default_model_settings" in columns:
+        op.drop_column("runtime_configurations", "codex_use_default_model_settings")
     if "codex_fast_mode" in columns:
         op.drop_column("runtime_configurations", "codex_fast_mode")
     if "codex_reasoning_effort" in columns:

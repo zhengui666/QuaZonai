@@ -83,3 +83,7 @@ def test_openapi_matches_research_intelligence_contract(
     enum_values = next(item["enum"] for item in effort_schema["anyOf"] if "enum" in item)
     assert enum_values == ["minimal", "low", "medium", "high", "xhigh"]
     assert request_schema["properties"]["codex_fast_mode"]["type"] == "boolean"
+    assert (
+        request_schema["properties"]["codex_use_default_model_settings"]["type"]
+        == "boolean"
+    )

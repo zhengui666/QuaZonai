@@ -52,6 +52,8 @@ class RuntimeConfigurationView(BaseModel):
     codex_model: str | None
     codex_reasoning_effort: CodexReasoningEffort | None
     codex_fast_mode: bool
+    # The default keeps historical idempotency receipts replayable after upgrade.
+    codex_use_default_model_settings: bool = False
     codex_base_url: str | None
     codex_api_key_configured: bool
     codex_login_configured: bool
@@ -72,6 +74,7 @@ class RuntimeConfigurationInput(BaseModel):
     codex_model: str | None = Field(default=None, max_length=200)
     codex_reasoning_effort: CodexReasoningEffort | None = None
     codex_fast_mode: bool = False
+    codex_use_default_model_settings: bool = False
     codex_base_url: str | None = Field(default=None, max_length=2048)
     codex_api_key: str | None = Field(default=None, max_length=16_384)
     clear_codex_api_key: bool = False
@@ -124,7 +127,10 @@ class RuntimeConfigurationInput(BaseModel):
 
     @field_validator("codex_reasoning_effort")
     @classmethod
-    def validate_reasoning_effort(cls, value: CodexReasoningEffort | None) -> CodexReasoningEffort | None:
+    def validate_reasoning_effort(
+        cls,
+        value: CodexReasoningEffort | None,
+    ) -> CodexReasoningEffort | None:
         if value is not None and value not in CODEX_REASONING_EFFORTS:
             raise ValueError("Unsupported Codex reasoning effort")
         return value
@@ -138,8 +144,12 @@ def _runtime_view_from_item(
         return RuntimeConfigurationView(
             revision=0,
             codex_model=settings.codex_model,
-            codex_reasoning_effort=cast(CodexReasoningEffort | None, settings.codex_reasoning_effort),
+            codex_reasoning_effort=cast(
+                CodexReasoningEffort | None,
+                settings.codex_reasoning_effort,
+            ),
             codex_fast_mode=settings.codex_fast_mode,
+            codex_use_default_model_settings=True,
             codex_base_url=settings.codex_base_url,
             codex_api_key_configured=False,
             codex_login_configured=(settings.codex_home / "auth.json").is_file(),
@@ -154,8 +164,12 @@ def _runtime_view_from_item(
     return RuntimeConfigurationView(
         revision=item.revision,
         codex_model=item.codex_model,
-        codex_reasoning_effort=cast(CodexReasoningEffort | None, item.codex_reasoning_effort),
+        codex_reasoning_effort=cast(
+            CodexReasoningEffort | None,
+            item.codex_reasoning_effort,
+        ),
         codex_fast_mode=item.codex_fast_mode,
+        codex_use_default_model_settings=item.codex_use_default_model_settings,
         codex_base_url=item.codex_base_url,
         codex_api_key_configured=codex_api_key_configured(item),
         codex_login_configured=(settings.codex_home / "auth.json").is_file(),
@@ -188,7 +202,12 @@ def _idempotency_shape(payload: RuntimeConfigurationInput) -> dict[str, Any]:
     """
     normalized = payload.model_dump(
         mode="json",
-        exclude={"codex_api_key", "codex_reasoning_effort", "codex_fast_mode"},
+        exclude={
+            "codex_api_key",
+            "codex_reasoning_effort",
+            "codex_fast_mode",
+            "codex_use_default_model_settings",
+        },
     )
     normalized["codex_api_key_action"] = (
         "clear" if payload.clear_codex_api_key else "set" if payload.codex_api_key else "unchanged"
@@ -206,6 +225,13 @@ def _idempotency_shape(payload: RuntimeConfigurationInput) -> dict[str, Any]:
         else "fast"
         if payload.codex_fast_mode
         else "standard"
+    )
+    normalized["codex_default_model_settings_action"] = (
+        "unchanged"
+        if "codex_use_default_model_settings" not in payload.model_fields_set
+        else "codex-defaults"
+        if payload.codex_use_default_model_settings
+        else "quazonai-overrides"
     )
     return normalized
 
@@ -311,9 +337,17 @@ def replace_runtime_configuration(
                 job_poll_seconds=payload.job_poll_seconds,
                 job_lease_seconds=payload.job_lease_seconds,
                 codex_reasoning_effort=payload.codex_reasoning_effort,
-                replace_codex_reasoning_effort="codex_reasoning_effort" in payload.model_fields_set,
+                replace_codex_reasoning_effort=(
+                    "codex_reasoning_effort" in payload.model_fields_set
+                ),
                 codex_fast_mode=payload.codex_fast_mode,
                 replace_codex_fast_mode="codex_fast_mode" in payload.model_fields_set,
+                codex_use_default_model_settings=(
+                    payload.codex_use_default_model_settings
+                ),
+                replace_codex_use_default_model_settings=(
+                    "codex_use_default_model_settings" in payload.model_fields_set
+                ),
             )
             append_event(
                 session,
@@ -340,6 +374,17 @@ def replace_runtime_configuration(
                         else "fast"
                         if payload.codex_fast_mode
                         else "standard"
+                    ),
+                    "codex_use_default_model_settings": (
+                        item.codex_use_default_model_settings
+                    ),
+                    "codex_default_model_settings_action": (
+                        "unchanged"
+                        if "codex_use_default_model_settings"
+                        not in payload.model_fields_set
+                        else "codex-defaults"
+                        if payload.codex_use_default_model_settings
+                        else "quazonai-overrides"
                     ),
                     "codex_api_key_action": (
                         "cleared"

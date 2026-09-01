@@ -78,6 +78,9 @@ class RuntimeConfiguration(Base, TimestampMixin):
     codex_fast_mode: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )
+    codex_use_default_model_settings: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
     codex_base_url: Mapped[str | None] = mapped_column(Text)
     codex_api_key_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary)
     codex_api_key_nonce: Mapped[bytes | None] = mapped_column(LargeBinary)

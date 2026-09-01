@@ -61,6 +61,7 @@ def _new_runtime_configuration(
         codex_model=None,
         codex_reasoning_effort=None,
         codex_fast_mode=False,
+        codex_use_default_model_settings=True,
         codex_base_url=None,
         max_plugin_wheel_bytes=base_settings.max_plugin_wheel_bytes,
         plugin_validation_timeout_seconds=base_settings.plugin_validation_timeout_seconds,
@@ -130,11 +131,15 @@ def effective_settings(session: Session, base_settings: Settings) -> Settings:
     item = get_runtime_configuration(session)
     if item is None:
         return base_settings
+    use_codex_defaults = item.codex_use_default_model_settings
     return replace(
         base_settings,
-        codex_model=item.codex_model,
-        codex_reasoning_effort=item.codex_reasoning_effort,
-        codex_fast_mode=item.codex_fast_mode,
+        # Default mode deliberately masks, but does not delete, the persisted
+        # QuaZonai model controls. Provider routing and authentication remain
+        # independent so a custom gateway can still choose its own defaults.
+        codex_model=None if use_codex_defaults else item.codex_model,
+        codex_reasoning_effort=None if use_codex_defaults else item.codex_reasoning_effort,
+        codex_fast_mode=False if use_codex_defaults else item.codex_fast_mode,
         codex_base_url=item.codex_base_url,
         codex_api_key=_decrypt_codex_api_key(item, base_settings),
         max_plugin_wheel_bytes=item.max_plugin_wheel_bytes,
@@ -180,6 +185,8 @@ def update_runtime_configuration(
     replace_codex_reasoning_effort: bool = False,
     codex_fast_mode: bool = False,
     replace_codex_fast_mode: bool = False,
+    codex_use_default_model_settings: bool = False,
+    replace_codex_use_default_model_settings: bool = False,
 ) -> RuntimeConfiguration:
     validate_codex_reasoning_effort(codex_reasoning_effort)
     if not isinstance(codex_fast_mode, bool):
@@ -188,7 +195,14 @@ def update_runtime_configuration(
             "Codex Fast mode must be a boolean.",
             422,
         )
+    if not isinstance(codex_use_default_model_settings, bool):
+        raise QfError(
+            "RUNTIME_CONFIGURATION_INVALID",
+            "Codex default-model-settings mode must be a boolean.",
+            422,
+        )
     item = get_runtime_configuration(session, for_update=True)
+    created = item is None
     if item is None:
         if expected_revision != 0:
             raise QfError(
@@ -229,6 +243,17 @@ def update_runtime_configuration(
         item.codex_reasoning_effort = codex_reasoning_effort
     if replace_codex_fast_mode:
         item.codex_fast_mode = codex_fast_mode
+    if replace_codex_use_default_model_settings:
+        item.codex_use_default_model_settings = codex_use_default_model_settings
+    elif created:
+        # A legacy client creating the singleton does not know about the mode.
+        # Infer the least surprising behavior: explicit model controls remain
+        # active, while a completely blank model configuration follows Codex.
+        item.codex_use_default_model_settings = (
+            item.codex_model is None
+            and item.codex_reasoning_effort is None
+            and not item.codex_fast_mode
+        )
     item.codex_base_url = next_base_url
     item.max_plugin_wheel_bytes = max_plugin_wheel_bytes
     item.plugin_validation_timeout_seconds = plugin_validation_timeout_seconds
