@@ -12,8 +12,6 @@ from settings import Settings, SettingsError, canonicalize_http_origin
 def _enabled_auth(settings: Settings, **overrides: object) -> Settings:
     values: dict[str, object] = {
         "operator_auth_enabled": True,
-        "operator_username": "operator",
-        "operator_password": "correct horse battery staple",
         "operator_totp_secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
         "auth_cookie_key": base64.b64encode(b"a" * 32).decode("ascii"),
         "api_token": secrets.token_urlsafe(32),
@@ -96,26 +94,6 @@ def test_enabled_auth_accepts_independent_cookie_and_master_keys(settings: Setti
 
 
 @pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("operator_username", "operator\nname"),
-        ("operator_username", "operator\rname"),
-        ("operator_password", "correct horse\nbattery staple"),
-        ("operator_password", "correct horse\rbattery staple"),
-    ],
-)
-def test_enabled_auth_rejects_browser_unrepresentable_line_breaks(
-    settings: Settings,
-    field: str,
-    value: str,
-) -> None:
-    configured = replace(_enabled_auth(settings), **{field: value})
-
-    with pytest.raises(SettingsError, match="must not contain carriage returns or line feeds"):
-        configured.validate_operator_auth()
-
-
-@pytest.mark.parametrize(
     "token",
     [
         secrets.token_urlsafe(32),
@@ -159,8 +137,6 @@ def test_from_env_preserves_invalid_machine_token_for_fail_closed_validation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("QUAZONAI_AUTH_ENABLED", "true")
-    monkeypatch.setenv("QUAZONAI_AUTH_USERNAME", "operator")
-    monkeypatch.setenv("QUAZONAI_AUTH_PASSWORD", "correct horse battery staple")
     monkeypatch.setenv(
         "QUAZONAI_AUTH_TOTP_SECRET",
         "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",

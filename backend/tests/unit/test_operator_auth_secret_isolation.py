@@ -4,6 +4,8 @@ import base64
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
 from runners.research_missions import _codex_launch_configuration
 from settings import Settings
 
@@ -11,12 +13,17 @@ from settings import Settings
 def test_codex_child_environment_scrubs_operator_auth_configuration(
     settings: Settings,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    legacy_username = "operator-secret-name"
+    legacy_password = "operator-secret-password"
+    monkeypatch.setenv("QUAZONAI_AUTH_USERNAME", legacy_username)
+    monkeypatch.setenv("QUAZONAI_AUTH_PASSWORD", legacy_password)
+    monkeypatch.setenv("QUAZONAI_AUTH_LEGACY_USERNAME_PRESENT", "true")
+    monkeypatch.setenv("QUAZONAI_AUTH_LEGACY_PASSWORD_PRESENT", "true")
     configured = replace(
         settings,
         operator_auth_enabled=True,
-        operator_username="operator-secret-name",
-        operator_password="operator-secret-password",
         operator_totp_secret="JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
         auth_cookie_key=base64.b64encode(b"c" * 32).decode("ascii"),
         api_token="operator-machine-token-" + "x" * 32,
@@ -31,6 +38,8 @@ def test_codex_child_environment_scrubs_operator_auth_configuration(
         "QUAZONAI_AUTH_ENABLED",
         "QUAZONAI_AUTH_USERNAME",
         "QUAZONAI_AUTH_PASSWORD",
+        "QUAZONAI_AUTH_LEGACY_USERNAME_PRESENT",
+        "QUAZONAI_AUTH_LEGACY_PASSWORD_PRESENT",
         "QUAZONAI_AUTH_TOTP_SECRET",
         "QUAZONAI_AUTH_COOKIE_KEY",
         "QUAZONAI_API_TOKEN",
@@ -43,8 +52,8 @@ def test_codex_child_environment_scrubs_operator_auth_configuration(
         assert config.env[name] == ""
 
     serialized = repr(config.env) + repr(config.config_overrides)
-    assert configured.operator_username not in serialized
-    assert configured.operator_password not in serialized
+    assert legacy_username not in serialized
+    assert legacy_password not in serialized
     assert configured.operator_totp_secret not in serialized
     assert configured.auth_cookie_key not in serialized
     assert configured.api_token not in serialized

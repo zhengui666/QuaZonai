@@ -2,8 +2,6 @@ import { execFileSync } from 'node:child_process';
 import { expect, test } from '@playwright/test';
 
 const authEnabled = process.env.QUAZONAI_E2E_AUTH_ENABLED === 'true';
-const username = process.env.QUAZONAI_E2E_AUTH_USERNAME ?? 'operator';
-const password = process.env.QUAZONAI_E2E_AUTH_PASSWORD ?? 'correct horse battery staple';
 const totpSecret = process.env.QUAZONAI_E2E_AUTH_TOTP_SECRET ?? '';
 
 function currentTotpCode(): string {
@@ -23,20 +21,19 @@ function currentTotpCode(): string {
 
 test.describe('single-operator authentication', () => {
   test.skip(!authEnabled, 'Runs only in the dedicated auth-enabled browser workflow.');
-  // A successful attempt consumes its RFC 6238 step. Retrying the same browser
-  // test would inevitably replay that step, so retries cannot exercise a
-  // transient failure meaningfully here.
   test.describe.configure({ retries: 0 });
 
-  test('password + TOTP login, trusted-browser restore, and logout revocation', async ({
+  test('TOTP-only login, trusted-browser restore, and logout revocation', async ({
     page,
     context,
   }) => {
     await page.goto('/');
 
-    await page.getByLabel('Username', { exact: true }).fill(username);
-    await page.getByLabel('Password', { exact: true }).fill(password);
-    await page.getByLabel('Authenticator code', { exact: true }).fill(currentTotpCode());
+    await expect(page.getByLabel('Username', { exact: true })).toHaveCount(0);
+    await expect(page.getByLabel('Password', { exact: true })).toHaveCount(0);
+    const totp = page.getByLabel('Authenticator code', { exact: true });
+    await expect(totp).toBeFocused();
+    await totp.fill(currentTotpCode());
     await page.getByRole('checkbox', { name: /^Trust this browser/ }).check();
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
 
@@ -44,9 +41,7 @@ test.describe('single-operator authentication', () => {
 
     const authenticatedCookies = await context.cookies();
     const session = authenticatedCookies.find((cookie) => cookie.name === 'quazonai_session');
-    const trusted = authenticatedCookies.find(
-      (cookie) => cookie.name === 'quazonai_trusted_browser',
-    );
+    const trusted = authenticatedCookies.find((cookie) => cookie.name === 'quazonai_trusted_browser');
     expect(session).toBeDefined();
     expect(trusted).toBeDefined();
     expect(session?.httpOnly).toBe(true);
@@ -56,19 +51,16 @@ test.describe('single-operator authentication', () => {
 
     await context.clearCookies({ name: 'quazonai_session' });
     await page.reload();
-
     await expect(page.getByText('Dashboard', { exact: true }).first()).toBeVisible();
-    expect((await context.cookies()).some((cookie) => cookie.name === 'quazonai_session')).toBe(
-      true,
-    );
+    expect((await context.cookies()).some((cookie) => cookie.name === 'quazonai_session')).toBe(true);
 
     await page.getByRole('button', { name: /sign out|log out/i }).click();
-    await expect(page.getByLabel('Username', { exact: true })).toBeVisible();
+    await expect(page.getByLabel('Authenticator code', { exact: true })).toBeVisible();
+    await expect(page.getByLabel('Username', { exact: true })).toHaveCount(0);
+    await expect(page.getByLabel('Password', { exact: true })).toHaveCount(0);
 
     const loggedOutCookies = await context.cookies();
     expect(loggedOutCookies.some((cookie) => cookie.name === 'quazonai_session')).toBe(false);
-    expect(
-      loggedOutCookies.some((cookie) => cookie.name === 'quazonai_trusted_browser'),
-    ).toBe(false);
+    expect(loggedOutCookies.some((cookie) => cookie.name === 'quazonai_trusted_browser')).toBe(false);
   });
 });

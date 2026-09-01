@@ -85,8 +85,6 @@ function normalizeTotpCode(value: string): string {
 
 function LoginPage({ onAuthenticated }: { onAuthenticated: (session: SessionView) => void }) {
   const { locale, setLocale, t } = useI18n();
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
   const [totpCode, setTotpCode] = useState('');
   const [trustBrowser, setTrustBrowser] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -110,8 +108,6 @@ function LoginPage({ onAuthenticated }: { onAuthenticated: (session: SessionView
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          username,
-          password,
           totp_code: totpCode,
           trust_browser: trustBrowser,
         }),
@@ -161,33 +157,10 @@ function LoginPage({ onAuthenticated }: { onAuthenticated: (session: SessionView
           </div>
           <form className="qz-auth-form" onSubmit={submit}>
             <label>
-              <span>{t('auth.username')}</span>
-              <input
-                autoComplete="username"
-                dir="auto"
-                autoFocus
-                disabled={submitting}
-                onChange={(event) => setUsername(event.target.value)}
-                required
-                value={username}
-              />
-            </label>
-            <label>
-              <span>{t('auth.password')}</span>
-              <input
-                autoComplete="current-password"
-                dir="ltr"
-                disabled={submitting}
-                onChange={(event) => setPassword(event.target.value)}
-                required
-                type="password"
-                value={password}
-              />
-            </label>
-            <label>
               <span>{t('auth.authenticatorCode')}</span>
               <input
                 autoComplete="one-time-code"
+                autoFocus
                 dir="ltr"
                 disabled={submitting}
                 inputMode="numeric"

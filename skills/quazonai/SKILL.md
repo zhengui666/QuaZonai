@@ -56,9 +56,13 @@ It does not own broker credentials, orders, fills, positions, accounts, NAV, exe
 2. Respect the Operator Authentication boundary:
 
    - when Operator Authentication is enabled, the CLI reads `QUAZONAI_API_TOKEN` from its process environment and sends it as a Bearer machine credential;
-   - never request, read, infer, print, or store `QUAZONAI_AUTH_PASSWORD`, `QUAZONAI_AUTH_TOTP_SECRET`, browser session cookies, or trusted-browser cookies;
    - never substitute the machine token for a downstream system's Handoff service token;
+   - never request, read, infer, capture, copy, print, or store the browser TOTP setup secret, one-time authenticator code, session cookie, or trusted-browser cookie; those credentials are outside the Skill and CLI boundary;
    - when authentication is disabled, the CLI retains direct loopback access and does not require the machine token.
+
+   This browser-credential prohibition applies equally to standalone Skill installations and repository-backed operation.
+
+   Read [references/authentication.md](references/authentication.md) before diagnosing an authentication failure or credential boundary.
 
    Check only whether the machine token is present; never print its value:
 
@@ -225,7 +229,7 @@ Successful commands print the Core API response as indented JSON to stdout. Erro
 | `10` | Core API returned a server-side `5xx` response | Check `status`; retry only after evidence of recovery |
 | `20` | Core API returned `409 Conflict` | Re-read the target; rebuild the action from current state |
 
-On `AUTH_REQUIRED`, verify only the presence of `QUAZONAI_API_TOKEN`; never print it or fall back to the Operator password/TOTP. On a rejected machine token, report that the API and CLI environment need the same current token.
+On `AUTH_REQUIRED`, verify only the presence of `QUAZONAI_API_TOKEN`; never print it or fall back to the Operator TOTP. On a rejected machine token, report that the API and CLI environment need the same current token.
 
 Do not parse human prose from stdout. Consume the JSON value. Preserve API error codes and messages verbatim enough to remain actionable, but never expose secrets or credentials.
 

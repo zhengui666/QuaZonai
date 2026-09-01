@@ -59,7 +59,7 @@ When QuaZonai Operator Authentication is enabled, the CLI reads `QUAZONAI_API_TO
 Authorization: Bearer <QUAZONAI_API_TOKEN>
 ```
 
-The token must be 32–4096 RFC 6750 `b64token` ASCII characters; whitespace, CR/LF, control characters, non-ASCII, and other punctuation are invalid. Do not put the token in the endpoint URL, command arguments, shell history, output, or documentation. Do not use the Operator password, TOTP setup secret, browser session cookie, or trusted-browser cookie from the CLI.
+The token must be 32–4096 RFC 6750 `b64token` ASCII characters; whitespace, CR/LF, control characters, non-ASCII, and other punctuation are invalid. Do not put the token in the endpoint URL, command arguments, shell history, output, or documentation. Do not use the Operator TOTP setup secret, browser session cookie, or trusted-browser cookie from the CLI.
 
 A safe shell prerequisite check verifies presence without printing the value:
 

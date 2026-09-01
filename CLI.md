@@ -8,7 +8,7 @@ QuaZonai 有三条操作通道：
 
 ```text
 Human Web
-  → direct access, or password + TOTP / trusted-browser credential when auth is enabled
+  → direct access, or TOTP / trusted-browser credential when auth is enabled
   → FastAPI Core
 
 Local human / automation
@@ -30,7 +30,7 @@ Built-in Codex **不通过 CLI 作为 RPC**。CLI 是人类与自动化薄客户
 - 默认 API：`http://127.0.0.1:8000`；
 - CLI 不直接访问 PostgreSQL、Program repo、Dataset volume、CODEX_HOME 或 plugin runtime；
 - `QUAZONAI_AUTH_ENABLED=true` 时，CLI 从环境读取 `QUAZONAI_API_TOKEN` 并以 `Authorization: Bearer` 调用 Operator API；认证关闭时该 token 不是必需项；
-- CLI 不读取 `QUAZONAI_AUTH_PASSWORD`、`QUAZONAI_AUTH_TOTP_SECRET`、browser session/trusted-browser cookie；
+- CLI 不读取或存储浏览器 TOTP setup secret、session/trusted-browser cookie，也不使用已废弃的 `QUAZONAI_AUTH_USERNAME` / `QUAZONAI_AUTH_PASSWORD`；
 - machine token 不授予 downstream-owned Handoff claim/accept/reject/package/feedback 权限；这些端点继续使用对应 Downstream System 的 service token；
 - 所有 mutation 发送 `Idempotency-Key`；
 - 更新类操作发送 `expected_revision/state/version`；
@@ -770,7 +770,7 @@ V1 不建设旧式远程 OAuth MCP Gateway、SSH transport、JSONL 隧道或通�
 
 - Web/CLI mutation 使用同一 Core API/Domain logic；
 - auth-enabled CLI 必须发送正确 `QUAZONAI_API_TOKEN`；缺失/错误 machine token 的 Operator API 请求失败；
-- CLI 不读取/存储 Operator password、TOTP secret 或 browser cookies；
+- CLI 不读取/存储 browser TOTP setup secret、session/trusted-browser cookies 或已废弃的 browser username/password；
 - CLI machine token 不能替代 downstream service token；
 - CLI 不访问 DB/volume；
 - built-in Codex 不 shell-out CLI 做业务 RPC；

@@ -97,7 +97,7 @@ def install_error_handlers(app: FastAPI) -> None:
         if request.url.path in _AUTH_LOGIN_PATHS:
             return _error_response(
                 code="AUTH_INVALID",
-                message="Invalid operator credentials.",
+                message="Operator authentication failed.",
                 status_code=401,
                 headers=_NO_STORE_HEADERS,
             )
