@@ -149,7 +149,7 @@ final class QuaZonaiUITests: XCTestCase {
         let reject = app.buttons["reject-\(rejectApprovalID)"]
         XCTAssertTrue(reject.waitForExistence(timeout: 8))
         reject.tap()
-        let picker = app.descendants(matching: .any)["reject-reason-code"]
+        let picker = app.buttons["reject-reason-code"]
         XCTAssertTrue(picker.waitForExistence(timeout: 6))
         picker.tap()
         XCTAssertTrue(app.buttons["Risk Profile Unacceptable"].waitForExistence(timeout: 6))

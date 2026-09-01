@@ -78,6 +78,7 @@ private struct ApprovalCard: View {
     @State private var rejectReason = ""
     @State private var rejectNote = ""
     @State private var showReject = false
+    @State private var showRejectReasonMenu = false
     @State private var error: String?
     @State private var busy = false
     @State private var mutationSubmission = MutationSubmission()
@@ -130,12 +131,8 @@ private struct ApprovalCard: View {
         .sheet(isPresented: $showReject) {
             NavigationStack {
                 Form {
-                Menu {
-                    ForEach(approvalRejectReasons, id: \.self) { code in
-                        Button(code.replacingOccurrences(of: "_", with: " ").capitalized) {
-                            rejectReason = code
-                        }
-                    }
+                Button {
+                    showRejectReasonMenu = true
                 } label: {
                     HStack {
                         Text(rejectReason.isEmpty ? "Reason code" : rejectReason.replacingOccurrences(of: "_", with: " ").capitalized)
@@ -147,6 +144,13 @@ private struct ApprovalCard: View {
                 }
                 .accessibilityIdentifier("reject-reason-code")
                 .accessibilityLabel("Reason code")
+                .confirmationDialog("Reason code", isPresented: $showRejectReasonMenu) {
+                    ForEach(approvalRejectReasons, id: \.self) { code in
+                        Button(code.replacingOccurrences(of: "_", with: " ").capitalized) {
+                            rejectReason = code
+                        }
+                    }
+                }
                 TextField("Optional note", text: $rejectNote, axis: .vertical)
                 }
                 .navigationTitle(L10n.text(.reject, session.language))
