@@ -16,6 +16,21 @@ from settings import Settings, SettingsError
 
 RUNTIME_SCOPE = "SYSTEM"
 CODEX_API_KEY_FIELD = "codex_api_key"
+CODEX_REASONING_EFFORTS = frozenset({"minimal", "low", "medium", "high", "xhigh"})
+
+
+def validate_codex_reasoning_effort(value: str | None) -> str | None:
+    """Validate the persisted semantic value, including non-HTTP callers."""
+    if value is None:
+        return None
+    if not isinstance(value, str) or value not in CODEX_REASONING_EFFORTS:
+        allowed = ", ".join(sorted(CODEX_REASONING_EFFORTS))
+        raise QfError(
+            "RUNTIME_CONFIGURATION_INVALID",
+            f"Codex reasoning effort must be one of: {allowed}.",
+            422,
+        )
+    return value
 
 
 def _api_key_aad(configuration_id: UUID, key_version: int) -> bytes:
@@ -44,6 +59,8 @@ def _new_runtime_configuration(
         scope=RUNTIME_SCOPE,
         revision=1,
         codex_model=None,
+        codex_reasoning_effort=None,
+        codex_fast_mode=False,
         codex_base_url=None,
         max_plugin_wheel_bytes=base_settings.max_plugin_wheel_bytes,
         plugin_validation_timeout_seconds=base_settings.plugin_validation_timeout_seconds,
@@ -116,6 +133,8 @@ def effective_settings(session: Session, base_settings: Settings) -> Settings:
     return replace(
         base_settings,
         codex_model=item.codex_model,
+        codex_reasoning_effort=item.codex_reasoning_effort,
+        codex_fast_mode=item.codex_fast_mode,
         codex_base_url=item.codex_base_url,
         codex_api_key=_decrypt_codex_api_key(item, base_settings),
         max_plugin_wheel_bytes=item.max_plugin_wheel_bytes,
@@ -157,7 +176,18 @@ def update_runtime_configuration(
     mission_job_timeout_seconds: int,
     job_poll_seconds: float,
     job_lease_seconds: int,
+    codex_reasoning_effort: str | None = None,
+    replace_codex_reasoning_effort: bool = False,
+    codex_fast_mode: bool = False,
+    replace_codex_fast_mode: bool = False,
 ) -> RuntimeConfiguration:
+    validate_codex_reasoning_effort(codex_reasoning_effort)
+    if not isinstance(codex_fast_mode, bool):
+        raise QfError(
+            "RUNTIME_CONFIGURATION_INVALID",
+            "Codex Fast mode must be a boolean.",
+            422,
+        )
     item = get_runtime_configuration(session, for_update=True)
     if item is None:
         if expected_revision != 0:
@@ -195,6 +225,10 @@ def update_runtime_configuration(
         )
 
     item.codex_model = codex_model.strip() if codex_model and codex_model.strip() else None
+    if replace_codex_reasoning_effort:
+        item.codex_reasoning_effort = codex_reasoning_effort
+    if replace_codex_fast_mode:
+        item.codex_fast_mode = codex_fast_mode
     item.codex_base_url = next_base_url
     item.max_plugin_wheel_bytes = max_plugin_wheel_bytes
     item.plugin_validation_timeout_seconds = plugin_validation_timeout_seconds

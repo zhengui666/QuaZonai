@@ -1,4 +1,5 @@
 export type UUID = string;
+export type CodexReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 export type ProgramState = 'ACTIVE' | 'COOLING' | 'APPROVAL_PENDING' | 'WAITING_FOR_FEEDBACK' | 'BLOCKED' | 'PAUSED' | 'ARCHIVED';
 export type MissionState = 'PLANNED' | 'READY' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'INTERRUPTED' | 'CANCELLED';
 export type ApprovalState = 'PENDING' | 'APPROVED' | 'REJECTED' | 'STALE' | 'EXPIRED';
@@ -193,6 +194,8 @@ export interface SystemHealth {
 export interface RuntimeConfiguration {
   revision: number;
   codex_model: string | null;
+  codex_reasoning_effort: CodexReasoningEffort | null;
+  codex_fast_mode: boolean;
   codex_base_url: string | null;
   codex_api_key_configured: boolean;
   codex_login_configured: boolean;
@@ -209,6 +212,8 @@ export interface RuntimeConfiguration {
 export interface RuntimeConfigurationUpdate {
   expected_revision: number;
   codex_model: string | null;
+  codex_reasoning_effort: CodexReasoningEffort | null;
+  codex_fast_mode: boolean;
   codex_base_url: string | null;
   codex_api_key?: string | null;
   clear_codex_api_key: boolean;

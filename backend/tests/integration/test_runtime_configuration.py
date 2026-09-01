@@ -20,6 +20,8 @@ from runners.research_missions import (
     BROKER_ACCEPT_POLL_SECONDS,
     CUSTOM_CODEX_PROVIDER_ID,
     _codex_launch_configuration,
+    _codex_service_tier,
+    _codex_thread_config,
     _provider_credential_broker,
 )
 from settings import (
@@ -38,6 +40,8 @@ def _payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "expected_revision": 0,
         "codex_model": "gpt-5.6-sol",
+        "codex_reasoning_effort": None,
+        "codex_fast_mode": False,
         "codex_base_url": "https://gateway.example.test/v1",
         "clear_codex_api_key": False,
         "max_plugin_wheel_bytes": 134_217_728,
@@ -63,11 +67,17 @@ def test_runtime_configuration_round_trip_encrypts_codex_key(
     assert defaults.status_code == 200
     assert defaults.json()["revision"] == 0
     assert defaults.json()["codex_api_key_configured"] is False
+    assert defaults.json()["codex_reasoning_effort"] is None
+    assert defaults.json()["codex_fast_mode"] is False
     assert defaults.json()["max_plugin_wheel_bytes"] == settings.max_plugin_wheel_bytes
 
     response = client.put(
         "/api/v1/system/runtime-configuration",
-        json=_payload(codex_api_key="sk-runtime-secret"),
+        json=_payload(
+            codex_api_key="sk-runtime-secret",
+            codex_reasoning_effort="high",
+            codex_fast_mode=True,
+        ),
     )
     assert response.status_code == 200, response.text
     body = response.json()
@@ -88,12 +98,18 @@ def test_runtime_configuration_round_trip_encrypts_codex_key(
         assert runtime.codex_model == "gpt-5.6-sol"
         assert runtime.codex_base_url == "https://gateway.example.test/v1"
         assert runtime.codex_api_key == "sk-runtime-secret"
+        assert runtime.codex_reasoning_effort == "high"
+        assert runtime.codex_fast_mode is True
         assert runtime.job_poll_seconds == 0.5
         event = session.scalar(
             select(Event).where(Event.kind == "RUNTIME_CONFIGURATION_UPDATED")
         )
         assert event is not None
         assert "sk-runtime-secret" not in str(event.payload)
+        assert event.payload["codex_reasoning_effort"] == "high"
+        assert event.payload["codex_fast_mode"] is True
+        assert event.payload["codex_reasoning_effort_action"] == "set"
+        assert event.payload["codex_fast_mode_action"] == "fast"
 
 
 def test_runtime_configuration_can_clear_codex_key(
@@ -338,6 +354,102 @@ def test_runtime_configuration_rejects_credential_bearing_base_url(
         json=_payload(codex_base_url="https://token@example.test/v1"),
     )
     assert response.status_code == 422
+
+
+def test_runtime_configuration_persists_reasoning_and_fast_controls_and_can_restore_defaults(
+    engine: Engine,
+    settings: Settings,
+) -> None:
+    client = TestClient(create_app(settings=settings, engine=engine))
+    created = client.put(
+        "/api/v1/system/runtime-configuration",
+        json=_payload(codex_reasoning_effort="xhigh", codex_fast_mode=True),
+    )
+    assert created.status_code == 200, created.text
+    assert created.json()["codex_reasoning_effort"] == "xhigh"
+    assert created.json()["codex_fast_mode"] is True
+
+    restored = client.put(
+        "/api/v1/system/runtime-configuration",
+        json=_payload(
+            expected_revision=created.json()["revision"],
+            codex_reasoning_effort=None,
+            codex_fast_mode=False,
+        ),
+    )
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["codex_reasoning_effort"] is None
+    assert restored.json()["codex_fast_mode"] is False
+
+
+def test_legacy_runtime_client_omission_preserves_reasoning_and_fast_controls(
+    engine: Engine,
+    settings: Settings,
+) -> None:
+    client = TestClient(create_app(settings=settings, engine=engine))
+    created = client.put(
+        "/api/v1/system/runtime-configuration",
+        json=_payload(codex_reasoning_effort="high", codex_fast_mode=True),
+    )
+    assert created.status_code == 200
+    legacy_payload = _payload(expected_revision=created.json()["revision"])
+    legacy_payload.pop("codex_reasoning_effort")
+    legacy_payload.pop("codex_fast_mode")
+
+    updated = client.put("/api/v1/system/runtime-configuration", json=legacy_payload)
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["codex_reasoning_effort"] == "high"
+    assert updated.json()["codex_fast_mode"] is True
+
+
+def test_runtime_configuration_rejects_unsupported_reasoning_effort(
+    engine: Engine,
+    settings: Settings,
+) -> None:
+    client = TestClient(create_app(settings=settings, engine=engine))
+    for value in ("", " high ", "HIGH", "none", "max", "ultra", 5):
+        response = client.put(
+            "/api/v1/system/runtime-configuration",
+            json=_payload(codex_reasoning_effort=value),
+        )
+        assert response.status_code == 422, response.text
+
+
+def test_runtime_idempotency_shape_distinguishes_reasoning_and_fast_actions() -> None:
+    omitted_payload = _payload()
+    omitted_payload.pop("codex_reasoning_effort")
+    omitted_payload.pop("codex_fast_mode")
+    omitted = RuntimeConfigurationInput.model_validate(omitted_payload)
+    inherit_standard = RuntimeConfigurationInput.model_validate(
+        _payload(codex_reasoning_effort=None, codex_fast_mode=False)
+    )
+    set_fast = RuntimeConfigurationInput.model_validate(
+        _payload(codex_reasoning_effort="high", codex_fast_mode=True)
+    )
+
+    from api.system import _idempotency_shape
+
+    assert _idempotency_shape(omitted)["codex_reasoning_effort_action"] == "unchanged"
+    assert _idempotency_shape(omitted)["codex_fast_mode_action"] == "unchanged"
+    assert _idempotency_shape(inherit_standard)["codex_reasoning_effort_action"] == "inherit-default"
+    assert _idempotency_shape(inherit_standard)["codex_fast_mode_action"] == "standard"
+    assert _idempotency_shape(set_fast)["codex_reasoning_effort_action"] == "set:high"
+    assert _idempotency_shape(set_fast)["codex_fast_mode_action"] == "fast"
+
+
+def test_codex_thread_controls_are_per_mission_and_preserve_sandbox_defaults(
+    settings: Settings,
+) -> None:
+    for effort in (None, "minimal", "low", "medium", "high", "xhigh"):
+        configured = replace(settings, codex_reasoning_effort=effort, codex_fast_mode=effort == "xhigh")
+        config = _codex_thread_config(configured)
+        assert config["sandbox_workspace_write"] == {"network_access": False}
+        assert config["web_search"] == "disabled"
+        if effort is None:
+            assert "model_reasoning_effort" not in config
+        else:
+            assert config["model_reasoning_effort"] == effort
+        assert _codex_service_tier(configured) == ("fast" if effort == "xhigh" else None)
 
 
 def test_runtime_tuning_is_not_loaded_from_environment(monkeypatch: object) -> None:

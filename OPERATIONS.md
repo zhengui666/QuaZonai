@@ -56,7 +56,7 @@ QuaZonai V1 是单用户、自托管私有工作台。正常 Research Program �
 - 决定是否在受控设备上启用 `Trust this browser`；
 - 完成首次 `RESEARCH_READY`；
 - Codex 登录/认证；
-- 在 Runtime Configuration 配置 Codex provider/model 与 Worker limits；
+- 在 Runtime Configuration 配置 Codex provider/model、reasoning effort、Fast mode 与 Worker limits；
 - 配置 Data Source / Universe / Mandate / Capital Context；
 - 配置 Paper/Live downstream；
 - 安装/激活/停用 research/data/handoff plugin；
@@ -445,6 +445,8 @@ Administration 是 Codex runtime 配置的事实入口，显示并允许修改�
 
 - Codex executable/version 与 login 状态；
 - 可选 `model`；
+- 可选 reasoning effort：`minimal`、`low`、`medium`、`high`、`xhigh`；省略/`null` 时沿用 Codex/模型默认值；
+- 可选 Fast mode；启用时只对新 Mission 使用 Codex 原生 `service_tier="fast"`，不写全局 `config.toml`，也不自动降为 Standard；
 - 可选自定义 OpenAI-compatible `Base URL`；
 - 可选 Codex API key；API key 只写、永不回显；
 - App Server preflight；
@@ -459,6 +461,8 @@ Codex API key 由 `QUAZONAI_MASTER_KEY` 使用 AES-256-GCM 加密后保存到 Po
 `.env` 只负责启动级基础设施与 Operator access：运行环境、PostgreSQL、master key、`QUAZONAI_AUTH_ENABLED`、Operator TOTP、browser cookie key、CLI machine token、public origin、存储根目录和 HTTP port。Codex model/API key/Base URL 不由 `.env` 配置。
 
 Runtime Configuration 使用 revision + 幂等 mutation：页面保存携带当前 revision，若其他请求已先更新则返回冲突并要求刷新，不覆盖较新配置；网络重试复用同一个 `Idempotency-Key`，不会重复修改 revision、重复写事件或重复保存 secret。
+
+reasoning effort 与 Fast mode 相互独立；未来 Mission/Profile 显式值优先于 Runtime Configuration 默认值，Runtime Configuration 又优先于 Codex/模型默认值。保存后的新配置只影响之后启动的 Mission Thread，已运行 Mission 不切换条件。
 
 ### 14.4 Worker limits
 

@@ -313,6 +313,21 @@ def _codex_launch_configuration(
     )
 
 
+def _codex_thread_config(settings: Settings) -> dict[str, Any]:
+    """Build the per-Mission config without changing the global Codex profile."""
+    config: dict[str, object] = {
+        "sandbox_workspace_write": {"network_access": False},
+        "web_search": "disabled",
+    }
+    if settings.codex_reasoning_effort is not None:
+        config["model_reasoning_effort"] = settings.codex_reasoning_effort
+    return config
+
+
+def _codex_service_tier(settings: Settings) -> str | None:
+    return "fast" if settings.codex_fast_mode else None
+
+
 def run_mission(settings: Settings, job_id: UUID) -> None:
     """Start app-server first, then atomically admit the Mission into RUNNING."""
     try:
@@ -346,10 +361,8 @@ def run_mission(settings: Settings, job_id: UUID) -> None:
                     cwd=str(workspace),
                     model=settings.codex_model,
                     model_provider=model_provider,
-                    config={
-                        "sandbox_workspace_write": {"network_access": False},
-                        "web_search": "disabled",
-                    },
+                    service_tier=_codex_service_tier(settings),
+                    config=_codex_thread_config(settings),
                     developer_instructions=(
                         "You are a QuaZonai Research Mission worker. Work only inside this Mission worktree. "
                         "Read MISSION.md and perform the bounded research task. Always write durable findings "
@@ -392,7 +405,13 @@ def run_mission(settings: Settings, job_id: UUID) -> None:
                         kind="MISSION_STARTED",
                         program_id=program_id,
                         mission_id=mission_id,
-                        payload={"codex_thread_id": thread.id},
+                        payload={
+                            "codex_thread_id": thread.id,
+                            "requested_codex_model": settings.codex_model,
+                            "requested_codex_reasoning_effort": settings.codex_reasoning_effort,
+                            "requested_codex_fast_mode": settings.codex_fast_mode,
+                            "requested_codex_service_tier": _codex_service_tier(settings),
+                        },
                     )
 
                 result = thread.run(
@@ -441,18 +460,18 @@ def run_mission(settings: Settings, job_id: UUID) -> None:
             )
     except Exception as exc:
         with factory() as session, session.begin():
-            mission = session.get(ResearchMission, mission_id)
-            if mission is not None and mission.state in {"READY", "RUNNING"}:
-                mission.state = "FAILED"
-                mission.finished_at = _now()
-                mission.error_code = str(getattr(exc, "code", type(exc).__name__))[:100]
-                mission.summary = str(exc)[-12000:]
+            failed_mission = session.get(ResearchMission, mission_id)
+            if failed_mission is not None and failed_mission.state in {"READY", "RUNNING"}:
+                failed_mission.state = "FAILED"
+                failed_mission.finished_at = _now()
+                failed_mission.error_code = str(getattr(exc, "code", type(exc).__name__))[:100]
+                failed_mission.summary = str(exc)[-12000:]
                 _event(
                     session,
                     kind="MISSION_FAILED",
                     program_id=program_id,
                     mission_id=mission_id,
-                    payload={"error_code": mission.error_code},
+                    payload={"error_code": failed_mission.error_code},
                 )
         raise
 
