@@ -10,6 +10,7 @@ const configuration: RuntimeConfiguration = {
   codex_model: 'openai/gpt-5.6-sol',
   codex_reasoning_effort: 'high',
   codex_fast_mode: false,
+  codex_use_default_model_settings: false,
   codex_base_url: 'https://gateway.example/v1',
   codex_api_key_configured: true,
   codex_login_configured: false,

@@ -196,6 +196,7 @@ export interface RuntimeConfiguration {
   codex_model: string | null;
   codex_reasoning_effort: CodexReasoningEffort | null;
   codex_fast_mode: boolean;
+  codex_use_default_model_settings: boolean;
   codex_base_url: string | null;
   codex_api_key_configured: boolean;
   codex_login_configured: boolean;
@@ -214,6 +215,7 @@ export interface RuntimeConfigurationUpdate {
   codex_model: string | null;
   codex_reasoning_effort: CodexReasoningEffort | null;
   codex_fast_mode: boolean;
+  codex_use_default_model_settings: boolean;
   codex_base_url: string | null;
   codex_api_key?: string | null;
   clear_codex_api_key: boolean;
