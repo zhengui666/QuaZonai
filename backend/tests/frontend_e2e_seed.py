@@ -325,7 +325,7 @@ def main() -> None:
         )
         package = CandidatePackage(
             id=HANDOFF_PACKAGE_ID,
-            approval_id=APPROVAL_ID,
+            approval_id=REJECT_APPROVAL_ID,
             candidate_id=CANDIDATE_ID,
             contract_version="1",
             state="AVAILABLE",
@@ -336,7 +336,7 @@ def main() -> None:
         )
         handoff = HandoffOffer(
             id=HANDOFF_ID,
-            approval_id=APPROVAL_ID,
+            approval_id=REJECT_APPROVAL_ID,
             candidate_package_id=HANDOFF_PACKAGE_ID,
             candidate_id=CANDIDATE_ID,
             purpose="PAPER",
