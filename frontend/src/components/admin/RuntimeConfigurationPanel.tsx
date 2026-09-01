@@ -1,8 +1,8 @@
-import { Button, Switch, TextField } from '@radix-ui/themes';
-import { useEffect, useMemo, useState } from 'react';
+import { Button, Slider, Switch, TextField } from '@radix-ui/themes';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../../i18n';
 import { useUpdateRuntimeConfiguration } from '../../lib/api/hooks';
-import type { RuntimeConfiguration } from '../../lib/api/types';
+import type { CodexReasoningEffort, RuntimeConfiguration, RuntimeConfigurationUpdate } from '../../lib/api/types';
 import { formatNumber } from '../../lib/format';
 import { ErrorPanel } from '../ui/ErrorPanel';
 import { Section } from '../ui/Section';
@@ -12,6 +12,26 @@ const MAX_PLUGIN_WHEEL_BYTES = 1_073_741_824;
 const MAX_WORKER_TIMEOUT_SECONDS = 86_400;
 const MAX_JOB_POLL_SECONDS = 3600;
 const MAX_JOB_LEASE_SECONDS = 86_400;
+
+type RuntimeConfigurationWithCodexDefaults = RuntimeConfiguration & {
+  codex_use_default_model_settings?: boolean;
+};
+
+type RuntimeConfigurationUpdateWithCodexDefaults = RuntimeConfigurationUpdate & {
+  codex_use_default_model_settings: boolean;
+};
+
+export const REASONING_EFFORT_STEPS: ReadonlyArray<{
+  value: CodexReasoningEffort | null;
+  key: 'runtime.reasoningDefault' | 'runtime.reasoningMinimal' | 'runtime.reasoningLow' | 'runtime.reasoningMedium' | 'runtime.reasoningHigh' | 'runtime.reasoningXHigh';
+}> = [
+  { value: null, key: 'runtime.reasoningDefault' },
+  { value: 'minimal', key: 'runtime.reasoningMinimal' },
+  { value: 'low', key: 'runtime.reasoningLow' },
+  { value: 'medium', key: 'runtime.reasoningMedium' },
+  { value: 'high', key: 'runtime.reasoningHigh' },
+  { value: 'xhigh', key: 'runtime.reasoningXHigh' },
+];
 
 function positiveNumber(value: string): number {
   const parsed = Number(value);
@@ -27,10 +47,22 @@ function normalizeBaseUrl(value: string): string {
   return value.trim().replace(/\/+$/, '');
 }
 
-export function RuntimeConfigurationPanel({ configuration }: { configuration: RuntimeConfiguration }) {
+function usesCodexModelDefaults(configuration: RuntimeConfigurationWithCodexDefaults): boolean {
+  return configuration.codex_use_default_model_settings ?? (
+    !configuration.codex_model
+    && configuration.codex_reasoning_effort === null
+    && !configuration.codex_fast_mode
+  );
+}
+
+export function RuntimeConfigurationPanel({ configuration }: { configuration: RuntimeConfigurationWithCodexDefaults }) {
   const { t } = useI18n();
   const update = useUpdateRuntimeConfiguration();
+  const reasoningSliderRef = useRef<HTMLSpanElement>(null);
+  const [useCodexDefaults, setUseCodexDefaults] = useState(usesCodexModelDefaults(configuration));
   const [model, setModel] = useState(configuration.codex_model ?? '');
+  const [reasoningEffort, setReasoningEffort] = useState<CodexReasoningEffort | null>(configuration.codex_reasoning_effort);
+  const [fastMode, setFastMode] = useState(configuration.codex_fast_mode);
   const [baseUrl, setBaseUrl] = useState(configuration.codex_base_url ?? '');
   const [apiKey, setApiKey] = useState('');
   const [clearApiKey, setClearApiKey] = useState(false);
@@ -43,7 +75,10 @@ export function RuntimeConfigurationPanel({ configuration }: { configuration: Ru
   const [jobLeaseSeconds, setJobLeaseSeconds] = useState(String(configuration.job_lease_seconds));
 
   useEffect(() => {
+    setUseCodexDefaults(usesCodexModelDefaults(configuration));
     setModel(configuration.codex_model ?? '');
+    setReasoningEffort(configuration.codex_reasoning_effort);
+    setFastMode(configuration.codex_fast_mode);
     setBaseUrl(configuration.codex_base_url ?? '');
     setMaxWheelBytes(String(configuration.max_plugin_wheel_bytes));
     setPluginValidationTimeout(String(configuration.plugin_validation_timeout_seconds));
@@ -64,6 +99,17 @@ export function RuntimeConfigurationPanel({ configuration }: { configuration: Ru
     job_lease_seconds: positiveInteger(jobLeaseSeconds),
   }), [maxWheelBytes, pluginValidationTimeout, bundleBuildTimeout, pluginJobTimeout, missionJobTimeout, jobPollSeconds, jobLeaseSeconds]);
 
+  const selectedReasoningIndex = REASONING_EFFORT_STEPS.findIndex((step) => step.value === reasoningEffort);
+  const reasoningInvalid = selectedReasoningIndex < 0;
+  const reasoningLabel = reasoningInvalid
+    ? ''
+    : t(REASONING_EFFORT_STEPS[selectedReasoningIndex].key);
+
+  useEffect(() => {
+    const thumb = reasoningSliderRef.current?.querySelector<HTMLElement>('[role="slider"]');
+    if (thumb) thumb.setAttribute('aria-valuetext', reasoningLabel);
+  }, [reasoningLabel]);
+
   const providerUrlChanged = normalizeBaseUrl(baseUrl) !== normalizeBaseUrl(configuration.codex_base_url ?? '');
   const requiresKeyDecision = providerUrlChanged && configuration.codex_api_key_configured && !apiKey.trim() && !clearApiKey;
   const invalid = Object.values(numericValues).some((value) => value <= 0)
@@ -75,7 +121,8 @@ export function RuntimeConfigurationPanel({ configuration }: { configuration: Ru
     || numericValues.job_poll_seconds < 0.01
     || numericValues.job_poll_seconds > MAX_JOB_POLL_SECONDS
     || numericValues.job_lease_seconds > MAX_JOB_LEASE_SECONDS
-    || requiresKeyDecision;
+    || requiresKeyDecision
+    || reasoningInvalid;
   const authState = configuration.codex_api_key_configured
     ? 'API KEY CONFIGURED'
     : configuration.codex_login_configured
@@ -83,14 +130,18 @@ export function RuntimeConfigurationPanel({ configuration }: { configuration: Ru
       : 'AUTH REQUIRED';
 
   const save = () => {
-    update.mutate({
+    const payload: RuntimeConfigurationUpdateWithCodexDefaults = {
       expected_revision: configuration.revision,
       codex_model: model.trim() || null,
+      codex_reasoning_effort: reasoningEffort,
+      codex_fast_mode: fastMode,
+      codex_use_default_model_settings: useCodexDefaults,
       codex_base_url: baseUrl.trim() || null,
       codex_api_key: clearApiKey ? null : apiKey.trim() || null,
       clear_codex_api_key: clearApiKey,
       ...numericValues,
-    }, {
+    };
+    update.mutate(payload, {
       onSuccess: () => {
         setApiKey('');
         setClearApiKey(false);
@@ -104,7 +155,7 @@ export function RuntimeConfigurationPanel({ configuration }: { configuration: Ru
         <div className="qz-grid-4" style={{ marginBottom: 18 }}>
           <div><div className="qz-label">{t('runtime.codexAuth')}</div><div style={{ marginTop: 6 }}><StateBadge state={authState} /></div></div>
           <div><div className="qz-label">{t('runtime.providerEndpoint')}</div><div style={{ marginTop: 6 }}><StateBadge state={configuration.codex_base_url ? 'CUSTOM' : 'DEFAULT'} /></div></div>
-          <div><div className="qz-label">{t('runtime.model')}</div><div className="qz-mono" style={{ marginTop: 8 }}>{configuration.codex_model ? <bdi dir="ltr">{configuration.codex_model}</bdi> : t('runtime.codexDefault')}</div></div>
+          <div><div className="qz-label">{t('runtime.model')}</div><div className="qz-mono" style={{ marginTop: 8 }}>{useCodexDefaults || !configuration.codex_model ? t('runtime.codexDefault') : <bdi dir="ltr">{configuration.codex_model}</bdi>}</div></div>
           <div><div className="qz-label">{t('runtime.revision')}</div><div className="qz-number" style={{ marginTop: 8 }}>{formatNumber(configuration.revision)}</div></div>
         </div>
 
@@ -113,10 +164,75 @@ export function RuntimeConfigurationPanel({ configuration }: { configuration: Ru
         </div>
 
         <div className="qz-form-grid">
+          <div className="qz-field">
+            <span className="qz-label" id="runtime-codex-defaults-label">{t('runtime.useDefault')}</span>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', minHeight: 32 }}>
+              <Switch
+                aria-labelledby="runtime-codex-defaults-label"
+                checked={useCodexDefaults}
+                disabled={update.isPending}
+                onCheckedChange={setUseCodexDefaults}
+              />
+              <span className="qz-list-subtitle">
+                <bdi dir="ltr">{useCodexDefaults ? t('runtime.codexDefault') : t('runtime.codexModel')}</bdi>
+              </span>
+            </div>
+            <span className="qz-help">
+              {useCodexDefaults ? t('runtime.reasoningDefault') : t('runtime.reasoningModelDependent')}
+            </span>
+          </div>
           <label className="qz-field">
             <span className="qz-label">{t('runtime.codexModel')}</span>
-            <TextField.Root dir="ltr" value={model} onChange={(event) => setModel(event.target.value)} placeholder={t('runtime.useDefault')} />
+            <TextField.Root
+              dir="ltr"
+              value={model}
+              disabled={update.isPending || useCodexDefaults}
+              onChange={(event) => setModel(event.target.value)}
+              placeholder={t('runtime.useDefault')}
+            />
           </label>
+          <div className="qz-field">
+            <div className="qz-reasoning-header">
+              <span className="qz-label" id="runtime-reasoning-label">{t('runtime.reasoningEffort')}</span>
+              <span className="qz-reasoning-current" aria-live="polite"><bdi dir="ltr">{reasoningLabel}</bdi></span>
+            </div>
+            <Slider
+              ref={reasoningSliderRef}
+              aria-label={t('runtime.reasoningEffort')}
+              aria-labelledby="runtime-reasoning-label"
+              aria-valuetext={reasoningLabel}
+              min={0}
+              max={REASONING_EFFORT_STEPS.length - 1}
+              step={1}
+              value={[Math.max(0, selectedReasoningIndex)]}
+              disabled={update.isPending || useCodexDefaults || reasoningInvalid}
+              onValueChange={([nextIndex]) => {
+                if (nextIndex !== undefined) setReasoningEffort(REASONING_EFFORT_STEPS[nextIndex].value);
+              }}
+            />
+            <div className="qz-reasoning-marks" aria-hidden="true">
+              {REASONING_EFFORT_STEPS.map((step, index) => (
+                <span className="qz-reasoning-mark" key={step.key} data-selected={index === selectedReasoningIndex}>
+                  <bdi dir="ltr">{t(step.key)}</bdi>
+                </span>
+              ))}
+            </div>
+            <span className="qz-help">{t('runtime.reasoningHelp')}</span>
+            <span className="qz-list-subtitle">{t('runtime.reasoningModelDependent')}</span>
+          </div>
+          <div className="qz-field">
+            <span className="qz-label" id="runtime-fast-label">{t('runtime.fastMode')}</span>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', minHeight: 32 }}>
+              <Switch
+                aria-labelledby="runtime-fast-label"
+                checked={fastMode}
+                disabled={update.isPending || useCodexDefaults}
+                onCheckedChange={setFastMode}
+              />
+              <span className="qz-list-subtitle"><bdi dir="ltr">{fastMode ? t('runtime.fastEnabled') : t('runtime.fastStandard')}</bdi></span>
+            </div>
+            <span className="qz-help">{t('runtime.fastHelp')}</span>
+          </div>
           <label className="qz-field">
             <span className="qz-label">{t('runtime.baseUrl')}</span>
             <TextField.Root dir="ltr" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.openai.com/v1" />

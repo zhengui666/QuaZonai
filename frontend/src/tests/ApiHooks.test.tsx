@@ -3,6 +3,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useApprovalDecision, useCreateDataSource, useUpdateRuntimeConfiguration } from '../lib/api/hooks';
+import type { RuntimeConfigurationUpdate } from '../lib/api/types';
 import { jsonResponse } from './testUtils';
 
 function createWrapper(client: QueryClient) {
@@ -62,15 +63,18 @@ describe('API hooks', () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(() => {
       attempt += 1;
       if (attempt === 1) return Promise.reject(new TypeError('response lost'));
-      return jsonResponse({ revision: 8, codex_model: 'gpt-5.6-sol', codex_base_url: 'https://gateway.example/v1', codex_api_key_configured: true });
+      return jsonResponse({ revision: 8, codex_model: 'gpt-5.6-sol', codex_reasoning_effort: 'high', codex_fast_mode: true, codex_use_default_model_settings: false, codex_base_url: 'https://gateway.example/v1', codex_api_key_configured: true });
     });
     vi.spyOn(globalThis.crypto, 'randomUUID')
       .mockReturnValueOnce('00000000-0000-4000-8000-000000000001')
       .mockReturnValueOnce('00000000-0000-4000-8000-000000000002');
     const { result } = renderHook(() => useUpdateRuntimeConfiguration(), { wrapper: createWrapper(client) });
-    const payload = {
+    const payload: RuntimeConfigurationUpdate = {
       expected_revision: 7,
       codex_model: 'gpt-5.6-sol',
+      codex_reasoning_effort: 'high',
+      codex_fast_mode: true,
+      codex_use_default_model_settings: false,
       codex_base_url: 'https://gateway.example/v1',
       codex_api_key: 'secret-value',
       clear_codex_api_key: false,

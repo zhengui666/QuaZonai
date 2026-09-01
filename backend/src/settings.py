@@ -385,6 +385,8 @@ class Settings:
     codex_home: Path = Path("/home/quazonai/.codex")
     codex_model: str | None = None
     codex_base_url: str | None = None
+    codex_reasoning_effort: str | None = None
+    codex_fast_mode: bool = False
     codex_api_key: str | None = None
     mission_job_timeout_seconds: int = DEFAULT_MISSION_JOB_TIMEOUT_SECONDS
     frontend_dist: Path = Path("/workspace/frontend-dist")
@@ -467,6 +469,8 @@ class Settings:
             codex_home=Path(os.environ.get("CODEX_HOME", "/home/quazonai/.codex")),
             codex_model=None,
             codex_base_url=None,
+            codex_reasoning_effort=None,
+            codex_fast_mode=False,
             codex_api_key=None,
             mission_job_timeout_seconds=DEFAULT_MISSION_JOB_TIMEOUT_SECONDS,
             frontend_dist=Path(

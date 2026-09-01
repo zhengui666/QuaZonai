@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     Float,
@@ -33,6 +34,11 @@ class RuntimeConfiguration(Base, TimestampMixin):
     __table_args__ = (
         CheckConstraint("scope = 'SYSTEM'", name="ck_runtime_configuration_scope"),
         CheckConstraint("revision > 0", name="ck_runtime_configuration_revision"),
+        CheckConstraint(
+            "codex_reasoning_effort IS NULL OR codex_reasoning_effort IN "
+            "('minimal', 'low', 'medium', 'high', 'xhigh')",
+            name="ck_runtime_configuration_codex_reasoning_effort",
+        ),
         CheckConstraint(
             "max_plugin_wheel_bytes > 0 AND max_plugin_wheel_bytes <= 1073741824",
             name="ck_runtime_max_plugin_wheel_bytes",
@@ -68,6 +74,13 @@ class RuntimeConfiguration(Base, TimestampMixin):
     scope: Mapped[str] = mapped_column(String(40), nullable=False, default="SYSTEM")
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     codex_model: Mapped[str | None] = mapped_column(String(200))
+    codex_reasoning_effort: Mapped[str | None] = mapped_column(String(16))
+    codex_fast_mode: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    codex_use_default_model_settings: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
     codex_base_url: Mapped[str | None] = mapped_column(Text)
     codex_api_key_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary)
     codex_api_key_nonce: Mapped[bytes | None] = mapped_column(LargeBinary)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal, cast
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Header, Request
@@ -16,6 +16,7 @@ from db.session import ping_database
 from errors import QfError
 from events import append_event
 from runtime_config import (
+    CODEX_REASONING_EFFORTS,
     codex_api_key_configured,
     get_runtime_configuration,
     update_runtime_configuration,
@@ -24,6 +25,7 @@ from settings import Settings, SettingsError
 
 router = APIRouter(prefix="/api/v1/system", tags=["system"])
 RUNTIME_CONFIGURATION_OPERATION = "system.runtime_configuration.replace"
+CodexReasoningEffort = Literal["minimal", "low", "medium", "high", "xhigh"]
 MAX_PLUGIN_WHEEL_BYTES = 1_073_741_824
 MAX_WORKER_TIMEOUT_SECONDS = 86_400
 MAX_JOB_POLL_SECONDS = 3600.0
@@ -48,6 +50,10 @@ class RuntimeConfigurationView(BaseModel):
 
     revision: int
     codex_model: str | None
+    codex_reasoning_effort: CodexReasoningEffort | None
+    codex_fast_mode: bool
+    # The default keeps historical idempotency receipts replayable after upgrade.
+    codex_use_default_model_settings: bool = False
     codex_base_url: str | None
     codex_api_key_configured: bool
     codex_login_configured: bool
@@ -66,6 +72,9 @@ class RuntimeConfigurationInput(BaseModel):
 
     expected_revision: int = Field(ge=0)
     codex_model: str | None = Field(default=None, max_length=200)
+    codex_reasoning_effort: CodexReasoningEffort | None = None
+    codex_fast_mode: bool = False
+    codex_use_default_model_settings: bool = False
     codex_base_url: str | None = Field(default=None, max_length=2048)
     codex_api_key: str | None = Field(default=None, max_length=16_384)
     clear_codex_api_key: bool = False
@@ -116,6 +125,16 @@ class RuntimeConfigurationInput(BaseModel):
             raise ValueError("Cannot set and clear the Codex API key in the same request")
         return self
 
+    @field_validator("codex_reasoning_effort")
+    @classmethod
+    def validate_reasoning_effort(
+        cls,
+        value: CodexReasoningEffort | None,
+    ) -> CodexReasoningEffort | None:
+        if value is not None and value not in CODEX_REASONING_EFFORTS:
+            raise ValueError("Unsupported Codex reasoning effort")
+        return value
+
 
 def _runtime_view_from_item(
     settings: Settings,
@@ -125,6 +144,12 @@ def _runtime_view_from_item(
         return RuntimeConfigurationView(
             revision=0,
             codex_model=settings.codex_model,
+            codex_reasoning_effort=cast(
+                CodexReasoningEffort | None,
+                settings.codex_reasoning_effort,
+            ),
+            codex_fast_mode=settings.codex_fast_mode,
+            codex_use_default_model_settings=True,
             codex_base_url=settings.codex_base_url,
             codex_api_key_configured=False,
             codex_login_configured=(settings.codex_home / "auth.json").is_file(),
@@ -139,6 +164,12 @@ def _runtime_view_from_item(
     return RuntimeConfigurationView(
         revision=item.revision,
         codex_model=item.codex_model,
+        codex_reasoning_effort=cast(
+            CodexReasoningEffort | None,
+            item.codex_reasoning_effort,
+        ),
+        codex_fast_mode=item.codex_fast_mode,
+        codex_use_default_model_settings=item.codex_use_default_model_settings,
         codex_base_url=item.codex_base_url,
         codex_api_key_configured=codex_api_key_configured(item),
         codex_login_configured=(settings.codex_home / "auth.json").is_file(),
@@ -169,21 +200,94 @@ def _idempotency_shape(payload: RuntimeConfigurationInput) -> dict[str, Any]:
     later supplies a different secret value with the otherwise-identical payload.
     This preserves retry semantics without retaining historical provider secrets.
     """
-    normalized = payload.model_dump(mode="json", exclude={"codex_api_key"})
+    normalized = payload.model_dump(
+        mode="json",
+        exclude={
+            "codex_api_key",
+            "codex_reasoning_effort",
+            "codex_fast_mode",
+            "codex_use_default_model_settings",
+        },
+    )
     normalized["codex_api_key_action"] = (
         "clear" if payload.clear_codex_api_key else "set" if payload.codex_api_key else "unchanged"
     )
+    normalized["codex_reasoning_effort_action"] = (
+        "unchanged"
+        if "codex_reasoning_effort" not in payload.model_fields_set
+        else "inherit-default"
+        if payload.codex_reasoning_effort is None
+        else f"set:{payload.codex_reasoning_effort}"
+    )
+    normalized["codex_fast_mode_action"] = (
+        "unchanged"
+        if "codex_fast_mode" not in payload.model_fields_set
+        else "fast"
+        if payload.codex_fast_mode
+        else "standard"
+    )
+    normalized["codex_default_model_settings_action"] = (
+        "unchanged"
+        if "codex_use_default_model_settings" not in payload.model_fields_set
+        else "codex-defaults"
+        if payload.codex_use_default_model_settings
+        else "quazonai-overrides"
+    )
     return normalized
+
+
+_LEGACY_MODEL_CONTROL_FIELDS = (
+    "codex_reasoning_effort",
+    "codex_fast_mode",
+    "codex_use_default_model_settings",
+)
+_LEGACY_RECEIPT_ACTION_FIELDS = (
+    "codex_reasoning_effort_action",
+    "codex_fast_mode_action",
+    "codex_default_model_settings_action",
+)
+
+
+def _legacy_idempotency_shape(payload: RuntimeConfigurationInput) -> dict[str, Any]:
+    normalized = _idempotency_shape(payload)
+    for field in _LEGACY_RECEIPT_ACTION_FIELDS:
+        normalized.pop(field, None)
+    return normalized
+
+
+def _receipt_match_kind(
+    receipt: PublicMutationReceipt,
+    payload: RuntimeConfigurationInput,
+) -> Literal["current", "legacy", "none"]:
+    if receipt.operation_name != RUNTIME_CONFIGURATION_OPERATION:
+        return "none"
+    if receipt.normalized_request == _idempotency_shape(payload):
+        return "current"
+    if any(field in payload.model_fields_set for field in _LEGACY_MODEL_CONTROL_FIELDS):
+        return "none"
+    if receipt.normalized_request == _legacy_idempotency_shape(payload):
+        return "legacy"
+    return "none"
 
 
 def _receipt_matches(
     receipt: PublicMutationReceipt,
     payload: RuntimeConfigurationInput,
 ) -> bool:
-    return (
-        receipt.operation_name == RUNTIME_CONFIGURATION_OPERATION
-        and receipt.normalized_request == _idempotency_shape(payload)
-    )
+    return _receipt_match_kind(receipt, payload) != "none"
+
+
+def _receipt_response(
+    receipt: PublicMutationReceipt,
+    payload: RuntimeConfigurationInput,
+) -> RuntimeConfigurationView:
+    response_json = dict(receipt.response_json)
+    if _receipt_match_kind(receipt, payload) == "legacy":
+        response_json.setdefault("codex_reasoning_effort", None)
+        response_json.setdefault("codex_fast_mode", False)
+        response_json.setdefault("codex_use_default_model_settings", False)
+        receipt.response_json = response_json
+    return RuntimeConfigurationView.model_validate(response_json)
 
 
 def _claim_idempotency_receipt(
@@ -258,7 +362,7 @@ def replace_runtime_configuration(
                             "The idempotency key belongs to a different request.",
                             409,
                         )
-                    return RuntimeConfigurationView.model_validate(receipt.response_json)
+                    return _receipt_response(receipt, payload)
                 claimed_receipt = receipt
 
             item = update_runtime_configuration(
@@ -276,6 +380,18 @@ def replace_runtime_configuration(
                 mission_job_timeout_seconds=payload.mission_job_timeout_seconds,
                 job_poll_seconds=payload.job_poll_seconds,
                 job_lease_seconds=payload.job_lease_seconds,
+                codex_reasoning_effort=payload.codex_reasoning_effort,
+                replace_codex_reasoning_effort=(
+                    "codex_reasoning_effort" in payload.model_fields_set
+                ),
+                codex_fast_mode=payload.codex_fast_mode,
+                replace_codex_fast_mode="codex_fast_mode" in payload.model_fields_set,
+                codex_use_default_model_settings=(
+                    payload.codex_use_default_model_settings
+                ),
+                replace_codex_use_default_model_settings=(
+                    "codex_use_default_model_settings" in payload.model_fields_set
+                ),
             )
             append_event(
                 session,
@@ -287,6 +403,33 @@ def replace_runtime_configuration(
                     "revision": item.revision,
                     "codex_model": item.codex_model,
                     "codex_base_url": item.codex_base_url,
+                    "codex_reasoning_effort": item.codex_reasoning_effort,
+                    "codex_reasoning_effort_action": (
+                        "unchanged"
+                        if "codex_reasoning_effort" not in payload.model_fields_set
+                        else "inherit-default"
+                        if payload.codex_reasoning_effort is None
+                        else "set"
+                    ),
+                    "codex_fast_mode": item.codex_fast_mode,
+                    "codex_fast_mode_action": (
+                        "unchanged"
+                        if "codex_fast_mode" not in payload.model_fields_set
+                        else "fast"
+                        if payload.codex_fast_mode
+                        else "standard"
+                    ),
+                    "codex_use_default_model_settings": (
+                        item.codex_use_default_model_settings
+                    ),
+                    "codex_default_model_settings_action": (
+                        "unchanged"
+                        if "codex_use_default_model_settings"
+                        not in payload.model_fields_set
+                        else "codex-defaults"
+                        if payload.codex_use_default_model_settings
+                        else "quazonai-overrides"
+                    ),
                     "codex_api_key_action": (
                         "cleared"
                         if payload.clear_codex_api_key
