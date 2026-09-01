@@ -24,6 +24,10 @@ jobs:
   verify:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [desktop-chromium, mobile-chromium, mobile-webkit]
     services:
       postgres:
         image: postgres:18-alpine
@@ -96,17 +100,20 @@ jobs:
       - name: Production build
         working-directory: frontend
         run: npm run build
-      - name: Install Chromium
+      - name: Verify PWA artifacts
         working-directory: frontend
-        run: npx playwright install --with-deps chromium
+        run: npm run pwa:verify
+      - name: Install Playwright browsers
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium webkit
       - name: Browser E2E against FastAPI/Postgres
         working-directory: frontend
-        run: npm run e2e
+        run: npx playwright test --project=${{ matrix.browser }}
       - name: Upload Playwright report on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.browser }}
           path: frontend/playwright-report
           if-no-files-found: ignore
       - name: Show API log on failure

@@ -1,5 +1,6 @@
 import '@fontsource-variable/geist';
 import '@fontsource-variable/geist-mono';
+import { Theme } from '@radix-ui/themes';
 import '@radix-ui/themes/styles.css';
 import './styles/theme.css';
 import './styles/production.css';
@@ -9,6 +10,9 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { App } from './app/App';
 import { I18nProvider } from './i18n';
+import { OnlineStatusBanner } from './pwa/OnlineStatusBanner';
+import { PwaProvider } from './pwa/PwaProvider';
+import { PwaUpdateBanner } from './pwa/PwaUpdateBanner';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -27,9 +31,15 @@ const queryClient = new QueryClient({
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <I18nProvider>
-      <QueryClientProvider client={queryClient}>
-        <BrowserRouter><App /></BrowserRouter>
-      </QueryClientProvider>
+      <PwaProvider>
+        <Theme appearance="dark" accentColor="jade" grayColor="sage" radius="small" scaling="90%">
+          <QueryClientProvider client={queryClient}>
+            <PwaUpdateBanner />
+            <OnlineStatusBanner />
+            <BrowserRouter><App /></BrowserRouter>
+          </QueryClientProvider>
+        </Theme>
+      </PwaProvider>
     </I18nProvider>
   </StrictMode>,
 );

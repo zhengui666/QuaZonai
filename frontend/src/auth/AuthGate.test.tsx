@@ -34,6 +34,15 @@ function deferredResponse(): { promise: Promise<Response>; resolve: (response: R
   return { promise, resolve: (response) => resolve(response) };
 }
 
+async function waitForRevalidationCallback(spy: { mock: { calls: unknown[][] } }): Promise<() => void> {
+  let callback: unknown;
+  await waitFor(() => {
+    callback = spy.mock.calls.find(([, delay]) => delay === AUTH_SESSION_REVALIDATION_INTERVAL_MS)?.[0];
+    expect(callback).toEqual(expect.any(Function));
+  });
+  return callback as () => void;
+}
+
 function LogoutProbe() {
   const { logout } = useOperatorAuth();
   const [error, setError] = useState<string | null>(null);
@@ -520,10 +529,7 @@ describe('AuthGate', () => {
     renderAuthGate(<div>Alpha library cache</div>);
 
     expect(await screen.findByText('Alpha library cache')).toBeInTheDocument();
-    const revalidate = setIntervalSpy.mock.calls.find(
-      ([, delay]) => delay === AUTH_SESSION_REVALIDATION_INTERVAL_MS,
-    )?.[0];
-    expect(typeof revalidate).toBe('function');
+    const revalidate = await waitForRevalidationCallback(setIntervalSpy);
     await act(async () => {
       if (typeof revalidate === 'function') revalidate();
       await Promise.resolve();
@@ -619,10 +625,7 @@ describe('AuthGate', () => {
     renderAuthGate(<div>Alpha library cache</div>);
 
     expect(await screen.findByText('Alpha library cache')).toBeInTheDocument();
-    const revalidate = setIntervalSpy.mock.calls.find(
-      ([, delay]) => delay === AUTH_SESSION_REVALIDATION_INTERVAL_MS,
-    )?.[0];
-    expect(typeof revalidate).toBe('function');
+    const revalidate = await waitForRevalidationCallback(setIntervalSpy);
     await act(async () => {
       if (typeof revalidate === 'function') revalidate();
       await Promise.resolve();
@@ -660,10 +663,7 @@ describe('AuthGate', () => {
     renderAuthGate(<AuthModeProbe />);
 
     expect(await screen.findByText('Authentication enabled')).toBeInTheDocument();
-    const revalidate = setIntervalSpy.mock.calls.find(
-      ([, delay]) => delay === AUTH_SESSION_REVALIDATION_INTERVAL_MS,
-    )?.[0];
-    expect(typeof revalidate).toBe('function');
+    const revalidate = await waitForRevalidationCallback(setIntervalSpy);
     await act(async () => {
       if (typeof revalidate === 'function') revalidate();
       await Promise.resolve();
@@ -704,10 +704,7 @@ describe('AuthGate', () => {
     renderAuthGate(<AuthModeProbe />);
 
     expect(await screen.findByText('Authentication enabled')).toBeInTheDocument();
-    const revalidate = setIntervalSpy.mock.calls.find(
-      ([, delay]) => delay === AUTH_SESSION_REVALIDATION_INTERVAL_MS,
-    )?.[0];
-    expect(typeof revalidate).toBe('function');
+    const revalidate = await waitForRevalidationCallback(setIntervalSpy);
     await act(async () => {
       if (typeof revalidate === 'function') {
         revalidate();
@@ -759,10 +756,7 @@ describe('AuthGate', () => {
     renderAuthGate(<LogoutProbe />);
 
     await screen.findByText('Workbench ready');
-    const revalidate = setIntervalSpy.mock.calls.find(
-      ([, delay]) => delay === AUTH_SESSION_REVALIDATION_INTERVAL_MS,
-    )?.[0];
-    expect(typeof revalidate).toBe('function');
+    const revalidate = await waitForRevalidationCallback(setIntervalSpy);
     act(() => { if (typeof revalidate === 'function') revalidate(); });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
 

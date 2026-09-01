@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { CandlestickSeries, ColorType, HistogramSeries, createChart, type CandlestickData, type HistogramData, type Time } from 'lightweight-charts';
 import { useI18n, type Locale } from '../../i18n';
 import type { OhlcPoint } from '../../lib/api/types';
+import { useResponsiveViewport } from '../../lib/useMediaQuery';
 
 function toTime(value: string | number): Time {
   if (typeof value === 'number') return value as Time;
@@ -29,6 +30,8 @@ export function formatCandlestickTooltipTime(locale: Locale, time: Time): string
 
 export function CandlestickChart({ data }: { data: OhlcPoint[] }) {
   const { locale, t } = useI18n();
+  const { isPhone } = useResponsiveViewport();
+  const chartHeight = isPhone ? 260 : 360;
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -41,7 +44,7 @@ export function CandlestickChart({ data }: { data: OhlcPoint[] }) {
         timeFormatter: (time: Time) => formatCandlestickTooltipTime(locale, time),
       },
       autoSize: true,
-      height: 360,
+      height: chartHeight,
       layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: styles.getPropertyValue('--qz-text-faint').trim(), fontSize: 10 },
       grid: { vertLines: { color: styles.getPropertyValue('--qz-border').trim() }, horzLines: { color: styles.getPropertyValue('--qz-border').trim() } },
       rightPriceScale: { borderColor: styles.getPropertyValue('--qz-border').trim() },
@@ -94,7 +97,7 @@ export function CandlestickChart({ data }: { data: OhlcPoint[] }) {
     });
     chart.timeScale().fitContent();
     return () => { tooltip.remove(); chart.remove(); };
-  }, [data, locale]);
+  }, [chartHeight, data, locale]);
 
-  return <div ref={ref} className="qz-chart-host qz-chart-tall" role="img" aria-label={`${t('research.marketContext')} · OHLC`} />;
+  return <div ref={ref} className="qz-chart-host qz-chart-tall" style={{ height: chartHeight, touchAction: 'pan-x pan-y' }} role="img" aria-label={`${t('research.marketContext')} · OHLC`} />;
 }

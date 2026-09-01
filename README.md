@@ -185,3 +185,7 @@ GitHub Actions additionally runs PostgreSQL 18 row-lock/idempotency integration,
 ## Status
 
 The Nautilus-first remote runtime architecture is implemented behind the independent runtime contract. It is release-ready only when CI, real Research/Sealed runtime tests, and independent review are green; documentation alone does not constitute implementation evidence.
+
+## Mobile Web / PWA
+
+The React/Vite workbench is one shared responsive client for desktop browsers, mobile browsers, and installed PWA. All existing routes, fields, validation, search/sort/filter/pagination, charts, graphs, and mutations remain available on small screens; the mobile shell groups less frequent capabilities under More. The PWA precaches only the static shell, keeps `/api/**` NetworkOnly with no auth/data cache or Background Sync, and requires an explicit user action for updates. Offline launch shows the shell and a clear server-unavailable message; it does not fabricate domain data or permit mutations.

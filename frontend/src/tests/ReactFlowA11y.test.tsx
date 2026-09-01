@@ -1,9 +1,10 @@
-import { render } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { Children, isValidElement, type ReactNode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RedundancyGraph } from '../components/graphs/RedundancyGraph';
 import { MissionGraph } from '../components/graphs/MissionGraph';
+import { GraphViewport } from '../components/graphs/GraphViewport';
 import { I18nProvider, translateKey } from '../i18n';
 import { AlphaDetailPage } from '../pages/AlphaDetailPage';
 
@@ -97,5 +98,17 @@ describe('React Flow accessibility labels', () => {
     expectBidiPart(parts[0], 'Custom Eur Usd');
     expect(parts[1]).toBe(' · ');
     expectBidiPart(parts[2], 'قيد التشغيل');
+  });
+
+  it('uses dialog semantics and restores focus for expanded graph views', async () => {
+    renderArabic(<GraphViewport ariaLabel="Mission DAG" items={[]}><div>Graph canvas</div></GraphViewport>);
+    const trigger = screen.getByRole('button', { name: 'توسيع الرسم البياني' });
+    trigger.focus();
+    fireEvent.click(trigger);
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Mission DAG' })).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(trigger).toHaveFocus();
   });
 });

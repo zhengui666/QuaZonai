@@ -32,6 +32,10 @@ jobs:
   verify:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [desktop-chromium, mobile-chromium, mobile-webkit]
     services:
       postgres:
         image: postgres:18-alpine
@@ -95,17 +99,17 @@ jobs:
       - name: Install locked frontend dependencies
         working-directory: frontend
         run: npm ci --legacy-peer-deps --no-audit --no-fund
-      - name: Install Chromium
+      - name: Install Playwright browsers
         working-directory: frontend
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium webkit
       - name: Authenticated browser lifecycle
         working-directory: frontend
-        run: npx playwright test e2e/operator-auth.spec.ts
+        run: npx playwright test e2e/operator-auth.spec.ts --project=${{ matrix.browser }}
       - name: Upload Playwright report on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: operator-auth-playwright-report
+          name: operator-auth-playwright-report-${{ matrix.browser }}
           path: frontend/playwright-report
           if-no-files-found: ignore
       - name: Show API log on failure

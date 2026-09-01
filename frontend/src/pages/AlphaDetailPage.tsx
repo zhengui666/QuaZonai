@@ -2,6 +2,7 @@ import { Background, Controls, ReactFlow, type Edge, type Node } from '@xyflow/r
 import '@xyflow/react/dist/style.css';
 import { useMemo } from 'react';
 import { useParams } from 'react-router-dom';
+import { GraphViewport, type GraphDataItem } from '../components/graphs/GraphViewport';
 import { useReactFlowAriaLabelConfig } from '../components/graphs/reactFlowA11y';
 import { EChart } from '../components/charts/EChart';
 import { FinancialSeriesChart } from '../components/charts/FinancialSeriesChart';
@@ -67,6 +68,24 @@ export function AlphaDetailPage() {
     })),
   ];
   const edges: Edge[] = lineage.map((item, index) => ({ id: `l-${index}`, source: item.id, target: alpha.id, style: { stroke: 'var(--qz-border-strong)' } }));
+  const lineageItems: GraphDataItem[] = [
+    {
+      id: alpha.id,
+      label: rootLabel,
+      details: [
+        [t('graph.role'), <bdi dir="auto">{humanize(alpha.role)}</bdi>],
+        [t('graph.state'), <bdi dir="auto">{humanize(alpha.state)}</bdi>],
+      ],
+    },
+    ...lineage.map<GraphDataItem>((item) => ({
+      id: item.id,
+      label: <bdi dir="auto">{item.label}</bdi>,
+      details: [
+        [t('graph.relationship'), <bdi dir="auto">{humanize(item.relationship)}</bdi>],
+        [t('graph.sourceId'), <bdi dir="ltr">{item.id}</bdi>],
+      ],
+    })),
+  ];
 
   return (
     <>
@@ -80,7 +99,7 @@ export function AlphaDetailPage() {
         <Section title="Calibration" meta="Predicted vs observed">{calibration.length ? <div className="qz-panel qz-panel-pad"><EChart ariaLabel="Alpha calibration chart" option={calibrationOption} /></div> : <EmptyState title="No calibration curve" description="Calibration metadata exists independently; the API did not return curve points." />}</Section>
         <Section title="Feature importance" meta="Explainability evidence">{importance.length ? <div className="qz-panel qz-panel-pad"><EChart ariaLabel="Feature importance chart" option={importanceOption} /></div> : <EmptyState title="No feature importance" description="No explainability vector was returned for this Alpha qualification." />}</Section>
       </div>
-      <Section title="Qualification lineage" meta="React Flow · immutable ancestry and reusable evidence"><div className="qz-flow"><ReactFlow ariaLabelConfig={ariaLabelConfig} nodes={nodes} edges={edges} fitView nodesDraggable={false} nodesConnectable={false}><Background gap={22} color="var(--qz-border)" /><Controls showInteractive={false} /></ReactFlow></div></Section>
+      <Section title="Qualification lineage" meta="React Flow · immutable ancestry and reusable evidence"><GraphViewport ariaLabel="Qualification lineage" items={lineageItems}><div className="qz-flow"><ReactFlow ariaLabelConfig={ariaLabelConfig} nodes={nodes} edges={edges} fitView nodesDraggable={false} nodesConnectable={false}><Background gap={22} color="var(--qz-border)" /><Controls showInteractive={false} /></ReactFlow></div></GraphViewport></Section>
       <Section title="Scope and evidence"><div className="qz-panel qz-panel-pad"><pre className="qz-code" dir="ltr">{JSON.stringify({ universe: alpha.universe ?? alpha.universe_version_id, scope: alpha.scope_json, metrics: alpha.metrics, evaluation_episode_id: alpha.evaluation_episode_id }, null, 2)}</pre></div></Section>
     </>
   );

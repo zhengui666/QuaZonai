@@ -45,6 +45,8 @@ QuaZonai is a quantitative **research and portfolio-construction** workbench. It
 
 It does not own broker credentials, orders, fills, positions, accounts, NAV, execution risk, or a Paper/Live trading runtime. Never invent or invoke commands for order placement, position management, deployment, runtime stop, undeploy, cancellation, or forced liquidation.
 
+The browser workbench, mobile browser, and installed PWA are one shared Core client, but this Skill remains a thin CLI workflow. Do not treat PWA offline state, browser install state, or Service Worker state as domain facts, and do not use the Skill to bypass the Web authentication or human approval boundaries.
+
 ## Start here
 
 1. Verify that the CLI is installed:

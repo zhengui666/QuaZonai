@@ -6,6 +6,7 @@ import { CanvasRenderer } from 'echarts/renderers';
 import { useI18n } from '../../i18n';
 import { humanize } from '../../lib/format';
 import { localizeEChartOption } from './EChart';
+import { useResponsiveViewport } from '../../lib/useMediaQuery';
 
 echarts.use([BarChart, LineChart, GridComponent, TooltipComponent, CanvasRenderer]);
 
@@ -18,6 +19,7 @@ export interface PulsePoint {
 
 export function ResearchPulseChart({ data }: { data: PulsePoint[] }) {
   const { t, locale } = useI18n();
+  const { isPhone } = useResponsiveViewport();
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -32,7 +34,7 @@ export function ResearchPulseChart({ data }: { data: PulsePoint[] }) {
 
     chart.setOption(localizeEChartOption({
       animationDuration: matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 250,
-      grid: { top: 18, left: 36, right: 16, bottom: 28 },
+      grid: { top: 18, left: isPhone ? 30 : 36, right: isPhone ? 8 : 16, bottom: isPhone ? 36 : 28, containLabel: true },
       tooltip: {
         trigger: 'axis',
         backgroundColor: '#111916',
@@ -44,7 +46,7 @@ export function ResearchPulseChart({ data }: { data: PulsePoint[] }) {
         data: data.map((point) => point.label),
         axisLine: { lineStyle: { color: border } },
         axisTick: { show: false },
-        axisLabel: { color: muted, fontSize: 10 },
+          axisLabel: { color: muted, fontSize: 9, width: isPhone ? 54 : undefined, overflow: 'truncate' },
       },
       yAxis: {
         type: 'value',
@@ -85,7 +87,7 @@ export function ResearchPulseChart({ data }: { data: PulsePoint[] }) {
       observer.disconnect();
       chart.dispose();
     };
-  }, [data, locale, t]);
+  }, [data, isPhone, locale, t]);
 
-  return <div ref={ref} className="qz-chart" role="img" aria-label={t('home.researchPulse')} />;
+  return <div ref={ref} className="qz-chart" style={{ height: isPhone ? 260 : 300 }} role="img" aria-label={t('home.researchPulse')} />;
 }

@@ -13,6 +13,7 @@ import { PageHeader } from '../components/ui/PageHeader';
 import { PageSkeleton } from '../components/ui/Skeleton';
 import { StateBadge } from '../components/ui/StateBadge';
 import { Section } from '../components/ui/Section';
+import { ResponsiveDialogContent } from '../components/ui/ResponsiveDialogContent';
 import { Translated, useI18n } from '../i18n';
 import { failedMissionForms, runningMissionForms, structuredEventForms, succeededMissionForms } from '../i18n/researchPlural';
 import { useProgram, useProgramAction, useProgramActivity, useProgramMissions } from '../lib/api/hooks';
@@ -57,7 +58,7 @@ function ProgramActionDialog({ id, action, label, icon }: { id: string; action: 
   const [reason, setReason] = useState('');
   const needsReason = action === 'pause' || action === 'archive';
   const localizedLabel = text(label);
-  return <Dialog.Root><Dialog.Trigger><Button size="1" variant="soft">{icon}{localizedLabel}</Button></Dialog.Trigger><Dialog.Content maxWidth="440px"><Dialog.Title>{t('research.actionTitle', { action: localizedLabel })}</Dialog.Title><Dialog.Description size="2" mb="4">{t('research.actionDesc')}</Dialog.Description>{needsReason ? <TextArea dir="auto" placeholder={t('research.reasonPlaceholder')} value={reason} onChange={(event) => setReason(event.target.value)} /> : null}<div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}><Dialog.Close><Button variant="soft" color="gray">{t('common.cancel')}</Button></Dialog.Close><Button disabled={mutation.isPending || (needsReason && !reason.trim())} onClick={() => mutation.mutate(needsReason ? reason.trim() : undefined)}>{mutation.isPending ? t('common.applying') : localizedLabel}</Button></div></Dialog.Content></Dialog.Root>;
+  return <Dialog.Root><Dialog.Trigger><Button size="1" variant="soft">{icon}{localizedLabel}</Button></Dialog.Trigger><ResponsiveDialogContent maxWidth="440px"><Dialog.Title>{t('research.actionTitle', { action: localizedLabel })}</Dialog.Title><Dialog.Description size="2" mb="4">{t('research.actionDesc')}</Dialog.Description>{needsReason ? <TextArea dir="auto" placeholder={t('research.reasonPlaceholder')} value={reason} onChange={(event) => setReason(event.target.value)} /> : null}<div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}><Dialog.Close><Button variant="soft" color="gray">{t('common.cancel')}</Button></Dialog.Close><Button disabled={mutation.isPending || (needsReason && !reason.trim())} onClick={() => mutation.mutate(needsReason ? reason.trim() : undefined)}>{mutation.isPending ? t('common.applying') : localizedLabel}</Button></div></ResponsiveDialogContent></Dialog.Root>;
 }
 
 export function ResearchDetailPage() {
