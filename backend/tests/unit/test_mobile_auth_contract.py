@@ -20,8 +20,6 @@ def auth_settings(settings: Settings) -> Settings:
     return replace(
         settings,
         operator_auth_enabled=True,
-        operator_username="legacy-browser-operator",
-        operator_password="legacy-browser-password-value",
         operator_totp_secret=TOTP_SECRET,
         auth_cookie_key=COOKIE_KEY,
         api_token=MACHINE_TOKEN,
