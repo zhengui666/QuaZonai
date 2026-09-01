@@ -56,7 +56,7 @@ QuaZonai V1 是单用户、自托管私有工作台。正常 Research Program �
 - 决定是否在受控设备上启用 `Trust this browser`；
 - 完成首次 `RESEARCH_READY`；
 - Codex 登录/认证；
-- 在 Runtime Configuration 配置 Codex provider/model 与 Worker limits；
+- 在 Runtime Configuration 配置 Codex provider、默认模型模式/model override 与 Worker limits；
 - 配置 Data Source / Universe / Mandate / Capital Context；
 - 配置 Paper/Live downstream；
 - 安装/激活/停用 research/data/handoff plugin；
@@ -444,7 +444,8 @@ Operator Authentication 启用时，CLI/automation 不使用 Web cookie、浏览
 Administration 是 Codex runtime 配置的事实入口，显示并允许修改：
 
 - Codex executable/version 与 login 状态；
-- 可选 `model`；
+- `Use Codex default model settings` 开关；
+- 关闭默认模式后可选 `model` override；
 - 可选自定义 OpenAI-compatible `Base URL`；
 - 可选 Codex API key；API key 只写、永不回显；
 - App Server preflight；
@@ -452,13 +453,15 @@ Administration 是 Codex runtime 配置的事实入口，显示并允许修改�
 
 Linux Docker 部署还会在 `finite-worker` 启动检查中执行一次真实 Codex workspace sandbox preflight。若宿主 Docker seccomp 不允许用户 namespace，worker 会保持未就绪并拒绝领取 Mission；不要通过 `privileged` 或关闭 Codex sandbox 绕过。Compose 为 worker 单独使用专用 seccomp profile，同时保留 no-new-privileges、capability drop、只读根文件系统和 Mission 网络隔离。
 
+开启 `Use Codex default model settings` 后，新 Mission 不接收 QuaZonai 保存的 model override，而由 Codex 按当前登录、provider 与自身配置选择模型；已保存 model 不会被删除，关闭开关即可恢复。该开关不影响 Base URL/API key、认证、sandbox、network 或 approval policy，并且只影响之后启动的 Mission。
+
 自定义 Base URL 必须是绝对 HTTP(S) URL，不能把 username/password、query token 或 fragment 嵌入 URL。配置了 Base URL/API key 时，Mission 使用独立 Codex model provider；未配置时继续使用持久 `CODEX_HOME` 中的标准 Codex 登录。已有 API key 时更改 Base URL，必须重新输入该 endpoint 对应的 key 或显式清除旧 key。
 
 Codex API key 由 `QUAZONAI_MASTER_KEY` 使用 AES-256-GCM 加密后保存到 PostgreSQL。Secret/token 不在 Web 展示，也不写入事件 payload；运行时通过受信任 runner 的 one-shot credential broker 交给 Codex provider auth，不进入 App Server/Mission 环境变量。
 
-`.env` 只负责启动级基础设施与 Operator access：运行环境、PostgreSQL、master key、`QUAZONAI_AUTH_ENABLED`、Operator TOTP、browser cookie key、CLI machine token、public origin、存储根目录和 HTTP port。Codex model/API key/Base URL 不由 `.env` 配置。
+`.env` 只负责启动级基础设施与 Operator access：运行环境、PostgreSQL、master key、`QUAZONAI_AUTH_ENABLED`、Operator TOTP、browser cookie key、CLI machine token、public origin、存储根目录和 HTTP port。Codex model mode/model/API key/Base URL 不由 `.env` 配置。
 
-Runtime Configuration 使用 revision + 幂等 mutation：页面保存携带当前 revision，若其他请求已先更新则返回冲突并要求刷新，不覆盖较新配置；网络重试复用同一个 `Idempotency-Key`，不会重复修改 revision、重复写事件或重复保存 secret。
+Runtime Configuration 使用 revision + 幂等 mutation：页面保存携带当前 revision，若其他请求已先更新则返回冲突并要求刷新，不覆盖较新配置；网络重试复用同一个 `Idempotency-Key`，不会重复修改 revision、重复写事件或重复保存 secret。第一方 Web 客户端始终显式发送 model mode；旧客户端省略该字段时，未改变 model 的普通保存保持当前模式，实际修改 model 则按旧语义自动切换。
 
 ### 14.4 Worker limits
 

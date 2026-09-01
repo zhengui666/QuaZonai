@@ -30,6 +30,7 @@ function normalizeBaseUrl(value: string): string {
 export function RuntimeConfigurationPanel({ configuration }: { configuration: RuntimeConfiguration }) {
   const { t } = useI18n();
   const update = useUpdateRuntimeConfiguration();
+  const [useCodexDefaults, setUseCodexDefaults] = useState(configuration.codex_use_default_model_settings);
   const [model, setModel] = useState(configuration.codex_model ?? '');
   const [baseUrl, setBaseUrl] = useState(configuration.codex_base_url ?? '');
   const [apiKey, setApiKey] = useState('');
@@ -43,6 +44,7 @@ export function RuntimeConfigurationPanel({ configuration }: { configuration: Ru
   const [jobLeaseSeconds, setJobLeaseSeconds] = useState(String(configuration.job_lease_seconds));
 
   useEffect(() => {
+    setUseCodexDefaults(configuration.codex_use_default_model_settings);
     setModel(configuration.codex_model ?? '');
     setBaseUrl(configuration.codex_base_url ?? '');
     setMaxWheelBytes(String(configuration.max_plugin_wheel_bytes));
@@ -86,6 +88,7 @@ export function RuntimeConfigurationPanel({ configuration }: { configuration: Ru
     update.mutate({
       expected_revision: configuration.revision,
       codex_model: model.trim() || null,
+      codex_use_default_model_settings: useCodexDefaults,
       codex_base_url: baseUrl.trim() || null,
       codex_api_key: clearApiKey ? null : apiKey.trim() || null,
       clear_codex_api_key: clearApiKey,
@@ -104,7 +107,7 @@ export function RuntimeConfigurationPanel({ configuration }: { configuration: Ru
         <div className="qz-grid-4" style={{ marginBottom: 18 }}>
           <div><div className="qz-label">{t('runtime.codexAuth')}</div><div style={{ marginTop: 6 }}><StateBadge state={authState} /></div></div>
           <div><div className="qz-label">{t('runtime.providerEndpoint')}</div><div style={{ marginTop: 6 }}><StateBadge state={configuration.codex_base_url ? 'CUSTOM' : 'DEFAULT'} /></div></div>
-          <div><div className="qz-label">{t('runtime.model')}</div><div className="qz-mono" style={{ marginTop: 8 }}>{configuration.codex_model ? <bdi dir="ltr">{configuration.codex_model}</bdi> : t('runtime.codexDefault')}</div></div>
+          <div><div className="qz-label">{t('runtime.model')}</div><div className="qz-mono" style={{ marginTop: 8 }}>{useCodexDefaults || !configuration.codex_model ? t('runtime.codexDefault') : <bdi dir="ltr">{configuration.codex_model}</bdi>}</div></div>
           <div><div className="qz-label">{t('runtime.revision')}</div><div className="qz-number" style={{ marginTop: 8 }}>{formatNumber(configuration.revision)}</div></div>
         </div>
 
@@ -113,9 +116,22 @@ export function RuntimeConfigurationPanel({ configuration }: { configuration: Ru
         </div>
 
         <div className="qz-form-grid">
+          <div className="qz-field">
+            <span className="qz-label" id="runtime-use-codex-defaults-label">{t('runtime.useCodexModelDefaults')}</span>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', minHeight: 32 }}>
+              <Switch
+                aria-labelledby="runtime-use-codex-defaults-label"
+                checked={useCodexDefaults}
+                disabled={update.isPending}
+                onCheckedChange={setUseCodexDefaults}
+              />
+              <span className="qz-list-subtitle">{useCodexDefaults ? t('runtime.codexDefault') : t('runtime.codexModel')}</span>
+            </div>
+            <span className="qz-help">{t('runtime.codexDefaultsHelp')}</span>
+          </div>
           <label className="qz-field">
             <span className="qz-label">{t('runtime.codexModel')}</span>
-            <TextField.Root dir="ltr" value={model} onChange={(event) => setModel(event.target.value)} placeholder={t('runtime.useDefault')} />
+            <TextField.Root dir="ltr" value={model} disabled={useCodexDefaults || update.isPending} onChange={(event) => setModel(event.target.value)} placeholder={t('runtime.useDefault')} />
           </label>
           <label className="qz-field">
             <span className="qz-label">{t('runtime.baseUrl')}</span>

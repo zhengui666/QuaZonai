@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     Float,
@@ -68,6 +69,9 @@ class RuntimeConfiguration(Base, TimestampMixin):
     scope: Mapped[str] = mapped_column(String(40), nullable=False, default="SYSTEM")
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     codex_model: Mapped[str | None] = mapped_column(String(200))
+    codex_use_default_model_settings: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
     codex_base_url: Mapped[str | None] = mapped_column(Text)
     codex_api_key_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary)
     codex_api_key_nonce: Mapped[bytes | None] = mapped_column(LargeBinary)

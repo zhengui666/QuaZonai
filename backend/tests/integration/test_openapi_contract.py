@@ -74,3 +74,11 @@ def test_openapi_matches_research_intelligence_contract(
         path for path in paths if any(path.startswith(prefix) for prefix in FORBIDDEN_PREFIXES)
     )
     assert not forbidden, f"execution-owned API paths leaked into QuaZonai: {forbidden}"
+
+    request_ref = schema["paths"]["/api/v1/system/runtime-configuration"]["put"][
+        "requestBody"
+    ]["content"]["application/json"]["schema"]["$ref"]
+    request_schema = schema["components"]["schemas"][request_ref.rsplit("/", 1)[-1]]
+    model_mode = request_schema["properties"]["codex_use_default_model_settings"]
+    assert model_mode["type"] == "boolean"
+    assert "codex_use_default_model_settings" not in request_schema.get("required", [])

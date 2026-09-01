@@ -44,6 +44,7 @@ def _new_runtime_configuration(
         scope=RUNTIME_SCOPE,
         revision=1,
         codex_model=None,
+        codex_use_default_model_settings=True,
         codex_base_url=None,
         max_plugin_wheel_bytes=base_settings.max_plugin_wheel_bytes,
         plugin_validation_timeout_seconds=base_settings.plugin_validation_timeout_seconds,
@@ -115,7 +116,7 @@ def effective_settings(session: Session, base_settings: Settings) -> Settings:
         return base_settings
     return replace(
         base_settings,
-        codex_model=item.codex_model,
+        codex_model=(None if item.codex_use_default_model_settings else item.codex_model),
         codex_base_url=item.codex_base_url,
         codex_api_key=_decrypt_codex_api_key(item, base_settings),
         max_plugin_wheel_bytes=item.max_plugin_wheel_bytes,
@@ -157,8 +158,17 @@ def update_runtime_configuration(
     mission_job_timeout_seconds: int,
     job_poll_seconds: float,
     job_lease_seconds: int,
+    codex_use_default_model_settings: bool = False,
+    replace_codex_use_default_model_settings: bool = False,
 ) -> RuntimeConfiguration:
+    if not isinstance(codex_use_default_model_settings, bool):
+        raise QfError(
+            "RUNTIME_CONFIGURATION_INVALID",
+            "Codex default-model-settings mode must be a boolean.",
+            422,
+        )
     item = get_runtime_configuration(session, for_update=True)
+    created = item is None
     if item is None:
         if expected_revision != 0:
             raise QfError(
@@ -194,7 +204,17 @@ def update_runtime_configuration(
             409,
         )
 
-    item.codex_model = codex_model.strip() if codex_model and codex_model.strip() else None
+    next_model = codex_model.strip() if codex_model and codex_model.strip() else None
+    model_changed = item.codex_model != next_model
+    item.codex_model = next_model
+    if replace_codex_use_default_model_settings:
+        item.codex_use_default_model_settings = codex_use_default_model_settings
+    elif created or model_changed:
+        # A legacy client cannot represent the new mode. Preserve a
+        # read-and-save when the model is unchanged, but retain the old
+        # contract when it actually changes the model: non-null enables
+        # the QuaZonai override and null follows Codex defaults.
+        item.codex_use_default_model_settings = next_model is None
     item.codex_base_url = next_base_url
     item.max_plugin_wheel_bytes = max_plugin_wheel_bytes
     item.plugin_validation_timeout_seconds = plugin_validation_timeout_seconds

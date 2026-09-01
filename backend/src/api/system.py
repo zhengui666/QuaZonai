@@ -48,6 +48,7 @@ class RuntimeConfigurationView(BaseModel):
 
     revision: int
     codex_model: str | None
+    codex_use_default_model_settings: bool
     codex_base_url: str | None
     codex_api_key_configured: bool
     codex_login_configured: bool
@@ -60,12 +61,24 @@ class RuntimeConfigurationView(BaseModel):
     job_lease_seconds: int
     updated_at: str | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def infer_legacy_codex_model_mode(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "codex_use_default_model_settings" not in value:
+            migrated = dict(value)
+            migrated["codex_use_default_model_settings"] = (
+                migrated.get("codex_model") is None
+            )
+            return migrated
+        return value
+
 
 class RuntimeConfigurationInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     expected_revision: int = Field(ge=0)
     codex_model: str | None = Field(default=None, max_length=200)
+    codex_use_default_model_settings: bool = False
     codex_base_url: str | None = Field(default=None, max_length=2048)
     codex_api_key: str | None = Field(default=None, max_length=16_384)
     clear_codex_api_key: bool = False
@@ -125,6 +138,7 @@ def _runtime_view_from_item(
         return RuntimeConfigurationView(
             revision=0,
             codex_model=settings.codex_model,
+            codex_use_default_model_settings=True,
             codex_base_url=settings.codex_base_url,
             codex_api_key_configured=False,
             codex_login_configured=(settings.codex_home / "auth.json").is_file(),
@@ -139,6 +153,7 @@ def _runtime_view_from_item(
     return RuntimeConfigurationView(
         revision=item.revision,
         codex_model=item.codex_model,
+        codex_use_default_model_settings=item.codex_use_default_model_settings,
         codex_base_url=item.codex_base_url,
         codex_api_key_configured=codex_api_key_configured(item),
         codex_login_configured=(settings.codex_home / "auth.json").is_file(),
@@ -169,7 +184,17 @@ def _idempotency_shape(payload: RuntimeConfigurationInput) -> dict[str, Any]:
     later supplies a different secret value with the otherwise-identical payload.
     This preserves retry semantics without retaining historical provider secrets.
     """
-    normalized = payload.model_dump(mode="json", exclude={"codex_api_key"})
+    normalized = payload.model_dump(
+        mode="json",
+        exclude={"codex_api_key", "codex_use_default_model_settings"},
+    )
+    normalized["codex_model_settings_action"] = (
+        "unchanged"
+        if "codex_use_default_model_settings" not in payload.model_fields_set
+        else "codex-defaults"
+        if payload.codex_use_default_model_settings
+        else "quazonai-override"
+    )
     normalized["codex_api_key_action"] = (
         "clear" if payload.clear_codex_api_key else "set" if payload.codex_api_key else "unchanged"
     )
@@ -180,10 +205,16 @@ def _receipt_matches(
     receipt: PublicMutationReceipt,
     payload: RuntimeConfigurationInput,
 ) -> bool:
-    return (
-        receipt.operation_name == RUNTIME_CONFIGURATION_OPERATION
-        and receipt.normalized_request == _idempotency_shape(payload)
-    )
+    if receipt.operation_name != RUNTIME_CONFIGURATION_OPERATION:
+        return False
+    normalized = _idempotency_shape(payload)
+    if receipt.normalized_request == normalized:
+        return True
+    if "codex_use_default_model_settings" not in payload.model_fields_set:
+        legacy = dict(normalized)
+        legacy.pop("codex_model_settings_action", None)
+        return receipt.normalized_request == legacy
+    return False
 
 
 def _claim_idempotency_receipt(
@@ -266,6 +297,12 @@ def replace_runtime_configuration(
                 settings,
                 expected_revision=payload.expected_revision,
                 codex_model=payload.codex_model,
+                codex_use_default_model_settings=(
+                    payload.codex_use_default_model_settings
+                ),
+                replace_codex_use_default_model_settings=(
+                    "codex_use_default_model_settings" in payload.model_fields_set
+                ),
                 codex_base_url=payload.codex_base_url,
                 codex_api_key=payload.codex_api_key,
                 clear_codex_api_key=payload.clear_codex_api_key,
@@ -286,6 +323,17 @@ def replace_runtime_configuration(
                 payload={
                     "revision": item.revision,
                     "codex_model": item.codex_model,
+                    "codex_use_default_model_settings": (
+                        item.codex_use_default_model_settings
+                    ),
+                    "codex_model_settings_action": (
+                        "unchanged"
+                        if "codex_use_default_model_settings"
+                        not in payload.model_fields_set
+                        else "codex-defaults"
+                        if payload.codex_use_default_model_settings
+                        else "quazonai-override"
+                    ),
                     "codex_base_url": item.codex_base_url,
                     "codex_api_key_action": (
                         "cleared"

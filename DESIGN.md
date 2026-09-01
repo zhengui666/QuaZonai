@@ -1154,7 +1154,7 @@ PostgreSQL 是业务事实源。Codex Thread/Turn/Item 只能作为执行上下�
 
 ### 30.1 Runtime Configuration ownership
 
-Codex provider 配置与 Worker limits 属于**运行时管理配置**，由本地 Administrator 在 Web Administration 中维护，并持久化到 PostgreSQL 单例 `runtime_configurations`。它们不是 Compose/bootstrap 环境变量。
+Codex provider 配置、Codex model override mode 与 Worker limits 属于**运行时管理配置**，由本地 Administrator 在 Web Administration 中维护，并持久化到 PostgreSQL 单例 `runtime_configurations`。它们不是 Compose/bootstrap 环境变量。
 
 `.env` / process environment 只负责启动级基础设施：
 
@@ -1175,6 +1175,7 @@ Runtime Configuration 至少包含：
 ```text
 revision
 codex_model nullable
+codex_use_default_model_settings boolean
 codex_base_url nullable
 codex_api_key encrypted/write-only nullable
 max_plugin_wheel_bytes
@@ -1188,7 +1189,9 @@ job_lease_seconds
 
 Codex provider 规则：
 
-- `codex_model` 为空时使用 Codex 默认模型选择；
+- `codex_use_default_model_settings=true` 是 QuaZonai 所有模型相关 thread override 的总开关；当前主干只包含 `codex_model`，后续 reasoning effort、service tier 等模型控制也必须受同一开关约束。开启后，新 Mission 不接收这些 QuaZonai override，Codex 按当前登录、provider 与自身配置选择默认值；该模式不取消 custom Base URL/API key、sandbox、network 或 approval policy；
+- `codex_use_default_model_settings=false` 时，QuaZonai 使用已保存的 `codex_model`；该字段为空仍回退到 Codex 默认模型选择；
+- 切换到 Codex 默认模式只屏蔽而不删除已保存的 `codex_model`，关闭后恢复原值；升级时仅 `codex_model IS NULL` 的既有行迁移为默认模式，已配置模型的部署保持原行为；
 - `codex_base_url` 支持自定义 OpenAI-compatible API root，必须是绝对 HTTP(S) URL；
 - Base URL 不允许内嵌 username/password、query token 或 fragment；
 - 配置 custom Base URL 或 API key 时，App Server 使用显式 model provider，V1 wire API 固定为 Responses；
@@ -1203,6 +1206,8 @@ Runtime Configuration mutation 规则：
 - GET 返回当前单调递增 `revision`；尚未创建 singleton 时为 revision `0`；
 - PUT 必须携带 `expected_revision`，陈旧保存返回 `RUNTIME_CONFIGURATION_STALE`，首次并发创建的唯一约束竞争也必须被翻译为同一业务冲突而不是数据库 500；
 - PUT 支持 `Idempotency-Key`；同一个逻辑请求重试返回原响应，不重复加密 provider key、不重复推进 revision、也不重复写 `RUNTIME_CONFIGURATION_UPDATED` event；
+- `codex_use_default_model_settings` 支持兼容旧客户端的三态更新：显式 `true` 使用 Codex 默认模型设置，显式 `false` 启用 QuaZonai model override；字段省略且 `codex_model` 未变化时保持当前模式，旧客户端实际修改 `codex_model` 时按旧合同推导（非空启用 override，空值使用 Codex 默认）；
+- `RUNTIME_CONFIGURATION_UPDATED` 记录非敏感的 model mode 与 action，不记录 provider key 或 Codex 隐藏 reasoning；
 - Idempotency receipt 不保存 provider key plaintext，也不为了去重额外保存历史 secret 副本。
 
 Worker 规则：
@@ -1211,7 +1216,7 @@ Worker 规则：
 - plugin validator/bundle child 与 Research Mission child 在启动时冻结当次有效配置；
 - `job_poll_seconds` 服务端与数据库下界为 `0.01` 秒，禁止近零 busy loop；
 - Administration 保存后不要求重建或重启 Compose stack；
-- 已运行 child 的 timeout/model/provider 不被中途改写，修改只影响之后领取/启动的工作。
+- 已运行 child 的 timeout/model-mode/model/provider 不被中途改写，修改只影响之后领取/启动的工作。
 
 Runtime Configuration 的 API key 使用 `QUAZONAI_MASTER_KEY` 做 AES-256-GCM authenticated encryption。Master key 仍必须外部注入，不能迁入数据库或 Web 配置。
 
@@ -1570,7 +1575,7 @@ Production 构建后 SPA 静态资产由 FastAPI 提供，减少额外运行服�
 | `archive_manifest_shards` | `id`, `manifest_id`, `shard_key`, `source_url`, `coverage_start`, `coverage_end`, `size_bytes`, `state`, `observed_at` |
 | `credential_sets` | `id`, `purpose`, `owner_resource_type`, `owner_resource_id`, `public_config`, `created_at`, `updated_at` |
 | `credential_secrets` | `credential_set_id`, `field_name`, `ciphertext`, `nonce`, `key_version` |
-| `runtime_configurations` | `id`, `scope`, `revision`, `codex_model`, `codex_base_url`, `codex_api_key_ciphertext`, `codex_api_key_nonce`, `codex_api_key_key_version`, `max_plugin_wheel_bytes`, `plugin_validation_timeout_seconds`, `bundle_build_timeout_seconds`, `plugin_job_timeout_seconds`, `mission_job_timeout_seconds`, `job_poll_seconds`, `job_lease_seconds`, `created_at`, `updated_at` |
+| `runtime_configurations` | `id`, `scope`, `revision`, `codex_model`, `codex_use_default_model_settings`, `codex_base_url`, `codex_api_key_ciphertext`, `codex_api_key_nonce`, `codex_api_key_key_version`, `max_plugin_wheel_bytes`, `plugin_validation_timeout_seconds`, `bundle_build_timeout_seconds`, `plugin_job_timeout_seconds`, `mission_job_timeout_seconds`, `job_poll_seconds`, `job_lease_seconds`, `created_at`, `updated_at` |
 | `artifacts` | `id`, `kind`, `owner_type`, `owner_id`, `relative_path`, `media_type`, `size_bytes`, `created_at` |
 
 ## 40. API
@@ -1743,7 +1748,7 @@ Program list/detail：
 
 - readiness；
 - Codex login/status；
-- Runtime Configuration：Codex model / custom Base URL / write-only API key；
+- Runtime Configuration：Codex default-model mode / retained model override / custom Base URL / write-only API key；
 - Runtime Configuration：Worker limits；
 - Data Source Registry；
 - Universe；
@@ -1995,7 +2000,8 @@ QuaZonai/
 - [ ] network-disabled Mission 仍可通过 MCP 使用批准数据能力；
 - [ ] Codex 输出不能绕过 Domain Validator 推进状态；
 - [ ] reasoning 内容不持久化为产品事实；
-- [ ] Administration 配置的 custom Base URL/model/API key 可在不依赖 `.env` 的情况下应用于新 Mission；
+- [ ] Administration 可显式选择 Codex 默认模型设置或 QuaZonai model override，custom Base URL/model/API key 均可在不依赖 `.env` 的情况下应用于新 Mission；
+- [ ] Codex 默认模式只屏蔽 model override，不删除已保存模型，也不绕过 provider/auth/sandbox/network/approval policy；
 - [ ] Codex provider API key 不回读、不写事件、不进入 App Server env/命令行，也不会进入 Mission shell；
 - [ ] Runtime Configuration stale revision 与并发首次创建返回业务冲突，幂等重试不重复写入；
 - [ ] Worker limits 修改无需重启，并只影响之后领取/启动的工作。

@@ -299,7 +299,7 @@ V1 不依赖 experimental `runtimeWorkspaceRoots`。Workspace hard boundary 由 
 
 ```json
 {
-  "model": "<AgentProfileVersion.model>",
+  "model": "<optional QuaZonai override; null/omitted in Codex-default mode>",
   "cwd": "/worktrees/<mission>",
   "developerInstructions": "<mission role + contract instructions>",
   "sandbox": "workspace-write",
@@ -308,6 +308,8 @@ V1 不依赖 experimental `runtimeWorkspaceRoots`。Workspace hard boundary 由 
 ```
 
 精确字段归属（thread vs turn）以 pinned App Server schema 为准；adapter 必须通过 generated schema 生成/校验 payload，不在业务代码里散落协议 JSON。
+
+`RuntimeConfiguration.codex_use_default_model_settings=true` 时，adapter 将有效 `model` 设为 `null`/不施加模型选择 override，让 Codex 使用当前登录、provider 与自身配置的默认模型。`false` 时才使用保存的 `codex_model`。切换只影响新 Thread，且不改变 custom provider/auth、sandbox、network 或 approval policy；保存的 model 值被保留以便恢复。
 
 `runtimeWorkspaceRoots`、`permissions` profile、Project/Environment 等 experimental 字段只允许作为未来可替换 hardening/optimization；不能成为业务正确性的前提。
 

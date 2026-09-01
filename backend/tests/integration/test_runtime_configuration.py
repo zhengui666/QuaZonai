@@ -38,6 +38,7 @@ def _payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "expected_revision": 0,
         "codex_model": "gpt-5.6-sol",
+        "codex_use_default_model_settings": False,
         "codex_base_url": "https://gateway.example.test/v1",
         "clear_codex_api_key": False,
         "max_plugin_wheel_bytes": 134_217_728,
@@ -63,6 +64,7 @@ def test_runtime_configuration_round_trip_encrypts_codex_key(
     assert defaults.status_code == 200
     assert defaults.json()["revision"] == 0
     assert defaults.json()["codex_api_key_configured"] is False
+    assert defaults.json()["codex_use_default_model_settings"] is True
     assert defaults.json()["max_plugin_wheel_bytes"] == settings.max_plugin_wheel_bytes
 
     response = client.put(
@@ -73,6 +75,7 @@ def test_runtime_configuration_round_trip_encrypts_codex_key(
     body = response.json()
     assert body["revision"] == 1
     assert body["codex_model"] == "gpt-5.6-sol"
+    assert body["codex_use_default_model_settings"] is False
     assert body["codex_base_url"] == "https://gateway.example.test/v1"
     assert body["codex_api_key_configured"] is True
     assert "api_key" not in " ".join(body.keys()).replace("codex_api_key_configured", "")
@@ -338,6 +341,157 @@ def test_runtime_configuration_rejects_credential_bearing_base_url(
         json=_payload(codex_base_url="https://token@example.test/v1"),
     )
     assert response.status_code == 422
+
+
+
+def test_codex_default_model_mode_masks_and_restores_saved_override(
+    engine: Engine,
+    settings: Settings,
+) -> None:
+    client = TestClient(create_app(settings=settings, engine=engine))
+    created = client.put(
+        "/api/v1/system/runtime-configuration",
+        json=_payload(codex_api_key="sk-model-mode"),
+    )
+    assert created.status_code == 200, created.text
+
+    inherited = client.put(
+        "/api/v1/system/runtime-configuration",
+        json=_payload(
+            expected_revision=created.json()["revision"],
+            codex_use_default_model_settings=True,
+        ),
+    )
+    assert inherited.status_code == 200, inherited.text
+    assert inherited.json()["codex_use_default_model_settings"] is True
+    assert inherited.json()["codex_model"] == "gpt-5.6-sol"
+
+    factory = create_session_factory(engine)
+    with factory() as session:
+        stored = session.scalar(select(RuntimeConfiguration))
+        assert stored is not None
+        assert stored.codex_model == "gpt-5.6-sol"
+        assert stored.codex_use_default_model_settings is True
+        runtime = effective_settings(session, settings)
+        assert runtime.codex_model is None
+        assert runtime.codex_base_url == "https://gateway.example.test/v1"
+        assert runtime.codex_api_key == "sk-model-mode"
+        event = session.scalar(select(Event).order_by(Event.id.desc()))
+        assert event is not None
+        assert event.payload["codex_model_settings_action"] == "codex-defaults"
+
+    restored = client.put(
+        "/api/v1/system/runtime-configuration",
+        json=_payload(
+            expected_revision=inherited.json()["revision"],
+            codex_use_default_model_settings=False,
+        ),
+    )
+    assert restored.status_code == 200, restored.text
+    with factory() as session:
+        runtime = effective_settings(session, settings)
+        assert runtime.codex_model == "gpt-5.6-sol"
+
+
+def test_legacy_client_omission_infers_and_preserves_model_mode(
+    engine: Engine,
+    settings: Settings,
+) -> None:
+    client = TestClient(create_app(settings=settings, engine=engine))
+    legacy_create = _payload()
+    legacy_create.pop("codex_use_default_model_settings")
+    created = client.put(
+        "/api/v1/system/runtime-configuration",
+        json=legacy_create,
+    )
+    assert created.status_code == 200, created.text
+    assert created.json()["codex_use_default_model_settings"] is False
+
+    legacy_update = _payload(
+        expected_revision=created.json()["revision"],
+        codex_model="gpt-5.6-sol-next",
+    )
+    legacy_update.pop("codex_use_default_model_settings")
+    updated = client.put(
+        "/api/v1/system/runtime-configuration",
+        json=legacy_update,
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["codex_use_default_model_settings"] is False
+
+
+
+def test_legacy_client_model_change_infers_mode_without_breaking_unchanged_save(
+    engine: Engine,
+    settings: Settings,
+) -> None:
+    client = TestClient(create_app(settings=settings, engine=engine))
+    created = client.put(
+        "/api/v1/system/runtime-configuration",
+        json=_payload(codex_use_default_model_settings=True),
+    )
+    assert created.status_code == 200, created.text
+    assert created.json()["codex_use_default_model_settings"] is True
+
+    legacy_same = _payload(expected_revision=created.json()["revision"])
+    legacy_same.pop("codex_use_default_model_settings")
+    unchanged = client.put(
+        "/api/v1/system/runtime-configuration",
+        json=legacy_same,
+    )
+    assert unchanged.status_code == 200, unchanged.text
+    assert unchanged.json()["codex_use_default_model_settings"] is True
+
+    legacy_changed = _payload(
+        expected_revision=unchanged.json()["revision"],
+        codex_model="gpt-5.6-sol-next",
+    )
+    legacy_changed.pop("codex_use_default_model_settings")
+    changed = client.put(
+        "/api/v1/system/runtime-configuration",
+        json=legacy_changed,
+    )
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["codex_use_default_model_settings"] is False
+
+    factory = create_session_factory(engine)
+    with factory() as session:
+        assert effective_settings(session, settings).codex_model == "gpt-5.6-sol-next"
+
+def test_legacy_blank_model_first_save_infers_codex_defaults(
+    engine: Engine,
+    settings: Settings,
+) -> None:
+    client = TestClient(create_app(settings=settings, engine=engine))
+    legacy_payload = _payload(codex_model=None)
+    legacy_payload.pop("codex_use_default_model_settings")
+    response = client.put(
+        "/api/v1/system/runtime-configuration",
+        json=legacy_payload,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["codex_use_default_model_settings"] is True
+
+
+def test_model_mode_idempotency_shape_distinguishes_omitted_and_explicit() -> None:
+    from api.system import _idempotency_shape
+
+    omitted_payload = _payload()
+    omitted_payload.pop("codex_use_default_model_settings")
+    omitted = RuntimeConfigurationInput.model_validate(omitted_payload)
+    inherited = RuntimeConfigurationInput.model_validate(
+        _payload(codex_use_default_model_settings=True)
+    )
+    overridden = RuntimeConfigurationInput.model_validate(
+        _payload(codex_use_default_model_settings=False)
+    )
+
+    assert _idempotency_shape(omitted)["codex_model_settings_action"] == "unchanged"
+    assert _idempotency_shape(inherited)["codex_model_settings_action"] == "codex-defaults"
+    assert (
+        _idempotency_shape(overridden)["codex_model_settings_action"]
+        == "quazonai-override"
+    )
 
 
 def test_runtime_tuning_is_not_loaded_from_environment(monkeypatch: object) -> None:
