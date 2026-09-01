@@ -23,6 +23,7 @@ targets:
       - path: Resources/ClientParity.xcstrings
       - path: Resources/LaunchScreen.storyboard
       - path: Resources/PrivacyInfo.xcprivacy
+        buildPhase: resources
     dependencies:
       - package: QuaZonaiAPI
     settings:
