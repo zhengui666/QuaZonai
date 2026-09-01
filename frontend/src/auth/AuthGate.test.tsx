@@ -73,13 +73,68 @@ afterEach(() => {
 });
 
 describe('AuthGate', () => {
-  it('renders the workbench immediately when a browser session is valid', async () => {
+  it('does not treat a malformed bootstrap response as an authenticated session', async () => {
     vi.stubGlobal('fetch', vi.fn(() => jsonResponse({
+      authenticated: true,
+      username: 'local-operator',
+      trusted_browser: true,
+    })));
+
+    renderAuthGate(<div>Workbench ready</div>);
+
+    expect(await screen.findByRole('heading', { name: 'Verify your identity' })).toBeInTheDocument();
+    expect(screen.queryByText('Workbench ready')).not.toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('HTTP 502');
+  });
+
+  it('enters first-visit setup from the bootstrap contract and confirms only the code intent', async () => {
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => jsonResponse({ auth_enabled: true, setup_required: true }))
+      .mockImplementationOnce(() => jsonResponse({
+        issuer: 'QuaZonai',
+        account_name: 'local-operator@testserver',
+        otpauth_uri: 'otpauth://totp/QuaZonai:local-operator?secret=TEST',
+        manual_key: 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP',
+        expires_in_seconds: 600,
+      }))
+      .mockImplementationOnce(() => jsonResponse({
+        authenticated: true,
+        username: 'local-operator',
+        trusted_browser: false,
+        auth_enabled: true,
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+
+    renderAuthGate(<div>Workbench ready</div>);
+
+    expect(await screen.findByRole('heading', { name: 'Set up your authenticator' })).toBeInTheDocument();
+    expect(await screen.findByLabelText('Authenticator setup QR code')).toBeInTheDocument();
+    expect(await screen.findByText('JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP')).toBeInTheDocument();
+    await user.type(screen.getByLabelText('Authenticator code'), '123456');
+    await user.click(screen.getByRole('button', { name: 'Confirm and continue' }));
+
+    await waitFor(() => expect(screen.getByText('Workbench ready')).toBeInTheDocument());
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      '/api/v1/auth/bootstrap',
+      '/api/v1/auth/setup/start',
+      '/api/v1/auth/setup/confirm',
+    ]);
+    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual({
+      totp_code: '123456',
+      trust_browser: false,
+    });
+  });
+
+  it('renders the workbench immediately when a browser session is valid', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockImplementationOnce(() => jsonResponse({ auth_enabled: true, setup_required: false }))
+      .mockImplementationOnce(() => jsonResponse({
       authenticated: true,
       username: 'local-operator',
       trusted_browser: false,
       auth_enabled: true,
-    })));
+      })));
 
     renderAuthGate(<div>Workbench ready</div>);
 
@@ -89,6 +144,10 @@ describe('AuthGate', () => {
   it('keeps an authenticated session stable when changing locale', async () => {
     const unexpectedRebootstrap = deferredResponse();
     const fetchMock = vi.fn()
+      .mockImplementationOnce(() => jsonResponse({
+        auth_enabled: true,
+        setup_required: false,
+      }))
       .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
         username: 'local-operator',
@@ -106,24 +165,26 @@ describe('AuthGate', () => {
     await waitFor(() => expect(document.documentElement).toHaveAttribute('dir', 'rtl'));
     await act(async () => { await Promise.resolve(); });
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(screen.getByText('Workbench ready')).toBeInTheDocument();
   });
 
   it('preserves direct access when operator authentication is disabled', async () => {
-    const fetchMock = vi.fn(() => jsonResponse({
-      authenticated: true,
-      username: 'local-operator',
-      trusted_browser: false,
-      auth_enabled: false,
-    }));
+    const fetchMock = vi.fn((input) => String(input).endsWith('/auth/bootstrap')
+      ? jsonResponse({ auth_enabled: false, setup_required: false })
+      : jsonResponse({
+        authenticated: true,
+        username: 'local-operator',
+        trusted_browser: false,
+        auth_enabled: false,
+      }));
     vi.stubGlobal('fetch', fetchMock);
 
     renderAuthGate(<div>Direct workbench</div>);
 
     expect(await screen.findByText('Direct workbench')).toBeInTheDocument();
     act(() => window.dispatchEvent(new Event('quazonai:auth-required')));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
     expect(await screen.findByText('Direct workbench')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Verify your identity' })).not.toBeInTheDocument();
   });
@@ -131,11 +192,16 @@ describe('AuthGate', () => {
   it('rechecks a stale direct-access session after an authentication-required signal', async () => {
     const fetchMock = vi.fn()
       .mockImplementationOnce(() => jsonResponse({
+        auth_enabled: false,
+        setup_required: false,
+      }))
+      .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
         username: 'local-operator',
         trusted_browser: false,
         auth_enabled: false,
       }))
+      .mockImplementationOnce(() => jsonResponse({ auth_enabled: true, setup_required: false }))
       .mockImplementationOnce(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -144,7 +210,7 @@ describe('AuthGate', () => {
     expect(await screen.findByText('Direct workbench')).toBeInTheDocument();
     act(() => window.dispatchEvent(new Event('quazonai:auth-required')));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
     expect(await screen.findByRole('heading', { name: 'Verify your identity' })).toBeInTheDocument();
   });
 
@@ -152,12 +218,17 @@ describe('AuthGate', () => {
     const staleDirectSession = deferredResponse();
     const fetchMock = vi.fn()
       .mockImplementationOnce(() => jsonResponse({
+        auth_enabled: false,
+        setup_required: false,
+      }))
+      .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
         username: 'local-operator',
         trusted_browser: false,
         auth_enabled: false,
       }))
       .mockImplementationOnce(() => staleDirectSession.promise)
+      .mockImplementationOnce(() => jsonResponse({ auth_enabled: true, setup_required: false }))
       .mockImplementationOnce(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -168,7 +239,7 @@ describe('AuthGate', () => {
       window.dispatchEvent(new Event('quazonai:auth-required'));
       window.dispatchEvent(new Event('quazonai:auth-required'));
     });
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5));
     expect(await screen.findByRole('heading', { name: 'Verify your identity' })).toBeInTheDocument();
 
     await act(async () => {
@@ -381,6 +452,10 @@ describe('AuthGate', () => {
   it('enters the login gate only after logout succeeds', async () => {
     const fetchMock = vi.fn()
       .mockImplementationOnce(() => jsonResponse({
+        auth_enabled: true,
+        setup_required: false,
+      }))
+      .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
         username: 'local-operator',
         trusted_browser: true,
@@ -395,11 +470,15 @@ describe('AuthGate', () => {
     await user.click(await screen.findByRole('button', { name: 'Sign out probe' }));
 
     expect(await screen.findByRole('heading', { name: 'Verify your identity' })).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it('keeps the authenticated workbench when logout is rejected', async () => {
     const fetchMock = vi.fn()
+      .mockImplementationOnce(() => jsonResponse({
+        auth_enabled: true,
+        setup_required: false,
+      }))
       .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
         username: 'local-operator',
@@ -425,11 +504,16 @@ describe('AuthGate', () => {
     const setIntervalSpy = vi.spyOn(window, 'setInterval');
     const fetchMock = vi.fn()
       .mockImplementationOnce(() => jsonResponse({
+        auth_enabled: true,
+        setup_required: false,
+      }))
+      .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
         username: 'local-operator',
         trusted_browser: false,
         auth_enabled: true,
       }))
+      .mockImplementationOnce(() => jsonResponse({ auth_enabled: true, setup_required: false }))
       .mockImplementationOnce(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -445,19 +529,90 @@ describe('AuthGate', () => {
       await Promise.resolve();
     });
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
     expect(await screen.findByRole('heading', { name: 'Verify your identity' })).toBeInTheDocument();
+  });
+
+  it('keeps an authenticated session during a transient periodic bootstrap failure', async () => {
+    const setIntervalSpy = vi.spyOn(window, 'setInterval');
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => jsonResponse({
+        auth_enabled: true,
+        setup_required: false,
+      }))
+      .mockImplementationOnce(() => jsonResponse({
+        authenticated: true,
+        username: 'local-operator',
+        trusted_browser: false,
+        auth_enabled: true,
+      }))
+      .mockRejectedValueOnce(new Error('offline'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderAuthGate(<div>Alpha library cache</div>);
+
+    expect(await screen.findByText('Alpha library cache')).toBeInTheDocument();
+    const revalidate = setIntervalSpy.mock.calls.find(
+      ([, delay]) => delay === AUTH_SESSION_REVALIDATION_INTERVAL_MS,
+    )?.[0];
+    expect(typeof revalidate).toBe('function');
+    act(() => {
+      if (typeof revalidate === 'function') revalidate();
+    });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(screen.getByText('Alpha library cache')).toBeInTheDocument();
+  });
+
+  it('keeps an authenticated session during a transient follow-up session failure', async () => {
+    const setIntervalSpy = vi.spyOn(window, 'setInterval');
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => jsonResponse({
+        auth_enabled: true,
+        setup_required: false,
+      }))
+      .mockImplementationOnce(() => jsonResponse({
+        authenticated: true,
+        username: 'local-operator',
+        trusted_browser: false,
+        auth_enabled: true,
+      }))
+      .mockImplementationOnce(() => jsonResponse({
+        auth_enabled: true,
+        setup_required: false,
+      }))
+      .mockRejectedValueOnce(new Error('offline'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderAuthGate(<div>Alpha library cache</div>);
+
+    expect(await screen.findByText('Alpha library cache')).toBeInTheDocument();
+    const revalidate = setIntervalSpy.mock.calls.find(
+      ([, delay]) => delay === AUTH_SESSION_REVALIDATION_INTERVAL_MS,
+    )?.[0];
+    expect(typeof revalidate).toBe('function');
+    act(() => {
+      if (typeof revalidate === 'function') revalidate();
+    });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+    expect(screen.getByText('Alpha library cache')).toBeInTheDocument();
   });
 
   it('periodically revalidates a direct-access session when authentication becomes enabled', async () => {
     const setIntervalSpy = vi.spyOn(window, 'setInterval');
     const fetchMock = vi.fn()
       .mockImplementationOnce(() => jsonResponse({
+        auth_enabled: false,
+        setup_required: false,
+      }))
+      .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
         username: 'local-operator',
         trusted_browser: false,
         auth_enabled: false,
       }))
+      .mockImplementationOnce(() => jsonResponse({ auth_enabled: true, setup_required: false }))
       .mockImplementationOnce(() => jsonResponse({ error: { code: 'AUTH_REQUIRED' } }, 401));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -473,7 +628,7 @@ describe('AuthGate', () => {
       await Promise.resolve();
     });
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
     expect(await screen.findByRole('heading', { name: 'Verify your identity' })).toBeInTheDocument();
   });
 
@@ -481,10 +636,18 @@ describe('AuthGate', () => {
     const setIntervalSpy = vi.spyOn(window, 'setInterval');
     const fetchMock = vi.fn()
       .mockImplementationOnce(() => jsonResponse({
+        auth_enabled: true,
+        setup_required: false,
+      }))
+      .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
         username: 'local-operator',
         trusted_browser: false,
         auth_enabled: true,
+      }))
+      .mockImplementationOnce(() => jsonResponse({
+        auth_enabled: false,
+        setup_required: false,
       }))
       .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
@@ -506,7 +669,7 @@ describe('AuthGate', () => {
       await Promise.resolve();
     });
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
     expect(await screen.findByText('Direct access enabled')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Verify your identity' })).not.toBeInTheDocument();
   });
@@ -516,12 +679,20 @@ describe('AuthGate', () => {
     const staleRevalidation = deferredResponse();
     const fetchMock = vi.fn()
       .mockImplementationOnce(() => jsonResponse({
+        auth_enabled: true,
+        setup_required: false,
+      }))
+      .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
         username: 'local-operator',
         trusted_browser: false,
         auth_enabled: true,
       }))
       .mockImplementationOnce(() => staleRevalidation.promise)
+      .mockImplementationOnce(() => jsonResponse({
+        auth_enabled: true,
+        setup_required: false,
+      }))
       .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
         username: 'local-operator',
@@ -544,7 +715,7 @@ describe('AuthGate', () => {
       }
       await Promise.resolve();
     });
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5));
 
     await act(async () => {
       staleRevalidation.resolve(await jsonResponse({
@@ -564,6 +735,10 @@ describe('AuthGate', () => {
     const setIntervalSpy = vi.spyOn(window, 'setInterval');
     const staleRevalidation = deferredResponse();
     const fetchMock = vi.fn()
+      .mockImplementationOnce(() => jsonResponse({
+        auth_enabled: true,
+        setup_required: false,
+      }))
       .mockImplementationOnce(() => jsonResponse({
         authenticated: true,
         username: 'local-operator',
@@ -589,7 +764,7 @@ describe('AuthGate', () => {
     )?.[0];
     expect(typeof revalidate).toBe('function');
     act(() => { if (typeof revalidate === 'function') revalidate(); });
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
 
     await user.click(screen.getByRole('button', { name: 'Sign out probe' }));
     await user.type(await screen.findByLabelText('Authenticator code'), '123456');

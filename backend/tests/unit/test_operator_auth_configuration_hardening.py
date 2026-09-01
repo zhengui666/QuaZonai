@@ -145,6 +145,10 @@ def test_from_env_preserves_invalid_machine_token_for_fail_closed_validation(
         "QUAZONAI_AUTH_COOKIE_KEY",
         base64.b64encode(b"a" * 32).decode("ascii"),
     )
+    monkeypatch.setenv(
+        "QUAZONAI_MASTER_KEY",
+        base64.b64encode(b"m" * 32).decode("ascii"),
+    )
     monkeypatch.setenv("QUAZONAI_API_TOKEN", "x" * 32 + "\n")
     monkeypatch.setenv("QUAZONAI_AUTH_PUBLIC_ORIGIN", "https://example.com")
 

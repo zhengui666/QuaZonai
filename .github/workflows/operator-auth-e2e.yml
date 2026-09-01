@@ -55,14 +55,12 @@ jobs:
       QUAZONAI_MISSION_ROOT: /tmp/quazonai-auth-e2e/missions
       CODEX_HOME: /tmp/quazonai-auth-e2e/codex-home
       QUAZONAI_AUTH_ENABLED: 'true'
-      QUAZONAI_AUTH_TOTP_SECRET: JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP
       QUAZONAI_AUTH_COOKIE_KEY: YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=
       QUAZONAI_API_TOKEN: auth-e2e-machine-token-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
       QUAZONAI_AUTH_PUBLIC_ORIGIN: http://127.0.0.1:4173
       QUAZONAI_AUTH_SESSION_TTL_SECONDS: '43200'
       QUAZONAI_AUTH_TRUSTED_BROWSER_TTL_DAYS: '30'
       QUAZONAI_E2E_AUTH_ENABLED: 'true'
-      QUAZONAI_E2E_AUTH_TOTP_SECRET: JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

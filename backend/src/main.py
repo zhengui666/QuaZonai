@@ -28,6 +28,7 @@ from operator_auth import (
     is_operator_auth_exempt,
     require_same_origin,
 )
+from operator_auth_store import initialize_operator_auth
 from settings import Settings
 
 
@@ -176,6 +177,11 @@ def create_app(*, settings: Settings | None = None, engine: Engine | None = None
     app.state.engine = runtime_engine
     app.state.session_factory = create_session_factory(runtime_engine)
     app.state.operator_auth_runtime = OperatorAuthRuntime()
+    canonical_secret = initialize_operator_auth(
+        app.state.session_factory,
+        runtime_settings,
+    )
+    app.state.operator_auth_runtime.set_totp_secret(canonical_secret)
 
     install_error_handlers(app)
     _install_operator_auth(app)
