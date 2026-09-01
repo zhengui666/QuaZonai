@@ -58,7 +58,7 @@ final class QuaZonaiUITests: XCTestCase {
     private func waitForHittable(_ element: XCUIElement, swipes: Int = 8) -> Bool {
         for _ in 0...swipes {
             if element.exists && element.isHittable { return true }
-            if element.exists && !element.frame.isEmpty { element.swipeUp() } else { app.swipeUp() }
+            app.swipeUp()
         }
         return element.exists && element.isHittable
     }
