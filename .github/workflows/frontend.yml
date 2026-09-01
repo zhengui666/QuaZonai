@@ -44,7 +44,7 @@ jobs:
       QUAZONAI_ALEMBIC_URL: postgresql+psycopg://quazonai:quazonai@127.0.0.1:5432/quazonai_frontend
       QUAZONAI_MASTER_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'
