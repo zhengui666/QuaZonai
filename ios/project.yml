@@ -19,7 +19,10 @@ targets:
     sources:
       - path: QuaZonai
     resources:
-      - path: Resources
+      - path: Resources/Assets.xcassets
+      - path: Resources/ClientParity.xcstrings
+      - path: Resources/LaunchScreen.storyboard
+      - path: Resources/PrivacyInfo.xcprivacy
     dependencies:
       - package: QuaZonaiAPI
     settings:
