@@ -18,12 +18,12 @@ targets:
     deploymentTarget: "18.0"
     sources:
       - path: QuaZonai
+      - path: Resources/PrivacyInfo.xcprivacy
+        buildPhase: resources
     resources:
       - path: Resources/Assets.xcassets
       - path: Resources/ClientParity.xcstrings
       - path: Resources/LaunchScreen.storyboard
-      - path: Resources/PrivacyInfo.xcprivacy
-        buildPhase: resources
     dependencies:
       - package: QuaZonaiAPI
     settings:
