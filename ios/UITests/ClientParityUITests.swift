@@ -2,6 +2,7 @@ import UIKit
 import XCTest
 
 final class ClientParityUITests: XCTestCase {
+    @MainActor
     private func launchFixtureApp() -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments += [
@@ -15,6 +16,7 @@ final class ClientParityUITests: XCTestCase {
         return app
     }
 
+    @MainActor
     private func assertDestination(_ name: String, in app: XCUIApplication) {
         let exists = app.buttons[name].waitForExistence(timeout: 5)
             || app.staticTexts[name].waitForExistence(timeout: 1)
@@ -22,6 +24,7 @@ final class ClientParityUITests: XCTestCase {
         XCTAssertTrue(exists, "Missing native destination: \(name)")
     }
 
+    @MainActor
     func testAllCapabilitiesRemainReachableOnIPhone() throws {
         guard UIDevice.current.userInterfaceIdiom == .phone else {
             throw XCTSkip("Executed only by the iPhone simulator matrix entry")
@@ -47,6 +50,7 @@ final class ClientParityUITests: XCTestCase {
         }
     }
 
+    @MainActor
     func testAllCapabilitiesRemainReachableOnIPad() throws {
         guard UIDevice.current.userInterfaceIdiom == .pad else {
             throw XCTSkip("Executed only by the iPad simulator matrix entry")
