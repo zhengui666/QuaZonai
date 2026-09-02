@@ -5,7 +5,7 @@ SHELL := /usr/bin/env bash
 
 help:
 	@printf '%s\n' \
-	  'install-dev      Install backend with development dependencies' \
+	  'install-dev      Install backend development and Codex runtime dependencies' \
 	  'format           Format Python and Rust sources' \
 	  'lint             Run Python lint checks' \
 	  'typecheck        Run Python type checks' \
@@ -18,7 +18,7 @@ help:
 	  'ci               Run the local CI-equivalent checks'
 
 install-dev:
-	python -m pip install -e 'backend[dev]'
+	python -m pip install -e 'backend[dev,agent]'
 
 format:
 	ruff format backend/src backend/tests

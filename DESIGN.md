@@ -1137,6 +1137,7 @@ PostgreSQL 是业务事实源。Codex Thread/Turn/Item 只能作为执行上下�
 - 稳定主传输使用 **stdio**；
 - 不以 experimental WebSocket 作为生产依赖；
 - App Server 版本必须精确固定，并在构建时生成对应 JSON Schema/TypeScript schema 作为协议测试输入；
+- CI 必须通过真实 pinned `openai-codex==0.144.4` 的 stdio App Server contract test，至少覆盖带 `model_reasoning_effort` + `service_tier=fast` 与省略这两个 override 的 `thread/start`；
 - 初始化连接后使用 `thread/start` / `thread/resume`、`turn/start`、`turn/interrupt` 和 item/turn notifications；
 - `runtimeWorkspaceRoots`、project API、environments、dynamicTools 等 experimental 字段不作为 V1 必需依赖；需要时必须先在设计中升级为批准能力。
 
@@ -1177,6 +1178,7 @@ revision
 codex_model nullable
 codex_reasoning_effort nullable       # null | minimal | low | medium | high | xhigh
 codex_fast_mode boolean               # default false; maps to service_tier=fast
+codex_use_default_model_settings boolean  # new singleton default true; migrated rows false
 codex_base_url nullable
 codex_api_key encrypted/write-only nullable
 max_plugin_wheel_bytes
@@ -1191,6 +1193,9 @@ job_lease_seconds
 Codex provider 规则：
 
 - `codex_model` 为空时使用 Codex 默认模型选择；
+- `codex_use_default_model_settings=true` 时，新 Mission 的 effective runtime 会屏蔽已保存的 `codex_model`、`codex_reasoning_effort` 与 `codex_fast_mode`，从而让 Codex/当前模型选择自身默认值；这些 QuaZonai override 原值保留在 Runtime Configuration 中，切回 `false` 后恢复，不因切换而清空；
+- `codex_use_default_model_settings=false` 时，按保存的 `codex_model`、`codex_reasoning_effort` 与 `codex_fast_mode` 启动新 Mission；provider/Base URL/API key routing 独立于该模型默认选择开关；
+- 新建 singleton 默认 `codex_use_default_model_settings=true`；迁移既有行写入 `false` 以保持既有显式模型控制。兼容旧客户端的首次保存若显式给出任一模型控制，也推断为 override mode，避免旧请求被静默忽略；
 - `codex_reasoning_effort` 为 `null` 时不向 `thread/start` 发送 `model_reasoning_effort`；显式值原样发送。它是公开运行元数据，不是隐藏思维链；不支持的模型/provider 值必须显式失败，不能自动降档；
 - `codex_fast_mode=false` 不发送 Fast service-tier override；为 `true` 时向新 Mission 的 `thread/start` 发送原生 `service_tier="fast"`。Fast 与 reasoning effort 正交，provider 拒绝时沿现有失败链路处理，不自动切回 Standard；
 - Runtime Configuration 的 reasoning/Fast 值优先级为：未来 AgentProfileVersion 或 Mission 显式值 > 系统级 Runtime Configuration 默认值 > Codex/模型默认值；本期只实现系统级默认值；
@@ -1577,7 +1582,7 @@ Production 构建后 SPA 静态资产由 FastAPI 提供，减少额外运行服�
 | `archive_manifest_shards` | `id`, `manifest_id`, `shard_key`, `source_url`, `coverage_start`, `coverage_end`, `size_bytes`, `state`, `observed_at` |
 | `credential_sets` | `id`, `purpose`, `owner_resource_type`, `owner_resource_id`, `public_config`, `created_at`, `updated_at` |
 | `credential_secrets` | `credential_set_id`, `field_name`, `ciphertext`, `nonce`, `key_version` |
-| `runtime_configurations` | `id`, `scope`, `revision`, `codex_model`, `codex_reasoning_effort`, `codex_fast_mode`, `codex_base_url`, `codex_api_key_ciphertext`, `codex_api_key_nonce`, `codex_api_key_key_version`, `max_plugin_wheel_bytes`, `plugin_validation_timeout_seconds`, `bundle_build_timeout_seconds`, `plugin_job_timeout_seconds`, `mission_job_timeout_seconds`, `job_poll_seconds`, `job_lease_seconds`, `created_at`, `updated_at` |
+| `runtime_configurations` | `id`, `scope`, `revision`, `codex_model`, `codex_reasoning_effort`, `codex_fast_mode`, `codex_use_default_model_settings`, `codex_base_url`, `codex_api_key_ciphertext`, `codex_api_key_nonce`, `codex_api_key_key_version`, `max_plugin_wheel_bytes`, `plugin_validation_timeout_seconds`, `bundle_build_timeout_seconds`, `plugin_job_timeout_seconds`, `mission_job_timeout_seconds`, `job_poll_seconds`, `job_lease_seconds`, `created_at`, `updated_at` |
 | `artifacts` | `id`, `kind`, `owner_type`, `owner_id`, `relative_path`, `media_type`, `size_bytes`, `created_at` |
 
 ## 40. API
