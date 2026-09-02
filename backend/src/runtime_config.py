@@ -126,6 +126,16 @@ def _decrypt_codex_api_key(item: RuntimeConfiguration, base_settings: Settings) 
     )
 
 
+def codex_api_key_decryptable(item: RuntimeConfiguration, base_settings: Settings) -> bool:
+    """Validate a persisted provider key without exposing its plaintext."""
+    if not codex_api_key_configured(item):
+        return False
+    try:
+        return _decrypt_codex_api_key(item, base_settings) is not None
+    except (QfError, SettingsError):
+        return False
+
+
 def effective_settings(session: Session, base_settings: Settings) -> Settings:
     """Overlay the latest persisted runtime configuration on bootstrap settings."""
     item = get_runtime_configuration(session)

@@ -78,6 +78,19 @@ class CodexChatgptAuthConfiguration(Base, TimestampMixin):
     reauth_required_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class CodexChatgptAuthOperationLock(Base):
+    """Durable singleton row used to order auth operations without a row gap."""
+
+    __tablename__ = "codex_chatgpt_auth_operation_locks"
+    __table_args__ = (
+        CheckConstraint("scope = 'SYSTEM'", name="ck_codex_chatgpt_auth_lock_scope"),
+        UniqueConstraint("scope", name="uq_codex_chatgpt_auth_lock_scope"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    scope: Mapped[str] = mapped_column(String(40), nullable=False, default=SYSTEM_SCOPE)
+
+
 class CodexChatgptLoginAttempt(Base, TimestampMixin):
     """Durable state for one OpenAI Device Code authorization attempt."""
 
@@ -121,6 +134,7 @@ __all__ = [
     "CHATGPT_AUTH_REAUTH_REQUIRED",
     "CHATGPT_AUTH_STATES",
     "CodexChatgptAuthConfiguration",
+    "CodexChatgptAuthOperationLock",
     "CodexChatgptLoginAttempt",
     "LOGIN_CANCELLED",
     "LOGIN_EXPIRED",

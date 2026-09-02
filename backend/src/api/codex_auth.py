@@ -12,6 +12,7 @@ from codex_chatgpt_auth import (
     auth_status,
     cancel_device_login,
     disconnect_chatgpt,
+    lock_codex_auth_operations,
     poll_device_login,
     remove_legacy_auth_file,
     start_device_login,
@@ -157,7 +158,7 @@ def cancel_chatgpt_device_login(
     _no_store(response)
     with request.app.state.session_factory.begin() as session:
         result = cancel_device_login(session, login_id)
-        if result.status == "CANCELLED":
+        if result.status == "CANCELLED" and result.transitioned:
             append_event(
                 session,
                 kind="CODEX_CHATGPT_AUTH_LOGIN_CANCELLED",
@@ -178,8 +179,11 @@ def cancel_chatgpt_device_login(
 def disconnect_chatgpt_auth(request: Request, response: Response) -> dict[str, Any]:
     _no_store(response)
     settings = request.app.state.settings
-    remove_legacy_auth_file(settings)
-    with request.app.state.session_factory() as session:
+    with request.app.state.session_factory.begin() as session:
+        # Hold the same singleton lock as device/start while cleanup and the
+        # database mutation are ordered as one auth operation.
+        lock_codex_auth_operations(session)
+        remove_legacy_auth_file(settings)
         disconnect_chatgpt(session)
         append_event(
             session,
@@ -189,7 +193,6 @@ def disconnect_chatgpt_auth(request: Request, response: Response) -> dict[str, A
             payload={"auth_mode": "CHATGPT"},
             actor_kind="LOCAL_OPERATOR",
         )
-        session.commit()
     with request.app.state.session_factory() as session:
         return auth_status(session, settings)
 

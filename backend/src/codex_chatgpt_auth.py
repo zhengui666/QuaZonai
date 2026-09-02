@@ -27,6 +27,7 @@ from db.codex_auth_models import (
     CHATGPT_AUTH_CONNECTED,
     CHATGPT_AUTH_REAUTH_REQUIRED,
     CodexChatgptAuthConfiguration,
+    CodexChatgptAuthOperationLock,
     CodexChatgptLoginAttempt,
     LOGIN_CANCELLED,
     LOGIN_EXPIRED,
@@ -37,7 +38,7 @@ from db.codex_auth_models import (
 )
 from db.models import RuntimeConfiguration
 from errors import QfError
-from runtime_config import codex_api_key_configured
+from runtime_config import codex_api_key_configured, codex_api_key_decryptable
 from settings import Settings, SettingsError
 
 logger = logging.getLogger(__name__)
@@ -332,6 +333,27 @@ def get_pending_attempt(
     return session.scalar(query)
 
 
+def _lock_auth_operations(session: Session) -> CodexChatgptAuthOperationLock:
+    """Lock the durable auth singleton, including when no auth row exists."""
+    lock = session.scalar(
+        select(CodexChatgptAuthOperationLock)
+        .where(CodexChatgptAuthOperationLock.scope == SYSTEM_SCOPE)
+        .with_for_update()
+    )
+    if lock is None:
+        # Production migrations seed this row.  Lazy creation keeps metadata
+        # based test databases and pre-seeded development databases usable.
+        lock = CodexChatgptAuthOperationLock(scope=SYSTEM_SCOPE)
+        session.add(lock)
+        session.flush()
+    return lock
+
+
+def lock_codex_auth_operations(session: Session) -> CodexChatgptAuthOperationLock:
+    """Lock the auth operation singleton for a multi-step service action."""
+    return _lock_auth_operations(session)
+
+
 def is_chatgpt_connected(session: Session) -> bool:
     auth = get_auth_configuration(session)
     return auth is not None and auth.state == CHATGPT_AUTH_CONNECTED
@@ -413,6 +435,7 @@ def start_device_login(
     *,
     now: Callable[[], datetime] = _now,
 ) -> DeviceLoginView:
+    _lock_auth_operations(session)
     current = now()
     auth = get_auth_configuration(session)
     if auth is not None and auth.state == CHATGPT_AUTH_CONNECTED:
@@ -492,8 +515,16 @@ def _pending_result(attempt: CodexChatgptLoginAttempt, *, now: datetime) -> Devi
     )
 
 
-def _terminal_result(attempt: CodexChatgptLoginAttempt) -> DeviceLoginPollResult:
-    return DeviceLoginPollResult(status=attempt.state, error_code=attempt.error_code)
+def _terminal_result(
+    attempt: CodexChatgptLoginAttempt,
+    *,
+    transitioned: bool = False,
+) -> DeviceLoginPollResult:
+    return DeviceLoginPollResult(
+        status=attempt.state,
+        error_code=attempt.error_code,
+        transitioned=transitioned,
+    )
 
 
 def _locked_login_attempt(session: Session, login_id: UUID) -> CodexChatgptLoginAttempt | None:
@@ -734,11 +765,12 @@ def cancel_device_login(session: Session, login_id: UUID) -> DeviceLoginPollResu
     ).scalar_one_or_none()
     if attempt is None:
         raise QfError("CODEX_CHATGPT_LOGIN_NOT_FOUND", "ChatGPT login attempt was not found.", 404)
-    if attempt.state == LOGIN_PENDING:
+    transitioned = attempt.state == LOGIN_PENDING
+    if transitioned:
         attempt.state = LOGIN_CANCELLED
         attempt.error_code = None
         _clear_attempt(attempt)
-    return _terminal_result(attempt)
+    return _terminal_result(attempt, transitioned=transitioned)
 
 
 def _clear_auth(auth: CodexChatgptAuthConfiguration) -> None:
@@ -759,6 +791,7 @@ def _mark_reauth(auth: CodexChatgptAuthConfiguration, when: datetime) -> None:
 
 
 def disconnect_chatgpt(session: Session) -> None:
+    _lock_auth_operations(session)
     pending = get_pending_attempt(session, for_update=True)
     if pending is not None:
         pending.state = LOGIN_CANCELLED
@@ -768,15 +801,31 @@ def disconnect_chatgpt(session: Session) -> None:
         session.delete(auth)
 
 
-def _is_custom_provider(session: Session, settings: Settings) -> bool:
+def _custom_provider_configuration(session: Session, settings: Settings) -> RuntimeConfiguration | None:
     runtime = session.scalar(select(RuntimeConfiguration).where(RuntimeConfiguration.scope == SYSTEM_SCOPE))
-    return bool(settings.codex_base_url or settings.codex_api_key or (runtime and (runtime.codex_base_url or codex_api_key_configured(runtime))))
+    if settings.codex_base_url or settings.codex_api_key:
+        return runtime
+    if runtime and (runtime.codex_base_url or codex_api_key_configured(runtime)):
+        return runtime
+    return None
+
+
+def _is_custom_provider(session: Session, settings: Settings) -> bool:
+    return settings.codex_base_url is not None or settings.codex_api_key is not None or _custom_provider_configuration(session, settings) is not None
+
+
+def _custom_provider_ready(session: Session, settings: Settings) -> bool:
+    runtime = _custom_provider_configuration(session, settings)
+    if runtime is not None and codex_api_key_configured(runtime):
+        return codex_api_key_decryptable(runtime, settings)
+    return True
 
 
 def codex_auth_readiness(session: Session, settings: Settings) -> tuple[bool, str]:
     """Return the non-secret Codex readiness state used by health/readiness APIs."""
     if _is_custom_provider(session, settings):
-        return True, "CUSTOM_PROVIDER"
+        ready = _custom_provider_ready(session, settings)
+        return ready, "CUSTOM_PROVIDER" if ready else "CUSTOM_PROVIDER_REAUTH_REQUIRED"
     auth = get_auth_configuration(session)
     if auth is not None and auth.state == CHATGPT_AUTH_CONNECTED:
         try:
@@ -881,6 +930,7 @@ def initialize_codex_auth(factory: Any, settings: Settings) -> None:
     path = _legacy_auth_path(settings)
     should_cleanup = False
     with factory.begin() as session:
+        _lock_auth_operations(session)
         auth = get_auth_configuration(session)
         if auth is not None and path.exists():
             should_cleanup = True
@@ -1101,6 +1151,7 @@ __all__ = [
     "is_chatgpt_connected",
     "initialize_codex_auth",
     "legacy_auth_file_present",
+    "lock_codex_auth_operations",
     "poll_device_login",
     "remove_legacy_auth_file",
     "start_device_login",

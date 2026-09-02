@@ -5,7 +5,11 @@ Importing this module registers every table on ``Base.metadata``.
 
 from db.auth_models import OperatorAuthConfiguration, OperatorAuthInitialization
 from db.base import Base, TimestampMixin
-from db.codex_auth_models import CodexChatgptAuthConfiguration, CodexChatgptLoginAttempt
+from db.codex_auth_models import (
+    CodexChatgptAuthConfiguration,
+    CodexChatgptAuthOperationLock,
+    CodexChatgptLoginAttempt,
+)
 from db.domain_models import (
     AlphaQualification,
     ApprovalSnapshot,
@@ -51,6 +55,7 @@ __all__ = [
     "OperatorAuthConfiguration",
     "OperatorAuthInitialization",
     "CodexChatgptAuthConfiguration",
+    "CodexChatgptAuthOperationLock",
     "CodexChatgptLoginAttempt",
     "PluginRelease",
     "PluginArtifact",

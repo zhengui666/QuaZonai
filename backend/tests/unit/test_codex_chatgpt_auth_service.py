@@ -6,12 +6,15 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
+from sqlalchemy import select
+from uuid import uuid4
 
 from codex_chatgpt_auth import (
     DEVICE_AUTH_TOKEN_URL,
     DEVICE_AUTH_USERCODE_URL,
     OAUTH_TOKEN_URL,
     _install_bundle,
+    cancel_device_login,
     codex_auth_readiness,
     disconnect_chatgpt,
     get_auth_configuration,
@@ -20,8 +23,11 @@ from codex_chatgpt_auth import (
     start_device_login,
 )
 from db.codex_auth_models import CodexChatgptLoginAttempt, LOGIN_CANCELLED, LOGIN_FAILED
+from db.models import RuntimeConfiguration
 from db.session import create_session_factory
 from errors import QfError
+from runtime_config import _api_key_aad
+from crypto import encrypt_bound_secret
 
 
 def _jwt(claims: dict[str, object]) -> str:
@@ -150,6 +156,34 @@ def test_reusing_pending_device_login_is_marked_without_creating_an_attempt(engi
     assert reused.login_id == first.login_id
 
 
+def test_repeated_device_cancel_reports_only_the_first_transition(engine, settings) -> None:
+    now = datetime(2026, 9, 2, 1, 0, tzinfo=UTC)
+    login_id = uuid4()
+    factory = create_session_factory(engine)
+    with factory.begin() as session:
+        session.add(
+            CodexChatgptLoginAttempt(
+                id=login_id,
+                state="PENDING",
+                verification_url="https://auth.openai.com/codex/device",
+                poll_interval_seconds=5,
+                expires_at=now + timedelta(minutes=10),
+                next_poll_at=now + timedelta(seconds=5),
+            )
+        )
+
+    with factory() as session:
+        first = cancel_device_login(session, login_id)
+        session.commit()
+    with factory() as session:
+        second = cancel_device_login(session, login_id)
+
+    assert first.status == LOGIN_CANCELLED
+    assert first.transitioned is True
+    assert second.status == LOGIN_CANCELLED
+    assert second.transitioned is False
+
+
 def test_device_poll_without_account_identity_is_terminal_failure(engine, settings) -> None:
     now = datetime(2026, 9, 2, 1, 0, tzinfo=UTC)
     factory = create_session_factory(engine)
@@ -235,6 +269,43 @@ def test_readiness_rejects_connected_auth_with_undecryptable_refresh_token(engin
 
     with factory() as session:
         assert codex_auth_readiness(session, settings) == (False, "REAUTH_REQUIRED")
+
+
+def test_readiness_rejects_undecryptable_persisted_custom_provider_key(engine, settings) -> None:
+    factory = create_session_factory(engine)
+    with factory.begin() as session:
+        item = RuntimeConfiguration(
+            scope="SYSTEM",
+            revision=1,
+            codex_base_url="https://gateway.example.test/v1",
+            max_plugin_wheel_bytes=settings.max_plugin_wheel_bytes,
+            plugin_validation_timeout_seconds=settings.plugin_validation_timeout_seconds,
+            bundle_build_timeout_seconds=settings.bundle_build_timeout_seconds,
+            plugin_job_timeout_seconds=settings.plugin_job_timeout_seconds,
+            mission_job_timeout_seconds=settings.mission_job_timeout_seconds,
+            job_poll_seconds=settings.job_poll_seconds,
+            job_lease_seconds=settings.job_lease_seconds,
+        )
+        session.add(item)
+        session.flush()
+        encrypted = encrypt_bound_secret(
+            "provider-secret",
+            master_key=settings.master_key_bytes(),
+            associated_data=_api_key_aad(item.id, 1),
+        )
+        item.codex_api_key_ciphertext = encrypted.ciphertext
+        item.codex_api_key_nonce = encrypted.nonce
+        item.codex_api_key_key_version = encrypted.key_version
+
+    with factory() as session:
+        assert codex_auth_readiness(session, settings) == (True, "CUSTOM_PROVIDER")
+        item = session.scalar(select(RuntimeConfiguration))
+        assert item is not None
+        item.codex_api_key_ciphertext = b"corrupt"
+        session.commit()
+
+    with factory() as session:
+        assert codex_auth_readiness(session, settings) == (False, "CUSTOM_PROVIDER_REAUTH_REQUIRED")
 
 
 def test_access_bundle_rejects_replaced_canonical_auth_row(engine, settings) -> None:

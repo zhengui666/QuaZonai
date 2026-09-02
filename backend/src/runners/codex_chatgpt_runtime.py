@@ -7,7 +7,10 @@ from pathlib import Path
 from typing import Any, Iterator
 from uuid import UUID
 
-from codex_chatgpt_auth import get_auth_configuration, get_valid_access_bundle, remove_legacy_auth_file
+from codex_chatgpt_auth import (
+    get_valid_access_bundle,
+    initialize_codex_auth,
+)
 from db.session import SessionFactory
 from errors import QfError
 from settings import Settings
@@ -44,14 +47,10 @@ def external_chatgpt_thread(
     App Server's external-auth memory.  The refresh callback uses the observed
     generation to avoid duplicate refresh-token rotation across workers.
     """
-    # API startup normally imports this file, but workers can start after
-    # migrations and before the API process has completed that initialization.
-    # Never destroy the only legacy credential source before a canonical row
-    # exists; a later API startup must still be able to import it.
-    with session_factory() as session:
-        has_canonical_auth = get_auth_configuration(session) is not None
-    if has_canonical_auth:
-        remove_legacy_auth_file(settings)
+    # Workers can start after migrations and before API initialization.  Admit
+    # no Mission until the one-time legacy importer has established the same
+    # canonical DB fact the API uses.
+    initialize_codex_auth(session_factory, settings)
     from openai_codex import ApprovalMode, Sandbox, Thread
     from openai_codex.client import CodexClient
 
@@ -76,9 +75,9 @@ def external_chatgpt_thread(
             observed_auth_id = bundle.auth_id
             observed_account_id = bundle.chatgpt_account_id
             return {
-                "access_token": bundle.access_token,
-                "chatgpt_account_id": bundle.chatgpt_account_id,
-                "chatgpt_plan_type": bundle.plan_type,
+                "accessToken": bundle.access_token,
+                "chatgptAccountId": bundle.chatgpt_account_id,
+                "chatgptPlanType": bundle.plan_type,
             }
         return _decline_approval(method)
 
