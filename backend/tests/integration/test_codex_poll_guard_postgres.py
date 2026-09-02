@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from threading import Event, Thread
 from uuid import uuid4
 
@@ -7,15 +8,29 @@ import pytest
 from sqlalchemy.exc import SQLAlchemyError
 
 from codex_poll_guard import hold_device_poll_execution
+from db.codex_auth_models import CodexChatgptLoginAttempt, LOGIN_PENDING
 from db.session import create_session_factory
 
 
-def test_postgres_advisory_guard_serializes_same_device_login(engine) -> None:  # type: ignore[no-untyped-def]
+def test_postgres_row_guard_serializes_same_device_login(engine) -> None:  # type: ignore[no-untyped-def]
     if engine.dialect.name != "postgresql":
-        pytest.skip("PostgreSQL advisory-lock integration test")
+        pytest.skip("PostgreSQL row-lock integration test")
 
     factory = create_session_factory(engine)
     login_id = uuid4()
+    now = datetime.now(UTC)
+    with factory.begin() as session:
+        session.add(
+            CodexChatgptLoginAttempt(
+                id=login_id,
+                state=LOGIN_PENDING,
+                verification_url="https://auth.openai.com/codex/device",
+                poll_interval_seconds=5,
+                expires_at=now + timedelta(minutes=10),
+                next_poll_at=now,
+            )
+        )
+
     attempting = Event()
     entered = Event()
     errors: list[SQLAlchemyError] = []
