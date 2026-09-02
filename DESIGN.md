@@ -1799,7 +1799,7 @@ Web、移动浏览器和已安装 PWA 必须是同一个 React/Vite 客户端、
 
 响应式实现必须在 320/375/390/430 CSS px 下无水平溢出。DataTable 保持单一 TanStack table state；手机使用包含全部可见列、状态、摘要和行操作的 card projection，并保留搜索、排序、字段显示、结果数和 20/50/100 page-size 控件。Dialog、表单、图表和 React Flow 图必须适配触控、键盘、焦点、Reduced Motion 和 RTL；图表提供紧凑视图，图谱提供全屏和可读列表回退。
 
-PWA 只缓存静态 application shell、版本化构建资源和图标。`/api/**` 使用 `NetworkOnly`，不做 API/auth/data cache、不保存 token/cookie、不使用 Background Sync；所有 mutation 仍在线执行。离线时只展示已缓存壳和明确的“需要连接 QuaZonai server”提示，不伪造或回退旧领域数据。Service Worker 使用 `registerType: prompt`，更新必须由用户动作确认；manifest 必须声明 standalone、`orientation:any`、192/512/maskable 图标和 Apple touch icon。
+PWA 只缓存静态 application shell、版本化构建资源和图标。`/api/**` 使用 `NetworkOnly`，不做 API/auth/data cache、不保存 token/cookie、不使用 Background Sync；所有 mutation 仍在线执行。离线时只展示已缓存壳和明确的“需要连接 QuaZonai server”提示，不伪造或回退旧领域数据。Service Worker 使用 `registerType: prompt`：前台可见时每 15 分钟主动检查，后台恢复前台或联网恢复时以 60 秒最短间隔补查；发现 waiting worker 后自动打开确认 Dialog，但只在操作者选择立即更新后调用 `updateServiceWorker(true)` 激活并重载。选择稍后只关闭 Dialog，More → Update 仍保留；后台检查失败静默并由下一触发点重试。manifest 必须声明 standalone、`orientation:any`、192/512/maskable 图标和 Apple touch icon。
 
 FastAPI 提供的 `index.html`、`sw.js`、`manifest.webmanifest` 使用 no-cache，带构建版本的静态 assets 使用 immutable；Web/API 分界不可被 SPA fallback 绕过，`/api` 不得返回 HTML，路径遍历必须拒绝。静态 Web 响应继续保留 `frame-ancestors 'none'` 与 `X-Frame-Options: DENY`。CI 必须对同一 smoke/parity flows 运行 desktop Chromium、mobile Chromium、mobile WebKit，并验证 manifest、Service Worker API policy、离线壳和静态安全响应。
 
