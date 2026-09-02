@@ -8,12 +8,12 @@ from uuid import UUID
 from fastapi import APIRouter, Body, Request, Response
 from pydantic import BaseModel, ConfigDict
 
+from api.codex_polling import poll_device_login
 from codex_chatgpt_auth import (
     auth_status,
     cancel_device_login,
     disconnect_chatgpt,
     lock_codex_auth_operations,
-    poll_device_login,
     remove_legacy_auth_file,
     start_device_login,
 )
@@ -138,9 +138,9 @@ def poll_chatgpt_device_login(
     settings = request.app.state.settings
     with factory() as session:
         # The durable poll lease remains the crash-recovery/backoff marker.
-        # This execution guard is the authoritative ownership primitive: it
-        # spans both upstream OAuth requests and credential installation, so a
-        # lease TTL expiring can never admit a concurrent device-code exchange.
+        # The execution guard owns serialization across the whole upstream
+        # operation; the polling wrapper then reconciles any cancellation or
+        # disconnect that committed while that network operation was in flight.
         with hold_device_poll_execution(session, login_id):
             result = poll_device_login(session, settings, login_id)
     return DeviceLoginPollResponse(
