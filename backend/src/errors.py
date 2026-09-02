@@ -19,6 +19,7 @@ _AUTH_LOGIN_PATHS = frozenset(
 )
 _AUTH_PATH_PREFIX = "/api/v1/auth/"
 _CODEX_AUTH_PATH_PREFIX = "/api/v1/system/codex-auth"
+_RUNTIME_CONFIGURATION_PATH = "/api/v1/system/runtime-configuration"
 _NO_STORE_HEADERS = {"Cache-Control": "no-store", "Pragma": "no-cache"}
 
 
@@ -98,6 +99,15 @@ def install_error_handlers(app: FastAPI) -> None:
                 code="AUTH_INVALID",
                 message="Operator authentication failed.",
                 status_code=401,
+                headers=_NO_STORE_HEADERS,
+            )
+        if request.url.path == _RUNTIME_CONFIGURATION_PATH:
+            # Runtime configuration accepts a write-only provider API key. Do
+            # not let FastAPI's generic validation envelope reflect that input.
+            return _error_response(
+                code="RUNTIME_CONFIGURATION_INVALID",
+                message="Runtime configuration is invalid.",
+                status_code=422,
                 headers=_NO_STORE_HEADERS,
             )
         return await request_validation_exception_handler(request, exc)

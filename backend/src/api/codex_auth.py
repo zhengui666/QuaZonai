@@ -98,7 +98,7 @@ def get_codex_auth(request: Request, response: Response) -> dict[str, Any]:
 def start_chatgpt_device_login(
     request: Request,
     response: Response,
-    payload: DeviceLoginStartRequest = Body(default=DeviceLoginStartRequest()),
+    payload: DeviceLoginStartRequest = Body(...),
 ) -> DeviceLoginStartResponse:
     _no_store(response)
     _require_json_request(request)

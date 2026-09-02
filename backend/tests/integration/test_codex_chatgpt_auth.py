@@ -94,8 +94,11 @@ def test_device_start_requires_json_and_deduplicates_reused_attempt_event(
     path = "/api/v1/system/codex-auth/chatgpt/device/start"
 
     rejected = client.post(path)
-    assert rejected.status_code == 415
-    assert rejected.json()["error"]["code"] == "CODEX_CHATGPT_JSON_REQUIRED"
+    assert rejected.status_code == 422
+    assert calls == 0
+
+    null_body = client.post(path, content="null", headers={"content-type": "application/json"})
+    assert null_body.status_code == 422
     assert calls == 0
 
     first = client.post(path, json={})

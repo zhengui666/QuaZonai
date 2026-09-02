@@ -454,7 +454,7 @@ Administration 是 Codex runtime 配置的事实入口，显示并允许修改�
 
 Linux Docker 部署还会在 `finite-worker` 启动检查中执行一次真实 Codex workspace sandbox preflight。若宿主 Docker seccomp 不允许用户 namespace，worker 会保持未就绪并拒绝领取 Mission；不要通过 `privileged` 或关闭 Codex sandbox 绕过。Compose 为 worker 单独使用专用 seccomp profile，同时保留 no-new-privileges、capability drop、只读根文件系统和 Mission 网络隔离。
 
-自定义 Base URL 必须是绝对 HTTP(S) URL，不能把 username/password、query token 或 fragment 嵌入 URL。配置了 Base URL/API key 时，Mission 使用独立 Codex model provider；未配置时使用 Administration 中连接的 ChatGPT Auth。ChatGPT Auth 的 access/refresh token 加密保存于 PostgreSQL，`CODEX_HOME/auth.json` 仅用于升级时一次性导入，不是运行时事实源；API 与 finite worker 在 admission 前都会执行同一 legacy import，避免 worker 抢先消费 queued Mission。已有 API key 时更改 Base URL，必须重新输入该 endpoint 对应的 key 或显式清除旧 key；读取 readiness 时也会解密已保存 API key，密文损坏会报告 custom-provider reauthentication required。
+自定义 Base URL 必须是绝对 HTTP(S) URL，不能把 username/password、query token 或 fragment 嵌入 URL。配置了 Base URL/API key 时，Mission 使用独立 Codex model provider；未配置时使用 Administration 中连接的 ChatGPT Auth。ChatGPT Auth 的 access/refresh token 加密保存于 PostgreSQL，`CODEX_HOME/auth.json` 仅用于升级时一次性导入，不是运行时事实源；finite worker 在 claim queued Mission 前都会执行同一 legacy import，custom-provider Mission 也不能绕过它，避免 worker 抢先消费 queued Mission。已有 API key 时更改 Base URL，必须重新输入该 endpoint 对应的 key 或显式清除旧 key；读取 readiness 时也会解密已保存 API key，密文损坏会报告 custom-provider reauthentication required。Runtime configuration 校验失败时不会把提交的 provider API key 放进错误响应。
 
 Codex API key 由 `QUAZONAI_MASTER_KEY` 使用 AES-256-GCM 加密后保存到 PostgreSQL。Secret/token 不在 Web 展示，也不写入事件 payload；运行时通过受信任 runner 的 one-shot credential broker 交给 Codex provider auth，不进入 App Server/Mission 环境变量。
 
