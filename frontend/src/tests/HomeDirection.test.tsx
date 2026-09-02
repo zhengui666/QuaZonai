@@ -80,7 +80,7 @@ describe('HomePage text direction', () => {
 
     renderApp(<HomePage />);
     const codexLabel = await screen.findByText('Codex readiness');
-    expect(codexLabel.parentElement).toHaveTextContent('Not configured');
+    expect(codexLabel.parentElement).toHaveTextContent('Not Configured');
     expect(codexLabel.parentElement).not.toHaveTextContent(/^Ready$/);
   });
 });
