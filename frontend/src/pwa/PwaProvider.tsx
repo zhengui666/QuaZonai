@@ -67,18 +67,32 @@ export function PwaProvider({ children }: { children: ReactNode }) {
   const [registration, setRegistration] = useState<ServiceWorkerRegistration | null>(null);
   const registrationRef = useRef<ServiceWorkerRegistration | null>(null);
   const promptedWaitingWorkerRef = useRef<ServiceWorker | null>(null);
+  const updateAvailableRef = useRef(false);
   const lastUpdateCheckAtRef = useRef<number | null>(null);
   const updateCheckPromiseRef = useRef<Promise<void> | null>(null);
   const applyUpdatePromiseRef = useRef<Promise<void> | null>(null);
 
   const markUpdateAvailable = useCallback((registered?: ServiceWorkerRegistration | null) => {
     const waitingWorker = registered?.waiting ?? registrationRef.current?.waiting ?? null;
-    const isNewWaitingWorker = waitingWorker === null || promptedWaitingWorkerRef.current !== waitingWorker;
+    const isNewWaitingWorker = waitingWorker === null
+      ? !updateAvailableRef.current
+      : promptedWaitingWorkerRef.current !== waitingWorker;
     if (waitingWorker) promptedWaitingWorkerRef.current = waitingWorker;
+    updateAvailableRef.current = true;
     setNeedRefresh(true);
+    if (!isNewWaitingWorker) return;
     setUpdatePhase('available');
     setUpdateError(null);
-    if (isNewWaitingWorker) setUpdatePromptOpen(true);
+    setUpdatePromptOpen(true);
+  }, []);
+
+  const clearUpdateState = useCallback(() => {
+    promptedWaitingWorkerRef.current = null;
+    updateAvailableRef.current = false;
+    setNeedRefresh(false);
+    setUpdatePromptOpen(false);
+    setUpdatePhase('idle');
+    setUpdateError(null);
   }, []);
 
   const { updateServiceWorker } = useRegisterSW({
@@ -101,6 +115,7 @@ export function PwaProvider({ children }: { children: ReactNode }) {
       markUpdateAvailable(registration);
       return;
     }
+    if (promptedWaitingWorkerRef.current) clearUpdateState();
     if (registration.installing) return;
 
     const inFlight = updateCheckPromiseRef.current;
@@ -127,7 +142,7 @@ export function PwaProvider({ children }: { children: ReactNode }) {
     } finally {
       if (updateCheckPromiseRef.current === updatePromise) updateCheckPromiseRef.current = null;
     }
-  }, [markUpdateAvailable, registration]);
+  }, [clearUpdateState, markUpdateAvailable, registration]);
 
   const dismissUpdatePrompt = useCallback(() => {
     setUpdatePromptOpen(false);
@@ -142,9 +157,17 @@ export function PwaProvider({ children }: { children: ReactNode }) {
     const updatePromise = (async () => {
       try {
         await updateServiceWorker(true);
+        const waitingWorker = registrationRef.current?.waiting ?? null;
+        if (waitingWorker) {
+          setUpdatePhase('available');
+          setUpdatePromptOpen(true);
+        } else {
+          clearUpdateState();
+        }
       } catch (error) {
         setUpdatePhase('failed');
         setUpdateError(normalizeError(error));
+        setUpdatePromptOpen(true);
         throw error;
       }
     })();
@@ -154,7 +177,7 @@ export function PwaProvider({ children }: { children: ReactNode }) {
     } finally {
       if (applyUpdatePromiseRef.current === updatePromise) applyUpdatePromiseRef.current = null;
     }
-  }, [updateServiceWorker]);
+  }, [clearUpdateState, updateServiceWorker]);
 
   useEffect(() => {
     const onOnline = () => {
@@ -170,16 +193,21 @@ export function PwaProvider({ children }: { children: ReactNode }) {
       event.preventDefault();
       setInstallEvent(event as BeforeInstallPromptEvent);
     };
+    const onControllerChange = () => {
+      if (!registrationRef.current?.waiting && promptedWaitingWorkerRef.current) clearUpdateState();
+    };
     window.addEventListener('online', onOnline);
     window.addEventListener('offline', onOffline);
     window.addEventListener('beforeinstallprompt', onInstallPrompt);
+    navigator.serviceWorker?.addEventListener('controllerchange', onControllerChange);
     onlineManager.setOnline(navigator.onLine);
     return () => {
       window.removeEventListener('online', onOnline);
       window.removeEventListener('offline', onOffline);
       window.removeEventListener('beforeinstallprompt', onInstallPrompt);
+      navigator.serviceWorker?.removeEventListener('controllerchange', onControllerChange);
     };
-  }, [checkForUpdate]);
+  }, [checkForUpdate, clearUpdateState]);
 
   useEffect(() => {
     const checkWhenVisible = () => {
