@@ -319,7 +319,8 @@ def test_expired_poll_cannot_release_a_newer_lease(engine, settings) -> None:
     with factory() as session:
         attempt = session.get(CodexChatgptLoginAttempt, login_id)
         assert attempt is not None
-        assert attempt.poll_lease_until == new_lease.replace(tzinfo=None)
+        assert attempt.poll_lease_until is not None
+        assert attempt.poll_lease_until.replace(tzinfo=UTC) == new_lease
 
 
 def test_start_rechecks_auth_after_waiting_on_pending_attempt(engine, settings, monkeypatch) -> None:
