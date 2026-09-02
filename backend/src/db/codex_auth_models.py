@@ -91,6 +91,14 @@ class CodexChatgptAuthOperationLock(Base):
     scope: Mapped[str] = mapped_column(String(40), nullable=False, default=SYSTEM_SCOPE)
 
 
+class CodexChatgptPollLock(Base):
+    """Exact-UUID row used to serialize one device-login poll across processes."""
+
+    __tablename__ = "codex_chatgpt_poll_locks"
+
+    login_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+
+
 class CodexChatgptLoginAttempt(Base, TimestampMixin):
     """Durable state for one OpenAI Device Code authorization attempt."""
 
@@ -136,6 +144,7 @@ __all__ = [
     "CHATGPT_AUTH_STATES",
     "CodexChatgptAuthConfiguration",
     "CodexChatgptAuthOperationLock",
+    "CodexChatgptPollLock",
     "CodexChatgptLoginAttempt",
     "LOGIN_CANCELLED",
     "LOGIN_EXPIRED",
