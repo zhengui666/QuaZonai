@@ -122,6 +122,7 @@ export function AppShell() {
               <div className="qz-topbar-title">{current}</div>
               <div className="qz-topbar-actions">
                 {signOutErrorMessage ? <span className="qz-signout-error" dir="auto" role="alert">{signOutErrorMessage}</span> : null}
+                {needRefresh ? <Button className="qz-pwa-desktop-update" size="1" variant="soft" disabled={updatePhase === 'applying'} onClick={() => { void applyUpdate().catch(() => undefined); }}><ArrowClockwiseIcon size={15} />{updatePhase === 'applying' ? t('pwa.updating') : t('pwa.updateNow')}</Button> : null}
                 <DropdownMenu.Root>
                   <DropdownMenu.Trigger>
                     <Button className="qz-mobile-nav-button" aria-label={t('a11y.openNavigation')} size="1" variant="soft"><ListIcon size={16} /></Button>
