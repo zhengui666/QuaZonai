@@ -11,9 +11,22 @@ const operatorAuth = vi.hoisted(() => ({
   logout: vi.fn(),
 }));
 
+const pwaState = vi.hoisted(() => ({
+  applyUpdate: vi.fn(async () => undefined),
+  canInstall: false,
+  install: vi.fn(async () => false),
+  isStandalone: false,
+  needRefresh: false,
+  updatePhase: 'idle' as 'idle' | 'available' | 'applying' | 'failed',
+}));
+
 vi.mock('../../auth/AuthGate', () => ({
   isLogoutError: (error: unknown) => typeof error === 'object' && error !== null && 'failure' in error,
   useOperatorAuth: () => operatorAuth,
+}));
+
+vi.mock('../../pwa/PwaProvider', () => ({
+  usePwa: () => pwaState,
 }));
 
 function renderShell() {
@@ -30,6 +43,9 @@ function renderShell() {
 afterEach(() => {
   operatorAuth.authEnabled = false;
   operatorAuth.logout.mockReset();
+  pwaState.applyUpdate.mockReset();
+  pwaState.needRefresh = false;
+  pwaState.updatePhase = 'idle';
 });
 
 describe('AppShell locale picker', () => {
@@ -62,5 +78,15 @@ describe('AppShell locale picker', () => {
     operatorAuth.logout.mockRejectedValue({ failure: { kind: 'api', message: 'Sign-out policy denied.' } });
     await user.click(screen.getByRole('button', { name: 'تسجيل الخروج ونسيان هذا المتصفح' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Sign-out policy denied.');
+  });
+
+  it('keeps the manual update action reachable outside the mobile navigation', () => {
+    pwaState.needRefresh = true;
+    renderShell();
+
+    const updateButton = screen.getByRole('button', { name: 'Update now' });
+    expect(updateButton).toHaveClass('qz-pwa-desktop-update');
+    expect(updateButton.closest('.qz-mobile-nav')).toBeNull();
+    expect(updateButton.closest('.qz-topbar-actions')).not.toBeNull();
   });
 });
