@@ -1,6 +1,6 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
-import { apiRequest, jsonBody, normalizeList } from './client';
+import { ApiError, apiRequest, jsonBody, normalizeList } from './client';
 import type {
   ActivityEvent,
   AlphaQualification,
@@ -72,6 +72,17 @@ export function useCodexChatgptAuth() {
     onSuccess: async (result) => {
       if (result.status === 'PENDING' && deviceLogin) {
         setDeviceLogin({ ...deviceLogin, expires_at: result.expires_at ?? deviceLogin.expires_at, poll_after_seconds: result.poll_after_seconds ?? deviceLogin.poll_after_seconds });
+      } else {
+        setDeviceLogin(null);
+        await invalidateAuth();
+      }
+    },
+    onError: async (error) => {
+      const retryable = error instanceof ApiError && (
+        [0, 408, 429].includes(error.status) || error.status >= 500
+      );
+      if (retryable) {
+        setDeviceLogin((current) => current ? { ...current, poll_after_seconds: Math.min(60, Math.max(5, current.poll_after_seconds + 5)) } : current);
       } else {
         setDeviceLogin(null);
         await invalidateAuth();
