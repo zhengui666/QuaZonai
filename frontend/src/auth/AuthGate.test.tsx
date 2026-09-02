@@ -558,12 +558,9 @@ describe('AuthGate', () => {
     renderAuthGate(<div>Alpha library cache</div>);
 
     expect(await screen.findByText('Alpha library cache')).toBeInTheDocument();
-    const revalidate = setIntervalSpy.mock.calls.find(
-      ([, delay]) => delay === AUTH_SESSION_REVALIDATION_INTERVAL_MS,
-    )?.[0];
-    expect(typeof revalidate).toBe('function');
+    const revalidate = await waitForRevalidationCallback(setIntervalSpy);
     act(() => {
-      if (typeof revalidate === 'function') revalidate();
+      revalidate();
     });
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));

@@ -1,10 +1,12 @@
-import { Button, Slider, Switch, TextField } from '@radix-ui/themes';
+import { Button, Dialog, Slider, Switch, TextField } from '@radix-ui/themes';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../../i18n';
-import { useUpdateRuntimeConfiguration } from '../../lib/api/hooks';
-import type { CodexReasoningEffort, RuntimeConfiguration, RuntimeConfigurationUpdate } from '../../lib/api/types';
+import { useCodexChatgptAuth, useUpdateRuntimeConfiguration } from '../../lib/api/hooks';
+import { ApiError } from '../../lib/api/client';
+import type { CodexChatgptAuthStatus, CodexReasoningEffort, RuntimeConfiguration, RuntimeConfigurationUpdate } from '../../lib/api/types';
 import { formatNumber } from '../../lib/format';
 import { ErrorPanel } from '../ui/ErrorPanel';
+import { ResponsiveDialogContent } from '../ui/ResponsiveDialogContent';
 import { Section } from '../ui/Section';
 import { StateBadge } from '../ui/StateBadge';
 
@@ -52,6 +54,72 @@ function usesCodexModelDefaults(configuration: RuntimeConfigurationWithCodexDefa
     !configuration.codex_model
     && configuration.codex_reasoning_effort === null
     && !configuration.codex_fast_mode
+  );
+}
+
+function chatgptState(status: CodexChatgptAuthStatus | undefined, configuration: RuntimeConfiguration): string {
+  if (status?.state === 'CONNECTED') return status.active ? 'CONNECTED' : 'INACTIVE';
+  if (status?.state === 'REAUTH_REQUIRED') return 'REAUTH_REQUIRED';
+  if (configuration.codex_api_key_configured || configuration.codex_base_url) return 'CUSTOM_PROVIDER';
+  return 'DISCONNECTED';
+}
+
+function ChatgptAuthControls({ configuration }: { configuration: RuntimeConfiguration }) {
+  const { t } = useI18n();
+  const { auth, deviceLogin, pollResult, start, poll, cancel, disconnect } = useCodexChatgptAuth();
+  const [copied, setCopied] = useState(false);
+  const status = auth.data;
+  const state = chatgptState(status, configuration);
+  const startLogin = () => { setCopied(false); start.mutate(); };
+  const closeLogin = () => {
+    if (deviceLogin) cancel.mutate(deviceLogin.login_id);
+  };
+  const pollError = pollResult?.status === 'EXPIRED'
+    ? new ApiError({ kind: 'api', message: t('runtime.deviceCodeExpired') }, 400, pollResult.error_code ?? 'expired')
+    : pollResult?.status === 'FAILED'
+      ? new ApiError({ kind: 'api', message: t('runtime.deviceCodeFailed', { code: pollResult.error_code ?? 'unknown' }) }, 400, pollResult.error_code ?? 'authorization_failed')
+      : null;
+
+  return (
+    <div className="qz-field" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <StateBadge state={state} />
+        {state === 'CONNECTED' && status?.email ? <span className="qz-list-subtitle"><bdi dir="ltr">{status.email}</bdi></span> : null}
+        {status?.plan_type ? <span className="qz-list-subtitle"><bdi dir="ltr">{status.plan_type}</bdi></span> : null}
+      </div>
+      {state === 'INACTIVE' ? <span className="qz-help">{t('runtime.chatgptInactive')}</span> : null}
+      {state === 'REAUTH_REQUIRED' ? <span className="qz-help">{t('runtime.chatgptReauthRequired')}</span> : null}
+      {state === 'CONNECTED' && status?.last_refresh_at ? <span className="qz-list-subtitle">{t('runtime.chatgptLastRefresh')}: <bdi dir="ltr">{status.last_refresh_at}</bdi></span> : null}
+      <div style={{ display: 'flex', gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
+        {state === 'CONNECTED' || state === 'INACTIVE'
+          ? <Button size="2" variant="soft" color="red" disabled={disconnect.isPending} onClick={() => disconnect.mutate()}>{t('runtime.disconnectChatgpt')}</Button>
+          : <Button size="2" variant="soft" disabled={start.isPending || Boolean(deviceLogin)} onClick={startLogin}>{state === 'REAUTH_REQUIRED' ? t('runtime.reauthenticateChatgpt') : t('runtime.signInChatgpt')}</Button>}
+      </div>
+      {start.error ? <div style={{ marginTop: 10 }}><ErrorPanel error={start.error} /></div> : null}
+      {pollError ? <div style={{ marginTop: 10 }}><ErrorPanel error={pollError} /></div> : null}
+      {poll.error ? <div style={{ marginTop: 10 }}><ErrorPanel error={poll.error} /></div> : null}
+      {disconnect.error ? <div style={{ marginTop: 10 }}><ErrorPanel error={disconnect.error} /></div> : null}
+      <Dialog.Root open={Boolean(deviceLogin)} onOpenChange={(open) => { if (!open) closeLogin(); }}>
+        <ResponsiveDialogContent aria-describedby="codex-device-description">
+          <Dialog.Title>{t('runtime.deviceCodeTitle')}</Dialog.Title>
+          <Dialog.Description id="codex-device-description">{t('runtime.deviceCodeDescription')}</Dialog.Description>
+          {deviceLogin ? (
+            <div style={{ display: 'grid', gap: 14, marginTop: 16 }}>
+              <a href={deviceLogin.verification_url} target="_blank" rel="noreferrer" dir="ltr">{t('runtime.deviceCodeOpen')}</a>
+              <div className="qz-panel qz-panel-pad" style={{ textAlign: 'center' }}>
+                <div className="qz-label">{t('runtime.deviceCodeWaiting')}</div>
+                <div className="qz-mono" dir="ltr" style={{ fontSize: 'clamp(1.5rem, 8vw, 2.5rem)', letterSpacing: '0.12em', marginTop: 8 }}>{deviceLogin.user_code}</div>
+                <Button size="2" variant="soft" style={{ marginTop: 12 }} onClick={() => { void navigator.clipboard?.writeText(deviceLogin.user_code); setCopied(true); }}>{copied ? t('runtime.deviceCodeCopied') : t('runtime.deviceCodeCopy')}</Button>
+              </div>
+              <span className="qz-help">{t('runtime.deviceCodeExpires', { expires: deviceLogin.expires_at })}</span>
+              <span className="qz-list-subtitle" aria-live="polite">{t('runtime.deviceCodePolling', { seconds: deviceLogin.poll_after_seconds })}</span>
+              {cancel.error ? <ErrorPanel error={cancel.error} /> : null}
+              <Button variant="soft" color="gray" onClick={closeLogin}>{t('runtime.deviceCodeCancel')}</Button>
+            </div>
+          ) : null}
+        </ResponsiveDialogContent>
+      </Dialog.Root>
+    </div>
   );
 }
 
@@ -162,6 +230,8 @@ export function RuntimeConfigurationPanel({ configuration }: { configuration: Ru
         <div className="qz-resource-note" style={{ marginBottom: 16 }}>
           {t('runtime.note')}
         </div>
+
+        <ChatgptAuthControls configuration={configuration} />
 
         <div className="qz-form-grid">
           <div className="qz-field">

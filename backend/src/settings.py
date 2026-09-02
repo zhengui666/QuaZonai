@@ -498,7 +498,11 @@ class Settings:
 
     @property
     def codex_auth_configured(self) -> bool:
-        return bool(self.codex_api_key) or (self.codex_home / "auth.json").is_file()
+        # Official ChatGPT auth is database-owned and therefore cannot be
+        # represented by bootstrap Settings.  Runtime code checks the DB
+        # configuration explicitly; this property only covers custom API key
+        # configuration supplied to a short-lived child.
+        return bool(self.codex_api_key)
 
     @property
     def auth_enabled(self) -> bool:

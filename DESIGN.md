@@ -1145,7 +1145,7 @@ PostgreSQL 是业务事实源。Codex Thread/Turn/Item 只能作为执行上下�
 
 每个 RUNNING Mission 使用独立 Codex App Server child process：
 
-- 共享只读/受控 `CODEX_HOME` 认证与 thread persistence volume；
+- 共享只读/受控 `CODEX_HOME` thread persistence volume；官方 ChatGPT 认证不再以该目录为事实源；
 - 一个 Mission 对应一个 durable Codex Thread；
 - Mission crash 后可由新 child `thread/resume`；
 - child 退出即释放 shell、MCP 和文件句柄；
@@ -1205,8 +1205,18 @@ Codex provider 规则：
 - provider API key 不进入 App Server environment、命令行或 `--config`。受信任 Mission runner 只在内存中持有解密后的 key，通过 `0700` 临时目录下的 `0600` one-shot Unix socket broker 向 Codex 0.144.4 的 command-backed model-provider `auth` helper 交付一次 token；helper 在首个 provider request 前取用后 broker 关闭，Mission shell、MCP Tool Server、Agent output 与持久 event 均不得获得该 key；
 - App Server environment 必须显式清除 provider API key、`QUAZONAI_MASTER_KEY` 与数据库连接 secret，不能依赖普通 shell env filtering 作为 Secret 边界；
 - 已保存 provider key 时修改 `codex_base_url`，必须在同一 mutation 中重新输入 key 或显式清除旧 key，禁止把旧 credential 静默重绑定到新 endpoint；
-- 未配置 custom provider credential 时，可继续使用持久 `CODEX_HOME` 中的官方 Codex/ChatGPT 登录；
+- 未配置 custom provider credential 时，官方 ChatGPT 认证来自 PostgreSQL 中的 `CodexChatgptAuthConfiguration`，并在 Mission child 内以 App Server external auth 的短期内存 token 使用；
 - Web/API 只返回 `codex_api_key_configured` 状态，不回读 plaintext/ciphertext/nonce。
+
+### 30.2 ChatGPT Auth ownership
+
+ChatGPT OAuth 是独立于 Runtime Configuration 的认证域。`codex_chatgpt_auth_configurations` 是唯一长期事实源；`access_token` 与 `refresh_token` 均使用既有 `QUAZONAI_MASTER_KEY` 和按认证 UUID/字段/key version 绑定的 AES-GCM AAD 加密保存。OAuth refresh/login/disconnect 不推进 Runtime Configuration revision。
+
+首版只实现 OpenAI Device Code OAuth：Backend 固定官方 issuer、client id、verification URL 和 token endpoints；浏览器只短暂持有 `login_id`、`user_code` 与过期时间，永不收到 access/refresh/id token。Device login attempt 也持久化在 PostgreSQL，服务端限制 poll cadence（收到 `slow_down` 时持久化增加间隔并推进下一次允许轮询时间），并用覆盖一次完整上游 device poll/token exchange 的持久 in-flight lease 串行化同一 attempt 的 exchange；poll 结束时只能清除自己取得且仍匹配的 lease，不能清除超时后由另一 poll 取得的新 lease。start/disconnect 通过 PostgreSQL singleton operation-lock 行序列化，poll/cancel 则通过 login-attempt 行锁、poll lease 和 late-poll 检查保证竞态安全；start 在等待 pending attempt 行锁后必须重新读取 canonical auth，避免成功 poll 已提交后仍创建第二个 login，且 start/disconnect 在没有 pending 行时也必须先争用 singleton lock。`device/start` 是状态变更请求，即使 Operator Authentication 关闭也必须使用服务端要求的非 safelisted `application/json` 请求体，不能被跨站 HTML form 或 `no-cors` 请求触发；重复 start 不得重复写入持久化事件，重复 cancel/disconnect 也不得重复写入状态事件；CONNECTED 事件必须与凭据安装在同一事务内提交。终态 poll 的失败/过期错误码必须保留到 Web UI 的现有错误面板，不能静默关闭。
+
+有限 worker 在 claim queued Mission 之前必须执行一次与 API 相同的 legacy import；因此 custom-provider Mission 也不会绕过该一次性 import/cleanup。Mission Runner 在启动官方 App Server 前仍会再次执行幂等检查（若 `auth.json` 是完整 ChatGPT token shape，则先提交 canonical DB row，再清理文件；多个 initializer 同时清理时，文件已被另一方移除视为成功），然后从 DB 解密或串行刷新 access token，再通过 pinned App Server 的 `account/login/start` `chatgptAuthTokens` 注入内存认证；401 的 `account/chatgptAuthTokens/refresh` server request 只由受信 parent 处理，返回 App Server 要求的 camelCase wire fields，并绑定 Mission 启动时的 canonical auth UUID 与 ChatGPT account，canonical row 被 Disconnect/re-auth 替换后不得把新账号 token 交给旧 Mission。重新认证或发现 CONNECTED row 的 access/refresh 密文损坏时必须创建新的 canonical auth UUID；公开 auth status/readiness 必须报告 reauthentication required，不能把损坏 row 当作仍然 Connected。readiness 在报告 ready 前必须验证 access/refresh 密文可用；custom provider readiness 也必须先解密已保存的 API key，完整、部分或损坏的密文均不得报告 ready；对应的 custom-provider reauth 状态在 `/system/health` 中必须是 degraded。refresh token 永不进入 Mission shell、环境变量、worktree、prompt、事件或 Codex config；App Server external-auth 路径不得创建 `auth.json`。runtime configuration 含 provider API key 时，校验错误响应不得回显请求 input。custom provider/API key 与 ChatGPT route 是互斥的显式路由，禁止隐式 failover。
+
+`CODEX_HOME/auth.json` 只允许作为一次性 legacy import source：没有 canonical DB row 时，仅导入当前 pinned Codex 的完整 ChatGPT auth shape，成功提交 DB 后删除文件；数据库写入或清理失败均 fail closed。已有 DB row 时 DB 胜出并只尝试清理文件，文件不能覆盖 DB。管理员 Disconnect 必须先成功移除 legacy 文件，再提交 canonical DB 凭据删除；文件清理失败时数据库状态保持不变，防止旧凭据在重启时复活。`codex_login_configured`、readiness 和 Mission admission 只读取 DB 状态，不以文件存在作为登录证明。
 
 Runtime Configuration mutation 规则：
 
@@ -1811,9 +1821,9 @@ FastAPI 提供的 `index.html`、`sw.js`、`manifest.webmanifest` 使用 no-cach
 
 QZ 只管理研究数据源、Codex provider、Operator access 和下游 Handoff service credentials，不保存 broker/exchange trading credential。
 
-Provider/Data/Handoff secret 使用既有 AES-256-GCM + externally injected master key 边界；Operator TOTP binding 使用同一 master key、binding UUID/AAD 与独立 `OperatorAuthConfiguration` ciphertext/nonce。Operator browser cookie 使用 independently generated、externally injected `QUAZONAI_AUTH_COOKIE_KEY`。该 key 解码后不得与 `QUAZONAI_MASTER_KEY` 相同，不能复用 browser credential 作为业务 secret。API 永不回读 persisted plaintext/ciphertext/nonce。Operator setup candidate/URI/code/API token/cookie key 不得进入 Codex Mission shell、事件、日志或第三方服务；唯一例外是同源 setup start 的短暂浏览器响应与内存 UI 展示。
+Provider/Data/Handoff/ChatGPT Auth secret 使用既有 AES-256-GCM + externally injected master key 边界；Operator TOTP binding 使用同一 master key、binding UUID/AAD 与独立 `OperatorAuthConfiguration` ciphertext/nonce。Operator browser cookie 使用 independently generated、externally injected `QUAZONAI_AUTH_COOKIE_KEY`。该 key 解码后不得与 `QUAZONAI_MASTER_KEY` 相同，不能复用 browser credential 作为业务 secret。API 永不回读 persisted plaintext/ciphertext/nonce。Operator setup candidate/URI/code/API token/cookie key 不得进入 Codex Mission shell、事件、日志或第三方服务；ChatGPT access/refresh/id token、device auth id、authorization code、code verifier 和 user code 也不得进入这些边界；唯一例外是同源 setup/device start 的短暂浏览器响应与内存 UI 展示。
 
-Provider/Data/Handoff secret 不得进入 Codex Mission shell、Research Tool Server 或持久事件；Codex provider credential 只通过受信任 runner 的 one-shot broker 进入 Codex command-backed provider authentication，不能进入 App Server environment 或命令行。
+Provider/Data/Handoff/ChatGPT Auth secret 不得进入 Codex Mission shell、Research Tool Server 或持久事件；Codex provider credential 只通过受信任 runner 的 one-shot broker 进入 Codex command-backed provider authentication，ChatGPT access token 只通过 external auth 内存接口注入，不能进入 App Server environment 或命令行。
 
 ## 44. Sealed Evaluator isolation
 

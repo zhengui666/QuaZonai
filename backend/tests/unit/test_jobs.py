@@ -7,6 +7,7 @@ from sqlalchemy.orm import sessionmaker
 
 from db.models import Job
 from jobs import claim_next_job, enqueue_job, release_expired_leases, renew_job_lease
+from runners import finite_worker
 from runners.finite_worker import run_once
 
 
@@ -69,6 +70,36 @@ def test_worker_run_once_uses_shared_factory_and_completes_job(
         assert job.state == "SUCCEEDED"
         assert job.lease_owner is None
         assert job.lease_expires_at is None
+
+
+def test_worker_imports_legacy_auth_before_claiming_a_job(engine, settings, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    with factory.begin() as session:
+        enqueue_job(
+            session,
+            kind="SYSTEM_NOOP",
+            resource_type="system",
+            resource_id=uuid4(),
+        )
+    settings.codex_home.mkdir(parents=True, exist_ok=True)
+    (settings.codex_home / "auth.json").write_text("legacy", encoding="utf-8")
+
+    order: list[str] = []
+    real_claim = finite_worker.claim_next_job
+    monkeypatch.setattr(
+        finite_worker,
+        "initialize_codex_auth",
+        lambda *_args: order.append("legacy-import"),
+    )
+
+    def record_claim(*args, **kwargs):  # type: ignore[no-untyped-def]
+        order.append("claim")
+        return real_claim(*args, **kwargs)
+
+    monkeypatch.setattr(finite_worker, "claim_next_job", record_claim)
+    run_once(settings, owner="worker-a", factory=factory)
+
+    assert order[:2] == ["legacy-import", "claim"]
 
 
 def test_renew_job_lease_extends_only_the_current_owner(

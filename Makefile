@@ -28,7 +28,7 @@ lint:
 	ruff check backend/src backend/tests
 
 typecheck:
-	mypy backend/src/quazonai
+	mypy --config-file backend/pyproject.toml backend/src
 
 test:
 	pytest -q backend/tests

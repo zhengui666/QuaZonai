@@ -241,7 +241,7 @@ Agent Worker 不复用操作者日常 Codex CLI 的任意全局配置。QuaZonai
 
 不得把个人全局 MCP servers、marketplaces、plugins 或任意 Skills 自动带入自治 Research Mission。
 
-管理员通过 QuaZonai Administration 完成该专用 runtime profile 的 Codex 登录；Secret/token 不进入 QZ 数据库、Mission prompt、Mission worktree 或普通 UI。
+管理员通过 QuaZonai Administration 完成 ChatGPT Device Code 登录；ChatGPT OAuth token 由 QZ 加密持久化到 PostgreSQL，trusted parent 只向 App Server external auth 提供短期 access token。Secret/token 不进入 CLI、Mission prompt、Mission worktree、shell environment 或普通 UI；Agent/Mission 不管理 OAuth login 或 refresh。
 
 ## 6. Per-Mission App Server process
 

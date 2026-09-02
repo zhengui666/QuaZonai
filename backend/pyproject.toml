@@ -43,7 +43,7 @@ quazonai-nautilus-runtime = "runners.nautilus_remote_runtime:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-py-modules = ["quazonai", "candidate_packages", "crypto", "downstream_auth", "errors", "events", "jobs", "logging_utils", "main", "operator_auth", "operator_auth_store", "optimization", "runtime_config", "schema_validation", "settings", "totp_core"]
+py-modules = ["quazonai", "candidate_packages", "codex_chatgpt_auth", "codex_poll_guard", "crypto", "downstream_auth", "errors", "events", "jobs", "logging_utils", "main", "operator_auth", "operator_auth_store", "optimization", "runtime_config", "schema_validation", "settings", "totp_core"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

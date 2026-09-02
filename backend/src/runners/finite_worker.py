@@ -14,6 +14,7 @@ from collections.abc import Callable, Sequence
 from threading import Event, Thread
 from uuid import UUID
 
+from codex_chatgpt_auth import initialize_codex_auth
 from db.models import Job
 from db.session import SessionFactory, create_database_engine, create_session_factory, ping_database
 from events import append_event
@@ -137,6 +138,15 @@ def run_once(
     next job. This preserves the rule that every newly admitted job freezes the
     latest effective settings while avoiding per-poll Engine construction.
     """
+    with factory() as session:
+        settings = effective_settings(session, base_settings)
+    legacy_auth_path = settings.codex_home / "auth.json"
+    if legacy_auth_path.exists():
+        # This must happen before claiming a job: API and worker startup can
+        # race during upgrades, and custom-provider jobs must not bypass the
+        # shared one-time legacy import/cleanup decision.
+        initialize_codex_auth(factory, settings)
+
     with factory.begin() as session:
         settings = effective_settings(session, base_settings)
         release_expired_leases(session)
