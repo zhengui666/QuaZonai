@@ -12,7 +12,7 @@ import { App } from './app/App';
 import { I18nProvider } from './i18n';
 import { OnlineStatusBanner } from './pwa/OnlineStatusBanner';
 import { PwaProvider } from './pwa/PwaProvider';
-import { PwaUpdateBanner } from './pwa/PwaUpdateBanner';
+import { PwaUpdateDialog } from './pwa/PwaUpdateDialog';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -34,7 +34,7 @@ createRoot(document.getElementById('root')!).render(
       <PwaProvider>
         <Theme appearance="dark" accentColor="jade" grayColor="sage" radius="small" scaling="90%">
           <QueryClientProvider client={queryClient}>
-            <PwaUpdateBanner />
+            <PwaUpdateDialog />
             <OnlineStatusBanner />
             <BrowserRouter><App /></BrowserRouter>
           </QueryClientProvider>
