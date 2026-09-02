@@ -57,7 +57,7 @@ export function AppShell() {
   const [signOutError, setSignOutError] = useState<LogoutFailure | null>(null);
   const { locale, setLocale, t } = useI18n();
   const { authEnabled, logout } = useOperatorAuth();
-  const { applyUpdate, canInstall, install, isStandalone, needRefresh } = usePwa();
+  const { applyUpdate, canInstall, install, isStandalone, needRefresh, updatePhase } = usePwa();
   const location = useLocation();
   const navigate = useNavigate();
   const current = useMemo(() => {
@@ -206,7 +206,7 @@ export function AppShell() {
                   </Button>
                   {!isStandalone && canInstall ? <Button className="qz-touch-button" size="2" variant="soft" onClick={() => { void install(); }}><DownloadSimpleIcon size={16} />{t('pwa.install')}</Button> : null}
                   {!isStandalone && !canInstall ? <p className="qz-mobile-more-help">{t('pwa.installHelp')}</p> : null}
-                  {needRefresh ? <Button className="qz-touch-button" size="2" variant="soft" onClick={() => { void applyUpdate(); }}><ArrowClockwiseIcon size={16} />{t('pwa.updateNow')}</Button> : null}
+                  {needRefresh ? <Button className="qz-touch-button" size="2" variant="soft" disabled={updatePhase === 'applying'} onClick={() => { void applyUpdate().catch(() => undefined); }}><ArrowClockwiseIcon size={16} />{updatePhase === 'applying' ? t('pwa.updating') : t('pwa.updateNow')}</Button> : null}
                   {authEnabled ? <Button className="qz-touch-button" size="2" variant="soft" color="red" disabled={signingOut} onClick={() => { void signOut(); }}><SignOutIcon size={16} />{t('auth.signOut')}</Button> : null}
                 </div>
               </Dialog.Content>
