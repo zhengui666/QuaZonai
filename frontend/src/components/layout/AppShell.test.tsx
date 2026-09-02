@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useMutation } from '@tanstack/react-query';
 import { Route, Routes } from 'react-router-dom';
+import type { ReactNode } from 'react';
 import { AppShell } from './AppShell';
 import { localeLabels, localeOrder } from '../../i18n';
 import { renderApp } from '../../tests/testUtils';
@@ -29,11 +31,16 @@ vi.mock('../../pwa/PwaProvider', () => ({
   usePwa: () => pwaState,
 }));
 
-function renderShell() {
+function PendingMutationProbe() {
+  const mutation = useMutation({ mutationFn: async () => new Promise<void>(() => undefined) });
+  return <button onClick={() => mutation.mutate()}>Start mutation</button>;
+}
+
+function renderShell(outlet: ReactNode = <div>Workbench</div>) {
   return renderApp(
     <Routes>
       <Route element={<AppShell />}>
-        <Route index element={<div>Workbench</div>} />
+        <Route index element={outlet} />
       </Route>
     </Routes>,
     { route: '/', locale: 'en' },
@@ -88,5 +95,15 @@ describe('AppShell locale picker', () => {
     expect(updateButton).toHaveClass('qz-pwa-desktop-update');
     expect(updateButton.closest('.qz-mobile-nav')).toBeNull();
     expect(updateButton.closest('.qz-topbar-actions')).not.toBeNull();
+  });
+
+  it('disables manual update while a mutation is active', async () => {
+    pwaState.needRefresh = true;
+    const user = userEvent.setup();
+    renderShell(<PendingMutationProbe />);
+
+    await user.click(screen.getByRole('button', { name: 'Start mutation' }));
+    expect(screen.getByRole('button', { name: 'Update now' })).toBeDisabled();
+    expect(pwaState.applyUpdate).not.toHaveBeenCalled();
   });
 });
