@@ -175,6 +175,35 @@ describe('PWA lifecycle', () => {
     expect(screen.getByTestId('pwa-state')).toHaveAttribute('data-phase', 'failed');
   });
 
+  it('reopens failure feedback after a manual update attempt', async () => {
+    const user = userEvent.setup();
+    const waitingWorker = {} as ServiceWorker;
+    const registration = makeRegistration({ waiting: waitingWorker });
+    swMock.updateServiceWorker.mockRejectedValueOnce(new Error('network down'));
+    renderPwa(<><PwaUpdateDialog /><ActionProbe /></>);
+    register(registration);
+    await user.click(await screen.findByRole('button', { name: 'Later' }));
+    await user.click(screen.getByRole('button', { name: 'Manual update' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Update failed. Check your connection and try again.');
+    expect(screen.getByRole('button', { name: 'Retry update' })).toBeInTheDocument();
+  });
+
+  it('preserves applying state when the same waiting worker is re-observed', async () => {
+    const user = userEvent.setup();
+    const waitingWorker = {} as ServiceWorker;
+    const registration = makeRegistration({ waiting: waitingWorker });
+    let releaseUpdate!: () => void;
+    swMock.updateServiceWorker.mockImplementationOnce(() => new Promise<void>((resolve) => { releaseUpdate = resolve; }));
+    renderPwa(<PwaUpdateDialog />);
+    register(registration);
+    await user.click(await screen.findByRole('button', { name: 'Update now' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Updating…' })).toBeDisabled());
+    act(() => swMock.options?.onNeedRefresh?.());
+    expect(screen.getByRole('button', { name: 'Updating…' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Later' })).toBeDisabled();
+    releaseUpdate();
+  });
+
   it('blocks apply while a domain mutation is active', async () => {
     const user = userEvent.setup();
     renderPwa(<><PendingMutationProbe /><PwaUpdateDialog /></>);
@@ -306,6 +335,21 @@ describe('PWA lifecycle', () => {
     await screen.getByRole('button', { name: 'Later' }).click();
     await screen.getByRole('button', { name: 'Check for update' }).click();
     expect(update).not.toHaveBeenCalled();
+  });
+
+  it('clears stale update state when a waiting worker activates without reloading this tab', async () => {
+    const user = userEvent.setup();
+    const waitingWorker = {} as ServiceWorker;
+    const registration = makeRegistration({ waiting: waitingWorker });
+    renderPwa(<><PwaUpdateDialog /><StateProbe /><ActionProbe /></>);
+    register(registration);
+    await user.click(await screen.findByRole('button', { name: 'Later' }));
+    Object.defineProperty(registration, 'waiting', { configurable: true, value: null });
+    await user.click(screen.getByRole('button', { name: 'Check for update' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('pwa-state')).toHaveAttribute('data-need-refresh', 'false');
+      expect(screen.getByTestId('pwa-state')).toHaveAttribute('data-phase', 'idle');
+    });
   });
 
   it('swallows background update failures so the workbench remains usable', async () => {
