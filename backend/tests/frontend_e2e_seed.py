@@ -29,6 +29,7 @@ from db.models import (
     ResearchCharter,
     ResearchMission,
     ResearchProgram,
+    RuntimeConfiguration,
 )
 from db.session import create_database_engine, create_session_factory
 from downstream_auth import install_service_token, issue_service_token
@@ -70,8 +71,24 @@ def main() -> None:
             DownstreamSystem,
             MarketUniverseVersion,
             PublicMutationReceipt,
+            RuntimeConfiguration,
         ):
             session.execute(delete(model))
+
+        runtime_configuration = RuntimeConfiguration(
+            scope="SYSTEM",
+            revision=1,
+            codex_base_url="https://ci.example.test/v1",
+            codex_fast_mode=False,
+            codex_use_default_model_settings=False,
+            max_plugin_wheel_bytes=settings.max_plugin_wheel_bytes,
+            plugin_validation_timeout_seconds=settings.plugin_validation_timeout_seconds,
+            bundle_build_timeout_seconds=settings.bundle_build_timeout_seconds,
+            plugin_job_timeout_seconds=settings.plugin_job_timeout_seconds,
+            mission_job_timeout_seconds=settings.mission_job_timeout_seconds,
+            job_poll_seconds=settings.job_poll_seconds,
+            job_lease_seconds=settings.job_lease_seconds,
+        )
 
         universe = MarketUniverseVersion(
             id=UNIVERSE_ID,
@@ -122,7 +139,7 @@ def main() -> None:
             state="CANDIDATE_READY",
             current_candidate_id=CANDIDATE_ID,
         )
-        session.add_all([universe, mandate, paper, live, portfolio_program])
+        session.add_all([runtime_configuration, universe, mandate, paper, live, portfolio_program])
         session.flush()
 
         alpha = AlphaQualification(
