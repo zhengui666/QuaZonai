@@ -4,6 +4,7 @@ from threading import Event, Thread
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
 
 from codex_poll_guard import hold_device_poll_execution
 from db.session import create_session_factory
@@ -17,7 +18,7 @@ def test_postgres_advisory_guard_serializes_same_device_login(engine) -> None:  
     login_id = uuid4()
     attempting = Event()
     entered = Event()
-    errors: list[BaseException] = []
+    errors: list[SQLAlchemyError] = []
 
     def contender() -> None:
         try:
@@ -25,7 +26,7 @@ def test_postgres_advisory_guard_serializes_same_device_login(engine) -> None:  
                 attempting.set()
                 with hold_device_poll_execution(session, login_id):
                     entered.set()
-        except BaseException as exc:  # pragma: no cover - surfaced below
+        except SQLAlchemyError as exc:  # pragma: no cover - surfaced below
             errors.append(exc)
             entered.set()
 
