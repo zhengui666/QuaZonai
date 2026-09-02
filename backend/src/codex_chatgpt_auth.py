@@ -394,14 +394,6 @@ def _connected_auth_usable(
     """Check that a CONNECTED row still has decryptable credentials."""
     try:
         _bundle_from_auth(auth, settings)
-        _decrypt(
-            auth.refresh_token_ciphertext,
-            auth.refresh_token_nonce,
-            auth.refresh_token_key_version,
-            auth_id=auth.id,
-            field="refresh_token",
-            settings=settings,
-        )
     except (QfError, SettingsError):
         return False
     return True
@@ -1060,6 +1052,14 @@ def _bundle_from_auth(auth: CodexChatgptAuthConfiguration, settings: Settings) -
         auth.access_token_key_version,
         auth_id=auth.id,
         field="access_token",
+        settings=settings,
+    )
+    _decrypt(
+        auth.refresh_token_ciphertext,
+        auth.refresh_token_nonce,
+        auth.refresh_token_key_version,
+        auth_id=auth.id,
+        field="refresh_token",
         settings=settings,
     )
     return CodexChatgptAccessBundle(
