@@ -619,4 +619,4 @@ QuaZonai 的产品体验应始终保持：**用户提出投资研究问题，系
 
 手机浏览器和已安装 PWA 使用与桌面相同的 Web 客户端、路由、字段、校验和 mutation，不需要单独注册或迁移移动端业务。小屏底部导航提供 Home、Research、Approvals、Portfolio；Idea、Alpha、Handoff、Administration、语言、主题、安装/更新和退出在 More 中可达。列表、审批、表单、图表和图谱都使用触控可操作的响应式视图。
 
-在浏览器支持安装提示时，More → Install QuaZonai 由操作者确认安装；Service Worker 更新只在 More → Update 或更新提示中由操作者确认，不自动重载。离线只保证静态壳能够启动；工作台会明确提示需要连接 QuaZonai server，API 查询和所有 mutation 不从本地缓存伪造成功，也不把认证/API 数据写入 PWA 缓存。
+在浏览器支持安装提示时，More → Install QuaZonai 由操作者确认安装。部署新前端后，已打开的 PWA 会在启动注册、前台周期检查（最长约 15 分钟）、后台恢复前台或联网恢复时发现新的 waiting Service Worker；恢复事件受 60 秒最短间隔保护。发现更新会弹出确认 Dialog：选择“稍后”不会重载，More → Update 仍可手动更新；选择“立即更新”才会激活 waiting worker 并重载当前页面。更新检查失败不打断工作台，会由后续触发点重试。排障时检查 `/sw.js` 是否返回新内容且 `Cache-Control: no-cache`，并确保 CDN / reverse proxy 没有把 `sw.js` 配成 immutable 长缓存。离线只保证静态壳能够启动；工作台会明确提示需要连接 QuaZonai server，API 查询和所有 mutation 不从本地缓存伪造成功，也不把认证/API 数据写入 PWA 缓存。
