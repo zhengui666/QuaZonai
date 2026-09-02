@@ -672,38 +672,81 @@ def poll_device_login(
     client = None
     owned = False
     try:
-        client, owned = _http_client(http_client)
         try:
-            upstream = _poll_device(client, device_auth_id=device_auth_id, user_code=user_code)
-        except _OAuthFailure as exc:
-            if exc.kind == "pending":
-                poll_after_seconds = interval
-                if exc.code == "slow_down":
+            client, owned = _http_client(http_client)
+            try:
+                upstream = _poll_device(client, device_auth_id=device_auth_id, user_code=user_code)
+            except _OAuthFailure as exc:
+                if exc.kind == "pending":
+                    poll_after_seconds = interval
+                    if exc.code == "slow_down":
+                        with session.begin():
+                            locked = _locked_login_attempt(session, login_id)
+                            if locked is not None and locked.state == LOGIN_PENDING:
+                                locked.poll_interval_seconds = min(
+                                    MAX_POLL_INTERVAL_SECONDS,
+                                    locked.poll_interval_seconds + 5,
+                                )
+                                locked.next_poll_at = max(
+                                    _aware(locked.next_poll_at),
+                                    now() + timedelta(seconds=locked.poll_interval_seconds),
+                                )
+                                poll_after_seconds = locked.poll_interval_seconds
+                    return DeviceLoginPollResult(
+                        status=LOGIN_PENDING,
+                        expires_at=expires_at,
+                        poll_after_seconds=poll_after_seconds,
+                    )
+                if exc.kind == "expired":
                     with session.begin():
                         locked = _locked_login_attempt(session, login_id)
                         if locked is not None and locked.state == LOGIN_PENDING:
-                            locked.poll_interval_seconds = min(
-                                MAX_POLL_INTERVAL_SECONDS,
-                                locked.poll_interval_seconds + 5,
-                            )
-                            locked.next_poll_at = max(
-                                _aware(locked.next_poll_at),
-                                now() + timedelta(seconds=locked.poll_interval_seconds),
-                            )
-                            poll_after_seconds = locked.poll_interval_seconds
-                return DeviceLoginPollResult(
-                    status=LOGIN_PENDING,
-                    expires_at=expires_at,
-                    poll_after_seconds=poll_after_seconds,
-                )
-            if exc.kind == "expired":
+                            locked.state = LOGIN_EXPIRED
+                            locked.error_code = "expired"
+                            _clear_attempt(locked)
+                    return DeviceLoginPollResult(status=LOGIN_EXPIRED, error_code="expired")
+                if exc.kind == "transient":
+                    if exc.retry_after is not None:
+                        with session.begin():
+                            locked = _locked_login_attempt(session, login_id)
+                            if locked is not None and locked.state == LOGIN_PENDING:
+                                locked.next_poll_at = max(
+                                    _aware(locked.next_poll_at),
+                                    now() + timedelta(seconds=exc.retry_after),
+                                )
+                    return DeviceLoginPollResult(
+                        status=LOGIN_PENDING,
+                        expires_at=expires_at,
+                        poll_after_seconds=interval,
+                    )
                 with session.begin():
                     locked = _locked_login_attempt(session, login_id)
                     if locked is not None and locked.state == LOGIN_PENDING:
-                        locked.state = LOGIN_EXPIRED
-                        locked.error_code = "expired"
+                        locked.state = LOGIN_FAILED
+                        locked.error_code = "authorization_failed"
                         _clear_attempt(locked)
-                return DeviceLoginPollResult(status=LOGIN_EXPIRED, error_code="expired")
+                return DeviceLoginPollResult(status=LOGIN_FAILED, error_code="authorization_failed")
+
+            authorization_code = _safe_string(upstream.get("authorization_code")) or _safe_string(upstream.get("code"))
+            code_verifier = _safe_string(upstream.get("code_verifier"))
+            if not authorization_code or not code_verifier:
+                # Some implementations return pending as a 2xx response.
+                return DeviceLoginPollResult(status=LOGIN_PENDING, expires_at=expires_at, poll_after_seconds=interval)
+            token_payload = _exchange_code(client, authorization_code, code_verifier)
+            access_token = _safe_string(token_payload.get("access_token"))
+            refresh_token = _safe_string(token_payload.get("refresh_token"))
+            id_token = _safe_string(token_payload.get("id_token"))
+            if not access_token or not refresh_token:
+                raise QfError("CODEX_CHATGPT_LOGIN_FAILED", "ChatGPT token exchange was incomplete.", 502)
+        except QfError:
+            with session.begin():
+                locked = _locked_login_attempt(session, login_id)
+                if locked is not None and locked.state == LOGIN_PENDING:
+                    locked.state = LOGIN_FAILED
+                    locked.error_code = "token_exchange_failed"
+                    _clear_attempt(locked)
+            return DeviceLoginPollResult(status=LOGIN_FAILED, error_code="token_exchange_failed")
+        except _OAuthFailure as exc:
             if exc.kind == "transient":
                 if exc.retry_after is not None:
                     with session.begin():
@@ -713,106 +756,64 @@ def poll_device_login(
                                 _aware(locked.next_poll_at),
                                 now() + timedelta(seconds=exc.retry_after),
                             )
-                return DeviceLoginPollResult(
-                    status=LOGIN_PENDING,
-                    expires_at=expires_at,
-                    poll_after_seconds=interval,
-                )
+                return DeviceLoginPollResult(status=LOGIN_PENDING, expires_at=expires_at, poll_after_seconds=interval)
             with session.begin():
                 locked = _locked_login_attempt(session, login_id)
                 if locked is not None and locked.state == LOGIN_PENDING:
                     locked.state = LOGIN_FAILED
-                    locked.error_code = "authorization_failed"
+                    locked.error_code = "token_exchange_failed"
                     _clear_attempt(locked)
-            return DeviceLoginPollResult(status=LOGIN_FAILED, error_code="authorization_failed")
+            return DeviceLoginPollResult(status=LOGIN_FAILED, error_code="token_exchange_failed")
 
-        authorization_code = _safe_string(upstream.get("authorization_code")) or _safe_string(upstream.get("code"))
-        code_verifier = _safe_string(upstream.get("code_verifier"))
-        if not authorization_code or not code_verifier:
-            # Some implementations return pending as a 2xx response.
-            return DeviceLoginPollResult(status=LOGIN_PENDING, expires_at=expires_at, poll_after_seconds=interval)
-        token_payload = _exchange_code(client, authorization_code, code_verifier)
-        access_token = _safe_string(token_payload.get("access_token"))
-        refresh_token = _safe_string(token_payload.get("refresh_token"))
-        id_token = _safe_string(token_payload.get("id_token"))
-        if not access_token or not refresh_token:
-            raise QfError("CODEX_CHATGPT_LOGIN_FAILED", "ChatGPT token exchange was incomplete.", 502)
-    except QfError:
-        with session.begin():
-            locked = _locked_login_attempt(session, login_id)
-            if locked is not None and locked.state == LOGIN_PENDING:
-                locked.state = LOGIN_FAILED
-                locked.error_code = "token_exchange_failed"
+        try:
+            with session.begin():
+                locked = _locked_login_attempt(session, login_id)
+                if locked is None:
+                    raise QfError("CODEX_CHATGPT_LOGIN_NOT_FOUND", "ChatGPT login attempt was not found.", 404)
+                current = now()
+                if locked.state != LOGIN_PENDING:
+                    return _terminal_result(locked)
+                if _aware(locked.expires_at) <= current:
+                    locked.state = LOGIN_EXPIRED
+                    locked.error_code = "expired"
+                    _clear_attempt(locked)
+                    return _terminal_result(locked)
+                _install_bundle(
+                    session,
+                    settings,
+                    access_token=access_token,
+                    refresh_token=refresh_token,
+                    id_token=id_token,
+                    response=token_payload,
+                    authenticated_at=current,
+                )
+                session.flush()
+                locked.state = LOGIN_SUCCEEDED
+                locked.error_code = None
                 _clear_attempt(locked)
-        return DeviceLoginPollResult(status=LOGIN_FAILED, error_code="token_exchange_failed")
-    except _OAuthFailure as exc:
-        if exc.kind == "transient":
-            if exc.retry_after is not None:
-                with session.begin():
-                    locked = _locked_login_attempt(session, login_id)
-                    if locked is not None and locked.state == LOGIN_PENDING:
-                        locked.next_poll_at = max(
-                            _aware(locked.next_poll_at),
-                            now() + timedelta(seconds=exc.retry_after),
-                        )
-            return DeviceLoginPollResult(status=LOGIN_PENDING, expires_at=expires_at, poll_after_seconds=interval)
-        with session.begin():
-            locked = _locked_login_attempt(session, login_id)
-            if locked is not None and locked.state == LOGIN_PENDING:
-                locked.state = LOGIN_FAILED
-                locked.error_code = "token_exchange_failed"
-                _clear_attempt(locked)
-        return DeviceLoginPollResult(status=LOGIN_FAILED, error_code="token_exchange_failed")
-
-    try:
-        with session.begin():
-            locked = _locked_login_attempt(session, login_id)
-            if locked is None:
-                raise QfError("CODEX_CHATGPT_LOGIN_NOT_FOUND", "ChatGPT login attempt was not found.", 404)
-            current = now()
-            if locked.state != LOGIN_PENDING:
-                return _terminal_result(locked)
-            if _aware(locked.expires_at) <= current:
-                locked.state = LOGIN_EXPIRED
-                locked.error_code = "expired"
-                _clear_attempt(locked)
-                return _terminal_result(locked)
-            _install_bundle(
-                session,
-                settings,
-                access_token=access_token,
-                refresh_token=refresh_token,
-                id_token=id_token,
-                response=token_payload,
-                authenticated_at=current,
-            )
-            session.flush()
-            locked.state = LOGIN_SUCCEEDED
-            locked.error_code = None
-            _clear_attempt(locked)
-            append_event(
-                session,
-                kind="CODEX_CHATGPT_AUTH_CONNECTED",
-                aggregate_type="CODEX_CHATGPT_AUTH",
-                aggregate_id=login_id,
-                payload={"auth_mode": "CHATGPT"},
-                actor_kind="LOCAL_OPERATOR",
-            )
-            return DeviceLoginPollResult(
-                status=LOGIN_SUCCEEDED,
-                auth=auth_status(session, settings),
-                transitioned=True,
-            )
-    except QfError as exc:
-        if exc.code == "CODEX_CHATGPT_LOGIN_NOT_FOUND":
-            raise
-        with session.begin():
-            locked = _locked_login_attempt(session, login_id)
-            if locked is not None and locked.state == LOGIN_PENDING:
-                locked.state = LOGIN_FAILED
-                locked.error_code = "credential_install_failed"
-                _clear_attempt(locked)
-        return DeviceLoginPollResult(status=LOGIN_FAILED, error_code="credential_install_failed")
+                append_event(
+                    session,
+                    kind="CODEX_CHATGPT_AUTH_CONNECTED",
+                    aggregate_type="CODEX_CHATGPT_AUTH",
+                    aggregate_id=login_id,
+                    payload={"auth_mode": "CHATGPT"},
+                    actor_kind="LOCAL_OPERATOR",
+                )
+                return DeviceLoginPollResult(
+                    status=LOGIN_SUCCEEDED,
+                    auth=auth_status(session, settings),
+                    transitioned=True,
+                )
+        except QfError as exc:
+            if exc.code == "CODEX_CHATGPT_LOGIN_NOT_FOUND":
+                raise
+            with session.begin():
+                locked = _locked_login_attempt(session, login_id)
+                if locked is not None and locked.state == LOGIN_PENDING:
+                    locked.state = LOGIN_FAILED
+                    locked.error_code = "credential_install_failed"
+                    _clear_attempt(locked)
+            return DeviceLoginPollResult(status=LOGIN_FAILED, error_code="credential_install_failed")
     finally:
         try:
             if owned and client is not None:
