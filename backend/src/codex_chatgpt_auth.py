@@ -57,6 +57,7 @@ OAUTH_HTTP_TIMEOUT_SECONDS = 30
 APP_SERVER_REFRESH_HTTP_TIMEOUT_SECONDS = 5
 ACCESS_TOKEN_FALLBACK_TTL_SECONDS = 300
 MAX_POLL_INTERVAL_SECONDS = 3600
+POLL_LEASE_SECONDS = OAUTH_HTTP_TIMEOUT_SECONDS * 2 + 5
 
 _ACCOUNT_ID_CLAIMS = (
     "chatgpt_account_id",
@@ -365,6 +366,7 @@ def _clear_attempt(attempt: CodexChatgptLoginAttempt) -> None:
     attempt.device_auth_id_nonce = None
     attempt.device_auth_id_key_version = None
     attempt.user_code = None
+    attempt.poll_lease_until = None
 
 
 def _attempt_view(
@@ -385,6 +387,26 @@ def _attempt_view(
     )
 
 
+def _connected_auth_usable(
+    auth: CodexChatgptAuthConfiguration,
+    settings: Settings,
+) -> bool:
+    """Check that a CONNECTED row still has decryptable credentials."""
+    try:
+        _bundle_from_auth(auth, settings)
+        _decrypt(
+            auth.refresh_token_ciphertext,
+            auth.refresh_token_nonce,
+            auth.refresh_token_key_version,
+            auth_id=auth.id,
+            field="refresh_token",
+            settings=settings,
+        )
+    except (QfError, SettingsError):
+        return False
+    return True
+
+
 def _install_bundle(
     session: Session,
     settings: Settings,
@@ -396,7 +418,10 @@ def _install_bundle(
     authenticated_at: datetime,
 ) -> CodexChatgptAuthConfiguration:
     auth = get_auth_configuration(session, for_update=True)
-    if auth is None:
+    if auth is None or auth.state == CHATGPT_AUTH_REAUTH_REQUIRED or not _connected_auth_usable(auth, settings):
+        if auth is not None:
+            session.delete(auth)
+            session.flush()
         auth = CodexChatgptAuthConfiguration(
             id=uuid4(), scope=SYSTEM_SCOPE, state=CHATGPT_AUTH_CONNECTED, token_generation=1
         )
@@ -439,7 +464,7 @@ def start_device_login(
     _lock_auth_operations(session)
     current = now()
     auth = get_auth_configuration(session)
-    if auth is not None and auth.state == CHATGPT_AUTH_CONNECTED:
+    if auth is not None and auth.state == CHATGPT_AUTH_CONNECTED and _connected_auth_usable(auth, settings):
         raise QfError("CODEX_CHATGPT_ALREADY_CONNECTED", "ChatGPT is already connected.", 409)
     pending = get_pending_attempt(session, for_update=True)
     if pending is not None:
@@ -509,10 +534,14 @@ def start_device_login(
 
 def _pending_result(attempt: CodexChatgptLoginAttempt, *, now: datetime) -> DeviceLoginPollResult:
     remaining = max(1, int((_aware(attempt.expires_at) - now).total_seconds()))
+    wait_until = _aware(attempt.next_poll_at)
+    if attempt.poll_lease_until is not None:
+        wait_until = max(wait_until, _aware(attempt.poll_lease_until))
+    wait_seconds = max(1, int((wait_until - now).total_seconds()))
     return DeviceLoginPollResult(
         status=LOGIN_PENDING,
         expires_at=_aware(attempt.expires_at),
-        poll_after_seconds=max(1, min(attempt.poll_interval_seconds, remaining)),
+        poll_after_seconds=max(1, min(wait_seconds, remaining)),
     )
 
 
@@ -570,6 +599,13 @@ def _poll_device(
     )
 
 
+def _release_poll_lease(session: Session, login_id: UUID) -> None:
+    with session.begin():
+        locked = _locked_login_attempt(session, login_id)
+        if locked is not None:
+            locked.poll_lease_until = None
+
+
 def poll_device_login(
     session: Session,
     settings: Settings,
@@ -601,6 +637,8 @@ def poll_device_login(
         _clear_attempt(attempt)
         session.commit()
         return _terminal_result(attempt)
+    if attempt.poll_lease_until is not None and _aware(attempt.poll_lease_until) > current:
+        return _pending_result(attempt, now=current)
     if _aware(attempt.next_poll_at) > current:
         return _pending_result(attempt, now=current)
     device_auth_id = _decrypt(
@@ -615,12 +653,15 @@ def poll_device_login(
         raise QfError("CODEX_CHATGPT_AUTH_CORRUPT", "Pending ChatGPT login is incomplete.", 503)
     user_code = attempt.user_code
     attempt.next_poll_at = current + timedelta(seconds=attempt.poll_interval_seconds)
+    attempt.poll_lease_until = current + timedelta(seconds=POLL_LEASE_SECONDS)
     interval = attempt.poll_interval_seconds
     expires_at = _aware(attempt.expires_at)
     session.commit()
 
-    client, owned = _http_client(http_client)
+    client = None
+    owned = False
     try:
+        client, owned = _http_client(http_client)
         try:
             upstream = _poll_device(client, device_auth_id=device_auth_id, user_code=user_code)
         except _OAuthFailure as exc:
@@ -711,9 +752,6 @@ def poll_device_login(
                 locked.error_code = "token_exchange_failed"
                 _clear_attempt(locked)
         return DeviceLoginPollResult(status=LOGIN_FAILED, error_code="token_exchange_failed")
-    finally:
-        if owned:
-            client.close()
 
     try:
         with session.begin():
@@ -764,6 +802,12 @@ def poll_device_login(
                 locked.error_code = "credential_install_failed"
                 _clear_attempt(locked)
         return DeviceLoginPollResult(status=LOGIN_FAILED, error_code="credential_install_failed")
+    finally:
+        try:
+            if owned and client is not None:
+                client.close()
+        finally:
+            _release_poll_lease(session, login_id)
 
 
 def cancel_device_login(session: Session, login_id: UUID) -> DeviceLoginPollResult:
@@ -856,19 +900,11 @@ def codex_auth_readiness(session: Session, settings: Settings) -> tuple[bool, st
         return ready, "CUSTOM_PROVIDER" if ready else "CUSTOM_PROVIDER_REAUTH_REQUIRED"
     auth = get_auth_configuration(session)
     if auth is not None and auth.state == CHATGPT_AUTH_CONNECTED:
-        try:
-            _bundle_from_auth(auth, settings)
-            _decrypt(
-                auth.refresh_token_ciphertext,
-                auth.refresh_token_nonce,
-                auth.refresh_token_key_version,
-                auth_id=auth.id,
-                field="refresh_token",
-                settings=settings,
-            )
-        except (QfError, SettingsError):
-            return False, CHATGPT_AUTH_REAUTH_REQUIRED
-        return True, CHATGPT_AUTH_CONNECTED
+        return (
+            (True, CHATGPT_AUTH_CONNECTED)
+            if _connected_auth_usable(auth, settings)
+            else (False, CHATGPT_AUTH_REAUTH_REQUIRED)
+        )
     if auth is not None and auth.state == CHATGPT_AUTH_REAUTH_REQUIRED:
         return False, CHATGPT_AUTH_REAUTH_REQUIRED
     return False, "DISCONNECTED"
@@ -878,6 +914,8 @@ def auth_status(session: Session, settings: Settings) -> dict[str, Any]:
     auth = get_auth_configuration(session)
     pending = get_pending_attempt(session)
     state = auth.state if auth is not None else "DISCONNECTED"
+    if auth is not None and auth.state == CHATGPT_AUTH_CONNECTED and not _connected_auth_usable(auth, settings):
+        state = CHATGPT_AUTH_REAUTH_REQUIRED
     return {
         "state": state,
         "active": state == CHATGPT_AUTH_CONNECTED and not _is_custom_provider(session, settings),
@@ -926,7 +964,10 @@ def remove_legacy_auth_file(settings: Settings) -> None:
     try:
         if path.is_symlink() or not path.is_file():
             raise OSError("legacy auth path is not a regular file")
-        path.unlink()
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
     except OSError as exc:
         raise QfError(
             "CODEX_LEGACY_AUTH_CLEANUP_FAILED",
@@ -988,6 +1029,8 @@ def initialize_codex_auth(factory: Any, settings: Settings) -> None:
     if should_cleanup and path.exists():
         try:
             path.unlink()
+        except FileNotFoundError:
+            pass
         except OSError as exc:
             raise QfError(
                 "CODEX_LEGACY_AUTH_CLEANUP_FAILED",

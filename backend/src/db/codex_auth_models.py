@@ -126,6 +126,7 @@ class CodexChatgptLoginAttempt(Base, TimestampMixin):
     poll_interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     next_poll_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    poll_lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_code: Mapped[str | None] = mapped_column(String(64))
 
 
