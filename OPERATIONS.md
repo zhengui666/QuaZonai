@@ -458,7 +458,7 @@ Linux Docker 部署还会在 `finite-worker` 启动检查中执行一次真实 C
 
 Codex API key 由 `QUAZONAI_MASTER_KEY` 使用 AES-256-GCM 加密后保存到 PostgreSQL。Secret/token 不在 Web 展示，也不写入事件 payload；运行时通过受信任 runner 的 one-shot credential broker 交给 Codex provider auth，不进入 App Server/Mission 环境变量。
 
-管理员可在同一 Runtime configuration 页面选择 **Sign in with ChatGPT**：打开固定的 OpenAI device authorization 页面，输入页面显示的短期 code，等待状态变为 Connected。浏览器只保留当前 dialog 的 code/login id 于内存；不会写入 Web Storage。Connected 账号可显示 email、plan 与刷新时间，但不会显示 account id 或任何 token。若 refresh token 被撤销，状态会变为 **Re-authentication required**；Disconnect 只删除本地凭据，不依赖远端 revoke 成功。旧 `auth.json` 导入在 DB commit 后自动删除；删除失败时 official Mission 会 fail closed，不能回退读文件。
+管理员可在同一 Runtime configuration 页面选择 **Sign in with ChatGPT**：打开固定的 OpenAI device authorization 页面，输入页面显示的短期 code，等待状态变为 Connected。浏览器只保留当前 dialog 的 code/login id 于内存；不会写入 Web Storage。Device login start 即使 direct access 开启也要求非 safelisted `application/json` 请求体，避免跨站 form/`no-cors` 反复触发持久化事件。Connected 账号可显示 email、plan 与刷新时间，但不会显示 account id 或任何 token。若 refresh token 被撤销，状态会变为 **Re-authentication required**；Disconnect 只删除本地凭据，不依赖远端 revoke 成功。旧 `auth.json` 导入在 DB commit 后自动删除；删除失败时 official Mission 会 fail closed，不能回退读文件。
 
 `.env` 只负责启动级基础设施与 Operator access：运行环境、PostgreSQL、master key、`QUAZONAI_AUTH_ENABLED`、Operator TOTP、browser cookie key、CLI machine token、public origin、存储根目录和 HTTP port。Codex model/API key/Base URL 不由 `.env` 配置。
 

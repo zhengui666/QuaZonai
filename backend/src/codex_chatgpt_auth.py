@@ -282,6 +282,7 @@ class DeviceLoginView:
     user_code: str
     expires_at: datetime
     poll_after_seconds: int
+    created: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -341,7 +342,11 @@ def _clear_attempt(attempt: CodexChatgptLoginAttempt) -> None:
     attempt.user_code = None
 
 
-def _attempt_view(attempt: CodexChatgptLoginAttempt) -> DeviceLoginView:
+def _attempt_view(
+    attempt: CodexChatgptLoginAttempt,
+    *,
+    created: bool = True,
+) -> DeviceLoginView:
     if not attempt.user_code:
         raise QfError("CODEX_CHATGPT_AUTH_CORRUPT", "Pending ChatGPT login is incomplete.", 503)
     return DeviceLoginView(
@@ -351,6 +356,7 @@ def _attempt_view(attempt: CodexChatgptLoginAttempt) -> DeviceLoginView:
         user_code=attempt.user_code,
         expires_at=_aware(attempt.expires_at),
         poll_after_seconds=attempt.poll_interval_seconds,
+        created=created,
     )
 
 
@@ -417,7 +423,7 @@ def start_device_login(
             _clear_attempt(pending)
             session.flush()
         else:
-            return _attempt_view(pending)
+            return _attempt_view(pending, created=False)
 
     client, owned = _http_client(http_client)
     try:
@@ -471,7 +477,7 @@ def start_device_login(
         existing = get_pending_attempt(session, for_update=True)
         if existing is None:
             raise QfError("CODEX_CHATGPT_LOGIN_FAILED", "ChatGPT login could not be started.", 503) from exc
-        return _attempt_view(existing)
+        return _attempt_view(existing, created=False)
     return _attempt_view(attempt)
 
 

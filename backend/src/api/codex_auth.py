@@ -69,6 +69,16 @@ def _no_store(response: Response) -> None:
     response.headers.update(_NO_STORE)
 
 
+def _require_json_request(request: Request) -> None:
+    media_type = request.headers.get("content-type", "").partition(";")[0].strip().casefold()
+    if media_type != "application/json":
+        raise QfError(
+            "CODEX_CHATGPT_JSON_REQUIRED",
+            "ChatGPT device login start requires an application/json request.",
+            415,
+        )
+
+
 @router.get("", response_model=CodexChatgptAuthStatus)
 def get_codex_auth(request: Request, response: Response) -> dict[str, Any]:
     _no_store(response)
@@ -82,18 +92,20 @@ def start_chatgpt_device_login(
     response: Response,
 ) -> DeviceLoginStartResponse:
     _no_store(response)
+    _require_json_request(request)
     factory = request.app.state.session_factory
     settings = request.app.state.settings
     with factory() as session:
         view = start_device_login(session, settings)
-        append_event(
-            session,
-            kind="CODEX_CHATGPT_AUTH_LOGIN_STARTED",
-            aggregate_type="CODEX_CHATGPT_AUTH",
-            aggregate_id=view.login_id,
-            payload={"auth_mode": "CHATGPT"},
-            actor_kind="LOCAL_OPERATOR",
-        )
+        if view.created:
+            append_event(
+                session,
+                kind="CODEX_CHATGPT_AUTH_LOGIN_STARTED",
+                aggregate_type="CODEX_CHATGPT_AUTH",
+                aggregate_id=view.login_id,
+                payload={"auth_mode": "CHATGPT"},
+                actor_kind="LOCAL_OPERATOR",
+            )
         session.commit()
     return DeviceLoginStartResponse(
         login_id=view.login_id,

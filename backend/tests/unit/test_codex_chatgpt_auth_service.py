@@ -57,6 +57,7 @@ def test_device_code_is_persisted_encrypted_and_refresh_rotates_atomically(engin
         view = start_device_login(session, settings, client, now=lambda: now)
         session.commit()
         assert view.user_code == "ABCD-EFGH"
+        assert view.created is True
         attempt = session.get(CodexChatgptLoginAttempt, view.login_id)
         assert attempt is not None
         assert attempt.device_auth_id_ciphertext != b"device-secret"
@@ -120,6 +121,27 @@ def test_late_device_poll_cannot_restore_a_cancelled_attempt(engine, settings) -
         result = poll_device_login(session, settings, view.login_id, client, now=lambda: now)
         assert result.status == LOGIN_CANCELLED
         assert get_auth_configuration(session) is None
+
+
+def test_reusing_pending_device_login_is_marked_without_creating_an_attempt(engine, settings) -> None:
+    now = datetime(2026, 9, 2, 1, 0, tzinfo=UTC)
+    factory = create_session_factory(engine)
+    start_client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={
+        "device_auth_id": "device-secret",
+        "user_code": "ABCD-EFGH",
+        "interval": 1,
+        "expires_in": 600,
+    })))
+    with factory() as session:
+        first = start_device_login(session, settings, start_client, now=lambda: now)
+        session.commit()
+
+    with factory() as session:
+        reused = start_device_login(session, settings, now=lambda: now)
+
+    assert first.created is True
+    assert reused.created is False
+    assert reused.login_id == first.login_id
 
 
 def test_device_poll_without_account_identity_is_terminal_failure(engine, settings) -> None:
