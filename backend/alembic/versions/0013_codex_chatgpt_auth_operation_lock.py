@@ -1,6 +1,6 @@
 """Add a durable singleton lock for ChatGPT auth operations.
 
-Revision ID: 0013_codex_chatgpt_auth_operation_lock
+Revision ID: 0013_codex_auth_operation_lock
 Revises: 0012_codex_chatgpt_auth
 """
 
@@ -11,7 +11,7 @@ from uuid import UUID
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0013_codex_chatgpt_auth_operation_lock"
+revision = "0013_codex_auth_operation_lock"
 down_revision = "0012_codex_chatgpt_auth"
 branch_labels = None
 depends_on = None
