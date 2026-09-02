@@ -17,6 +17,7 @@ from codex_chatgpt_auth import (
     remove_legacy_auth_file,
     start_device_login,
 )
+from codex_poll_guard import hold_device_poll_execution
 from errors import QfError
 from events import append_event
 
@@ -136,7 +137,12 @@ def poll_chatgpt_device_login(
     factory = request.app.state.session_factory
     settings = request.app.state.settings
     with factory() as session:
-        result = poll_device_login(session, settings, login_id)
+        # The durable poll lease remains the crash-recovery/backoff marker.
+        # This execution guard is the authoritative ownership primitive: it
+        # spans both upstream OAuth requests and credential installation, so a
+        # lease TTL expiring can never admit a concurrent device-code exchange.
+        with hold_device_poll_execution(session, login_id):
+            result = poll_device_login(session, settings, login_id)
     return DeviceLoginPollResponse(
         status=cast(Literal["PENDING", "SUCCEEDED", "CANCELLED", "EXPIRED", "FAILED"], result.status),
         expires_at=result.expires_at.isoformat() if result.expires_at else None,
