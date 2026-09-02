@@ -10,8 +10,8 @@ from sqlalchemy import Engine, select
 from api import codex_auth as codex_auth_api
 from codex_chatgpt_auth import DeviceLoginPollResult, DeviceLoginView
 from db.codex_auth_models import CodexChatgptLoginAttempt, LOGIN_PENDING
-from errors import QfError
 from db.models import Event
+from errors import QfError
 from main import create_app
 from settings import Settings
 
@@ -42,7 +42,10 @@ def test_legacy_auth_file_does_not_configure_runtime_without_valid_db_import(
 ) -> None:
     settings.codex_home.mkdir(parents=True, exist_ok=True)
     legacy = settings.codex_home / "auth.json"
-    legacy.write_text(json.dumps({"auth_mode": "api_key", "OPENAI_API_KEY": "not-a-chatgpt-token"}), encoding="utf-8")
+    legacy.write_text(
+        json.dumps({"auth_mode": "api_key", "OPENAI_API_KEY": "not-a-chatgpt-token"}),
+        encoding="utf-8",
+    )
     client = TestClient(create_app(settings=settings, engine=engine))
 
     status = client.get("/api/v1/system/codex-auth")
@@ -95,10 +98,29 @@ def test_device_start_requires_json_and_deduplicates_reused_attempt_event(
 
     rejected = client.post(path)
     assert rejected.status_code == 422
+    assert rejected.headers["cache-control"] == "no-store"
+    assert rejected.headers["pragma"] == "no-cache"
     assert calls == 0
 
     null_body = client.post(path, content="null", headers={"content-type": "application/json"})
     assert null_body.status_code == 422
+    assert null_body.headers["cache-control"] == "no-store"
+    assert null_body.headers["pragma"] == "no-cache"
+    assert calls == 0
+
+    secret = "refresh-token-must-never-be-reflected"
+    malformed = client.post(path, json={"refresh_token": secret})
+    assert malformed.status_code == 422
+    assert malformed.headers["cache-control"] == "no-store"
+    assert malformed.headers["pragma"] == "no-cache"
+    assert malformed.json() == {
+        "error": {
+            "code": "CODEX_CHATGPT_AUTH_INVALID_REQUEST",
+            "message": "ChatGPT authentication request is invalid.",
+            "details": {},
+        }
+    }
+    assert secret not in malformed.text
     assert calls == 0
 
     first = client.post(path, json={})
@@ -114,10 +136,18 @@ def test_device_start_requires_json_and_deduplicates_reused_attempt_event(
     assert len(events) == 1
 
 
-def test_terminal_success_poll_does_not_repeat_connected_event(engine: Engine, settings: Settings, monkeypatch) -> None:
+def test_terminal_success_poll_does_not_repeat_connected_event(
+    engine: Engine,
+    settings: Settings,
+    monkeypatch,
+) -> None:
     login_id = uuid4()
     result = DeviceLoginPollResult(status="SUCCEEDED", transitioned=False)
-    monkeypatch.setattr(codex_auth_api, "poll_device_login", lambda session, configured_settings, configured_login_id: result)
+    monkeypatch.setattr(
+        codex_auth_api,
+        "poll_device_login",
+        lambda session, configured_settings, configured_login_id: result,
+    )
     client = TestClient(create_app(settings=settings, engine=engine))
 
     response = client.post(f"/api/v1/system/codex-auth/chatgpt/device/{login_id}/poll")
