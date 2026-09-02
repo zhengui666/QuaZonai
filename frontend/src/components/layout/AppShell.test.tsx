@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useMutation } from '@tanstack/react-query';
 import { Route, Routes } from 'react-router-dom';
+import type { ReactNode } from 'react';
 import { AppShell } from './AppShell';
 import { localeLabels, localeOrder } from '../../i18n';
 import { renderApp } from '../../tests/testUtils';
@@ -11,16 +13,34 @@ const operatorAuth = vi.hoisted(() => ({
   logout: vi.fn(),
 }));
 
+const pwaState = vi.hoisted(() => ({
+  applyUpdate: vi.fn(async () => undefined),
+  canInstall: false,
+  install: vi.fn(async () => false),
+  isStandalone: false,
+  needRefresh: false,
+  updatePhase: 'idle' as 'idle' | 'available' | 'applying' | 'failed',
+}));
+
 vi.mock('../../auth/AuthGate', () => ({
   isLogoutError: (error: unknown) => typeof error === 'object' && error !== null && 'failure' in error,
   useOperatorAuth: () => operatorAuth,
 }));
 
-function renderShell() {
+vi.mock('../../pwa/PwaProvider', () => ({
+  usePwa: () => pwaState,
+}));
+
+function PendingMutationProbe() {
+  const mutation = useMutation({ mutationFn: async () => new Promise<void>(() => undefined) });
+  return <button onClick={() => mutation.mutate()}>Start mutation</button>;
+}
+
+function renderShell(outlet: ReactNode = <div>Workbench</div>) {
   return renderApp(
     <Routes>
       <Route element={<AppShell />}>
-        <Route index element={<div>Workbench</div>} />
+        <Route index element={outlet} />
       </Route>
     </Routes>,
     { route: '/', locale: 'en' },
@@ -30,6 +50,9 @@ function renderShell() {
 afterEach(() => {
   operatorAuth.authEnabled = false;
   operatorAuth.logout.mockReset();
+  pwaState.applyUpdate.mockReset();
+  pwaState.needRefresh = false;
+  pwaState.updatePhase = 'idle';
 });
 
 describe('AppShell locale picker', () => {
@@ -62,5 +85,25 @@ describe('AppShell locale picker', () => {
     operatorAuth.logout.mockRejectedValue({ failure: { kind: 'api', message: 'Sign-out policy denied.' } });
     await user.click(screen.getByRole('button', { name: 'تسجيل الخروج ونسيان هذا المتصفح' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Sign-out policy denied.');
+  });
+
+  it('keeps the manual update action reachable outside the mobile navigation', () => {
+    pwaState.needRefresh = true;
+    renderShell();
+
+    const updateButton = screen.getByRole('button', { name: 'Update now' });
+    expect(updateButton).toHaveClass('qz-pwa-desktop-update');
+    expect(updateButton.closest('.qz-mobile-nav')).toBeNull();
+    expect(updateButton.closest('.qz-topbar-actions')).not.toBeNull();
+  });
+
+  it('disables manual update while a mutation is active', async () => {
+    pwaState.needRefresh = true;
+    const user = userEvent.setup();
+    renderShell(<PendingMutationProbe />);
+
+    await user.click(screen.getByRole('button', { name: 'Start mutation' }));
+    expect(screen.getByRole('button', { name: 'Update now' })).toBeDisabled();
+    expect(pwaState.applyUpdate).not.toHaveBeenCalled();
   });
 });
