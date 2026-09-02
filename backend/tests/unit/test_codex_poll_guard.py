@@ -3,6 +3,8 @@ from __future__ import annotations
 from threading import Event, Thread
 from uuid import uuid4
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from codex_poll_guard import hold_device_poll_execution
 from db.session import create_session_factory
 
@@ -13,7 +15,7 @@ def test_same_login_poll_guard_outlives_any_lease_ttl(engine) -> None:  # type: 
     login_id = uuid4()
     attempting = Event()
     entered = Event()
-    errors: list[BaseException] = []
+    errors: list[SQLAlchemyError] = []
 
     def contender() -> None:
         try:
@@ -21,7 +23,7 @@ def test_same_login_poll_guard_outlives_any_lease_ttl(engine) -> None:  # type: 
                 attempting.set()
                 with hold_device_poll_execution(session, login_id):
                     entered.set()
-        except BaseException as exc:  # pragma: no cover - surfaced below
+        except SQLAlchemyError as exc:  # pragma: no cover - surfaced below
             errors.append(exc)
             entered.set()
 
