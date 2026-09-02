@@ -101,6 +101,16 @@ def install_error_handlers(app: FastAPI) -> None:
                 status_code=401,
                 headers=_NO_STORE_HEADERS,
             )
+        if request.url.path.startswith(_CODEX_AUTH_PATH_PREFIX):
+            # Codex authentication endpoints may carry or reject credential-shaped
+            # fields. Validation happens before endpoint-local no-store handling,
+            # so never use FastAPI's envelope here: it can reflect rejected input.
+            return _error_response(
+                code="CODEX_CHATGPT_AUTH_INVALID_REQUEST",
+                message="ChatGPT authentication request is invalid.",
+                status_code=422,
+                headers=_NO_STORE_HEADERS,
+            )
         if request.url.path == _RUNTIME_CONFIGURATION_PATH:
             # Runtime configuration accepts a write-only provider API key. Do
             # not let FastAPI's generic validation envelope reflect that input.
