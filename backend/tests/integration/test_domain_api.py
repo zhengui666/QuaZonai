@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import zipfile
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -396,7 +397,9 @@ def test_data_source_registration_updates_readiness(
     engine: Engine,
     settings: Settings,
 ) -> None:
-    client = _client(engine, settings)
+    # Research readiness now also requires an explicit Codex route. Use the
+    # existing custom-provider path so this test remains focused on data setup.
+    client = _client(engine, replace(settings, codex_api_key="test-api-key"))
     before = client.get("/api/v1/readiness")
     assert before.status_code == 200
     assert before.json()["RESEARCH_READY"] is False

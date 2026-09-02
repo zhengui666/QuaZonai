@@ -1145,7 +1145,7 @@ PostgreSQL 是业务事实源。Codex Thread/Turn/Item 只能作为执行上下�
 
 每个 RUNNING Mission 使用独立 Codex App Server child process：
 
-- 共享只读/受控 `CODEX_HOME` 认证与 thread persistence volume；
+- 共享只读/受控 `CODEX_HOME` thread persistence volume；官方 ChatGPT 认证不再以该目录为事实源；
 - 一个 Mission 对应一个 durable Codex Thread；
 - Mission crash 后可由新 child `thread/resume`；
 - child 退出即释放 shell、MCP 和文件句柄；
@@ -1205,8 +1205,18 @@ Codex provider 规则：
 - provider API key 不进入 App Server environment、命令行或 `--config`。受信任 Mission runner 只在内存中持有解密后的 key，通过 `0700` 临时目录下的 `0600` one-shot Unix socket broker 向 Codex 0.144.4 的 command-backed model-provider `auth` helper 交付一次 token；helper 在首个 provider request 前取用后 broker 关闭，Mission shell、MCP Tool Server、Agent output 与持久 event 均不得获得该 key；
 - App Server environment 必须显式清除 provider API key、`QUAZONAI_MASTER_KEY` 与数据库连接 secret，不能依赖普通 shell env filtering 作为 Secret 边界；
 - 已保存 provider key 时修改 `codex_base_url`，必须在同一 mutation 中重新输入 key 或显式清除旧 key，禁止把旧 credential 静默重绑定到新 endpoint；
-- 未配置 custom provider credential 时，可继续使用持久 `CODEX_HOME` 中的官方 Codex/ChatGPT 登录；
+- 未配置 custom provider credential 时，官方 ChatGPT 认证来自 PostgreSQL 中的 `CodexChatgptAuthConfiguration`，并在 Mission child 内以 App Server external auth 的短期内存 token 使用；
 - Web/API 只返回 `codex_api_key_configured` 状态，不回读 plaintext/ciphertext/nonce。
+
+### 30.2 ChatGPT Auth ownership
+
+ChatGPT OAuth 是独立于 Runtime Configuration 的认证域。`codex_chatgpt_auth_configurations` 是唯一长期事实源；`access_token` 与 `refresh_token` 均使用既有 `QUAZONAI_MASTER_KEY` 和按认证 UUID/字段/key version 绑定的 AES-GCM AAD 加密保存。OAuth refresh/login/disconnect 不推进 Runtime Configuration revision。
+
+首版只实现 OpenAI Device Code OAuth：Backend 固定官方 issuer、client id、verification URL 和 token endpoints；浏览器只短暂持有 `login_id`、`user_code` 与过期时间，永不收到 access/refresh/id token。Device login attempt 也持久化在 PostgreSQL，服务端限制 poll cadence，并以数据库锁保证 start、poll、cancel 和 disconnect 的竞态安全。
+
+Mission Runner 在启动官方 App Server 前，从 DB 解密或串行刷新 access token，再通过 pinned App Server 的 `account/login/start` `chatgptAuthTokens` 注入内存认证；401 的 `account/chatgptAuthTokens/refresh` server request 只由受信 parent 处理。refresh token 永不进入 Mission shell、环境变量、worktree、prompt、事件或 Codex config；App Server external-auth 路径不得创建 `auth.json`。custom provider/API key 与 ChatGPT route 是互斥的显式路由，禁止隐式 failover。
+
+`CODEX_HOME/auth.json` 只允许作为一次性 legacy import source：没有 canonical DB row 时，仅导入当前 pinned Codex 的完整 ChatGPT auth shape，成功提交 DB 后删除文件；数据库写入或清理失败均 fail closed。已有 DB row 时 DB 胜出并只尝试清理文件，文件不能覆盖 DB。`codex_login_configured`、readiness 和 Mission admission 只读取 DB 状态，不以文件存在作为登录证明。
 
 Runtime Configuration mutation 规则：
 
@@ -1811,9 +1821,9 @@ FastAPI 提供的 `index.html`、`sw.js`、`manifest.webmanifest` 使用 no-cach
 
 QZ 只管理研究数据源、Codex provider、Operator access 和下游 Handoff service credentials，不保存 broker/exchange trading credential。
 
-Provider/Data/Handoff secret 使用既有 AES-256-GCM + externally injected master key 边界；Operator TOTP binding 使用同一 master key、binding UUID/AAD 与独立 `OperatorAuthConfiguration` ciphertext/nonce。Operator browser cookie 使用 independently generated、externally injected `QUAZONAI_AUTH_COOKIE_KEY`。该 key 解码后不得与 `QUAZONAI_MASTER_KEY` 相同，不能复用 browser credential 作为业务 secret。API 永不回读 persisted plaintext/ciphertext/nonce。Operator setup candidate/URI/code/API token/cookie key 不得进入 Codex Mission shell、事件、日志或第三方服务；唯一例外是同源 setup start 的短暂浏览器响应与内存 UI 展示。
+Provider/Data/Handoff/ChatGPT Auth secret 使用既有 AES-256-GCM + externally injected master key 边界；Operator TOTP binding 使用同一 master key、binding UUID/AAD 与独立 `OperatorAuthConfiguration` ciphertext/nonce。Operator browser cookie 使用 independently generated、externally injected `QUAZONAI_AUTH_COOKIE_KEY`。该 key 解码后不得与 `QUAZONAI_MASTER_KEY` 相同，不能复用 browser credential 作为业务 secret。API 永不回读 persisted plaintext/ciphertext/nonce。Operator setup candidate/URI/code/API token/cookie key 不得进入 Codex Mission shell、事件、日志或第三方服务；ChatGPT access/refresh/id token、device auth id、authorization code、code verifier 和 user code 也不得进入这些边界；唯一例外是同源 setup/device start 的短暂浏览器响应与内存 UI 展示。
 
-Provider/Data/Handoff secret 不得进入 Codex Mission shell、Research Tool Server 或持久事件；Codex provider credential 只通过受信任 runner 的 one-shot broker 进入 Codex command-backed provider authentication，不能进入 App Server environment 或命令行。
+Provider/Data/Handoff/ChatGPT Auth secret 不得进入 Codex Mission shell、Research Tool Server 或持久事件；Codex provider credential 只通过受信任 runner 的 one-shot broker 进入 Codex command-backed provider authentication，ChatGPT access token 只通过 external auth 内存接口注入，不能进入 App Server environment 或命令行。
 
 ## 44. Sealed Evaluator isolation
 

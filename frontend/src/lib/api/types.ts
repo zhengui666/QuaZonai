@@ -228,6 +228,44 @@ export interface RuntimeConfigurationUpdate {
   job_lease_seconds: number;
 }
 
+export type CodexChatgptAuthState = 'DISCONNECTED' | 'CONNECTED' | 'REAUTH_REQUIRED';
+export type CodexChatgptLoginState = 'PENDING' | 'SUCCEEDED' | 'CANCELLED' | 'EXPIRED' | 'FAILED';
+
+export interface CodexChatgptPendingLogin {
+  login_id: UUID;
+  expires_at: string;
+  poll_after_seconds: number;
+}
+
+export interface CodexChatgptAuthStatus {
+  state: CodexChatgptAuthState;
+  active: boolean;
+  email: string | null;
+  plan_type: string | null;
+  authenticated_at: string | null;
+  last_refresh_at: string | null;
+  reauth_required_at: string | null;
+  pending_login: CodexChatgptPendingLogin | null;
+  legacy_auth_file_present: boolean;
+}
+
+export interface CodexChatgptDeviceLoginStart {
+  login_id: UUID;
+  status: 'PENDING';
+  verification_url: 'https://auth.openai.com/codex/device';
+  user_code: string;
+  expires_at: string;
+  poll_after_seconds: number;
+}
+
+export interface CodexChatgptDeviceLoginPoll {
+  status: CodexChatgptLoginState;
+  expires_at: string | null;
+  poll_after_seconds: number | null;
+  auth: CodexChatgptAuthStatus | null;
+  error_code: string | null;
+}
+
 export interface MarketUniverse { id: UUID; universe_key?: string; version_no?: number; name: string; state?: string; spec_json?: Record<string, unknown>; }
 export interface DatasetRevision { id: UUID; data_source_id?: UUID; universe_version_id?: UUID; universe_name?: string; revision_no?: number; schema_version?: string; event_start?: string; event_end?: string; available_start?: string; available_end?: string; row_count?: number; quality_state?: string; point_in_time_state?: string; partition?: 'DISCOVERY' | 'SEALED' | string; created_at?: string; }
 export interface DataSource { id: UUID; name: string; provider?: string; state: string; universe_scope?: string[] | UUID[]; fields?: string[]; update_cadence?: string; preflight_state?: string; }

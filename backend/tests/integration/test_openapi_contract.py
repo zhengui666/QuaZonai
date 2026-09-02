@@ -46,6 +46,11 @@ REQUIRED_PATHS = {
     "/api/v1/plugin-releases",
     "/api/v1/system/health",
     "/api/v1/system/runtime-configuration",
+    "/api/v1/system/codex-auth",
+    "/api/v1/system/codex-auth/chatgpt/device/start",
+    "/api/v1/system/codex-auth/chatgpt/device/{login_id}/poll",
+    "/api/v1/system/codex-auth/chatgpt/device/{login_id}",
+    "/api/v1/system/codex-auth/chatgpt",
 }
 
 FORBIDDEN_PREFIXES = (
@@ -87,3 +92,11 @@ def test_openapi_matches_research_intelligence_contract(
         request_schema["properties"]["codex_use_default_model_settings"]["type"]
         == "boolean"
     )
+    auth_schema_names = {name.casefold() for name in schema["components"]["schemas"]}
+    assert not {"accesstoken", "refreshtoken", "idtoken"} & auth_schema_names
+    auth_json = str(
+        [schema["paths"][path] for path in REQUIRED_PATHS if path.startswith("/api/v1/system/codex-auth")]
+    ).casefold()
+    assert "access_token" not in auth_json
+    assert "refresh_token" not in auth_json
+    assert "id_token" not in auth_json

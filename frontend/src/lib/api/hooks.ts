@@ -1,5 +1,5 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { apiRequest, jsonBody, normalizeList } from './client';
 import type {
   ActivityEvent,
@@ -22,12 +22,16 @@ import type {
   RuntimeConfigurationUpdate,
   SystemHealth,
   UUID,
+  CodexChatgptAuthStatus,
+  CodexChatgptDeviceLoginPoll,
+  CodexChatgptDeviceLoginStart,
 } from './types';
 
 const keys = {
   readiness: ['readiness'] as const,
   health: ['health'] as const,
   runtimeConfiguration: ['runtime-configuration'] as const,
+  codexAuth: ['codex-auth'] as const,
   programs: ['programs'] as const,
   program: (id: UUID) => ['program', id] as const,
   missions: (id: UUID) => ['missions', id] as const,
@@ -49,6 +53,53 @@ const keys = {
 export const useReadiness = () => useQuery({ queryKey: keys.readiness, queryFn: () => apiRequest<Readiness>('/api/v1/readiness'), refetchInterval: 15_000 });
 export const useHealth = () => useQuery({ queryKey: keys.health, queryFn: () => apiRequest<SystemHealth>('/api/v1/system/health'), refetchInterval: 15_000 });
 export const useRuntimeConfiguration = () => useQuery({ queryKey: keys.runtimeConfiguration, queryFn: () => apiRequest<RuntimeConfiguration>('/api/v1/system/runtime-configuration') });
+export function useCodexChatgptAuth() {
+  const client = useQueryClient();
+  const [deviceLogin, setDeviceLogin] = useState<CodexChatgptDeviceLoginStart | null>(null);
+  const auth = useQuery({ queryKey: keys.codexAuth, queryFn: () => apiRequest<CodexChatgptAuthStatus>('/api/v1/system/codex-auth'), refetchInterval: 15_000 });
+  const invalidateAuth = () => Promise.all([
+    client.invalidateQueries({ queryKey: keys.codexAuth }),
+    client.invalidateQueries({ queryKey: keys.runtimeConfiguration }),
+    client.invalidateQueries({ queryKey: keys.health }),
+    client.invalidateQueries({ queryKey: keys.readiness }),
+  ]);
+  const start = useMutation({
+    mutationFn: () => apiRequest<CodexChatgptDeviceLoginStart>('/api/v1/system/codex-auth/chatgpt/device/start', { method: 'POST', body: jsonBody({}), idempotent: true }),
+    onSuccess: (result) => setDeviceLogin(result),
+  });
+  const poll = useMutation({
+    mutationFn: (loginId: UUID) => apiRequest<CodexChatgptDeviceLoginPoll>(`/api/v1/system/codex-auth/chatgpt/device/${loginId}/poll`, { method: 'POST', body: jsonBody({}) }),
+    onSuccess: async (result) => {
+      if (result.status === 'PENDING' && deviceLogin) {
+        setDeviceLogin({ ...deviceLogin, expires_at: result.expires_at ?? deviceLogin.expires_at, poll_after_seconds: result.poll_after_seconds ?? deviceLogin.poll_after_seconds });
+      } else {
+        setDeviceLogin(null);
+        await invalidateAuth();
+      }
+    },
+  });
+  const pollMutate = useRef(poll.mutate);
+  pollMutate.current = poll.mutate;
+  const cancel = useMutation({
+    mutationFn: (loginId: UUID) => apiRequest<CodexChatgptDeviceLoginPoll>(`/api/v1/system/codex-auth/chatgpt/device/${loginId}`, { method: 'DELETE' }),
+    onSuccess: async () => { setDeviceLogin(null); await invalidateAuth(); },
+  });
+  const disconnect = useMutation({
+    mutationFn: () => apiRequest<CodexChatgptAuthStatus>('/api/v1/system/codex-auth/chatgpt', { method: 'DELETE' }),
+    onSuccess: async () => { setDeviceLogin(null); await invalidateAuth(); },
+  });
+  useEffect(() => {
+    if (!deviceLogin || document.visibilityState === 'hidden') return undefined;
+    const timer = window.setTimeout(() => pollMutate.current(deviceLogin.login_id), deviceLogin.poll_after_seconds * 1000);
+    return () => window.clearTimeout(timer);
+  }, [deviceLogin]);
+  useEffect(() => {
+    const resume = () => { if (document.visibilityState === 'visible') setDeviceLogin((current) => current ? { ...current } : current); };
+    document.addEventListener('visibilitychange', resume);
+    return () => document.removeEventListener('visibilitychange', resume);
+  }, []);
+  return { auth, deviceLogin, start, poll, cancel, disconnect };
+}
 export const usePrograms = () => useQuery({ queryKey: keys.programs, queryFn: async () => normalizeList(await apiRequest<ResearchProgram[] | { items: ResearchProgram[] }>('/api/v1/research-programs')) });
 export const useProgram = (id?: UUID) => useQuery({ queryKey: id ? keys.program(id) : ['program', 'none'], queryFn: () => apiRequest<ResearchProgram>(`/api/v1/research-programs/${id}`), enabled: Boolean(id) });
 export const useProgramMissions = (id?: UUID) => useQuery({ queryKey: id ? keys.missions(id) : ['missions', 'none'], queryFn: async () => normalizeList(await apiRequest<ResearchMission[] | { items: ResearchMission[] }>(`/api/v1/research-programs/${id}/missions`)), enabled: Boolean(id) });

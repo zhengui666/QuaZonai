@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import shutil
@@ -328,16 +329,61 @@ def _codex_service_tier(settings: Settings) -> str | None:
     return "fast" if settings.codex_fast_mode else None
 
 
+@contextmanager
+def _mission_codex_thread(
+    settings: Settings,
+    workspace: Path,
+    factory: Any,
+    *,
+    developer_instructions: str,
+) -> Iterator[Any]:
+    """Yield a Mission thread through exactly one explicit auth route."""
+    from openai_codex import ApprovalMode, Codex, Sandbox
+
+    if settings.codex_base_url or settings.codex_api_key:
+        with _provider_credential_broker(settings.codex_api_key) as credential_socket:
+            codex_config, model_provider = _codex_launch_configuration(
+                settings,
+                workspace,
+                credential_socket=credential_socket,
+            )
+            with Codex(codex_config) as codex:
+                yield codex.thread_start(
+                    approval_mode=ApprovalMode.deny_all,
+                    sandbox=Sandbox.workspace_write,
+                    cwd=str(workspace),
+                    model=settings.codex_model,
+                    model_provider=model_provider,
+                    service_tier=_codex_service_tier(settings),
+                    config=_codex_thread_config(settings),
+                    developer_instructions=developer_instructions,
+                )
+        return
+
+    from runners.codex_chatgpt_runtime import external_chatgpt_thread
+
+    codex_config, _ = _codex_launch_configuration(settings, workspace)
+    with external_chatgpt_thread(
+        codex_config,
+        settings=settings,
+        session_factory=factory,
+        workspace=workspace,
+        model=settings.codex_model,
+        service_tier=_codex_service_tier(settings),
+        thread_config=_codex_thread_config(settings),
+        developer_instructions=developer_instructions,
+    ) as thread:
+        yield thread
+
+
 def run_mission(settings: Settings, job_id: UUID) -> None:
     """Start app-server first, then atomically admit the Mission into RUNNING."""
-    try:
-        from openai_codex import ApprovalMode, Codex, Sandbox
-    except ImportError as exc:
+    if importlib.util.find_spec("openai_codex") is None:
         raise QfError(
             "CODEX_RUNTIME_UNAVAILABLE",
             "The official OpenAI Codex app-server SDK is not installed.",
             503,
-        ) from exc
+        )
 
     mission_id, program_id, context = _load_mission_context(settings, job_id)
     codex_sandbox_preflight()
@@ -348,77 +394,67 @@ def run_mission(settings: Settings, job_id: UUID) -> None:
     engine = create_database_engine(settings)
     factory = create_session_factory(engine)
     try:
-        with _provider_credential_broker(settings.codex_api_key) as credential_socket:
-            codex_config, model_provider = _codex_launch_configuration(
-                settings,
-                workspace,
-                credential_socket=credential_socket,
-            )
-            with Codex(codex_config) as codex:
-                thread = codex.thread_start(
-                    approval_mode=ApprovalMode.deny_all,
-                    sandbox=Sandbox.workspace_write,
-                    cwd=str(workspace),
-                    model=settings.codex_model,
-                    model_provider=model_provider,
-                    service_tier=_codex_service_tier(settings),
-                    config=_codex_thread_config(settings),
-                    developer_instructions=(
-                        "You are a QuaZonai Research Mission worker. Work only inside this Mission worktree. "
-                        "Read MISSION.md and perform the bounded research task. Always write durable findings "
-                        "to RESULT.md. For ALPHA_DISCOVERY, also write the typed EXPERIMENTS.json requested in "
-                        "MISSION.md. Every StrategyArtifact must contain complete importable strategy and "
-                        "config source matching its paths; never submit a placeholder, TODO, or ask the parent "
-                        "runtime to implement missing factor logic. Use only config values compatible with "
-                        "Nautilus types and numeric trade sizes. Do not invent performance, orders, fills, "
-                        "positions, PnL, or statistics. Before finishing, parse EXPERIMENTS.json with "
-                        "python -m json.tool and syntax-check every source file; fix malformed JSON or "
-                        "trailing commas before returning. Discovery strategies must submit genuine orders "
-                        "to the simulated venue when signals are executable; virtual-only counters and dummy "
-                        "orders are not acceptable runtime evidence. Use positional arguments "
-                        "(instrument_id, order_side, quantity) for Nautilus market orders; its binding may "
-                        "reject keyword arguments. "
-                        "The trusted parent executes experiments after your turn. Do not request approvals, "
-                        "access external networks, place trades, manage broker state, or alter the Charter."
-                    ),
-                )
-                with factory() as session, session.begin():
-                    mission = session.execute(
-                        select(ResearchMission)
-                        .where(ResearchMission.id == mission_id)
-                        .with_for_update()
-                    ).scalar_one()
-                    if mission.state != "READY":
-                        raise QfError(
-                            "MISSION_STATE_CONFLICT",
-                            "Mission state changed before Codex admission.",
-                            409,
-                            {"state": mission.state},
-                        )
-                    mission.state = "RUNNING"
-                    mission.started_at = _now()
-                    mission.codex_thread_id = thread.id
-                    mission.workspace_path = str(workspace)
-                    mission.summary = "Codex app-server admitted the Mission and started the research turn."
-                    _event(
-                        session,
-                        kind="MISSION_STARTED",
-                        program_id=program_id,
-                        mission_id=mission_id,
-                        payload={
-                            "codex_thread_id": thread.id,
-                            "requested_codex_model": settings.codex_model,
-                            "requested_codex_reasoning_effort": settings.codex_reasoning_effort,
-                            "requested_codex_fast_mode": settings.codex_fast_mode,
-                            "requested_codex_service_tier": _codex_service_tier(settings),
-                        },
+        developer_instructions = (
+            "You are a QuaZonai Research Mission worker. Work only inside this Mission worktree. "
+            "Read MISSION.md and perform the bounded research task. Always write durable findings "
+            "to RESULT.md. For ALPHA_DISCOVERY, also write the typed EXPERIMENTS.json requested in "
+            "MISSION.md. Every StrategyArtifact must contain complete importable strategy and "
+            "config source matching its paths; never submit a placeholder, TODO, or ask the parent "
+            "runtime to implement missing factor logic. Use only config values compatible with "
+            "Nautilus types and numeric trade sizes. Do not invent performance, orders, fills, "
+            "positions, PnL, or statistics. Before finishing, parse EXPERIMENTS.json with "
+            "python -m json.tool and syntax-check every source file; fix malformed JSON or "
+            "trailing commas before returning. Discovery strategies must submit genuine orders "
+            "to the simulated venue when signals are executable; virtual-only counters and dummy "
+            "orders are not acceptable runtime evidence. Use positional arguments "
+            "(instrument_id, order_side, quantity) for Nautilus market orders; its binding may "
+            "reject keyword arguments. "
+            "The trusted parent executes experiments after your turn. Do not request approvals, "
+            "access external networks, place trades, manage broker state, or alter the Charter."
+        )
+        with _mission_codex_thread(
+            settings,
+            workspace,
+            factory,
+            developer_instructions=developer_instructions,
+        ) as thread:
+            with factory() as session, session.begin():
+                mission = session.execute(
+                    select(ResearchMission)
+                    .where(ResearchMission.id == mission_id)
+                    .with_for_update()
+                ).scalar_one()
+                if mission.state != "READY":
+                    raise QfError(
+                        "MISSION_STATE_CONFLICT",
+                        "Mission state changed before Codex admission.",
+                        409,
+                        {"state": mission.state},
                     )
-
-                result = thread.run(
-                    "Execute the Mission in MISSION.md. Produce RESULT.md with assumptions, limitations, "
-                    "and next actions. For ALPHA_DISCOVERY, produce the required EXPERIMENTS.json without "
-                    "claiming results. Return a concise completion summary."
+                mission.state = "RUNNING"
+                mission.started_at = _now()
+                mission.codex_thread_id = thread.id
+                mission.workspace_path = str(workspace)
+                mission.summary = "Codex app-server admitted the Mission and started the research turn."
+                _event(
+                    session,
+                    kind="MISSION_STARTED",
+                    program_id=program_id,
+                    mission_id=mission_id,
+                    payload={
+                        "codex_thread_id": thread.id,
+                        "requested_codex_model": settings.codex_model,
+                        "requested_codex_reasoning_effort": settings.codex_reasoning_effort,
+                        "requested_codex_fast_mode": settings.codex_fast_mode,
+                        "requested_codex_service_tier": _codex_service_tier(settings),
+                    },
                 )
+
+            result = thread.run(
+                "Execute the Mission in MISSION.md. Produce RESULT.md with assumptions, limitations, "
+                "and next actions. For ALPHA_DISCOVERY, produce the required EXPERIMENTS.json without "
+                "claiming results. Return a concise completion summary."
+            )
 
         quant_result = execute_mission_experiments(
             settings,

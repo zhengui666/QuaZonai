@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from candidate_packages import build_candidate_package, resolve_package_archive
+from codex_chatgpt_auth import codex_auth_readiness
 from db.models import (
     AlphaQualification,
     ApprovalSnapshot,
@@ -1551,7 +1552,16 @@ def readiness(request: Request) -> dict[str, Any]:
     factory = request.app.state.session_factory
     with factory() as session:
         data_ready = bool(session.scalar(select(func.count()).select_from(GovernedDataSource).where(GovernedDataSource.state == "ACTIVE", GovernedDataSource.preflight_state == "READY")) or session.scalar(select(func.count()).select_from(DatasetRevision)))
+        codex_ready, codex_state = codex_auth_readiness(session, request.app.state.settings)
         paper_ready = bool(session.scalar(select(func.count()).select_from(DownstreamSystem).where(DownstreamSystem.environment_type == "PAPER", DownstreamSystem.enabled.is_(True), DownstreamSystem.preflight_state == "READY", DownstreamSystem.service_token_ciphertext.is_not(None))))
         live_downstream_ready = bool(session.scalar(select(func.count()).select_from(DownstreamSystem).where(DownstreamSystem.environment_type == "LIVE", DownstreamSystem.enabled.is_(True), DownstreamSystem.preflight_state == "READY", DownstreamSystem.service_token_ciphertext.is_not(None))))
         paper_feedback_ready = bool(session.scalar(select(func.count()).select_from(ForwardEvidenceEpisode).join(HandoffOffer, ForwardEvidenceEpisode.handoff_id == HandoffOffer.id).where(HandoffOffer.purpose == "PAPER", ForwardEvidenceEpisode.state == "FEEDBACK_COMPLETE")))
-        return {"SYSTEM_READY": True, "RESEARCH_READY": data_ready, "PAPER_HANDOFF_READY": paper_ready, "LIVE_HANDOFF_READY": live_downstream_ready and paper_feedback_ready}
+        return {
+            "SYSTEM_READY": True,
+            "RESEARCH_READY": data_ready and codex_ready,
+            "RESEARCH_READY_REASONS": [] if data_ready and codex_ready else [
+                reason for reason, missing in (("DATA_SOURCE_REQUIRED", not data_ready), (f"CODEX_AUTH_{codex_state}", not codex_ready)) if missing
+            ],
+            "PAPER_HANDOFF_READY": paper_ready,
+            "LIVE_HANDOFF_READY": live_downstream_ready and paper_feedback_ready,
+        }
