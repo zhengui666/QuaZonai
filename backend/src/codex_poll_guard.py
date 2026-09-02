@@ -2,41 +2,46 @@
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from threading import Lock
 from typing import cast
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 _LOCAL_GUARD_LOCK = Lock()
-_LOCAL_POLL_LOCKS: dict[UUID, Lock] = {}
 
 
-def _postgres_advisory_key(login_id: UUID) -> int:
-    """Map the full UUID to a stable signed 64-bit PostgreSQL advisory key."""
-    digest = hashlib.blake2b(login_id.bytes, digest_size=8, person=b"qz-poll").digest()
-    return int.from_bytes(digest, byteorder="big", signed=True)
+@dataclass(slots=True)
+class _LocalPollLock:
+    lock: Lock = field(default_factory=Lock)
+    users: int = 0
 
 
-def _local_lock(login_id: UUID) -> Lock:
+_LOCAL_POLL_LOCKS: dict[UUID, _LocalPollLock] = {}
+
+
+def _acquire_local_lock(login_id: UUID) -> _LocalPollLock:
+    """Acquire the non-PostgreSQL fallback without dropping queued waiters."""
     with _LOCAL_GUARD_LOCK:
-        lock = _LOCAL_POLL_LOCKS.get(login_id)
-        if lock is None:
-            lock = Lock()
-            _LOCAL_POLL_LOCKS[login_id] = lock
-        return lock
+        entry = _LOCAL_POLL_LOCKS.get(login_id)
+        if entry is None:
+            entry = _LocalPollLock()
+            _LOCAL_POLL_LOCKS[login_id] = entry
+        entry.users += 1
+    entry.lock.acquire()
+    return entry
 
 
-def _release_local_lock(login_id: UUID, lock: Lock) -> None:
-    lock.release()
+def _release_local_lock(login_id: UUID, entry: _LocalPollLock) -> None:
+    entry.lock.release()
     with _LOCAL_GUARD_LOCK:
-        if _LOCAL_POLL_LOCKS.get(login_id) is lock and not lock.locked():
+        entry.users -= 1
+        if entry.users == 0 and _LOCAL_POLL_LOCKS.get(login_id) is entry:
             _LOCAL_POLL_LOCKS.pop(login_id, None)
 
 
@@ -44,40 +49,49 @@ def _release_local_lock(login_id: UUID, lock: Lock) -> None:
 def hold_device_poll_execution(session: Session, login_id: UUID) -> Iterator[None]:
     """Serialize one login's upstream poll/exchange for the full HTTP operation.
 
-    PostgreSQL uses a session-level advisory lock on a dedicated autocommit
-    connection. The lock is independent of the durable poll-lease TTL and is
-    held until the entire upstream poll/exchange/install call returns. If the
-    worker process dies, PostgreSQL releases the advisory lock with the lost
-    connection. SQLite/non-PostgreSQL test runtimes use a process-local lock.
+    PostgreSQL uses a dedicated transaction that locks a row whose primary key
+    is the complete login UUID. The row lock is independent of the durable
+    poll-lease TTL and is held until the entire upstream poll/exchange/install
+    call returns. A lost database connection rolls the transaction back and
+    releases the lock. SQLite/non-PostgreSQL test runtimes use a process-local
+    keyed lock with waiter reference counting.
     """
     bind = session.get_bind()
     engine = cast(Engine, getattr(bind, "engine", bind))
     if engine.dialect.name != "postgresql":
-        lock = _local_lock(login_id)
-        lock.acquire()
+        entry = _acquire_local_lock(login_id)
         try:
             yield
         finally:
-            _release_local_lock(login_id, lock)
+            _release_local_lock(login_id, entry)
         return
 
-    key = _postgres_advisory_key(login_id)
-    connection = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
-    locked = False
-    try:
-        connection.execute(text("SELECT pg_advisory_lock(:key)"), {"key": key})
-        locked = True
-        yield
-    finally:
-        if locked:
-            try:
-                connection.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": key})
-            except SQLAlchemyError:
-                # A lost PostgreSQL connection has already released its
-                # session-level locks. Invalidate it so a locked/broken
-                # physical connection can never be returned to the pool.
-                connection.invalidate()
-        connection.close()
+    with engine.connect() as connection:
+        with connection.begin():
+            # Create the exact-UUID lock row only for a real durable login
+            # attempt. Concurrent inserts for the same UUID serialize on the
+            # primary-key constraint; existing rows are then locked below.
+            connection.execute(
+                text(
+                    "INSERT INTO codex_chatgpt_poll_locks (login_id) "
+                    "SELECT id FROM codex_chatgpt_login_attempts WHERE id = :login_id "
+                    "ON CONFLICT (login_id) DO NOTHING"
+                ),
+                {"login_id": login_id},
+            )
+            locked_login_id = connection.execute(
+                text(
+                    "SELECT login_id FROM codex_chatgpt_poll_locks "
+                    "WHERE login_id = :login_id FOR UPDATE"
+                ),
+                {"login_id": login_id},
+            ).scalar_one_or_none()
+            if locked_login_id is None:
+                # Unknown IDs never reach an upstream OAuth operation, so no
+                # durable guard row is created merely by probing the endpoint.
+                yield
+                return
+            yield
 
 
 __all__ = ["hold_device_poll_execution"]
