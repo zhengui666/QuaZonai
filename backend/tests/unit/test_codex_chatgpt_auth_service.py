@@ -5,11 +5,15 @@ import json
 from datetime import UTC, datetime, timedelta
 
 import httpx
+import pytest
 
 from codex_chatgpt_auth import (
     DEVICE_AUTH_TOKEN_URL,
     DEVICE_AUTH_USERCODE_URL,
     OAUTH_TOKEN_URL,
+    _install_bundle,
+    codex_auth_readiness,
+    disconnect_chatgpt,
     get_auth_configuration,
     get_valid_access_bundle,
     poll_device_login,
@@ -17,6 +21,7 @@ from codex_chatgpt_auth import (
 )
 from db.codex_auth_models import CodexChatgptLoginAttempt, LOGIN_CANCELLED, LOGIN_FAILED
 from db.session import create_session_factory
+from errors import QfError
 
 
 def _jwt(claims: dict[str, object]) -> str:
@@ -66,6 +71,7 @@ def test_device_code_is_persisted_encrypted_and_refresh_rotates_atomically(engin
         session.commit()
         result = poll_device_login(session, settings, view.login_id, client, now=lambda: now)
         assert result.status == "SUCCEEDED"
+        assert result.transitioned is True
         auth = get_auth_configuration(session)
         assert auth is not None
         assert auth.chatgpt_account_id == "acct-1"
@@ -176,3 +182,97 @@ def test_device_poll_without_account_identity_is_terminal_failure(engine, settin
         assert attempt.state == LOGIN_FAILED
         assert attempt.user_code is None
         assert get_auth_configuration(session) is None
+
+
+def test_slow_down_persists_backoff_and_moves_next_poll_time(engine, settings) -> None:
+    now = datetime(2026, 9, 2, 1, 0, tzinfo=UTC)
+    factory = create_session_factory(engine)
+    start_client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={
+        "device_auth_id": "device-secret",
+        "user_code": "ABCD-EFGH",
+        "interval": 1,
+        "expires_in": 600,
+    })))
+    with factory() as session:
+        view = start_device_login(session, settings, start_client, now=lambda: now)
+        session.commit()
+        attempt = session.get(CodexChatgptLoginAttempt, view.login_id)
+        assert attempt is not None
+        original_interval = attempt.poll_interval_seconds
+        attempt.next_poll_at = now - timedelta(seconds=1)
+        session.commit()
+
+    slow_client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(400, json={"error": "slow_down"})))
+    with factory() as session:
+        result = poll_device_login(session, settings, view.login_id, slow_client, now=lambda: now)
+        attempt = session.get(CodexChatgptLoginAttempt, view.login_id)
+        assert result.status == "PENDING"
+        assert result.poll_after_seconds == original_interval + 5
+        assert attempt is not None
+        assert attempt.poll_interval_seconds == original_interval + 5
+        assert attempt.next_poll_at.replace(tzinfo=UTC) >= now + timedelta(seconds=original_interval + 5) - timedelta(microseconds=1)
+
+
+def test_readiness_rejects_connected_auth_with_undecryptable_refresh_token(engine, settings) -> None:
+    now = datetime(2026, 9, 2, 1, 0, tzinfo=UTC)
+    access_token = _jwt({"chatgpt_account_id": "acct-1"})
+    factory = create_session_factory(engine)
+    with factory() as session:
+        _install_bundle(
+            session,
+            settings,
+            access_token=access_token,
+            refresh_token="refresh-secret",
+            id_token=None,
+            response={"access_token": access_token},
+            authenticated_at=now,
+        )
+        session.commit()
+        auth = get_auth_configuration(session)
+        assert auth is not None
+        auth.refresh_token_ciphertext = b"corrupt"
+        session.commit()
+
+    with factory() as session:
+        assert codex_auth_readiness(session, settings) == (False, "REAUTH_REQUIRED")
+
+
+def test_access_bundle_rejects_replaced_canonical_auth_row(engine, settings) -> None:
+    now = datetime(2026, 9, 2, 1, 0, tzinfo=UTC)
+    access_a = _jwt({"chatgpt_account_id": "acct-a"})
+    access_b = _jwt({"chatgpt_account_id": "acct-b"})
+    factory = create_session_factory(engine)
+    with factory() as session:
+        _install_bundle(
+            session,
+            settings,
+            access_token=access_a,
+            refresh_token="refresh-a",
+            id_token=None,
+            response={"access_token": access_a},
+            authenticated_at=now,
+        )
+        session.commit()
+        bundle_a = get_valid_access_bundle(session, settings, now=lambda: now)
+        disconnect_chatgpt(session)
+        _install_bundle(
+            session,
+            settings,
+            access_token=access_b,
+            refresh_token="refresh-b",
+            id_token=None,
+            response={"access_token": access_b},
+            authenticated_at=now,
+        )
+        session.commit()
+
+    with factory() as session:
+        with pytest.raises(QfError) as error:
+            get_valid_access_bundle(
+                session,
+                settings,
+                expected_auth_id=bundle_a.auth_id,
+                expected_account_id=bundle_a.chatgpt_account_id,
+                now=lambda: now,
+            )
+        assert error.value.code == "CODEX_CHATGPT_AUTH_REAUTH_REQUIRED"

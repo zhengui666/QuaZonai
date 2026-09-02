@@ -13,6 +13,7 @@ from codex_chatgpt_auth import (
     cancel_device_login,
     disconnect_chatgpt,
     poll_device_login,
+    remove_legacy_auth_file,
     start_device_login,
 )
 from errors import QfError
@@ -128,7 +129,7 @@ def poll_chatgpt_device_login(
     settings = request.app.state.settings
     with factory() as session:
         result = poll_device_login(session, settings, login_id)
-    if result.status == "SUCCEEDED":
+    if result.status == "SUCCEEDED" and result.transitioned:
         with factory.begin() as session:
             append_event(
                 session,
@@ -177,6 +178,7 @@ def cancel_chatgpt_device_login(
 def disconnect_chatgpt_auth(request: Request, response: Response) -> dict[str, Any]:
     _no_store(response)
     settings = request.app.state.settings
+    remove_legacy_auth_file(settings)
     with request.app.state.session_factory() as session:
         disconnect_chatgpt(session)
         append_event(
@@ -188,16 +190,6 @@ def disconnect_chatgpt_auth(request: Request, response: Response) -> dict[str, A
             actor_kind="LOCAL_OPERATOR",
         )
         session.commit()
-    try:
-        legacy_path = settings.codex_home / "auth.json"
-        if legacy_path.exists():
-            legacy_path.unlink()
-    except OSError as exc:
-        raise QfError(
-            "CODEX_LEGACY_AUTH_CLEANUP_FAILED",
-            "The legacy Codex auth file could not be removed; official Codex login is disabled.",
-            503,
-        ) from exc
     with request.app.state.session_factory() as session:
         return auth_status(session, settings)
 

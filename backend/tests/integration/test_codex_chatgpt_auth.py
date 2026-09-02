@@ -8,7 +8,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select
 
 from api import codex_auth as codex_auth_api
-from codex_chatgpt_auth import DeviceLoginView
+from codex_chatgpt_auth import DeviceLoginPollResult, DeviceLoginView
+from errors import QfError
 from db.models import Event
 from main import create_app
 from settings import Settings
@@ -107,3 +108,49 @@ def test_device_start_requires_json_and_deduplicates_reused_attempt_event(
             select(Event).where(Event.kind == "CODEX_CHATGPT_AUTH_LOGIN_STARTED")
         ).all()
     assert len(events) == 1
+
+
+def test_terminal_success_poll_does_not_repeat_connected_event(engine: Engine, settings: Settings, monkeypatch) -> None:
+    login_id = uuid4()
+    result = DeviceLoginPollResult(status="SUCCEEDED", transitioned=False)
+    monkeypatch.setattr(codex_auth_api, "poll_device_login", lambda session, configured_settings, configured_login_id: result)
+    client = TestClient(create_app(settings=settings, engine=engine))
+
+    response = client.post(f"/api/v1/system/codex-auth/chatgpt/device/{login_id}/poll")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "SUCCEEDED"
+    with engine.connect() as connection:
+        events = connection.execute(
+            select(Event).where(Event.kind == "CODEX_CHATGPT_AUTH_CONNECTED")
+        ).all()
+    assert events == []
+
+
+def test_disconnect_keeps_database_state_when_legacy_cleanup_fails(
+    engine: Engine,
+    settings: Settings,
+    monkeypatch,
+) -> None:
+    settings.codex_home.mkdir(parents=True, exist_ok=True)
+    legacy = settings.codex_home / "auth.json"
+    legacy.write_text("legacy", encoding="utf-8")
+    disconnect_calls = 0
+
+    def fail_cleanup(configured_settings):
+        raise QfError("CODEX_LEGACY_AUTH_CLEANUP_FAILED", "cleanup failed", 503)
+
+    def record_disconnect(session):
+        nonlocal disconnect_calls
+        disconnect_calls += 1
+
+    monkeypatch.setattr(codex_auth_api, "remove_legacy_auth_file", fail_cleanup)
+    monkeypatch.setattr(codex_auth_api, "disconnect_chatgpt", record_disconnect)
+    client = TestClient(create_app(settings=settings, engine=engine))
+
+    response = client.delete("/api/v1/system/codex-auth/chatgpt")
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "CODEX_LEGACY_AUTH_CLEANUP_FAILED"
+    assert disconnect_calls == 0
+    assert legacy.is_file()

@@ -38,7 +38,7 @@ from db.codex_auth_models import (
 from db.models import RuntimeConfiguration
 from errors import QfError
 from runtime_config import codex_api_key_configured
-from settings import Settings
+from settings import Settings, SettingsError
 
 logger = logging.getLogger(__name__)
 
@@ -292,10 +292,12 @@ class DeviceLoginPollResult:
     poll_after_seconds: int | None = None
     auth: dict[str, Any] | None = None
     error_code: str | None = None
+    transitioned: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class CodexChatgptAccessBundle:
+    auth_id: UUID
     access_token: str
     chatgpt_account_id: str
     plan_type: str | None
@@ -591,10 +593,24 @@ def poll_device_login(
             upstream = _poll_device(client, device_auth_id=device_auth_id, user_code=user_code)
         except _OAuthFailure as exc:
             if exc.kind == "pending":
+                poll_after_seconds = interval
+                if exc.code == "slow_down":
+                    with session.begin():
+                        locked = _locked_login_attempt(session, login_id)
+                        if locked is not None and locked.state == LOGIN_PENDING:
+                            locked.poll_interval_seconds = min(
+                                MAX_POLL_INTERVAL_SECONDS,
+                                locked.poll_interval_seconds + 5,
+                            )
+                            locked.next_poll_at = max(
+                                _aware(locked.next_poll_at),
+                                now() + timedelta(seconds=locked.poll_interval_seconds),
+                            )
+                            poll_after_seconds = locked.poll_interval_seconds
                 return DeviceLoginPollResult(
                     status=LOGIN_PENDING,
                     expires_at=expires_at,
-                    poll_after_seconds=interval,
+                    poll_after_seconds=poll_after_seconds,
                 )
             if exc.kind == "expired":
                 with session.begin():
@@ -696,6 +712,7 @@ def poll_device_login(
             return DeviceLoginPollResult(
                 status=LOGIN_SUCCEEDED,
                 auth=auth_status(session, settings),
+                transitioned=True,
             )
     except QfError as exc:
         if exc.code == "CODEX_CHATGPT_LOGIN_NOT_FOUND":
@@ -762,6 +779,18 @@ def codex_auth_readiness(session: Session, settings: Settings) -> tuple[bool, st
         return True, "CUSTOM_PROVIDER"
     auth = get_auth_configuration(session)
     if auth is not None and auth.state == CHATGPT_AUTH_CONNECTED:
+        try:
+            _bundle_from_auth(auth, settings)
+            _decrypt(
+                auth.refresh_token_ciphertext,
+                auth.refresh_token_nonce,
+                auth.refresh_token_key_version,
+                auth_id=auth.id,
+                field="refresh_token",
+                settings=settings,
+            )
+        except (QfError, SettingsError):
+            return False, CHATGPT_AUTH_REAUTH_REQUIRED
         return True, CHATGPT_AUTH_CONNECTED
     if auth is not None and auth.state == CHATGPT_AUTH_REAUTH_REQUIRED:
         return False, CHATGPT_AUTH_REAUTH_REQUIRED
@@ -810,6 +839,23 @@ def _valid_chatgpt_tokens(document: object) -> tuple[str, str, str | None] | Non
 
 def _legacy_auth_path(settings: Settings) -> Path:
     return settings.codex_home / "auth.json"
+
+
+def remove_legacy_auth_file(settings: Settings) -> None:
+    """Remove the legacy auth source, failing closed for unsafe cleanup."""
+    path = _legacy_auth_path(settings)
+    if not path.exists():
+        return
+    try:
+        if path.is_symlink() or not path.is_file():
+            raise OSError("legacy auth path is not a regular file")
+        path.unlink()
+    except OSError as exc:
+        raise QfError(
+            "CODEX_LEGACY_AUTH_CLEANUP_FAILED",
+            "The legacy Codex auth file could not be removed; official Codex login is disabled.",
+            503,
+        ) from exc
 
 
 def _read_legacy_auth(path: Path) -> tuple[str, str, str | None, Mapping[str, Any]] | None:
@@ -884,6 +930,7 @@ def _bundle_from_auth(auth: CodexChatgptAuthConfiguration, settings: Settings) -
         settings=settings,
     )
     return CodexChatgptAccessBundle(
+        auth_id=auth.id,
         access_token=token,
         chatgpt_account_id=auth.chatgpt_account_id,
         plan_type=auth.plan_type,
@@ -899,13 +946,35 @@ def get_valid_access_bundle(
     *,
     force_refresh: bool = False,
     observed_generation: int | None = None,
+    expected_auth_id: UUID | None = None,
+    expected_account_id: str | None = None,
     now: Callable[[], datetime] = _now,
 ) -> CodexChatgptAccessBundle:
     """Return an access token, serializing refreshes on the auth DB row."""
     current = now()
     auth = get_auth_configuration(session)
-    if auth is None or auth.state != CHATGPT_AUTH_CONNECTED:
+    if auth is None:
+        if expected_auth_id is not None:
+            raise QfError(
+                "CODEX_CHATGPT_AUTH_REAUTH_REQUIRED",
+                "The ChatGPT authentication used by this Mission is no longer available.",
+                503,
+            )
         raise QfError("CODEX_CHATGPT_AUTH_REQUIRED", "ChatGPT authentication is required.", 503)
+    if auth.state != CHATGPT_AUTH_CONNECTED:
+        raise QfError("CODEX_CHATGPT_AUTH_REAUTH_REQUIRED", "ChatGPT authentication requires re-authentication.", 503)
+    if expected_auth_id is not None and auth.id != expected_auth_id:
+        raise QfError(
+            "CODEX_CHATGPT_AUTH_REAUTH_REQUIRED",
+            "The ChatGPT authentication used by this Mission is no longer available.",
+            503,
+        )
+    if expected_account_id is not None and auth.chatgpt_account_id != expected_account_id:
+        raise QfError(
+            "CODEX_CHATGPT_AUTH_REAUTH_REQUIRED",
+            "The ChatGPT account used by this Mission is no longer available.",
+            503,
+        )
     initial_generation = auth.token_generation
     if observed_generation is not None and auth.token_generation > observed_generation:
         return _bundle_from_auth(auth, settings)
@@ -920,6 +989,18 @@ def get_valid_access_bundle(
     ).scalar_one_or_none()
     if locked is None or locked.state != CHATGPT_AUTH_CONNECTED:
         raise QfError("CODEX_CHATGPT_AUTH_REAUTH_REQUIRED", "ChatGPT authentication requires re-authentication.", 503)
+    if expected_auth_id is not None and locked.id != expected_auth_id:
+        raise QfError(
+            "CODEX_CHATGPT_AUTH_REAUTH_REQUIRED",
+            "The ChatGPT authentication used by this Mission is no longer available.",
+            503,
+        )
+    if expected_account_id is not None and locked.chatgpt_account_id != expected_account_id:
+        raise QfError(
+            "CODEX_CHATGPT_AUTH_REAUTH_REQUIRED",
+            "The ChatGPT account used by this Mission is no longer available.",
+            503,
+        )
     if locked.token_generation != initial_generation:
         return _bundle_from_auth(locked, settings)
     if observed_generation is not None and locked.token_generation > observed_generation:
@@ -1021,5 +1102,6 @@ __all__ = [
     "initialize_codex_auth",
     "legacy_auth_file_present",
     "poll_device_login",
+    "remove_legacy_auth_file",
     "start_device_login",
 ]

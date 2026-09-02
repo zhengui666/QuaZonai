@@ -5,8 +5,9 @@ from __future__ import annotations
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
+from uuid import UUID
 
-from codex_chatgpt_auth import get_valid_access_bundle
+from codex_chatgpt_auth import get_valid_access_bundle, remove_legacy_auth_file
 from db.session import SessionFactory
 from errors import QfError
 from settings import Settings
@@ -23,22 +24,6 @@ def _decline_approval(method: str) -> dict[str, str]:
         "The Codex server request is not allowed by the Mission policy.",
         403,
     )
-
-
-def _remove_auth_file(settings: Settings) -> None:
-    path = settings.codex_home / "auth.json"
-    if not path.exists():
-        return
-    try:
-        if path.is_symlink() or not path.is_file():
-            raise OSError("legacy auth path is not a regular file")
-        path.unlink()
-    except OSError as exc:
-        raise QfError(
-            "CODEX_LEGACY_AUTH_CLEANUP_FAILED",
-            "The legacy Codex auth file could not be removed; official Codex login is disabled.",
-            503,
-        ) from exc
 
 
 @contextmanager
@@ -59,14 +44,16 @@ def external_chatgpt_thread(
     App Server's external-auth memory.  The refresh callback uses the observed
     generation to avoid duplicate refresh-token rotation across workers.
     """
-    _remove_auth_file(settings)
+    remove_legacy_auth_file(settings)
     from openai_codex import ApprovalMode, Sandbox, Thread
     from openai_codex.client import CodexClient
 
     observed_generation: int | None = None
+    observed_auth_id: UUID | None = None
+    observed_account_id: str | None = None
 
     def server_request_handler(method: str, params: dict[str, Any] | None) -> dict[str, Any]:
-        nonlocal observed_generation
+        nonlocal observed_account_id, observed_auth_id, observed_generation
         if method == "account/chatgptAuthTokens/refresh":
             with session_factory() as session:
                 bundle = get_valid_access_bundle(
@@ -74,9 +61,13 @@ def external_chatgpt_thread(
                     settings,
                     force_refresh=True,
                     observed_generation=observed_generation,
+                    expected_auth_id=observed_auth_id,
+                    expected_account_id=observed_account_id,
                 )
                 session.commit()
             observed_generation = bundle.token_generation
+            observed_auth_id = bundle.auth_id
+            observed_account_id = bundle.chatgpt_account_id
             return {
                 "access_token": bundle.access_token,
                 "chatgpt_account_id": bundle.chatgpt_account_id,
@@ -92,6 +83,8 @@ def external_chatgpt_thread(
             bundle = get_valid_access_bundle(session, settings)
             session.commit()
         observed_generation = bundle.token_generation
+        observed_auth_id = bundle.auth_id
+        observed_account_id = bundle.chatgpt_account_id
         login = client.account_login_start(
             {
                 "type": "chatgptAuthTokens",
