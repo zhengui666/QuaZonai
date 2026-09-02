@@ -6,9 +6,11 @@ import hashlib
 from collections.abc import Iterator
 from contextlib import contextmanager
 from threading import Lock
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -49,7 +51,7 @@ def hold_device_poll_execution(session: Session, login_id: UUID) -> Iterator[Non
     connection. SQLite/non-PostgreSQL test runtimes use a process-local lock.
     """
     bind = session.get_bind()
-    engine = getattr(bind, "engine", bind)
+    engine = cast(Engine, getattr(bind, "engine", bind))
     if engine.dialect.name != "postgresql":
         lock = _local_lock(login_id)
         lock.acquire()
