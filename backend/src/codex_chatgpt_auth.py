@@ -38,6 +38,7 @@ from db.codex_auth_models import (
 )
 from db.models import RuntimeConfiguration
 from errors import QfError
+from events import append_event
 from runtime_config import codex_api_key_configured, codex_api_key_decryptable
 from settings import Settings, SettingsError
 
@@ -740,6 +741,14 @@ def poll_device_login(
             locked.state = LOGIN_SUCCEEDED
             locked.error_code = None
             _clear_attempt(locked)
+            append_event(
+                session,
+                kind="CODEX_CHATGPT_AUTH_CONNECTED",
+                aggregate_type="CODEX_CHATGPT_AUTH",
+                aggregate_id=login_id,
+                payload={"auth_mode": "CHATGPT"},
+                actor_kind="LOCAL_OPERATOR",
+            )
             return DeviceLoginPollResult(
                 status=LOGIN_SUCCEEDED,
                 auth=auth_status(session, settings),
@@ -790,22 +799,35 @@ def _mark_reauth(auth: CodexChatgptAuthConfiguration, when: datetime) -> None:
     _clear_auth(auth)
 
 
-def disconnect_chatgpt(session: Session) -> None:
+def disconnect_chatgpt(session: Session) -> bool:
     _lock_auth_operations(session)
     pending = get_pending_attempt(session, for_update=True)
     if pending is not None:
         pending.state = LOGIN_CANCELLED
         _clear_attempt(pending)
     auth = get_auth_configuration(session, for_update=True)
+    transitioned = pending is not None or auth is not None
     if auth is not None:
         session.delete(auth)
+    return transitioned
 
 
 def _custom_provider_configuration(session: Session, settings: Settings) -> RuntimeConfiguration | None:
     runtime = session.scalar(select(RuntimeConfiguration).where(RuntimeConfiguration.scope == SYSTEM_SCOPE))
     if settings.codex_base_url or settings.codex_api_key:
         return runtime
-    if runtime and (runtime.codex_base_url or codex_api_key_configured(runtime)):
+    if runtime and (
+        runtime.codex_base_url
+        or codex_api_key_configured(runtime)
+        or any(
+            value is not None
+            for value in (
+                runtime.codex_api_key_ciphertext,
+                runtime.codex_api_key_nonce,
+                runtime.codex_api_key_key_version,
+            )
+        )
+    ):
         return runtime
     return None
 
@@ -816,8 +838,14 @@ def _is_custom_provider(session: Session, settings: Settings) -> bool:
 
 def _custom_provider_ready(session: Session, settings: Settings) -> bool:
     runtime = _custom_provider_configuration(session, settings)
-    if runtime is not None and codex_api_key_configured(runtime):
-        return codex_api_key_decryptable(runtime, settings)
+    if runtime is not None:
+        key_parts = (
+            runtime.codex_api_key_ciphertext,
+            runtime.codex_api_key_nonce,
+            runtime.codex_api_key_key_version,
+        )
+        if any(value is not None for value in key_parts):
+            return codex_api_key_configured(runtime) and codex_api_key_decryptable(runtime, settings)
     return True
 
 

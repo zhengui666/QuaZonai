@@ -478,8 +478,9 @@ def health(request: Request) -> HealthResponse:
     else:
         codex_ready = False
     # Basic service health remains true before the operator chooses a provider;
-    # a stored ChatGPT REAUTH_REQUIRED state is the explicit degraded condition.
-    ready = database_state == "ready" and master_key_state == "configured" and codex_state != "REAUTH_REQUIRED"
+    # either provider reauthentication state is an explicit degraded condition.
+    reauth_required_states = {"REAUTH_REQUIRED", "CUSTOM_PROVIDER_REAUTH_REQUIRED"}
+    ready = database_state == "ready" and master_key_state == "configured" and codex_state not in reauth_required_states
     return HealthResponse(
         live=True,
         ready=ready,
@@ -487,6 +488,6 @@ def health(request: Request) -> HealthResponse:
         master_key=master_key_state,
         plugin_manager="ready" if database_state == "ready" else "unavailable",
         research_worker="not_observed",
-        codex=("ready" if codex_ready else "degraded" if codex_state == "REAUTH_REQUIRED" else "not_configured"),
+        codex=("ready" if codex_ready else "degraded" if codex_state in reauth_required_states else "not_configured"),
         details=details,
     )

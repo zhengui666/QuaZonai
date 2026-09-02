@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Body, Request, Response
 from pydantic import BaseModel, ConfigDict
 
 from codex_chatgpt_auth import (
@@ -57,6 +57,12 @@ class DeviceLoginStartResponse(BaseModel):
     poll_after_seconds: int
 
 
+class DeviceLoginStartRequest(BaseModel):
+    """Explicit empty JSON object required for the state-changing start call."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class DeviceLoginPollResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -92,6 +98,7 @@ def get_codex_auth(request: Request, response: Response) -> dict[str, Any]:
 def start_chatgpt_device_login(
     request: Request,
     response: Response,
+    payload: DeviceLoginStartRequest = Body(default=DeviceLoginStartRequest()),
 ) -> DeviceLoginStartResponse:
     _no_store(response)
     _require_json_request(request)
@@ -130,16 +137,6 @@ def poll_chatgpt_device_login(
     settings = request.app.state.settings
     with factory() as session:
         result = poll_device_login(session, settings, login_id)
-    if result.status == "SUCCEEDED" and result.transitioned:
-        with factory.begin() as session:
-            append_event(
-                session,
-                kind="CODEX_CHATGPT_AUTH_CONNECTED",
-                aggregate_type="CODEX_CHATGPT_AUTH",
-                aggregate_id=login_id,
-                payload={"auth_mode": "CHATGPT"},
-                actor_kind="LOCAL_OPERATOR",
-            )
     return DeviceLoginPollResponse(
         status=cast(Literal["PENDING", "SUCCEEDED", "CANCELLED", "EXPIRED", "FAILED"], result.status),
         expires_at=result.expires_at.isoformat() if result.expires_at else None,
@@ -184,15 +181,15 @@ def disconnect_chatgpt_auth(request: Request, response: Response) -> dict[str, A
         # database mutation are ordered as one auth operation.
         lock_codex_auth_operations(session)
         remove_legacy_auth_file(settings)
-        disconnect_chatgpt(session)
-        append_event(
-            session,
-            kind="CODEX_CHATGPT_AUTH_DISCONNECTED",
-            aggregate_type="CODEX_CHATGPT_AUTH",
-            aggregate_id=None,
-            payload={"auth_mode": "CHATGPT"},
-            actor_kind="LOCAL_OPERATOR",
-        )
+        if disconnect_chatgpt(session):
+            append_event(
+                session,
+                kind="CODEX_CHATGPT_AUTH_DISCONNECTED",
+                aggregate_type="CODEX_CHATGPT_AUTH",
+                aggregate_id=None,
+                payload={"auth_mode": "CHATGPT"},
+                actor_kind="LOCAL_OPERATOR",
+            )
     with request.app.state.session_factory() as session:
         return auth_status(session, settings)
 

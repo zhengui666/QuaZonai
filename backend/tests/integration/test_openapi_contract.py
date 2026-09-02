@@ -92,6 +92,9 @@ def test_openapi_matches_research_intelligence_contract(
         request_schema["properties"]["codex_use_default_model_settings"]["type"]
         == "boolean"
     )
+    device_start = schema["paths"]["/api/v1/system/codex-auth/chatgpt/device/start"]["post"]
+    assert "requestBody" in device_start
+    assert "application/json" in device_start["requestBody"]["content"]
     auth_schema_names = {name.casefold() for name in schema["components"]["schemas"]}
     assert not {"accesstoken", "refreshtoken", "idtoken"} & auth_schema_names
     auth_json = str(

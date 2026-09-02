@@ -156,6 +156,34 @@ def test_repeated_device_cancel_does_not_repeat_cancel_event(engine: Engine, set
     assert len(events) == 1
 
 
+def test_repeated_disconnect_does_not_repeat_disconnect_event(engine: Engine, settings: Settings) -> None:
+    login_id = uuid4()
+    now = datetime.now(UTC)
+    app = create_app(settings=settings, engine=engine)
+    with app.state.session_factory.begin() as session:
+        session.add(
+            CodexChatgptLoginAttempt(
+                id=login_id,
+                state=LOGIN_PENDING,
+                verification_url="https://auth.openai.com/codex/device",
+                poll_interval_seconds=5,
+                expires_at=now + timedelta(minutes=10),
+                next_poll_at=now + timedelta(seconds=5),
+            )
+        )
+
+    client = TestClient(app)
+    path = "/api/v1/system/codex-auth/chatgpt"
+    assert client.delete(path).status_code == 200
+    assert client.delete(path).status_code == 200
+
+    with engine.connect() as connection:
+        events = connection.execute(
+            select(Event).where(Event.kind == "CODEX_CHATGPT_AUTH_DISCONNECTED")
+        ).all()
+    assert len(events) == 1
+
+
 def test_disconnect_keeps_database_state_when_legacy_cleanup_fails(
     engine: Engine,
     settings: Settings,

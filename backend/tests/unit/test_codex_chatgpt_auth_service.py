@@ -23,7 +23,7 @@ from codex_chatgpt_auth import (
     start_device_login,
 )
 from db.codex_auth_models import CodexChatgptLoginAttempt, LOGIN_CANCELLED, LOGIN_FAILED
-from db.models import RuntimeConfiguration
+from db.models import Event, RuntimeConfiguration
 from db.session import create_session_factory
 from errors import QfError
 from runtime_config import _api_key_aad
@@ -83,6 +83,10 @@ def test_device_code_is_persisted_encrypted_and_refresh_rotates_atomically(engin
         assert auth.chatgpt_account_id == "acct-1"
         assert auth.access_token_ciphertext is not None
         assert b"refresh-secret-1" not in auth.refresh_token_ciphertext
+        events = session.scalars(
+            select(Event).where(Event.kind == "CODEX_CHATGPT_AUTH_CONNECTED")
+        ).all()
+        assert len(events) == 1
         session.commit()
 
     with factory() as session:
@@ -303,6 +307,28 @@ def test_readiness_rejects_undecryptable_persisted_custom_provider_key(engine, s
         assert item is not None
         item.codex_api_key_ciphertext = b"corrupt"
         session.commit()
+
+    with factory() as session:
+        assert codex_auth_readiness(session, settings) == (False, "CUSTOM_PROVIDER_REAUTH_REQUIRED")
+
+
+def test_readiness_rejects_partially_persisted_custom_provider_key(engine, settings) -> None:
+    factory = create_session_factory(engine)
+    with factory.begin() as session:
+        session.add(
+            RuntimeConfiguration(
+                scope="SYSTEM",
+                revision=1,
+                codex_api_key_ciphertext=b"partial",
+                max_plugin_wheel_bytes=settings.max_plugin_wheel_bytes,
+                plugin_validation_timeout_seconds=settings.plugin_validation_timeout_seconds,
+                bundle_build_timeout_seconds=settings.bundle_build_timeout_seconds,
+                plugin_job_timeout_seconds=settings.plugin_job_timeout_seconds,
+                mission_job_timeout_seconds=settings.mission_job_timeout_seconds,
+                job_poll_seconds=settings.job_poll_seconds,
+                job_lease_seconds=settings.job_lease_seconds,
+            )
+        )
 
     with factory() as session:
         assert codex_auth_readiness(session, settings) == (False, "CUSTOM_PROVIDER_REAUTH_REQUIRED")

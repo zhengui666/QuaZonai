@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 
+from api import system as system_api
 from main import create_app
 from settings import Settings
 
@@ -19,6 +20,24 @@ def test_health_reports_ready_with_database_and_master_key(
     assert payload["ready"] is True
     assert payload["database"] == "ready"
     assert payload["master_key"] == "configured"
+
+
+def test_health_reports_custom_provider_reauth_as_degraded(
+    engine: Engine,
+    settings: Settings,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        system_api,
+        "codex_auth_readiness",
+        lambda session, configured_settings: (False, "CUSTOM_PROVIDER_REAUTH_REQUIRED"),
+    )
+    response = TestClient(create_app(settings=settings, engine=engine)).get("/api/v1/system/health")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["ready"] is False
+    assert payload["codex"] == "degraded"
 
 
 def test_openapi_is_available_only_at_explicit_path(
