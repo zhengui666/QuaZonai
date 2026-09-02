@@ -6,6 +6,8 @@ Revises: 0012_codex_chatgpt_auth
 
 from __future__ import annotations
 
+from uuid import UUID
+
 import sqlalchemy as sa
 from alembic import op
 
@@ -37,7 +39,7 @@ def upgrade() -> None:
                 "INSERT INTO codex_chatgpt_auth_operation_locks (id, scope) "
                 "SELECT :id, 'SYSTEM' WHERE NOT EXISTS "
                 "(SELECT 1 FROM codex_chatgpt_auth_operation_locks WHERE scope = 'SYSTEM')"
-            ).bindparams(id=_LOCK_ID)
+            ).bindparams(sa.bindparam("id", value=UUID(_LOCK_ID), type_=sa.Uuid()))
         )
 
 
