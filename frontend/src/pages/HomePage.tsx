@@ -23,6 +23,7 @@ function dataReady(value: unknown) {
 }
 function healthState(value: unknown) {
   if (typeof value === 'boolean') return value ? 'READY' : 'NOT_READY';
+  if (typeof value === 'string') return value.trim() ? value.toUpperCase() : 'UNKNOWN';
   if (value && typeof value === 'object') {
     const item = value as Record<string, unknown>;
     if (typeof item.state === 'string') return item.state;
