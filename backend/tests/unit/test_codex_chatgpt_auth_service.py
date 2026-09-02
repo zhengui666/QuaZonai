@@ -24,6 +24,7 @@ from codex_chatgpt_auth import (
     poll_device_login,
     start_device_login,
 )
+import codex_chatgpt_auth as codex_auth_service
 from db.codex_auth_models import (
     CHATGPT_AUTH_REAUTH_REQUIRED,
     CodexChatgptLoginAttempt,
@@ -289,6 +290,66 @@ def test_poll_lease_prevents_a_second_upstream_exchange(engine, settings) -> Non
     assert result.status == "PENDING"
     assert result.poll_after_seconds >= 59
     assert calls == 0
+
+
+def test_expired_poll_cannot_release_a_newer_lease(engine, settings) -> None:
+    from codex_chatgpt_auth import _release_poll_lease
+
+    now = datetime(2026, 9, 2, 1, 0, tzinfo=UTC)
+    old_lease = now + timedelta(seconds=65)
+    new_lease = now + timedelta(seconds=130)
+    login_id = uuid4()
+    factory = create_session_factory(engine)
+    with factory.begin() as session:
+        session.add(
+            CodexChatgptLoginAttempt(
+                id=login_id,
+                state="PENDING",
+                verification_url="https://auth.openai.com/codex/device",
+                poll_interval_seconds=5,
+                expires_at=now + timedelta(minutes=10),
+                next_poll_at=now,
+                poll_lease_until=new_lease,
+            )
+        )
+
+    with factory() as session:
+        _release_poll_lease(session, login_id, old_lease)
+
+    with factory() as session:
+        attempt = session.get(CodexChatgptLoginAttempt, login_id)
+        assert attempt is not None
+        assert attempt.poll_lease_until == new_lease.replace(tzinfo=None)
+
+
+def test_start_rechecks_auth_after_waiting_on_pending_attempt(engine, settings, monkeypatch) -> None:
+    now = datetime(2026, 9, 2, 1, 0, tzinfo=UTC)
+    access_token = _jwt({"chatgpt_account_id": "acct-1"})
+    factory = create_session_factory(engine)
+    installed = False
+
+    def pending_after_poll(session, *, for_update=False):
+        nonlocal installed
+        if not installed:
+            installed = True
+            _install_bundle(
+                session,
+                settings,
+                access_token=access_token,
+                refresh_token="refresh-secret",
+                id_token=None,
+                response={"access_token": access_token},
+                authenticated_at=now,
+            )
+            session.flush()
+        return None
+
+    monkeypatch.setattr(codex_auth_service, "get_pending_attempt", pending_after_poll)
+    with factory() as session:
+        with pytest.raises(QfError) as exc_info:
+            start_device_login(session, settings, now=lambda: now)
+
+    assert exc_info.value.code == "CODEX_CHATGPT_ALREADY_CONNECTED"
 
 
 def test_reauthentication_rotates_canonical_auth_identity(engine, settings) -> None:

@@ -497,6 +497,8 @@ export const messages = {
   'runtime.deviceCodeWaiting': m('Enter this device code', '请输入此设备代码', '請輸入此裝置代碼', 'このデバイスコードを入力', '이 디바이스 코드 입력', 'Introduzca este código de dispositivo', 'أدخل رمز الجهاز هذا'),
   'runtime.deviceCodeExpires': m('This code expires at {expires}.', '此代码将于 {expires} 过期。', '此代碼將於 {expires} 到期。', 'このコードの有効期限は{expires}です。', '이 코드는 {expires}에 만료됩니다.', 'Este código caduca a las {expires}.', 'تنتهي صلاحية هذا الرمز في {expires}.'),
   'runtime.deviceCodePolling': m('Checking authorization every {seconds} seconds.', '每 {seconds} 秒检查一次授权。', '每 {seconds} 秒檢查一次授權。', '{seconds}秒ごとに認証を確認しています。', '{seconds}초마다 인증을 확인합니다.', 'Comprobando la autorización cada {seconds} segundos.', 'جارٍ التحقق من التخويل كل {seconds} ثانية.'),
+  'runtime.deviceCodeExpired': m('ChatGPT authorization expired. Start again.', 'ChatGPT 授权已过期，请重新开始。', 'ChatGPT 授權已到期，請重新開始。', 'ChatGPTの認証が期限切れです。もう一度開始してください。', 'ChatGPT 인증이 만료되었습니다. 다시 시작하세요.', 'La autorización de ChatGPT caducó. Vuelve a empezar.', 'انتهت صلاحية تخويل ChatGPT. ابدأ من جديد.'),
+  'runtime.deviceCodeFailed': m('ChatGPT authorization failed ({code}). Start again.', 'ChatGPT 授权失败（{code}），请重新开始。', 'ChatGPT 授權失敗（{code}），請重新開始。', 'ChatGPTの認証に失敗しました（{code}）。もう一度開始してください。', 'ChatGPT 인증에 실패했습니다({code}). 다시 시작하세요.', 'La autorización de ChatGPT falló ({code}). Vuelve a empezar.', 'فشل تخويل ChatGPT ({code}). ابدأ من جديد.'),
   'runtime.deviceCodeCancel': m('Cancel sign-in', '取消登录', '取消登入', 'サインインをキャンセル', '로그인 취소', 'Cancelar inicio de sesión', 'إلغاء تسجيل الدخول'),
   'runtime.providerEndpoint': m('Provider endpoint', '提供方端点', '提供方端點', 'プロバイダーエンドポイント', '공급자 엔드포인트', 'Endpoint del proveedor', 'نقطة نهاية المزود'),
   'runtime.model': m('Model', '模型', '模型', 'モデル', '모델', 'Modelo', 'النموذج'),

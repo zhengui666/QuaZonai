@@ -2,6 +2,7 @@ import { Button, Dialog, Slider, Switch, TextField } from '@radix-ui/themes';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../../i18n';
 import { useCodexChatgptAuth, useUpdateRuntimeConfiguration } from '../../lib/api/hooks';
+import { ApiError } from '../../lib/api/client';
 import type { CodexChatgptAuthStatus, CodexReasoningEffort, RuntimeConfiguration, RuntimeConfigurationUpdate } from '../../lib/api/types';
 import { formatNumber } from '../../lib/format';
 import { ErrorPanel } from '../ui/ErrorPanel';
@@ -65,7 +66,7 @@ function chatgptState(status: CodexChatgptAuthStatus | undefined, configuration:
 
 function ChatgptAuthControls({ configuration }: { configuration: RuntimeConfiguration }) {
   const { t } = useI18n();
-  const { auth, deviceLogin, start, cancel, disconnect } = useCodexChatgptAuth();
+  const { auth, deviceLogin, pollResult, start, poll, cancel, disconnect } = useCodexChatgptAuth();
   const [copied, setCopied] = useState(false);
   const status = auth.data;
   const state = chatgptState(status, configuration);
@@ -73,6 +74,11 @@ function ChatgptAuthControls({ configuration }: { configuration: RuntimeConfigur
   const closeLogin = () => {
     if (deviceLogin) cancel.mutate(deviceLogin.login_id);
   };
+  const pollError = pollResult?.status === 'EXPIRED'
+    ? new ApiError({ kind: 'api', message: t('runtime.deviceCodeExpired') }, 400, pollResult.error_code ?? 'expired')
+    : pollResult?.status === 'FAILED'
+      ? new ApiError({ kind: 'api', message: t('runtime.deviceCodeFailed', { code: pollResult.error_code ?? 'unknown' }) }, 400, pollResult.error_code ?? 'authorization_failed')
+      : null;
 
   return (
     <div className="qz-field" style={{ gridColumn: '1 / -1' }}>
@@ -90,6 +96,8 @@ function ChatgptAuthControls({ configuration }: { configuration: RuntimeConfigur
           : <Button size="2" variant="soft" disabled={start.isPending || Boolean(deviceLogin)} onClick={startLogin}>{state === 'REAUTH_REQUIRED' ? t('runtime.reauthenticateChatgpt') : t('runtime.signInChatgpt')}</Button>}
       </div>
       {start.error ? <div style={{ marginTop: 10 }}><ErrorPanel error={start.error} /></div> : null}
+      {pollError ? <div style={{ marginTop: 10 }}><ErrorPanel error={pollError} /></div> : null}
+      {poll.error ? <div style={{ marginTop: 10 }}><ErrorPanel error={poll.error} /></div> : null}
       {disconnect.error ? <div style={{ marginTop: 10 }}><ErrorPanel error={disconnect.error} /></div> : null}
       <Dialog.Root open={Boolean(deviceLogin)} onOpenChange={(open) => { if (!open) closeLogin(); }}>
         <ResponsiveDialogContent aria-describedby="codex-device-description">

@@ -143,4 +143,39 @@ describe('RuntimeConfigurationPanel directionality', () => {
     fireEvent.click(screen.getByRole('button', { name: translateKey('en', 'runtime.deviceCodeCancel') }));
     await waitFor(() => expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'DELETE')).toBe(true));
   });
+
+  it('keeps a terminal device authorization error visible after the dialog closes', async () => {
+    const auth = {
+      state: 'DISCONNECTED', active: false, email: null, plan_type: null,
+      authenticated_at: null, last_refresh_at: null, reauth_required_at: null,
+      pending_login: null, legacy_auth_file_present: false,
+    };
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input, options) => {
+      const path = String(input);
+      if (path.endsWith('/codex-auth') && !options?.method) return jsonResponse(auth);
+      if (path.endsWith('/device/start')) return jsonResponse({
+        login_id: '00000000-0000-0000-0000-000000000051',
+        status: 'PENDING',
+        verification_url: 'https://auth.openai.com/codex/device',
+        user_code: 'ABCD-EFGH',
+        expires_at: '2026-09-02T01:15:00+00:00',
+        poll_after_seconds: 0,
+      });
+      if (path.endsWith('/device/00000000-0000-0000-0000-000000000051/poll')) return jsonResponse({
+        status: 'FAILED', expires_at: null, poll_after_seconds: null, auth: null, error_code: 'authorization_failed',
+      });
+      return jsonResponse(configuration);
+    });
+    renderApp(<RuntimeConfigurationPanel configuration={{
+      ...configuration,
+      codex_api_key_configured: false,
+      codex_base_url: null,
+    }} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: translateKey('en', 'runtime.signInChatgpt') }));
+    await waitFor(() => expect(screen.getByText('authorization_failed')).toBeInTheDocument());
+    expect(screen.getByText('ChatGPT authorization failed (authorization_failed). Start again.')).toBeInTheDocument();
+    expect(screen.queryByText('ABCD-EFGH')).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith('/poll'))).toBe(true);
+  });
 });

@@ -476,6 +476,14 @@ def start_device_login(
         else:
             return _attempt_view(pending, created=False)
 
+    # A successful poll installs credentials while holding the attempt row,
+    # not the singleton operation lock.  Re-read the canonical auth row after
+    # waiting on that row so start cannot create a second login from a stale
+    # pre-poll snapshot.
+    auth = get_auth_configuration(session, for_update=True)
+    if auth is not None and auth.state == CHATGPT_AUTH_CONNECTED and _connected_auth_usable(auth, settings):
+        raise QfError("CODEX_CHATGPT_ALREADY_CONNECTED", "ChatGPT is already connected.", 409)
+
     client, owned = _http_client(http_client)
     try:
         payload = _post_json(
@@ -599,10 +607,12 @@ def _poll_device(
     )
 
 
-def _release_poll_lease(session: Session, login_id: UUID) -> None:
+def _release_poll_lease(session: Session, login_id: UUID, lease_until: datetime) -> None:
     with session.begin():
         locked = _locked_login_attempt(session, login_id)
-        if locked is not None:
+        # An upstream exchange can outlive this lease.  Do not clear a newer
+        # lease acquired by another poll after the original one expired.
+        if locked is not None and locked.poll_lease_until is not None and _aware(locked.poll_lease_until) == _aware(lease_until):
             locked.poll_lease_until = None
 
 
@@ -653,7 +663,8 @@ def poll_device_login(
         raise QfError("CODEX_CHATGPT_AUTH_CORRUPT", "Pending ChatGPT login is incomplete.", 503)
     user_code = attempt.user_code
     attempt.next_poll_at = current + timedelta(seconds=attempt.poll_interval_seconds)
-    attempt.poll_lease_until = current + timedelta(seconds=POLL_LEASE_SECONDS)
+    lease_until = current + timedelta(seconds=POLL_LEASE_SECONDS)
+    attempt.poll_lease_until = lease_until
     interval = attempt.poll_interval_seconds
     expires_at = _aware(attempt.expires_at)
     session.commit()
@@ -807,7 +818,7 @@ def poll_device_login(
             if owned and client is not None:
                 client.close()
         finally:
-            _release_poll_lease(session, login_id)
+            _release_poll_lease(session, login_id, lease_until)
 
 
 def cancel_device_login(session: Session, login_id: UUID) -> DeviceLoginPollResult:

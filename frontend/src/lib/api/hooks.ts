@@ -56,6 +56,7 @@ export const useRuntimeConfiguration = () => useQuery({ queryKey: keys.runtimeCo
 export function useCodexChatgptAuth() {
   const client = useQueryClient();
   const [deviceLogin, setDeviceLogin] = useState<CodexChatgptDeviceLoginStart | null>(null);
+  const [pollResult, setPollResult] = useState<CodexChatgptDeviceLoginPoll | null>(null);
   const auth = useQuery({ queryKey: keys.codexAuth, queryFn: () => apiRequest<CodexChatgptAuthStatus>('/api/v1/system/codex-auth'), refetchInterval: 15_000 });
   const invalidateAuth = () => Promise.all([
     client.invalidateQueries({ queryKey: keys.codexAuth }),
@@ -65,6 +66,7 @@ export function useCodexChatgptAuth() {
   ]);
   const start = useMutation({
     mutationFn: () => apiRequest<CodexChatgptDeviceLoginStart>('/api/v1/system/codex-auth/chatgpt/device/start', { method: 'POST', body: jsonBody({}), idempotent: true }),
+    onMutate: () => setPollResult(null),
     onSuccess: (result) => setDeviceLogin(result),
   });
   const poll = useMutation({
@@ -73,6 +75,7 @@ export function useCodexChatgptAuth() {
       if (result.status === 'PENDING' && deviceLogin) {
         setDeviceLogin({ ...deviceLogin, expires_at: result.expires_at ?? deviceLogin.expires_at, poll_after_seconds: result.poll_after_seconds ?? deviceLogin.poll_after_seconds });
       } else {
+        setPollResult(result.status === 'FAILED' || result.status === 'EXPIRED' ? result : null);
         setDeviceLogin(null);
         await invalidateAuth();
       }
@@ -84,6 +87,7 @@ export function useCodexChatgptAuth() {
       if (retryable) {
         setDeviceLogin((current) => current ? { ...current, poll_after_seconds: Math.min(60, Math.max(5, current.poll_after_seconds + 5)) } : current);
       } else {
+        setPollResult(null);
         setDeviceLogin(null);
         await invalidateAuth();
       }
@@ -93,11 +97,11 @@ export function useCodexChatgptAuth() {
   pollMutate.current = poll.mutate;
   const cancel = useMutation({
     mutationFn: (loginId: UUID) => apiRequest<CodexChatgptDeviceLoginPoll>(`/api/v1/system/codex-auth/chatgpt/device/${loginId}`, { method: 'DELETE' }),
-    onSuccess: async () => { setDeviceLogin(null); await invalidateAuth(); },
+    onSuccess: async () => { setPollResult(null); setDeviceLogin(null); await invalidateAuth(); },
   });
   const disconnect = useMutation({
     mutationFn: () => apiRequest<CodexChatgptAuthStatus>('/api/v1/system/codex-auth/chatgpt', { method: 'DELETE' }),
-    onSuccess: async () => { setDeviceLogin(null); await invalidateAuth(); },
+    onSuccess: async () => { setPollResult(null); setDeviceLogin(null); await invalidateAuth(); },
   });
   useEffect(() => {
     if (!deviceLogin || document.visibilityState === 'hidden') return undefined;
@@ -109,7 +113,7 @@ export function useCodexChatgptAuth() {
     document.addEventListener('visibilitychange', resume);
     return () => document.removeEventListener('visibilitychange', resume);
   }, []);
-  return { auth, deviceLogin, start, poll, cancel, disconnect };
+  return { auth, deviceLogin, pollResult, start, poll, cancel, disconnect };
 }
 export const usePrograms = () => useQuery({ queryKey: keys.programs, queryFn: async () => normalizeList(await apiRequest<ResearchProgram[] | { items: ResearchProgram[] }>('/api/v1/research-programs')) });
 export const useProgram = (id?: UUID) => useQuery({ queryKey: id ? keys.program(id) : ['program', 'none'], queryFn: () => apiRequest<ResearchProgram>(`/api/v1/research-programs/${id}`), enabled: Boolean(id) });
