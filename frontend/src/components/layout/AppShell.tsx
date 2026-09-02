@@ -16,6 +16,7 @@ import {
   SunIcon,
   TargetIcon,
 } from '@phosphor-icons/react';
+import { useIsMutating } from '@tanstack/react-query';
 import { Button, Dialog, DropdownMenu, Theme } from '@radix-ui/themes';
 import { Direction } from 'radix-ui';
 import { Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
@@ -58,6 +59,7 @@ export function AppShell() {
   const { locale, setLocale, t } = useI18n();
   const { authEnabled, logout } = useOperatorAuth();
   const { applyUpdate, canInstall, install, isStandalone, needRefresh, updatePhase } = usePwa();
+  const mutationInFlight = useIsMutating() > 0;
   const location = useLocation();
   const navigate = useNavigate();
   const current = useMemo(() => {
@@ -122,7 +124,7 @@ export function AppShell() {
               <div className="qz-topbar-title">{current}</div>
               <div className="qz-topbar-actions">
                 {signOutErrorMessage ? <span className="qz-signout-error" dir="auto" role="alert">{signOutErrorMessage}</span> : null}
-                {needRefresh ? <Button className="qz-pwa-desktop-update" size="1" variant="soft" disabled={updatePhase === 'applying'} onClick={() => { void applyUpdate().catch(() => undefined); }}><ArrowClockwiseIcon size={15} />{updatePhase === 'applying' ? t('pwa.updating') : t('pwa.updateNow')}</Button> : null}
+                {needRefresh ? <Button className="qz-pwa-desktop-update" size="1" variant="soft" disabled={updatePhase === 'applying' || mutationInFlight} onClick={() => { void applyUpdate().catch(() => undefined); }}><ArrowClockwiseIcon size={15} />{updatePhase === 'applying' ? t('pwa.updating') : updatePhase === 'failed' ? t('pwa.updateRetry') : t('pwa.updateNow')}</Button> : null}
                 <DropdownMenu.Root>
                   <DropdownMenu.Trigger>
                     <Button className="qz-mobile-nav-button" aria-label={t('a11y.openNavigation')} size="1" variant="soft"><ListIcon size={16} /></Button>
@@ -207,7 +209,7 @@ export function AppShell() {
                   </Button>
                   {!isStandalone && canInstall ? <Button className="qz-touch-button" size="2" variant="soft" onClick={() => { void install(); }}><DownloadSimpleIcon size={16} />{t('pwa.install')}</Button> : null}
                   {!isStandalone && !canInstall ? <p className="qz-mobile-more-help">{t('pwa.installHelp')}</p> : null}
-                  {needRefresh ? <Button className="qz-touch-button" size="2" variant="soft" disabled={updatePhase === 'applying'} onClick={() => { void applyUpdate().catch(() => undefined); }}><ArrowClockwiseIcon size={16} />{updatePhase === 'applying' ? t('pwa.updating') : t('pwa.updateNow')}</Button> : null}
+                  {needRefresh ? <Button className="qz-touch-button" size="2" variant="soft" disabled={updatePhase === 'applying' || mutationInFlight} onClick={() => { void applyUpdate().catch(() => undefined); }}><ArrowClockwiseIcon size={16} />{updatePhase === 'applying' ? t('pwa.updating') : updatePhase === 'failed' ? t('pwa.updateRetry') : t('pwa.updateNow')}</Button> : null}
                   {authEnabled ? <Button className="qz-touch-button" size="2" variant="soft" color="red" disabled={signingOut} onClick={() => { void signOut(); }}><SignOutIcon size={16} />{t('auth.signOut')}</Button> : null}
                 </div>
               </Dialog.Content>
