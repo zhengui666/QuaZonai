@@ -12,6 +12,13 @@ html, body, #root { max-width: 100%; overflow-x: hidden; }
 .qz-main, .qz-content, .qz-page-header, .qz-panel, .qz-section { min-width: 0; }
 .qz-page-actions > * { min-width: 0; }
 .qz-pwa-banner { position: fixed; inset-inline: 12px; inset-block-start: calc(12px + var(--qz-safe-top)); z-index: 60; display: flex; align-items: center; gap: 8px; width: auto; box-shadow: var(--qz-shadow); }
+.qz-pwa-update-dialog { box-sizing: border-box; width: min(420px, calc(100vw - 24px)); max-height: calc(100dvh - 24px - var(--qz-safe-top) - var(--qz-safe-bottom)); overflow-y: auto; margin-inline: auto; padding: 22px max(18px, var(--qz-safe-right)) max(22px, var(--qz-safe-bottom)) max(18px, var(--qz-safe-left)); }
+.qz-pwa-update-copy { line-height: 1.55; }
+.qz-pwa-update-pending, .qz-pwa-update-error { display: block; margin-top: 12px; line-height: 1.45; }
+.qz-pwa-update-pending { color: var(--qz-warning); }
+.qz-pwa-update-error { color: var(--qz-danger); }
+.qz-pwa-update-actions { flex-wrap: wrap; }
+.qz-pwa-update-actions button { min-height: 44px; }
 .qz-offline-shell { display: grid; place-items: center; min-height: 100dvh; padding: 24px; background: var(--qz-bg); color: var(--qz-text); text-align: center; }
 .qz-offline-card { width: min(100%, 420px); padding: 28px; border: 1px solid var(--qz-border); border-radius: 12px; background: var(--qz-bg-elevated); box-shadow: var(--qz-shadow); }
 .qz-offline-card .qz-brand-mark { margin: 0 auto 16px; }
