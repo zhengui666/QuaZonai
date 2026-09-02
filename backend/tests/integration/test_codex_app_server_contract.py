@@ -26,10 +26,12 @@ def test_runtime_controls_round_trip_through_pinned_codex_app_server(
         ),
     )
 
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
     with Codex(
         CodexConfig(
             env={
-                "CODEX_HOME": str(tmp_path / "codex-home"),
+                "CODEX_HOME": str(codex_home),
                 "RUST_LOG": "error",
             }
         )
