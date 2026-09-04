@@ -312,6 +312,13 @@ def _persist_descriptor(
                 "Archive manifest identity is already occupied.",
                 409,
             )
+        # A manifest is executable evidence only when both remote result
+        # classes passed.  A clean probe cannot make a failed/malformed PIT
+        # result active or advance the source to READY.
+        manifest_active = (
+            not descriptor.probe_error_count
+            and descriptor.point_in_time_result.get("valid") is True
+        )
         manifest = ArchiveManifest(
             manifest_uri=descriptor.manifest_uri,
             data_source_id=source.id,
@@ -327,7 +334,7 @@ def _persist_descriptor(
             missing_shard_count=descriptor.missing_shard_count,
             probe_error_count=descriptor.probe_error_count,
             schema_revision=descriptor.schema_revision,
-            state="ACTIVE" if not descriptor.probe_error_count else "INCONCLUSIVE",
+            state="ACTIVE" if manifest_active else "INCONCLUSIVE",
             point_in_time_result=descriptor.point_in_time_result,
         )
         session.add(manifest)
@@ -347,7 +354,7 @@ def _persist_descriptor(
                 for shard in descriptor.shards
             ]
         )
-        if descriptor.probe_error_count:
+        if not manifest_active:
             append_event(
                 session,
                 kind="DATA_SOURCE_PREFLIGHT_INCONCLUSIVE",
