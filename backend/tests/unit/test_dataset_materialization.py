@@ -142,7 +142,7 @@ def _seed_pending_materialization(
             origin="test",
             ingested_at=now,
             promotability="NON_PROMOTABLE",
-            schema_version="requested-v1",
+            schema_version="actual-v1",
             event_start=now,
             event_end=coverage_end,
             available_start=now,
@@ -176,6 +176,7 @@ class _Runtime:
         assert spec.source_shards and len(spec.source_shards) == 1
         assert timeout_seconds >= 120
         now = _now()
+        requested_hours = int(spec.source_spec["materialization"]["requested_shard_count"])
         return CatalogDescriptor(
             catalog_uri=f"catalog://{spec.catalog_name}",
             provider=spec.provider,
@@ -184,9 +185,9 @@ class _Runtime:
             nautilus_data_type="QuoteTick",
             instrument_scope=["TEST.INSTRUMENT"],
             event_start=now,
-            event_end=now + timedelta(minutes=59),
+            event_end=now + timedelta(hours=requested_hours),
             available_start=now,
-            available_end=now + timedelta(minutes=59),
+            available_end=now + timedelta(hours=requested_hours),
             row_count=10,
             schema_revision="actual-v1",
             quality_result={"valid": True, "sorted": True},
@@ -200,6 +201,13 @@ class _PointInTimeInvalidRuntime(_Runtime):
             super()
             .ingest(spec, timeout_seconds=timeout_seconds)
             .model_copy(update={"point_in_time_result": {"valid": False}})
+        )
+
+
+class _WrongDescriptorRuntime(_Runtime):
+    def ingest(self, spec, *, timeout_seconds):  # type: ignore[no-untyped-def]
+        return super().ingest(spec, timeout_seconds=timeout_seconds).model_copy(
+            update={"instrument_scope": ["OTHER.INSTRUMENT"]}
         )
 
 
@@ -410,6 +418,30 @@ def test_point_in_time_failure_persists_non_promotable_evidence(
         )
         assert result is not None
         assert result.summary["reason_codes"] == ["REMOTE_POINT_IN_TIME_INVALID"]
+
+
+def test_materialization_rejects_descriptor_that_changes_frozen_request(
+    engine: Engine, settings, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    lease, dataset_id = _seed_pending_materialization(engine)
+    monkeypatch.setattr(dataset_materialization, "create_database_engine", lambda _: engine)
+    monkeypatch.setattr(engine, "dispose", lambda: None)
+    monkeypatch.setattr(dataset_materialization, "_runtime", _WrongDescriptorRuntime)
+
+    with pytest.raises(QfError, match="DATASET_MATERIALIZATION_DESCRIPTOR_MISMATCH"):
+        dataset_materialization.run_dataset_materialization(
+            replace(settings, plugin_job_timeout_seconds=300), lease
+        )
+
+    with Session(engine) as session:
+        revision = session.get(DatasetRevision, dataset_id)
+        assert revision is not None
+        assert (revision.quality_state, revision.point_in_time_state) == ("PENDING", "PENDING")
+        assert session.scalar(
+            select(NautilusCatalogBinding).where(
+                NautilusCatalogBinding.dataset_revision_id == dataset_id
+            )
+        ) is None
 
 
 def test_missing_shard_is_recorded_as_non_promotable_quality_evidence(
