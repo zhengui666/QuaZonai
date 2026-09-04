@@ -39,7 +39,16 @@ _TOOL_DESCRIPTIONS: Mapping[MissionTool, str] = {
     MissionTool.GET_RUN_EVIDENCE: "Read one scoped Discovery evidence summary. arguments requires mission_id and run_id.",
     MissionTool.SUBMIT_MISSION_ARTIFACT: (
         "Submit one typed DraftArtifact. ALPHA_PROPOSAL payloads require AlphaArtifactDraftV1. "
-        "arguments requires mission_id, idempotency_key, expected_revision and artifact."
+        "Non-Alpha v1 payloads are {kind: {summary, items, facts}} with exact facts: "
+        "RESEARCH_PLAN(objective,hypotheses), DATA_REQUIREMENT(dataset_scope,requirements), "
+        "DATA_QUALITY_REPORT(dataset_revision_id,quality_state,pit_state), "
+        "FEATURE_PROPOSAL(family,input_contract), CALIBRATION_PROPOSAL(model_version_id,method), "
+        "ROBUSTNESS_REPORT(checks,outcome), PROMOTION_REVIEW(candidate_id,decision), "
+        "PORTFOLIO_PROPOSAL(candidate_id,weights), PAPER_EVIDENCE_REVIEW and "
+        "LIVE_PROMOTION_REVIEW(evidence_episode_id,decision), DEGRADATION_REPORT(subject_id,state), "
+        "REPLAN_PROPOSAL(cause_event_id,changes), MISSION_GRAPH_PROPOSAL(nodes). "
+        "DATA_QUALITY_REPORT requires both quality_state and pit_state VALID. "
+        "Arguments require mission_id, idempotency_key, expected_revision and artifact."
     ),
 }
 

@@ -420,6 +420,15 @@ def _load_mission_context(
         )
 
 
+def _mission_id_for_lease(factory: SessionFactory, lease: JobLease) -> UUID | None:
+    """Resolve the leased Mission before any admission setup can fail."""
+    with factory() as session:
+        job = session.get(Job, lease.job_id)
+        if job is None or job.kind != "RESEARCH_MISSION":
+            return None
+        return job.resource_id
+
+
 @contextmanager
 def _provider_credential_broker(api_key: str | None) -> Iterator[Path | None]:
     """Expose a configured provider key exactly once to Codex's auth helper.
@@ -725,20 +734,19 @@ def _run_observable_turn(
 
 def run_mission(settings: Settings, lease: JobLease) -> None:
     """Resume or start one bounded Mission without recreating its workspace or Thread."""
-    if importlib.util.find_spec("openai_codex") is None:
-        raise QfError(
-            "CODEX_RUNTIME_UNAVAILABLE",
-            "The official OpenAI Codex app-server SDK is not installed.",
-            503,
-        )
-
     engine = create_database_engine(settings)
     factory = create_lease_fenced_session_factory(engine, lease)
     auth_factory = create_session_factory(engine)
-    mission_id: UUID | None = None
+    mission_id: UUID | None = _mission_id_for_lease(factory, lease)
     program_id: UUID | None = None
     execution_turns: tuple[tuple[str, str], ...] = ()
     try:
+        if importlib.util.find_spec("openai_codex") is None:
+            raise QfError(
+                "CODEX_RUNTIME_UNAVAILABLE",
+                "The official OpenAI Codex app-server SDK is not installed.",
+                503,
+            )
         (
             mission_id,
             program_id,

@@ -94,6 +94,13 @@ _NON_ALPHA_FACT_RULES: dict[DraftArtifactKind, dict[str, str]] = {
     DraftArtifactKind.MISSION_GRAPH_PROPOSAL: {"nodes": "list"},
 }
 
+_NON_ALPHA_SUCCESS_VALUES: dict[DraftArtifactKind, dict[str, frozenset[str]]] = {
+    DraftArtifactKind.DATA_QUALITY_REPORT: {
+        "quality_state": frozenset({"VALID"}),
+        "pit_state": frozenset({"VALID"}),
+    },
+}
+
 
 def _bounded_non_alpha_payload(
     kind: DraftArtifactKind, payload: dict[str, Any]
@@ -139,6 +146,12 @@ def _bounded_non_alpha_payload(
                 facts_valid = isinstance(fact, dict) and bool(fact)
             if not facts_valid:
                 break
+    success_values = _NON_ALPHA_SUCCESS_VALUES.get(kind, {})
+    if facts_valid and any(
+        not isinstance(facts.get(field), str) or facts[field] not in values
+        for field, values in success_values.items()
+    ):
+        facts_valid = False
     if (
         not isinstance(summary, str)
         or not summary.strip()

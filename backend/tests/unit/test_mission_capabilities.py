@@ -332,6 +332,21 @@ def test_non_alpha_artifacts_require_kind_specific_facts() -> None:
         },
     )
     assert payload["quality"]["facts"]["quality_state"] == "VALID"
+    with pytest.raises(QfError, match="MISSION_ARTIFACT_SCHEMA_INVALID"):
+        _bounded_non_alpha_payload(
+            DraftArtifactKind.DATA_QUALITY_REPORT,
+            {
+                "quality": {
+                    "summary": "quality checks failed",
+                    "items": ["point-in-time coverage is invalid"],
+                    "facts": {
+                        "dataset_revision_id": "00000000-0000-0000-0000-000000000001",
+                        "quality_state": "INVALID",
+                        "pit_state": "INVALID",
+                    },
+                }
+            },
+        )
 
 
 def test_mission_tool_calls_are_counted_and_budgeted(engine) -> None:

@@ -427,6 +427,9 @@ quality_state,pit_state)`、`FEATURE_PROPOSAL(family,input_contract)`、
 `DEGRADATION_REPORT(subject_id,state)`、`REPLAN_PROPOSAL(cause_event_id,changes)`、
 `MISSION_GRAPH_PROPOSAL(nodes)`。通用摘要或空 JSON 不能推进 Mission DAG。
 
+`DATA_QUALITY_REPORT` 只有 `quality_state=VALID` 且 `pit_state=VALID` 才能成为
+`VALIDATED` 输出；明确报告失败状态不会解锁后续 Mission。
+
 Codex Thread 是 Mission 执行上下文，不是业务状态。
 
 ## 7. Mission Graph 与自治调度

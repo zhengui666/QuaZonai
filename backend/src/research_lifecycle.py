@@ -685,6 +685,7 @@ def _forward_evidence_is_in_order(
             DegradationObservation.subject_id == subject_id,
             DegradationObservation.policy_revision == _DEGRADATION_POLICY.policy_revision,
             DegradationObservation.evaluated.is_(True),
+            DegradationObservation.forward_evidence_episode_id != episode.id,
             ForwardEvidenceEpisode.observation_end >= episode.observation_end,
         )
         .limit(1)
