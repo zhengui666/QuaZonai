@@ -67,6 +67,9 @@ _DOWNSTREAM_ROUTE = re.compile(
 _DOWNSTREAM_PREFLIGHT_ROUTE = re.compile(
     r"^/api/v1/downstream-systems/[^/]+/preflight$"
 )
+_DOWNSTREAM_CONNECTION_PREFLIGHT_ROUTE = re.compile(
+    r"^/api/v1/downstream-connection-versions/[^/]+/preflight$"
+)
 _DOWNSTREAM_METHODS = {
     "claim": "POST",
     "accept": "POST",
@@ -1094,7 +1097,10 @@ def is_operator_auth_exempt(method: str, path: str) -> bool:
     normalized_method = method.upper()
     if (normalized_method, path) in _PUBLIC_OPERATOR_ROUTES:
         return True
-    if _DOWNSTREAM_PREFLIGHT_ROUTE.fullmatch(path) is not None:
+    if (
+        _DOWNSTREAM_PREFLIGHT_ROUTE.fullmatch(path) is not None
+        or _DOWNSTREAM_CONNECTION_PREFLIGHT_ROUTE.fullmatch(path) is not None
+    ):
         return normalized_method == "POST"
     match = _DOWNSTREAM_ROUTE.fullmatch(path)
     if match is None:
