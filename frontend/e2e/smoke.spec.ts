@@ -47,7 +47,7 @@ async function createPendingSource(page: Page) {
   await dialog.getByRole('button', { name: 'Register data source', exact: true }).click();
 
   const sourceTable = page.locator('.qz-table-shell').filter({ hasText: sourceName });
-  await expect(sourceTable.getByText('Pending', { exact: true })).toBeVisible();
+  await expect(sourceTable.getByText('Pending', { exact: true }).first()).toBeVisible();
   await expect(researchReady).toContainText('NO');
   return { sourceName };
 }
@@ -60,7 +60,7 @@ test('Fresh configuration flow 2: a pending source remains unready after reload'
   const { sourceName } = await createPendingSource(page);
   await page.reload();
   const sourceTable = page.locator('.qz-table-shell').filter({ hasText: sourceName });
-  await expect(sourceTable.getByText('Pending', { exact: true })).toBeVisible();
+  await expect(sourceTable.getByText('Pending', { exact: true }).first()).toBeVisible();
   const researchReady = page.locator('.qz-kpi').filter({ hasText: 'Research ready' });
   await expect(researchReady).toContainText('NO');
 });
