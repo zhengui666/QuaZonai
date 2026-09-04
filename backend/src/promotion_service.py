@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from candidate_packages import is_trusted_candidate_package
 from db.models import (
+    AlphaQualification,
     ApprovalSnapshot,
     CandidatePackage,
     DownstreamConnectionVersion,
@@ -36,6 +37,7 @@ from db.models import (
     PortfolioEvaluationEpisode,
     PortfolioEvaluationMetric,
     PortfolioCandidate,
+    PortfolioCandidateMember,
     PreflightReceipt,
     PromotionEvaluation,
     PromotionGateResult,
@@ -172,7 +174,9 @@ def validate_typed_paper_approval(
     )
     if policy is None:
         raise _conflict("PROMOTION_POLICY_INVALID", "Approval Promotion Policy is missing.")
-    _, downstream, connection, contract, receipt = _strict_p2p_policy(session, policy)
+    _, downstream, connection, contract, receipt = _strict_p2p_policy(
+        session, policy, package.contract_version
+    )
     if (
         approval.downstream_system_id != downstream.id
         or approval.downstream_connection_version_id != connection.id
@@ -323,7 +327,7 @@ def approve_typed_live_handoff(session: Session, approval_id: UUID) -> HandoffOf
 
 
 def _strict_p2p_policy(
-    session: Session, policy: PromotionPolicyVersion
+    session: Session, policy: PromotionPolicyVersion, package_contract_version: str
 ) -> tuple[PromotionPolicyVersion, DownstreamSystem, DownstreamConnectionVersion, FeedbackContractVersion, PreflightReceipt]:
     if (
         policy.policy_contract_version != _PROMOTION_POLICY_CONTRACT
@@ -417,7 +421,7 @@ def _strict_p2p_policy(
         receipt_id=cast(UUID, policy.paper_preflight_receipt_id),
         connection=connection,
         downstream=paper_downstream,
-        package_contract_version=connection.package_contract_version,
+        package_contract_version=package_contract_version,
     )
     return policy, paper_downstream, connection, contract, receipt
 
@@ -522,7 +526,9 @@ def maybe_enqueue_p2p(
     )
     if policy is None:
         raise _conflict("PROMOTION_POLICY_INVALID", "Portfolio evaluation policy is missing.")
-    _, downstream, connection, contract, receipt = _strict_p2p_policy(session, policy)
+    _, downstream, connection, contract, receipt = _strict_p2p_policy(
+        session, policy, package.contract_version
+    )
     metrics = {
         metric.metric_code: metric
         for metric in session.scalars(
@@ -831,16 +837,20 @@ def accept_paper_feedback(
     metrics: Iterable[TypedFeedbackMetric],
 ) -> ForwardEvidenceEpisode:
     """Persist complete typed Paper feedback and enqueue exactly one P2L job."""
-    handoff, _approval, _evaluation, _package, contract = _typed_paper_handoff(session, handoff_id)
+    handoff, _approval, _evaluation, _package, paper_contract = _typed_paper_handoff(
+        session, handoff_id
+    )
     if handoff.state not in {"DOWNSTREAM_ACCEPTED", "FEEDBACK_PENDING", "FEEDBACK_IN_PROGRESS", "FEEDBACK_PARTIAL", "FEEDBACK_COMPLETE"}:
         raise _conflict("HANDOFF_STATE_CONFLICT", "Paper Handoff is not accepting complete feedback.")
     start = _utc(header.observation_start)
     end = _utc(header.observation_end)
-    if end <= start or header.sample_size < contract.minimum_valid_sample_size:
+    if end > datetime.now(UTC):
+        raise _conflict("FEEDBACK_CONTRACT_INVALID", "Feedback observation cannot end in the future.")
+    if end <= start or header.sample_size < paper_contract.minimum_valid_sample_size:
         raise _conflict("FEEDBACK_CONTRACT_INVALID", "Feedback observation does not satisfy the frozen contract.")
-    if (end - start).total_seconds() < contract.minimum_observation_seconds:
+    if (end - start).total_seconds() < paper_contract.minimum_observation_seconds:
         raise _conflict("FEEDBACK_CONTRACT_INVALID", "Feedback observation is shorter than the frozen contract.")
-    typed = _typed_feedback_rows(session, contract, metrics)
+    typed = _typed_feedback_rows(session, paper_contract, metrics)
     existing = session.scalar(
         select(FeedbackPackage)
         .where(FeedbackPackage.handoff_offer_id == handoff.id)
@@ -879,7 +889,7 @@ def accept_paper_feedback(
     package = FeedbackPackage(
         id=uuid4(),
         handoff_offer_id=handoff.id,
-        feedback_contract_version_id=contract.id,
+        feedback_contract_version_id=paper_contract.id,
         state="COMPLETE",
         observation_start=start,
         observation_end=end,
@@ -989,6 +999,36 @@ def maybe_enqueue_p2l(session: Session, *, forward_evidence_episode_id: UUID) ->
         raise _conflict("PROMOTION_LINEAGE_INVALID", "Promotion Candidate is missing.")
     degrading = session.scalar(select(DegradationObservation.id).where(DegradationObservation.subject_type == "PORTFOLIO", DegradationObservation.subject_id == candidate.id, DegradationObservation.state.in_(("DEGRADING", "FAILED"))).limit(1))
     if degrading is not None:
+        return None
+    degrading_member_observation = session.scalar(
+        select(DegradationObservation.id)
+        .join(
+            PortfolioCandidateMember,
+            PortfolioCandidateMember.alpha_qualification_id == DegradationObservation.subject_id,
+        )
+        .where(
+            PortfolioCandidateMember.candidate_id == candidate.id,
+            DegradationObservation.subject_type == "ALPHA",
+            DegradationObservation.state.in_(("DEGRADING", "FAILED")),
+        )
+        .limit(1)
+    )
+    if degrading_member_observation is not None:
+        return None
+    degrading_member = session.scalar(
+        select(AlphaQualification.id)
+        .join(
+            PortfolioCandidateMember,
+            PortfolioCandidateMember.alpha_qualification_id == AlphaQualification.id,
+        )
+        .where(
+            PortfolioCandidateMember.candidate_id == candidate.id,
+            AlphaQualification.degradation_state.in_(("DEGRADING", "FAILED")),
+        )
+        .with_for_update()
+        .limit(1)
+    )
+    if degrading_member is not None:
         return None
     metrics = {row.metric_code: row for row in session.scalars(select(ForwardEvidenceMetric).where(ForwardEvidenceMetric.episode_id == episode.id).with_for_update())}
     requirements = list(session.scalars(select(FeedbackContractMetricRequirement).where(FeedbackContractMetricRequirement.feedback_contract_version_id == contract.id).order_by(FeedbackContractMetricRequirement.ordinal).with_for_update()))
