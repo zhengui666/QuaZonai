@@ -222,7 +222,7 @@ describe('canonical Administration configuration', () => {
     await user.type(within(dialog).getByLabelText('Annualization factor'), '252');
     await selectOption(user, dialog, 'Multiple testing method', 'Bonferroni');
     await user.type(within(dialog).getByLabelText('Multiple testing maximum trials'), '10');
-    await user.type(within(dialog).getByLabelText('Qualification metric code'), 'SHARPE_RATIO');
+    await selectOption(user, dialog, 'Qualification metric code', 'Sharpe Ratio');
     await selectOption(user, dialog, 'Qualification comparator', 'Minimum');
     await user.type(within(dialog).getByLabelText('Qualification threshold'), '1.25');
     await user.type(within(dialog).getByLabelText('Pass disclosure code'), 'ALPHA_PASS');
@@ -255,19 +255,17 @@ describe('canonical Administration configuration', () => {
     });
   });
 
-  it('submits explicit ordered Promotion Policy gates with canonical downstream references', async () => {
+  it('submits an Alpha typed Promotion Policy without legacy downstream fields', async () => {
     const user = userEvent.setup();
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(canonicalFetch);
     renderApp(<AdministrationPage />);
 
     await user.click(await screen.findByRole('button', { name: 'Create Promotion Policy Version' }));
     const dialog = screen.getByRole('dialog');
-    await selectOption(user, dialog, 'Promotion purpose', 'Paper To Live');
-    await selectOption(user, dialog, 'Promotion mode', 'Auto Handoff');
-    await selectOption(user, dialog, 'Paper downstream', 'Paper Consumer · paper-1');
-    await selectOption(user, dialog, 'Live downstream', 'Live Consumer · live-1');
+    await selectOption(user, dialog, 'Promotion purpose', 'Sealed To Qualified');
+    await selectOption(user, dialog, 'Promotion mode', 'Manual Approval');
     await user.click(within(dialog).getByRole('button', { name: 'Add promotion gate' }));
-    await user.type(within(dialog).getByLabelText('Gate 1 metric code'), 'PAPER_SHARPE');
+    await selectOption(user, dialog, 'Gate 1 metric code', 'Sharpe Ratio');
     await selectOption(user, dialog, 'Gate 1 comparator', 'Minimum');
     await user.type(within(dialog).getByLabelText('Gate 1 threshold'), '1.5');
     await user.type(within(dialog).getByLabelText('Gate 1 ordinal'), '1');
@@ -277,11 +275,9 @@ describe('canonical Administration configuration', () => {
       const call = fetchMock.mock.calls.find(([input, options]) => String(input) === '/api/v1/promotion-policy-versions' && (options as RequestInit | undefined)?.method === 'POST');
       expect(call).toBeDefined();
       expect(JSON.parse(String((call?.[1] as RequestInit).body))).toEqual({
-        purpose: 'PAPER_TO_LIVE',
-        mode: 'AUTO_HANDOFF',
-        paper_downstream_system_id: 'paper-1',
-        live_downstream_system_id: 'live-1',
-        gates: [{ metric_code: 'PAPER_SHARPE', comparator: 'MINIMUM', threshold: '1.5', ordinal: 1 }],
+        purpose: 'SEALED_TO_QUALIFIED',
+        mode: 'MANUAL_APPROVAL',
+        gates: [{ metric_code: 'SHARPE_RATIO', comparator: 'MINIMUM', threshold: '1.5', ordinal: 1 }],
         state: 'ACTIVE',
       });
     });
@@ -309,7 +305,7 @@ describe('canonical Administration configuration', () => {
     await user.click(await screen.findByRole('option', { name: 'US Equities · v1' }));
     await user.type(within(mandateDialog).getByLabelText('Minimum Alpha count'), '2');
     for (const [label, value] of Object.entries({
-      'Minimum weight': '0',
+      'Minimum weight': '0.01',
       'Maximum weight': '1',
       'Gross exposure limit': '1',
       'Net exposure target': '1',
@@ -342,7 +338,7 @@ describe('canonical Administration configuration', () => {
         eligible_alpha_role: 'PRIMARY_ALPHA',
         universe_version_id: 'universe-1',
         minimum_alpha_count: 2,
-        minimum_weight: '0',
+        minimum_weight: '0.01',
         maximum_weight: '1',
         gross_exposure_limit: '1',
         net_exposure_target: '1',
