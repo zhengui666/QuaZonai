@@ -403,7 +403,7 @@ def _portfolio_facts(session: Session) -> dict[str, object]:
         capabilities=[],
         contract_version=paper_connection.package_contract_version,
         checked_at=forecast.as_of_time,
-        valid_until=forecast.as_of_time + timedelta(days=1),
+        valid_until=datetime.now(UTC) + timedelta(days=1),
         checker_version="test",
     )
     live_receipt = PreflightReceipt(
@@ -416,7 +416,7 @@ def _portfolio_facts(session: Session) -> dict[str, object]:
         capabilities=[],
         contract_version=live_connection.package_contract_version,
         checked_at=forecast.as_of_time,
-        valid_until=forecast.as_of_time + timedelta(days=1),
+        valid_until=datetime.now(UTC) + timedelta(days=1),
         checker_version="test",
     )
     session.add_all((paper_receipt, live_receipt))
