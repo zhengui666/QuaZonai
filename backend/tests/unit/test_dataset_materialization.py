@@ -150,7 +150,11 @@ def _seed_pending_materialization(
             quality_state="PENDING",
             point_in_time_state="PENDING",
             partition=partition,
-            materialization_request={"instrument_scope": ["TEST.INSTRUMENT"]},
+            materialization_request={
+                "instrument_scope": ["TEST.INSTRUMENT"],
+                "quality_requirements": {"coverage": "required"},
+                "point_in_time_requirements": {"available_at": "required"},
+            },
             created_at=now,
         )
         session.add(revision)
@@ -304,7 +308,7 @@ def test_reclaimed_materializer_cannot_persist_stale_descriptor_facts(
         )
 
 
-def test_unready_source_is_rejected_as_dataset_evidence(
+def test_unready_source_remains_pending_operationally(
     engine: Engine, settings, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]
     lease, dataset_id = _seed_pending_materialization(engine, source_ready=False)
@@ -318,20 +322,13 @@ def test_unready_source_is_rejected_as_dataset_evidence(
         revision = session.get(DatasetRevision, dataset_id)
         assert revision is not None
         assert (revision.quality_state, revision.point_in_time_state, revision.promotability) == (
-            "INVALID",
-            "INVALID",
+            "PENDING",
+            "PENDING",
             "NON_PROMOTABLE",
         )
-        reason_codes = [
-            item.summary["reason_codes"]
-            for item in session.scalars(
-                select(DataQualityResult).where(DataQualityResult.dataset_revision_id == dataset_id)
-            )
-        ]
-        assert reason_codes == [
-            ["DATASET_MATERIALIZATION_SOURCE_NOT_READY"],
-            ["DATASET_MATERIALIZATION_SOURCE_NOT_READY"],
-        ]
+        assert session.scalar(
+            select(DataQualityResult).where(DataQualityResult.dataset_revision_id == dataset_id)
+        ) is None
 
 
 def test_sealed_partition_is_rejected_without_creating_a_catalog_binding(

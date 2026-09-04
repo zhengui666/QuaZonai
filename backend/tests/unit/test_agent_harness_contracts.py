@@ -97,11 +97,11 @@ def test_draft_artifact_is_an_unprivileged_strict_envelope() -> None:
         mission_id=uuid4(),
         kind=DraftArtifactKind.RESEARCH_PLAN,
         summary="A candidate signal requires validation.",
-        payload={"free_form_for_this_kind": True},
+        payload={"plan": "bounded plan"},
     )
 
     assert artifact.schema_version == "v1"
-    assert artifact.payload == {"free_form_for_this_kind": True}
+    assert artifact.payload == {"plan": "bounded plan"}
     with pytest.raises(ValidationError):
         DraftArtifact(
             mission_id=uuid4(),

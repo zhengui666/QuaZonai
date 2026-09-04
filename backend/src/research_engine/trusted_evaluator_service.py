@@ -40,6 +40,7 @@ from db.models import (
     EvaluationDesignVersion,
     EvidenceExposure,
     MissionArtifact,
+    NautilusCatalogBinding,
     PortfolioEvaluationAssignment,
     PortfolioInputEvaluationAssignment,
     PromotionPolicyGate,
@@ -532,6 +533,46 @@ def trusted_evaluator_assignment_running(
         return False
     row = session.scalar(select(model).where(model.id == resource_id).with_for_update())
     return row is not None and row.state == "RUNNING"
+
+
+def terminalize_trusted_evaluator_failure(
+    session: Session, *, kind: str, resource_id: UUID, outcome_code: str
+) -> bool:
+    """Close a fenced evaluator assignment after its bounded retries are spent."""
+    models = {
+        "DISCOVERY_EVALUATION": AlphaDiscoveryEvaluation,
+        "ALPHA_EVALUATION": AlphaEvaluationAssignment,
+        "PORTFOLIO_INPUT_EVALUATION": PortfolioInputEvaluationAssignment,
+        "PORTFOLIO_EVALUATION": PortfolioEvaluationAssignment,
+    }
+    model: Any = models.get(kind)
+    if model is None:
+        return False
+    row = session.scalar(select(model).where(model.id == resource_id).with_for_update())
+    if row is None or row.state != "RUNNING":
+        return False
+    completed_at = datetime.now(UTC)
+    code = outcome_code.strip()[:100] or "TRUSTED_EVALUATOR_FAILED"
+    if kind == "ALPHA_EVALUATION":
+        row.state = "INVALIDATED"
+        episode = session.scalar(
+            select(AlphaEvaluationEpisode)
+            .where(AlphaEvaluationEpisode.assignment_id == row.id)
+            .with_for_update()
+        )
+        if episode is not None and episode.state in {"ASSIGNED", "EVALUATING"}:
+            episode.state = "INVALIDATED"
+            episode.result = "INVALID"
+    elif kind == "PORTFOLIO_EVALUATION":
+        row.state = "FAILED"
+        row.outcome = "RETRIES_EXHAUSTED"
+        row.completed_at = completed_at
+    else:
+        row.state = "FAILED"
+        row.outcome_code = code
+        row.completed_at = completed_at
+    session.flush()
+    return True
 
 
 def _write_descriptor(root: Path, descriptor: Mapping[str, object]) -> Path:
@@ -1190,6 +1231,27 @@ def _create_signal(
             "Alpha signal summary is outside its frozen sealed Dataset.",
             409,
         )
+    catalog = session.scalar(
+        select(NautilusCatalogBinding)
+        .where(NautilusCatalogBinding.dataset_revision_id == sealed_dataset.id)
+        .with_for_update()
+    )
+    if (
+        catalog is None
+        or not catalog.sealed
+        or catalog.quality_state != "VALID"
+        or catalog.point_in_time_state != "VALID"
+        or signal is None
+        or any(
+            forecast.instrument_id not in set(catalog.instrument_scope)
+            for forecast in result.forecasts
+        )
+    ):
+        raise QfError(
+            "ALPHA_SIGNAL_CATALOG_BINDING_INVALID",
+            "Alpha forecasts must stay within the frozen sealed catalog scope.",
+            409,
+        )
     artifact = AlphaSignalArtifact(
         alpha_model_version_id=context.model_version.id,
         dataset_revision_id=sealed_dataset.id,
@@ -1513,5 +1575,6 @@ __all__ = [
     "prepare_portfolio_input_evaluation",
     "prepare_discovery_evaluation",
     "run_trusted_evaluator",
+    "terminalize_trusted_evaluator_failure",
     "trusted_evaluator_assignment_running",
 ]

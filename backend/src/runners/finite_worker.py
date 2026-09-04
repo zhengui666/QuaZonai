@@ -31,7 +31,10 @@ from logging_utils import configure_logging
 from runtime_config import effective_settings
 from runners.codex_sandbox import codex_sandbox_preflight
 from settings import Settings
-from research_engine.trusted_evaluator_service import trusted_evaluator_assignment_running
+from research_engine.trusted_evaluator_service import (
+    terminalize_trusted_evaluator_failure,
+    trusted_evaluator_assignment_running,
+)
 
 LOGGER = logging.getLogger("quazonai.finite_worker")
 Handler = Callable[[Settings, Job, Event | None], None]
@@ -184,6 +187,12 @@ HANDLERS: dict[str, Handler] = {
         timeout_attribute="mission_job_timeout_seconds",
         redact_child_failure=True,
     ),
+    "PORTFOLIO_ASSEMBLY": _child_handler(
+        "runners.portfolio_assembly",
+        "run",
+        timeout_attribute="mission_job_timeout_seconds",
+        redact_child_failure=True,
+    ),
     "PORTFOLIO_EVALUATION": _child_handler(
         "runners.sealed_evaluator",
         "run-portfolio",
@@ -332,17 +341,21 @@ def run_once(
         )
     if failure is not None:
         with factory.begin() as session:
+            evaluator_retryable = job.kind in {
+                "DISCOVERY_EVALUATION",
+                "ALPHA_EVALUATION",
+                "PORTFOLIO_INPUT_EVALUATION",
+                "PORTFOLIO_EVALUATION",
+            } and trusted_evaluator_assignment_running(
+                session, kind=job.kind, resource_id=job.resource_id
+            )
+            production_retryable = job.kind in {
+                "CANDIDATE_PACKAGE_BUILD",
+                "PORTFOLIO_TO_PAPER_PROMOTION",
+                "PAPER_TO_LIVE_PROMOTION",
+            }
             retryable = (
-                job.kind
-                in {
-                    "DISCOVERY_EVALUATION",
-                    "ALPHA_EVALUATION",
-                    "PORTFOLIO_INPUT_EVALUATION",
-                    "PORTFOLIO_EVALUATION",
-                }
-                and trusted_evaluator_assignment_running(
-                    session, kind=job.kind, resource_id=job.resource_id
-                )
+                (evaluator_retryable or production_retryable)
                 and job.attempt < _TRUSTED_EVALUATOR_MAX_ATTEMPTS
             )
             failure_message = str(failure)[-4000:]
@@ -360,6 +373,13 @@ def run_once(
                 else fail_job(session, failure_message, lease=lease)
             )
             if handled:
+                if not retryable and evaluator_retryable:
+                    terminalize_trusted_evaluator_failure(
+                        session,
+                        kind=job.kind,
+                        resource_id=job.resource_id,
+                        outcome_code="RETRIES_EXHAUSTED",
+                    )
                 append_event(
                     session,
                     kind="JOB_REQUEUED" if retryable else "JOB_FAILED",

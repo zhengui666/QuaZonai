@@ -192,3 +192,22 @@ def test_optimizer_returns_solver_infeasible_for_capacity_limits() -> None:
     assert result.status is OptimizationStatus.INFEASIBLE
     assert not result.target_weights
     assert {diagnostic.code for diagnostic in result.diagnostics} >= {"SOLVER_INFEASIBLE"}
+
+
+def test_optimizer_enforces_stressed_capacity_ceiling() -> None:
+    result = optimize_portfolio(
+        OptimizationInput(
+            eligible_alphas=(
+                EligibleAlpha("alpha-a", expected_return=0.06, uncertainty=0.01),
+                EligibleAlpha("alpha-b", expected_return=0.05, uncertainty=0.02),
+            ),
+            covariance=((0.04, 0.01), (0.01, 0.03)),
+            capital=1_000_000,
+            capacities=(
+                CapacityEstimate(1_000_000, 1_000_000, 0.1, 1.0, 100_000),
+                CapacityEstimate(1_000_000, 1_000_000, 0.1, 1.0, 100_000),
+            ),
+        )
+    )
+
+    assert result.status is OptimizationStatus.INFEASIBLE

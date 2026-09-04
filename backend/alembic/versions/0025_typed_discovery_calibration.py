@@ -20,7 +20,8 @@ _DISCOVERY_PRIVATE_RESULT = (
     "(state IN ('FROZEN', 'QUEUED', 'RUNNING') "
     "AND private_result_ref IS NULL AND evaluated_at IS NULL) OR "
     "(state IN ('VALID', 'INCONCLUSIVE', 'INVALID') "
-    "AND private_result_ref IS NOT NULL AND evaluated_at IS NOT NULL)"
+    "AND private_result_ref IS NOT NULL AND evaluated_at IS NOT NULL) OR "
+    "(state = 'FAILED' AND private_result_ref IS NULL AND evaluated_at IS NULL)"
 )
 _CALIBRATION_TRUSTED_PROVENANCE = (
     "(source_discovery_evaluation_id IS NULL "

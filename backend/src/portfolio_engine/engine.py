@@ -405,11 +405,12 @@ def _constraint_slacks(
         for alpha, capacity, weight, previous_weight in zip(
             request.eligible_alphas, request.capacities, weights, previous, strict=True
         ):
+            position_ceiling = min(capacity.max_position_notional, capacity.stressed_capacity)
             slacks.extend(
                 (
                     ConstraintSlack(
                         f"capacity_position:{alpha.alpha_id}",
-                        float(capacity.max_position_notional - request.capital * weight),
+                        float(position_ceiling - request.capital * weight),
                     ),
                     ConstraintSlack(
                         f"capacity_trade:{alpha.alpha_id}",
@@ -455,9 +456,10 @@ def optimize_portfolio(request: OptimizationInput) -> OptimizationResult:
     if constraints.variance_limit is not None:
         cvx_constraints.append(risk <= constraints.variance_limit)
     for index, capacity in enumerate(request.capacities):
+        position_ceiling = min(capacity.max_position_notional, capacity.stressed_capacity)
         cvx_constraints.extend(
             (
-                weights[index] * request.capital <= capacity.max_position_notional,
+                weights[index] * request.capital <= position_ceiling,
                 cp.abs(delta[index]) * request.capital <= capacity.max_trade_notional,
             )
         )

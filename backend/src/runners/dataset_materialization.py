@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from math import isfinite
 from typing import Any
 from uuid import UUID
 
@@ -53,6 +54,8 @@ class _MaterializationContext:
     requested_event_end: datetime
     requested_available_start: datetime
     requested_available_end: datetime
+    quality_requirements: dict[str, Any]
+    point_in_time_requirements: dict[str, Any]
 
 
 def _utc_hour(value: datetime, field_name: str) -> datetime:
@@ -262,6 +265,52 @@ def _prepare_materialization(factory: SessionFactory, job_id: UUID) -> _Material
         plugin_binding = _resolve_plugin_binding(session, binding)
 
         request = revision.materialization_request
+        quality_requirements = request.get("quality_requirements") if isinstance(request, dict) else None
+        point_in_time_requirements = (
+            request.get("point_in_time_requirements") if isinstance(request, dict) else None
+        )
+        if not isinstance(quality_requirements, dict) or not isinstance(
+            point_in_time_requirements, dict
+        ):
+            raise QfError(
+                "DATASET_MATERIALIZATION_REQUIREMENTS_INVALID",
+                "Dataset materialization requires the typed quality and point-in-time requirements.",
+                409,
+            )
+        if set(point_in_time_requirements) != {"available_at"} or point_in_time_requirements.get(
+            "available_at"
+        ) != "required":
+            raise QfError(
+                "DATASET_MATERIALIZATION_REQUIREMENTS_INVALID",
+                "Point-in-time requirements must request available_at.",
+                409,
+            )
+        if set(quality_requirements) == {"coverage"}:
+            if quality_requirements.get("coverage") != "required":
+                raise QfError(
+                    "DATASET_MATERIALIZATION_REQUIREMENTS_INVALID",
+                    "Coverage requirement must be required.",
+                    409,
+                )
+        elif set(quality_requirements) == {"minimum_coverage"}:
+            minimum_coverage = quality_requirements.get("minimum_coverage")
+            if (
+                isinstance(minimum_coverage, bool)
+                or not isinstance(minimum_coverage, (int, float))
+                or not isfinite(float(minimum_coverage))
+                or not 0 <= float(minimum_coverage) <= 1
+            ):
+                raise QfError(
+                    "DATASET_MATERIALIZATION_REQUIREMENTS_INVALID",
+                    "minimum_coverage must be a finite ratio between zero and one.",
+                    409,
+                )
+        else:
+            raise QfError(
+                "DATASET_MATERIALIZATION_REQUIREMENTS_INVALID",
+                "Quality requirements must use one supported typed field.",
+                409,
+            )
         instruments = request.get("instrument_scope") if isinstance(request, dict) else None
         if (
             not isinstance(instruments, list)
@@ -390,6 +439,8 @@ def _prepare_materialization(factory: SessionFactory, job_id: UUID) -> _Material
             requested_available_end=_utc(revision.available_end)
             if revision.available_end is not None
             else end,
+            quality_requirements=quality_requirements,
+            point_in_time_requirements=point_in_time_requirements,
         )
 
 
@@ -400,6 +451,16 @@ def _terminal_states(
     pit_reasons: list[str] = []
     if descriptor.quality_result.get("valid") is not True:
         quality_reasons.append("REMOTE_QUALITY_INVALID")
+    if "minimum_coverage" in context.quality_requirements:
+        coverage = descriptor.quality_result.get("coverage")
+        minimum_coverage = context.quality_requirements["minimum_coverage"]
+        if (
+            isinstance(coverage, bool)
+            or not isinstance(coverage, (int, float))
+            or not isfinite(float(coverage))
+            or float(coverage) < float(minimum_coverage)
+        ):
+            quality_reasons.append("QUALITY_COVERAGE_BELOW_REQUIREMENT")
     if descriptor.row_count <= 0:
         quality_reasons.append("DATA_EMPTY")
     if context.missing_shard_count:
@@ -503,6 +564,21 @@ def _record_rejection(factory: SessionFactory, job_id: UUID, error: QfError) -> 
 
 
 def _is_terminal_rejection(error: QfError) -> bool:
+    if error.code in {
+        "DATASET_MATERIALIZATION_BINDING_CONFLICT",
+        "DATASET_MATERIALIZATION_BINDING_INVALID",
+        "DATASET_MATERIALIZATION_CONNECTOR_UNSUPPORTED",
+        "DATASET_MATERIALIZATION_MANIFEST_INVALID",
+        "DATASET_MATERIALIZATION_PLUGIN_BUNDLE_MEMBER_REQUIRED",
+        "DATASET_MATERIALIZATION_PLUGIN_BUNDLE_NOT_READY",
+        "DATASET_MATERIALIZATION_PLUGIN_CAPABILITY_FORBIDDEN",
+        "DATASET_MATERIALIZATION_PLUGIN_RELEASE_NOT_ACTIVE",
+        "DATASET_MATERIALIZATION_REQUIREMENTS_INVALID",
+        "DATASET_MATERIALIZATION_SOURCE_INVALID",
+        "DATASET_MATERIALIZATION_SOURCE_NOT_READY",
+        "DATASET_MATERIALIZATION_WORKER_TIMEOUT_INSUFFICIENT",
+    }:
+        return False
     return error.code not in {
         "JOB_NOT_FOUND",
         "JOB_STATE_CONFLICT",

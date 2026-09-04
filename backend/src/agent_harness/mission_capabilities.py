@@ -56,6 +56,24 @@ _MAX_RPC_BYTES = 96 * 1024
 _MAX_FACT_BYTES = 64 * 1024
 _MAX_EVIDENCE_ITEMS = 50
 _DISCOVERY_DISCLOSURE_LEVEL = "DISCOVERY_FULL"
+# Non-Alpha artifacts still cross a trust boundary. Keep the envelope small
+# and kind-specific so an empty dictionary cannot become VALIDATED by merely
+# claiming schema_version=v1.
+_NON_ALPHA_REQUIRED_FIELDS: dict[DraftArtifactKind, str] = {
+    DraftArtifactKind.RESEARCH_PLAN: "plan",
+    DraftArtifactKind.DATA_REQUIREMENT: "requirements",
+    DraftArtifactKind.DATA_QUALITY_REPORT: "quality",
+    DraftArtifactKind.FEATURE_PROPOSAL: "feature",
+    DraftArtifactKind.CALIBRATION_PROPOSAL: "calibration",
+    DraftArtifactKind.ROBUSTNESS_REPORT: "robustness",
+    DraftArtifactKind.PROMOTION_REVIEW: "review",
+    DraftArtifactKind.PORTFOLIO_PROPOSAL: "portfolio",
+    DraftArtifactKind.PAPER_EVIDENCE_REVIEW: "evidence",
+    DraftArtifactKind.LIVE_PROMOTION_REVIEW: "evidence",
+    DraftArtifactKind.DEGRADATION_REPORT: "diagnosis",
+    DraftArtifactKind.REPLAN_PROPOSAL: "replan",
+    DraftArtifactKind.MISSION_GRAPH_PROPOSAL: "graph",
+}
 _IMPLEMENTED_TOOLS = frozenset(
     {
         MissionTool.PROFILE_DATASET,
@@ -523,6 +541,15 @@ class MissionCapabilityService:
                         "MISSION_ARTIFACT_SCHEMA_INVALID",
                         "Mission artifacts must use the bounded v1 envelope.",
                         422,
+                    )
+                required_field = _NON_ALPHA_REQUIRED_FIELDS.get(request.artifact.kind)
+                value = payload.get(required_field) if required_field is not None else None
+                if required_field is None or value in (None, "", [], {}):
+                    raise QfError(
+                        "MISSION_ARTIFACT_SCHEMA_INVALID",
+                        "Mission artifact payload does not match its kind-specific v1 schema.",
+                        422,
+                        {"kind": request.artifact.kind.value, "required_field": required_field},
                     )
                 artifact_state = "VALIDATED"
             normalized = request.model_dump(mode="json")

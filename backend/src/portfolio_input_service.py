@@ -604,10 +604,17 @@ def _trusted_axes(
         axes.append(_TrustedAxis(qualification, result, signal, forecast))
 
     as_of = _stored_utc(axes[0].forecast.as_of_time)
+    horizons = {
+        axis.qualification.horizon.strip().upper()
+        for axis in axes
+        if axis.qualification.horizon is not None
+    }
     if (
         as_of is None
         or any(_stored_utc(axis.forecast.as_of_time) != as_of for axis in axes)
         or len({axis.forecast.instrument_id for axis in axes}) != len(axes)
+        or len(horizons) != 1
+        or any(axis.qualification.horizon is None for axis in axes)
     ):
         return None
     return tuple(axes)
@@ -712,6 +719,13 @@ def _assignment_axes(
             return None
         axes.append(_TrustedAxis(qualification, result, signal, forecast))
     if len(axes) < mandate.minimum_alpha_count:
+        return None
+    horizons = {
+        axis.qualification.horizon.strip().upper()
+        for axis in axes
+        if axis.qualification.horizon is not None
+    }
+    if len(horizons) != 1 or any(axis.qualification.horizon is None for axis in axes):
         return None
     return tuple(axes)
 

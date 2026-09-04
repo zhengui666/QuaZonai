@@ -1265,7 +1265,7 @@ class AlphaDiscoveryEvaluation(Base):
         ),
         CheckConstraint(
             "state IN ('FROZEN', 'QUEUED', 'RUNNING', 'VALID', "
-            "'INCONCLUSIVE', 'INVALID')",
+            "'INCONCLUSIVE', 'INVALID', 'FAILED')",
             name="ck_alpha_discovery_evaluation_state",
         ),
         CheckConstraint(
@@ -1273,14 +1273,17 @@ class AlphaDiscoveryEvaluation(Base):
             "AND outcome_code IS NULL AND completed_at IS NULL) OR "
             "(state IN ('VALID', 'INCONCLUSIVE', 'INVALID') "
             "AND outcome_code IS NOT NULL AND length(outcome_code) > 0 "
-            "AND completed_at IS NOT NULL)",
+            "AND completed_at IS NOT NULL) OR "
+            "(state = 'FAILED' AND outcome_code IS NOT NULL "
+            "AND length(outcome_code) > 0 AND completed_at IS NOT NULL)",
             name="ck_alpha_discovery_evaluation_completion",
         ),
         CheckConstraint(
             "(state IN ('FROZEN', 'QUEUED', 'RUNNING') "
             "AND private_result_ref IS NULL AND evaluated_at IS NULL) OR "
             "(state IN ('VALID', 'INCONCLUSIVE', 'INVALID') "
-            "AND private_result_ref IS NOT NULL AND evaluated_at IS NOT NULL)",
+            "AND private_result_ref IS NOT NULL AND evaluated_at IS NOT NULL) OR "
+            "(state = 'FAILED' AND private_result_ref IS NULL AND evaluated_at IS NULL)",
             name="ck_alpha_discovery_evaluation_private_result",
         ),
         ForeignKeyConstraint(
@@ -2125,6 +2128,9 @@ class PortfolioInputEvaluationAssignment(Base):
             "(state IN ('VALID', 'INCONCLUSIVE', 'INVALID') "
             "AND private_result_ref IS NOT NULL AND evaluated_at IS NOT NULL "
             "AND outcome_code IS NOT NULL AND length(trim(outcome_code)) > 0 "
+            "AND completed_at IS NOT NULL) OR "
+            "(state = 'FAILED' AND private_result_ref IS NULL AND evaluated_at IS NULL "
+            "AND outcome_code IS NOT NULL AND length(trim(outcome_code)) > 0 "
             "AND completed_at IS NOT NULL)",
             name="ck_portfolio_input_evaluation_assignment_state",
         ),
@@ -2701,6 +2707,10 @@ class PortfolioEvaluationAssignment(Base):
         UniqueConstraint("candidate_id", name="uq_portfolio_evaluation_assignment_candidate"),
         UniqueConstraint("id", "candidate_id", name="uq_portfolio_evaluation_assignment_candidate_pair"),
         CheckConstraint(
+            "state IN ('FROZEN', 'QUEUED', 'RUNNING', 'FINALIZED', 'FAILED')",
+            name="ck_portfolio_evaluation_assignment_allowed_state",
+        ),
+        CheckConstraint(
             "evaluator_contract_version = 'PORTFOLIO_EVALUATION_V1'",
             name="ck_portfolio_evaluation_assignment_contract",
         ),
@@ -2710,7 +2720,9 @@ class PortfolioEvaluationAssignment(Base):
             "AND outcome IS NULL AND completed_at IS NULL) OR "
             "(state = 'FINALIZED' AND private_result_ref IS NOT NULL "
             "AND evaluated_at IS NOT NULL AND outcome IN ('PASS', 'FAIL', 'INCONCLUSIVE', 'INVALID') "
-            "AND completed_at IS NOT NULL)",
+            "AND completed_at IS NOT NULL) OR "
+            "(state = 'FAILED' AND private_result_ref IS NULL AND evaluated_at IS NULL "
+            "AND outcome IS NOT NULL AND completed_at IS NOT NULL)",
             name="ck_portfolio_evaluation_assignment_state",
         ),
         ForeignKeyConstraint(

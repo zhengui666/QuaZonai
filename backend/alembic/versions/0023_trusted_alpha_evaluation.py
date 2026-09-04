@@ -339,7 +339,7 @@ def _create_discovery_evaluations() -> None:
         ),
         sa.CheckConstraint(
             "state IN ('FROZEN', 'QUEUED', 'RUNNING', 'VALID', "
-            "'INCONCLUSIVE', 'INVALID')",
+            "'INCONCLUSIVE', 'INVALID', 'FAILED')",
             name="ck_alpha_discovery_evaluation_state",
         ),
         sa.CheckConstraint(
@@ -347,7 +347,9 @@ def _create_discovery_evaluations() -> None:
             "AND outcome_code IS NULL AND completed_at IS NULL) OR "
             "(state IN ('VALID', 'INCONCLUSIVE', 'INVALID') "
             "AND outcome_code IS NOT NULL AND length(outcome_code) > 0 "
-            "AND completed_at IS NOT NULL)",
+            "AND completed_at IS NOT NULL) OR "
+            "(state = 'FAILED' AND outcome_code IS NOT NULL "
+            "AND length(outcome_code) > 0 AND completed_at IS NOT NULL)",
             name="ck_alpha_discovery_evaluation_completion",
         ),
         sa.ForeignKeyConstraint(

@@ -37,7 +37,10 @@ from db.models import (
 )
 from errors import QfError
 from jobs import enqueue_job
-from research_engine.trusted_evaluator_service import run_trusted_evaluator
+from research_engine.trusted_evaluator_service import (
+    run_trusted_evaluator,
+    terminalize_trusted_evaluator_failure,
+)
 from runners.finite_worker import run_once
 from settings import Settings
 from test_trusted_alpha_evaluation_persistence import _seed_assignment
@@ -91,7 +94,7 @@ def _catalog(session: Session, dataset: DatasetRevision, *, sealed: bool) -> Non
             provider="fixture-provider",
             source_license="fixture-license",
             nautilus_data_type="QuoteTick",
-            instrument_scope=["TEST"],
+            instrument_scope=["US:TEST"],
             event_time_range={},
             available_time_range={},
             schema_revision="v1",
@@ -197,6 +200,28 @@ def _queued_discovery(session: Session) -> AlphaDiscoveryEvaluation:
         _catalog(session, dataset, sealed=dataset.partition == "SEALED")
     session.flush()
     return discovery
+
+
+def test_exhausted_discovery_retry_closes_assignment_without_fake_result(engine) -> None:  # type: ignore[no-untyped-def]
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    with factory.begin() as session:
+        discovery = _queued_discovery(session)
+        discovery.state = "RUNNING"
+        discovery_id = discovery.id
+        assert terminalize_trusted_evaluator_failure(
+            session,
+            kind="DISCOVERY_EVALUATION",
+            resource_id=discovery_id,
+            outcome_code="RETRIES_EXHAUSTED",
+        )
+
+    with factory() as session:
+        discovery = session.get(AlphaDiscoveryEvaluation, discovery_id)
+        assert discovery is not None
+        assert discovery.state == "FAILED"
+        assert discovery.private_result_ref is None
+        assert discovery.evaluated_at is None
+        assert discovery.outcome_code == "RETRIES_EXHAUSTED"
 
 
 def _write_evaluator(path: Path, body: str) -> Path:

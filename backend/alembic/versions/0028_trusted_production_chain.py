@@ -472,7 +472,9 @@ def _create_portfolio_evaluation_tables() -> None:
             "AND outcome IS NULL AND completed_at IS NULL) OR "
             "(state = 'FINALIZED' AND private_result_ref IS NOT NULL "
             "AND evaluated_at IS NOT NULL AND outcome IN ('PASS', 'FAIL', 'INCONCLUSIVE', 'INVALID') "
-            "AND completed_at IS NOT NULL)",
+            "AND completed_at IS NOT NULL) OR "
+            "(state = 'FAILED' AND private_result_ref IS NULL AND evaluated_at IS NULL "
+            "AND outcome IS NOT NULL AND completed_at IS NOT NULL)",
             name="ck_portfolio_evaluation_assignment_state",
         ),
         sa.ForeignKeyConstraint(

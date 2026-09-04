@@ -373,6 +373,9 @@ def finish_mission(
         agent_session.state = mission.state
         agent_session.finished_at = timestamp
         agent_session.last_event_at = timestamp
+    # The production session factories disable autoflush.  Make the terminal
+    # Mission state visible before cycle-exhaustion queries inspect siblings.
+    session.flush()
     program = session.get(ResearchProgram, mission.program_id)
     if program is None:
         raise QfError("RESEARCH_PROGRAM_NOT_FOUND", "Research Program was not found.", 500)
@@ -382,6 +385,7 @@ def finish_mission(
             select(ResearchMission.id)
             .where(
                 ResearchMission.program_id == program.id,
+                ResearchMission.cycle_id == mission.cycle_id,
                 ResearchMission.state.in_(
                     ("READY", "RUNNING", "AWAITING_VALIDATION", "INTERRUPTED")
                 ),
@@ -402,6 +406,7 @@ def finish_mission(
                 select(ResearchMission.id)
                 .where(
                     ResearchMission.program_id == program.id,
+                    ResearchMission.cycle_id == mission.cycle_id,
                     ResearchMission.state == "FAILED",
                 )
                 .limit(1)
@@ -409,7 +414,17 @@ def finish_mission(
             if cycle is not None and cycle.state == "RUNNING":
                 cycle.state = "FAILED" if failed is not None else "SUCCEEDED"
                 cycle.finished_at = timestamp
-            if program.state == "ACTIVE":
+            program_pending = session.scalar(
+                select(ResearchMission.id)
+                .where(
+                    ResearchMission.program_id == program.id,
+                    ResearchMission.state.in_(
+                        ("READY", "RUNNING", "AWAITING_VALIDATION", "INTERRUPTED")
+                    ),
+                )
+                .limit(1)
+            )
+            if program.state == "ACTIVE" and program_pending is None:
                 program.state = "COOLING"
                 program.revision += 1
     session.add(

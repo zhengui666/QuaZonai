@@ -174,6 +174,21 @@ class DataSourcePreflightInput(StrictModel):
     """Intentionally empty: preflight consumes only registered source facts."""
 
 
+class DatasetQualityRequirements(StrictModel):
+    coverage: Literal["required"] | None = None
+    minimum_coverage: float | None = Field(default=None, ge=0, le=1)
+
+    @model_validator(mode="after")
+    def require_one_requirement(self) -> "DatasetQualityRequirements":
+        if (self.coverage is None) == (self.minimum_coverage is None):
+            raise ValueError("set exactly one typed quality requirement")
+        return self
+
+
+class DatasetPointInTimeRequirements(StrictModel):
+    available_at: Literal["required"]
+
+
 class DatasetMaterializationInput(StrictModel):
     data_source_id: UUID
     universe_version_id: UUID
@@ -187,8 +202,8 @@ class DatasetMaterializationInput(StrictModel):
     event_end: datetime
     available_start: datetime
     available_end: datetime
-    quality_requirements: dict[str, Any] = Field(default_factory=dict)
-    point_in_time_requirements: dict[str, Any] = Field(default_factory=dict)
+    quality_requirements: DatasetQualityRequirements
+    point_in_time_requirements: DatasetPointInTimeRequirements
     sealed_catalog_uri: str | None = Field(
         default=None,
         pattern=r"^catalog://[A-Za-z0-9][A-Za-z0-9._-]{0,119}$",
@@ -208,8 +223,6 @@ class DatasetMaterializationInput(StrictModel):
             raise ValueError("dataset ranges must be ordered")
         if self.event_start > self.available_start or self.event_end > self.available_end:
             raise ValueError("available time must not precede event time")
-        if not self.quality_requirements or not self.point_in_time_requirements:
-            raise ValueError("quality and point-in-time requirements must not be empty")
         if self.partition == "SEALED" and self.sealed_catalog_uri is None:
             raise ValueError("SEALED materialization requires sealed_catalog_uri")
         if self.partition != "SEALED" and self.sealed_catalog_uri is not None:

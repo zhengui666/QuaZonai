@@ -42,6 +42,9 @@ _ASSIGNMENT_STATE = (
     "(state IN ('VALID', 'INCONCLUSIVE', 'INVALID') "
     "AND private_result_ref IS NOT NULL AND evaluated_at IS NOT NULL "
     "AND outcome_code IS NOT NULL AND length(trim(outcome_code)) > 0 "
+    "AND completed_at IS NOT NULL) OR "
+    "(state = 'FAILED' AND private_result_ref IS NULL AND evaluated_at IS NULL "
+    "AND outcome_code IS NOT NULL AND length(trim(outcome_code)) > 0 "
     "AND completed_at IS NOT NULL)"
 )
 _INPUT_SCALARS = (

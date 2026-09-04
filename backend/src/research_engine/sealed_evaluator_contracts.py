@@ -788,6 +788,10 @@ class SealedEvaluationResult:
             if self.status is EvaluationStatus.PASS:
                 if signal is None or len(forecasts) != 1:
                     raise ValueError("PASS Alpha evaluation requires one signal and one forecast")
+                if forecasts[0].as_of_time < signal.available_end:
+                    raise ValueError(
+                        "forecast as_of_time must not precede signal available_end"
+                    )
             elif signal is not None or forecasts:
                 raise ValueError("non-PASS Alpha evaluation must not contain signal or forecasts")
         elif signal is not None or forecasts:

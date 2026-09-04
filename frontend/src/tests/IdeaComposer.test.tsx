@@ -57,12 +57,12 @@ describe('IdeaComposer', () => {
     expect(await screen.findByText('Does drift persist?')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Start Research' }));
 
-    await waitFor(() => expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(expect.arrayContaining([
+    await waitFor(() => expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([
       '/api/v1/idea-drafts',
       '/api/v1/idea-drafts/draft-1/answers',
       '/api/v1/universes',
       '/api/v1/idea-drafts/draft-1/start',
-    ])));
+    ]));
     const answerCall = fetchMock.mock.calls.find(([path]) => String(path).endsWith('/answers'));
     const startCall = fetchMock.mock.calls.find(([path]) => String(path).endsWith('/start'));
     expect(JSON.parse(answerCall?.[1]?.body as string)).toEqual({
