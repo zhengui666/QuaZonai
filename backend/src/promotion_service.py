@@ -11,7 +11,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from dataclasses import dataclass
-from typing import cast
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
@@ -33,6 +33,7 @@ from db.models import (
     HandoffOffer,
     Job,
     PortfolioEvaluationAssignment,
+    PortfolioAssemblyInput,
     PortfolioEvaluationDisclosure,
     PortfolioEvaluationEpisode,
     PortfolioEvaluationMetric,
@@ -120,6 +121,12 @@ def _require_receipt(
             "The frozen Paper preflight receipt is not valid for its connection and package.",
         )
     return receipt
+
+
+def _claim_deadline(receipt: PreflightReceipt) -> datetime:
+    """Keep an offer claimable only while its frozen preflight is valid."""
+    valid_until = _stored_utc(receipt.valid_until)
+    return min(valid_until, datetime.now(UTC) + timedelta(days=7))
 
 
 def validate_typed_paper_approval(
@@ -216,7 +223,7 @@ def approve_typed_paper_handoff(session: Session, approval_id: UUID) -> HandoffO
         preflight_receipt_id=receipt.id,
         paper_to_live_policy_version_id=approval.paper_to_live_policy_version_id,
         state="AVAILABLE",
-        claim_deadline=datetime.now(UTC) + timedelta(days=7),
+        claim_deadline=_claim_deadline(receipt),
         feedback_state="PENDING",
         feedback_contract_snapshot={"feedback_contract_version_id": str(contract.id)},
     )
@@ -308,7 +315,7 @@ def approve_typed_live_handoff(session: Session, approval_id: UUID) -> HandoffOf
         preflight_receipt_id=receipt.id,
         paper_to_live_policy_version_id=None,
         state="AVAILABLE",
-        claim_deadline=datetime.now(UTC) + timedelta(days=7),
+        claim_deadline=_claim_deadline(receipt),
         feedback_state="PENDING",
         feedback_contract_snapshot={"feedback_contract_version_id": str(contract.id)},
     )
@@ -452,6 +459,75 @@ def _promotion_gate(
     )
 
 
+def _approval_summaries(
+    *,
+    metrics: Iterable[Any],
+    gates: Iterable[Any],
+    package: CandidatePackage,
+    input_row: PortfolioAssemblyInput | None = None,
+    source_episode_id: UUID | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Freeze only typed, relational decision evidence into an Approval."""
+    metric_rows = {
+        str(row.metric_code): {
+            "status": str(row.status),
+            "value": None if row.value is None else str(row.value),
+        }
+        for row in metrics
+    }
+    gate_rows = [
+        {
+            "metric_code": str(getattr(row, "metric_code", getattr(row, "gate_code", ""))),
+            "status": str(row.status),
+            "actual": None if row.actual is None else str(row.actual),
+            "expected": None if row.expected is None else str(row.expected),
+            "reason_code": row.reason_code,
+        }
+        for row in gates
+    ]
+    evidence = {"metrics": metric_rows, "gates": gate_rows}
+    capital = {
+        "capital_context_version_id": (
+            str(input_row.capital_context_version_id) if input_row else "not_applicable"
+        )
+    }
+    risk = {
+        "variance_limit": str(input_row.variance_limit) if input_row else "not_applicable",
+        "risk_aversion": str(input_row.risk_aversion) if input_row else "not_applicable",
+        "uncertainty_aversion": (
+            str(input_row.uncertainty_aversion) if input_row else "not_applicable"
+        ),
+    }
+    cost = {
+        "commission_rate": str(input_row.commission_rate) if input_row else "not_applicable",
+        "half_spread_rate": str(input_row.half_spread_rate) if input_row else "not_applicable",
+        "slippage_rate": str(input_row.slippage_rate) if input_row else "not_applicable",
+        "impact_rate": str(input_row.impact_rate) if input_row else "not_applicable",
+    }
+    capacity = {
+        "package_contract_version": package.contract_version,
+        "candidate_package_revision": package.revision,
+        "impact_breakpoint": (
+            str(input_row.impact_breakpoint) if input_row else "not_applicable"
+        ),
+    }
+    changes = {
+        "previous_candidate_id": (
+            str(input_row.previous_candidate_id)
+            if input_row and input_row.previous_candidate_id
+            else "baseline"
+        ),
+        "source_episode_id": str(source_episode_id) if source_episode_id else "not_applicable",
+    }
+    return {
+        "evidence_summary": evidence,
+        "capital_context": capital,
+        "risk_summary": risk,
+        "cost_summary": cost,
+        "capacity_summary": capacity,
+        "changes_summary": changes,
+    }
+
 def _existing_p2p(session: Session, episode_id: UUID) -> PromotionEvaluation | None:
     return session.scalar(
         select(PromotionEvaluation)
@@ -549,6 +625,14 @@ def maybe_enqueue_p2p(
         raise _conflict("PROMOTION_POLICY_INVALID", "Portfolio-to-Paper policy has no gates.")
     gate_results = [_promotion_gate(gate, metrics.get(gate.metric_code)) for gate in p2p_gates]
     all_pass = all(row.status == "PASS" for row in gate_results)
+    input_row = session.get(PortfolioAssemblyInput, assignment.assembly_input_id)
+    summaries = _approval_summaries(
+        metrics=metrics.values(),
+        gates=gate_results,
+        package=package,
+        input_row=input_row,
+        source_episode_id=episode.id,
+    )
     evaluation = PromotionEvaluation(
         id=uuid4(),
         purpose="PORTFOLIO_TO_PAPER",
@@ -590,12 +674,7 @@ def maybe_enqueue_p2p(
                 valid_until=receipt.valid_until,
                 expires_at=receipt.valid_until,
                 human_report={},
-                evidence_summary={},
-                capital_context={},
-                risk_summary={},
-                cost_summary={},
-                capacity_summary={},
-                changes_summary={},
+                **summaries,
             )
         )
     session.flush()
@@ -954,6 +1033,131 @@ def accept_paper_feedback(
     return episode
 
 
+def _typed_live_handoff(
+    session: Session, handoff_id: UUID
+) -> tuple[HandoffOffer, ApprovalSnapshot, PromotionEvaluation, CandidatePackage, FeedbackContractVersion]:
+    handoff = session.scalar(
+        select(HandoffOffer).where(HandoffOffer.id == handoff_id).with_for_update()
+    )
+    if (
+        handoff is None
+        or handoff.promotion_purpose != "PAPER_TO_LIVE"
+        or handoff.purpose != "LIVE"
+        or handoff.candidate_package_revision is None
+        or handoff.downstream_connection_version_id is None
+        or handoff.feedback_contract_version_id is None
+        or handoff.preflight_receipt_id is None
+        or handoff.paper_to_live_policy_version_id is not None
+    ):
+        raise _conflict("HANDOFF_TYPED_LINEAGE_REQUIRED", "Only a typed Live Handoff accepts production feedback.")
+    approval = session.scalar(
+        select(ApprovalSnapshot).where(ApprovalSnapshot.id == handoff.approval_id).with_for_update()
+    )
+    evaluation = (
+        session.scalar(
+            select(PromotionEvaluation)
+            .where(PromotionEvaluation.id == approval.promotion_evaluation_id)
+            .with_for_update()
+        )
+        if approval is not None and approval.promotion_evaluation_id is not None
+        else None
+    )
+    package = session.scalar(
+        select(CandidatePackage).where(CandidatePackage.id == handoff.candidate_package_id).with_for_update()
+    )
+    contract = session.scalar(
+        select(FeedbackContractVersion).where(FeedbackContractVersion.id == handoff.feedback_contract_version_id).with_for_update()
+    )
+    if (
+        approval is None
+        or approval.state != "APPROVED"
+        or approval.promotion_purpose != "PAPER_TO_LIVE"
+        or approval.purpose != "LIVE"
+        or evaluation is None
+        or evaluation.purpose != "PAPER_TO_LIVE"
+        or evaluation.outcome != "PASS"
+        or evaluation.candidate_id != handoff.candidate_id
+        or evaluation.candidate_package_id != handoff.candidate_package_id
+        or evaluation.package_revision != handoff.candidate_package_revision
+        or evaluation.downstream_system_id != handoff.downstream_system_id
+        or evaluation.downstream_connection_version_id != handoff.downstream_connection_version_id
+        or evaluation.feedback_contract_version_id != handoff.feedback_contract_version_id
+        or evaluation.preflight_receipt_id != handoff.preflight_receipt_id
+        or package is None
+        or package.candidate_id != handoff.candidate_id
+        or package.revision != handoff.candidate_package_revision
+        or not is_trusted_candidate_package(session, package)
+        or contract is None
+        or contract.purpose != "LIVE"
+        or contract.state != "ACTIVE"
+    ):
+        raise _conflict("HANDOFF_TYPED_LINEAGE_INVALID", "Live Handoff facts do not share one frozen lineage.")
+    policy, downstream, connection, frozen_contract, receipt = _strict_p2l_policy(
+        session, evaluation.policy_version_id, package.contract_version
+    )
+    if (
+        policy.mode not in {"MANUAL_APPROVAL", "AUTO_HANDOFF"}
+        or downstream.id != handoff.downstream_system_id
+        or connection.id != handoff.downstream_connection_version_id
+        or frozen_contract.id != handoff.feedback_contract_version_id
+        or receipt.id != handoff.preflight_receipt_id
+    ):
+        raise _conflict("HANDOFF_TYPED_LINEAGE_INVALID", "Live Handoff binding is not frozen.")
+    return handoff, approval, evaluation, package, contract
+
+
+def accept_live_feedback(
+    session: Session,
+    *,
+    handoff_id: UUID,
+    header: FeedbackHeader,
+    metrics: Iterable[TypedFeedbackMetric],
+) -> ForwardEvidenceEpisode:
+    """Persist complete typed Live feedback without accepting JSON evidence."""
+    handoff, _approval, _evaluation, package, contract = _typed_live_handoff(session, handoff_id)
+    if handoff.state not in {"DOWNSTREAM_ACCEPTED", "FEEDBACK_PENDING", "FEEDBACK_IN_PROGRESS", "FEEDBACK_PARTIAL", "FEEDBACK_COMPLETE"}:
+        raise _conflict("HANDOFF_STATE_CONFLICT", "Live Handoff is not accepting complete feedback.")
+    start = _utc(header.observation_start)
+    end = _utc(header.observation_end)
+    if end > datetime.now(UTC) or end <= start:
+        raise _conflict("FEEDBACK_CONTRACT_INVALID", "Feedback observation window is invalid.")
+    if header.sample_size < contract.minimum_valid_sample_size:
+        raise _conflict("FEEDBACK_CONTRACT_INVALID", "Feedback sample is below the frozen contract minimum.")
+    if (end - start).total_seconds() < contract.minimum_observation_seconds:
+        raise _conflict("FEEDBACK_CONTRACT_INVALID", "Feedback observation is shorter than the frozen contract.")
+    typed = _typed_feedback_rows(session, contract, metrics)
+    existing = session.scalar(select(FeedbackPackage).where(FeedbackPackage.handoff_offer_id == handoff.id).with_for_update())
+    if existing is not None:
+        episode = session.scalar(select(ForwardEvidenceEpisode).where(ForwardEvidenceEpisode.feedback_package_id == existing.id).with_for_update())
+        if episode is None or existing.state != "COMPLETE":
+            raise _conflict("FEEDBACK_CONTRACT_CONFLICT", "Existing Live feedback is incomplete.")
+        persisted = {row.metric_code: (row.status, row.value) for row in session.scalars(select(ForwardEvidenceMetric).where(ForwardEvidenceMetric.episode_id == episode.id).with_for_update())}
+        provided = {row.metric_code: (row.status, row.value) for row in typed}
+        if (_stored_utc(existing.observation_start) != start or _stored_utc(existing.observation_end) != end or existing.sample_size != header.sample_size or persisted != provided):
+            raise _conflict("FEEDBACK_CONTRACT_CONFLICT", "Retrying Live feedback must exactly match the immutable submission.")
+        return episode
+    feedback = FeedbackPackage(
+        id=uuid4(), handoff_offer_id=handoff.id, feedback_contract_version_id=contract.id,
+        state="COMPLETE", observation_start=start, observation_end=end,
+        sample_size=header.sample_size, summary_json={}, relative_path=None,
+    )
+    session.add(feedback)
+    session.flush()
+    episode = ForwardEvidenceEpisode(
+        id=uuid4(), handoff_id=handoff.id, feedback_package_id=feedback.id,
+        state="FEEDBACK_COMPLETE", evidence={}, observation_start=start,
+        observation_end=end, sample_size=header.sample_size, created_at=datetime.now(UTC),
+    )
+    session.add(episode)
+    session.flush()
+    session.add_all(ForwardEvidenceMetric(episode_id=episode.id, metric_code=row.metric_code, value=row.value, status=row.status) for row in typed)
+    handoff.state = "FEEDBACK_COMPLETE"
+    handoff.feedback_state = "FEEDBACK_COMPLETE"
+    session.flush()
+    append_event(session, kind="FORWARD_EVIDENCE_RECORDED", aggregate_type="HANDOFF", aggregate_id=handoff.id, payload={"episode_id": str(episode.id), "state": "FEEDBACK_COMPLETE"})
+    return episode
+
+
 def _strict_p2l_policy(
     session: Session, policy_id: UUID, package_contract_version: str
 ) -> tuple[PromotionPolicyVersion, DownstreamSystem, DownstreamConnectionVersion, FeedbackContractVersion, PreflightReceipt]:
@@ -1045,6 +1249,19 @@ def maybe_enqueue_p2l(session: Session, *, forward_evidence_episode_id: UUID) ->
         passed = actual is not None and (actual >= expected if gate.comparator == "MINIMUM" else actual <= expected)
         gate_results.append(PromotionGateResult(evaluation_id=uuid4(), gate_code=gate.metric_code, status="PASS" if passed else "FAIL", actual=actual, expected=expected, reason_code=None if passed else "PROMOTION_METRIC_GATE_FAILED"))
     all_pass = all(item.status == "PASS" for item in gate_results)
+    source_input = None
+    if p2p.portfolio_evaluation_episode_id is not None:
+        source_episode = session.get(
+            PortfolioEvaluationEpisode, p2p.portfolio_evaluation_episode_id
+        )
+        if source_episode is not None:
+            source_assignment = session.get(
+                PortfolioEvaluationAssignment, source_episode.assignment_id
+            )
+            if source_assignment is not None:
+                source_input = session.get(
+                    PortfolioAssemblyInput, source_assignment.assembly_input_id
+                )
     evaluation = PromotionEvaluation(id=uuid4(), purpose="PAPER_TO_LIVE", portfolio_evaluation_episode_id=None, forward_evidence_episode_id=episode.id, candidate_id=candidate.id, candidate_package_id=package.id, package_revision=package.revision, policy_version_id=policy.id, paper_to_live_policy_version_id=None, downstream_system_id=downstream.id, downstream_connection_version_id=connection.id, feedback_contract_version_id=contract.id, preflight_receipt_id=receipt.id, outcome="PASS" if all_pass else "FAIL", action=policy.mode if all_pass else "NO_ACTION")
     session.add(evaluation)
     session.flush()
@@ -1052,11 +1269,18 @@ def maybe_enqueue_p2l(session: Session, *, forward_evidence_episode_id: UUID) ->
         result.evaluation_id = evaluation.id
     session.add_all(gate_results)
     if all_pass:
-        approval_row = ApprovalSnapshot(id=uuid4(), promotion_evaluation_id=evaluation.id, promotion_purpose="PAPER_TO_LIVE", candidate_id=candidate.id, candidate_package_id=package.id, candidate_package_revision=package.revision, purpose="LIVE", state="APPROVED" if policy.mode == "AUTO_HANDOFF" else "PENDING", downstream_system_id=downstream.id, downstream_connection_version_id=connection.id, feedback_contract_version_id=contract.id, preflight_receipt_id=receipt.id, paper_to_live_policy_version_id=None, valid_until=receipt.valid_until, expires_at=receipt.valid_until, human_report={"decision": "SYSTEM_APPROVED"} if policy.mode == "AUTO_HANDOFF" else {}, evidence_summary={}, capital_context={}, risk_summary={}, cost_summary={}, capacity_summary={}, changes_summary={})
+        summaries = _approval_summaries(
+            metrics=metrics.values(),
+            gates=gate_results,
+            package=package,
+            input_row=source_input,
+            source_episode_id=episode.id,
+        )
+        approval_row = ApprovalSnapshot(id=uuid4(), promotion_evaluation_id=evaluation.id, promotion_purpose="PAPER_TO_LIVE", candidate_id=candidate.id, candidate_package_id=package.id, candidate_package_revision=package.revision, purpose="LIVE", state="APPROVED" if policy.mode == "AUTO_HANDOFF" else "PENDING", downstream_system_id=downstream.id, downstream_connection_version_id=connection.id, feedback_contract_version_id=contract.id, preflight_receipt_id=receipt.id, paper_to_live_policy_version_id=None, valid_until=receipt.valid_until, expires_at=receipt.valid_until, human_report={"decision": "SYSTEM_APPROVED"} if policy.mode == "AUTO_HANDOFF" else {}, **summaries)
         session.add(approval_row)
         session.flush()
         if policy.mode == "AUTO_HANDOFF":
-            session.add(HandoffOffer(id=uuid4(), approval_id=approval_row.id, candidate_package_id=package.id, candidate_package_revision=package.revision, candidate_id=candidate.id, promotion_purpose="PAPER_TO_LIVE", purpose="LIVE", downstream_system_id=downstream.id, downstream_connection_version_id=connection.id, feedback_contract_version_id=contract.id, preflight_receipt_id=receipt.id, paper_to_live_policy_version_id=None, state="AVAILABLE", claim_deadline=datetime.now(UTC) + timedelta(days=7), feedback_state="PENDING", feedback_contract_snapshot={"feedback_contract_version_id": str(contract.id)}))
+            session.add(HandoffOffer(id=uuid4(), approval_id=approval_row.id, candidate_package_id=package.id, candidate_package_revision=package.revision, candidate_id=candidate.id, promotion_purpose="PAPER_TO_LIVE", purpose="LIVE", downstream_system_id=downstream.id, downstream_connection_version_id=connection.id, feedback_contract_version_id=contract.id, preflight_receipt_id=receipt.id, paper_to_live_policy_version_id=None, state="AVAILABLE", claim_deadline=_claim_deadline(receipt), feedback_state="PENDING", feedback_contract_snapshot={"feedback_contract_version_id": str(contract.id)}))
     session.flush()
     append_event(
         session,
@@ -1076,6 +1300,7 @@ def maybe_enqueue_p2l(session: Session, *, forward_evidence_episode_id: UUID) ->
 __all__ = [
     "FeedbackHeader",
     "TypedFeedbackMetric",
+    "accept_live_feedback",
     "accept_paper_feedback",
     "approve_typed_live_handoff",
     "enqueue_p2p_promotion_job",
