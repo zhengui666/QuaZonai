@@ -75,6 +75,25 @@ _NON_ALPHA_REQUIRED_FIELDS: dict[DraftArtifactKind, str] = {
     DraftArtifactKind.MISSION_GRAPH_PROPOSAL: "graph",
 }
 
+# These are the minimum domain facts needed before a non-Alpha artifact can
+# unlock the next Mission.  The payload remains deliberately small and public;
+# richer evidence belongs in the Core-owned validators for each domain.
+_NON_ALPHA_FACT_RULES: dict[DraftArtifactKind, dict[str, str]] = {
+    DraftArtifactKind.RESEARCH_PLAN: {"objective": "text", "hypotheses": "list"},
+    DraftArtifactKind.DATA_REQUIREMENT: {"dataset_scope": "dict", "requirements": "list"},
+    DraftArtifactKind.DATA_QUALITY_REPORT: {"dataset_revision_id": "uuid", "quality_state": "text", "pit_state": "text"},
+    DraftArtifactKind.FEATURE_PROPOSAL: {"family": "text", "input_contract": "dict"},
+    DraftArtifactKind.CALIBRATION_PROPOSAL: {"model_version_id": "uuid", "method": "text"},
+    DraftArtifactKind.ROBUSTNESS_REPORT: {"checks": "list", "outcome": "text"},
+    DraftArtifactKind.PROMOTION_REVIEW: {"candidate_id": "uuid", "decision": "text"},
+    DraftArtifactKind.PORTFOLIO_PROPOSAL: {"candidate_id": "uuid", "weights": "list"},
+    DraftArtifactKind.PAPER_EVIDENCE_REVIEW: {"evidence_episode_id": "uuid", "decision": "text"},
+    DraftArtifactKind.LIVE_PROMOTION_REVIEW: {"evidence_episode_id": "uuid", "decision": "text"},
+    DraftArtifactKind.DEGRADATION_REPORT: {"subject_id": "uuid", "state": "text"},
+    DraftArtifactKind.REPLAN_PROPOSAL: {"cause_event_id": "uuid", "changes": "list"},
+    DraftArtifactKind.MISSION_GRAPH_PROPOSAL: {"nodes": "list"},
+}
+
 
 def _bounded_non_alpha_payload(
     kind: DraftArtifactKind, payload: dict[str, Any]
@@ -89,7 +108,8 @@ def _bounded_non_alpha_payload(
             422,
             {"kind": kind.value, "required_field": required_field},
         )
-    if set(value) != {"summary", "items"}:
+    fact_rules = _NON_ALPHA_FACT_RULES[kind]
+    if set(value) != {"summary", "items", "facts"} or not isinstance(value["facts"], dict):
         raise QfError(
             "MISSION_ARTIFACT_SCHEMA_INVALID",
             "Mission artifact payload has unknown or missing bounded fields.",
@@ -98,6 +118,27 @@ def _bounded_non_alpha_payload(
         )
     summary = value["summary"]
     items = value["items"]
+    facts = value["facts"]
+    facts_valid = set(facts) == set(fact_rules)
+    if facts_valid:
+        for field, rule in fact_rules.items():
+            fact = facts[field]
+            if rule == "uuid":
+                try:
+                    UUID(str(fact))
+                except (ValueError, AttributeError):
+                    facts_valid = False
+                    break
+            elif rule == "text":
+                facts_valid = isinstance(fact, str) and bool(fact.strip())
+            elif rule == "list":
+                facts_valid = isinstance(fact, list) and bool(fact) and all(
+                    isinstance(item, str) and bool(item.strip()) for item in fact
+                )
+            elif rule == "dict":
+                facts_valid = isinstance(fact, dict) and bool(fact)
+            if not facts_valid:
+                break
     if (
         not isinstance(summary, str)
         or not summary.strip()
@@ -105,6 +146,7 @@ def _bounded_non_alpha_payload(
         or not isinstance(items, list)
         or not 1 <= len(items) <= 50
         or any(not isinstance(item, str) or not item.strip() or len(item) > 1000 for item in items)
+        or not facts_valid
     ):
         raise QfError(
             "MISSION_ARTIFACT_SCHEMA_INVALID",
@@ -116,6 +158,7 @@ def _bounded_non_alpha_payload(
         required_field: {
             "summary": summary.strip(),
             "items": [item.strip() for item in items],
+            "facts": facts,
         }
     }
 _IMPLEMENTED_TOOLS = frozenset(
@@ -577,9 +620,8 @@ class MissionCapabilityService:
                         422,
                     ) from exc
             else:
-                # Non-Alpha artifacts use the fixed generic v1 envelope. The
-                # bounded JSON/summary checks above are the Core validator for
-                # this intentionally non-semantic research handoff.
+                # Non-Alpha artifacts use a bounded, kind-specific v1 envelope;
+                # no generic summary can unlock a Mission by itself.
                 if request.artifact.schema_version != "v1" or not isinstance(payload, dict):
                     raise QfError(
                         "MISSION_ARTIFACT_SCHEMA_INVALID",

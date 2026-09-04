@@ -55,6 +55,7 @@ describe('IdeaComposer', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'What is the holding horizon?' }), { target: { value: '1D' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save clarifications' }));
     expect(await screen.findByText('Does drift persist?')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Start Research' })).not.toBeDisabled());
     fireEvent.click(screen.getByRole('button', { name: 'Start Research' }));
 
     await waitFor(() => {

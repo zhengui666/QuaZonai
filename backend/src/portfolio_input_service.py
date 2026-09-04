@@ -1054,6 +1054,10 @@ def stage_initial_portfolio_input_evaluations(
                     AlphaQualification.state == "ACTIVE",
                     AlphaQualification.role == mandate.eligible_alpha_role,
                     AlphaQualification.universe_version_id == mandate.universe_version_id,
+                    # The triggering Qualification is the explicit research
+                    # owner; another Program sharing this Universe stages in
+                    # its own independent portfolio.
+                    AlphaQualification.program_id == qualification.program_id,
                 )
                 .order_by(AlphaQualification.id)
                 .with_for_update()

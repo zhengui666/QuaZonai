@@ -68,6 +68,8 @@ export function IdeaComposerPage() {
   const answersComplete = questions.every((question) => answers[question.key]?.trim());
   const needsAnswers = draft?.next_action === 'ANSWER_CLARIFICATIONS';
   const activeUniverses = (universes.data ?? []).filter((item) => item.state === 'ACTIVE');
+  const universeSelectionPending = draft?.next_action === 'START_PROGRAM'
+    && (universes.isLoading || universes.isFetching || universes.isError);
 
   async function createDraft() {
     setPending(true);
@@ -190,7 +192,7 @@ export function IdeaComposerPage() {
                   </select>
                 </label>
               ) : null}
-              <Button color="green" disabled={pending || (needsAnswers && !answersComplete) || (draft.next_action === 'START_PROGRAM' && activeUniverses.length > 1 && selectedUniverseIds.length === 0)} onClick={() => void (needsAnswers ? submitAnswers() : launch())}>
+              <Button color="green" disabled={pending || universeSelectionPending || (needsAnswers && !answersComplete) || (draft.next_action === 'START_PROGRAM' && activeUniverses.length > 1 && selectedUniverseIds.length === 0)} onClick={() => void (needsAnswers ? submitAnswers() : launch())}>
                 {pending ? (needsAnswers ? t('common.saving') : t('common.starting')) : (needsAnswers ? t('idea.saveClarifications') : t('idea.startResearch'))}
               </Button>
             </div>

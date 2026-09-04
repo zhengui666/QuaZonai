@@ -347,10 +347,12 @@ def finish_mission(
     ).scalar_one_or_none()
     if mission is None:
         raise QfError("MISSION_NOT_FOUND", "Mission was not found.", 404)
-    if mission.state not in {"RUNNING", "AWAITING_VALIDATION"}:
+    if mission.state not in {"RUNNING", "AWAITING_VALIDATION"} and not (
+        mission.state == "READY" and not succeeded
+    ):
         raise QfError(
             "MISSION_STATE_CONFLICT",
-            "Only RUNNING or AWAITING_VALIDATION Missions can be completed.",
+            "Only RUNNING or AWAITING_VALIDATION Missions can complete, or READY Missions can fail.",
             409,
             {"state": mission.state},
         )

@@ -24,7 +24,11 @@ from agent_harness.contracts import (
     RoleProfile,
 )
 from agent_harness.mcp_server import build_frozen_mission_mcp_server, freeze_mission_contract
-from agent_harness.mission_capabilities import MissionCapabilityBroker, MissionCapabilityService
+from agent_harness.mission_capabilities import (
+    MissionCapabilityBroker,
+    MissionCapabilityService,
+    _bounded_non_alpha_payload,
+)
 from db.models import (
     AgentSession,
     AgentTurn,
@@ -305,6 +309,29 @@ def test_mcp_rejects_alpha_payloads_outside_the_typed_public_contract(engine, tm
                     },
                 },
             )
+
+
+def test_non_alpha_artifacts_require_kind_specific_facts() -> None:
+    with pytest.raises(QfError, match="MISSION_ARTIFACT_SCHEMA_INVALID"):
+        _bounded_non_alpha_payload(
+            DraftArtifactKind.DATA_QUALITY_REPORT,
+            {"quality": {"summary": "ok", "items": ["ok"]}},
+        )
+    payload = _bounded_non_alpha_payload(
+        DraftArtifactKind.DATA_QUALITY_REPORT,
+        {
+            "quality": {
+                "summary": "quality and PIT checks completed",
+                "items": ["coverage is complete"],
+                "facts": {
+                    "dataset_revision_id": "00000000-0000-0000-0000-000000000001",
+                    "quality_state": "VALID",
+                    "pit_state": "VALID",
+                },
+            }
+        },
+    )
+    assert payload["quality"]["facts"]["quality_state"] == "VALID"
 
 
 def test_mission_tool_calls_are_counted_and_budgeted(engine) -> None:

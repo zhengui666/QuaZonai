@@ -1242,39 +1242,62 @@ def maybe_enqueue_p2l(session: Session, *, forward_evidence_episode_id: UUID) ->
     candidate = session.scalar(select(PortfolioCandidate).where(PortfolioCandidate.id == handoff.candidate_id).with_for_update())
     if candidate is None:
         raise _conflict("PROMOTION_LINEAGE_INVALID", "Promotion Candidate is missing.")
-    degrading = session.scalar(select(DegradationObservation.id).where(DegradationObservation.subject_type == "PORTFOLIO", DegradationObservation.subject_id == candidate.id, DegradationObservation.state.in_(("DEGRADING", "FAILED"))).limit(1))
-    if degrading is not None:
-        return None
-    degrading_member_observation = session.scalar(
-        select(DegradationObservation.id)
+    portfolio_observation = session.scalar(
+        select(DegradationObservation)
         .join(
-            PortfolioCandidateMember,
-            PortfolioCandidateMember.alpha_qualification_id == DegradationObservation.subject_id,
+            ForwardEvidenceEpisode,
+            ForwardEvidenceEpisode.id == DegradationObservation.forward_evidence_episode_id,
         )
         .where(
-            PortfolioCandidateMember.candidate_id == candidate.id,
-            DegradationObservation.subject_type == "ALPHA",
-            DegradationObservation.state.in_(("DEGRADING", "FAILED")),
+            DegradationObservation.subject_type == "PORTFOLIO",
+            DegradationObservation.subject_id == candidate.id,
+            DegradationObservation.evaluated.is_(True),
         )
+        .order_by(ForwardEvidenceEpisode.observation_end.desc(), DegradationObservation.id.desc())
         .limit(1)
-    )
-    if degrading_member_observation is not None:
-        return None
-    degrading_member = session.scalar(
-        select(AlphaQualification.id)
-        .join(
-            PortfolioCandidateMember,
-            PortfolioCandidateMember.alpha_qualification_id == AlphaQualification.id,
-        )
-        .where(
-            PortfolioCandidateMember.candidate_id == candidate.id,
-            AlphaQualification.degradation_state.in_(("DEGRADING", "FAILED")),
-        )
         .with_for_update()
-        .limit(1)
     )
-    if degrading_member is not None:
+    if portfolio_observation is not None and portfolio_observation.state in {"DEGRADING", "FAILED"}:
         return None
+    member_ids = list(
+        session.scalars(
+            select(PortfolioCandidateMember.alpha_qualification_id)
+            .where(PortfolioCandidateMember.candidate_id == candidate.id)
+            .order_by(PortfolioCandidateMember.alpha_qualification_id)
+            .with_for_update()
+        )
+    )
+    if not member_ids:
+        return None
+    members = list(
+        session.scalars(
+            select(AlphaQualification)
+            .where(AlphaQualification.id.in_(member_ids))
+            .with_for_update()
+        )
+    )
+    if len(members) != len(member_ids) or any(
+        member.degradation_state in {"DEGRADING", "FAILED"} for member in members
+    ):
+        return None
+    for member_id in member_ids:
+        member_observation = session.scalar(
+            select(DegradationObservation)
+            .join(
+                ForwardEvidenceEpisode,
+                ForwardEvidenceEpisode.id == DegradationObservation.forward_evidence_episode_id,
+            )
+            .where(
+                DegradationObservation.subject_type == "ALPHA",
+                DegradationObservation.subject_id == member_id,
+                DegradationObservation.evaluated.is_(True),
+            )
+            .order_by(ForwardEvidenceEpisode.observation_end.desc(), DegradationObservation.id.desc())
+            .limit(1)
+            .with_for_update()
+        )
+        if member_observation is not None and member_observation.state in {"DEGRADING", "FAILED"}:
+            return None
     metrics = {row.metric_code: row for row in session.scalars(select(ForwardEvidenceMetric).where(ForwardEvidenceMetric.episode_id == episode.id).with_for_update())}
     requirements = list(session.scalars(select(FeedbackContractMetricRequirement).where(FeedbackContractMetricRequirement.feedback_contract_version_id == paper_contract.id).order_by(FeedbackContractMetricRequirement.ordinal).with_for_update()))
     if not requirements or set(metrics) != {row.metric_code for row in requirements}:

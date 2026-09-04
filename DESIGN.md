@@ -415,6 +415,18 @@ branch_id
 workspace_revision_no
 ```
 
+除 `ALPHA_PROPOSAL` 外，Agent artifact 只能提交固定的公开 V1 envelope：`{kind: {
+summary, items, facts}}`。`summary` 和 `items` 必须非空且有界，`facts` 必须与 artifact kind 的
+固定字段集合精确一致，并通过 Core 的类型/UUID/非空值校验；只有该 kind-specific validator
+可以把 artifact 标为 `VALIDATED`。固定 facts 集合为：`RESEARCH_PLAN(objective,hypotheses)`、
+`DATA_REQUIREMENT(dataset_scope,requirements)`、`DATA_QUALITY_REPORT(dataset_revision_id,
+quality_state,pit_state)`、`FEATURE_PROPOSAL(family,input_contract)`、
+`CALIBRATION_PROPOSAL(model_version_id,method)`、`ROBUSTNESS_REPORT(checks,outcome)`、
+`PROMOTION_REVIEW(candidate_id,decision)`、`PORTFOLIO_PROPOSAL(candidate_id,weights)`、
+`PAPER_EVIDENCE_REVIEW/LIVE_PROMOTION_REVIEW(evidence_episode_id,decision)`、
+`DEGRADATION_REPORT(subject_id,state)`、`REPLAN_PROPOSAL(cause_event_id,changes)`、
+`MISSION_GRAPH_PROPOSAL(nodes)`。通用摘要或空 JSON 不能推进 Mission DAG。
+
 Codex Thread 是 Mission 执行上下文，不是业务状态。
 
 ## 7. Mission Graph 与自治调度

@@ -16,6 +16,7 @@ from db.models import (
     MarketUniverseVersion,
     MissionArtifact,
     ResearchMission,
+    ResearchCycle,
 )
 from errors import QfError
 from jobs import release_expired_leases
@@ -148,6 +149,24 @@ def test_explicit_validated_output_gate_fails_closed_then_unlocks(engine) -> Non
             )
         )
         assert data_mission is not None and data_mission.state == "READY"
+
+
+def test_ready_failure_closes_cycle_and_cools_program(engine) -> None:
+    with Session(engine) as session, session.begin():
+        program = _program_with_graph(session)
+        plan = session.scalar(
+            select(ResearchMission).where(
+                ResearchMission.program_id == program.id,
+                ResearchMission.mission_type == "PLAN_RESEARCH",
+            )
+        )
+        assert plan is not None and plan.state == "READY"
+        finish_mission(session, plan.id, succeeded=False, error_code="PRE_ADMISSION_FAILED")
+        session.flush()
+        cycle = session.scalar(select(ResearchCycle).where(ResearchCycle.program_id == program.id))
+        assert cycle is not None and cycle.state == "FAILED"
+        session.refresh(program)
+        assert program.state == "COOLING"
 
 
 def test_expired_mission_lease_interrupts_then_allows_same_thread_resume(engine) -> None:
