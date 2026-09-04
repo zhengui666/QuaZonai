@@ -46,6 +46,13 @@ class _MaterializationContext:
     plugin_binding: dict[str, str]
     missing_shard_count: int
     probe_error_count: int
+    requested_schema_version: str | None
+    requested_data_type: str | None
+    requested_instrument_scope: tuple[str, ...]
+    requested_event_start: datetime
+    requested_event_end: datetime
+    requested_available_start: datetime
+    requested_available_end: datetime
 
 
 def _utc_hour(value: datetime, field_name: str) -> datetime:
@@ -364,6 +371,25 @@ def _prepare_materialization(factory: SessionFactory, job_id: UUID) -> _Material
             plugin_binding=plugin_binding,
             missing_shard_count=sum(item.state == "MISSING" for item in range_shards),
             probe_error_count=sum(item.state == "PROBE_ERROR" for item in range_shards),
+            requested_schema_version=(
+                str(request.get("schema_version"))
+                if isinstance(request, dict) and request.get("schema_version")
+                else revision.schema_version
+            ),
+            requested_data_type=(
+                str(request.get("data_type"))
+                if isinstance(request, dict) and request.get("data_type")
+                else None
+            ),
+            requested_instrument_scope=tuple(instruments),
+            requested_event_start=start,
+            requested_event_end=end,
+            requested_available_start=_utc(revision.available_start)
+            if revision.available_start is not None
+            else start,
+            requested_available_end=_utc(revision.available_end)
+            if revision.available_end is not None
+            else end,
         )
 
 
@@ -489,6 +515,31 @@ def _is_terminal_rejection(error: QfError) -> bool:
 def _persist_descriptor(
     factory: SessionFactory, context: _MaterializationContext, descriptor: CatalogDescriptor
 ) -> None:
+    mismatches: list[str] = []
+    if descriptor.catalog_uri != f"catalog://{context.catalog_name}":
+        mismatches.append("catalog_uri")
+    if context.requested_schema_version and descriptor.schema_revision != context.requested_schema_version:
+        mismatches.append("schema_revision")
+    if context.requested_data_type and descriptor.nautilus_data_type != context.requested_data_type:
+        mismatches.append("data_type")
+    if tuple(descriptor.instrument_scope) != context.requested_instrument_scope:
+        mismatches.append("instrument_scope")
+    expected_ranges = (
+        (descriptor.event_start, context.requested_event_start, "event_start"),
+        (descriptor.event_end, context.requested_event_end, "event_end"),
+        (descriptor.available_start, context.requested_available_start, "available_start"),
+        (descriptor.available_end, context.requested_available_end, "available_end"),
+    )
+    for actual, expected, field_name in expected_ranges:
+        if actual is None or _utc(actual) != expected:
+            mismatches.append(field_name)
+    if mismatches:
+        raise QfError(
+            "DATASET_MATERIALIZATION_DESCRIPTOR_MISMATCH",
+            "The materialized descriptor does not match the frozen Dataset Revision request.",
+            409,
+            {"fields": mismatches},
+        )
     quality_state, pit_state, promotability, quality_reasons, pit_reasons = _terminal_states(
         context, descriptor
     )
