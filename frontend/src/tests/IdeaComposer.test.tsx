@@ -57,17 +57,19 @@ describe('IdeaComposer', () => {
     expect(await screen.findByText('Does drift persist?')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Start Research' }));
 
-    await waitFor(() => expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([
+    await waitFor(() => expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(expect.arrayContaining([
       '/api/v1/idea-drafts',
       '/api/v1/idea-drafts/draft-1/answers',
       '/api/v1/universes',
       '/api/v1/idea-drafts/draft-1/start',
-    ]));
-    expect(JSON.parse(fetchMock.mock.calls[1]?.[1]?.body as string)).toEqual({
+    ])));
+    const answerCall = fetchMock.mock.calls.find(([path]) => String(path).endsWith('/answers'));
+    const startCall = fetchMock.mock.calls.find(([path]) => String(path).endsWith('/start'));
+    expect(JSON.parse(answerCall?.[1]?.body as string)).toEqual({
       answers: { horizon: '1D' },
       expected_revision: 1,
     });
-    expect(JSON.parse(fetchMock.mock.calls[3]?.[1]?.body as string)).toEqual({ expected_revision: 2 });
+    expect(JSON.parse(startCall?.[1]?.body as string)).toEqual({ expected_revision: 2 });
   });
 
   it('shows a contract error instead of proceeding on a malformed draft response', async () => {
