@@ -493,13 +493,15 @@ def _mission_mcp_config_override(
     contract_file: Path, capability_socket: Path | None = None
 ) -> str:
     """Serialize the only Mission MCP server as one TOML config override."""
-    arguments = ["-m", "agent_harness.mcp_server", "--contract-file", str(contract_file)]
+    arguments = ["-I", "-m", "agent_harness.mcp_server", "--contract-file", str(contract_file)]
     if capability_socket is not None:
         arguments.extend(("--capability-socket", str(capability_socket)))
     serialized_arguments = ", ".join(json.dumps(argument) for argument in arguments)
+    trusted_cwd = Path(__file__).resolve().parents[2]
     return (
         "mcp_servers = { quazonai_mission = { command = "
-        f"{json.dumps(sys.executable)}, args = [{serialized_arguments}] }} }}"
+        f"{json.dumps(sys.executable)}, args = [{serialized_arguments}], cwd = "
+        f"{json.dumps(str(trusted_cwd))} }} }}"
     )
 
 
