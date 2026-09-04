@@ -42,10 +42,11 @@ from db.models import (
     PublicMutationReceipt,
 )
 from downstream_auth import authenticate_downstream, install_service_token, issue_service_token
-from downstream_contracts import feedback_contract_snapshot, is_current_downstream_preflight
+from downstream_contracts import feedback_contract_snapshot
 from errors import QfError
 from events import append_event
 from jobs import enqueue_job
+from research_engine.sealed_evaluator_contracts import ALPHA_METRIC_CODES
 
 
 router = APIRouter(prefix="/api/v1", tags=["configuration"])
@@ -325,7 +326,7 @@ def _required_text(value: str) -> str:
 class EvaluationDesignVersionInput(StrictModel):
     universe_version_id: UUID
     contract_version: StrictStr = Field(min_length=1, max_length=40)
-    allowed_model_mode: Literal["RELATIVE_SCORE", "CALIBRATED_RETURN"]
+    allowed_model_mode: Literal["RELATIVE_SCORE"]
     qualification_role: Literal[
         "PRIMARY_ALPHA",
         "DIVERSIFIER_ALPHA",
@@ -351,6 +352,13 @@ class EvaluationDesignVersionInput(StrictModel):
     @classmethod
     def require_nonblank_text(cls, value: str) -> str:
         return _required_text(value)
+
+    @field_validator("qualification_metric_code")
+    @classmethod
+    def require_sealed_alpha_metric(cls, value: str) -> str:
+        if value not in ALPHA_METRIC_CODES:
+            raise ValueError("must be a supported sealed Alpha metric")
+        return value
 
     @field_validator(*_DESIGN_DECIMAL_FIELDS, mode="before")
     @classmethod
@@ -424,34 +432,20 @@ class PromotionPolicyVersionInput(StrictModel):
         "PAPER_TO_LIVE",
     ]
     mode: Literal["MANUAL_APPROVAL", "AUTO_HANDOFF"]
-    paper_downstream_system_id: UUID | None
-    live_downstream_system_id: UUID | None
     gates: list[PromotionPolicyGateInput] = Field(min_length=1)
     state: Literal["ACTIVE"]
 
     @model_validator(mode="after")
-    def require_downstreams_and_ordered_unique_gates(self) -> "PromotionPolicyVersionInput":
-        if self.purpose in {"ALPHA_DISCOVERY_TO_SEALED", "SEALED_TO_QUALIFIED"}:
-            valid_downstreams = (
-                self.paper_downstream_system_id is None and self.live_downstream_system_id is None
-            )
-        elif self.purpose == "PORTFOLIO_TO_PAPER":
-            valid_downstreams = (
-                self.paper_downstream_system_id is not None and self.live_downstream_system_id is None
-            )
-        else:
-            valid_downstreams = (
-                self.paper_downstream_system_id is not None
-                and self.live_downstream_system_id is not None
-                and self.paper_downstream_system_id != self.live_downstream_system_id
-            )
-        if not valid_downstreams:
-            raise ValueError("policy purpose requires explicit compatible downstream references")
+    def require_ordered_supported_gates(self) -> "PromotionPolicyVersionInput":
         if len({gate.metric_code for gate in self.gates}) != len(self.gates):
             raise ValueError("policy gate metric_code values must be unique")
         ordinals = {gate.ordinal for gate in self.gates}
         if ordinals != set(range(1, len(self.gates) + 1)):
             raise ValueError("policy gate ordinals must be contiguous from one")
+        if self.purpose in {"ALPHA_DISCOVERY_TO_SEALED", "SEALED_TO_QUALIFIED"} and any(
+            gate.metric_code not in ALPHA_METRIC_CODES for gate in self.gates
+        ):
+            raise ValueError("Alpha policy gates must use supported sealed Alpha metrics")
         return self
 
 
@@ -467,6 +461,7 @@ class PromotionPolicyVersionView(StrictModel):
     version_no: int
     purpose: str
     mode: str
+    policy_contract_version: str | None = None
     paper_downstream_system_id: UUID | None = None
     live_downstream_system_id: UUID | None = None
     gates: list[PromotionPolicyGateView]
@@ -556,8 +551,8 @@ class MandateVersionInput(StrictModel):
         values = tuple(getattr(self, name) for name in _DECIMAL_INPUT_FIELDS)
         if not all(value.is_finite() for value in values):
             raise ValueError("V1 numeric values must be finite")
-        if not 0 <= self.minimum_weight <= self.maximum_weight <= 1:
-            raise ValueError("weights must satisfy 0 <= minimum_weight <= maximum_weight <= 1")
+        if not 0 < self.minimum_weight <= self.maximum_weight <= 1:
+            raise ValueError("weights must satisfy 0 < minimum_weight <= maximum_weight <= 1")
         if self.minimum_weight * self.minimum_alpha_count > 1 or (
             self.maximum_weight * self.minimum_alpha_count < 1
         ):
@@ -956,6 +951,7 @@ def _promotion_policy_version_view(
         version_no=item.version_no,
         purpose=item.purpose,
         mode=item.mode,
+        policy_contract_version=item.policy_contract_version,
         paper_downstream_system_id=item.paper_downstream_system_id,
         live_downstream_system_id=item.live_downstream_system_id,
         gates=[
@@ -1177,44 +1173,6 @@ def _trusted_evaluation_dataset(
             {"phase": phase},
         )
     return dataset
-
-
-def _require_policy_downstream(
-    session: Session,
-    downstream_system_id: UUID,
-    *,
-    environment_type: Literal["PAPER", "LIVE"],
-) -> DownstreamSystem:
-    downstream = session.execute(
-        select(DownstreamSystem)
-        .where(DownstreamSystem.id == downstream_system_id)
-        .with_for_update()
-    ).scalar_one_or_none()
-    if downstream is None:
-        raise QfError("DOWNSTREAM_NOT_FOUND", "Downstream System was not found.", 404)
-    if downstream.environment_type != environment_type:
-        raise QfError(
-            "PROMOTION_POLICY_DOWNSTREAM_ENVIRONMENT_INVALID",
-            "Promotion Policy downstream has the wrong environment.",
-            409,
-            {"expected_environment_type": environment_type},
-        )
-    receipt = session.scalar(
-        select(PreflightReceipt)
-        .where(
-            PreflightReceipt.resource_type == "DOWNSTREAM_SYSTEM",
-            PreflightReceipt.resource_id == downstream.id,
-        )
-        .order_by(PreflightReceipt.revision.desc())
-        .limit(1)
-    )
-    if not is_current_downstream_preflight(receipt, downstream, _now()):
-        raise QfError(
-            "PROMOTION_POLICY_DOWNSTREAM_NOT_READY",
-            "Promotion Policy downstream must have a current compatible preflight.",
-            409,
-        )
-    return downstream
 
 
 def _new_mandate_version(
@@ -1914,20 +1872,14 @@ def create_promotion_policy_version(
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     del request
+    if payload.purpose in {"PORTFOLIO_TO_PAPER", "PAPER_TO_LIVE"}:
+        raise QfError(
+            "PROMOTION_POLICY_TYPED_BINDING_UNAVAILABLE",
+            "Paper/Live policy creation requires typed connection, feedback-contract, and preflight writers.",
+            409,
+        )
     with session.begin():
         def action() -> dict[str, Any]:
-            if payload.paper_downstream_system_id is not None:
-                _require_policy_downstream(
-                    session,
-                    payload.paper_downstream_system_id,
-                    environment_type="PAPER",
-                )
-            if payload.live_downstream_system_id is not None:
-                _require_policy_downstream(
-                    session,
-                    payload.live_downstream_system_id,
-                    environment_type="LIVE",
-                )
             active = list(
                 session.scalars(
                     select(PromotionPolicyVersion)
@@ -1963,8 +1915,7 @@ def create_promotion_policy_version(
                 version_no=int(last_version or 0) + 1,
                 purpose=payload.purpose,
                 mode=payload.mode,
-                paper_downstream_system_id=payload.paper_downstream_system_id,
-                live_downstream_system_id=payload.live_downstream_system_id,
+                policy_contract_version="PROMOTION_POLICY_V1",
                 state=payload.state,
             )
             session.add(item)
