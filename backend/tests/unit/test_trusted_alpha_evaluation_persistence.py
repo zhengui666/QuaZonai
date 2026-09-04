@@ -12,7 +12,7 @@ from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy import MetaData, Table, create_engine, inspect, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DataError, IntegrityError
 from sqlalchemy.orm import Session
 
 from db.models import (
@@ -612,7 +612,7 @@ def test_constraints_reject_incoherent_trusted_facts(engine) -> None:
                 status="AVAILABLE",
             )
         )
-        with pytest.raises(IntegrityError):
+        with pytest.raises((IntegrityError, DataError)):
             session.flush()
 
     with Session(engine) as session:
