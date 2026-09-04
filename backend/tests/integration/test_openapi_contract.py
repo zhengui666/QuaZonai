@@ -165,8 +165,6 @@ def test_openapi_matches_research_intelligence_contract(
         "/api/v1/promotion-policy-versions": {
             "purpose",
             "mode",
-            "paper_downstream_system_id",
-            "live_downstream_system_id",
             "gates",
             "state",
         },
