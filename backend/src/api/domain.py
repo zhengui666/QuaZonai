@@ -277,11 +277,14 @@ def _idempotent(
     action: Callable[[], dict[str, Any]],
     *,
     status_code: int = 200,
+    before_replay: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     normalized = _normalize(payload)
     if key:
         existing = session.get(PublicMutationReceipt, key)
         if existing is not None:
+            if before_replay is not None:
+                before_replay()
             if existing.operation_name != operation or existing.normalized_request != normalized:
                 raise QfError(
                     "IDEMPOTENCY_KEY_REUSED",
@@ -749,23 +752,20 @@ def _authenticate_handoff(session: Session, request: Request, handoff: HandoffOf
     return downstream
 
 
-def _expire_handoff_if_needed(request: Request, handoff_id: UUID) -> bool:
-    factory = request.app.state.session_factory
-    with factory() as session, session.begin():
-        handoff = session.execute(select(HandoffOffer).where(HandoffOffer.id == handoff_id).with_for_update()).scalar_one_or_none()
-        if handoff is None:
-            return False
-        if handoff.state == "AVAILABLE" and _is_past(handoff.claim_deadline):
-            handoff.state = "EXPIRED"
-            _event(session, "HANDOFF_EXPIRED", "HANDOFF", handoff.id, {})
-            return True
-    return False
+def _authenticate_handoff_id(
+    session: Session,
+    request: Request,
+    handoff_id: UUID,
+    authorization: str | None,
+) -> None:
+    handoff = session.get(HandoffOffer, handoff_id)
+    if handoff is None:
+        raise QfError("HANDOFF_NOT_FOUND", "Handoff was not found.", 404)
+    _authenticate_handoff(session, request, handoff, authorization)
 
 
 @router.post("/handoffs/{handoff_id}/claim", response_model=HandoffView)
 def claim_handoff(handoff_id: UUID, payload: HandoffStateInput, request: Request, authorization: str | None = Header(default=None, alias="Authorization"), idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
-    if _expire_handoff_if_needed(request, handoff_id):
-        raise QfError("HANDOFF_EXPIRED", "Handoff claim deadline expired.", 409)
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
         def action() -> dict[str, Any]:
@@ -775,6 +775,11 @@ def claim_handoff(handoff_id: UUID, payload: HandoffStateInput, request: Request
             _authenticate_handoff(session, request, handoff, authorization)
             if handoff.state != "AVAILABLE":
                 raise QfError("HANDOFF_STATE_CONFLICT", "Only Available Handoffs can be claimed.", 409)
+            if _is_past(handoff.claim_deadline):
+                handoff.state = "EXPIRED"
+                _event(session, "HANDOFF_EXPIRED", "HANDOFF", handoff.id, {})
+                session.flush()
+                raise QfError("HANDOFF_EXPIRED", "Handoff claim deadline expired.", 409)
             if payload.expected_state and payload.expected_state != handoff.state:
                 raise QfError("HANDOFF_STATE_CONFLICT", "Handoff state changed before claim.", 409)
             handoff.state = "CLAIMED"
@@ -783,7 +788,14 @@ def claim_handoff(handoff_id: UUID, payload: HandoffStateInput, request: Request
             session.flush()
             return _handoff_view(session, handoff).model_dump(mode="json")
 
-        return _idempotent(session, idempotency_key, f"handoff.claim:{handoff_id}", payload, action)
+        return _idempotent(
+            session,
+            idempotency_key,
+            f"handoff.claim:{handoff_id}",
+            payload,
+            action,
+            before_replay=lambda: _authenticate_handoff_id(session, request, handoff_id, authorization),
+        )
 
 
 @router.post("/handoffs/{handoff_id}/accept", response_model=HandoffView)
@@ -806,7 +818,14 @@ def accept_handoff(handoff_id: UUID, payload: HandoffStateInput, request: Reques
             session.flush()
             return _handoff_view(session, handoff).model_dump(mode="json")
 
-        return _idempotent(session, idempotency_key, f"handoff.accept:{handoff_id}", payload, action)
+        return _idempotent(
+            session,
+            idempotency_key,
+            f"handoff.accept:{handoff_id}",
+            payload,
+            action,
+            before_replay=lambda: _authenticate_handoff_id(session, request, handoff_id, authorization),
+        )
 
 
 @router.post("/handoffs/{handoff_id}/reject", response_model=HandoffView)
@@ -826,7 +845,14 @@ def downstream_reject_handoff(handoff_id: UUID, payload: HandoffStateInput, requ
             session.flush()
             return _handoff_view(session, handoff).model_dump(mode="json")
 
-        return _idempotent(session, idempotency_key, f"handoff.downstream-reject:{handoff_id}", payload, action)
+        return _idempotent(
+            session,
+            idempotency_key,
+            f"handoff.downstream-reject:{handoff_id}",
+            payload,
+            action,
+            before_replay=lambda: _authenticate_handoff_id(session, request, handoff_id, authorization),
+        )
 
 
 @router.get("/handoffs/{handoff_id}/package", response_class=FileResponse)
@@ -1007,7 +1033,14 @@ def submit_feedback(handoff_id: UUID, payload: FeedbackInput, request: Request, 
             session.flush()
             return _handoff_view(session, handoff).model_dump(mode="json")
 
-        return _idempotent(session, idempotency_key, f"handoff.feedback:{handoff_id}", payload, action)
+        return _idempotent(
+            session,
+            idempotency_key,
+            f"handoff.feedback:{handoff_id}",
+            payload,
+            action,
+            before_replay=lambda: _authenticate_handoff_id(session, request, handoff_id, authorization),
+        )
 
 
 @router.post(
