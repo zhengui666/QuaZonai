@@ -1031,9 +1031,9 @@ def maybe_enqueue_p2l(session: Session, *, forward_evidence_episode_id: UUID) ->
     if degrading_member is not None:
         return None
     metrics = {row.metric_code: row for row in session.scalars(select(ForwardEvidenceMetric).where(ForwardEvidenceMetric.episode_id == episode.id).with_for_update())}
-    requirements = list(session.scalars(select(FeedbackContractMetricRequirement).where(FeedbackContractMetricRequirement.feedback_contract_version_id == contract.id).order_by(FeedbackContractMetricRequirement.ordinal).with_for_update()))
+    requirements = list(session.scalars(select(FeedbackContractMetricRequirement).where(FeedbackContractMetricRequirement.feedback_contract_version_id == paper_contract.id).order_by(FeedbackContractMetricRequirement.ordinal).with_for_update()))
     if not requirements or set(metrics) != {row.metric_code for row in requirements}:
-        raise _conflict("FEEDBACK_CONTRACT_INVALID", "Forward Evidence metrics do not match the Live contract.")
+        raise _conflict("FEEDBACK_CONTRACT_INVALID", "Forward Evidence metrics do not match the Paper contract.")
     gates = list(session.scalars(select(PromotionPolicyGate).where(PromotionPolicyGate.policy_version_id == policy.id).order_by(PromotionPolicyGate.ordinal).with_for_update()))
     if not gates:
         raise _conflict("PROMOTION_POLICY_INVALID", "Live policy has no typed gates.")
