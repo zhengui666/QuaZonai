@@ -115,6 +115,8 @@ class ApprovalView(StrictModel):
     candidate_id: UUID
     candidate_package_id: UUID | None = None
     candidate_package_revision: int | None = None
+    promotion_evaluation_id: UUID | None = None
+    promotion_purpose: str | None = None
     candidate: CandidateView
     purpose: str
     state: str
@@ -353,6 +355,8 @@ def _approval_view(session: Session, item: ApprovalSnapshot) -> ApprovalView:
         candidate_id=item.candidate_id,
         candidate_package_id=item.candidate_package_id,
         candidate_package_revision=item.candidate_package_revision,
+        promotion_evaluation_id=item.promotion_evaluation_id,
+        promotion_purpose=item.promotion_purpose,
         candidate=_candidate_view(candidate),
         purpose=item.purpose,
         state=item.state,
