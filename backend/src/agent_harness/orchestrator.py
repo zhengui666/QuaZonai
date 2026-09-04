@@ -100,14 +100,19 @@ def _require_alpha_discovery_completion(session: Session, mission: ResearchMissi
         )
         .with_for_update()
     )
+    if discovery is None:
+        raise QfError(
+            "ALPHA_DISCOVERY_VALIDATION_REQUIRED",
+            "Alpha Discovery success requires a Core-validated Discovery evaluation.",
+            409,
+            {"mission_id": str(mission.id)},
+        )
     version = (
         session.scalar(
             select(AlphaModelVersion)
             .where(AlphaModelVersion.id == discovery.alpha_model_version_id)
             .with_for_update()
         )
-        if discovery is not None
-        else None
     )
     metrics = (
         list(
@@ -117,8 +122,6 @@ def _require_alpha_discovery_completion(session: Session, mission: ResearchMissi
                 .with_for_update()
             )
         )
-        if discovery is not None
-        else []
     )
     gates = (
         list(
@@ -128,8 +131,6 @@ def _require_alpha_discovery_completion(session: Session, mission: ResearchMissi
                 .with_for_update()
             )
         )
-        if discovery is not None
-        else []
     )
     selection = (
         session.scalar(
@@ -137,8 +138,6 @@ def _require_alpha_discovery_completion(session: Session, mission: ResearchMissi
             .where(EvaluationDatasetSelection.id == discovery.evaluation_dataset_selection_id)
             .with_for_update()
         )
-        if discovery is not None
-        else None
     )
     design = (
         session.scalar(
@@ -146,8 +145,6 @@ def _require_alpha_discovery_completion(session: Session, mission: ResearchMissi
             .where(EvaluationDesignVersion.id == discovery.evaluation_design_version_id)
             .with_for_update()
         )
-        if discovery is not None
-        else None
     )
     assignment = (
         session.scalar(
@@ -162,8 +159,6 @@ def _require_alpha_discovery_completion(session: Session, mission: ResearchMissi
             )
             .with_for_update()
         )
-        if discovery is not None
-        else None
     )
     episode = (
         session.scalar(
