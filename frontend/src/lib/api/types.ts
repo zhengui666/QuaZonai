@@ -474,7 +474,14 @@ export interface ConfigurationPromotionPolicyVersion {
   mode: 'MANUAL_APPROVAL' | 'AUTO_HANDOFF';
   policy_contract_version: 'PROMOTION_POLICY_V1' | null;
   paper_downstream_system_id: UUID | null;
+  paper_connection_version_id: UUID | null;
+  paper_feedback_contract_version_id: UUID | null;
+  paper_preflight_receipt_id: UUID | null;
   live_downstream_system_id: UUID | null;
+  live_connection_version_id: UUID | null;
+  live_feedback_contract_version_id: UUID | null;
+  live_preflight_receipt_id: UUID | null;
+  paper_to_live_policy_version_id: UUID | null;
   gates: ConfigurationPromotionPolicyGate[];
   state: 'ACTIVE' | 'RETIRED';
   created_at: string;
