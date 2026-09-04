@@ -503,6 +503,7 @@ class MissionCapabilityService:
                 )
             payload = _safe_json(request.artifact.payload)
             summary = request.artifact.summary
+            artifact_state = "DRAFT"
             if request.artifact.kind is DraftArtifactKind.ALPHA_PROPOSAL:
                 try:
                     payload = AlphaArtifactDraftV1.model_validate(payload).model_dump(mode="json")
@@ -513,6 +514,17 @@ class MissionCapabilityService:
                         "Alpha proposals must use the bounded public AlphaArtifactDraftV1 contract.",
                         422,
                     ) from exc
+            else:
+                # Non-Alpha artifacts use the fixed generic v1 envelope. The
+                # bounded JSON/summary checks above are the Core validator for
+                # this intentionally non-semantic research handoff.
+                if request.artifact.schema_version != "v1" or not isinstance(payload, dict):
+                    raise QfError(
+                        "MISSION_ARTIFACT_SCHEMA_INVALID",
+                        "Mission artifacts must use the bounded v1 envelope.",
+                        422,
+                    )
+                artifact_state = "VALIDATED"
             normalized = request.model_dump(mode="json")
             normalized["artifact"]["summary"] = summary
             normalized["artifact"]["payload"] = payload
@@ -559,7 +571,7 @@ class MissionCapabilityService:
                 kind=request.artifact.kind.value,
                 schema_version=request.artifact.schema_version,
                 revision=revision,
-                state="DRAFT",
+                state=artifact_state,
                 storage_uri="",
                 metadata_json={"summary": summary, "payload": payload},
                 created_at=datetime.now(UTC),

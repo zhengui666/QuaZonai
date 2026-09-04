@@ -42,7 +42,10 @@ def _program_with_graph(session: Session):
     answer_draft(
         session,
         draft.id,
-        {question.id: f"answer-{question.ordinal}" for question in questions},
+        {
+            question.id: ("1D" if question.ordinal == 2 else f"answer-{question.ordinal}")
+            for question in questions
+        },
         expected_revision=draft.revision,
     )
     return start_draft(session, draft.id, expected_revision=draft.revision)

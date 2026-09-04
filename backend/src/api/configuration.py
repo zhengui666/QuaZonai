@@ -19,7 +19,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from api.dependencies import get_session
@@ -2589,6 +2589,12 @@ def create_capital_context(
     del request
     with session.begin():
         def action() -> dict[str, Any]:
+            # ponytail: serialize this rare admin mutation at the table level;
+            # a currency lock row is unnecessary until configuration throughput matters.
+            if session.get_bind().dialect.name == "postgresql":
+                session.execute(
+                    text("LOCK TABLE capital_context_versions IN SHARE ROW EXCLUSIVE MODE")
+                )
             overlap = session.scalar(
                 select(CapitalContextVersion.id)
                 .where(

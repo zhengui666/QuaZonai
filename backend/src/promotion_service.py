@@ -92,6 +92,7 @@ def _require_receipt(
     package_contract_version: str,
     environment_type: str = "PAPER",
     require_fresh: bool = True,
+    require_active: bool = True,
 ) -> PreflightReceipt:
     receipt = session.scalar(
         select(PreflightReceipt)
@@ -111,7 +112,7 @@ def _require_receipt(
         or valid_until is None
         or (require_fresh and valid_until <= now)
         or receipt.contract_version != connection.package_contract_version
-        or connection.state != "ACTIVE"
+        or (require_active and connection.state != "ACTIVE")
         or downstream.id != connection.downstream_system_id
         or not downstream.enabled
         or downstream.environment_type != environment_type
@@ -924,27 +925,6 @@ def accept_paper_feedback(
         raise _conflict("HANDOFF_STATE_CONFLICT", "Paper Handoff is not accepting complete feedback.")
     start = _utc(header.observation_start)
     end = _utc(header.observation_end)
-    accepted_at = handoff.accepted_at
-    if accepted_at is None or start < _stored_utc(accepted_at):
-        raise _conflict(
-            "FEEDBACK_CONTRACT_INVALID",
-            "Feedback observation must begin at or after Handoff acceptance.",
-        )
-    if end > datetime.now(UTC):
-        raise _conflict("FEEDBACK_CONTRACT_INVALID", "Feedback observation cannot end in the future.")
-    deadline = _stored_utc(accepted_at) + timedelta(
-        seconds=paper_contract.complete_feedback_deadline_seconds
-        + paper_contract.grace_period_seconds
-    )
-    if datetime.now(UTC) > deadline:
-        raise _conflict(
-            "FEEDBACK_CONTRACT_EXPIRED",
-            "Paper feedback arrived after the frozen completion deadline.",
-        )
-    if end <= start or header.sample_size < paper_contract.minimum_valid_sample_size:
-        raise _conflict("FEEDBACK_CONTRACT_INVALID", "Feedback observation does not satisfy the frozen contract.")
-    if (end - start).total_seconds() < paper_contract.minimum_observation_seconds:
-        raise _conflict("FEEDBACK_CONTRACT_INVALID", "Feedback observation is shorter than the frozen contract.")
     typed = _typed_feedback_rows(session, paper_contract, metrics)
     existing = session.scalar(
         select(FeedbackPackage)
@@ -981,6 +961,27 @@ def accept_paper_feedback(
                 "Retrying Paper feedback must exactly match the immutable submission.",
             )
         return episode
+    accepted_at = handoff.accepted_at
+    if accepted_at is None or start < _stored_utc(accepted_at):
+        raise _conflict(
+            "FEEDBACK_CONTRACT_INVALID",
+            "Feedback observation must begin at or after Handoff acceptance.",
+        )
+    if end > datetime.now(UTC):
+        raise _conflict("FEEDBACK_CONTRACT_INVALID", "Feedback observation cannot end in the future.")
+    deadline = _stored_utc(accepted_at) + timedelta(
+        seconds=paper_contract.complete_feedback_deadline_seconds
+        + paper_contract.grace_period_seconds
+    )
+    if datetime.now(UTC) > deadline:
+        raise _conflict(
+            "FEEDBACK_CONTRACT_EXPIRED",
+            "Paper feedback arrived after the frozen completion deadline.",
+        )
+    if end <= start or header.sample_size < paper_contract.minimum_valid_sample_size:
+        raise _conflict("FEEDBACK_CONTRACT_INVALID", "Feedback observation does not satisfy the frozen contract.")
+    if (end - start).total_seconds() < paper_contract.minimum_observation_seconds:
+        raise _conflict("FEEDBACK_CONTRACT_INVALID", "Feedback observation is shorter than the frozen contract.")
     package = FeedbackPackage(
         id=uuid4(),
         handoff_offer_id=handoff.id,
@@ -1113,6 +1114,7 @@ def _typed_live_handoff(
         evaluation.policy_version_id,
         package.contract_version,
         require_fresh_receipt=False,
+        require_active=False,
     )
     if (
         policy.mode not in {"MANUAL_APPROVAL", "AUTO_HANDOFF"}
@@ -1189,6 +1191,7 @@ def _strict_p2l_policy(
     package_contract_version: str,
     *,
     require_fresh_receipt: bool = True,
+    require_active: bool = True,
 ) -> tuple[PromotionPolicyVersion, DownstreamSystem, DownstreamConnectionVersion, FeedbackContractVersion, PreflightReceipt]:
     policy = session.scalar(
         select(PromotionPolicyVersion).where(PromotionPolicyVersion.id == policy_id).with_for_update()
@@ -1215,6 +1218,7 @@ def _strict_p2l_policy(
         package_contract_version=package_contract_version,
         environment_type="LIVE",
         require_fresh=require_fresh_receipt,
+        require_active=require_active,
     )
     return policy, downstream, connection, contract, receipt
 

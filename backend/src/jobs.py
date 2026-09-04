@@ -308,6 +308,7 @@ def retry_job(
     *,
     lease: JobLease,
     now: datetime | None = None,
+    available_at: datetime | None = None,
 ) -> bool:
     """Return a still-leased job to READY without changing its frozen resource."""
     current = now or _now()
@@ -321,6 +322,7 @@ def retry_job(
                 lease_owner=None,
                 lease_expires_at=None,
                 last_error=message,
+                available_at=available_at or current,
                 updated_at=current,
             )
         ),

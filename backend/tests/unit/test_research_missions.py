@@ -103,7 +103,10 @@ def _leased_mission(settings, tmp_path):  # type: ignore[no-untyped-def]
         answer_draft(
             session,
             draft.id,
-            {question.id: f"answer-{question.ordinal}" for question in questions},
+            {
+                question.id: ("1D" if question.ordinal == 2 else f"answer-{question.ordinal}")
+                for question in questions
+            },
             expected_revision=draft.revision,
         )
         program = start_draft(session, draft.id, expected_revision=draft.revision)

@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime, timedelta
 from threading import Event, Thread
 from codex_chatgpt_auth import initialize_codex_auth
 from db.models import Job
@@ -34,6 +35,7 @@ from research_engine.trusted_evaluator_service import trusted_evaluator_assignme
 
 LOGGER = logging.getLogger("quazonai.finite_worker")
 Handler = Callable[[Settings, Job, Event | None], None]
+_TRUSTED_EVALUATOR_MAX_ATTEMPTS = 3
 
 
 def _noop_handler(_: Settings, __: Job, ___: Event | None = None) -> None:
@@ -341,8 +343,22 @@ def run_once(
                 and trusted_evaluator_assignment_running(
                     session, kind=job.kind, resource_id=job.resource_id
                 )
+                and job.attempt < _TRUSTED_EVALUATOR_MAX_ATTEMPTS
             )
-            handled = retry_job(session, str(failure)[-4000:], lease=lease) if retryable else fail_job(session, str(failure)[-4000:], lease=lease)
+            failure_message = str(failure)[-4000:]
+            retry_at = datetime.now(UTC) + timedelta(
+                seconds=min(60, 2 ** max(job.attempt - 1, 0))
+            )
+            handled = (
+                retry_job(
+                    session,
+                    failure_message,
+                    lease=lease,
+                    available_at=retry_at,
+                )
+                if retryable
+                else fail_job(session, failure_message, lease=lease)
+            )
             if handled:
                 append_event(
                     session,

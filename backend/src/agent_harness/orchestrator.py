@@ -377,13 +377,13 @@ def finish_mission(
     if program is None:
         raise QfError("RESEARCH_PROGRAM_NOT_FOUND", "Research Program was not found.", 500)
     queued = queue_eligible_missions(session, program) if succeeded else []
-    if succeeded and not queued:
+    if not queued:
         pending = session.scalar(
             select(ResearchMission.id)
             .where(
                 ResearchMission.program_id == program.id,
                 ResearchMission.state.in_(
-                    ("PLANNED", "READY", "RUNNING", "AWAITING_VALIDATION", "INTERRUPTED")
+                    ("READY", "RUNNING", "AWAITING_VALIDATION", "INTERRUPTED")
                 ),
             )
             .limit(1)
@@ -398,8 +398,16 @@ def finish_mission(
                 if mission.cycle_id is not None
                 else None
             )
+            failed = session.scalar(
+                select(ResearchMission.id)
+                .where(
+                    ResearchMission.program_id == program.id,
+                    ResearchMission.state == "FAILED",
+                )
+                .limit(1)
+            )
             if cycle is not None and cycle.state == "RUNNING":
-                cycle.state = "SUCCEEDED"
+                cycle.state = "FAILED" if failed is not None else "SUCCEEDED"
                 cycle.finished_at = timestamp
             if program.state == "ACTIVE":
                 program.state = "COOLING"

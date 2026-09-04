@@ -319,7 +319,7 @@ class AlphaArtifactDraftV1(StrictModel):
     requested_role: AlphaRequestedRole
     universe_version_id: UUID
     horizon: str = Field(min_length=2, max_length=5)
-    feature_pipeline_ref: UUID
+    feature_pipeline_ref: UUID | None = None
     source_path: str = Field(min_length=1, max_length=500)
     entrypoint: str = Field(min_length=3, max_length=320)
     parameters: dict[str, Any] = Field(default_factory=dict)

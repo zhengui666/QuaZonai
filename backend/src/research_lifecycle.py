@@ -166,7 +166,14 @@ def _normalize_horizon(value: str) -> str:
         "ONEWEEK": "1W",
         "ONEMONTH": "1M",
     }
-    return words.get(normalized, normalized)
+    canonical = words.get(normalized)
+    if canonical is not None:
+        return canonical
+    raise QfError(
+        "CHARTER_HORIZON_INVALID",
+        "Clarification horizon must use a bounded duration such as 1D.",
+        422,
+    )
 
 
 def _event(

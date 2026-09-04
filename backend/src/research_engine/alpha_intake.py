@@ -390,7 +390,11 @@ def stage_alpha_discovery_evaluation(
     branch = session.get(ResearchBranch, mission.branch_id)
     charter = session.get(ResearchCharter, program.charter_id) if program is not None else None
     universe = session.get(MarketUniverseVersion, draft.universe_version_id)
-    feature = session.get(FeaturePipelineVersion, draft.feature_pipeline_ref)
+    feature = (
+        session.get(FeaturePipelineVersion, draft.feature_pipeline_ref)
+        if draft.feature_pipeline_ref is not None
+        else None
+    )
     if (
         program is None
         or branch is None
