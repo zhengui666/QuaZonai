@@ -188,6 +188,35 @@ class MissionCapabilityService:
             raise QfError("MISSION_TOOL_INVALID", "Mission tool is not available.", 404) from exc
         if tool not in _IMPLEMENTED_TOOLS:
             raise QfError("MISSION_TOOL_UNAVAILABLE", "Mission tool is not implemented.", 404)
+        try:
+            mission_id = UUID(str(arguments.get("mission_id")))
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise QfError("MISSION_TOOL_ARGUMENT_INVALID", "Mission tool arguments are invalid.", 422) from exc
+        with self._session_factory() as session, session.begin():
+            mission = self._mission(session, tool, mission_id, lock=True)
+            turn = session.scalar(
+                select(AgentTurn)
+                .join(AgentSession, AgentSession.id == AgentTurn.agent_session_id)
+                .where(
+                    AgentSession.mission_id == mission.id,
+                    AgentTurn.state == "RUNNING",
+                )
+                .with_for_update()
+            )
+            if turn is None:
+                raise QfError(
+                    "MISSION_TURN_NOT_RUNNING",
+                    "Mission tools require one running AgentTurn.",
+                    409,
+                )
+            limit = min(self._contract.max_tool_calls, mission.max_tool_calls)
+            if turn.tool_call_count >= limit:
+                raise QfError(
+                    "MISSION_TOOL_CALL_BUDGET_EXCEEDED",
+                    "Mission tool-call budget is exhausted.",
+                    409,
+                )
+            turn.tool_call_count += 1
         if tool == MissionTool.SUBMIT_MISSION_ARTIFACT:
             return self._submit_artifact(_parse(_SubmitArtifactRequest, arguments))
         if tool == MissionTool.PROFILE_DATASET:
