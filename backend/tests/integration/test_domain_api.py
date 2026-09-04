@@ -189,6 +189,7 @@ def _seed_candidate_approval(
         )
         if candidate_package is not None:
             session.add(candidate_package)
+            session.flush()
         approval = ApprovalSnapshot(
             candidate_id=candidate.id,
             candidate_package_id=(candidate_package.id if candidate_package else None),
