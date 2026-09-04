@@ -54,7 +54,7 @@ from downstream_contracts import feedback_contract_snapshot
 from errors import QfError
 from events import append_event
 from jobs import enqueue_job
-from research_engine.sealed_evaluator_contracts import ALPHA_METRIC_CODES
+from research_engine.sealed_evaluator_contracts import ALPHA_METRIC_CODES, PORTFOLIO_METRIC_CODES
 
 
 router = APIRouter(prefix="/api/v1", tags=["configuration"])
@@ -483,6 +483,8 @@ class PromotionPolicyVersionInput(StrictModel):
                 raise ValueError("Paper policy requires its frozen Paper-to-Live policy")
             if self.mode != "MANUAL_APPROVAL":
                 raise ValueError("Paper policy must use MANUAL_APPROVAL")
+            if any(gate.metric_code not in PORTFOLIO_METRIC_CODES for gate in self.gates):
+                raise ValueError("Portfolio policy gates must use supported evaluator metrics")
             if not any(
                 gate.metric_code == "MATERIAL_IMPROVEMENT"
                 and gate.comparator == "MINIMUM"
@@ -2587,6 +2589,22 @@ def create_capital_context(
     del request
     with session.begin():
         def action() -> dict[str, Any]:
+            overlap = session.scalar(
+                select(CapitalContextVersion.id)
+                .where(
+                    CapitalContextVersion.configuration_contract_version == "CAPITAL_CONTEXT_V1",
+                    CapitalContextVersion.base_currency == payload.base_currency,
+                    CapitalContextVersion.observed_at < payload.valid_until,
+                    CapitalContextVersion.valid_until > payload.observed_at,
+                )
+                .with_for_update()
+            )
+            if overlap is not None:
+                raise QfError(
+                    "CAPITAL_CONTEXT_OVERLAP",
+                    "A V1 capital context overlaps the requested validity window.",
+                    409,
+                )
             item = CapitalContextVersion(
                 configuration_contract_version="CAPITAL_CONTEXT_V1",
                 source_type="ADMIN",
@@ -2694,6 +2712,13 @@ def create_mandate_version(
             ).scalar_one_or_none()
             if item is None:
                 raise QfError("MANDATE_NOT_FOUND", "Portfolio Mandate was not found.", 404)
+            previous_version = session.scalar(
+                select(PortfolioMandateVersion)
+                .where(PortfolioMandateVersion.id == item.latest_version_id)
+                .with_for_update()
+            )
+            if previous_version is not None:
+                previous_version.state = "RETIRED"
             last_version = session.scalar(
                 select(func.max(PortfolioMandateVersion.version_no)).where(
                     PortfolioMandateVersion.portfolio_mandate_id == item.id
@@ -3217,6 +3242,15 @@ def rotate_downstream_service_token(
             raise QfError("DOWNSTREAM_NOT_FOUND", "Downstream System was not found.", 404)
         issued = issue_service_token(request.app.state.settings, item.id)
         install_service_token(item, issued)
+        for connection in session.scalars(
+            select(DownstreamConnectionVersion)
+            .where(
+                DownstreamConnectionVersion.downstream_system_id == item.id,
+                DownstreamConnectionVersion.state == "ACTIVE",
+            )
+            .with_for_update()
+        ):
+            connection.state = "RETIRED"
         item.revision += 1
         item.preflight_state = "PENDING"
         append_event(

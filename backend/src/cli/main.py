@@ -88,6 +88,7 @@ def build_parser() -> argparse.ArgumentParser:
     draft_start.add_argument("id")
     draft_start.add_argument("--expected-revision", type=int, required=True)
     draft_start.add_argument("--title")
+    draft_start.add_argument("--universe-version-id", dest="universe_version_ids", action="append")
 
     research = commands.add_parser("research")
     research_actions = research.add_subparsers(dest="action", required=True)
@@ -229,6 +230,7 @@ def execute(client: ApiClient, args: argparse.Namespace) -> Any:
             json_body={
                 "expected_revision": args.expected_revision,
                 **({"title": args.title} if args.title else {}),
+                **({"universe_version_ids": args.universe_version_ids} if args.universe_version_ids else {}),
             },
             headers=_headers(),
         )

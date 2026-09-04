@@ -22,6 +22,7 @@ from jobs import (
     claim_next_job,
     complete_job,
     fail_job,
+    retry_job,
     release_expired_leases,
     renew_job_lease,
 )
@@ -29,6 +30,7 @@ from logging_utils import configure_logging
 from runtime_config import effective_settings
 from runners.codex_sandbox import codex_sandbox_preflight
 from settings import Settings
+from research_engine.trusted_evaluator_service import trusted_evaluator_assignment_running
 
 LOGGER = logging.getLogger("quazonai.finite_worker")
 Handler = Callable[[Settings, Job, Event | None], None]
@@ -328,13 +330,26 @@ def run_once(
         )
     if failure is not None:
         with factory.begin() as session:
-            if fail_job(session, str(failure)[-4000:], lease=lease):
+            retryable = (
+                job.kind
+                in {
+                    "DISCOVERY_EVALUATION",
+                    "ALPHA_EVALUATION",
+                    "PORTFOLIO_INPUT_EVALUATION",
+                    "PORTFOLIO_EVALUATION",
+                }
+                and trusted_evaluator_assignment_running(
+                    session, kind=job.kind, resource_id=job.resource_id
+                )
+            )
+            handled = retry_job(session, str(failure)[-4000:], lease=lease) if retryable else fail_job(session, str(failure)[-4000:], lease=lease)
+            if handled:
                 append_event(
                     session,
-                    kind="JOB_FAILED",
+                    kind="JOB_REQUEUED" if retryable else "JOB_FAILED",
                     aggregate_type="job",
                     aggregate_id=lease.job_id,
-                    payload={"error_code": type(failure).__name__},
+                    payload={"error_code": type(failure).__name__, "retryable": retryable},
                 )
         LOGGER.error(
             "job failed",

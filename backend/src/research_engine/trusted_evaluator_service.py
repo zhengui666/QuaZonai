@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
@@ -39,6 +40,8 @@ from db.models import (
     EvaluationDesignVersion,
     EvidenceExposure,
     MissionArtifact,
+    PortfolioEvaluationAssignment,
+    PortfolioInputEvaluationAssignment,
     PromotionPolicyGate,
     PromotionPolicyVersion,
 )
@@ -512,6 +515,23 @@ def prepare_portfolio_evaluation_request(
         },
         input=input_value,
     )
+
+
+def trusted_evaluator_assignment_running(
+    session: Session, *, kind: str, resource_id: UUID
+) -> bool:
+    """Identify failures after a descriptor transaction has admitted the frozen fact."""
+    models = {
+        "DISCOVERY_EVALUATION": AlphaDiscoveryEvaluation,
+        "ALPHA_EVALUATION": AlphaEvaluationAssignment,
+        "PORTFOLIO_INPUT_EVALUATION": PortfolioInputEvaluationAssignment,
+        "PORTFOLIO_EVALUATION": PortfolioEvaluationAssignment,
+    }
+    model: Any = models.get(kind)
+    if model is None:
+        return False
+    row = session.scalar(select(model).where(model.id == resource_id).with_for_update())
+    return row is not None and row.state == "RUNNING"
 
 
 def _write_descriptor(root: Path, descriptor: Mapping[str, object]) -> Path:
@@ -1493,4 +1513,5 @@ __all__ = [
     "prepare_portfolio_input_evaluation",
     "prepare_discovery_evaluation",
     "run_trusted_evaluator",
+    "trusted_evaluator_assignment_running",
 ]

@@ -31,6 +31,7 @@ from db.models import (
     DatasetRevision,
     Event,
     EvaluationDatasetSelection,
+    EvidenceExposure,
     Job,
     PortfolioAssemblyInput,
     PortfolioAssemblyInputCovariance,
@@ -1932,10 +1933,32 @@ def assemble_trusted_portfolio_input(session: Session, input_id: UUID) -> Portfo
         )
         for member in members
     ]
+    exposure_levels: dict[UUID, int] = {}
+    for exposure in session.scalars(
+        select(EvidenceExposure).where(
+            EvidenceExposure.subject_type == "ALPHA_QUALIFICATION",
+            EvidenceExposure.subject_id.in_(
+                tuple(member.alpha_qualification_id for member in members)
+            ),
+        )
+    ):
+        exposure_levels[exposure.episode_id] = max(
+            exposure_levels.get(exposure.episode_id, 0), exposure.level
+        )
+    candidate_exposures = [
+        EvidenceExposure(
+            id=uuid4(),
+            episode_id=episode_id,
+            subject_type="PORTFOLIO_CANDIDATE",
+            subject_id=candidate.id,
+            level=level,
+        )
+        for episode_id, level in exposure_levels.items()
+    ]
     input_row.state = "ASSEMBLED"
     input_row.outcome_code = "OPTIMAL"
     input_row.completed_at = datetime.now(UTC)
-    session.add_all((candidate, *candidate_members))
+    session.add_all((candidate, *candidate_members, *candidate_exposures))
     session.flush()
     ensure_portfolio_evaluation(session, candidate_id=candidate.id)
     enqueue_candidate_package_build(session, candidate.id)

@@ -358,7 +358,7 @@ def _portfolio_facts(session: Session) -> dict[str, object]:
         minimum_observation_seconds=1,
         minimum_valid_sample_size=1,
         first_status_deadline_seconds=1,
-        complete_feedback_deadline_seconds=1,
+        complete_feedback_deadline_seconds=600,
         grace_period_seconds=0,
         disclosure_policy="LEVEL_1",
     )
@@ -369,7 +369,7 @@ def _portfolio_facts(session: Session) -> dict[str, object]:
         minimum_observation_seconds=1,
         minimum_valid_sample_size=1,
         first_status_deadline_seconds=1,
-        complete_feedback_deadline_seconds=1,
+        complete_feedback_deadline_seconds=600,
         grace_period_seconds=0,
         disclosure_policy="LEVEL_1",
     )

@@ -233,6 +233,30 @@ def test_paper_feedback_uses_paper_contract_and_rejects_future_end(
         engine.dispose()
 
 
+def test_paper_feedback_rejects_after_frozen_completion_deadline(tmp_path, monkeypatch) -> None:
+    engine = _engine(tmp_path)
+    try:
+        with Session(engine) as session:
+            _candidate, handoff, paper_contract, _live_contract = _paper_handoff(
+                session, monkeypatch
+            )
+            paper_contract.complete_feedback_deadline_seconds = 1
+            now = datetime.now(UTC)
+            with pytest.raises(QfError, match="FEEDBACK_CONTRACT_EXPIRED"):
+                accept_paper_feedback(
+                    session,
+                    handoff_id=handoff.id,
+                    header=FeedbackHeader(
+                        observation_start=now - timedelta(seconds=3),
+                        observation_end=now - timedelta(seconds=1),
+                        sample_size=paper_contract.minimum_valid_sample_size,
+                    ),
+                    metrics=(TypedFeedbackMetric("return", "AVAILABLE", Decimal("0.1")),),
+                )
+    finally:
+        engine.dispose()
+
+
 def test_p2l_blocks_degrading_relational_alpha_member(tmp_path, monkeypatch) -> None:
     engine = _engine(tmp_path)
     try:

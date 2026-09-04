@@ -165,7 +165,7 @@ export const useApprovals = () => useQuery({ queryKey: keys.approvals, queryFn: 
 export const useHandoffs = () => useQuery({ queryKey: keys.handoffs, queryFn: async () => normalizeList(await apiRequest<HandoffOffer[] | { items: HandoffOffer[] }>('/api/v1/handoffs')), refetchInterval: 10_000 });
 export const useDownstreams = () => useQuery({ queryKey: keys.downstreams, queryFn: async () => normalizeList(await apiRequest<{ items: ConfigurationDownstream[] }>('/api/v1/downstream-systems')) });
 
-export const useConfigurationUniverses = () => useQuery({ queryKey: keys.universes, queryFn: async () => normalizeList(await apiRequest<{ items: ConfigurationUniverse[] }>('/api/v1/universes')) });
+export const useConfigurationUniverses = (enabled = true) => useQuery({ queryKey: keys.universes, queryFn: async () => normalizeList(await apiRequest<{ items: ConfigurationUniverse[] }>('/api/v1/universes')), enabled });
 export const useConfigurationDataSources = () => useQuery({ queryKey: keys.dataSources, queryFn: async () => normalizeList(await apiRequest<{ items: ConfigurationDataSource[] }>('/api/v1/data-sources')) });
 export const useConfigurationDatasets = () => useQuery({ queryKey: keys.datasets, queryFn: async () => normalizeList(await apiRequest<{ items: ConfigurationDataset[] }>('/api/v1/datasets')) });
 export const useConfigurationMandates = () => useQuery({ queryKey: keys.mandates, queryFn: async () => normalizeList(await apiRequest<{ items: ConfigurationMandate[] }>('/api/v1/portfolio-mandates')) });

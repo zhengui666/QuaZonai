@@ -23,6 +23,7 @@ from db.models import (
     Base,
     Job,
     MarketUniverseVersion,
+    MissionArtifact,
     ResearchMission,
     ResearchProgram,
 )
@@ -113,6 +114,18 @@ def _leased_mission(settings, tmp_path):  # type: ignore[no-untyped-def]
             )
         )
         assert mission is not None
+        session.add(
+            MissionArtifact(
+                mission_id=mission.id,
+                kind="RESEARCH_PLAN",
+                schema_version="v1",
+                revision=1,
+                state="VALIDATED",
+                storage_uri="artifact://plans/validated",
+                metadata_json={},
+                created_at=datetime.now(UTC),
+            )
+        )
         claimed = claim_next_job(session, owner="worker", lease_seconds=60)
         assert claimed is not None and claimed.resource_id == mission.id
         assert claimed.lease_owner is not None

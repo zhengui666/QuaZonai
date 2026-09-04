@@ -130,6 +130,7 @@ _PORTFOLIO_METRICS = frozenset(
         MetricCode.MATERIAL_IMPROVEMENT,
     }
 )
+PORTFOLIO_METRIC_CODES = _PORTFOLIO_METRICS
 _ALPHA_GATES = frozenset(
     {
         GateCode.EVIDENCE_VALID,
@@ -819,6 +820,7 @@ class SealedEvaluator(Protocol):
 
 __all__ = [
     "ALPHA_METRIC_CODES",
+    "PORTFOLIO_METRIC_CODES",
     "AlphaForecast",
     "AlphaEvaluationInput",
     "AlphaSignalSummary",

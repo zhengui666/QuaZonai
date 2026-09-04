@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -137,6 +138,35 @@ _DEGRADATION_MISSION_GRAPH = (
 
 def now() -> datetime:
     return datetime.now(UTC)
+
+
+def _normalize_horizon(value: str) -> str:
+    normalized = value.strip().upper().replace(" ", "")
+    aliases = {
+        "DAILY": "1D",
+        "DAY": "1D",
+        "ONEDAY": "1D",
+        "HOURLY": "1H",
+        "HOUR": "1H",
+        "WEEKLY": "1W",
+        "WEEK": "1W",
+        "MONTHLY": "1M",
+        "MONTH": "1M",
+    }
+    normalized = aliases.get(normalized, normalized)
+    match = re.fullmatch(r"([1-9][0-9]{0,3})([SMHDW])", normalized)
+    if match is not None:
+        return normalized
+    embedded = re.search(r"([1-9][0-9]{0,3})([SMHDW])", normalized)
+    if embedded is not None:
+        return embedded.group(1) + embedded.group(2)
+    words = {
+        "ONEDAY": "1D",
+        "ONEHOUR": "1H",
+        "ONEWEEK": "1W",
+        "ONEMONTH": "1M",
+    }
+    return words.get(normalized, normalized)
 
 
 def _event(
@@ -1152,7 +1182,7 @@ def start_draft(
         research_question=draft.original_idea_text,
         market_scope=[answer_by_ordinal[1]],
         universe_version_ids=charter_universe_version_ids,
-        prediction_horizon=answer_by_ordinal[2],
+        prediction_horizon=_normalize_horizon(answer_by_ordinal[2]),
         allowed_data_domains=[answer_by_ordinal[3]],
         explicit_exclusions=[],
         material_assumptions=[],

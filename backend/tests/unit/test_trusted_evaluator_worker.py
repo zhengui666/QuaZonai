@@ -417,7 +417,7 @@ def test_malformed_or_unknown_evaluator_output_fails_closed_in_discovery_runner(
     assert run_once(worker_settings, owner="worker-a", factory=factory)[0] is True
     with factory() as session:
         job = session.get(Job, job_id)
-        assert job is not None and job.state == "FAILED"
+        assert job is not None and job.state == "READY"
         assert session.scalar(select(AlphaEvaluationAssignment)) is None
         assert session.scalar(select(AlphaEvaluationResult)) is None
 
@@ -476,7 +476,7 @@ while True:
         time.sleep(0.01)
     with factory() as session:
         job = session.get(Job, job_id)
-        assert job is not None and job.state == "FAILED"
+        assert job is not None and job.state == "READY"
         assert session.scalar(select(AlphaEvaluationAssignment)) is None
 
 

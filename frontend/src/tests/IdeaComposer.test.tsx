@@ -42,6 +42,7 @@ describe('IdeaComposer', () => {
           },
         });
       }
+      if (url.endsWith('/universes')) return jsonResponse({ items: [{ id: 'u-1', universe_key: 'US', version_no: 1, name: 'US Equities', state: 'ACTIVE', spec: {}, created_at: '2026-01-01T00:00:00Z' }] });
       if (url.endsWith('/idea-drafts/draft-1/start')) return jsonResponse({ id: 'program-1', state: 'ACTIVE' }, 201);
       return jsonResponse({}, 404);
     });
@@ -59,13 +60,14 @@ describe('IdeaComposer', () => {
     await waitFor(() => expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([
       '/api/v1/idea-drafts',
       '/api/v1/idea-drafts/draft-1/answers',
+      '/api/v1/universes',
       '/api/v1/idea-drafts/draft-1/start',
     ]));
     expect(JSON.parse(fetchMock.mock.calls[1]?.[1]?.body as string)).toEqual({
       answers: { horizon: '1D' },
       expected_revision: 1,
     });
-    expect(JSON.parse(fetchMock.mock.calls[2]?.[1]?.body as string)).toEqual({ expected_revision: 2 });
+    expect(JSON.parse(fetchMock.mock.calls[3]?.[1]?.body as string)).toEqual({ expected_revision: 2 });
   });
 
   it('shows a contract error instead of proceeding on a malformed draft response', async () => {

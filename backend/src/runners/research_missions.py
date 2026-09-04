@@ -958,7 +958,13 @@ def run_mission(settings: Settings, lease: JobLease) -> None:
                         422,
                     )
             else:
-                finish_mission(session, completion_mission.id, succeeded=True, summary=final_response)
+                finish_mission(
+                    session,
+                    completion_mission.id,
+                    succeeded=True,
+                    summary=final_response,
+                    require_validated_output=True,
+                )
         if completion_error is not None:
             raise completion_error
     except Exception as exc:

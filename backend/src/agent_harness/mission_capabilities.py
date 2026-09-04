@@ -211,7 +211,15 @@ class MissionCapabilityService:
                     409,
                 )
             limit = min(self._contract.max_tool_calls, mission.max_tool_calls)
-            if turn.tool_call_count >= limit:
+            total_tool_calls = int(
+                session.scalar(
+                    select(func.coalesce(func.sum(AgentTurn.tool_call_count), 0))
+                    .join(AgentSession, AgentSession.id == AgentTurn.agent_session_id)
+                    .where(AgentSession.mission_id == mission.id)
+                )
+                or 0
+            )
+            if total_tool_calls >= limit or turn.tool_call_count >= limit:
                 raise QfError(
                     "MISSION_TOOL_CALL_BUDGET_EXCEEDED",
                     "Mission tool-call budget is exhausted.",
@@ -253,7 +261,10 @@ class MissionCapabilityService:
         if datetime.now(UTC) > self._contract.deadline:
             raise QfError("MISSION_DEADLINE_EXPIRED", "Mission capability deadline has expired.", 409)
         program = session.get(ResearchProgram, mission.program_id)
-        if program is None or program.state != "ACTIVE":
+        if program is None or (
+            program.state != "ACTIVE"
+            and not (program.state == "PAUSED" and mission.state == "RUNNING")
+        ):
             raise QfError("PROGRAM_NOT_ACTIVE", "Mission tools require an ACTIVE Research Program.", 409)
         try:
             role = RoleProfile(mission.role_profile)

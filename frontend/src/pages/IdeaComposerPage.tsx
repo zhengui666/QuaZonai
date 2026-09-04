@@ -7,7 +7,8 @@ import { PageHeader } from '../components/ui/PageHeader';
 import { Section } from '../components/ui/Section';
 import { useI18n } from '../i18n';
 import { ApiError, answerIdeaDraft, createIdeaDraft, startIdeaDraft } from '../lib/api/client';
-import type { IdeaDraft, ResearchProgram } from '../lib/api/types';
+import { useConfigurationUniverses } from '../lib/api/hooks';
+import type { IdeaDraft, ResearchProgram, UUID } from '../lib/api/types';
 import { localizeSystemInferred } from '../lib/format';
 
 function requireDraft(value: unknown): IdeaDraft {
@@ -59,11 +60,14 @@ export function IdeaComposerPage() {
   const [draft, setDraft] = useState<IdeaDraft | null>(null);
   const [error, setError] = useState<unknown>();
   const [pending, setPending] = useState(false);
+  const [selectedUniverseIds, setSelectedUniverseIds] = useState<UUID[]>([]);
   const navigate = useNavigate();
+  const universes = useConfigurationUniverses(draft?.next_action === 'START_PROGRAM');
   const canCreate = idea.trim().length >= 12;
   const questions = draft?.clarification_questions ?? [];
   const answersComplete = questions.every((question) => answers[question.key]?.trim());
   const needsAnswers = draft?.next_action === 'ANSWER_CLARIFICATIONS';
+  const activeUniverses = (universes.data ?? []).filter((item) => item.state === 'ACTIVE');
 
   async function createDraft() {
     setPending(true);
@@ -105,7 +109,10 @@ export function IdeaComposerPage() {
           'CONTRACT_MISMATCH',
         );
       }
-      const program = requireProgram(await startIdeaDraft(draft.id, { expected_revision: draft.revision }));
+      const program = requireProgram(await startIdeaDraft(draft.id, {
+        expected_revision: draft.revision,
+        ...(selectedUniverseIds.length ? { universe_version_ids: selectedUniverseIds } : {}),
+      }));
       navigate(`/research/${program.id}`);
     } catch (requestError) {
       setError(requestError);
@@ -134,6 +141,7 @@ export function IdeaComposerPage() {
                   setIdea(event.target.value);
                   setDraft(null);
                   setAnswers({});
+                  setSelectedUniverseIds([]);
                   setError(undefined);
                 }}
                 placeholder={t('idea.placeholder')}
@@ -167,7 +175,22 @@ export function IdeaComposerPage() {
                   ))}
                 </div>
               ) : null}
-              <Button color="green" disabled={pending || (needsAnswers && !answersComplete)} onClick={() => void (needsAnswers ? submitAnswers() : launch())}>
+              {draft.next_action === 'START_PROGRAM' && activeUniverses.length > 1 ? (
+                <label className="qz-field">
+                  <span className="qz-label">{t('admin.universes')}</span>
+                  <select
+                    multiple
+                    value={selectedUniverseIds}
+                    onChange={(event) => setSelectedUniverseIds(Array.from(event.target.selectedOptions, (option) => option.value))}
+                    size={Math.min(6, activeUniverses.length)}
+                  >
+                    {activeUniverses.map((item) => (
+                      <option key={item.id} value={item.id}>{item.name} · v{item.version_no}</option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              <Button color="green" disabled={pending || (needsAnswers && !answersComplete) || (draft.next_action === 'START_PROGRAM' && activeUniverses.length > 1 && selectedUniverseIds.length === 0)} onClick={() => void (needsAnswers ? submitAnswers() : launch())}>
                 {pending ? (needsAnswers ? t('common.saving') : t('common.starting')) : (needsAnswers ? t('idea.saveClarifications') : t('idea.startResearch'))}
               </Button>
             </div>

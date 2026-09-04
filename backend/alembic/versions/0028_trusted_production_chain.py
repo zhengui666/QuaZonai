@@ -720,6 +720,18 @@ def _create_promotion_tables() -> None:
             "preflight_receipt_id",
             name="uq_promotion_evaluation_approval_lineage",
         ),
+        sa.UniqueConstraint(
+            "id",
+            "purpose",
+            "candidate_id",
+            "candidate_package_id",
+            "package_revision",
+            "downstream_system_id",
+            "downstream_connection_version_id",
+            "feedback_contract_version_id",
+            "preflight_receipt_id",
+            name="uq_promotion_evaluation_lineage_without_p2l",
+        ),
         sa.CheckConstraint(
             "purpose IN ('PORTFOLIO_TO_PAPER', 'PAPER_TO_LIVE')",
             name="ck_promotion_evaluation_purpose",
@@ -915,6 +927,9 @@ def _extend_approval_and_handoff_lineage() -> None:
         "preflight_receipt_id",
         "paper_to_live_policy_version_id",
     ]
+    approval_lineage_without_p2l = approval_lineage_columns[:-1]
+    promotion_lineage_without_p2l = promotion_lineage_columns[:-1]
+    promotion_target_without_p2l = promotion_target_columns[:-1]
     handoff_lineage_columns = [
         "approval_id",
         "promotion_purpose",
@@ -927,6 +942,7 @@ def _extend_approval_and_handoff_lineage() -> None:
         "preflight_receipt_id",
         "paper_to_live_policy_version_id",
     ]
+    handoff_lineage_without_p2l = handoff_lineage_columns[:-1]
     bind = op.get_bind()
     if bind.dialect.name == "sqlite":
         with op.batch_alter_table("approval_snapshots", recreate="always") as batch:
@@ -938,11 +954,21 @@ def _extend_approval_and_handoff_lineage() -> None:
             batch.create_unique_constraint(
                 "uq_approval_snapshot_handoff_lineage", approval_lineage_columns
             )
+            batch.create_unique_constraint(
+                "uq_approval_snapshot_lineage_without_p2l", approval_lineage_without_p2l
+            )
             batch.create_foreign_key(
                 "fk_approval_snapshot_promotion_lineage",
                 "promotion_evaluations",
                 promotion_lineage_columns,
                 promotion_target_columns,
+                ondelete="RESTRICT",
+            )
+            batch.create_foreign_key(
+                "fk_approval_snapshot_promotion_lineage_without_p2l",
+                "promotion_evaluations",
+                promotion_lineage_without_p2l,
+                promotion_target_without_p2l,
                 ondelete="RESTRICT",
             )
             for name, target, column in (
@@ -962,11 +988,21 @@ def _extend_approval_and_handoff_lineage() -> None:
                 "uq_handoff_offer_feedback_contract_pair",
                 ["id", "feedback_contract_version_id"],
             )
+            batch.create_unique_constraint(
+                "uq_handoff_offer_lineage_without_p2l", handoff_lineage_without_p2l
+            )
             batch.create_foreign_key(
                 "fk_handoff_offer_approval_lineage",
                 "approval_snapshots",
                 handoff_lineage_columns,
                 approval_lineage_columns,
+                ondelete="RESTRICT",
+            )
+            batch.create_foreign_key(
+                "fk_handoff_offer_approval_lineage_without_p2l",
+                "approval_snapshots",
+                handoff_lineage_without_p2l,
+                approval_lineage_without_p2l,
                 ondelete="RESTRICT",
             )
             for name, target, column in (
@@ -985,12 +1021,25 @@ def _extend_approval_and_handoff_lineage() -> None:
         op.create_unique_constraint(
             "uq_approval_snapshot_handoff_lineage", "approval_snapshots", approval_lineage_columns
         )
+        op.create_unique_constraint(
+            "uq_approval_snapshot_lineage_without_p2l",
+            "approval_snapshots",
+            approval_lineage_without_p2l,
+        )
         op.create_foreign_key(
             "fk_approval_snapshot_promotion_lineage",
             "approval_snapshots",
             "promotion_evaluations",
             promotion_lineage_columns,
             promotion_target_columns,
+            ondelete="RESTRICT",
+        )
+        op.create_foreign_key(
+            "fk_approval_snapshot_promotion_lineage_without_p2l",
+            "approval_snapshots",
+            "promotion_evaluations",
+            promotion_lineage_without_p2l,
+            promotion_target_without_p2l,
             ondelete="RESTRICT",
         )
         for name, target, column in (
@@ -1010,12 +1059,25 @@ def _extend_approval_and_handoff_lineage() -> None:
             "handoff_offers",
             ["id", "feedback_contract_version_id"],
         )
+        op.create_unique_constraint(
+            "uq_handoff_offer_lineage_without_p2l",
+            "handoff_offers",
+            handoff_lineage_without_p2l,
+        )
         op.create_foreign_key(
             "fk_handoff_offer_approval_lineage",
             "handoff_offers",
             "approval_snapshots",
             handoff_lineage_columns,
             approval_lineage_columns,
+            ondelete="RESTRICT",
+        )
+        op.create_foreign_key(
+            "fk_handoff_offer_approval_lineage_without_p2l",
+            "handoff_offers",
+            "approval_snapshots",
+            handoff_lineage_without_p2l,
+            approval_lineage_without_p2l,
             ondelete="RESTRICT",
         )
         for name, target, column in (
@@ -1123,6 +1185,7 @@ def _shrink_approval_and_handoff_lineage() -> None:
     op.drop_index("uq_approval_snapshot_promotion_evaluation", table_name="approval_snapshots")
     handoff_fks = (
         "fk_handoff_offer_approval_lineage",
+        "fk_handoff_offer_approval_lineage_without_p2l",
         "fk_handoff_offer_connection",
         "fk_handoff_offer_contract",
         "fk_handoff_offer_receipt",
@@ -1130,6 +1193,7 @@ def _shrink_approval_and_handoff_lineage() -> None:
     )
     approval_fks = (
         "fk_approval_snapshot_promotion_lineage",
+        "fk_approval_snapshot_promotion_lineage_without_p2l",
         "fk_approval_snapshot_connection",
         "fk_approval_snapshot_contract",
         "fk_approval_snapshot_receipt",
@@ -1156,6 +1220,7 @@ def _shrink_approval_and_handoff_lineage() -> None:
             for name in handoff_fks:
                 batch.drop_constraint(name, type_="foreignkey")
             batch.drop_constraint("uq_handoff_offer_feedback_contract_pair", type_="unique")
+            batch.drop_constraint("uq_handoff_offer_lineage_without_p2l", type_="unique")
             batch.drop_constraint("ck_handoff_offer_typed_lineage", type_="check")
             for column in handoff_columns:
                 batch.drop_column(column)
@@ -1163,6 +1228,7 @@ def _shrink_approval_and_handoff_lineage() -> None:
             for name in approval_fks:
                 batch.drop_constraint(name, type_="foreignkey")
             batch.drop_constraint("uq_approval_snapshot_handoff_lineage", type_="unique")
+            batch.drop_constraint("uq_approval_snapshot_lineage_without_p2l", type_="unique")
             batch.drop_constraint("ck_approval_snapshot_typed_lineage", type_="check")
             for column in approval_columns:
                 batch.drop_column(column)
@@ -1170,12 +1236,14 @@ def _shrink_approval_and_handoff_lineage() -> None:
     for name in handoff_fks:
         op.drop_constraint(name, "handoff_offers", type_="foreignkey")
     op.drop_constraint("uq_handoff_offer_feedback_contract_pair", "handoff_offers", type_="unique")
+    op.drop_constraint("uq_handoff_offer_lineage_without_p2l", "handoff_offers", type_="unique")
     op.drop_constraint("ck_handoff_offer_typed_lineage", "handoff_offers", type_="check")
     for column in handoff_columns:
         op.drop_column("handoff_offers", column)
     for name in approval_fks:
         op.drop_constraint(name, "approval_snapshots", type_="foreignkey")
     op.drop_constraint("uq_approval_snapshot_handoff_lineage", "approval_snapshots", type_="unique")
+    op.drop_constraint("uq_approval_snapshot_lineage_without_p2l", "approval_snapshots", type_="unique")
     op.drop_constraint("ck_approval_snapshot_typed_lineage", "approval_snapshots", type_="check")
     for column in approval_columns:
         op.drop_column("approval_snapshots", column)

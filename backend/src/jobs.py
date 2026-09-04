@@ -300,3 +300,29 @@ def fail_job(
         ),
     )
     return int(result.rowcount or 0) == 1
+
+
+def retry_job(
+    session: Session,
+    message: str,
+    *,
+    lease: JobLease,
+    now: datetime | None = None,
+) -> bool:
+    """Return a still-leased job to READY without changing its frozen resource."""
+    current = now or _now()
+    result = cast(
+        CursorResult[Any],
+        session.execute(
+            update(Job)
+            .where(*_lease_conditions(lease, current))
+            .values(
+                state="READY",
+                lease_owner=None,
+                lease_expires_at=None,
+                last_error=message,
+                updated_at=current,
+            )
+        ),
+    )
+    return int(result.rowcount or 0) == 1

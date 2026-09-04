@@ -25,6 +25,7 @@ from db.models import (
     Job,
     MissionArtifact,
     ResearchMission,
+    ResearchCycle,
     ResearchProgram,
 )
 from errors import QfError
@@ -376,6 +377,33 @@ def finish_mission(
     if program is None:
         raise QfError("RESEARCH_PROGRAM_NOT_FOUND", "Research Program was not found.", 500)
     queued = queue_eligible_missions(session, program) if succeeded else []
+    if succeeded and not queued:
+        pending = session.scalar(
+            select(ResearchMission.id)
+            .where(
+                ResearchMission.program_id == program.id,
+                ResearchMission.state.in_(
+                    ("PLANNED", "READY", "RUNNING", "AWAITING_VALIDATION", "INTERRUPTED")
+                ),
+            )
+            .limit(1)
+        )
+        if pending is None:
+            cycle = (
+                session.scalar(
+                    select(ResearchCycle)
+                    .where(ResearchCycle.id == mission.cycle_id)
+                    .with_for_update()
+                )
+                if mission.cycle_id is not None
+                else None
+            )
+            if cycle is not None and cycle.state == "RUNNING":
+                cycle.state = "SUCCEEDED"
+                cycle.finished_at = timestamp
+            if program.state == "ACTIVE":
+                program.state = "COOLING"
+                program.revision += 1
     session.add(
         Event(
             kind="MISSION_SUCCEEDED" if succeeded else "MISSION_FAILED",

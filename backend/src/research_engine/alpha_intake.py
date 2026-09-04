@@ -398,8 +398,7 @@ def stage_alpha_discovery_evaluation(
         or charter is None
         or universe is None
         or universe.state != "ACTIVE"
-        or feature is None
-        or feature.universe_version_id != universe.id
+        or (feature is not None and feature.universe_version_id != universe.id)
         or len(draft.family_key) > 120
     ):
         return _reject_proposal(
@@ -509,7 +508,7 @@ def stage_alpha_discovery_evaluation(
         source_mission_artifact_id=artifact.id,
         source_mission_artifact_revision=artifact.revision,
         universe_version_id=universe.id,
-        feature_pipeline_version_id=feature.id,
+        feature_pipeline_version_id=feature.id if feature is not None else None,
         horizon=draft.horizon,
         mode="RELATIVE_SCORE",
         artifact_uri=artifact_uri,

@@ -91,6 +91,7 @@ def _require_receipt(
     downstream: DownstreamSystem,
     package_contract_version: str,
     environment_type: str = "PAPER",
+    require_fresh: bool = True,
 ) -> PreflightReceipt:
     receipt = session.scalar(
         select(PreflightReceipt)
@@ -108,7 +109,7 @@ def _require_receipt(
         or receipt.resource_revision != connection.version_no
         or receipt.status != "READY"
         or valid_until is None
-        or valid_until <= now
+        or (require_fresh and valid_until <= now)
         or receipt.contract_version != connection.package_contract_version
         or connection.state != "ACTIVE"
         or downstream.id != connection.downstream_system_id
@@ -931,6 +932,15 @@ def accept_paper_feedback(
         )
     if end > datetime.now(UTC):
         raise _conflict("FEEDBACK_CONTRACT_INVALID", "Feedback observation cannot end in the future.")
+    deadline = _stored_utc(accepted_at) + timedelta(
+        seconds=paper_contract.complete_feedback_deadline_seconds
+        + paper_contract.grace_period_seconds
+    )
+    if datetime.now(UTC) > deadline:
+        raise _conflict(
+            "FEEDBACK_CONTRACT_EXPIRED",
+            "Paper feedback arrived after the frozen completion deadline.",
+        )
     if end <= start or header.sample_size < paper_contract.minimum_valid_sample_size:
         raise _conflict("FEEDBACK_CONTRACT_INVALID", "Feedback observation does not satisfy the frozen contract.")
     if (end - start).total_seconds() < paper_contract.minimum_observation_seconds:
@@ -1099,7 +1109,10 @@ def _typed_live_handoff(
     ):
         raise _conflict("HANDOFF_TYPED_LINEAGE_INVALID", "Live Handoff facts do not share one frozen lineage.")
     policy, downstream, connection, frozen_contract, receipt = _strict_p2l_policy(
-        session, evaluation.policy_version_id, package.contract_version
+        session,
+        evaluation.policy_version_id,
+        package.contract_version,
+        require_fresh_receipt=False,
     )
     if (
         policy.mode not in {"MANUAL_APPROVAL", "AUTO_HANDOFF"}
@@ -1171,7 +1184,11 @@ def accept_live_feedback(
 
 
 def _strict_p2l_policy(
-    session: Session, policy_id: UUID, package_contract_version: str
+    session: Session,
+    policy_id: UUID,
+    package_contract_version: str,
+    *,
+    require_fresh_receipt: bool = True,
 ) -> tuple[PromotionPolicyVersion, DownstreamSystem, DownstreamConnectionVersion, FeedbackContractVersion, PreflightReceipt]:
     policy = session.scalar(
         select(PromotionPolicyVersion).where(PromotionPolicyVersion.id == policy_id).with_for_update()
@@ -1190,7 +1207,15 @@ def _strict_p2l_policy(
     contract = session.scalar(select(FeedbackContractVersion).where(FeedbackContractVersion.id == policy.live_feedback_contract_version_id).with_for_update())
     if downstream is None or connection is None or contract is None or connection.downstream_system_id != downstream.id or connection.feedback_contract_version_id != contract.id or contract.downstream_system_id != downstream.id or contract.purpose != "LIVE" or contract.state != "ACTIVE":
         raise _conflict("PROMOTION_POLICY_LINEAGE_INVALID", "Live policy dependencies do not match.")
-    receipt = _require_receipt(session, receipt_id=cast(UUID, policy.live_preflight_receipt_id), connection=connection, downstream=downstream, package_contract_version=package_contract_version, environment_type="LIVE")
+    receipt = _require_receipt(
+        session,
+        receipt_id=cast(UUID, policy.live_preflight_receipt_id),
+        connection=connection,
+        downstream=downstream,
+        package_contract_version=package_contract_version,
+        environment_type="LIVE",
+        require_fresh=require_fresh_receipt,
+    )
     return policy, downstream, connection, contract, receipt
 
 

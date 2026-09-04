@@ -47,6 +47,8 @@ export interface AnswerIdeaDraftRequest {
 
 export interface StartIdeaDraftRequest {
   expected_revision: number;
+  title?: string;
+  universe_version_ids?: UUID[];
 }
 
 export interface ResearchProgram {
