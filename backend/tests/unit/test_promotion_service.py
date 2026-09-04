@@ -44,6 +44,7 @@ from portfolio_evaluation_service import (
 from promotion_service import (
     FeedbackHeader,
     TypedFeedbackMetric,
+    accept_live_feedback,
     accept_paper_feedback,
     approve_typed_live_handoff,
     approve_typed_paper_handoff,
@@ -288,6 +289,53 @@ def test_p2l_blocks_degrading_relational_alpha_member(tmp_path, monkeypatch) -> 
                 )
                 is None
             )
+    finally:
+        engine.dispose()
+
+
+def test_typed_live_feedback_uses_frozen_live_contract(tmp_path, monkeypatch) -> None:
+    engine = _engine(tmp_path)
+    try:
+        with Session(engine) as session:
+            _candidate, handoff, paper_contract, live_contract = _paper_handoff(
+                session,
+                monkeypatch,
+                paper_metric="paper_return",
+                live_metric="live_return",
+            )
+            live_policy = session.get(PromotionPolicyVersion, handoff.paper_to_live_policy_version_id)
+            assert live_policy is not None
+            live_gate = session.scalar(
+                select(PromotionPolicyGate).where(PromotionPolicyGate.policy_version_id == live_policy.id)
+            )
+            assert live_gate is not None
+            live_gate.metric_code = "paper_return"
+            now = datetime.now(UTC)
+            paper = accept_paper_feedback(
+                session,
+                handoff_id=handoff.id,
+                header=FeedbackHeader(now - timedelta(seconds=3), now - timedelta(seconds=1), 1),
+                metrics=(TypedFeedbackMetric("paper_return", "AVAILABLE", Decimal("0.1")),),
+            )
+            live_evaluation = maybe_enqueue_p2l(session, forward_evidence_episode_id=paper.id)
+            assert live_evaluation is not None
+            live_approval = session.scalar(
+                select(ApprovalSnapshot).where(
+                    ApprovalSnapshot.promotion_evaluation_id == live_evaluation.id
+                )
+            )
+            assert live_approval is not None
+            live_handoff = approve_typed_live_handoff(session, live_approval.id)
+            live_handoff.state = "DOWNSTREAM_ACCEPTED"
+            live_handoff.feedback_state = "FEEDBACK_PENDING"
+            result = accept_live_feedback(
+                session,
+                handoff_id=live_handoff.id,
+                header=FeedbackHeader(now - timedelta(seconds=3), now - timedelta(seconds=1), 1),
+                metrics=(TypedFeedbackMetric("live_return", "AVAILABLE", Decimal("0.2")),),
+            )
+            assert result.state == "FEEDBACK_COMPLETE"
+            assert live_contract.id != paper_contract.id
     finally:
         engine.dispose()
 
