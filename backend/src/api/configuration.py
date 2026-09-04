@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from api.dependencies import get_session
 from db.models import (
+    AlphaQualification,
     DataQualityResult,
     DatasetRevision,
     DownstreamSystem,
@@ -1950,6 +1951,21 @@ def create_promotion_policy_version(
         )
 
 
+def _reconcile_initial_portfolio_inputs(session: Session, universe_version_id: UUID) -> None:
+    """Reconsider an already-qualified Alpha pool after Mandate configuration."""
+    from portfolio_input_service import stage_initial_portfolio_input_evaluations
+
+    qualification_ids = session.scalars(
+        select(AlphaQualification.id).where(
+            AlphaQualification.universe_version_id == universe_version_id,
+            AlphaQualification.role == "PRIMARY_ALPHA",
+            AlphaQualification.state == "ACTIVE",
+        )
+    )
+    for qualification_id in qualification_ids:
+        stage_initial_portfolio_input_evaluations(session, qualification_id=qualification_id)
+
+
 @router.get("/operations/{operation_id}", response_model=OperationView)
 def get_configuration_operation(
     operation_id: UUID, session: Session = Depends(get_session)
@@ -2065,6 +2081,7 @@ def create_mandate(
             )
             session.add_all((item, version))
             session.flush()
+            _reconcile_initial_portfolio_inputs(session, payload.universe_version_id)
             append_event(
                 session,
                 kind="PORTFOLIO_MANDATE_VERSION_CREATED",
@@ -2115,6 +2132,7 @@ def create_mandate_version(
             session.add(version)
             session.flush()
             item.latest_version_id = version.id
+            _reconcile_initial_portfolio_inputs(session, payload.universe_version_id)
             append_event(
                 session,
                 kind="PORTFOLIO_MANDATE_VERSION_CREATED",
