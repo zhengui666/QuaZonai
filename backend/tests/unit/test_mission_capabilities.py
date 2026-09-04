@@ -13,6 +13,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from agent_harness.contracts import (
@@ -25,6 +26,8 @@ from agent_harness.contracts import (
 from agent_harness.mcp_server import build_frozen_mission_mcp_server, freeze_mission_contract
 from agent_harness.mission_capabilities import MissionCapabilityBroker, MissionCapabilityService
 from db.models import (
+    AgentSession,
+    AgentTurn,
     DatasetRevision,
     MissionArtifact,
     QuantRuntimeRun,
@@ -88,6 +91,28 @@ def _seed(engine) -> tuple[MissionContractV1, UUID, UUID, UUID, UUID]:  # type: 
             prompt_version="v1", max_turns=7, max_tool_calls=20, started_at=now, attempt=1, revision=3,
         )
         session.add(mission)
+        session.flush()
+        agent_session = AgentSession(
+            mission_id=mission.id,
+            role_profile=mission.role_profile,
+            codex_thread_id="mcp-test-thread",
+            codex_version="test",
+            state="RUNNING",
+            started_at=now,
+            last_event_at=now,
+        )
+        session.add(agent_session)
+        session.flush()
+        session.add(
+            AgentTurn(
+                agent_session_id=agent_session.id,
+                ordinal=1,
+                kind="EXECUTE",
+                codex_turn_id="mcp-test-turn",
+                state="RUNNING",
+                started_at=now,
+            )
+        )
         session.flush()
         datasets = [
             DatasetRevision(
@@ -280,6 +305,23 @@ def test_mcp_rejects_alpha_payloads_outside_the_typed_public_contract(engine, tm
                     },
                 },
             )
+
+
+def test_mission_tool_calls_are_counted_and_budgeted(engine) -> None:
+    contract, mission_id, _, _, _ = _seed(engine)
+    factory = create_session_factory(engine)
+    with factory() as session, session.begin():
+        mission = session.get(ResearchMission, mission_id)
+        assert mission is not None
+        mission.max_tool_calls = 1
+    service = MissionCapabilityService(contract, factory)
+    args = {"mission_id": str(mission_id)}
+    service.invoke(MissionTool.LIST_PRIOR_ATTEMPTS.value, args)
+    with pytest.raises(QfError, match="MISSION_TOOL_CALL_BUDGET_EXCEEDED"):
+        service.invoke(MissionTool.LIST_PRIOR_ATTEMPTS.value, args)
+    with factory() as session:
+        turn = session.scalar(select(AgentTurn))
+        assert turn is not None and turn.tool_call_count == 1
 
 
 def test_mcp_config_passes_a_socket_not_a_database_url(tmp_path: Path) -> None:
