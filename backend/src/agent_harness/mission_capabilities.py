@@ -36,6 +36,7 @@ from agent_harness.contracts import (
 from db.models import (
     AgentSession,
     AgentTurn,
+    AlphaDiscoveryEvaluation,
     AlphaModel,
     AlphaModelVersion,
     DatasetRevision,
@@ -324,6 +325,52 @@ class MissionCapabilityService:
             )
         )
 
+    def _discovery_rows(
+        self,
+        session: Session,
+        mission: ResearchMission,
+        *,
+        limit: int,
+        family: str | None = None,
+    ) -> list[AlphaDiscoveryEvaluation]:
+        if family is not None and family != "ALPHA_DISCOVERY":
+            return []
+        return list(
+            session.scalars(
+                select(AlphaDiscoveryEvaluation)
+                .where(
+                    AlphaDiscoveryEvaluation.program_id == mission.program_id,
+                    AlphaDiscoveryEvaluation.branch_id == mission.branch_id,
+                )
+                .order_by(
+                    AlphaDiscoveryEvaluation.created_at.desc(),
+                    AlphaDiscoveryEvaluation.id,
+                )
+                .limit(limit)
+            )
+        )
+
+    @staticmethod
+    def _discovery_item(row: AlphaDiscoveryEvaluation) -> dict[str, Any]:
+        return {
+            "id": str(row.id),
+            "run_id": None,
+            "mission_id": str(row.mission_id),
+            "family": "ALPHA_DISCOVERY",
+            "parameters": {
+                "alpha_model_version_id": str(row.alpha_model_version_id),
+                "evaluation_design_version_id": str(row.evaluation_design_version_id),
+                "discovery_dataset_revision_id": str(row.discovery_dataset_revision_id),
+            },
+            "outcome": row.state,
+            "failure_code": row.outcome_code if row.state != "VALID" else None,
+            "evidence_summary": {
+                "evaluation_design_version_id": str(row.evaluation_design_version_id),
+                "discovery_dataset_revision_id": str(row.discovery_dataset_revision_id),
+            },
+            "created_at": _iso(row.created_at),
+        }
+
     @staticmethod
     def _ledger_item(entry: SearchLedgerEntry) -> dict[str, Any] | None:
         try:
@@ -347,17 +394,26 @@ class MissionCapabilityService:
         with self._session_factory() as session:
             mission = self._mission(session, MissionTool.LIST_PRIOR_ATTEMPTS, request.mission_id)
             entries = self._ledger_rows(session, mission, limit=request.limit)
+            discoveries = self._discovery_rows(session, mission, limit=request.limit)
             items = [item for entry in entries if (item := self._ledger_item(entry)) is not None]
-            return {"items": items, "omitted_count": len(entries) - len(items)}
+            items.extend(self._discovery_item(row) for row in discoveries)
+            items.sort(key=lambda item: (item["created_at"] or "", item["id"]), reverse=True)
+            omitted = len(entries) + len(discoveries) - len(items[: request.limit])
+            return {"items": items[: request.limit], "omitted_count": omitted}
 
     def _query_search_ledger(self, request: _SearchLedgerRequest) -> dict[str, Any]:
         with self._session_factory() as session:
             mission = self._mission(session, MissionTool.QUERY_SEARCH_LEDGER, request.mission_id)
+            family = request.family.strip() if request.family else None
             entries = self._ledger_rows(
-                session, mission, limit=request.limit, family=request.family.strip() if request.family else None
+                session, mission, limit=request.limit, family=family
             )
+            discoveries = self._discovery_rows(session, mission, limit=request.limit, family=family)
             items = [item for entry in entries if (item := self._ledger_item(entry)) is not None]
-            return {"items": items, "omitted_count": len(entries) - len(items)}
+            items.extend(self._discovery_item(row) for row in discoveries)
+            items.sort(key=lambda item: (item["created_at"] or "", item["id"]), reverse=True)
+            omitted = len(entries) + len(discoveries) - len(items[: request.limit])
+            return {"items": items[: request.limit], "omitted_count": omitted}
 
     def _query_alpha_library(self, request: _EvidenceListRequest) -> dict[str, Any]:
         with self._session_factory() as session:
