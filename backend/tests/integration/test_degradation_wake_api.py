@@ -237,7 +237,9 @@ def _seed_handoff(
             capacity_summary={},
             changes_summary={},
         )
-        session.add_all((package, downstream, approval))
+        session.add_all((package, downstream))
+        session.flush()
+        session.add(approval)
         session.flush()
         handoff = HandoffOffer(
             approval_id=approval.id,
