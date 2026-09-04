@@ -61,13 +61,13 @@ def _evaluation_design(universe_version_id: str) -> dict[str, object]:
     return {
         "universe_version_id": universe_version_id,
         "contract_version": "evaluation-design-v1",
-        "allowed_model_mode": "CALIBRATED_RETURN",
+        "allowed_model_mode": "RELATIVE_SCORE",
         "qualification_role": "PRIMARY_ALPHA",
         "walk_forward_folds": 2,
         "annualization_factor": "252",
         "multiple_testing_method": "BONFERRONI",
         "multiple_testing_max_trials": 3,
-        "qualification_metric_code": "NET_EDGE",
+        "qualification_metric_code": "SHARPE_RATIO",
         "qualification_comparator": "MINIMUM",
         "qualification_threshold": "0.01",
         "pass_disclosure_code": "QUALIFIED",
@@ -78,19 +78,15 @@ def _evaluation_design(universe_version_id: str) -> dict[str, object]:
     }
 
 
-def _promotion_policy(
-    paper_downstream_system_id: str, live_downstream_system_id: str | None = None
-) -> dict[str, object]:
+def _promotion_policy() -> dict[str, object]:
     return {
-        "purpose": "PAPER_TO_LIVE" if live_downstream_system_id else "PORTFOLIO_TO_PAPER",
+        "purpose": "SEALED_TO_QUALIFIED",
         "mode": "MANUAL_APPROVAL",
-        "paper_downstream_system_id": paper_downstream_system_id,
-        "live_downstream_system_id": live_downstream_system_id,
         "gates": [
             {
-                "metric_code": "OBSERVATION_DAYS",
+                "metric_code": "SHARPE_RATIO",
                 "comparator": "MINIMUM",
-                "threshold": "20",
+                "threshold": "1.0",
                 "ordinal": 2,
             },
             {
@@ -477,6 +473,18 @@ def test_typed_portfolio_configuration_rejects_legacy_inputs_and_marks_legacy_fa
         },
     )
     assert rejected_mandate.status_code == 422
+
+    zero_minimum_weight = client.post(
+        "/api/v1/portfolio-mandates",
+        json={
+            "key": "zero-minimum-weight",
+            "name": "Zero Minimum Weight",
+            "enabled": True,
+            **_v1_mandate(str(uuid4())),
+            "minimum_weight": "0",
+        },
+    )
+    assert zero_minimum_weight.status_code == 422
 
     rejected_capital = client.post(
         "/api/v1/capital-contexts",
@@ -866,7 +874,7 @@ def test_trusted_alpha_configuration_writers_are_immutable_and_readable(
     assert designs[design.json()["id"]]["state"] == "RETIRED"
     assert designs[replacement_design.json()["id"]]["state"] == "ACTIVE"
 
-    policy_payload = _promotion_policy(facts["paper_downstream_id"])
+    policy_payload = _promotion_policy()
     policy = client.post(
         "/api/v1/promotion-policy-versions",
         headers={"Idempotency-Key": "policy-v1"},
@@ -874,6 +882,9 @@ def test_trusted_alpha_configuration_writers_are_immutable_and_readable(
     )
     assert policy.status_code == 201, policy.text
     assert [gate["ordinal"] for gate in policy.json()["gates"]] == [1, 2]
+    assert policy.json()["policy_contract_version"] == "PROMOTION_POLICY_V1"
+    assert policy.json()["paper_downstream_system_id"] is None
+    assert policy.json()["live_downstream_system_id"] is None
     replacement_policy = client.post(
         "/api/v1/promotion-policy-versions",
         json={
@@ -891,19 +902,6 @@ def test_trusted_alpha_configuration_writers_are_immutable_and_readable(
     }
     assert policies[policy.json()["id"]]["state"] == "RETIRED"
     assert policies[replacement_policy.json()["id"]]["state"] == "ACTIVE"
-    live_policy = client.post(
-        "/api/v1/promotion-policy-versions",
-        json={
-            **_promotion_policy(
-                facts["paper_downstream_id"], facts["live_downstream_id"]
-            ),
-            "mode": "AUTO_HANDOFF",
-        },
-    )
-    assert live_policy.status_code == 201, live_policy.text
-    assert live_policy.json()["mode"] == "AUTO_HANDOFF"
-    assert live_policy.json()["paper_downstream_system_id"] == facts["paper_downstream_id"]
-    assert live_policy.json()["live_downstream_system_id"] == facts["live_downstream_id"]
 
     factory = create_session_factory(engine)
     with factory() as session:
@@ -920,7 +918,7 @@ def test_trusted_alpha_configuration_writers_are_immutable_and_readable(
         )
         assert [(gate.metric_code, gate.ordinal) for gate in gates] == [
             ("NET_RETURN", 1),
-            ("OBSERVATION_DAYS", 2),
+            ("SHARPE_RATIO", 2),
         ]
 
 
@@ -978,8 +976,22 @@ def test_trusted_alpha_configuration_rejects_implicit_or_untrusted_inputs(
         ).status_code
         == 422
     )
+    assert (
+        client.post(
+            "/api/v1/evaluation-design-versions",
+            json={**design_payload, "allowed_model_mode": "CALIBRATED_RETURN"},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/api/v1/evaluation-design-versions",
+            json={**design_payload, "qualification_metric_code": "TURNOVER"},
+        ).status_code
+        == 422
+    )
 
-    policy_payload = _promotion_policy(facts["paper_downstream_id"])
+    policy_payload = _promotion_policy()
     assert (
         client.post(
             "/api/v1/promotion-policy-versions",
@@ -987,16 +999,34 @@ def test_trusted_alpha_configuration_rejects_implicit_or_untrusted_inputs(
         ).status_code
         == 422
     )
-    wrong_environment = client.post(
-        "/api/v1/promotion-policy-versions",
-        json={**policy_payload, "paper_downstream_system_id": facts["live_downstream_id"]},
-    )
-    assert wrong_environment.status_code == 409
-    assert wrong_environment.json()["error"]["code"] == "PROMOTION_POLICY_DOWNSTREAM_ENVIRONMENT_INVALID"
     assert (
         client.post(
             "/api/v1/promotion-policy-versions",
-            json={**policy_payload, "promotion_policy": {}},
+            json={
+                **policy_payload,
+                "gates": [{**policy_payload["gates"][0], "metric_code": "TURNOVER"}],
+            },
+        ).status_code
+        == 422
+    )
+    policies_before = client.get("/api/v1/promotion-policy-versions").json()["items"]
+    unsupported_paper_policy = client.post(
+        "/api/v1/promotion-policy-versions",
+        json={**policy_payload, "purpose": "PORTFOLIO_TO_PAPER"},
+    )
+    assert unsupported_paper_policy.status_code == 409
+    assert unsupported_paper_policy.json()["error"]["code"] == "PROMOTION_POLICY_TYPED_BINDING_UNAVAILABLE"
+    unsupported_live_policy = client.post(
+        "/api/v1/promotion-policy-versions",
+        json={**policy_payload, "purpose": "PAPER_TO_LIVE"},
+    )
+    assert unsupported_live_policy.status_code == 409
+    assert unsupported_live_policy.json()["error"]["code"] == "PROMOTION_POLICY_TYPED_BINDING_UNAVAILABLE"
+    assert client.get("/api/v1/promotion-policy-versions").json()["items"] == policies_before
+    assert (
+        client.post(
+            "/api/v1/promotion-policy-versions",
+            json={**policy_payload, "paper_downstream_system_id": facts["paper_downstream_id"]},
         ).status_code
         == 422
     )
