@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 from api.dependencies import get_session
 from db.models import (
     AlphaQualification,
+    ApprovalSnapshot,
     DataQualityResult,
     DatasetRevision,
     DownstreamConnectionVersion,
@@ -44,6 +45,7 @@ from db.models import (
     PortfolioMandateVersion,
     PreflightReceipt,
     PromotionPolicyGate,
+    PromotionEvaluation,
     PromotionPolicyVersion,
     PublicMutationReceipt,
 )
@@ -2438,6 +2440,34 @@ def create_promotion_policy_version(
             )
             if active:
                 active[0].state = "RETIRED"
+                if active[0].purpose == "PORTFOLIO_TO_PAPER":
+                    pending = list(
+                        session.scalars(
+                            select(ApprovalSnapshot)
+                            .join(
+                                PromotionEvaluation,
+                                PromotionEvaluation.id == ApprovalSnapshot.promotion_evaluation_id,
+                            )
+                            .where(
+                                PromotionEvaluation.policy_version_id == active[0].id,
+                                ApprovalSnapshot.promotion_purpose == "PORTFOLIO_TO_PAPER",
+                                ApprovalSnapshot.state == "PENDING",
+                            )
+                            .with_for_update()
+                        )
+                    )
+                    for approval in pending:
+                        approval.state = "STALE"
+                        approval.stale_reason = "PROMOTION_POLICY_RETIRED"
+                        approval.revision += 1
+                        append_event(
+                            session,
+                            kind="PROMOTION_APPROVAL_STALE",
+                            aggregate_type="APPROVAL",
+                            aggregate_id=approval.id,
+                            payload={"reason_code": "PROMOTION_POLICY_RETIRED"},
+                            actor_kind="SYSTEM",
+                        )
                 append_event(
                     session,
                     kind="PROMOTION_POLICY_VERSION_RETIRED",
