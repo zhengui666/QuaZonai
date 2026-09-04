@@ -1047,9 +1047,9 @@ def stage_initial_portfolio_input_evaluations(
                 continue
             if blocked:
                 continue
-        qualification_ids = tuple(
-            session.scalars(
-                select(AlphaQualification.id)
+        qualification_rows = tuple(
+            session.execute(
+                select(AlphaQualification.id, AlphaQualification.program_id)
                 .where(
                     AlphaQualification.state == "ACTIVE",
                     AlphaQualification.role == mandate.eligible_alpha_role,
@@ -1059,6 +1059,14 @@ def stage_initial_portfolio_input_evaluations(
                 .with_for_update()
             )
         )
+        qualification_ids = tuple(row[0] for row in qualification_rows)
+        qualification_program_ids = {row[1] for row in qualification_rows}
+        if (
+            not qualification_ids
+            or None in qualification_program_ids
+            or len(qualification_program_ids) != 1
+        ):
+            continue
         dependencies = _input_dependencies(session, mandate, qualification_ids)
         if dependencies is None:
             continue

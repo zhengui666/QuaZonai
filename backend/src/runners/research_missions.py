@@ -971,11 +971,11 @@ def run_mission(settings: Settings, lease: JobLease) -> None:
         if mission_id is not None:
             with factory() as session, session.begin():
                 failed_mission = session.get(ResearchMission, mission_id)
-                if failed_mission is not None and failed_mission.state == "RUNNING":
+                if failed_mission is not None and failed_mission.state in {"READY", "RUNNING"}:
                     failed_agent_session = session.scalar(
                         select(AgentSession).where(AgentSession.mission_id == failed_mission.id)
                     )
-                    if failed_agent_session is not None:
+                    if failed_mission.state == "RUNNING" and failed_agent_session is not None:
                         turn = session.scalar(
                             select(AgentTurn).where(
                                 AgentTurn.agent_session_id == failed_agent_session.id,
@@ -989,13 +989,29 @@ def run_mission(settings: Settings, lease: JobLease) -> None:
                                 summary=str(exc),
                                 error_code=str(getattr(exc, "code", type(exc).__name__))[:100],
                             )
-                    finish_mission(
-                        session,
-                        mission_id,
-                        succeeded=False,
-                        summary=str(exc),
-                        error_code=str(getattr(exc, "code", type(exc).__name__))[:100],
-                    )
+                    error_code = str(getattr(exc, "code", type(exc).__name__))[:100]
+                    if failed_mission.state == "RUNNING":
+                        finish_mission(
+                            session,
+                            mission_id,
+                            succeeded=False,
+                            summary=str(exc),
+                            error_code=error_code,
+                        )
+                    else:
+                        failed_mission.state = "FAILED"
+                        failed_mission.outcome = "FAILED"
+                        failed_mission.finished_at = _now()
+                        failed_mission.summary = str(exc)
+                        failed_mission.error_code = error_code
+                        failed_mission.revision += 1
+                        _event(
+                            session,
+                            kind="MISSION_FAILED",
+                            program_id=failed_mission.program_id,
+                            mission_id=failed_mission.id,
+                            payload={"error_code": error_code},
+                        )
         raise
     finally:
         engine.dispose()

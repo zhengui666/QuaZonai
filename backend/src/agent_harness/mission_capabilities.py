@@ -74,6 +74,50 @@ _NON_ALPHA_REQUIRED_FIELDS: dict[DraftArtifactKind, str] = {
     DraftArtifactKind.REPLAN_PROPOSAL: "replan",
     DraftArtifactKind.MISSION_GRAPH_PROPOSAL: "graph",
 }
+
+
+def _bounded_non_alpha_payload(
+    kind: DraftArtifactKind, payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Validate the small, public envelope shared by non-Alpha artifacts."""
+    required_field = _NON_ALPHA_REQUIRED_FIELDS.get(kind)
+    value = payload.get(required_field) if required_field is not None else None
+    if required_field is None or set(payload) != {required_field} or not isinstance(value, dict):
+        raise QfError(
+            "MISSION_ARTIFACT_SCHEMA_INVALID",
+            "Mission artifact payload does not match its kind-specific v1 schema.",
+            422,
+            {"kind": kind.value, "required_field": required_field},
+        )
+    if set(value) != {"summary", "items"}:
+        raise QfError(
+            "MISSION_ARTIFACT_SCHEMA_INVALID",
+            "Mission artifact payload has unknown or missing bounded fields.",
+            422,
+            {"kind": kind.value, "required_field": required_field},
+        )
+    summary = value["summary"]
+    items = value["items"]
+    if (
+        not isinstance(summary, str)
+        or not summary.strip()
+        or len(summary) > 4000
+        or not isinstance(items, list)
+        or not 1 <= len(items) <= 50
+        or any(not isinstance(item, str) or not item.strip() or len(item) > 1000 for item in items)
+    ):
+        raise QfError(
+            "MISSION_ARTIFACT_SCHEMA_INVALID",
+            "Mission artifact payload contains invalid bounded content.",
+            422,
+            {"kind": kind.value, "required_field": required_field},
+        )
+    return {
+        required_field: {
+            "summary": summary.strip(),
+            "items": [item.strip() for item in items],
+        }
+    }
 _IMPLEMENTED_TOOLS = frozenset(
     {
         MissionTool.PROFILE_DATASET,
@@ -542,15 +586,7 @@ class MissionCapabilityService:
                         "Mission artifacts must use the bounded v1 envelope.",
                         422,
                     )
-                required_field = _NON_ALPHA_REQUIRED_FIELDS.get(request.artifact.kind)
-                value = payload.get(required_field) if required_field is not None else None
-                if required_field is None or value in (None, "", [], {}):
-                    raise QfError(
-                        "MISSION_ARTIFACT_SCHEMA_INVALID",
-                        "Mission artifact payload does not match its kind-specific v1 schema.",
-                        422,
-                        {"kind": request.artifact.kind.value, "required_field": required_field},
-                    )
+                payload = _bounded_non_alpha_payload(request.artifact.kind, payload)
                 artifact_state = "VALIDATED"
             normalized = request.model_dump(mode="json")
             normalized["artifact"]["summary"] = summary

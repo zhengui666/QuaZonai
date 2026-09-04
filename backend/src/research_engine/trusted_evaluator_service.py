@@ -42,6 +42,7 @@ from db.models import (
     MissionArtifact,
     NautilusCatalogBinding,
     PortfolioEvaluationAssignment,
+    PortfolioEvaluationEpisode,
     PortfolioInputEvaluationAssignment,
     PromotionPolicyGate,
     PromotionPolicyVersion,
@@ -567,6 +568,16 @@ def terminalize_trusted_evaluator_failure(
         row.state = "FAILED"
         row.outcome = "RETRIES_EXHAUSTED"
         row.completed_at = completed_at
+        portfolio_episode = session.scalar(
+            select(PortfolioEvaluationEpisode)
+            .where(PortfolioEvaluationEpisode.assignment_id == row.id)
+            .with_for_update()
+        )
+        if portfolio_episode is not None and portfolio_episode.state in {"ASSIGNED", "EVALUATING"}:
+            portfolio_episode.state = "DISCLOSED"
+            portfolio_episode.result = "INVALID"
+            portfolio_episode.evaluated_at = completed_at
+            portfolio_episode.disclosed_at = completed_at
     else:
         row.state = "FAILED"
         row.outcome_code = code

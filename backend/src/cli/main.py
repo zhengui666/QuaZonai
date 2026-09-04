@@ -131,7 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
     approval_show.add_argument("id")
     approve = approval_actions.add_parser("approve")
     approve.add_argument("id")
-    approve.add_argument("--downstream", dest="downstream_id", required=True)
+    approve.add_argument("--downstream", dest="downstream_id")
     approve.add_argument("--expected-state", default="PENDING")
     reject = approval_actions.add_parser("reject")
     reject.add_argument("id")
@@ -271,10 +271,9 @@ def execute(client: ApiClient, args: argparse.Namespace) -> Any:
         if args.action == "show":
             return client.request("GET", f"/api/v1/approvals/{args.id}")
         if args.action == "approve":
-            body = {
-                "downstream_system_id": args.downstream_id,
-                "expected_state": args.expected_state,
-            }
+            body = {"expected_state": args.expected_state}
+            if args.downstream_id is not None:
+                body["downstream_system_id"] = args.downstream_id
         else:
             body = {
                 "reason_code": args.reason_code,

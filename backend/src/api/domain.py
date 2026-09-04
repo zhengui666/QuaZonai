@@ -29,6 +29,7 @@ from db.models import (
     PortfolioCandidate,
     PortfolioCandidateMember,
     PortfolioMandate,
+    PortfolioMandateVersion,
     PortfolioProgram,
     PreflightReceipt,
     FeedbackContractVersion,
@@ -464,9 +465,16 @@ def _toggle_mandate(mandate_id: UUID, request: Request, idempotency_key: str | N
             item = session.execute(select(PortfolioMandate).where(PortfolioMandate.id == mandate_id).with_for_update()).scalar_one_or_none()
             if item is None:
                 raise QfError("MANDATE_NOT_FOUND", "Portfolio Mandate was not found.", 404)
+            was_enabled = item.enabled
             item.enabled = enabled
             _event(session, "MANDATE_ENABLED" if enabled else "MANDATE_DISABLED", "PORTFOLIO_MANDATE", item.id, {}, actor_kind="HUMAN")
             session.flush()
+            if enabled and not was_enabled:
+                version = session.get(PortfolioMandateVersion, item.latest_version_id)
+                if version is not None:
+                    from api.configuration import _reconcile_initial_portfolio_inputs
+
+                    _reconcile_initial_portfolio_inputs(session, version.universe_version_id)
             return MandateView(id=item.id, key=item.key, name=item.name, enabled=item.enabled, latest_version_id=item.latest_version_id, spec_json=item.spec_json, state=item.state).model_dump(mode="json")
 
         return _idempotent(session, idempotency_key, f"portfolio-mandate.{'enable' if enabled else 'disable'}:{mandate_id}", {}, action)
@@ -939,7 +947,16 @@ def submit_feedback(handoff_id: UUID, payload: FeedbackInput, request: Request, 
             if handoff is None:
                 raise QfError("HANDOFF_NOT_FOUND", "Handoff was not found.", 404)
             _authenticate_handoff(session, request, handoff, authorization)
-            if handoff.state not in {"DOWNSTREAM_ACCEPTED", "FEEDBACK_PENDING", "FEEDBACK_IN_PROGRESS", "FEEDBACK_PARTIAL"}:
+            typed_handoff = handoff.promotion_purpose in {"PORTFOLIO_TO_PAPER", "PAPER_TO_LIVE"}
+            accepted_states = {
+                "DOWNSTREAM_ACCEPTED",
+                "FEEDBACK_PENDING",
+                "FEEDBACK_IN_PROGRESS",
+                "FEEDBACK_PARTIAL",
+            }
+            if typed_handoff:
+                accepted_states.add("FEEDBACK_COMPLETE")
+            if handoff.state not in accepted_states:
                 raise QfError("HANDOFF_STATE_CONFLICT", "Handoff is not accepting feedback.", 409)
             if handoff.promotion_purpose == "PORTFOLIO_TO_PAPER":
                 if (
