@@ -95,7 +95,7 @@ def _promotion_source(
         id=uuid4(),
         candidate_id=candidate.id,
         revision=1,
-        contract_version="CANDIDATE_PACKAGE_V1",
+        contract_version="1",
         state="AVAILABLE",
         manifest_json={},
         relative_path="test/candidate-package.zip",
