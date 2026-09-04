@@ -10,7 +10,7 @@ import { StateBadge } from '../components/ui/StateBadge';
 import { ResponsiveDialogContent } from '../components/ui/ResponsiveDialogContent';
 import { useI18n, type Locale } from '../i18n';
 import { useApprovalDecision, useApprovals, useDownstreams } from '../lib/api/hooks';
-import type { ApprovalSnapshot, DownstreamSystem } from '../lib/api/types';
+import type { ApprovalSnapshot, ConfigurationDownstream } from '../lib/api/types';
 import { formatCapitalAmount, formatDateTime, humanize } from '../lib/format';
 
 const rejectionReasons = [
@@ -28,7 +28,7 @@ const rejectionReasons = [
   'OTHER',
 ];
 
-function compatible(approval: ApprovalSnapshot, systems: DownstreamSystem[]) {
+function compatible(approval: ApprovalSnapshot, systems: ConfigurationDownstream[]) {
   return systems.filter((system) => {
     if (!system.enabled) return false;
     if (system.preflight_state && !/READY|PASS|VALID/i.test(system.preflight_state)) return false;
@@ -42,7 +42,7 @@ export function formatDeployableCapital(locale: Locale, value?: number | string 
   return formatCapitalAmount(value, locale);
 }
 
-function ApprovalCard({ approval, systems }: { approval: ApprovalSnapshot; systems: DownstreamSystem[] }) {
+function ApprovalCard({ approval, systems }: { approval: ApprovalSnapshot; systems: ConfigurationDownstream[] }) {
   const { locale, t } = useI18n();
   const options = compatible(approval, systems);
   const [downstream, setDownstream] = useState(approval.downstream_system_id ?? options[0]?.id ?? '');

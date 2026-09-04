@@ -8,15 +8,9 @@ describe('ResearchDetailPage charter direction', () => {
   beforeEach(() => vi.restoreAllMocks());
 
   it('isolates mixed market scopes and localizes the system-inferred charter sentinel', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
       const url = String(input);
-      if (url.endsWith('/research-programs/p-1/missions')) return jsonResponse([]);
-      if (url.endsWith('/research-programs/p-1/activity')) return jsonResponse([{
-        id: 'event-1',
-        kind: 'EVIDENCE_RECORDED',
-        created_at: '2030-01-01T00:00:00Z',
-        payload: { evidence: ['EUR/USD', 'دليل عربي'] },
-      }]);
+      if (url.endsWith('/research-programs/p-1/mission-graph')) return jsonResponse({ nodes: [] });
       if (url.endsWith('/research-programs/p-1')) {
         return jsonResponse({
           id: 'p-1',
@@ -59,7 +53,6 @@ describe('ResearchDetailPage charter direction', () => {
     expect(exclusionContainer).not.toHaveAttribute('dir');
     expect(exclusionContainer).toHaveTextContent('استبعاد غير سائل, GBP/JPY');
 
-    const structuredEvidence = screen.getByText(JSON.stringify(['EUR/USD', 'دليل عربي']), { selector: 'bdi' });
-    expect(structuredEvidence).toHaveAttribute('dir', 'ltr');
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/research-programs/p-1/mission-graph', expect.anything());
   });
 });

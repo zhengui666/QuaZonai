@@ -13,22 +13,23 @@ describe('IdeaComposer text direction', () => {
     expect(screen.getByText(translateKey('ar', 'idea.oneRound', { count: 1 }))).toBeInTheDocument();
   });
 
-  it('lets user-authored and API-authored facts determine their own direction', async () => {
+  it('lets user-authored and draft facts determine their own direction', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
-      const url = String(input);
-      if (url.endsWith('/ideas/preview')) {
+      if (String(input).endsWith('/idea-drafts')) {
         return jsonResponse({
+          id: 'draft-1',
+          original_idea_text: 'Study EUR/USD post-event drift.',
+          stage: 'CLARIFYING',
+          outcome: null,
+          next_action: 'ANSWER_CLARIFICATIONS',
+          blocking_reasons: ['CLARIFICATION_REQUIRED'],
+          revision: 1,
+          clarification_questions: [{ key: 'symbol', question: 'Which market symbol: EUR/USD?' }],
           charter: {
             original_idea_text: 'Study EUR/USD post-event drift.',
             research_question: 'Does EUR/USD drift persist?',
             prediction_horizon: '1D',
             market_scope: 'US Equities',
-          },
-          clarification_required: true,
-          clarification_questions: [{ key: 'symbol', question: 'Which market symbol: EUR/USD?' }],
-          overlap: {
-            kind: 'DUPLICATE',
-            rationale: 'Existing program covers EUR/USD drift.',
           },
         });
       }
@@ -40,68 +41,33 @@ describe('IdeaComposer text direction', () => {
     expect(ideaInput).toHaveAttribute('dir', 'auto');
 
     fireEvent.change(ideaInput, { target: { value: 'Study EUR/USD post-event drift over one day.' } });
-    fireEvent.click(screen.getByRole('button', { name: /Preview research charter/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create draft' }));
 
     expect(await screen.findByText('Does EUR/USD drift persist?')).toHaveAttribute('dir', 'auto');
     expect(screen.getByText('US Equities')).toHaveAttribute('dir', 'auto');
     expect(screen.getByText('1D')).toHaveAttribute('dir', 'auto');
     expect(screen.getByText('Which market symbol: EUR/USD?')).toHaveAttribute('dir', 'auto');
     expect(screen.getByRole('textbox', { name: 'Which market symbol: EUR/USD?' })).toHaveAttribute('dir', 'auto');
-
-    const kind = screen.getByText((_, element) => (
-      element?.tagName === 'BDI' && element.textContent === 'Duplicate'
-    ));
-    const rationale = screen.getByText((_, element) => (
-      element?.tagName === 'BDI' && element.textContent === 'Existing program covers EUR/USD drift.'
-    ));
-    expect(kind).toHaveAttribute('dir', 'auto');
-    expect(rationale).toHaveAttribute('dir', 'auto');
-  });
-  it('isolates a localized overlap kind from an LTR API rationale in Arabic', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
-      if (String(input).endsWith('/ideas/preview')) {
-        return jsonResponse({
-          charter: {
-            original_idea_text: 'Study EUR/USD post-event drift.',
-            research_question: 'Does EUR/USD drift persist?',
-            prediction_horizon: '1D',
-            market_scope: 'US Equities',
-          },
-          clarification_required: false,
-          overlap: { kind: 'DUPLICATE', rationale: 'Compare EUR/USD' },
-        });
-      }
-      return jsonResponse({}, 404);
-    });
-
-    renderApp(<IdeaComposerPage />, { route: '/ideas', locale: 'ar' });
-    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Study EUR/USD post-event drift over one day.' } });
-    fireEvent.click(screen.getByRole('button', { name: 'معاينة ميثاق البحث' }));
-
-    const kind = await screen.findByText((_, element) => (
-      element?.tagName === 'BDI' && element.textContent === 'مكرر'
-    ));
-    const rationale = screen.getByText((_, element) => (
-      element?.tagName === 'BDI' && element.textContent === 'Compare EUR/USD'
-    ));
-    expect(kind).toHaveAttribute('dir', 'auto');
-    expect(rationale).toHaveAttribute('dir', 'auto');
-    expect(kind.parentElement).toBe(rationale.parentElement);
-    expect(kind.parentElement).toHaveTextContent('مكرر · Compare EUR/USD');
   });
 
   it('isolates mixed market scopes and localizes the system-inferred charter sentinel', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
-      if (String(input).endsWith('/ideas/preview')) {
+      if (String(input).endsWith('/idea-drafts')) {
         return jsonResponse({
+          id: 'draft-1',
+          original_idea_text: 'Study mixed markets.',
+          stage: 'READY',
+          outcome: null,
+          next_action: 'START_PROGRAM',
+          blocking_reasons: [],
+          revision: 1,
+          clarification_questions: [],
           charter: {
             original_idea_text: 'Study mixed markets.',
             research_question: 'Does mixed-market drift persist?',
             prediction_horizon: 'System inferred',
             market_scope: ['بورصة الرياض', 'EUR/USD', 'System inferred'],
           },
-          clarification_required: false,
-          overlap: null,
         });
       }
       return jsonResponse({}, 404);
@@ -109,7 +75,7 @@ describe('IdeaComposer text direction', () => {
 
     renderApp(<IdeaComposerPage />, { route: '/ideas', locale: 'ar' });
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Study mixed market behavior over a meaningful horizon.' } });
-    fireEvent.click(screen.getByRole('button', { name: 'معاينة ميثاق البحث' }));
+    fireEvent.click(screen.getByRole('button', { name: 'إنشاء مسودة' }));
 
     const arabicScope = await screen.findByText((_, element) => element?.tagName === 'BDI' && element.textContent === 'بورصة الرياض');
     const eurUsdScope = screen.getByText((_, element) => element?.tagName === 'BDI' && element.textContent === 'EUR/USD');

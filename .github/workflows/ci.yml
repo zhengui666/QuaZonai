@@ -49,7 +49,8 @@ jobs:
           test ! -d backend/src/mcp_gateway
           test ! -d native/quazonai_nautilus_risk
           ! grep -R -n -E '/api/v1/(deployments|risk-accounts|execution-connections)|quazonai-live-supervisor|quazonai-mcp-gateway|mcp_gateway|QUAZONAI_MCP_' backend/src compose.yml backend/pyproject.toml deploy/Dockerfile.backend
-          ! grep -R -n -E 'backend\[[^]]*mcp|PyJWT' backend/pyproject.toml deploy/Dockerfile.backend THIRD_PARTY_NOTICES.md
+          ! grep -R -n -E 'mcp_gateway|PyJWT' backend/pyproject.toml deploy/Dockerfile.backend THIRD_PARTY_NOTICES.md
+          grep -q '"mcp>=' backend/pyproject.toml
           allowed='backend/src/runners/nautilus_remote_runtime.py'
           imports=$(grep -R -l -E '(^|[[:space:]])(from|import)[[:space:]]+nautilus_trader' backend/src || true)
           for path in $imports; do

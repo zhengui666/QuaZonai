@@ -83,6 +83,10 @@ class _AdmissionGuardedThread:
         self.release_admission_guard()
         return self._thread.run(*args, **kwargs)
 
+    def turn(self, *args: Any, **kwargs: Any) -> Any:
+        self.release_admission_guard()
+        return self._thread.turn(*args, **kwargs)
+
     def __getattr__(self, name: str) -> Any:
         return getattr(self._thread, name)
 
@@ -119,6 +123,7 @@ def external_chatgpt_thread(
     service_tier: str | None,
     thread_config: dict[str, Any],
     developer_instructions: str,
+    existing_thread_id: str | None = None,
 ) -> Iterator[Any]:
     """Start a ChatGPT-authenticated App Server and yield a public Thread.
 
@@ -184,16 +189,19 @@ def external_chatgpt_thread(
                 "Codex did not accept the ChatGPT external authentication.",
                 503,
             )
-        response = client.thread_start(
-            {
-                "approvalPolicy": ApprovalMode.deny_all.value,
-                "sandbox": Sandbox.workspace_write.value,
-                "cwd": str(workspace),
-                "model": model,
-                "serviceTier": service_tier,
-                "config": thread_config,
-                "developerInstructions": developer_instructions,
-            }
+        thread_params: Any = {
+            "approvalPolicy": ApprovalMode.deny_all.value,
+            "sandbox": Sandbox.workspace_write.value,
+            "cwd": str(workspace),
+            "model": model,
+            "serviceTier": service_tier,
+            "config": thread_config,
+            "developerInstructions": developer_instructions,
+        }
+        response = (
+            client.thread_resume(existing_thread_id, thread_params)
+            if existing_thread_id
+            else client.thread_start(thread_params)
         )
         admission_guard = _acquire_admission_guard(
             session_factory,

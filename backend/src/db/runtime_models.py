@@ -113,6 +113,96 @@ class Job(Base, TimestampMixin):
             "lease_expires_at",
             postgresql_where=text("state = 'LEASED'"),
         ),
+        Index(
+            "uq_candidate_package_build_job_active",
+            "resource_id",
+            unique=True,
+            sqlite_where=text(
+                "kind = 'CANDIDATE_PACKAGE_BUILD' "
+                "AND resource_type = 'portfolio_candidate' "
+                "AND state IN ('READY', 'LEASED')"
+            ),
+            postgresql_where=text(
+                "kind = 'CANDIDATE_PACKAGE_BUILD' "
+                "AND resource_type = 'portfolio_candidate' "
+                "AND state IN ('READY', 'LEASED')"
+            ),
+        ),
+        Index(
+            "uq_portfolio_input_evaluation_job_active",
+            "resource_id",
+            unique=True,
+            sqlite_where=text(
+                "kind = 'PORTFOLIO_INPUT_EVALUATION' "
+                "AND resource_type = 'portfolio_input_evaluation_assignment' "
+                "AND state IN ('READY', 'LEASED')"
+            ),
+            postgresql_where=text(
+                "kind = 'PORTFOLIO_INPUT_EVALUATION' "
+                "AND resource_type = 'portfolio_input_evaluation_assignment' "
+                "AND state IN ('READY', 'LEASED')"
+            ),
+        ),
+        Index(
+            "uq_portfolio_assembly_job_active",
+            "resource_id",
+            unique=True,
+            sqlite_where=text(
+                "kind = 'PORTFOLIO_ASSEMBLY' "
+                "AND resource_type = 'portfolio_assembly_input' "
+                "AND state IN ('READY', 'LEASED')"
+            ),
+            postgresql_where=text(
+                "kind = 'PORTFOLIO_ASSEMBLY' "
+                "AND resource_type = 'portfolio_assembly_input' "
+                "AND state IN ('READY', 'LEASED')"
+            ),
+        ),
+        Index(
+            "uq_portfolio_evaluation_job_active",
+            "resource_id",
+            unique=True,
+            sqlite_where=text(
+                "kind = 'PORTFOLIO_EVALUATION' "
+                "AND resource_type = 'portfolio_evaluation_assignment' "
+                "AND state IN ('READY', 'LEASED')"
+            ),
+            postgresql_where=text(
+                "kind = 'PORTFOLIO_EVALUATION' "
+                "AND resource_type = 'portfolio_evaluation_assignment' "
+                "AND state IN ('READY', 'LEASED')"
+            ),
+        ),
+        Index(
+            "uq_portfolio_to_paper_promotion_job_active",
+            "resource_id",
+            unique=True,
+            sqlite_where=text(
+                "kind = 'PORTFOLIO_TO_PAPER_PROMOTION' "
+                "AND resource_type = 'portfolio_evaluation_episode' "
+                "AND state IN ('READY', 'LEASED')"
+            ),
+            postgresql_where=text(
+                "kind = 'PORTFOLIO_TO_PAPER_PROMOTION' "
+                "AND resource_type = 'portfolio_evaluation_episode' "
+                "AND state IN ('READY', 'LEASED')"
+            ),
+        ),
+        Index(
+            "uq_paper_to_live_promotion_job_active",
+            "resource_id",
+            unique=True,
+            sqlite_where=text(
+                "kind = 'PAPER_TO_LIVE_PROMOTION' "
+                "AND resource_type = 'forward_evidence_episode' "
+                "AND state IN ('READY', 'LEASED')"
+            ),
+            postgresql_where=text(
+                "kind = 'PAPER_TO_LIVE_PROMOTION' "
+                "AND resource_type = 'forward_evidence_episode' "
+                "AND state IN ('READY', 'LEASED')"
+            ),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)

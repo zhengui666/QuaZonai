@@ -19,9 +19,10 @@ from db.models import (
     PluginRuntimeBundle,
     PluginRuntimeBundleMember,
 )
-from db.session import SessionFactory, create_database_engine, create_session_factory
+from db.session import SessionFactory, create_database_engine
 from errors import QfError
 from events import append_event
+from jobs import JobLease, create_lease_fenced_session_factory
 from plugins.contract import DescriptorSnapshot
 from plugins.runtime import build_bundle_environment, resolve_plugin_path, validate_release_environment
 from plugins.wheel_metadata import inspect_wheel, validate_wheel_set
@@ -55,10 +56,10 @@ def _mark_release_failed(factory: SessionFactory, release_id: UUID, message: str
         )
 
 
-def install_plugin(settings: Settings, job_id: UUID) -> None:
+def install_plugin(settings: Settings, lease: JobLease) -> None:
     engine = create_database_engine(settings)
-    factory = create_session_factory(engine)
-    job = _load_job(factory, job_id)
+    factory = create_lease_fenced_session_factory(engine, lease)
+    job = _load_job(factory, lease.job_id)
     release_id = job.resource_id
     try:
         with factory.begin() as session:
@@ -153,10 +154,10 @@ def install_plugin(settings: Settings, job_id: UUID) -> None:
         engine.dispose()
 
 
-def build_bundle(settings: Settings, job_id: UUID) -> None:
+def build_bundle(settings: Settings, lease: JobLease) -> None:
     engine = create_database_engine(settings)
-    factory = create_session_factory(engine)
-    job = _load_job(factory, job_id)
+    factory = create_lease_fenced_session_factory(engine, lease)
+    job = _load_job(factory, lease.job_id)
     bundle_id = job.resource_id
     try:
         with factory() as session:
@@ -235,10 +236,10 @@ def build_bundle(settings: Settings, job_id: UUID) -> None:
         engine.dispose()
 
 
-def remove_plugin(settings: Settings, job_id: UUID) -> None:
+def remove_plugin(settings: Settings, lease: JobLease) -> None:
     engine = create_database_engine(settings)
-    factory = create_session_factory(engine)
-    job = _load_job(factory, job_id)
+    factory = create_lease_fenced_session_factory(engine, lease)
+    job = _load_job(factory, lease.job_id)
     release_id = job.resource_id
     force = bool(job.payload.get("force", False))
     with factory.begin() as session:
@@ -288,6 +289,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run one isolated plugin job")
     parser.add_argument("action", choices=["install", "build", "remove"])
     parser.add_argument("job_id")
+    parser.add_argument("--lease-owner", required=True)
+    parser.add_argument("--lease-attempt", required=True, type=int)
     return parser
 
 
@@ -295,13 +298,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     settings = load_effective_settings(Settings.from_env())
     settings.ensure_worker_directories()
-    job_id = UUID(args.job_id)
+    lease = JobLease(
+        job_id=UUID(args.job_id),
+        owner=args.lease_owner,
+        attempt=args.lease_attempt,
+    )
     if args.action == "install":
-        install_plugin(settings, job_id)
+        install_plugin(settings, lease)
     elif args.action == "build":
-        build_bundle(settings, job_id)
+        build_bundle(settings, lease)
     else:
-        remove_plugin(settings, job_id)
+        remove_plugin(settings, lease)
     return 0
 
 

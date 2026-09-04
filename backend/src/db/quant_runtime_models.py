@@ -206,6 +206,8 @@ class CapitalContextVersion(Base, TimestampMixin):
     __table_args__ = (Index("ix_capital_context_validity", "valid_until", "observed_at"),)
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    # Null means a pre-V1 fact that must not become a trusted production input.
+    configuration_contract_version: Mapped[str | None] = mapped_column(String(40))
     source_type: Mapped[str] = mapped_column(String(40), nullable=False)
     source_downstream_system_id: Mapped[UUID | None] = mapped_column(
         Uuid,

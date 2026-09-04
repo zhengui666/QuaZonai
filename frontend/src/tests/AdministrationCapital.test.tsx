@@ -1,11 +1,10 @@
 import { screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { formatCapitalContextValue } from '../pages/AdministrationPage';
-import { formatPlainDecimalString } from '../lib/format';
+import { formatCapitalAmount, formatPlainDecimalString } from '../lib/format';
 import { renderApp } from './testUtils';
 
 function CapitalValue({ value }: { value: number | string }) {
-  return <div>{formatCapitalContextValue(value)}</div>;
+  return <div>{formatCapitalAmount(value)}</div>;
 }
 
 describe('Administration capital context', () => {

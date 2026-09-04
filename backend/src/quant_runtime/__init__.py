@@ -11,10 +11,6 @@ from quant_runtime.contracts import (
     ArchiveShardDescriptor,
     CatalogDescriptor,
     CatalogIngestSpec,
-    ExperimentSpec,
-    MissionExperimentEnvelope,
-    RunEvidence,
-    StrategyArtifact,
 )
 from quant_runtime.remote import NautilusQuantRuntime, QuantRuntime
 
@@ -24,10 +20,6 @@ __all__ = [
     "RemoteNautilusConfig",
     "CatalogDescriptor",
     "CatalogIngestSpec",
-    "ExperimentSpec",
-    "MissionExperimentEnvelope",
-    "RunEvidence",
-    "StrategyArtifact",
     "NautilusQuantRuntime",
     "QuantRuntime",
     "ArchiveManifestDescriptor",

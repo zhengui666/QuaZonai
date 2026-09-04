@@ -2,18 +2,21 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import { useEffect, useRef, useState } from 'react';
 import { ApiError, apiRequest, jsonBody, normalizeList } from './client';
 import type {
-  ActivityEvent,
   AlphaQualification,
   ApprovalSnapshot,
-  DataSource,
-  DatasetRevision,
-  DownstreamSystem,
+  ConfigurationDataSource,
+  ConfigurationCapitalContext,
+  ConfigurationDataset,
+  ConfigurationDownstream,
+  ConfigurationEvaluationDatasetSelection,
+  ConfigurationEvaluationDesignVersion,
+  ConfigurationMandate,
+  ConfigurationOperation,
+  ConfigurationPromotionPolicyVersion,
+  ConfigurationUniverse,
   HandoffOffer,
-  IdeaPreview,
-  MarketUniverse,
   PluginRelease,
   PortfolioCandidate,
-  PortfolioMandate,
   PortfolioProgram,
   Readiness,
   ResearchMission,
@@ -34,11 +37,14 @@ const keys = {
   codexAuth: ['codex-auth'] as const,
   programs: ['programs'] as const,
   program: (id: UUID) => ['program', id] as const,
-  missions: (id: UUID) => ['missions', id] as const,
-  activity: (id: UUID) => ['activity', id] as const,
+  missionGraph: (id: UUID) => ['mission-graph', id] as const,
   alphas: ['alphas'] as const,
   alpha: (id: UUID) => ['alpha', id] as const,
   mandates: ['mandates'] as const,
+  capitalContexts: ['capital-contexts'] as const,
+  evaluationDatasetSelections: ['evaluation-dataset-selections'] as const,
+  evaluationDesignVersions: ['evaluation-design-versions'] as const,
+  promotionPolicyVersions: ['promotion-policy-versions'] as const,
   portfolioPrograms: ['portfolio-programs'] as const,
   candidate: (id: UUID) => ['candidate', id] as const,
   approvals: ['approvals'] as const,
@@ -48,6 +54,7 @@ const keys = {
   dataSources: ['data-sources'] as const,
   downstreams: ['downstreams'] as const,
   plugins: ['plugins'] as const,
+  configurationOperation: (id: UUID) => ['configuration', 'operation', id] as const,
 };
 
 export const useReadiness = () => useQuery({ queryKey: keys.readiness, queryFn: () => apiRequest<Readiness>('/api/v1/readiness'), refetchInterval: 15_000 });
@@ -117,14 +124,26 @@ export function useCodexChatgptAuth() {
 }
 export const usePrograms = () => useQuery({ queryKey: keys.programs, queryFn: async () => normalizeList(await apiRequest<ResearchProgram[] | { items: ResearchProgram[] }>('/api/v1/research-programs')) });
 export const useProgram = (id?: UUID) => useQuery({ queryKey: id ? keys.program(id) : ['program', 'none'], queryFn: () => apiRequest<ResearchProgram>(`/api/v1/research-programs/${id}`), enabled: Boolean(id) });
-export const useProgramMissions = (id?: UUID) => useQuery({ queryKey: id ? keys.missions(id) : ['missions', 'none'], queryFn: async () => normalizeList(await apiRequest<ResearchMission[] | { items: ResearchMission[] }>(`/api/v1/research-programs/${id}/missions`)), enabled: Boolean(id) });
-export const useProgramActivity = (id?: UUID) => useQuery({ queryKey: id ? keys.activity(id) : ['activity', 'none'], queryFn: async () => normalizeList(await apiRequest<ActivityEvent[] | { items: ActivityEvent[] }>(`/api/v1/research-programs/${id}/activity`)), enabled: Boolean(id), refetchInterval: 8_000 });
+
+async function fetchProgramMissions(id: UUID): Promise<ResearchMission[]> {
+  const graph = await apiRequest<{ nodes?: ResearchMission[] }>(`/api/v1/research-programs/${id}/mission-graph`);
+  if (!Array.isArray(graph.nodes)) {
+    throw new ApiError(
+      { kind: 'contract', message: 'Expected a mission graph response.' },
+      0,
+      'CONTRACT_MISMATCH',
+    );
+  }
+  return graph.nodes;
+}
+
+export const useProgramMissions = (id?: UUID) => useQuery({ queryKey: id ? keys.missionGraph(id) : ['mission-graph', 'none'], queryFn: () => fetchProgramMissions(id as UUID), enabled: Boolean(id) });
 
 export function useProgramMissionMatrix(ids: UUID[]) {
   return useQueries({
     queries: ids.map((id) => ({
-      queryKey: keys.missions(id),
-      queryFn: async () => normalizeList(await apiRequest<ResearchMission[] | { items: ResearchMission[] }>(`/api/v1/research-programs/${id}/missions`)),
+      queryKey: keys.missionGraph(id),
+      queryFn: () => fetchProgramMissions(id),
       staleTime: 5_000,
     })),
   });
@@ -132,7 +151,7 @@ export function useProgramMissionMatrix(ids: UUID[]) {
 
 export const useAlphaLibrary = () => useQuery({ queryKey: keys.alphas, queryFn: async () => normalizeList(await apiRequest<AlphaQualification[] | { items: AlphaQualification[] }>('/api/v1/alpha-library')) });
 export const useAlpha = (id?: UUID) => useQuery({ queryKey: id ? keys.alpha(id) : ['alpha', 'none'], queryFn: () => apiRequest<AlphaQualification>(`/api/v1/alpha-library/${id}`), enabled: Boolean(id) });
-export const useMandates = () => useQuery({ queryKey: keys.mandates, queryFn: async () => normalizeList(await apiRequest<PortfolioMandate[] | { items: PortfolioMandate[] }>('/api/v1/portfolio-mandates')) });
+export const useMandates = () => useQuery({ queryKey: keys.mandates, queryFn: async () => normalizeList(await apiRequest<{ items: ConfigurationMandate[] }>('/api/v1/portfolio-mandates')) });
 export const usePortfolioPrograms = () => useQuery({ queryKey: keys.portfolioPrograms, queryFn: async () => normalizeList(await apiRequest<PortfolioProgram[] | { items: PortfolioProgram[] }>('/api/v1/portfolio-programs')) });
 export const useCandidate = (id?: UUID) => useQuery({ queryKey: id ? keys.candidate(id) : ['candidate', 'none'], queryFn: () => apiRequest<PortfolioCandidate>(`/api/v1/portfolio-candidates/${id}`), enabled: Boolean(id) });
 
@@ -144,10 +163,18 @@ export function useCandidates(ids: UUID[]) {
 
 export const useApprovals = () => useQuery({ queryKey: keys.approvals, queryFn: async () => normalizeList(await apiRequest<ApprovalSnapshot[] | { items: ApprovalSnapshot[] }>('/api/v1/approvals')), refetchInterval: 10_000 });
 export const useHandoffs = () => useQuery({ queryKey: keys.handoffs, queryFn: async () => normalizeList(await apiRequest<HandoffOffer[] | { items: HandoffOffer[] }>('/api/v1/handoffs')), refetchInterval: 10_000 });
-export const useUniverses = () => useQuery({ queryKey: keys.universes, queryFn: async () => normalizeList(await apiRequest<MarketUniverse[] | { items: MarketUniverse[] }>('/api/v1/universes')) });
-export const useDatasets = () => useQuery({ queryKey: keys.datasets, queryFn: async () => normalizeList(await apiRequest<DatasetRevision[] | { items: DatasetRevision[] }>('/api/v1/datasets')) });
-export const useDataSources = () => useQuery({ queryKey: keys.dataSources, queryFn: async () => normalizeList(await apiRequest<DataSource[] | { items: DataSource[] }>('/api/v1/data-sources')) });
-export const useDownstreams = () => useQuery({ queryKey: keys.downstreams, queryFn: async () => normalizeList(await apiRequest<DownstreamSystem[] | { items: DownstreamSystem[] }>('/api/v1/downstream-systems')) });
+export const useDownstreams = () => useQuery({ queryKey: keys.downstreams, queryFn: async () => normalizeList(await apiRequest<{ items: ConfigurationDownstream[] }>('/api/v1/downstream-systems')) });
+
+export const useConfigurationUniverses = () => useQuery({ queryKey: keys.universes, queryFn: async () => normalizeList(await apiRequest<{ items: ConfigurationUniverse[] }>('/api/v1/universes')) });
+export const useConfigurationDataSources = () => useQuery({ queryKey: keys.dataSources, queryFn: async () => normalizeList(await apiRequest<{ items: ConfigurationDataSource[] }>('/api/v1/data-sources')) });
+export const useConfigurationDatasets = () => useQuery({ queryKey: keys.datasets, queryFn: async () => normalizeList(await apiRequest<{ items: ConfigurationDataset[] }>('/api/v1/datasets')) });
+export const useConfigurationMandates = () => useQuery({ queryKey: keys.mandates, queryFn: async () => normalizeList(await apiRequest<{ items: ConfigurationMandate[] }>('/api/v1/portfolio-mandates')) });
+export const useConfigurationCapitalContexts = () => useQuery({ queryKey: keys.capitalContexts, queryFn: async () => normalizeList(await apiRequest<{ items: ConfigurationCapitalContext[] }>('/api/v1/capital-contexts')) });
+export const useConfigurationEvaluationDatasetSelections = () => useQuery({ queryKey: keys.evaluationDatasetSelections, queryFn: async () => normalizeList(await apiRequest<{ items: ConfigurationEvaluationDatasetSelection[] }>('/api/v1/evaluation-dataset-selections')) });
+export const useConfigurationEvaluationDesignVersions = () => useQuery({ queryKey: keys.evaluationDesignVersions, queryFn: async () => normalizeList(await apiRequest<{ items: ConfigurationEvaluationDesignVersion[] }>('/api/v1/evaluation-design-versions')) });
+export const useConfigurationPromotionPolicyVersions = () => useQuery({ queryKey: keys.promotionPolicyVersions, queryFn: async () => normalizeList(await apiRequest<{ items: ConfigurationPromotionPolicyVersion[] }>('/api/v1/promotion-policy-versions')) });
+export const useConfigurationDownstreams = () => useQuery({ queryKey: keys.downstreams, queryFn: async () => normalizeList(await apiRequest<{ items: ConfigurationDownstream[] }>('/api/v1/downstream-systems')) });
+export const useConfigurationOperation = (id?: UUID) => useQuery({ queryKey: id ? keys.configurationOperation(id) : ['configuration', 'operation', 'none'], queryFn: () => apiRequest<ConfigurationOperation>(`/api/v1/operations/${id}`), enabled: Boolean(id), refetchInterval: 5_000 });
 
 export function usePluginReleases() {
   return useQuery({
@@ -159,16 +186,9 @@ export function usePluginReleases() {
   });
 }
 
-export const useIdeaPreview = () => useMutation({ mutationFn: (idea: string) => apiRequest<IdeaPreview>('/api/v1/ideas/preview', { method: 'POST', body: jsonBody({ idea }), idempotent: true }) });
-
-export function useStartResearch() {
+export function useProgramAction(id: UUID, action: 'pause' | 'resume' | 'archive', expectedRevision?: number) {
   const client = useQueryClient();
-  return useMutation({ mutationFn: (payload: { idea: string; answers?: Record<string, string>; overlap_action?: string }) => apiRequest<ResearchProgram>('/api/v1/research-programs', { method: 'POST', body: jsonBody(payload), idempotent: true }), onSuccess: () => client.invalidateQueries({ queryKey: keys.programs }) });
-}
-
-export function useProgramAction(id: UUID, action: 'pause' | 'resume' | 'archive' | 'restore') {
-  const client = useQueryClient();
-  return useMutation({ mutationFn: (reason?: string) => apiRequest(`/api/v1/research-programs/${id}/${action}`, { method: 'POST', body: jsonBody(reason ? { reason } : {}), idempotent: true }), onSuccess: async () => { await Promise.all([client.invalidateQueries({ queryKey: keys.program(id) }), client.invalidateQueries({ queryKey: keys.programs })]); } });
+  return useMutation({ mutationFn: (reason?: string) => apiRequest(`/api/v1/research-programs/${id}/${action}`, { method: 'POST', body: jsonBody({ ...(reason ? { reason } : {}), ...(expectedRevision === undefined ? {} : { expected_revision: expectedRevision }) }), idempotent: true }), onSuccess: async () => { await Promise.all([client.invalidateQueries({ queryKey: keys.program(id) }), client.invalidateQueries({ queryKey: keys.programs })]); } });
 }
 
 export function useApprovalDecision(id: UUID) {
@@ -184,19 +204,59 @@ export function useRevokeHandoff(id: UUID) {
   return useMutation({ mutationFn: (reason: string) => apiRequest(`/api/v1/handoffs/${id}/revoke`, { method: 'POST', body: jsonBody({ reason_code: reason }), idempotent: true }), onSuccess: () => client.invalidateQueries({ queryKey: keys.handoffs }) });
 }
 
-export function useMandateToggle(id: UUID, enabled: boolean) {
+export function useCreateConfigurationUniverse() {
   const client = useQueryClient();
-  return useMutation({ mutationFn: () => apiRequest(`/api/v1/portfolio-mandates/${id}/${enabled ? 'disable' : 'enable'}`, { method: 'POST', body: jsonBody({}), idempotent: true }), onSuccess: async () => { await Promise.all([client.invalidateQueries({ queryKey: keys.mandates }), client.invalidateQueries({ queryKey: keys.portfolioPrograms }), client.invalidateQueries({ queryKey: keys.readiness })]); } });
+  return useMutation({ mutationFn: (payload: Record<string, unknown>) => apiRequest<ConfigurationUniverse>('/api/v1/universes', { method: 'POST', body: jsonBody(payload), idempotent: true }), onSuccess: () => client.invalidateQueries({ queryKey: keys.universes }) });
 }
 
-export function useCreateDataSource() {
+export function useCreateConfigurationUniverseVersion() {
   const client = useQueryClient();
-  return useMutation({ mutationFn: (payload: Partial<DataSource> & Record<string, unknown>) => apiRequest<DataSource>('/api/v1/data-sources', { method: 'POST', body: jsonBody(payload), idempotent: true }), onSuccess: async () => { await Promise.all([client.invalidateQueries({ queryKey: keys.dataSources }), client.invalidateQueries({ queryKey: keys.readiness }), client.invalidateQueries({ queryKey: keys.health })]); } });
+  return useMutation({ mutationFn: ({ universeId, payload }: { universeId: UUID; payload: Record<string, unknown> }) => apiRequest<ConfigurationUniverse>(`/api/v1/universes/${universeId}/versions`, { method: 'POST', body: jsonBody(payload), idempotent: true }), onSuccess: () => client.invalidateQueries({ queryKey: keys.universes }) });
 }
 
-export function useCreateDownstream() {
+export function useCreateConfigurationDataSource() {
   const client = useQueryClient();
-  return useMutation({ mutationFn: (payload: Partial<DownstreamSystem> & Record<string, unknown>) => apiRequest<DownstreamSystem>('/api/v1/downstream-systems', { method: 'POST', body: jsonBody(payload), idempotent: true }), onSuccess: async () => { await Promise.all([client.invalidateQueries({ queryKey: keys.downstreams }), client.invalidateQueries({ queryKey: keys.readiness })]); } });
+  return useMutation({ mutationFn: (payload: Record<string, unknown>) => apiRequest<ConfigurationDataSource>('/api/v1/data-sources', { method: 'POST', body: jsonBody(payload), idempotent: true }), onSuccess: () => client.invalidateQueries({ queryKey: keys.dataSources }) });
+}
+
+export function useRequestConfigurationDataSourcePreflight() {
+  const client = useQueryClient();
+  return useMutation({ mutationFn: (dataSourceId: UUID) => apiRequest<ConfigurationOperation>(`/api/v1/data-sources/${dataSourceId}/preflight`, { method: 'POST', body: jsonBody({}), idempotent: true }), onSuccess: () => client.invalidateQueries({ queryKey: keys.dataSources }) });
+}
+
+export function useRequestConfigurationDatasetMaterialization() {
+  const client = useQueryClient();
+  return useMutation({ mutationFn: (payload: Record<string, unknown>) => apiRequest<ConfigurationOperation>('/api/v1/datasets/materializations', { method: 'POST', body: jsonBody(payload), idempotent: true }), onSuccess: () => client.invalidateQueries({ queryKey: keys.datasets }) });
+}
+
+export function useCreateConfigurationMandate() {
+  const client = useQueryClient();
+  return useMutation({ mutationFn: (payload: Record<string, unknown>) => apiRequest<ConfigurationMandate>('/api/v1/portfolio-mandates', { method: 'POST', body: jsonBody(payload), idempotent: true }), onSuccess: () => client.invalidateQueries({ queryKey: keys.mandates }) });
+}
+
+export function useCreateConfigurationMandateVersion() {
+  const client = useQueryClient();
+  return useMutation({ mutationFn: ({ mandateId, payload }: { mandateId: UUID; payload: Record<string, unknown> }) => apiRequest<ConfigurationMandate>(`/api/v1/portfolio-mandates/${mandateId}/versions`, { method: 'POST', body: jsonBody(payload), idempotent: true }), onSuccess: () => client.invalidateQueries({ queryKey: keys.mandates }) });
+}
+
+export function useCreateConfigurationCapitalContext() {
+  const client = useQueryClient();
+  return useMutation({ mutationFn: (payload: Record<string, unknown>) => apiRequest<ConfigurationCapitalContext>('/api/v1/capital-contexts', { method: 'POST', body: jsonBody(payload), idempotent: true }), onSuccess: () => client.invalidateQueries({ queryKey: keys.capitalContexts }) });
+}
+
+export function useCreateConfigurationEvaluationDatasetSelection() {
+  const client = useQueryClient();
+  return useMutation({ mutationFn: (payload: Record<string, unknown>) => apiRequest<ConfigurationEvaluationDatasetSelection>('/api/v1/evaluation-dataset-selections', { method: 'POST', body: jsonBody(payload), idempotent: true }), onSuccess: () => client.invalidateQueries({ queryKey: keys.evaluationDatasetSelections }) });
+}
+
+export function useCreateConfigurationEvaluationDesignVersion() {
+  const client = useQueryClient();
+  return useMutation({ mutationFn: (payload: Record<string, unknown>) => apiRequest<ConfigurationEvaluationDesignVersion>('/api/v1/evaluation-design-versions', { method: 'POST', body: jsonBody(payload), idempotent: true }), onSuccess: () => client.invalidateQueries({ queryKey: keys.evaluationDesignVersions }) });
+}
+
+export function useCreateConfigurationPromotionPolicyVersion() {
+  const client = useQueryClient();
+  return useMutation({ mutationFn: (payload: Record<string, unknown>) => apiRequest<ConfigurationPromotionPolicyVersion>('/api/v1/promotion-policy-versions', { method: 'POST', body: jsonBody(payload), idempotent: true }), onSuccess: () => client.invalidateQueries({ queryKey: keys.promotionPolicyVersions }) });
 }
 
 export function useUpdateRuntimeConfiguration() {
