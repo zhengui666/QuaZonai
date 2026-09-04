@@ -308,6 +308,7 @@ def _mission_context(
         "# QuaZonai Research Mission\n\n"
         f"Program: {program.title}\n"
         f"Mission ID: {mission.id}\n"
+        f"Mission revision: {mission.revision}\n"
         f"Role: {mission.role or 'RESEARCH_AGENT'}\n"
         f"Mission type: {mission.type}\n"
         f"Objective: {mission.objective or charter.research_question}\n\n"
