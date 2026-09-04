@@ -47,6 +47,9 @@ REQUIRED_PATHS = {
     "/api/v1/datasets",
     "/api/v1/universes",
     "/api/v1/downstream-systems",
+    "/api/v1/downstream-connection-versions",
+    "/api/v1/downstream-connection-versions/{connection_version_id}/preflight",
+    "/api/v1/feedback-contract-versions",
     "/api/v1/downstream-systems/{downstream_id}/preflight",
     "/api/v1/universes/{universe_id}/versions",
     "/api/v1/datasets/materializations",
@@ -136,6 +139,22 @@ def test_openapi_matches_research_intelligence_contract(
         "valid_until",
     }
 
+    connection_preflight = schema["paths"][
+        "/api/v1/downstream-connection-versions/{connection_version_id}/preflight"
+    ]["post"]
+    connection_preflight_ref = connection_preflight["requestBody"]["content"][
+        "application/json"
+    ]["schema"]["$ref"]
+    connection_preflight_schema = schema["components"]["schemas"][
+        connection_preflight_ref.rsplit("/", 1)[-1]
+    ]
+    assert set(connection_preflight_schema["required"]) == {
+        "package_contract_version",
+        "feedback_contract_version_id",
+        "capabilities",
+        "valid_until",
+    }
+
     for path, required in {
         "/api/v1/evaluation-dataset-selections": {
             "universe_version_id",
@@ -167,6 +186,24 @@ def test_openapi_matches_research_intelligence_contract(
             "mode",
             "gates",
             "state",
+        },
+        "/api/v1/feedback-contract-versions": {
+            "downstream_system_id",
+            "purpose",
+            "minimum_observation_seconds",
+            "minimum_valid_sample_size",
+            "first_status_deadline_seconds",
+            "complete_feedback_deadline_seconds",
+            "grace_period_seconds",
+            "required_metric_codes",
+            "accepted_package_contracts",
+            "accepted_arrow_contracts",
+            "disclosure_policy",
+        },
+        "/api/v1/downstream-connection-versions": {
+            "downstream_system_id",
+            "feedback_contract_version_id",
+            "package_contract_version",
         },
     }.items():
         operation = schema["paths"][path]["post"]
