@@ -150,3 +150,100 @@ def test_default_mode_omission_is_distinct_and_preserves_existing_state() -> Non
         _idempotency_shape(overridden)["codex_default_model_settings_action"]
         == "quazonai-overrides"
     )
+
+def test_legacy_unchanged_save_preserves_codex_default_mode(
+    engine: Engine,
+    settings: Settings,
+) -> None:
+    client = TestClient(create_app(settings=settings, engine=engine))
+    configured = client.put(
+        "/api/v1/system/runtime-configuration",
+        json=_payload(codex_use_default_model_settings=True),
+    )
+    assert configured.status_code == 200, configured.text
+
+    legacy_payload = _payload(expected_revision=configured.json()["revision"])
+    legacy_payload.pop("codex_use_default_model_settings")
+    legacy_payload.pop("codex_reasoning_effort")
+    legacy_payload.pop("codex_fast_mode")
+    unchanged = client.put(
+        "/api/v1/system/runtime-configuration",
+        json=legacy_payload,
+    )
+    assert unchanged.status_code == 200, unchanged.text
+    assert unchanged.json()["codex_use_default_model_settings"] is True
+
+    factory = create_session_factory(engine)
+    with factory() as session:
+        runtime = effective_settings(session, settings)
+        assert runtime.codex_model is None
+        assert runtime.codex_reasoning_effort is None
+        assert runtime.codex_fast_mode is False
+
+
+def test_legacy_model_change_enables_quazonai_overrides(
+    engine: Engine,
+    settings: Settings,
+) -> None:
+    client = TestClient(create_app(settings=settings, engine=engine))
+    configured = client.put(
+        "/api/v1/system/runtime-configuration",
+        json=_payload(codex_use_default_model_settings=True),
+    )
+    assert configured.status_code == 200, configured.text
+
+    legacy_payload = _payload(
+        expected_revision=configured.json()["revision"],
+        codex_model="gpt-5.6-sol-next",
+    )
+    legacy_payload.pop("codex_use_default_model_settings")
+    legacy_payload.pop("codex_reasoning_effort")
+    legacy_payload.pop("codex_fast_mode")
+    changed = client.put(
+        "/api/v1/system/runtime-configuration",
+        json=legacy_payload,
+    )
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["codex_use_default_model_settings"] is False
+
+    factory = create_session_factory(engine)
+    with factory() as session:
+        runtime = effective_settings(session, settings)
+        assert runtime.codex_model == "gpt-5.6-sol-next"
+        assert runtime.codex_reasoning_effort == "high"
+        assert runtime.codex_fast_mode is True
+        assert runtime.codex_base_url == "https://gateway.example.test/v1"
+
+
+def test_legacy_clear_all_model_controls_restores_codex_defaults(
+    engine: Engine,
+    settings: Settings,
+) -> None:
+    client = TestClient(create_app(settings=settings, engine=engine))
+    configured = client.put(
+        "/api/v1/system/runtime-configuration",
+        json=_payload(codex_use_default_model_settings=False),
+    )
+    assert configured.status_code == 200, configured.text
+
+    legacy_payload = _payload(
+        expected_revision=configured.json()["revision"],
+        codex_model=None,
+        codex_reasoning_effort=None,
+        codex_fast_mode=False,
+    )
+    legacy_payload.pop("codex_use_default_model_settings")
+    cleared = client.put(
+        "/api/v1/system/runtime-configuration",
+        json=legacy_payload,
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["codex_use_default_model_settings"] is True
+
+    factory = create_session_factory(engine)
+    with factory() as session:
+        runtime = effective_settings(session, settings)
+        assert runtime.codex_model is None
+        assert runtime.codex_reasoning_effort is None
+        assert runtime.codex_fast_mode is False
+        assert runtime.codex_base_url == "https://gateway.example.test/v1"

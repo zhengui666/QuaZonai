@@ -1617,7 +1617,7 @@ Codex provider 规则：
 - `codex_model` 为空时使用 Codex 默认模型选择；
 - `codex_use_default_model_settings=true` 时，新 Mission 的 effective runtime 会屏蔽已保存的 `codex_model`、`codex_reasoning_effort` 与 `codex_fast_mode`，从而让 Codex/当前模型选择自身默认值；这些 QuaZonai override 原值保留在 Runtime Configuration 中，切回 `false` 后恢复，不因切换而清空；
 - `codex_use_default_model_settings=false` 时，按保存的 `codex_model`、`codex_reasoning_effort` 与 `codex_fast_mode` 启动新 Mission；provider/Base URL/API key routing 独立于该模型默认选择开关；
-- 新建 singleton 默认 `codex_use_default_model_settings=true`；迁移既有行写入 `false` 以保持既有显式模型控制。兼容旧客户端的首次保存若显式给出任一模型控制，也推断为 override mode，避免旧请求被静默忽略；
+- 新建 singleton 默认 `codex_use_default_model_settings=true`；迁移既有行写入 `false` 以保持既有显式模型控制。兼容旧客户端的首次保存若显式给出任一模型控制，也推断为 override mode，避免旧请求被静默忽略；旧客户端省略该字段且模型相关控制未变化时保持当前模式，实际修改任一模型相关控制时按修改后的完整控制集自动推导模式；
 - `codex_reasoning_effort` 为 `null` 时不向 `thread/start` 发送 `model_reasoning_effort`；显式值原样发送。它是公开运行元数据，不是隐藏思维链；不支持的模型/provider 值必须显式失败，不能自动降档；
 - `codex_fast_mode=false` 不发送 Fast service-tier override；为 `true` 时向新 Mission 的 `thread/start` 发送原生 `service_tier="fast"`。Fast 与 reasoning effort 正交，provider 拒绝时沿现有失败链路处理，不自动切回 Standard；
 - Runtime Configuration 的 reasoning/Fast 值优先级为：未来 AgentProfileVersion 或 Mission 显式值 > 系统级 Runtime Configuration 默认值 > Codex/模型默认值；本期只实现系统级默认值；
@@ -1646,6 +1646,7 @@ Runtime Configuration mutation 规则：
 - PUT 必须携带 `expected_revision`，陈旧保存返回 `RUNTIME_CONFIGURATION_STALE`，首次并发创建的唯一约束竞争也必须被翻译为同一业务冲突而不是数据库 500；
 - PUT 支持 `Idempotency-Key`；同一个逻辑请求重试返回原响应，不重复加密 provider key、不重复推进 revision、也不重复写 `RUNTIME_CONFIGURATION_UPDATED` event；
 - 新字段支持兼容旧客户端的三态更新：字段省略保持当前值，`codex_reasoning_effort: null` 恢复模型默认，`codex_fast_mode: false` 只有在字段显式出现时才关闭 Fast；第一方 Web 客户端始终显式发送二者；
+- `codex_use_default_model_settings` 显式 `true/false` 时直接选择 Codex defaults 或 QuaZonai overrides；旧客户端省略该字段且模型相关控制未变化时保持当前模式，实际修改任一模型相关控制时按修改后的完整控制集推导：全部为空/Standard 则使用 Codex defaults，否则启用 QuaZonai overrides；
 - `RUNTIME_CONFIGURATION_UPDATED` 只记录非敏感的 requested reasoning/Fast 配置及 action，不记录隐藏 reasoning、token、API key 或其他 Secret；
 - Idempotency receipt 不保存 provider key plaintext，也不为了去重额外保存历史 secret 副本。
 
