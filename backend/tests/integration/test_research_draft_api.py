@@ -100,7 +100,13 @@ def test_idea_draft_freezes_a_charter_and_starts_a_bounded_mission_graph(
     factory = create_session_factory(engine)
     with factory() as session:
         mission = session.scalar(
-            select(ResearchMission).where(ResearchMission.program_id == UUID(program["id"]))
+            select(ResearchMission)
+            .join(Job, Job.resource_id == ResearchMission.id)
+            .where(
+                ResearchMission.program_id == UUID(program["id"]),
+                Job.resource_type == "research_mission",
+                Job.state == "CANCELLED",
+            )
         )
         assert mission is not None and mission.state == "PLANNED"
         job = session.scalar(select(Job).where(Job.resource_id == mission.id))
