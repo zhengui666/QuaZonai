@@ -21,14 +21,17 @@ from db.models import (
     ApprovalSnapshot,
     CandidatePackage,
     DatasetRevision,
+    DownstreamConnectionVersion,
     DownstreamSystem,
     Event,
     ForwardEvidenceEpisode,
     HandoffOffer,
     PortfolioCandidate,
+    PortfolioCandidateMember,
     PortfolioMandate,
     PortfolioProgram,
     PreflightReceipt,
+    FeedbackContractVersion,
     PublicMutationReceipt,
 )
 from downstream_auth import authenticate_downstream
@@ -38,6 +41,7 @@ from research_lifecycle import record_degradation_observation
 from promotion_service import (
     FeedbackHeader,
     TypedFeedbackMetric,
+    accept_live_feedback,
     accept_paper_feedback,
     approve_typed_live_handoff,
     approve_typed_paper_handoff,
@@ -218,6 +222,10 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def _stored_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
 def _iso(value: datetime | None) -> str | None:
     if value is None:
         return None
@@ -296,10 +304,27 @@ def _idempotent(
     return result
 
 
-def _candidate_view(item: PortfolioCandidate) -> CandidateView:
+def _candidate_view(session: Session, item: PortfolioCandidate) -> CandidateView:
     universe_set = item.universe_set_json
     if not isinstance(universe_set, (list, dict)):
         universe_set = []
+    relational_members = list(
+        session.scalars(
+            select(PortfolioCandidateMember)
+            .where(PortfolioCandidateMember.candidate_id == item.id)
+            .order_by(PortfolioCandidateMember.alpha_qualification_id)
+        )
+    )
+    members = [
+        {
+            "alpha_qualification_id": str(member.alpha_qualification_id),
+            "role": member.role,
+            "target_weight": float(member.target_weight),
+        }
+        for member in relational_members
+    ]
+    if not members and not (item.state == "ASSEMBLED" and item.assembly_input_id is not None):
+        members = item.members
     return CandidateView(
         id=item.id,
         candidate_family_id=item.candidate_family_id,
@@ -317,7 +342,7 @@ def _candidate_view(item: PortfolioCandidate) -> CandidateView:
         evaluation_episode_id=item.evaluation_episode_id,
         state=item.state,
         created_at=_iso(item.created_at),
-        members=item.members,
+        members=members,
         metrics=item.metrics,
     )
 
@@ -357,7 +382,7 @@ def _approval_view(session: Session, item: ApprovalSnapshot) -> ApprovalView:
         candidate_package_revision=item.candidate_package_revision,
         promotion_evaluation_id=item.promotion_evaluation_id,
         promotion_purpose=item.promotion_purpose,
-        candidate=_candidate_view(candidate),
+        candidate=_candidate_view(session, candidate),
         purpose=item.purpose,
         state=item.state,
         downstream_system_id=item.downstream_system_id,
@@ -472,7 +497,7 @@ def get_candidate(candidate_id: UUID, request: Request) -> CandidateView:
         item = session.get(PortfolioCandidate, candidate_id)
         if item is None:
             raise QfError("CANDIDATE_NOT_FOUND", "Portfolio Candidate was not found.", 404)
-        return _candidate_view(item)
+        return _candidate_view(session, item)
 
 
 @router.get("/approvals", response_model=list[ApprovalView])
@@ -517,6 +542,38 @@ def _has_current_downstream_preflight(session: Session, downstream: DownstreamSy
         .limit(1)
     )
     return is_current_downstream_preflight(receipt, downstream, _now())
+
+
+def _has_typed_connection_preflight(session: Session, environment_type: str) -> bool:
+    now = _now()
+    rows = session.execute(
+        select(DownstreamSystem, DownstreamConnectionVersion, FeedbackContractVersion, PreflightReceipt)
+        .join(
+            DownstreamConnectionVersion,
+            DownstreamConnectionVersion.downstream_system_id == DownstreamSystem.id,
+        )
+        .join(
+            FeedbackContractVersion,
+            FeedbackContractVersion.id == DownstreamConnectionVersion.feedback_contract_version_id,
+        )
+        .join(
+            PreflightReceipt,
+            (PreflightReceipt.resource_id == DownstreamConnectionVersion.id)
+            & (PreflightReceipt.resource_type == "DOWNSTREAM_CONNECTION_VERSION")
+            & (PreflightReceipt.resource_revision == DownstreamConnectionVersion.version_no),
+        )
+        .where(
+            DownstreamSystem.enabled.is_(True),
+            DownstreamSystem.environment_type == environment_type,
+            DownstreamSystem.service_token_ciphertext.is_not(None),
+            DownstreamConnectionVersion.state == "ACTIVE",
+            FeedbackContractVersion.state == "ACTIVE",
+            FeedbackContractVersion.purpose == environment_type,
+            PreflightReceipt.status == "READY",
+            PreflightReceipt.contract_version == DownstreamConnectionVersion.package_contract_version,
+        )
+    ).all()
+    return any(_stored_utc(receipt.valid_until) > now for _, _, _, receipt in rows)
 
 
 def _bound_candidate_package(
@@ -891,6 +948,39 @@ def submit_feedback(handoff_id: UUID, payload: FeedbackInput, request: Request, 
                 )
                 session.flush()
                 return _handoff_view(session, handoff).model_dump(mode="json")
+            if handoff.promotion_purpose == "PAPER_TO_LIVE":
+                if (
+                    payload.state != "FEEDBACK_COMPLETE"
+                    or payload.observation_start is None
+                    or payload.observation_end is None
+                    or payload.sample_size is None
+                    or payload.evidence
+                    or not payload.metrics
+                ):
+                    raise QfError(
+                        "FEEDBACK_CONTRACT_INVALID",
+                        "Typed Live feedback requires complete scalar metrics and no JSON evidence.",
+                        422,
+                    )
+                accept_live_feedback(
+                    session,
+                    handoff_id=handoff.id,
+                    header=FeedbackHeader(
+                        observation_start=payload.observation_start,
+                        observation_end=payload.observation_end,
+                        sample_size=payload.sample_size,
+                    ),
+                    metrics=(
+                        TypedFeedbackMetric(
+                            metric_code=metric.metric_code,
+                            status=metric.status,
+                            value=metric.value,
+                        )
+                        for metric in payload.metrics
+                    ),
+                )
+                session.flush()
+                return _handoff_view(session, handoff).model_dump(mode="json")
             allowed = {"FEEDBACK_IN_PROGRESS", "FEEDBACK_PARTIAL", "FEEDBACK_COMPLETE"}
             if payload.state not in allowed:
                 raise QfError("FEEDBACK_STATE_INVALID", "Feedback state is invalid.", 422)
@@ -983,25 +1073,8 @@ def readiness(request: Request) -> dict[str, Any]:
             .limit(1)
         ) is not None
         codex_ready, codex_state = codex_auth_readiness(session, request.app.state.settings)
-        downstreams = list(
-            session.scalars(
-                select(DownstreamSystem).where(
-                    DownstreamSystem.enabled.is_(True),
-                    DownstreamSystem.preflight_state == "READY",
-                    DownstreamSystem.service_token_ciphertext.is_not(None),
-                )
-            )
-        )
-        paper_ready = any(
-            downstream.environment_type == "PAPER"
-            and _has_current_downstream_preflight(session, downstream)
-            for downstream in downstreams
-        )
-        live_downstream_ready = any(
-            downstream.environment_type == "LIVE"
-            and _has_current_downstream_preflight(session, downstream)
-            for downstream in downstreams
-        )
+        paper_ready = _has_typed_connection_preflight(session, "PAPER")
+        live_downstream_ready = _has_typed_connection_preflight(session, "LIVE")
         paper_feedback_ready = bool(session.scalar(select(func.count()).select_from(ForwardEvidenceEpisode).join(HandoffOffer, ForwardEvidenceEpisode.handoff_id == HandoffOffer.id).where(HandoffOffer.purpose == "PAPER", ForwardEvidenceEpisode.state == "FEEDBACK_COMPLETE")))
         return {
             "SYSTEM_READY": True,
