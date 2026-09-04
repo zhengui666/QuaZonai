@@ -143,8 +143,6 @@ def test_trusted_alpha_configuration_commands_are_thin_canonical_transport() -> 
         "promotion-policy-version": {
             "purpose": "ALPHA_DISCOVERY_TO_SEALED",
             "mode": "MANUAL_APPROVAL",
-            "paper_downstream_system_id": None,
-            "live_downstream_system_id": None,
             "gates": [{"metric_code": "NET_RETURN", "comparator": "MINIMUM", "threshold": "0.02", "ordinal": 1}],
             "state": "ACTIVE",
         },
