@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, Query, Request
@@ -27,9 +27,14 @@ from db.models import (
     AlphaQualification,
     DataQualityResult,
     DatasetRevision,
+    DownstreamConnectionVersion,
     DownstreamSystem,
     EvaluationDatasetSelection,
     EvaluationDesignVersion,
+    FeedbackContractAcceptedArrowContract,
+    FeedbackContractAcceptedPackageContract,
+    FeedbackContractMetricRequirement,
+    FeedbackContractVersion,
     GovernedDataSource,
     Job,
     MarketUniverseVersion,
@@ -433,6 +438,15 @@ class PromotionPolicyVersionInput(StrictModel):
         "PAPER_TO_LIVE",
     ]
     mode: Literal["MANUAL_APPROVAL", "AUTO_HANDOFF"]
+    paper_downstream_system_id: UUID | None = None
+    paper_connection_version_id: UUID | None = None
+    paper_feedback_contract_version_id: UUID | None = None
+    paper_preflight_receipt_id: UUID | None = None
+    live_downstream_system_id: UUID | None = None
+    live_connection_version_id: UUID | None = None
+    live_feedback_contract_version_id: UUID | None = None
+    live_preflight_receipt_id: UUID | None = None
+    paper_to_live_policy_version_id: UUID | None = None
     gates: list[PromotionPolicyGateInput] = Field(min_length=1)
     state: Literal["ACTIVE"]
 
@@ -443,10 +457,42 @@ class PromotionPolicyVersionInput(StrictModel):
         ordinals = {gate.ordinal for gate in self.gates}
         if ordinals != set(range(1, len(self.gates) + 1)):
             raise ValueError("policy gate ordinals must be contiguous from one")
-        if self.purpose in {"ALPHA_DISCOVERY_TO_SEALED", "SEALED_TO_QUALIFIED"} and any(
-            gate.metric_code not in ALPHA_METRIC_CODES for gate in self.gates
-        ):
-            raise ValueError("Alpha policy gates must use supported sealed Alpha metrics")
+        paper = (
+            self.paper_downstream_system_id,
+            self.paper_connection_version_id,
+            self.paper_feedback_contract_version_id,
+            self.paper_preflight_receipt_id,
+        )
+        live = (
+            self.live_downstream_system_id,
+            self.live_connection_version_id,
+            self.live_feedback_contract_version_id,
+            self.live_preflight_receipt_id,
+        )
+        if self.purpose in {"ALPHA_DISCOVERY_TO_SEALED", "SEALED_TO_QUALIFIED"}:
+            if any(value is not None for value in (*paper, *live, self.paper_to_live_policy_version_id)):
+                raise ValueError("Alpha policies cannot bind downstream production tuples")
+            if any(gate.metric_code not in ALPHA_METRIC_CODES for gate in self.gates):
+                raise ValueError("Alpha policy gates must use supported sealed Alpha metrics")
+        elif self.purpose == "PORTFOLIO_TO_PAPER":
+            if any(value is None for value in paper) or any(value is not None for value in live):
+                raise ValueError("Paper policy requires exactly one complete Paper tuple")
+            if self.paper_to_live_policy_version_id is None:
+                raise ValueError("Paper policy requires its frozen Paper-to-Live policy")
+            if self.mode != "MANUAL_APPROVAL":
+                raise ValueError("Paper policy must use MANUAL_APPROVAL")
+            if not any(
+                gate.metric_code == "MATERIAL_IMPROVEMENT"
+                and gate.comparator == "MINIMUM"
+                and gate.threshold <= 0
+                for gate in self.gates
+            ):
+                raise ValueError("Paper policy requires a non-positive MATERIAL_IMPROVEMENT gate")
+        else:
+            if any(value is None for value in (*paper, *live)):
+                raise ValueError("Live policy requires complete Paper and Live tuples")
+            if self.paper_to_live_policy_version_id is not None:
+                raise ValueError("Live policy cannot bind another Paper-to-Live policy")
         return self
 
 
@@ -464,7 +510,14 @@ class PromotionPolicyVersionView(StrictModel):
     mode: str
     policy_contract_version: str | None = None
     paper_downstream_system_id: UUID | None = None
+    paper_connection_version_id: UUID | None = None
+    paper_feedback_contract_version_id: UUID | None = None
+    paper_preflight_receipt_id: UUID | None = None
     live_downstream_system_id: UUID | None = None
+    live_connection_version_id: UUID | None = None
+    live_feedback_contract_version_id: UUID | None = None
+    live_preflight_receipt_id: UUID | None = None
+    paper_to_live_policy_version_id: UUID | None = None
     gates: list[PromotionPolicyGateView]
     state: str
     created_at: datetime
@@ -752,6 +805,124 @@ class DownstreamPage(StrictModel):
     next_cursor: UUID | None = None
 
 
+class FeedbackContractVersionInput(StrictModel):
+    downstream_system_id: UUID
+    purpose: Literal["PAPER", "LIVE"]
+    minimum_observation_seconds: StrictInt = Field(gt=0)
+    minimum_valid_sample_size: StrictInt = Field(gt=0)
+    first_status_deadline_seconds: StrictInt = Field(gt=0)
+    complete_feedback_deadline_seconds: StrictInt = Field(gt=0)
+    grace_period_seconds: StrictInt = Field(ge=0)
+    required_metric_codes: list[StrictStr] = Field(min_length=1, max_length=100)
+    accepted_package_contracts: list[StrictStr] = Field(min_length=1, max_length=20)
+    accepted_arrow_contracts: list[StrictStr] = Field(min_length=1, max_length=20)
+    disclosure_policy: StrictStr = Field(min_length=1, max_length=80)
+
+    @field_validator(
+        "required_metric_codes", "accepted_package_contracts", "accepted_arrow_contracts"
+    )
+    @classmethod
+    def require_ordered_unique_text(cls, value: list[str]) -> list[str]:
+        normalized = [_required_text(item) for item in value]
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("values must be unique")
+        return normalized
+
+    @field_validator("disclosure_policy")
+    @classmethod
+    def require_disclosure_policy(cls, value: str) -> str:
+        return _required_text(value)
+
+
+class FeedbackContractVersionView(StrictModel):
+    id: UUID
+    downstream_system_id: UUID
+    version_no: int
+    purpose: Literal["PAPER", "LIVE"]
+    minimum_observation_seconds: int
+    minimum_valid_sample_size: int
+    first_status_deadline_seconds: int
+    complete_feedback_deadline_seconds: int
+    grace_period_seconds: int
+    required_metric_codes: list[str]
+    accepted_package_contracts: list[str]
+    accepted_arrow_contracts: list[str]
+    disclosure_policy: str
+    state: Literal["ACTIVE", "RETIRED"]
+    created_at: datetime
+
+
+class FeedbackContractVersionPage(StrictModel):
+    items: list[FeedbackContractVersionView]
+    next_cursor: UUID | None = None
+
+
+class DownstreamConnectionVersionInput(StrictModel):
+    downstream_system_id: UUID
+    feedback_contract_version_id: UUID
+    package_contract_version: StrictStr = Field(min_length=1, max_length=40)
+
+    @field_validator("package_contract_version")
+    @classmethod
+    def require_package_contract(cls, value: str) -> str:
+        return _required_text(value)
+
+
+class DownstreamConnectionVersionView(StrictModel):
+    id: UUID
+    downstream_system_id: UUID
+    version_no: int
+    package_contract_version: str
+    feedback_contract_version_id: UUID
+    state: Literal["ACTIVE", "RETIRED"]
+    created_at: datetime
+
+
+class DownstreamConnectionVersionPage(StrictModel):
+    items: list[DownstreamConnectionVersionView]
+    next_cursor: UUID | None = None
+
+
+class DownstreamConnectionPreflightInput(StrictModel):
+    package_contract_version: StrictStr = Field(min_length=1, max_length=40)
+    feedback_contract_version_id: UUID
+    capabilities: list[StrictStr] = Field(min_length=1, max_length=100)
+    valid_until: datetime
+
+    @field_validator("package_contract_version")
+    @classmethod
+    def require_preflight_package_contract(cls, value: str) -> str:
+        return _required_text(value)
+
+    @field_validator("capabilities")
+    @classmethod
+    def require_unique_capabilities(cls, value: list[str]) -> list[str]:
+        normalized = [_required_text(item) for item in value]
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("capabilities must be unique")
+        return normalized
+
+    @model_validator(mode="after")
+    def require_utc_future_validity(self) -> "DownstreamConnectionPreflightInput":
+        if self.valid_until.tzinfo is None or self.valid_until.utcoffset() != timedelta(0):
+            raise ValueError("valid_until must be UTC")
+        if self.valid_until <= _now():
+            raise ValueError("valid_until must be in the future")
+        return self
+
+
+class DownstreamConnectionPreflightView(StrictModel):
+    id: UUID
+    downstream_connection_version_id: UUID
+    resource_revision: int
+    revision: int
+    status: Literal["READY"]
+    capabilities: list[str]
+    package_contract_version: str
+    checked_at: datetime
+    valid_until: datetime
+
+
 def _now() -> datetime:
     return datetime.now(UTC)
 
@@ -954,7 +1125,14 @@ def _promotion_policy_version_view(
         mode=item.mode,
         policy_contract_version=item.policy_contract_version,
         paper_downstream_system_id=item.paper_downstream_system_id,
+        paper_connection_version_id=item.paper_connection_version_id,
+        paper_feedback_contract_version_id=item.paper_feedback_contract_version_id,
+        paper_preflight_receipt_id=item.paper_preflight_receipt_id,
         live_downstream_system_id=item.live_downstream_system_id,
+        live_connection_version_id=item.live_connection_version_id,
+        live_feedback_contract_version_id=item.live_feedback_contract_version_id,
+        live_preflight_receipt_id=item.live_preflight_receipt_id,
+        paper_to_live_policy_version_id=item.paper_to_live_policy_version_id,
         gates=[
             PromotionPolicyGateView(
                 metric_code=gate.metric_code,
@@ -1100,6 +1278,79 @@ def _downstream_view(item: DownstreamSystem) -> DownstreamView:
     )
 
 
+def _feedback_contract_version_view(
+    session: Session, item: FeedbackContractVersion
+) -> FeedbackContractVersionView:
+    metric_rows = list(
+        session.scalars(
+            select(FeedbackContractMetricRequirement)
+            .where(FeedbackContractMetricRequirement.feedback_contract_version_id == item.id)
+            .order_by(FeedbackContractMetricRequirement.ordinal)
+        )
+    )
+    package_rows = list(
+        session.scalars(
+            select(FeedbackContractAcceptedPackageContract)
+            .where(FeedbackContractAcceptedPackageContract.feedback_contract_version_id == item.id)
+            .order_by(FeedbackContractAcceptedPackageContract.ordinal)
+        )
+    )
+    arrow_rows = list(
+        session.scalars(
+            select(FeedbackContractAcceptedArrowContract)
+            .where(FeedbackContractAcceptedArrowContract.feedback_contract_version_id == item.id)
+            .order_by(FeedbackContractAcceptedArrowContract.ordinal)
+        )
+    )
+    return FeedbackContractVersionView(
+        id=item.id,
+        downstream_system_id=item.downstream_system_id,
+        version_no=item.version_no,
+        purpose=cast(Literal["PAPER", "LIVE"], item.purpose),
+        minimum_observation_seconds=item.minimum_observation_seconds,
+        minimum_valid_sample_size=item.minimum_valid_sample_size,
+        first_status_deadline_seconds=item.first_status_deadline_seconds,
+        complete_feedback_deadline_seconds=item.complete_feedback_deadline_seconds,
+        grace_period_seconds=item.grace_period_seconds,
+        required_metric_codes=[row.metric_code for row in metric_rows],
+        accepted_package_contracts=[row.contract_version for row in package_rows],
+        accepted_arrow_contracts=[row.contract_version for row in arrow_rows],
+        disclosure_policy=item.disclosure_policy,
+        state=cast(Literal["ACTIVE", "RETIRED"], item.state),
+        created_at=item.created_at,
+    )
+
+
+def _downstream_connection_version_view(
+    item: DownstreamConnectionVersion,
+) -> DownstreamConnectionVersionView:
+    return DownstreamConnectionVersionView(
+        id=item.id,
+        downstream_system_id=item.downstream_system_id,
+        version_no=item.version_no,
+        package_contract_version=item.package_contract_version,
+        feedback_contract_version_id=item.feedback_contract_version_id,
+        state=cast(Literal["ACTIVE", "RETIRED"], item.state),
+        created_at=item.created_at,
+    )
+
+
+def _downstream_connection_preflight_view(
+    item: PreflightReceipt,
+) -> DownstreamConnectionPreflightView:
+    return DownstreamConnectionPreflightView(
+        id=item.id,
+        downstream_connection_version_id=item.resource_id,
+        resource_revision=item.resource_revision,
+        revision=item.revision,
+        status="READY",
+        capabilities=item.capabilities,
+        package_contract_version=item.contract_version,
+        checked_at=item.checked_at,
+        valid_until=item.valid_until,
+    )
+
+
 def _require_universes(session: Session, ids: list[UUID]) -> None:
     present = set(session.scalars(select(MarketUniverseVersion.id).where(MarketUniverseVersion.id.in_(ids))))
     missing = [str(item) for item in ids if item not in present]
@@ -1116,6 +1367,185 @@ def _locked_universe(session: Session, universe_version_id: UUID) -> MarketUnive
     if universe is None:
         raise QfError("UNIVERSE_NOT_FOUND", "Universe Version was not found.", 404)
     return universe
+
+
+def _locked_downstream(session: Session, downstream_system_id: UUID) -> DownstreamSystem:
+    downstream = session.execute(
+        select(DownstreamSystem)
+        .where(DownstreamSystem.id == downstream_system_id)
+        .with_for_update()
+    ).scalar_one_or_none()
+    if downstream is None:
+        raise QfError("DOWNSTREAM_NOT_FOUND", "Downstream System was not found.", 404)
+    return downstream
+
+
+def _ordered_contract_rows(
+    session: Session, contract_id: UUID
+) -> tuple[list[FeedbackContractMetricRequirement], list[FeedbackContractAcceptedPackageContract], list[FeedbackContractAcceptedArrowContract]]:
+    metrics = list(
+        session.scalars(
+            select(FeedbackContractMetricRequirement)
+            .where(FeedbackContractMetricRequirement.feedback_contract_version_id == contract_id)
+            .order_by(FeedbackContractMetricRequirement.ordinal)
+            .with_for_update()
+        )
+    )
+    packages = list(
+        session.scalars(
+            select(FeedbackContractAcceptedPackageContract)
+            .where(FeedbackContractAcceptedPackageContract.feedback_contract_version_id == contract_id)
+            .order_by(FeedbackContractAcceptedPackageContract.ordinal)
+            .with_for_update()
+        )
+    )
+    arrows = list(
+        session.scalars(
+            select(FeedbackContractAcceptedArrowContract)
+            .where(FeedbackContractAcceptedArrowContract.feedback_contract_version_id == contract_id)
+            .order_by(FeedbackContractAcceptedArrowContract.ordinal)
+            .with_for_update()
+        )
+    )
+    if any(
+        not rows or [row.ordinal for row in rows] != list(range(1, len(rows) + 1))
+        for rows in (metrics, packages, arrows)
+    ):
+        raise QfError(
+            "FEEDBACK_CONTRACT_INVALID",
+            "Feedback Contract typed rows must be nonempty and contiguous.",
+            409,
+        )
+    return metrics, packages, arrows
+
+
+def _locked_connection_tuple(
+    session: Session,
+    *,
+    downstream_system_id: UUID,
+    connection_version_id: UUID,
+    feedback_contract_version_id: UUID,
+    purpose: Literal["PAPER", "LIVE"],
+) -> tuple[DownstreamSystem, DownstreamConnectionVersion, FeedbackContractVersion]:
+    downstream = _locked_downstream(session, downstream_system_id)
+    connection = session.execute(
+        select(DownstreamConnectionVersion)
+        .where(DownstreamConnectionVersion.id == connection_version_id)
+        .with_for_update()
+    ).scalar_one_or_none()
+    contract = session.execute(
+        select(FeedbackContractVersion)
+        .where(FeedbackContractVersion.id == feedback_contract_version_id)
+        .with_for_update()
+    ).scalar_one_or_none()
+    if connection is None or contract is None:
+        raise QfError(
+            "PROMOTION_POLICY_BINDING_NOT_FOUND",
+            "Promotion Policy binding dependency was not found.",
+            404,
+        )
+    _, packages, _ = _ordered_contract_rows(session, contract.id)
+    if (
+        not downstream.enabled
+        or downstream.environment_type != purpose
+        or connection.downstream_system_id != downstream.id
+        or connection.feedback_contract_version_id != contract.id
+        or connection.state != "ACTIVE"
+        or contract.downstream_system_id != downstream.id
+        or contract.purpose != purpose
+        or contract.state != "ACTIVE"
+        or connection.package_contract_version
+        not in {row.contract_version for row in packages}
+    ):
+        raise QfError(
+            "PROMOTION_POLICY_BINDING_INVALID",
+            "Promotion Policy binding dependencies do not form one active typed tuple.",
+            409,
+        )
+    return downstream, connection, contract
+
+
+def _locked_policy_tuple(
+    session: Session,
+    *,
+    downstream_system_id: UUID,
+    connection_version_id: UUID,
+    feedback_contract_version_id: UUID,
+    preflight_receipt_id: UUID,
+    purpose: Literal["PAPER", "LIVE"],
+) -> tuple[DownstreamSystem, DownstreamConnectionVersion, FeedbackContractVersion, PreflightReceipt]:
+    downstream, connection, contract = _locked_connection_tuple(
+        session,
+        downstream_system_id=downstream_system_id,
+        connection_version_id=connection_version_id,
+        feedback_contract_version_id=feedback_contract_version_id,
+        purpose=purpose,
+    )
+    receipt = session.execute(
+        select(PreflightReceipt)
+        .where(PreflightReceipt.id == preflight_receipt_id)
+        .with_for_update()
+    ).scalar_one_or_none()
+    valid_until = receipt.valid_until if receipt is not None else None
+    if valid_until is not None and valid_until.tzinfo is None:
+        valid_until = valid_until.replace(tzinfo=UTC)
+    if (
+        receipt is None
+        or receipt.resource_type != "DOWNSTREAM_CONNECTION_VERSION"
+        or receipt.resource_id != connection.id
+        or receipt.resource_revision != connection.version_no
+        or receipt.status != "READY"
+        or valid_until is None
+        or valid_until <= _now()
+        or receipt.contract_version != connection.package_contract_version
+    ):
+        raise QfError(
+            "PROMOTION_POLICY_PREFLIGHT_STALE",
+            "Promotion Policy requires its exact active typed preflight receipt.",
+            409,
+        )
+    return downstream, connection, contract, receipt
+
+
+def _require_p2l_gate_metric_codes(
+    session: Session, *, contract_id: UUID, metric_codes: list[str]
+) -> None:
+    metrics, _, _ = _ordered_contract_rows(session, contract_id)
+    required = {row.metric_code for row in metrics}
+    if not metric_codes or not set(metric_codes) <= required:
+        raise QfError(
+            "PROMOTION_POLICY_GATE_INVALID",
+            "Paper-to-Live policy gates must use frozen Paper Feedback Contract metrics.",
+            409,
+        )
+
+
+def _require_p2l_gate_rows(
+    session: Session, *, policy_id: UUID, contract_id: UUID
+) -> None:
+    gates = list(
+        session.scalars(
+            select(PromotionPolicyGate)
+            .where(PromotionPolicyGate.policy_version_id == policy_id)
+            .order_by(PromotionPolicyGate.ordinal)
+            .with_for_update()
+        )
+    )
+    if (
+        not gates
+        or [gate.ordinal for gate in gates] != list(range(1, len(gates) + 1))
+        or any(not gate.threshold.is_finite() for gate in gates)
+    ):
+        raise QfError(
+            "PROMOTION_POLICY_GATE_INVALID",
+            "Paper-to-Live policy gates must be finite, nonempty, and contiguous.",
+            409,
+        )
+    _require_p2l_gate_metric_codes(
+        session,
+        contract_id=contract_id,
+        metric_codes=[gate.metric_code for gate in gates],
+    )
 
 
 def _trusted_evaluation_dataset(
@@ -1873,22 +2303,126 @@ def create_promotion_policy_version(
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     del request
-    if payload.purpose in {"PORTFOLIO_TO_PAPER", "PAPER_TO_LIVE"}:
-        raise QfError(
-            "PROMOTION_POLICY_TYPED_BINDING_UNAVAILABLE",
-            "Paper/Live policy creation requires typed connection, feedback-contract, and preflight writers.",
-            409,
-        )
     with session.begin():
         def action() -> dict[str, Any]:
-            active = list(
-                session.scalars(
+            paper_tuple = (
+                cast(UUID, payload.paper_downstream_system_id),
+                cast(UUID, payload.paper_connection_version_id),
+                cast(UUID, payload.paper_feedback_contract_version_id),
+                cast(UUID, payload.paper_preflight_receipt_id),
+            )
+            live_tuple = (
+                cast(UUID, payload.live_downstream_system_id),
+                cast(UUID, payload.live_connection_version_id),
+                cast(UUID, payload.live_feedback_contract_version_id),
+                cast(UUID, payload.live_preflight_receipt_id),
+            )
+            if payload.purpose == "PORTFOLIO_TO_PAPER":
+                _, target_paper_connection, target_paper_contract, _ = _locked_policy_tuple(
+                    session,
+                    downstream_system_id=paper_tuple[0],
+                    connection_version_id=paper_tuple[1],
+                    feedback_contract_version_id=paper_tuple[2],
+                    preflight_receipt_id=paper_tuple[3],
+                    purpose="PAPER",
+                )
+                target = session.execute(
                     select(PromotionPolicyVersion)
                     .where(
-                        PromotionPolicyVersion.purpose == payload.purpose,
-                        PromotionPolicyVersion.state == "ACTIVE",
+                        PromotionPolicyVersion.id
+                        == cast(UUID, payload.paper_to_live_policy_version_id)
                     )
                     .with_for_update()
+                ).scalar_one_or_none()
+                if (
+                    target is None
+                    or target.policy_contract_version != "PROMOTION_POLICY_V1"
+                    or target.purpose != "PAPER_TO_LIVE"
+                    or target.state != "ACTIVE"
+                    or target.paper_to_live_policy_version_id is not None
+                    or (
+                        target.paper_downstream_system_id,
+                        target.paper_connection_version_id,
+                        target.paper_feedback_contract_version_id,
+                        target.paper_preflight_receipt_id,
+                    )
+                    != paper_tuple
+                    or any(
+                        value is None
+                        for value in (
+                            target.live_downstream_system_id,
+                            target.live_connection_version_id,
+                            target.live_feedback_contract_version_id,
+                            target.live_preflight_receipt_id,
+                        )
+                    )
+                ):
+                    raise QfError(
+                        "PROMOTION_POLICY_LINEAGE_INVALID",
+                        "Paper policy must bind one active matching Paper-to-Live policy.",
+                        409,
+                    )
+                _, target_live_connection, _, _ = _locked_policy_tuple(
+                    session,
+                    downstream_system_id=cast(UUID, target.live_downstream_system_id),
+                    connection_version_id=cast(UUID, target.live_connection_version_id),
+                    feedback_contract_version_id=cast(
+                        UUID, target.live_feedback_contract_version_id
+                    ),
+                    preflight_receipt_id=cast(UUID, target.live_preflight_receipt_id),
+                    purpose="LIVE",
+                )
+                if target_paper_connection.package_contract_version != target_live_connection.package_contract_version:
+                    raise QfError(
+                        "PROMOTION_POLICY_LINEAGE_INVALID",
+                        "Paper-to-Live policy must accept one immutable Candidate Package contract.",
+                        409,
+                    )
+                _require_p2l_gate_rows(
+                    session,
+                    policy_id=target.id,
+                    contract_id=target_paper_contract.id,
+                )
+            elif payload.purpose == "PAPER_TO_LIVE":
+                _, paper_connection, paper_contract, _ = _locked_policy_tuple(
+                    session,
+                    downstream_system_id=paper_tuple[0],
+                    connection_version_id=paper_tuple[1],
+                    feedback_contract_version_id=paper_tuple[2],
+                    preflight_receipt_id=paper_tuple[3],
+                    purpose="PAPER",
+                )
+                _, live_connection, _, _ = _locked_policy_tuple(
+                    session,
+                    downstream_system_id=live_tuple[0],
+                    connection_version_id=live_tuple[1],
+                    feedback_contract_version_id=live_tuple[2],
+                    preflight_receipt_id=live_tuple[3],
+                    purpose="LIVE",
+                )
+                if paper_connection.package_contract_version != live_connection.package_contract_version:
+                    raise QfError(
+                        "PROMOTION_POLICY_BINDING_INVALID",
+                        "Paper and Live tuples must accept the same Candidate Package contract.",
+                        409,
+                    )
+                _require_p2l_gate_metric_codes(
+                    session,
+                    contract_id=paper_contract.id,
+                    metric_codes=[gate.metric_code for gate in payload.gates],
+                )
+            active = (
+                []
+                if payload.purpose == "PAPER_TO_LIVE"
+                else list(
+                    session.scalars(
+                        select(PromotionPolicyVersion)
+                        .where(
+                            PromotionPolicyVersion.purpose == payload.purpose,
+                            PromotionPolicyVersion.state == "ACTIVE",
+                        )
+                        .with_for_update()
+                    )
                 )
             )
             if len(active) > 1:
@@ -1917,6 +2451,15 @@ def create_promotion_policy_version(
                 purpose=payload.purpose,
                 mode=payload.mode,
                 policy_contract_version="PROMOTION_POLICY_V1",
+                paper_downstream_system_id=payload.paper_downstream_system_id,
+                paper_connection_version_id=payload.paper_connection_version_id,
+                paper_feedback_contract_version_id=payload.paper_feedback_contract_version_id,
+                paper_preflight_receipt_id=payload.paper_preflight_receipt_id,
+                live_downstream_system_id=payload.live_downstream_system_id,
+                live_connection_version_id=payload.live_connection_version_id,
+                live_feedback_contract_version_id=payload.live_feedback_contract_version_id,
+                live_preflight_receipt_id=payload.live_preflight_receipt_id,
+                paper_to_live_policy_version_id=payload.paper_to_live_policy_version_id,
                 state=payload.state,
             )
             session.add(item)
@@ -2234,6 +2777,284 @@ def create_downstream_system(
                 )
             )
         return response
+
+
+@router.get("/feedback-contract-versions", response_model=FeedbackContractVersionPage)
+def list_feedback_contract_versions(
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: UUID | None = None,
+    session: Session = Depends(get_session),
+) -> FeedbackContractVersionPage:
+    items, next_cursor = _page(session, FeedbackContractVersion, limit=limit, cursor=cursor)
+    return FeedbackContractVersionPage(
+        items=[_feedback_contract_version_view(session, item) for item in items],
+        next_cursor=next_cursor,
+    )
+
+
+@router.post(
+    "/feedback-contract-versions",
+    response_model=FeedbackContractVersionView,
+    status_code=201,
+)
+def create_feedback_contract_version(
+    payload: FeedbackContractVersionInput,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    del request
+    with session.begin():
+        def action() -> dict[str, Any]:
+            downstream = _locked_downstream(session, payload.downstream_system_id)
+            if downstream.environment_type != payload.purpose:
+                raise QfError(
+                    "FEEDBACK_CONTRACT_PURPOSE_INVALID",
+                    "Feedback Contract purpose must match its logical Downstream.",
+                    409,
+                )
+            last_version = session.scalar(
+                select(func.max(FeedbackContractVersion.version_no)).where(
+                    FeedbackContractVersion.downstream_system_id == downstream.id
+                )
+            )
+            item = FeedbackContractVersion(
+                downstream_system_id=downstream.id,
+                version_no=int(last_version or 0) + 1,
+                purpose=payload.purpose,
+                minimum_observation_seconds=payload.minimum_observation_seconds,
+                minimum_valid_sample_size=payload.minimum_valid_sample_size,
+                first_status_deadline_seconds=payload.first_status_deadline_seconds,
+                complete_feedback_deadline_seconds=payload.complete_feedback_deadline_seconds,
+                grace_period_seconds=payload.grace_period_seconds,
+                disclosure_policy=payload.disclosure_policy,
+                spec_json={},
+                state="ACTIVE",
+            )
+            session.add(item)
+            session.flush()
+            session.add_all(
+                FeedbackContractMetricRequirement(
+                    feedback_contract_version_id=item.id,
+                    metric_code=metric_code,
+                    ordinal=index,
+                )
+                for index, metric_code in enumerate(payload.required_metric_codes, start=1)
+            )
+            session.add_all(
+                FeedbackContractAcceptedPackageContract(
+                    feedback_contract_version_id=item.id,
+                    contract_version=contract_version,
+                    ordinal=index,
+                )
+                for index, contract_version in enumerate(payload.accepted_package_contracts, start=1)
+            )
+            session.add_all(
+                FeedbackContractAcceptedArrowContract(
+                    feedback_contract_version_id=item.id,
+                    contract_version=contract_version,
+                    ordinal=index,
+                )
+                for index, contract_version in enumerate(payload.accepted_arrow_contracts, start=1)
+            )
+            session.flush()
+            append_event(
+                session,
+                kind="FEEDBACK_CONTRACT_VERSION_CREATED",
+                aggregate_type="FEEDBACK_CONTRACT_VERSION",
+                aggregate_id=item.id,
+                payload={"downstream_system_id": str(downstream.id), "version_no": item.version_no},
+                actor_kind="HUMAN",
+            )
+            return _feedback_contract_version_view(session, item).model_dump(mode="json")
+
+        return _idempotent(
+            session,
+            key=idempotency_key,
+            operation=f"configuration.feedback-contract-version:{payload.downstream_system_id}",
+            payload=payload,
+            action=action,
+            status_code=201,
+        )
+
+
+@router.get("/downstream-connection-versions", response_model=DownstreamConnectionVersionPage)
+def list_downstream_connection_versions(
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: UUID | None = None,
+    session: Session = Depends(get_session),
+) -> DownstreamConnectionVersionPage:
+    items, next_cursor = _page(session, DownstreamConnectionVersion, limit=limit, cursor=cursor)
+    return DownstreamConnectionVersionPage(
+        items=[_downstream_connection_version_view(item) for item in items],
+        next_cursor=next_cursor,
+    )
+
+
+@router.post(
+    "/downstream-connection-versions",
+    response_model=DownstreamConnectionVersionView,
+    status_code=201,
+)
+def create_downstream_connection_version(
+    payload: DownstreamConnectionVersionInput,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    del request
+    with session.begin():
+        def action() -> dict[str, Any]:
+            downstream = _locked_downstream(session, payload.downstream_system_id)
+            contract = session.execute(
+                select(FeedbackContractVersion)
+                .where(FeedbackContractVersion.id == payload.feedback_contract_version_id)
+                .with_for_update()
+            ).scalar_one_or_none()
+            if contract is None:
+                raise QfError("FEEDBACK_CONTRACT_NOT_FOUND", "Feedback Contract was not found.", 404)
+            _, packages, _ = _ordered_contract_rows(session, contract.id)
+            if (
+                contract.downstream_system_id != downstream.id
+                or contract.purpose != downstream.environment_type
+                or contract.state != "ACTIVE"
+                or payload.package_contract_version
+                not in {row.contract_version for row in packages}
+            ):
+                raise QfError(
+                    "DOWNSTREAM_CONNECTION_CONTRACT_INVALID",
+                    "Connection requires one active matching Feedback Contract and accepted package contract.",
+                    409,
+                )
+            last_version = session.scalar(
+                select(func.max(DownstreamConnectionVersion.version_no)).where(
+                    DownstreamConnectionVersion.downstream_system_id == downstream.id
+                )
+            )
+            item = DownstreamConnectionVersion(
+                downstream_system_id=downstream.id,
+                version_no=int(last_version or 0) + 1,
+                plugin_release_id=None,
+                credential_set_id=None,
+                package_contract_version=payload.package_contract_version,
+                feedback_contract_version_id=contract.id,
+                public_config={},
+                state="ACTIVE",
+            )
+            session.add(item)
+            session.flush()
+            append_event(
+                session,
+                kind="DOWNSTREAM_CONNECTION_VERSION_CREATED",
+                aggregate_type="DOWNSTREAM_CONNECTION_VERSION",
+                aggregate_id=item.id,
+                payload={"downstream_system_id": str(downstream.id), "version_no": item.version_no},
+                actor_kind="HUMAN",
+            )
+            return _downstream_connection_version_view(item).model_dump(mode="json")
+
+        return _idempotent(
+            session,
+            key=idempotency_key,
+            operation=f"configuration.downstream-connection-version:{payload.downstream_system_id}",
+            payload=payload,
+            action=action,
+            status_code=201,
+        )
+
+
+@router.post(
+    "/downstream-connection-versions/{connection_version_id}/preflight",
+    response_model=DownstreamConnectionPreflightView,
+)
+def preflight_downstream_connection_version(
+    connection_version_id: UUID,
+    payload: DownstreamConnectionPreflightInput,
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    with session.begin():
+        connection = session.execute(
+            select(DownstreamConnectionVersion)
+            .where(DownstreamConnectionVersion.id == connection_version_id)
+            .with_for_update()
+        ).scalar_one_or_none()
+        if connection is None:
+            raise QfError("DOWNSTREAM_CONNECTION_NOT_FOUND", "Connection Version was not found.", 404)
+        configured_downstream = _locked_downstream(session, connection.downstream_system_id)
+        if configured_downstream.environment_type not in {"PAPER", "LIVE"}:
+            raise QfError("DOWNSTREAM_CONNECTION_CONTRACT_INVALID", "Downstream environment is invalid.", 409)
+        downstream, locked_connection, contract = _locked_connection_tuple(
+            session,
+            downstream_system_id=connection.downstream_system_id,
+            connection_version_id=connection.id,
+            feedback_contract_version_id=connection.feedback_contract_version_id,
+            purpose=cast(Literal["PAPER", "LIVE"], configured_downstream.environment_type),
+        )
+        authenticate_downstream(request.app.state.settings, downstream, authorization)
+        if (
+            payload.package_contract_version != locked_connection.package_contract_version
+            or payload.feedback_contract_version_id != contract.id
+        ):
+            raise QfError(
+                "DOWNSTREAM_CONNECTION_PREFLIGHT_CONTRACT_MISMATCH",
+                "Preflight must echo its frozen Connection and Feedback Contract.",
+                409,
+            )
+        operation = f"configuration.downstream-connection.preflight:{connection.id}:{connection.version_no}"
+
+        def action() -> dict[str, Any]:
+            checked_at = _now()
+            if payload.valid_until <= checked_at:
+                raise QfError(
+                    "DOWNSTREAM_CONNECTION_PREFLIGHT_VALIDITY_INVALID",
+                    "valid_until must still be in the future.",
+                    422,
+                )
+            revision = int(
+                session.scalar(
+                    select(func.max(PreflightReceipt.revision)).where(
+                        PreflightReceipt.resource_type == "DOWNSTREAM_CONNECTION_VERSION",
+                        PreflightReceipt.resource_id == locked_connection.id,
+                    )
+                )
+                or 0
+            ) + 1
+            item = PreflightReceipt(
+                resource_type="DOWNSTREAM_CONNECTION_VERSION",
+                resource_id=locked_connection.id,
+                resource_revision=locked_connection.version_no,
+                revision=revision,
+                status="READY",
+                reason_codes=[],
+                capabilities=payload.capabilities,
+                contract_version=locked_connection.package_contract_version,
+                checked_at=checked_at,
+                valid_until=payload.valid_until,
+                checker_version="downstream-service-v1",
+            )
+            session.add(item)
+            session.flush()
+            append_event(
+                session,
+                kind="DOWNSTREAM_CONNECTION_PREFLIGHT_COMPLETED",
+                aggregate_type="DOWNSTREAM_CONNECTION_VERSION",
+                aggregate_id=locked_connection.id,
+                payload={"receipt_id": str(item.id), "revision": item.revision},
+                actor_kind="DOWNSTREAM",
+            )
+            return _downstream_connection_preflight_view(item).model_dump(mode="json")
+
+        return _idempotent(
+            session,
+            key=idempotency_key,
+            operation=operation,
+            payload=payload,
+            action=action,
+            status_code=200,
+        )
 
 
 @router.post(
