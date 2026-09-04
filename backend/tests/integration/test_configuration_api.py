@@ -100,6 +100,67 @@ def _promotion_policy() -> dict[str, object]:
     }
 
 
+def _create_typed_downstream_binding(
+    client: TestClient, *, name: str, environment_type: str
+) -> dict[str, str]:
+    downstream = client.post(
+        "/api/v1/downstream-systems",
+        json={
+            "name": name,
+            "environment_type": environment_type,
+            "package_contract_version": "CANDIDATE_PACKAGE_V1",
+            "feedback_contract_version": "1",
+            "compatibility": ["TARGET_PORTFOLIO_V1"],
+            "public_config": {},
+        },
+    )
+    assert downstream.status_code == 201, downstream.text
+    downstream_body = downstream.json()
+    contract = client.post(
+        "/api/v1/feedback-contract-versions",
+        json={
+            "downstream_system_id": downstream_body["id"],
+            "purpose": environment_type,
+            "minimum_observation_seconds": 60,
+            "minimum_valid_sample_size": 2,
+            "first_status_deadline_seconds": 60,
+            "complete_feedback_deadline_seconds": 600,
+            "grace_period_seconds": 0,
+            "required_metric_codes": ["PAPER_SHARPE", "PAPER_RETURN"],
+            "accepted_package_contracts": ["CANDIDATE_PACKAGE_V1"],
+            "accepted_arrow_contracts": ["arrow-ipc-file-v1"],
+            "disclosure_policy": "LEVEL_1",
+        },
+    )
+    assert contract.status_code == 201, contract.text
+    connection = client.post(
+        "/api/v1/downstream-connection-versions",
+        json={
+            "downstream_system_id": downstream_body["id"],
+            "feedback_contract_version_id": contract.json()["id"],
+            "package_contract_version": "CANDIDATE_PACKAGE_V1",
+        },
+    )
+    assert connection.status_code == 201, connection.text
+    receipt = client.post(
+        f"/api/v1/downstream-connection-versions/{connection.json()['id']}/preflight",
+        headers={"Authorization": f"Bearer {downstream_body['service_token']}"},
+        json={
+            "package_contract_version": "CANDIDATE_PACKAGE_V1",
+            "feedback_contract_version_id": contract.json()["id"],
+            "capabilities": ["TARGET_PORTFOLIO_V1"],
+            "valid_until": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+        },
+    )
+    assert receipt.status_code == 200, receipt.text
+    return {
+        "downstream_system_id": downstream_body["id"],
+        "connection_version_id": connection.json()["id"],
+        "feedback_contract_version_id": contract.json()["id"],
+        "preflight_receipt_id": receipt.json()["id"],
+    }
+
+
 def _seed_trusted_alpha_configuration(engine: Engine) -> dict[str, str]:
     now = datetime.now(UTC)
     factory = create_session_factory(engine)
@@ -922,6 +983,129 @@ def test_trusted_alpha_configuration_writers_are_immutable_and_readable(
         ]
 
 
+def test_typed_downstream_bindings_create_complete_paper_and_live_policies(
+    engine: Engine, settings: Settings
+) -> None:
+    client = TestClient(create_app(settings=settings, engine=engine))
+    paper = _create_typed_downstream_binding(
+        client, name="Typed Paper Consumer", environment_type="PAPER"
+    )
+    live = _create_typed_downstream_binding(
+        client, name="Typed Live Consumer", environment_type="LIVE"
+    )
+    paper_tuple = {
+        "paper_downstream_system_id": paper["downstream_system_id"],
+        "paper_connection_version_id": paper["connection_version_id"],
+        "paper_feedback_contract_version_id": paper["feedback_contract_version_id"],
+        "paper_preflight_receipt_id": paper["preflight_receipt_id"],
+    }
+    live_tuple = {
+        "live_downstream_system_id": live["downstream_system_id"],
+        "live_connection_version_id": live["connection_version_id"],
+        "live_feedback_contract_version_id": live["feedback_contract_version_id"],
+        "live_preflight_receipt_id": live["preflight_receipt_id"],
+    }
+    paper_to_live = client.post(
+        "/api/v1/promotion-policy-versions",
+        json={
+            "purpose": "PAPER_TO_LIVE",
+            "mode": "AUTO_HANDOFF",
+            **paper_tuple,
+            **live_tuple,
+            "paper_to_live_policy_version_id": None,
+            "gates": [
+                {
+                    "metric_code": "PAPER_SHARPE",
+                    "comparator": "MINIMUM",
+                    "threshold": "1.0",
+                    "ordinal": 1,
+                }
+            ],
+            "state": "ACTIVE",
+        },
+    )
+    assert paper_to_live.status_code == 201, paper_to_live.text
+    assert paper_to_live.json()["policy_contract_version"] == "PROMOTION_POLICY_V1"
+    assert paper_to_live.json()["paper_connection_version_id"] == paper_tuple[
+        "paper_connection_version_id"
+    ]
+    assert paper_to_live.json()["live_connection_version_id"] == live_tuple[
+        "live_connection_version_id"
+    ]
+
+    paper_policy = client.post(
+        "/api/v1/promotion-policy-versions",
+        json={
+            "purpose": "PORTFOLIO_TO_PAPER",
+            "mode": "MANUAL_APPROVAL",
+            **paper_tuple,
+            "live_downstream_system_id": None,
+            "live_connection_version_id": None,
+            "live_feedback_contract_version_id": None,
+            "live_preflight_receipt_id": None,
+            "paper_to_live_policy_version_id": paper_to_live.json()["id"],
+            "gates": [
+                {
+                    "metric_code": "MATERIAL_IMPROVEMENT",
+                    "comparator": "MINIMUM",
+                    "threshold": "0",
+                    "ordinal": 1,
+                }
+            ],
+            "state": "ACTIVE",
+        },
+    )
+    assert paper_policy.status_code == 201, paper_policy.text
+    assert paper_policy.json()["paper_to_live_policy_version_id"] == paper_to_live.json()["id"]
+
+    wrong_gate = client.post(
+        "/api/v1/promotion-policy-versions",
+        json={
+            "purpose": "PAPER_TO_LIVE",
+            "mode": "MANUAL_APPROVAL",
+            **paper_tuple,
+            **live_tuple,
+            "paper_to_live_policy_version_id": None,
+            "gates": [
+                {
+                    "metric_code": "LIVE_ONLY_METRIC",
+                    "comparator": "MINIMUM",
+                    "threshold": "1.0",
+                    "ordinal": 1,
+                }
+            ],
+            "state": "ACTIVE",
+        },
+    )
+    assert wrong_gate.status_code == 409
+    assert wrong_gate.json()["error"]["code"] == "PROMOTION_POLICY_GATE_INVALID"
+
+    mismatched_paper = client.post(
+        "/api/v1/promotion-policy-versions",
+        json={
+            "purpose": "PORTFOLIO_TO_PAPER",
+            "mode": "MANUAL_APPROVAL",
+            **{**paper_tuple, "paper_preflight_receipt_id": live["preflight_receipt_id"]},
+            "live_downstream_system_id": None,
+            "live_connection_version_id": None,
+            "live_feedback_contract_version_id": None,
+            "live_preflight_receipt_id": None,
+            "paper_to_live_policy_version_id": paper_to_live.json()["id"],
+            "gates": [
+                {
+                    "metric_code": "MATERIAL_IMPROVEMENT",
+                    "comparator": "MINIMUM",
+                    "threshold": "0",
+                    "ordinal": 1,
+                }
+            ],
+            "state": "ACTIVE",
+        },
+    )
+    assert mismatched_paper.status_code == 409
+    assert mismatched_paper.json()["error"]["code"] == "PROMOTION_POLICY_PREFLIGHT_STALE"
+
+
 def test_trusted_alpha_configuration_rejects_implicit_or_untrusted_inputs(
     engine: Engine, settings: Settings
 ) -> None:
@@ -1009,20 +1193,16 @@ def test_trusted_alpha_configuration_rejects_implicit_or_untrusted_inputs(
         ).status_code
         == 422
     )
-    policies_before = client.get("/api/v1/promotion-policy-versions").json()["items"]
-    unsupported_paper_policy = client.post(
+    incomplete_paper_policy = client.post(
         "/api/v1/promotion-policy-versions",
         json={**policy_payload, "purpose": "PORTFOLIO_TO_PAPER"},
     )
-    assert unsupported_paper_policy.status_code == 409
-    assert unsupported_paper_policy.json()["error"]["code"] == "PROMOTION_POLICY_TYPED_BINDING_UNAVAILABLE"
-    unsupported_live_policy = client.post(
+    assert incomplete_paper_policy.status_code == 422
+    incomplete_live_policy = client.post(
         "/api/v1/promotion-policy-versions",
         json={**policy_payload, "purpose": "PAPER_TO_LIVE"},
     )
-    assert unsupported_live_policy.status_code == 409
-    assert unsupported_live_policy.json()["error"]["code"] == "PROMOTION_POLICY_TYPED_BINDING_UNAVAILABLE"
-    assert client.get("/api/v1/promotion-policy-versions").json()["items"] == policies_before
+    assert incomplete_live_policy.status_code == 422
     assert (
         client.post(
             "/api/v1/promotion-policy-versions",
