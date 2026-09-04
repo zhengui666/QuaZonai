@@ -60,3 +60,7 @@ def test_only_exact_downstream_owned_handoff_method_paths_bypass_operator_auth()
     assert is_operator_auth_exempt(
         "POST", f"/api/v1/downstream-systems/{downstream_id}/rotate-service-token"
     ) is False
+    typed_path = f"/api/v1/downstream-connection-versions/{downstream_id}/preflight"
+    assert is_operator_auth_exempt("POST", typed_path) is True
+    assert is_operator_auth_exempt("GET", typed_path) is False
+    assert is_operator_auth_exempt("POST", f"{typed_path}/") is False
