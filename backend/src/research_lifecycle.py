@@ -43,6 +43,7 @@ from db.models import (
     MissionDependency,
     MarketUniverseVersion,
     PortfolioCandidate,
+    PortfolioCandidateMember,
     ResearchBranch,
     ResearchCharter,
     ResearchCycle,
@@ -480,7 +481,28 @@ def _completed_forward_evidence(
     return handoff, episodes[0]
 
 
-def _candidate_qualification_ids(candidate: PortfolioCandidate) -> tuple[UUID, ...]:
+def _candidate_qualification_ids(session: Session, candidate: PortfolioCandidate) -> tuple[UUID, ...]:
+    relational_ids = tuple(
+        session.scalars(
+            select(PortfolioCandidateMember.alpha_qualification_id)
+            .where(PortfolioCandidateMember.candidate_id == candidate.id)
+            .order_by(PortfolioCandidateMember.alpha_qualification_id)
+        )
+    )
+    if relational_ids:
+        if len(relational_ids) != len(set(relational_ids)):
+            raise QfError(
+                "DEGRADATION_SUBJECT_INVALID",
+                "Candidate members cannot establish degradation scope.",
+                409,
+            )
+        return relational_ids
+    if candidate.state == "ASSEMBLED" or candidate.assembly_input_id is not None:
+        raise QfError(
+            "DEGRADATION_SUBJECT_INVALID",
+            "Trusted Candidate members are missing.",
+            409,
+        )
     if not isinstance(candidate.members, list):
         raise QfError(
             "DEGRADATION_SUBJECT_INVALID",
@@ -516,7 +538,7 @@ def _locked_subject_program(
     candidate = session.get(PortfolioCandidate, handoff.candidate_id)
     if candidate is None:
         raise QfError("CANDIDATE_NOT_FOUND", "Handoff Candidate is missing.", 500)
-    qualification_ids = _candidate_qualification_ids(candidate)
+    qualification_ids = _candidate_qualification_ids(session, candidate)
     alpha: AlphaQualification | None = None
     if subject_type is SubjectType.ALPHA:
         if subject_id not in qualification_ids:
