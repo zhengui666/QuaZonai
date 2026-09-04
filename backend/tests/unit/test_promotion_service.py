@@ -157,6 +157,7 @@ def _paper_handoff(
     assert approval is not None
     handoff = approve_typed_paper_handoff(session, approval.id)
     handoff.state = "DOWNSTREAM_ACCEPTED"
+    handoff.accepted_at = datetime.now(UTC) - timedelta(seconds=5)
     handoff.feedback_state = "FEEDBACK_PENDING"
     return candidate, handoff, paper_contract, live_contract
 
@@ -327,6 +328,7 @@ def test_typed_live_feedback_uses_frozen_live_contract(tmp_path, monkeypatch) ->
             assert live_approval is not None
             live_handoff = approve_typed_live_handoff(session, live_approval.id)
             live_handoff.state = "DOWNSTREAM_ACCEPTED"
+            live_handoff.accepted_at = datetime.now(UTC) - timedelta(seconds=5)
             live_handoff.feedback_state = "FEEDBACK_PENDING"
             result = accept_live_feedback(
                 session,
@@ -458,6 +460,7 @@ def test_complete_typed_paper_feedback_queues_and_decides_live_promotion(tmp_pat
                 receipt.valid_until = datetime.now(UTC) + timedelta(days=1)
             handoff = approve_typed_paper_handoff(session, approval.id)
             handoff.state = "DOWNSTREAM_ACCEPTED"
+            handoff.accepted_at = datetime.now(UTC) - timedelta(seconds=5)
             handoff.feedback_state = "FEEDBACK_PENDING"
             contracts = list(session.scalars(select(FeedbackContractVersion)))
             assert len(contracts) == 2
