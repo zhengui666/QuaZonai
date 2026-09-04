@@ -2165,6 +2165,7 @@ GET/POST /api/v1/capital-contexts
 GET/POST /api/v1/downstream-systems
 GET/POST /api/v1/downstream-connection-versions
 GET/POST /api/v1/feedback-contract-versions
+POST     /api/v1/downstream-connection-versions/{connection_version_id}/preflight  # downstream service auth; writes one frozen connection receipt
 POST     /api/v1/downstream-systems/{downstream_id}/preflight  # downstream service auth
 POST     /api/v1/downstream-systems/{downstream_id}/rotate-service-token
 # /api/v1/configuration/* is not an API alias.
