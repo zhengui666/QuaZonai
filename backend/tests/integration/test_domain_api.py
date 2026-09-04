@@ -374,7 +374,8 @@ def test_readiness_and_approval_require_a_current_downstream_preflight_receipt(
 ) -> None:
     approval_id, downstream_id, _ = _seed_candidate_approval(engine, settings)
     client = _client(engine, settings)
-    assert client.get("/api/v1/readiness").json()["PAPER_HANDOFF_READY"] is True
+    # Legacy system-level receipts are intentionally not production readiness.
+    assert client.get("/api/v1/readiness").json()["PAPER_HANDOFF_READY"] is False
 
     factory = create_session_factory(engine)
     with factory() as session, session.begin():
