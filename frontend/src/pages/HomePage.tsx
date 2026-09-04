@@ -19,7 +19,7 @@ function ready(value: unknown) { return typeof value === 'boolean' ? value : Boo
 function dataReady(value: unknown) {
   if (ready((value as { RESEARCH_READY?: unknown } | undefined)?.RESEARCH_READY)) return true;
   const reasons = (value as { RESEARCH_READY_REASONS?: unknown } | undefined)?.RESEARCH_READY_REASONS;
-  return Array.isArray(reasons) && !reasons.includes('DATA_SOURCE_REQUIRED');
+  return Array.isArray(reasons) && !reasons.includes('PROMOTABLE_DATASET_REQUIRED');
 }
 function healthState(value: unknown) {
   if (typeof value === 'boolean') return value ? 'READY' : 'NOT_READY';
@@ -117,8 +117,8 @@ export function HomePage() {
   const cooling = items.filter((item) => item.state === 'COOLING').length;
   const blocked = items.filter((item) => item.state === 'BLOCKED').length;
   const runningMissions = missions.filter((mission) => mission.state === 'RUNNING').length;
-  const discoveryMissions = missions.filter((mission) => mission.state === 'RUNNING' && /ALPHA|DISCOVERY/i.test(mission.type)).length;
-  const evaluationMissions = missions.filter((mission) => /EVAL|VALIDAT|SEALED|REVIEW/i.test(mission.type));
+  const discoveryMissions = missions.filter((mission) => mission.state === 'RUNNING' && /ALPHA|DISCOVERY/i.test(mission.mission_type)).length;
+  const evaluationMissions = missions.filter((mission) => /EVAL|VALIDAT|SEALED|REVIEW/i.test(mission.mission_type));
   const evaluationRunning = evaluationMissions.filter((mission) => mission.state === 'RUNNING').length;
   const candidateReady = (portfolio.data ?? []).filter((item) => /CANDIDATE|READY/i.test(item.state)).length;
   const availableHandoffs = (handoffs.data ?? []).filter((item) => item.state === 'AVAILABLE').length;

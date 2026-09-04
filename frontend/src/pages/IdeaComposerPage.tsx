@@ -1,30 +1,127 @@
-import { CheckCircleIcon, FlaskIcon, WarningCircleIcon } from '@phosphor-icons/react';
-import { Button, Callout, RadioGroup, TextArea, TextField } from '@radix-ui/themes';
+import { FlaskIcon } from '@phosphor-icons/react';
+import { Button, TextArea, TextField } from '@radix-ui/themes';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ErrorPanel } from '../components/ui/ErrorPanel';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Section } from '../components/ui/Section';
 import { useI18n } from '../i18n';
-import { useIdeaPreview, useStartResearch } from '../lib/api/hooks';
-import { humanize, localizeSystemInferred } from '../lib/format';
+import { ApiError, answerIdeaDraft, createIdeaDraft, startIdeaDraft } from '../lib/api/client';
+import { useConfigurationUniverses } from '../lib/api/hooks';
+import type { IdeaDraft, ResearchProgram, UUID } from '../lib/api/types';
+import { localizeSystemInferred } from '../lib/format';
+
+function requireDraft(value: unknown): IdeaDraft {
+  if (!value || typeof value !== 'object') {
+    throw new ApiError(
+      { kind: 'contract', message: 'Expected a complete idea draft response.' },
+      0,
+      'CONTRACT_MISMATCH',
+    );
+  }
+  const draft = value as Partial<IdeaDraft>;
+  if (
+    typeof draft.id !== 'string'
+    || !Number.isInteger(draft.revision)
+    || typeof draft.stage !== 'string'
+    || (draft.next_action !== null && typeof draft.next_action !== 'string')
+    || !Array.isArray(draft.blocking_reasons)
+    || !Array.isArray(draft.clarification_questions)
+    || !draft.clarification_questions.every((question) => (
+      Boolean(question)
+      && typeof question.key === 'string'
+      && typeof question.question === 'string'
+    ))
+  ) {
+    throw new ApiError(
+      { kind: 'contract', message: 'Expected a complete idea draft response.' },
+      0,
+      'CONTRACT_MISMATCH',
+    );
+  }
+  return draft as IdeaDraft;
+}
+
+function requireProgram(value: unknown): ResearchProgram {
+  if (!value || typeof value !== 'object' || typeof (value as Partial<ResearchProgram>).id !== 'string') {
+    throw new ApiError(
+      { kind: 'contract', message: 'Expected a research program response.' },
+      0,
+      'CONTRACT_MISMATCH',
+    );
+  }
+  return value as ResearchProgram;
+}
 
 export function IdeaComposerPage() {
   const { t } = useI18n();
   const [idea, setIdea] = useState('');
   const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [overlapAction, setOverlapAction] = useState('recommended');
-  const preview = useIdeaPreview();
-  const start = useStartResearch();
+  const [draft, setDraft] = useState<IdeaDraft | null>(null);
+  const [error, setError] = useState<unknown>();
+  const [pending, setPending] = useState(false);
+  const [selectedUniverseIds, setSelectedUniverseIds] = useState<UUID[]>([]);
   const navigate = useNavigate();
-  const canPreview = idea.trim().length >= 12;
-  const result = preview.data;
-  const questions = result?.clarification_questions ?? [];
+  const universes = useConfigurationUniverses(draft?.next_action === 'START_PROGRAM');
+  const canCreate = idea.trim().length >= 12;
+  const questions = draft?.clarification_questions ?? [];
   const answersComplete = questions.every((question) => answers[question.key]?.trim());
+  const needsAnswers = draft?.next_action === 'ANSWER_CLARIFICATIONS';
+  const activeUniverses = (universes.data ?? []).filter((item) => item.state === 'ACTIVE');
+  const universeSelectionPending = draft?.next_action === 'START_PROGRAM'
+    && !universes.data
+    && (universes.isLoading || universes.isFetching || universes.isError);
+
+  async function createDraft() {
+    setPending(true);
+    setError(undefined);
+    try {
+      setDraft(requireDraft(await createIdeaDraft({ original_idea_text: idea.trim() })));
+    } catch (requestError) {
+      setError(requestError);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function submitAnswers() {
+    if (!draft || draft.next_action !== 'ANSWER_CLARIFICATIONS') return;
+    setPending(true);
+    setError(undefined);
+    try {
+      setDraft(requireDraft(await answerIdeaDraft(draft.id, {
+        answers,
+        expected_revision: draft.revision,
+      })));
+    } catch (requestError) {
+      setError(requestError);
+    } finally {
+      setPending(false);
+    }
+  }
 
   async function launch() {
-    const program = await start.mutateAsync({ idea: idea.trim(), answers, overlap_action: overlapAction });
-    navigate(`/research/${program.id}`);
+    if (!draft) return;
+    setPending(true);
+    setError(undefined);
+    try {
+      if (draft.next_action !== 'START_PROGRAM') {
+        throw new ApiError(
+          { kind: 'contract', message: 'The idea draft is not ready to start.' },
+          0,
+          'CONTRACT_MISMATCH',
+        );
+      }
+      const program = requireProgram(await startIdeaDraft(draft.id, {
+        expected_revision: draft.revision,
+        ...(selectedUniverseIds.length ? { universe_version_ids: selectedUniverseIds } : {}),
+      }));
+      navigate(`/research/${program.id}`);
+    } catch (requestError) {
+      setError(requestError);
+    } finally {
+      setPending(false);
+    }
   }
 
   return (
@@ -43,41 +140,32 @@ export function IdeaComposerPage() {
                 size="3"
                 rows={8}
                 value={idea}
-                onChange={(event) => setIdea(event.target.value)}
+                onChange={(event) => {
+                  setIdea(event.target.value);
+                  setDraft(null);
+                  setAnswers({});
+                  setSelectedUniverseIds([]);
+                  setError(undefined);
+                }}
                 placeholder={t('idea.placeholder')}
               />
               <span className="qz-help">{t('idea.help')}</span>
             </label>
-            <Button disabled={!canPreview || preview.isPending} onClick={() => preview.mutate(idea.trim())}>
-              <FlaskIcon size={15} />{preview.isPending ? t('idea.analyzing') : t('idea.preview')}
+            <Button disabled={!canCreate || pending || Boolean(draft)} onClick={() => void createDraft()}>
+              <FlaskIcon size={15} />{pending ? t('common.saving') : t('idea.createDraft')}
             </Button>
-            {preview.error ? <ErrorPanel error={preview.error} /> : null}
+            {error ? <ErrorPanel error={error} /> : null}
           </div>
         </Section>
-        <Section title="Charter preview" meta="Frozen after Start Research">
-          {!result ? (
+        <Section title={t('idea.charterPreview')} meta={t('idea.frozenAfter')}>
+          {!draft ? (
             <div className="qz-empty"><div><strong>{t('idea.noCharter')}</strong><div>{t('idea.noCharterDesc')}</div></div></div>
           ) : (
             <div className="qz-panel qz-panel-pad qz-form-grid">
-              {result.overlap ? (
-                <Callout.Root color="amber" size="1">
-                  <Callout.Icon><WarningCircleIcon /></Callout.Icon>
-                  <Callout.Text>
-                    <bdi dir="auto"><strong>{humanize(result.overlap.kind)}</strong></bdi>
-                    {' · '}
-                    <bdi dir="auto">{result.overlap.rationale ?? result.overlap.recommendation ?? t('idea.overlapFallback')}</bdi>
-                  </Callout.Text>
-                </Callout.Root>
-              ) : (
-                <Callout.Root color="green" size="1">
-                  <Callout.Icon><CheckCircleIcon /></Callout.Icon>
-                  <Callout.Text>{t('idea.noOverlap')}</Callout.Text>
-                </Callout.Root>
-              )}
-              <div><div className="qz-label">{t('idea.researchQuestion')}</div><div dir="auto" style={{ marginTop: 5, fontSize: 13 }}>{result.charter?.research_question ?? idea}</div></div>
+              <div><div className="qz-label">{t('idea.researchQuestion')}</div><div dir="auto" style={{ marginTop: 5, fontSize: 13 }}>{draft.charter?.research_question ?? idea}</div></div>
               <div className="qz-grid-2">
-                <div><div className="qz-label">{t('idea.marketScope')}</div><div className="qz-list-subtitle">{Array.isArray(result.charter?.market_scope) ? result.charter.market_scope.map((scope, index) => <span key={`${scope}-${index}`}>{index ? ', ' : null}<bdi dir="auto">{localizeSystemInferred(scope, t('common.systemInferred'))}</bdi></span>) : <bdi dir="auto">{localizeSystemInferred(result.charter?.market_scope, t('common.systemInferred')) ?? t('common.systemInferred')}</bdi>}</div></div>
-                <div><div className="qz-label">{t('idea.predictionHorizon')}</div><div dir="auto" className="qz-list-subtitle">{localizeSystemInferred(result.charter?.prediction_horizon, t('common.systemInferred')) ?? t('common.systemInferred')}</div></div>
+                <div><div className="qz-label">{t('idea.marketScope')}</div><div className="qz-list-subtitle">{Array.isArray(draft.charter?.market_scope) ? draft.charter.market_scope.map((scope, index) => <span key={`${scope}-${index}`}>{index ? ', ' : null}<bdi dir="auto">{localizeSystemInferred(scope, t('common.systemInferred'))}</bdi></span>) : <bdi dir="auto">{localizeSystemInferred(draft.charter?.market_scope, t('common.systemInferred')) ?? t('common.systemInferred')}</bdi>}</div></div>
+                <div><div className="qz-label">{t('idea.predictionHorizon')}</div><div dir="auto" className="qz-list-subtitle">{localizeSystemInferred(draft.charter?.prediction_horizon, t('common.systemInferred')) ?? t('common.systemInferred')}</div></div>
               </div>
               {questions.length ? (
                 <div className="qz-form-grid">
@@ -90,17 +178,27 @@ export function IdeaComposerPage() {
                   ))}
                 </div>
               ) : null}
-              {result.overlap ? (
-                <RadioGroup.Root value={overlapAction} onValueChange={setOverlapAction}>
-                  <RadioGroup.Item value="recommended">{t('idea.useRecommendation')}</RadioGroup.Item>
-                  <RadioGroup.Item value="new-program">{t('idea.createRelated')}</RadioGroup.Item>
-                  <RadioGroup.Item value="independent-program">{t('idea.createIndependent')}</RadioGroup.Item>
-                </RadioGroup.Root>
+              {draft.next_action === 'START_PROGRAM' && activeUniverses.length > 1 ? (
+                <label className="qz-field">
+                  <span className="qz-label">{t('admin.universes')}</span>
+                  <select
+                    multiple
+                    value={selectedUniverseIds}
+                    onChange={(event) => setSelectedUniverseIds(Array.from(event.target.selectedOptions, (option) => option.value))}
+                    size={Math.min(6, activeUniverses.length)}
+                  >
+                    {activeUniverses.map((item) => (
+                      <option key={item.id} value={item.id}>{item.name} · v{item.version_no}</option>
+                    ))}
+                  </select>
+                </label>
               ) : null}
-              <Button color="green" disabled={start.isPending || (questions.length > 0 && !answersComplete)} onClick={launch}>
-                {start.isPending ? t('common.starting') : t('idea.startResearch')}
+              {draft.next_action === 'START_PROGRAM' && universes.isError ? (
+                <ErrorPanel error={universes.error} action={<Button variant="soft" onClick={() => void universes.refetch()}>Retry</Button>} />
+              ) : null}
+              <Button color="green" disabled={pending || universeSelectionPending || (needsAnswers && !answersComplete) || (draft.next_action === 'START_PROGRAM' && activeUniverses.length > 1 && selectedUniverseIds.length === 0)} onClick={() => void (needsAnswers ? submitAnswers() : launch())}>
+                {pending ? (needsAnswers ? t('common.saving') : t('common.starting')) : (needsAnswers ? t('idea.saveClarifications') : t('idea.startResearch'))}
               </Button>
-              {start.error ? <ErrorPanel error={start.error} /> : null}
             </div>
           )}
         </Section>

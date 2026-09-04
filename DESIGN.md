@@ -1,11 +1,74 @@
 # QuaZonai 产品需求与技术架构设计
 
-> 架构基线：2026-08-29（Issue #22 Nautilus-first）
+> 架构基线：2026-09-03（Issue #58）
 > 文档地位：**QuaZonai 唯一完整的产品与架构事实源**  
 > 目标：Codex Harness 驱动的单用户、自托管、持续自治量化研究与策略组合工作台  
-> 当前状态：**Nautilus-first 远程量化运行边界已进入实现验收；合并前以 CI、Review 与独立复核为准**
+> 当前状态：**Issue #58 迁移中；已落地的领域/合同必须与尚未验证的端到端闭环分开表述。合并与 release-ready 仍以 CI、Review 与独立复核为准。**
 
 `OPERATIONS.md` 只展开用户运行视图；`CLI.md` 只展开 CLI、Codex Runtime 和 Agent Tool 合同；`README.md` 只做入口与当前状态摘要；代码、测试、聊天记录和临时决策文件不得静默改写本文。
+
+---
+
+## 0.1 Issue #58 当前事实与迁移边界（2026-09-03，优先于下文冲突表述）
+
+本节同时区分已提交的实现事实、必须保持的边界和仍待验收的目标。下文任何把可下单
+Strategy、单成员 Candidate、动态第三方插件、下游节点控制或一次 Agent 运行描述为
+当前 V1 主链的文字，均为待删除的历史说明，不是兼容目标。
+
+### 规范性产品授权：继续实现可信生产链
+
+Issue #58 的产品授权明确要求继续实现可信的
+`Alpha → Portfolio → Promotion / Auto-Live` 决定性生产链。已落地的 fail-closed
+边界只能在同一 PR Checklist 标记为 `Foundation Complete`；它们不是 Issue 完成条件、
+唯一 PR 的合并条件、七项核心业务能力已交付的证据，也不是拆分第二个 PR 的理由。
+本授权优先于任何把 fail-closed 基础设施解释为独立完成范围的歧义；只有本节所列的
+端到端生产事实、验证与独立复核全部成立后，才可宣称 Issue #58 完成。
+
+### 已实现的基础事实
+
+- `IdeaDraft → ClarificationQuestion/Answer → ResearchCharter` 是唯一创建 Program
+  的实现路径。它持久化一轮、三项边界澄清；答案进入冻结 Charter 后才可 Start。
+- Start 持久化一个 `ResearchCycle` 和六节点依赖图：`PLAN_RESEARCH → DATA_QUALITY
+  → ALPHA_DISCOVERY → ROBUSTNESS → PORTFOLIO_ASSEMBLY →
+  SEALED_PROMOTION_REVIEW`。Mission、AgentSession、AgentTurn、Artifact、lease
+  interruption 与同 Thread resume 都有持久化合同。
+- `AlphaModelV1` / `AlphaSignalFrameV1` 已限制为有限、UTC、PIT-valid 的
+  `event_time`、`available_time`、`instrument_id`、`score` 与可选已校准
+  `expected_return`/`uncertainty` 信号；它没有 order、broker、account 或 position
+  surface。PIT/质量、honest evaluation、Feature/Alpha/Calibration/Qualification 的
+  不可变持久化基础也已存在。
+- Portfolio 的纯引擎只产生 target weights；默认少于两个合格 Alpha 时返回明确
+  `INFEASIBLE`，不会产生单 Alpha 100% 候选。target-only Package builder 只写
+  manifest 与 `TargetPortfolioFrame`，并拒绝 Secret、订单、成交、仓位和运行控制字段。
+- Promotion 仍只有 fail-closed 的纯 policy/contract；Degradation 已有从 completed
+  Forward Evidence 到受限 Wake/Replan Cycle 的数据库/API 闭环，但两者都不等同于完整
+  Paper→Live 闭环。
+
+QZ 只生成 Alpha 信号、目标权重、研究和交付事实。它不生成或执行订单，不保存
+broker/account/position/NAV，不启动、停止、撤单、平仓或恢复任何下游节点。
+
+### 不可变身份与无 hash gate
+
+所有业务身份使用显式 UUID、关系和有意义的版本/revision。Candidate 是不可变 UUID
+事实，**不**伪造 `candidate_revision=1`。Package 有明确 `package_revision`；Approval
+绑定 `candidate_id + candidate_package_id + package_revision`。替换 Package 创建新的
+Package/revision，并使旧 Approval stale。
+
+不得为业务身份、审批、幂等、发布、Package 或数据有效性新增 SHA、hash、checksum、
+digest、fingerprint 或任何等价内容寻址 Gate。Package 的 schema/reference-fixture
+conformance 与显式对象引用是业务验证；底层存储字节完整性属于存储运维职责。
+
+### 尚未被本轮实现证据证明的闭环
+
+以下是验收目标，不得描述为已交付：从空 PostgreSQL 仅经 Web/CLI 配置后完成多角色
+研究、至少两个真实 Qualification、Paper、Manual/Auto Live，以及从空库只经 Web/CLI
+配置完成的全链路 Forward Evidence/Wake/Replan；Package-before-Approval 的持久化事务；
+以及自动 Paper→Live 产生真实 Approval/Handoff。已验证的 bounded Degradation 写者不替代
+这些 E2E 证据，测试 seed 或手工插表也不能。
+
+任何仍存在的生成式执行 artifact、旧远程 runtime 或 execution-control 路径只可视为
+删除中的遗留代码；它们不得接收新的 Mission、Alpha、Candidate、Package 或 Promotion
+调用。
 
 ---
 
@@ -25,7 +88,7 @@ QuaZonai **不拥有交易执行**。NautilusTrader、LEAN 或任何自定义执
 
 首次安装、可选 Operator 登录、数据授权、Codex 登录与 Runtime Configuration、Mandate/Universe/下游配置、插件管理和故障处理属于低频 Administration，不计入正常研究旅程。
 
-完整闭环：
+目标闭环（验收目标，不表示已交付）：
 
 ```text
 Idea
@@ -87,29 +150,29 @@ Git 自身对象 ID、Python wheel `RECORD` 等工具链内部机制可以存在
 
 ## 2. 人类旅程
 
-### 2.1 Idea Composer
+### 2.1 Idea Draft
 
 ```text
 自然语言 Idea
-→ 解析 Market / Hypothesis / Horizon / Data Domain / Explicit Exclusions
-→ 重大歧义时一次性提出 1–3 个问题
-→ 生成 Research Charter 摘要
-→ 用户点击 Start Research
-→ Charter 冻结
+→ 创建 IdeaDraft
+→ 一轮、三项 server-owned 边界澄清
+→ 人类提交不可变 Answer
+→ 所有 Answer 完成后 Start
+→ ResearchCharter 冻结并创建 Program/Cycle/fixed DAG
 ```
 
-只追问会改变研究边界的问题；模型、特征、CV、优化器、参数、算力和技术实现由系统决定。
+当前实现的三项问题覆盖 market scope、horizon 和 data scope。只追问会改变 Charter
+边界的问题；模型、特征、CV、优化器、参数、算力和技术实现不属于人类澄清输入。
 
-### 2.2 重叠 Idea
+Start 会把 Charter 绑定到已启用的 Universe Version：只有一个启用版本时可自动采用；
+零个或多个版本时必须阻断或由请求显式选择。不得创建 `universe_version_ids=[]` 的新
+Charter。
 
-系统在 Idea Composer 内检测与已有 Program 的语义和领域重叠：
+### 2.2 重叠关系的实现状态
 
-- 实质重复：默认记录 `IdeaContribution` 并唤醒已有 Program；
-- 原 Charter 内新角度：推荐在已有 Program 新建 Research Branch；
-- 超出原 Charter：创建关联的新 Program；
-- 用户可以坚持创建独立 Program，但适用的 Search Ledger 与 Evidence Exposure 必须继承，不能制造“新独立证据”。
-
-这个选择仍属于“提出 Idea”操作。
+`IdeaContribution` 与 `ProgramRelationship` 的持久化模型存在，但自动语义重叠检测、
+复用、Branch 推荐和 Exposure 继承尚未接入 Draft Start。当前每个完成的 Draft 创建其
+自身 Program；不得把尚未实现的自动重叠处理描述为用户可依赖的行为。
 
 ### 2.3 Candidate Approval
 
@@ -131,11 +194,12 @@ Reject(reason_code, optional_note)
 - Pause；
 - Resume；
 - Archive；
-- Restore。
+- 受 policy 限制的 Wake。
 
 正式开始的 Program 不提供业务层物理删除。只有未提交 Idea Draft 可以删除。
 
 Pause/Archive 只影响 QZ 研究，不停止任何已领取 Package 的外部 Paper/Live 系统。
+`PAUSED`/`ARCHIVED` 的 Wake 保持待处理，不能绕过人工状态自动恢复。
 
 ## 3. 首页与信息架构
 
@@ -185,7 +249,9 @@ LIVE_HANDOFF_READY
 - PostgreSQL 与持久卷可用；
 - Codex App Server 可启动且认证有效；
 - Program repo / Mission worktree 可创建；
-- 至少一个 Discovery Dataset 或批准的数据获取能力可用；
+- 至少一份 `quality_state=VALID`、`point_in_time_state=VALID` 且
+  `promotability=PROMOTABLE` 的真实 Dataset Revision 可用；仅登记或
+  preflight-ready 的 Data Source、PENDING Dataset Revision 都不构成研究就绪；
 - Canonical Research Engine 最小 preflight 通过；
 - Sealed Evaluator 与 Codex 的访问隔离成立；
 - Scheduler 有可用 Mission slot。
@@ -199,6 +265,24 @@ Paper readiness 要求至少一个可用 Paper downstream、Package/Feedback Con
 Live readiness 除独立 Live downstream preflight 外，还要求完整、有效、已重新评估的 Paper Forward Evidence。
 
 缺少下游 readiness 时，研究继续。候选进入 `PAPER_CONFIGURATION_REQUIRED` 或 `LIVE_CONFIGURATION_REQUIRED`，不创建无法行动的 Approval。
+
+### 4.2.1 Downstream service preflight
+
+Operator 注册 DownstreamSystem 后，其初始 `revision=1`、`preflight_state=PENDING`；注册本身不构成
+Paper 或 Live readiness。仅该 downstream 持有的 per-service Bearer credential 可以调用
+`POST /api/v1/downstream-systems/{id}/preflight`。请求只回显已登记的
+`package_contract_version`、`feedback_contract_version` 与完整 `compatibility`，并给出一个 UTC、未来的
+`valid_until`；它不接受 URL、provider/downstream secret、运行命令或任何 execution control 输入。
+
+Core 必须严格解析已登记的非空 `feedback_contract`（required fields、observation/sample minimum、接受的
+package/Arrow contract 与 disclosure policy），并将回显值与登记值逐项精确比较。成功时追加一条不可变
+`PreflightReceipt`，其中绑定 DownstreamSystem 的当前 `revision`、feedback contract、compatibility 与
+`valid_until`，然后才把该系统置为 `READY`。`PreflightReceipt` 是唯一的 preflight 有效性事实源；readiness
+和 Approval 在各自判定时重新要求一条未过期、`READY`、且匹配当前 system revision/contracts 的 receipt。
+
+service token rotation 必须使 DownstreamSystem `revision += 1` 并回到 `PENDING`；历史 receipt 保留但不能
+为新 revision 提供 readiness。该握手只证明独立 consumer 的声明兼容性，QZ 不连接、启动、停止或控制
+downstream runtime。
 
 ---
 
@@ -303,10 +387,15 @@ Mission 是有限执行单元：
 
 ```text
 PLANNED → READY → RUNNING → SUCCEEDED
+                    ├→ AWAITING_VALIDATION → SUCCEEDED | FAILED | CANCELLED
                     ├→ FAILED
                     ├→ INTERRUPTED
                     └→ CANCELLED
 ```
+
+`AWAITING_VALIDATION` 只用于 Codex child 已退出、但同一 Mission 的 Core-owned durable
+validation/evaluator job 尚未形成可信结果的短暂状态；它不会重新派发 Codex child，也不会
+解锁 DAG。只有该冻结验证 job 可以把它推进为终态。
 
 MissionContract 至少包含：
 
@@ -326,38 +415,52 @@ branch_id
 workspace_revision_no
 ```
 
+除 `ALPHA_PROPOSAL` 外，Agent artifact 只能提交固定的公开 V1 envelope：`{kind: {
+summary, items, facts}}`。`summary` 和 `items` 必须非空且有界，`facts` 必须与 artifact kind 的
+固定字段集合精确一致，并通过 Core 的类型/UUID/非空值校验；只有该 kind-specific validator
+可以把 artifact 标为 `VALIDATED`。固定 facts 集合为：`RESEARCH_PLAN(objective,hypotheses)`、
+`DATA_REQUIREMENT(dataset_scope,requirements)`、`DATA_QUALITY_REPORT(dataset_revision_id,
+quality_state,pit_state)`、`FEATURE_PROPOSAL(family,input_contract)`、
+`CALIBRATION_PROPOSAL(model_version_id,method)`、`ROBUSTNESS_REPORT(checks,outcome)`、
+`PROMOTION_REVIEW(candidate_id,decision)`、`PORTFOLIO_PROPOSAL(candidate_id,weights)`、
+`PAPER_EVIDENCE_REVIEW/LIVE_PROMOTION_REVIEW(evidence_episode_id,decision)`、
+`DEGRADATION_REPORT(subject_id,state)`、`REPLAN_PROPOSAL(cause_event_id,changes)`、
+`MISSION_GRAPH_PROPOSAL(nodes)`。通用摘要或空 JSON 不能推进 Mission DAG。
+
+`DATA_QUALITY_REPORT` 只有 `quality_state=VALID` 且 `pit_state=VALID` 才能成为
+`VALIDATED` 输出；明确报告失败状态不会解锁后续 Mission。
+
 Codex Thread 是 Mission 执行上下文，不是业务状态。
 
 ## 7. Mission Graph 与自治调度
 
 Research Program 使用持久化 Mission DAG，不使用“让 Agent 一直继续研究”的无限聊天。
 
-典型节点：
+当前 Start 固定持久化的节点：
 
 ```text
 PLAN_RESEARCH
-DATA_REQUIREMENT
 DATA_QUALITY
-HYPOTHESIS
-FEATURE_RESEARCH
 ALPHA_DISCOVERY
-CALIBRATION
 ROBUSTNESS
-PROMOTION_REVIEW
 PORTFOLIO_ASSEMBLY
-DEGRADATION_DIAGNOSIS
+SEALED_PROMOTION_REVIEW
 ```
 
-每次 Mission 结束后由 deterministic Orchestrator 依据 Domain Event 和 Policy 决定：
+Start 图只包含这六个节点。当前 Orchestrator 只按已持久化依赖解锁下一个固定节点，
+并受并发/turn/tool-call budget 约束；`DATA_REQUIREMENT`、`FEATURE_RESEARCH`、
+`CALIBRATION` 等 MissionType 不会由 Agent 任意扩张到 Start 图。
 
-- 解锁依赖节点；
-- 创建 replan Mission；
-- 进入 Promotion；
-- 进入 COOLING；
-- 等待 Data Capability / Forward Feedback；
-- 标记 BLOCKED。
+唯一的受限例外是持久化 Degradation Wake：Domain Validator 只能从有效的
+`ForwardEvidenceEpisode` 创建一个新的 Cycle/Branch，且图固定为：
 
-Codex 可以提交“建议的 Mission Graph / replan artifact”，但只有 QZ Domain Validator 可以持久化正式图。
+```text
+DEGRADATION_DIAGNOSIS → REPLAN
+```
+
+它不是 Start 图的第七节点，也不允许 Codex 自己创建、改变依赖或推进领域状态。
+Wake 的因果 Observation、WakeEvent、Cycle、Branch 和 Mission 必须在同一领域事务中
+持久化；失败不得留下可运行的半张图。
 
 ## 8. Search Ledger 与 Evidence Exposure
 
@@ -453,7 +556,46 @@ Codex 可以自主声明 Data Requirement、查询已批准能力和请求 inges
 
 互联网检索只能用于允许的定性假设形成；进入 Research Engine 的定量数据必须通过批准 Connector。
 
-### 10.1.1 PMXT Archive historical connector plugin
+### 10.1.1 Canonical Data Source preflight
+
+登记 Data Source 不是连接成功。Operator 只能通过 canonical
+`POST /api/v1/data-sources/{data_source_id}/preflight` 请求一次异步 preflight；请求体为
+`{}`，不接受 URL、host、endpoint、plugin path、`source_spec` 或任何 credential。它只消费
+已登记 Data Source 的公开 plugin manifest contract、provider/license、唯一 active Universe
+scope，以及受治理的 `plugin_release_id` / `plugin_runtime_bundle_id` binding。
+
+Core 在 worker 中确认 release 为 `ACTIVE`、bundle 为 `READY` 且含该 release 的
+`IMPORTER` member，然后通过独立 runtime 的 manifest scanner 取得真实
+`ArchiveManifestDescriptor`。本地 plugin construction/preflight 不能把 Data Source 置为
+`READY`。只有 descriptor 与请求事实一致且没有 `PROBE_ERROR` 时，Core 才原子地保存
+materializable immutable `ACTIVE ArchiveManifest` / shard evidence，固定
+`archive_manifest_id`，并将 Data Source 从 `PENDING` 置为 `READY`。`MISSING` 是已知数据
+间隔而非虚构成功，必须保留；后续 materialization 仍按其范围产生 quality evidence。
+`PROBE_ERROR` 只保存不可 materialize 的 immutable `INCONCLUSIVE ArchiveManifest` / shard
+audit evidence，让 Source 保持 `PENDING` 且不固定 Manifest。任何其他
+runtime/binding/contract failure 也让 Source 保持 `PENDING`，不固定 Manifest，也不能绕过
+Dataset 的 quality/PIT gates。
+
+扫描 URL 只能由 approved plugin 从其受限公开 contract 生成；preflight 不接受或构造用户提供的
+远端 locator，且不把 provider/downstream secret 写入 Job 或 Event。
+
+### 10.1.2 Trusted sealed catalog provision
+
+Sealed raw Catalog 先由独立的受信 sealed runtime provisioning/import path 写入；Core 不创建、
+上传、下载或读取该 raw data。Operator 仍使用 canonical
+`POST /api/v1/datasets/materializations`，但 `partition=SEALED` 时只能提交一个不透明、受限格式的
+`catalog://` reference，不能提交 URL、`source_spec`、shard、plugin binding 或 credential。
+
+该请求只在已登记且 preflight-`READY` 的 Data Source / Universe 范围内创建 PENDING immutable
+Dataset Revision 和 `SEALED_CATALOG_PROVISION` job。该 job 使用独立 sealed runtime profile 调用
+`validate_catalog`，只接收受控 descriptor，并校验 reference、sealed flag、provider、scope、
+source license、时间范围、质量与 PIT。它不 import plugin、不调用 ingest，也不把 reference 或
+raw data 放进 Job/Event payload；quality/PIT 只持久化 validated `valid` aggregate 和本地 reason
+code。验证成功才原子写入 `DataQualityResult`、Dataset Revision 与不可变
+`NautilusCatalogBinding(sealed=true)`；任何本地或 descriptor 不一致都成为 NON_PROMOTABLE data
+evidence，runtime 不可达则保持 PENDING。Codex/MCP 从不获得该 reference 或 sealed raw data。
+
+### 10.1.3 PMXT Archive historical connector plugin
 
 PMXT Archive 以 `DATA_CONNECTOR` / `HISTORICAL_IMPORT` runtime plugin 形式提供只读历史市场数据能力，不是交易 venue、broker 或 downstream runtime。PMXT 的 primary wheel 为 `quazonai-pmxt-archive`，通过唯一 `quazonai.plugins` entry point 注册 `pmxt_archive`；Core 不包含 PMXT-specific dispatch 分支。
 
@@ -531,76 +673,69 @@ point_in_time_state
 
 数据质量失败是 Data Evidence，不得被解释为 Alpha 失败。
 
-## 11. Canonical Quant Runtime：Remote NautilusTrader
+### 10.3 Evaluation Dataset Selection
 
-QZ 不再自建平行的向量化交易模拟器。NautilusTrader `1.231.0` 是首个、默认且正式支持的 Canonical Quant Runtime。
+`EvaluationDatasetSelection` 是 Administration 创建的不可变版本事实：它为一个
+Universe 显式绑定一个 `DISCOVERY`、一个 `VALIDATION` 和一个 `SEALED` Dataset Revision。
+三者都必须是 `VALID/PIT-VALID/PROMOTABLE`，Sealed binding 还必须是独立 provisioned
+sealed Catalog。Start 或 Alpha Artifact Validator 只能使用唯一启用的 Selection；缺失或
+歧义时返回 `EVALUATION_DATASET_SELECTION_REQUIRED`，不选择最新 Revision。Discovery/
+Validation 引用可按冻结 Mission Contract 最小授权给对应 Mission；Sealed 引用只能进入
+Core Assignment 与独立 Evaluator。
 
-### 11.1 Thin Quant Runtime Adapter
+## 11. Independent evaluation boundary
 
-Core 只依赖薄 HTTP 合同 `NautilusQuantRuntime`，负责 capabilities、Catalog ingest/validate、Discovery/Sealed/Portfolio run 和 Candidate Bundle conformance verification。它不 import NautilusTrader，不维护订单/仓位账本，也不提供 Paper/Live 控制。
-
-### 11.2 远程独立实例
-
-```text
-QZ Control Plane
-  API / PostgreSQL / finite-worker / Durable Jobs
-          |
-          | typed HTTP experiment contract
-          v
-Remote Nautilus Research Runtime
-  ParquetDataCatalog / Strategy / BacktestNode
-  Simulated Venue / Matching / Fee / Fill / Latency
-  Cache / Portfolio / Positions / PnL / Reports
-          |
-          | structured aggregate run evidence
-          v
-QZ Evaluation Governance
-          |
-          | sealed contract, separate endpoint/token/catalog
-          v
-Remote Sealed Nautilus Runtime
-          |
-          | evaluator-only raw evidence and deterministic decision
-          v
-Alpha / Portfolio / Approval / Candidate Bundle
-```
-
-Core production image 不安装 `nautilus_trader`；该依赖只存在于独立 remote-runtime image 和真实 integration tests。Research 与 Sealed runtime 可以运行在另一台主机/集群，不依赖共享本地路径、Docker socket、QZ 子进程或固定 `localhost`。
-
-### 11.3 Nautilus-first data and evidence
-
-Remote runtime 使用 Nautilus Instrument model、Quote/Trade/Bar/OrderBook/CustomData、loader/wrangler/adapter 与 `ParquetDataCatalog`。QZ PostgreSQL 只保存治理元数据和受控的结构化聚合运行证据；订单、成交、仓位和账户报告留在独立 runtime，不进入 QZ 的持久化事实：
+QZ owns the governed input and disclosed result of research/evaluation, not an
+execution runtime. The only accepted research output is a typed Alpha signal;
+the only Package payload is a validated `TargetPortfolioFrame`. A separately
+operated evaluator may consume those bounded inputs for simulation or reference
+fixture conformance, but it receives no QZ database credential, Codex secret,
+broker credential, or downstream-control authority.
 
 ```text
-dataset_revision_id / catalog_uri / source_license
-nautilus_data_type / instrument_scope
-event_time_range / available_time_range / schema_revision
-quality_result / point_in_time_result
-runtime_name / runtime_version / run mode / aggregate run evidence
+governed Dataset / AlphaSignalFrame / TargetPortfolioFrame
+→ trusted independent evaluator
+→ controlled aggregate evidence or conformance result
+→ QZ domain validation
 ```
 
-Agent 只能引用已治理、未封存的 Dataset Revision。受信 Mission runner 校验 Catalog binding、instrument scope、quality 与 point-in-time 状态。Discovery 的成功与失败均进入 Search Ledger；Sealed raw evidence 只在 evaluator 子进程边界短暂存在，QZ 只保存 deterministic disclosure 和聚合统计，API 不返回 runtime 错误细节。
+QZ persists governed identifiers, PIT/quality results and permitted aggregate
+evidence. It does not persist or expose orders, fills, positions, accounts,
+NAV, node configuration, or runtime-control reports. Sealed raw data stays
+outside the Mission process and is not a Tool/API payload.
 
-### 11.4 Research Mission、Sealed 与 Portfolio
+### 11.1 Current implementation boundary
 
-Codex 在隔离 worktree 中生成 `EXPERIMENTS.json`，但不获得 DB、runtime endpoint/token、Sealed data 或 broker credential。受信 runner 校验 contract 后调用 Remote Research Runtime，并把每个结果持久化为 `QuantRuntimeRun` 与 `SearchLedgerEntry`。
+The checked-in target-only Package builder can ask an independently configured
+runtime to validate its archive. That is package conformance only; it is not
+evidence that a full Discovery/Sealed/Portfolio/Paper/Live pipeline has run.
+Likewise, the Alpha signal contracts and honest-evaluation primitives do not by
+themselves create a qualified Alpha or a Promotion decision in the database.
 
-`EXPERIMENTS.json` 是可执行的 StrategyArtifact 合同：每个 artifact 的 `source_files` 必须包含与 `strategy_path`、`config_path` 对应的完整、可导入 Nautilus strategy/config 实现，配置字段也必须与实现兼容。Agent 不得提交“由 parent runtime 实现”、TODO、注释占位或不可解析的交易参数；受信 parent 只校验并执行 artifact，不代替实验补全缺失的因子逻辑。不可运行的 artifact 作为失败 Search Ledger 尝试记录，不能被包装成研究成功。
+Any remaining generated-strategy or remote execution implementation is legacy
+removal work. It is not a V1 Mission artifact contract, may not receive new
+Mission input, and may not become a compatibility path for Package or Handoff.
 
-Mission 的 `workspace-write` 依赖 Codex bundled bubblewrap 创建用户、挂载和网络 namespace。Core Compose 的 `finite-worker` 必须使用允许这些 namespace syscall 的专用 seccomp profile；`no-new-privileges`、`cap_drop: ALL`、只读根文件系统、无任意 Mission 网络和 QZ 外层 worktree/volume 边界仍保持不变。禁止用 `privileged`、增加 `CAP_SYS_ADMIN` 或 bypass Codex sandbox 解决启动问题。Worker preflight 必须实际执行一次隔离命令并在失败时阻止 `RESEARCH_READY`。
+### 11.2 Mission isolation
 
-Discovery 成功后创建新的 Sealed Evaluation Episode，由独立 Sealed endpoint/token/catalog 使用相同 pinned runtime 和 Strategy artifact 执行。Sealed 通过 deterministic classification 进入治理；只有通过后，才冻结适用的 Universe Version、Mandate Version、Capital Context Version 与 TargetPortfolioFrame，再在 Research runtime 的 discovery catalog 上执行 Portfolio simulation，并产生 Alpha、Portfolio Candidate 与 Paper Approval。Promotion threshold 不属于 Mission 输出；所有 Sealed classification 和 promotion policy 均由 server-owned policy 决定。
+Mission `workspace-write` is bounded by the Mission worktree, network policy
+and outer filesystem isolation. The worker must fail closed if its sandbox
+preflight cannot establish those boundaries; it must not use `privileged`,
+`CAP_SYS_ADMIN`, or a sandbox bypass. Mission processes never receive Sealed
+data, database credentials, provider/downstream secrets, or execution access.
 
-### 11.5 Portfolio 与 Risk ownership
+### 11.3 Ownership
 
 ```text
 Alpha selection / Mandate / target-weight optimization -> QuaZonai
-Target weights -> strategy / rebalance / orders         -> NautilusTrader
-Positions / PnL / margin / execution risk               -> NautilusTrader
-Research / promotion / overfitting risk                 -> QuaZonai
+simulation internals and execution state               -> independent downstream/evaluator
+Research / evidence / promotion policy                 -> QuaZonai
 ```
 
-Candidate 最终必须通过 Nautilus transaction-level simulation。QZ 不提交、修改或撤销真实订单，不启动、停止或恢复 Paper/Live runtime。
+No QZ API starts, stops, recovers, cancels, replaces or otherwise controls a
+Paper/Live runtime. A successful target-frame conformance result cannot be
+reported as a Handoff, Portfolio, or promotion success without its separate
+persisted gates.
 
 ## 12. Alpha Contract
 
@@ -686,6 +821,87 @@ PLANNED → SEALED → ASSIGNED → EVALUATING → EVALUATED → DISCLOSED → C
 ```
 
 一旦披露任何会影响后续研究的信息，该 Episode 对该 lineage 永久 `CONSUMED`，不能重新充当独立证据。
+
+### 14.1 Trusted Alpha Evaluation Assignment
+
+`AlphaEvaluationAssignment` 是独立于 `AlphaEvaluationEpisode` 的不可变、Core-owned
+输入事实。Assignment 冻结一个已经 `VALIDATED` 的 `ALPHA_PROPOSAL` Mission Artifact
+（ID + revision）、其 `VALID` AlphaDiscoveryEvaluation、Alpha Model/Calibration Version、明确的
+Discovery/Validation/Sealed Dataset Revision、绑定的 Promotion Policy Version 和 evaluator
+contract version。它不保存
+raw bar、raw return、signal frame、secret、任意 URL 或内容 hash。
+
+`EvaluationDesignVersion` 是 server-owned、版本化的统计设计：它定义允许的 Model/Role、
+walk-forward split、annualization、multiple-testing、qualification gate 和 Level-1 disclosure
+mapping。Assignment 冻结其 ID；Agent 不能修改阈值、trial count、role 或 disclosure policy。
+
+Core 的 Artifact Validator 是唯一 Assignment 写者：它验证 Proposal 属于已完成的
+`ALPHA_DISCOVERY` Mission，所有 Discovery evidence 均属于同一 Program/Branch 和冻结的
+Discovery Dataset；再从已启用的、显式 Dataset Selection 取得 Validation/Sealed Dataset
+及 Policy。零个或多个可用 Selection 都是 `INCONCLUSIVE`，不能猜测“最新”数据。Sealed
+Dataset ID 永不进入 Mission Contract 或 MCP。无效 Proposal 标为 `REJECTED`，不能解锁
+后续 Mission。
+
+Validator 只接收一个 worktree 内的常规 Python source file，复制到 QZ-owned artifact
+storage 前按字节流上限 1 MiB 拒绝；它不跟随 link、目录、归档或任意外部 URI。该固定 V1
+边界防止 Mission 输出耗尽持久卷，不引入可由 Agent 改写的容量配置。
+
+`AlphaDiscoveryEvaluation` 是这条前置 evidence 的 Core-owned、不变输入/结果事实：它冻结
+已验证 Proposal（ID + revision）、其尚为 `DRAFT` 的 Alpha Model Version、
+Program/Cycle/Branch/Mission、唯一启用的 `EvaluationDatasetSelection`、其 Discovery Dataset、
+`EvaluationDesignVersion`、cause Event 与 discovery evaluator contract。`DISCOVERY_EVALUATION` durable job 只引用该
+事实且 payload 为空；隔离的 Discovery Evaluator 才可加载受限的模型 artifact 和 Discovery
+数据，并只回传受 schema 限制的 aggregate/gate outcome。只有 `VALID` Discovery Evaluation
+才能成为最终 `AlphaEvaluationAssignment` 的证据；`INCONCLUSIVE`/`INVALID` 记录尝试但不能
+创建 Assignment。它不复用已退役的 Quant Runtime Run，也不接受 Agent 声称的 run ID、raw
+数据、任意 URI 或 hash。
+
+每个终态 `AlphaDiscoveryEvaluation` 自身必须冻结私有 result UUID、有限 aggregate、固定
+gate 与 outcome；不为同一条已经终态的 Evaluation 再造平行 Result 身份。`VALID`
+raw-score 模型可由同一独立 Evaluator 产生一个受信 Calibration artifact。Core 只在该
+Discovery Evaluation 与其冻结 Discovery Dataset 均有效时创建 `AlphaCalibrationVersion`，
+并把其 provenance 固定到该 Evaluation；Calibration artifact 的位置由 evaluator-private
+UUID 映射，不由 Agent/Job/API 提供 URI。没有有效 Calibration 的模型仍可保留为
+relative-score 研究事实，但不得进入需要 expected return 的 Portfolio input。无需为这条
+同一冻结 Discovery 数据上的确定性计算另造 Agent Mission、任意 JSON training evidence
+或第二个可选 job。
+
+`RELATIVE_SCORE` 的 source Model Version 与这个受信 Calibration Version 共同构成
+`CalibratedAlphaFrame`；Assignment 必须冻结两者，不能为此复制或重标一个
+`CALIBRATED_RETURN` Model Version。没有该受信 Calibration 的 Assignment 可以保留
+研究结果，但不能产生可进入 mean-variance Portfolio 的 Qualification。
+
+`ALPHA_EVALUATION` durable job 只引用 Assignment ID，Job payload 必须为空。独立 Sealed
+Evaluator 只在自己的隔离进程中读取已冻结 Model Artifact 与 Sealed Catalog；它向 Core
+返回受 schema 限制的 result，Core 事务性写入 `AlphaEvaluationEpisode`、
+`AlphaSignalArtifact`、确定性 Level-1 Disclosure / Evidence Exposure，并且仅在所有
+统计、PIT、Calibration、Policy gate 通过时创建不可变 Qualification。Agent、API、CLI、
+Job payload 和旧 Nautilus runtime 都不能提供或读取 evaluator 输入/结果的 raw 值。
+为填充既有 Signal Artifact 的不可变元数据，Alpha result 只可另带 `row_count` 与 UTC
+event/available interval 的 typed Signal Summary；Core 校验 PIT 顺序、固定 schema/mode，
+并只由 evaluator-private result UUID 派生内部 locator。result 不携带 URI、frame 或 raw rows。
+
+若一个通过的 Alpha 可参与 V1 Portfolio，Sealed Evaluator 还必须为它写入恰好一个
+`AlphaEvaluationForecast`：冻结 `evaluation_result_id`、`AlphaSignalArtifact`、instrument、
+as-of / effective interval、有限的 expected return、uncertainty、confidence 以及有限的
+capacity envelope（最大 trade/position notional、participation、liquidation days、stressed
+capacity）。这是只供 Core Portfolio Input Evaluator 消费的受限 aggregate，不是 raw signal
+frame、URI 或 Mission disclosure。一个可进入 V1 mean-variance 的 Qualification 必须有且
+只有一个这样的 Forecast；多 instrument 或缺少 forecast 的结果可以保留研究/披露事实，
+但不得产生 Portfolio input、Candidate 或 Approval。
+
+`AlphaEvaluationEpisode` 是结果生命周期/披露事实，Assignment 是输入事实；二者一一
+绑定但不能互相替代。重试必须复用同一 Assignment、Episode 和引用，不得重新选数据或
+以 hash 判断输入是否相同。
+
+Discovery 与 Sealed Evaluator 都经同一个固定的 operator-owned executable 边界运行：
+`QUAZONAI_TRUSTED_EVALUATOR_COMMAND` 只能是一个绝对可执行文件路径，Core 为每个 Job
+创建只含 `kind` 与受 schema 限制 UUID/revision 引用的临时 descriptor，并将该 descriptor
+路径作为唯一参数传入。Evaluator 以自己的受信任配置和只读挂载解析这些引用，stdout
+只能返回一个 typed result；Core 在自己的事务中验证、持久化或拒绝它。该 child 不继承
+QZ database URL、Codex credential、downstream credential 或 Mission workspace；不存在
+该 executable、descriptor 或可验证 result 时 Job 失败，不创建 Alpha 事实。它不是插件
+注册表、通用 shell hook、API 或 raw-data transport。
 
 ## 15. Disclosure Policy
 
@@ -777,6 +993,23 @@ notes
 
 Discovery 可以运行多个 capital scenario；Paper/Live Promotion 必须冻结当前 Capital Context，并验证 Candidate 的 capacity envelope 覆盖该金额。
 
+### 17.1 V1 typed mandate and capital configuration
+
+`LONG_ONLY_MEAN_VARIANCE_V1` 是唯一可写的 V1 Mandate policy。Mandate Version 以 typed
+fields 固化单一 Universe、合格 role、minimum/maximum weight、gross/net exposure、turnover
+与 variance limit、risk/cost/uncertainty aversion、commission/half-spread/slippage/impact
+rates 与 impact breakpoint；`cash_reserve` 必须为零。未知 policy key、group/custom
+constraint、自由 JSON 解释或多个 Universe 一律在配置时拒绝。
+
+Capital Context 只能由 Operator Administration 创建新的不可变 Version，显式填写 currency、
+deployable capital、observed_at 和 valid_until；它不是从 Mandate JSON、下游账户或缺省值
+推导的。初始 Candidate 的 previous target weight 明确定义为零；之后只可读取同一
+Portfolio Program 的前一 QZ TargetPortfolioFrame，绝不读取下游 position。
+
+新的 V1 Capital Context 固化 `configuration_contract_version=CAPITAL_CONTEXT_V1`。迁移前的
+Capital Context 即使 `source_type=ADMIN` 也没有这个版本化 typed contract，必须标为 legacy
+unavailable，不能被 Input Evaluator 当作现实资金快照。
+
 ## 18. Portfolio Program 自动创建
 
 满足以下条件时自动创建 Portfolio Program：
@@ -790,33 +1023,138 @@ Enabled Mandate
 
 没有合格 Alpha 时是 `WAITING_FOR_ALPHA`，不是失败。
 
-Portfolio Program 永久绑定一个 Mandate Version，并在 Promotion 时冻结 Capital Context Version。
+V1 对每个 Mandate Version 只创建或复用一个等价的 Portfolio Program，且数据库以
+`mandate_version_id` 唯一约束强制此身份，Program 只处理一个 Universe。Core 只可在先验证
+至少两个完整、互异的 forecast axis 后创建或复用其
+`WAITING_FOR_ALPHA` Program，作为 `PortfolioInputEvaluationAssignment` 的稳定锚点；这不创建
+Candidate，也不表示 covariance/Capital/Policy 已就绪。只有唯一的系统 Portfolio Input
+Evaluator 从可信、版本化事实记录完整不可变 `PortfolioAssemblyInput` 后，才可将 Program
+唤醒为 active assembly。缺少任一输入时保持 `WAITING_FOR_ALPHA` 或记录
+`INCONCLUSIVE`，不得补零、猜测或开放人工 assemble API。Codex 只能提出候选 Alpha/rationale，
+不能写 Input、权重、Candidate 或 Approval。
+
+V1 的真实自动 trigger 只生产每个 Program/Family 的首个 Candidate：在同一 trusted Alpha
+acceptance transaction 中，新建 `ACTIVE PRIMARY_ALPHA` Qualification 后，Core 可枚举全部
+enabled、typed V1、且单一 Universe/role 匹配的 Mandate Version；对每个 Mandate 先确定性
+收集完整 eligible `ACTIVE` pool，绝不先创建空 Program/Family。只有至少两个完整 axis 时才
+锁定/创建其唯一 Mandate Program；且该
+Program/Family 尚无 Candidate 时，Core 才创建 `PORTFOLIO_MANDATE` cause Event、冻结
+`previous_candidate_id=NULL` 的 Assignment，并排队空 payload
+`PORTFOLIO_INPUT_EVALUATION` job。它绝不读取或写入 `current_candidate_id`，也不从已存在
+Candidate 推断 successor；非首个 Candidate 必须等待未来显式的、冻结 predecessor 的因果事实。
+同一 Program/Family 已有首个 in-flight Assignment 或 `PENDING` Input 时也不得再创建初始
+Assignment；同一 cause/retry 必须收敛到已有的冻结事实，而不是并发地产生竞争的首个 Input。
+
+Portfolio Program 永久绑定一个 Mandate Version，并在 Promotion 时冻结 Capital Context
+Version。V1 的 Mandate 与 Input 都只接受单一 `universe_version_id`；multi-universe 是
+§20 的后续显式能力，在 V1 必须 fail closed。
 
 ## 19. Staged Portfolio Assembly
 
 ```text
 Alpha Library
-→ Eligibility Snapshot
-→ Role Pools
+→ Eligibility / Role Pools
 → Redundancy / Common-source Clustering
 → Portfolio Skeletons
 → Approved Policy Families
+→ complete PortfolioAssemblyInput
+→ deterministic Portfolio Assembly
 → Discovery Evaluation
 → Robustness / Marginal Contribution
 → Candidate Family
 → Portfolio-level Sealed Evaluation
 ```
 
-第一版 approved policy families：
+Eligibility 是选择阶段，不再单独持久化为可漂移的 Snapshot。
+`PortfolioAssemblyInput` 是该选择的唯一冻结事实，也是 deterministic Portfolio Engine
+的唯一生产输入；它只由系统 Portfolio Input Evaluator 一次性写入，不能 patch。它至少
+绑定：
 
-- Equal Weight；
-- Volatility Scaling；
-- Risk Parity；
-- Hierarchical Risk Parity；
-- Constrained Mean-Variance；
-- Mean-CVaR。
+- `portfolio_program_id`、`mandate_version_id`、有效的 `capital_context_version_id`、单一
+  `universe_version_id`、因果 `cause_event_id`、`snapshot_no` 与 `as_of_time`；
+- 每个已选 Alpha Qualification 的显式 ID、Signal Artifact ID、instrument、expected
+  return、uncertainty、confidence、previous target weight 与 capacity estimate；
+- 以 Alpha axis 明确索引的 covariance 上三角，以及其 method、observations、decay 和
+  shrinkage；
+- V1 `LONG_ONLY_MEAN_VARIANCE_V1` 的显式约束、risk/cost/uncertainty aversion 和
+  commission、spread、slippage、impact 参数。
+
+这些字段是 typed columns/relations，不是 `alpha_set_json`、matrix JSON、`risk_config`、
+`cost_config`、`capacity_config` 或 `constraint_config` 的自由解释。V1 只支持当前明确定义
+的 long-only scalar constraints；未映射的 group/custom constraint、未知 policy key、
+`cash_reserve != 0` 或多个 Universe 一律拒绝，且不产生 Candidate。Cash/position/order
+语义仍不属于 QZ；previous weights 只能来自先前 QZ Candidate 的 TargetPortfolioFrame，
+不是下游 position。
+
+Input 必须完整后才可持久化和排队；缺失 expected return、uncertainty、confidence、
+covariance、capacity 或有效 Capital Context 时，在 Portfolio Search Ledger 记录
+`INCONCLUSIVE` reason，不能写半成品 Input。Input 的语义字段不可更新；只有其有限的
+处理结果 `PENDING | ASSEMBLED | INFEASIBLE | STALE | INVALID` 与完成时间可由 worker
+推进。Input UUID、Candidate UUID、Package UUID/revision 和 cause event 是显式身份；不用
+digest、hash 或伪造 Candidate revision。
+
+V1 唯一 approved policy family 是 Constrained Mean-Variance
+(`LONG_ONLY_MEAN_VARIANCE_V1`)。Equal Weight、Volatility Scaling、Risk Parity、
+Hierarchical Risk Parity 和 Mean-CVaR 只有在各自的 typed input contract、独立 evidence
+和验证落地后才可成为新的显式 policy family；不能作为未知 JSON 的 fallback。
 
 `PortfolioSearchLedger` 保存 Alpha subset、role、policy、constraint、rebalance 和结果。
+
+一个 `PORTFOLIO_ASSEMBLY` job 只引用已冻结的 Input，重试必须收敛到同一 Input 与
+Candidate。它先验证所有引用仍有效，再产生 Candidate。后续独立的
+`CANDIDATE_PACKAGE_BUILD` job 只引用该 Candidate，预留一个 target-only Package revision；
+Package 变为 `AVAILABLE` 后才可被后续流程读取。文件归档与数据库不是同一原子资源，
+因此 package worker 必须以 package ID/revision 和 manifest 中的显式引用恢复或验收
+`BUILDING` Package，不能以 hash 判断重试结果。
+
+V1 Candidate 在 assembly transaction 中一次性成为 `ASSEMBLED`；它不因 Package 文件写入而
+改写。Package 是独立的 `BUILDING → AVAILABLE` 处理状态，Promotion 同时要求
+`ASSEMBLED` Candidate 与 `AVAILABLE` Package。TargetPortfolioFrame 冻结
+`portfolio_state='ASSEMBLED'`，不是未来可变的 handoff/readiness 标记。
+
+Assembly 成功也不得直接创建 Approval。只有独立 Portfolio evidence 已完成、
+material-improvement/policy gate 通过，且已有 `AVAILABLE` Package 时，后续 promotion 流程才可创建
+绑定该 Candidate ID + Package ID/revision 的 Paper Approval；Paper 与 Live 仍分开。
+
+`PortfolioInputEvaluationAssignment` 是 `PORTFOLIO_INPUT_EVALUATION` 的不可变、Core-owned
+输入事实。它冻结 Program、typed Mandate、有效 Capital Context、明确的 Sealed Dataset
+Selection、`PORTFOLIO_TO_PAPER` Policy、cause Event、明确的 `previous_candidate_id`（首个
+Candidate 时为 NULL），以及按 axis 排列的合格 Alpha
+Qualification、其 Sealed Result / Signal Artifact / 唯一 Forecast。只要同一 as-of 时点没有
+至少两个完整且不重复的 axis、或缺少有效 Capital/Policy，Core 只写
+`PortfolioSearchLedger(INCONCLUSIVE)`，不能写半成品 Assignment 或猜测“latest”。
+`PORTFOLIO_INPUT_EVALUATION` job 只引用这个 Assignment 且 payload 为空；同一受信 evaluator
+边界只回传该固定 axis 的有限 covariance 上三角及其 method、observations、decay、shrinkage
+和 evaluator-private result UUID。它不能接收或输出 raw returns、matrix JSON、URI、secret 或
+Job payload。Core 验证轴完整、时间一致和每个有限值后，才一次性写完整
+`PortfolioAssemblyInput`/Member/Covariance 关系并排队空 payload 的 `PORTFOLIO_ASSEMBLY` job。
+V1 的 covariance method 唯一且严格为 `EWMA_SHRINKAGE`；其他 method label（包括未知或
+自由字符串）一律拒绝，不能被当作等价 fallback。
+previous weights 只从 Assignment 已冻结 predecessor 的 relational Candidate Members 读取；
+不得在 evaluator 返回后读取 `current_candidate_id` 或按时间挑选“latest”。
+
+因此 `PORTFOLIO_INPUT_EVALUATION` 是唯一 `PortfolioAssemblyInput` 写者。它只消费已完成的
+Alpha Assignment/Episode/Qualification、上述冻结 Assignment、typed Mandate、有效 Capital
+Context 和因果 Event；缺任何一项时只写 `PortfolioSearchLedger(INCONCLUSIVE)`。它不能从
+`Qualification.metrics`、Mission Artifact、任意 JSON、下游 position 或 Job payload 补值。
+Assembly job 从关系行重建 `OptimizationInput`，只复用确定性 target-weight engine，且只在
+`OPTIMAL` 时创建 Candidate；Package 只由后续独立 build job 预留。
+
+`PORTFOLIO_ASSEMBLY` 仅在 `OPTIMAL` 时创建 `ASSEMBLED` Candidate、Candidate Member 与因果
+Event；同一成功事务随即创建唯一的 `PortfolioEvaluationAssignment` 和 `ASSIGNED`
+`PortfolioEvaluationEpisode`，并排队空 payload 的 `PORTFOLIO_EVALUATION` job。Assignment
+冻结 Candidate、Candidate Family、nullable 的 `previous_candidate_id`、Assembly Input、Sealed
+Dataset Selection/revision、`PORTFOLIO_TO_PAPER` policy 与 cause Event。独立 evaluator 只接收
+这些显式引用，返回受限的 Portfolio evidence、Level-1 disclosure、有限 typed metrics/gates 和
+evaluator-private result UUID；它不调用旧 Nautilus runtime，不接受 raw Job payload，不创建
+Approval。Core 是唯一的 Episode/metric/result writer。
+
+Portfolio evidence 没有 `CANDIDATE_CURRENT`、`current_candidate_id` 或 latest 语义。非首个
+Candidate 的 evaluator 只能与 Assignment 已冻结的 predecessor 比较。首个 Family baseline
+明确为 `previous_candidate_id=NULL`：只有 evaluator 同时返回
+`MATERIAL_IMPROVEMENT=0` 与 `MATERIAL_IMPROVEMENT_VALID=PASS` 时才可通过；相应的
+`PORTFOLIO_TO_PAPER` policy 必须明确要求 `MATERIAL_IMPROVEMENT` 且其 minimum 不大于零。
+没有通过该 Assignment 的 Candidate 不能进入 Promotion。
 
 ## 20. Multi-Universe Portfolio
 
@@ -851,6 +1189,11 @@ Portfolio Candidate 永久不可变。任何下列变化都产生新 Candidate�
 - Rebalance policy；
 - Candidate Package contract。
 
+V1 `PortfolioCandidateFamily` 是 Core-owned 的稳定比较 lineage：每个
+`PortfolioProgram` 恰有一个 Family，按 Program/Mandate 创建或复用，不能由 Candidate UUID、
+latest query 或 Agent 指定。每个 Candidate 必须冻结这个非空 Family ID；Material Improvement
+只在同一 Family 内比较。
+
 Candidate 至少冻结：
 
 ```text
@@ -865,7 +1208,6 @@ risk_model_version_id
 cost_model_version_id
 capacity_model_version_id
 constraint_set_version_id
-evaluation_episode_id
 created_at
 ```
 
@@ -903,7 +1245,10 @@ Promotion Gates passed
 + downstream compatibility preflight
 ```
 
-`MaterialImprovementPolicyVersion` 综合：
+V1 不新增只有一个消费者的 `MaterialImprovementPolicyVersion` 平行表。Material Improvement
+是 `PORTFOLIO_TO_PAPER` 的不可变 typed `PromotionPolicyVersion` 中明确的
+`MATERIAL_IMPROVEMENT` metric gate，并由 frozen Family/predecessor 的独立 Portfolio evaluator
+产出。它综合：
 
 - search-adjusted evidence；
 - portfolio marginal contribution；
@@ -917,6 +1262,50 @@ Promotion Gates passed
 - 对当前已批准 Portfolio 的替代/互补价值。
 
 同 Candidate Family 只维护一个当前内部推荐。新版本没有实质改善时不替换，也不打扰用户。
+
+### 22.1 Promotion policy and deterministic writers
+
+`PromotionPolicyVersion` 是不可变、typed 的 Paper/Live policy：新生产版本固定
+`policy_contract_version = PROMOTION_POLICY_V1`，它冻结 purpose、明确的
+Paper/Live logical downstream、对应的 `DownstreamConnectionVersion`、
+`FeedbackContractVersion` 与具体 `PreflightReceipt`，以及每个必需 metric 的名称、比较符
+与有限阈值。Alpha policy 的所有 downstream/connection/contract/receipt refs 均为 NULL；
+`PORTFOLIO_TO_PAPER` 只冻结非空的 Paper tuple，Live tuple 为 NULL，且必须是
+`MANUAL_APPROVAL` 并含 `MATERIAL_IMPROVEMENT` gate；`PAPER_TO_LIVE` 的 Paper/Live tuple
+均非空，才可明确选择 `MANUAL_APPROVAL` 或 `AUTO_HANDOFF`。writer 只复核该固定 receipt
+仍 `READY` 且未过期；过期即 stale/ineligible，绝不选择更新的 receipt。自由
+`promotion_policy` JSON、任意 Feedback JSON 或全局 readiness bool 不能成为 Promotion
+输入；production writer 也不读取 mutable `DownstreamSystem` 的 current/latest 字段。
+历史 policy 的 `policy_contract_version` 只可为 NULL，保留只读审计；它不满足任何生产
+writer 的 typed eligibility。数据库对 `PROMOTION_POLICY_V1` 强制 purpose tuple XOR，不能把
+缺失 tuple 的新 policy 伪装为 legacy。
+
+`PORTFOLIO_TO_PAPER` policy 还必须冻结一个 `paper_to_live_policy_version_id`，它只能指向
+一个 `PAPER_TO_LIVE` policy，并且二者的 Paper tuple 必须逐字段相同。Alpha 与
+`PAPER_TO_LIVE` policy 的该 self-FK 均为 NULL。P2P writer 将这个已验证的 P2L policy ID
+预绑定到其 Paper Approval 和其后唯一的 Handoff；P2L 只沿该 immutable lineage 读取 policy，
+仍需复核其冻结 tuples 可用，绝不在 Feedback 或 Promotion 时选择 active/current/latest policy。
+
+系统 `PORTFOLIO_TO_PAPER_PROMOTION` writer 只在冻结 Candidate 有 `PASS` 的
+Portfolio Evaluation、所有 typed P2P gates（含 Material Improvement）通过、Package 已
+`AVAILABLE`，且该 policy 冻结的 Paper connection/contract/receipt 仍有效时，原子创建一个
+带同一 `paper_to_live_policy_version_id` 的 `PromotionEvaluation`、每个 gate result 和冻结的
+PENDING Paper Approval。该 ID 必须等于 P2P policy 的已验证 self-FK，并与明确的
+`promotion_purpose` 一起纳入 Promotion Evaluation、Approval 与 Handoff 的 frozen lineage；它不推断 current dependencies、
+Candidate、Policy 或 downstream。人工动作只 `Approve` / `Reject` 已
+绑定 downstream 的 Snapshot；不再在审批时选择或修改 downstream。
+
+完整、contract-valid 的 Paper Feedback 必须先持久化它的有限 typed metric rows，才可为同一
+Candidate/Package lineage 排队一个
+`PAPER_TO_LIVE_PROMOTION` job。Feedback Contract 的 complete 判定来自 typed scalar
+requirements 和 `feedback_contract_metric_requirements`；`spec_json`、summary 或 optional
+artifact path 只供展示，绝不参与 gate。该 worker 事务内从持久化的 Candidate/Package/Policy/
+Dataset/Capital/connection/receipt、typed Forward Evidence metrics 与冻结的 lineage 重建
+deterministic request、持久化每个 gate/action，并以同一 Candidate/成员任一
+`DEGRADING|FAILED` Observation 保守阻断；它不作 latest/current 恢复推断。
+`MANUAL_APPROVAL` 创建 PENDING Live Approval；`AUTO_HANDOFF` 原子创建审计用
+SYSTEM-approved Live Approval 与 AVAILABLE Live Handoff。二者都只是 target-only offer，
+仍由独立 downstream claim/accept，绝不控制其运行时。
 
 ## 23. Approval Snapshot
 
@@ -938,7 +1327,16 @@ PENDING → APPROVED
 
 终态不可恢复。
 
-Snapshot 冻结：Candidate Package、Evidence Set、Alpha/Calibration、Mandate、Capital Context、Portfolio Policy、Risk/Cost/Capacity/Constraint、目标 downstream、downstream connection version、Package/Feedback Contract、compatibility preflight、validity policy。
+Snapshot 冻结：不可变 `candidate_id + candidate_package_id + package_revision`、Evidence
+Set、Alpha/Calibration、Mandate、Capital Context、Portfolio Policy、Risk/Cost/Capacity/
+Constraint、目标 downstream、downstream connection version、Package/Feedback Contract、
+compatibility preflight、validity policy。三项 Package/Candidate 显式身份任一变化都会使
+Snapshot stale；这不是内容 hash 比较。
+
+`ApprovalSnapshot.promotion_evaluation_id` 是一对一冻结关系。Approve 请求只携带
+`expected_state`；它不能携带、选择、替换或覆盖 downstream、connection、contract、receipt、
+Candidate 或 Package。批准时仅重验 Snapshot 自己的显式绑定，随后创建同一绑定的 target-only
+Handoff；`AUTO_HANDOFF` 不经过人工 endpoint。
 
 ### 23.1 STALE / EXPIRED
 
@@ -969,48 +1367,46 @@ OTHER
 
 Codex 只能看到 policy 允许的 reason code 和用户 note，不能看到 Level 2 Sealed 明细。
 
-## 24. Nautilus-native Candidate Bundle
+## 24. Target-only Candidate Package
 
-V1 标准格式：
+Package 是不可变交付事实，不是下游 runtime 的安装包。其唯一 payload 是
+`TargetPortfolioFrame`；当前 builder 的归档最小形状为：
 
 ```text
-candidate-bundle/
+candidate-package/
   manifest.json
-  requirements.lock
-  strategy/
-    strategy.whl
-    strategy-config.json
-    actor-config.json
-  data/
-    requirements.json
-    instrument-scope.json
-    custom-data-schemas/
-  runtime/
-    nautilus-version.json
-    backtest-run-config.json
-    venue-config.json
-    risk-config.json
-    live-node-template.json
   validation/
-    fixture-catalog/
     target-portfolio-frame.json
-    expected-statistics.json
-  evidence/
-    discovery-summary.json
-    sealed-summary.json
-    robustness-summary.json
-  lineage.json
 ```
 
-`requirements.lock` 精确固定 `nautilus-trader==1.231.0` 及所有其他依赖。Bundle 不包含真实 broker/provider/runtime credential、private key、account secret、账户/执行报告或 execution-control endpoint；`live-node-template.json` 只是 downstream-owned 配置模板，QZ 不启动或控制节点。Bundle 只传递脱敏后的 `TargetPortfolioFrame` 和聚合统计，conformance 依赖显式 artifact/version、wheel metadata、schema、required files、fixture/report/statistics 与 remote `verify_candidate`，不新增应用级 hash/checksum/fingerprint gate。
+`TargetPortfolioFrame` 只包含 Candidate/Universe、有效时间和每个 instrument 的目标
+权重/置信度。它不包含 executable strategy、wheel、依赖锁、node template、broker URL、
+API key、private key、account、订单、成交、仓位、recovery、heartbeat 或 execution
+retry。下游自行决定如何解释目标，QZ 不提供启动、停止、撤单、平仓或升级指令。
 
-Package 禁止包含：broker URL、API key、private key、account ID、order type、TIF、order id、recovery、heartbeat 或 execution retry。`validation/` 只包含脱敏后的 Reference Fixture 与预期报告，不包含运行时账户数据。
+Package 使用 `candidate_package_id + package_revision` 作为显式身份；Approval 绑定
+`candidate_id + candidate_package_id + package_revision`。Candidate 本身是不可变 UUID
+事实，不添加无意义的 Candidate revision。替换 Package 必须创建新 Package/revision，
+旧 Approval 必须 stale。
 
-QZ 不为 Package 创建应用级 hash/checksum/fingerprint。完整性与兼容性依赖：显式 artifact ID/version、文件名/长度、wheel/package metadata、schema validation、Reference Fixture 执行结果与 contract version。
+业务验证只使用 schema、显式 ID/revision、禁止字段检查和受信 reference-fixture
+conformance。不得为 Package 增加 SHA、hash、checksum、digest、fingerprint、内容清单
+或任何等价 gate；存储字节完整性由基础设施负责。
+
+当前 target-only archive builder 和其禁止字段验证已实现。把 revised Package 预先持久化、
+验证后再绑定 Approval 的事务仍是 §0.1 所列的待验收闭环，不能由现有 archive 生成
+行为冒充。
+
+Package worker 先以显式 Candidate ID + Package revision 预留 `BUILDING` row，再写入和
+验证 archive；只有验证成功才推进 `AVAILABLE`。lease/retry 只恢复或验证同一预留 row，
+不能创建重复 Package、以文件 hash 识别重试，或让 `BUILDING` Package 进入 Approval。
 
 ## 25. Handoff Registry
 
-用户在 Approval 页选择**逻辑下游系统**，例如 `Nautilus Paper Lab`、`Nautilus Live Primary`、`External Validator`，不选择机器、容器或节点。
+Promotion Policy 在创建 Snapshot 前冻结**逻辑下游系统**，例如 `Nautilus Paper Lab`、
+`Nautilus Live Primary`、`External Validator`，以及该系统的 concrete connection、feedback
+contract 与 preflight receipt，而不是机器、容器或节点。Approval 页面只展示该绑定；用户只
+Approve / Reject，不选择或替换 downstream。
 
 状态：
 
@@ -1059,7 +1455,7 @@ feedback_contract_version_id
 purpose
 minimum_observation_duration
 minimum_valid_sample_size
-required_fields
+required_metric_codes[] (ordered relational rows)
 first_status_deadline
 complete_feedback_deadline
 grace_period
@@ -1068,7 +1464,11 @@ accepted_arrow_contracts
 disclosure_policy
 ```
 
-缺失、迟到、部分或 invalid feedback 是运营/证据质量问题，不等于 Candidate 失败。
+完整 Feedback 用 observation header 加与 frozen `required_metric_codes[]` 精确相同的有限
+typed metric rows 表达；`NOT_AVAILABLE` 是显式无值状态，不能伪造数值。自由
+evidence JSON、summary 和 optional artifact path 只能展示，不能影响 contract validity 或
+Promotion gate。缺失、迟到、部分或 invalid feedback 是运营/证据质量问题，不等于 Candidate
+失败。
 
 只有 `FEEDBACK_COMPLETE` 且 contract-valid 的 Paper feedback 才能成为 `ForwardEvidenceEpisode` 并参与 Live Promotion。
 
@@ -1102,12 +1502,34 @@ Portfolio Health：
 状态：
 
 ```text
-HEALTHY → WATCH → DEGRADING → INVALIDATED
+HEALTHY → WATCH → DEGRADING → FAILED → RECOVERED
 ```
 
 `DegradationPolicyVersion` 判断持续时间、严重程度、统计置信度、多 Episode 一致性、Mandate 影响和是否存在可研究的新信息。
 
-只有达到门槛才自动 wake Program 并创建 Diagnostic Mission。不会自动停止下游、自动换仓或替换 Live Candidate。
+V1 Wake 只接受一个已完成 Handoff 的 `ForwardEvidenceEpisode` 作为来源；Operator 将其
+转换为受 schema 约束的 Alpha 或 Portfolio Observation。Core 必须验证该 subject 属于
+该 Handoff 的 immutable Candidate，并能唯一映射到一个 Research Program；不完整、
+不属于 Candidate、跨多个 Program 或无法映射的证据一律拒绝，不能猜测目标 Program。
+同一 Program/subject 的新 Episode 必须具有严格更晚的 `observation_end`；早于或相同
+时间的 evaluated Evidence 一律 fail-closed，不能由接收顺序改变状态。
+
+本期只使用 server-owned、显式版本的 `degradation-v1` policy；每个 Observation 固化
+完整 policy snapshot、输入 severity/confidence、结果 state 与 reason code。它不是通用
+的可配置 policy API；未来改变 policy 必须使用新的显式版本，不能重写既有 Observation。
+
+每个 active-state crossing 以 `(program_id, subject_type, subject_id,
+forward_evidence_episode_id, policy_revision, reason_code)` 的结构化唯一约束创建一个
+`WakeEvent`，不使用 hash。Program 为 `ACTIVE` 时，Wake 在同一事务创建上述两节点
+Diagnostic/Replan Cycle 后才标记为已消费，并由既有 Mission scheduler 排队。有效 Wake
+在 `COOLING` 或 `WAITING_FOR_FEEDBACK` 时同一事务转回 `ACTIVE` 再消费；`PAUSED`、
+`ARCHIVED`、`BLOCKED` 与 `APPROVAL_PENDING` 只保留 `PENDING` Wake。`Resume` 在
+`PAUSED → ACTIVE` 的同一事务中消费 pending Wake；`BLOCKED`/`APPROVAL_PENDING` 只能由
+既有低频 Wake 管理动作显式转为 `ACTIVE` 后消费。`ARCHIVED` 不会由 Wake 恢复，且本期
+不新增 restore 语义。
+
+Wake 只创建受限 Research work；它不改变 Handoff、Package、Approval 或 Candidate，
+不调用下游，也绝不自动停止下游、自动换仓或替换 Live Candidate。
 
 ---
 
@@ -1406,16 +1828,17 @@ api                 # FastAPI + built React static assets + SSE
 finite-worker       # Mission + remote Discovery/Sealed durable jobs
 ```
 
-外部独立部署：
+外部独立系统（不属于 QZ Compose 或控制面）：
 
 ```text
-remote-nautilus-research-runtime
-remote-nautilus-sealed-runtime
-nautilus-paper-node
-nautilus-live-node
+trusted research/sealed evaluator (when configured)
+Paper downstream
+Live downstream
 ```
 
-`deploy/Dockerfile.nautilus-runtime` 是 reference remote runtime image；`deploy/nautilus-runtime.compose.example.yml` 提供独立 runtime，以及同主机部署时加入稳定 `quazonai-core` network 的窄 proxy。Core Compose 也提供同样的 `nautilus-runtime-proxy` 边界；API 只连接 Core network，不直接加入 runtime bridge。Proxy 只转发到 Research/Sealed runtime，并保留长时 manifest/materialization 与 Candidate Bundle 的 contract 上限，因此 runtime/plugin peer 不能通过网络直达 Operator API。跨主机部署使用受信 HTTPS endpoint/token，不使用两个 Docker network 的跨主机假设。Research 与 Sealed 使用不同 endpoint/token/catalog。Core API image 必须证明未安装 NautilusTrader。
+如配置受信 evaluator，QZ 只通过窄的受控接口交付受限输入并接收受控结果。Paper/Live
+downstream 的部署、节点生命周期、凭据、网络和恢复均不在 QZ 事实源或 Compose 拓扑中。
+仓库中的旧 remote-runtime 部署材料属于迁移删除范围，不能作为 QZ 对下游运行的承诺。
 
 不引入 Redis、Celery、Kafka 或 Kubernetes。使用 PostgreSQL durable jobs + `FOR UPDATE SKIP LOCKED`，事件表 + `LISTEN/NOTIFY` 仅做唤醒。
 
@@ -1540,6 +1963,7 @@ Production 构建后 SPA 静态资产由 FastAPI 提供，减少额外运行服�
 | `data_sources` | `id`, `plugin_release_id`, `name`, `provider`, `config`, `state` |
 | `dataset_revisions` | `id`, `data_source_id`, `universe_version_id`, `revision_no`, `schema_version`, `event_start`, `event_end`, `available_start`, `available_end`, `relative_path`, `row_count`, `quality_state`, `point_in_time_state`, `created_at` |
 | `data_quality_results` | `id`, `dataset_revision_id`, `check_kind`, `state`, `summary`, `created_at` |
+| `evaluation_dataset_selections` | `id`, `universe_version_id`, `version_no`, `discovery_dataset_revision_id`, `validation_dataset_revision_id`, `sealed_dataset_revision_id`, `state`, `created_at` |
 
 ### 39.4 Research assets & evidence
 
@@ -1547,39 +1971,136 @@ Production 构建后 SPA 静态资产由 FastAPI 提供，减少额外运行服�
 |---|---|
 | `feature_pipeline_versions` | `id`, `program_id`, `branch_id`, `version_no`, `artifact_id`, `contract_json`, `created_at` |
 | `alpha_model_versions` | `id`, `program_id`, `branch_id`, `version_no`, `mode`, `artifact_id`, `horizon`, `created_at` |
-| `alpha_calibration_versions` | `id`, `alpha_model_version_id`, `version_no`, `method`, `training_evidence_json`, `artifact_id`, `created_at` |
+| `alpha_calibration_versions` | `id`, `alpha_model_version_id`, `version_no`, `method`, `training_dataset_revision_id`, `source_discovery_evaluation_id`, `private_artifact_ref`, `state`, `created_at` |
 | `alpha_qualifications` | `id`, `alpha_model_version_id`, `calibration_version_id`, `universe_version_id`, `role`, `state`, `scope_json`, `evaluation_episode_id`, `created_at` |
+| `evaluation_design_versions` | `id`, `version_no`, `universe_version_id`, `contract_version`, typed statistical and disclosure fields, `state`, `created_at` |
+| `alpha_discovery_evaluations` | `id`, `source_mission_artifact_id`, `alpha_model_version_id`, `program_id`, `cycle_id`, `branch_id`, `mission_id`, `evaluation_dataset_selection_id`, `discovery_dataset_revision_id`, `evaluation_design_version_id`, `cause_event_id`, `evaluator_contract_version`, `state`, `outcome_code`, `created_at`, `completed_at` |
+| `alpha_discovery_evaluation_metrics` | `discovery_evaluation_id`, `metric_code`, `value`, `status` |
+| `alpha_discovery_evaluation_gates` | `discovery_evaluation_id`, `gate_code`, `status`, `reason_code` |
+| `alpha_evaluation_assignments` | `id`, `source_mission_artifact_id`, `discovery_evaluation_id`, `program_id`, `cycle_id`, `branch_id`, `mission_id`, `alpha_model_version_id`, `universe_version_id`, `sealed_dataset_revision_id`, `evaluation_design_version_id`, `promotion_policy_version_id`, `cause_event_id`, `assignment_no`, `state`, `created_at` |
+| `alpha_evaluation_assignment_dataset_revisions` | `assignment_id`, `dataset_revision_id`, `phase`, `ordinal` |
+| `alpha_evaluation_episodes` | `id`, `assignment_id` (unique), `state`, `result`, `sealed_at`, `evaluated_at`, `disclosed_at`, `consumed_at`, `invalid_reason` |
+| `alpha_evaluation_results` | `id`, `episode_id` (unique), `evidence_validity`, `result`, `private_result_ref`, `evaluated_at` |
+| `alpha_evaluation_metrics` | `result_id`, `metric_code`, `phase`, `value`, `status` |
+| `alpha_evaluation_gates` | `result_id`, `gate_code`, `status`, `reason_code` |
+| `alpha_evaluation_forecasts` | `evaluation_result_id`, `alpha_signal_artifact_id`, `instrument_id`, `as_of_time`, `effective_from`, `effective_until`, `expected_return`, `uncertainty`, `confidence`, typed capacity envelope |
 | `search_ledger_entries` | `id`, `program_id`, `branch_id`, `mission_id`, `attempt_type`, `family_key`, `params_json`, `outcome_class`, `created_at` |
-| `evaluation_episodes` | `id`, `kind`, `state`, `universe_version_id`, `dataset_revision_id`, `policy_version`, `sealed_at`, `assigned_candidate_type`, `assigned_candidate_id`, `evaluated_at`, `disclosed_at`, `consumed_at`, `invalid_reason` |
 | `evidence_exposures` | `id`, `episode_id`, `subject_type`, `subject_id`, `level`, `created_at` |
 | `disclosures` | `id`, `episode_id`, `audience`, `level`, `classification_json`, `created_at` |
+
+`alpha_discovery_evaluations` is unique by `(source_mission_artifact_id, cause_event_id)` and
+only its `FROZEN | QUEUED | RUNNING | VALID | INCONCLUSIVE | INVALID` processing state may
+advance. `alpha_evaluation_assignments` is unique by `(source_mission_artifact_id, cause_event_id)` and
+by `(alpha_model_version_id, cycle_id, assignment_no)`. Its Dataset relation is unique by
+`(assignment_id, phase, ordinal)`. `AlphaEvaluationEpisode.assignment_id` and
+`AlphaEvaluationResult.episode_id` are unique. These explicit keys, not a digest, make
+validator/worker retries converge.
 
 ### 39.5 Portfolio
 
 | 表 | 关键字段 |
 |---|---|
 | `portfolio_mandates` | `id`, `key`, `name`, `enabled`, `created_at` |
-| `portfolio_mandate_versions` | `id`, `mandate_id`, `version_no`, `spec_json`, `state`, `created_at` |
-| `capital_context_versions` | `id`, `source_type`, `source_downstream_system_id`, `base_currency`, `deployable_capital`, `observed_at`, `valid_until`, `created_at` |
-| `portfolio_programs` | `id`, `mandate_version_id`, `state`, `created_at`, `updated_at` |
-| `portfolio_eligibility_snapshots` | `id`, `portfolio_program_id`, `snapshot_no`, `alpha_set_json`, `created_at` |
-| `portfolio_search_ledger_entries` | `id`, `portfolio_program_id`, `eligibility_snapshot_id`, `attempt_json`, `outcome_class`, `created_at` |
-| `portfolio_candidates` | `id`, `candidate_family_id`, `portfolio_program_id`, `mandate_version_id`, `capital_context_version_id`, `universe_set_json`, `policy_version`, `risk_model_version`, `cost_model_version`, `capacity_model_version`, `constraint_set_version`, `evaluation_episode_id`, `state`, `created_at` |
-| `portfolio_candidate_members` | `candidate_id`, `alpha_qualification_id`, `role`, `target_contribution` |
+| `portfolio_mandate_versions` | `id`, `mandate_id`, `version_no`, `base_currency`, `objective`, `eligible_alpha_roles`, `universe_version_id`, typed V1 policy/constraint fields, `state`, `created_at` |
+| `capital_context_versions` | `id`, `configuration_contract_version`, `source_type`, `source_downstream_system_id`, `base_currency`, `deployable_capital`, `observed_at`, `valid_until`, `created_at` |
+| `portfolio_programs` | `id`, `mandate_version_id` (unique in V1), `state`, `current_candidate_id`, `created_at`, `updated_at` |
+| `portfolio_input_evaluation_assignments` | `id`, `portfolio_program_id`, `mandate_version_id`, `capital_context_version_id`, `evaluation_dataset_selection_id`, `sealed_dataset_revision_id`, `promotion_policy_version_id`, `cause_event_id`, `previous_candidate_id` nullable, `as_of_time`, `evaluator_contract_version`, `state`, `private_result_ref`, `evaluated_at`, `outcome_code`, `created_at`, `completed_at` |
+| `portfolio_input_evaluation_assignment_members` | `assignment_id`, `axis_index`, `alpha_qualification_id`, `alpha_evaluation_result_id`, `alpha_signal_artifact_id`, `instrument_id` (composite-ref to its forecast) |
+| `portfolio_assembly_inputs` | `id`, `portfolio_input_evaluation_assignment_id` (unique), `portfolio_program_id`, `mandate_version_id`, `capital_context_version_id`, `universe_version_id`, `promotion_policy_version_id`, `cause_event_id`, `snapshot_no`, `input_contract_version`, `as_of_time`, `effective_from`, `effective_until`, `previous_candidate_id`, covariance method/observations/decay/shrinkage, typed V1 constraint/risk/cost/aversion fields, `state`, `outcome_code`, `created_at`, `completed_at` |
+| `portfolio_assembly_input_members` | `input_id`, `axis_index`, `alpha_qualification_id`, `alpha_signal_artifact_id`, `instrument_id`, `expected_return`, `uncertainty`, `confidence`, `previous_weight`, `max_trade_notional`, `max_position_notional`, `max_participation_rate`, `days_to_liquidate`, `stressed_capacity` |
+| `portfolio_assembly_input_covariances` | `input_id`, `left_axis_index`, `right_axis_index`, `covariance` (upper triangle) |
+| `portfolio_search_ledger_entries` | `id`, `portfolio_program_id`, `cause_event_id`, `portfolio_assembly_input_id` nullable, `attempt_type`, `outcome_class`, `reason_code`, `created_at` |
+| `portfolio_candidate_families` | `id`, `portfolio_program_id` (unique), `mandate_version_id`, `created_at` |
+| `portfolio_candidates` | `id`, `assembly_input_id` (unique), `candidate_family_id` (non-null), `portfolio_program_id`, `mandate_version_id`, `capital_context_version_id`, `universe_version_id`, `state`, `created_at` |
+| `portfolio_candidate_members` | `candidate_id`, `alpha_qualification_id`, `role`, `target_weight` |
+| `portfolio_evaluation_assignments` | `id`, `candidate_id`, `candidate_family_id`, `previous_candidate_id` nullable, `assembly_input_id`, `evaluation_dataset_selection_id`, `sealed_dataset_revision_id`, `policy_version_id`, `cause_event_id`, `evaluator_contract_version`, `private_result_ref`, `state`, `evaluated_at`, `completed_at`, `created_at` |
+| `portfolio_evaluation_episodes` | `id`, `assignment_id` (unique), `state`, `result`, `evaluated_at`, `disclosed_at`, `created_at` |
+| `portfolio_evaluation_metrics` | `episode_id`, `metric_code`, `value`, `status` |
+| `portfolio_evaluation_gates` | `episode_id`, `gate_code`, `status`, `reason_code` |
+| `portfolio_evaluation_disclosures` | `episode_id` (unique), `candidate_id`, `classification_code`, `reason_code`, `created_at` |
+
+`portfolio_input_evaluation_assignments` is unique by `(portfolio_program_id, cause_event_id)`;
+its member identity is unique by `(assignment_id, axis_index)`,
+`(assignment_id, alpha_qualification_id)` and `(assignment_id, instrument_id)`. It is the only
+durable evaluator descriptor for Portfolio covariance. `portfolio_assembly_inputs` replaces the unimplemented
+`portfolio_eligibility_snapshots`; there is no parallel optimization-run or content-addressed
+input table. Its parent identity is unique by `(portfolio_program_id, snapshot_no)` and by
+`(portfolio_program_id, cause_event_id)`; only one `PENDING` Input may exist per Program.
+Member identity is unique by `(input_id, axis_index)`, `(input_id, alpha_qualification_id)` and
+`(input_id, instrument_id)`; covariance identity is `(input_id, left_axis_index,
+right_axis_index)` with `left_axis_index <= right_axis_index`. `portfolio_candidates` has one
+`assembly_input_id`, and Candidate Packages are unique by `(candidate_id, revision)`.
+
+V1 stores the listed risk/cost/capacity/constraint facts as typed scalar columns and relational
+rows. JSON may hold non-gating display diagnostics only; it cannot encode a core relationship,
+an Alpha set, a covariance matrix, a constraint or a model input. Reusable independent model
+version tables are deferred until an actual second consumer exists; their absence must not be
+papered over with free JSON or string labels.
+
+`portfolio_evaluation_assignments` and `portfolio_evaluation_episodes` are one-to-one by
+Assignment ID. `PORTFOLIO_EVALUATION` is their only result writer and its Job only references the
+frozen Assignment resource with payload `{}`. Its evaluator descriptor includes Family and the
+nullable frozen predecessor; `CANDIDATE_CURRENT` is not a valid Portfolio metric/gate or descriptor
+field. Candidate-bound evidence, disclosures and exposures retain the Candidate UUID lineage; a
+Package conformance check is not Portfolio Evaluation evidence.
+
+Portfolio metric rows use only `AVAILABLE` finite values or `NOT_AVAILABLE` with no value. Portfolio
+gate rows use only `PASS | FAIL | INCONCLUSIVE | INVALID`; a passing row has no reason and every
+non-passing row has a nonempty reason. Each Portfolio Level-1 disclosure is one-to-one with its
+Episode and explicitly carries that Episode's Candidate ID; `QUALIFIED` has no reason and every
+other classification has one. No JSON field can substitute for any of these gate or disclosure facts.
 
 ### 39.6 Approval / Handoff / Feedback
 
 | 表 | 关键字段 |
 |---|---|
-| `candidate_packages` | `id`, `candidate_id`, `contract_version`, `state`, `manifest_json`, `relative_path`, `created_at` |
-| `downstream_systems` | `id`, `name`, `environment_type`, `enabled`, `created_at` |
-| `downstream_connection_versions` | `id`, `downstream_system_id`, `version_no`, `plugin_release_id`, `public_config`, `credential_set_id`, `state`, `created_at` |
-| `feedback_contract_versions` | `id`, `version_no`, `purpose`, `spec_json`, `created_at` |
-| `approvals` | `id`, `type`, `candidate_id`, `candidate_package_id`, `downstream_system_id`, `downstream_connection_version_id`, `feedback_contract_version_id`, `state`, `evidence_snapshot_json`, `dependency_snapshot_json`, `valid_until`, `reason_code`, `note`, `created_at`, `decided_at` |
-| `handoff_offers` | `id`, `approval_id`, `state`, `claim_deadline`, `claimed_at`, `accepted_at`, `revoked_at`, `expired_at`, `created_at` |
+| `candidate_packages` | `id`, `candidate_id`, `package_revision`, `contract_version`, `state`, `manifest_json`, `relative_path`, `created_at` |
+| `downstream_systems` | `id`, `name`, `environment_type`, `enabled`, `package_contract_version`, `feedback_contract_version`, `compatibility`, `preflight_state`, `revision`, `created_at` |
+| `preflight_receipts` | `id`, `resource_type`, `resource_id`, `resource_revision`, `revision`, `status`, `reason_codes`, `capabilities`, `contract_version`, `checked_at`, `valid_until`, `checker_version` |
+| `downstream_connection_versions` | `id`, `downstream_system_id`, `version_no`, `plugin_release_id` nullable, `credential_set_id` nullable, `package_contract_version`, `feedback_contract_version_id`, `public_config`, `state`, `created_at` |
+| `feedback_contract_versions` | `id`, `downstream_system_id`, `version_no`, `purpose`, typed duration/sample/package/Arrow/disclosure fields, `spec_json` display-only, `created_at` |
+| `feedback_contract_metric_requirements` | `feedback_contract_version_id`, `metric_code`, `ordinal` |
+| `feedback_contract_accepted_package_contracts` | `feedback_contract_version_id`, `contract_version`, `ordinal` |
+| `feedback_contract_accepted_arrow_contracts` | `feedback_contract_version_id`, `contract_version`, `ordinal` |
+| `promotion_policy_versions` | `id`, `version_no`, `purpose`, `mode`, `policy_contract_version` nullable (`PROMOTION_POLICY_V1` for new facts), `paper_downstream_system_id`, `paper_connection_version_id`, `paper_feedback_contract_version_id`, `paper_preflight_receipt_id`, `live_downstream_system_id`, `live_connection_version_id`, `live_feedback_contract_version_id`, `live_preflight_receipt_id`, `paper_to_live_policy_version_id` nullable self-FK, `state`, `created_at` |
+| `promotion_policy_gates` | `policy_version_id`, `metric_code`, `comparator`, `threshold`, `ordinal` |
+| `promotion_evaluations` | `id`, `purpose`, `portfolio_evaluation_episode_id` nullable, `forward_evidence_episode_id` nullable, `candidate_id`, `candidate_package_id`, `package_revision`, `policy_version_id`, `paper_to_live_policy_version_id` nullable (P2P required), `downstream_system_id`, `downstream_connection_version_id`, `feedback_contract_version_id`, `preflight_receipt_id`, `outcome`, `action`, `created_at` |
+| `promotion_gate_results` | `evaluation_id`, `gate_code`, `status`, `actual`, `expected`, `reason_code` |
+| `approval_snapshots` | `id`, `type`, `promotion_evaluation_id`, `promotion_purpose` nullable, `candidate_id`, `candidate_package_id`, `package_revision`, `downstream_system_id`, `downstream_connection_version_id`, `feedback_contract_version_id`, `preflight_receipt_id`, `paper_to_live_policy_version_id` nullable, `state`, `evidence_snapshot_json`, `dependency_snapshot_json`, `valid_until`, `reason_code`, `note`, `created_at`, `decided_at` |
+| `handoff_offers` | `id`, `approval_id`, `promotion_purpose` nullable, `paper_to_live_policy_version_id` nullable, `state`, `claim_deadline`, `claimed_at`, `accepted_at`, `revoked_at`, `expired_at`, `created_at` |
 | `feedback_packages` | `id`, `handoff_offer_id`, `state`, `observation_start`, `observation_end`, `sample_size`, `summary_json`, `relative_path`, `received_at` |
 | `forward_evidence_episodes` | `id`, `feedback_package_id`, `state`, `evaluation_summary`, `created_at` |
-| `degradation_observations` | `id`, `subject_type`, `subject_id`, `forward_evidence_episode_id`, `state`, `severity`, `classification`, `created_at` |
+| `forward_evidence_metrics` | `episode_id`, `metric_code`, `value`, `status` |
+| `degradation_observations` | `id`, `program_id`, `subject_type`, `subject_id`, `forward_evidence_episode_id`, `metric_name`, `severity`, `confidence`, `policy_revision`, `policy_snapshot`, `reason_code`, `state`, `consecutive_breaches`, `evaluated`, `created_at` |
+| `research_wake_events` | `id`, `program_id`, `degradation_observation_id`, `forward_evidence_episode_id`, `subject_type`, `subject_id`, `policy_revision`, `reason_code`, `state`, `cycle_id`, `consumed_at`, `created_at` |
+
+`feedback_contract_metric_requirements` 是 complete Feedback 的唯一 metric schema；其 ordinal
+必须连续，完整 Feedback 的 typed rows 必须与之精确一致。`spec_json`、Feedback summary 与
+optional artifact path 只能承载非 gating 展示资料。
+
+`promotion_policy_versions` 的 `PROMOTION_POLICY_V1` tuple 以 purpose 严格 XOR：Alpha purpose 的 Paper/Live tuple
+均为 NULL；`PORTFOLIO_TO_PAPER` 的 Paper tuple 全部非 NULL、Live tuple 全部为 NULL，且 mode
+只能是 `MANUAL_APPROVAL`，并有非 NULL `paper_to_live_policy_version_id` 指向 P2L；
+`PAPER_TO_LIVE` 的两个 tuple 均全部非 NULL，且 self-FK 为 NULL。目标 P2L 与来源 P2P 的
+Paper tuple 必须完全相同。每个 tuple 的 logical Downstream、Connection、Feedback Contract 与
+Receipt 必须精确相互对应，Receipt 不得由 writer 按 current/latest 重选。
+`policy_contract_version IS NULL` 仅表示迁移前 legacy policy，所有生产 writer/API 结构性
+拒绝它；新写入绝不能留 NULL。
+
+`promotion_evaluations` 使用明确 `purpose`：`PORTFOLIO_TO_PAPER` 必有且只有一个
+`portfolio_evaluation_episode_id`，不带 Forward Evidence；`PAPER_TO_LIVE` 必有且只有一个
+`forward_evidence_episode_id`，不带 Portfolio Evaluation。两个方向均冻结具体 connection、
+feedback contract 与仍有效的 `preflight_receipt_id`；不从 logical Downstream 的 mutable 现状
+重选。partial unique 分别保证同一通过的 Portfolio Evaluation 只生成一次 Paper 决策、同一
+完整 Forward Evidence 只生成一次 Live 决策。`approval_snapshots.promotion_evaluation_id` 与
+`handoff_offers.approval_id` 都是一对一；`forward_evidence_metrics` 只保存 contract 已验证的
+有限数值/`NOT_AVAILABLE` 状态，JSON summary 不能作为 promotion gate 输入。
+P2P 的 `promotion_evaluations.paper_to_live_policy_version_id` 必须等于其 P2P policy 的
+已验证 self-FK，P2L 为 NULL。P2P 写入的 Approval/Handoff 必须复制同一 ID，且
+Promotion Evaluation→Approval→Handoff 的复合 lineage 也必须精确包含相同
+`promotion_purpose`；Approval/Handoff 保留的 downstream-facing `purpose` 仅映射为
+P2P→Paper、P2L→Live，不能代替该精确绑定；P2L
+必须验证该 lineage 与 P2P policy 一致后才可使用它，不能以 mutable configuration 补全或替换。
 
 ### 39.7 Plugins / credentials / runtime configuration / artifacts
 
@@ -1626,7 +2147,7 @@ GET    /api/v1/portfolio-candidates/{id}
 
 GET    /api/v1/approvals
 GET    /api/v1/approvals/{id}
-POST   /api/v1/approvals/{id}/approve
+POST   /api/v1/approvals/{id}/approve              # expected_state only; bound target cannot change
 POST   /api/v1/approvals/{id}/reject
 
 GET    /api/v1/handoffs
@@ -1636,22 +2157,47 @@ POST   /api/v1/handoffs/{id}/accept             # downstream
 POST   /api/v1/handoffs/{id}/reject             # downstream
 GET    /api/v1/handoffs/{id}/package            # downstream
 POST   /api/v1/handoffs/{id}/feedback           # downstream
+POST   /api/v1/handoffs/{id}/degradation-observations  # Operator; no downstream control
 
+# Fresh-install resource configuration: one canonical root contract.
+# Collection reads always return {"items": [...], "next_cursor": ...}.
+GET/POST /api/v1/universes
+POST     /api/v1/universes/{universe_id}/versions
 GET/POST /api/v1/data-sources
+POST     /api/v1/data-sources/{data_source_id}/preflight
 GET      /api/v1/datasets
-GET      /api/v1/universes
+POST     /api/v1/datasets/materializations
+GET      /api/v1/datasets/{dataset_id}
+GET      /api/v1/datasets/{dataset_id}/quality
+GET      /api/v1/datasets/{dataset_id}/profile
+GET/POST /api/v1/evaluation-dataset-selections
+GET/POST /api/v1/evaluation-design-versions
+GET/POST /api/v1/promotion-policy-versions
+GET      /api/v1/operations/{operation_id}
+GET/POST /api/v1/portfolio-mandates
+POST     /api/v1/portfolio-mandates/{mandate_id}/versions
+GET/POST /api/v1/capital-contexts
 GET/POST /api/v1/downstream-systems
+GET/POST /api/v1/downstream-connection-versions
+GET/POST /api/v1/feedback-contract-versions
+POST     /api/v1/downstream-connection-versions/{connection_version_id}/preflight  # downstream service auth; writes one frozen connection receipt
+POST     /api/v1/downstream-systems/{downstream_id}/preflight  # downstream service auth
+POST     /api/v1/downstream-systems/{downstream_id}/rotate-service-token
+# /api/v1/configuration/* is not an API alias.
+GET      /api/v1/portfolio-candidates/{candidate_id}/promotion-readiness
 GET      /api/v1/readiness
 GET      /api/v1/events/stream
 GET      /api/v1/system/health                   # public healthcheck
 GET/PUT  /api/v1/system/runtime-configuration
-POST   /api/v1/quant-runtime/archive-manifests/inspect
-GET    /api/v1/quant-runtime/archive-manifests
-GET    /api/v1/quant-runtime/archive-manifests/{manifest_id}/shards
-POST   /api/v1/quant-runtime/archive-manifests/{manifest_id}/materialize
 ```
 
-Operator Authentication 启用时，Operator API 要求 authenticated browser session/trusted-browser credential 或 machine API token；认证入口和 healthcheck 是明确例外。认证关闭时保留 direct access。下游 service credential 只授权其自身 Handoff/Feedback 资源，不形成业务用户/RBAC 域，也不被 Operator auth 替代。
+没有 `POST /alpha-evaluation-assignments`、手工 assemble、手工 portfolio evaluate、
+手工 promote 或 Auto-Live endpoint。它们都是上述 Core validator / durable worker 的
+内部写入；HTTP 只暴露 Administration 配置、只读状态和人工 Approval/Reject。Handoff
+Feedback HTTP payload 只接受 contract 的 typed metric rows 与 observation header，不能携带
+任意 evidence JSON 作为 Promotion 输入。
+
+Operator Authentication 启用时，Operator API 要求 authenticated browser session/trusted-browser credential 或 machine API token；认证入口和 healthcheck 是明确例外。认证关闭时保留 direct access。下游 service credential 只授权其自身 Handoff/Feedback/preflight 资源，不形成业务用户/RBAC 域，也不被 Operator auth 替代。
 
 统一错误 envelope：
 
@@ -1668,6 +2214,16 @@ Operator Authentication 启用时，Operator API 要求 authenticated browser se
 ## 41. Durable jobs / events / idempotency
 
 `jobs` 使用 PostgreSQL lease；每个 mutation 资源自己拥有业务状态，job 只执行操作，不是事实源。
+
+生产链 jobs 均只引用一个已冻结 resource，payload 必为 `{}`：
+`PORTFOLIO_INPUT_EVALUATION(PortfolioInputEvaluationAssignment)`、
+`PORTFOLIO_ASSEMBLY(PortfolioAssemblyInput)`、
+`CANDIDATE_PACKAGE_BUILD(PortfolioCandidate)`、
+`PORTFOLIO_EVALUATION(PortfolioEvaluationAssignment)`、
+`PORTFOLIO_TO_PAPER_PROMOTION(PortfolioEvaluationEpisode)` 与
+`PAPER_TO_LIVE_PROMOTION(ForwardEvidenceEpisode)`。worker 使用 lease-fenced transaction；
+重复投递只能收敛到同一 frozen Assignment/Input/Candidate/Package/evaluation/snapshot/offer，
+不能据 Job payload 选择事实或创造额外 identity。
 
 `events` 与状态变更同事务写入。SSE 的 `id` 等于 `events.id`，前端使用 Last-Event-ID 恢复。
 
@@ -1747,7 +2303,7 @@ Program list/detail：
 - recommendation rationale；
 - Level 2 evidence；
 - risk / drawdown / cost / capacity；
-- downstream selector（只显示兼容目标）；
+- 已冻结的 downstream / connection / contract / preflight receipt（只读，无 selector）；
 - valid_until / freshness；
 - Approve / Reject。
 
@@ -1835,6 +2391,12 @@ Provider/Data/Handoff/ChatGPT Auth secret 不得进入 Codex Mission shell、Res
 - 只访问 assigned sealed Dataset Revision 和 Candidate artifact；
 - 只向 Core 写完整私有 result + policy-derived disclosure；
 - Codex 只读 Level 1 disclosure。
+
+Evaluator child 由固定绝对路径启动，不经过 shell；它只收到 assignment-scoped descriptor
+路径和最小环境。descriptor 只包含受限 ID/revision，不能含 Dataset URI、raw frame/return、
+secret、QZ database URL 或任意 command。Core 校验 stdout 的 typed result 后才写数据库；
+任何子进程输出、超时或 schema 错误都只形成受限 failure code，不能把原始内容写进 Job
+error 或 Event。
 
 ## 45. Threat / failure boundary
 
@@ -2061,12 +2623,23 @@ QuaZonai/
 
 ## 50. 当前实现状态与迁移原则
 
-截至本基线，Issue #22 的 Nautilus-first 远程运行主链已落入实现：Core 通过 typed HTTP contract 使用独立 Research/Sealed Nautilus runtime，Candidate Bundle 由 pinned runtime conformance 校验。CI、真实双 runtime integration test、Codex Review 与独立架构复核仍是合并和 release readiness 的必要证据。
+截至本基线，已验证的实现切片是：Draft/冻结 Charter/固定 DAG 与 durable Mission
+facts；PIT/Alpha signal/诚实评估的纯合同和 Alpha 版本化持久化基础；至少两个 Alpha
+才可求解的 target-weight-only Portfolio engine；target-only Package archive/禁止字段
+验证；Promotion 的纯 fail-closed policy；以及 completed Forward Evidence 到 immutable
+Observation、deduplicated Wake、固定 Diagnostic/Replan Cycle 的受限持久化闭环。它们不能
+合并表述成一个已验证的 Research→Paper→Live 全链路。
+
+尤其不得声称已完成：从空库的生产配置、真实多 Agent Alpha 研究、Package-before-
+Approval、独立 simulation gate、自动 Live Handoff，或完整 Research→Paper→Live
+全链路。每一项仍需要真实对象、契约测试、集成测试和独立复核；seed、mock 或旧生成式
+执行 runtime 不能替代。
 
 迁移原则：
 
 - 新架构没有旧运行状态兼容义务；
-- 优先删除 execution-specific code，再实现新领域；
+- 优先删除旧生成式执行、execution-control、动态第三方 plugin 和旧 runtime
+  兼容路径，再扩展新领域；
 - 现有 DB 不做复杂业务迁移；开发阶段采用新的干净 baseline；
 - 临时 Grill-Me 文件在本文成为事实源后删除；
 - 任何实现偏离本文必须先更新本文并说明原因。

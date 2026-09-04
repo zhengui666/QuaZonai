@@ -1,12 +1,12 @@
 SHELL := /usr/bin/env bash
 .DEFAULT_GOAL := help
 
-.PHONY: help install-dev format lint typecheck test test-unit test-integration compile migrate preflight up down logs ps build verify-compose rust-format rust-lint rust-test ci
+.PHONY: help install-dev format lint typecheck test test-unit test-integration compile migrate preflight up down logs ps build verify-compose ci
 
 help:
 	@printf '%s\n' \
 	  'install-dev      Install backend development and Codex runtime dependencies' \
-	  'format           Format Python and Rust sources' \
+	  'format           Format Python sources' \
 	  'lint             Run Python lint checks' \
 	  'typecheck        Run Python type checks' \
 	  'test             Run Python tests' \
@@ -14,15 +14,13 @@ help:
 	  'migrate          Run database preflight and Alembic upgrade' \
 	  'up/down/logs/ps  Operate the Core Compose stack' \
 	  'build            Build the backend image' \
-	  'rust-*           Run native risk crate checks' \
 	  'ci               Run the local CI-equivalent checks'
 
 install-dev:
-	python -m pip install -e 'backend[dev,agent]'
+	python -m pip install -e 'backend[dev,research,agent]'
 
 format:
 	ruff format backend/src backend/tests
-	cargo fmt --manifest-path native/quazonai_nautilus_risk/Cargo.toml
 
 lint:
 	ruff check backend/src backend/tests
@@ -67,13 +65,4 @@ build:
 verify-compose:
 	docker compose --env-file .env.example config --quiet
 
-rust-format:
-	cargo fmt --manifest-path native/quazonai_nautilus_risk/Cargo.toml --check
-
-rust-lint:
-	cargo clippy --manifest-path native/quazonai_nautilus_risk/Cargo.toml --all-targets -- -D warnings
-
-rust-test:
-	cargo test --manifest-path native/quazonai_nautilus_risk/Cargo.toml
-
-ci: compile lint typecheck test rust-format rust-lint rust-test verify-compose
+ci: compile lint typecheck test verify-compose

@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { useApprovalDecision, useCreateDataSource, useUpdateRuntimeConfiguration } from '../lib/api/hooks';
+import { useApprovalDecision, useCreateConfigurationDataSource, useRequestConfigurationDataSourcePreflight, useRequestConfigurationDatasetMaterialization, useUpdateRuntimeConfiguration } from '../lib/api/hooks';
 import type { RuntimeConfigurationUpdate } from '../lib/api/types';
 import { jsonResponse } from './testUtils';
 
@@ -17,24 +17,38 @@ afterEach(() => {
 });
 
 describe('API hooks', () => {
-  it('creates a data source and invalidates dependent server state', async () => {
+  it('creates a governed Data Source through the canonical configuration API', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     const invalidate = vi.spyOn(client, 'invalidateQueries');
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(() => jsonResponse({ id: 'source-1', name: 'PIT Data', state: 'ACTIVE' }));
-    const { result } = renderHook(() => useCreateDataSource(), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useCreateConfigurationDataSource(), { wrapper: createWrapper(client) });
 
     await act(async () => {
-      await result.current.mutateAsync({ name: 'PIT Data', provider: 'Approved', fields: ['event_time', 'available_time'], state: 'STAGED' });
+      await result.current.mutateAsync({ name: 'PIT Data', connector_key: 'pit-data', provider: 'Approved', universe_scope: ['universe-1'], field_schema: { event_time: 'timestamp', available_time: 'timestamp' }, license_classification: 'LICENSED', availability_semantics: { available_at_field: 'available_time' } });
     });
 
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/data-sources', expect.objectContaining({ method: 'POST' }));
     const options = fetchMock.mock.calls[0][1] as RequestInit;
-    expect(JSON.parse(String(options.body))).toMatchObject({ name: 'PIT Data', provider: 'Approved', state: 'STAGED' });
+    expect(JSON.parse(String(options.body))).toMatchObject({ name: 'PIT Data', connector_key: 'pit-data', universe_scope: ['universe-1'], license_classification: 'LICENSED' });
     await waitFor(() => {
       expect(invalidate).toHaveBeenCalledWith({ queryKey: ['data-sources'] });
-      expect(invalidate).toHaveBeenCalledWith({ queryKey: ['readiness'] });
-      expect(invalidate).toHaveBeenCalledWith({ queryKey: ['health'] });
     });
+  });
+
+  it('requests Data Source preflight with no caller-supplied configuration', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(() => jsonResponse({ id: 'operation-1', kind: 'DATA_SOURCE_PREFLIGHT', state: 'READY' }, 202));
+    const { result } = renderHook(() => useRequestConfigurationDataSourcePreflight(), { wrapper: createWrapper(client) });
+
+    await act(async () => {
+      await result.current.mutateAsync('source-1');
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/data-sources/source-1/preflight', expect.objectContaining({ method: 'POST' }));
+    const options = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(JSON.parse(String(options.body))).toEqual({});
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['data-sources'] }));
   });
 
   it('approves one immutable candidate and refreshes approvals plus handoffs', async () => {
@@ -54,6 +68,22 @@ describe('API hooks', () => {
       expect(invalidate).toHaveBeenCalledWith({ queryKey: ['approvals'] });
       expect(invalidate).toHaveBeenCalledWith({ queryKey: ['handoffs'] });
     });
+  });
+
+  it('requests Dataset materialization through the canonical asynchronous operation endpoint', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(() => jsonResponse({ id: 'operation-1', kind: 'DATASET_MATERIALIZATION', state: 'READY' }, 202));
+    const { result } = renderHook(() => useRequestConfigurationDatasetMaterialization(), { wrapper: createWrapper(client) });
+
+    await act(async () => {
+      await result.current.mutateAsync({ data_source_id: 'source-1', universe_version_id: 'universe-1', partition: 'DISCOVERY', data_class: 'VENDOR', origin: 'vendor', schema_version: 'v1', data_type: 'BAR', instrument_scope: ['AAPL.XNAS'], event_start: '2025-01-01T00:00:00Z', event_end: '2025-01-02T00:00:00Z', available_start: '2025-01-01T00:05:00Z', available_end: '2025-01-02T00:05:00Z', quality_requirements: { minimum_coverage: 1 }, point_in_time_requirements: { available_at: 'required' } });
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/datasets/materializations', expect.objectContaining({ method: 'POST' }));
+    const options = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(JSON.parse(String(options.body))).toMatchObject({ data_source_id: 'source-1', partition: 'DISCOVERY', point_in_time_requirements: { available_at: 'required' } });
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['datasets'] }));
   });
 
   it('reuses one idempotency key when the same runtime save is retried', async () => {

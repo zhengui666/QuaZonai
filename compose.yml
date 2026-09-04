@@ -9,6 +9,7 @@ x-core-env: &core-env
   QUAZONAI_PACKAGE_ROOT: /var/lib/quazonai/packages
   QUAZONAI_MISSION_ROOT: /var/lib/quazonai/missions
   QUAZONAI_FRONTEND_DIST: /workspace/frontend-dist
+  QUAZONAI_TRUSTED_EVALUATOR_COMMAND: ${QUAZONAI_TRUSTED_EVALUATOR_COMMAND:-}
   CODEX_HOME: /home/quazonai/.codex
 
 x-nautilus-env: &nautilus-env

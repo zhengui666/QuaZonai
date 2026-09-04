@@ -51,6 +51,33 @@ describe('ApprovalInbox', () => {
     expect(formatDeployableCapital('ar', '2.5E-4')).toBe(formatPlainDecimalString('0.00025', 'ar'));
   });
 
+  it('renders typed approvals with their frozen downstream and submits no replacement', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = String(input);
+      if (url.endsWith('/approvals')) return jsonResponse([{
+        id: 'typed-1',
+        candidate_id: 'candidate-12345678',
+        promotion_evaluation_id: 'evaluation-1',
+        promotion_purpose: 'PORTFOLIO_TO_PAPER',
+        purpose: 'PAPER',
+        state: 'PENDING',
+        downstream_system_id: 'd-1',
+        downstream_name: 'Frozen Paper',
+        candidate: { id: 'candidate-12345678', portfolio_program_id: 'pp-1', state: 'ASSEMBLED', mandate_name: 'Core Growth' },
+      }]);
+      if (url.endsWith('/downstream-systems')) return jsonResponse([{ id: 'd-1', name: 'Frozen Paper', environment_type: 'PAPER', enabled: true }]);
+      if (url.endsWith('/approvals/typed-1/approve') && init?.method === 'POST') return jsonResponse({ state: 'APPROVED' });
+      return jsonResponse({}, 404);
+    });
+
+    renderApp(<ApprovalInboxPage />, { route: '/approvals' });
+    expect(await screen.findByText('Frozen Paper')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/v1/approvals/typed-1/approve', expect.objectContaining({ method: 'POST' })));
+    const request = fetchMock.mock.calls.find(([input, init]) => String(input).endsWith('/approvals/typed-1/approve') && init?.method === 'POST');
+    expect(JSON.parse(String(request?.[1]?.body))).toEqual({ expected_state: 'PENDING' });
+  });
+
 
   it('lets rejection notes infer their text direction', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {

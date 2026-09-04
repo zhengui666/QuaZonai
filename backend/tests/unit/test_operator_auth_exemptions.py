@@ -29,6 +29,7 @@ def test_only_explicit_auth_and_health_method_paths_are_public() -> None:
 
 def test_only_exact_downstream_owned_handoff_method_paths_bypass_operator_auth() -> None:
     handoff_id = "00000000-0000-0000-0000-000000000001"
+    downstream_id = "00000000-0000-0000-0000-000000000002"
     operations = {
         "claim": "POST",
         "accept": "POST",
@@ -51,3 +52,15 @@ def test_only_exact_downstream_owned_handoff_method_paths_bypass_operator_auth()
         "/api/v1/handoffs/not-an-id/unknown",
     ):
         assert is_operator_auth_exempt("POST", path) is False
+
+    preflight_path = f"/api/v1/downstream-systems/{downstream_id}/preflight"
+    assert is_operator_auth_exempt("POST", preflight_path) is True
+    assert is_operator_auth_exempt("GET", preflight_path) is False
+    assert is_operator_auth_exempt("POST", f"{preflight_path}/") is False
+    assert is_operator_auth_exempt(
+        "POST", f"/api/v1/downstream-systems/{downstream_id}/rotate-service-token"
+    ) is False
+    typed_path = f"/api/v1/downstream-connection-versions/{downstream_id}/preflight"
+    assert is_operator_auth_exempt("POST", typed_path) is True
+    assert is_operator_auth_exempt("GET", typed_path) is False
+    assert is_operator_auth_exempt("POST", f"{typed_path}/") is False

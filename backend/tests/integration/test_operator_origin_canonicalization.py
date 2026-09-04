@@ -81,17 +81,17 @@ def test_cookie_authenticated_mutation_uses_canonical_origin_comparison(
     assert _login(client, secured, origin="https://example.com").status_code == 200
 
     accepted = client.post(
-        "/api/v1/ideas/preview",
+        "/api/v1/idea-drafts",
         headers={"Origin": "https://example.com:443"},
-        json={"idea": "Test a liquid US equity factor after realistic costs."},
+        json={"original_idea_text": "Test a liquid US equity factor after realistic costs."},
     )
     rejected = client.post(
-        "/api/v1/ideas/preview",
+        "/api/v1/idea-drafts",
         headers={"Origin": "https://example.com:8443"},
-        json={"idea": "Test a liquid US equity factor after realistic costs."},
+        json={"original_idea_text": "Test a liquid US equity factor after realistic costs."},
     )
 
-    assert accepted.status_code == 200
+    assert accepted.status_code == 201
     assert rejected.status_code == 403
     assert rejected.json()["error"]["code"] == "AUTH_ORIGIN_REJECTED"
 
@@ -119,9 +119,9 @@ def test_cookie_authenticated_mutation_rejects_invalid_or_distinct_origins(
     assert _login(client, secured, origin="https://example.com").status_code == 200
 
     response = client.post(
-        "/api/v1/ideas/preview",
+        "/api/v1/idea-drafts",
         headers={"Origin": origin},
-        json={"idea": "Test a liquid US equity factor after realistic costs."},
+        json={"original_idea_text": "Test a liquid US equity factor after realistic costs."},
     )
 
     assert response.status_code == 403

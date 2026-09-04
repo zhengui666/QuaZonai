@@ -12,29 +12,21 @@ import importlib
 import importlib.metadata
 import json
 import math
-import multiprocessing
 import os
-import re
 import secrets
 import selectors
 import shutil
-import socket
 import stat
 import subprocess
-import sys
 import tempfile
 import threading
 import time
 import zipfile
 import weakref
-from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
 from datetime import UTC, datetime
-from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 from typing import Any, BinaryIO, cast
-from uuid import uuid4
 
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from pydantic import BaseModel, ConfigDict
@@ -46,19 +38,12 @@ from quant_runtime.contracts import (
     ArchiveShardDescriptor,
     CatalogDescriptor,
     CatalogIngestSpec,
-    ExperimentSpec,
-    RunMode,
-    RunEvidence,
     RuntimeCapabilities,
-    StrategyArtifact,
 )
 
-_RUNS: dict[str, dict[str, Any]] = {}
-_RUNS_LOCK = threading.Lock()
 _CATALOG_LOCKS: weakref.WeakValueDictionary[str, threading.Lock] = weakref.WeakValueDictionary()
 _CATALOG_LOCKS_GUARD = threading.Lock()
 _PLUGIN_CHILD_LOCK = threading.Lock()
-_EXECUTION_LOCK = threading.Lock()
 _CATALOG_PREFIX = "catalog://"
 _PLUGIN_ROOT = Path(
     os.environ.get("QUAZONAI_NAUTILUS_PLUGIN_ROOT", "/var/lib/quazonai/plugins")
@@ -91,6 +76,55 @@ _FORBIDDEN_BUNDLE_KEYS = {
     "account_id",
 }
 _CANDIDATE_BUNDLE_CONTRACT_VERSION = "1"
+_TARGET_CANDIDATE_FILES = frozenset({"manifest.json", "validation/target-portfolio-frame.json"})
+_TARGET_MANIFEST_FIELDS = frozenset(
+    {
+        "candidate_bundle_contract_version",
+        "package_kind",
+        "candidate_id",
+        "candidate_package_id",
+        "candidate_package_revision",
+        "target_portfolio_frame",
+    }
+)
+_TARGET_FRAME_FIELDS = frozenset(
+    {
+        "schema_version",
+        "portfolio_candidate_id",
+        "portfolio_state",
+        "universe_version_id",
+        "as_of_time",
+        "effective_from",
+        "effective_until",
+        "rows",
+    }
+)
+_TARGET_FRAME_ROW_FIELDS = frozenset({"instrument_id", "target_weight", "confidence"})
+_FORBIDDEN_TARGET_FRAME_KEYS = {
+    "account",
+    "account_id",
+    "broker",
+    "execution",
+    "execution_retry",
+    "fill",
+    "fills",
+    "heartbeat",
+    "limit",
+    "limit_price",
+    "order",
+    "order_id",
+    "order_type",
+    "orders",
+    "position",
+    "positions",
+    "recovery",
+    "side",
+    "stop",
+    "stop_price",
+    "tif",
+    "time_in_force",
+    "venue",
+}
 _ISOLATED_ENVIRONMENT_KEYS = {
     "LANG",
     "LC_ALL",
@@ -125,46 +159,12 @@ class CatalogValidationInput(StrictModel):
     catalog_uri: str
 
 
-class RunInput(StrictModel):
-    mode: RunMode
-    experiment: ExperimentSpec
-
-
 def _now() -> datetime:
     return datetime.now(UTC)
 
 
 def _runtime_version() -> str:
     return importlib.metadata.version("nautilus_trader")
-
-
-def _jsonable(value: Any) -> Any:
-    if value is None or isinstance(value, (str, int, bool)):
-        return value
-    if isinstance(value, float):
-        return value if math.isfinite(value) else None
-    if isinstance(value, Decimal):
-        return str(value)
-    if isinstance(value, Mapping):
-        return {str(key): _jsonable(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [_jsonable(item) for item in value]
-    if hasattr(value, "isoformat"):
-        try:
-            return value.isoformat()
-        except (TypeError, ValueError):
-            pass
-    return str(value)
-
-
-def _records(value: Any) -> list[dict[str, Any]]:
-    if value is None:
-        return []
-    frame = value.reset_index() if hasattr(value, "reset_index") else value
-    if not hasattr(frame, "to_dict"):
-        return []
-    records = frame.to_dict(orient="records")
-    return [_jsonable(record) for record in records]
 
 
 def _catalog_root() -> Path:
@@ -914,323 +914,6 @@ def _write_catalog(spec: CatalogIngestSpec) -> CatalogDescriptor:
             raise
 
 
-def _instrument(catalog_uri: str, instrument_id: str) -> tuple[Any, Path]:
-    from nautilus_trader.persistence.catalog import ParquetDataCatalog
-
-    path = _catalog_path(catalog_uri)
-    catalog = ParquetDataCatalog(path)
-    for instrument in catalog.instruments():
-        if instrument.id.value == instrument_id:
-            return instrument, path
-    raise HTTPException(status_code=422, detail="instrument is not present in catalog")
-
-
-@contextmanager
-def _strategy_import_root(artifact: StrategyArtifact) -> Iterator[None]:
-    root = Path(tempfile.mkdtemp(prefix="quazonai-nautilus-strategy-"))
-    try:
-        for relative_path, source in artifact.source_files.items():
-            target = (root / relative_path).resolve()
-            if not target.is_relative_to(root):
-                raise HTTPException(status_code=422, detail="strategy source escapes artifact root")
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(source, encoding="utf-8")
-        sys.path.insert(0, str(root))
-        importlib.invalidate_caches()
-        yield
-    finally:
-        if str(root) in sys.path:
-            sys.path.remove(str(root))
-        for name, module in list(sys.modules.items()):
-            module_file = getattr(module, "__file__", None)
-            if module_file:
-                try:
-                    if Path(module_file).resolve().is_relative_to(root):
-                        sys.modules.pop(name, None)
-                except OSError:
-                    continue
-        importlib.invalidate_caches()
-        shutil.rmtree(root, ignore_errors=True)
-
-
-def _normalize_strategy_config(
-    artifact: StrategyArtifact,
-    instrument: Any,
-    config_type: Any | None = None,
-) -> dict[str, Any]:
-    config = dict(artifact.config)
-    config["instrument_id"] = instrument.id
-    if isinstance(config.get("trade_size"), str):
-        expected_type = getattr(config_type, "__annotations__", {}).get("trade_size")
-        if expected_type is float or expected_type == "float":
-            config["trade_size"] = float(config["trade_size"])
-        else:
-            config["trade_size"] = Decimal(str(config["trade_size"]))
-    return config
-
-
-def _named_statistic(values: Mapping[str, Any], *needles: str) -> float:
-    for key, value in values.items():
-        normalized = str(key).casefold().replace("_", " ")
-        if all(needle in normalized for needle in needles):
-            try:
-                result = float(value)
-            except (TypeError, ValueError):
-                continue
-            if math.isfinite(result):
-                return result
-    return 0.0
-
-
-def _validate_portfolio_frame(experiment: ExperimentSpec) -> None:
-    frame = experiment.parameters.get("portfolio_target_frame")
-    if not isinstance(frame, dict) or frame.get("schema_version") != "1":
-        raise HTTPException(status_code=422, detail="PORTFOLIO requires a frozen target frame")
-    rows = frame.get("rows")
-    if not isinstance(rows, list) or not rows:
-        raise HTTPException(status_code=422, detail="PORTFOLIO target frame is empty")
-    total = 0.0
-    for row in rows:
-        if not isinstance(row, dict) or not isinstance(row.get("instrument_id"), str):
-            raise HTTPException(status_code=422, detail="PORTFOLIO target frame is invalid")
-        try:
-            weight = float(row["target_weight"])
-        except (KeyError, TypeError, ValueError) as exc:
-            raise HTTPException(status_code=422, detail="PORTFOLIO target frame is invalid") from exc
-        if not math.isfinite(weight) or weight < 0.0 or weight > 1.0:
-            raise HTTPException(status_code=422, detail="PORTFOLIO target frame weight is invalid")
-        total += weight
-    if not math.isclose(total, 1.0, rel_tol=0.0, abs_tol=1e-9):
-        raise HTTPException(status_code=422, detail="PORTFOLIO target frame weights must sum to one")
-
-
-def _execute_once(experiment: ExperimentSpec, mode: RunMode) -> RunEvidence:
-    from nautilus_trader.backtest.node import BacktestDataConfig
-    from nautilus_trader.backtest.node import BacktestEngineConfig
-    from nautilus_trader.backtest.node import BacktestNode
-    from nautilus_trader.backtest.node import BacktestRunConfig
-    from nautilus_trader.backtest.node import BacktestVenueConfig
-    from nautilus_trader.config import ImportableStrategyConfig
-    from nautilus_trader.model import QuoteTick
-
-    descriptor = _read_catalog_descriptor(experiment.catalog_uri)
-    if mode == "PORTFOLIO":
-        _validate_portfolio_frame(experiment)
-    if mode == "SEALED" and not descriptor.sealed:
-        raise HTTPException(status_code=422, detail="SEALED mode requires a sealed catalog")
-    if mode != "SEALED" and descriptor.sealed:
-        raise HTTPException(status_code=422, detail="sealed catalog cannot be used outside evaluator mode")
-    configured_instrument = str(experiment.strategy.config.get("instrument_id", ""))
-    instrument_id = configured_instrument or descriptor.instrument_scope[0]
-    instrument, catalog_path = _instrument(experiment.catalog_uri, instrument_id)
-    external_run_id = str(uuid4())
-    started = _now()
-    node: Any | None = None
-    try:
-        with _strategy_import_root(experiment.strategy):
-            config_module, separator, config_name = experiment.strategy.config_path.partition(":")
-            config_type = (
-                getattr(importlib.import_module(config_module), config_name)
-                if separator and config_name
-                else None
-            )
-            strategy = ImportableStrategyConfig(
-                strategy_path=experiment.strategy.strategy_path,
-                config_path=experiment.strategy.config_path,
-                config=_normalize_strategy_config(
-                    experiment.strategy,
-                    instrument,
-                    config_type=config_type,
-                ),
-            )
-            run_config = BacktestRunConfig(
-                engine=BacktestEngineConfig(strategies=[strategy]),
-                data=[
-                    BacktestDataConfig(
-                        catalog_path=str(catalog_path),
-                        data_cls=QuoteTick,
-                        instrument_id=instrument.id,
-                    )
-                ],
-                venues=[
-                    BacktestVenueConfig(
-                        # The simulated venue must match the instrument's venue.
-                        # Catalogs are not limited to the EUR/USD.SIM fixture;
-                        # using a fixed SIM config makes PMXT instruments fail
-                        # before the strategy receives any data.
-                        name=instrument.id.venue.value,
-                        oms_type="HEDGING",
-                        account_type="MARGIN",
-                        base_currency="USD",
-                        starting_balances=["1_000_000 USD"],
-                    )
-                ],
-                dispose_on_completion=False,
-                raise_exception=True,
-            )
-            node = BacktestNode(configs=[run_config])
-            results = node.run()
-            if len(results) != 1:
-                raise RuntimeError("Nautilus BacktestNode returned an unexpected result count")
-            result = results[0]
-            config_id = result.run_config_id or run_config.id
-            engine = node.get_engine(config_id)
-            assert engine is not None
-            orders = _records(engine.trader.generate_orders_report())
-            fills = _records(engine.trader.generate_fills_report())
-            positions = _records(engine.trader.generate_positions_report())
-            account = _records(
-                engine.trader.generate_account_report(venue=instrument.id.venue)
-            )
-            returns = _jsonable(result.stats_returns)
-            pnls = _jsonable(result.stats_pnls)
-            statistics = {
-                "total_events": int(result.total_events),
-                "total_orders": int(result.total_orders),
-                "total_positions": int(result.total_positions),
-                "sharpe_ratio": _named_statistic(result.stats_returns, "sharpe"),
-                "max_drawdown": abs(
-                    _named_statistic(result.stats_returns, "max", "drawdown")
-                ),
-                "turnover": float(len(fills)),
-                "capacity_envelope": {
-                    "max_deployable_capital": 1_000_000.0,
-                    "source": "frozen simulated starting balance",
-                },
-                "summary": _jsonable(result.summary),
-                "returns": returns,
-                "pnls": pnls,
-            }
-            return RunEvidence(
-                external_run_id=external_run_id,
-                state="SUCCEEDED",
-                mode=mode,
-                runtime_name="NautilusTrader",
-                nautilus_version=_runtime_version(),
-                contract_version=CONTRACT_VERSION,
-                catalog_uri=experiment.catalog_uri,
-                strategy_artifact=experiment.strategy.model_dump(mode="json"),
-                orders=orders,
-                fills=fills,
-                positions=positions,
-                account=account,
-                statistics=statistics,
-                started_at=started,
-                finished_at=_now(),
-            )
-    except HTTPException:
-        raise
-    except Exception as exc:  # noqa: BLE001 - failed runs are returned as evidence
-        return RunEvidence(
-            external_run_id=external_run_id,
-            state="FAILED",
-            mode=mode,
-            runtime_name="NautilusTrader",
-            nautilus_version=_runtime_version(),
-            contract_version=CONTRACT_VERSION,
-            catalog_uri=experiment.catalog_uri,
-            strategy_artifact=experiment.strategy.model_dump(mode="json"),
-            statistics={},
-            started_at=started,
-            finished_at=_now(),
-            error_code=type(exc).__name__,
-            error_message=str(exc)[-4000:],
-        )
-    finally:
-        if node is not None:
-            node.dispose()
-
-
-def _prepare_isolated_child() -> None:
-    """Leave only non-secret runtime bootstrap values in a generated-code child."""
-    inherited = {
-        name: value
-        for name, value in os.environ.items()
-        if name in _ISOLATED_ENVIRONMENT_KEYS
-    }
-    os.environ.clear()
-    os.environ.update(inherited)
-
-    def blocked_network(*_: Any, **__: Any) -> Any:
-        raise PermissionError("generated strategy network access is disabled")
-
-    class BlockedSocket:
-        def __init__(self, *_: Any, **__: Any) -> None:
-            raise PermissionError("generated strategy network access is disabled")
-
-    setattr(socket, "socket", BlockedSocket)  # noqa: B010 - intentional child network barrier
-    setattr(socket, "create_connection", blocked_network)  # noqa: B010 - intentional child network barrier
-    setattr(socket, "getaddrinfo", blocked_network)  # noqa: B010 - intentional child network barrier
-    setattr(socket, "socketpair", blocked_network)  # noqa: B010 - intentional child network barrier
-
-
-def _execute_isolated_child(
-    experiment_payload: dict[str, Any],
-    mode: RunMode,
-    catalog_root: str,
-    connection: Any,
-) -> None:
-    """Execute generated strategy code in a credential-free, network-disabled child."""
-    _prepare_isolated_child()
-    os.environ["QUAZONAI_NAUTILUS_CATALOG_ROOT"] = catalog_root
-    try:
-        evidence = _execute_once(ExperimentSpec.model_validate(experiment_payload), mode)
-        payload = evidence.model_dump(mode="json")
-        if mode == "SEALED":
-            for key in ("orders", "fills", "positions", "account"):
-                payload.pop(key, None)
-        connection.send(payload)
-    except BaseException as exc:  # noqa: BLE001 - parent turns child failures into protocol failures
-        connection.send({"__error__": type(exc).__name__})
-    finally:
-        connection.close()
-
-
-def _execute(experiment: ExperimentSpec, mode: RunMode) -> RunEvidence:
-    """Serialize runs and isolate all generated strategy code from the service process."""
-    with _EXECUTION_LOCK:
-        catalog_path = _catalog_path(experiment.catalog_uri)
-        if not catalog_path.is_dir():
-            raise HTTPException(status_code=404, detail="catalog does not exist")
-        with tempfile.TemporaryDirectory(prefix="quazonai-isolated-catalog-") as root:
-            isolated_path = Path(root) / experiment.catalog_uri.removeprefix(_CATALOG_PREFIX)
-            shutil.copytree(catalog_path, isolated_path)
-            context = multiprocessing.get_context("spawn")
-            parent, child = context.Pipe(duplex=False)
-            process = context.Process(
-                target=_execute_isolated_child,
-                args=(experiment.model_dump(mode="json"), mode, root, child),
-            )
-            process.start()
-            child.close()
-            received: dict[str, Any] | None = None
-
-            def receive_payload() -> None:
-                nonlocal received
-                try:
-                    received = parent.recv()
-                except (EOFError, OSError):
-                    received = None
-
-            receiver = threading.Thread(target=receive_payload, daemon=True)
-            receiver.start()
-            process.join(300)
-            if process.is_alive():
-                process.terminate()
-                process.join(5)
-                receiver.join(5)
-                parent.close()
-                raise HTTPException(status_code=504, detail="strategy execution timed out")
-            receiver.join()
-            parent.close()
-            if received is None:
-                raise HTTPException(status_code=502, detail="isolated strategy child returned no evidence")
-            payload = received
-            if "__error__" in payload:
-                raise HTTPException(status_code=502, detail="isolated strategy child failed")
-            return RunEvidence.model_validate(payload)
-
-
 def _bundle_contains_secret(value: object) -> bool:
     if isinstance(value, dict):
         for key, item in value.items():
@@ -1244,132 +927,78 @@ def _bundle_contains_secret(value: object) -> bool:
     return False
 
 
+def _bundle_contains_execution(value: object) -> bool:
+    if isinstance(value, dict):
+        return any(
+            str(key).casefold() in _FORBIDDEN_TARGET_FRAME_KEYS or _bundle_contains_execution(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(_bundle_contains_execution(item) for item in value)
+    return False
+
+
+def _target_frame_timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        result = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if result.tzinfo is None or result.utcoffset() is None:
+        return None
+    return result.astimezone(UTC)
+
+
 def _verify_bundle(data: bytes | BinaryIO) -> dict[str, Any]:
-    required = {
-        "manifest.json",
-        "requirements.lock",
-        "strategy/strategy.whl",
-        "strategy/strategy-config.json",
-        "strategy/actor-config.json",
-        "data/requirements.json",
-        "data/instrument-scope.json",
-        "runtime/nautilus-version.json",
-        "runtime/backtest-run-config.json",
-        "runtime/venue-config.json",
-        "runtime/risk-config.json",
-        "runtime/live-node-template.json",
-        "validation/fixture-catalog/catalog-descriptor.json",
-        "validation/target-portfolio-frame.json",
-        "validation/expected-statistics.json",
-        "evidence/discovery-summary.json",
-        "evidence/sealed-summary.json",
-        "evidence/robustness-summary.json",
-        "lineage.json",
-    }
     try:
         source = BytesIO(data) if isinstance(data, bytes) else data
         with zipfile.ZipFile(source) as bundle:
             names = set(bundle.namelist())
-            if any(
-                part.casefold() in _FORBIDDEN_BUNDLE_PATH_PARTS
-                for name in names
-                for part in Path(name).parts
-            ):
-                return {"valid": False, "errors": ["bundle contains execution reports"]}
-            missing = sorted(required - names)
+            missing = sorted(_TARGET_CANDIDATE_FILES - names)
             if missing:
                 return {"valid": False, "errors": [f"missing files: {', '.join(missing)}"]}
+            unexpected = sorted(names - _TARGET_CANDIDATE_FILES)
+            if unexpected:
+                return {
+                    "valid": False,
+                    "errors": [f"unexpected files: {', '.join(unexpected)}"],
+                }
             manifest = json.loads(bundle.read("manifest.json"))
-            runtime = json.loads(bundle.read("runtime/nautilus-version.json"))
-            strategy_config = json.loads(bundle.read("strategy/strategy-config.json"))
-            data_requirements = json.loads(bundle.read("data/requirements.json"))
-            instrument_scope = json.loads(bundle.read("data/instrument-scope.json"))
-            fixture_descriptor = json.loads(
-                bundle.read("validation/fixture-catalog/catalog-descriptor.json")
-            )
             target_frame = json.loads(bundle.read("validation/target-portfolio-frame.json"))
-            requirements = bundle.read("requirements.lock").decode("utf-8").splitlines()
-            if any(
-                name.endswith(".json")
-                and _bundle_contains_secret(json.loads(bundle.read(name)))
-                for name in names
-                if name.endswith(".json")
-            ):
+            if not isinstance(manifest, dict) or not isinstance(target_frame, dict):
+                return {"valid": False, "errors": ["target Candidate Package must contain objects"]}
+            if _bundle_contains_secret(manifest) or _bundle_contains_secret(target_frame):
                 return {"valid": False, "errors": ["bundle contains a secret-bearing field"]}
-            if manifest.get("candidate_bundle_contract_version") != _CANDIDATE_BUNDLE_CONTRACT_VERSION:
-                return {"valid": False, "errors": ["unsupported Candidate Bundle contract version"]}
-            if manifest.get("strategy", {}).get("wheel") != "strategy/strategy.whl":
-                return {"valid": False, "errors": ["manifest strategy wheel path is invalid"]}
-            if manifest.get("validation", {}).get("target_portfolio_frame") != (
-                "validation/target-portfolio-frame.json"
+            if _bundle_contains_execution(manifest) or _bundle_contains_execution(target_frame):
+                return {"valid": False, "errors": ["bundle contains an execution field"]}
+            if set(manifest) != _TARGET_MANIFEST_FIELDS:
+                return {"valid": False, "errors": ["manifest contains unsupported fields"]}
+            if (
+                manifest.get("candidate_bundle_contract_version")
+                != _CANDIDATE_BUNDLE_CONTRACT_VERSION
             ):
+                return {
+                    "valid": False,
+                    "errors": ["unsupported Candidate Package contract version"],
+                }
+            if manifest.get("package_kind") != "TARGET_PORTFOLIO_FRAME":
+                return {"valid": False, "errors": ["bundle package kind is invalid"]}
+            try:
+                package_id = manifest["candidate_package_id"]
+                if not isinstance(package_id, str) or not package_id.strip():
+                    raise ValueError
+                package_revision = manifest["candidate_package_revision"]
+                if (
+                    isinstance(package_revision, bool)
+                    or not isinstance(package_revision, int)
+                    or package_revision < 1
+                ):
+                    raise ValueError
+            except (KeyError, ValueError):
+                return {"valid": False, "errors": ["manifest package identity is invalid"]}
+            if manifest.get("target_portfolio_frame") != "validation/target-portfolio-frame.json":
                 return {"valid": False, "errors": ["manifest target frame path is invalid"]}
-            if runtime.get("version") != PINNED_NAUTILUS_VERSION:
-                return {"valid": False, "errors": ["pinned NautilusTrader version mismatch"]}
-            if any(
-                not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*==[^\s;,]+", item)
-                for item in requirements
-                if item
-            ) or any(not item for item in requirements) or len(requirements) != len(set(requirements)):
-                return {"valid": False, "errors": ["requirements.lock contains unpinned or duplicate dependencies"]}
-            if f"nautilus-trader=={PINNED_NAUTILUS_VERSION}" not in requirements:
-                return {"valid": False, "errors": ["requirements.lock does not pin NautilusTrader"]}
-            wheel_bytes = bundle.read("strategy/strategy.whl")
-            with zipfile.ZipFile(BytesIO(wheel_bytes)) as wheel:
-                wheel_names = set(wheel.namelist())
-                module_path = str(strategy_config["strategy_path"]).partition(":")[0]
-                config_path = str(strategy_config["config_path"]).partition(":")[0]
-                for module in {module_path, config_path}:
-                    expected = module.replace(".", "/") + ".py"
-                    package_init = module.replace(".", "/") + "/__init__.py"
-                    if expected not in wheel_names and package_init not in wheel_names:
-                        return {
-                            "valid": False,
-                            "errors": [f"strategy wheel cannot import {module}"],
-                        }
-                with tempfile.TemporaryDirectory(prefix="quazonai-candidate-verify-") as root:
-                    wheel.extractall(root)
-                    script = (
-                        "import importlib, sys\n"
-                        "root, strategy_ref, config_ref = sys.argv[1:]\n"
-                        "sys.path.insert(0, root)\n"
-                        "for ref in (strategy_ref, config_ref):\n"
-                        "    module_name, separator, attribute = ref.partition(':')\n"
-                        "    if not separator or not attribute:\n"
-                        "        raise ValueError('invalid import reference')\n"
-                        "    module = importlib.import_module(module_name)\n"
-                        "    getattr(module, attribute)\n"
-                    )
-                    result = subprocess.run(
-                        [
-                            sys.executable,
-                            "-I",
-                            "-c",
-                            script,
-                            root,
-                            str(strategy_config["strategy_path"]),
-                            str(strategy_config["config_path"]),
-                        ],
-                        capture_output=True,
-                        text=True,
-                        timeout=10,
-                        env={"PATH": os.environ.get("PATH", "")},
-                    )
-                    if result.returncode != 0:
-                        return {"valid": False, "errors": ["strategy conformance import failed"]}
-            catalog_uri = str(data_requirements.get("catalog_uri", ""))
-            if not catalog_uri.startswith("catalog://"):
-                return {"valid": False, "errors": ["bundle catalog URI is invalid"]}
-            if fixture_descriptor.get("catalog_uri") != catalog_uri:
-                return {"valid": False, "errors": ["fixture catalog does not match data requirements"]}
-            scoped_instruments = instrument_scope.get("instruments")
-            if not isinstance(scoped_instruments, list) or not scoped_instruments:
-                return {"valid": False, "errors": ["instrument scope fixture is invalid"]}
-            scoped_ids = {
-                str(item.get("instrument_id"))
-                for item in scoped_instruments
-                if isinstance(item, dict) and item.get("instrument_id") is not None
-            }
             rows = target_frame.get("rows")
             required_frame_fields = {
                 "as_of_time",
@@ -1380,41 +1009,85 @@ def _verify_bundle(data: bytes | BinaryIO) -> dict[str, Any]:
                 "universe_version_id",
             }
             if (
-                target_frame.get("schema_version") != "1"
+                set(target_frame) != _TARGET_FRAME_FIELDS
+                or target_frame.get("schema_version") != "1"
                 or not required_frame_fields.issubset(target_frame)
                 or not isinstance(rows, list)
                 or not rows
             ):
                 return {"valid": False, "errors": ["target portfolio frame is invalid"]}
+            if manifest.get("candidate_id") != target_frame.get("portfolio_candidate_id"):
+                return {
+                    "valid": False,
+                    "errors": ["target frame candidate does not match manifest"],
+                }
+            as_of_time = _target_frame_timestamp(target_frame["as_of_time"])
+            effective_from = _target_frame_timestamp(target_frame["effective_from"])
+            effective_until = target_frame["effective_until"]
+            effective_until_time = (
+                None if effective_until is None else _target_frame_timestamp(effective_until)
+            )
+            if (
+                as_of_time is None
+                or effective_from is None
+                or effective_from < as_of_time
+                or (effective_until_time is not None and effective_until_time < effective_from)
+            ):
+                return {"valid": False, "errors": ["target portfolio frame timestamps are invalid"]}
+            if not all(
+                isinstance(target_frame.get(field), str) and target_frame[field].strip()
+                for field in ("portfolio_candidate_id", "portfolio_state", "universe_version_id")
+            ):
+                return {
+                    "valid": False,
+                    "errors": ["target portfolio frame identifiers are invalid"],
+                }
             total_weight = 0.0
+            target_ids: set[str] = set()
             for row in rows:
                 try:
-                    weight = float(row["target_weight"]) if isinstance(row, dict) else float("nan")
-                except (KeyError, TypeError, ValueError):
+                    weight = (
+                        float(row["target_weight"])
+                        if isinstance(row, dict) and set(row) == _TARGET_FRAME_ROW_FIELDS
+                        else float("nan")
+                    )
+                    confidence = (
+                        float(row["confidence"])
+                        if isinstance(row, dict) and set(row) == _TARGET_FRAME_ROW_FIELDS
+                        else float("nan")
+                    )
+                except KeyError, TypeError, ValueError:
                     weight = float("nan")
+                    confidence = float("nan")
                 if (
                     not isinstance(row, dict)
                     or not isinstance(row.get("instrument_id"), str)
+                    or not row["instrument_id"].strip()
                     or not math.isfinite(weight)
+                    or not math.isfinite(confidence)
                     or not 0.0 <= weight <= 1.0
+                    or not 0.0 <= confidence <= 1.0
                 ):
-                    return {"valid": False, "errors": ["target portfolio frame contains invalid weights"]}
+                    return {
+                        "valid": False,
+                        "errors": ["target portfolio frame contains invalid rows"],
+                    }
+                if row["instrument_id"] in target_ids:
+                    return {
+                        "valid": False,
+                        "errors": ["target portfolio frame has duplicate instruments"],
+                    }
+                target_ids.add(row["instrument_id"])
                 total_weight += weight
             if not math.isclose(total_weight, 1.0, rel_tol=0.0, abs_tol=1e-9):
-                return {"valid": False, "errors": ["target portfolio frame weights must sum to one"]}
-            target_ids = {str(row["instrument_id"]) for row in rows}
-            if not target_ids.issubset(scoped_ids):
-                return {"valid": False, "errors": ["target frame exceeds the instrument scope fixture"]}
+                return {
+                    "valid": False,
+                    "errors": ["target portfolio frame weights must sum to one"],
+                }
             return {
                 "valid": True,
-                "runtime_name": "NautilusTrader",
-                "nautilus_version": _runtime_version(),
-                "contract_version": CONTRACT_VERSION,
                 "checked_files": len(names),
-                "strategy_imports": [
-                    strategy_config["strategy_path"],
-                    strategy_config["config_path"],
-                ],
+                "target_frame_rows": len(rows),
             }
     except (KeyError, OSError, ValueError, zipfile.BadZipFile) as exc:
         return {"valid": False, "errors": [f"invalid bundle: {type(exc).__name__}"]}
@@ -1444,7 +1117,7 @@ def create_app() -> FastAPI:
             nautilus_version=_runtime_version(),
             contract_version=CONTRACT_VERSION,
             catalog_type="ParquetDataCatalog",
-            supported_modes=["DISCOVERY", "SEALED", "PORTFOLIO"],
+            supported_modes=[],
             candidate_contract_version="1",
         )
 
@@ -1480,23 +1153,6 @@ def create_app() -> FastAPI:
     @app.post("/v1/archive-manifests/inspect", response_model=ArchiveManifestDescriptor)
     def inspect_archive_manifest(spec: ArchiveManifestSpec) -> ArchiveManifestDescriptor:
         return _inspect_plugin_manifest(spec)
-
-    @app.post("/v1/runs", response_model=RunEvidence)
-    def run(payload: RunInput) -> RunEvidence:
-        if payload.mode not in {"DISCOVERY", "SEALED", "PORTFOLIO"}:
-            raise HTTPException(status_code=422, detail="unsupported run mode")
-        evidence = _execute(payload.experiment, payload.mode)
-        with _RUNS_LOCK:
-            _RUNS[evidence.external_run_id] = evidence.model_dump(mode="json")
-        return evidence
-
-    @app.get("/v1/runs/{external_run_id}", response_model=RunEvidence)
-    def get_run(external_run_id: str) -> RunEvidence:
-        with _RUNS_LOCK:
-            payload = _RUNS.get(external_run_id)
-        if payload is None:
-            raise HTTPException(status_code=404, detail="run does not exist")
-        return RunEvidence.model_validate(payload)
 
     @app.post("/v1/candidates/verify")
     async def verify_candidate(bundle: UploadFile = File(...)) -> dict[str, Any]:

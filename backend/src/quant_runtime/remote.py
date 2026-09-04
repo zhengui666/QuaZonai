@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -15,9 +14,6 @@ from quant_runtime.contracts import (
     ArchiveManifestSpec,
     CatalogDescriptor,
     CatalogIngestSpec,
-    ExperimentSpec,
-    RunMode,
-    RunEvidence,
     RuntimeCapabilities,
 )
 
@@ -35,12 +31,6 @@ class QuantRuntime(Protocol):
     def inspect_archive_manifest(self, spec: ArchiveManifestSpec) -> ArchiveManifestDescriptor: ...
 
     def validate_catalog(self, catalog_uri: str) -> CatalogDescriptor: ...
-
-    def run_backtest(self, experiment: ExperimentSpec) -> RunEvidence: ...
-
-    def run_sealed_backtest(self, experiment: ExperimentSpec) -> RunEvidence: ...
-
-    def run_portfolio_backtest(self, experiment: ExperimentSpec) -> RunEvidence: ...
 
     def verify_candidate(self, bundle_path: Path) -> dict[str, Any]: ...
 
@@ -232,89 +222,6 @@ class NautilusQuantRuntime:
                 {"fields": mismatches},
             )
         return descriptor
-
-    def _run(self, experiment: ExperimentSpec, mode: RunMode) -> RunEvidence:
-        self.capabilities()
-        payload = self._request_json(
-            "POST",
-            "/v1/runs",
-            json_body={
-                "mode": mode,
-                "experiment": experiment.model_dump(mode="json"),
-            },
-        )
-        deadline = time.monotonic() + self.config.timeout_seconds
-        while payload.get("state") in {"PENDING", "RUNNING"}:
-            run_id = payload.get("external_run_id")
-            if not isinstance(run_id, str) or not run_id:
-                raise QfError(
-                    "NAUTILUS_RUNTIME_PROTOCOL_ERROR",
-                    "An asynchronous run did not return an external_run_id.",
-                    502,
-                )
-            if time.monotonic() >= deadline:
-                raise QfError(
-                    "NAUTILUS_RUNTIME_TIMEOUT",
-                    "The remote NautilusTrader run exceeded its configured time limit.",
-                    504,
-                    {"external_run_id": run_id},
-                )
-            time.sleep(self.config.poll_seconds)
-            payload = self._request_json("GET", f"/v1/runs/{run_id}")
-
-        evidence = RunEvidence.model_validate(payload)
-        expected_artifact = experiment.strategy.model_dump(mode="json")
-        if evidence.runtime_name != "NautilusTrader":
-            raise QfError(
-                "NAUTILUS_RUNTIME_IDENTITY_MISMATCH",
-                "Run evidence was produced by an unexpected runtime.",
-                502,
-            )
-        if evidence.mode != mode:
-            raise QfError(
-                "NAUTILUS_RUNTIME_MODE_MISMATCH",
-                "Run evidence mode does not match the requested run.",
-                502,
-                {"expected": mode, "actual": evidence.mode},
-            )
-        if evidence.catalog_uri != experiment.catalog_uri:
-            raise QfError(
-                "NAUTILUS_RUNTIME_CATALOG_MISMATCH",
-                "Run evidence references a different catalog than requested.",
-                502,
-            )
-        if evidence.strategy_artifact != expected_artifact:
-            raise QfError(
-                "NAUTILUS_RUNTIME_STRATEGY_MISMATCH",
-                "Run evidence references a different strategy artifact than requested.",
-                502,
-            )
-        if evidence.nautilus_version != self.config.pinned_version:
-            raise QfError(
-                "NAUTILUS_RUNTIME_VERSION_MISMATCH",
-                "Run evidence was produced by an unexpected NautilusTrader version.",
-                502,
-                {
-                    "expected": self.config.pinned_version,
-                    "actual": evidence.nautilus_version,
-                },
-            )
-        if evidence.contract_version != self.config.contract_version:
-            raise QfError(
-                "NAUTILUS_RUNTIME_CONTRACT_MISMATCH",
-                "Run evidence uses an incompatible quant-runtime contract.",
-                502,
-            )
-        return evidence
-
-    def run_backtest(self, experiment: ExperimentSpec) -> RunEvidence:
-        return self._run(experiment, "DISCOVERY")
-
-    def run_sealed_backtest(self, experiment: ExperimentSpec) -> RunEvidence:
-        return self._run(experiment, "SEALED")
-
-    def run_portfolio_backtest(self, experiment: ExperimentSpec) -> RunEvidence:
-        return self._run(experiment, "PORTFOLIO")
 
     def verify_candidate(self, bundle_path: Path) -> dict[str, Any]:
         self.capabilities()

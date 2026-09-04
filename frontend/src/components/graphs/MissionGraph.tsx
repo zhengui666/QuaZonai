@@ -12,7 +12,7 @@ export function MissionGraph({ missions }: { missions: ResearchMission[] }) {
   const nodes: Node[] = missions.map((mission, index) => ({
     id: mission.id,
     position: { x: (index % 4) * 220, y: Math.floor(index / 4) * 120 },
-    data: { label: <><bdi dir="auto">{humanize(mission.type)}</bdi>{' · '}<bdi dir="auto">{humanize(mission.state)}</bdi></> },
+    data: { label: <><bdi dir="auto">{humanize(mission.mission_type)}</bdi>{' · '}<bdi dir="auto">{humanize(mission.state)}</bdi></> },
     style: { background: 'var(--qz-bg-elevated)', border: `1px solid ${mission.state === 'RUNNING' ? 'var(--qz-accent)' : 'var(--qz-border-strong)'}`, color: 'var(--qz-text)', borderRadius: 8, fontSize: 11, width: 185 },
   }));
   const edges: Edge[] = missions.flatMap((mission) => (mission.dependencies ?? []).map((source) => ({
@@ -26,7 +26,7 @@ export function MissionGraph({ missions }: { missions: ResearchMission[] }) {
     id: mission.id,
     label: <bdi dir="ltr">{mission.id.slice(0, 12)}</bdi>,
     details: [
-      [t('graph.type'), <bdi dir="auto">{humanize(mission.type)}</bdi>],
+      [t('graph.type'), <bdi dir="auto">{humanize(mission.mission_type)}</bdi>],
       [t('graph.state'), <bdi dir="auto">{humanize(mission.state)}</bdi>],
       [t('graph.dependency'), mission.dependencies?.length ? <bdi dir="ltr">{mission.dependencies.join(', ')}</bdi> : '—'],
       [t('graph.branch'), <bdi dir="ltr">{mission.branch_id?.slice(0, 12) ?? '—'}</bdi>],

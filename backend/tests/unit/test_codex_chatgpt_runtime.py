@@ -36,6 +36,7 @@ def _install_fake_codex(monkeypatch):  # type: ignore[no-untyped-def]
         def __init__(self, config, approval_handler) -> None:  # type: ignore[no-untyped-def]
             self.approval_handler = approval_handler
             self.login_payload = None
+            self.resume_payload = None
             self.closed = False
             FakeClient.instance = self
 
@@ -51,6 +52,10 @@ def _install_fake_codex(monkeypatch):  # type: ignore[no-untyped-def]
 
         def thread_start(self, payload):  # type: ignore[no-untyped-def]
             return SimpleNamespace(thread=SimpleNamespace(id="thread-1"))
+
+        def thread_resume(self, thread_id, payload):  # type: ignore[no-untyped-def]
+            self.resume_payload = (thread_id, payload)
+            return SimpleNamespace(thread=SimpleNamespace(id=thread_id))
 
         def close(self) -> None:
             self.closed = True
@@ -233,3 +238,55 @@ def test_admission_guard_releases_before_mission_turn_runs(monkeypatch, settings
         result = thread.run("mission")
         assert result.final_response == "done"
         assert transaction_state["open"] is False
+
+
+def test_external_chatgpt_thread_resumes_the_existing_thread(monkeypatch, settings, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    FakeClient = _install_fake_codex(monkeypatch)
+    monkeypatch.setattr(runtime, "initialize_codex_auth", lambda *args, **kwargs: None)
+    bundle = CodexChatgptAccessBundle(
+        auth_id=uuid4(),
+        access_token="access-token",
+        chatgpt_account_id="account-1",
+        plan_type="pro",
+        token_generation=1,
+        expires_at=datetime.now(UTC) + timedelta(minutes=5),
+    )
+    monkeypatch.setattr(runtime, "get_valid_access_bundle", lambda *args, **kwargs: bundle)
+    monkeypatch.setattr(runtime, "lock_codex_auth_operations", lambda session: None)
+    monkeypatch.setattr(
+        runtime,
+        "get_auth_configuration",
+        lambda session, for_update=False: SimpleNamespace(
+            id=bundle.auth_id,
+            state="CONNECTED",
+            chatgpt_account_id=bundle.chatgpt_account_id,
+        ),
+    )
+
+    class FakeSession:
+        def commit(self) -> None:
+            pass
+
+        def begin(self):  # type: ignore[no-untyped-def]
+            return nullcontext(self)
+
+    @contextmanager
+    def fake_session_factory():
+        yield FakeSession()
+
+    with runtime.external_chatgpt_thread(
+        config=SimpleNamespace(),
+        settings=settings,
+        session_factory=fake_session_factory,
+        workspace=tmp_path,
+        model=None,
+        service_tier=None,
+        thread_config={},
+        developer_instructions="instructions",
+        existing_thread_id="thread-existing",
+    ) as thread:
+        assert thread.id == "thread-existing"
+
+    assert FakeClient.instance is not None
+    assert FakeClient.instance.resume_payload is not None
+    assert FakeClient.instance.resume_payload[0] == "thread-existing"

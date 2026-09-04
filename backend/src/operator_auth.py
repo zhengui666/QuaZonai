@@ -64,6 +64,12 @@ _PUBLIC_OPERATOR_ROUTES = frozenset(
 _DOWNSTREAM_ROUTE = re.compile(
     r"^/api/v1/handoffs/[^/]+/(?P<action>claim|accept|reject|package|feedback)$"
 )
+_DOWNSTREAM_PREFLIGHT_ROUTE = re.compile(
+    r"^/api/v1/downstream-systems/[^/]+/preflight$"
+)
+_DOWNSTREAM_CONNECTION_PREFLIGHT_ROUTE = re.compile(
+    r"^/api/v1/downstream-connection-versions/[^/]+/preflight$"
+)
 _DOWNSTREAM_METHODS = {
     "claim": "POST",
     "accept": "POST",
@@ -1083,13 +1089,19 @@ def require_same_origin(request: Request, settings: Settings) -> None:
 def is_operator_auth_exempt(method: str, path: str) -> bool:
     """Return whether one exact method/path belongs outside Operator authentication.
 
-    Downstream-owned Handoff routes remain authenticated by their per-downstream
-    service token. Matching both method and path prevents a future Operator route
-    that reuses one path with a different HTTP method from becoming public.
+    Downstream-owned Handoff and preflight routes remain authenticated by their
+    per-downstream service token. Matching both method and path prevents a future
+    Operator route that reuses one path with a different HTTP method from becoming
+    public.
     """
     normalized_method = method.upper()
     if (normalized_method, path) in _PUBLIC_OPERATOR_ROUTES:
         return True
+    if (
+        _DOWNSTREAM_PREFLIGHT_ROUTE.fullmatch(path) is not None
+        or _DOWNSTREAM_CONNECTION_PREFLIGHT_ROUTE.fullmatch(path) is not None
+    ):
+        return normalized_method == "POST"
     match = _DOWNSTREAM_ROUTE.fullmatch(path)
     if match is None:
         return False

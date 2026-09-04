@@ -19,12 +19,50 @@ export interface ResearchCharter {
   created_at?: string;
 }
 
+export interface ClarificationQuestion {
+  key: string;
+  question: string;
+}
+
+export interface IdeaDraft {
+  id: UUID;
+  original_idea_text: string;
+  stage: string;
+  outcome: string | null;
+  next_action: string | null;
+  blocking_reasons: string[];
+  revision: number;
+  clarification_questions: ClarificationQuestion[];
+  charter?: ResearchCharter | null;
+}
+
+export interface CreateIdeaDraftRequest {
+  original_idea_text: string;
+}
+
+export interface AnswerIdeaDraftRequest {
+  answers: Record<string, string>;
+  expected_revision: number;
+}
+
+export interface StartIdeaDraftRequest {
+  expected_revision: number;
+  title?: string;
+  universe_version_ids?: UUID[];
+}
+
 export interface ResearchProgram {
   id: UUID;
   title?: string;
   charter_id?: UUID;
   charter?: ResearchCharter;
   state: ProgramState;
+  stage?: string;
+  outcome?: string | null;
+  next_action?: string | null;
+  blocking_reasons?: string[];
+  revision?: number;
+  current_cycle_id?: UUID | null;
   cooling_reason?: string | null;
   blocked_reason?: string | null;
   wake_reason?: string | null;
@@ -39,14 +77,20 @@ export interface ResearchMission {
   id: UUID;
   branch_id?: UUID;
   program_id?: UUID;
-  type: string;
-  role?: string;
+  cycle_id?: UUID | null;
+  mission_type: string;
+  role_profile?: string | null;
   state: MissionState;
+  outcome?: string | null;
   objective?: string;
   dependencies?: UUID[];
+  contract_version?: string;
+  max_turns?: number;
+  max_tool_calls?: number;
   started_at?: string | null;
   finished_at?: string | null;
   attempt?: number;
+  revision?: number;
   error_code?: string | null;
   summary?: string | null;
 }
@@ -138,6 +182,8 @@ export interface ApprovalSnapshot {
   state: ApprovalState;
   downstream_system_id?: UUID | null;
   downstream_name?: string | null;
+  promotion_evaluation_id?: UUID | null;
+  promotion_purpose?: string | null;
   created_at?: string;
   valid_until?: string | null;
   expires_at?: string | null;
@@ -266,11 +312,202 @@ export interface CodexChatgptDeviceLoginPoll {
   error_code: string | null;
 }
 
-export interface MarketUniverse { id: UUID; universe_key?: string; version_no?: number; name: string; state?: string; spec_json?: Record<string, unknown>; }
-export interface DatasetRevision { id: UUID; data_source_id?: UUID; universe_version_id?: UUID; universe_name?: string; revision_no?: number; schema_version?: string; event_start?: string; event_end?: string; available_start?: string; available_end?: string; row_count?: number; quality_state?: string; point_in_time_state?: string; partition?: 'DISCOVERY' | 'SEALED' | string; created_at?: string; }
-export interface DataSource { id: UUID; name: string; provider?: string; state: string; universe_scope?: string[] | UUID[]; fields?: string[]; update_cadence?: string; preflight_state?: string; }
-export interface DownstreamSystem { id: UUID; name: string; environment_type: 'PAPER' | 'LIVE' | 'EXTERNAL_BACKTEST' | string; enabled: boolean; package_contract_version?: string; feedback_contract_version?: string; compatibility?: string[]; preflight_state?: string; }
+/** Canonical fresh-install administration facts from root /api/v1 resources. */
+export interface ConfigurationUniverse {
+  id: UUID;
+  universe_key: string;
+  version_no: number;
+  name: string;
+  state: string;
+  spec: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ConfigurationDataSource {
+  id: UUID;
+  name: string;
+  connector_key: string;
+  provider: string | null;
+  state: string;
+  universe_scope: string[];
+  field_schema: Record<string, unknown>;
+  license_classification: string;
+  availability_semantics: Record<string, unknown>;
+  update_cadence: string | null;
+  preflight_state: string;
+  public_config: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConfigurationDataset {
+  id: UUID;
+  data_source_id: UUID | null;
+  universe_version_id: UUID | null;
+  universe_name: string | null;
+  revision_no: number;
+  partition: string;
+  data_class: string | null;
+  origin: string | null;
+  promotability: string | null;
+  schema_version: string | null;
+  event_start: string | null;
+  event_end: string | null;
+  available_start: string | null;
+  available_end: string | null;
+  row_count: number | null;
+  quality_state: string;
+  point_in_time_state: string;
+  created_at: string;
+}
+
+export interface ConfigurationOperation {
+  id: UUID;
+  kind: string;
+  resource_type: string;
+  resource_id: UUID;
+  state: string;
+  attempt: number;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConfigurationMandateVersion {
+  id: UUID;
+  portfolio_mandate_id: UUID;
+  version_no: number;
+  policy_family: 'LONG_ONLY_MEAN_VARIANCE_V1';
+  base_currency: string;
+  objective: 'MAXIMIZE_NET_RETURN';
+  eligible_alpha_role: 'PRIMARY_ALPHA';
+  universe_version_id: UUID;
+  minimum_alpha_count: number;
+  minimum_weight: string;
+  maximum_weight: string;
+  gross_exposure_limit: string;
+  net_exposure_target: string;
+  cash_reserve: string;
+  turnover_limit: string;
+  variance_limit: string;
+  risk_aversion: string;
+  cost_aversion: string;
+  uncertainty_aversion: string;
+  commission_rate: string;
+  half_spread_rate: string;
+  slippage_rate: string;
+  impact_rate: string;
+  impact_breakpoint: string;
+  state: 'ACTIVE' | 'RETIRED';
+  created_at: string;
+}
+
+export interface ConfigurationMandate {
+  id: UUID;
+  key: string;
+  name: string;
+  enabled: boolean;
+  state: string;
+  configuration_state: 'V1_CONFIGURED' | 'LEGACY_UNAVAILABLE';
+  latest_version: ConfigurationMandateVersion | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConfigurationCapitalContext {
+  id: UUID;
+  configuration_contract_version: 'CAPITAL_CONTEXT_V1' | null;
+  configuration_state: 'V1_CONFIGURED' | 'LEGACY_UNAVAILABLE';
+  source_type: string;
+  source_downstream_system_id: UUID | null;
+  base_currency: string;
+  deployable_capital: string;
+  observed_at: string;
+  valid_until: string;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConfigurationEvaluationDatasetSelection {
+  id: UUID;
+  universe_version_id: UUID;
+  version_no: number;
+  discovery_dataset_revision_id: UUID;
+  validation_dataset_revision_id: UUID;
+  sealed_dataset_revision_id: UUID;
+  state: 'ENABLED' | 'RETIRED';
+  created_at: string;
+}
+
+export interface ConfigurationEvaluationDesignVersion {
+  id: UUID;
+  version_no: number;
+  universe_version_id: UUID;
+  contract_version: string;
+  allowed_model_mode: 'RELATIVE_SCORE';
+  qualification_role: 'PRIMARY_ALPHA' | 'DIVERSIFIER_ALPHA' | 'HEDGE_ALPHA' | 'REGIME_SIGNAL' | 'RISK_MODULATOR' | 'SHADOW_ALPHA';
+  walk_forward_folds: number;
+  annualization_factor: string;
+  multiple_testing_method: 'BONFERRONI' | 'BENJAMINI_HOCHBERG';
+  multiple_testing_max_trials: number;
+  qualification_metric_code: string;
+  qualification_comparator: 'MINIMUM' | 'MAXIMUM';
+  qualification_threshold: string;
+  pass_disclosure_code: string;
+  failure_disclosure_code: string;
+  inconclusive_disclosure_code: string;
+  invalid_disclosure_code: string;
+  state: 'ACTIVE' | 'RETIRED';
+  created_at: string;
+}
+
+export interface ConfigurationPromotionPolicyGate {
+  metric_code: string;
+  comparator: 'MINIMUM' | 'MAXIMUM';
+  threshold: string;
+  ordinal: number;
+}
+
+export interface ConfigurationPromotionPolicyVersion {
+  id: UUID;
+  version_no: number;
+  purpose: 'ALPHA_DISCOVERY_TO_SEALED' | 'SEALED_TO_QUALIFIED' | 'PORTFOLIO_TO_PAPER' | 'PAPER_TO_LIVE';
+  mode: 'MANUAL_APPROVAL' | 'AUTO_HANDOFF';
+  policy_contract_version: 'PROMOTION_POLICY_V1' | null;
+  paper_downstream_system_id: UUID | null;
+  paper_connection_version_id: UUID | null;
+  paper_feedback_contract_version_id: UUID | null;
+  paper_preflight_receipt_id: UUID | null;
+  live_downstream_system_id: UUID | null;
+  live_connection_version_id: UUID | null;
+  live_feedback_contract_version_id: UUID | null;
+  live_preflight_receipt_id: UUID | null;
+  paper_to_live_policy_version_id: UUID | null;
+  gates: ConfigurationPromotionPolicyGate[];
+  state: 'ACTIVE' | 'RETIRED';
+  created_at: string;
+}
+
+export interface ConfigurationDownstream {
+  id: UUID;
+  name: string;
+  environment_type: 'PAPER' | 'LIVE' | string;
+  enabled: boolean;
+  package_contract_version: string;
+  feedback_contract_version: string;
+  compatibility: string[];
+  preflight_state: string;
+  public_config: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConfigurationDownstreamRegistration extends ConfigurationDownstream {
+  service_token: string | null;
+  token_issued: boolean;
+}
+
 export interface PluginRelease { id: UUID; plugin_id?: string; version?: string; state: string; capabilities?: string[]; created_at?: string; }
-export interface IdeaPreview { charter?: ResearchCharter; clarification_required?: boolean; clarification_questions?: Array<{ key: string; question: string }>; overlap?: { kind?: 'DUPLICATE' | 'BRANCH' | 'RELATED_PROGRAM' | 'NEW' | string; program_id?: UUID; program_title?: string; rationale?: string; recommendation?: string } | null; assumptions?: string[]; }
 export interface OhlcPoint { time: string | number; open: number; high: number; low: number; close: number; volume?: number; }
 export interface ApiErrorEnvelope { error?: { code?: string; message?: string; details?: Record<string, unknown> }; }

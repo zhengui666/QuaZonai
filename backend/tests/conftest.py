@@ -20,6 +20,16 @@ def _test_database_url() -> str:
     return "sqlite+pysqlite:///:memory:"
 
 
+def _reset_database(database: Engine) -> None:
+    """Reset the isolated test database even after legacy-schema fixtures."""
+    if database.dialect.name == "postgresql":
+        with database.begin() as connection:
+            connection.exec_driver_sql("DROP SCHEMA IF EXISTS public CASCADE")
+            connection.exec_driver_sql("CREATE SCHEMA public")
+        return
+    Base.metadata.drop_all(database)
+
+
 @pytest.fixture
 def engine() -> Iterator[Engine]:
     url = _test_database_url()
@@ -31,12 +41,12 @@ def engine() -> Iterator[Engine]:
         )
     else:
         database = create_engine(url, pool_pre_ping=True)
-    Base.metadata.drop_all(database)
+    _reset_database(database)
     Base.metadata.create_all(database)
     try:
         yield database
     finally:
-        Base.metadata.drop_all(database)
+        _reset_database(database)
         database.dispose()
 
 
