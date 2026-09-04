@@ -34,6 +34,7 @@ from db.models import (
     ClarificationAnswer,
     ClarificationQuestion,
     DegradationObservation,
+    DatasetRevision,
     Event,
     ForwardEvidenceEpisode,
     HandoffOffer,
@@ -378,6 +379,22 @@ def _create_initial_missions(
         "hypothesis": branch.hypothesis,
         "preserved_constraints": branch.preserved_constraints,
     }
+    universe_ids = tuple(
+        UUID(str(value))
+        for value in charter.universe_version_ids
+        if value is not None
+    )
+    discovery_dataset_ids = tuple(
+        str(dataset_id)
+        for dataset_id in session.scalars(
+            select(DatasetRevision.id)
+            .where(
+                DatasetRevision.partition == "DISCOVERY",
+                DatasetRevision.universe_version_id.in_(universe_ids),
+            )
+            .order_by(DatasetRevision.id)
+        )
+    ) if universe_ids else ()
     for spec in _INITIAL_MISSION_GRAPH:
         mission = ResearchMission(
             program_id=program.id,
@@ -390,7 +407,8 @@ def _create_initial_missions(
             contract_version="v1",
             input_snapshot={"charter": charter_snapshot, "branch": branch_snapshot},
             capability_snapshot={
-                "allowed_tools": sorted(tool.value for tool in role_allowed_tools(spec.role))
+                "allowed_tools": sorted(tool.value for tool in role_allowed_tools(spec.role)),
+                "allowed_dataset_revision_ids": discovery_dataset_ids,
             },
             runtime_snapshot={"runtime_configuration_revision": cycle.runtime_configuration_revision},
             prompt_version="v1",
@@ -716,6 +734,22 @@ def _degradation_cycle(
         "consecutive_breaches": observation.consecutive_breaches,
         "evaluated": observation.evaluated,
     }
+    universe_ids = tuple(
+        UUID(str(value))
+        for value in charter_snapshot.get("universe_version_ids", ())
+        if value is not None
+    )
+    discovery_dataset_ids = tuple(
+        str(dataset_id)
+        for dataset_id in session.scalars(
+            select(DatasetRevision.id)
+            .where(
+                DatasetRevision.partition == "DISCOVERY",
+                DatasetRevision.universe_version_id.in_(universe_ids),
+            )
+            .order_by(DatasetRevision.id)
+        )
+    ) if universe_ids else ()
     missions: dict[str, ResearchMission] = {}
     for spec in _DEGRADATION_MISSION_GRAPH:
         mission = ResearchMission(
@@ -733,7 +767,8 @@ def _degradation_cycle(
                 "degradation": degradation_snapshot,
             },
             capability_snapshot={
-                "allowed_tools": sorted(tool.value for tool in role_allowed_tools(spec.role))
+                "allowed_tools": sorted(tool.value for tool in role_allowed_tools(spec.role)),
+                "allowed_dataset_revision_ids": discovery_dataset_ids,
             },
             runtime_snapshot={"runtime_configuration_revision": cycle.runtime_configuration_revision},
             prompt_version="v1",
