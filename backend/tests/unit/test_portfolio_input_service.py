@@ -378,7 +378,7 @@ def _portfolio_facts(session: Session) -> dict[str, object]:
     paper_connection = DownstreamConnectionVersion(
         downstream_system_id=paper_downstream.id,
         version_no=1,
-        package_contract_version="CANDIDATE_PACKAGE_V1",
+        package_contract_version="1",
         feedback_contract_version_id=paper_feedback.id,
         public_config={},
         state="ACTIVE",
@@ -386,7 +386,7 @@ def _portfolio_facts(session: Session) -> dict[str, object]:
     live_connection = DownstreamConnectionVersion(
         downstream_system_id=live_downstream.id,
         version_no=1,
-        package_contract_version="CANDIDATE_PACKAGE_V1",
+        package_contract_version="1",
         feedback_contract_version_id=live_feedback.id,
         public_config={},
         state="ACTIVE",
