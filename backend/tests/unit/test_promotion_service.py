@@ -8,21 +8,31 @@ import pytest
 from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session
 
+import promotion_service
 from candidate_packages import (
     finalize_candidate_package_build,
     prepare_candidate_package_build,
     write_candidate_package_archive,
 )
 from db.models import (
+    AlphaQualification,
     ApprovalSnapshot,
     Base,
+    CandidatePackage,
+    DegradationObservation,
     FeedbackContractMetricRequirement,
     FeedbackContractVersion,
     DownstreamConnectionVersion,
     Job,
+    PortfolioAssemblyInputMember,
+    PortfolioCandidate,
+    PortfolioCandidateMember,
+    PortfolioEvaluationEpisode,
     PreflightReceipt,
     PromotionEvaluation,
     PromotionPolicyGate,
+    PromotionPolicyVersion,
+    HandoffOffer,
 )
 from errors import QfError
 from jobs import JobLease, claim_next_job
@@ -41,7 +51,10 @@ from promotion_service import (
     maybe_enqueue_p2p,
 )
 from test_candidate_package_build import _assembled_candidate
-from test_portfolio_input_service import _portfolio_result_input
+from test_portfolio_input_service import (
+    _assembled_candidate_for_evaluation,
+    _portfolio_result_input,
+)
 from runners import promotion as promotion_runner
 
 
@@ -54,6 +67,229 @@ def _engine(tmp_path):
 
     Base.metadata.create_all(engine)
     return engine
+
+
+def _promotion_source(
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[PortfolioCandidate, CandidatePackage, PromotionPolicyVersion, PortfolioEvaluationEpisode]:
+    candidate, input_row, input_assignment = _assembled_candidate_for_evaluation(session)
+    members = list(
+        session.scalars(
+            select(PortfolioAssemblyInputMember).where(
+                PortfolioAssemblyInputMember.input_id == input_row.id
+            )
+        )
+    )
+    assert members
+    session.add_all(
+        PortfolioCandidateMember(
+            candidate_id=candidate.id,
+            alpha_qualification_id=member.alpha_qualification_id,
+            role="PRIMARY_ALPHA",
+            target_weight=Decimal("0.5"),
+        )
+        for member in members
+    )
+    package = CandidatePackage(
+        id=uuid4(),
+        candidate_id=candidate.id,
+        revision=1,
+        contract_version="CANDIDATE_PACKAGE_V1",
+        state="AVAILABLE",
+        manifest_json={},
+        relative_path="test/candidate-package.zip",
+        payload={},
+        created_at=datetime.now(UTC),
+    )
+    session.add(package)
+    session.flush()
+    monkeypatch.setattr(promotion_service, "is_trusted_candidate_package", lambda *_: True)
+    assignment = ensure_portfolio_evaluation(session, candidate_id=candidate.id)
+    descriptor = prepare_portfolio_evaluation(session, assignment.id)
+    episode = accept_portfolio_evaluation_result(session, _portfolio_result_input(descriptor))
+    policy = session.get(PromotionPolicyVersion, input_assignment.promotion_policy_version_id)
+    assert policy is not None
+    return candidate, package, policy, episode
+
+
+def _paper_handoff(
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    paper_metric: str = "return",
+    live_metric: str = "return",
+) -> tuple[PortfolioCandidate, HandoffOffer, FeedbackContractVersion, FeedbackContractVersion]:
+    candidate, _package, policy, episode = _promotion_source(session, monkeypatch)
+    paper_contract = session.get(FeedbackContractVersion, policy.paper_feedback_contract_version_id)
+    live_policy = session.get(PromotionPolicyVersion, policy.paper_to_live_policy_version_id)
+    assert paper_contract is not None and live_policy is not None
+    live_contract = session.get(FeedbackContractVersion, live_policy.live_feedback_contract_version_id)
+    assert live_contract is not None
+    session.add_all(
+        (
+            FeedbackContractMetricRequirement(
+                feedback_contract_version_id=paper_contract.id,
+                metric_code=paper_metric,
+                ordinal=1,
+            ),
+            FeedbackContractMetricRequirement(
+                feedback_contract_version_id=live_contract.id,
+                metric_code=live_metric,
+                ordinal=1,
+            ),
+            PromotionPolicyGate(
+                policy_version_id=live_policy.id,
+                metric_code=live_metric,
+                comparator="MINIMUM",
+                threshold=0,
+                ordinal=1,
+            ),
+        )
+    )
+    session.flush()
+    p2p = maybe_enqueue_p2p(session, portfolio_evaluation_episode_id=episode.id)
+    assert p2p is not None and p2p.outcome == "PASS"
+    approval = session.scalar(
+        select(ApprovalSnapshot).where(ApprovalSnapshot.promotion_evaluation_id == p2p.id)
+    )
+    assert approval is not None
+    handoff = approve_typed_paper_handoff(session, approval.id)
+    handoff.state = "DOWNSTREAM_ACCEPTED"
+    handoff.feedback_state = "FEEDBACK_PENDING"
+    return candidate, handoff, paper_contract, live_contract
+
+
+def test_p2p_receipt_requires_actual_package_contract(tmp_path, monkeypatch) -> None:
+    engine = _engine(tmp_path)
+    try:
+        with Session(engine) as session:
+            _candidate, _package, policy, episode = _promotion_source(session, monkeypatch)
+            connection = session.get(
+                DownstreamConnectionVersion, policy.paper_connection_version_id
+            )
+            receipt = session.get(PreflightReceipt, policy.paper_preflight_receipt_id)
+            assert connection is not None and receipt is not None
+            connection.package_contract_version = "OTHER_PACKAGE_V1"
+            receipt.contract_version = connection.package_contract_version
+            with pytest.raises(QfError, match="PROMOTION_PREFLIGHT_STALE"):
+                maybe_enqueue_p2p(session, portfolio_evaluation_episode_id=episode.id)
+            assert (
+                session.scalar(
+                    select(PromotionEvaluation).where(
+                        PromotionEvaluation.purpose == "PORTFOLIO_TO_PAPER"
+                    )
+                )
+                is None
+            )
+    finally:
+        engine.dispose()
+
+
+def test_paper_feedback_uses_paper_contract_and_rejects_future_end(
+    tmp_path, monkeypatch
+) -> None:
+    engine = _engine(tmp_path)
+    try:
+        with Session(engine) as session:
+            _candidate, handoff, paper_contract, live_contract = _paper_handoff(
+                session,
+                monkeypatch,
+                paper_metric="paper_return",
+                live_metric="live_return",
+            )
+            live_contract.minimum_valid_sample_size = 99
+            live_contract.minimum_observation_seconds = 99
+            now = datetime.now(UTC)
+            with pytest.raises(QfError, match="FEEDBACK_CONTRACT_INVALID"):
+                accept_paper_feedback(
+                    session,
+                    handoff_id=handoff.id,
+                    header=FeedbackHeader(
+                        observation_start=now - timedelta(seconds=2),
+                        observation_end=now + timedelta(minutes=1),
+                        sample_size=paper_contract.minimum_valid_sample_size,
+                    ),
+                    metrics=(
+                        TypedFeedbackMetric("paper_return", "AVAILABLE", Decimal("0.1")),
+                    ),
+                )
+            forward = accept_paper_feedback(
+                session,
+                handoff_id=handoff.id,
+                header=FeedbackHeader(
+                    observation_start=now - timedelta(seconds=3),
+                    observation_end=now - timedelta(seconds=1),
+                    sample_size=paper_contract.minimum_valid_sample_size,
+                ),
+                metrics=(
+                    TypedFeedbackMetric("paper_return", "AVAILABLE", Decimal("0.1")),
+                ),
+            )
+            assert forward.state == "FEEDBACK_COMPLETE"
+    finally:
+        engine.dispose()
+
+
+def test_p2l_blocks_degrading_relational_alpha_member(tmp_path, monkeypatch) -> None:
+    engine = _engine(tmp_path)
+    try:
+        with Session(engine) as session:
+            candidate, handoff, paper_contract, _live_contract = _paper_handoff(
+                session, monkeypatch
+            )
+            member = session.scalar(
+                select(PortfolioCandidateMember).where(
+                    PortfolioCandidateMember.candidate_id == candidate.id
+                )
+            )
+            assert member is not None
+            alpha = session.get(AlphaQualification, member.alpha_qualification_id)
+            assert alpha is not None
+            alpha.degradation_state = "DEGRADING"
+            now = datetime.now(UTC)
+            forward = accept_paper_feedback(
+                session,
+                handoff_id=handoff.id,
+                header=FeedbackHeader(
+                    observation_start=now - timedelta(seconds=3),
+                    observation_end=now - timedelta(seconds=1),
+                    sample_size=paper_contract.minimum_valid_sample_size,
+                ),
+                metrics=(TypedFeedbackMetric("return", "AVAILABLE", Decimal("0.1")),),
+            )
+            assert maybe_enqueue_p2l(session, forward_evidence_episode_id=forward.id) is None
+            alpha.degradation_state = "HEALTHY"
+            assert alpha.program_id is not None
+            session.add(
+                DegradationObservation(
+                    program_id=alpha.program_id,
+                    forward_evidence_episode_id=forward.id,
+                    subject_type="ALPHA",
+                    subject_id=alpha.id,
+                    metric_name="return",
+                    severity=Decimal("0.5"),
+                    confidence=Decimal("1"),
+                    policy_revision="degradation-v1",
+                    policy_snapshot={},
+                    reason_code="ALPHA_DEGRADING",
+                    state="DEGRADING",
+                    consecutive_breaches=1,
+                    evaluated=True,
+                    created_at=datetime.now(UTC),
+                )
+            )
+            assert maybe_enqueue_p2l(session, forward_evidence_episode_id=forward.id) is None
+            assert (
+                session.scalar(
+                    select(PromotionEvaluation).where(
+                        PromotionEvaluation.purpose == "PAPER_TO_LIVE"
+                    )
+                )
+                is None
+            )
+    finally:
+        engine.dispose()
 
 
 def test_package_and_portfolio_pass_create_one_frozen_paper_approval(tmp_path, settings, monkeypatch) -> None:
@@ -197,25 +433,22 @@ def test_complete_typed_paper_feedback_queues_and_decides_live_promotion(tmp_pat
                 )
             )
             session.flush()
+            feedback_header = FeedbackHeader(
+                observation_start=datetime.now(UTC) - timedelta(seconds=3),
+                observation_end=datetime.now(UTC) - timedelta(seconds=1),
+                sample_size=1,
+            )
             forward = accept_paper_feedback(
                 session,
                 handoff_id=handoff.id,
-                header=FeedbackHeader(
-                    observation_start=datetime(2026, 9, 3, tzinfo=UTC),
-                    observation_end=datetime(2026, 9, 4, tzinfo=UTC),
-                    sample_size=1,
-                ),
+                header=feedback_header,
                 metrics=(TypedFeedbackMetric("return", "AVAILABLE", Decimal("0.1")),),
             )
             assert (
                 accept_paper_feedback(
                     session,
                     handoff_id=handoff.id,
-                    header=FeedbackHeader(
-                        observation_start=datetime(2026, 9, 3, tzinfo=UTC),
-                        observation_end=datetime(2026, 9, 4, tzinfo=UTC),
-                        sample_size=1,
-                    ),
+                    header=feedback_header,
                     metrics=(TypedFeedbackMetric("return", "AVAILABLE", Decimal("0.1")),),
                 ).id
                 == forward.id
@@ -224,11 +457,7 @@ def test_complete_typed_paper_feedback_queues_and_decides_live_promotion(tmp_pat
                 accept_paper_feedback(
                     session,
                     handoff_id=handoff.id,
-                    header=FeedbackHeader(
-                        observation_start=datetime(2026, 9, 3, tzinfo=UTC),
-                        observation_end=datetime(2026, 9, 4, tzinfo=UTC),
-                        sample_size=1,
-                    ),
+                    header=feedback_header,
                     metrics=(TypedFeedbackMetric("return", "AVAILABLE", Decimal("0.2")),),
                 )
             forward_id = forward.id
