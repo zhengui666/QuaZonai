@@ -716,7 +716,7 @@ def _run_observable_turn(
         )
         if agent_session is None or turn is None:
             raise QfError("AGENT_TURN_NOT_FOUND", "Mission AgentTurn is missing.", 500)
-        finish_turn(turn, agent_session, summary=summary)
+        finish_turn(turn, agent_session, summary=summary, tool_call_count=turn.tool_call_count)
     return summary
 
 
@@ -924,27 +924,27 @@ def run_mission(settings: Settings, lease: JobLease) -> None:
 
         completion_error: QfError | None = None
         with factory() as session, session.begin():
-            mission = session.scalar(
+            completion_mission = session.scalar(
                 select(ResearchMission)
                 .where(ResearchMission.id == mission_id)
                 .with_for_update()
             )
-            if mission is None:
+            if completion_mission is None:
                 raise QfError("MISSION_NOT_FOUND", "Mission was not found.", 404)
-            if mission.mission_type == MissionType.ALPHA_DISCOVERY.value:
+            if completion_mission.mission_type == MissionType.ALPHA_DISCOVERY.value:
                 intake = stage_alpha_discovery_evaluation(
                     session,
-                    mission_id=mission.id,
+                    mission_id=completion_mission.id,
                     workspace=workspace,
                     artifact_root=mission_settings.mission_root / "artifacts",
                 )
                 if intake.accepted:
-                    await_mission_validation(session, mission.id, summary=final_response)
+                    await_mission_validation(session, completion_mission.id, summary=final_response)
                 else:
                     error_code = intake.error_code or "ALPHA_PROPOSAL_INVALID"
                     finish_mission(
                         session,
-                        mission.id,
+                        completion_mission.id,
                         succeeded=False,
                         summary=final_response,
                         error_code=error_code,
@@ -955,7 +955,7 @@ def run_mission(settings: Settings, lease: JobLease) -> None:
                         422,
                     )
             else:
-                finish_mission(session, mission.id, succeeded=True, summary=final_response)
+                finish_mission(session, completion_mission.id, succeeded=True, summary=final_response)
         if completion_error is not None:
             raise completion_error
     except Exception as exc:
