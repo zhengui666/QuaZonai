@@ -34,7 +34,7 @@ nautilus-runtime = [
   "pandas>=2.3,<4",
   "pyarrow==25.0.1",
 ]
-dev = ["mypy>=1.18,<2", "pytest>=9,<10", "ruff>=0.15,<1"]
+dev = ["mypy>=1.18,<3", "pytest>=9,<10", "ruff>=0.15,<1"]
 
 [project.scripts]
 quazonai = "cli.main:main"
