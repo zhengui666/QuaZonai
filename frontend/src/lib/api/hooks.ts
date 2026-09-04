@@ -194,7 +194,7 @@ export function useProgramAction(id: UUID, action: 'pause' | 'resume' | 'archive
 export function useApprovalDecision(id: UUID) {
   const client = useQueryClient();
   return {
-    approve: useMutation({ mutationFn: (downstream_system_id: UUID) => apiRequest(`/api/v1/approvals/${id}/approve`, { method: 'POST', body: jsonBody({ downstream_system_id, expected_state: 'PENDING' }), idempotent: true }), onSuccess: async () => { await Promise.all([client.invalidateQueries({ queryKey: keys.approvals }), client.invalidateQueries({ queryKey: keys.handoffs })]); } }),
+    approve: useMutation({ mutationFn: (downstream_system_id: UUID | null) => apiRequest(`/api/v1/approvals/${id}/approve`, { method: 'POST', body: jsonBody({ ...(downstream_system_id ? { downstream_system_id } : {}), expected_state: 'PENDING' }), idempotent: true }), onSuccess: async () => { await Promise.all([client.invalidateQueries({ queryKey: keys.approvals }), client.invalidateQueries({ queryKey: keys.handoffs })]); } }),
     reject: useMutation({ mutationFn: (payload: { reason_code: string; note?: string }) => apiRequest(`/api/v1/approvals/${id}/reject`, { method: 'POST', body: jsonBody({ ...payload, expected_state: 'PENDING' }), idempotent: true }), onSuccess: () => client.invalidateQueries({ queryKey: keys.approvals }) }),
   };
 }
