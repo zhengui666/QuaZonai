@@ -44,6 +44,7 @@ export function formatDeployableCapital(locale: Locale, value?: number | string 
 
 function ApprovalCard({ approval, systems }: { approval: ApprovalSnapshot; systems: ConfigurationDownstream[] }) {
   const { locale, t } = useI18n();
+  const typed = approval.promotion_evaluation_id != null;
   const options = compatible(approval, systems);
   const [downstream, setDownstream] = useState(approval.downstream_system_id ?? options[0]?.id ?? '');
   const [reason, setReason] = useState('');
@@ -71,7 +72,7 @@ function ApprovalCard({ approval, systems }: { approval: ApprovalSnapshot; syste
         </div>
       </div>
       <div className="qz-approval-actions">
-        <div className="qz-field" style={{ minWidth: 260 }}><span className="qz-label">{t('approval.compatibleDownstream')}</span><Select.Root value={downstream} onValueChange={setDownstream} disabled={!pending}><Select.Trigger placeholder={options.length ? t('approval.selectDownstream') : t('approval.noDownstream')} /><Select.Content>{options.map((option) => <Select.Item value={option.id} key={option.id}><bdi dir="auto">{option.name}</bdi> · {humanize(option.environment_type)}</Select.Item>)}</Select.Content></Select.Root></div>
+        {typed ? <div className="qz-field" style={{ minWidth: 260 }}><span className="qz-label">{t('approval.compatibleDownstream')}</span><div className="qz-list-title" style={{ marginTop: 5 }}><bdi dir="auto">{approval.downstream_name ?? systems.find((system) => system.id === approval.downstream_system_id)?.name ?? approval.downstream_system_id ?? '—'}</bdi></div><div className="qz-list-subtitle">{t('approval.frozenBinding')}</div></div> : <div className="qz-field" style={{ minWidth: 260 }}><span className="qz-label">{t('approval.compatibleDownstream')}</span><Select.Root value={downstream} onValueChange={setDownstream} disabled={!pending}><Select.Trigger placeholder={options.length ? t('approval.selectDownstream') : t('approval.noDownstream')} /><Select.Content>{options.map((option) => <Select.Item value={option.id} key={option.id}><bdi dir="auto">{option.name}</bdi> · {humanize(option.environment_type)}</Select.Item>)}</Select.Content></Select.Root></div>}
         <div style={{ display: 'flex', gap: 8 }}>
           <Dialog.Root>
             <Dialog.Trigger><Button variant="soft" color="red" disabled={!pending}><XIcon size={14} />{t('approval.reject')}</Button></Dialog.Trigger>
@@ -85,7 +86,7 @@ function ApprovalCard({ approval, systems }: { approval: ApprovalSnapshot; syste
               </div>
             </ResponsiveDialogContent>
           </Dialog.Root>
-          <Button color="green" disabled={!pending || !downstream || decision.approve.isPending} onClick={() => decision.approve.mutate(downstream)}><CheckIcon size={14} />{decision.approve.isPending ? t('common.approving') : t('approval.approve')}</Button>
+          <Button color="green" disabled={!pending || (!typed && !downstream) || (typed && !approval.downstream_system_id) || decision.approve.isPending} onClick={() => decision.approve.mutate(typed ? null : downstream)}><CheckIcon size={14} />{decision.approve.isPending ? t('common.approving') : t('approval.approve')}</Button>
         </div>
       </div>
       {mutationError ? <div style={{ marginTop: 12 }}><ErrorPanel error={mutationError} /></div> : null}
