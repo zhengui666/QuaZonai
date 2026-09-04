@@ -612,7 +612,7 @@ def test_constraints_reject_incoherent_trusted_facts(engine) -> None:
                 status="AVAILABLE",
             )
         )
-        with pytest.raises((IntegrityError, DataError)):
+        with pytest.raises(IntegrityError):
             session.flush()
 
     with Session(engine) as session:
@@ -747,7 +747,7 @@ def test_discovery_metric_rejects_nonfinite_database_values(engine, value: Decim
                 status="AVAILABLE",
             )
         )
-        with pytest.raises(IntegrityError):
+        with pytest.raises((IntegrityError, DataError)):
             session.flush()
 
     with Session(engine) as session:
