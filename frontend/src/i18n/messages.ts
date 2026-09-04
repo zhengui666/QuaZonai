@@ -369,6 +369,7 @@ export const messages = {
   'approval.noReport': m('No narrative report returned.', '未返回叙述性报告。', '未回傳敘述性報告。', 'ナラティブレポートは返されませんでした。', '서술형 보고서가 반환되지 않았습니다.', 'No se devolvió un informe narrativo.', 'لم يُعد تقرير سردي.'),
   'approval.compatibleDownstream': m('Compatible downstream', '兼容下游', '相容下游', '互換ダウンストリーム', '호환 다운스트림', 'Downstream compatible', 'نظام downstream متوافق'),
   'approval.selectDownstream': m('Select downstream', '选择下游', '選擇下游', 'ダウンストリームを選択', '다운스트림 선택', 'Seleccionar downstream', 'اختر downstream'),
+  'approval.frozenBinding': m('Frozen by the system recommendation', '系统推荐已冻结', '系統推薦已凍結', 'システム推奨で固定', '시스템 권장으로 고정됨', 'Fijado por la recomendación del sistema', 'مثبت بواسطة توصية النظام'),
   'approval.noDownstream': m('No compatible downstream', '无兼容下游', '無相容下游', '互換ダウンストリームなし', '호환 다운스트림 없음', 'No hay downstream compatible', 'لا يوجد downstream متوافق'),
   'approval.reject': m('Reject', '拒绝', '拒絕', '却下', '거부', 'Rechazar', 'رفض'),
   'approval.rejectTitle': m('Reject candidate', '拒绝候选', '拒絕候選', '候補を却下', '후보 거부', 'Rechazar candidato', 'رفض المرشح'),
