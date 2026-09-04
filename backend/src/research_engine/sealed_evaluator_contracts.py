@@ -104,7 +104,7 @@ class DisclosureReasonCode(StrEnum):
     INVALID_EVALUATOR_RESULT = "INVALID_EVALUATOR_RESULT"
 
 
-_ALPHA_METRICS = frozenset(
+ALPHA_METRIC_CODES = frozenset(
     {
         MetricCode.OBSERVATION_COUNT,
         MetricCode.COVERAGE,
@@ -553,7 +553,7 @@ class DiscoveryEvaluationResult:
             raise ValueError("gates must be ordered by code")
         if any(metric.phase is not EvaluationPhase.DISCOVERY for metric in metrics):
             raise ValueError("Discovery metrics must use the discovery phase")
-        if frozenset(metric.code for metric in metrics) != _ALPHA_METRICS:
+        if frozenset(metric.code for metric in metrics) != ALPHA_METRIC_CODES:
             raise ValueError("Discovery evaluation requires the fixed Alpha metric set")
         if frozenset(gate.code for gate in gates) != _ALPHA_GATES:
             raise ValueError("Discovery evaluation requires the fixed Alpha gate set")
@@ -755,7 +755,7 @@ class SealedEvaluationResult:
         if isinstance(self.input, AlphaEvaluationInput):
             if any(metric.phase is not EvaluationPhase.SEALED for metric in metrics):
                 raise ValueError("Alpha metrics must be sealed")
-            if frozenset(metric.code for metric in metrics) != _ALPHA_METRICS:
+            if frozenset(metric.code for metric in metrics) != ALPHA_METRIC_CODES:
                 raise ValueError("Alpha evaluation requires the fixed Alpha metric set")
             if frozenset(gate.code for gate in gates) != _ALPHA_GATES:
                 raise ValueError("Alpha evaluation requires the fixed Alpha gate set")
@@ -818,6 +818,7 @@ class SealedEvaluator(Protocol):
 
 
 __all__ = [
+    "ALPHA_METRIC_CODES",
     "AlphaForecast",
     "AlphaEvaluationInput",
     "AlphaSignalSummary",
