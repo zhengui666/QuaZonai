@@ -273,7 +273,7 @@ class MissionCapabilityService:
 
     def _profile_dataset(self, request: _DatasetRequest) -> dict[str, Any]:
         with self._session_factory() as session:
-            self._mission(session, MissionTool.PROFILE_DATASET, request.mission_id)
+            mission = self._mission(session, MissionTool.PROFILE_DATASET, request.mission_id)
             if request.dataset_revision_id not in self._contract.allowed_dataset_revision_ids:
                 raise QfError("MISSION_DATASET_FORBIDDEN", "Dataset is not granted to this Mission.", 403)
             dataset = session.get(DatasetRevision, request.dataset_revision_id)
@@ -283,6 +283,7 @@ class MissionCapabilityService:
                 raise QfError("MISSION_DATASET_SEALED", "Only Discovery datasets are visible to Codex.", 403)
             return {
                 "dataset_revision_id": str(dataset.id),
+                "mission_revision": mission.revision,
                 "partition": dataset.partition,
                 "data_class": dataset.data_class,
                 "schema_version": dataset.schema_version,
