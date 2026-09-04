@@ -433,11 +433,15 @@ def test_codex_launch_config_has_one_frozen_contract_mcp_server(
             "command": sys.executable,
             "args": [
                 "-I",
-                "-m",
-                "agent_harness.mcp_server",
+                "-c",
+                (
+                    "import sys;sys.path.insert(0, "
+                    f"{research_missions.json.dumps(str(research_missions.Path(research_missions.__file__).resolve().parents[1]))});"
+                    "from agent_harness.mcp_server import main;raise SystemExit(main())"
+                ),
                 "--contract-file",
                 str(contract_file),
             ],
-            "cwd": str(research_missions.Path(__file__).resolve().parents[2]),
+            "cwd": str(research_missions.Path(research_missions.__file__).resolve().parents[1]),
         }
     }

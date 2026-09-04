@@ -502,11 +502,19 @@ def _mission_mcp_config_override(
     contract_file: Path, capability_socket: Path | None = None
 ) -> str:
     """Serialize the only Mission MCP server as one TOML config override."""
-    arguments = ["-I", "-m", "agent_harness.mcp_server", "--contract-file", str(contract_file)]
+    # Use an absolute, trusted source root with isolated Python imports.  The
+    # App Server cwd is a Mission worktree; never let it select the MCP module.
+    trusted_source = Path(__file__).resolve().parents[1]
+    bootstrap = (
+        "import sys;sys.path.insert(0, "
+        f"{json.dumps(str(trusted_source))});"
+        "from agent_harness.mcp_server import main;raise SystemExit(main())"
+    )
+    arguments = ["-I", "-c", bootstrap, "--contract-file", str(contract_file)]
     if capability_socket is not None:
         arguments.extend(("--capability-socket", str(capability_socket)))
     serialized_arguments = ", ".join(json.dumps(argument) for argument in arguments)
-    trusted_cwd = Path(__file__).resolve().parents[2]
+    trusted_cwd = trusted_source
     return (
         "mcp_servers = { quazonai_mission = { command = "
         f"{json.dumps(sys.executable)}, args = [{serialized_arguments}], cwd = "

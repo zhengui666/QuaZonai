@@ -925,6 +925,12 @@ def accept_paper_feedback(
         raise _conflict("HANDOFF_STATE_CONFLICT", "Paper Handoff is not accepting complete feedback.")
     start = _utc(header.observation_start)
     end = _utc(header.observation_end)
+    accepted_at = handoff.accepted_at
+    if accepted_at is None or start < _stored_utc(accepted_at):
+        raise _conflict(
+            "FEEDBACK_CONTRACT_INVALID",
+            "Feedback observation must begin at or after Handoff acceptance.",
+        )
     typed = _typed_feedback_rows(session, paper_contract, metrics)
     existing = session.scalar(
         select(FeedbackPackage)
@@ -961,12 +967,6 @@ def accept_paper_feedback(
                 "Retrying Paper feedback must exactly match the immutable submission.",
             )
         return episode
-    accepted_at = handoff.accepted_at
-    if accepted_at is None or start < _stored_utc(accepted_at):
-        raise _conflict(
-            "FEEDBACK_CONTRACT_INVALID",
-            "Feedback observation must begin at or after Handoff acceptance.",
-        )
     if end > datetime.now(UTC):
         raise _conflict("FEEDBACK_CONTRACT_INVALID", "Feedback observation cannot end in the future.")
     deadline = _stored_utc(accepted_at) + timedelta(
