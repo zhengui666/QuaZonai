@@ -939,13 +939,6 @@ def _extend_approval_and_handoff_lineage() -> None:
                 "uq_approval_snapshot_handoff_lineage", approval_lineage_columns
             )
             batch.create_foreign_key(
-                "fk_approval_snapshot_promotion_evaluation",
-                "promotion_evaluations",
-                ["promotion_evaluation_id"],
-                ["id"],
-                ondelete="RESTRICT",
-            )
-            batch.create_foreign_key(
                 "fk_approval_snapshot_promotion_lineage",
                 "promotion_evaluations",
                 promotion_lineage_columns,
@@ -991,14 +984,6 @@ def _extend_approval_and_handoff_lineage() -> None:
         )
         op.create_unique_constraint(
             "uq_approval_snapshot_handoff_lineage", "approval_snapshots", approval_lineage_columns
-        )
-        op.create_foreign_key(
-            "fk_approval_snapshot_promotion_evaluation",
-            "approval_snapshots",
-            "promotion_evaluations",
-            ["promotion_evaluation_id"],
-            ["id"],
-            ondelete="RESTRICT",
         )
         op.create_foreign_key(
             "fk_approval_snapshot_promotion_lineage",
@@ -1144,7 +1129,6 @@ def _shrink_approval_and_handoff_lineage() -> None:
         "fk_handoff_offer_p2l_policy",
     )
     approval_fks = (
-        "fk_approval_snapshot_promotion_evaluation",
         "fk_approval_snapshot_promotion_lineage",
         "fk_approval_snapshot_connection",
         "fk_approval_snapshot_contract",
