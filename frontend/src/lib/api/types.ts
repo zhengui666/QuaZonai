@@ -443,7 +443,7 @@ export interface ConfigurationEvaluationDesignVersion {
   version_no: number;
   universe_version_id: UUID;
   contract_version: string;
-  allowed_model_mode: 'RELATIVE_SCORE' | 'CALIBRATED_RETURN';
+  allowed_model_mode: 'RELATIVE_SCORE';
   qualification_role: 'PRIMARY_ALPHA' | 'DIVERSIFIER_ALPHA' | 'HEDGE_ALPHA' | 'REGIME_SIGNAL' | 'RISK_MODULATOR' | 'SHADOW_ALPHA';
   walk_forward_folds: number;
   annualization_factor: string;
@@ -472,6 +472,7 @@ export interface ConfigurationPromotionPolicyVersion {
   version_no: number;
   purpose: 'ALPHA_DISCOVERY_TO_SEALED' | 'SEALED_TO_QUALIFIED' | 'PORTFOLIO_TO_PAPER' | 'PAPER_TO_LIVE';
   mode: 'MANUAL_APPROVAL' | 'AUTO_HANDOFF';
+  policy_contract_version: 'PROMOTION_POLICY_V1' | null;
   paper_downstream_system_id: UUID | null;
   live_downstream_system_id: UUID | null;
   gates: ConfigurationPromotionPolicyGate[];
