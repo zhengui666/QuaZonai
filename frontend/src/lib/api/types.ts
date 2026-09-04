@@ -180,6 +180,8 @@ export interface ApprovalSnapshot {
   state: ApprovalState;
   downstream_system_id?: UUID | null;
   downstream_name?: string | null;
+  promotion_evaluation_id?: UUID | null;
+  promotion_purpose?: string | null;
   created_at?: string;
   valid_until?: string | null;
   expires_at?: string | null;
