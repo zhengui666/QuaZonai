@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import re
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Any, Callable
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from fastapi import APIRouter, Header, Request
 from fastapi.responses import FileResponse
@@ -13,123 +13,46 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from candidate_packages import build_candidate_package, resolve_package_archive
+from candidate_packages import is_trusted_candidate_package, resolve_package_archive
+from codex_chatgpt_auth import codex_auth_readiness
+from degradation_engine import SubjectType
 from db.models import (
     AlphaQualification,
     ApprovalSnapshot,
     CandidatePackage,
     DatasetRevision,
+    DownstreamConnectionVersion,
     DownstreamSystem,
     Event,
     ForwardEvidenceEpisode,
-    GovernedDataSource,
     HandoffOffer,
-    IdeaContribution,
-    MarketUniverseVersion,
     PortfolioCandidate,
+    PortfolioCandidateMember,
     PortfolioMandate,
+    PortfolioMandateVersion,
     PortfolioProgram,
+    PreflightReceipt,
+    FeedbackContractVersion,
     PublicMutationReceipt,
-    ResearchBranch,
-    ResearchCharter,
-    ResearchMission,
-    ResearchProgram,
 )
-from downstream_auth import authenticate_downstream, install_service_token, issue_service_token
+from downstream_auth import authenticate_downstream
+from downstream_contracts import feedback_contract_snapshot, is_current_downstream_preflight
 from errors import QfError
-from jobs import enqueue_job
+from research_lifecycle import record_degradation_observation
+from promotion_service import (
+    FeedbackHeader,
+    TypedFeedbackMetric,
+    accept_live_feedback,
+    accept_paper_feedback,
+    approve_typed_live_handoff,
+    approve_typed_paper_handoff,
+)
 
 router = APIRouter(prefix="/api/v1", tags=["domain"])
 
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
-
-class CharterView(StrictModel):
-    id: UUID | None = None
-    original_idea_text: str
-    research_question: str | None = None
-    market_scope: str | list[str] | None = None
-    universe_version_ids: list[UUID] = Field(default_factory=list)
-    prediction_horizon: str | None = None
-    allowed_data_domains: list[str] = Field(default_factory=list)
-    explicit_exclusions: list[str] = Field(default_factory=list)
-    material_assumptions: list[str] = Field(default_factory=list)
-    system_assumptions: list[str] = Field(default_factory=list)
-    created_at: str | None = None
-
-
-class OverlapView(StrictModel):
-    kind: str
-    program_id: UUID | None = None
-    program_title: str | None = None
-    rationale: str | None = None
-    recommendation: str | None = None
-
-
-class IdeaPreviewInput(StrictModel):
-    idea: str = Field(min_length=12, max_length=20_000)
-
-
-class IdeaPreviewView(StrictModel):
-    charter: CharterView
-    clarification_required: bool = False
-    clarification_questions: list[dict[str, str]] = Field(default_factory=list)
-    overlap: OverlapView | None = None
-    assumptions: list[str] = Field(default_factory=list)
-
-
-class ResearchProgramInput(StrictModel):
-    idea: str = Field(min_length=12, max_length=20_000)
-    answers: dict[str, str] = Field(default_factory=dict)
-    overlap_action: str | None = None
-
-
-class ResearchProgramView(StrictModel):
-    id: UUID
-    title: str
-    charter_id: UUID
-    charter: CharterView
-    state: str
-    cooling_reason: str | None = None
-    blocked_reason: str | None = None
-    wake_reason: str | None = None
-    created_at: str | None = None
-    updated_at: str | None = None
-    branch_count: int = 0
-    mission_count: int = 0
-    alpha_count: int = 0
-
-
-class ProgramActionInput(StrictModel):
-    reason: str | None = None
-
-
-class MissionView(StrictModel):
-    id: UUID
-    branch_id: UUID
-    program_id: UUID
-    type: str
-    role: str | None = None
-    state: str
-    objective: str | None = None
-    dependencies: list[UUID] = Field(default_factory=list)
-    started_at: str | None = None
-    finished_at: str | None = None
-    attempt: int = 1
-    error_code: str | None = None
-    summary: str | None = None
-
-
-class ActivityView(StrictModel):
-    id: int
-    kind: str
-    aggregate_type: str
-    aggregate_id: UUID | None = None
-    mission_id: UUID | None = None
-    payload: dict[str, Any] = Field(default_factory=dict)
-    created_at: str
 
 
 class AlphaView(StrictModel):
@@ -195,6 +118,10 @@ class CandidateView(StrictModel):
 class ApprovalView(StrictModel):
     id: UUID
     candidate_id: UUID
+    candidate_package_id: UUID | None = None
+    candidate_package_revision: int | None = None
+    promotion_evaluation_id: UUID | None = None
+    promotion_purpose: str | None = None
     candidate: CandidateView
     purpose: str
     state: str
@@ -215,7 +142,9 @@ class ApprovalView(StrictModel):
 
 
 class ApprovalApproveInput(StrictModel):
-    downstream_system_id: UUID
+    # Kept optional for legacy clients; typed Approvals reject any attempted
+    # target override and use the frozen Core binding instead.
+    downstream_system_id: UUID | None = None
     expected_state: str
 
 
@@ -252,94 +181,50 @@ class HandoffStateInput(StrictModel):
     reason_code: str | None = None
 
 
+class FeedbackMetricInput(StrictModel):
+    metric_code: str = Field(min_length=1, max_length=100)
+    status: str
+    value: Decimal | None = None
+
+
 class FeedbackInput(StrictModel):
     state: str = "FEEDBACK_COMPLETE"
     observation_start: datetime | None = None
     observation_end: datetime | None = None
     sample_size: int | None = Field(default=None, ge=0)
+    metrics: list[FeedbackMetricInput] = Field(default_factory=list)
+    # Legacy display-only evidence is accepted only on historical handoffs;
+    # typed production handoffs reject it before any state mutation.
     evidence: dict[str, Any] = Field(default_factory=dict)
 
 
-class DataSourceInput(StrictModel):
-    name: str = Field(min_length=1, max_length=200)
-    provider: str | None = Field(default=None, max_length=200)
-    universe_scope: list[str] = Field(default_factory=list)
-    fields: list[str] = Field(default_factory=list)
-    update_cadence: str | None = Field(default=None, max_length=100)
-    state: str | None = None
-    public_config: dict[str, Any] = Field(default_factory=dict)
+class DegradationObservationInput(StrictModel):
+    subject_type: SubjectType
+    subject_id: UUID
+    metric_name: str = Field(min_length=1, max_length=100)
+    severity: Decimal = Field(ge=0, le=1)
+    confidence: Decimal = Field(default=Decimal("1"), ge=0, le=1)
 
 
-class DataSourceView(StrictModel):
+class DegradationObservationView(StrictModel):
     id: UUID
-    name: str
-    provider: str | None = None
+    forward_evidence_episode_id: UUID
+    subject_type: SubjectType
+    subject_id: UUID
+    metric_name: str
     state: str
-    universe_scope: list[str] = Field(default_factory=list)
-    fields: list[str] = Field(default_factory=list)
-    update_cadence: str | None = None
-    preflight_state: str
-
-
-class DownstreamInput(StrictModel):
-    name: str = Field(min_length=1, max_length=200)
-    environment_type: str
-    enabled: bool = True
-    package_contract_version: str = "1"
-    feedback_contract_version: str = "1"
-    compatibility: list[str] = Field(default_factory=list)
-    public_config: dict[str, Any] = Field(default_factory=dict)
-
-
-class DownstreamView(StrictModel):
-    id: UUID
-    name: str
-    environment_type: str
-    enabled: bool
-    package_contract_version: str
-    feedback_contract_version: str
-    compatibility: list[str] = Field(default_factory=list)
-    preflight_state: str
-
-
-class DownstreamRegistrationView(DownstreamView):
-    service_token: str
-
-
-class DownstreamTokenView(StrictModel):
-    downstream_system_id: UUID
-    service_token: str
-
-
-class UniverseView(StrictModel):
-    id: UUID
-    universe_key: str
-    version_no: int
-    name: str
-    state: str
-    spec_json: dict[str, Any] = Field(default_factory=dict)
-
-
-class DatasetView(StrictModel):
-    id: UUID
-    data_source_id: UUID | None = None
-    universe_version_id: UUID | None = None
-    universe_name: str | None = None
-    revision_no: int
-    schema_version: str | None = None
-    event_start: str | None = None
-    event_end: str | None = None
-    available_start: str | None = None
-    available_end: str | None = None
-    row_count: int | None = None
-    quality_state: str
-    point_in_time_state: str
-    partition: str
-    created_at: str
+    evaluated: bool
+    wake_event_id: UUID | None = None
+    wake_state: str | None = None
+    cycle_id: UUID | None = None
 
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+def _stored_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -393,11 +278,14 @@ def _idempotent(
     action: Callable[[], dict[str, Any]],
     *,
     status_code: int = 200,
+    before_replay: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     normalized = _normalize(payload)
     if key:
         existing = session.get(PublicMutationReceipt, key)
         if existing is not None:
+            if before_replay is not None:
+                before_replay()
             if existing.operation_name != operation or existing.normalized_request != normalized:
                 raise QfError(
                     "IDEMPOTENCY_KEY_REUSED",
@@ -420,66 +308,27 @@ def _idempotent(
     return result
 
 
-def _infer_scope(idea: str) -> str:
-    lowered = idea.lower()
-    if "crypto" in lowered:
-        return "Crypto Spot"
-    if "option" in lowered:
-        return "US Options"
-    if "future" in lowered:
-        return "Futures"
-    if " fx " in f" {lowered} " or "foreign exchange" in lowered:
-        return "FX"
-    if any(word in lowered for word in ("equity", "stock", "earnings", "us ")):
-        return "US Equities"
-    return "System inferred"
-
-
-def _infer_horizon(idea: str) -> str:
-    match = re.search(r"\b(\d+)\s*(minute|min|hour|hr|day|d|h|m)s?\b", idea.lower())
-    if not match:
-        return "System inferred"
-    number, unit = match.groups()
-    return f"{number}{unit[0].upper()}"
-
-
-def _charter_preview(idea: str) -> CharterView:
-    clean = idea.strip()
-    return CharterView(
-        original_idea_text=clean,
-        research_question=clean.rstrip(".") + ("" if clean.rstrip().endswith("?") else "?"),
-        market_scope=_infer_scope(clean),
-        prediction_horizon=_infer_horizon(clean),
-        system_assumptions=["Implementation details are selected by the research system."],
-    )
-
-
-def _charter_view(item: ResearchCharter) -> CharterView:
-    universe_ids: list[UUID] = []
-    for value in item.universe_version_ids:
-        try:
-            universe_ids.append(UUID(str(value)))
-        except ValueError:
-            continue
-    return CharterView(
-        id=item.id,
-        original_idea_text=item.original_idea_text,
-        research_question=item.research_question,
-        market_scope=item.market_scope,
-        universe_version_ids=universe_ids,
-        prediction_horizon=item.prediction_horizon,
-        allowed_data_domains=item.allowed_data_domains,
-        explicit_exclusions=item.explicit_exclusions,
-        material_assumptions=item.material_assumptions,
-        system_assumptions=item.system_assumptions,
-        created_at=_iso(item.created_at),
-    )
-
-
-def _candidate_view(item: PortfolioCandidate) -> CandidateView:
+def _candidate_view(session: Session, item: PortfolioCandidate) -> CandidateView:
     universe_set = item.universe_set_json
     if not isinstance(universe_set, (list, dict)):
         universe_set = []
+    relational_members = list(
+        session.scalars(
+            select(PortfolioCandidateMember)
+            .where(PortfolioCandidateMember.candidate_id == item.id)
+            .order_by(PortfolioCandidateMember.alpha_qualification_id)
+        )
+    )
+    members = [
+        {
+            "alpha_qualification_id": str(member.alpha_qualification_id),
+            "role": member.role,
+            "target_weight": float(member.target_weight),
+        }
+        for member in relational_members
+    ]
+    if not members and not (item.state == "ASSEMBLED" and item.assembly_input_id is not None):
+        members = item.members
     return CandidateView(
         id=item.id,
         candidate_family_id=item.candidate_family_id,
@@ -497,62 +346,8 @@ def _candidate_view(item: PortfolioCandidate) -> CandidateView:
         evaluation_episode_id=item.evaluation_episode_id,
         state=item.state,
         created_at=_iso(item.created_at),
-        members=item.members,
+        members=members,
         metrics=item.metrics,
-    )
-
-
-def _program_view(session: Session, item: ResearchProgram) -> ResearchProgramView:
-    charter = session.get(ResearchCharter, item.charter_id)
-    if charter is None:
-        raise QfError("CHARTER_NOT_FOUND", "Research Charter is missing.", 500)
-    branch_count = session.scalar(
-        select(func.count()).select_from(ResearchBranch).where(ResearchBranch.program_id == item.id)
-    )
-    mission_count = session.scalar(
-        select(func.count()).select_from(ResearchMission).where(ResearchMission.program_id == item.id)
-    )
-    alpha_count = session.scalar(
-        select(func.count()).select_from(AlphaQualification).where(AlphaQualification.program_id == item.id)
-    )
-    return ResearchProgramView(
-        id=item.id,
-        title=item.title,
-        charter_id=item.charter_id,
-        charter=_charter_view(charter),
-        state=item.state,
-        cooling_reason=item.cooling_reason,
-        blocked_reason=item.blocked_reason,
-        wake_reason=item.wake_reason,
-        created_at=_iso(item.created_at),
-        updated_at=_iso(item.updated_at),
-        branch_count=int(branch_count or 0),
-        mission_count=int(mission_count or 0),
-        alpha_count=int(alpha_count or 0),
-    )
-
-
-def _mission_view(item: ResearchMission) -> MissionView:
-    dependencies: list[UUID] = []
-    for value in item.dependencies:
-        try:
-            dependencies.append(UUID(str(value)))
-        except ValueError:
-            continue
-    return MissionView(
-        id=item.id,
-        branch_id=item.branch_id,
-        program_id=item.program_id,
-        type=item.type,
-        role=item.role,
-        state=item.state,
-        objective=item.objective,
-        dependencies=dependencies,
-        started_at=_iso(item.started_at),
-        finished_at=_iso(item.finished_at),
-        attempt=item.attempt,
-        error_code=item.error_code,
-        summary=item.summary,
     )
 
 
@@ -587,7 +382,11 @@ def _approval_view(session: Session, item: ApprovalSnapshot) -> ApprovalView:
     return ApprovalView(
         id=item.id,
         candidate_id=item.candidate_id,
-        candidate=_candidate_view(candidate),
+        candidate_package_id=item.candidate_package_id,
+        candidate_package_revision=item.candidate_package_revision,
+        promotion_evaluation_id=item.promotion_evaluation_id,
+        promotion_purpose=item.promotion_purpose,
+        candidate=_candidate_view(session, candidate),
         purpose=item.purpose,
         state=item.state,
         downstream_system_id=item.downstream_system_id,
@@ -637,375 +436,6 @@ def _handoff_view(session: Session, item: HandoffOffer) -> HandoffView:
     )
 
 
-def _find_duplicate_program(session: Session, idea: str) -> ResearchProgram | None:
-    normalized = idea.strip().casefold()
-    for program in session.scalars(select(ResearchProgram).order_by(ResearchProgram.created_at.desc())):
-        charter = session.get(ResearchCharter, program.charter_id)
-        if charter and charter.original_idea_text.strip().casefold() == normalized:
-            return program
-    return None
-
-
-def _latest_branch(session: Session, program_id: UUID) -> ResearchBranch | None:
-    return session.scalar(
-        select(ResearchBranch)
-        .where(ResearchBranch.program_id == program_id)
-        .order_by(ResearchBranch.created_at.desc())
-        .limit(1)
-    )
-
-
-def _queue_mission(
-    session: Session,
-    *,
-    program: ResearchProgram,
-    branch: ResearchBranch,
-    objective: str,
-) -> ResearchMission:
-    mission = ResearchMission(
-        program_id=program.id,
-        branch_id=branch.id,
-        type="ALPHA_DISCOVERY",
-        role="ALPHA_RESEARCHER",
-        state="READY",
-        objective=objective,
-        dependencies=[],
-        attempt=1,
-        summary="Mission is ready and queued for the Agent Worker.",
-    )
-    session.add(mission)
-    session.flush()
-    job = enqueue_job(
-        session,
-        kind="RESEARCH_MISSION",
-        resource_type="research_mission",
-        resource_id=mission.id,
-        payload={"program_id": str(program.id), "branch_id": str(branch.id)},
-    )
-    _event(
-        session,
-        "MISSION_READY",
-        "RESEARCH_PROGRAM",
-        program.id,
-        {
-            "program_id": str(program.id),
-            "mission_id": str(mission.id),
-            "job_id": str(job.id),
-            "summary": mission.summary,
-        },
-    )
-    return mission
-
-
-@router.post("/ideas/preview", response_model=IdeaPreviewView)
-def preview_idea(payload: IdeaPreviewInput, request: Request) -> IdeaPreviewView:
-    preview = _charter_preview(payload.idea)
-    factory = request.app.state.session_factory
-    with factory() as session:
-        program = _find_duplicate_program(session, payload.idea)
-        overlap = None
-        if program is not None:
-            overlap = OverlapView(
-                kind="DUPLICATE",
-                program_id=program.id,
-                program_title=program.title,
-                rationale="An existing Program has the same submitted idea.",
-                recommendation="Wake the existing Program unless independent treatment is required.",
-            )
-        return IdeaPreviewView(charter=preview, overlap=overlap)
-
-
-@router.post("/research-programs", response_model=ResearchProgramView, status_code=201)
-def create_program(
-    payload: ResearchProgramInput,
-    request: Request,
-    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-) -> dict[str, Any]:
-    allowed_actions = {None, "recommended", "new-program", "independent-program"}
-    if payload.overlap_action not in allowed_actions:
-        raise QfError("OVERLAP_ACTION_INVALID", "Overlap action is invalid.", 422)
-    factory = request.app.state.session_factory
-    with factory() as session, session.begin():
-        def action() -> dict[str, Any]:
-            duplicate = _find_duplicate_program(session, payload.idea)
-            if duplicate is not None and payload.overlap_action in {None, "recommended"}:
-                session.add(
-                    IdeaContribution(
-                        program_id=duplicate.id,
-                        idea_text=payload.idea.strip(),
-                        action="WAKE_EXISTING",
-                        created_at=_now(),
-                    )
-                )
-                duplicate.wake_reason = "Overlapping IdeaContribution received."
-                duplicate.revision += 1
-                if duplicate.state == "COOLING":
-                    duplicate.state = "ACTIVE"
-                active_count = session.scalar(
-                    select(func.count())
-                    .select_from(ResearchMission)
-                    .where(
-                        ResearchMission.program_id == duplicate.id,
-                        ResearchMission.state.in_(["READY", "RUNNING"]),
-                    )
-                )
-                branch = _latest_branch(session, duplicate.id)
-                if (
-                    branch is not None
-                    and duplicate.state not in {"PAUSED", "ARCHIVED"}
-                    and not active_count
-                ):
-                    _queue_mission(
-                        session,
-                        program=duplicate,
-                        branch=branch,
-                        objective="Revisit the Charter hypothesis after a materially overlapping IdeaContribution.",
-                    )
-                _event(
-                    session,
-                    "IDEA_CONTRIBUTED",
-                    "RESEARCH_PROGRAM",
-                    duplicate.id,
-                    {"action": "WAKE_EXISTING"},
-                    actor_kind="HUMAN",
-                )
-                session.flush()
-                return _program_view(session, duplicate).model_dump(mode="json")
-
-            preview = _charter_preview(payload.idea)
-            now = _now()
-            charter = ResearchCharter(
-                original_idea_text=preview.original_idea_text,
-                research_question=preview.research_question or preview.original_idea_text,
-                market_scope=preview.market_scope or "System inferred",
-                universe_version_ids=[],
-                prediction_horizon=preview.prediction_horizon,
-                allowed_data_domains=[],
-                explicit_exclusions=preview.explicit_exclusions,
-                material_assumptions=preview.material_assumptions,
-                system_assumptions=preview.system_assumptions,
-                created_at=now,
-            )
-            session.add(charter)
-            session.flush()
-            relationship_type = None
-            inherited_from = None
-            source_program_id = None
-            if duplicate is not None:
-                source_program_id = duplicate.id
-                relationship_type = (
-                    "INDEPENDENT_WITH_INHERITED_EVIDENCE"
-                    if payload.overlap_action == "independent-program"
-                    else "RELATED_PROGRAM"
-                )
-                inherited_from = duplicate.id
-            program = ResearchProgram(
-                charter_id=charter.id,
-                title=payload.idea.strip().splitlines()[0][:120],
-                state="ACTIVE",
-                source_program_id=source_program_id,
-                relationship_type=relationship_type,
-                evidence_inherited_from_program_id=inherited_from,
-            )
-            session.add(program)
-            session.flush()
-            branch = ResearchBranch(
-                program_id=program.id,
-                derivation_type="ROOT",
-                hypothesis=preview.research_question or payload.idea.strip(),
-                changed_assumptions=[],
-                preserved_constraints=preview.explicit_exclusions,
-                state="ACTIVE",
-                created_at=now,
-            )
-            session.add(branch)
-            session.flush()
-            _queue_mission(
-                session,
-                program=program,
-                branch=branch,
-                objective=f"Test the Charter hypothesis within {preview.market_scope}.",
-            )
-            _event(
-                session,
-                "PROGRAM_CREATED",
-                "RESEARCH_PROGRAM",
-                program.id,
-                {
-                    "program_id": str(program.id),
-                    "charter_id": str(charter.id),
-                    "source_program_id": str(source_program_id) if source_program_id else None,
-                    "evidence_inherited_from_program_id": (
-                        str(inherited_from) if inherited_from else None
-                    ),
-                },
-                actor_kind="HUMAN",
-            )
-            if duplicate is not None:
-                session.add(
-                    IdeaContribution(
-                        program_id=duplicate.id,
-                        idea_text=payload.idea.strip(),
-                        action=relationship_type or "RELATED_PROGRAM",
-                        created_at=now,
-                    )
-                )
-            session.flush()
-            return _program_view(session, program).model_dump(mode="json")
-
-        return _idempotent(
-            session,
-            idempotency_key,
-            "research-program.create",
-            payload,
-            action,
-            status_code=201,
-        )
-
-
-@router.get("/research-programs", response_model=list[ResearchProgramView])
-def list_programs(request: Request) -> list[ResearchProgramView]:
-    factory = request.app.state.session_factory
-    with factory() as session:
-        return [
-            _program_view(session, item)
-            for item in session.scalars(select(ResearchProgram).order_by(ResearchProgram.created_at.desc()))
-        ]
-
-
-@router.get("/research-programs/{program_id}", response_model=ResearchProgramView)
-def get_program(program_id: UUID, request: Request) -> ResearchProgramView:
-    factory = request.app.state.session_factory
-    with factory() as session:
-        item = session.get(ResearchProgram, program_id)
-        if item is None:
-            raise QfError("RESEARCH_PROGRAM_NOT_FOUND", "Research Program was not found.", 404)
-        return _program_view(session, item)
-
-
-def _program_action(
-    program_id: UUID,
-    payload: ProgramActionInput,
-    request: Request,
-    idempotency_key: str | None,
-    action_name: str,
-) -> dict[str, Any]:
-    transitions = {
-        "pause": (None, "PAUSED"),
-        "resume": ("PAUSED", "ACTIVE"),
-        "archive": (None, "ARCHIVED"),
-        "restore": ("ARCHIVED", "ACTIVE"),
-    }
-    factory = request.app.state.session_factory
-    with factory() as session, session.begin():
-        def action() -> dict[str, Any]:
-            item = session.execute(
-                select(ResearchProgram).where(ResearchProgram.id == program_id).with_for_update()
-            ).scalar_one_or_none()
-            if item is None:
-                raise QfError("RESEARCH_PROGRAM_NOT_FOUND", "Research Program was not found.", 404)
-            required, target = transitions[action_name]
-            if required and item.state != required:
-                raise QfError(
-                    "PROGRAM_STATE_CONFLICT",
-                    f"Program must be {required} for {action_name}.",
-                    409,
-                    {"state": item.state},
-                )
-            if action_name == "pause" and item.state == "ARCHIVED":
-                raise QfError("PROGRAM_STATE_CONFLICT", "Archived Program cannot be paused.", 409)
-            item.state = target
-            item.revision += 1
-            if action_name == "pause":
-                item.blocked_reason = payload.reason
-            if action_name in {"resume", "restore"}:
-                item.wake_reason = payload.reason
-            _event(
-                session,
-                f"PROGRAM_{target}",
-                "RESEARCH_PROGRAM",
-                item.id,
-                {"program_id": str(item.id), "reason": payload.reason},
-                actor_kind="HUMAN",
-            )
-            session.flush()
-            return _program_view(session, item).model_dump(mode="json")
-
-        return _idempotent(
-            session,
-            idempotency_key,
-            f"research-program.{action_name}:{program_id}",
-            payload,
-            action,
-        )
-
-
-@router.post("/research-programs/{program_id}/pause", response_model=ResearchProgramView)
-def pause_program(program_id: UUID, payload: ProgramActionInput, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
-    return _program_action(program_id, payload, request, idempotency_key, "pause")
-
-
-@router.post("/research-programs/{program_id}/resume", response_model=ResearchProgramView)
-def resume_program(program_id: UUID, payload: ProgramActionInput, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
-    return _program_action(program_id, payload, request, idempotency_key, "resume")
-
-
-@router.post("/research-programs/{program_id}/archive", response_model=ResearchProgramView)
-def archive_program(program_id: UUID, payload: ProgramActionInput, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
-    return _program_action(program_id, payload, request, idempotency_key, "archive")
-
-
-@router.post("/research-programs/{program_id}/restore", response_model=ResearchProgramView)
-def restore_program(program_id: UUID, payload: ProgramActionInput, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
-    return _program_action(program_id, payload, request, idempotency_key, "restore")
-
-
-@router.get("/research-programs/{program_id}/missions", response_model=list[MissionView])
-def list_program_missions(program_id: UUID, request: Request) -> list[MissionView]:
-    factory = request.app.state.session_factory
-    with factory() as session:
-        return [
-            _mission_view(item)
-            for item in session.scalars(
-                select(ResearchMission)
-                .where(ResearchMission.program_id == program_id)
-                .order_by(ResearchMission.id.asc())
-            )
-        ]
-
-
-@router.get("/research-programs/{program_id}/activity", response_model=list[ActivityView])
-def list_program_activity(program_id: UUID, request: Request) -> list[ActivityView]:
-    factory = request.app.state.session_factory
-    with factory() as session:
-        result: list[ActivityView] = []
-        for item in session.scalars(
-            select(Event)
-            .where(Event.aggregate_type == "RESEARCH_PROGRAM", Event.aggregate_id == program_id)
-            .order_by(Event.id.desc())
-            .limit(500)
-        ):
-            raw_mission = item.payload.get("mission_id")
-            mission_id = None
-            if raw_mission:
-                try:
-                    mission_id = UUID(str(raw_mission))
-                except ValueError:
-                    mission_id = None
-            result.append(
-                ActivityView(
-                    id=item.id,
-                    kind=item.kind,
-                    aggregate_type=item.aggregate_type,
-                    aggregate_id=item.aggregate_id,
-                    mission_id=mission_id,
-                    payload=item.payload,
-                    created_at=_iso(item.created_at) or "",
-                )
-            )
-        return result
-
-
 @router.get("/alpha-library", response_model=list[AlphaView])
 def list_alphas(request: Request) -> list[AlphaView]:
     factory = request.app.state.session_factory
@@ -1028,24 +458,6 @@ def get_alpha(qualification_id: UUID, request: Request) -> AlphaView:
         return _alpha_view(item)
 
 
-@router.get("/portfolio-mandates", response_model=list[MandateView])
-def list_mandates(request: Request) -> list[MandateView]:
-    factory = request.app.state.session_factory
-    with factory() as session:
-        return [
-            MandateView(
-                id=item.id,
-                key=item.key,
-                name=item.name,
-                enabled=item.enabled,
-                latest_version_id=item.latest_version_id,
-                spec_json=item.spec_json,
-                state=item.state,
-            )
-            for item in session.scalars(select(PortfolioMandate).order_by(PortfolioMandate.name))
-        ]
-
-
 def _toggle_mandate(mandate_id: UUID, request: Request, idempotency_key: str | None, enabled: bool) -> dict[str, Any]:
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
@@ -1053,9 +465,16 @@ def _toggle_mandate(mandate_id: UUID, request: Request, idempotency_key: str | N
             item = session.execute(select(PortfolioMandate).where(PortfolioMandate.id == mandate_id).with_for_update()).scalar_one_or_none()
             if item is None:
                 raise QfError("MANDATE_NOT_FOUND", "Portfolio Mandate was not found.", 404)
+            was_enabled = item.enabled
             item.enabled = enabled
             _event(session, "MANDATE_ENABLED" if enabled else "MANDATE_DISABLED", "PORTFOLIO_MANDATE", item.id, {}, actor_kind="HUMAN")
             session.flush()
+            if enabled and not was_enabled:
+                version = session.get(PortfolioMandateVersion, item.latest_version_id)
+                if version is not None:
+                    from api.configuration import _reconcile_initial_portfolio_inputs
+
+                    _reconcile_initial_portfolio_inputs(session, version.universe_version_id)
             return MandateView(id=item.id, key=item.key, name=item.name, enabled=item.enabled, latest_version_id=item.latest_version_id, spec_json=item.spec_json, state=item.state).model_dump(mode="json")
 
         return _idempotent(session, idempotency_key, f"portfolio-mandate.{'enable' if enabled else 'disable'}:{mandate_id}", {}, action)
@@ -1089,7 +508,7 @@ def get_candidate(candidate_id: UUID, request: Request) -> CandidateView:
         item = session.get(PortfolioCandidate, candidate_id)
         if item is None:
             raise QfError("CANDIDATE_NOT_FOUND", "Portfolio Candidate was not found.", 404)
-        return _candidate_view(item)
+        return _candidate_view(session, item)
 
 
 @router.get("/approvals", response_model=list[ApprovalView])
@@ -1123,30 +542,90 @@ def _expire_approval_if_needed(request: Request, approval_id: UUID) -> bool:
     return False
 
 
-def _feedback_contract_snapshot(downstream: DownstreamSystem, purpose: str) -> dict[str, Any]:
-    configured = downstream.public_config.get("feedback_contract", {})
-    if not isinstance(configured, dict):
-        configured = {}
-    required_fields = configured.get("required_fields", [])
-    if not isinstance(required_fields, list) or not all(isinstance(item, str) for item in required_fields):
-        raise QfError("FEEDBACK_CONTRACT_INVALID", "feedback_contract.required_fields must be a list of strings.", 422)
-    try:
-        minimum_duration = int(configured.get("minimum_observation_duration_seconds", 1))
-        minimum_sample = int(configured.get("minimum_valid_sample_size", 1))
-    except (TypeError, ValueError) as exc:
-        raise QfError("FEEDBACK_CONTRACT_INVALID", "Feedback contract minimums must be integers.", 422) from exc
-    if minimum_duration < 0 or minimum_sample < 1:
-        raise QfError("FEEDBACK_CONTRACT_INVALID", "Feedback contract minimums are invalid.", 422)
-    return {
-        "feedback_contract_version_id": downstream.feedback_contract_version,
-        "purpose": purpose,
-        "minimum_observation_duration_seconds": minimum_duration,
-        "minimum_valid_sample_size": minimum_sample,
-        "required_fields": required_fields,
-        "accepted_package_contracts": configured.get("accepted_package_contracts", [downstream.package_contract_version]),
-        "accepted_arrow_contracts": configured.get("accepted_arrow_contracts", ["arrow-ipc-file-v1"]),
-        "disclosure_policy": configured.get("disclosure_policy", "FULL"),
-    }
+def _has_current_downstream_preflight(session: Session, downstream: DownstreamSystem) -> bool:
+    receipt = session.scalar(
+        select(PreflightReceipt)
+        .where(
+            PreflightReceipt.resource_type == "DOWNSTREAM_SYSTEM",
+            PreflightReceipt.resource_id == downstream.id,
+        )
+        .order_by(PreflightReceipt.revision.desc())
+        .limit(1)
+    )
+    return is_current_downstream_preflight(receipt, downstream, _now())
+
+
+def _has_typed_connection_preflight(session: Session, environment_type: str) -> bool:
+    now = _now()
+    rows = session.execute(
+        select(DownstreamSystem, DownstreamConnectionVersion, FeedbackContractVersion, PreflightReceipt)
+        .join(
+            DownstreamConnectionVersion,
+            DownstreamConnectionVersion.downstream_system_id == DownstreamSystem.id,
+        )
+        .join(
+            FeedbackContractVersion,
+            FeedbackContractVersion.id == DownstreamConnectionVersion.feedback_contract_version_id,
+        )
+        .join(
+            PreflightReceipt,
+            (PreflightReceipt.resource_id == DownstreamConnectionVersion.id)
+            & (PreflightReceipt.resource_type == "DOWNSTREAM_CONNECTION_VERSION")
+            & (PreflightReceipt.resource_revision == DownstreamConnectionVersion.version_no),
+        )
+        .where(
+            DownstreamSystem.enabled.is_(True),
+            DownstreamSystem.environment_type == environment_type,
+            DownstreamSystem.service_token_ciphertext.is_not(None),
+            DownstreamConnectionVersion.state == "ACTIVE",
+            FeedbackContractVersion.state == "ACTIVE",
+            FeedbackContractVersion.purpose == environment_type,
+            PreflightReceipt.status == "READY",
+            PreflightReceipt.contract_version == DownstreamConnectionVersion.package_contract_version,
+        )
+    ).all()
+    return any(_stored_utc(receipt.valid_until) > now for _, _, _, receipt in rows)
+
+
+def _bound_candidate_package(
+    session: Session,
+    request: Request,
+    approval: ApprovalSnapshot,
+) -> CandidatePackage:
+    package_id = approval.candidate_package_id
+    package_revision = approval.candidate_package_revision
+    if package_id is None or package_revision is None:
+        raise QfError(
+            "CANDIDATE_PACKAGE_REQUIRED",
+            "Approval must bind an available Candidate Package before approval.",
+            409,
+        )
+    package = session.get(CandidatePackage, package_id)
+    if (
+        package is None
+        or package.candidate_id != approval.candidate_id
+        or package.revision != package_revision
+        or package.state != "AVAILABLE"
+        or not is_trusted_candidate_package(session, package)
+    ):
+        raise QfError(
+            "CANDIDATE_PACKAGE_STALE",
+            "Approval Candidate Package is no longer available at the expected revision.",
+            409,
+        )
+    manifest = package.manifest_json
+    if not isinstance(manifest, dict) or (
+        manifest.get("candidate_id"),
+        manifest.get("candidate_package_id"),
+        manifest.get("candidate_package_revision"),
+    ) != (str(approval.candidate_id), str(package.id), package.revision):
+        raise QfError(
+            "CANDIDATE_PACKAGE_STALE",
+            "Approval Candidate Package does not match its immutable binding.",
+            409,
+        )
+    resolve_package_archive(request.app.state.settings, package.relative_path)
+    return package
 
 
 @router.post("/approvals/{approval_id}/approve", response_model=ApprovalView)
@@ -1161,34 +640,50 @@ def approve_candidate(approval_id: UUID, payload: ApprovalApproveInput, request:
                 raise QfError("APPROVAL_NOT_FOUND", "Approval Snapshot was not found.", 404)
             if approval.state != payload.expected_state or approval.state != "PENDING":
                 raise QfError("APPROVAL_STATE_CONFLICT", "Approval state changed before the decision.", 409, {"expected": payload.expected_state, "actual": approval.state})
-            downstream = session.get(DownstreamSystem, payload.downstream_system_id)
-            if downstream is None or not downstream.enabled or downstream.preflight_state != "READY":
+            if approval.promotion_evaluation_id is not None:
+                if (
+                    payload.downstream_system_id is not None
+                    and payload.downstream_system_id != approval.downstream_system_id
+                ):
+                    raise QfError(
+                        "APPROVAL_TARGET_IMMUTABLE",
+                        "Typed Approval downstream binding cannot be changed.",
+                        409,
+                    )
+                if approval.promotion_purpose == "PORTFOLIO_TO_PAPER":
+                    approve_typed_paper_handoff(session, approval.id)
+                elif approval.promotion_purpose == "PAPER_TO_LIVE":
+                    approve_typed_live_handoff(session, approval.id)
+                else:
+                    raise QfError(
+                        "APPROVAL_TYPED_LINEAGE_REQUIRED",
+                        "Approval purpose is not a typed production handoff.",
+                        409,
+                    )
+                return _approval_view(session, approval).model_dump(mode="json")
+            downstream = session.execute(
+                select(DownstreamSystem)
+                .where(DownstreamSystem.id == payload.downstream_system_id)
+                .with_for_update()
+            ).scalar_one_or_none()
+            if downstream is None or not _has_current_downstream_preflight(session, downstream):
                 raise QfError("DOWNSTREAM_NOT_READY", "Selected downstream is not ready.", 409)
             if downstream.environment_type != approval.purpose:
                 raise QfError("DOWNSTREAM_INCOMPATIBLE", "Downstream environment does not match Approval purpose.", 409)
             if downstream.service_token_ciphertext is None:
                 raise QfError("DOWNSTREAM_CREDENTIAL_NOT_CONFIGURED", "Selected downstream has no service credential.", 409)
-            candidate = session.get(PortfolioCandidate, approval.candidate_id)
-            if candidate is None:
-                raise QfError("CANDIDATE_NOT_FOUND", "Approval candidate was not found.", 500)
-            built = build_candidate_package(request.app.state.settings, approval=approval, candidate=candidate, downstream=downstream)
-            package = CandidatePackage(
-                approval_id=approval.id,
-                candidate_id=candidate.id,
-                contract_version=downstream.package_contract_version,
-                state="AVAILABLE",
-                manifest_json=built.manifest,
-                relative_path=built.relative_path,
-                payload=built.operator_summary,
-                created_at=_now(),
-            )
-            session.add(package)
-            session.flush()
-            contract = _feedback_contract_snapshot(downstream, approval.purpose)
+            package = _bound_candidate_package(session, request, approval)
+            if package.contract_version != downstream.package_contract_version:
+                raise QfError(
+                    "CANDIDATE_PACKAGE_CONTRACT_MISMATCH",
+                    "Candidate Package contract is incompatible with the selected downstream.",
+                    409,
+                )
+            contract = feedback_contract_snapshot(downstream, approval.purpose)
             handoff = HandoffOffer(
                 approval_id=approval.id,
                 candidate_package_id=package.id,
-                candidate_id=candidate.id,
+                candidate_id=approval.candidate_id,
                 purpose=approval.purpose,
                 downstream_system_id=downstream.id,
                 state="AVAILABLE",
@@ -1201,8 +696,8 @@ def approve_candidate(approval_id: UUID, payload: ApprovalApproveInput, request:
             approval.state = "APPROVED"
             approval.downstream_system_id = downstream.id
             approval.revision += 1
-            _event(session, "APPROVAL_APPROVED", "APPROVAL", approval.id, {"candidate_id": str(candidate.id), "handoff_id": str(handoff.id)}, actor_kind="HUMAN")
-            _event(session, "HANDOFF_AVAILABLE", "HANDOFF", handoff.id, {"candidate_id": str(candidate.id), "approval_id": str(approval.id)})
+            _event(session, "APPROVAL_APPROVED", "APPROVAL", approval.id, {"candidate_id": str(approval.candidate_id), "handoff_id": str(handoff.id)}, actor_kind="HUMAN")
+            _event(session, "HANDOFF_AVAILABLE", "HANDOFF", handoff.id, {"candidate_id": str(approval.candidate_id), "approval_id": str(approval.id)})
             session.flush()
             return _approval_view(session, approval).model_dump(mode="json")
 
@@ -1265,23 +760,20 @@ def _authenticate_handoff(session: Session, request: Request, handoff: HandoffOf
     return downstream
 
 
-def _expire_handoff_if_needed(request: Request, handoff_id: UUID) -> bool:
-    factory = request.app.state.session_factory
-    with factory() as session, session.begin():
-        handoff = session.execute(select(HandoffOffer).where(HandoffOffer.id == handoff_id).with_for_update()).scalar_one_or_none()
-        if handoff is None:
-            return False
-        if handoff.state == "AVAILABLE" and _is_past(handoff.claim_deadline):
-            handoff.state = "EXPIRED"
-            _event(session, "HANDOFF_EXPIRED", "HANDOFF", handoff.id, {})
-            return True
-    return False
+def _authenticate_handoff_id(
+    session: Session,
+    request: Request,
+    handoff_id: UUID,
+    authorization: str | None,
+) -> None:
+    handoff = session.get(HandoffOffer, handoff_id)
+    if handoff is None:
+        raise QfError("HANDOFF_NOT_FOUND", "Handoff was not found.", 404)
+    _authenticate_handoff(session, request, handoff, authorization)
 
 
 @router.post("/handoffs/{handoff_id}/claim", response_model=HandoffView)
 def claim_handoff(handoff_id: UUID, payload: HandoffStateInput, request: Request, authorization: str | None = Header(default=None, alias="Authorization"), idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
-    if _expire_handoff_if_needed(request, handoff_id):
-        raise QfError("HANDOFF_EXPIRED", "Handoff claim deadline expired.", 409)
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
         def action() -> dict[str, Any]:
@@ -1291,6 +783,11 @@ def claim_handoff(handoff_id: UUID, payload: HandoffStateInput, request: Request
             _authenticate_handoff(session, request, handoff, authorization)
             if handoff.state != "AVAILABLE":
                 raise QfError("HANDOFF_STATE_CONFLICT", "Only Available Handoffs can be claimed.", 409)
+            if _is_past(handoff.claim_deadline):
+                handoff.state = "EXPIRED"
+                _event(session, "HANDOFF_EXPIRED", "HANDOFF", handoff.id, {})
+                session.flush()
+                raise QfError("HANDOFF_EXPIRED", "Handoff claim deadline expired.", 409)
             if payload.expected_state and payload.expected_state != handoff.state:
                 raise QfError("HANDOFF_STATE_CONFLICT", "Handoff state changed before claim.", 409)
             handoff.state = "CLAIMED"
@@ -1299,7 +796,14 @@ def claim_handoff(handoff_id: UUID, payload: HandoffStateInput, request: Request
             session.flush()
             return _handoff_view(session, handoff).model_dump(mode="json")
 
-        return _idempotent(session, idempotency_key, f"handoff.claim:{handoff_id}", payload, action)
+        return _idempotent(
+            session,
+            idempotency_key,
+            f"handoff.claim:{handoff_id}",
+            payload,
+            action,
+            before_replay=lambda: _authenticate_handoff_id(session, request, handoff_id, authorization),
+        )
 
 
 @router.post("/handoffs/{handoff_id}/accept", response_model=HandoffView)
@@ -1322,7 +826,14 @@ def accept_handoff(handoff_id: UUID, payload: HandoffStateInput, request: Reques
             session.flush()
             return _handoff_view(session, handoff).model_dump(mode="json")
 
-        return _idempotent(session, idempotency_key, f"handoff.accept:{handoff_id}", payload, action)
+        return _idempotent(
+            session,
+            idempotency_key,
+            f"handoff.accept:{handoff_id}",
+            payload,
+            action,
+            before_replay=lambda: _authenticate_handoff_id(session, request, handoff_id, authorization),
+        )
 
 
 @router.post("/handoffs/{handoff_id}/reject", response_model=HandoffView)
@@ -1342,7 +853,14 @@ def downstream_reject_handoff(handoff_id: UUID, payload: HandoffStateInput, requ
             session.flush()
             return _handoff_view(session, handoff).model_dump(mode="json")
 
-        return _idempotent(session, idempotency_key, f"handoff.downstream-reject:{handoff_id}", payload, action)
+        return _idempotent(
+            session,
+            idempotency_key,
+            f"handoff.downstream-reject:{handoff_id}",
+            payload,
+            action,
+            before_replay=lambda: _authenticate_handoff_id(session, request, handoff_id, authorization),
+        )
 
 
 @router.get("/handoffs/{handoff_id}/package", response_class=FileResponse)
@@ -1356,8 +874,16 @@ def get_handoff_package(handoff_id: UUID, request: Request, authorization: str |
         if handoff.state not in {"CLAIMED", "DOWNSTREAM_ACCEPTED", "FEEDBACK_PENDING", "FEEDBACK_IN_PROGRESS", "FEEDBACK_PARTIAL", "FEEDBACK_COMPLETE"}:
             raise QfError("HANDOFF_PACKAGE_UNAVAILABLE", "Package is not available in this state.", 409)
         package = session.get(CandidatePackage, handoff.candidate_package_id)
-        if package is None:
-            raise QfError("CANDIDATE_PACKAGE_NOT_FOUND", "Candidate Package was not found.", 500)
+        if (
+            package is None
+            or package.candidate_id != handoff.candidate_id
+            or not is_trusted_candidate_package(session, package)
+        ):
+            raise QfError(
+                "CANDIDATE_PACKAGE_STALE",
+                "Handoff Candidate Package is no longer a trusted assembled Package.",
+                409,
+            )
         archive = resolve_package_archive(request.app.state.settings, package.relative_path)
         return FileResponse(archive, media_type="application/zip", filename=f"candidate-package-{package.id}.zip")
 
@@ -1380,19 +906,33 @@ def _validate_complete_feedback(handoff: HandoffOffer, payload: FeedbackInput) -
     if end <= start:
         problems.append("observation_end must be after observation_start")
     contract = handoff.feedback_contract_snapshot or {}
-    minimum_duration = int(contract.get("minimum_observation_duration_seconds", 1))
-    minimum_sample = int(contract.get("minimum_valid_sample_size", 1))
-    if end > start and (end - start).total_seconds() < minimum_duration:
-        problems.append(f"observation duration must be at least {minimum_duration} seconds")
-    if payload.sample_size < minimum_sample:
-        problems.append(f"sample_size must be at least {minimum_sample}")
-    required_fields = contract.get("required_fields", [])
-    if not isinstance(required_fields, list):
+    minimum_duration = contract.get("minimum_observation_duration_seconds")
+    minimum_sample = contract.get("minimum_valid_sample_size")
+    if (
+        isinstance(minimum_duration, bool)
+        or not isinstance(minimum_duration, int)
+        or isinstance(minimum_sample, bool)
+        or not isinstance(minimum_sample, int)
+        or minimum_duration < 0
+        or minimum_sample < 1
+    ):
+        problems.append("frozen feedback contract minimums are invalid")
+    else:
+        if end > start and (end - start).total_seconds() < minimum_duration:
+            problems.append(f"observation duration must be at least {minimum_duration} seconds")
+        if payload.sample_size < minimum_sample:
+            problems.append(f"sample_size must be at least {minimum_sample}")
+    required_fields = contract.get("required_fields")
+    if (
+        not isinstance(required_fields, list)
+        or not required_fields
+        or any(not isinstance(field, str) or not field.strip() for field in required_fields)
+    ):
         problems.append("frozen required_fields is invalid")
     else:
         missing = [field for field in required_fields if field not in payload.evidence or payload.evidence[field] is None]
         if missing:
-            problems.append(f"missing required evidence fields: {', '.join(str(item) for item in missing)}")
+            problems.append(f"missing required evidence fields: {', '.join(missing)}")
     if problems:
         raise QfError("FEEDBACK_CONTRACT_INVALID", "Complete feedback does not satisfy the frozen Feedback Contract.", 422, {"problems": problems})
     return start, end, payload.sample_size
@@ -1407,8 +947,83 @@ def submit_feedback(handoff_id: UUID, payload: FeedbackInput, request: Request, 
             if handoff is None:
                 raise QfError("HANDOFF_NOT_FOUND", "Handoff was not found.", 404)
             _authenticate_handoff(session, request, handoff, authorization)
-            if handoff.state not in {"DOWNSTREAM_ACCEPTED", "FEEDBACK_PENDING", "FEEDBACK_IN_PROGRESS", "FEEDBACK_PARTIAL"}:
+            typed_handoff = handoff.promotion_purpose in {"PORTFOLIO_TO_PAPER", "PAPER_TO_LIVE"}
+            accepted_states = {
+                "DOWNSTREAM_ACCEPTED",
+                "FEEDBACK_PENDING",
+                "FEEDBACK_IN_PROGRESS",
+                "FEEDBACK_PARTIAL",
+            }
+            if typed_handoff:
+                accepted_states.add("FEEDBACK_COMPLETE")
+            if handoff.state not in accepted_states:
                 raise QfError("HANDOFF_STATE_CONFLICT", "Handoff is not accepting feedback.", 409)
+            if handoff.promotion_purpose == "PORTFOLIO_TO_PAPER":
+                if (
+                    payload.state != "FEEDBACK_COMPLETE"
+                    or payload.observation_start is None
+                    or payload.observation_end is None
+                    or payload.sample_size is None
+                    or payload.evidence
+                    or not payload.metrics
+                ):
+                    raise QfError(
+                        "FEEDBACK_CONTRACT_INVALID",
+                        "Typed Paper feedback requires complete scalar metrics and no JSON evidence.",
+                        422,
+                    )
+                accept_paper_feedback(
+                    session,
+                    handoff_id=handoff.id,
+                    header=FeedbackHeader(
+                        observation_start=payload.observation_start,
+                        observation_end=payload.observation_end,
+                        sample_size=payload.sample_size,
+                    ),
+                    metrics=(
+                        TypedFeedbackMetric(
+                            metric_code=metric.metric_code,
+                            status=metric.status,
+                            value=metric.value,
+                        )
+                        for metric in payload.metrics
+                    ),
+                )
+                session.flush()
+                return _handoff_view(session, handoff).model_dump(mode="json")
+            if handoff.promotion_purpose == "PAPER_TO_LIVE":
+                if (
+                    payload.state != "FEEDBACK_COMPLETE"
+                    or payload.observation_start is None
+                    or payload.observation_end is None
+                    or payload.sample_size is None
+                    or payload.evidence
+                    or not payload.metrics
+                ):
+                    raise QfError(
+                        "FEEDBACK_CONTRACT_INVALID",
+                        "Typed Live feedback requires complete scalar metrics and no JSON evidence.",
+                        422,
+                    )
+                accept_live_feedback(
+                    session,
+                    handoff_id=handoff.id,
+                    header=FeedbackHeader(
+                        observation_start=payload.observation_start,
+                        observation_end=payload.observation_end,
+                        sample_size=payload.sample_size,
+                    ),
+                    metrics=(
+                        TypedFeedbackMetric(
+                            metric_code=metric.metric_code,
+                            status=metric.status,
+                            value=metric.value,
+                        )
+                        for metric in payload.metrics
+                    ),
+                )
+                session.flush()
+                return _handoff_view(session, handoff).model_dump(mode="json")
             allowed = {"FEEDBACK_IN_PROGRESS", "FEEDBACK_PARTIAL", "FEEDBACK_COMPLETE"}
             if payload.state not in allowed:
                 raise QfError("FEEDBACK_STATE_INVALID", "Feedback state is invalid.", 422)
@@ -1435,123 +1050,93 @@ def submit_feedback(handoff_id: UUID, payload: FeedbackInput, request: Request, 
             session.flush()
             return _handoff_view(session, handoff).model_dump(mode="json")
 
-        return _idempotent(session, idempotency_key, f"handoff.feedback:{handoff_id}", payload, action)
+        return _idempotent(
+            session,
+            idempotency_key,
+            f"handoff.feedback:{handoff_id}",
+            payload,
+            action,
+            before_replay=lambda: _authenticate_handoff_id(session, request, handoff_id, authorization),
+        )
 
 
-@router.get("/data-sources", response_model=list[DataSourceView])
-def list_data_sources(request: Request) -> list[DataSourceView]:
-    factory = request.app.state.session_factory
-    with factory() as session:
-        return [DataSourceView(id=item.id, name=item.name, provider=item.provider, state=item.state, universe_scope=item.universe_scope, fields=item.fields, update_cadence=item.update_cadence, preflight_state=item.preflight_state) for item in session.scalars(select(GovernedDataSource).order_by(GovernedDataSource.name))]
-
-
-@router.get("/data-sources/{source_id}", response_model=DataSourceView)
-def get_data_source(source_id: UUID, request: Request) -> DataSourceView:
-    factory = request.app.state.session_factory
-    with factory() as session:
-        item = session.get(GovernedDataSource, source_id)
-        if item is None:
-            raise QfError("DATA_SOURCE_NOT_FOUND", "Data Source was not found.", 404)
-        return DataSourceView(id=item.id, name=item.name, provider=item.provider, state=item.state, universe_scope=item.universe_scope, fields=item.fields, update_cadence=item.update_cadence, preflight_state=item.preflight_state)
-
-
-@router.post("/data-sources", response_model=DataSourceView, status_code=201)
-def create_data_source(payload: DataSourceInput, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
+@router.post(
+    "/handoffs/{handoff_id}/degradation-observations",
+    response_model=DegradationObservationView,
+    status_code=201,
+)
+def record_handoff_degradation(
+    handoff_id: UUID,
+    payload: DegradationObservationInput,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
+    """Record an operator observation; it never calls or controls the downstream."""
     factory = request.app.state.session_factory
     with factory() as session, session.begin():
+
         def action() -> dict[str, Any]:
-            duplicate = session.scalar(select(GovernedDataSource).where(GovernedDataSource.name == payload.name.strip()))
-            if duplicate:
-                raise QfError("DATA_SOURCE_NAME_CONFLICT", "Data Source name already exists.", 409)
-            item = GovernedDataSource(name=payload.name.strip(), provider=payload.provider, state="ACTIVE", universe_scope=payload.universe_scope, fields=payload.fields, update_cadence=payload.update_cadence, preflight_state="READY", public_config=payload.public_config)
-            session.add(item)
+            observation, wake, cycle = record_degradation_observation(
+                session,
+                handoff_id=handoff_id,
+                subject_type=payload.subject_type,
+                subject_id=payload.subject_id,
+                metric_name=payload.metric_name,
+                severity=payload.severity,
+                confidence=payload.confidence,
+            )
             session.flush()
-            _event(session, "DATA_SOURCE_REGISTERED", "DATA_SOURCE", item.id, {}, actor_kind="HUMAN")
-            return DataSourceView(id=item.id, name=item.name, provider=item.provider, state=item.state, universe_scope=item.universe_scope, fields=item.fields, update_cadence=item.update_cadence, preflight_state=item.preflight_state).model_dump(mode="json")
+            return DegradationObservationView(
+                id=observation.id,
+                forward_evidence_episode_id=observation.forward_evidence_episode_id,
+                subject_type=SubjectType(observation.subject_type),
+                subject_id=observation.subject_id,
+                metric_name=observation.metric_name,
+                state=observation.state,
+                evaluated=observation.evaluated,
+                wake_event_id=wake.id if wake else None,
+                wake_state=wake.state if wake else None,
+                cycle_id=cycle.id if cycle else None,
+            ).model_dump(mode="json")
 
-        return _idempotent(session, idempotency_key, "data-source.create", payload, action, status_code=201)
-
-
-@router.get("/datasets", response_model=list[DatasetView])
-def list_datasets(request: Request) -> list[DatasetView]:
-    factory = request.app.state.session_factory
-    with factory() as session:
-        return [DatasetView(id=item.id, data_source_id=item.data_source_id, universe_version_id=item.universe_version_id, universe_name=item.universe_name, revision_no=item.revision_no, schema_version=item.schema_version, event_start=_iso(item.event_start), event_end=_iso(item.event_end), available_start=_iso(item.available_start), available_end=_iso(item.available_end), row_count=item.row_count, quality_state=item.quality_state, point_in_time_state=item.point_in_time_state, partition=item.partition, created_at=_iso(item.created_at) or "") for item in session.scalars(select(DatasetRevision).order_by(DatasetRevision.created_at.desc()))]
-
-
-@router.get("/universes", response_model=list[UniverseView])
-def list_universes(request: Request) -> list[UniverseView]:
-    factory = request.app.state.session_factory
-    with factory() as session:
-        return [UniverseView(id=item.id, universe_key=item.universe_key, version_no=item.version_no, name=item.name, state=item.state, spec_json=item.spec_json) for item in session.scalars(select(MarketUniverseVersion).order_by(MarketUniverseVersion.universe_key, MarketUniverseVersion.version_no.desc()))]
-
-
-def _downstream_view(item: DownstreamSystem) -> DownstreamView:
-    return DownstreamView(id=item.id, name=item.name, environment_type=item.environment_type, enabled=item.enabled, package_contract_version=item.package_contract_version, feedback_contract_version=item.feedback_contract_version, compatibility=item.compatibility, preflight_state=item.preflight_state)
-
-
-@router.get("/downstream-systems", response_model=list[DownstreamView])
-def list_downstreams(request: Request) -> list[DownstreamView]:
-    factory = request.app.state.session_factory
-    with factory() as session:
-        return [_downstream_view(item) for item in session.scalars(select(DownstreamSystem).order_by(DownstreamSystem.name))]
-
-
-@router.get("/downstream-systems/{downstream_id}", response_model=DownstreamView)
-def get_downstream(downstream_id: UUID, request: Request) -> DownstreamView:
-    factory = request.app.state.session_factory
-    with factory() as session:
-        item = session.get(DownstreamSystem, downstream_id)
-        if item is None:
-            raise QfError("DOWNSTREAM_NOT_FOUND", "Downstream System was not found.", 404)
-        return _downstream_view(item)
-
-
-@router.post("/downstream-systems", response_model=DownstreamRegistrationView, status_code=201)
-def create_downstream(payload: DownstreamInput, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
-    if payload.environment_type not in {"PAPER", "LIVE", "EXTERNAL_BACKTEST"}:
-        raise QfError("DOWNSTREAM_ENVIRONMENT_INVALID", "Downstream environment is invalid.", 422)
-    factory = request.app.state.session_factory
-    with factory() as session, session.begin():
-        def action() -> dict[str, Any]:
-            duplicate = session.scalar(select(DownstreamSystem).where(DownstreamSystem.name == payload.name.strip()))
-            if duplicate:
-                raise QfError("DOWNSTREAM_NAME_CONFLICT", "Downstream name already exists.", 409)
-            downstream_id = uuid4()
-            issued = issue_service_token(request.app.state.settings, downstream_id)
-            item = DownstreamSystem(id=downstream_id, name=payload.name.strip(), environment_type=payload.environment_type, enabled=payload.enabled, package_contract_version=payload.package_contract_version, feedback_contract_version=payload.feedback_contract_version, compatibility=payload.compatibility, preflight_state="READY", public_config=payload.public_config)
-            install_service_token(item, issued)
-            _feedback_contract_snapshot(item, payload.environment_type)
-            session.add(item)
-            session.flush()
-            _event(session, "DOWNSTREAM_REGISTERED", "DOWNSTREAM_SYSTEM", item.id, {}, actor_kind="HUMAN")
-            return DownstreamRegistrationView(**_downstream_view(item).model_dump(), service_token=issued.token).model_dump(mode="json")
-
-        return _idempotent(session, idempotency_key, "downstream.create", payload, action, status_code=201)
-
-
-@router.post("/downstream-systems/{downstream_id}/rotate-service-token", response_model=DownstreamTokenView)
-def rotate_downstream_token(downstream_id: UUID, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
-    factory = request.app.state.session_factory
-    with factory() as session, session.begin():
-        def action() -> dict[str, Any]:
-            item = session.execute(select(DownstreamSystem).where(DownstreamSystem.id == downstream_id).with_for_update()).scalar_one_or_none()
-            if item is None:
-                raise QfError("DOWNSTREAM_NOT_FOUND", "Downstream System was not found.", 404)
-            issued = issue_service_token(request.app.state.settings, item.id)
-            install_service_token(item, issued)
-            _event(session, "DOWNSTREAM_SERVICE_TOKEN_ROTATED", "DOWNSTREAM_SYSTEM", item.id, {}, actor_kind="HUMAN")
-            return DownstreamTokenView(downstream_system_id=item.id, service_token=issued.token).model_dump(mode="json")
-
-        return _idempotent(session, idempotency_key, f"downstream.rotate-service-token:{downstream_id}", {}, action)
+        return _idempotent(
+            session,
+            idempotency_key,
+            f"handoff.degradation-observation:{handoff_id}",
+            payload,
+            action,
+            status_code=201,
+        )
 
 
 @router.get("/readiness", response_model=dict[str, Any])
 def readiness(request: Request) -> dict[str, Any]:
     factory = request.app.state.session_factory
     with factory() as session:
-        data_ready = bool(session.scalar(select(func.count()).select_from(GovernedDataSource).where(GovernedDataSource.state == "ACTIVE", GovernedDataSource.preflight_state == "READY")) or session.scalar(select(func.count()).select_from(DatasetRevision)))
-        paper_ready = bool(session.scalar(select(func.count()).select_from(DownstreamSystem).where(DownstreamSystem.environment_type == "PAPER", DownstreamSystem.enabled.is_(True), DownstreamSystem.preflight_state == "READY", DownstreamSystem.service_token_ciphertext.is_not(None))))
-        live_downstream_ready = bool(session.scalar(select(func.count()).select_from(DownstreamSystem).where(DownstreamSystem.environment_type == "LIVE", DownstreamSystem.enabled.is_(True), DownstreamSystem.preflight_state == "READY", DownstreamSystem.service_token_ciphertext.is_not(None))))
+        data_ready = session.scalar(
+            select(DatasetRevision.id)
+            .where(
+                DatasetRevision.quality_state == "VALID",
+                DatasetRevision.point_in_time_state == "VALID",
+                DatasetRevision.promotability == "PROMOTABLE",
+            )
+            .limit(1)
+        ) is not None
+        codex_ready, codex_state = codex_auth_readiness(session, request.app.state.settings)
+        paper_ready = _has_typed_connection_preflight(session, "PAPER")
+        live_downstream_ready = _has_typed_connection_preflight(session, "LIVE")
         paper_feedback_ready = bool(session.scalar(select(func.count()).select_from(ForwardEvidenceEpisode).join(HandoffOffer, ForwardEvidenceEpisode.handoff_id == HandoffOffer.id).where(HandoffOffer.purpose == "PAPER", ForwardEvidenceEpisode.state == "FEEDBACK_COMPLETE")))
-        return {"SYSTEM_READY": True, "RESEARCH_READY": data_ready, "PAPER_HANDOFF_READY": paper_ready, "LIVE_HANDOFF_READY": live_downstream_ready and paper_feedback_ready}
+        return {
+            "SYSTEM_READY": True,
+            "RESEARCH_READY": data_ready and codex_ready,
+            "RESEARCH_READY_REASONS": [] if data_ready and codex_ready else [
+                reason
+                for reason, missing in (
+                    ("PROMOTABLE_DATASET_REQUIRED", not data_ready),
+                    (f"CODEX_AUTH_{codex_state}", not codex_ready),
+                )
+                if missing
+            ],
+            "PAPER_HANDOFF_READY": paper_ready,
+            "LIVE_HANDOFF_READY": live_downstream_ready and paper_feedback_ready,
+        }

@@ -10,6 +10,8 @@
 .ruff_cache
 .coverage
 htmlcov
+backend/build
+backend/src/*.egg-info
 
 # Legacy backend trees are intentionally absent from the target image
 backend/app

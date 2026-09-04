@@ -1,27 +1,57 @@
-"""Build immutable Nautilus-native Candidate Bundle artifacts."""
+"""Build and verify target-only Packages from immutable relational Candidates."""
 
 from __future__ import annotations
 
 import json
 import math
 import os
-import re
 import shutil
 import zipfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
-from typing import Any
-from uuid import uuid4
+from typing import Any, Iterator, NoReturn
+from uuid import UUID, uuid4
 
-from db.models import ApprovalSnapshot, DownstreamSystem, PortfolioCandidate
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from db.models import (
+    CandidatePackage,
+    Job,
+    PortfolioAssemblyInput,
+    PortfolioAssemblyInputMember,
+    PortfolioCandidate,
+    PortfolioCandidateMember,
+)
 from errors import QfError
-from quant_runtime.config import PINNED_NAUTILUS_VERSION, RemoteNautilusConfig
-from quant_runtime.contracts import RunEvidence, StrategyArtifact
-from quant_runtime.remote import NautilusQuantRuntime
+from jobs import enqueue_job
 from settings import Settings
 
+try:  # Linux workers use the standard-library flock; unavailable platforms fail closed.
+    import fcntl
+except ImportError:  # pragma: no cover - production workers run in Linux containers
+    fcntl = None  # type: ignore[assignment]
 
+
+_CANDIDATE_BUNDLE_CONTRACT_VERSION = "1"
+_TARGET_FRAME_PATH = "validation/target-portfolio-frame.json"
+_ARCHIVE_NAMES = frozenset({"manifest.json", _TARGET_FRAME_PATH})
+_TARGET_FRAME_FIELDS = frozenset(
+    {
+        "schema_version",
+        "portfolio_candidate_id",
+        "portfolio_state",
+        "universe_version_id",
+        "as_of_time",
+        "effective_from",
+        "effective_until",
+        "rows",
+    }
+)
+_TARGET_FRAME_ROW_FIELDS = frozenset({"instrument_id", "target_weight", "confidence"})
 _FORBIDDEN_SECRET_FIELDS = {
     "api_key",
     "apikey",
@@ -34,21 +64,55 @@ _FORBIDDEN_SECRET_FIELDS = {
     "wallet_seed",
     "broker_url",
 }
-_CANDIDATE_BUNDLE_CONTRACT_VERSION = "1"
-_EXACT_REQUIREMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*==[^\s;,]+$")
+_FORBIDDEN_EXECUTION_FIELDS = {
+    "account",
+    "account_id",
+    "broker",
+    "execution",
+    "execution_retry",
+    "fill",
+    "fills",
+    "heartbeat",
+    "limit",
+    "limit_price",
+    "order",
+    "order_id",
+    "order_type",
+    "orders",
+    "position",
+    "positions",
+    "recovery",
+    "side",
+    "stop",
+    "stop_price",
+    "tif",
+    "time_in_force",
+    "venue",
+}
 
 
 @dataclass(frozen=True, slots=True)
-class BuiltCandidatePackage:
-    manifest: dict[str, Any]
+class CandidatePackageBuild:
+    """The only filesystem inputs, reconstructed from locked Core relations."""
+
+    candidate_id: UUID
+    package_id: UUID
+    revision: int
     relative_path: str
-    operator_summary: dict[str, Any]
+    manifest: dict[str, Any]
+    target_frame: dict[str, Any]
+
+
+def _conflict(code: str, message: str) -> QfError:
+    return QfError(code, message, 409)
+
+
+def _locked(statement: Any, *, lock: bool) -> Any:
+    return statement.with_for_update() if lock else statement
 
 
 def _json_bytes(value: Any) -> bytes:
-    return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True, default=str).encode(
-        "utf-8"
-    )
+    return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8")
 
 
 def _write_json(path: Path, value: Any) -> None:
@@ -56,523 +120,683 @@ def _write_json(path: Path, value: Any) -> None:
     path.write_bytes(_json_bytes(value))
 
 
-def _member_rows(candidate: PortfolioCandidate) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for index, member in enumerate(candidate.members):
-        instrument = (
-            member.get("instrument_id")
-            or member.get("symbol")
-            or member.get("asset")
-            or member.get("id")
-        )
-        if instrument is None:
-            raise QfError(
-                "CANDIDATE_BUNDLE_INVALID",
-                "Every Candidate member must identify a Nautilus instrument.",
-                422,
-                {"member_index": index},
-            )
-        try:
-            weight = float(str(member.get("target_weight", member.get("weight"))))
-        except (TypeError, ValueError) as exc:
-            raise QfError(
-                "CANDIDATE_BUNDLE_INVALID",
-                "Candidate target weights must be numeric.",
-                422,
-                {"member_index": index},
-            ) from exc
-        if not math.isfinite(weight) or not 0.0 <= weight <= 1.0:
-            raise QfError(
-                "CANDIDATE_BUNDLE_INVALID",
-                "Candidate target weights must be finite values between zero and one.",
-                422,
-                {"member_index": index},
-            )
-        rows.append(
-            {
-                "instrument_id": str(instrument),
-                "target_weight": weight,
-                "alpha_qualification_id": member.get("alpha_qualification_id"),
-            }
-        )
-    if not rows:
-        raise QfError(
-            "CANDIDATE_BUNDLE_INVALID",
-            "A Nautilus Candidate Bundle requires at least one target instrument.",
-            422,
-        )
-    if not math.isclose(
-        sum(row["target_weight"] for row in rows),
-        1.0,
-        rel_tol=0.0,
-        abs_tol=1e-9,
-    ):
-        raise QfError(
-            "CANDIDATE_BUNDLE_INVALID",
-            "Candidate target weights must sum to one.",
-            422,
-        )
-    return rows
+def _stored_utc(value: object) -> datetime | None:
+    if not isinstance(value, datetime):
+        return None
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
-def _reject_secret_fields(value: object, path: str = "$") -> None:
+def _finite_decimal(value: object, field: str) -> Decimal:
+    if not isinstance(value, Decimal) or not value.is_finite():
+        raise _conflict("CANDIDATE_PACKAGE_SOURCE_INVALID", f"Candidate {field} is not finite.")
+    return value
+
+
+def _reject_forbidden_fields(value: object, path: str = "$") -> None:
     if isinstance(value, dict):
         for key, item in value.items():
             normalized = str(key).casefold()
             if normalized in _FORBIDDEN_SECRET_FIELDS or normalized.endswith("_secret"):
                 raise QfError(
-                    "CANDIDATE_BUNDLE_CONTAINS_SECRET",
-                    "Candidate Bundle data contains a forbidden execution credential field.",
+                    "CANDIDATE_PACKAGE_CONTAINS_SECRET",
+                    "Target Portfolio Frame contains a forbidden credential field.",
                     422,
                     {"path": f"{path}.{key}"},
                 )
-            _reject_secret_fields(item, f"{path}.{key}")
+            if normalized in _FORBIDDEN_EXECUTION_FIELDS:
+                raise QfError(
+                    "CANDIDATE_PACKAGE_CONTAINS_EXECUTION_FIELD",
+                    "Target Portfolio Frame must not contain execution fields.",
+                    422,
+                    {"path": f"{path}.{key}"},
+                )
+            _reject_forbidden_fields(item, f"{path}.{key}")
     elif isinstance(value, list):
         for index, item in enumerate(value):
-            _reject_secret_fields(item, f"{path}[{index}]")
+            _reject_forbidden_fields(item, f"{path}[{index}]")
 
 
-def _without_runtime_account_data(value: object) -> object:
-    """Keep validation reports useful without exporting runtime account data."""
-    if isinstance(value, dict):
-        return {
-            str(key): _without_runtime_account_data(item)
-            for key, item in value.items()
-            if (
-                str(key).casefold() not in {"account", "account_id"}
-                and not str(key).casefold().startswith("account.")
-            )
-        }
-    if isinstance(value, list):
-        return [_without_runtime_account_data(item) for item in value]
-    return value
-
-
-def _runtime_payload(
+def _target_frame(
     candidate: PortfolioCandidate,
-) -> tuple[StrategyArtifact, RunEvidence, dict[str, Any]]:
-    raw = candidate.metrics.get("nautilus")
-    if not isinstance(raw, dict):
-        raise QfError(
-            "CANDIDATE_BUNDLE_EVIDENCE_MISSING",
-            "Candidate is not backed by Nautilus runtime evidence.",
-            422,
-        )
-    try:
-        artifact = StrategyArtifact.model_validate(raw["strategy_artifact"])
-        portfolio_evidence = RunEvidence.model_validate(raw["portfolio_evidence"])
-    except (KeyError, ValueError) as exc:
-        raise QfError(
-            "CANDIDATE_BUNDLE_EVIDENCE_INVALID",
-            "Candidate Nautilus evidence is incomplete or invalid.",
-            422,
-        ) from exc
-    if portfolio_evidence.state != "SUCCEEDED" or portfolio_evidence.mode != "PORTFOLIO":
-        raise QfError(
-            "CANDIDATE_BUNDLE_EVIDENCE_INVALID",
-            "Candidate requires a successful Nautilus PORTFOLIO simulation.",
-            422,
-        )
-    if portfolio_evidence.nautilus_version != PINNED_NAUTILUS_VERSION:
-        raise QfError(
-            "CANDIDATE_BUNDLE_RUNTIME_MISMATCH",
-            "Candidate evidence was not produced by the pinned NautilusTrader version.",
-            422,
-            {
-                "expected": PINNED_NAUTILUS_VERSION,
-                "actual": portfolio_evidence.nautilus_version,
-            },
-        )
-    if portfolio_evidence.strategy_artifact != artifact.model_dump(mode="json"):
-        raise QfError(
-            "CANDIDATE_BUNDLE_EVIDENCE_INVALID",
-            "Candidate evidence does not reference the frozen strategy artifact.",
-            422,
-        )
-    _reject_secret_fields(raw)
-    return artifact, portfolio_evidence, raw
-
-
-def _requirements(artifact: StrategyArtifact) -> list[str]:
-    result = [f"nautilus-trader=={PINNED_NAUTILUS_VERSION}"]
-    for requirement in artifact.requirements:
-        clean = requirement.strip()
-        if not clean:
-            continue
-        lower = clean.casefold()
-        if lower.startswith("nautilus-trader") and clean != result[0]:
-            raise QfError(
-                "CANDIDATE_BUNDLE_RUNTIME_MISMATCH",
-                "Strategy artifact requests a NautilusTrader version other than the pinned version.",
-                422,
-                {"requirement": clean},
-            )
-        if not _EXACT_REQUIREMENT.fullmatch(clean):
-            raise QfError(
-                "CANDIDATE_BUNDLE_REQUIREMENT_INVALID",
-                "Every Candidate Bundle dependency must use an exact package version.",
-                422,
-                {"requirement": clean},
-            )
-        if "://" in clean or clean.startswith(("git+", "-e ", "--editable")):
-            raise QfError(
-                "CANDIDATE_BUNDLE_REQUIREMENT_INVALID",
-                "Candidate Bundle requirements must be pinned package requirements, not URLs.",
-                422,
-                {"requirement": clean},
-            )
-        if clean not in result:
-            result.append(clean)
-    return sorted(set(result))
-
-
-def _write_strategy_wheel(path: Path, artifact: StrategyArtifact) -> None:
-    distribution = "quazonai_nautilus_candidate"
-    version = "1.0.0"
-    dist_info = f"{distribution}-{version}.dist-info"
-    metadata_path = f"{dist_info}/METADATA"
-    wheel_path = f"{dist_info}/WHEEL"
-    record_path = f"{dist_info}/RECORD"
-    source_paths = sorted(artifact.source_files)
-    record_lines = [f"{name},," for name in source_paths]
-    record_lines.extend([metadata_path + ",,", wheel_path + ",,", record_path + ",,", ""])
-    metadata = (
-        "Metadata-Version: 2.4\n"
-        "Name: quazonai-nautilus-candidate\n"
-        f"Version: {version}\n"
-        "Summary: Frozen NautilusTrader strategy artifact for one approved Candidate\n"
-        f"Requires-Dist: nautilus-trader (=={PINNED_NAUTILUS_VERSION})\n"
-    )
-    wheel = "Wheel-Version: 1.0\nGenerator: QuaZonai\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for source_path in source_paths:
-            archive.writestr(source_path, artifact.source_files[source_path])
-        archive.writestr(metadata_path, metadata)
-        archive.writestr(wheel_path, wheel)
-        archive.writestr(record_path, "\n".join(record_lines))
-
-
-def _bundle_manifest(
-    *,
-    approval: ApprovalSnapshot,
-    candidate: PortfolioCandidate,
-    downstream: DownstreamSystem,
-    artifact: StrategyArtifact,
-    evidence: RunEvidence,
+    input_row: PortfolioAssemblyInput,
+    input_members: list[PortfolioAssemblyInputMember],
+    candidate_members: list[PortfolioCandidateMember],
 ) -> dict[str, Any]:
-    return {
-        "candidate_bundle_contract_version": downstream.package_contract_version,
-        "candidate_id": str(candidate.id),
-        "approval_id": str(approval.id),
-        "purpose": approval.purpose,
-        "canonical_runtime": {
-            "name": "NautilusTrader",
-            "version": PINNED_NAUTILUS_VERSION,
-            "quant_contract_version": evidence.contract_version,
-        },
-        "strategy": {
-            "wheel": "strategy/strategy.whl",
-            "strategy_config": "strategy/strategy-config.json",
-            "actor_config": "strategy/actor-config.json",
-            "strategy_path": artifact.strategy_path,
-            "config_path": artifact.config_path,
-        },
-        "data": {
-            "requirements": "data/requirements.json",
-            "instrument_scope": "data/instrument-scope.json",
-            "custom_data_schemas": "data/custom-data-schemas/",
-        },
-        "runtime": {
-            "nautilus_version": "runtime/nautilus-version.json",
-            "backtest_run_config": "runtime/backtest-run-config.json",
-            "venue_config": "runtime/venue-config.json",
-            "risk_config": "runtime/risk-config.json",
-            "live_node_template": "runtime/live-node-template.json",
-        },
-        "validation": {
-            "fixture_catalog": "validation/fixture-catalog/",
-            "target_portfolio_frame": "validation/target-portfolio-frame.json",
-            "expected_statistics": "validation/expected-statistics.json",
-        },
-        "evidence": {
-            "discovery": "evidence/discovery-summary.json",
-            "sealed": "evidence/sealed-summary.json",
-            "robustness": "evidence/robustness-summary.json",
-        },
-        "lineage": "lineage.json",
-        "requirements_lock": "requirements.lock",
-        "same_strategy_artifact_for_backtest_paper_live": True,
-        "execution_secret_material": "excluded",
-    }
-
-
-def build_candidate_package(
-    settings: Settings,
-    *,
-    approval: ApprovalSnapshot,
-    candidate: PortfolioCandidate,
-    downstream: DownstreamSystem,
-) -> BuiltCandidatePackage:
-    """Freeze an approved Candidate into a Nautilus-native, remotely verified bundle."""
-    if downstream.package_contract_version != _CANDIDATE_BUNDLE_CONTRACT_VERSION:
-        raise QfError(
-            "CANDIDATE_BUNDLE_CONTRACT_UNSUPPORTED",
-            "The configured downstream Candidate Bundle contract is not supported.",
-            422,
-            {
-                "expected": _CANDIDATE_BUNDLE_CONTRACT_VERSION,
-                "actual": downstream.package_contract_version,
-            },
+    if (
+        candidate.state != "ASSEMBLED"
+        or candidate.assembly_input_id is None
+        or candidate.universe_version_id is None
+        or input_row.state != "ASSEMBLED"
+        or input_row.outcome_code != "OPTIMAL"
+    ):
+        raise _conflict(
+            "CANDIDATE_PACKAGE_TRUSTED_SOURCE_REQUIRED",
+            "Candidate Package requires an assembled relational Candidate and Input.",
         )
-    if PINNED_NAUTILUS_VERSION not in {
-        str(item).removeprefix("NAUTILUS_TRADER_")
-        for item in downstream.compatibility
-    }:
-        raise QfError(
-            "CANDIDATE_BUNDLE_RUNTIME_INCOMPATIBLE",
-            "The selected downstream has not declared support for the pinned NautilusTrader runtime.",
-            422,
-            {"expected": f"NAUTILUS_TRADER_{PINNED_NAUTILUS_VERSION}"},
+    if not input_members or len(input_members) != len(candidate_members):
+        raise _conflict(
+            "CANDIDATE_PACKAGE_MEMBERS_INVALID",
+            "Candidate Package requires the exact relational Candidate member set.",
         )
-    rows = _member_rows(candidate)
-    artifact, portfolio_evidence, runtime_data = _runtime_payload(candidate)
-    requirements = _requirements(artifact)
-    package_id = uuid4()
-    staging = settings.package_root / "staging" / str(package_id)
-    final_root = settings.package_root / str(package_id)
-    archive_name = "candidate-bundle.zip"
-    staging.mkdir(parents=True, exist_ok=False)
-    try:
-        for directory in (
-            "strategy",
-            "data/custom-data-schemas",
-            "runtime",
-            "validation/fixture-catalog",
-            "evidence",
+    if tuple(member.axis_index for member in input_members) != tuple(range(len(input_members))):
+        raise _conflict(
+            "CANDIDATE_PACKAGE_MEMBERS_INVALID",
+            "Candidate Package Input member axes are incomplete.",
+        )
+    weights = {member.alpha_qualification_id: member for member in candidate_members}
+    expected_ids = tuple(member.alpha_qualification_id for member in input_members)
+    if (
+        len(weights) != len(candidate_members)
+        or set(weights) != set(expected_ids)
+        or any(member.role != "PRIMARY_ALPHA" for member in candidate_members)
+    ):
+        raise _conflict(
+            "CANDIDATE_PACKAGE_MEMBERS_INVALID",
+            "Candidate Package members do not match the assembled Input.",
+        )
+    as_of_time = _stored_utc(input_row.as_of_time)
+    effective_from = _stored_utc(input_row.effective_from)
+    effective_until = _stored_utc(input_row.effective_until)
+    if (
+        as_of_time is None
+        or effective_from is None
+        or effective_from < as_of_time
+        or (effective_until is not None and effective_until < effective_from)
+    ):
+        raise _conflict(
+            "CANDIDATE_PACKAGE_SOURCE_INVALID",
+            "Candidate Package Input timestamps are invalid.",
+        )
+    rows: list[dict[str, Any]] = []
+    total_weight = Decimal()
+    instruments: set[str] = set()
+    for member in input_members:
+        candidate_member = weights[member.alpha_qualification_id]
+        weight = _finite_decimal(candidate_member.target_weight, "target weight")
+        confidence = _finite_decimal(member.confidence, "confidence")
+        instrument_id = member.instrument_id.strip() if isinstance(member.instrument_id, str) else ""
+        if (
+            not instrument_id
+            or instrument_id in instruments
+            or weight < 0
+            or weight > 1
+            or confidence < 0
+            or confidence > 1
         ):
-            (staging / directory).mkdir(parents=True, exist_ok=True)
-
-        _write_strategy_wheel(staging / "strategy" / "strategy.whl", artifact)
-        _write_json(
-            staging / "strategy" / "strategy-config.json",
+            raise _conflict(
+                "CANDIDATE_PACKAGE_MEMBERS_INVALID",
+                "Candidate Package targets must be unique finite long-only rows.",
+            )
+        instruments.add(instrument_id)
+        total_weight += weight
+        rows.append(
             {
-                "strategy_path": artifact.strategy_path,
-                "config_path": artifact.config_path,
-                "config": artifact.config,
-            },
-        )
-        _write_json(staging / "strategy" / "actor-config.json", {"actors": []})
-        (staging / "requirements.lock").write_text(
-            "\n".join(requirements) + "\n",
-            encoding="utf-8",
-        )
-
-        _write_json(
-            staging / "data" / "requirements.json",
-            {
-                "catalog_uri": portfolio_evidence.catalog_uri,
-                "nautilus_data_types": ["Bar"],
-                "point_in_time_required": True,
-                "license_governance": "QuaZonai Dataset Revision",
-            },
-        )
-        _write_json(staging / "data" / "instrument-scope.json", {"instruments": rows})
-        (staging / "data" / "custom-data-schemas" / ".keep").write_text(
-            "",
-            encoding="utf-8",
-        )
-
-        _write_json(
-            staging / "runtime" / "nautilus-version.json",
-            {
-                "package": "nautilus-trader",
-                "version": PINNED_NAUTILUS_VERSION,
-                "quant_contract_version": portfolio_evidence.contract_version,
-            },
-        )
-        _write_json(
-            staging / "runtime" / "backtest-run-config.json",
-            {
-                "strategy_path": artifact.strategy_path,
-                "config_path": artifact.config_path,
-                "strategy_config": artifact.config,
-                "catalog_uri": portfolio_evidence.catalog_uri,
-            },
-        )
-        _write_json(
-            staging / "runtime" / "venue-config.json",
-            {
-                "source": "frozen remote Nautilus PORTFOLIO run",
-                "mode": "simulation",
-                "venue_semantics_owned_by": "NautilusTrader",
-            },
-        )
-        _write_json(
-            staging / "runtime" / "risk-config.json",
-            {
-                "execution_risk_engine": "NautilusTrader RiskEngine",
-                "research_promotion_risk": "QuaZonai governance",
-            },
-        )
-        _write_json(
-            staging / "runtime" / "live-node-template.json",
-            {
-                "strategy_wheel": "strategy/strategy.whl",
-                "strategy_config": "strategy/strategy-config.json",
-                "runtime": f"nautilus-trader=={PINNED_NAUTILUS_VERSION}",
-                "environment": "PAPER_OR_LIVE_DOWNSTREAM",
-                "secret_source": "downstream-owned secret store",
-                "control_owner": "downstream Nautilus runtime",
-            },
-        )
-
-        _write_json(
-            staging / "validation" / "fixture-catalog" / "catalog-descriptor.json",
-            {
-                "catalog_uri": portfolio_evidence.catalog_uri,
-                "purpose": "candidate conformance fixture reference",
-            },
-        )
-        stored_frame = runtime_data.get("target_portfolio_frame")
-        target_frame = dict(stored_frame) if isinstance(stored_frame, dict) else {}
-        target_frame.update(
-            {
-                "schema_version": "1",
-                "portfolio_candidate_id": str(candidate.id),
-                "portfolio_state": "READY",
-                "rows": [
-                    {
-                        "instrument_id": row["instrument_id"],
-                        "target_weight": row["target_weight"],
-                        "alpha_qualification_id": row.get("alpha_qualification_id"),
-                        "confidence": 1.0,
-                    }
-                    for row in rows
-                ],
+                "instrument_id": instrument_id,
+                "target_weight": float(weight),
+                "confidence": float(confidence),
             }
         )
-        universe_set = candidate.universe_set_json
-        if "universe_version_id" not in target_frame and isinstance(universe_set, list):
-            if universe_set and universe_set[0] is not None:
-                target_frame["universe_version_id"] = str(universe_set[0])
-        frame_time = datetime.now(UTC).isoformat()
-        target_frame.setdefault("as_of_time", frame_time)
-        target_frame.setdefault("effective_from", frame_time)
-        target_frame.setdefault("effective_until", None)
-        _write_json(staging / "validation" / "target-portfolio-frame.json", target_frame)
-        _write_json(
-            staging / "validation" / "expected-statistics.json",
-            _without_runtime_account_data(portfolio_evidence.statistics),
+    if not math.isclose(float(total_weight), 1.0, rel_tol=0.0, abs_tol=1e-6):
+        raise _conflict(
+            "CANDIDATE_PACKAGE_MEMBERS_INVALID",
+            "Candidate Package target weights must sum to one.",
         )
+    frame = {
+        "schema_version": "1",
+        "portfolio_candidate_id": str(candidate.id),
+        "portfolio_state": "ASSEMBLED",
+        "universe_version_id": str(candidate.universe_version_id),
+        "as_of_time": as_of_time.isoformat(),
+        "effective_from": effective_from.isoformat(),
+        "effective_until": effective_until.isoformat() if effective_until is not None else None,
+        "rows": rows,
+    }
+    _reject_forbidden_fields(frame)
+    return frame
 
-        _write_json(
-            staging / "evidence" / "discovery-summary.json",
-            {
-                "run_id": runtime_data.get("discovery_run_id"),
-                "source": "remote Nautilus discovery evidence",
-            },
-        )
-        _write_json(
-            staging / "evidence" / "sealed-summary.json",
-            {
-                "run_id": runtime_data.get("sealed_run_id"),
-                "statistics": candidate.metrics.get("sealed_statistics", {}),
-                "source": "independent remote Nautilus sealed evaluator",
-            },
-        )
-        _write_json(
-            staging / "evidence" / "robustness-summary.json",
-            {
-                "portfolio_run_id": runtime_data.get("portfolio_run_id"),
-                "transaction_level_simulation": True,
-                "target_frame_rows": len(rows),
-            },
-        )
 
-        approval_summary = {
-            "approval_id": str(approval.id),
-            "candidate_id": str(candidate.id),
-            "purpose": approval.purpose,
-            "evidence_summary": approval.evidence_summary,
-            "capital_context": approval.capital_context,
-            "risk_summary": approval.risk_summary,
-            "cost_summary": approval.cost_summary,
-            "capacity_summary": approval.capacity_summary,
-            "changes_summary": approval.changes_summary,
-        }
-        lineage = {
-            "candidate_id": str(candidate.id),
-            "candidate_family_id": (
-                str(candidate.candidate_family_id) if candidate.candidate_family_id else None
+def _trusted_candidate_frame(
+    session: Session,
+    candidate_id: UUID,
+    *,
+    lock: bool,
+) -> tuple[PortfolioCandidate, dict[str, Any]]:
+    candidate = session.scalar(
+        _locked(select(PortfolioCandidate).where(PortfolioCandidate.id == candidate_id), lock=lock)
+    )
+    if candidate is None:
+        raise QfError("CANDIDATE_NOT_FOUND", "Portfolio Candidate was not found.", 404)
+    if (
+        candidate.state != "ASSEMBLED"
+        or candidate.assembly_input_id is None
+        or candidate.candidate_family_id is None
+        or candidate.mandate_version_id is None
+        or candidate.capital_context_version_id is None
+        or candidate.universe_version_id is None
+    ):
+        raise _conflict(
+            "CANDIDATE_PACKAGE_TRUSTED_SOURCE_REQUIRED",
+            "Candidate Package requires an assembled relational Candidate.",
+        )
+    input_row = session.scalar(
+        _locked(
+            select(PortfolioAssemblyInput).where(
+                PortfolioAssemblyInput.id == candidate.assembly_input_id,
+                PortfolioAssemblyInput.portfolio_program_id == candidate.portfolio_program_id,
+                PortfolioAssemblyInput.mandate_version_id == candidate.mandate_version_id,
+                PortfolioAssemblyInput.capital_context_version_id
+                == candidate.capital_context_version_id,
+                PortfolioAssemblyInput.universe_version_id == candidate.universe_version_id,
             ),
-            "portfolio_program_id": str(candidate.portfolio_program_id),
-            "mandate_version_id": (
-                str(candidate.mandate_version_id) if candidate.mandate_version_id else None
-            ),
-            "capital_context_version_id": (
-                str(candidate.capital_context_version_id)
-                if candidate.capital_context_version_id
-                else None
-            ),
-            "evaluation_episode_id": (
-                str(candidate.evaluation_episode_id) if candidate.evaluation_episode_id else None
-            ),
-            "discovery_run_id": runtime_data.get("discovery_run_id"),
-            "sealed_run_id": runtime_data.get("sealed_run_id"),
-            "portfolio_run_id": runtime_data.get("portfolio_run_id"),
-            "policy_version": candidate.policy_version,
-            "risk_model_version": candidate.risk_model_version,
-            "cost_model_version": candidate.cost_model_version,
-            "capacity_model_version": candidate.capacity_model_version,
-            "constraint_set_version": candidate.constraint_set_version,
-            "rebalance_policy_version": candidate.rebalance_policy_version,
-        }
-        _write_json(staging / "lineage.json", lineage)
-
-        manifest = _bundle_manifest(
-            approval=approval,
-            candidate=candidate,
-            downstream=downstream,
-            artifact=artifact,
-            evidence=portfolio_evidence,
+            lock=lock,
         )
-        _reject_secret_fields(manifest)
-        _write_json(staging / "manifest.json", manifest)
-
-        archive_path = staging / archive_name
-        with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            for path in sorted(staging.rglob("*")):
-                if path.is_file() and path != archive_path:
-                    archive.write(path, path.relative_to(staging).as_posix())
-
-        remote_config = RemoteNautilusConfig.from_env(
-            required=settings.environment == "production"
+    )
+    if input_row is None:
+        raise _conflict(
+            "CANDIDATE_PACKAGE_LINEAGE_INVALID",
+            "Candidate Package Input lineage is not exact.",
         )
-        verification: dict[str, Any] | None = None
-        if remote_config is not None:
-            verification = NautilusQuantRuntime(remote_config).verify_candidate(archive_path)
+    input_members = list(
+        session.scalars(
+            _locked(
+                select(PortfolioAssemblyInputMember)
+                .where(PortfolioAssemblyInputMember.input_id == input_row.id)
+                .order_by(PortfolioAssemblyInputMember.axis_index),
+                lock=lock,
+            )
+        )
+    )
+    candidate_members = list(
+        session.scalars(
+            _locked(
+                select(PortfolioCandidateMember)
+                .where(PortfolioCandidateMember.candidate_id == candidate.id)
+                .order_by(PortfolioCandidateMember.alpha_qualification_id),
+                lock=lock,
+            )
+        )
+    )
+    return candidate, _target_frame(candidate, input_row, input_members, candidate_members)
 
+
+def _relative_path(package_id: UUID) -> str:
+    return (Path(str(package_id)) / "candidate-package.zip").as_posix()
+
+
+def _build(
+    candidate: PortfolioCandidate,
+    target_frame: dict[str, Any],
+    *,
+    package_id: UUID,
+    revision: int,
+) -> CandidatePackageBuild:
+    if revision != 1:
+        raise _conflict(
+            "CANDIDATE_PACKAGE_REVISION_INVALID",
+            "Candidate Package V1 only supports revision one.",
+        )
+    manifest = {
+        "candidate_bundle_contract_version": _CANDIDATE_BUNDLE_CONTRACT_VERSION,
+        "package_kind": "TARGET_PORTFOLIO_FRAME",
+        "candidate_id": str(candidate.id),
+        "candidate_package_id": str(package_id),
+        "candidate_package_revision": revision,
+        "target_portfolio_frame": _TARGET_FRAME_PATH,
+    }
+    _reject_forbidden_fields(manifest)
+    return CandidatePackageBuild(
+        candidate_id=candidate.id,
+        package_id=package_id,
+        revision=revision,
+        relative_path=_relative_path(package_id),
+        manifest=manifest,
+        target_frame=target_frame,
+    )
+
+
+def _reserved_package(
+    session: Session,
+    candidate: PortfolioCandidate,
+    target_frame: dict[str, Any],
+) -> tuple[CandidatePackage, CandidatePackageBuild]:
+    packages = list(
+        session.scalars(
+            select(CandidatePackage)
+            .where(CandidatePackage.candidate_id == candidate.id)
+            .with_for_update()
+        )
+    )
+    if len(packages) > 1:
+        raise _conflict(
+            "CANDIDATE_PACKAGE_V1_CONFLICT",
+            "Candidate Package V1 permits exactly one Package for an assembled Candidate.",
+        )
+    if not packages:
+        package = CandidatePackage(
+            id=uuid4(),
+            candidate_id=candidate.id,
+            revision=1,
+            contract_version=_CANDIDATE_BUNDLE_CONTRACT_VERSION,
+            state="BUILDING",
+            manifest_json={},
+            relative_path="",
+            payload={},
+            created_at=datetime.now(UTC),
+        )
+        build = _build(candidate, target_frame, package_id=package.id, revision=package.revision)
+        package.manifest_json = build.manifest
+        package.relative_path = build.relative_path
+        session.add(package)
+        session.flush()
+        return package, build
+
+    package = packages[0]
+    build = _build(candidate, target_frame, package_id=package.id, revision=package.revision)
+    if (
+        package.contract_version != _CANDIDATE_BUNDLE_CONTRACT_VERSION
+        or package.state not in {"BUILDING", "AVAILABLE"}
+        or package.manifest_json != build.manifest
+        or package.relative_path != build.relative_path
+        or package.payload != {}
+    ):
+        raise _conflict(
+            "CANDIDATE_PACKAGE_V1_CONFLICT",
+            "Candidate has an incompatible immutable Package fact.",
+        )
+    return package, build
+
+
+def _active_build_jobs(session: Session, candidate_id: UUID, *, lock: bool) -> list[Job]:
+    statement = select(Job).where(
+        Job.kind == "CANDIDATE_PACKAGE_BUILD",
+        Job.resource_type == "portfolio_candidate",
+        Job.resource_id == candidate_id,
+        Job.state.in_(("READY", "LEASED")),
+    )
+    return list(session.scalars(_locked(statement, lock=lock)))
+
+
+def _ensure_single_build_job(session: Session, candidate_id: UUID) -> None:
+    # The Candidate row is already locked by the caller.  Do not take a Job
+    # row lock here: workers lock Job then Candidate, and the partial unique
+    # index is sufficient to reject any non-cooperating duplicate enqueue.
+    jobs = _active_build_jobs(session, candidate_id, lock=False)
+    if len(jobs) > 1 or (jobs and jobs[0].payload != {}):
+        raise _conflict(
+            "CANDIDATE_PACKAGE_JOB_CONFLICT",
+            "Candidate Package has an invalid active build job.",
+        )
+    if not jobs:
+        enqueue_job(
+            session,
+            kind="CANDIDATE_PACKAGE_BUILD",
+            resource_type="portfolio_candidate",
+            resource_id=candidate_id,
+            payload={},
+        )
+
+
+def _require_single_build_job(session: Session, candidate_id: UUID) -> None:
+    jobs = _active_build_jobs(session, candidate_id, lock=True)
+    if len(jobs) != 1 or jobs[0].payload != {}:
+        raise _conflict(
+            "CANDIDATE_PACKAGE_JOB_CONFLICT",
+            "Candidate Package build has no exclusive empty-payload job.",
+        )
+
+
+def _reserve_candidate_package_build(session: Session, candidate_id: UUID) -> CandidatePackage:
+    """Worker-only phase-one reservation of the deterministic V1 Package."""
+    if not isinstance(candidate_id, UUID):
+        raise QfError("CANDIDATE_PACKAGE_SOURCE_INVALID", "Candidate ID is invalid.", 422)
+    candidate, target_frame = _trusted_candidate_frame(session, candidate_id, lock=True)
+    package, _build_context = _reserved_package(session, candidate, target_frame)
+    return package
+
+
+def enqueue_candidate_package_build(session: Session, candidate_id: UUID) -> None:
+    """Atomically queue the Candidate resource; the fenced child owns Package reservation."""
+    if not isinstance(candidate_id, UUID):
+        raise QfError("CANDIDATE_PACKAGE_SOURCE_INVALID", "Candidate ID is invalid.", 422)
+    candidate, target_frame = _trusted_candidate_frame(session, candidate_id, lock=True)
+    packages = list(
+        session.scalars(
+            select(CandidatePackage)
+            .where(CandidatePackage.candidate_id == candidate.id)
+            .with_for_update()
+        )
+    )
+    if len(packages) > 1:
+        raise _conflict(
+            "CANDIDATE_PACKAGE_V1_CONFLICT",
+            "Candidate Package V1 permits exactly one Package for an assembled Candidate.",
+        )
+    if packages:
+        package = packages[0]
+        expected = _build(candidate, target_frame, package_id=package.id, revision=package.revision)
+        if (
+            package.contract_version != _CANDIDATE_BUNDLE_CONTRACT_VERSION
+            or package.state not in {"BUILDING", "AVAILABLE"}
+            or package.manifest_json != expected.manifest
+            or package.relative_path != expected.relative_path
+            or package.payload != {}
+        ):
+            raise _conflict(
+                "CANDIDATE_PACKAGE_V1_CONFLICT",
+                "Candidate has an incompatible immutable Package fact.",
+            )
+        if package.state == "AVAILABLE":
+            return
+    _ensure_single_build_job(session, candidate.id)
+
+
+def prepare_candidate_package_build(session: Session, candidate_id: UUID) -> CandidatePackageBuild:
+    """Lock/revalidate the Candidate and reserve its Package before filesystem work."""
+    _require_single_build_job(session, candidate_id)
+    package = _reserve_candidate_package_build(session, candidate_id)
+    candidate, target_frame = _trusted_candidate_frame(session, candidate_id, lock=True)
+    build = _build(candidate, target_frame, package_id=package.id, revision=package.revision)
+    if (
+        package.manifest_json != build.manifest
+        or package.relative_path != build.relative_path
+        or package.state not in {"BUILDING", "AVAILABLE"}
+    ):
+        raise _conflict(
+            "CANDIDATE_PACKAGE_V1_CONFLICT",
+            "Candidate Package reservation no longer matches its relational source.",
+        )
+    return build
+
+
+def _validate_target_frame(value: object) -> None:
+    if not isinstance(value, dict) or set(value) != _TARGET_FRAME_FIELDS:
+        raise QfError(
+            "CANDIDATE_PACKAGE_CONFORMANCE_FAILED",
+            "Candidate Package target frame does not use the supported schema.",
+            422,
+        )
+    if value.get("schema_version") != "1" or value.get("portfolio_state") != "ASSEMBLED":
+        raise QfError(
+            "CANDIDATE_PACKAGE_CONFORMANCE_FAILED",
+            "Candidate Package target frame is not an assembled V1 frame.",
+            422,
+        )
+    rows = value.get("rows")
+    if not isinstance(rows, list) or not rows:
+        raise QfError(
+            "CANDIDATE_PACKAGE_CONFORMANCE_FAILED",
+            "Candidate Package target frame has no target rows.",
+            422,
+        )
+    instruments: set[str] = set()
+    total_weight = 0.0
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != _TARGET_FRAME_ROW_FIELDS:
+            raise QfError(
+                "CANDIDATE_PACKAGE_CONFORMANCE_FAILED",
+                "Candidate Package target frame rows are invalid.",
+                422,
+            )
+        instrument = row.get("instrument_id")
+        weight = row.get("target_weight")
+        confidence = row.get("confidence")
+        if (
+            not isinstance(instrument, str)
+            or not instrument.strip()
+            or instrument in instruments
+            or isinstance(weight, bool)
+            or isinstance(confidence, bool)
+            or not isinstance(weight, int | float)
+            or not isinstance(confidence, int | float)
+            or not math.isfinite(float(weight))
+            or not math.isfinite(float(confidence))
+            or not 0 <= float(weight) <= 1
+            or not 0 <= float(confidence) <= 1
+        ):
+            raise QfError(
+                "CANDIDATE_PACKAGE_CONFORMANCE_FAILED",
+                "Candidate Package target rows must be unique finite long-only values.",
+                422,
+            )
+        instruments.add(instrument)
+        total_weight += float(weight)
+    if not math.isclose(total_weight, 1.0, rel_tol=0.0, abs_tol=1e-6):
+        raise QfError(
+            "CANDIDATE_PACKAGE_CONFORMANCE_FAILED",
+            "Candidate Package target weights must sum to one.",
+            422,
+        )
+    _reject_forbidden_fields(value)
+
+
+def verify_candidate_package_archive(path: Path, build: CandidatePackageBuild) -> None:
+    """Small trusted reference-fixture conformance check; no remote runtime involved."""
+    try:
+        with zipfile.ZipFile(path) as archive:
+            names = archive.namelist()
+            if len(names) != len(_ARCHIVE_NAMES) or set(names) != _ARCHIVE_NAMES:
+                raise QfError(
+                    "CANDIDATE_PACKAGE_CONFORMANCE_FAILED",
+                    "Candidate Package archive contains unsupported files.",
+                    422,
+                )
+            manifest = json.loads(archive.read("manifest.json"))
+            target_frame = json.loads(archive.read(_TARGET_FRAME_PATH))
+    except (OSError, zipfile.BadZipFile, json.JSONDecodeError, KeyError) as error:
+        raise QfError(
+            "CANDIDATE_PACKAGE_CONFORMANCE_FAILED",
+            "Candidate Package archive cannot be read as the trusted target-only fixture.",
+            422,
+        ) from error
+    _validate_target_frame(target_frame)
+    if manifest != build.manifest or target_frame != build.target_frame:
+        raise QfError(
+            "CANDIDATE_PACKAGE_CONFORMANCE_FAILED",
+            "Candidate Package archive does not match its immutable relational source.",
+            422,
+        )
+
+
+def _package_paths(settings: Settings, package_id: UUID) -> tuple[Path, Path, Path]:
+    root = settings.package_root.resolve()
+    staging_root = root / "staging"
+    staging = staging_root / str(package_id)
+    final_root = root / str(package_id)
+    if staging_root.is_symlink() or staging.is_symlink() or final_root.is_symlink():
+        raise QfError("CANDIDATE_PACKAGE_PATH_INVALID", "Candidate Package path is invalid.", 500)
+    resolved_staging_root = staging_root.resolve()
+    resolved_staging = staging.resolve()
+    resolved_final_root = final_root.resolve()
+    if (
+        not resolved_staging_root.is_relative_to(root)
+        or not resolved_staging.is_relative_to(resolved_staging_root)
+        or not resolved_final_root.is_relative_to(root)
+    ):
+        raise QfError("CANDIDATE_PACKAGE_PATH_INVALID", "Candidate Package path is invalid.", 500)
+    return staging, final_root, final_root / "candidate-package.zip"
+
+
+@contextmanager
+def candidate_package_filesystem_lock(settings: Settings, package_id: UUID) -> Iterator[None]:
+    """Serialize one deterministic Package path across fenced worker attempts."""
+    if fcntl is None:
+        raise QfError(
+            "CANDIDATE_PACKAGE_LOCK_UNAVAILABLE",
+            "Candidate Package build requires a local filesystem lock.",
+            500,
+        )
+    root = settings.package_root.resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    flags = os.O_RDONLY | os.O_DIRECTORY
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    root_fd = os.open(root, flags)
+    lock_dir_fd: int | None = None
+    lock_fd: int | None = None
+    try:
+        try:
+            os.mkdir(".candidate-package-build-locks", mode=0o700, dir_fd=root_fd)
+        except FileExistsError:
+            pass
+        try:
+            lock_dir_fd = os.open(
+                ".candidate-package-build-locks",
+                flags | nofollow,
+                dir_fd=root_fd,
+            )
+            lock_fd = os.open(
+                f"{package_id}.lock",
+                os.O_RDWR | os.O_CREAT | nofollow,
+                0o600,
+                dir_fd=lock_dir_fd,
+            )
+        except OSError as error:
+            raise QfError(
+                "CANDIDATE_PACKAGE_PATH_INVALID",
+                "Candidate Package lock path is invalid.",
+                500,
+            ) from error
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        if lock_fd is not None:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            finally:
+                os.close(lock_fd)
+        if lock_dir_fd is not None:
+            os.close(lock_dir_fd)
+        os.close(root_fd)
+
+
+def write_candidate_package_archive(settings: Settings, build: CandidatePackageBuild) -> None:
+    """Atomically promote a locally verified archive, or verify a prior promotion."""
+    staging, final_root, archive_path = _package_paths(settings, build.package_id)
+    if final_root.exists():
+        if not final_root.is_dir():
+            raise QfError("CANDIDATE_PACKAGE_PATH_INVALID", "Candidate Package root is invalid.", 500)
+        try:
+            verify_candidate_package_archive(archive_path, build)
+            return
+        except QfError as error:
+            if error.code != "CANDIDATE_PACKAGE_CONFORMANCE_FAILED":
+                raise
+            # This UUID-derived resolved directory belongs to the one active
+            # candidate-resource job reserved in phase one. A crash can leave
+            # a partial archive, which must rebuild under the same identity.
+            if final_root.is_symlink():
+                raise QfError(
+                    "CANDIDATE_PACKAGE_PATH_INVALID", "Candidate Package path is invalid.", 500
+                ) from error
+            shutil.rmtree(final_root)
+    staging.parent.mkdir(parents=True, exist_ok=True)
+    if staging.exists():
+        if not staging.is_dir():
+            raise QfError("CANDIDATE_PACKAGE_PATH_INVALID", "Candidate Package staging root is invalid.", 500)
+        if staging.is_symlink():
+            raise QfError("CANDIDATE_PACKAGE_PATH_INVALID", "Candidate Package staging root is invalid.", 500)
+        shutil.rmtree(staging)
+    staging.mkdir()
+    try:
+        _write_json(staging / "manifest.json", build.manifest)
+        _write_json(staging / _TARGET_FRAME_PATH, build.target_frame)
+        staged_archive = staging / "candidate-package.zip"
+        with zipfile.ZipFile(staged_archive, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.write(staging / "manifest.json", "manifest.json")
+            archive.write(staging / _TARGET_FRAME_PATH, _TARGET_FRAME_PATH)
+        verify_candidate_package_archive(staged_archive, build)
         final_root.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(staging, final_root)
-        return BuiltCandidatePackage(
-            manifest=manifest,
-            relative_path=(Path(str(package_id)) / archive_name).as_posix(),
-            operator_summary={
-                **approval_summary,
-                "remote_nautilus_conformance": verification,
-            },
+        try:
+            os.replace(staging, final_root)
+        except OSError:
+            if not final_root.is_dir():
+                raise
+            verify_candidate_package_archive(archive_path, build)
+    finally:
+        if staging.exists():
+            if staging.is_symlink():
+                raise QfError("CANDIDATE_PACKAGE_PATH_INVALID", "Candidate Package staging root is invalid.", 500)
+            shutil.rmtree(staging)
+    verify_candidate_package_archive(archive_path, build)
+
+
+def finalize_candidate_package_build(session: Session, build: CandidatePackageBuild) -> CandidatePackage:
+    """Flip only the same verified BUILDING row to AVAILABLE in fenced phase two."""
+    candidate, target_frame = _trusted_candidate_frame(session, build.candidate_id, lock=True)
+    package = session.scalar(
+        select(CandidatePackage)
+        .where(CandidatePackage.id == build.package_id, CandidatePackage.candidate_id == candidate.id)
+        .with_for_update()
+    )
+    expected = _build(candidate, target_frame, package_id=build.package_id, revision=build.revision)
+    if (
+        package is None
+        or expected != build
+        or package.revision != build.revision
+        or package.contract_version != _CANDIDATE_BUNDLE_CONTRACT_VERSION
+        or package.manifest_json != build.manifest
+        or package.relative_path != build.relative_path
+        or package.payload != {}
+    ):
+        raise _conflict(
+            "CANDIDATE_PACKAGE_V1_CONFLICT",
+            "Candidate Package cannot be finalized from a changed relational source.",
         )
-    except Exception:
-        shutil.rmtree(staging, ignore_errors=True)
-        raise
+    if package.state == "AVAILABLE":
+        from promotion_service import enqueue_p2p_promotion_job_for_candidate
+
+        enqueue_p2p_promotion_job_for_candidate(session, candidate.id)
+        return package
+    if package.state != "BUILDING":
+        raise _conflict(
+            "CANDIDATE_PACKAGE_STATE_CONFLICT",
+            "Candidate Package is not reserved for a build.",
+        )
+    package.state = "AVAILABLE"
+    session.flush()
+    from promotion_service import enqueue_p2p_promotion_job_for_candidate
+
+    enqueue_p2p_promotion_job_for_candidate(session, candidate.id)
+    return package
+
+
+def is_trusted_candidate_package(session: Session, package: CandidatePackage) -> bool:
+    """Structural eligibility guard for any current Approval-bound Package."""
+    if (
+        package.state != "AVAILABLE"
+        or package.contract_version != _CANDIDATE_BUNDLE_CONTRACT_VERSION
+        or package.revision != 1
+        or package.payload != {}
+    ):
+        return False
+    try:
+        candidate, target_frame = _trusted_candidate_frame(session, package.candidate_id, lock=False)
+        expected = _build(candidate, target_frame, package_id=package.id, revision=package.revision)
+    except QfError:
+        return False
+    return package.manifest_json == expected.manifest and package.relative_path == expected.relative_path
+
+
+def build_candidate_package(*_: Any, **__: Any) -> NoReturn:
+    """Legacy raw-frame writer is intentionally retired; use the fenced worker."""
+    raise _conflict(
+        "CANDIDATE_PACKAGE_TRUSTED_BUILD_REQUIRED",
+        "Candidate Packages are built only from a relational assembled Candidate by CANDIDATE_PACKAGE_BUILD.",
+    )
+
+
+def create_candidate_package(*_: Any, **__: Any) -> NoReturn:
+    """Legacy direct Package creation is intentionally retired."""
+    raise _conflict(
+        "CANDIDATE_PACKAGE_TRUSTED_BUILD_REQUIRED",
+        "Candidate Packages are reserved only by the trusted Candidate assembly path.",
+    )
 
 
 def resolve_package_archive(settings: Settings, relative_path: str) -> Path:
     root = settings.package_root.resolve()
     candidate = (root / relative_path).resolve()
     if not candidate.is_relative_to(root):
-        raise QfError("CANDIDATE_PACKAGE_PATH_INVALID", "Candidate Bundle path is invalid.", 500)
+        raise QfError("CANDIDATE_PACKAGE_PATH_INVALID", "Candidate Package path is invalid.", 500)
     if not candidate.is_file():
-        raise QfError("CANDIDATE_PACKAGE_MISSING", "Candidate Bundle artifact is missing.", 500)
+        raise QfError("CANDIDATE_PACKAGE_MISSING", "Candidate Package artifact is missing.", 500)
     return candidate

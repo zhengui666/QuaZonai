@@ -144,7 +144,6 @@ def test_skill_does_not_advertise_design_only_commands() -> None:
         path.read_text(encoding="utf-8") for path in _skill_documents()
     )
     stale_invocations = {
-        "quazonai mandate ",
         "quazonai portfolio list",
         "quazonai portfolio show",
         "quazonai candidate show",
@@ -248,26 +247,30 @@ def test_high_risk_argument_shapes_match_documentation() -> None:
         parser.parse_args(["handoff", "revoke", "handoff-1", "SUPERSEDED"])
 
     data_source = parser.parse_args(
-        [
-            "data-source",
-            "create",
-            "primary-market-data",
-            "--provider",
-            "example",
-            "--fields",
-            "symbol,price",
-        ]
+        ["data-source", "create", "--json", '{"name":"primary-market-data"}']
     )
-    assert data_source.name == "primary-market-data"
-    assert data_source.provider == "example"
-    assert data_source.fields == "symbol,price"
+    assert data_source.payload == {"name": "primary-market-data"}
+    data_preflight = parser.parse_args(["data-source", "preflight", "source-1"])
+    assert data_preflight.id == "source-1"
+    for resource in (
+        "evaluation-dataset-selection",
+        "evaluation-design-version",
+        "promotion-policy-version",
+    ):
+        configuration = parser.parse_args([resource, "create", "--json", "{}"])
+        assert configuration.payload == {}
+        assert parser.parse_args([resource, "list"]).action == "list"
 
     reference = CLI_REFERENCE_PATH.read_text(encoding="utf-8")
     assert "--downstream <DOWNSTREAM_SYSTEM_ID>" in reference
     assert "--reason <REASON_CODE>" in reference
     assert "quazonai handoff revoke <HANDOFF_ID> --reason <REASON_CODE>" in reference
     assert "Do not rewrite them as positional arguments" in reference
-    assert "quazonai data-source create \\\n  \"<NAME>\"" in reference
+    assert "quazonai data-source create --json '<DATA_SOURCE_JSON>'" in reference
+    assert "quazonai data-source preflight <DATA_SOURCE_ID>" in reference
+    assert "quazonai evaluation-dataset-selection create --json '<EVALUATION_DATASET_SELECTION_JSON>'" in reference
+    assert "quazonai evaluation-design-version create --json '<EVALUATION_DESIGN_VERSION_JSON>'" in reference
+    assert "quazonai promotion-policy-version create --json '<PROMOTION_POLICY_VERSION_JSON>'" in reference
 
 
 def test_global_endpoint_examples_use_argparse_order() -> None:

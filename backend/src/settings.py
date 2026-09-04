@@ -63,6 +63,15 @@ def _optional_raw_env(name: str) -> str | None:
     return value
 
 
+def _trusted_evaluator_command(value: str | None) -> Path | None:
+    if value is None:
+        return None
+    path = Path(value)
+    if not path.is_absolute():
+        raise SettingsError("QUAZONAI_TRUSTED_EVALUATOR_COMMAND must be an absolute path")
+    return path
+
+
 def _normalize_environment(value: str) -> str:
     """Return the canonical deployment environment or reject unknown labels.
 
@@ -389,6 +398,7 @@ class Settings:
     codex_fast_mode: bool = False
     codex_api_key: str | None = None
     mission_job_timeout_seconds: int = DEFAULT_MISSION_JOB_TIMEOUT_SECONDS
+    trusted_evaluator_command: Path | None = None
     frontend_dist: Path = Path("/workspace/frontend-dist")
     operator_auth_enabled: bool = False
     operator_totp_secret: str | None = None
@@ -473,6 +483,9 @@ class Settings:
             codex_fast_mode=False,
             codex_api_key=None,
             mission_job_timeout_seconds=DEFAULT_MISSION_JOB_TIMEOUT_SECONDS,
+            trusted_evaluator_command=_trusted_evaluator_command(
+                _optional_env("QUAZONAI_TRUSTED_EVALUATOR_COMMAND")
+            ),
             frontend_dist=Path(
                 os.environ.get("QUAZONAI_FRONTEND_DIST", "/workspace/frontend-dist")
             ),
@@ -498,7 +511,11 @@ class Settings:
 
     @property
     def codex_auth_configured(self) -> bool:
-        return bool(self.codex_api_key) or (self.codex_home / "auth.json").is_file()
+        # Official ChatGPT auth is database-owned and therefore cannot be
+        # represented by bootstrap Settings.  Runtime code checks the DB
+        # configuration explicitly; this property only covers custom API key
+        # configuration supplied to a short-lived child.
+        return bool(self.codex_api_key)
 
     @property
     def auth_enabled(self) -> bool:

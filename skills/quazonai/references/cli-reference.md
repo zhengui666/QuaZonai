@@ -1,95 +1,56 @@
 # QuaZonai CLI reference
 
-Use this file for exact implemented syntax. In a QuaZonai source checkout, `DESIGN.md` remains the product authority, `AGENTS.md` remains the governance authority, and `CLI.md` remains the external Skill/CLI contract. The installed CLI's `--help` output is syntax authority only if a later release differs; it never overrides product, ownership, authorization, or safety rules.
+`backend/src/cli/main.py` is the syntax source for this reference. In a source
+checkout, `DESIGN.md` remains the product authority and `AGENTS.md` remains the
+governance authority. `--help` confirms syntax only; it never overrides product, ownership, authorization, or safety rules.
 
-This reference documents the command tree implemented by `backend/src/cli/main.py` in QuaZonai 0.1.x.
-
-## Install and verify
-
-From a QuaZonai checkout with Python 3.14:
+## Install and endpoint
 
 ```bash
 python -m pip install ./backend
 quazonai --help
+quazonai --endpoint http://localhost:8000 readiness
 ```
-
-For an editable development install:
-
-```bash
-make install-dev
-quazonai --help
-```
-
-The console entry point is `quazonai`.
-
-## Invocation grammar
 
 ```text
 quazonai [--endpoint LOOPBACK_URL] <resource> [<action>] [arguments]
 ```
 
-Endpoint precedence:
-
-1. global `--endpoint`;
-2. `QUAZONAI_API_ENDPOINT`;
-3. `http://127.0.0.1:8000`.
-
-Valid endpoint examples:
-
-```text
-http://127.0.0.1:8000
-http://localhost:8000
-http://[::1]:8000
-https://localhost:8443
-```
-
-The URL must not contain credentials, a query, a fragment, or a path other than `/`. The CLI rejects non-loopback hostnames with `REMOTE_API_ENDPOINT_FORBIDDEN`.
-
-Because `--endpoint` is a global option, place it before the resource:
-
-```bash
-quazonai --endpoint http://localhost:8000 readiness
-```
-
-## Machine authentication
-
-When QuaZonai Operator Authentication is enabled, the CLI reads `QUAZONAI_API_TOKEN` from its process environment and automatically sends:
-
-```text
-Authorization: Bearer <QUAZONAI_API_TOKEN>
-```
-
-The token must be 32–4096 RFC 6750 `b64token` ASCII characters; whitespace, CR/LF, control characters, non-ASCII, and other punctuation are invalid. Do not put the token in the endpoint URL, command arguments, shell history, output, or documentation. Do not use the Operator TOTP setup secret, browser session cookie, or trusted-browser cookie from the CLI.
-
-A safe shell prerequisite check verifies presence without printing the value:
+Only `127.0.0.1`, `localhost`, and `::1` endpoints are accepted. Use global
+`--endpoint`, then `QUAZONAI_API_ENDPOINT`, then `http://127.0.0.1:8000`.
+When authentication is enabled, `QUAZONAI_API_TOKEN` is a separate machine
+credential, never a downstream Handoff service token.
 
 ```bash
 test -n "${QUAZONAI_API_TOKEN:-}"
 quazonai readiness
 ```
 
-When authentication is disabled, no machine token is required. `AUTH_REQUIRED` means the protected API did not receive the current configured machine credential. A downstream Handoff service token is separate and must not be replaced by `QUAZONAI_API_TOKEN`.
-
 ## Implemented command inventory
 
-The following table is contract-tested against the `argparse` command tree. Do not add design-stage or imagined commands to an invocation. An implemented command is not automatically authorized for an Agent: `approval approve` and `approval reject` are human-only decisions.
+This table is contract-tested against argparse. Approval commands remain
+human-only even though their syntax is implemented.
 
 <!-- cli-command-paths:start -->
 | Command path | Access | Purpose |
 |---|---|---|
 | `status` | Read | Read Core API health |
 | `readiness` | Read | Read capability/readiness status |
-| `idea preview` | Preview | Preview an Idea without creating a Research Program |
-| `research list` | Read | List Research Programs |
-| `research show` | Read | Read one Research Program |
-| `research start` | Write | Create a Research Program from an Idea |
-| `research create` | Write | Alternate implemented form for creating a Research Program |
-| `research pause` | Write | Pause a Research Program |
-| `research resume` | Write | Resume a Research Program |
-| `research archive` | Write | Archive a Research Program |
-| `research restore` | Write | Restore an archived Research Program |
-| `research missions` | Read | List Missions for a Research Program |
-| `research activity` | Read | Read activity for a Research Program |
+| `idea create` | Write | Create an Idea Draft |
+| `idea show` | Read | Read one Idea Draft |
+| `idea answer` | Write | Answer Draft clarifications |
+| `idea start` | Write | Start a complete Draft |
+| `research list` | Read | List Programs |
+| `research show` | Read | Read one Program |
+| `research pause` | Write | Pause a Program |
+| `research resume` | Write | Resume a Program |
+| `research archive` | Write | Archive a Program |
+| `research wake` | Write | Submit a bounded Wake |
+| `research cycles` | Read | List Research Cycles |
+| `research graph` | Read | Read the Mission graph |
+| `mission show` | Read | Read one Mission |
+| `mission turns` | Read | Read durable Mission turns |
+| `mission artifacts` | Read | List Mission artifacts |
 | `alpha list` | Read | List Alpha qualifications |
 | `alpha show` | Read | Read one Alpha qualification |
 | `portfolio mandates` | Read | List Portfolio Mandates |
@@ -97,88 +58,89 @@ The following table is contract-tested against the `argparse` command tree. Do n
 | `portfolio candidate` | Read | Read one Portfolio Candidate |
 | `approval list` | Read | List Approval Snapshots |
 | `approval show` | Read | Read one Approval Snapshot |
-| `approval approve` | Human-only decision | Approve an Approval Snapshot for one downstream system; an Agent may prepare but never execute it |
-| `approval reject` | Human-only decision | Reject an Approval Snapshot; an Agent may prepare but never execute it |
+| `approval approve` | Human-only decision | Human approval syntax |
+| `approval reject` | Human-only decision | Human rejection syntax |
 | `handoff list` | Read | List Handoffs |
-| `handoff revoke` | Write | Revoke a Handoff when the domain preconditions permit it |
+| `handoff revoke` | Write | Revoke an eligible Handoff |
+| `universe create` | Write | Create a governed Universe Version |
+| `universe version` | Write | Create the next immutable Universe Version |
 | `data-source list` | Read | List Data Sources |
-| `data-source create` | Write | Create a Data Source registration |
+| `data-source create` | Write | Register a governed Data Source |
+| `data-source preflight` | Write | Request governed Data Source preflight |
+| `dataset materialize` | Write | Request Dataset materialization |
+| `dataset status` | Read | Read a configuration operation |
+| `evaluation-dataset-selection create` | Write | Create immutable Evaluation Dataset Selection |
+| `evaluation-dataset-selection list` | Read | List Evaluation Dataset Selections |
+| `evaluation-design-version create` | Write | Create immutable Evaluation Design Version |
+| `evaluation-design-version list` | Read | List Evaluation Design Versions |
+| `promotion-policy-version create` | Write | Create immutable Promotion Policy Version |
+| `promotion-policy-version list` | Read | List Promotion Policy Versions |
+| `mandate create` | Write | Create a Portfolio Mandate and first Version |
+| `mandate version` | Write | Create the next immutable Mandate Version |
+| `downstream register` | Write | Register a logical Paper or Live downstream |
 | `datasets` | Read | List Datasets |
 | `universes` | Read | List Universes |
 | `downstreams` | Read | List Downstream Systems |
 <!-- cli-command-paths:end -->
 
-## System
+## Draft and Program
 
-```bash
-quazonai status
-quazonai readiness
-```
-
-## Idea
-
-```bash
-quazonai idea preview --text "<RESEARCH_IDEA>"
-```
-
-`idea preview` uses a POST endpoint but is a non-creating preview operation.
-
-## Research
+`IdeaDraft → answers → start` is the only Program creation path. There is no
+preview, direct Program creation, restore, activity, or legacy Mission-list
+command.
 
 ```text
+quazonai idea create --text "<RESEARCH_IDEA>"
+quazonai idea show <DRAFT_ID>
+quazonai idea answer <DRAFT_ID> \
+  --expected-revision <REVISION> \
+  --answer KEY=VALUE [--answer KEY=VALUE ...]
+quazonai idea start <DRAFT_ID> \
+  --expected-revision <REVISION> \
+  [--title "<TITLE>"]
 quazonai research list
 quazonai research show <PROGRAM_ID>
-
-quazonai research start \
-  --idea "<RESEARCH_IDEA>" \
-  [--overlap-action recommended|new-program|independent-program]
-
-quazonai research create "<RESEARCH_IDEA>" \
-  [--overlap-action recommended|new-program|independent-program]
-
-quazonai research pause <PROGRAM_ID> [--reason "<TEXT>"]
-quazonai research resume <PROGRAM_ID> [--reason "<TEXT>"]
-quazonai research archive <PROGRAM_ID> [--reason "<TEXT>"]
-quazonai research restore <PROGRAM_ID> [--reason "<TEXT>"]
-
-quazonai research missions <PROGRAM_ID>
-quazonai research activity <PROGRAM_ID>
+quazonai research cycles <PROGRAM_ID>
+quazonai research graph <PROGRAM_ID>
 ```
 
-The default overlap action is `recommended`.
+The server returns Draft question keys and freezes the Charter only after all
+required answers exist. Use the current returned revision for every Draft or
+Program write:
 
-`start` and `create` call the same creation operation with the same Idea and overlap fields. Prefer `start` in new recipes; retain `create` only when the caller intentionally uses its positional Idea form.
+```text
+quazonai research pause <PROGRAM_ID> --expected-revision <REVISION> [--reason "<TEXT>"]
+quazonai research resume <PROGRAM_ID> --expected-revision <REVISION> [--reason "<TEXT>"]
+quazonai research archive <PROGRAM_ID> --expected-revision <REVISION> [--reason "<TEXT>"]
+quazonai research wake <PROGRAM_ID> --expected-revision <REVISION> [--reason "<TEXT>"]
+quazonai mission show <MISSION_ID>
+quazonai mission turns <MISSION_ID>
+quazonai mission artifacts <MISSION_ID>
+```
 
-## Alpha
+## Alpha and Portfolio reads
 
-```bash
+```text
 quazonai alpha list
 quazonai alpha show <QUALIFICATION_ID>
-```
-
-## Portfolio
-
-```bash
 quazonai portfolio mandates
 quazonai portfolio programs
 quazonai portfolio candidate <CANDIDATE_ID>
 ```
 
-There is no implemented command for manual Alpha selection, Candidate patching, or weight editing.
+There is no manual Alpha activation, Candidate patching, Alpha selection, or
+target-weight command. Fewer than two eligible Alphas is `INFEASIBLE`, never a
+single-Alpha fallback.
 
-## Approval
-
-The CLI implements the following human commands so the Agent can explain and prepare their exact syntax:
+## Approval and Handoff
 
 ```text
 quazonai approval list
 quazonai approval show <APPROVAL_ID>
-
 quazonai approval approve \
   <APPROVAL_ID> \
   --downstream <DOWNSTREAM_SYSTEM_ID> \
   [--expected-state <STATE>]
-
 quazonai approval reject \
   <APPROVAL_ID> \
   --reason <REASON_CODE> \
@@ -186,82 +148,69 @@ quazonai approval reject \
   [--expected-state <STATE>]
 ```
 
-The default expected state is `PENDING`.
+`--downstream` and `--reason` are required named options. Do not rewrite them as positional arguments. An AI Agent must never execute `approval approve` or `approval reject`.
 
-`--downstream` and `--reason` are required named options, matching the canonical CLI contract. Do not rewrite them as positional arguments.
-
-An AI Agent must never execute `approval approve` or `approval reject`. It may run `approval list/show`, validate the current snapshot, and render the exact decision command for the human operator.
-
-## Handoff
-
-```bash
+```text
 quazonai handoff list
 quazonai handoff revoke <HANDOFF_ID> --reason <REASON_CODE>
 ```
 
-There is no implemented `handoff show` command. Verify a revoke by listing Handoffs again and locating the returned ID.
+There is no downstream runtime-control command. Revocation never stops a
+claimed downstream.
 
-QuaZonai does not expose downstream runtime stop, undeploy, order cancellation, or position-closing commands.
-
-## Data and Administration inventories
+## Fresh-install configuration
 
 ```text
 quazonai data-source list
 
-quazonai data-source create \
-  "<NAME>" \
-  [--provider "<PROVIDER>"] \
-  [--fields "field_a,field_b,field_c"]
+quazonai universe create --json '<UNIVERSE_CREATE_JSON>'
+quazonai universe version <UNIVERSE_VERSION_ID> --json '<UNIVERSE_VERSION_JSON>'
+quazonai data-source create --json '<DATA_SOURCE_JSON>'
+quazonai data-source preflight <DATA_SOURCE_ID>
+quazonai dataset materialize --json '<DATASET_MATERIALIZATION_JSON>'
+quazonai dataset status <OPERATION_ID>
+quazonai evaluation-dataset-selection create --json '<EVALUATION_DATASET_SELECTION_JSON>'
+quazonai evaluation-design-version create --json '<EVALUATION_DESIGN_VERSION_JSON>'
+quazonai promotion-policy-version create --json '<PROMOTION_POLICY_VERSION_JSON>'
+quazonai mandate create --json '<MANDATE_CREATE_JSON>'
+quazonai mandate version <MANDATE_ID> --json '<MANDATE_VERSION_JSON>'
+quazonai downstream register --json '<DOWNSTREAM_JSON>'
 
 quazonai datasets
 quazonai universes
 quazonai downstreams
+quazonai evaluation-dataset-selection list
+quazonai evaluation-design-version list
+quazonai promotion-policy-version list
 ```
 
-`--fields` is a comma-separated string. The CLI trims whitespace, removes empty entries, and sends the resulting list.
+Each `--json` is one complete JSON object validated by the canonical
+`/api/v1/*` resource API. It must contain every field required by that
+resource's schema; public configuration must not contain credentials.
+`data-source preflight` sends `{}` only and returns an operation ID for
+`dataset status`; it accepts no URL, endpoint, plugin path, or credential.
+`dataset materialize` also returns an operation ID for `dataset status`, and
+both the operation's Dataset Revision and its quality/PIT checks begin `PENDING`.
+Trusted Alpha configuration creates forward complete JSON unchanged to Core;
+they do not choose latest Dataset Revisions or synthesize statistical thresholds,
+gates, downstreams, modes, or activation state.
+Registration may issue a downstream service token, but the CLI redacts it from
+stdout; do not put a token in the request or terminal transcript.
 
-## Output contract
+## Output and mutation mechanics
 
-On success, the CLI prints one indented JSON value to stdout. It may be an object, array, string, or `null`, depending on the Core API response.
-
-On failure, the CLI writes an actionable message to stderr. API failures are formatted as:
-
-```text
-<ERROR_CODE>: <MESSAGE>
-```
-
-Exit codes:
+Success prints one JSON response on stdout. Errors print to stderr.
 
 | Code | Meaning |
 |---:|---|
 | `0` | Success |
-| `1` | Other CLI, client, network, or non-conflict API failure |
-| `2` | Command-line usage/input failure |
+| `1` | CLI, client, network, or non-conflict API failure |
+| `2` | Command syntax/input failure |
 | `10` | Core API `5xx` failure |
-| `20` | Core API `409 Conflict` |
+| `20` | Core API conflict |
 
-`AUTH_REQUIRED` is an exit-code `1` authentication/configuration failure. Verify that the current process has `QUAZONAI_API_TOKEN` without printing it. Never fall back to browser credentials or a downstream service token.
-
-## Mutation mechanics
-
-The CLI automatically creates a fresh UUID `Idempotency-Key` for each mutation invocation. It does not expose a flag for reusing that key. For Agent-permitted mutations:
-
-- execute a requested mutation once;
-- after timeout/connection ambiguity, read current state before retrying;
-- never assume rerunning the same shell command is the same idempotent request;
-- on `409`, read the target and rebuild the action from current state.
-
-These mechanics describe the CLI; they do not authorize an Agent to execute the human-only Approval commands.
-
-The CLI is a thin HTTP client. It does not read PostgreSQL, Dataset volumes, Program repositories, Codex state, plugin runtimes, broker accounts, or downstream trading runtimes directly.
-
-## Discover release-specific help
-
-```bash
-quazonai --help
-quazonai research --help
-quazonai research start --help
-quazonai approval approve --help
-```
-
-Use the narrowest relevant `--help` command when syntax fails. `--help` confirms syntax only. Do not use it to relax governance, probe the Core API with guessed paths, or replace the CLI with ad hoc `curl`.
+Each mutation uses a fresh `Idempotency-Key`. After a timeout or `409`, re-read
+state before a new write. The CLI never reads PostgreSQL, Dataset volumes,
+worktrees, Sealed data, secrets, broker accounts, or downstream runtimes.
+Configuration creation alone is not fresh-install E2E evidence, and it does
+not prove Package-before-Approval, Auto Live, or automatic Wake/Replan.

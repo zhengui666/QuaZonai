@@ -18,6 +18,8 @@ _AUTH_LOGIN_PATHS = frozenset(
     }
 )
 _AUTH_PATH_PREFIX = "/api/v1/auth/"
+_CODEX_AUTH_PATH_PREFIX = "/api/v1/system/codex-auth"
+_RUNTIME_CONFIGURATION_PATH = "/api/v1/system/runtime-configuration"
 _NO_STORE_HEADERS = {"Cache-Control": "no-store", "Pragma": "no-cache"}
 
 
@@ -71,7 +73,11 @@ def _error_response(
 def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(QfError)
     async def handle_qf_error(request: Request, exc: QfError) -> JSONResponse:
-        headers = _NO_STORE_HEADERS if request.url.path.startswith(_AUTH_PATH_PREFIX) else None
+        headers = (
+            _NO_STORE_HEADERS
+            if request.url.path.startswith((_AUTH_PATH_PREFIX, _CODEX_AUTH_PATH_PREFIX))
+            else None
+        )
         return _error_response(
             code=exc.code,
             message=exc.message,
@@ -93,6 +99,25 @@ def install_error_handlers(app: FastAPI) -> None:
                 code="AUTH_INVALID",
                 message="Operator authentication failed.",
                 status_code=401,
+                headers=_NO_STORE_HEADERS,
+            )
+        if request.url.path.startswith(_CODEX_AUTH_PATH_PREFIX):
+            # Codex authentication endpoints may carry or reject credential-shaped
+            # fields. Validation happens before endpoint-local no-store handling,
+            # so never use FastAPI's envelope here: it can reflect rejected input.
+            return _error_response(
+                code="CODEX_CHATGPT_AUTH_INVALID_REQUEST",
+                message="ChatGPT authentication request is invalid.",
+                status_code=422,
+                headers=_NO_STORE_HEADERS,
+            )
+        if request.url.path == _RUNTIME_CONFIGURATION_PATH:
+            # Runtime configuration accepts a write-only provider API key. Do
+            # not let FastAPI's generic validation envelope reflect that input.
+            return _error_response(
+                code="RUNTIME_CONFIGURATION_INVALID",
+                message="Runtime configuration is invalid.",
+                status_code=422,
                 headers=_NO_STORE_HEADERS,
             )
         return await request_validation_exception_handler(request, exc)

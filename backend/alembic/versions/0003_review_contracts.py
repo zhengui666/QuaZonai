@@ -56,7 +56,34 @@ def upgrade() -> None:
         )
 
     program_columns = _columns(bind, "research_programs")
-    if "source_program_id" not in program_columns:
+    missing_program_fks = {
+        "source_program_id": "source_program_id" not in program_columns,
+        "evidence_inherited_from_program_id": "evidence_inherited_from_program_id"
+        not in program_columns,
+    }
+    if bind.dialect.name == "sqlite" and any(missing_program_fks.values()):
+        with op.batch_alter_table("research_programs", recreate="always") as batch:
+            if missing_program_fks["source_program_id"]:
+                batch.add_column(sa.Column("source_program_id", sa.Uuid(), nullable=True))
+                batch.create_foreign_key(
+                    "fk_research_program_source_program",
+                    "research_programs",
+                    ["source_program_id"],
+                    ["id"],
+                    ondelete="RESTRICT",
+                )
+            if missing_program_fks["evidence_inherited_from_program_id"]:
+                batch.add_column(
+                    sa.Column("evidence_inherited_from_program_id", sa.Uuid(), nullable=True)
+                )
+                batch.create_foreign_key(
+                    "fk_research_program_evidence_parent",
+                    "research_programs",
+                    ["evidence_inherited_from_program_id"],
+                    ["id"],
+                    ondelete="RESTRICT",
+                )
+    elif missing_program_fks["source_program_id"]:
         op.add_column("research_programs", sa.Column("source_program_id", sa.Uuid(), nullable=True))
         op.create_foreign_key(
             "fk_research_program_source_program",
@@ -71,7 +98,7 @@ def upgrade() -> None:
             "research_programs",
             sa.Column("relationship_type", sa.String(length=80), nullable=True),
         )
-    if "evidence_inherited_from_program_id" not in program_columns:
+    if bind.dialect.name != "sqlite" and missing_program_fks["evidence_inherited_from_program_id"]:
         op.add_column(
             "research_programs",
             sa.Column("evidence_inherited_from_program_id", sa.Uuid(), nullable=True),
@@ -183,9 +210,23 @@ def upgrade() -> None:
             "observation_end = COALESCE(observation_end, created_at), "
             "sample_size = COALESCE(sample_size, 0)"
         )
-        op.alter_column("forward_evidence_episodes", "observation_start", nullable=False)
-        op.alter_column("forward_evidence_episodes", "observation_end", nullable=False)
-        op.alter_column("forward_evidence_episodes", "sample_size", nullable=False)
+        if bind.dialect.name == "sqlite":
+            with op.batch_alter_table("forward_evidence_episodes", recreate="always") as batch:
+                batch.alter_column(
+                    "observation_start",
+                    existing_type=sa.DateTime(timezone=True),
+                    nullable=False,
+                )
+                batch.alter_column(
+                    "observation_end",
+                    existing_type=sa.DateTime(timezone=True),
+                    nullable=False,
+                )
+                batch.alter_column("sample_size", existing_type=sa.Integer(), nullable=False)
+        else:
+            op.alter_column("forward_evidence_episodes", "observation_start", nullable=False)
+            op.alter_column("forward_evidence_episodes", "observation_end", nullable=False)
+            op.alter_column("forward_evidence_episodes", "sample_size", nullable=False)
 
 
 def downgrade() -> None:

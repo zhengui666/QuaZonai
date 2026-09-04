@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from db.models import PublicMutationReceipt, RuntimeConfiguration
+from codex_chatgpt_auth import codex_auth_readiness, is_chatgpt_connected
 from db.session import ping_database
 from errors import QfError
 from events import append_event
@@ -139,7 +140,9 @@ class RuntimeConfigurationInput(BaseModel):
 def _runtime_view_from_item(
     settings: Settings,
     item: RuntimeConfiguration | None,
+    session: Session | None = None,
 ) -> RuntimeConfigurationView:
+    codex_login_configured = is_chatgpt_connected(session) if session is not None else False
     if item is None:
         return RuntimeConfigurationView(
             revision=0,
@@ -152,7 +155,7 @@ def _runtime_view_from_item(
             codex_use_default_model_settings=True,
             codex_base_url=settings.codex_base_url,
             codex_api_key_configured=False,
-            codex_login_configured=(settings.codex_home / "auth.json").is_file(),
+            codex_login_configured=codex_login_configured,
             max_plugin_wheel_bytes=settings.max_plugin_wheel_bytes,
             plugin_validation_timeout_seconds=settings.plugin_validation_timeout_seconds,
             bundle_build_timeout_seconds=settings.bundle_build_timeout_seconds,
@@ -172,7 +175,7 @@ def _runtime_view_from_item(
         codex_use_default_model_settings=item.codex_use_default_model_settings,
         codex_base_url=item.codex_base_url,
         codex_api_key_configured=codex_api_key_configured(item),
-        codex_login_configured=(settings.codex_home / "auth.json").is_file(),
+        codex_login_configured=codex_login_configured,
         max_plugin_wheel_bytes=item.max_plugin_wheel_bytes,
         plugin_validation_timeout_seconds=item.plugin_validation_timeout_seconds,
         bundle_build_timeout_seconds=item.bundle_build_timeout_seconds,
@@ -188,7 +191,7 @@ def _runtime_view(request: Request) -> RuntimeConfigurationView:
     settings: Settings = request.app.state.settings
     factory = request.app.state.session_factory
     with factory() as session:
-        return _runtime_view_from_item(settings, get_runtime_configuration(session))
+        return _runtime_view_from_item(settings, get_runtime_configuration(session), session)
 
 
 def _idempotency_shape(payload: RuntimeConfigurationInput) -> dict[str, Any]:
@@ -442,7 +445,7 @@ def replace_runtime_configuration(
             )
             session.flush()
             session.refresh(item)
-            view = _runtime_view_from_item(settings, item)
+            view = _runtime_view_from_item(settings, item, session)
             if claimed_receipt is not None:
                 claimed_receipt.response_json = view.model_dump(mode="json")
                 claimed_receipt.status_code = 200
@@ -467,7 +470,17 @@ def health(request: Request) -> HealthResponse:
 
     settings = request.app.state.settings
     master_key_state = "configured" if settings.master_key_configured else "missing_or_invalid"
-    ready = database_state == "ready" and master_key_state == "configured"
+    codex_state = "unavailable"
+    if database_state == "ready":
+        with request.app.state.session_factory() as session:
+            codex_ready, codex_state = codex_auth_readiness(session, settings)
+        details["codex_auth_state"] = codex_state
+    else:
+        codex_ready = False
+    # Basic service health remains true before the operator chooses a provider;
+    # either provider reauthentication state is an explicit degraded condition.
+    reauth_required_states = {"REAUTH_REQUIRED", "CUSTOM_PROVIDER_REAUTH_REQUIRED"}
+    ready = database_state == "ready" and master_key_state == "configured" and codex_state not in reauth_required_states
     return HealthResponse(
         live=True,
         ready=ready,
@@ -475,6 +488,6 @@ def health(request: Request) -> HealthResponse:
         master_key=master_key_state,
         plugin_manager="ready" if database_state == "ready" else "unavailable",
         research_worker="not_observed",
-        codex="not_observed",
+        codex=("ready" if codex_ready else "degraded" if codex_state in reauth_required_states else "not_configured"),
         details=details,
     )

@@ -20,7 +20,7 @@ RUN groupadd --system quazonai \
        --create-home --shell /usr/sbin/nologin quazonai \
     && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
-       ca-certificates git libpq5 \
+       ca-certificates git libpq5 bubblewrap \
     && rm -rf /var/lib/apt/lists/* \
     && python -m venv /opt/venv
 

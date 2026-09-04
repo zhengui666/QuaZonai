@@ -94,6 +94,6 @@ def authenticate_downstream(
     if not secrets.compare_digest(expected, provided):
         raise QfError(
             "DOWNSTREAM_UNAUTHORIZED",
-            "Downstream service credential does not own this Handoff.",
+            "Downstream service credential does not own this resource.",
             403,
         )

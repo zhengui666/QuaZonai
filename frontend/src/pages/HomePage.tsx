@@ -16,8 +16,14 @@ import { formatDateTime, humanize } from '../lib/format';
 import { useEventStream } from '../lib/useEventStream';
 
 function ready(value: unknown) { return typeof value === 'boolean' ? value : Boolean((value as { ready?: boolean } | undefined)?.ready); }
+function dataReady(value: unknown) {
+  if (ready((value as { RESEARCH_READY?: unknown } | undefined)?.RESEARCH_READY)) return true;
+  const reasons = (value as { RESEARCH_READY_REASONS?: unknown } | undefined)?.RESEARCH_READY_REASONS;
+  return Array.isArray(reasons) && !reasons.includes('PROMOTABLE_DATASET_REQUIRED');
+}
 function healthState(value: unknown) {
   if (typeof value === 'boolean') return value ? 'READY' : 'NOT_READY';
+  if (typeof value === 'string') return value.trim() ? value.toUpperCase() : 'UNKNOWN';
   if (value && typeof value === 'object') {
     const item = value as Record<string, unknown>;
     if (typeof item.state === 'string') return item.state;
@@ -111,8 +117,8 @@ export function HomePage() {
   const cooling = items.filter((item) => item.state === 'COOLING').length;
   const blocked = items.filter((item) => item.state === 'BLOCKED').length;
   const runningMissions = missions.filter((mission) => mission.state === 'RUNNING').length;
-  const discoveryMissions = missions.filter((mission) => mission.state === 'RUNNING' && /ALPHA|DISCOVERY/i.test(mission.type)).length;
-  const evaluationMissions = missions.filter((mission) => /EVAL|VALIDAT|SEALED|REVIEW/i.test(mission.type));
+  const discoveryMissions = missions.filter((mission) => mission.state === 'RUNNING' && /ALPHA|DISCOVERY/i.test(mission.mission_type)).length;
+  const evaluationMissions = missions.filter((mission) => /EVAL|VALIDAT|SEALED|REVIEW/i.test(mission.mission_type));
   const evaluationRunning = evaluationMissions.filter((mission) => mission.state === 'RUNNING').length;
   const candidateReady = (portfolio.data ?? []).filter((item) => /CANDIDATE|READY/i.test(item.state)).length;
   const availableHandoffs = (handoffs.data ?? []).filter((item) => item.state === 'AVAILABLE').length;
@@ -161,7 +167,7 @@ export function HomePage() {
         <div className="qz-grid-3">
           <div className="qz-panel qz-panel-pad"><div className="qz-label">{t('home.agentHeartbeat')}</div><div style={{ marginTop: 8 }}><StateBadge state={healthState(health.data?.agent_worker)} /></div><div className="qz-list-subtitle">{t('home.agentHeartbeatDesc')}</div></div>
           <div className="qz-panel qz-panel-pad"><div className="qz-label">{t('home.codexReadiness')}</div><div style={{ marginTop: 8 }}><StateBadge state={healthState(health.data?.codex)} /></div><div className="qz-list-subtitle">{t('home.codexReadinessDesc')}</div></div>
-          <div className="qz-panel qz-panel-pad"><div className="qz-label">{t('home.dataReadiness')}</div><div style={{ marginTop: 8 }}><StateBadge state={ready(readiness.data?.RESEARCH_READY) ? 'READY' : healthState(health.data?.data)} /></div><div className="qz-list-subtitle">{t('home.dataReadinessDesc')}</div></div>
+          <div className="qz-panel qz-panel-pad"><div className="qz-label">{t('home.dataReadiness')}</div><div style={{ marginTop: 8 }}><StateBadge state={dataReady(readiness.data) ? 'READY' : healthState(health.data?.data)} /></div><div className="qz-list-subtitle">{t('home.dataReadinessDesc')}</div></div>
         </div>
       </Section>
       <Section title="Recent material events" meta={connected ? 'Live SSE connection' : 'Reconnecting automatically'}>

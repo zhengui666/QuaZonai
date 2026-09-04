@@ -123,24 +123,98 @@ def validate_installed_plugin(
     version: str,
     timeout_seconds: int,
 ) -> DescriptorSnapshot:
-    process_env = os.environ.copy()
-    package_root = str(_package_root())
-    existing = process_env.get("PYTHONPATH")
-    process_env["PYTHONPATH"] = (
-        package_root if not existing else f"{package_root}{os.pathsep}{existing}"
-    )
+    bwrap = shutil.which("bwrap")
+    if bwrap is None:
+        raise QfError(
+            "PLUGIN_VALIDATION_SANDBOX_UNAVAILABLE",
+            "The bubblewrap sandbox is unavailable for plugin validation.",
+            503,
+        )
+    package_root = _package_root().resolve()
+    environment_root = environment.root.resolve()
+    try:
+        python_relative = environment.python.relative_to(environment.root)
+    except ValueError as exc:
+        raise QfError(
+            "PLUGIN_VALIDATION_FAILED",
+            "Plugin validation environment is outside its trusted root.",
+            500,
+        ) from exc
+    sandbox_python = Path("/qz-plugin") / python_relative
+    command = [
+        bwrap,
+        "--die-with-parent",
+        "--new-session",
+        "--unshare-net",
+        "--unshare-pid",
+        "--unshare-ipc",
+        "--unshare-uts",
+        "--cap-drop",
+        "ALL",
+        "--ro-bind",
+        str(environment_root),
+        "/qz-plugin",
+        "--ro-bind",
+        str(package_root),
+        "/qz-core",
+        "--ro-bind",
+        "/usr",
+        "/usr",
+        "--ro-bind",
+        "/usr/local",
+        "/usr/local",
+        "--ro-bind",
+        "/bin",
+        "/bin",
+        "--ro-bind",
+        "/lib",
+        "/lib",
+        "--ro-bind",
+        "/lib64",
+        "/lib64",
+        "--ro-bind",
+        "/etc",
+        "/etc",
+        "--proc",
+        "/proc",
+        "--dev",
+        "/dev",
+        "--tmpfs",
+        "/tmp",
+        "--chdir",
+        "/qz-plugin",
+        "--clearenv",
+        "--setenv",
+        "PATH",
+        "/usr/local/bin:/usr/bin:/bin",
+        "--setenv",
+        "LANG",
+        "C.UTF-8",
+        "--setenv",
+        "LC_ALL",
+        "C.UTF-8",
+        "--setenv",
+        "PYTHONNOUSERSITE",
+        "1",
+        "--setenv",
+        "PYTHONPATH",
+        "/qz-core",
+        "--setenv",
+        "HOME",
+        "/tmp",
+        "--",
+        str(sandbox_python),
+        "-m",
+        "plugins.validator_entry",
+        "--plugin-id",
+        plugin_id,
+        "--version",
+        version,
+    ]
     result = _run(
-        [
-            str(environment.python),
-            "-m",
-            "plugins.validator_entry",
-            "--plugin-id",
-            plugin_id,
-            "--version",
-            version,
-        ],
+        command,
         timeout_seconds=timeout_seconds,
-        env=process_env,
+        env={"PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"},
     )
     try:
         payload = json.loads(result.stdout)

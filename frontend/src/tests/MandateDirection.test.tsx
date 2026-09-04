@@ -9,13 +9,14 @@ describe('Portfolio mandate text direction', () => {
   it('lets API-authored mandate names and objectives establish their own direction', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
       const url = String(input);
-      if (url.endsWith('/portfolio-mandates')) return jsonResponse([{
+      if (url.endsWith('/portfolio-mandates')) return jsonResponse({ items: [{
         id: 'mandate-1',
         name: 'Core Growth — EUR/USD',
         enabled: true,
-        latest_version_id: 'version-12345678',
-        spec_json: { objective: 'Target 8% (SPY/QQQ)' },
-      }]);
+        state: 'ACTIVE',
+        configuration_state: 'V1_CONFIGURED',
+        latest_version: { id: 'version-12345678', objective: 'Target 8% (SPY/QQQ)' },
+      }], next_cursor: null });
       if (url.endsWith('/portfolio-programs')) return jsonResponse([]);
       return jsonResponse({}, 404);
     });

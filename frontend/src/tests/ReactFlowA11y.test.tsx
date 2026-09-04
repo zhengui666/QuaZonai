@@ -87,7 +87,7 @@ describe('React Flow accessibility labels', () => {
   });
 
   it('isolates arbitrary mission types from localized states', () => {
-    renderArabic(<MissionGraph missions={[{ id: 'mission-1', type: 'CUSTOM_EUR_USD', state: 'RUNNING' }]} />);
+    renderArabic(<MissionGraph missions={[{ id: 'mission-1', mission_type: 'CUSTOM_EUR_USD', state: 'RUNNING' }]} />);
     const props = reactFlowSpy.mock.calls.at(-1)?.[0] as { nodes?: Array<{ id: string; data: { label: ReactNode } }> } | undefined;
     const missionNode = props?.nodes?.find((node) => node.id === 'mission-1');
     expect(missionNode).toBeDefined();

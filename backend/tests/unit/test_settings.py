@@ -37,6 +37,15 @@ def test_master_key_requires_exactly_32_decoded_bytes(settings: Settings) -> Non
     assert invalid.master_key_configured is False
 
 
+def test_trusted_evaluator_command_requires_an_absolute_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("QUAZONAI_TRUSTED_EVALUATOR_COMMAND", "relative-evaluator")
+
+    with pytest.raises(SettingsError, match="must be an absolute path"):
+        Settings.from_env()
+
+
 def test_database_scheme_rejects_remote_style_unknown_driver(settings: Settings) -> None:
     invalid = replace(settings, database_url="mysql://localhost/quazonai")
     try:

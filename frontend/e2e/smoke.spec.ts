@@ -1,44 +1,66 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
-test('Flow 1: create idea -> research program -> mission appears', async ({ page }) => {
-  await page.goto('/ideas');
-  await page.getByLabel('What should the research system investigate?').fill(
-    'Test post-earnings drift in liquid US equities after realistic costs.',
-  );
-  await page.getByRole('button', { name: 'Preview research charter' }).click();
-  await expect(page.getByText(/post-earnings drift in liquid US equities/i).first()).toBeVisible();
-  await page.getByRole('button', { name: 'Start Research' }).click();
-  await expect(page).toHaveURL(/\/research\/[0-9a-f-]+$/i);
-  await expect(page.getByText(/Alpha Discovery · Ready/i)).toBeVisible();
-});
+async function createPendingSource(page: Page) {
+  const suffix = `${test.info().project.name}-${test.info().testId}-${Date.now()}`
+    .replace(/[^A-Za-z0-9._-]/g, '-')
+    .slice(-48);
+  const universeName = `US Equities ${suffix}`;
+  const sourceName = `Primary PIT Data ${suffix}`;
 
-test('Flow 2: candidate ready -> approve -> handoff available', async ({ page }) => {
-  await page.goto('/approval');
-  await expect(page.getByText(/materially improves the current frontier/i)).toBeVisible();
-  await expect(page.getByText(/Paper Lab · PAPER/i).first()).toBeVisible();
-  await page.locator('button:visible:not([disabled])').filter({ hasText: 'Approve' }).first().click();
-  await expect(page.getByText('Approved', { exact: true }).first()).toBeVisible();
-  const mobileMore = page.getByRole('button', { name: 'More', exact: true });
-  if (await mobileMore.isVisible()) {
-    await mobileMore.click();
-    await page.getByRole('dialog').getByRole('link', { name: 'Handoff Center', exact: true }).click();
-  } else {
-    await page.getByRole('link', { name: 'Handoff Center', exact: true }).click();
-  }
-  await expect(page.getByText('Available', { exact: true }).first()).toBeVisible();
-  await expect(page.getByRole('button', { name: /stop|undeploy|close position|buy|sell/i })).toHaveCount(0);
-});
-
-test('Flow 3: create datasource -> readiness update', async ({ page }) => {
   await page.goto('/admin');
   const researchReady = page.locator('.qz-kpi').filter({ hasText: 'Research ready' });
   await expect(researchReady).toContainText('NO');
-  await page.getByRole('button', { name: /Register data source/ }).click();
-  const dialog = page.getByRole('dialog');
-  await dialog.getByLabel('Name').fill('Primary PIT Data');
+
+  await page.getByRole('button', { name: 'Create Universe', exact: true }).click();
+  let dialog = page.getByRole('dialog');
+  await dialog.getByLabel('Universe key').fill(`US_EQUITIES_${suffix}`);
+  await dialog.getByLabel('Name').fill(universeName);
+  await dialog.getByLabel('Universe specification (JSON)').fill(JSON.stringify({
+    instrument_schema: { instrument_id: 'string' },
+    membership_rules: { listing: 'NYSE|NASDAQ' },
+    calendar_semantics: { timezone: 'America/New_York' },
+    currency_semantics: { base_currency: 'USD' },
+    data_requirements: { available_at: 'required' },
+    risk_model_family: 'EWMA',
+    cost_model_family: 'SPREAD',
+    capacity_model_family: 'ADV',
+  }));
+  await dialog.getByRole('button', { name: 'Create Universe', exact: true }).click();
+  await expect(page.getByText(universeName, { exact: true })).toBeVisible();
+
+  const registerSource = page.getByRole('button', { name: 'Register data source', exact: true });
+  await expect(registerSource).toBeEnabled();
+  await registerSource.click();
+  dialog = page.getByRole('dialog');
+  await dialog.getByLabel('Name').fill(sourceName);
+  await dialog.getByLabel('Connector key').fill(`licensed-bars-${suffix}`);
   await dialog.getByLabel('Provider').fill('Approved provider');
-  await dialog.getByLabel('Canonical fields').fill('event_time, available_time, close, volume');
-  await dialog.getByRole('button', { name: 'Register' }).click();
-  await expect(page.getByText('Primary PIT Data')).toBeVisible();
-  await expect(researchReady).toContainText('YES');
+  await dialog.getByRole('combobox').click();
+  await page.getByRole('option', { name: new RegExp(universeName) }).click();
+  await dialog.getByLabel('License classification').fill('LICENSED');
+  await dialog.getByLabel('Field schema (JSON)').fill(JSON.stringify({
+    event_time: 'timestamp', available_at: 'timestamp', close: 'decimal',
+  }));
+  await dialog.getByLabel('Availability semantics (JSON)').fill(JSON.stringify({
+    available_at_field: 'available_at',
+  }));
+  await dialog.getByRole('button', { name: 'Register data source', exact: true }).click();
+
+  const sourceTable = page.locator('.qz-table-shell').filter({ hasText: sourceName });
+  await expect(sourceTable.getByText('Pending', { exact: true }).first()).toBeVisible();
+  await expect(researchReady).toContainText('NO');
+  return { sourceName };
+}
+
+test('Fresh configuration flow 1: a governed source remains pending and research stays unready', async ({ page }) => {
+  await createPendingSource(page);
+});
+
+test('Fresh configuration flow 2: a pending source remains unready after reload', async ({ page }) => {
+  const { sourceName } = await createPendingSource(page);
+  await page.reload();
+  const sourceTable = page.locator('.qz-table-shell').filter({ hasText: sourceName });
+  await expect(sourceTable.getByText('Pending', { exact: true }).first()).toBeVisible();
+  const researchReady = page.locator('.qz-kpi').filter({ hasText: 'Research ready' });
+  await expect(researchReady).toContainText('NO');
 });

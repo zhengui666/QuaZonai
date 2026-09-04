@@ -1,197 +1,109 @@
 # QuaZonai CLI workflows
 
-Use these recipes after reading the operating rules in `../SKILL.md`. Replace placeholders only with values returned by the user or by a fresh CLI read.
-
-When the active working directory is inside a validated QuaZonai checkout, that checkout's `AGENTS.md`, `DESIGN.md`, `OPERATIONS.md`, and `CLI.md` remain authoritative over these portable recipes.
+Use these recipes after [the operating rules](../SKILL.md). In a source
+checkout, its AGENTS.md, DESIGN.md, OPERATIONS.md and CLI.md remain authoritative.
 
 ## 1. Diagnose connectivity, authentication, and readiness
 
-Use when the CLI cannot connect, the API returns `AUTH_REQUIRED`, the user asks whether QuaZonai is operational, or a permitted mutation is about to start and readiness matters.
-
-When Operator Authentication may be enabled, verify only that the machine token exists; do not print it:
+When authentication may be enabled, verify only that the machine token exists;
+never print it:
 
 ```bash
 test -n "${QUAZONAI_API_TOKEN:-}"
-```
-
-Then use a protected read to verify the credential, and query health separately when needed:
-
-```bash
 quazonai readiness
 quazonai status
 ```
 
-Interpret them separately:
+`readiness` proves the machine credential is accepted when enabled; `status`
+is public health and does not prove authentication. `AUTH_REQUIRED` means the
+process lacks the current machine token. Never fall back to a TOTP setup secret,
+browser cookie, or downstream Handoff service token.
 
-- `readiness` proves the machine credential is accepted when authentication is enabled and reports whether QuaZonai has the capabilities required for work;
-- `status` answers whether the Core API and reported services are healthy, but remains intentionally public and does not prove machine-token authentication.
-
-Authentication interpretation:
-
-- no `QUAZONAI_API_TOKEN` plus `AUTH_REQUIRED`: the CLI process lacks the required environment prerequisite;
-- token present plus `AUTH_REQUIRED`: the CLI environment and API likely have different token revisions, or the API received no token;
-- never fall back to the Operator TOTP setup secret, browser cookies, or a downstream Handoff service token;
-- when authentication is disabled, direct loopback access works without a token.
-
-If the CLI executable is missing and the current directory is a QuaZonai checkout containing `backend/pyproject.toml`:
-
-```bash
-python -m pip install ./backend
-quazonai --help
-```
-
-Without a checkout, report the missing CLI prerequisite instead of guessing an installation source.
-
-If the endpoint is not the default, put it before the command:
+For a non-default local endpoint, put the global option first:
 
 ```bash
 quazonai --endpoint http://localhost:8000 status
 ```
 
-Do not work around `REMOTE_API_ENDPOINT_FORBIDDEN` with an arbitrary hostname. The local CLI intentionally accepts only loopback endpoints.
+## 2. Create, answer, and start an Idea Draft
 
-## 2. Preview and start a Research Program
-
-### Preview
+Program creation is a three-step write path. First create and read the Draft:
 
 ```bash
-quazonai idea preview --text "<RESEARCH_IDEA>"
+quazonai idea create --text "<RESEARCH_IDEA>"
+quazonai idea show <DRAFT_ID>
 ```
 
-Read the returned preview. Surface:
-
-- the interpreted research objective;
-- material clarifications;
-- overlap/reuse recommendations;
-- any stated data/capability limitation.
-
-Do not create a Program while the preview materially differs from the user's intent.
-
-### Start
-
-Use the overlap action returned or selected by the user:
+Use only question keys returned by that Draft. Submit all needed answers using
+the revision just read:
 
 ```bash
-quazonai research start \
-  --idea "<RESEARCH_IDEA>" \
-  --overlap-action recommended
+quazonai idea answer <DRAFT_ID> \
+  --expected-revision 1 \
+  --answer market_scope="<SCOPE>" \
+  --answer horizon="<HORIZON>" \
+  --answer data_scope="<DATA_SCOPE>"
+quazonai idea show <DRAFT_ID>
 ```
 
-Other accepted values:
-
-```text
-new-program
-independent-program
-```
-
-Capture the Program ID from the JSON response, then verify:
+When the Draft is ready, start it with its current revision and inspect the
+persisted Program rather than submitting another Idea:
 
 ```bash
+quazonai idea start <DRAFT_ID> --expected-revision 2
 quazonai research show <PROGRAM_ID>
-quazonai research activity <PROGRAM_ID>
-quazonai research missions <PROGRAM_ID>
+quazonai research cycles <PROGRAM_ID>
+quazonai research graph <PROGRAM_ID>
 ```
 
-A Program that has automatic work pending or running should be followed, not submitted again.
+## 3. Inspect autonomous work
 
-## 3. Inspect a Research Program
-
-Start from the list when the user did not provide a freshly verified ID:
+Start from the list when the Program ID is not fresh:
 
 ```bash
 quazonai research list
+quazonai research show <PROGRAM_ID>
+quazonai research cycles <PROGRAM_ID>
+quazonai research graph <PROGRAM_ID>
+quazonai mission show <MISSION_ID>
+quazonai mission turns <MISSION_ID>
+quazonai mission artifacts <MISSION_ID>
 ```
 
-Select only an unambiguous Program from the returned data, then:
+Report Program state separately from data quality, Mission/runtime, Sealed, or
+negative research evidence. A failed Mission alone does not prove a failed
+Alpha.
+
+## 4. Change Program lifecycle
+
+Read first and take only the explicit requested action with the current
+revision:
 
 ```bash
 quazonai research show <PROGRAM_ID>
-quazonai research activity <PROGRAM_ID>
-quazonai research missions <PROGRAM_ID>
-```
-
-Report domain state separately from Mission/job activity. A failed Mission does not by itself prove that the research hypothesis failed; preserve the API's failure category and evidence.
-
-## 4. Change a Research Program lifecycle state
-
-Read the Program first:
-
-```bash
+quazonai research pause <PROGRAM_ID> --expected-revision 1 --reason "<TEXT>"
+quazonai research resume <PROGRAM_ID> --expected-revision 2
+quazonai research archive <PROGRAM_ID> --expected-revision 3 --reason "<TEXT>"
+quazonai research wake <PROGRAM_ID> --expected-revision 4 --reason "<TEXT>"
 quazonai research show <PROGRAM_ID>
 ```
 
-Run only the action explicitly requested:
+Pause/archive affect QZ research only. They do not stop an independent
+downstream runtime. Wake cannot bypass a Paused or Archived human state.
 
-```bash
-quazonai research pause <PROGRAM_ID> --reason "<TEXT>"
-quazonai research resume <PROGRAM_ID>
-quazonai research archive <PROGRAM_ID> --reason "<TEXT>"
-quazonai research restore <PROGRAM_ID>
-```
+## 5. Review an Approval Snapshot
 
-Add `--reason "<TEXT>"` to `resume` or `restore` only when the user supplied a reason.
-
-Then verify:
-
-```bash
-quazonai research show <PROGRAM_ID>
-```
-
-Pause/archive affect QuaZonai research only. Never claim that they stop an independent Paper or Live trading runtime.
-
-## 5. Inspect Alpha and Portfolio state
-
-### Alpha qualification
-
-```bash
-quazonai alpha list
-quazonai alpha show <QUALIFICATION_ID>
-```
-
-### Portfolio inventories and Candidate
-
-```bash
-quazonai portfolio mandates
-quazonai portfolio programs
-quazonai portfolio candidate <CANDIDATE_ID>
-```
-
-Treat returned Candidate data as immutable evidence. Do not offer unsupported manual commands for selecting Alphas, changing weights, or patching a Candidate.
-
-## 6. Review an Approval Snapshot
-
-List and fetch the current snapshot:
+Read current state and summarize only returned facts:
 
 ```bash
 quazonai approval list
 quazonai approval show <APPROVAL_ID>
-```
-
-Summarize only fields actually returned by the API, including:
-
-- current Approval state;
-- Candidate identity and recommendation;
-- Paper/Live scope when present;
-- available downstream choices or the requested downstream ID;
-- freshness/validity window;
-- material warnings and evidence.
-
-Do not infer permission to approve from a request to inspect. No AI Agent may execute `approval approve` or `approval reject`; these remain human-only capital-allocation decisions.
-
-## 7. Prepare a human Approval command
-
-The Agent may inspect and prepare, but must not execute, the decision.
-
-Re-read immediately before preparing the command:
-
-```bash
-quazonai approval show <APPROVAL_ID>
 quazonai downstreams
 ```
 
-Confirm that the Approval is current, the Candidate matches the user's decision, the downstream system ID is exact, the Paper/Live scope is understood, and the snapshot is not stale or expired.
-
-Render this exact command for the human operator to run in their local terminal:
+Confirm Candidate identity, downstream ID, Paper/Live scope, freshness and
+warnings. No AI Agent may execute an approval or rejection. It may render this
+for the human operator in a response, not run it:
 
 ```text
 quazonai approval approve \
@@ -200,145 +112,67 @@ quazonai approval approve \
   --expected-state PENDING
 ```
 
-Do not execute it through Agent tools or a shell. Do not substitute another Candidate or downstream system.
+After the human acts, the Agent may re-read the snapshot and Handoff list.
 
-After the human has run it, the Agent may verify through read-only commands:
-
-```bash
-quazonai approval show <APPROVAL_ID>
-quazonai handoff list
-```
-
-Report the actual observed Approval/Handoff state. `DOWNSTREAM_ACCEPTED`, when present, means the downstream accepted a package contract; it does not prove that a trading runtime is running.
-
-If the human reports exit `20`, re-read the Approval and prepare a new command only from current state.
-
-## 8. Prepare a human Rejection command
-
-The Agent may inspect and prepare, but must not execute, the decision. Use only a reason code supplied by the human or exposed by QuaZonai.
-
-First re-read:
-
-```bash
-quazonai approval show <APPROVAL_ID>
-```
-
-Render this exact command for the human operator:
-
-```text
-quazonai approval reject \
-  <APPROVAL_ID> \
-  --reason <REASON_CODE> \
-  --expected-state PENDING
-```
-
-Add `--note "<TEXT>"` only when the human supplied explanatory text. Do not invent a reason code from prose when the valid code set is unknown.
-
-Do not execute the command. After the human has run it, verify read-only:
-
-```bash
-quazonai approval show <APPROVAL_ID>
-```
-
-## 9. Inspect or revoke a Handoff
-
-Inspect:
+## 6. Inspect or revoke a Handoff
 
 ```bash
 quazonai handoff list
 ```
 
-Locate the Handoff ID and current state in the returned JSON.
-
-Revoke only on explicit authorization for the specific Handoff and reason code:
+Revoke only with explicit authorization for a specific Handoff and reason.
+Then re-read the list:
 
 ```bash
 quazonai handoff revoke <HANDOFF_ID> --reason <REASON_CODE>
 quazonai handoff list
 ```
 
-There is no `handoff show` command. Use the post-write list to verify.
+Do not translate revoke into stop, undeploy, cancellation, or position control.
 
-Do not translate revoke into downstream stop/undeploy. Once a downstream owns runtime activity, QuaZonai is not an execution control plane.
-
-## 10. Inspect or create a Data Source
-
-Read existing registrations first:
+## 7. Inspect or configure a Data Source
 
 ```bash
 quazonai data-source list
-```
-
-Create only from explicit configuration values:
-
-```bash
-quazonai data-source create \
-  "<NAME>" \
-  --provider "<PROVIDER>" \
-  --fields "field_a,field_b,field_c"
-```
-
-Then verify:
-
-```bash
+quazonai data-source create --json '{}'
+quazonai data-source preflight <DATA_SOURCE_ID>
+quazonai dataset status <OPERATION_ID>
 quazonai data-source list
-```
-
-Omit optional flags rather than inventing values. Never request that the user paste provider credentials into chat; this CLI command accepts only name, provider, and field metadata.
-
-## 11. List Administration inventories
-
-```bash
 quazonai datasets
 quazonai universes
-quazonai downstreams
 ```
 
-These are list operations. The implemented CLI does not provide per-item `show` commands for these resources.
+Replace `{}` with the complete canonical Data Source JSON object after explicit
+administrator authorization. Never ask a user to paste provider credentials
+into chat; public configuration rejects them. Preflight sends no configuration
+and is not ready until its returned operation completes. A materialization
+request remains `PENDING` until its worker and quality/PIT checks complete.
 
-## 12. Recover from an ambiguous permitted mutation
+## 7.1 Configure trusted Alpha facts
 
-When a permitted mutation times out, the network disconnects, or exit `1` does not establish whether the Core API committed the mutation:
-
-1. Do not immediately repeat the write.
-2. Run `quazonai status` if service availability is uncertain.
-3. Re-read the affected resource with the corresponding read command.
-4. If the desired state is already visible, report success with the verification evidence.
-5. If the prior state is still visible, confirm that the original request still applies, then issue one new permitted mutation.
-6. If state is conflicting or advanced, stop and report the current state.
-
-Each CLI invocation creates a fresh idempotency key. Shell-command repetition is not request replay.
-
-This retry workflow never authorizes an Agent to execute `approval approve` or `approval reject`.
-
-## 13. Response template
-
-Use only relevant sections:
-
-```text
-Objective
-- <what the user asked>
-
-Commands executed
-- <exact permitted command with secrets omitted>
-
-Commands prepared for the human operator
-- <human-only approval/rejection command, if applicable>
-
-Resources read or changed
-- <resource type and ID>
-
-Current observed state
-- <verified state from the final read>
-
-Automatic work still running
-- <Program/Mission/Handoff activity, when present>
-
-Human decision still required
-- <specific unresolved decision>
-
-Failures or unverified items
-- <exit code, API error code/message, and what was not proven>
+```bash
+quazonai evaluation-dataset-selection create --json '{}'
+quazonai evaluation-dataset-selection list
+quazonai evaluation-design-version create --json '{}'
+quazonai evaluation-design-version list
+quazonai promotion-policy-version create --json '{}'
+quazonai promotion-policy-version list
 ```
 
-Never include credentials, tokens, hidden reasoning, or guessed fields.
+The `{}` values are syntax placeholders, not valid payloads. Replace each with
+exact, complete governed identifiers and policy fields returned or approved by
+Core. Do not choose latest Dataset Revisions or make up thresholds, gates,
+downstreams, modes, or activation state; Core validates each immutable version.
+
+## 8. Recover from an ambiguous mutation
+
+When a permitted write times out or exits ambiguously:
+
+1. Do not blindly repeat it.
+2. Check `quazonai status` if service availability is uncertain.
+3. Re-read the affected Draft, Program, or Handoff.
+4. If the desired state is present, report that evidence.
+5. If it is not, confirm the request still applies and submit a new mutation.
+
+Each invocation creates a new `Idempotency-Key`; shell repetition is not request
+replay. This never authorizes an Agent to make a human Approval decision.

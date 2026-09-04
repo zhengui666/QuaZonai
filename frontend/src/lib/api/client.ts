@@ -1,10 +1,19 @@
-import type { ApiErrorEnvelope } from './types';
+import type {
+  AnswerIdeaDraftRequest,
+  ApiErrorEnvelope,
+  CreateIdeaDraftRequest,
+  IdeaDraft,
+  ResearchProgram,
+  StartIdeaDraftRequest,
+  UUID,
+} from './types';
 
 export type ApiFailure =
   | { kind: 'api'; message: string }
   | { kind: 'http'; status: number }
   | { kind: 'network' }
-  | { kind: 'decode' };
+  | { kind: 'decode' }
+  | { kind: 'contract'; message: string };
 
 export class ApiError extends Error {
   readonly failure: ApiFailure;
@@ -19,7 +28,7 @@ export class ApiError extends Error {
     details?: Record<string, unknown>,
     diagnosticMessage?: string,
   ) {
-    super(failure.kind === 'api' ? failure.message : diagnosticMessage ?? failure.kind);
+    super('message' in failure ? failure.message : diagnosticMessage ?? failure.kind);
     this.name = 'ApiError';
     this.failure = failure;
     this.status = status;
@@ -79,5 +88,29 @@ export function jsonBody(value: unknown): string {
 
 export function normalizeList<T>(value: T[] | { items?: T[]; data?: T[] } | null | undefined): T[] {
   if (Array.isArray(value)) return value;
-  return value?.items ?? value?.data ?? [];
+  if (value && typeof value === 'object') {
+    const envelope = value as { items?: unknown; data?: unknown };
+    if (Array.isArray(envelope.items)) return envelope.items as T[];
+    if (Array.isArray(envelope.data)) return envelope.data as T[];
+  }
+  throw new ApiError(
+    { kind: 'contract', message: 'Expected a list response with an items or data array.' },
+    0,
+    'CONTRACT_MISMATCH',
+  );
 }
+
+export const createIdeaDraft = (payload: CreateIdeaDraftRequest) => apiRequest<IdeaDraft>(
+  '/api/v1/idea-drafts',
+  { method: 'POST', body: jsonBody(payload), idempotent: true },
+);
+
+export const answerIdeaDraft = (id: UUID, payload: AnswerIdeaDraftRequest) => apiRequest<IdeaDraft>(
+  `/api/v1/idea-drafts/${id}/answers`,
+  { method: 'POST', body: jsonBody(payload), idempotent: true },
+);
+
+export const startIdeaDraft = (id: UUID, payload: StartIdeaDraftRequest) => apiRequest<ResearchProgram>(
+  `/api/v1/idea-drafts/${id}/start`,
+  { method: 'POST', body: jsonBody(payload), idempotent: true },
+);

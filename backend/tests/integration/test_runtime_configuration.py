@@ -407,6 +407,23 @@ def test_runtime_configuration_rejects_credential_bearing_base_url(
     assert response.status_code == 422
 
 
+def test_runtime_configuration_validation_does_not_echo_provider_key(
+    engine: Engine,
+    settings: Settings,
+) -> None:
+    sentinel = "sk-validation-secret"
+    client = TestClient(create_app(settings=settings, engine=engine))
+    response = client.put(
+        "/api/v1/system/runtime-configuration",
+        json=_payload(codex_api_key=sentinel, clear_codex_api_key=True),
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "RUNTIME_CONFIGURATION_INVALID"
+    assert sentinel not in response.text
+    assert "input" not in response.json()["error"]
+
+
 def test_runtime_configuration_persists_reasoning_and_fast_controls_and_can_restore_defaults(
     engine: Engine,
     settings: Settings,

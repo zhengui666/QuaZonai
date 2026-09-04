@@ -38,15 +38,23 @@ test('mobile navigation preserves access to less frequent capabilities', async (
   }
 });
 
-test('administration capability tabs remain reachable on phone widths', async ({ page }) => {
+test('administration setup controls remain reachable on phone widths', async ({ page }) => {
+  const controls = [
+    'Create Universe',
+    'New Universe version',
+    'Register data source',
+    'Request materialization',
+    'Create Mandate/version',
+    'Register Paper/Live Downstream',
+  ];
   for (const width of widths) {
     await page.setViewportSize({ width, height: 844 });
     await page.goto('/admin');
-    const tabs = page.getByRole('tab');
-    await expect(tabs).toHaveCount(6);
-    for (let index = 0; index < await tabs.count(); index += 1) {
-      const box = await tabs.nth(index).boundingBox();
-      expect(box, `tab ${index} has no layout at ${width}px`).not.toBeNull();
+    for (const name of controls) {
+      const control = page.getByRole('button', { name, exact: true });
+      await expect(control).toBeVisible();
+      const box = await control.boundingBox();
+      expect(box, `${name} has no layout at ${width}px`).not.toBeNull();
       expect(box!.x).toBeGreaterThanOrEqual(0);
       expect(box!.x + box!.width).toBeLessThanOrEqual(width);
     }

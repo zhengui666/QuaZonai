@@ -16,22 +16,37 @@ def upgrade() -> None:
     inspector = sa.inspect(bind)
     evaluation_columns = {column["name"] for column in inspector.get_columns("evaluation_episodes")}
     if "sealed_dataset_revision_id" not in evaluation_columns:
-        op.add_column(
-            "evaluation_episodes",
-            sa.Column(
-                "sealed_dataset_revision_id",
-                sa.Uuid(),
-                sa.ForeignKey(
-                    "dataset_revisions.id",
-                    name="fk_evaluation_episodes_sealed_dataset_revision_id",
+        if bind.dialect.name == "sqlite":
+            with op.batch_alter_table("evaluation_episodes", recreate="always") as batch:
+                batch.add_column(sa.Column("sealed_dataset_revision_id", sa.Uuid(), nullable=True))
+                batch.create_foreign_key(
+                    "fk_evaluation_episodes_sealed_dataset_revision_id",
+                    "dataset_revisions",
+                    ["sealed_dataset_revision_id"],
+                    ["id"],
                     ondelete="RESTRICT",
+                )
+        else:
+            op.add_column(
+                "evaluation_episodes",
+                sa.Column(
+                    "sealed_dataset_revision_id",
+                    sa.Uuid(),
+                    sa.ForeignKey(
+                        "dataset_revisions.id",
+                        name="fk_evaluation_episodes_sealed_dataset_revision_id",
+                        ondelete="RESTRICT",
+                    ),
+                    nullable=True,
                 ),
-                nullable=True,
-            ),
-        )
+            )
     run_columns = {column["name"] for column in inspector.get_columns("quant_runtime_runs")}
     if "promotion_gate" in run_columns:
-        op.drop_column("quant_runtime_runs", "promotion_gate")
+        if bind.dialect.name == "sqlite":
+            with op.batch_alter_table("quant_runtime_runs", recreate="always") as batch:
+                batch.drop_column("promotion_gate")
+        else:
+            op.drop_column("quant_runtime_runs", "promotion_gate")
     if "capital_context_versions" not in inspector.get_table_names():
         op.create_table(
             "capital_context_versions",
@@ -79,4 +94,12 @@ def downgrade() -> None:
     if "sealed_dataset_revision_id" in {
         column["name"] for column in inspector.get_columns("evaluation_episodes")
     }:
-        op.drop_column("evaluation_episodes", "sealed_dataset_revision_id")
+        if bind.dialect.name == "sqlite":
+            with op.batch_alter_table("evaluation_episodes", recreate="always") as batch:
+                batch.drop_constraint(
+                    "fk_evaluation_episodes_sealed_dataset_revision_id",
+                    type_="foreignkey",
+                )
+                batch.drop_column("sealed_dataset_revision_id")
+        else:
+            op.drop_column("evaluation_episodes", "sealed_dataset_revision_id")

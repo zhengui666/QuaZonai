@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import time
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 
 import pyotp
 import pytest
@@ -75,6 +76,57 @@ def test_public_and_downstream_auth_exemptions_are_method_specific() -> None:
     assert not is_operator_auth_exempt("GET", f"{route}/feedback")
     assert not is_operator_auth_exempt("POST", f"{route}/package")
     assert not is_operator_auth_exempt("GET", route)
+
+
+def test_downstream_preflight_uses_service_auth_not_operator_machine_token(
+    settings: Settings,
+    engine: Engine,
+) -> None:
+    secured = _enabled_settings(settings)
+    assert secured.api_token is not None
+    client = TestClient(create_app(settings=secured, engine=engine))
+    registered = client.post(
+        "/api/v1/downstream-systems",
+        headers={"Authorization": f"Bearer {secured.api_token}"},
+        json={
+            "name": "Authenticated preflight consumer",
+            "environment_type": "PAPER",
+            "public_config": {
+                "feedback_contract": {
+                    "minimum_observation_duration_seconds": 60,
+                    "minimum_valid_sample_size": 10,
+                    "required_fields": ["return"],
+                    "accepted_package_contracts": ["1"],
+                    "accepted_arrow_contracts": ["arrow-ipc-file-v1"],
+                    "disclosure_policy": "FULL",
+                }
+            },
+        },
+    )
+    assert registered.status_code == 201, registered.text
+    downstream = registered.json()
+    path = f"/api/v1/downstream-systems/{downstream['id']}/preflight"
+    payload = {
+        "package_contract_version": "1",
+        "feedback_contract_version": "1",
+        "compatibility": [],
+        "valid_until": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+    }
+
+    operator_token = client.post(
+        path,
+        headers={"Authorization": f"Bearer {secured.api_token}"},
+        json=payload,
+    )
+    assert operator_token.status_code == 403
+    assert operator_token.json()["error"]["code"] == "DOWNSTREAM_UNAUTHORIZED"
+    service_token = client.post(
+        path,
+        headers={"Authorization": f"Bearer {downstream['service_token']}"},
+        json=payload,
+    )
+    assert service_token.status_code == 200, service_token.text
+    assert service_token.json()["preflight_state"] == "READY"
 
 
 def test_auth_disabled_preserves_direct_operator_access(
@@ -170,13 +222,14 @@ def test_browser_authenticated_protected_api_responses_cannot_be_shared_cached(
 
     get_response = client.get("/api/v1/system/runtime-configuration")
     post_response = client.post(
-        "/api/v1/ideas/preview",
+        "/api/v1/idea-drafts",
         headers={"Origin": "http://testserver"},
-        json={"idea": "Test a liquid US equity factor after realistic costs."},
+        json={"original_idea_text": "Test a liquid US equity factor after realistic costs."},
     )
 
+    assert get_response.status_code == 200
+    assert post_response.status_code == 201
     for response in (get_response, post_response):
-        assert response.status_code == 200
         assert response.headers["Cache-Control"] == "private, no-store"
         assert response.headers["Vary"] == "Cookie"
 
@@ -258,12 +311,12 @@ def test_machine_token_can_make_operator_mutation_without_browser_origin(
     client = TestClient(create_app(settings=secured, engine=engine))
 
     response = client.post(
-        "/api/v1/ideas/preview",
+        "/api/v1/idea-drafts",
         headers={"Authorization": f"Bearer {secured.api_token}"},
-        json={"idea": "Test a liquid US equity factor after realistic costs."},
+        json={"original_idea_text": "Test a liquid US equity factor after realistic costs."},
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 201
 
 
 def test_totp_login_sets_strict_http_only_cookies(settings: Settings, engine: Engine) -> None:
@@ -399,13 +452,13 @@ def test_browser_mutation_requires_configured_origin(settings: Settings, engine:
     assert _login(client, secured).status_code == 200
 
     missing = client.post(
-        "/api/v1/ideas/preview",
-        json={"idea": "Test a liquid US equity factor after realistic costs."},
+        "/api/v1/idea-drafts",
+        json={"original_idea_text": "Test a liquid US equity factor after realistic costs."},
     )
     mismatched = client.post(
-        "/api/v1/ideas/preview",
+        "/api/v1/idea-drafts",
         headers={"Origin": "https://attacker.example"},
-        json={"idea": "Test a liquid US equity factor after realistic costs."},
+        json={"original_idea_text": "Test a liquid US equity factor after realistic costs."},
     )
 
     assert missing.status_code == 403

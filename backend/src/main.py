@@ -12,10 +12,12 @@ from sqlalchemy import Engine
 from quazonai import __version__
 from api.auth import router as auth_router
 from api.credentials import router as credentials_router
+from api.codex_auth import router as codex_auth_router
+from api.configuration import router as configuration_router
 from api.domain import router as domain_router
 from api.events import router as events_router
 from api.plugins import router as plugins_router
-from api.quant_runtime import router as quant_runtime_router
+from api.research import router as research_router
 from api.system import router as system_router
 from db.session import create_database_engine, create_session_factory
 from errors import QfError, install_error_handlers
@@ -29,6 +31,7 @@ from operator_auth import (
     require_same_origin,
 )
 from operator_auth_store import initialize_operator_auth
+from codex_chatgpt_auth import initialize_codex_auth
 from settings import Settings
 
 
@@ -193,15 +196,18 @@ def create_app(*, settings: Settings | None = None, engine: Engine | None = None
         runtime_settings,
     )
     app.state.operator_auth_runtime.set_totp_secret(canonical_secret)
+    initialize_codex_auth(app.state.session_factory, runtime_settings)
 
     install_error_handlers(app)
     _install_operator_auth(app)
     app.include_router(auth_router)
     app.include_router(system_router)
+    app.include_router(configuration_router)
+    app.include_router(research_router)
     app.include_router(domain_router)
-    app.include_router(quant_runtime_router)
     app.include_router(plugins_router)
     app.include_router(credentials_router)
+    app.include_router(codex_auth_router)
     app.include_router(events_router)
 
     @app.get("/api/v1/openapi.json", include_in_schema=False)
