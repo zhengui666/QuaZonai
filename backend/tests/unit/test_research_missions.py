@@ -416,10 +416,12 @@ def test_codex_launch_config_has_one_frozen_contract_mcp_server(
         "quazonai_mission": {
             "command": sys.executable,
             "args": [
+                "-I",
                 "-m",
                 "agent_harness.mcp_server",
                 "--contract-file",
                 str(contract_file),
             ],
+            "cwd": str(research_missions.Path(__file__).resolve().parents[2]),
         }
     }
