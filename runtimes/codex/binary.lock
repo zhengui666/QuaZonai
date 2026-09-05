@@ -1,0 +1,4 @@
+# Official native binary wheel from the pre-rewrite, verified backend/uv.lock.
+# Linux x86_64 only; no Python SDK or authentication implementation is installed.
+openai-codex-cli-bin==0.144.4 \
+    --hash=sha256:4106229c38f37245c3eea8d904426afd45b8bf19831765715647f5402f757c06
