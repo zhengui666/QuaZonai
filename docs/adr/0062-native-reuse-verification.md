@@ -11,7 +11,7 @@
 | 边界 | 直接复用 | 本仓库新增的最小工作 | 目前未证明的内容 |
 |---|---|---|---|
 | Rust → 科学库 | PyO3 0.29.2 的嵌入 CPython API | 短进程导入、参数映射、结果校验与退出码 | 完整 JobSpec/权限/预算/结果采纳 |
-| 风险和求解 | skfolio 1.0.4 EmpiricalPrior/EmpiricalCovariance/MeanRisk → CVXPY/CLARABEL | 两资产解析解的测试断言；不实现协方差或求解器 | 多 Alpha 校准/混合、现金/组/容量及不可行场景 |
+| 风险和求解 | skfolio 1.0.3 EmpiricalPrior/EmpiricalCovariance/MeanRisk → CVXPY/CLARABEL | 两资产解析解的测试断言；不实现协方差或求解器 | 多 Alpha 校准/混合、现金/组/容量及不可行场景 |
 | 数据和模拟 | NautilusTrader 1.231.0 ParquetDataCatalog/BacktestEngine/官方 EMACross 示例 | 合成 Bar 构造、原生目录往返、原生结果字段检查 | target-only 组合适配、统一资金 T20、各市场结算 |
 | 表格产物 | PyArrow 25.0.1 IPC | 原生结果到 Arrow、含元数据的往返检查 | 生产 qz.alpha_signal/qz.portfolio_targets schema |
 | 事务消息 | PostgreSQL + PGMQ 1.10.0 原生函数 | 两个独立连接验证回滚、注入故障、提交和归档 | Rust run/attempt/owner_epoch/幂等/预算/SSE |
@@ -33,6 +33,10 @@
 缺值、NaN、Infinity、错误维度或单资产 100% 均不能通过这个 oracle。
 这不是第二份生产优化器，也不将该验证解释成 alpha 具有预测收益。
 
+Nautilus fixture 使用有合法高低价格区间的 Bar：上游 EMACross 明确忽略单价 OHLC，
+不能用恒定 OHLC 后再降低订单/事件断言来假装执行成功。每次必须完成 20 次原生迭代，
+订单和事件均大于零；失败信息包含实际计数，保留原生实现的交易规则。
+
 `evidence.json` 包含 schema_version、测试类型、origin/deliverable、实际 Python/
 原生库版本、native solver status、实际权重、容差、Arrow 往返结果和 Nautilus
 原生 iterations/orders/events。只有全部步骤成功后才创建 manifest；Nautilus
@@ -43,13 +47,17 @@ PGMQ fixture 仅允许数据库名 `qz_native_probe`，避免误运行到产品�
 第一连接验证显式 ROLLBACK、send 后异常的子事务回滚，再提交合法 run/event/message；
 第二连接必须只看见已提交记录，读取唯一消息并用原生 archive 归档。
 
-## 当前构建状态与可重复性边界
+## 真实构建记录与可重复性边界
 
-初次 W0 必须实际解析依赖，不能凭空编造 Cargo.lock 或 scientific transitive lock。
-当前 Docker 构建会输出这两个**候选 lockfile**和 rustfmt 格式化后的源文件到 CI artifact。
-下一提交必须审查并纳入版本控制，之后改为 locked/frozen 构建与格式 diff 检查。
-初次解析成功不等于附录 B 的 `rust` / `supply-chain` / `rewrite-complete` 通过。
-镜像先固定 release tag；CI 记录原生 RepoDigests，验收前将镜像引用固定到确认过的 digest。
+- Actions run `33945220158` 实际通过 Rust 1.98.1 编译、Clippy `-D warnings`、单元测试和 release 构建；Cargo.lock 来自其 artifact `9963114149`，已审查并提交，不是手写校验值。
+- Actions run `33945408845` 实际安装 Python 3.12.14 的 39 个科学依赖；完整解析输出已固定为 `runtimes/science/requirements.lock`。后续镜像只安装该锁文件，不在构建中选择新版本。
+- Rust/Python base image 引用使用 CI 实际拉取到的 RepoDigests；Rust 基础镜像只有 1.98.0 标签，因此通过 rustup 安装含编译器修复的 1.98.1，不使用不存在的镜像标签。
+- GitHub skfolio v1.0.4 release 与 PyPI 发布状态不一致，1.0.4 曾造成真实依赖解析失败；当前使用已发布且实际安装成功的 1.0.3。本次均值/协方差/优化验证不能证明 CPCV、purge 或 embargo 正确，这些能力仍需独立原生参考测试。
+- 上述 run 的原生执行因上游拒绝单价 Bar 未完成，不能记为 native-runtime 通过。修复后必须由新的 CI 运行重新证明。
+- 构建现已使用 `cargo --locked` 和 `cargo fmt --all --check`；不再通过构建时改写源文件掩盖格式问题。临时公开工具链 bootstrap 导出已删除，不属于产品或长期 CI。
+
+这些记录不等于附录 B 的完整 `rust` / `supply-chain` / `rewrite-complete` 通过。
+科学 wheel 哈希锁、完整供应链审计、其他平台兼容及所有业务验收仍需补齐。
 不得把不存在的 digest、未运行的检查或 skipped 记为 PASS。
 
 开发验证：
@@ -65,7 +73,8 @@ docker run --rm --user "$(id -u):$(id -g)" --network none --read-only \
 ```
 
 CI 使用同一入口，并保留数值 JSON、Arrow、目录、进程退出状态、锁文件和原生镜像身份。
-不访问真实 Codex profile、模型密钥、broker credentials 或生产数据。
+失败退出码不会因收集日志/锁文件而被吞掉。不访问真实 Codex profile、模型密钥、
+broker credentials 或生产数据。
 
 ## 不可越过的后续交付边界
 
@@ -79,8 +88,10 @@ W0 的真实 Codex 协议、Qlib 兼容、原生 target adapter 以及 W1–W8/T
 
 - https://github.com/PyO3/pyo3/releases/tag/v0.29.2
 - https://pyo3.rs/v0.29.2/python-from-rust.html
-- https://github.com/skfolio/skfolio/releases/tag/v1.0.4
+- https://pypi.org/project/skfolio/1.0.3/
 - https://skfolio.org/generated/skfolio.optimization.MeanRisk.html
 - https://github.com/nautechsystems/nautilus_trader/tree/v1.231.0
+- https://github.com/nautechsystems/nautilus_trader/blob/v1.231.0/nautilus_trader/examples/strategies/ema_cross.py
 - https://github.com/pgmq/pgmq/tree/v1.10.0
+- https://blog.rust-lang.org/2026/09/03/Rust-1.98.1/
 - https://github.com/DietrichGebert/ponytail/blob/main/skills/ponytail/SKILL.md

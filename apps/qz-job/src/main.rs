@@ -18,9 +18,12 @@ const WEIGHT_TOLERANCE: f64 = 1e-6;
 
 fn check_golden(weights: &[f64]) -> Result<(), &'static str> {
     if weights.len() != GOLDEN_WEIGHTS.len()
-        || weights.iter().zip(GOLDEN_WEIGHTS).any(|(actual, expected)| {
-            !actual.is_finite() || (actual - expected).abs() > WEIGHT_TOLERANCE
-        })
+        || weights
+            .iter()
+            .zip(GOLDEN_WEIGHTS)
+            .any(|(actual, expected)| {
+                !actual.is_finite() || (actual - expected).abs() > WEIGHT_TOLERANCE
+            })
     {
         return Err("native minimum-variance result differs from the analytic fixture");
     }
@@ -71,14 +74,21 @@ fn portfolio_golden(py: Python<'_>, output: &Path) -> PyResult<Value> {
     )?;
     options.set_item(
         "risk_measure",
-        py.import("skfolio")?.getattr("RiskMeasure")?.getattr("VARIANCE")?,
+        py.import("skfolio")?
+            .getattr("RiskMeasure")?
+            .getattr("VARIANCE")?,
     )?;
     let model = optimization.getattr("MeanRisk")?.call((), Some(&options))?;
     model.call_method1("fit", (&returns,))?;
-    let weights: Vec<f64> = model.getattr("weights_")?.call_method0("tolist")?.extract()?;
+    let weights: Vec<f64> = model
+        .getattr("weights_")?
+        .call_method0("tolist")?
+        .extract()?;
     let solver_status: String = model.getattr("problem_")?.getattr("status")?.extract()?;
     if solver_status != "optimal" {
-        return Err(PyValueError::new_err("native solver did not report optimal"));
+        return Err(PyValueError::new_err(
+            "native solver did not report optimal",
+        ));
     }
     check_golden(&weights).map_err(PyValueError::new_err)?;
 
@@ -99,12 +109,18 @@ fn portfolio_golden(py: Python<'_>, output: &Path) -> PyResult<Value> {
     let writer = ipc.call_method1("new_file", (path.as_ref(), table.getattr("schema")?))?;
     writer.call_method1("write_table", (&table,))?;
     writer.call_method0("close")?;
-    let restored = ipc.call_method1("open_file", (path.as_ref(),))?.call_method0("read_all")?;
+    let restored = ipc
+        .call_method1("open_file", (path.as_ref(),))?
+        .call_method0("read_all")?;
     let equal_options = PyDict::new(py);
     equal_options.set_item("check_metadata", true)?;
-    let equal: bool = table.call_method("equals", (&restored,), Some(&equal_options))?.extract()?;
+    let equal: bool = table
+        .call_method("equals", (&restored,), Some(&equal_options))?
+        .extract()?;
     if !equal {
-        return Err(PyValueError::new_err("Arrow round trip lost data or metadata"));
+        return Err(PyValueError::new_err(
+            "Arrow round trip lost data or metadata",
+        ));
     }
     Ok(json!({
         "origin": "SYNTHETIC", "deliverable": false,
@@ -131,16 +147,24 @@ fn nautilus_probe(py: Python<'_>, output: &Path) -> PyResult<Value> {
         .call_method1("from_str", ("1000000.00000000",))?;
     let bars = PyList::empty(py);
     let prices = [
-        2000, 2050, 2100, 2150, 2200, 2250, 2200, 2150, 2100, 2050,
-        2000, 1950, 2000, 2050, 2100, 2150, 2200, 2250, 2300, 2350,
+        2000, 2050, 2100, 2150, 2200, 2250, 2200, 2150, 2100, 2050, 2000, 1950, 2000, 2050, 2100,
+        2150, 2200, 2250, 2300, 2350,
     ];
     for (index, number) in prices.iter().enumerate() {
         let price = objects
             .getattr("Price")?
             .call_method1("from_str", (format!("0.{number:08}"),))?;
+        // The upstream EMA strategy deliberately ignores single-price bars.
+        // Supply valid OHLC ranges rather than replacing its trading logic.
+        let high = objects
+            .getattr("Price")?
+            .call_method1("from_str", (format!("0.{:08}", number + 10),))?;
+        let low = objects
+            .getattr("Price")?
+            .call_method1("from_str", (format!("0.{:08}", number - 10),))?;
         let timestamp = 1_700_000_000_000_000_000_u64 + (index as u64 + 1) * 60_000_000_000;
         bars.append(data.getattr("Bar")?.call1((
-            &bar_type, &price, &price, &price, &price, &volume, timestamp, timestamp,
+            &bar_type, &price, &high, &low, &price, &volume, timestamp, timestamp,
         ))?)?;
     }
     let catalog_options = PyDict::new(py);
@@ -162,24 +186,33 @@ fn nautilus_probe(py: Python<'_>, output: &Path) -> PyResult<Value> {
     let config = py.import("nautilus_trader.config")?;
     let logging_options = PyDict::new(py);
     logging_options.set_item("log_level", "ERROR")?;
-    let logging = config.getattr("LoggingConfig")?.call((), Some(&logging_options))?;
+    let logging = config
+        .getattr("LoggingConfig")?
+        .call((), Some(&logging_options))?;
     let engine_options = PyDict::new(py);
     engine_options.set_item("logging", logging)?;
     engine_options.set_item("run_analysis", false)?;
-    let engine_config = config.getattr("BacktestEngineConfig")?.call((), Some(&engine_options))?;
+    let engine_config = config
+        .getattr("BacktestEngineConfig")?
+        .call((), Some(&engine_options))?;
     let engine = py
         .import("nautilus_trader.backtest.engine")?
         .getattr("BacktestEngine")?
         .call1((engine_config,))?;
     let result: PyResult<Value> = (|| {
         let enums = py.import("nautilus_trader.model.enums")?;
-        let currency = py.import("nautilus_trader.model.currencies")?.getattr("BTC")?;
+        let currency = py
+            .import("nautilus_trader.model.currencies")?
+            .getattr("BTC")?;
         let balances = PyList::empty(py);
         balances.append(objects.getattr("Money")?.call1((1, &currency))?)?;
         let venue_options = PyDict::new(py);
         venue_options.set_item("venue", instrument.getattr("id")?.getattr("venue")?)?;
         venue_options.set_item("oms_type", enums.getattr("OmsType")?.getattr("NETTING")?)?;
-        venue_options.set_item("account_type", enums.getattr("AccountType")?.getattr("MARGIN")?)?;
+        venue_options.set_item(
+            "account_type",
+            enums.getattr("AccountType")?.getattr("MARGIN")?,
+        )?;
         venue_options.set_item("base_currency", currency)?;
         venue_options.set_item("starting_balances", balances)?;
         engine.call_method("add_venue", (), Some(&venue_options))?;
@@ -188,13 +221,18 @@ fn nautilus_probe(py: Python<'_>, output: &Path) -> PyResult<Value> {
         let strategy_options = PyDict::new(py);
         strategy_options.set_item("instrument_id", instrument.getattr("id")?)?;
         strategy_options.set_item("bar_type", &bar_type)?;
-        strategy_options.set_item("trade_size", py.import("decimal")?.getattr("Decimal")?.call1(("100",))?)?;
+        strategy_options.set_item(
+            "trade_size",
+            py.import("decimal")?.getattr("Decimal")?.call1(("100",))?,
+        )?;
         strategy_options.set_item("fast_ema_period", 2)?;
         strategy_options.set_item("slow_ema_period", 4)?;
         strategy_options.set_item("request_bars", false)?;
         strategy_options.set_item("subscribe_trade_ticks", false)?;
         let upstream = py.import("nautilus_trader.examples.strategies.ema_cross")?;
-        let strategy_config = upstream.getattr("EMACrossConfig")?.call((), Some(&strategy_options))?;
+        let strategy_config = upstream
+            .getattr("EMACrossConfig")?
+            .call((), Some(&strategy_options))?;
         let strategy = upstream.getattr("EMACross")?.call1((strategy_config,))?;
         engine.call_method1("add_strategy", (strategy,))?;
         engine.call_method0("run")?;
@@ -203,7 +241,9 @@ fn nautilus_probe(py: Python<'_>, output: &Path) -> PyResult<Value> {
         let orders: usize = native.getattr("total_orders")?.extract()?;
         let events: usize = native.getattr("total_events")?.extract()?;
         if iterations != prices.len() || orders == 0 || events == 0 {
-            return Err(PyValueError::new_err("native backtest did not execute the fixture"));
+            return Err(PyValueError::new_err(format!(
+                "native backtest fixture incomplete: iterations={iterations}, orders={orders}, events={events}"
+            )));
         }
         Ok(json!({
             "origin": "SYNTHETIC", "deliverable": false,
@@ -226,11 +266,24 @@ fn verify(output: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let evidence = Python::attach(|py| -> PyResult<Value> {
         let metadata = py.import("importlib.metadata")?;
         let mut versions = BTreeMap::new();
-        for distribution in ["nautilus-trader", "skfolio", "pyarrow", "optuna", "cvxpy-base", "clarabel", "numpy"] {
-            let version: String = metadata.call_method1("version", (distribution,))?.extract()?;
+        for distribution in [
+            "nautilus-trader",
+            "skfolio",
+            "pyarrow",
+            "optuna",
+            "cvxpy-base",
+            "clarabel",
+            "numpy",
+        ] {
+            let version: String = metadata
+                .call_method1("version", (distribution,))?
+                .extract()?;
             versions.insert(distribution, version);
         }
-        let python: String = py.import("platform")?.call_method0("python_version")?.extract()?;
+        let python: String = py
+            .import("platform")?
+            .call_method0("python_version")?
+            .extract()?;
         let portfolio = portfolio_golden(py, output)?;
         let nautilus = nautilus_probe(py, output)?;
         Ok(json!({
@@ -240,7 +293,10 @@ fn verify(output: &Path) -> Result<(), Box<dyn std::error::Error>> {
             "portfolio_golden": portfolio, "nautilus": nautilus
         }))
     })?;
-    let file = OpenOptions::new().write(true).create_new(true).open(output.join("evidence.json"))?;
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output.join("evidence.json"))?;
     let mut writer = BufWriter::new(file);
     serde_json::to_writer_pretty(&mut writer, &evidence)?;
     writer.flush()?;
@@ -271,7 +327,13 @@ mod tests {
     #[test]
     fn oracle_rejects_missing_nonfinite_and_wrong_results() {
         assert!(check_golden(&[0.8, 0.2]).is_ok());
-        for values in [vec![], vec![0.8], vec![f64::NAN, 0.2], vec![f64::INFINITY, 0.2], vec![1.0, 0.0]] {
+        for values in [
+            vec![],
+            vec![0.8],
+            vec![f64::NAN, 0.2],
+            vec![f64::INFINITY, 0.2],
+            vec![1.0, 0.0],
+        ] {
             assert!(check_golden(&values).is_err());
         }
     }

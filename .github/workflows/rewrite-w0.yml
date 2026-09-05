@@ -16,28 +16,21 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - name: Build real Rust PyO3 executable and resolve candidate locks
+      - name: Build locked Rust PyO3 executable and native image
         env:
           SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
-          mkdir -p evidence bootstrap
+          mkdir -p evidence
           printf '%s\n' "$SOURCE_HEAD" > evidence/source-head.txt
           git rev-parse HEAD > evidence/tested-commit.txt
           exec > >(tee evidence/build.log) 2>&1
-          git archive --format=tar.gz HEAD > bootstrap/source.tar.gz
           docker pull python:3.12.14-slim-bookworm
           docker pull rust:1.98.0-slim-bookworm
           docker build --target build --tag qz-w0-build --file runtimes/science/Dockerfile .
           cid=$(docker create qz-w0-build true)
           trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
           docker cp "$cid:/build/Cargo.lock" evidence/Cargo.lock
-          docker cp "$cid:/build/apps/qz-job/src/main.rs" evidence/formatted-main.rs
-          # Temporary W0 bootstrap for the offline development environment.
-          # Export only public compiler files and public dependency caches, no HOME/auth.
-          docker run --rm --network none --read-only --entrypoint tar qz-w0-build \
-            -czf - -C /usr/local/rustup/toolchains 1.98.1-x86_64-unknown-linux-gnu \
-            -C /usr/local/cargo registry > bootstrap/rust-dev.tar.gz
           docker build --target runtime --tag qz-w0-science --file runtimes/science/Dockerfile .
       - name: Native numerical golden, Arrow, Nautilus catalog and backtest
         run: |
@@ -45,15 +38,17 @@ jobs:
           mkdir -p evidence/runtime
           name=qz-w0-native-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}
           trap 'docker rm -f "$name" >/dev/null 2>&1 || true' EXIT
+          status=0
           timeout --kill-after=10s 180s docker run --name "$name" \
             --user "$(id -u):$(id -g)" --network none --read-only \
             --cap-drop ALL --security-opt no-new-privileges \
             --pids-limit 128 --cpus 2 --memory 4g \
             --tmpfs /tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777 \
             --mount "type=bind,src=$PWD/evidence/runtime,dst=/output" \
-            qz-w0-science verify-native /output/probe | tee evidence/native.log
+            qz-w0-science verify-native /output/probe 2>&1 | tee evidence/native.log || status=$?
           docker cp "$name:/opt/qz/requirements.lock" evidence/requirements.lock
           docker inspect "$name" --format '{{.State.ExitCode}} {{.State.OOMKilled}}' > evidence/process-exit.txt
+          test "$status" -eq 0
           grep -qx '0 false' evidence/process-exit.txt
           test -s evidence/runtime/probe/evidence.json
           test -s evidence/runtime/probe/native-weights.arrow
@@ -63,7 +58,7 @@ jobs:
           docker image inspect python:3.12.14-slim-bookworm rust:1.98.0-slim-bookworm \
             --format '{{json .RepoDigests}}' > evidence/base-images.txt
           docker image inspect qz-w0-science --format '{{.Id}}' > evidence/built-image-id.txt
-      - name: Upload actual evidence and candidate lockfiles
+      - name: Upload actual evidence and resolved versions
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -71,15 +66,6 @@ jobs:
           path: evidence/
           if-no-files-found: error
           retention-days: 14
-      - name: Temporary offline bootstrap (remove once retrieved)
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: rewrite-w0-bootstrap-${{ github.run_id }}-${{ github.run_attempt }}
-          path: bootstrap/
-          if-no-files-found: error
-          retention-days: 1
-          compression-level: 0
 
   pgmq-w0:
     runs-on: ubuntu-24.04
