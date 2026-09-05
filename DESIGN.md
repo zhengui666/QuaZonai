@@ -1,385 +1,1288 @@
-# QuaZonai 产品与架构事实源
+# QuaZonai 产品、领域与架构事实源
 
-> 重写基线：2026-09-05，Issue #62。本文是唯一完整的产品与架构事实源。
-> **状态：Draft 集成实施中；目前只有部分 W0 原生兼容性代码及其执行证据，不是可交付的新系统。**
+> 需求基线：2026-09-05，Issue #62 正文及附录 A（评论 5549224292）、B（评论 5549244417）。
+> 所有者修订：2026-09-05，PR #63 的执行要求——**优先 Rust，其次 Python；优先复用，其次造轮子**。
+> **状态：Draft 集成实施中。只有部分 W0 已实现；本文的目标合同不代表全量系统、全部测试或受保护验收已完成。**
 
-Issue #62 正文及规范附录 A、B 是本次交付的完整验收输入；本文将其架构约束纳入仓库。
-不得以本文摘要、实现记录、局部 CI 或未实现项列表缩小该 Issue 的范围。发现差异时，
-先补齐本文和实现，不得通过降低验收标准解决。`README.md` 是入口，`OPERATIONS.md` 是
-运行说明，`CLI.md` 是操作合同，`docs/architecture/issue-62-execution.md` 只记录实际证据，
-均不得覆盖本文。旧 #58 设计已原样保存为 `docs/architecture/legacy-issue-58-design.md`，
-仅用于迁移对照，不再是新架构的实现计划。
+本文包含完整字段合同、API/CLI/MCP 映射、状态机、故障场景、T01–T42 和交付边界，是唯一完整架构事实源。Issue 是需求出处和验收追溯链接，不是运行时或离线审查必须另行读取的规范依赖；其后续编辑不会自动改变本文。任何新要求必须先通过版本控制更新本文，再实现。不得以摘要、局部绿色 CI、缺失能力清单或语言修订缩小核心范围。
 
-## 1. 当前事实与目标严格分开
+`AGENTS.md` 只定义治理；`OPERATIONS.md`、`CLI.md`、Skill、README 分别展开运行、命令、工作流和入口；`docs/architecture/issue-62-execution.md` 与兼容性矩阵只记录证据，不创造竞争架构。旧 #58 设计归档于 `docs/architecture/legacy-issue-58-design.md`，仅用于迁移对照。
 
-| 部分 | 当前事实 | #62 必须交付的目标 |
+## 0. 所有者修订：语言与复用的决策顺序
+
+1. 优先寻找仓库已有实现、标准库、平台和成熟外部组件，随后才考虑新写代码。先验证实际接口、安全、许可证、维护性和目标行为，而不是按语言数量评价架构。
+2. 在适用实现之间优先 Rust，其次 Python。Rust 是新控制面、领域合同、持久化、CLI/MCP 和网关的默认选择；不是对所有第一方 Python 的绝对禁令。
+3. 成熟 Python 组件能够可靠承接、而 Rust 方案会重复建设成熟能力或引入更复杂桥接时，允许复用 Python，包含必要的第一方薄适配或有明确依据的服务。先记录复用对象、接口缺口、选择理由、隔离/部署边界、锁定版本和验证；不要求把成熟 Python 数值库翻译成自研 Rust 算法。
+4. 第一方代码只拥有 QZ 的产品规则、权限、证据关联和最小适配。不重建回测、优化器、Agent Harness、OAuth 刷新、消息队列、密码学或容器平台。仅在没有满足需求的成熟能力时自研，并明确缺口与退出条件；不以“adapter”命名隐藏整套自建内核。
+5. 不为 Rust 占比增加无意义 FFI/微服务，也不以 Rust 启动器包装全部 Python 然后声称 Rust 优先。一个业务状态机、一个合同源、一个权威数据源；不维持两套永久兼容后端或重复真相。
+6. 该修订取代 #62 中“所有第一方后端只能 Rust”“Python 只能是第三方库”“必须因语言删除全部 Python 服务”等绝对措辞。前端 React + TypeScript + **官方 `antd`**、产品范围、安全、数据、测试、CI/Review/合并条件全部不变。
+
+## 1. 当前实现与完整目标
+
+| 部分 | 已有事实 | 必须完成的目标 |
 |---|---|---|
-| 既有服务 | 旧 Python 后端和旧前端仍存在、仍是当前运行实现 | 完整 Rust 控制面和官方 Ant Design 前端；验收后整体切换并删除旧入口 |
-| 原生科学计算 | `apps/qz-job` 的固定 FIXTURE 探针直接调用 skfolio、CLARABEL、Nautilus、Arrow | 独立隔离的真实研究、评估、组合和共享资金原生模拟 |
-| Codex | Rust 测试程序验证原生 App Server 握手、账号读取、完整模型分页和 Thread 配置 | 真实账号、同一原生 Thread 内真实工具/Job 回读、独立 Reviewer、恢复和安全隔离 |
-| PGMQ | 测试 SQL 验证原生事务回滚、重复投递、结果与确认回滚 | 与正式领域事实同事务的生产任务投递、租约、恢复、取消和去重 |
-| 发布与自动化 | 新 Rust 系统尚无实际交付链 | 多 Alpha → Package → Approval → Paper/Live Handoff → Forward → Wake 全链路 |
-| 运维与体验 | 新系统迁移、恢复、截图、移动/PWA、受保护验收尚未完成 | W0–W8、T01–T42 全部完成且证据绑定最新 Head |
+| 运行服务 | 旧 Python 后端/旧前端仍是当前运行实现 | 按第 0 节重建并验收控制面，完整 Ant Design 产品面；显式切换后移除被替代路径 |
+| 原生科学计算 | `apps/qz-job` 固定 FIXTURE 探针调用 skfolio、CLARABEL、Nautilus、Arrow | 隔离真实研究、评估、至少两个 Alpha、完整约束与共享资金模拟 |
+| Codex | 无账号 stdio 握手、account/read、完整模型分页、默认与 effort-only Thread 探针 | 真实工具→Job→Evaluation→同 Thread 消费结果、独立 Reviewer、恢复、原生账号和权限隔离 |
+| PGMQ | 原生投递/结果/确认事务回滚探针 | 正式领域事务、预算、Run/Attempt 接管、恢复、取消和唯一结果采纳 |
+| 交付/迁移/运维/UX | 新系统完整链路尚未实现 | W0–W8、T01–T42；不能把此表当作 Future Work 排除项 |
 
-本表不是拆分 Issue、另开缩小范围 PR 或把剩余部分移到 Future Work 的授权。
-同一 Draft 集成 PR 必须承载完整工作包；W0 成功也不能合并或关闭 #62。
+同一 Draft 集成 PR 承载全部范围。从 `main@941dbcbbaa26293d17b14f733c0d415611035f57` 建立的 #63 不依赖未合并 PR；旧 Issue 不自动关闭，最终覆盖矩阵说明替代和独立保留关系。W0 成功也不能合并骨架或关闭 #62。
 
-## 2. 产品职责与正常业务链
+## 2. 产品与所有权
 
-QuaZonai 是单 Operator、自托管的持续量化研究与目标组合工作台。正常用户负责提出
-Idea 和审批交付；配置数据授权、模型账号、运行环境、组合约束及故障处理是低频管理。
+QuaZonai 是证据优先、单用户、自托管的自治量化研究工作台。用户提出想法，系统在预算内组织研究、调用专业引擎，交付可解释、可追溯的结论和目标组合。首页回答：研究什么、证据是否可信、组合有什么取舍、哪里需要用户决定。不以聊天条数、Token/Agent 数或动效冒充研究成果。
 
 ```text
-Idea → 冻结 ResearchBrief → 有预算的 ResearchCycle
-  → 原生 Codex 提议并调用真实研究 Jobs → 独立 Review / 封存评估
-  → 至少两个有效 Qualified Alpha → 原生组合优化 → 共享资金 Nautilus 模拟
-  → 不可变 Target-only Package → Approval → Paper / Live Handoff
-  → 真实 Forward Evidence → Degradation Observation → 受限 Wake / 新 Cycle
+Idea 与已有证据 → 冻结 Research Brief → 有界 Research Cycle
+→ 原生 Codex 提出假设/研究产物/实验请求 → 数据与代码合同验证
+→ 原生研究库及远端 Nautilus → 实际结果回到同一 Codex Thread
+→ 修正或否定结论 → 独立验证/封存评估 → Qualified Alpha 版本
+→ 至少两个合格 Alpha 的原生组合构建 → 共享资金 Nautilus 模拟
+→ 冻结 Release/target-only Package → Paper 审批/交付/反馈
+→ 冻结政策满足后人工或已授权自动 Live 目标交付
+→ Forward Evidence → Degradation Observation → 受限 Wake/新 Cycle
 ```
 
-“没有合格候选”是正常终态，不允许不断重试直到得到赢家。暂停禁止启动新研究周期，
-但应保存真实 Wake 事实；确定性再平衡不应偷偷重启 LLM 研究循环。
+QZ 拥有研究意图、版本、预算、权限、证据关联、资格、审批、交付记录及用户体验。Codex 拥有原生模型会话、工具循环、上下文和认证；科学库拥有估计、交叉验证、优化和统计计算；Nautilus 拥有市场目录、市场事件、模拟成交和交易运行语义。
 
-QZ 不拥有交易执行。不得新增券商/交易所凭证、订单、真实成交、仓位、账户、NAV 或
-执行风控账本；不得启动、停止、撤单、平仓或恢复下游交易节点。交付只包含 Alpha
-信号、目标权重、约束、版本与证据。Nautilus 回测内的模拟成交属于内部评估证据，
-不属于真实执行控制或下游运行管理。
+**QZ 不拥有真实 Broker/Exchange 凭据、订单/成交/仓位/账户/NAV、执行风控、下游 heartbeat/recovery/reconciliation 或启停/撤单/平仓。** Live 是目标包交付，不是交易指令。取消计算、暂停研究不是停止下游交易。Nautilus 回测内模拟成交仅是评估证据，不是第二份真实交易账本。
 
-## 3. 目标模块与原生复用边界
+正常人工动作是提出 Idea、审批推荐的交付；暂停/恢复/归档、数据授权、Codex 登录、Mandate/Universe/下游配置和故障处理是低频管理，不得变成每轮必经点击。Brief 确认后预算内不反复要求 Continue。最多澄清 1–3 个真正影响边界的问题；不需要则直接展示可修改 Brief。系统故障、数据不足、研究被否定、等待审批分别显示。没有有效 Alpha 是正常结论，不重试制造赢家。
+
+## 3. 架构、复用与调研落实
 
 ```text
-apps/qz              Rust API、Worker、CLI 及 MCP 入口（目标，未实现）
-apps/qz-runtime      受信任远端 Gateway 与一次性 Job 生命周期（目标，未实现）
-apps/qz-job          一次进程的原生计算；当前只实现 W0 探针
-crates/qz-domain     无 HTTP/SQLx 的领域决策与状态转移（目标，未实现）
-crates/qz-contracts  Serde / OpenAPI / JSON Schema / Arrow 合同源（目标，未实现）
-crates/qz-store      SQLx、PostgreSQL、PGMQ 与事务（目标，未实现）
-crates/qz-integrations  Codex / OCI / 原生存储和下游适配（目标，未实现）
-frontend            React + TypeScript + 官方 Ant Design（目标，未迁移）
-migrations          新数据库的显式迁移（目标，未实现）
-runtimes            锁定的上游运行依赖；不是自建 Python Web 后端
-contracts/generated 从正式合同和锁定原生工具生成的版本化文件（目标）
-tests               单元、合同、真实原生、数据库竞争、安全、故障和 E2E
+React + TypeScript + antd → REST/SSE 生成合同 → qz API/Domain/Worker/CLI/MCP
+  ├─ PostgreSQL + PGMQ：领域事实、通知、持久事件和审计
+  ├─ 原生 Codex App Server：受信任模型进程
+  ├─ Artifact Store：原生不可变对象/版本引用
+  └─ qz-runtime：受信任远程计算网关 → 原生 OCI/Docker
+       └─ 每任务一个隔离 qz-job 进程/容器 → Nautilus / skfolio / CVXPY / solver
+                                                   / Qlib / scikit-learn / Optuna
 ```
 
-控制面、业务编排、持久化与外部 API 必须使用 Rust。Python 只能作为成熟原生科学库的
-运行依赖、上游必要扩展点、隔离的研究输入或测试/构建工具；不能把新 Python 服务
-包装在 Rust 外壳里。自建 queue、回测撮合、数值优化器、Agent Harness、OAuth 刷新、
-重复前端基础组件均不属于允许范围。
+默认布局（只有 qz-job W0 已存在，其他是目标，不是一 crate 一微服务）：
 
-优先复用 PostgreSQL/PGMQ、SQLx、成熟 Rust HTTP/CLI/MCP SDK、官方 Codex App Server、
-Bollard/OCI、NautilusTrader、skfolio/CVXPY/CLARABEL、Optuna，以及确有需要且通过验证
-的上游数据/研究组件。没有执行验证的候选依赖不能宣称生产可用；确需适配上游缺口，
-必须记录版本、接口缺口、最小适配范围和替代方案，不能扩展为自建内核。
+```text
+Cargo.toml / Cargo.lock / rust-toolchain.toml
+apps/qz/                 API、Worker、CLI、MCP 入口，共享领域服务
+apps/qz-runtime/         远程任务与受限数据访问网关
+apps/qz-job/             一次任务一个进程的上游执行器
+crates/qz-domain/        无 HTTP/SQLx 的领域规则
+crates/qz-contracts/     DTO、错误、事件、政策、OpenAPI/JSON/Arrow 合同源
+crates/qz-store/         SQLx、事务、PGMQ 薄适配
+crates/qz-integrations/  Codex、OCI、原生存储、科学库和下游适配
+frontend/src/features/  research、alphas、portfolios、deliveries、runs、settings
+migrations/             新系统显式 SQLx 迁移
+contracts/generated/    原生工具/合同源生成，不手改
+runtimes/               锁定镜像和依赖，包含经论证的 Python 复用
+examples/               明确 provenance 的可重复示例
+ tests/                 contract、golden、e2e、security、fault
+ deploy/                compose、backup、observability、runbooks
+ docs/                  product、architecture、adr、research、protocols、operations
+```
 
-## 4. 当前 W0 实现的准确合同
+| 成熟组件/对标 | 采用能力 | 禁止重复建设 |
+|---|---|---|
+| 官方 Codex App Server | Thread/Turn/Item、登录、模型目录、工具循环、上下文 | 第二套 LLM Loop、消息历史引擎、OAuth 刷新器 |
+| NautilusTrader | BacktestNode/BacktestEngine、ParquetDataCatalog、适配器、执行模拟 | 撮合器、回测引擎、第二份权威 NAV |
+| skfolio/CVXPY/原生 solver | 风险估计、Alpha/Prior、组合优化、交叉验证 | 自写协方差、优化器或伪指标 |
+| Qlib（按需）/scikit-learn | 原生数据/特征/模型流程、估计器 | 强制训练平台或另一套成交账本 |
+| Optuna | 预算内有限搜索与试验采样 | 无预算 trial、自研搜索器 |
+| PostgreSQL/PGMQ/SQLx | 事务、关系、原生投递/visibility/archive | 自研队列、应用 outbox 搬运平台 |
+| Axum/Tokio/Serde/utoipa/schemars/成熟 CLI 库 | 默认 Rust 服务与合同 | 平行 HTTP/schema 框架 |
+| 官方 Rust MCP SDK `rmcp` | MCP 协议和工具传输 | 自写 MCP/JSON-RPC 栈 |
+| PyO3 或最小独立 Python 适配 | 按第 0 节接入成熟科学能力 | 为语言占比翻译算法或创建无意义包装 |
+| Bollard/OCI | 容器生命周期、资源和隔离限制 | 容器平台；向 Agent 暴露 Docker socket |
+| 官方 Ant Design/icons、ECharts | 全部基础 UI、主题、表单、反馈和单一图表 | Radix 与 antd 双体系、自写基础组件 |
+| RD-Agent | 假设→实现→真实反馈、失败知识组织经验 | 与 Codex 并行的 Agent Harness |
+| packaging / pip / npm / Cargo | 原生依赖解析、版本、锁定和完整性 | 自制依赖解析器或业务 hash gate |
 
-### 4.1 原生计算探针
+PGMQ 只保证至少一次投递场景，外部副作用不是全链路 exactly-once。业务幂等、预算、Attempt 和结果采纳不能外包给消息 visibility。Nautilus Python/Rust 库不是现成官方 HTTP 服务；`/runtime/v1` 是我方适配合同。
 
-`qz-job verify-native --output NEW_DIRECTORY` 只接受不存在的输出目录，创建私有目录，
-完成后退出。固定输入和所有输出均为 `origin=FIXTURE`、`deliverable=false`，不能进入
-Qualification、Release、Paper/Live 或真实数据能力判断。
+调研来源与落地机制：Qlib（arXiv 2009.11189）用于数据/模型/评估分离；R&D-Agent-Quant（2505.15155v2）用于有界假设—产物—反馈及失败记录；AlphaAgent（2502.16789v2）用于研究动机、产物一致性、重复性与复杂度；AlphaPROBE（2602.11917v1）用于血缘和负面证据；TradingAgents（2412.20138）用于独立上下文反方审查；The Probability of Backtest Overfitting 和 The Deflated Sharpe Ratio 用于完整试验集合、选择偏差及统计前提；skfolio（2507.04176）用于成熟估计/优化/验证流程。论文作者在特定市场的结果不是本项目复现或收益承诺；新颖、多 Agent 投票、Sharpe 或一般 CV 不能替代硬性证据 Gate。
 
-Rust/PyO3 直接构造并调用上游对象，不嵌入 Python 业务源代码：
+DSR/PBO 默认不支持：未确认选定 skfolio 版本具备满足本项目的完整接口。只有接通已审计上游、参考数据验证、完整可比试验集合后才能开启；CPCV 不是 CSCV/PBO。required 指标不支持时 INCONCLUSIVE，不手写常量/近似冒充。基础交付仍必须完成 PIT、时间隔离、真实样本外、试验账本、sealed 防重复消费。
 
-- `optimization.rs` 调用 skfolio `MeanRisk` 和 CLARABEL。两资产样本协方差比例为 1:4，
-  long-only、预算 1 的独立手工参考为 0.8/0.2，绝对容差 1e-5。参考仅用于测试，不得
-  作为生产优化 fallback。通过上游 `scale_objective` 与原生求解容差保证精度，要求
-  原生 `problem_.status == optimal`，拒绝非有限、维度错误或错误权重。
-- `backtest.rs` 调用 Nautilus `BacktestEngine`、上游测试 Equity 和上游
-  `EMACrossLongOnly`。要求真实处理 64 根固定 Bar 并产生原生成交报告；引擎成功或失败
-  后均 dispose。它不是目标组合适配器，更不证明多 Alpha 共享资金验收完成。
-- `arrow.rs` 调用原生 PyArrow IPC 写入、读取并比较 Table。没有成功报告的 Arrow
-  文件不是成功结果，也不证明正式 Artifact 已被持久接受。
-- `report.rs` 先写 `.pending` 文件、完成 JSON/换行/文件同步，再用同文件系统原子
-  create-if-absent 发布正式报告，绝不覆盖现有报告。写入或同步失败时不能出现正式
-  成功报告名；临时文件永不作为成功证据。该测试报告发布不是生产 Artifact Store，
-  不宣称目录级崩溃一致性或 Job 完成事实。发布后的 stdout 关闭不能改写已提交结果。
+默认不引入 Redis、Kafka、Temporal、向量/图数据库、通用 Workflow DSL、插件市场、第二实验记录平台或自建密钥平台。模块只为真实边界存在，不建立形式化 Repository/Factory/事件总线模板。保持 LICENSE/NOTICE/第三方声明，不擅自换许可证。
 
-当前验证组合为 Rust 1.90.0、PyO3 0.25.1、CPython 3.12.12、Nautilus 1.231.0、
-skfolio 1.0.3、CVXPY-base 1.7.2、CLARABEL 0.11.1、PyArrow 25.0.0；平台为 Linux
-x86_64，CI 验证 Ubuntu 24.04。`Cargo.lock`、科学库平台 hash lock 和 Codex npm lock
-固定实际依赖；其他平台在独立验证前不属于已支持矩阵。
+## 4. 当前 W0 的准确边界
 
-### 4.2 原生 Codex 合同探针
+`qz-job verify-native --output NEW_DIRECTORY` 只接受不存在的目录，创建私有输出并在一次进程后退出。全部输入与报告为 `origin=FIXTURE`、`deliverable=false`，不能产生正式 Qualification/Release/Handoff。
 
-`apps/qz-job/examples/codex_contract.rs` 是测试夹具，不是生产客户端或 Agent Loop。
-它启动锁定的原生 Codex 0.144.4，以新的 HOME/CODEX_HOME 和清空后白名单环境执行
-initialize → initialized → account/read → 完整分页 model/list → thread/start。
-默认 Thread 不传模型、推理强度、URL、provider 或 API key；另一 Thread 仅配置原生
-模型列表声明支持的 effort，模型仍省略，用来检验两项控制独立。新 HOME 中不得出现
-继承的账号或 auth.json。原生 schema 由同版本二进制生成，不以最新网站协议代替。
+- `optimization.rs` 原生 skfolio MeanRisk/CLARABEL：两资产协方差比例 1:4，long-only、预算 1 的独立手算参考 0.8/0.2，绝对容差 1e-5；要求原生 optimal、有限值、正确维度。参考不是生产 fallback。
+- `backtest.rs` 原生 BacktestEngine、测试 Equity、上游 EMACrossLongOnly，真实 64 Bar/原生成交并在成功或失败后 dispose；不是目标权重适配或多 Alpha 验收。
+- `arrow.rs` 原生 PyArrow IPC 写入/回读 Table 相等；文件存在不等于正式结果采纳。
+- `report.rs` create_new 写 `.pending`，完整 JSON/换行/sync 后同文件系统 hard_link 原子 create-if-absent 发布；不覆盖，失败不出现正式成功名。发布后 stdout 关闭不改结果；不宣称生产 Artifact Store 或目录级崩溃一致性。
+- `examples/codex_contract.rs` 锁定原生二进制、新 HOME/CODEX_HOME、白名单环境，initialize/initialized/account/read/全分页 model/list/thread/start；默认省略 model/effort/provider/key，另一 Thread 仅传原生支持 effort。新 home 不继承账号；限制 frame/队列/时间/分页，拒绝意外工具/审批请求，不记录原始通知/身份/隐藏推理。真实账号及同 Thread 推理工具闭环尚未完成。
+- `tests/native/pgmq_contract.sql` 可丢弃 PostgreSQL/PGMQ 中验证业务+send 回滚、重投 read count、结果+archive 回滚及成功归档；临时表不是生产 Run/Attempt。
 
-协议夹具有 frame、队列、总截止时间、分页和重复 cursor/ID 限制；拒绝所有意外服务端
-工具/审批请求，不保存原始通知、账户身份、配置转储或隐藏推理。报告明确标记真实
-账号验收和同 Thread 推理工具闭环尚未执行。它们不能由这个无账号探针替代。
+已验证 W0 组合：Rust 1.90.0、PyO3 0.25.1、CPython 3.12.12、Nautilus 1.231.0、skfolio 1.0.3、CVXPY-base 1.7.2、CLARABEL 0.11.1、PyArrow 25.0.0、Codex 0.144.4、PGMQ 1.10.0；Linux x86_64/Ubuntu 24.04。其他平台不能推定支持。
 
-### 4.3 原生 PGMQ 合同探针
+Cargo/npm/科学平台 wheel lock 均提交，CI 使用 locked 安装且不改写源码。科学 lock 记录规范化的直接依赖集合；`tools/lock_science_runtime.py check INPUT LOCK` 使用 packaging 的 PEP 508/440 解析，离线检查新增、删除、缺失、版本漂移、重复和不支持格式，不解依赖、不下载、不修改文件。平台格式是无条件 exact pin + 原生 wheel hash；marker/extras/URL/递归 requirements 明确拒绝。pip 原生 `--require-hashes` 验证 wheel，`pip check` 验证安装后的传递依赖；输入检查不能替代两者或数值验证。维护者先在指定平台解析、按完整 lock 验证下载，再用 `export VERIFIED_WHEEL_DIR INPUT NEW_LOCK` 导出；不在验收 CI 现场生成 lock。
 
-`tests/native/pgmq_contract.sql` 仅在可丢弃的 PostgreSQL/PGMQ 1.10.0 中执行；无端口
-公开、无生产账号。测试业务写入和 send 同事务 rollback、可重复投递且 read count
-增加、结果与 archive 一起 rollback，以及成功 archive 后不再投递。它明确证明的是
-至少一次投递，不是“全局恰好执行一次”。测试临时表不是生产 Run/Attempt 持久化。
+W0 完整闸门仍要求真实镜像安装/导入/执行/回收/Arrow，Qlib 如需单独镜像则单独验收 ABI。新版本不写 latest，不用新网站 API 猜旧发布版能力，不用 mock 或私造算法补齐缺口。
 
-## 5. 正式字段与跨接口基本规则（目标）
+## 5. 研究、数据与数值边界
 
-正式合同使用 `schema_version=1`，拒绝未知字段。ID 使用 UUIDv7；版本/事件序号/计数
-使用 BIGINT 范围并以十进制字符串传入 JSON；revision 从 1 开始，更新显式携带
-expected_revision。金额和精确权重采用 NUMERIC(38,18)/十进制字符串，不使用 JS
-浮点承载。UTC 时间使用 RFC3339，纳秒使用十进制字符串；拒绝无时区时间。
+用户只面对研究项目、实验、Alpha、组合、交付、运行六类主对象；Brief/版本/评估放详情，不暴露几十张表的人工操作。`execution_state`、`evidence_status`、`decision` 分离：例如计算成功而数据不完整是 SUCCEEDED + INVALID/INCOMPLETE + INCONCLUSIVE，不是通过。
 
-统计值只能是有限浮点或 null。null 必须携带 `status`、`reason`、`method`、`unit`、
-样本数和有效区间，不能把错误、不支持、无样本或 NaN 填成 0。
+Brief 冻结问题、假设、经济含义、Universe、数据授权、预测期限、基准、成本/容量、验证分区、选择规则、停止规则和预算。修改创建新版本，不事后改阈值。失败、取消、无效和淘汰试验均保存；重开项目、换 UUID、同赢家改名不重置试验/暴露。
 
-关系必须有真实外键；跨项目资源使用 `(project_id, resource_id)` 等复合约束，不允许
-仅凭任意 UUID 关联。正式版本不可变；修订创建新版本及显式关系，撤销是追加事实。
-禁止 CASCADE 删除证据历史。互相引用的版本先使用合法 nullable 草稿或 deferrable FK，
-不能插入虚构占位 ID。
+市场源以原生 Nautilus ParquetDataCatalog/不可变 snapshot 为权威；Qlib 等派生缓存可重建，不是第二份源。保留数据/资产定义、授权、版本、质量与当时可得时间。`event_at` 是事件，`available_at` 是当时可用，`decision_at` 是决策；必须 available_at <= decision_at，按事件排序或把 ingest_at 填成 available_at 不构成 PIT。财务重述、成分变更、退市、到期、结算和日历不得以今天状态替换历史。
 
-业务身份、幂等、审批、发布、Package 和数据有效性不引入 SHA/hash/checksum/digest/
-fingerprint gate；它们依赖 UUID、关系和原生版本。依赖供应链与原生存储自身完整性
-校验不是业务内容寻址，不得反过来成为自制业务可信度证明。
+Discovery/Validation/Sealed/Forward 分权限与挂载。raw/sample/metric/plot/summary 都可能暴露；按根血缘继承，在 evaluator 获得读取能力前事务预约，崩溃/取消不回滚已发生的读取机会。研究者无 sealed raw/preview/日志旁路；evaluator 无 Provider 凭据和研究工作区写权限。是否向后续研究披露由冻结政策决定，不继续把已披露 sealed 当独立。
 
-### 5.1 领域事实目录
+原生 WalkForward/CombinatorialPurgedCV 显式 purge/embargo；默认 0 不等于安全。按观测数 purge 仅适用于验证过的固定 horizon；变量区间需支持重叠区间的上游接口，否则 UNSUPPORTED_LABEL_INTERVALS。所有可比试验才可进入统计选择集合，不拼不同市场/频率/区间伪算 PBO/p-value。
 
-下列字段组定义目标模型职责；其必填性、精确枚举、约束及接口映射必须逐项落实
-Issue #62 规范附录 A、B，不能用一个无约束 JSON 列代替正式实体。
+Alpha 只发 score/expected_return/uncertainty，不发订单。score 未校准不能冒充收益/仓位；校准/调参仅使用允许训练段。至少两个合格 Alpha 的实际预测经单位、共同期限、币种、资产对齐、覆盖率验证后进入原生 Alpha/Prior/ensemble/optimizer（如 PredictorAlpha、FixedWeightedAlpha、MeanRisk，必须所锁版本确实支持）。固定权重/scale 是配置，不冒充拟合校准。Alpha 混合权重和最终资产权重分别持久化。
 
-| 事实 | 必须保留的身份、字段与约束 |
+风险/协方差复用 skfolio EWCovariance/LedoitWolf 等；优化复用 skfolio/CVXPY/原生 solver。生产路径真实支持现金、单资产、gross/net、组约束、换手、成本、风险和参与率，保存余量和诊断。不可行返回 INFEASIBLE，无目标，不偷偷等权/单资产100%/放宽约束。ACCEPTABLE_INACCURATE 仅显式政策允许且独立容差验证通过才采纳。
+
+毛净收益、费用、换手定义、年化频率、无风险利率、单位、区间、样本数、方法版本、原生来源均明确；缺值 null + reason，NaN/Infinity 拒绝。成本/滑点/冲击/容量基于版本化费表、流动性及上游模型；缺深度数据不声称精准盘口冲击，capacity 不等于初始资金。最终组合在一个共享资金、统一净额、实际成本 Nautilus 模拟中验证，不平均独立账户曲线或另算权威撮合账本。
+
+市场支持依测试矩阵：保留已使用市场的真实数据路径；venue/data type/到期/结算分别验证。Polymarket/Kalshi 不伪装普通股票；不支持的组合明确 RESEARCH_ONLY/UNSUPPORTED，不能 Paper/Live。
+
+## 6. 原生 Codex、自治与权限
+
+连接合同：`connection_mode=SYSTEM|CUSTOM_PROVIDER`；`profile_origin=MANAGED_VOLUME|OPERATOR_MOUNT`；`use_default_model_settings:bool`；保存 model/effort 可空、fast_mode bool。来源不是第三种 Provider。
+
+SYSTEM 不注入 provider/base URL/API key，不写空值覆盖原生环境，不导入/删除 auth.json，使用明确的 Worker CODEX_HOME。CUSTOM_PROVIDER 只用显式激活路由与凭据，失败不偷用系统订阅。失败时不自动切连接/模型/effort。命名卷不等于宿主 ~/.codex；提供同卷同 UID 原生 login/status，显式挂载 profile 不自动复制/chown/删除。宿主 keyring 容器可用性不能保证，UI/运维明确说明。
+
+由锁定 Codex 二进制生成协议 schema，稳定 stdio initialize → initialized。model/list 遍历全部 cursor，模型 ID、支持 effort、默认值来自原生能力，不硬编码型号或 high/xhigh 集合。default 开关开启时省略 model/effort/Fast 覆盖但保留保存值；关闭时只传实际配置非空项。SYSTEM + model=null + 合法 effort 非空必须可用；unsupported 报错不降档。requested 与原生可观察 actual 分开，未观察到的 actual=unknown。
+
+账号读取、device code 登录/start/cancel/logout、保存/刷新凭据由原生 Codex 管理；QZ 只呈现受控流程，不维护 DB OAuth token 刷新器，不依赖实验 external-token。V1 不以 experimental WebSocket/dynamicTools/project environments 为必需能力。
+
+一个 Mission 对应一个 durable Thread，不使用无限长 Program Thread；真实 Job/Evaluation 结果回该 Thread 后才结论。Reviewer 有独立 Thread、权限和输入清单，不是同聊天换角色。QZ 只编排有限业务阶段，不另造 Agent DAG/规划/记忆/工具循环；并行使用验证过的原生机制或独立受控会话，不固定凑七个角色。
+
+Mission 默认独占临时 Git worktree、独立 App Server child、workspace-write、network disabled、approvalPolicy=never，仅允许 worktree root。Agent 不访问 QZ 源仓库/其他项目/Sealed/Secret/DB/Docker socket，不通过 Git 操作绕过工作区管理。所需数据与实验经 mission-scoped stdio MCP。受信任 App Server 可访问模型服务/Provider 凭据，不等于 Agent shell 可获得该文件系统/环境权限。随机名 sentinel、auth.json、DB、master key、sealed、socket 等真实越界测试是硬要求；过滤 KEY/TOKEN 变量名不是隔离。
+
+初始默认预算：并行 2、Cycle 实验 20、修复 Turn 2、Mission Turn 16、墙钟 3600 秒、容器 2 CPU/4096 MiB、输出 64 MiB、每日自动 Cycle 3；均配置化、冻结并在入队事务预约。Optuna 内部 trial 计入预算。无法精确计费则只显示估算/不可用，不宣称严格美元限额。Agent 不能扩大政策/预算、自评、自批、发包、读 secret、改正式指标或写 SQL。
+
+只保存可观察调用、文件变更、命令/测试、公开总结和 Domain Event，不索取、存储或展示隐藏 chain-of-thought。
+
+## 7. 可靠执行、远端与产物
+
+Run/Attempt/队列/事件的精确字段和状态机见本文 A6、B4–B6。领域写入、预算、事件与 pgmq.send 同一 PostgreSQL 事务；消息仅携带 run_id 等稳定引用。当前 attempt_no/owner_epoch/DB lease 才能采纳结果，queue visibility 不是领域 authority。
+
+远端 stable `(run_id,attempt_no)`，先持久 dispatch intent 再外部 submit。超时/ACK 丢失进入 UNKNOWN/RECONCILING，查询原任务，不马上重复跑。可能接管同一 attempt；只有确认旧任务终止/不存在或安全隔离后才新 attempt。外部调用不持行锁。先验证并持久化不可变产物，再事务唯一采纳结果、事件/评估，最后 archive/ack。旧 Worker 返回 STALE_ATTEMPT，不改终态。
+
+取消先 CANCEL_REQUESTED；远端未确认停止不能显示 CANCELLED。成功/取消按同一行 CAS 唯一终态，不同时发布 success/cancel。浏览器关闭/超时不取消任务。仅可恢复基础设施错误有界重试；研究否定、数据无效、solver 不可行不是重试理由。正式引用产物不可按临时 workspace 规则删除。
+
+远端协议 `/runtime/v1` 是我方网关，不是 Nautilus 官方 HTTP API。默认 Rust，Python 仅按第 0 节有明确复用依据。生产 TLS 校验和明确凭据，Operator 配置 allowlist；拒绝 SSRF、重定向绕过、DNS rebinding、云元数据、任意 URL/宿主路径/环境变量/命令。可信网关独占 OCI socket；不提供任意 docker run。JobKind 映射登记镜像/入口和允许参数。
+
+每 Job 一个非 root、只读 rootfs、capabilities drop、默认无网络的进程/容器；限制 CPU/内存/PID/时限/文件大小/输出字节，不使用长期共享 CPython/BLAS 池承载不受信任任务。API 不嵌入科学解释器；采用 Python 控制面适配不意味着科学执行可回到 API 进程。可信 App Server 与不可信代码不能共享含 Secret 的 filesystem namespace。命令文本/Prompt 不是隔离证明。
+
+Artifact 只能使用服务端登记原生对象/版本；校验 schema/provenance/version/size/access 后采纳。路径存在、exit=0、远端 success 字符串不是资格。使用原生对象存储版本/唯一只读发布目录和数据库约束；Local 发布禁止覆盖。宿主管理员已经控制运行宿主不在不可变威胁边界内。业务不新建 hash/fingerprint 身份或发布 Gate。
+
+## 8. Release、审批、反馈与唤醒
+
+先冻结目标包再审批。审批绑定 release、artifact 原生版本、candidate/mandate/policy、下游、证据和有效期；任何目标/依赖变化产生新 Release/审批。Qualification 仅独立 VALID/PASS/新鲜/合法血缘证据产生；无手工 force PASS。
+
+Approval/Offer/Claim 在事务内重新验证版本、撤销、资格、REAL 数据、授权用途、政策、期限、readiness 配置版本与新鲜度；外部 probe 在事务外执行。Claim/revoke/expire 原子竞争只一结果；下游只领自身 offer。CLAIMED 后 QZ 无停止/撤单/伪撤销权限，只可 advisory 或新版本；旧过期目标不能因重试复活。
+
+Paper/Live 分开审批。MANUAL/AUTO_PAPER/AUTO_HANDOFF 是显式 Operator 授权的不可变政策，不是 Agent 可开启的布尔开关。自动晋级需要完整足量连续且新鲜 Paper、有效未撤销政策、资格/Release/数据新鲜、无活动阻塞劣化、下游兼容；任何缺失分别阻断。停用仅阻止未来授权，不撤销已执行交易。
+
+Forward 按 downstream/external_message_id 去重；保留 stream/sequence/revision/supersedes 和覆盖窗口；迟到、重传、重叠、gap、partial、correction 不重复累计独立样本。完整窗口交原生指标评估形成 HEALTHY/WATCH/DEGRADED/INSUFFICIENT_DATA Observation，再 Wake，再项目状态/冷却/预算校验启动新 Cycle；相同 Observation 不产生两个自动 Cycle。缺数据不等于健康或劣化。PAUSED/ARCHIVED 不开新 Cycle，保留待处理 Wake 和已有风险观察。
+
+确定性再平衡和研究分开：已合格 Alpha 在新 cutoff 计算新 Candidate/Release，所有新包照常校验、授权；不修改已批包，也不强迫 LLM 每次发明策略。Current weights 来源明确 FORWARD_SNAPSHOT/LAST_TARGET/NONE；LAST_TARGET 是假设，不冒称真实账户仓位。
+
+## 9. Ant Design 产品面与浏览器合同
+
+主导航：研究 / Alpha / 组合 / 交付 / 运行 / 设置。React/TypeScript + 官方 antd，不是 Ant Design Vue，不保留 Radix/自制基础组件双体系。ConfigProvider + App 统一 locale/theme/token，官方 icons；默认 ECharts 单图表方案，表格替代、真实单位和证据下载依据。保留合适业务复合组件、React Query 和测试经验，不 fork 基础组件或另建 form/theme。
+
+| 页面 | 用户任务与官方组件 |
 |---|---|
-| research_lineages / projects | parent/root lineage、origin、项目状态 DRAFT/ACTIVE/PAUSED/ARCHIVED、当前 Brief/Policy 引用 |
-| research_briefs / brief_data_bindings | 冻结版本、假设/经济含义、Universe、周期/目标单位、预算、评估/执行约束；数据 discovery/validation/sealed/forward 角色与访问域 |
-| research_cycles | 有界 turn/experiment/CPU/wall/memory/token/软费用/修复/并行预算、reserved/used、截止时间、正常无候选终态 |
-| data_sources / universe_versions / benchmark_versions | 上游来源、许可用途、能力快照、历史成员/退市/日历及版本，不把当前成分股倒灌到历史 |
-| dataset_revisions | event_time/available_at、schema/datatype、PIT/质量/修订策略、原生版本、REAL/SYNTHETIC/FIXTURE/LEGACY_UNKNOWN |
-| execution_assumptions | 原生市场/引擎、费用/撮合/滑点/延迟、初始资金/币种、日历/结算、参与率与可支持的市场范围 |
-| experiment_families / experiments | 根谱系、父提议、代码/参数、Optuna study/trial、输入、Run、结果与全部尝试历史 |
-| artifacts / input_sets / input_set_items | 原生对象及版本、media/schema、producer attempt、访问域、provenance、retention；typed artifact XOR dataset 引用 |
-| alphas / alpha_versions / calibrations | Alpha 状态、版本/代码/模型、输出单位/预测区间、训练截止、原生校准方法/有效性及真实评估引用 |
-| evaluation_policies / evaluations | 冻结切分/封存/最小样本/必需指标；Alpha XOR Candidate；执行状态与 VALID/INVALID/INCOMPLETE/UNSUPPORTED、PASS/REJECT/INCONCLUSIVE 分开 |
-| metric_values | value/null、status、reason、unit、频率/年化、n_obs、样本区间、原生方法与 source |
-| qualifications / qualification_revocations | 不可变资格、评估/政策/版本/有效期，追加撤销；被撤销资格不能继续授权新交付 |
-| evidence_exposures | 根谱系、分区、actor/目的、首次实际读取前插入；新 UUID、分支或崩溃重试不能清零泄漏计数 |
-| portfolio_mandates | 冻结目标/风险度量、币种/资金、Universe、原生估计/优化/ensemble、约束、再平衡、容差与执行假设 |
-| portfolio_candidates / candidate_alphas / candidate_targets | 原生 solver status、预测/协方差/诊断/目标 artifacts、至少两个有效 Alpha/Calibration/Qualification、当前权重来源、现金与 instrument target weights |
-| releases | 不可变 package 原生版本、Mandate/Candidate/Evaluation/市场能力版本、as_of/valid_from/valid_until、DEMO/REAL |
-| runs / run_attempts / run_events | 输入与 Cycle、状态、attempt_no/owner_epoch、DB lease/deadline、外部稳定 Job ID、派发/运行状态、manifest 接收、终态与单调事件序号 |
-| codex_sessions | RESEARCHER/INDEPENDENT_REVIEWER、原生 thread/turn、profile、请求配置及观察到的 actual 配置、native history 引用和允许公开的结构化摘要 |
-| automation_policies / policy_revocations | MANUAL/AUTO_PAPER/AUTO_HANDOFF、真实 Operator 授权、scope/有效期、绑定 Mandate/下游、Paper 窗口、反馈新鲜度与再平衡限制 |
-| approvals / approval_revocations | 冻结 Release、PAPER/LIVE、下游、OPERATOR/FROZEN_POLICY、授权证据及有效期、追加撤销 |
-| handoff_offers | Release/Approval/下游/环境/序号绑定，OFFERED/CLAIMED/ACKNOWLEDGED/REJECTED/REVOKED/EXPIRED，外部 claim 与 revision |
-| forward_messages / forward_evidence_windows | 下游 external message ID、流序号/revision/supersedes、覆盖区间/样本/报告、连续性/完整性/新鲜度与正式 Evaluation |
-| degradation_observations / wake_events | 真实评估与 HEALTHY/WATCH/DEGRADED/INSUFFICIENT_DATA；原因、not_before、Cycle、抑制/消耗状态与受限新研究 |
-| runtime_integrations / downstream_integrations | TLS endpoint、受限 credentials reference、能力/协议/接受版本/环境及快照 revision |
-| codex_profiles | SYSTEM/CUSTOM_PROVIDER 与 MANAGED_VOLUME/OPERATOR_MOUNT 两条独立轴；home/key reference、保留的 model/effort/fast/default 设置及 revision |
-| operator_auth_state / trusted_devices | 初始化状态、原生 TOTP secret reference、last accepted step、auth epoch；设备随机令牌 verifier、撤销与 epoch |
-| command_receipts | scope + operation + idempotency key、规范化 typed 非秘密请求、资源 ID/status/有效期；同 key 不同请求返回 409 |
+| 首页/研究列表 | 目标、阻塞、下一步；Layout/Menu/Table/Card/Alert/Tag，无虚构 KPI |
+| 新研究 | Steps/Form/Input/Select/InputNumber/Descriptions；草稿保存不等于启动 |
+| 研究详情 | Tabs/Splitter/Timeline/Table/Drawer；版本/证据/分支比较，聊天是证据侧栏 |
+| Alpha | Table/Descriptions/Statistic/Alert；预测单位、样本外、资格、限制；缺失不填 0 |
+| 组合 | Form/Table/Tabs/ECharts；风险/成本/容量/约束取舍，Alpha 权重和资产权重分开 |
+| 交付/审批 | Descriptions/Modal/Alert/Table；准确版本/后果、Paper/Live 分开，不乐观批准 |
+| 运行 | Timeline/Progress/Result/Collapse；真实状态、取消、重试、排错，未知进度不编百分比 |
+| 设置 | Form/Radio/Select/Slider/Switch；连接、模型/effort/默认互相独立，marks 来自真实能力 |
 
-## 6. 研究、封存与数值诚实
+每页支持 loading、empty、error、stale、permission denied、partial、offline；空列表不是接口故障或合同不兼容。提交禁重复仍依赖服务端幂等；409 展示版本变化与需重载字段，不覆盖。审批/secret 不乐观更新；后端 available_actions 决定可操作项，前端不猜状态权限。生成客户端不得 as any、大量 optional/default0、catch-return-empty 掩盖错误。
 
-所有特征/标签的可见性按 `available_at <= decision_at` 验证，包含源数据修订、时区、
-日历、退市及历史 Universe。数据质量或许可不足要显式拒绝，不允许把生成数据标成
-REAL。Fixture/Demo 可以用于演示和测试，永远不能获得正式 Qualification/Release。
+390/768/1440 全部核心操作可达；窄屏表格分组详情/横向查看，不隐藏批准/取消/配置。键盘、焦点/嵌套模态、屏幕阅读器、44px 触摸目标、非颜色状态、reduced motion、安全区域和多语言逐项验收。
 
-封存访问计数沿根谱系持久化，必须在真正取数之前提交；崩溃、新分支、重复调用不能
-擦除暴露。研究者不能读取 evaluator-only 对象。Reviewer 使用独立上下文及职责，
-不能自评、自批或把隐藏 CoT 当成评审事实。
+PWA 只缓存静态 shell；业务 API/认证/证据/审批/产物/SSE NetworkOnly。离线禁止 mutation。新版本由 Service Worker 生命周期检测并提示用户确认；未保存表单/审批对话框不强刷，不循环刷新。浏览器断线不取消运行。
 
-切分、purging/embargo、校准、优化和指标复用经过数值验证的上游。固定 horizon 的
-原生支持不等于变长标签区间已支持。CPCV 不等于 PBO；未验证或上游不支持的 DSR/PBO
-必须是 UNSUPPORTED/null，政策要求它们时结果为 INCONCLUSIVE，不能手写近似冒充。
-必须保留失败/无效/负收益/无候选实验及选择次数，不能只展示赢家。
+## 10. 身份、安全与运维
 
-正式 Alpha Arrow 合同包含 instrument_id、as_of/available_at/horizon_end UTC ns、
-nullable finite score/expected_return/uncertainty、coverage、alpha_version 及 dataset/
-unit/currency 元信息。Score 不是收益；必须通过仅使用训练期证据的原生校准形成有
-明确单位和周期的 expected return，才可参与要求该单位的组合。
+浏览器正常登录只输入 Google Authenticator-compatible 6 位 TOTP，不提交 username/password。首次初始化需要本机 CLI 一次性 bootstrap capability 或可信本地入口，不能公网抢绑；二维码/secret 仅受控 enrollment 展示，确认后 CAS 初始化并关闭 setup。TOTP 原生算法、防重放 last step、限流、信任浏览器撤销、注销/session epoch 均测试。
 
-## 7. 多 Alpha、组合与原生共享资金模拟
+Cookie Secure/HttpOnly/SameSite，同源 Origin/CSRF；机器/CLI 使用独立范围受限可撤销 token，不把浏览器 cookie/TOTP secret/动态码当 API token。Agent MCP 不复用 Operator session。TOTP/session/AEAD/随机 verifier 使用成熟库，依第 0 节选语言，不自制密码学。Secret 仅受信任进程解析；UI 只见 configured/status/last_checked；日志不含 auth 文件、token、完整 Provider/stderr/traceback。
 
-正式 Candidate 至少引用两个仍有效、单位/预测周期兼容的 Alpha Qualification；不得
-用两个拷贝 ID 或单 Alpha 100% 权重绕过。冻结 Mandate 包含原生预测/ensemble/协方差/
-风险估计及优化配置，预算、现金、资产边界、gross/net、turnover、行业/组别、交易
-费用、流动性/参与率和执行假设。当前权重必须来自明确 Forward Snapshot 或 Last Target，
-没有时记录 NONE，不捏造实盘仓位。
+默认 Compose 为 qz-api、qz-worker、PostgreSQL+PGMQ；Codex/远端按 profile 配置，单机也保持权限分区。生产同源 HTTPS，未认证写接口不能暴露。默认不托管在线 wheel 上传/安装/插件市场；受支持集成经显式版本/能力登记，既有使用固定 release。上游 Python import 只在隔离 job/必要受控适配，不长期热加载/卸载不可信插件。
 
-所有优化由 skfolio/CVXPY/原生 solver 承担。Infeasible、失败、维度/单位错误、非有限
-结果产生显式诊断，不产生权重，不使用等权、单资产全仓、静默放宽约束等 fallback。
-共享资金组合必须真正进入同一个 Nautilus 引擎；不能把独立回测曲线加权求和当成共享
-资金模拟。撮合、费用、成交、保证金/结算等由声明支持的上游能力决定。
+配置至少包括：HTTP bind/public URL、数据库/PGMQ、artifact root/backend、runtime endpoint/credential ref、Codex binary/CODEX_HOME、代理与 egress allowlist、预算/资源限制、session/TOTP secret ref、日志脱敏、backup destination/retention、telemetry opt-in。缺失 fail fast 指明字段，不退到公网无认证。来源显示 SYSTEM/EXPLICIT/DEFAULT 与安全摘要；启动验证镜像、协议、schema、ABI，不等首次真实研究才崩溃。
 
-市场能力必须有版本、到期日、合约/结算/日历覆盖和对应原生测试。未验证市场不得
-领取正式交付。固定 AAPL 示例回测不构成美国股票、期货或预测市场的生产能力认证。
+统一 request_id/project_id/cycle_id/run_id/attempt，tracing/OpenTelemetry 兼容；指标含队列等待/重投/lease loss、时长、未确认取消、孤儿任务、数据失败、预算耗尽、审批过期、反馈迟到。readiness 分 research/sealed/portfolio/paper/live，含组件、状态、reason、checked_at/valid_until；健康检查不每次启动 Codex/付费调用。检测连接是显式有总超时动作。
 
-## 8. 可靠执行与恢复
+复用 PostgreSQL 原生备份/pgBackRest、restic 等，不建备份平台。备份数据库、引用 artifacts、配置和受保护原生 Codex profile；市场目录由原所有者按版本备份，密钥与数据分离。恢复先暂停 admission，恢复一致版本、查悬空引用、reconcile 未完成远端任务，再恢复消费；不盲目重放 Live。重置/恢复明确处理旧 session/设备/凭据。RPO 24h/RTO 60min 是待演练目标，只有实际记录才声称达到。
 
-正式 Run 状态为 QUEUED、DISPATCHING、RUNNING、RECONCILING、CANCEL_REQUESTED、
-SUCCEEDED、FAILED、CANCELLED。Attempt 有独立编号、owner_epoch、DB lease、deadline、
-派发 NOT_SENT/SENT_UNKNOWN/ACKNOWLEDGED/TERMINAL、原生运行状态及 manifest 接收事实。
-结果接受和终态转移必须校验当前 owner/epoch/attempt，旧 worker 不能覆盖新事实。
+升级检查版本、磁盘、备份与兼容矩阵；不可逆 schema 用备份恢复回滚，不声称旧二进制任意读新 schema。磁盘满/DB断连/runtime离线停止接新任务并明确告警。恢复报告包含备份时点、DB/产物验证、reconcile 清单、未重复 Handoff、凭据处理、耗时和损失区间。
 
-同一 PostgreSQL 事务写业务事实、事件及 PGMQ send。至少一次投递是常态；外部 stable
-Job ID 与 durable tombstone 用于重连、lost-submit-ack 和重复投递对账，不靠内存字典。
-结果持久化并成功 CAS 终态之后才能确认队列消息；发出取消不等于已经取消，必须等待
-真实停止确认。租约过期不直接推导任务失败或重新执行，应先 reconcile。
+## 11. 迁移、删除与 README
 
-事件序号由同一 Run 行锁/CAS 分配并持久化。SSE `run_id:seq` 是唯一重放顺序，支持
-Last-Event-ID、重复去重与过期游标明确 410；NOTIFY 只是唤醒提示，不是事实源。
-不得持有数据库事务/行锁等待 HTTP。Readiness 先获取，再在事务内验证快照 revision、
-TTL 与所绑定的政策/资格/数据/运行能力，阻止陈旧检查授权新动作。
+新数据库/数据卷/API v2，不不可恢复重置原库：冻结旧写入 → 一致性备份/导出 → 新 schema → 导入映射/校验 → 只读对照 → 全链路验收 → 显式切换 → 观察/回滚窗口。不长期双写，不为语言删除有依据的合格复用；被替代的旧入口/架构/重复真相必须移除。
 
-## 9. 原生 Codex 与秘密隔离
+旧 Research/Run/Artifact 保留追溯；不能证明等价的 Strategy 为 LEGACY_REVALIDATION_REQUIRED，旧 PASS 不自动变新 qualification；旧审批/Handoff 只读不自动触发 Live。认证迁移独立，默认保留旧凭据，选择新原生 profile 则显式登录，不偷读/删除宿主 auth.json。导入报告包含 ID 映射、逐类行数、关系完整性、时间/精度、产物可读率、失败/人工决策/legacy 重验及未继承权限/审批/凭据，不能只看脚本无异常。
 
-SYSTEM 使用 Worker 明确指定的 CODEX_HOME，保留原生 auth.json、config 和订阅登录，
-不注入 QZ provider/key/base_url；CUSTOM_PROVIDER 只使用显式授权的对应配置，不得在
-失败时静默回退到另一账户。认证选择与 Home 的 MANAGED_VOLUME/OPERATOR_MOUNT 来源
-互不混用。不得实现自己的 OAuth token refresh 或要求用户导出浏览器秘密。
+旧 API/db/Alembic/jobs/harness/auth/science/portfolio/remote/plugin/前端路径逐项标记复用或替换；保留已发布旧迁移语义和只读导出，Git 保存代码历史。删除自研投递、重复 LLM/OAuth、伪指标、错误 execution-control、在线插件市场、Radix/重复图表及过时永久 PASS 文档；不在新系统不可用时删旧测试制造绿色。
 
-保留 Operator 保存的 model、effort、fast_mode；use_default_model_settings=true 时
-只屏蔽覆盖参数，不删除保留值，恢复自定义时仍可恢复。模型省略但 effort 非空是合法
-独立配置。模型和支持的 effort 来自全部分页后的真实原生列表；actual model/effort
-只在原生明确确认时记录，否则为 unknown，不能把 requested 值冒充 actual。
+README 对标 uv 的清晰定位/快速使用、Nautilus 的架构与支持边界、Qlib 的数据准备/实际流程、RD-Agent 的可运行研究示例、Ant Design 的文档/生态导航；不借用上游性能/收益/全部功能当本项目已交付。中文为主，英文状态同步。最终结构：一句话是什么/不是什么；真实 E2E 截图/短演示；已验证能力与限制；真实架构图；无付费凭据 Demo；原生登录/数据/远端/预算真实启动；流程与证据；开发测试；部署备份升级故障安全；路线图贡献许可证/第三方。
 
-生产协议来源是锁定二进制生成的 schema，使用稳定 stdio initialize/initialized、
-Thread/Turn、模型/账号与配置 API；不依赖实验 WebSocket/dynamicTools 绕过权限。
-真实原生 Thread 必须发起真实工具调用、提交隔离 Job、读取真实结果并继续同 Thread；
-Python/HTTP echo、拼接日志、模拟 reasoning 或假响应均不等于该闭环。
+Demo 一条文档命令启动，synthetic/fixture 明显且不能生产领取；真实模式不依赖测试 seed/手工 SQL。所有 Quickstart、CLI Help、配置/Skill 示例和生成合同进入 smoke；不存在命令就不能写“一键可用”。截图来自真实界面，不用概念图冒充。README/Skill 不复制领域状态机，实际 CI/Review 链接替代永久 RELEASE READY 声明。
 
-原生账号 account/login/start、device 流程、取消和 logout 由 Codex 执行；QZ 只呈现
-受控状态与用户操作，不保存多余令牌。原生隐藏推理、auth 内容、请求 header 与任意
-traceback 不能进入公共事件、SSE、模型报告或 CI artifact。
+## 12. 工作包与完成边界
 
-Trusted Codex 进程可访问其授权账号卷，不代表其不受信任 shell/研究代码也能访问。
-实际文件系统测试必须证明 untrusted 工作区/子进程无法读取 auth、数据库、sealed
-数据、其他工作区、宿主仓库或 Docker socket。仅删环境变量、正则过滤或文档承诺
-不能作为隔离通过；当前无账号协议探针没有完成该生产安全验收。
+| 工作包 | 必须输出 | 证明 |
+|---|---|---|
+| W0 | 原生版本/ABI/科学镜像、Codex 协议、PGMQ 事务、Nautilus 目标适配和复用登记 | 真实依赖与最小任务，不是 mock |
+| W1 | Brief/Cycle/Run/Evidence/Alpha/Candidate/Release/Delivery，字段模型和导入 | 新库/真实旧快照、约束/关系报告 |
+| W2 | Rust 优先控制面 API/Worker/CLI/MCP、事件、预算、幂等、鉴权 | 状态机/API/并发与复用取舍证据 |
+| W3 | 原生 Codex、远端、隔离 job、取消/恢复 | 真实 stdio/工具/进程/断连故障 |
+| W4 | PIT、分区、科学调用、trial ledger、独立评估 | 时间泄漏/缺数据/过拟合/非泄漏 golden |
+| W5 | 多 Alpha 原生优化、共享资金、Paper/Live、Forward/Wake | 数值参考、竞态、去重与自动闭环 |
+| W6 | 六域官方 antd、移动/PWA/状态/配置 | 三视口 Playwright/axe、截图 |
+| W7 | 备份恢复、升级/切换、迁移、README/CLI/Skill、清理 | 冷启动/恢复演练、docs smoke、残留检查 |
+| W8 | 全部 T01–T42、检查族、Review、合并后证据 | 最新 Head/merge/main 可复核 |
 
-## 10. 远端 Runtime 与 Artifact 边界
+新增选择先说明消除哪些第一方代码、增加哪些运维成本。核心缺口在同一 PR 解决，不用空实现、永久关闭 Feature Flag、缩小范围或 Future Work 跳过。覆盖率不是正确性；相同 fixture 可共享但不能空断言。
 
-远端 Rust Gateway 使用 TLS、明确 allowlist、请求大小限制、能力快照和协议版本；
-拒绝 SSRF、DNS rebinding、意外 redirect、任意 URL/宿主路径/环境变量或任意命令。
-Gateway 是唯一有权访问本地 Docker/OCI socket 的组件。每个 Job 是独立容器/进程，
-非 root、只读根文件系统、无默认网络、capabilities drop，并强制 CPU/内存/PID/时限/
-输出字节限制；不允许共享 Python 解释器进程池承载不受信任研究。
+结束顺序：完整实现同一 PR → 最新 Head 所有适用 CI 通过、所有 review threads 解决且 `@codex review` **明确无问题** → 才允许 merged → main 检查、迁移/完整链路/隔离/恢复/文档证据回填 → 才关闭 #62。更新 Head 必须重新满足；缺失、失败、取消、应运行却跳过、额度不足、未回复、旧 Head 或仅 emoji 都不算通过。创建 Issue/方案/空页面/PR/mock 不算完成。
 
-JobSpec 绑定 run_id、attempt、owner_epoch、stable external ID、原生镜像/协议版本、
-明确输入原生对象版本、资源限制、deadline 和允许的输出 schema。Gateway 的接受、
-状态、取消、结果 manifest 与 tombstone 均须跨进程重启保留。
+**GitHub 上 Codex 只承担 review，禁止要求其修复、实现、提交或自动处理。执行者自行分析、修改、补测、push 后再请求 review。** 普通 PR 不携带生产密钥；真实账号/许可数据/远端只在经过审查、锁定待交付 Head、最小权限的受保护环境验收。缺账号/数据/额度/权限为 BLOCKED，不是 skipped pass。禁止 pull_request_target 等把未审查代码放进 secret-bearing 环境；不用真实下单证明代码正确。
 
-结果先由受控接收者校验 schema/provenance/native version/size，再进入持久化 Artifact
-与 Run CAS；路径名、远端 success 字符串、进程 exit=0 或文件存在都不是完整验收。
-Artifact 使用原生对象版本和权限域，研究者不能猜 UUID 读取 sealed/Operator/Delivery
-域。错误有稳定公开 code，详细敏感诊断只进入受控审计，不把异常文本拼入公开响应。
+# 附录 A：完整字段级数据模型
 
-## 11. Package、Approval 与 Handoff 的事务边界
+以下是正式目标合同，不声称数据库已经实现。逻辑记录不意味着同等数量的服务/页面/框架。字段可在一致迁移中统一命名，但语义、必填性、约束和权限不得缺失。所有本地引用为真实 FK，未标 `?` 的字段必填；类型别名和共有字段按 A0。本文包含源附录 B 的 SQL 补充，不需到外部 Issue 补全。
 
-不可变 Target-only Package 必须在审批之前形成，绑定 Candidate、Mandate、Evaluation、
-原生 Artifact 版本、市场能力、环境、as_of 与有效期。新 Package 必须产生新 Release，
-不能原地修改已批准内容。Package 只含目标权重/信号/约束及证据引用，不含订单量、
-账户状态、执行命令或秘密。
+## A0. 类型、共有字段与写入
 
-审批验证最新 Qualification/revocation、冻结 Policy、REAL provenance、数据和评估
-新鲜度、市场/下游 readiness 与到期时间。领取时在事务内再次验证，claim 与 revoke/
-expire 竞争必须有唯一结果。下游只能领取绑定自己的 offer，ack 使用外部稳定身份和
-幂等键。已经 claim 的外部交付不能通过 QZ 伪造撤单/停止；撤销只能阻止未来领取并
-提供明确 advisory 或新 Release。
+- `Id=UUIDv7`，JSON 标准 UUID 字符串；外部 ID 单独保存，不冒充本地 FK。
+- `Time=timestamptz`，JSON UTC RFC3339；市场 ns 为 Arrow timestamp(ns,UTC)，JSON 十进制字符串，不经 JS Number 截断。
+- `Rev=bigint>=1`，JSON 十进制字符串；可变对象 `expected_revision` CAS。计数依字段范围，涉及 bigint 的 wire 值用字符串。
+- `Decimal=numeric(38,18)`，JSON 十进制字符串；Money 带 ISO currency。tick/lot/price precision 复用 Nautilus，不另造算法；是否允许负权重由 mandate 决定。
+- `Metric=finite f64|null`；不接受 NaN/Infinity，null 带 status/reason。bool 只接受 bool，不混淆省略/null/false。
+- 每表 `id:Id PK, created_at:Time`。可变表另有 `updated_at:Time, revision:Rev`；immutable 禁 UPDATE/DELETE，撤销/修订追加；append-only 没有伪 mutable revision。
+- 默认归档，不级联删除引用的研究/评估/审批/交付。封闭 enum 与合同/DB CHECK 一致；状态迁移带当前 state/revision，不接受客户端终态赋值。
+- JSONB 仅存版本化上游配置/政策，schema_version、严格字段校验、unknown-field 拒绝或明确兼容；不用 dict[str,any] 隐藏领域。
+- Ref 只能服务端登记的原生对象，不能用户/Agent 提交 file:///etc/passwd、任意公网/内网 URL/bucket 路径。
+- Web/CLI/MCP 同一领域服务/权限合同，Rust 优先按第 0 节，Agent/job 无 DB 凭据。
+- 发布引用环用 nullable draft pointer 或同事务分配 ID + DEFERRABLE FK，不禁 FK/跨事务半发布。owned FK 优先 `(id,project_id)` 复合唯一/外键，血缘无环等由事务校验并发测试。
 
-AUTO_PAPER/AUTO_HANDOFF 必须有真实 Operator 冻结授权，限制有效期、Mandate、下游、
-环境、Paper 样本/连续时长、反馈新鲜度及最大日内再平衡。配置一个布尔开关不等于
-授权，不得用演示数据或过期政策自动 Live。
+## A1. 项目、Brief、周期与预算
 
-## 12. Forward、纠正与真实 Wake
+```text
+projects [mutable]
+  root_lineage_id: Id FK research_lineages
+  name: varchar(120)
+  description: text default ''
+  state: DRAFT|ACTIVE|PAUSED|ARCHIVED
+  current_brief_id: Id? FK research_briefs
+  current_automation_policy_id: Id? FK automation_policies
+  created_by: OPERATOR|IMPORT
+  archived_at: Time?
 
-Forward 使用下游 external message ID 去重，保留 stream sequence/revision/supersedes
-和真实覆盖区间；纠正不得再累计成第二份独立样本，重叠窗口不得双计。形成连续、
-完整、足量、新鲜的 Evidence Window 后才允许评估或 Paper→Live 判定。
+research_lineages [append-only]
+  origin: NEW|FORK|LEGACY_IMPORT
+  parent_lineage_id: Id? FK research_lineages
+  legacy_reference: text?
+  reason: text
 
-Degradation Observation 必须来自实际完成的有效评估；无数据不是退化，状态明确为
-INSUFFICIENT_DATA。Wake 由真实观察或明确授权事件产生，持久化 cause、cooldown、
-not_before、budget、消耗与抑制状态。定时扫描不能凭空制造退化，暂停也不能丢失事实。
-确定性再平衡、继续监视和重新研究是不同动作，必须有不同授权和预算。
+research_briefs [DRAFT mutable; FROZEN immutable]
+  project_id: Id FK projects
+  version: int >= 1
+  hypothesis: text
+  economic_rationale: text
+  universe_version_id: Id FK universe_versions
+  target_kind: SCORE|EXPECTED_RETURN
+  horizon_kind: FIXED_BARS|FIXED_DURATION|VARIABLE_INTERVAL
+  horizon_value: bigint? > 0
+  base_currency: char(3)
+  benchmark_ref: Id? FK benchmark_versions
+  evaluation_policy_id: Id FK evaluation_policies
+  execution_assumptions_id: Id FK execution_assumptions
+  budget: BudgetV1
+  stop_rule: StopRuleV1
+  state: DRAFT|FROZEN
+  frozen_at: Time?
+  supersedes_id: Id? FK research_briefs
+  revision: Rev  # only DRAFT updates
 
-## 13. API、CLI、MCP 与前端合同（目标）
+brief_data_bindings [append-only after Brief freeze]
+  brief_id: Id FK research_briefs
+  dataset_revision_id: Id FK dataset_revisions
+  role: DISCOVERY|VALIDATION|SEALED|FORWARD
+  access_policy: METADATA_ONLY|RESEARCH_READ|EVALUATOR_ONLY
 
-新业务 API 使用 `/api/v2`：auth/bootstrap、projects/briefs/cycles、experiments、data、
-alphas/evaluations、portfolios/candidates、releases/approvals/handoffs、forward、policies、
-runs/events/artifacts、settings/codex/models/login、readiness/integrations/migration。
-所有写接口带适用的幂等键和 expected_revision；同键不同 typed 请求返回 409；长任务
-返回 202 与真实 run_id。错误使用统一 Problem code、field_errors、current_revision、
-retryable 与 request_id，不能返回隐藏推理或任意异常文本。
+research_cycles [mutable]
+  project_id: Id FK projects
+  brief_id: Id FK research_briefs
+  ordinal: int >= 1
+  trigger: OPERATOR|SCHEDULE|DEGRADATION|NEW_DATA
+  wake_id: Id? FK wake_events
+  state: QUEUED|RUNNING|WAITING_INPUT|PAUSING|PAUSED|COMPLETED|CANCELLED|FAILED
+  outcome: QUALIFIED_CANDIDATES|NO_SUPPORTED_CANDIDATE|BUDGET_EXHAUSTED|INCONCLUSIVE|null
+  budget_snapshot: BudgetV1
+  reserved_experiments: int >= 0
+  used_experiments: int >= 0
+  reserved_cpu_seconds: bigint >= 0
+  started_at: Time?
+  ended_at: Time?
+  next_action: text?
+```
 
-CLI 与 Web 共享同一领域应用层和权限规则，不允许 CLI 直接插表或提供管理员旁路来
-完成 E2E。MCP 复用官方 rmcp，仅提供 Cycle-scoped 的 research.get_brief、data.describe、
-research.search_history、experiment.propose/validate/run、artifact.submit、run.get、
-evidence.read、portfolio.propose、research.conclude 等允许工具；没有审批、凭证读取、
-任意 HTTP、任意命令或任意路径工具。工具参数、返回值及 Artifact schema 来自同一
-Rust 合同源；代码生成产物在 CI 验证没有漂移。
+`unique(research_briefs.project_id,version)`、`unique(research_cycles.project_id,ordinal)`；current_brief 同项目且 FROZEN。Brief 冻结后内容/数据绑定不可改。预算预约与入队同事务，多 Worker 不可读剩余额度后各自超发。fork 接父血缘；legacy exposure unknown 不得换 UUID 获全新 sealed。
 
-前端整体采用官方 Ant Design、官方 icons 与单一图表方案，不保留 Radix/自建基础
-组件与重复图表库作为新系统永久兼容层。工作台覆盖 Idea/研究活动、Alpha 证据、
-组合候选与审批、Handoff/Forward、运行与设置；每个不可操作状态显示后端返回的原因。
-390/768/1440 宽度均可完成 PC 全部动作，不靠隐藏按钮假装响应式。图表支持证据追溯、
-失败/空态、时间单位与方法说明，禁止只展示漂亮收益曲线。
+```text
+BudgetV1:
+  schema_version: 1
+  max_experiments: u32
+  max_parallel_runs: u16
+  max_turns_per_mission: u16
+  max_repair_turns: u16
+  max_wall_seconds: u32
+  max_cpu_seconds: u64
+  max_memory_mib: u32
+  max_output_bytes: u64
+  max_cycles_per_day: u16
+  min_cycle_interval_seconds: u32
+  max_tokens: u64?
+  max_cost_decimal: decimal-string?
+  cost_currency: string?
+  cost_enforcement: UNAVAILABLE|ESTIMATED|EXACT
+StopRuleV1:
+  schema_version: 1
+  stop_on_qualified_count: u16
+  stop_on_budget: bool default true
+  stop_on_no_improvement_trials: u16?
+  stop_on_invalid_data: bool default true
+```
 
-PWA 只缓存允许的静态资源，敏感 API、SSE、认证和写操作不离线缓存；更新提示由真实
-Service Worker 生命周期驱动，由用户确认升级，保护未提交表单并避免循环刷新。验证
-键盘操作、屏幕阅读器、焦点、色彩、Reduced Motion、移动安全区域及 a11y。
+无准确计费能力不得接受 EXACT；费用值/币种配对。Optuna 内部 trial 使用预分配预算，不能藏在一次 job 无限搜索。资源/turn/并行上限必须有效正值且符合 runtime capability；修复 turn 不超过总 turn。停止规则由用户冻结，Agent 不能扩大。
 
-## 14. Operator 与机器身份
+## A2. 数据、Universe、基准与执行假设
 
-浏览器正常登录只输入 Google Authenticator-compatible 6 位 TOTP 动态码，不展示、缓存或提交 username/password。
+```text
+data_sources [operator mutable]
+  name: varchar(120)
+  runtime_id: Id FK runtime_integrations
+  native_catalog_ref: registered text
+  provider_kind: registered adapter enum
+  license_reference: text
+  allowed_uses: RESEARCH|RESEARCH_AND_PAPER|RESEARCH_PAPER_LIVE
+  enabled: bool default true
 
-首次初始化必须使用本地受控 bootstrap，不能让公网第一个访问者抢占系统。二维码/
-setup secret 只在受控初始流程展示，确认一次有效 TOTP 后绑定；last accepted step 的
-CAS 防止同一时间步重放，统一错误及限速防止探测。信任浏览器是显式可撤销的独立
-随机凭证，绑定 auth epoch；重置/恢复必须使旧设备与会话失效。
+universe_versions [immutable]
+  name: text
+  membership_artifact_id: Id FK artifacts
+  instrument_definition_artifact_id: Id FK artifacts
+  calendar_ref: text
+  calendar_version: text
+  selection_asof: Time
+  has_historical_membership: bool
+  coverage_start: Time
+  coverage_end: Time
 
-会话 cookie 使用 Secure/HttpOnly/SameSite，所有写操作验证同源及 CSRF；不得把 API
-暴露等同于匿名可写。机器/CLI 使用范围受限的独立 token；既有 CLI 的
-`QUAZONAI_API_TOKEN` 不得由浏览器 cookie、TOTP setup secret 或一次性动态码替代。
-Agent/Skill 永不读取、推断、复制或打印浏览器秘密。密钥加密/随机 token verifier
-复用成熟密码学组件，不自制认证算法；密码学身份保护不是业务内容 hash gate。
+benchmark_versions [immutable]
+  name: text
+  dataset_revision_id: Id FK dataset_revisions
+  return_kind: TOTAL_RETURN|PRICE_RETURN|CASH
+  currency: char(3)
+  frequency: text
 
-## 15. 迁移、运维与文档
+dataset_revisions [immutable published metadata]
+  source_id: Id FK data_sources
+  native_snapshot_ref: text
+  native_storage_version: text
+  universe_version_id: Id FK universe_versions
+  schema_version: text
+  data_kind: BAR|QUOTE|TRADE|ORDER_BOOK|FUNDAMENTAL|EVENT|DERIVED_FEATURE
+  partition_role: DISCOVERY|VALIDATION|SEALED|FORWARD
+  event_start: Time
+  event_end: Time
+  available_through: Time
+  row_count: bigint >= 0
+  timezone: text
+  quality_artifact_id: Id FK artifacts
+  pit_status: VERIFIED|UNVERIFIED|INVALID
+  revision_policy: AS_KNOWN_THEN|RESTATED|UNKNOWN
+  origin: REAL|SYNTHETIC|FIXTURE|LEGACY_UNKNOWN
 
-新数据库/API v2/volume 明确隔离。迁移先备份，提供 dry-run、映射清单、外键与计数
-核对；旧事实标记 legacy_unknown，旧审批只读，禁止重放为 Live。不能覆盖旧库后才
-发现无恢复路径，也不能把双后端长期兼容当成完成。切换后删除旧服务入口、重复
-依赖/文档和失效 CI，而不是在新架构尚未可用时先删旧测试制造绿色。
+execution_assumptions [immutable]
+  venue_capability_ref: text
+  engine_image_ref: pinned native OCI reference
+  price_type: MID|BID_ASK|TRADE|BAR
+  starting_capital: Decimal > 0
+  base_currency: char(3)
+  fee_schedule_artifact_id: Id FK artifacts
+  slippage_model: NativeModelRefV1
+  fill_model: NativeModelRefV1
+  latency_model: NativeModelRefV1?
+  liquidity_artifact_id: Id? FK artifacts
+  cost_assumption_status: DATA_BACKED|CONSERVATIVE_ASSUMPTION|INSUFFICIENT
+  participation_limit: Decimal? in (0,1]
+  calendar_version: text
+  settlement_rule_ref: text
+```
 
-提供实际健康/就绪检查、超时、队列积压、租约和受控日志；备份必须执行真实恢复演练。
-验证断网、重启、低磁盘、失联 Gateway、迟到结果、重复消息及身份撤销；没有实际
-readiness 的组件返回明确未就绪，而非健康假阳性。
+`event_start < event_end`；发布 snapshot 不原地覆盖，更新新目录/版本；许可与用途匹配。PIT 报告证明 available_at 来源，不用 ingest_at 替代。Universe 含退市/到期；静态今日成分明确有偏，不能称完整历史池。
 
-README 对标优质开源项目，清楚说明用途/不做什么、真实可运行 Quickstart、依赖矩阵、
-架构、数据/模型/凭证配置、许可、贡献和故障排查。截图由真实运行页面产生，命令在
-干净环境执行；没有执行的流程不得写成“一键可用”。LICENSE/NOTICE 保持项目 AGPL
-要求，同时遵守各上游组件许可证。
+`NativeModelRefV1={schema_version,adapter_kind,upstream_class,upstream_version,parameters}`。class/adapter 来自服务端 allowlist 和实际 capability；parameters 为对应锁定适配器的严格 schema。未知项拒绝，不映成 GENERIC/DEFAULT；禁止任意 Python import/path/exec 越界。
 
-## 16. 完成边界与证据判定
+## A3. 实验、产物、Alpha 与校准
 
-W0 原生复用/协议/隔离/锁定；W1 模型迁移；W2 Rust API/Worker/CLI/MCP；W3 原生 Agent
-与恢复/隔离；W4 PIT/研究/独立评估；W5 多 Alpha/组合/交付/Forward/Wake；W6 Ant Design
-完整 UI/移动/PWA；W7 运维/文档/清理；W8 T01–T42 最终验收，全部属于同一个 PR。
+```text
+experiment_families [immutable identity]
+  project_id: Id FK projects
+  root_lineage_id: Id FK research_lineages
+  question: text
+  selection_policy_id: Id FK evaluation_policies
 
-T01–T42 包括冷启动、无账号演示、SYSTEM/独立 effort/CUSTOM/分页、受保护真实账号、
-同 Thread 工具/Job、独立 Reviewer、预算、PIT/根谱系暴露、原生切分/不支持指标、
-数值参考、多 Alpha/不可行/成本/共享资金/市场能力、事务/租约/提交恢复/结果确认/
-取消/SSE、不可变 Package/领取撤销竞争、Forward 纠正、Auto Live、Wake/再平衡、
-实际秘密隔离/恶意研究代码、TOTP、三个视口/a11y/PWA、迁移/恢复、真实文档截图和
-只经 Web/CLI 的干净实例全链路。每项需要真实自动化或受保护执行证据，不能只写文件
-名、assert true、mock 上游计算或手工 SQL seed 后宣布完成。
+experiments [immutable proposal; mutable execution pointer until consumed]
+  cycle_id: Id FK research_cycles
+  family_id: Id FK experiment_families
+  parent_experiment_id: Id? FK experiments
+  ordinal: int >= 1
+  hypothesis: text
+  expected_failure_modes: text
+  proposal_artifact_id: Id FK artifacts
+  code_artifact_id: Id? FK artifacts
+  parameter_artifact_id: Id? FK artifacts
+  trial_source: CODEX|OPTUNA|OPERATOR
+  native_study_ref: text?
+  native_trial_id: text?
+  run_id: Id? FK runs
+  outcome: PENDING|SUPPORTED|REJECTED|INVALID|INCONCLUSIVE
+  outcome_reason: text?
+  conclusion_artifact_id: Id? FK artifacts
 
-普通 CI 不含生产密钥。真实 Codex 账号/真实许可数据/真实远端验收只允许经过审查的
-源代码在受保护环境执行；缺配置、未授权或未运行是 BLOCKED，不是 skipped pass。
-所需检查族为 rust、db-domain、contracts、frontend、e2e、native-runtime、codex-contract、
-security-isolation、recovery、docs-smoke、supply-chain、protected-acceptance 和完整的
-rewrite-complete。缺失、失败、取消或本应运行却跳过的检查不能汇总成成功。
+artifacts [immutable]
+  project_id: Id? FK projects
+  producer_run_id: Id? FK runs
+  producer_attempt_id: Id? FK run_attempts
+  kind: CODE|PARAMETERS|SIGNALS|TARGETS|REPORT|METRICS|DATA_QUALITY|MODEL|PACKAGE|LOG|MIGRATION
+  media_type: text
+  schema_name: text
+  schema_version: text
+  storage_backend: LOCAL|OBJECT_STORE|NATIVE_CATALOG
+  storage_object_ref: text
+  storage_version: text
+  byte_count: bigint >= 0
+  access_class: OPERATOR|RESEARCH|EVALUATOR_ONLY|DELIVERY
+  origin: REAL|SYNTHETIC|FIXTURE|LEGACY_UNKNOWN
+  created_by: OPERATOR|RUNTIME|AGENT|IMPORT
+  retention_class: REFERENCED|TEMPORARY|AUDIT
 
-交付顺序不可降低：同一 PR 完成全部范围 → 最新 Head 全部适用 CI 通过且相关 PR 的
-Codex review 明确无问题、所有 review threads 已解决 → 才允许合并 → 验证 main 检查并
-回填迁移/全链路/隔离/恢复/截图证据 → 关闭 #62。更新 Head 后，旧 Head 的绿色和审查
-不自动成为新 Head 的通过证据。仅 emoji、无回复或额度不足不是明确审查通过。
+alphas [mutable display/active pointer]
+  project_id: Id FK projects
+  name: text
+  lifecycle: RESEARCH|QUALIFIED|SUSPENDED|RETIRED
+  active_version_id: Id? FK alpha_versions
 
-**GitHub 上 Codex 只参与 review；禁止要求其实现、修复、提交、自动改代码或代替执行者
-完成本 Issue。任何 W0 探针/旧 CI/文档声明都不能把当前 Draft 变成已完成重写。**
+alpha_versions [immutable]
+  alpha_id: Id FK alphas
+  version: int >= 1
+  experiment_id: Id FK experiments
+  root_lineage_id: Id FK research_lineages
+  code_artifact_id: Id FK artifacts
+  model_artifact_id: Id? FK artifacts
+  signal_contract_version: text
+  signal_kind: SCORE|EXPECTED_RETURN
+  horizon_kind: FIXED_BARS|FIXED_DURATION|VARIABLE_INTERVAL
+  horizon_value: bigint?
+  forecast_unit: RETURN_PER_HORIZON|RESIDUAL_RETURN_PER_HORIZON|UNITLESS_SCORE
+  calibration_id: Id? FK calibrations
+  runtime_image_ref: text
+
+calibrations [immutable]
+  estimator_kind: registered native estimator
+  estimator_version: text
+  model_artifact_id: Id FK artifacts
+  train_input_set_id: Id FK input_sets
+  fit_end_available_at: Time
+  output_unit: text
+  horizon_kind: text
+  horizon_value: bigint?
+  validation_evaluation_id: Id FK evaluations
+```
+
+`unique(cycle_id,ordinal)`、`unique(alpha_id,version)`；parent experiment 无环，root lineage 不可由 Agent 改。保留失败实验/试验次数。草稿可未绑定必要产物，但一经 evaluator/qualification/Release 引用即冻结，发布事务检查完整输入版本；不能改正在评估的实验。storage_version 是原生存储/发布目录版本，不是自研内容 hash ID。
+
+Arrow `qz.alpha_signal.v1`：
+
+```text
+instrument_id: utf8 non-null  # Nautilus native ID
+asof_ns: timestamp(ns,UTC) non-null
+available_at_ns: timestamp(ns,UTC) non-null
+horizon_end_ns: timestamp(ns,UTC) non-null
+score: float64 nullable
+expected_return: float64 nullable
+uncertainty: float64 nullable
+coverage_status: utf8 non-null
+alpha_version_id: utf8 non-null
+```
+
+`available_at <= asof < horizon_end`；score/expected_return 按 signal_kind 校验；uncertainty 未估计为 null，不能填 confidence=1；唯一 `(alpha_version_id,instrument_id,asof_ns,horizon_end_ns)`。元数据含币种、单位、horizon、dataset revision。预测表不含 broker_key/order_id/quantity/真实 account/position。
+
+## A4. 输入、政策、评估、资格与暴露
+
+```text
+input_sets [immutable]
+  project_id: Id FK projects
+  purpose: DISCOVERY|VALIDATION|SEALED|PORTFOLIO|FORWARD
+  decision_cutoff: Time
+
+input_set_items [immutable]
+  input_set_id: Id FK input_sets
+  dataset_revision_id: Id? FK dataset_revisions
+  artifact_id: Id? FK artifacts
+  role: registered contract enum
+  ordinal: int >= 0
+  CHECK exactly one of dataset_revision_id/artifact_id
+
+evaluation_policies [immutable]
+  project_id: Id FK projects
+  version: int >= 1
+  selection_rule: SelectionRuleV1
+  split_policy: SplitPolicyV1
+  metric_requirements: MetricRequirementV1[]
+  minimum_observations: int > 0
+  maximum_missing_fraction: Decimal in [0,1]
+  require_real_data: bool default true
+  required_capabilities: text[]
+  maximum_sealed_uses_per_lineage: int >= 1
+  validity_seconds: bigint > 0
+
+evaluations [immutable completed record]
+  project_id: Id FK projects
+  subject_alpha_version_id: Id? FK alpha_versions
+  subject_candidate_id: Id? FK portfolio_candidates
+  CHECK exactly one subject
+  input_set_id: Id FK input_sets
+  policy_id: Id FK evaluation_policies
+  run_id: Id FK runs
+  evaluation_kind: DISCOVERY|WALK_FORWARD|SEALED|PORTFOLIO|FORWARD
+  execution_status: SUCCEEDED|FAILED|CANCELLED
+  evidence_status: VALID|INVALID|INCOMPLETE|UNSUPPORTED
+  decision: PASS|REJECT|INCONCLUSIVE
+  report_artifact_id: Id FK artifacts
+  method_versions_artifact_id: Id FK artifacts
+  concluded_at: Time
+  valid_until: Time?
+
+metric_values [immutable]
+  evaluation_id: Id FK evaluations
+  metric_code: text
+  scope: text  # e.g. total/fold:2/regime:bear
+  value: Metric
+  status: OK|INSUFFICIENT_DATA|UNSUPPORTED|INVALID_INPUT|FAILED
+  reason_code: text?
+  unit: text
+  period_start: Time
+  period_end: Time
+  observation_count: bigint >= 0
+  frequency: text
+  annualization_factor: Metric
+  method_id: text
+  method_version: text
+  source_artifact_id: Id FK artifacts
+  higher_is_better: bool?
+
+qualifications [immutable]
+  alpha_version_id: Id FK alpha_versions
+  policy_id: Id FK evaluation_policies
+  qualifying_evaluation_id: Id FK evaluations
+  granted_at: Time
+  valid_until: Time
+
+qualification_revocations [append-only]
+  qualification_id: Id FK qualifications
+  reason_code: text
+  evidence_evaluation_id: Id? FK evaluations
+  effective_at: Time
+
+evidence_exposures [append-only]
+  root_lineage_id: Id FK research_lineages
+  dataset_revision_id: Id FK dataset_revisions
+  evaluation_id: Id? FK evaluations
+  actor_kind: OPERATOR|RESEARCH_AGENT|EVALUATOR|IMPORT
+  actor_session_ref: text?
+  exposure_kind: RAW|SAMPLE|METRIC|PLOT|SUMMARY|LEGACY_UNKNOWN
+  exposed_at: Time
+  purpose: text
+```
+
+sealed 使用预约先提交再授予 evaluator 能力，失败/取消不抹去机会。Exposure 包括原始行、样本、指标、图、摘要和 legacy unknown。后续反馈按冻结披露政策，不能洗白相同 sealed。缺 required metric、实现不支持、样本不足、方法不适用或过期均 INCONCLUSIVE；无“全部 Gate 缺值自动跳过”。
+
+```text
+MetricRequirementV1:
+  metric_code, scope
+  comparator: GT|GE|LT|LE|BETWEEN
+  threshold_low: Decimal?
+  threshold_high: Decimal?
+  required: bool
+  minimum_observations: nonnegative integer
+  method_allowlist: string[]
+SplitPolicyV1:
+  kind: WALK_FORWARD|CPCV_FIXED_HORIZON
+  train_size, test_size
+  step_size?, group_count?, test_group_count?
+  purge_observations, embargo_observations
+  label_horizon_observations?
+  interval_validation_required: true
+  sealed_revision_id: Id FK dataset_revisions
+```
+
+这些政策 JSON 同样有 schema_version=1；阈值按 comparator 校验数量/次序，原生方法/单位一致，不能仅比较数值。SelectionRuleV1 是冻结的候选选择合同，必须明确可比试验范围、选择指标/方向、候选数量和确定性平手规则；全部失败/淘汰仍在 trial ledger，不允许事后重定义集合。原生适配器具体可选参数由锁定版本的严格注册 schema 提供，不用任意 blob。固定 horizon 切分不能用于未支持 VARIABLE_INTERVAL。DSR/PBO 维持 UNSUPPORTED，直至真实上游与参考数据验收。
+
+## A5. Mandate、Candidate、目标与 Release
+
+```text
+portfolio_mandates [immutable versions]
+  project_id: Id FK projects
+  version: int >= 1
+  objective: MIN_RISK|MAX_UTILITY|RISK_BUDGETING
+  risk_measure: VARIANCE|CVAR
+  base_currency: char(3)
+  capital_assumption: Decimal > 0
+  universe_version_id: Id FK universe_versions
+  covariance_estimator: NativeModelRefV1
+  alpha_ensemble: NativeModelRefV1
+  optimizer: NativeModelRefV1
+  constraints: PortfolioConstraintsV1
+  rebalance_schedule: RebalanceScheduleV1
+  required_evaluation_policy_id: Id FK evaluation_policies
+  execution_assumptions_id: Id FK execution_assumptions
+  exposure_tolerance: Decimal > 0
+
+portfolio_candidates [immutable after result]
+  project_id: Id FK projects
+  mandate_id: Id FK portfolio_mandates
+  input_set_id: Id FK input_sets
+  decision_asof: Time
+  run_id: Id FK runs
+  solver_status: OPTIMAL|ACCEPTABLE_INACCURATE|INFEASIBLE|UNBOUNDED|FAILED
+  evidence_status: VALID|INCOMPLETE|INVALID
+  reason_code: text?
+  forecast_artifact_id: Id? FK artifacts
+  covariance_artifact_id: Id? FK artifacts
+  diagnostics_artifact_id: Id FK artifacts
+  target_artifact_id: Id? FK artifacts
+  allocation_evaluation_id: Id? FK evaluations
+  cash_weight: Decimal?
+  current_weights_source: FORWARD_SNAPSHOT|LAST_TARGET|NONE
+  current_weights_artifact_id: Id? FK artifacts
+
+candidate_alphas [immutable]
+  candidate_id: Id FK portfolio_candidates
+  alpha_version_id: Id FK alpha_versions
+  qualification_id: Id FK qualifications
+  ensemble_weight: Decimal
+  calibration_id: Id? FK calibrations
+  forecast_unit: text
+  coverage_fraction: Decimal in [0,1]
+
+candidate_targets [immutable compact publish-time snapshot]
+  candidate_id: Id FK portfolio_candidates
+  instrument_id: text
+  target_weight: Decimal
+  currency: char(3)
+  asof: Time
+  valid_until: Time
+
+releases [immutable]
+  candidate_id: Id FK portfolio_candidates
+  package_artifact_id: Id FK artifacts
+  package_schema_version: text
+  mandate_id: Id FK portfolio_mandates
+  evaluation_id: Id FK evaluations
+  market_capability_version: text
+  asof: Time
+  valid_from: Time
+  valid_until: Time
+  environment: DEMO|REAL
+```
+
+历史目标序列存 Arrow/Parquet，不每 bar 建业务对象。不可行 cash/targets 均 null；LAST_TARGET 是假设，真实权重输入来自下游签发 snapshot，QZ 不建真实账户账本。`sum(asset_weights)+cash_weight=1` 在 mandate tolerance 内，现金字段/保留代码明确；gross/net、组、成本、参与率原生计算，领域层独立合同/容差验证。
+
+```text
+PortfolioConstraintsV1:
+  schema_version: 1
+  long_only: bool
+  min_cash_weight, max_cash_weight: Decimal
+  min_asset_weight, max_asset_weight: Decimal
+  max_gross_exposure: Decimal
+  min_net_exposure, max_net_exposure: Decimal
+  max_turnover_per_rebalance: Decimal
+  max_participation: Decimal?
+  max_ex_ante_risk: Decimal?
+  group_bounds: [{group_id, min:Decimal, max:Decimal}]
+  asset_overrides: [{instrument_id, min:Decimal, max:Decimal}]
+  transaction_costs_ref: Id
+  liquidity_ref: Id?
+RebalanceScheduleV1:
+  schema_version: 1
+  kind: MANUAL|FIXED_INTERVAL|CALENDAR_SESSION
+  interval_seconds: u32?
+  calendar_ref: string?
+  timezone: IANA timezone
+  session_offset_seconds: i32?
+  max_input_age_seconds: u32
+  target_ttl_seconds: u32
+```
+
+不用的约束明确 null/empty，不能默认放宽；min<=max，与 long_only/现金/净敞口一致；原生 solver 实际不支持就报 capability 错误。日历/定时复用库不另造 Cron 平台。新 cutoff 必须新 Candidate/Release；ACCEPTABLE_INACCURATE 不能冒充 OPTIMAL。
+
+## A6. Run、Attempt、事件和原生会话
+
+```text
+runs [mutable]
+  project_id: Id FK projects
+  cycle_id: Id? FK research_cycles
+  kind: AGENT_RESEARCH|DATA_VALIDATE|ALPHA_EVALUATE|PORTFOLIO_BUILD|PORTFOLIO_SIMULATE|FORWARD_EVALUATE|EXPORT|IMPORT
+  input_set_id: Id FK input_sets
+  state: QUEUED|DISPATCHING|RUNNING|RECONCILING|CANCEL_REQUESTED|SUCCEEDED|FAILED|CANCELLED
+  current_attempt_no: int >= 0
+  active_attempt_id: Id? FK run_attempts
+  last_event_seq: bigint >= 0
+  deadline_at: Time
+  cancellation_requested_at: Time?
+  terminal_reason_code: text?
+  queued_at: Time
+  started_at: Time?
+  finished_at: Time?
+
+run_attempts [mutable until terminal]
+  run_id: Id FK runs
+  attempt_no: int >= 1
+  worker_owner_id: text
+  owner_epoch: bigint >= 1
+  lease_expires_at: Time
+  runtime_id: Id? FK runtime_integrations
+  external_job_id: text?
+  dispatch_state: NOT_SENT|SENT_UNKNOWN|ACKNOWLEDGED|TERMINAL
+  runtime_state: UNKNOWN|PENDING|RUNNING|SUCCEEDED|FAILED|CANCELLED
+  result_manifest_artifact_id: Id? FK artifacts
+  accepted_at: Time?
+  error_class: RETRYABLE_INFRA|PERMANENT_CONFIG|INVALID_INPUT|CANCELLED|RESOURCE_LIMIT|null
+  error_code: text?
+
+run_events [append-only]
+  run_id: Id FK runs
+  seq: bigint >= 1
+  attempt_id: Id? FK run_attempts
+  event_type: registered event type
+  schema_version: int >= 1
+  payload: TypedEventPayload
+  occurred_at: Time
+
+codex_sessions [mutable native references, not copied chat store]
+  project_id: Id FK projects
+  run_id: Id FK runs
+  role: RESEARCHER|INDEPENDENT_REVIEWER
+  profile_id: Id FK codex_profiles
+  thread_id: text
+  active_turn_id: text?
+  codex_version: text
+  protocol_schema_version: text
+  requested_settings: EffectiveCodexRequestV1
+  observed_model: text?
+  observed_effort: text?
+  observed_provider: text?
+  native_history_ref: text
+  public_summary_artifact_id: Id? FK artifacts
+```
+
+`unique(run_id,attempt_no)`、`unique(run_id,seq)`；external_job_id 在 runtime 唯一。lease 使用 DB 时间；接管同一次外部任务可增 owner_epoch，不因超时直接建新 attempt。持 run 行锁分配 seq、插事件、更新 last_event_seq，同一 run 已提交顺序一致；全局自增 ID 分配顺序不是事务提交顺序。
+
+EffectiveCodexRequestV1 记录 schema_version、profile/connection 来源和实际发送的非秘密可选 model/effort/Fast 覆盖；default 开启的省略与 saved 配置区分，observed 只能来自协议可观察事实。TypedEventPayload 为注册事件的封闭版本化 union，不记录秘密、任意原始 traceback 或隐藏推理。
+
+## A7. 自动化、审批、交付、Forward 与 Wake
+
+```text
+automation_policies [immutable, operator only]
+  project_id: Id FK projects
+  mode: MANUAL|AUTO_PAPER|AUTO_HANDOFF
+  mandate_id: Id FK portfolio_mandates
+  downstream_id: Id FK downstream_integrations
+  required_paper_observations: int > 0
+  minimum_paper_elapsed_seconds: bigint > 0
+  max_feedback_age_seconds: bigint > 0
+  promotion_metric_requirements: MetricRequirementV1[]
+  degradation_metric_requirements: MetricRequirementV1[]
+  authorized_at: Time
+  valid_until: Time
+  enabled_for_new_rebalances: bool
+  max_rebalances_per_day: int >= 1
+
+policy_revocations [append-only]
+  automation_policy_id: Id FK automation_policies
+  effective_at: Time
+  reason: text
+
+approvals [immutable]
+  release_id: Id FK releases
+  environment: PAPER|LIVE
+  downstream_id: Id FK downstream_integrations
+  authority_kind: OPERATOR|FROZEN_POLICY
+  automation_policy_id: Id? FK automation_policies
+  evidence_set_id: Id FK input_sets
+  granted_at: Time
+  valid_until: Time
+  CHECK FROZEN_POLICY requires policy FK; AGENT is never an authority
+
+approval_revocations [append-only]
+  approval_id: Id FK approvals
+  effective_at: Time
+  reason: text
+
+handoff_offers [mutable state; immutable bindings]
+  release_id: Id FK releases
+  approval_id: Id FK approvals
+  downstream_id: Id FK downstream_integrations
+  environment: PAPER|LIVE
+  delivery_sequence: bigint >= 1
+  state: OFFERED|CLAIMED|ACKNOWLEDGED|REJECTED|REVOKED|EXPIRED
+  external_claim_id: text?
+  offered_at: Time
+  expires_at: Time
+  claimed_at: Time?
+  acknowledged_at: Time?
+
+forward_messages [append-only]
+  downstream_id: Id FK downstream_integrations
+  external_message_id: text
+  handoff_id: Id FK handoff_offers
+  stream_id: text
+  sequence: bigint >= 0
+  message_revision: int >= 1
+  supersedes_message_id: Id? FK forward_messages
+  window_start: Time
+  window_end: Time
+  coverage_status: COMPLETE|PARTIAL|CORRECTION
+  observation_count: bigint >= 0
+  report_artifact_id: Id FK artifacts
+  issued_at: Time
+  received_at: Time
+
+forward_evidence_windows [immutable evaluated snapshot]
+  release_id: Id FK releases
+  input_set_id: Id FK input_sets
+  evaluation_id: Id FK evaluations
+  window_start: Time
+  window_end: Time
+  complete_observations: bigint >= 0
+  is_contiguous: bool
+  freshness_deadline: Time
+
+degradation_observations [append-only]
+  project_id: Id FK projects
+  release_id: Id FK releases
+  evaluation_id: Id FK evaluations
+  policy_id: Id FK automation_policies
+  classification: HEALTHY|WATCH|DEGRADED|INSUFFICIENT_DATA
+  reason_codes: text[]
+  observed_at: Time
+
+wake_events [mutable delivery state]
+  project_id: Id FK projects
+  observation_id: Id? FK degradation_observations
+  trigger: DEGRADATION|DATA_AVAILABLE|OPERATOR|SCHEDULE
+  state: PENDING|SUPPRESSED|CONSUMED|CANCELLED
+  not_before: Time
+  consumed_cycle_id: Id? FK research_cycles
+  reason: text
+```
+
+唯一 `(downstream_id,environment,delivery_sequence)`、`(downstream_id,external_message_id)`；同 observation 不重复同类自动 Wake。Correction 追加替代引用，不覆盖旧消息；重叠窗口不能加总 observation_count。自动晋级事务验证 ACTIVE、Operator 政策有效未撤销、Release/资格/数据新鲜、完整足量新鲜 Paper、无阻塞观察、readiness/合同通过、无重复交付。Agent 文本不满足这些条件。
+
+## A8. 集成、身份与幂等
+
+```text
+runtime_integrations [operator mutable]
+  name: text
+  endpoint: text
+  tls_policy: SYSTEM_CA|PINNED_CA
+  credential_ref: text
+  allowed_capabilities: text[]
+  protocol_version: text
+  last_capability_snapshot_artifact_id: Id? FK artifacts
+  enabled: bool
+
+downstream_integrations [operator mutable]
+  name: text
+  endpoint: text
+  credential_ref: text
+  accepted_package_versions: text[]
+  environments: PAPER|LIVE|BOTH
+  enabled: bool
+
+codex_profiles [operator mutable]
+  name: text
+  connection_mode: SYSTEM|CUSTOM_PROVIDER
+  profile_origin: MANAGED_VOLUME|OPERATOR_MOUNT
+  codex_home_ref: text
+  custom_base_url: text?
+  custom_api_key_ref: text?
+  custom_provider_options: StrictProviderOptionsV1?
+  use_default_model_settings: bool default true
+  saved_model: text?
+  saved_reasoning_effort: text?
+  saved_fast_mode: bool default false
+
+operator_auth_state [singleton mutable]
+  initialized: bool
+  totp_secret_ref: text?
+  last_accepted_totp_step: bigint?
+  session_epoch: bigint >= 1
+  setup_completed_at: Time?
+
+trusted_devices [mutable]
+  token_verifier_ref: text  # mature opaque-session/crypto verifier
+  label: text
+  last_used_at: Time?
+  expires_at: Time
+  revoked_at: Time?
+  auth_epoch: bigint
+
+command_receipts [immutable result binding]
+  principal_scope: text
+  operation: text
+  idempotency_key: text
+  normalized_nonsecret_request: StrictCommandV1
+  resource_id: Id
+  response_status: int
+  expires_at: Time?
+```
+
+幂等唯一 `(principal_scope,operation,idempotency_key)`；同规范化非敏感请求返回原结果，不同请求409。长期不可重复操作另有领域唯一约束，receipt 过期不能再次 Live handoff。secret 操作用原生凭据存储/版本，不把 secret/token/auth JSON/可还原秘密请求存 receipt，也不自制请求哈希 Gate。StrictCommandV1 是各真实命令的严格版本化 union，不是任意 JSON；StrictProviderOptionsV1 来自 pinned provider 允许参数的严格 schema，不让配置指定任意命令、环境泄漏或认证模式兜底。
+
+credential_ref 只被可信进程解析；API 仅 configured/status/last_checked，Agent 不得读。ChatGPT native token 留在 Codex profile，QZ DB 不设 access_token/refresh_token 列。
+
+前端模型目录最低字段：`id,model,display_name,hidden,default_reasoning_effort,supported_reasoning_efforts[{reasoning_effort,description}],is_default,fetched_at,profile_revision`。遍历 cursor，未知能力不补默认值。
+
+Readiness snapshot 至少：`integration_id,integration_revision,capability_version,scope,status,reason_code,checked_at,valid_until`。事务外 probe，事务内只采纳配置 revision 一致且未过期的快照；不持锁等待 HTTP。
+
+## A9. 索引、保留与迁移核对
+
+必要索引：projects(state,updated_at)；research_cycles(project_id,ordinal DESC)；experiments(family_id,ordinal)；runs(project_id,state,queued_at)；run_attempts(run_id,attempt_no)、活动 lease_expires_at partial index；run_events(run_id,seq)；artifacts(producer_run_id)；input_set_items(input_set_id)；evidence_exposures(root_lineage_id,dataset_revision_id)；evaluations(subject_alpha_version_id,concluded_at DESC)、evaluations(subject_candidate_id)；metric_values(evaluation_id,metric_code,scope)；candidate_alphas(candidate_id,alpha_version_id)；candidate_targets(candidate_id,instrument_id)；releases(candidate_id)；handoff_offers(downstream_id,environment,state,delivery_sequence)；forward_messages(handoff_id,stream_id,sequence,message_revision)；wake_events(state,not_before)。所有 owned FK 有适用 `(id,project_id)` 唯一及复合 FK。
+
+被正式评估/审批/交付引用的 artifacts 默认保留，临时日志/未采纳产物先查引用再清理；审计、trial ledger、sealed exposure 不因清空历史删除。市场目录/缓存由原生工具管理。迁移核对逐类旧新 ID/行数、悬空 FK=0、产物可读率、时间/精度、失败/人工决策/legacy revalidation、未继承权限/审批/凭据；旧 PASS 不是新 qualification。
+
+# 附录 B：完整接口、状态机、故障测试与 CI
+
+所有路径均为目标合同，不声称旧主干已实现。每行都需要 request/response schema、权限、状态转换、正负测试及代码/CI 证据。服务器生成字段不可由客户端赋值。
+
+## B0. 合同源、版本与持久化
+
+`qz-contracts` 为默认 Rust 的 HTTP/MCP 共用 DTO、错误、事件、政策、产物源，生成 OpenAPI/JSON Schema/TypeScript；批准的 Python 适配消费同一合同，不复制平行真相。Codex 协议从 pinned 原生二进制生成，不发明近似 DTO。HTTP `/api/v2`，远端 `/runtime/v1`，产物 `qz.*.v1`；不兼容改主版本，可选字段按明确兼容策略，生成物提交且 CI diff。引用环、candidate cash/current weights、草稿冻结、readiness、sealed 预约和允许清单规则已完整纳入 A0–A8。
+
+## B1. 通用 wire、权限与错误
+
+浏览器同源 secure/httpOnly/SameSite session + Origin/CSRF；机器独立 scoped/revocable credential；Agent 不能复用 Operator。创建/命令 `Idempotency-Key`，可变资源 `expected_revision`，二者不可互相替代。GET 无副作用，202 仅接受长任务。
+
+```http
+POST /api/v2/projects/{project_id}/cycles
+Idempotency-Key: <client-generated-key>
+Content-Type: application/json
+
+{"brief_id":"<frozen-brief-uuid>","expected_revision":"7"}
+```
+
+```json
+{"cycle_id":"<uuid>","run_id":"<uuid>","state":"QUEUED","revision":"1","links":{"run":"/api/v2/runs/<uuid>","events":"/api/v2/runs/<uuid>/events"}}
+```
+
+统一 Problem Details：
+
+```json
+{"type":"urn:quazonai:problem:revision-conflict","title":"对象已被修改","status":409,"code":"REVISION_CONFLICT","detail":"请重新载入后提交，不会覆盖新版本。","request_id":"<uuid>","retryable":false,"current_revision":"8","field_errors":[],"safe_next_actions":["RELOAD"]}
+```
+
+最低 code：VALIDATION_ERROR、AUTH_REQUIRED、SETUP_ALREADY_COMPLETED、TOTP_REPLAY、FORBIDDEN_CAPABILITY、REVISION_CONFLICT、IDEMPOTENCY_CONFLICT、BUDGET_EXHAUSTED、UNSUPPORTED_MODEL_EFFORT、INTEGRATION_UNAVAILABLE、CAPABILITY_STALE、CONTRACT_VERSION_UNSUPPORTED、DATA_NOT_POINT_IN_TIME、SEALED_ACCESS_DENIED、SEALED_ALREADY_EXPOSED、UNSUPPORTED_LABEL_INTERVALS、INSUFFICIENT_EVIDENCE、SOLVER_INFEASIBLE、STALE_ATTEMPT、CANCEL_NOT_CONFIRMED、RELEASE_EXPIRED、APPROVAL_REVOKED、ALREADY_CLAIMED、DEMO_NOT_DELIVERABLE、EVENT_CURSOR_EXPIRED。
+
+HTTP 400/422 输入、401认证、403权限、404不存在/需隐藏、409版本/状态、410过期cursor/不可续用能力、429配额/限流、503暂时依赖故障。内部分类留受控日志，响应不泄漏路径/secret/Provider原文/堆栈。
+
+## B2. HTTP 与 CLI 完整映射
+
+| API（均为 /api/v2 下） | 输入/结果要点 | 角色 / CLI |
+|---|---|---|
+| GET /bootstrap/status | initialized/setup_allowed，无 secret | 未认证；qz auth status |
+| POST /bootstrap/start | 一次性本机 capability → 短期 enrollment_id/二维码 | Bootstrap；qz auth bootstrap |
+| POST /bootstrap/confirm | enrollment_id/TOTP/可选 device label，CAS 初始化 | Bootstrap |
+| POST /auth/login | TOTP/trust_device/label，限速防重放 | 未认证 |
+| POST /auth/logout | 撤销当前 session | Operator |
+| GET/DELETE /auth/devices/{id} | 列表/撤销，敏感动作近期认证 | Operator |
+| GET/POST /projects | 筛选分页/新建，Agent 不得新建洗血缘 | Operator；qz project list/create |
+| GET/PATCH /projects/{id} | 展示/名称等可变字段，expected_revision | Operator；qz project show/update |
+| POST /projects/{id}/pause、/resume | 控制新研究，不操作下游交易 | Operator；qz project pause/resume |
+| POST /projects/{id}/briefs | 草稿/解析/缺失字段 | Operator；qz brief create |
+| POST /briefs/{id}/freeze | 数据政策预算验证冻结；422完整问题 | Operator；qz brief freeze |
+| POST /projects/{id}/cycles | frozen Brief → 202 cycle/run | Operator/受控调度；qz cycle start |
+| GET /cycles/{id} | 阶段/预算/实验/结论/available_actions | Operator；qz cycle show |
+| GET /experiments、/{id} | 可比条件过滤，不默认隐藏失败/取消 | Operator；qz experiment list/show |
+| GET /data/sources、/data/revisions/{id} | 可用性/许可/PIT/coverage，无任意读路径 | Operator；qz data list/describe |
+| POST /data/validate | 已登记 ref → 202 validation run | Operator；qz data validate |
+| GET /alphas、/alphas/{id}/versions/{version} | 资格/版本/单位/血缘/证据/限制 | Operator；qz alpha list/show |
+| POST /alpha-versions/{id}/evaluations | policy/input refs；sealed专门 evaluator | Operator/限权服务；qz alpha evaluate |
+| GET /evaluations/{id} | 三层状态/方法/指标/证据 | Operator；qz evidence show |
+| POST /portfolio-mandates | immutable版本，验证原生solver能力 | Operator；qz portfolio mandate |
+| POST /portfolio-candidates | mandate/alpha_version_ids/decision_asof/input_set_id → 202 | Operator/受限Agent建议；qz portfolio build |
+| GET /portfolio-candidates/{id} | Alpha/资产/cash、风险成本容量余量诊断 | Operator；qz portfolio show |
+| POST /releases | candidate_id → freeze包，独立组合模拟/政策PASS | Operator/受控服务；qz release create |
+| GET /releases/{id} | exact版本/asof/expiry/证据/市场 | Operator；qz release show |
+| POST /releases/{id}/approvals | environment/downstream_id/expiry/近期验证 | Operator；qz release approve |
+| POST /approvals/{id}/revoke | reason/expected context，claimed不伪撤销 | Operator；qz approval revoke |
+| POST /handoffs | release_id/approval_id → OFFERED，不是 executed | Operator/政策服务；qz handoff offer |
+| POST /handoffs/{id}/claim | 下游身份/external_claim_id/支持版本，原子重查 | Downstream |
+| POST /handoffs/{id}/ack | external receipt/状态，不代表知道全部成交 | Downstream |
+| POST /forward/messages | message/stream/sequence/revision/窗口/report ref，去重 | Downstream |
+| GET /projects/{id}/forward | 完整/缺失/迟到窗口与晋级/劣化原因 | Operator；qz forward show |
+| POST /projects/{id}/automation-policies | 显式授权、冻结阈值/期限/范围 | Operator；qz automation authorize |
+| POST /automation-policies/{id}/revoke | 阻止未来授权，不停止已执行交易 | Operator；qz automation revoke |
+| GET /runs、/runs/{id} | 分页/状态/attempt/原因/下一动作 | Operator；qz run list/show |
+| POST /runs/{id}/cancel、/retry | 限定转换，202或409 | Operator；qz run cancel/retry |
+| GET /runs/{id}/events | 持久SSE/恢复cursor | Operator；qz run watch |
+| GET /artifacts/{id}、/content | 元数据/受限下载，敏感访问先 exposure | 限权；qz artifact show/export |
+| GET/PATCH /settings/codex | 正交配置，secret仅状态 | Operator；qz codex config |
+| GET /codex/models | 全分页/支持effort/profile_revision | Operator；qz codex models |
+| POST /codex/login/start、/cancel、/logout | 原生account RPC，UI只展示受控流程 | Operator；qz codex login/logout |
+| GET /codex/account | 原生认证类型/status，不读回token | Operator；qz codex status |
+| GET /readiness、POST /integrations/{id}/probe | 分场景能力/期限，probe总超时 | Operator；qz doctor |
+| POST /migrations/import | 受信任 export ref/dry_run，202/report | Operator；qz migrate import --dry-run |
+
+表中 `/{id}` 等简写沿同一行资源前缀，不是根路由。列表 opaque cursor、服务端 limit 上限、稳定排序和项目/权限过滤。CLI 用生成客户端和同一服务器命令，不直写 SQL；唯一本地特权入口为受限 bootstrap/备份恢复等运维。
+
+## B3. MCP 白名单与真实闭环
+
+官方 rmcp；服务端绑定 project_id/cycle_id/run_id/role/capabilities/budget/deadline，模型不能自报 authority。
+
+| 工具 | 请求字段 | 返回/边界 |
+|---|---|---|
+| research.get_brief | brief_id | frozen目标/允许动作，无secret |
+| data.describe | dataset_revision_id | schema/coverage/PIT/用途；sealed只metadata |
+| research.search_history | query/family_id?/limit | 受限项目历史、失败和证据，暴露过滤 |
+| experiment.propose | family_id/hypothesis/rationale/parameters_ref/idempotency_key | experiment_id，不能自定PASS |
+| artifact.submit | declared_kind/schema_version/workspace_relative_path | 校验artifact_id，拒绝绝对/软链越界/超额 |
+| experiment.validate | experiment_id/input_set_id | 202/run_id，可见合同错误 |
+| experiment.run | experiment_id/registered_runtime_kind/input_set_id/idempotency_key | 先预算预约，202/run_id；无任意command/URL |
+| run.get | run_id | 真实state/attempt/产物/安全错误 |
+| evidence.read | evaluation_id | 允许披露级别/限制，exposure生效 |
+| portfolio.propose | mandate_id/alpha_version_ids/input_set_id/decision_asof/idempotency_key | proposal/candidate run，无approval |
+| research.conclude | experiment_ids/evaluation_ids/decision/explanation | 引用真实性验证，不生成qualification |
+
+approve/publish/handoff.claim/policy.update/db.query/secret.read/http.fetch_any 不存在于工具集。Reviewer 不是 Operator，研究者不能把别的 service token 带回 shell。最小真实闭环：原生 thread/start或resume → turn/start → 实际 tool请求 → 真实外部job → artifact/evaluation → 同thread后续turn引用实际evaluation_id → 结论。空工具列表、启动日志、漂亮解释/fake metrics不算。
+
+## B4. Runtime 协议
+
+```text
+GET  /runtime/v1/capabilities
+GET  /runtime/v1/catalogs/{registered_ref}/metadata
+POST /runtime/v1/jobs
+GET  /runtime/v1/jobs/{external_job_id}
+POST /runtime/v1/jobs/{external_job_id}/cancel
+GET  /runtime/v1/jobs/{external_job_id}/result
+```
+
+Capabilities：protocol_versions、runtime_version、engine_versions、image_refs、job_kinds、artifact_schemas、data_kinds、venues、label_interval_support、solver_capabilities、max_cpu/max_memory/max_output、isolation_profile、checked_at。缺能力拒绝，不选“差不多”executor。
+
+```json
+{"schema_version":1,"run_id":"<uuid>","attempt_no":1,"owner_epoch":"3","external_job_id":"<run-id>/1","job_kind":"PORTFOLIO_SIMULATE","image_ref":"<registered-pinned-native-image>","input_set_id":"<uuid>","inputs":[{"kind":"DATASET","revision_id":"<uuid>","registered_ref":"<immutable-catalog-version>"},{"kind":"ARTIFACT","artifact_id":"<uuid>","storage_version":"<immutable-version>"}],"parameters_artifact_id":"<uuid>","limits":{"cpu":2,"memory_mib":4096,"wall_seconds":3600,"output_bytes":67108864},"deadline_at":"<RFC3339>","requested_output_schemas":["qz.evaluation.v1","qz.portfolio_targets.v1"]}
+```
+
+JobSpecV1 使用固定登记入口/镜像/参数，不接受任意 docker 参数。输入能力只经可信通道/挂载授予，JobSpec/日志/Agent响应无secret。Nautilus对象用原生序列化/配置，不自己的价格/订单模拟。
+
+流程：验证合同/版本 → 只读输入挂载 → PyO3或有依据的独立Python适配调用pinned native → 原生导出 → Arrow/schema/资源验证 → 原子发布manifest → 退出。该层不审批/改政策。
+
+ResultManifestV1：`schema_version,run_id,attempt_no,external_job_id,state,engine_versions,started_at,finished_at,resource_usage,artifacts[{kind,schema,storage_ref,storage_version,byte_count}],error{class,code,safe_message}?`。控制面再次验证，不因 JSON 写 PASSED 授资格。
+
+同 external_job_id + 同 JobSpec 返回已有任务，不同409；使用 OCI身份/状态，不内存锁做唯一事实。terminal identity/tombstone 保留至确认采纳和重试窗口结束，清理不让旧请求立即重建。少量网关映射/tombstone 可复用嵌入式数据库/原子文件，不再建业务库/队列。实际隔离按第7节/T34/T35验证，不用 Prompt 替代。
+
+## B5. 事务与状态机
+
+### B5.1 入队
+
+```text
+BEGIN
+  lock project/cycle; validate state, frozen Brief, budget, receipt
+  reserve budget; create run(QUEUED)
+  lock run; allocate seq; insert run.created
+  pgmq.send(queue, {run_id})
+  write command receipt
+COMMIT
+```
+
+任一步失败整体回滚，不另建outbox搬到其他broker。PGMQ extension安装/升级显式部署/迁移。
+
+### B5.2 接管与采纳
+
+```text
+PGMQ read → short transaction, lock run/attempt
+  terminal: only safe ack, no reexecution
+  dispatch unknown: adopt owner_epoch, RECONCILING
+  dispatch allowed: persist attempt and intent
+commit → external submit/query without DB locks
+
+real terminal result → validate manifest and immutable artifacts
+→ short transaction, lock run/attempt
+→ check attempt_no/owner_epoch/state/input versions
+→ accept result, business records/evaluation and event
+→ commit → archive/ack
+```
+
+crash-after-submit-before-save 以 external_job_id 查询；crash-after-result-before-ack 不重复qualification/Release/Handoff；旧owner STALE_ATTEMPT，未采纳输出隔离用于诊断。外部至少一次，正式结果唯一采纳。
+
+### B5.3 取消与重试
+
+```text
+QUEUED → CANCELLED  # only no external side effect
+DISPATCHING/RUNNING/RECONCILING → CANCEL_REQUESTED
+CANCEL_REQUESTED → CANCELLED  # remote confirmed stopped/nonexistent
+CANCEL_REQUESTED → SUCCEEDED # only a lawful success-wins atomic race
+terminal → immutable; rerun creates new run or explicit safe new attempt
+```
+
+同一行CAS决定唯一终态，不能取消同时公布成功。无法确认停止保留CANCEL_REQUESTED+reason。重试前确认旧attempt停止/不存在/安全隔离；研究否定/数据无效/求解不可行不自动重试。
+
+### B5.4 Qualification/Release/Approval/Claim
+
+Qualification 仅独立VALID/PASS、未过期、合法数据/血缘；无强制PASS。Release检查原生solver可采纳、约束、共享资金模拟PASS、非demo/许可适用、资格新鲜、引用完整。文件先不可变发布再Release再审批。
+
+Approval/Offer/Claim锁相关对象，按DB时间重查政策撤销/到期/版本、Release、readiness和重复领取；最多一方领到能力，不持锁等HTTP。新rebalance同project/mandate/environment明确supersession，旧过期目标不能重试复活。
+
+### B5.5 自动化
+
+Forward真实消息 → 去重/对齐 → native指标 → Observation → Wake → 状态/冷却/预算 → 新Cycle；同Observation单事务不能两次开Cycle。PAUSED/ARCHIVED不启动；暂停现有任务按用户明确选择继续或申请取消，保留结果。缺数据INSUFFICIENT_DATA不假称健康/劣化。自动Live全部条件依第8节/A7逐项事务复核。
+
+## B6. SSE 与恢复
+
+GET run 同一快照返回 state/revision/last_event_seq；随后 `Last-Event-ID=<run_id>:<seq>` 从持久表读 seq>cursor。
+
+```text
+id: <run_id>:42
+event: run.state_changed
+data: {"schema_version":1,"run_id":"...","seq":"42","state":"RECONCILING","reason_code":"REMOTE_RESPONSE_UNKNOWN"}
+```
+
+run行锁保证已提交序列，持久查询补快照后订阅前窗口；通知丢失仍轮询。客户端seq去重，不按到达顺序覆盖较新状态。过期cursor在流开始前410+snapshot地址；已连接发送reset-required。未知兼容事件保留envelope并记录，未知不兼容版本提示升级/刷新不清空。heartbeat不编进度，断线不cancel。
+
+## B7. Target Package
+
+`qz.target_package.v1` 最少：
+
+```text
+release_id, package_schema_version, environment_origin,
+project_id, candidate_id, mandate_id, qualification_refs,
+evaluation_refs, input_revision_refs, engine_versions,
+asof, valid_from, valid_until, base_currency,
+capital_assumption, current_weights_source,
+targets[{instrument_id,target_weight,currency}], cash_weight,
+constraints_summary, cost_assumption_ref, compatible_market_capabilities,
+limitations, provenance_artifact_refs
+```
+
+全部对应不可变记录；无brokercredential、真实订单、quantity指令、账户写入口、实时止损/撤单/平仓。再平衡新包，不下游偷跑未经批准新研究代码。下游独立风险/账户/执行治理。下载只针对精确artifact/storage_version，不跳到相邻私有目录；claim失败不扩大权限重试。
+
+## B8. 完整自动化验收矩阵 T01–T42
+
+全部是本次交付项；共享基础fixture不等于空断言。每项输出CI日志、输入版本、产物/截图。真实收益不是预设必须出现的结果。
+
+| ID | 场景 | 必须证明 |
+|---|---|---|
+| T01 | Rust/PyO3/Nautilus/skfolio/solver冷启动 | pinned镜像实际安装/导入/运行，真实版本/结果；科学解释器不在API进程，语言取舍按第0节 |
+| T02 | 无凭据Demo | 一条文档命令完整UI演示；synthetic/fixture明显且不能生产领取 |
+| T03 | 原生Codex SYSTEM | 空QZ URL/key不覆盖native配置；真实stdio使用既有profile，无自动删/复制auth.json |
+| T04 | SYSTEM+effort | model=null、合法非空effort生效，来源不变，default开关保留保存值 |
+| T05 | 自定义Provider | 显式route/key，失败不偷用订阅，inactive凭据不注入 |
+| T06 | 动态模型目录 | 全分页，Slider marks来自supported efforts；未知报错不降档 |
+| T07 | 官方订阅原生登录 | 受保护环境实测device code/start/cancel/logout/status；token不进QZ DB/日志 |
+| T08 | Agent真闭环 | tool→真实job/evaluation→同thread消费结果→引用真实证据结论，不scripted UI假成功 |
+| T09 | 独立Reviewer | Thread/权限/输入隔离，研究者不能改Reviewer指标/冒用approval |
+| T10 | 并发预算 | 多Worker/Agent实验/CPU/并行预约不超发，Optuna trial计总预算 |
+| T11 | PIT | event已发生但available_at晚于decision拒绝，重述/退市不穿越 |
+| T12 | sealed不泄漏 | raw/preview/图/摘要/workspace/日志均不能绕读，fork继承暴露 |
+| T13 | sealed中途crash | 已授读取但失败仍记录消费，不能重领独立资格 |
+| T14 | purge/embargo | 固定horizon正确原生CV；未支持变量区间明确拒绝 |
+| T15 | 缺指标/NaN/试验不完整 | null+reason，required缺值INCONCLUSIVE，不填Sharpe0/DSR1/伪p-value |
+| T16 | 科学数值golden | 原生库与独立参考/手工小例一致，容差/solver状态/单位有依据 |
+| T17 | 至少两个Alpha | 两份真实预测经校准/混合/native优化到资产目标，不平均两条NAV |
+| T18 | 不可行约束 | INFEASIBLE，无发布权重，不fallback单资产100% |
+| T19 | 成本/换手/容量 | 原生费率/滑点/流动性输入产生可解释变化；超参与率拒绝，缺输入不补常数 |
+| T20 | 共享资金模拟 | 真Nautilus净额/资金/费用与目标序列一致，不重复扣费/平均独立账户 |
+| T21 | 市场/到期/结算 | 支持venue/data path原生场景；不支持预测市场不得READY |
+| T22 | DB事务故障 | domain/event/PGMQ任一步失败无半入队，不同会话验证 |
+| T23 | 重投/lease过期 | 同run不重复结果，过期owner终态被拒，current attempt可恢复 |
+| T24 | crash-after-submit | ACK丢失/Worker crash查询原任务，不盲目重复job |
+| T25 | result-before-ack | 重投不再发qualification/Release/Handoff，唯一约束/业务幂等生效 |
+| T26 | 取消/完成竞态 | 唯一终态，远端未停不CANCELLED，取消不触发下游撤单 |
+| T27 | SSE断线/通知丢失/并发 | 不漏事件/重复倒退，正确cursor/410/reconnect，关浏览器不取消 |
+| T28 | 包/审批绑定 | 变权重/数据/mandate必须新Release/审批，不能改已批文件 |
+| T29 | claim/revoke/expiry竞态 | 双领一次成功，撤销领取同步重查，过期目标不复活 |
+| T30 | Forward去重/纠正 | 重传不加样本，重叠/迟到/gap/correction正确处理 |
+| T31 | 自动Live | 缺Paper/过期政策/劣化/readiness分别阻断，仅完整条件交付target |
+| T32 | Degradation→Wake→Cycle | 真实观测，冷却/预算/PAUSED/去重无循环风暴 |
+| T33 | 确定性再平衡 | 新cutoff新Candidate/Release，不覆盖旧包、不让LLM绕审批 |
+| T34 | Secret/文件系统隔离 | 随机变量名sentinel、auth.json、DB、master key、Docker socket实际不可达 |
+| T35 | 恶意产物 | symlink/traversal/压缩炸弹/出网/sealed/fork bomb/超输出受限且安全错误可见 |
+| T36 | 初始化/TOTP | 无本机capability不能公网抢绑，并发confirm只一成功，重放/限速/设备撤销/注销有效 |
+| T37 | antd桌面/移动 | 390/768/1440全部核心动作，无Radix残留/嵌套模态焦点丢失 |
+| T38 | a11y/PWA/离线/更新 | 键盘/标签/非颜色/触摸，API不缓存，离线不写，未保存表单不被强刷 |
+| T39 | 旧数据迁移 | dry-run报告/真实旧快照/FK完整，旧PASS不晋级，原数据不毁 |
+| T40 | 恢复/磁盘满/依赖离线 | 版本一致、admission先暂停、无盲目Live重发，磁盘满拒新任务并告警 |
+| T41 | README/CLI/Skill | 全部quickstart/help/示例实际执行，真实截图，能力矩阵与测试相符 |
+| T42 | Web/CLI双入口完整闭环 | 新实例分别达研究/Alpha/组合/Paper/Forward/晋级或劣化唤醒，无手工SQL |
+
+T16可用两资产独立手算最小方差/费用前后差，不维护第二生产优化器。T31/T42可用专门非交易验收下游接target，**不用真实下单**。Demo/fixture不能通过测试开关变生产可批；真实路径用可追溯有权数据，生产制品无跳过Gate后门。
+
+## B9. Required checks 与受保护验收
+
+| Check | 必须内容 |
+|---|---|
+| rust | cargo fmt --check、clippy deny warnings、locked build、nextest/unit/proptest |
+| db-domain | 真PostgreSQL+PGMQ、SQLx offline、新库迁移/约束/事务/并发 |
+| contracts | OpenAPI/TS/JSON/Arrow diff、Codex原生schema比对、兼容性 |
+| frontend | locked install、lint、typecheck、Vitest、production build |
+| e2e | Web/CLI、三视口/PWA、Playwright/axe/截图 |
+| native-runtime | 真Nautilus/skfolio/CVXPY/solver/PyO3或批准的薄适配、市场/数值golden |
+| codex-contract | 真pinned App Server+本地可控Provider fixture；protocol/model/list/工具循环/环境 |
+| security-isolation | 真实隔离越界、依赖漏洞/secret扫描、安全配置 |
+| recovery | kill/restart、ACK丢失、lease、cancel race、SSE、恢复/迁移 |
+| docs-smoke | README命令/CLI/Skill/链接/生成文档一致与真实能力矩阵 |
+| supply-chain | Cargo/前端/科学锁、镜像/action原生版本固定、许可证/SBOM |
+| protected-acceptance | 授权系统Codex/官方订阅/custom Provider、真实remote和数据完整链路 |
+| rewrite-complete | 汇总所有结果和交付矩阵，失败/取消/缺失/应运行而skip必须失败 |
+
+普通PR CI无生产密钥，本地Provider fixture不能代替T07或受保护真实链路。真实账号由Operator在同一受保护profile登录，经审查锁定Head最小权限执行。额度/账号/数据/权限缺失为待处理/阻塞，不视通过；真实订阅集成不证明收益或Codex review。复用现成测试/coverage/license/SBOM工具，不另建Gate平台；不能删测试/全skip/关闭核心功能造绿。
+
+## B10. 交付映射与恢复证据
+
+最终PR提供W0–W8/T01–T42逐项代码模块、实际测试、CI run/artifact映射；标明复用/替换/删除的旧Python服务、自研数值/Agent/队列、Radix/重复图表和过时文档。语言按第0节，不以第一方Python本身判失败，也不以目录名掩盖未论证重建。运行配置、fail-fast、ABI/readiness和备份恢复演练字段完整见第10节；迁移核对见第11节/A9，不以新文档充当运行证据。
+
+## B11. 关闭证据
+
+```text
+Implementation PR:
+Reviewed Head:
+Merge Commit:
+GitHub CI Runs:
+Final Codex Review (explicit no issues):
+Unresolved Threads: 0
+W0 Compatibility / Native Runtime Evidence:
+Fresh-install Web + CLI E2E:
+Multi-Alpha / Numerical Golden:
+Paper / Live / Degradation / Wake Evidence:
+Isolation / Recovery / Backup Restore:
+Migration Report / Rollback Evidence:
+Ant Design Desktop + Mobile + PWA + Accessibility:
+README Commands / Screenshots / Docs Checks:
+Post-merge main Checks:
+Known Limitations / Residual Risks:
+```
+
+填有链接的完整证据不是授权跳过任何检查。第12节顺序不可降低：完整实现 → 最新Head CI全绿且Codex明确无问题 → merged → main复核/证据回填；不满足即部分完成，不关闭Issue。
