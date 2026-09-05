@@ -1,0 +1,61 @@
+name: Rewrite dependency bootstrap (not acceptance)
+
+on:
+  push:
+    branches: ['rewrite/issue-62-rust-evidence']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rewrite-bootstrap-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  native-bootstrap:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12.12'
+      - name: Resolve candidate dependency locks
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/qz-bootstrap-evidence
+          rustup toolchain install 1.90.0 --profile minimal --component rustfmt --component clippy
+          python -m pip install uv==0.8.15
+          cargo generate-lockfile
+          uv pip compile --python-version 3.12 --generate-hashes --only-binary :all: runtimes/science/requirements.in -o /tmp/qz-bootstrap-evidence/science-requirements.lock
+          cp Cargo.lock /tmp/qz-bootstrap-evidence/Cargo.lock
+          cargo fmt --all
+          git diff --binary > /tmp/qz-bootstrap-evidence/format.patch
+      - name: Compile and test Rust probe
+        run: |
+          set -euo pipefail
+          export PYO3_PYTHON="$(command -v python)"
+          cargo clippy --locked --workspace --all-targets -- -D warnings
+          cargo test --locked --workspace
+          cargo build --locked -p qz-job
+      - name: Execute real upstream engines and Arrow round trip
+        run: |
+          set -euo pipefail
+          uv pip install --python "$(command -v python)" --require-hashes -r /tmp/qz-bootstrap-evidence/science-requirements.lock
+          target/debug/qz-job verify-native --output /tmp/qz-bootstrap-evidence/native
+      - name: Export exact source snapshot for offline development
+        if: always()
+        run: |
+          mkdir -p /tmp/qz-bootstrap-evidence
+          git archive --format=tar HEAD | gzip > /tmp/qz-bootstrap-evidence/source.tar.gz
+      - name: Upload generated locks and actual evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rewrite-bootstrap-${{ github.sha }}
+          path: /tmp/qz-bootstrap-evidence/
+          if-no-files-found: error
+          retention-days: 7
