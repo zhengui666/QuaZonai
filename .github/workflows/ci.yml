@@ -40,6 +40,7 @@ jobs:
           cargo run --locked -q -p contracts --example generate > /tmp/native-evidence/domain-v1.openapi.json
           diff -u contracts/generated/domain-v1.openapi.json /tmp/native-evidence/domain-v1.openapi.json
           node tests/contracts/decimal-wire.mjs | tee /tmp/native-evidence/decimal-wire.log
+          node tests/contracts/bigint-wire.mjs | tee /tmp/native-evidence/bigint-wire.log
       - name: Execute real Rust solver, Nautilus and Arrow round-trip
         run: target/debug/job verify-native --output /tmp/native-evidence/native
       - name: Install locked official Codex and verify native stdio
