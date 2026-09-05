@@ -19,8 +19,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
           mkdir -p /tmp/reuse/core/src /tmp/reuse/nautilus/src /tmp/evidence
+          exec > >(tee /tmp/evidence/resolution.log) 2>&1
+          printf 'PUBLIC DEVELOPMENT INPUTS. Not committed-product acceptance.\n' > /tmp/evidence/README.txt
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
           cat > /tmp/reuse/core/Cargo.toml <<'TOML'
           [package]
           name = "reuse-candidates"
@@ -30,7 +32,7 @@ jobs:
           [dependencies]
           serde = { version = "=1.0.219", features = ["derive"] }
           serde_json = "=1.0.140"
-          iso_currency = "=0.5.3"
+          iso_currency = "=0.7.0"
           arrow-array = "=56.2.0"
           arrow-schema = "=56.2.0"
           arrow-ipc = "=56.2.0"
@@ -47,7 +49,7 @@ jobs:
           nautilus-backtest = { version = "=0.63.0", default-features = false }
           nautilus-model = { version = "=0.63.0", default-features = false, features = ["test-support"] }
           nautilus-trading = { version = "=0.63.0", default-features = false, features = ["examples"] }
-          anyhow = "=1.0.99"
+          anyhow = "=1.0.104"
           TOML
           curl --fail --location --proto '=https' --tlsv1.2 --max-time 60 \
             https://raw.githubusercontent.com/nautechsystems/nautilus_trader/v2.0.0rc4/crates/backtest/examples/engine_ema_cross.rs \
@@ -59,7 +61,6 @@ jobs:
           tar -C /tmp/reuse -czf /tmp/evidence/sources.tar.gz core nautilus vendor
           toolchain="$(rustup show home)/toolchains/1.98.0-x86_64-unknown-linux-gnu"
           tar -C "$toolchain" -czf /tmp/evidence/rust.tar.gz bin lib libexec
-          printf 'PUBLIC DEVELOPMENT INPUTS. Resolver output is not committed-product acceptance.\n' > /tmp/evidence/README.txt
           git diff --exit-code
       - name: Export public sources for isolated local development
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
