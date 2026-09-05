@@ -1,8 +1,14 @@
 name: Rewrite dependency bootstrap (not acceptance)
 
 on:
-  push:
-    branches: ['rewrite/issue-62-rust-evidence']
+  pull_request:
+    paths:
+      - 'Cargo.*'
+      - 'rust-toolchain.toml'
+      - 'apps/**'
+      - 'crates/**'
+      - 'runtimes/**'
+      - '.github/workflows/rewrite-bootstrap.yml'
   workflow_dispatch:
 
 permissions:
