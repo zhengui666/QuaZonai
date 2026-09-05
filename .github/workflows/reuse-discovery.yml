@@ -1,0 +1,92 @@
+name: Rust reuse discovery (not delivery acceptance)
+on:
+  pull_request:
+    paths: ['.github/workflows/reuse-discovery.yml']
+permissions:
+  contents: read
+jobs:
+  native-evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Resolve disposable development candidates, not product locks
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
+          mkdir -p /tmp/reuse/core/src /tmp/reuse/nautilus/src /tmp/evidence
+          cat > /tmp/reuse/core/Cargo.toml <<'TOML'
+          [package]
+          name = "reuse-candidates"
+          version = "0.0.0"
+          edition = "2021"
+          rust-version = "1.90"
+          [dependencies]
+          serde = { version = "=1.0.219", features = ["derive"] }
+          serde_json = "=1.0.140"
+          iso_currency = "=0.5.3"
+          arrow-array = "=56.2.0"
+          arrow-schema = "=56.2.0"
+          arrow-ipc = "=56.2.0"
+          clarabel = "=0.11.1"
+          TOML
+          echo 'fn main() {}' > /tmp/reuse/core/src/main.rs
+          cat > /tmp/reuse/nautilus/Cargo.toml <<'TOML'
+          [package]
+          name = "native-nautilus-probe"
+          version = "0.0.0"
+          edition = "2024"
+          rust-version = "1.98"
+          [dependencies]
+          nautilus-backtest = { version = "=0.63.0", default-features = false }
+          nautilus-model = { version = "=0.63.0", default-features = false, features = ["test-support"] }
+          nautilus-trading = { version = "=0.63.0", default-features = false, features = ["examples"] }
+          anyhow = "=1.0.99"
+          TOML
+          curl --fail --location --proto '=https' --tlsv1.2 --max-time 60 \
+            https://raw.githubusercontent.com/nautechsystems/nautilus_trader/v2.0.0rc4/crates/backtest/examples/engine_ema_cross.rs \
+            --output /tmp/reuse/nautilus/src/main.rs
+          cargo +1.98.0 generate-lockfile --manifest-path /tmp/reuse/core/Cargo.toml
+          cargo +1.98.0 generate-lockfile --manifest-path /tmp/reuse/nautilus/Cargo.toml
+          cargo +1.98.0 vendor --locked --manifest-path /tmp/reuse/core/Cargo.toml \
+            --sync /tmp/reuse/nautilus/Cargo.toml /tmp/reuse/vendor > /tmp/evidence/vendor-config.toml
+          tar -C /tmp/reuse -czf /tmp/evidence/sources.tar.gz core nautilus vendor
+          toolchain="$(rustup show home)/toolchains/1.98.0-x86_64-unknown-linux-gnu"
+          tar -C "$toolchain" -czf /tmp/evidence/rust.tar.gz bin lib libexec
+          printf 'PUBLIC DEVELOPMENT INPUTS. Resolver output is not committed-product acceptance.\n' > /tmp/evidence/README.txt
+          git diff --exit-code
+      - name: Export public sources for isolated local development
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rust-reuse-development-${{ github.sha }}
+          path: /tmp/evidence/
+          retention-days: 1
+          if-no-files-found: error
+      - name: Compile native Rust Arrow, solver and ISO library
+        run: cargo +1.98.0 check --locked --manifest-path /tmp/reuse/core/Cargo.toml
+      - name: Execute upstream Rust backtest without Python bindings
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +1.98.0 tree --locked --manifest-path /tmp/reuse/nautilus/Cargo.toml > /tmp/evidence/nautilus-dependencies.txt
+          if grep -Eq '(^|[[:space:]])pyo3(-ffi)? v' /tmp/evidence/nautilus-dependencies.txt; then
+            echo 'Unexpected Python runtime dependency' >&2
+            exit 1
+          fi
+          cargo +1.98.0 run --locked --manifest-path /tmp/reuse/nautilus/Cargo.toml 2>&1 | tee /tmp/evidence/nautilus.log
+      - name: Export actual outcome, including failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rust-reuse-result-${{ github.sha }}
+          path: |
+            /tmp/evidence/*.txt
+            /tmp/evidence/*.log
+          retention-days: 7
+          if-no-files-found: error
