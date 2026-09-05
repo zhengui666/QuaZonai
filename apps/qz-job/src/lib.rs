@@ -9,6 +9,9 @@ use serde::Serialize;
 mod arrow;
 mod backtest;
 mod optimization;
+mod report;
+
+pub use report::write_probe_report;
 
 #[derive(Serialize)]
 pub struct ProbeReport {

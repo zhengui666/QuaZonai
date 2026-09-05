@@ -1,6 +1,6 @@
 //! A one-process native compatibility probe for Issue #62 W0.
 use std::error::Error;
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::Write;
 use std::path::Path;
 
@@ -12,16 +12,21 @@ fn run() -> Result<(), Box<dyn Error>> {
     let directory = Path::new(&args[3]);
     // Refuse pre-existing paths and accidental overwrites. This local operator
     // command is not an Agent-controlled path or a published artifact service.
-    fs::create_dir(directory)?;
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(directory)?;
     let report = qz_job::probe(directory)?;
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(directory.join("native-probe.json"))?;
-    serde_json::to_writer_pretty(&mut file, &report)?;
-    file.write_all(b"\n")?;
-    file.sync_all()?;
-    println!("native compatibility probe completed; origin=FIXTURE; deliverable=false");
+    qz_job::write_probe_report(directory, "native-probe.json", &report)?;
+    // Publication is the commit point; a closed output pipe must not turn an
+    // already published report into a failed process result.
+    let _ = writeln!(
+        std::io::stdout(),
+        "native compatibility probe completed; origin=FIXTURE; deliverable=false"
+    );
     Ok(())
 }
 

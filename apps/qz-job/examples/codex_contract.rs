@@ -216,12 +216,9 @@ fn probe() -> Result<()> {
         "initialize": true, "unauthenticated_account_read": true,
         "default_thread_start": true, "effort_without_model_thread_start": true,
         "real_account_acceptance": false, "same_thread_inference_tool_loop": false});
-    let file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(directory.join("codex-probe.json"))?;
-    serde_json::to_writer_pretty(file, &report)?;
-    println!(
+    qz_job::write_probe_report(&directory, "codex-probe.json", &report)?;
+    let _ = writeln!(
+        std::io::stdout(),
         "native Codex contract probe completed; origin=FIXTURE; real-account acceptance=false"
     );
     Ok(())
