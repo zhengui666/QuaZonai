@@ -1,25 +1,15 @@
-# Third-Party Notices
+# Third-party notices
 
-QuaZonai depends on third-party packages. Their source code is not vendored or relicensed by this repository. Each package remains available under its upstream license.
+Original QuaZonai code remains AGPL-3.0-only under LICENSE/NOTICE. Third-party software retains its upstream license. The authoritative dependency inputs are Cargo.toml/Cargo.lock and runtimes/codex/package.json/package-lock.json. Obsolete Python/frontend manifests are not release inputs.
 
-## Authoritative dependency inputs
+| Component | Upstream license | Use |
+|---|---|---|
+| Nautilus Rust 0.63.0 | LGPL-3.0-only | Native BacktestEngine/model/trading; apps/job/src/backtest.rs adapts the official v2.0.0rc4 engine_ema_cross example and retains its copyright/license header |
+| Clarabel.rs 0.11.1 | Apache-2.0 | Native convex solver, not a QZ-owned numerical implementation |
+| Apache Arrow Rust 56.2.0 | Apache-2.0 | Native arrays/schema/IPC |
+| Serde, UUID, Chrono, BigDecimal, utoipa, thiserror, proptest | Resolved upstream license texts | Wire types, standard scalar implementations, schema and testing |
+| iso_currency 0.7.0 | Upstream license and versioned data attribution | ISO-code membership; not an online authoritative ISO service |
+| OpenAI Codex 0.144.4 | Apache-2.0 | Native App Server binary/protocol; no copied Agent loop |
+| PostgreSQL / PGMQ | PostgreSQL License / PGMQ upstream license | Isolated native transaction fixture and future persistence |
 
-Use these committed manifests to produce a release-specific license inventory and SBOM:
-
-- `backend/pyproject.toml`
-- `frontend/package.json` and `frontend/package-lock.json`
-
-The current repository does not commit a backend `uv.lock`; do not treat a nonexistent lockfile as release evidence.
-
-## Direct dependency inventory
-
-| Component | Direct dependencies |
-| --- | --- |
-| Backend runtime | Alembic, cryptography, FastAPI, HTTPX, idna, packaging, psycopg, Pydantic, PyOTP, python-multipart, SQLAlchemy, uv, Uvicorn |
-| Backend optional research/runtime groups | Optuna, PyArrow, openai-codex |
-| Frontend | React, React DOM, React Router DOM, Radix Themes, TanStack Query/Table/Virtual, XYFlow React, Phosphor Icons, ECharts, Lightweight Charts, Geist fonts |
-| Development and test tooling | Ruff, mypy, pytest, Playwright, Vitest, ESLint, TypeScript, Vite, Testing Library, jsdom |
-
-## Release requirement
-
-Before publishing a GHCR image or a release, generate and archive an exact dependency-license report and SBOM from the dependency graph resolved by the release build. Review package license texts and notices for that resolved graph; this document is an entry point, not a substitute for the upstream license terms.
+A dependency inventory is not a completed license audit. Before distribution, generate a complete license report/SBOM for the exact resolved graph, inspect upstream license texts and NOTICE requirements, and comply with LGPL requirements for redistribution/linking (including relinking/source obligations as applicable). No license is changed by a directory rename or rewrite. The repository does not vendor Cargo dependencies or toolchains.
