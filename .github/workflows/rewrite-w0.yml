@@ -17,11 +17,16 @@ jobs:
         with:
           persist-credentials: false
       - name: Build real Rust PyO3 executable and resolve candidate locks
+        env:
+          SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           mkdir -p evidence
+          printf '%s\n' "$SOURCE_HEAD" > evidence/source-head.txt
+          git rev-parse HEAD > evidence/tested-commit.txt
+          exec > >(tee evidence/build.log) 2>&1
           docker pull python:3.12.14-slim-bookworm
-          docker pull rust:1.98.1-slim-bookworm
+          docker pull rust:1.98.0-slim-bookworm
           docker build --target build --tag qz-w0-build --file runtimes/science/Dockerfile .
           cid=$(docker create qz-w0-build true)
           trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
@@ -49,7 +54,7 @@ jobs:
       - name: Record native image identities and source identity
         run: |
           git rev-parse HEAD > evidence/tested-commit.txt
-          docker image inspect python:3.12.14-slim-bookworm rust:1.98.1-slim-bookworm \
+          docker image inspect python:3.12.14-slim-bookworm rust:1.98.0-slim-bookworm \
             --format '{{json .RepoDigests}}' > evidence/base-images.txt
           docker image inspect qz-w0-science --format '{{.Id}}' > evidence/built-image-id.txt
       - name: Upload actual evidence and candidate lockfiles

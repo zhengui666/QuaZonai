@@ -1,5 +1,6 @@
 # W0 dependency-resolution image. Replace resolution with committed locks before release.
-FROM rust:1.98.1-slim-bookworm AS rust-toolchain
+# The published image currently carries 1.98.0; build with the 1.98.1 compiler fix.
+FROM rust:1.98.0-slim-bookworm AS rust-toolchain
 FROM python:3.12.14-slim-bookworm AS build
 COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo
 COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup
@@ -13,7 +14,8 @@ COPY Cargo.toml rust-toolchain.toml ./
 COPY apps/qz-job apps/qz-job
 # This first W0 pass records the resolved dependency graph for inspection.
 # Its success is not the locked-build or rewrite-complete acceptance check.
-RUN rustup component add rustfmt clippy \
+RUN rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy \
+    && rustc --version \
     && cargo generate-lockfile \
     && cargo fmt --all \
     && cargo clippy --workspace --all-targets -- -D warnings \
