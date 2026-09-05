@@ -9,6 +9,7 @@ on:
       - 'crates/**'
       - 'runtimes/**'
       - 'tests/native/**'
+      - 'tools/lock_science_runtime.py'
       - '.github/workflows/rewrite-bootstrap.yml'
   workflow_dispatch:
 
@@ -36,11 +37,9 @@ jobs:
           mkdir -p /tmp/qz-bootstrap-evidence
           rustup toolchain install 1.90.0 --profile minimal --component rustfmt --component clippy
           python -m pip install uv==0.8.15
-          cargo generate-lockfile
-          uv pip compile --quiet --python-version 3.12 --generate-hashes --only-binary :all: runtimes/science/requirements.in -o /tmp/qz-bootstrap-evidence/science-requirements.lock
+          uv pip compile --quiet --python-version 3.12 --generate-hashes --only-binary :all: runtimes/science/versions.txt -o /tmp/qz-bootstrap-evidence/science-requirements.lock
           cp Cargo.lock /tmp/qz-bootstrap-evidence/Cargo.lock
-          cargo fmt --all
-          git diff --binary > /tmp/qz-bootstrap-evidence/format.patch
+          cargo fmt --all -- --check
       - name: Compile and test Rust probe
         run: |
           set -euo pipefail
@@ -54,6 +53,27 @@ jobs:
         run: python tests/native/test_upstream_compatibility.py
       - name: Execute Rust bridge and Arrow round trip
         run: target/debug/qz-job verify-native --output /tmp/qz-bootstrap-evidence/native
+      - name: Export verified platform dependency lock
+        run: |
+          set -euo pipefail
+          mkdir /tmp/qz-verified-wheels
+          python -m pip download --only-binary=:all: --require-hashes --no-deps -r /tmp/qz-bootstrap-evidence/science-requirements.lock -d /tmp/qz-verified-wheels
+          python tools/lock_science_runtime.py /tmp/qz-verified-wheels /tmp/qz-bootstrap-evidence/science-linux-x86_64.lock
+      - name: Install pinned native Codex and generate its real protocol schemas
+        run: |
+          set -euo pipefail
+          npm install --prefix runtimes/codex --ignore-scripts --no-audit --no-fund
+          test "$(runtimes/codex/node_modules/.bin/codex --version)" = 'codex-cli 0.144.4'
+          mkdir /tmp/qz-codegen-home
+          CODEX_HOME=/tmp/qz-codegen-home runtimes/codex/node_modules/.bin/codex app-server generate-json-schema --out /tmp/qz-bootstrap-evidence/codex-schema
+          cp runtimes/codex/package-lock.json /tmp/qz-bootstrap-evidence/codex-package-lock.json
+      - name: Verify actual Codex stdio handshake and complete model pagination
+        run: |
+          set -euo pipefail
+          export CODEX_NATIVE_BIN="$PWD/runtimes/codex/node_modules/.bin/codex"
+          export CODEX_PROBE_DIR=/tmp/qz-codex-probe
+          timeout --kill-after=5s 90s cargo run --locked -p qz-job --example codex_contract
+          cp /tmp/qz-codex-probe/codex-probe.json /tmp/qz-bootstrap-evidence/codex-probe.json
       - name: Export exact source snapshot for offline development
         if: always()
         run: |
@@ -67,32 +87,53 @@ jobs:
           path: /tmp/qz-bootstrap-evidence/
           if-no-files-found: error
           retention-days: 7
-      - name: Export isolated development toolchains
+      - name: Export native Codex development dependency
         if: always()
         run: |
           set -euo pipefail
-          mkdir -p /tmp/qz-dev-rust /tmp/qz-dev-science
-          # Only installed tool directories: never HOME, .git, runner temp,
-          # authentication files, environment dumps, or application data.
-          tar -C "$HOME/.rustup/toolchains" -I 'zstd -T0 -3' -cf /tmp/qz-dev-rust/rust-1.90.tar.zst 1.90.0-x86_64-unknown-linux-gnu
-          cargo vendor --locked /tmp/qz-vendor > /tmp/qz-dev-rust/vendor-config.toml
-          tar -C /tmp -I 'zstd -T0 -3' -cf /tmp/qz-dev-rust/vendor.tar.zst qz-vendor
-          tar -C "$pythonLocation" -I 'zstd -T0 -3' -cf /tmp/qz-dev-science/python-science.tar.zst bin lib include share
-      - name: Upload isolated Rust development toolchain
+          mkdir -p /tmp/qz-dev-codex
+          tar -C runtimes/codex -I 'zstd -T0 -3' -cf /tmp/qz-dev-codex/codex.tar.zst node_modules
+      - name: Upload native Codex development dependency
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: rewrite-dev-rust-${{ github.sha }}
-          path: /tmp/qz-dev-rust/
+          name: rewrite-dev-codex-${{ github.sha }}
+          path: /tmp/qz-dev-codex/
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
-      - name: Upload isolated native development libraries
+
+  pgmq-bootstrap:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Start isolated upstream PostgreSQL and PGMQ
+        run: |
+          set -euo pipefail
+          docker pull ghcr.io/pgmq/pg18-pgmq:v1.10.0
+          docker run --detach --name qz-pgmq-w0 --env POSTGRES_PASSWORD=fixture-only-disposable ghcr.io/pgmq/pg18-pgmq:v1.10.0
+          for attempt in $(seq 1 60); do
+            if docker exec qz-pgmq-w0 pg_isready -U postgres; then break; fi
+            sleep 1
+          done
+          docker exec qz-pgmq-w0 pg_isready -U postgres
+      - name: Verify native transaction rollback, redelivery, and acknowledgement
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/qz-pgmq-evidence
+          docker image inspect --format '{{json .RepoDigests}}' ghcr.io/pgmq/pg18-pgmq:v1.10.0 > /tmp/qz-pgmq-evidence/image-version.json
+          docker exec -i qz-pgmq-w0 psql -U postgres -v ON_ERROR_STOP=1 < tests/native/pgmq_contract.sql | tee /tmp/qz-pgmq-evidence/contract.log
+      - name: Preserve actual PGMQ evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: rewrite-dev-science-${{ github.sha }}
-          path: /tmp/qz-dev-science/
+          name: rewrite-pgmq-${{ github.sha }}
+          path: /tmp/qz-pgmq-evidence/
           if-no-files-found: error
-          retention-days: 1
-          compression-level: 0
+          retention-days: 7
+      - name: Remove disposable upstream instance
+        if: always()
+        run: docker rm --force --volumes qz-pgmq-w0

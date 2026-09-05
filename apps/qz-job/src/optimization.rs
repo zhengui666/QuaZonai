@@ -61,7 +61,10 @@ pub(crate) fn native_minimum_variance(py: Python<'_>) -> PyResult<Vec<f64>> {
     kwargs.set_item("solver_params", solver_params)?;
     let estimator = optimization.getattr("MeanRisk")?.call((), Some(&kwargs))?;
     estimator.call_method1("fit", (&returns,))?;
-    let status: String = estimator.getattr("problem_")?.getattr("status")?.extract()?;
+    let status: String = estimator
+        .getattr("problem_")?
+        .getattr("status")?
+        .extract()?;
     if status != "optimal" {
         return Err(PyAssertionError::new_err("NATIVE_SOLVER_NOT_OPTIMAL"));
     }

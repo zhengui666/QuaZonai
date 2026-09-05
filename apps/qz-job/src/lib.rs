@@ -44,7 +44,10 @@ pub fn probe(directory: &Path) -> PyResult<ProbeReport> {
             versions.insert(distribution.to_owned(), actual);
         }
         versions.insert("pyo3".to_owned(), "0.25.1".to_owned());
-        let python_version: String = py.import("platform")?.call_method0("python_version")?.extract()?;
+        let python_version: String = py
+            .import("platform")?
+            .call_method0("python_version")?
+            .extract()?;
         if python_version != "3.12.12" {
             return Err(PyAssertionError::new_err("VERSION_MISMATCH:python"));
         }
