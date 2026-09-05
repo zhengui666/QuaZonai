@@ -68,6 +68,8 @@ jobs:
           cargo vendor --locked --manifest-path /tmp/qz-candidate/Cargo.toml /tmp/qz-dev-kit/vendor > /tmp/qz-dev-kit/vendor-config.toml
           cp /tmp/qz-candidate/Cargo.toml /tmp/qz-dev-kit/candidate-Cargo.toml
           cp /tmp/qz-candidate/Cargo.lock /tmp/qz-dev-kit/candidate-Cargo.lock
+          # Preserve native .cargo-checksum.json and other upstream dotfiles inside tar.
+          tar -C /tmp/qz-dev-kit -czf /tmp/qz-dev-kit/vendor.tar.gz vendor
           # No account homes, Cargo credentials, git metadata or CI tokens are exported.
           TOOLCHAIN="$(rustup show home)/toolchains/1.90.0-x86_64-unknown-linux-gnu"
           tar -C "$TOOLCHAIN" -czf /tmp/qz-dev-kit/rust-1.90.0.tar.gz bin lib libexec share/man
@@ -79,6 +81,10 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: offline-rust-dev-${{ github.sha }}
-          path: /tmp/qz-dev-kit/
+          path: |
+            /tmp/qz-dev-kit/*.tar.gz
+            /tmp/qz-dev-kit/*.toml
+            /tmp/qz-dev-kit/*.lock
+            /tmp/qz-dev-kit/*.txt
           if-no-files-found: error
           retention-days: 1
