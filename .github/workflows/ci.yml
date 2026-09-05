@@ -27,7 +27,7 @@ jobs:
           rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
           cargo fmt --all -- --check
           cargo clippy --locked --workspace --all-targets -- -D warnings
-          cargo test --locked --workspace --exclude store
+          cargo test --locked --workspace --exclude store --exclude server
           cargo build --locked --workspace --all-targets
           cargo tree --locked -e normal > /tmp/native-evidence/dependencies.txt
           if grep -Eq '(^|[[:space:]])pyo3(-ffi)? v' /tmp/native-evidence/dependencies.txt; then
@@ -39,6 +39,9 @@ jobs:
           set -euo pipefail
           cargo run --locked -q -p contracts --example generate > /tmp/native-evidence/domain-v1.openapi.json
           diff -u contracts/generated/domain-v1.openapi.json /tmp/native-evidence/domain-v1.openapi.json
+          cargo run --locked -q -p server -- openapi > /tmp/native-evidence/api-v2.openapi.json
+          diff -u contracts/generated/api-v2.openapi.json /tmp/native-evidence/api-v2.openapi.json
+          cargo run --locked -q -p server -- --help > /tmp/native-evidence/server-help.txt
           node tests/contracts/decimal-wire.mjs | tee /tmp/native-evidence/decimal-wire.log
           node tests/contracts/bigint-wire.mjs | tee /tmp/native-evidence/bigint-wire.log
       - name: Execute real Rust solver, Nautilus and Arrow round-trip
@@ -146,7 +149,7 @@ jobs:
         run: |
           set -euo pipefail
           rustup toolchain install 1.98.0 --profile minimal
-          cargo test --locked -p store -- --test-threads=4 2>&1 | tee /tmp/store-evidence/tests.log
+          cargo test --locked -p store -p server -- --test-threads=4 2>&1 | tee /tmp/store-evidence/tests.log
           git diff --exit-code
       - name: Preserve exact migrations and qualification of the evidence
         if: always()

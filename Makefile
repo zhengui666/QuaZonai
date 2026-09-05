@@ -1,4 +1,4 @@
-.PHONY: check check-unit check-store require-test-database native
+.PHONY: check check-unit check-store check-http require-test-database native
 
 # Full check fails closed when a disposable test database was not provided.
 check: require-test-database
@@ -10,10 +10,13 @@ check: require-test-database
 check-unit:
 	cargo fmt --all -- --check
 	cargo clippy --locked --workspace --all-targets -- -D warnings
-	cargo test --locked --workspace --exclude store
+	cargo test --locked --workspace --exclude store --exclude server
 
 check-store: require-test-database
 	cargo test --locked -p store
+
+check-http: require-test-database
+	cargo test --locked -p server
 
 require-test-database:
 	@test -n "$$DATABASE_URL" || { printf '%s\n' 'DATABASE_URL is required: use only a disposable PostgreSQL18 + PGMQ1.10.0 test instance.' >&2; exit 1; }

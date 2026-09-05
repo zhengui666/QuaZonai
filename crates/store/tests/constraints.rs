@@ -208,13 +208,13 @@ async fn new_database_migrations_are_repeatable_without_legacy_side_effects(pool
     let store = store::Store::from_pool(pool.clone());
     store.migrate().await.unwrap();
     let tables:i64=sqlx::query_scalar("SELECT count(*) FROM information_schema.tables WHERE table_schema='app' AND table_type='BASE TABLE'").fetch_one(&pool).await.unwrap();
-    assert_eq!(tables, 61);
+    assert_eq!(tables, 65);
     let migration_count: i64 =
         sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations WHERE success")
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(migration_count, 2);
+    assert_eq!(migration_count, 3);
 }
 
 #[sqlx::test(migrations = "../../migrations")]

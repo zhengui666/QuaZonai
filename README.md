@@ -2,7 +2,7 @@
 
 证据优先的自托管量化研究工作台：目标是将想法变成可追溯研究、合格Alpha和目标组合包，不是Broker、交易执行控制面或收益保证。
 
-> **正在重写，尚不可作为完整产品部署。** 本分支已删除旧服务、旧前端和兼容层；不要沿用旧Docker/uv启动命令。当前可运行内容是Rust合同/领域测试、PostgreSQL逐轮Store与关系测试、原生科学计算和Codex协议探针。完整Web、API、研究/交付、迁移和恢复尚未通过验收，PR #63仍须保持Draft。
+> **正在重写，尚不可作为完整产品部署。** 本分支已删除旧服务、旧前端和兼容层；不要沿用旧Docker/uv启动命令。当前可运行内容包括真实 Axum 认证 API、本机初始化命令、Rust 合同/领域测试、PostgreSQL 逐轮 Store、原生科学计算和 Codex 协议探针。完整 Web 产品、研究/交付、迁移和恢复尚未通过验收，PR #63仍须保持Draft。
 
 ## 已有实现与边界
 
@@ -12,7 +12,8 @@
 | 原生求解 | Clarabel Rust 0.11.1，最小方差手算参考0.8/0.2及不可行约束测试；不是完整生产组合流程 |
 | Arrow | Rust IPC RecordBatch写入/回读，明确FIXTURE不可交付 |
 | 领域基础 | 精确UUIDv7/bigint/Decimal、预算、租约/终态、Codex覆盖及required指标判定；不是完整数据库权限证明 |
-| PostgreSQL Store | 新库SQLx迁移、逐轮不可变预约/发送/结算、同Mission幂等与预算投影、关系唯一/复合外键；不是完整应用鉴权或Worker |
+| 认证 API | Axum + PostgreSQL 原生会话、一次性本机初始化、六位 TOTP 登录、防重放、持久注销/设备撤销；普通服务使用非 owner 数据库角色 |
+| PostgreSQL Store | 新库SQLx迁移、逐轮不可变预约/发送/结算、同Mission幂等与预算投影、关系唯一/复合外键；不是完整机器身份/研究权限体系或 Worker |
 | Codex | 锁定官方App Server stdio、全分页模型及Thread启动探针；真实账号/同Thread工具闭环还需验收 |
 | 交付与UX | 全量Ant Design、审批/反馈/晋级/唤醒、旧数据导入、恢复与隔离仍在实施，不虚构页面或状态 |
 
@@ -23,7 +24,7 @@
 ```sh
 cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets -- -D warnings
-cargo test --locked --workspace --exclude store
+cargo test --locked --workspace --exclude store --exclude server
 cargo build --locked --workspace --all-targets
 cargo run --locked -q -p contracts --example generate > /tmp/domain-v1.openapi.json
 diff -u contracts/generated/domain-v1.openapi.json /tmp/domain-v1.openapi.json
@@ -38,6 +39,8 @@ diff -u contracts/generated/domain-v1.openapi.json /tmp/domain-v1.openapi.json
 make check
 # Run only the actual PostgreSQL transaction/constraint tests:
 make check-store
+# Test actual Axum routes, cryptography and independent PostgreSQL databases:
+make check-http
 ```
 
 `make check-unit` 是无数据库的明确子集；不能拿其通过替代 Store 测试。
@@ -73,6 +76,17 @@ timeout --kill-after=5s 90s cargo run --locked -p job --example codex_contract
 目录不用qz-前缀；旧代码只存在Git历史，源码清理不删除用户数据。Rust可用就用Rust，Python须先提交具体能力证据。不自研成熟数值、认证、Agent、队列或容器平台。
 
 完整W0–W8/T01–T42、最新Head全部适用CI、明确无问题Codex review和零未解决线程之前不得合并；旧测试删除或少数检查绿色不代表完整产品通过。
+
+
+## 已实现的认证 API
+
+`apps/server` 已提供真实 Axum 认证服务与本机 `init-state`、`migrate`、`bootstrap` 命令，
+复用 tower-sessions/PostgreSQL、totp-rs、Argon2 和 RustCrypto。初始化需要本机一次性
+capability；正常登录只提交六位 TOTP。注销、设备撤销、认证 epoch 与重放检查由数据库
+持久化，旧 cookie 不能恢复已撤销权限。运行步骤见 [CLI](CLI.md) 和 [运维](OPERATIONS.md)。
+
+这是可运行的认证 API，不是研究产品已全部完成的声明；前端、研究/组合/交付全链路
+仍须按 DESIGN 实现和验收。API 合同由 `server openapi` 从实际路由生成，不手写平行协议。
 
 ## License
 

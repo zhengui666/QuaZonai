@@ -3,6 +3,7 @@
 //! untrusted agents and workers executing research code never get this pool.
 #![forbid(unsafe_code)]
 
+pub mod auth;
 pub mod turns;
 
 use sqlx::{postgres::PgPoolOptions, PgPool};
@@ -16,6 +17,18 @@ pub struct Store {
 
 #[derive(Debug, Error)]
 pub enum StoreError {
+    #[error("authentication required")]
+    AuthenticationRequired,
+    #[error("authentication attempt rejected")]
+    InvalidCredentials,
+    #[error("initial setup has already completed")]
+    SetupCompleted,
+    #[error("authentication code has already been consumed")]
+    TotpReplay,
+    #[error("recent authentication required")]
+    RecentAuthenticationRequired,
+    #[error("authentication rate limit exceeded")]
+    AuthRateLimited { retry_after_seconds: u32 },
     #[error("record not found")]
     NotFound,
     #[error("conflicting immutable command or native identity")]
@@ -34,6 +47,23 @@ pub enum StoreError {
 }
 
 impl Store {
+    /// For native adapters in trusted entrypoints (for example tower-sessions).
+    /// This is never exposed through an Agent tool or an HTTP/CLI data endpoint.
+    pub fn native_pool(&self) -> PgPool {
+        self.pool.clone()
+    }
+
+    pub async fn verify_runtime_role(&self) -> Result<(), StoreError> {
+        let elevated: bool = sqlx::query_scalar("SELECT rolsuper OR rolcreaterole OR rolcreatedb OR rolbypassrls OR has_schema_privilege(current_user,'app','CREATE') OR has_table_privilege(current_user,'app.operator_auth_state','TRUNCATE') FROM pg_roles WHERE rolname=current_user")
+            .fetch_one(&self.pool).await?;
+        if elevated {
+            return Err(StoreError::Invalid(
+                "runtime_role_must_be_non_owner_and_unprivileged",
+            ));
+        }
+        Ok(())
+    }
+
     pub fn from_pool(pool: PgPool) -> Self {
         Self { pool }
     }

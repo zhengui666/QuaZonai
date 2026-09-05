@@ -218,6 +218,50 @@ PWA 只缓存静态 shell；业务 API/认证/证据/审批/产物/SSE NetworkOn
 
 ## 10. 身份、安全与运维
 
+### 10.1 浏览器认证的具体实现合同
+
+浏览器 session 复用 tower-sessions 0.14.0 与官方 SQLx PostgreSQL Store 0.15.0；
+TOTP 复用 totp-rs 5.7.0（SHA1 / 6 位 / 30 秒），密码学复用 RustCrypto。
+Cookie 只承载原生 opaque session ID，Secure（HTTPS）、HttpOnly、SameSite=Strict、
+Path=/，不放 TOTP secret、验证码、Provider token 或业务授权。每次请求还必须查询
+下述独立授权记录；不能因为会话 middleware 的并发保存而复活已注销/撤销的登录。
+
+- `bootstrap_capabilities`：id、原生 Argon2id verifier、created_at、expires_at（最多15分钟）、
+  consumed_at；仅本机特权 CLI 可签发，原始值仅一次输出。start 在锁定 capability 与
+  singleton auth state 的事务内消费；同一 capability 不能展示第二份二维码。
+- `auth_enrollments`：id、capability_id UNIQUE、secret_ref、browser_binding、expires_at、
+  confirmed_at；secret 为成熟 AEAD 加密文件的 UUID 引用，browser_binding 是短期浏览器
+  session 内独立随机关联值，不是 Operator 身份。QR/provisioning URI 只在 start 响应
+  展示一次，不存在 GET 回读接口；响应丢失需本机重新发证，不能降级为公网无保护初始化。
+- `browser_logins`：id、auth_epoch、authenticated_at、expires_at、device_id?、revoked_at。
+  login_id 仅保存在原生 server-side session 中；没有把它本身设计成可直接使用的 bearer。
+  信任浏览器最多30天，普通登录12小时；设备撤销、session_epoch 变化、到期或注销立即
+  使每次权限检查失败。trusted_devices 的 verifier_ref 只引用对应 native-session 授权
+  记录，不再保存/实现另一套 browser token。logout 先持久撤销再清空原生 session。
+- `auth_rate_windows`：operation（bootstrap/login/reauth）、window_started_at、attempts。
+  同一部署的全局60秒窗口最多5次尝试，在验证前短事务原子预约；多 API 实例不因进程
+  重启或多 IP 绕过。失败也占用尝试。数据库不可达时拒绝认证，不退回进程内允许状态。
+
+所有表使用A0的UUIDv7/时间/共有字段；各次初始化和TOTP接受锁定同一 auth singleton。
+已接受的 step 只能递增；有限时钟宽容为 DB 当前30秒步的±1，匹配由上游 constant-time
+TOTP check 计算，QZ 不重写算法。确认初始化与首个登录记录同一事务提交；重放/两个
+并发confirm最多一项成功。近期认证为最多300秒；过期必须经独立 reauth 接口重新验证
+TOTP，不能仅修改 session 时间。原始 code/token/provisioning URI 不记录到日志、审计或
+command receipt。
+
+新增浏览器接口：GET `/auth/session`、POST `/auth/verify`、GET `/auth/devices`、DELETE
+`/auth/devices/{id}`（近期认证）。服务端配置明确 public URL；所有浏览器 mutation 验证
+精确同源 Origin，拒绝缺失/null/不同 scheme、host 或 port；CORS 不开放通配。
+仅显式 loopback development 配置可使用 HTTP，且监听地址也必须为 loopback；不存在
+skip-auth 开关。配置错误在启动时失败，不暴露未认证的业务写入口。
+
+Secret 文件格式使用 XChaCha20-Poly1305，随机 nonce 与明确 UUID/purpose AAD，
+加密主密钥为仅owner可读的32字节本机文件（不随数据库备份一起存储）。库负责原生
+加密/随机/verifier，cap-std 负责受限根目录读写；UUID命名、create_new、同步后只读
+发布，禁止任意路径、symlink越界、覆盖旧版本。轮换新建版本，不更改已有引用。
+本实现不把原生密码学完整性用作业务资格或内容身份。
+
+
 浏览器正常登录只输入 Google Authenticator-compatible 6 位 TOTP，不提交 username/password。首次初始化需要本机 CLI 一次性 bootstrap capability 或可信本地入口，不能公网抢绑；二维码/secret 仅受控 enrollment 展示，确认后 CAS 初始化并关闭 setup。TOTP 原生算法、防重放 last step、限流、信任浏览器撤销、注销/session epoch 均测试。
 
 Cookie Secure/HttpOnly/SameSite，同源 Origin/CSRF；机器/CLI 使用独立范围受限可撤销 token，不把浏览器 cookie/TOTP secret/动态码当 API token。Agent MCP 不复用 Operator session。TOTP/session/AEAD/随机 verifier 使用成熟库，依第 0 节选语言，不自制密码学。Secret 仅受信任进程解析；UI 只见 configured/status/last_checked；日志不含 auth 文件、token、完整 Provider/stderr/traceback。

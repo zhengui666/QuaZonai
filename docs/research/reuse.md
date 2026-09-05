@@ -69,3 +69,22 @@ Nautilus示例复用保留原版权/LGPL声明；QZ原有AGPL/NOTICE不修改。
 QZ 独有的部分仅为字段关系、许可/资格引用、不可变发布、同一 Mission/Turn 的预算和阶段规则。队列读写/归档、连接池、事务、迁移、精确数值和测试数据库管理均由成熟组件承接。`Store` 不是另一份 LLM Harness，也不把 PGMQ 的至少一次投递解释为外部模型 exactly-once。
 
 初始 DDL 只实现记录和关系约束，严格 JSON 参数、身份认证、资格授权、Sealed sandbox 与完整模型闭环仍须由相应服务实现并验收；不能把60张表或 fixture 关系的存在作为产品完成证据。
+
+## 浏览器认证与机密存储（2026-09-06）
+
+采用 [tower-sessions 0.14.0](https://docs.rs/tower-sessions/0.14.0/tower_sessions/)
+和 [官方 SQLx Store 0.15.0](https://docs.rs/tower-sessions-sqlx-store/0.15.0/)
+的 opaque cookie/session 与 PostgreSQL 持久化。上游明确警告并发 session 更新可能
+丢失；因此 QZ 的注销/设备撤销/epoch 存在独立数据库授权记录，任何 middleware
+并发回写都不能恢复权限，不自建另一套 session 算法。
+
+TOTP 使用 [totp-rs 5.7.0](https://docs.rs/totp-rs/5.7.0/)，读取锁定源代码的
+`TOTP::check` 确认其 constant-time comparison；QZ 只实现数据库 step 防重放和
+初始化 CAS。bootstrap verifier 使用 Argon2id，不自己实现 KDF；Secret 使用
+[RustCrypto XChaCha20-Poly1305 0.10.1](https://docs.rs/chacha20poly1305/0.10.1/)
+与随机 nonce/UUID-purpose AAD、cap-std 3.4.5 受限文件访问。数据库备份不包含
+主密钥。这些密码学原生完整性不是研究资格或业务内容 hash。
+
+[PostgreSQL18角色属性](https://www.postgresql.org/docs/18/role-attributes.html)
+明确 superuser 绕过权限：运行服务必须使用非owner/non-superuser角色；migration
+在独立本机运维命令中执行，不能每次服务器启动自动以管理员建表。

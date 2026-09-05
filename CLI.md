@@ -1,23 +1,49 @@
-# CLI 实现状态
+# CLI 命令
 
-完整目标CLI及权限合同只在DESIGN附录B；本文件不把未实现的命令写成可运行。
+完整产品合同在 DESIGN。当前已实现原生验证、逐轮 Store 和浏览器认证服务；研究/组合/交付命令仍待实现，不提供绕过 API 的手工 SQL 业务路径。
 
-## 当前可运行
+## 认证服务与本机管理
 
-- `cargo run --locked -p job -- verify-native --output NEW_DIRECTORY`：固定Rust Clarabel/Nautilus/Arrow fixture；目录必须不存在；不会读取用户数据或交付目标包。
-- `cargo run --locked -q -p contracts --example generate`：原生生成当前DTO OpenAPI，尚无HTTP endpoints。
-- `cargo run --locked -p job --example codex_contract`：需CODEX_NATIVE_BIN和不存在的CODEX_PROBE_DIR；仅原生stdio/模型/Thread兼容性，使用新空profile。
+以下入口复用 Clap；`cargo run --locked -p server -- --help` 展示实际命令。
 
-README给出完整可执行参数。没有兼容的旧Python CLI；旧命令已撤下。Operator-only命令、正式数据/项目/审批管理及MCP是仍需完成的实现项，不允许绕过API用手工SQL冒充完成。
+```sh
+# 目录必须不存在；生成私有 master.key、原生 session key 和加密 secrets 目录。
+cargo run --locked -p server -- init-state --state-dir ./var
 
+# DATABASE_URL 此时是独立的新库迁移身份。原生 PostgreSQL 管理预先创建
+# quazonai_app 登录角色；本命令只授予应用所需 DML，不创建或输出数据库密码。
+cargo run --locked -p server -- migrate --application-role quazonai_app
 
-## 开发验证：逐轮 Store
+# 将 DATABASE_URL 切换为非 owner、非 superuser 的应用身份。
+# 此本机命令显示一次15分钟有效的初始化 capability；没有远程发证接口。
+cargo run --locked -p server -- bootstrap
 
-这不是尚未实现的用户 API/CLI 命令。仅对可丢弃 PostgreSQL18 + PGMQ1.10.0 执行：
+# PUBLIC_URL 必须是实际同源 HTTPS 入口。API 不在启动时执行 DDL。
+cargo run --locked -p server -- serve --state-dir ./var \
+  --bind 127.0.0.1:8080 --public-url https://research.example
+```
+
+`DATABASE_URL` 支持环境变量；不要把真实密码写到命令行、Git 或日志。默认启动拒绝具有 schema CREATE、表 TRUNCATE 或超级用户权限的应用角色。master key 必须独立于数据库和加密对象备份。
+
+本地开发可显式使用 `--development-http --public-url http://127.0.0.1:8080`，同时监听地址必须为 loopback。此选项只调整本地传输和 cookie 的 Secure 属性，不跳过初始化、TOTP、会话撤销、Origin 或数据库角色校验。
+
+## 原生组件与合同验证
+
+```sh
+cargo run --locked -p job -- verify-native --output NEW_DIRECTORY
+cargo run --locked -q -p contracts --example generate
+cargo run --locked -q -p server -- openapi
+```
+
+`job` 命令只运行固定 Rust Clarabel/Nautilus/Arrow fixture，输出不可交付；不能生成正式资格或目标包。`contracts` 生成共享 DTO；`server openapi` 生成实际 HTTP 路由合同。原生 Codex 兼容性命令仍为 `cargo run --locked -p job --example codex_contract`，需 `CODEX_NATIVE_BIN` 与不存在的 `CODEX_PROBE_DIR`；不是完整模型工具循环。
+
+## 开发测试
+
+仅对可丢弃的 PostgreSQL18 + PGMQ1.10.0 使用：
 
 ```sh
 DATABASE_URL=postgres://TEST_USER:TEST_PASSWORD@127.0.0.1:55432/postgres \
-  cargo test --locked -p store
+  cargo test --locked -p store -p server
 ```
 
-SQLx 会创建/清理自己的测试数据库；不得给它生产 DATABASE_URL。迁移通过 SQLx 原生 runner 应用到新数据库，不需要部署旧 Python 服务。`apps/server` 用户入口仍未交付，不能把本命令写成产品 Quickstart。
+SQLx 创建独立测试数据库并执行提交的迁移；不要使用生产 DATABASE_URL。HTTP 测试运行真实 Axum、Argon2、TOTP、AEAD、PostgreSQL Session Store，并另测非 owner 角色与 loopback TCP。它们不是完整研究/组合/交付的验收结果。

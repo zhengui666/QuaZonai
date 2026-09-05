@@ -12,4 +12,14 @@ Original QuaZonai code remains AGPL-3.0-only under LICENSE/NOTICE. Third-party s
 | OpenAI Codex 0.144.4 | Apache-2.0 | Native App Server binary/protocol; no copied Agent loop |
 | PostgreSQL / PGMQ | PostgreSQL License / PGMQ upstream license | Isolated native transaction fixture and future persistence |
 
+| axum-0.8.9 | MIT | Rust authentication / HTTP / persistence / CLI integration |
+| tower-sessions-0.14.0 | MIT | Rust authentication / HTTP / persistence / CLI integration |
+| tower-sessions-sqlx-store-0.15.0 | MIT | Rust authentication / HTTP / persistence / CLI integration |
+| totp-rs-5.7.0 | MIT | Rust authentication / HTTP / persistence / CLI integration |
+| argon2-0.5.3 | MIT OR Apache-2.0 | Rust authentication / HTTP / persistence / CLI integration |
+| chacha20poly1305-0.10.1 | Apache-2.0 OR MIT | Rust authentication / HTTP / persistence / CLI integration |
+| cap-std-3.4.5 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | Rust authentication / HTTP / persistence / CLI integration |
+| clap-4.5.46 | MIT OR Apache-2.0 | Rust authentication / HTTP / persistence / CLI integration |
+| sqlx-0.8.6 | MIT OR Apache-2.0 | Rust authentication / HTTP / persistence / CLI integration |
+
 A dependency inventory is not a completed license audit. Before distribution, generate a complete license report/SBOM for the exact resolved graph, inspect upstream license texts and NOTICE requirements, and comply with LGPL requirements for redistribution/linking (including relinking/source obligations as applicable). No license is changed by a directory rename or rewrite. The repository does not vendor Cargo dependencies or toolchains.

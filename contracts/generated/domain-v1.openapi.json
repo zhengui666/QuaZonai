@@ -1,6 +1,143 @@
 {
   "components": {
     "schemas": {
+      "BootstrapConfirm": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "maxLength": 6,
+            "minLength": 6,
+            "pattern": "^[0-9]{6}$",
+            "type": "string"
+          },
+          "device_label": {
+            "maxLength": 120,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enrollment_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "trust_device": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "schema_version",
+          "enrollment_id",
+          "code",
+          "trust_device"
+        ],
+        "type": "object"
+      },
+      "BootstrapEnrollment": {
+        "additionalProperties": false,
+        "properties": {
+          "enrollment_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "provisioning_uri": {
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "enrollment_id",
+          "expires_at",
+          "provisioning_uri"
+        ],
+        "type": "object"
+      },
+      "BootstrapStart": {
+        "additionalProperties": false,
+        "properties": {
+          "capability": {
+            "maxLength": 43,
+            "minLength": 43,
+            "type": "string"
+          },
+          "capability_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "capability_id",
+          "capability"
+        ],
+        "type": "object"
+      },
+      "BootstrapStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "initialized": {
+            "type": "boolean"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "setup_allowed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "schema_version",
+          "initialized",
+          "setup_allowed"
+        ],
+        "type": "object"
+      },
+      "BrowserSession": {
+        "additionalProperties": false,
+        "properties": {
+          "authenticated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "recent_authentication_required": {
+            "type": "boolean"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "trusted_device_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          }
+        },
+        "required": [
+          "schema_version",
+          "authenticated_at",
+          "expires_at",
+          "recent_authentication_required"
+        ],
+        "type": "object"
+      },
       "BudgetV1": {
         "additionalProperties": false,
         "properties": {
@@ -154,6 +291,35 @@
         ],
         "type": "string"
       },
+      "DeviceList": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TrustedDevice"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "items"
+        ],
+        "type": "object"
+      },
       "EvidenceStatus": {
         "enum": [
           "VALID",
@@ -167,6 +333,36 @@
         "format": "uuid",
         "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
         "type": "string"
+      },
+      "LoginRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "maxLength": 6,
+            "minLength": 6,
+            "pattern": "^[0-9]{6}$",
+            "type": "string"
+          },
+          "device_label": {
+            "maxLength": 120,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "trust_device": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "schema_version",
+          "code",
+          "trust_device"
+        ],
+        "type": "object"
       },
       "MetricRequirementV1": {
         "additionalProperties": false,
@@ -623,11 +819,65 @@
           "stop_on_invalid_data"
         ],
         "type": "object"
+      },
+      "TrustedDevice": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "label": {
+            "type": "string"
+          },
+          "last_used_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "revoked_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "expires_at"
+        ],
+        "type": "object"
+      },
+      "VerifyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "maxLength": 6,
+            "minLength": 6,
+            "pattern": "^[0-9]{6}$",
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "code"
+        ],
+        "type": "object"
       }
     }
   },
   "info": {
-    "description": "Shared scalar, budget, Codex-settings, run and metric contracts. No HTTP endpoint or full-system acceptance is implied.",
+    "description": "Shared strict domain and authentication DTOs. HTTP routes are generated by the server crate; no full-system acceptance is implied.",
     "license": {
       "name": ""
     },

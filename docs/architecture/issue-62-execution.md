@@ -65,7 +65,7 @@ The schema enforces exact native artifact identity, frozen input membership,
 Qualification/Alpha/evaluation relationships, Release/candidate evaluations and
 Offer/approval/release/downstream/environment tuples. A single-use human grant is
 bound to one command target. These relational constraints do not replace the
-unimplemented application authentication or independent scientific qualification.
+remaining domain authorization or independent scientific qualification.
 
 ### Verification scope
 
@@ -103,15 +103,61 @@ A mandatory `store-postgres` CI job now covers these migrations and tests; the
 foundation aggregate requires its success. This workflow must run against the
 published Head. No green result from the earlier pre-Store commit applies to it.
 
+## Browser authentication vertical (2026-09-06)
+
+The first actual HTTP entrypoint now lives in `apps/server`. It reuses Axum0.8.9,
+tower-sessions0.14 with **only PostgreSQL persistence**, PostgresStore0.15,
+totp-rs5.7, Argon2id and RustCrypto XChaCha20Poly1305. A native `cap-std` directory
+and private key protect enrolled TOTP material. There is no memory-session fallback.
+`init-state`, native `migrate`, one-use local `bootstrap`, `serve` and native OpenAPI
+are real Clap commands. None provides research/approval authority to an Agent.
+
+Initialization requires a bounded local capability and the same private browser
+session; the global database singleton makes concurrent binding mutually exclusive.
+Normal login uses six-digit TOTP only. A fresh six-digit code is required for
+sensitive device revocation. PostgreSQL commits replay steps, login authority,
+fixed expiry, epoch and revocation independently of the cookie transport; an old
+or concurrently saved native session cannot resurrect a revoked login. Rate limits
+are atomic database counters, not process-local counts. Argon2 work is concurrency
+bounded. Secret/verifier/credential values are absent from response errors and logs.
+
+### New verification context
+
+The selective locked local command below passed **97 tests**: 12 contracts,
+40 domain, 3 native authentication/vault integrations, 35 actual PostgreSQL Store
+tests and 7 server tests. Six of the server tests use real independent PostgreSQL
+databases; one additionally sends real HTTP over a loopback TCP listener using
+a distinct non-owner PostgreSQL role. That role can execute the authentication
+flow but cannot alter or truncate domain tables. Native crypto is not mocked.
+The HTTP tests also cover missing/wrong origin, host mismatch, malformed JSON,
+cookie tampering, replay, rate limiting, logout and device revocation. Device
+lists paginate rather than hiding revocable records after the first 100.
+
+```sh
+DATABASE_URL=postgres://TEST_USER@127.0.0.1:55432/postgres \
+  cargo test --locked -p contracts -p domain -p integrations -p store -p server
+cargo run --locked -q -p server -- openapi > /tmp/api-v2.openapi.json
+diff -u contracts/generated/api-v2.openapi.json /tmp/api-v2.openapi.json
+```
+
+The existing eight scientific/native-report tests were **not rerun by that selective
+command**; they retain their separate baseline/CI evidence. Do not add them to the
+new local pass count or claim full-system acceptance. The committed workflow now
+requires real Store **and HTTP** tests with PostgreSQL and compares both generated
+contracts without rewriting tracked output. The exact new GitHub Head and run must
+be checked after publication; preceding CI results do not validate these changes.
+
 ## Explicit gaps
 
 The relational schema and per-turn Store are implemented, but complete Run
-admission/takeover, services and authentication, API/Worker/CLI/MCP, native
+admission/takeover, research services and machine authorization, the remaining
+API/Worker/CLI/MCP, native
 same-Thread model/tool/job/evidence cycle, independent Reviewer, PIT/sealed
 isolation, multi-Alpha shared-capital portfolio, target-only approval/feedback/
 wake services, Ant Design UI/PWA, data migration, backup/restore and protected
 real-account acceptance remain incomplete. Existing JSON checks verify structure
 and versions, not a complete policy or authorization decision. Non-owner database
-role provisioning and deployed user-data migration still require validation.
+role authentication is exercised locally; production TLS, isolated deployment,
+role-specific research permissions and deployed user-data migration still require validation.
 Removing legacy tests is not acceptance. Do not merge until every W0–W8/T01–T42
 requirement and the latest-Head CI/review conditions are met.
