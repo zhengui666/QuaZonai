@@ -88,3 +88,15 @@ TOTP 使用 [totp-rs 5.7.0](https://docs.rs/totp-rs/5.7.0/)，读取锁定源代
 [PostgreSQL18角色属性](https://www.postgresql.org/docs/18/role-attributes.html)
 明确 superuser 绕过权限：运行服务必须使用非owner/non-superuser角色；migration
 在独立本机运维命令中执行，不能每次服务器启动自动以管理员建表。
+
+
+## Native authentication integration: versioned upstream boundary
+
+This adapter uses Rust implementations; no Python exception is requested. It is not a browser authentication service or evidence of complete T36 acceptance.
+
+- totp-rs 5.7.0: native SHA-1, six digits, 30-second TOTP and otpauth URI; https://docs.rs/totp-rs/5.7.0/totp_rs/struct.TOTP.html . Tests use RFC 6238 Appendix B reference outputs; https://www.rfc-editor.org/rfc/rfc6238#appendix-B . Database time, monotonic accepted step, rate limits and operator enrollment remain Store responsibilities.
+- Argon2 0.5.3: native salted PHC verifier for random 256-bit bootstrap capabilities; https://docs.rs/argon2/0.5.3/argon2/ . This is the native cryptography exception, not a QZ business hash gate.
+- chacha20poly1305 0.10.1: native XChaCha20-Poly1305 authenticated encryption; https://docs.rs/chacha20poly1305/0.10.1/chacha20poly1305/ . The UUID reference and purpose are authenticated additional data. Secret bytes never belong in domain receipts or public API results.
+- cap-std 3.4.5 and rustix 1.1.4: bounded directory-relative access and no-follow native file opens; https://docs.rs/cap-std/3.4.5/cap_std/fs/struct.Dir.html and https://docs.rs/rustix/1.1.4/rustix/fs/struct.OFlags.html . Only trusted processes receive the private directory; this does not prove Agent/container isolation.
+
+The local adapter publishes a UUID reference only after file and directory synchronization. Failed partial writes are unreferenced encrypted objects, never successful authority. A damaged or missing master key fails startup; existing keys are not automatically replaced. Actual formatting, compilation and test outcomes are recorded by the development workflow and subsequent read-only CI, not inferred from this research entry.
