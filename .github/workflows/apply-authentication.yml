@@ -1,0 +1,76 @@
+name: Apply executor-prepared authentication changes (one-time transport)
+
+on:
+  pull_request:
+    paths:
+      - '.github/prepared-auth/**'
+      - '.github/workflows/apply-authentication.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  apply-reviewed-by-executor-source:
+    if: >-
+      github.repository == 'zhengui666/QuaZonai' &&
+      github.event.pull_request.number == 63 &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'rewrite/issue-62-rust-evidence' &&
+      github.actor == 'zhengui666'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      TARGET_BRANCH: rewrite/issue-62-rust-evidence
+      TRANSPORT_HEAD: ${{ github.event.pull_request.head.sha }}
+      SOURCE_PARENT: 385fd0c9eae4d2a909ad4edc669a328852accc18
+      EXPECTED_TREE: 4c8e3c8eceda81e87c836ab86cbcdfc0bf4d1866
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Validate exact base, decode bounded prepared patch, apply using native Git
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TRANSPORT_HEAD"
+          test "$(git rev-parse HEAD^)" = "$SOURCE_PARENT"
+          git diff-tree --no-commit-id --name-only -r HEAD > /tmp/transport-paths
+          if grep -Ev '^\.github/(prepared-auth/[0-6][0-9]\.b64|workflows/apply-authentication\.yml)$' /tmp/transport-paths; then
+            echo 'Unexpected source change in transport commit' >&2
+            exit 1
+          fi
+          python - <<'PY'
+          import base64
+          import lzma
+          from pathlib import Path
+          parts = [Path(f'.github/prepared-auth/{index:02}.b64') for index in range(7)]
+          encoded = ''.join(path.read_text(encoding='ascii').strip() for path in parts)
+          if len(encoded) != 60064:
+              raise SystemExit('Unexpected prepared payload size')
+          decoder = lzma.LZMADecompressor(memlimit=256 * 1024 * 1024)
+          patch = decoder.decompress(base64.b64decode(encoded, validate=True), max_length=300000)
+          if not decoder.eof or decoder.unused_data or len(patch) != 214529:
+              raise SystemExit('Incomplete, oversized or trailing prepared payload')
+          Path('/tmp/authentication.patch').write_bytes(patch)
+          PY
+          git apply --check --index /tmp/authentication.patch
+          git apply --index /tmp/authentication.patch
+          git rm -- .github/prepared-auth/*.b64 .github/workflows/apply-authentication.yml
+          test "$(git write-tree)" = "$EXPECTED_TREE"
+          git diff --exit-code
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat(auth): implement PostgreSQL-backed TOTP browser authentication' -m 'Apply executor-prepared and locally tested Rust source with native Git. Reuse Axum, native PostgreSQL sessions, totp-rs, Argon2id, RustCrypto AEAD and cap-std. Include real HTTP/PostgreSQL tests and generated contracts. This transport does not execute the new code, run acceptance, expose production secrets, or claim full rewrite completion. Remove the one-time transport in the same commit.'
+      - name: Publish only the exact prepared source without force or exposed credentials
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          test "$(git ls-remote origin "refs/heads/$TARGET_BRANCH" | cut -f1)" = "$TRANSPORT_HEAD"
+          git push origin "HEAD:refs/heads/$TARGET_BRANCH"
