@@ -1,0 +1,16 @@
+[package]
+name = "qz-contracts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+uuid = { version = "=1.18.0", features = ["v7", "serde"] }
+chrono = { version = "=0.4.41", features = ["serde"] }
+bigdecimal = { version = "=0.4.8", features = ["serde"] }
+utoipa = { version = "=5.4.0", features = ["chrono", "uuid"] }

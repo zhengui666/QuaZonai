@@ -7,6 +7,7 @@ on:
       - 'rust-toolchain.toml'
       - 'apps/**'
       - 'crates/**'
+      - 'contracts/**'
       - 'runtimes/**'
       - 'tests/native/**'
       - 'tools/lock_science_runtime.py'
@@ -46,6 +47,11 @@ jobs:
           cargo clippy --locked --workspace --all-targets -- -D warnings
           cargo test --locked --workspace
           cargo build --locked -p qz-job
+      - name: Compare native-generated domain contracts without rewriting tracked output
+        run: |
+          set -euo pipefail
+          cargo run --locked -q -p qz-contracts --example generate > /tmp/qz-bootstrap-evidence/domain-v1.openapi.json
+          diff -u contracts/generated/domain-v1.openapi.json /tmp/qz-bootstrap-evidence/domain-v1.openapi.json
       - name: Install scientific wheels using the committed platform hash lock
         run: |
           python -m pip install --only-binary=:all: --require-hashes -r runtimes/science/requirements.lock
