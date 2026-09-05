@@ -1,0 +1,100 @@
+name: Rewrite W0 compatibility
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  native-runtime-w0:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Build real Rust PyO3 executable and resolve candidate locks
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          docker pull python:3.12.14-slim-bookworm
+          docker pull rust:1.98.1-slim-bookworm
+          docker build --target build --tag qz-w0-build --file runtimes/science/Dockerfile .
+          cid=$(docker create qz-w0-build true)
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          docker cp "$cid:/build/Cargo.lock" evidence/Cargo.lock
+          docker cp "$cid:/build/apps/qz-job/src/main.rs" evidence/formatted-main.rs
+          docker build --target runtime --tag qz-w0-science --file runtimes/science/Dockerfile .
+      - name: Native numerical golden, Arrow, Nautilus catalog and backtest
+        run: |
+          set -euo pipefail
+          mkdir -p evidence/runtime
+          name=qz-w0-native-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}
+          trap 'docker rm -f "$name" >/dev/null 2>&1 || true' EXIT
+          timeout --kill-after=10s 180s docker run --name "$name" \
+            --user "$(id -u):$(id -g)" --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges \
+            --pids-limit 128 --cpus 2 --memory 4g \
+            --tmpfs /tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777 \
+            --mount "type=bind,src=$PWD/evidence/runtime,dst=/output" \
+            qz-w0-science verify-native /output/probe | tee evidence/native.log
+          docker cp "$name:/opt/qz/requirements.lock" evidence/requirements.lock
+          docker inspect "$name" --format '{{.State.ExitCode}} {{.State.OOMKilled}}' > evidence/process-exit.txt
+          grep -qx '0 false' evidence/process-exit.txt
+          test -s evidence/runtime/probe/evidence.json
+          test -s evidence/runtime/probe/native-weights.arrow
+      - name: Record native image identities and source identity
+        run: |
+          git rev-parse HEAD > evidence/tested-commit.txt
+          docker image inspect python:3.12.14-slim-bookworm rust:1.98.1-slim-bookworm \
+            --format '{{json .RepoDigests}}' > evidence/base-images.txt
+          docker image inspect qz-w0-science --format '{{.Id}}' > evidence/built-image-id.txt
+      - name: Upload actual evidence and candidate lockfiles
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rewrite-w0-native-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
+
+  pgmq-w0:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: ghcr.io/pgmq/pg18-pgmq:v1.10.0
+        env:
+          POSTGRES_USER: qz
+          POSTGRES_PASSWORD: qz-ci-only
+          POSTGRES_DB: qz_native_probe
+        options: >-
+          --health-cmd "pg_isready -U qz -d qz_native_probe"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Native transaction rollback and committed visibility in a second session
+        env:
+          PG_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          docker exec -i "$PG_CONTAINER" psql -X -U qz -d qz_native_probe \
+            -v observe=false < tests/native/pgmq.sql | tee evidence/pgmq-writer.log
+          docker exec -i "$PG_CONTAINER" psql -X -U qz -d qz_native_probe \
+            -v observe=true < tests/native/pgmq.sql | tee evidence/pgmq-observer.log
+          grep -q PGMQ_COMMIT_ROLLBACK_SECOND_SESSION_OK evidence/pgmq-observer.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: rewrite-w0-pgmq-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14

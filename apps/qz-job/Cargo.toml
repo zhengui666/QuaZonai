@@ -1,0 +1,11 @@
+[package]
+name = "qz-job"
+version = "0.2.0-dev.1"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+pyo3.workspace = true
+serde_json.workspace = true
