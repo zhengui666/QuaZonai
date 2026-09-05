@@ -1,0 +1,180 @@
+diff --git a/.dockerignore b/.dockerignore
+new file mode 100644
+index 0000000..f728be7
+--- /dev/null
++++ b/.dockerignore
+@@ -0,0 +1,5 @@
++.git
++target
++node_modules
++*.log
++.env*
+diff --git a/.github/CODEOWNERS b/.github/CODEOWNERS
+new file mode 100644
+index 0000000..ebb5733
+--- /dev/null
++++ b/.github/CODEOWNERS
+@@ -0,0 +1 @@
++* @zhengui666
+diff --git a/.github/dependabot.yml b/.github/dependabot.yml
+new file mode 100644
+index 0000000..36fbdf3
+--- /dev/null
++++ b/.github/dependabot.yml
+@@ -0,0 +1,14 @@
++version: 2
++updates:
++  - package-ecosystem: cargo
++    directory: /
++    schedule:
++      interval: weekly
++  - package-ecosystem: npm
++    directory: /runtimes/codex
++    schedule:
++      interval: weekly
++  - package-ecosystem: github-actions
++    directory: /
++    schedule:
++      interval: weekly
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..4262823
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,7 @@
++/target/
++**/node_modules/
++**/dist/
++.env
++.env.local
++*.log
++.DS_Store
+diff --git a/AGENTS.md b/AGENTS.md
+new file mode 100644
+index 0000000..4b8c75f
+--- /dev/null
++++ b/AGENTS.md
+@@ -0,0 +1,47 @@
++# QuaZonai Agent 治理
++
++本文件只定义开发治理与导航，不复制产品状态机。产品、领域、接口、数据、安全、运维和完整验收合同统一在 `DESIGN.md`。
++
++## 事实源与顺序
++
++1. `DESIGN.md`：唯一完整的产品与架构事实源，包含字段级附录 A、接口/状态机/测试附录 B，以及所有者对 #62 的语言与复用修订。
++2. `OPERATIONS.md`：用户运行说明；`CLI.md`：命令和原生协议的实现展开；二者不得另创产品事实。
++3. `skills/quazonai/SKILL.md`：薄工作流、真实命令和权限边界，不是另一套业务引擎。
++4. `README.md`：入口、当前实现状态、可执行启动和文档索引。
++5. 代码、测试、CI/Review、`docs/architecture/issue-62-execution.md` 和兼容性矩阵：可核验实现证据，不得把目标写成已交付。
++
++外部 Issue/评论是需求出处，不是随时可变的架构依赖。需求变更先进入 DESIGN，再改代码。旧实现只存在于 Git 历史，不在活动源码树保留兼容层或归档代码。用户数据、备份和许可证不属于可删除旧代码。
++
++## 所有者修订与实现纪律
++
++- 第一方目录不得以 `qz-` 开头；直接使用 `apps/server`、`apps/runtime`、`apps/job`、`crates/contracts`、`crates/domain`、`crates/store`。
++- 旧代码无需兼容或保留；删除旧服务、旧前端、重复引擎、旧专属测试与部署配置，不能移动到 legacy/archives 伪装删除。保留用户数据、Git 历史、LICENSE/NOTICE。
++- 能复用 Rust 组件的能力必须采用 Rust；先查目标版本的真实 API、特性、成熟性、许可和运行结果。不能用本机缺工具链、一次编译错误或语言占比作为选 Python 的理由。
++- Python 仅限已提交 `docs/research/reuse.md` 的具体例外：必须列出所需能力、核查的 Rust 候选与具体缺口、上游证据、锁定版本、薄适配和隔离边界及退出条件；不需要再次问用户。不能泛称“Rust 生态不成熟”。
++- 只实现 QZ 独有规则、权限、关联和最小适配；不重建数值优化、回测撮合、Agent 工具循环、OAuth 刷新、消息投递、认证算法或容器平台。
++- 使用 Ponytail 原则：删除无真实需求的抽象；平台原生能力优先；旧错误路径不加永久兼容 wrapper；不为每张表建立服务、Repository/Factory 或通用 Workflow DSL。
++- 前端仍必须使用 React/TypeScript/官方 Ant Design；语言修订不改变这项要求。
++
++## 不可越过的边界
++
++- QZ 是研究与 target-only 交付系统，不拥有 Broker/Exchange 凭据、真实订单/成交/仓位/账户/NAV、下游执行风控或启停/撤单/平仓权限。
++- Agent 不拥有 Operator/Reviewer/Downstream 身份，不能审批、交付、改政策、写数据库、读 Sealed raw data、Secret 或任意 URL/宿主路径。
++- 原生 Codex App Server 管理模型会话、工具循环和认证；任务有界、Thread 持久、Reviewer 独立；不复制 canonical 聊天数据库。
++- 不读取、索取、保存或展示模型隐藏 chain-of-thought。审计只记录可观察调用、变更、真实结果、公开总结和领域事件。
++- 不可变版本、审批、Package、试验账本和证据暴露不得原地改写或因复制 UUID 清零；取消不能假称远端已停止。
++- 不新增应用级 SHA/hash/checksum/digest/fingerprint 身份或业务门禁。Git、OCI、wheel、存储、成熟密码学组件的原生完整性机制不受此禁令影响，但不能冒充领域资格。
++- 不销毁用户旧数据、擅自变更 LICENSE/NOTICE、将 Demo 变成生产可交付证据，或向未审查 PR 代码提供生产秘密。
++
++## 工作顺序与验证
++
++读取 DESIGN 对应章节 → 确认 ownership/data flow → 必要时先更新 DESIGN → 同步用户文档/CLI/Skill → 最小正确实现 → 最窄有效验证 → 跨边界验证 → 独立 review → 汇总已验证与未验证项。
++
++每项检查说明要发现的失败及失败后的行动。不能仅用 mock 证明原生 Codex/MCP/Thread resume、PGMQ/数据库并发、Sealed/Secret/文件系统隔离、原生科学数值、Package/Claim 竞态、SSE 恢复或备份迁移。具体 T01–T42 与检查族完整定义在 DESIGN 附录 B。
++
++## PR #63 / Issue #62 完成边界
++
++同一 PR 完成全部工作包和合同 → 最新 Head 的全部适用 CI 通过、所有 Review Thread 解决且 `@codex review` 明确无问题 → 才允许 merged → main 检查及迁移/完整链路/隔离/恢复/文档证据复核 → 才关闭 #62。
++
++Head 变化必须重新验证。缺失、失败、取消、应执行却跳过、额度不足、未回复或仅 emoji 均不是通过。局部 W0、文档更新、创建 PR、页面壳或大量 mock 不能替代完成。
++
++**GitHub 上 Codex 只用于 review；禁止要求 Codex 修复、实现、提交或自动处理问题。修复由实际执行者完成并补测，再 push 后重新请求 review。** 未满足合同只能报告部分完成，不能合并骨架或宣称 release-ready。
+diff --git a/CLI.md b/CLI.md
+new file mode 100644
+index 0000000..a67f05c
+--- /dev/null
++++ b/CLI.md
+@@ -0,0 +1,11 @@
++# CLI 实现状态
++
++完整目标CLI及权限合同只在DESIGN附录B；本文件不把未实现的命令写成可运行。
++
++## 当前可运行
++
++- `cargo run --locked -p job -- verify-native --output NEW_DIRECTORY`：固定Rust Clarabel/Nautilus/Arrow fixture；目录必须不存在；不会读取用户数据或交付目标包。
++- `cargo run --locked -q -p contracts --example generate`：原生生成当前DTO OpenAPI，尚无HTTP endpoints。
++- `cargo run --locked -p job --example codex_contract`：需CODEX_NATIVE_BIN和不存在的CODEX_PROBE_DIR；仅原生stdio/模型/Thread兼容性，使用新空profile。
++
++README给出完整可执行参数。没有兼容的旧Python CLI；旧命令已撤下。Operator-only命令、正式数据/项目/审批管理及MCP是仍需完成的实现项，不允许绕过API用手工SQL冒充完成。
+diff --git a/Cargo.toml b/Cargo.toml
+index 90dffc5..68aa599 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -5,11 +5,10 @@ resolver = "2"
+ [workspace.package]
+ version = "2.0.0-dev.1"
+ edition = "2021"
+-rust-version = "1.90"
++rust-version = "1.98"
+ license-file = "LICENSE"
+ repository = "https://github.com/zhengui666/QuaZonai"
+ 
+ [workspace.dependencies]
+-pyo3 = { version = "=0.25.1", features = ["auto-initialize"] }
+-serde = { version = "=1.0.219", features = ["derive"] }
+-serde_json = "=1.0.140"
++serde = { version = "=1.0.229", features = ["derive"] }
++serde_json = "=1.0.151"
+diff --git a/DESIGN.md b/DESIGN.md
+index e8fe1d5..d64b520 100644
+--- a/DESIGN.md
++++ b/DESIGN.md
+@@ -2,27 +2,36 @@
+ 
+ > 需求基线：2026-09-05，Issue #62 正文及附录 A（评论 5549224292）、B（评论 5549244417）。
+ > 所有者修订：2026-09-05，PR #63 的执行要求——**优先 Rust，其次 Python；优先复用，其次造轮子**。
+-> **状态：Draft 集成实施中。只有部分 W0 已实现；本文的目标合同不代表全量系统、全部测试或受保护验收已完成。**
++> **状态：Draft 集成实施中。已实现原生适配及合同/领域初始切片；本文的目标合同不代表全量系统、全部测试或受保护验收已完成。**
+ 
+ 本文包含完整字段合同、API/CLI/MCP 映射、状态机、故障场景、T01–T42 和交付边界，是唯一完整架构事实源。Issue 是需求出处和验收追溯链接，不是运行时或离线审查必须另行读取的规范依赖；其后续编辑不会自动改变本文。任何新要求必须先通过版本控制更新本文，再实现。不得以摘要、局部绿色 CI、缺失能力清单或语言修订缩小核心范围。
+ 
+-`AGENTS.md` 只定义治理；`OPERATIONS.md`、`CLI.md`、Skill、README 分别展开运行、命令、工作流和入口；`docs/architecture/issue-62-execution.md` 与兼容性矩阵只记录证据，不创造竞争架构。旧 #58 设计归档于 `docs/architecture/legacy-issue-58-design.md`，仅用于迁移对照。
++`AGENTS.md` 只定义治理；`OPERATIONS.md`、`CLI.md`、Skill、README 分别展开运行、命令、工作流和入口；`docs/architecture/issue-62-execution.md` 与兼容性矩阵只记录证据，不创造竞争架构。旧代码和过时设计从当前树删除；历史仅由 Git 保存，迁移以只读外部快照为输入。
+ 
+ ## 0. 所有者修订：语言与复用的决策顺序
+ 
+ 1. 优先寻找仓库已有实现、标准库、平台和成熟外部组件，随后才考虑新写代码。先验证实际接口、安全、许可证、维护性和目标行为，而不是按语言数量评价架构。
+ 2. 在适用实现之间优先 Rust，其次 Python。Rust 是新控制面、领域合同、持久化、CLI/MCP 和网关的默认选择；不是对所有第一方 Python 的绝对禁令。
+-3. 成熟 Python 组件能够可靠承接、而 Rust 方案会重复建设成熟能力或引入更复杂桥接时，允许复用 Python，包含必要的第一方薄适配或有明确依据的服务。先记录复用对象、接口缺口、选择理由、隔离/部署边界、锁定版本和验证；不要求把成熟 Python 数值库翻译成自研 Rust 算法。
++3. 只有具名目标能力无法由满足合同的Rust组件承接，且已先提交第0.1节要求的证据，才允许采用Python的最小上游适配。能用Rust的组件必须Rust；不要求自研Rust算法替代已有库，也不接受“桥接方便”作为Python理由。
+ 4. 第一方代码只拥有 QZ 的产品规则、权限、证据关联和最小适配。不重建回测、优化器、Agent Harness、OAuth 刷新、消息队列、密码学或容器平台。仅在没有满足需求的成熟能力时自研，并明确缺口与退出条件；不以“adapter”命名隐藏整套自建内核。
+ 5. 不为 Rust 占比增加无意义 FFI/微服务，也不以 Rust 启动器包装全部 Python 然后声称 Rust 优先。一个业务状态机、一个合同源、一个权威数据源；不维持两套永久兼容后端或重复真相。
+ 6. 该修订取代 #62 中“所有第一方后端只能 Rust”“Python 只能是第三方库”“必须因语言删除全部 Python 服务”等绝对措辞。前端 React + TypeScript + **官方 `antd`**、产品范围、安全、数据、测试、CI/Review/合并条件全部不变。
+ 
++## 0.1 所有者追加修订（2026-09-05，本次执行）
++
++- 第一方目录不使用 `qz-` 前缀：`apps/job`、`apps/server`、`apps/runtime`、`crates/contracts`、`crates/domain`、`crates/store`、`crates/integrations`。包名/构建路径同步改名，不保留旧别名目录。
++- 旧代码没有兼容和保留义务。删除旧 Python 服务、旧前端、插件平台、旧专属测试/部署/文档及兼容层；Git 已提供代码历史，不在新树保留 legacy 副本。删除源码不是删除用户数据：不重置用户数据库/数据卷，不删除 LICENSE/NOTICE，迁移、导出及回滚仍是交付项。
++- 某组件有满足本项目能力和安全合同的 Rust 实现，就使用该实现。不能以现有桥接方便、旧工具链、版本解析失败、语言占比或赶工为理由选择 Python。
++- Python 例外须先提交 `docs/research/reuse.md` 中的具名能力证据：审查的 Rust 候选和具体版本/API、真实缺口/失败复现、采用的 Python API/版本、接口/权限/进程边界、测试和替换条件。检索不到不等于证明不存在；只批准必要范围，可由执行者依据证据自主决定。
++- 已确认并实测：Nautilus `nautilus-backtest/model/trading 0.63.0`（官方 `v2.0.0rc4`）、Clarabel 0.11.1、Apache Arrow Rust 56.2.0；使用 Rust 1.98.0 满足上游 MSRV。第一方 job 不再通过 PyO3/CPython 调用这些能力。
++- 当前提交只实现受测原生适配与合同/领域基础，不声称完整控制面/UX/研究/交付已就绪。删除旧测试不满足新系统 T01–T42；缺失检查仍阻塞最终合并。
++
+ ## 1. 当前实现与完整目标
+ 
+ | 部分 | 已有事实 | 必须完成的目标 |
+ |---|---|---|
+-| 运行服务 | 旧 Python 后端/旧前端仍是当前运行实现 | 按第 0 节重建并验收控制面，完整 Ant Design 产品面；显式切换后移除被替代路径 |

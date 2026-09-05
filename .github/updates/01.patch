@@ -1,0 +1,180 @@
+-| 原生科学计算 | `apps/job` 固定 FIXTURE 探针调用 skfolio、CLARABEL、Nautilus、Arrow | 隔离真实研究、评估、至少两个 Alpha、完整约束与共享资金模拟 |
++| 运行服务 | 旧实现从本分支删除；新系统未完成部署验收 | 按第 0 节重建并验收控制面，完整 Ant Design 产品面；显式切换后移除被替代路径 |
++| 原生科学计算 | `apps/job` 固定 FIXTURE 直接调用 Rust Clarabel、Nautilus、Arrow | 隔离真实研究、评估、至少两个 Alpha、完整约束与共享资金模拟 |
+ | Codex | 无账号 stdio 握手、account/read、完整模型分页、默认与 effort-only Thread 探针 | 真实工具→Job→Evaluation→同 Thread 消费结果、独立 Reviewer、恢复、原生账号和权限隔离 |
+ | PGMQ | 原生投递/结果/确认事务回滚探针 | 正式领域事务、预算、Run/Attempt 接管、恢复、取消和唯一结果采纳 |
+ | 交付/迁移/运维/UX | 新系统完整链路尚未实现 | W0–W8、T01–T42；不能把此表当作 Future Work 排除项 |
+@@ -57,12 +66,12 @@ React + TypeScript + antd → REST/SSE 生成合同 → qz API/Domain/Worker/CLI
+   ├─ PostgreSQL + PGMQ：领域事实、通知、持久事件和审计
+   ├─ 原生 Codex App Server：受信任模型进程
+   ├─ Artifact Store：原生不可变对象/版本引用
+-  └─ qz-runtime：受信任远程计算网关 → 原生 OCI/Docker
+-       └─ 每任务一个隔离 job 进程/容器 → Nautilus / skfolio / CVXPY / solver
+-                                                   / Qlib / scikit-learn / Optuna
++  └─ runtime：受信任远程计算网关 → 原生 OCI/Docker
++       └─ 每任务一个隔离 job 进程/容器 → Rust Nautilus / Clarabel / Arrow
++                                                   / 已验证的原生统计与研究组件
+ ```
+ 
+-默认布局（只有 job W0 已存在，其他是目标，不是一 crate 一微服务）：
++默认布局（job 与 contracts/domain 已有受测切片，其余完整能力仍为目标，不是一 crate 一微服务）：
+ 
+ ```text
+ Cargo.toml / Cargo.lock / rust-toolchain.toml
+@@ -87,13 +96,13 @@ examples/               明确 provenance 的可重复示例
+ |---|---|---|
+ | 官方 Codex App Server | Thread/Turn/Item、登录、模型目录、工具循环、上下文 | 第二套 LLM Loop、消息历史引擎、OAuth 刷新器 |
+ | NautilusTrader | BacktestNode/BacktestEngine、ParquetDataCatalog、适配器、执行模拟 | 撮合器、回测引擎、第二份权威 NAV |
+-| skfolio/CVXPY/原生 solver | 风险估计、Alpha/Prior、组合优化、交叉验证 | 自写协方差、优化器或伪指标 |
++| Rust科学组件 / Clarabel | 原生风险/模型/组合求解；Python仅证据批准的缺口 | 自写协方差、优化器或伪指标 |
+ | Qlib（按需）/scikit-learn | 原生数据/特征/模型流程、估计器 | 强制训练平台或另一套成交账本 |
+ | Optuna | 预算内有限搜索与试验采样 | 无预算 trial、自研搜索器 |
+ | PostgreSQL/PGMQ/SQLx | 事务、关系、原生投递/visibility/archive | 自研队列、应用 outbox 搬运平台 |
+ | Axum/Tokio/Serde/utoipa/schemars/成熟 CLI 库 | 默认 Rust 服务与合同 | 平行 HTTP/schema 框架 |
+ | 官方 Rust MCP SDK `rmcp` | MCP 协议和工具传输 | 自写 MCP/JSON-RPC 栈 |
+-| PyO3 或最小独立 Python 适配 | 按第 0 节接入成熟科学能力 | 为语言占比翻译算法或创建无意义包装 |
++| 有证据批准的最小 Python 例外 | 第0.1节审核后才能引入，目前无生产例外 | 通过Python调用已有Rust能力或伪装全后端 |
+ | Bollard/OCI | 容器生命周期、资源和隔离限制 | 容器平台；向 Agent 暴露 Docker socket |
+ | 官方 Ant Design/icons、ECharts | 全部基础 UI、主题、表单、反馈和单一图表 | Radix 与 antd 双体系、自写基础组件 |
+ | RD-Agent | 假设→实现→真实反馈、失败知识组织经验 | 与 Codex 并行的 Agent Harness |
+@@ -107,22 +116,20 @@ DSR/PBO 默认不支持：未确认选定 skfolio 版本具备满足本项目的
+ 
+ 默认不引入 Redis、Kafka、Temporal、向量/图数据库、通用 Workflow DSL、插件市场、第二实验记录平台或自建密钥平台。模块只为真实边界存在，不建立形式化 Repository/Factory/事件总线模板。保持 LICENSE/NOTICE/第三方声明，不擅自换许可证。
+ 
+-## 4. 当前 W0 的准确边界
++## 4. 当前原生适配的准确边界
+ 
+-`job verify-native --output NEW_DIRECTORY` 只接受不存在的目录，创建私有输出并在一次进程后退出。全部输入与报告为 `origin=FIXTURE`、`deliverable=false`，不能产生正式 Qualification/Release/Handoff。
++`job verify-native --output NEW_DIRECTORY` 只接受不存在目录，0700 创建；一个任务一个进程。报告始终 `origin=FIXTURE`、`deliverable=false`，不能产生 Qualification/Release/Handoff。
+ 
+-- `optimization.rs` 原生 skfolio MeanRisk/CLARABEL：两资产协方差比例 1:4，long-only、预算 1 的独立手算参考 0.8/0.2，绝对容差 1e-5；要求原生 optimal、有限值、正确维度。参考不是生产 fallback。
+-- `backtest.rs` 原生 BacktestEngine、测试 Equity、上游 EMACrossLongOnly，真实 64 Bar/原生成交并在成功或失败后 dispose；不是目标权重适配或多 Alpha 验收。
+-- `arrow.rs` 原生 PyArrow IPC 写入/回读 Table 相等；文件存在不等于正式结果采纳。
+-- `report.rs` create_new 写 `.pending`，完整 JSON/换行/sync 后同文件系统 hard_link 原子 create-if-absent 发布；不覆盖，失败不出现正式成功名。发布后 stdout 关闭不改结果；不宣称生产 Artifact Store 或目录级崩溃一致性。
+-- `examples/codex_contract.rs` 锁定原生二进制、新 HOME/CODEX_HOME、白名单环境，initialize/initialized/account/read/全分页 model/list/thread/start；默认省略 model/effort/provider/key，另一 Thread 仅传原生支持 effort。新 home 不继承账号；限制 frame/队列/时间/分页，拒绝意外工具/审批请求，不记录原始通知/身份/隐藏推理。真实账号及同 Thread 推理工具闭环尚未完成。
+-- `tests/native/pgmq_contract.sql` 可丢弃 PostgreSQL/PGMQ 中验证业务+send 回滚、重投 read count、结果+archive 回滚及成功归档；临时表不是生产 Run/Attempt。
++- `optimization.rs` 直接调用 Clarabel Rust `DefaultSolver`，原生二次锥规划最小方差；两资产协方差 diag(1,4)，long-only、预算1，独立手算参考0.8/0.2，容差1e-5。必须原生 `Solved`、有限权重和正确维度；无 Python 或生产兜底。
++- `backtest.rs` 直接调用 Nautilus Rust BacktestEngine 和上游 EmaCross，固定745个 synthetic quote、实际原生事件/订单/持仓计数，成功/失败均 dispose。计数来自引擎，不写死“成交成功”；fixture仍不是 target-weight 多Alpha组合模拟。
++- `arrow.rs` 使用 Apache Arrow Rust RecordBatch/FileWriter/FileReader，create_new 写入，回读检查 schema/元数据/每个值和行数；不是 PyArrow。不存在第二套 IPC 协议。
++- `report.rs` 完整序列化、换行、sync_all后使用同文件系统 hard_link create-if-absent 发布正式名，不覆盖。任何发布前失败无正式成功报告；不是目录级崩溃一致性或生产 Artifact Store。
++- Codex 探针沿用官方 pinned二进制 stdio initialize/initialized/account/read/完整model分页/thread启动；QZ只保留受控适配，不获取隐藏推理/凭据。无真实账号推理和同Thread工具链的测试不能当作T07/T08。
++- 原生 PostgreSQL+PGMQ 事务探针保留；临时fixture表不是正式生产Store。
+ 
+-已验证 W0 组合：Rust 1.90.0、PyO3 0.25.1、CPython 3.12.12、Nautilus 1.231.0、skfolio 1.0.3、CVXPY-base 1.7.2、CLARABEL 0.11.1、PyArrow 25.0.0、Codex 0.144.4、PGMQ 1.10.0；Linux x86_64/Ubuntu 24.04。其他平台不能推定支持。
++Rust 1.98.0，Nautilus Rust crates0.63.0（Python2.0.0rc4发布族），Clarabel0.11.1，Arrow56.2.0，Codex0.144.4，PGMQ1.10.0；Linux x86_64。Cargo.lock来自原生Cargo，所有验收 locked，不现场生成锁。没有任何生产Python例外被此处批准；旧science requirements/lock/checker随旧桥接删除，供应链改由Cargo原生锁验证。
+ 
+-Cargo/npm/科学平台 wheel lock 均提交，CI 使用 locked 安装且不改写源码。科学 lock 记录规范化的直接依赖集合；`tools/lock_science_runtime.py check INPUT LOCK` 使用 packaging 的 PEP 508/440 解析，离线检查新增、删除、缺失、版本漂移、重复和不支持格式，不解依赖、不下载、不修改文件。平台格式是无条件 exact pin + 原生 wheel hash；marker/extras/URL/递归 requirements 明确拒绝。pip 原生 `--require-hashes` 验证 wheel，`pip check` 验证安装后的传递依赖；输入检查不能替代两者或数值验证。维护者先在指定平台解析、按完整 lock 验证下载，再用 `export VERIFIED_WHEEL_DIR INPUT NEW_LOCK` 导出；不在验收 CI 现场生成 lock。
+-
+-W0 完整闸门仍要求真实镜像安装/导入/执行/回收/Arrow，Qlib 如需单独镜像则单独验收 ABI。新版本不写 latest，不用新网站 API 猜旧发布版能力，不用 mock 或私造算法补齐缺口。
++Nautilus2.0发布族仍为release candidate，不能隐瞒预发行风险或仅因为版本较新宣称稳定；正式目标组合、目录、结算、隔离/资源/取消必须单独验收。原生引擎日志的NaN不能直接当正式指标，正式Metric wire层拒绝非有限值。
+ 
+ ## 5. 研究、数据与数值边界
+ 
+@@ -138,7 +145,7 @@ Discovery/Validation/Sealed/Forward 分权限与挂载。raw/sample/metric/plot/
+ 
+ Alpha 只发 score/expected_return/uncertainty，不发订单。score 未校准不能冒充收益/仓位；校准/调参仅使用允许训练段。至少两个合格 Alpha 的实际预测经单位、共同期限、币种、资产对齐、覆盖率验证后进入原生 Alpha/Prior/ensemble/optimizer（如 PredictorAlpha、FixedWeightedAlpha、MeanRisk，必须所锁版本确实支持）。固定权重/scale 是配置，不冒充拟合校准。Alpha 混合权重和最终资产权重分别持久化。
+ 
+-风险/协方差复用 skfolio EWCovariance/LedoitWolf 等；优化复用 skfolio/CVXPY/原生 solver。生产路径真实支持现金、单资产、gross/net、组约束、换手、成本、风险和参与率，保存余量和诊断。不可行返回 INFEASIBLE，无目标，不偷偷等权/单资产100%/放宽约束。ACCEPTABLE_INACCURATE 仅显式政策允许且独立容差验证通过才采纳。
++风险/协方差优先复用已验证的Rust sample/EWMA/LedoitWolf等接口；优化复用Rust Clarabel等原生solver。skfolio只是待证据审批的具名Python候选，不是默认实现。生产路径真实支持现金、单资产、gross/net、组约束、换手、成本、风险和参与率，保存余量和诊断。不可行返回 INFEASIBLE，无目标，不偷偷等权/单资产100%/放宽约束。ACCEPTABLE_INACCURATE 仅显式政策允许且独立容差验证通过才采纳。
+ 
+ 毛净收益、费用、换手定义、年化频率、无风险利率、单位、区间、样本数、方法版本、原生来源均明确；缺值 null + reason，NaN/Infinity 拒绝。成本/滑点/冲击/容量基于版本化费表、流动性及上游模型；缺深度数据不声称精准盘口冲击，capacity 不等于初始资金。最终组合在一个共享资金、统一净额、实际成本 Nautilus 模拟中验证，不平均独立账户曲线或另算权威撮合账本。
+ 
+@@ -215,7 +222,7 @@ PWA 只缓存静态 shell；业务 API/认证/证据/审批/产物/SSE NetworkOn
+ 
+ Cookie Secure/HttpOnly/SameSite，同源 Origin/CSRF；机器/CLI 使用独立范围受限可撤销 token，不把浏览器 cookie/TOTP secret/动态码当 API token。Agent MCP 不复用 Operator session。TOTP/session/AEAD/随机 verifier 使用成熟库，依第 0 节选语言，不自制密码学。Secret 仅受信任进程解析；UI 只见 configured/status/last_checked；日志不含 auth 文件、token、完整 Provider/stderr/traceback。
+ 
+-默认 Compose 为 qz-api、qz-worker、PostgreSQL+PGMQ；Codex/远端按 profile 配置，单机也保持权限分区。生产同源 HTTPS，未认证写接口不能暴露。默认不托管在线 wheel 上传/安装/插件市场；受支持集成经显式版本/能力登记，既有使用固定 release。上游 Python import 只在隔离 job/必要受控适配，不长期热加载/卸载不可信插件。
++目标 Compose 为 server、worker、PostgreSQL+PGMQ；Codex/远端按 profile 配置，单机也保持权限分区。生产同源 HTTPS，未认证写接口不能暴露。默认不托管在线 wheel 上传/安装/插件市场；受支持集成经显式版本/能力登记，既有使用固定 release。上游 Python import 只在隔离 job/必要受控适配，不长期热加载/卸载不可信插件。
+ 
+ 配置至少包括：HTTP bind/public URL、数据库/PGMQ、artifact root/backend、runtime endpoint/credential ref、Codex binary/CODEX_HOME、代理与 egress allowlist、预算/资源限制、session/TOTP secret ref、日志脱敏、backup destination/retention、telemetry opt-in。缺失 fail fast 指明字段，不退到公网无认证。来源显示 SYSTEM/EXPLICIT/DEFAULT 与安全摘要；启动验证镜像、协议、schema、ABI，不等首次真实研究才崩溃。
+ 
+@@ -231,7 +238,7 @@ Cookie Secure/HttpOnly/SameSite，同源 Origin/CSRF；机器/CLI 使用独立
+ 
+ 旧 Research/Run/Artifact 保留追溯；不能证明等价的 Strategy 为 LEGACY_REVALIDATION_REQUIRED，旧 PASS 不自动变新 qualification；旧审批/Handoff 只读不自动触发 Live。认证迁移独立，默认保留旧凭据，选择新原生 profile 则显式登录，不偷读/删除宿主 auth.json。导入报告包含 ID 映射、逐类行数、关系完整性、时间/精度、产物可读率、失败/人工决策/legacy 重验及未继承权限/审批/凭据，不能只看脚本无异常。
+ 
+-旧 API/db/Alembic/jobs/harness/auth/science/portfolio/remote/plugin/前端路径逐项标记复用或替换；保留已发布旧迁移语义和只读导出，Git 保存代码历史。删除自研投递、重复 LLM/OAuth、伪指标、错误 execution-control、在线插件市场、Radix/重复图表及过时永久 PASS 文档；不在新系统不可用时删旧测试制造绿色。
++旧 API/db/Alembic/jobs/harness/auth/science/portfolio/remote/plugin/前端路径逐项标记复用或替换；保留已发布旧迁移语义和只读导出，Git 保存代码历史。删除自研投递、重复 LLM/OAuth、伪指标、错误 execution-control、在线插件市场、Radix/重复图表及过时永久 PASS 文档；删除旧代码同时删除仅适用于旧系统的测试；不能把剩余测试绿色当完整新系统验收。
+ 
+ README 对标 uv 的清晰定位/快速使用、Nautilus 的架构与支持边界、Qlib 的数据准备/实际流程、RD-Agent 的可运行研究示例、Ant Design 的文档/生态导航；不借用上游性能/收益/全部功能当本项目已交付。中文为主，英文状态同步。最终结构：一句话是什么/不是什么；真实 E2E 截图/短演示；已验证能力与限制；真实架构图；无付费凭据 Demo；原生登录/数据/远端/预算真实启动；流程与证据；开发测试；部署备份升级故障安全；路线图贡献许可证/第三方。
+ 
+@@ -374,8 +381,6 @@ data_sources [operator mutable]
+   runtime_id: Id FK runtime_integrations
+   native_catalog_ref: registered text
+   provider_kind: registered adapter enum
+-  license_reference: text
+-  allowed_uses: RESEARCH|RESEARCH_AND_PAPER|RESEARCH_PAPER_LIVE
+   enabled: bool default true
+ 
+ universe_versions [immutable]
+@@ -398,6 +403,7 @@ benchmark_versions [immutable]
+ 
+ dataset_revisions [immutable published metadata]
+   source_id: Id FK data_sources
++  data_use_grant_id: Id FK data_use_grants
+   native_snapshot_ref: text
+   native_storage_version: text
+   universe_version_id: Id FK universe_versions
+@@ -435,6 +441,30 @@ execution_assumptions [immutable]
+ 
+ `NativeModelRefV1={schema_version,adapter_kind,upstream_class,upstream_version,parameters}`。class/adapter 来自服务端 allowlist 和实际 capability；parameters 为对应锁定适配器的严格 schema。未知项拒绝，不映成 GENERIC/DEFAULT；禁止任意 Python import/path/exec 越界。
+ 
++### A2.1 不可变数据授权与原生身份
++
++将可变 `data_sources.license_reference/allowed_uses` 移除；仅 name/enabled 可变。runtime_id/native_catalog_ref/provider_kind 一经引用不可变。`dataset_revisions` 增加 `data_use_grant_id:Id FK data_use_grants`，授权属于同 source（复合FK）。
++
++```text
++data_use_grants [immutable]
++  source_id: Id FK data_sources
++  version: int >= 1
++  license_reference: nonempty text
++  evidence_artifact_id: Id FK artifacts
++  allowed_uses: RESEARCH|RESEARCH_AND_PAPER|RESEARCH_PAPER_LIVE
++  valid_from: Time
++  valid_until: Time?
++  authorized_by: OPERATOR
++data_use_revocations [append-only]
++  grant_id: Id FK data_use_grants
++  effective_at: Time
++  reason: nonempty text
++```
++
++`unique(source_id,version)`；grant.valid_until 为空或晚于valid_from。每次新消费/发布/审批/Claim按DB时间检查精确grant和撤销，历史保留当时授权；升级不自动扩张旧dataset用途，撤销不回写历史。换授权需要明确新原生snapshot发布及新证据，不允许仅换UUID洗旧sealed。
++
++必须 `unique(dataset_revisions.source_id,native_snapshot_ref,native_storage_version)` 和 `unique(data_sources.runtime_id,native_catalog_ref)`；相同原生身份同请求返回已有记录，不同partition/授权等409。服务端registry规范化来源；迁移/别名映射已有身份并继承暴露，无法证明独立时LEGACY_UNKNOWN，不能获得sealed资格。此项不得以应用内容hash实现。
++
+ ## A3. 实验、产物、Alpha 与校准
+ 
+ ```text
+@@ -641,6 +671,30 @@ SplitPolicyV1:
+ 
+ 这些政策 JSON 同样有 schema_version=1；阈值按 comparator 校验数量/次序，原生方法/单位一致，不能仅比较数值。SelectionRuleV1 是冻结的候选选择合同，必须明确可比试验范围、选择指标/方向、候选数量和确定性平手规则；全部失败/淘汰仍在 trial ledger，不允许事后重定义集合。原生适配器具体可选参数由锁定版本的严格注册 schema 提供，不用任意 blob。固定 horizon 切分不能用于未支持 VARIABLE_INTERVAL。DSR/PBO 维持 UNSUPPORTED，直至真实上游与参考数据验收。
+ 
++### A4.1 SelectionRuleV1 的严格线协议
++
++```text
++schema_version: 1
++comparable_scope: FAMILY_LINEAGE
++root_lineage_id: Id FK research_lineages
++family_id: Id FK experiment_families
++comparison_input_set_id: Id FK input_sets
++execution_assumptions_id: Id FK execution_assumptions
++evaluation_kind: WALK_FORWARD|SEALED
++metric_code: nonempty string
++metric_scope: nonempty string
++method_id: nonempty string
++method_version: nonempty string
++unit: nonempty string
++frequency: nonempty string
++direction: MAXIMIZE|MINIMIZE
++candidate_count: u16 >= 1
++tie_break: EXPERIMENT_ID_ASC
++missing_required_metric: INCONCLUSIVE
++```
++
++拒绝unknown字段；所有FK同project且family/root一致，candidate_count不超过冻结max_experiments，所选方法/单位/频率为真实native capability。policy/family引用环在同事务分配ID+DEFERRABLE FK。实验后规则不可改。比较集合包含同family/lineage/输入/执行假设/评估类型的全部试验，失败/取消/无效/淘汰留账本及排除理由，不以0填入排名。冻结实际experiment/evaluation ID清单；仅VALID/required指标完整且同方法口径参与finite值排序，direction优先，相等按UUID原生16字节升序。每experiment只一次；不足返回实际数量+INCONCLUSIVE，不复制赢家、不扩大政策、不重置sealed。
++
+ ## A5. Mandate、Candidate、目标与 Release
+ 
+ ```text
+@@ -739,6 +793,10 @@ RebalanceScheduleV1:
+ 

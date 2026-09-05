@@ -1,0 +1,180 @@
+         false
+     );
+ }
++
++#[test]
++fn metric_nullable_fields_are_present_not_silently_defaulted() {
++    let value = json!({"schema_version":1,"evaluation_id":Id::new(),"metric_code":"risk","scope":"total",
++        "value":null,"status":"INSUFFICIENT_DATA","reason_code":"NO_SAMPLES","unit":"fraction","period_start":"2026-01-01T00:00:00Z",
++        "period_end":"2026-02-01T00:00:00Z","observation_count":"0","frequency":"daily",
++        "annualization_factor":null,"method_id":"native-risk","method_version":"1","source_artifact_id":Id::new(),"higher_is_better":false});
++    assert!(from_value::<MetricValueV1>(value.clone()).is_ok());
++    for key in ["value", "annualization_factor"] {
++        let mut omitted = value.clone();
++        omitted.as_object_mut().unwrap().remove(key);
++        assert!(from_value::<MetricValueV1>(omitted).is_err(), "{key}");
++    }
++    let schema: serde_json::Value =
++        serde_json::from_str(&contracts::openapi_json().unwrap()).unwrap();
++    let required = schema["components"]["schemas"]["MetricValueV1"]["required"]
++        .as_array()
++        .unwrap();
++    assert!(
++        required.contains(&json!("value")) && required.contains(&json!("annualization_factor"))
++    );
++    assert!(schema["components"]["schemas"]["Id"]["pattern"]
++        .as_str()
++        .unwrap()
++        .contains("-7"));
++    assert!(from_value::<Id>(json!(Id::new().as_uuid().simple().to_string())).is_err());
++}
+diff --git a/crates/domain/Cargo.toml b/crates/domain/Cargo.toml
+index abbf161..f582e99 100644
+--- a/crates/domain/Cargo.toml
++++ b/crates/domain/Cargo.toml
+@@ -10,7 +10,8 @@ publish = false
+ [dependencies]
+ contracts = { path = "../contracts" }
+ chrono = { version = "=0.4.41", features = ["serde"] }
+-thiserror = "=2.0.16"
++thiserror = "=2.0.20"
++iso_currency = "=0.7.0"
+ 
+ [dev-dependencies]
+ serde_json.workspace = true
+diff --git a/crates/domain/src/admission.rs b/crates/domain/src/admission.rs
+index 040786c..870a13c 100644
+--- a/crates/domain/src/admission.rs
++++ b/crates/domain/src/admission.rs
+@@ -54,9 +54,7 @@ pub fn validate_budget(budget: &BudgetV1, stop: &StopRuleV1) -> Result<(), Domai
+     ) {
+         (None, None, CostEnforcement::Unavailable) => {}
+         (Some(amount), Some(currency), CostEnforcement::Estimated)
+-            if amount.is_positive()
+-                && currency.len() == 3
+-                && currency.bytes().all(|byte| byte.is_ascii_uppercase()) => {}
++            if amount.is_positive() && iso_currency::Currency::from_code(currency).is_some() => {}
+         (_, _, CostEnforcement::Exact) => {
+             return Err(DomainError::CapabilityUnavailable("exact_cost_enforcement"));
+         }
+diff --git a/crates/domain/src/codex.rs b/crates/domain/src/codex.rs
+index cbfb03f..70a0338 100644
+--- a/crates/domain/src/codex.rs
++++ b/crates/domain/src/codex.rs
+@@ -46,7 +46,7 @@ pub fn resolve_overrides(
+     }
+     if saved.saved_model.is_none() && saved.saved_reasoning_effort.is_none() {
+         return Ok(ModelOverrides {
+-            fast_mode: Some(saved.saved_fast_mode),
++            fast_mode: saved.saved_fast_mode.then_some(true),
+             ..Default::default()
+         });
+     }
+@@ -90,6 +90,6 @@ pub fn resolve_overrides(
+     Ok(ModelOverrides {
+         model: saved.saved_model.clone(),
+         reasoning_effort: saved.saved_reasoning_effort.clone(),
+-        fast_mode: Some(saved.saved_fast_mode),
++        fast_mode: saved.saved_fast_mode.then_some(true),
+     })
+ }
+diff --git a/crates/domain/src/evidence.rs b/crates/domain/src/evidence.rs
+index 17ca1e3..acc206d 100644
+--- a/crates/domain/src/evidence.rs
++++ b/crates/domain/src/evidence.rs
+@@ -97,6 +97,7 @@ pub fn evaluate_metrics(
+         }
+     }
+     let mut seen = BTreeMap::new();
++    let mut invalid = false;
+     let mut missing = false;
+     let mut unsupported = false;
+     let mut rejected = false;
+@@ -123,6 +124,14 @@ pub fn evaluate_metrics(
+             ));
+             continue;
+         };
++        if metric.status == MetricStatus::InvalidInput {
++            invalid = true;
++            reasons.push(format!(
++                "{}:{}:INVALID_INPUT",
++                metric.metric_code, metric.scope
++            ));
++            continue;
++        }
+         let native_supported = capabilities.iter().any(|capability| {
+             capability.metric_code == metric.metric_code
+                 && capability.method_id == metric.method_id
+@@ -170,9 +179,11 @@ pub fn evaluate_metrics(
+             ));
+         }
+     }
+-    if unsupported || missing {
++    if invalid || unsupported || missing {
+         Ok(MetricGate {
+-            evidence_status: if unsupported {
++            evidence_status: if invalid {
++                EvidenceStatus::Invalid
++            } else if unsupported {
+                 EvidenceStatus::Unsupported
+             } else {
+                 EvidenceStatus::Incomplete
+diff --git a/crates/domain/src/runs.rs b/crates/domain/src/runs.rs
+index e3327c3..8b9834f 100644
+--- a/crates/domain/src/runs.rs
++++ b/crates/domain/src/runs.rs
+@@ -113,6 +113,9 @@ pub fn accept_terminal(
+     }
+     let terminal = terminal.ok_or(DomainError::CancelNotConfirmed)?;
+     if state == RunState::CancelRequested {
++        if terminal == RemoteTerminal::Failed {
++            return Ok(RunState::Failed);
++        }
+         // Cancellation won the database CAS. A remotely completed but unadopted
+         // result stays diagnostic only; never publish success as well.
+         return Ok(RunState::Cancelled);
+diff --git a/crates/domain/tests/rules.rs b/crates/domain/tests/rules.rs
+index 92cd5b0..5f9bb55 100644
+--- a/crates/domain/tests/rules.rs
++++ b/crates/domain/tests/rules.rs
+@@ -1,5 +1,4 @@
+ use chrono::{Duration, TimeZone, Utc};
+-use proptest::prelude::*;
+ use contracts::{
+     budget::{BudgetV1, CostEnforcement, StopRuleV1},
+     codex::{ModelCapabilityV1, ReasoningEffortCapability, SavedModelSettingsV1},
+@@ -8,6 +7,7 @@ use contracts::{
+     DbCounter, Id, Revision, SchemaV1,
+ };
+ use domain::{admission::*, codex::*, evidence::*, runs::*, DomainError};
++use proptest::prelude::*;
+ 
+ fn count(value: u64) -> DbCounter {
+     DbCounter::new(value).unwrap()
+@@ -251,7 +251,6 @@ fn cancel_request_and_acknowledged_termination_are_different() {
+     );
+     for outcome in [
+         RemoteTerminal::Succeeded,
+-        RemoteTerminal::Failed,
+         RemoteTerminal::Cancelled,
+         RemoteTerminal::ConfirmedAbsent,
+     ] {
+@@ -598,3 +597,82 @@ fn corrupt_or_mixed_evidence_is_rejected_not_coerced_to_missing_or_pass() {
+     invalid.threshold_low = Some("1".parse().unwrap());
+     assert!(evaluate_metrics(id, &[invalid], &[metric(id)], &[capability()]).is_err());
+ }
++
++#[test]
++fn cancellation_does_not_erase_genuine_failure() {
++    let owner = lease();
++    assert_eq!(
++        accept_terminal(
++            RunState::CancelRequested,
++            Some(RemoteTerminal::Failed),
++            &owner,
++            &owner,
++            time()
++        )
++        .unwrap(),
++        RunState::Failed
++    );

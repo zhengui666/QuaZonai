@@ -1,0 +1,135 @@
++    assert_eq!(
++        accept_terminal(
++            RunState::Cancelled,
++            Some(RemoteTerminal::Failed),
++            &owner,
++            &owner,
++            time()
++        ),
++        Err(DomainError::TerminalRun)
++    );
++}
++#[test]
++fn invalid_metric_is_not_missing_evidence() {
++    let id = Id::new();
++    let mut m = metric(id);
++    m.status = MetricStatus::InvalidInput;
++    m.value = None;
++    m.reason_code = Some("INVALID_DATA".into());
++    let gate = evaluate_metrics(id, &[requirement()], &[m], &[capability()]).unwrap();
++    assert_eq!(gate.evidence_status, EvidenceStatus::Invalid);
++    assert_eq!(gate.decision, Decision::Inconclusive);
++    assert!(gate.reasons.iter().any(|r| r.ends_with("INVALID_INPUT")));
++}
++#[test]
++fn standard_tier_is_an_absent_fast_override() {
++    let models = [model()];
++    let mut saved = settings();
++    assert_eq!(
++        resolve_overrides(&saved, &catalog(&models))
++            .unwrap()
++            .fast_mode,
++        None
++    );
++    saved.saved_fast_mode = true;
++    assert_eq!(
++        resolve_overrides(&saved, &catalog(&models))
++            .unwrap()
++            .fast_mode,
++        Some(true)
++    );
++    saved.saved_reasoning_effort = None;
++    saved.saved_fast_mode = false;
++    assert_eq!(
++        resolve_overrides(&saved, &catalog(&models))
++            .unwrap()
++            .fast_mode,
++        None
++    );
++}
++
++#[test]
++fn cost_currency_uses_iso_library_membership_not_ascii_shape() {
++    let mut b = budget();
++    b.max_cost_decimal = Some("10".parse().unwrap());
++    b.cost_enforcement = CostEnforcement::Estimated;
++    for code in ["USD", "EUR", "CNY", "JPY"] {
++        b.cost_currency = Some(code.into());
++        assert!(validate_budget(&b, &stop()).is_ok());
++    }
++    for code in ["ZZZ", "QQQ", "US", "usd", "USDT", "", " USD"] {
++        b.cost_currency = Some(code.into());
++        assert!(validate_budget(&b, &stop()).is_err(), "accepted {code}");
++    }
++}
+diff --git a/docs/architecture/compatibility-matrix.md b/docs/architecture/compatibility-matrix.md
+new file mode 100644
+index 0000000..bcf8edb
+--- /dev/null
++++ b/docs/architecture/compatibility-matrix.md
+@@ -0,0 +1,14 @@
++# Native compatibility matrix
++
++| Component | Pin | Verified boundary |
++|---|---|---|
++| Rust | 1.98.0 | Toolchain required by Nautilus 0.63.0 |
++| Nautilus backtest/model/trading | 0.63.0, release family v2.0.0rc4 | Rust-only synthetic EMA fixture,745 iterations/12 orders/24 events; target-weight/market/isolation acceptance remains separate |
++| Clarabel | 0.11.1 | Native QP golden and infeasible certificate; no Python binding |
++| Arrow | 56.2.0 | Rust RecordBatch IPC schema/provenance/value round-trip |
++| Codex | 0.144.4 | Pinned official binary; unauthenticated stdio/model pagination/Thread startup fixture |
++| PGMQ | 1.10.0 on PG18 | Native transaction rollback/redelivery/archive fixture, not full production domain recovery |
++
++Platform: Linux x86_64. Cargo.lock and the Codex npm lock are committed native resolver outputs; CI must use locked installs and must not rewrite tracked files. No Python scientific bridge remains. A future Python exception requires concrete evidence in ../research/reuse.md; none is approved by this matrix.
++
++Pre-release Nautilus status, unsupported market paths and incomplete product scope must stay visible. A compatibility probe is not a release, account-login, multi-Alpha, security-isolation or full T01–T42 certificate.
+diff --git a/docs/architecture/issue-62-execution.md b/docs/architecture/issue-62-execution.md
+new file mode 100644
+index 0000000..03d9886
+--- /dev/null
++++ b/docs/architecture/issue-62-execution.md
+@@ -0,0 +1,23 @@
++# Issue62 implementation evidence
++
++DESIGN is the normative contract; this file records evidence, not a second design.
++
++## Current changes
++
++- Rename apps/job, crates/contracts, crates/domain and related package/build paths without qz- directories.
++- Delete legacy backend/frontend/plugin/deployment implementations, obsolete tests and archived design; retain Git history, LICENSE/NOTICE and user-data boundaries. There is no legacy compatibility service.
++- Replace PyO3 scientific probes with Rust-native Nautilus0.63.0, Clarabel0.11.1 and Arrow56.2.0. Upgrade Rust1.98.0 rather than using an old compiler as a Python exception.
++- Fix mandatory nullable metric keys, INVALID_INPUT evidence classification, UUIDv7 schema, Fast=false omission, cancellation-after-real-failure and ISO currency membership. Preserve version/lease/terminal and precision tests.
++- Complete previously missing design contracts for SelectionRule, immutable data authorization, native snapshot identity, logical feedback deduplication, operator rejection, candidate uniqueness, integration setup and machine credentials. These design additions do not claim their SQL/API implementation exists.
++
++## Actual local evidence
++
++35 Rust tests pass (7 contract,20 domain,8 native/report), strict Clippy and rustfmt check pass. A real native run produces weights0.7999999999997491/0.20000000000025078,745 iterations,12 native orders,24 native events and an Arrow round-trip; FIXTURE, deliverable=false, python_runtime=false. Counts are observed, not assertions of full business acceptance.
++
++The upstream feasibility run33952841460 independently compiled Rust Arrow/Clarabel/ISO and ran the official Rust Nautilus example without PyO3. It is a development study, not a final product lock/check. New source needs its own latest-Head CI and review.
++
++## Explicit gaps
++
++Full Store/migrations/API/Worker/CLI/MCP, autonomous same-Thread model/tool/job/evidence cycle, independent Reviewer, PIT/sealed isolation, multi-Alpha shared-capital portfolio, target-only approvals/Paper/Live/Forward/Wake, Ant Design product UI/PWA, migration/backup/restore and protected real-account acceptance remain incomplete. Removing legacy tests does not satisfy new acceptance. Do not merge until all W0–W8/T01–T42 and CI/review boundaries are met.
++
++Earlier references to nonexistent commits0f1b84a and2e98539 were incorrect and must not be used as evidence. The actual starting tree was45153c6956f556449d5a5acb4b3abfef0a68df9e at eea0f2e; only successfully published and reread GitHub Heads count.
+diff --git a/rust-toolchain.toml b/rust-toolchain.toml
+index 66f329f..a1598cc 100644
+--- a/rust-toolchain.toml
++++ b/rust-toolchain.toml
+@@ -1,4 +1,4 @@
+ [toolchain]
+-channel = "1.90.0"
++channel = "1.98.0"
+ profile = "minimal"
+-components = ["clippy", "rustfmt"]
++components = ["rustfmt", "clippy"]
+diff --git a/skills/quazonai/SKILL.md b/skills/quazonai/SKILL.md
+new file mode 100644
+index 0000000..1d53f11
+--- /dev/null
++++ b/skills/quazonai/SKILL.md
+@@ -0,0 +1,5 @@
++---
++name: quazonai
++description: Read the QuaZonai contract and run currently implemented native verification commands.
++---
++Read ../../DESIGN.md and ../../AGENTS.md before changes. Actual commands are in ../../CLI.md and ../../README.md. The workspace is under rewrite: do not use deleted Python/legacy commands, invent production API endpoints, or mark synthetic native probes as qualified evidence. GitHub Codex is review-only. No approval, downstream control, database/Secret/sealed access is granted to an Agent by this skill.
