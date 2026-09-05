@@ -8,6 +8,7 @@ on:
       - 'apps/**'
       - 'crates/**'
       - 'runtimes/**'
+      - 'tests/native/**'
       - '.github/workflows/rewrite-bootstrap.yml'
   workflow_dispatch:
 
@@ -36,7 +37,7 @@ jobs:
           rustup toolchain install 1.90.0 --profile minimal --component rustfmt --component clippy
           python -m pip install uv==0.8.15
           cargo generate-lockfile
-          uv pip compile --python-version 3.12 --generate-hashes --only-binary :all: runtimes/science/requirements.in -o /tmp/qz-bootstrap-evidence/science-requirements.lock
+          uv pip compile --quiet --python-version 3.12 --generate-hashes --only-binary :all: runtimes/science/requirements.in -o /tmp/qz-bootstrap-evidence/science-requirements.lock
           cp Cargo.lock /tmp/qz-bootstrap-evidence/Cargo.lock
           cargo fmt --all
           git diff --binary > /tmp/qz-bootstrap-evidence/format.patch
@@ -47,11 +48,12 @@ jobs:
           cargo clippy --locked --workspace --all-targets -- -D warnings
           cargo test --locked --workspace
           cargo build --locked -p qz-job
-      - name: Execute real upstream engines and Arrow round trip
-        run: |
-          set -euo pipefail
-          uv pip install --python "$(command -v python)" --require-hashes -r /tmp/qz-bootstrap-evidence/science-requirements.lock
-          target/debug/qz-job verify-native --output /tmp/qz-bootstrap-evidence/native
+      - name: Install exact scientific dependencies
+        run: uv pip install --python "$(command -v python)" --require-hashes -r /tmp/qz-bootstrap-evidence/science-requirements.lock
+      - name: Independent upstream numerical reference
+        run: python tests/native/test_upstream_compatibility.py
+      - name: Execute Rust bridge and Arrow round trip
+        run: target/debug/qz-job verify-native --output /tmp/qz-bootstrap-evidence/native
       - name: Export exact source snapshot for offline development
         if: always()
         run: |
@@ -65,3 +67,23 @@ jobs:
           path: /tmp/qz-bootstrap-evidence/
           if-no-files-found: error
           retention-days: 7
+      - name: Export isolated development toolchains
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/qz-dev-tools
+          # Explicit installed tool directories only. Never archive HOME, .git,
+          # runner temp, authentication files, environment dumps, or credentials.
+          tar -C "$HOME/.rustup/toolchains" -I 'zstd -T0 -3' -cf /tmp/qz-dev-tools/rust-1.90.tar.zst 1.90.0-x86_64-unknown-linux-gnu
+          cargo vendor --locked /tmp/qz-vendor > /tmp/qz-dev-tools/vendor-config.toml
+          tar -C /tmp -I 'zstd -T0 -3' -cf /tmp/qz-dev-tools/vendor.tar.zst qz-vendor
+          tar -C "$pythonLocation" -I 'zstd -T0 -3' -cf /tmp/qz-dev-tools/python-science.tar.zst bin lib include share
+      - name: Upload isolated development toolchains
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rewrite-dev-tools-${{ github.sha }}
+          path: /tmp/qz-dev-tools/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
