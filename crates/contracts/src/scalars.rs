@@ -107,10 +107,53 @@ fn parse_db_unsigned(text: &str, nonzero: bool) -> Result<u64, String> {
     Ok(value)
 }
 
+/// Describe the native bigint boundary without a second number parser. Each
+/// alternative shares a prefix with i64::MAX and has a strictly smaller next
+/// digit, or is the exact maximum. The end assertion rejects a final newline.
+fn bigint_schema(nonzero: bool) -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+    let maximum = i64::MAX.to_string();
+    let mut alternatives = vec![format!("[1-9][0-9]{{0,{}}}", maximum.len() - 2)];
+    if !nonzero {
+        alternatives.push("0".into());
+    }
+    for (index, byte) in maximum.bytes().enumerate() {
+        let digit = byte - b'0';
+        let first_allowed = u8::from(index == 0);
+        if digit > first_allowed {
+            let prefix = &maximum[..index];
+            let last_allowed = digit - 1;
+            let remaining = maximum.len() - index - 1;
+            alternatives.push(format!(
+                "{prefix}[{first_allowed}-{last_allowed}][0-9]{{{remaining}}}"
+            ));
+        }
+    }
+    alternatives.push(maximum);
+    utoipa::openapi::schema::ObjectBuilder::new()
+        .schema_type(utoipa::openapi::schema::Type::String)
+        .description(Some("Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions."))
+        .min_length(Some(1))
+        .max_length(Some(19))
+        .pattern(Some(format!(r"^(?:{})(?![\s\S])", alternatives.join("|"))))
+        .into()
+}
+
+impl utoipa::PartialSchema for DbCounter {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        bigint_schema(false)
+    }
+}
+impl ToSchema for DbCounter {}
+impl utoipa::PartialSchema for Revision {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        bigint_schema(true)
+    }
+}
+impl ToSchema for Revision {}
+
 /// Non-negative PostgreSQL bigint encoded as a JSON string, including zero.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
-#[schema(value_type = String, pattern = "^(0|[1-9][0-9]*)$", example = "42")]
 pub struct DbCounter(u64);
 
 impl DbCounter {
@@ -149,9 +192,8 @@ impl From<DbCounter> for String {
 }
 
 /// Positive PostgreSQL bigint revision. JSON numeric values are never accepted.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
-#[schema(value_type = String, pattern = "^[1-9][0-9]*$", example = "1")]
 pub struct Revision(u64);
 
 impl Revision {

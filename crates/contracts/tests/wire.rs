@@ -208,3 +208,18 @@ fn native_decimal_parser_matches_the_shared_wire_boundary_corpus() {
         smallest
     );
 }
+
+#[test]
+fn generated_bigint_schemas_share_the_native_postgres_boundary() {
+    let cases: serde_json::Value =
+        serde_json::from_str(include_str!("../../../tests/contracts/bigint-wire.json")).unwrap();
+    for case in cases.as_array().unwrap() {
+        let input = case["input"].clone();
+        let accepted = match case["schema"].as_str().unwrap() {
+            "DbCounter" => serde_json::from_value::<DbCounter>(input).is_ok(),
+            "Revision" => serde_json::from_value::<Revision>(input).is_ok(),
+            other => panic!("unknown scalar in shared corpus: {other}"),
+        };
+        assert_eq!(accepted, case["valid"].as_bool().unwrap(), "{case}");
+    }
+}

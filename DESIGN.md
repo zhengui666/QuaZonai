@@ -380,6 +380,10 @@ StopRuleV1:
 
 每次原生模型请求、工具后的后续Turn、修复和重试均纳入预约，不因沿用Thread、失败或新Attempt清零。消耗结算必须绑定精确的原生请求/Attempt并幂等转移预约到已用计数；结果未知保留预约，不能因断线/取消请求提前退款。实际用量超过预约也要如实记录并阻断后续准入，不能将账本裁到上限。ESTIMATED只对估算预算作准入，不承诺Provider最终账单严格不超过金额，缺准确计费继续拒绝EXACT。纯领域函数的这部分检查不等于正式Worker与数据库结算链路已经交付。
 
+模型轮数与 token/费用在相同准入事务内预约，但轮数属于精确 Mission（run_id），不能把整个 Cycle 的多个 Mission 合并计数。每个模型请求必须给出可信调度器绑定的 mission_id 和 turn_kind=RESEARCH|REPAIR；每次恰好预约一轮，REPAIR 同时占总轮数和修复轮数。Mission 持久化 used_turns/reserved_turns/used_repair_turns/reserved_repair_turns（u16，JSON整数，数据库非负约束），repair 分别不超过相应 total；准入使用 used+reserved+1 与冻结 max_turns_per_mission/max_repair_turns 比较，checked_add 溢出必须拒绝。研究者不能自行创建新 Mission 或更改 turn kind 来重置/扩大预算。续轮/工具后续轮使用同一 Mission 的单独 model-turn 准入，不重复占用实验数、运行并发槽或 job CPU；真正新任务仍要完整预约。不同 Mission 的轮数隔离，Cycle 的 token/费用仍全局累计。缺失或身份不一致的 Mission 账目报错，不默认为零。
+
+模型发送前将轮数预约、token/费用预约、原生请求意图和幂等 receipt 同事务持久化。ACK 丢失不释放预约/重新开轮，必须先按原生 Thread/Turn 对账；已发送轮即使失败/取消也计已用，重试和修复同样占额。只有确认从未发送才释放未用预约。首次 Mission 的零账目只能由可信服务和新的 run 在同事务创建；独立 Reviewer 是独立受控 Mission，不用重置研究者计数冒充隔离。
+
 Optuna 内部 trial 使用预分配预算，不能藏在一次 job 无限搜索。资源/turn/并行上限必须有效正值且符合 runtime capability；修复 turn 不超过总 turn。停止规则由用户冻结，Agent 不能扩大。
 
 ## A2. 数据、Universe、基准与执行假设
@@ -862,6 +866,10 @@ codex_sessions [mutable native references, not copied chat store]
   profile_id: Id FK codex_profiles
   thread_id: text
   active_turn_id: text?
+  used_turns: int >= 0
+  reserved_turns: int >= 0
+  used_repair_turns: int >= 0
+  reserved_repair_turns: int >= 0
   codex_version: text
   protocol_schema_version: text
   requested_settings: EffectiveCodexRequestV1

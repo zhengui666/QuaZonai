@@ -52,7 +52,17 @@ fn empty_usage() -> BudgetUsage {
         reserved_tokens: DbCounter::ZERO,
         used_tokens: DbCounter::ZERO,
         cost: None,
+        mission: Some(MissionUsage {
+            mission_id: mission_id(),
+            used_turns: 0,
+            reserved_turns: 0,
+            used_repair_turns: 0,
+            reserved_repair_turns: 0,
+        }),
     }
+}
+fn mission_id() -> Id {
+    Id::try_from("01990000-0000-7000-8000-000000000001".to_owned()).unwrap()
 }
 fn request() -> Reservation {
     Reservation {
@@ -739,6 +749,8 @@ fn invalid_input_requires_registered_native_provenance_and_policy_allowlist() {
 fn model_request(tokens: u64, estimate: Option<(&str, &str)>) -> Reservation {
     Reservation {
         model: Some(ModelReservation {
+            mission_id: mission_id(),
+            turn_kind: TurnKind::Research,
             tokens: count(tokens),
             estimated_cost: estimate.map(|(currency, amount)| CostEstimate {
                 currency: currency.into(),
@@ -1009,6 +1021,231 @@ proptest! {
         if let Ok(next) = result {
             prop_assert_eq!(next.used_tokens, count(used));
             prop_assert_eq!(next.reserved_tokens, count(reserved+wanted));
+        }
+    }
+}
+
+#[test]
+fn native_turns_exhaust_the_mission_cap_even_without_token_or_cost_limits() {
+    let policy = budget();
+    let model = model_request(10, None).model.unwrap();
+    let mut usage = empty_usage();
+    // A continuing Mission may run while every parallel slot is occupied.
+    usage.active_runs = policy.max_parallel_runs;
+    usage.used_experiments = policy.max_experiments;
+    usage.reserved_cpu_seconds = policy.max_cpu_seconds;
+    let job_counters = (
+        usage.active_runs,
+        usage.used_experiments,
+        usage.reserved_cpu_seconds,
+    );
+    for expected in 1..=policy.max_turns_per_mission {
+        usage = reserve_model_turn(ProjectState::Active, &policy, &stop(), &usage, &model).unwrap();
+        assert_eq!(usage.mission.as_ref().unwrap().reserved_turns, expected);
+        assert_eq!(
+            (
+                usage.active_runs,
+                usage.used_experiments,
+                usage.reserved_cpu_seconds
+            ),
+            job_counters
+        );
+    }
+    let before = usage.clone();
+    assert_eq!(
+        reserve_model_turn(ProjectState::Active, &policy, &stop(), &usage, &model),
+        Err(DomainError::BudgetExhausted("mission_turns"))
+    );
+    assert_eq!(usage, before);
+}
+
+#[test]
+fn repair_turns_consume_both_limits_and_may_be_disabled() {
+    let mut model = model_request(10, None).model.unwrap();
+    model.turn_kind = TurnKind::Repair;
+    let mut usage = empty_usage();
+    for expected in 1..=2 {
+        usage =
+            reserve_model_turn(ProjectState::Active, &budget(), &stop(), &usage, &model).unwrap();
+        let mission = usage.mission.as_ref().unwrap();
+        assert_eq!(mission.reserved_turns, expected);
+        assert_eq!(mission.reserved_repair_turns, expected);
+    }
+    assert_eq!(
+        reserve_model_turn(ProjectState::Active, &budget(), &stop(), &usage, &model),
+        Err(DomainError::BudgetExhausted("repair_turns"))
+    );
+    let policy = BudgetV1 {
+        max_repair_turns: 0,
+        ..budget()
+    };
+    assert_eq!(
+        reserve_model_turn(
+            ProjectState::Active,
+            &policy,
+            &stop(),
+            &empty_usage(),
+            &model
+        ),
+        Err(DomainError::BudgetExhausted("repair_turns"))
+    );
+    model.turn_kind = TurnKind::Research;
+    assert!(reserve_model_turn(
+        ProjectState::Active,
+        &policy,
+        &stop(),
+        &empty_usage(),
+        &model
+    )
+    .is_ok());
+}
+
+#[test]
+fn used_and_unknown_outstanding_turns_both_count_and_cannot_wrap() {
+    let mut usage = empty_usage();
+    let mission = usage.mission.as_mut().unwrap();
+    mission.used_turns = 14;
+    mission.reserved_turns = 1;
+    mission.used_repair_turns = 1;
+    mission.reserved_repair_turns = 1;
+    let model = model_request(10, None).model.unwrap();
+    let next =
+        reserve_model_turn(ProjectState::Active, &budget(), &stop(), &usage, &model).unwrap();
+    assert_eq!(next.mission.as_ref().unwrap().reserved_turns, 2);
+    assert_eq!(next.mission.as_ref().unwrap().used_turns, 14);
+    assert_eq!(
+        reserve_model_turn(ProjectState::Active, &budget(), &stop(), &next, &model),
+        Err(DomainError::BudgetExhausted("mission_turns"))
+    );
+    usage.mission.as_mut().unwrap().used_turns = u16::MAX;
+    assert_eq!(
+        reserve_model_turn(ProjectState::Active, &budget(), &stop(), &usage, &model),
+        Err(DomainError::BudgetExhausted("mission_turns"))
+    );
+    usage.mission.as_mut().unwrap().used_turns = 0;
+    usage.mission.as_mut().unwrap().used_repair_turns = 0;
+    usage.mission.as_mut().unwrap().reserved_turns = u16::MAX;
+    assert_eq!(
+        reserve_model_turn(ProjectState::Active, &budget(), &stop(), &usage, &model),
+        Err(DomainError::BudgetExhausted("mission_turns"))
+    );
+}
+
+#[test]
+fn unknown_or_different_mission_is_not_an_implicit_fresh_budget() {
+    let model = model_request(10, None).model.unwrap();
+    let mut usage = empty_usage();
+    usage.mission = None;
+    assert_eq!(
+        reserve_model_turn(ProjectState::Active, &budget(), &stop(), &usage, &model),
+        Err(DomainError::CapabilityUnavailable("mission_usage_unknown"))
+    );
+    let mut usage = empty_usage();
+    usage.mission.as_mut().unwrap().mission_id = Id::new();
+    assert_eq!(
+        reserve_model_turn(ProjectState::Active, &budget(), &stop(), &usage, &model),
+        Err(DomainError::Invalid("mission_usage"))
+    );
+    let mut usage = empty_usage();
+    usage.mission.as_mut().unwrap().used_repair_turns = 1;
+    assert_eq!(
+        reserve_model_turn(ProjectState::Active, &budget(), &stop(), &usage, &model),
+        Err(DomainError::Invalid("mission_usage"))
+    );
+}
+
+#[test]
+fn new_model_job_and_followup_turn_use_the_same_budget_guard() {
+    let mut usage = empty_usage();
+    usage.mission.as_mut().unwrap().used_turns = budget().max_turns_per_mission;
+    let request = model_request(10, None);
+    assert_eq!(
+        reserve(ProjectState::Active, &budget(), &stop(), &usage, &request),
+        Err(DomainError::BudgetExhausted("mission_turns"))
+    );
+    let model = request.model.unwrap();
+    assert_eq!(
+        reserve_model_turn(ProjectState::Active, &budget(), &stop(), &usage, &model),
+        Err(DomainError::BudgetExhausted("mission_turns"))
+    );
+    for state in [
+        ProjectState::Draft,
+        ProjectState::Paused,
+        ProjectState::Archived,
+    ] {
+        assert_eq!(
+            reserve_model_turn(state, &budget(), &stop(), &empty_usage(), &model),
+            Err(DomainError::AdmissionClosed)
+        );
+    }
+}
+
+#[test]
+fn followup_turns_cannot_skip_cycle_token_or_cost_limits() {
+    let mut usage = cost_usage("0", "1");
+    usage.used_tokens = count(999);
+    let request = model_request(2, Some(("USD", "0"))).model.unwrap();
+    assert_eq!(
+        reserve_model_turn(
+            ProjectState::Active,
+            &estimated_budget(),
+            &stop(),
+            &usage,
+            &request
+        ),
+        Err(DomainError::BudgetExhausted("tokens"))
+    );
+    let request = model_request(1, Some(("USD", "0.000000000000000002")))
+        .model
+        .unwrap();
+    assert_eq!(
+        reserve_model_turn(
+            ProjectState::Active,
+            &estimated_budget(),
+            &stop(),
+            &usage,
+            &request
+        ),
+        Err(DomainError::BudgetExhausted("estimated_cost"))
+    );
+    let request = model_request(1, Some(("USD", "0.000000000000000001")))
+        .model
+        .unwrap();
+    let next = reserve_model_turn(
+        ProjectState::Active,
+        &estimated_budget(),
+        &stop(),
+        &usage,
+        &request,
+    )
+    .unwrap();
+    assert_eq!(next.reserved_tokens, count(1));
+    assert_eq!(next.mission.as_ref().unwrap().reserved_turns, 1);
+}
+
+proptest! {
+    #[test]
+    fn every_accepted_turn_respects_used_plus_outstanding_total_and_repair_limits(
+        used in 0u16..20, outstanding in 0u16..20,
+        used_repairs in 0u16..5, outstanding_repairs in 0u16..5, repair in any::<bool>()
+    ) {
+        let mut usage = empty_usage();
+        let mission = usage.mission.as_mut().unwrap();
+        mission.used_turns = used;
+        mission.reserved_turns = outstanding;
+        mission.used_repair_turns = used_repairs;
+        mission.reserved_repair_turns = outstanding_repairs;
+        let mut model = model_request(1, None).model.unwrap();
+        model.turn_kind = if repair { TurnKind::Repair } else { TurnKind::Research };
+        let expected = used_repairs <= used && outstanding_repairs <= outstanding
+            && used + outstanding < 16 && used_repairs + outstanding_repairs + u16::from(repair) <= 2;
+        let result = reserve_model_turn(ProjectState::Active, &budget(), &stop(), &usage, &model);
+        prop_assert_eq!(result.is_ok(), expected);
+        if let Ok(next) = result {
+            prop_assert_eq!(next.reserved_tokens, count(1));
+            let mission = next.mission.unwrap();
+            prop_assert_eq!(mission.reserved_turns, outstanding+1);
+            prop_assert_eq!(mission.used_turns, used);
         }
     }
 }

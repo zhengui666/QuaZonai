@@ -2,7 +2,7 @@
 use contracts::{
     budget::{BudgetV1, CostEnforcement, StopRuleV1},
     runs::ProjectState,
-    DbCounter, DecimalValue,
+    DbCounter, DecimalValue, Id,
 };
 
 use crate::DomainError;
@@ -19,6 +19,8 @@ pub struct BudgetUsage {
     pub used_tokens: DbCounter,
     /// Required when a cost cap exists. None is unknown, never an implicit zero.
     pub cost: Option<CostUsage>,
+    /// The targeted Mission row, read under the same lock as this cycle usage.
+    pub mission: Option<MissionUsage>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -35,8 +37,26 @@ pub struct CostEstimate {
     pub amount: DecimalValue,
 }
 
+/// A Mission is a run identity, not a resettable counter chosen by the Agent.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MissionUsage {
+    pub mission_id: Id,
+    pub used_turns: u16,
+    pub reserved_turns: u16,
+    pub used_repair_turns: u16,
+    pub reserved_repair_turns: u16,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TurnKind {
+    Research,
+    Repair,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ModelReservation {
+    pub mission_id: Id,
+    pub turn_kind: TurnKind,
     /// A bounded native model request, not an Agent-supplied usage claim.
     pub tokens: DbCounter,
     pub estimated_cost: Option<CostEstimate>,
@@ -140,8 +160,37 @@ pub fn reserve(
     if active_runs > budget.max_parallel_runs {
         return Err(DomainError::BudgetExhausted("parallel_runs"));
     }
-    let requested_tokens = request.model.as_ref().map_or(0, |model| model.tokens.get());
-    if request.model.is_some() && requested_tokens == 0 {
+    let mut next = reserve_model_resources(budget, usage, request.model.as_ref())?;
+    next.reserved_experiments = reserved_experiments;
+    next.reserved_cpu_seconds = reserved_cpu_seconds;
+    next.active_runs = active_runs;
+    Ok(next)
+}
+
+/// A subsequent native turn consumes only model resources, not a second job.
+/// Caller must hold cycle then Mission locks, validate the run/lease/deadline and
+/// persist the returned usage with the dispatch intent and idempotency receipt.
+pub fn reserve_model_turn(
+    project: ProjectState,
+    budget: &BudgetV1,
+    stop: &StopRuleV1,
+    usage: &BudgetUsage,
+    request: &ModelReservation,
+) -> Result<BudgetUsage, DomainError> {
+    validate_budget(budget, stop)?;
+    if project != ProjectState::Active {
+        return Err(DomainError::AdmissionClosed);
+    }
+    reserve_model_resources(budget, usage, Some(request))
+}
+
+fn reserve_model_resources(
+    budget: &BudgetV1,
+    usage: &BudgetUsage,
+    model: Option<&ModelReservation>,
+) -> Result<BudgetUsage, DomainError> {
+    let requested_tokens = model.map_or(0, |request| request.tokens.get());
+    if model.is_some() && requested_tokens == 0 {
         return Err(DomainError::Invalid("model_token_reservation"));
     }
     let reserved_tokens = usage
@@ -155,27 +204,63 @@ pub fn reserve(
     if budget.max_tokens.is_some_and(|limit| total_tokens > limit) {
         return Err(DomainError::BudgetExhausted("tokens"));
     }
-    let cost = reserve_cost(budget, usage, request)?;
+    let cost = reserve_cost(budget, usage, model)?;
+    let mission = match model {
+        None => usage.mission.clone(),
+        Some(request) => {
+            let known = usage
+                .mission
+                .as_ref()
+                .ok_or(DomainError::CapabilityUnavailable("mission_usage_unknown"))?;
+            if known.mission_id != request.mission_id
+                || known.used_repair_turns > known.used_turns
+                || known.reserved_repair_turns > known.reserved_turns
+            {
+                return Err(DomainError::Invalid("mission_usage"));
+            }
+            let reserved_turns = known
+                .reserved_turns
+                .checked_add(1)
+                .ok_or(DomainError::BudgetExhausted("mission_turns"))?;
+            let total = known
+                .used_turns
+                .checked_add(reserved_turns)
+                .ok_or(DomainError::BudgetExhausted("mission_turns"))?;
+            if total > budget.max_turns_per_mission {
+                return Err(DomainError::BudgetExhausted("mission_turns"));
+            }
+            let reserved_repair_turns = known
+                .reserved_repair_turns
+                .checked_add(u16::from(request.turn_kind == TurnKind::Repair))
+                .ok_or(DomainError::BudgetExhausted("repair_turns"))?;
+            let repairs = known
+                .used_repair_turns
+                .checked_add(reserved_repair_turns)
+                .ok_or(DomainError::BudgetExhausted("repair_turns"))?;
+            if repairs > budget.max_repair_turns {
+                return Err(DomainError::BudgetExhausted("repair_turns"));
+            }
+            Some(MissionUsage {
+                reserved_turns,
+                reserved_repair_turns,
+                ..known.clone()
+            })
+        }
+    };
     Ok(BudgetUsage {
-        reserved_experiments,
-        used_experiments: usage.used_experiments,
-        reserved_cpu_seconds,
-        active_runs,
         reserved_tokens,
-        used_tokens: usage.used_tokens,
         cost,
+        mission,
+        ..usage.clone()
     })
 }
 
 fn reserve_cost(
     budget: &BudgetV1,
     usage: &BudgetUsage,
-    request: &Reservation,
+    model: Option<&ModelReservation>,
 ) -> Result<Option<CostUsage>, DomainError> {
-    let estimate = request
-        .model
-        .as_ref()
-        .and_then(|model| model.estimated_cost.as_ref());
+    let estimate = model.and_then(|request| request.estimated_cost.as_ref());
     let Some(limit) = &budget.max_cost_decimal else {
         if usage.cost.is_some() || estimate.is_some() {
             return Err(DomainError::Invalid("unconfigured_cost_accounting"));
@@ -196,7 +281,7 @@ fn reserve_cost(
     {
         return Err(DomainError::Invalid("cost_usage"));
     }
-    if request.model.is_some() && estimate.is_none() {
+    if model.is_some() && estimate.is_none() {
         return Err(DomainError::CapabilityUnavailable("cost_estimate_missing"));
     }
     let reserved = match estimate {
