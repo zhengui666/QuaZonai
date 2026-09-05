@@ -107,7 +107,7 @@ jobs:
         run: npx playwright test e2e/operator-auth.spec.ts --project=${{ matrix.browser }}
       - name: Upload Playwright report on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: operator-auth-playwright-report-${{ matrix.browser }}
           path: frontend/playwright-report
