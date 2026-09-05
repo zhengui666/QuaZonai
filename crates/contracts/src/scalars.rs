@@ -276,18 +276,16 @@ impl DecimalValue {
         self.0 >= BigDecimal::from(0) && self.0 <= BigDecimal::from(1)
     }
 
-    /// Only statistical metric thresholds use floating point, never money or weights.
-    pub fn metric_threshold(&self) -> Result<f64, String> {
-        let value: f64 = self
-            .0
-            .to_string()
-            .parse()
-            .map_err(|_| "invalid metric threshold")?;
-        if value.is_finite() {
-            Ok(value)
-        } else {
-            Err("non-finite metric threshold".into())
+    /// Compare a finite observable metric with the exact frozen threshold.
+    pub fn compare_metric(&self, value: f64) -> Result<std::cmp::Ordering, String> {
+        if !value.is_finite() {
+            return Err("non-finite metric".into());
         }
+        // Preserve the observable JSON number and the complete frozen decimal.
+        // Do not round the threshold or invent a binary floating-point tail.
+        let wire = serde_json::to_string(&value).map_err(|_| "invalid metric")?;
+        let metric = BigDecimal::from_str(&wire).map_err(|_| "invalid metric decimal")?;
+        Ok(metric.cmp(&self.0))
     }
 }
 

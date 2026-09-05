@@ -43,3 +43,8 @@ product check. Every new Head still needs independent read-only CI and review.
 Full Store/migrations/API/Worker/CLI/MCP, autonomous same-Thread model/tool/job/evidence cycle, independent Reviewer, PIT/sealed isolation, multi-Alpha shared-capital portfolio, target-only approvals/Paper/Live/Forward/Wake, Ant Design product UI/PWA, migration/backup/restore and protected real-account acceptance remain incomplete. Removing legacy tests does not satisfy new acceptance. Do not merge until all W0–W8/T01–T42 and CI/review boundaries are met.
 
 Earlier references to nonexistent commits0f1b84a and2e98539 were incorrect and must not be used as evidence. The actual starting tree was45153c6956f556449d5a5acb4b3abfef0a68df9e at eea0f2e; only successfully published and reread GitHub Heads count.
+
+
+## Verification record scope
+
+Numeric test totals in the historical section belong to that earlier source and dependency context, not an assertion of the current Head. The current suites and exact dependency combination are established by locked CI logs and their tested commit. A local development/vendor lock is not the product lock and cannot replace that evidence. This repair adds exact decimal-bound comparisons and integer schema regressions; generated contracts must be regenerated with utoipa, committed, and independently compared in read-only CI. New model-turn ledger and composite-FK requirements remain implementation targets until the Store and real database fault tests are committed and pass.

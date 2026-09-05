@@ -1437,3 +1437,81 @@ Known Limitations / Residual Risks:
 ```
 
 填有链接的完整证据不是授权跳过任何检查。第12节顺序不可降低：完整实现 → 最新Head CI全绿且Codex明确无问题 → merged → main复核/证据回填；不满足即部分完成，不关闭Issue。
+
+
+## C. 精确数值、Mission 原生 Turn 账本与交付复合关系
+
+本节补齐 A4/A6/A7 的规范约束；不是已建成 SQL/API 或全量验收的声明。已有必填性、权限、不可变性和项目隔离约束同时生效。
+
+### C1. 指标的可观察十进制语义
+
+Metric 的有限 f64 由 Serde 原生 JSON 序列化为可往返的十进制数值，再用 BigDecimal 原生解析，与冻结的 Decimal 阈值精确比较。不得把阈值先转为 f64，也不把未通过 wire 暴露的二进制尾数当成额外有效数字。0.1 与 0.1 相等；0.1 不满足 GE 0.10000000000000001。BETWEEN 的上下界按完整 Decimal 比较，不能先舍入后接受逆序区间。NaN/Infinity 一律拒绝。u16 的生成 wire 上限为65535，u32为4294967295；DB/资源政策可进一步收窄，不默默截断。
+
+### C2. 一个 Mission 的唯一原生会话
+
+数据库必须建立 UNIQUE(codex_sessions.run_id) 和 UNIQUE(codex_sessions.profile_id,thread_id)。run_id 是 Mission 身份；Reviewer 必须是不同的 Mission/Run，不能靠同一 Mission 换 session_id 重置预算。同一 Mission 的会话创建重试须返回相同 session/profile/thread；不一致返回409。身份字段一经绑定禁止改写。原生 thread/start 的未知结果进入恢复，不盲目创建另一条 Thread。四个已用/预约 Turn 计数是下述账本的事务投影，不能作为唯一恢复事实。
+
+### C3. 每次模型请求的持久账本
+
+所有记录继承 A0 的 UUIDv7、时间和不可变约束；各本地 ID 都是实际 FK。
+
+```text
+model_turn_reservations [immutable]
+  project_id: Id FK projects
+  cycle_id: Id FK research_cycles
+  mission_id: Id FK runs
+  session_id: Id FK codex_sessions
+  attempt_id: Id FK run_attempts
+  owner_epoch: Rev
+  request_id: Id UNIQUE
+  ordinal: int in [1,65535]
+  turn_kind: RESEARCH|REPAIR
+  input_artifact_id: Id FK artifacts
+  reserved_tokens: bigint > 0
+  reserved_estimated_cost: Decimal? >= 0
+  cost_currency: ISO4217?
+  profile_revision: Rev
+
+model_turn_dispatches [immutable, one per reservation]
+  reservation_id: Id UNIQUE FK model_turn_reservations
+  thread_id: nonempty text
+  dispatch_intent_at: Time
+
+model_turn_acknowledgements [immutable, one per reservation]
+  reservation_id: Id UNIQUE FK model_turn_reservations
+  profile_id: Id FK codex_profiles
+  thread_id: nonempty text
+  native_turn_id: nonempty text
+  acknowledged_at: Time
+
+model_turn_terminals [immutable, one per reservation]
+  reservation_id: Id UNIQUE FK model_turn_reservations
+  native_turn_id: text?
+  outcome: COMPLETED|FAILED|INTERRUPTED|CONFIRMED_NOT_SENT
+  reason_code: text?
+  observed_at: Time
+
+model_turn_settlements [immutable, one per reservation]
+  reservation_id: Id UNIQUE FK model_turn_reservations
+  used_tokens: bigint >= 0
+  used_estimated_cost: Decimal? >= 0
+  cost_currency: ISO4217?
+  usage_source: NATIVE_USAGE|CONFIRMED_NOT_SENT
+  settled_at: Time
+```
+
+UNIQUE(mission_id,ordinal) 与 UNIQUE(session_id,ordinal) 阻止重复消费。预约的 session 必须属于精确 mission/project，attempt 必须属于精确 mission，cycle/输入必须属于该项目。费用及币种同时存在或同时为空；有费用上限时不允许未知账目。ACK 对 (profile_id,thread_id,native_turn_id) 全局唯一，profile/thread 必须等于该 session，且只能在持久 dispatch intent 后写入。除 CONFIRMED_NOT_SENT 外，terminal 的 (reservation_id,native_turn_id) 必须引用该预约的 ACK。
+
+锁顺序为项目/周期 → Run → Attempt → Session → Reservation。准入在同事务内核对当前 lease/epoch、冻结政策、项目状态/期限与所有预算，追加预约并更新周期 token/费用与 Mission total/repair 计数。每个 Session 同时最多一条未结算预约；request_id 同语义重试返回旧记录，异义409，不再次占用预算。Repair 同时消耗总 Turn 和 repair Turn。
+
+先提交 dispatch intent 再调用原生 App Server，外部调用不持 DB 锁。网络超时、进程退出或 ACK 丢失不能推定未发送，更不能退还占用；按原生 Thread/Turn 恢复并关联已有预约，无法证明关联则明确 RECONCILING，不盲目重发。CONFIRMED_NOT_SENT 只允许没有 dispatch intent 的预约，不能用本地超时替代证明。
+
+新 owner 只接管既有 Run/Attempt，并以当前 DB epoch 验证恢复权限，不改写旧预约归属。终态与可信 usage 均已观察到后，追加一次 settlement，并在同事务把相应 reserved 转为 used。原生实际消耗超出预约也如实记录，不裁剪或丢弃；超额阻止下一次准入。缺少可信用量则保留待结算占用；暂停、取消、过期不得阻止记录已发生的消耗。结算重传相同内容返回旧记录，不同内容409；不得同时记录两种 outcome 或重复计费。已用 Turn 不因失败、取消或恢复清零。
+
+### C4. 精确绑定评估和交付授权
+
+在 evaluations 建立 UNIQUE(id,subject_candidate_id)，releases 的 (evaluation_id,candidate_id) 复合 FK 必须引用该组合；Alpha 评估或其他 Candidate 的 PASS 不能用于当前 Release。Mandate、项目、输入、资格、独立评估状态、新鲜度等 Gate 仍要事务验证，FK 不代表已合格。
+
+在 approvals 建立 UNIQUE(id,release_id,downstream_id,environment)，handoff_offers 的 (approval_id,release_id,downstream_id,environment) 必须作为同一复合 FK 引用。Paper 审批不能授权 Live，其他下游或其他 Release 的审批不能借用。Offer/Claim 的权限、到期/撤销、人工拒绝、数据授权及 readiness 检查不得因复合 FK 存在而省略。
+
+T10/T23–T26 必须增加真实 DB 的预约并发、相同 request_id 重试、dispatch-before-ACK 崩溃、旧 owner 回报、未知用量不退款、重复结算、实际超额及暂停后结算测试；T28/T29 必须负向验证错 Candidate、错 Release、错下游和 Paper/Live 混用。纯函数或文档不替代这些集成证据。

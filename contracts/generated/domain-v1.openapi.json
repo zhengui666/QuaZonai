@@ -28,16 +28,19 @@
           },
           "max_cycles_per_day": {
             "format": "int32",
+            "maximum": 65535,
             "minimum": 0,
             "type": "integer"
           },
           "max_experiments": {
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           },
           "max_memory_mib": {
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           },
@@ -46,11 +49,13 @@
           },
           "max_parallel_runs": {
             "format": "int32",
+            "maximum": 65535,
             "minimum": 0,
             "type": "integer"
           },
           "max_repair_turns": {
             "format": "int32",
+            "maximum": 65535,
             "minimum": 0,
             "type": "integer"
           },
@@ -66,16 +71,19 @@
           },
           "max_turns_per_mission": {
             "format": "int32",
+            "maximum": 65535,
             "minimum": 0,
             "type": "integer"
           },
           "max_wall_seconds": {
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           },
           "min_cycle_interval_seconds": {
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           },
@@ -445,6 +453,7 @@
           },
           "current_attempt_no": {
             "format": "int32",
+            "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           },
@@ -593,6 +602,7 @@
           },
           "stop_on_no_improvement_trials": {
             "format": "int32",
+            "maximum": 65535,
             "minimum": 0,
             "type": [
               "integer",
@@ -601,6 +611,7 @@
           },
           "stop_on_qualified_count": {
             "format": "int32",
+            "maximum": 65535,
             "minimum": 0,
             "type": "integer"
           }

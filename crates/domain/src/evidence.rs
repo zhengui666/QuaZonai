@@ -28,25 +28,30 @@ pub struct MetricGate {
 
 fn thresholds(
     requirement: &MetricRequirementV1,
-) -> Result<(Option<f64>, Option<f64>), DomainError> {
-    let low = requirement
-        .threshold_low
-        .as_ref()
-        .map(|value| value.metric_threshold())
-        .transpose()
-        .map_err(|_| DomainError::Invalid("metric_threshold"))?;
-    let high = requirement
-        .threshold_high
-        .as_ref()
-        .map(|value| value.metric_threshold())
-        .transpose()
-        .map_err(|_| DomainError::Invalid("metric_threshold"))?;
+) -> Result<
+    (
+        Option<&contracts::DecimalValue>,
+        Option<&contracts::DecimalValue>,
+    ),
+    DomainError,
+> {
+    let low = requirement.threshold_low.as_ref();
+    let high = requirement.threshold_high.as_ref();
     match (requirement.comparator, low, high) {
         (Comparator::Gt | Comparator::Ge, Some(_), None)
         | (Comparator::Lt | Comparator::Le, None, Some(_)) => Ok((low, high)),
         (Comparator::Between, Some(low), Some(high)) if low <= high => Ok((Some(low), Some(high))),
         _ => Err(DomainError::Invalid("metric_threshold_bounds")),
     }
+}
+
+fn compare_threshold(
+    bound: &contracts::DecimalValue,
+    value: f64,
+) -> Result<std::cmp::Ordering, DomainError> {
+    bound
+        .compare_metric(value)
+        .map_err(|_| DomainError::Invalid("metric_value"))
 }
 
 pub fn validate_metric(metric: &MetricValueV1) -> Result<(), DomainError> {
@@ -166,11 +171,22 @@ pub fn evaluate_metrics(
             .value
             .ok_or(DomainError::Invalid("metric_value_status"))?;
         let passes = match (requirement.comparator, low, high) {
-            (Comparator::Gt, Some(low), _) => value > low,
-            (Comparator::Ge, Some(low), _) => value >= low,
-            (Comparator::Lt, _, Some(high)) => value < high,
-            (Comparator::Le, _, Some(high)) => value <= high,
-            (Comparator::Between, Some(low), Some(high)) => value >= low && value <= high,
+            (Comparator::Gt, Some(low), _) => {
+                compare_threshold(low, value)? == std::cmp::Ordering::Greater
+            }
+            (Comparator::Ge, Some(low), _) => {
+                compare_threshold(low, value)? != std::cmp::Ordering::Less
+            }
+            (Comparator::Lt, _, Some(high)) => {
+                compare_threshold(high, value)? == std::cmp::Ordering::Less
+            }
+            (Comparator::Le, _, Some(high)) => {
+                compare_threshold(high, value)? != std::cmp::Ordering::Greater
+            }
+            (Comparator::Between, Some(low), Some(high)) => {
+                compare_threshold(low, value)? != std::cmp::Ordering::Less
+                    && compare_threshold(high, value)? != std::cmp::Ordering::Greater
+            }
             _ => return Err(DomainError::Invalid("metric_threshold_bounds")),
         };
         if !passes {
