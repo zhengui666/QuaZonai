@@ -1,5 +1,6 @@
 # Platform lock: Linux x86_64, CPython 3.12.12; tested on Ubuntu 24.04.
 # Generated from wheels verified by pip --require-hashes; do not edit manually.
+# Direct requirements v1: ["clarabel==0.11.1", "cvxpy-base==1.7.2", "nautilus-trader==1.231.0", "numpy==2.3.2", "pandas==2.3.3", "pyarrow==25.0.0", "skfolio==1.0.3"]
 cffi==2.1.1 --hash=sha256:c1453022f490d2459a11819d83ad1d586e9ff65a12ac3e705ffebd46d3685dcf
 clarabel==0.11.1 --hash=sha256:c8c41aaa6f3f8c0f3bd9d86c3e568dcaee079562c075bd2ec9fb3a80287380ef
 click==8.5.0 --hash=sha256:255bc9599cf7748b4b1a446ccc735421bd08a2ae529a8b88597d3de5664ee360

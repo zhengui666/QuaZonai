@@ -1,6 +1,6 @@
 # W0 candidate ABI: CPython 3.12.12 + PyO3 0.25.1 on Linux x86_64.
-# The bootstrap workflow resolves every transitive dependency into a hash-locked
-# requirements file; this input alone is NOT supply-chain acceptance evidence.
+# Direct inputs for the maintained platform lock, not an installation lock.
+# CI checks this file against the committed lock without resolving dependencies.
 nautilus-trader==1.231.0
 skfolio==1.0.3
 cvxpy-base==1.7.2

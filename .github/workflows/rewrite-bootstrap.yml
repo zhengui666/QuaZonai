@@ -49,6 +49,12 @@ jobs:
       - name: Install scientific wheels using the committed platform hash lock
         run: |
           python -m pip install --only-binary=:all: --require-hashes -r runtimes/science/requirements.lock
+      - name: Reject stale science inputs without resolving or rewriting dependencies
+        run: |
+          set -euo pipefail
+          python tools/lock_science_runtime.py check runtimes/science/requirements.in runtimes/science/requirements.lock
+          python tests/native/test_science_lock.py
+          python -m pip check
       - name: Independent upstream numerical reference
         run: python tests/native/test_upstream_compatibility.py
       - name: Execute Rust bridge and Arrow round trip

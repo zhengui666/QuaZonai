@@ -34,10 +34,17 @@ ghcr.io/pgmq/pg18-pgmq@sha256:bfb3537068ce453609744518ece92b178ac89dff53747d47ca
 `requirements.in` 仅记录直接依赖输入，不能直接用于验收安装。依赖维护者在隔离的
 指定平台先用固定 resolver 生成包含全部传递依赖与 hashes 的临时完整 lock，再用
 `pip download --only-binary=:all: --require-hashes --no-deps` 按该 lock 下载 wheels。
-`tools/lock_science_runtime.py VERIFIED_WHEEL_DIR NEW_LOCK_PATH` 使用 pip 原生 hash
+`python tools/lock_science_runtime.py export VERIFIED_WHEEL_DIR runtimes/science/requirements.in NEW_LOCK_PATH` 使用 pip 原生 hash
 与标准 wheel 文件名解析生成平台 lock；输出必须是不存在的新路径。核对原始完整
 lock、平台 lock、wheel 版本后提交，再让 CI 只消费已提交的 lock，不能在验收任务中
 现场重新解依赖。工具不下载未经完整 lock 核验的任意 wheels。
+
+导出器同时记录规范化的直接依赖集合。CI 在安装已锁定的 `packaging` 后执行
+`python tools/lock_science_runtime.py check runtimes/science/requirements.in runtimes/science/requirements.lock`，
+离线检查新增、删除、版本漂移、缺失项和重复项；不解析或改写依赖。`packaging` 负责
+PEP 508/440 解析，平台 lock 仅允许导出器的无条件精确 pin 格式；不支持的 marker、
+extras、URL 或递归 requirements 必须明确报错。原生 `pip check` 另外核对已安装的
+传递依赖要求。输入一致性不替代 wheel 哈希验证、原生数值验证或完整供应链审计。
 
 历史原生运行通过不代表安全审计完成；许可证、漏洞扫描、完整镜像及 SBOM 均仍须
 纳入 #62 最终 supply-chain gate。本表没有把缺失 gate 宣称为已通过。
