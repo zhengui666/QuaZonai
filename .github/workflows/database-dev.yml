@@ -1,0 +1,44 @@
+name: Temporary PostgreSQL development tools
+on:
+  pull_request:
+    paths: ['.github/workflows/database-dev.yml']
+permissions:
+  contents: read
+jobs:
+  public-native-tools:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      PGMQ_IMAGE: ghcr.io/pgmq/pg18-pgmq@sha256:bfb3537068ce453609744518ece92b178ac89dff53747d47ca6fab91c2fc66a6
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with: {persist-credentials: false}
+      - name: Export only native public installation files, never database data
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/postgres-tools/root /tmp/postgres-tools/lib /tmp/evidence
+          docker run --detach --name database-tools --env POSTGRES_PASSWORD=development-disposable "$PGMQ_IMAGE"
+          for flag in --bindir --sharedir --pkglibdir; do
+            path="$(docker exec database-tools pg_config "$flag")"
+            case "$path" in /usr/*) ;; *) exit 1 ;; esac
+            mkdir -p "/tmp/postgres-tools/root$(dirname "$path")"
+            docker cp -L "database-tools:$path" "/tmp/postgres-tools/root$path"
+            printf '%s %s\n' "$flag" "$path" >> /tmp/postgres-tools/paths.txt
+          done
+          docker exec database-tools sh -c 'ldd "$(command -v postgres)"; ldd "$(command -v psql)"; ldd "$(command -v initdb)"' | awk '/=> \// {print $3}' | sort -u > /tmp/postgres-tools/libraries.txt
+          while IFS= read -r library; do
+            case "$(basename "$library")" in libc.so.*|libm.so.*|libpthread.so.*|libdl.so.*|librt.so.*|ld-linux*) continue ;; esac
+            docker cp -L "database-tools:$library" "/tmp/postgres-tools/lib/$(basename "$library")"
+          done < /tmp/postgres-tools/libraries.txt
+          docker exec database-tools postgres --version > /tmp/postgres-tools/version.txt
+          tar -C /tmp/postgres-tools -czf /tmp/evidence/postgres-tools.tar.gz root lib paths.txt libraries.txt version.txt
+          git archive --format=tar HEAD | gzip > /tmp/evidence/source.tar.gz
+          printf 'Public database installation files only. No initialized database, credentials or production data.\n' > /tmp/evidence/README.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: postgres-development-${{ github.sha }}
+          path: /tmp/evidence/
+          retention-days: 1
+          if-no-files-found: error
+      - if: always()
+        run: docker rm --force --volumes database-tools
