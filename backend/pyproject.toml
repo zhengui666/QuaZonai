@@ -27,7 +27,7 @@ dependencies = [
 
 [project.optional-dependencies]
 research = ["optuna==4.9.0", "pyarrow==25.0.1", "numpy>=2.3,<3", "cvxpy>=1.7,<2"]
-agent = ["openai-codex==0.144.4", "mcp>=1.29,<2"]
+agent = ["openai-codex==0.147.0", "mcp>=1.29,<2"]
 nautilus-runtime = [
   "nautilus-trader==1.231.0",
   "numpy>=2.3,<3",
