@@ -1,0 +1,84 @@
+name: Temporary offline development kit (not product acceptance)
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/rewrite-offline-dev.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  export-native-development-tools:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Prepare public native tools and candidate dependency sources only
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.90.0 --profile minimal --component rustfmt --component clippy
+          mkdir -p /tmp/qz-dev-kit /tmp/qz-candidate/src
+          cat > /tmp/qz-candidate/Cargo.toml <<'TOML'
+          [package]
+          name = "qz-offline-development-kit"
+          version = "0.0.0"
+          edition = "2021"
+          rust-version = "1.90"
+          publish = false
+          [dependencies]
+          pyo3 = { version = "=0.25.1", features = ["auto-initialize"] }
+          serde = { version = "=1.0.219", features = ["derive"] }
+          serde_json = "=1.0.140"
+          axum = { version = "=0.8.4", features = ["macros"] }
+          tokio = { version = "=1.47.1", features = ["full"] }
+          tokio-stream = { version = "=0.1.17", features = ["sync"] }
+          sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-native-roots", "postgres", "uuid", "chrono", "bigdecimal", "json", "migrate", "macros"] }
+          uuid = { version = "=1.18.0", features = ["v7", "serde"] }
+          chrono = { version = "=0.4.41", features = ["serde"] }
+          bigdecimal = { version = "=0.4.8", features = ["serde"] }
+          clap = { version = "=4.5.46", features = ["derive", "env"] }
+          reqwest = { version = "=0.12.23", default-features = false, features = ["json", "rustls-tls", "stream"] }
+          tower = { version = "=0.5.2", features = ["util", "limit", "timeout"] }
+          tower-http = { version = "=0.6.6", features = ["cors", "trace", "timeout", "limit", "fs", "set-header", "sensitive-headers"] }
+          tower-sessions = "=0.14.0"
+          tower-sessions-sqlx-store = { version = "=0.15.0", features = ["postgres"] }
+          totp-rs = { version = "=5.7.0", features = ["gen_secret", "otpauth"] }
+          chacha20poly1305 = "=0.10.1"
+          base64 = "=0.22.1"
+          rand = "=0.9.2"
+          rmcp = { version = "=0.6.1", features = ["server", "transport-io"] }
+          utoipa = { version = "=5.4.0", features = ["chrono", "uuid"] }
+          bollard = "=0.19.1"
+          thiserror = "=2.0.16"
+          tracing = "=0.1.41"
+          tracing-subscriber = { version = "=0.3.19", features = ["env-filter", "json"] }
+          futures-util = "=0.3.31"
+          async-stream = "=0.3.6"
+          url = "=2.5.7"
+          toml = "=0.9.5"
+          tempfile = "=3.21.0"
+          proptest = "=1.7.0"
+          time = "=0.3.41"
+          TOML
+          printf 'fn main() {}\n' > /tmp/qz-candidate/src/main.rs
+          CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback cargo generate-lockfile --manifest-path /tmp/qz-candidate/Cargo.toml
+          cargo vendor --locked --manifest-path /tmp/qz-candidate/Cargo.toml /tmp/qz-dev-kit/vendor > /tmp/qz-dev-kit/vendor-config.toml
+          cp /tmp/qz-candidate/Cargo.toml /tmp/qz-dev-kit/candidate-Cargo.toml
+          cp /tmp/qz-candidate/Cargo.lock /tmp/qz-dev-kit/candidate-Cargo.lock
+          # No account homes, Cargo credentials, git metadata or CI tokens are exported.
+          TOOLCHAIN="$(rustup show home)/toolchains/1.90.0-x86_64-unknown-linux-gnu"
+          tar -C "$TOOLCHAIN" -czf /tmp/qz-dev-kit/rust-1.90.0.tar.gz bin lib libexec share/man
+          git archive --format=tar HEAD | gzip > /tmp/qz-dev-kit/reviewed-source.tar.gz
+          git rev-parse HEAD > /tmp/qz-dev-kit/source-commit.txt
+          printf 'Development inputs only. Not a product lock, test result or acceptance proof.\n' > /tmp/qz-dev-kit/NOT-ACCEPTANCE.txt
+          # This workflow does not alter or commit the product source or product lock.
+          git diff --exit-code
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: offline-rust-dev-${{ github.sha }}
+          path: /tmp/qz-dev-kit/
+          if-no-files-found: error
+          retention-days: 1
