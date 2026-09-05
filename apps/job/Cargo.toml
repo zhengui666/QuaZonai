@@ -1,0 +1,20 @@
+[package]
+name = "job"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+arrow-array = "=56.2.0"
+arrow-schema = "=56.2.0"
+arrow-ipc = "=56.2.0"
+clarabel = "=0.11.1"
+nautilus-backtest = { version = "=0.63.0", default-features = false }
+nautilus-model = { version = "=0.63.0", default-features = false, features = ["test-support"] }
+nautilus-trading = { version = "=0.63.0", default-features = false, features = ["examples"] }
+anyhow = "=1.0.104"

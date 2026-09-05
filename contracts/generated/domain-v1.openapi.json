@@ -1,0 +1,639 @@
+{
+  "components": {
+    "schemas": {
+      "BudgetV1": {
+        "additionalProperties": false,
+        "properties": {
+          "cost_currency": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cost_enforcement": {
+            "$ref": "#/components/schemas/CostEnforcement"
+          },
+          "max_cost_decimal": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DecimalValue"
+              }
+            ]
+          },
+          "max_cpu_seconds": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "max_cycles_per_day": {
+            "format": "int32",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_experiments": {
+            "format": "int32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_memory_mib": {
+            "format": "int32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_output_bytes": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "max_parallel_runs": {
+            "format": "int32",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_repair_turns": {
+            "format": "int32",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_tokens": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DbCounter"
+              }
+            ]
+          },
+          "max_turns_per_mission": {
+            "format": "int32",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_wall_seconds": {
+            "format": "int32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "min_cycle_interval_seconds": {
+            "format": "int32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "max_experiments",
+          "max_parallel_runs",
+          "max_turns_per_mission",
+          "max_repair_turns",
+          "max_wall_seconds",
+          "max_cpu_seconds",
+          "max_memory_mib",
+          "max_output_bytes",
+          "max_cycles_per_day",
+          "min_cycle_interval_seconds",
+          "cost_enforcement"
+        ],
+        "type": "object"
+      },
+      "Comparator": {
+        "enum": [
+          "GT",
+          "GE",
+          "LT",
+          "LE",
+          "BETWEEN"
+        ],
+        "type": "string"
+      },
+      "ConnectionMode": {
+        "enum": [
+          "SYSTEM",
+          "CUSTOM_PROVIDER"
+        ],
+        "type": "string"
+      },
+      "CostEnforcement": {
+        "enum": [
+          "UNAVAILABLE",
+          "ESTIMATED",
+          "EXACT"
+        ],
+        "type": "string"
+      },
+      "DbCounter": {
+        "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+        "maxLength": 19,
+        "minLength": 1,
+        "pattern": "^(?:[1-9][0-9]{0,17}|0|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])",
+        "type": "string"
+      },
+      "DecimalValue": {
+        "description": "Plain decimal exactly representable by NUMERIC(38,18).",
+        "maxLength": 64,
+        "minLength": 1,
+        "pattern": "^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])",
+        "type": "string"
+      },
+      "Decision": {
+        "enum": [
+          "PASS",
+          "REJECT",
+          "INCONCLUSIVE"
+        ],
+        "type": "string"
+      },
+      "EvidenceStatus": {
+        "enum": [
+          "VALID",
+          "INVALID",
+          "INCOMPLETE",
+          "UNSUPPORTED"
+        ],
+        "type": "string"
+      },
+      "Id": {
+        "format": "uuid",
+        "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+        "type": "string"
+      },
+      "MetricRequirementV1": {
+        "additionalProperties": false,
+        "properties": {
+          "comparator": {
+            "$ref": "#/components/schemas/Comparator"
+          },
+          "method_allowlist": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "metric_code": {
+            "type": "string"
+          },
+          "minimum_observations": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "threshold_high": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DecimalValue"
+              }
+            ]
+          },
+          "threshold_low": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DecimalValue"
+              }
+            ]
+          }
+        },
+        "required": [
+          "schema_version",
+          "metric_code",
+          "scope",
+          "comparator",
+          "required",
+          "minimum_observations",
+          "method_allowlist"
+        ],
+        "type": "object"
+      },
+      "MetricStatus": {
+        "enum": [
+          "OK",
+          "INSUFFICIENT_DATA",
+          "UNSUPPORTED",
+          "INVALID_INPUT",
+          "FAILED"
+        ],
+        "type": "string"
+      },
+      "MetricValueV1": {
+        "additionalProperties": false,
+        "properties": {
+          "annualization_factor": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "evaluation_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "frequency": {
+            "type": "string"
+          },
+          "higher_is_better": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "method_id": {
+            "type": "string"
+          },
+          "method_version": {
+            "type": "string"
+          },
+          "metric_code": {
+            "type": "string"
+          },
+          "observation_count": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "period_end": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "period_start": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "source_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/MetricStatus"
+          },
+          "unit": {
+            "type": "string"
+          },
+          "value": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "schema_version",
+          "evaluation_id",
+          "metric_code",
+          "scope",
+          "value",
+          "status",
+          "unit",
+          "period_start",
+          "period_end",
+          "observation_count",
+          "frequency",
+          "annualization_factor",
+          "method_id",
+          "method_version",
+          "source_artifact_id"
+        ],
+        "type": "object"
+      },
+      "ModelCapabilityV1": {
+        "additionalProperties": false,
+        "properties": {
+          "default_reasoning_effort": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "fetched_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "hidden": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "is_default": {
+            "type": "boolean"
+          },
+          "model": {
+            "type": "string"
+          },
+          "profile_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "supported_reasoning_efforts": {
+            "items": {
+              "$ref": "#/components/schemas/ReasoningEffortCapability"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "schema_version",
+          "id",
+          "model",
+          "display_name",
+          "hidden",
+          "default_reasoning_effort",
+          "supported_reasoning_efforts",
+          "is_default",
+          "fetched_at",
+          "profile_revision"
+        ],
+        "type": "object"
+      },
+      "ProfileOrigin": {
+        "enum": [
+          "MANAGED_VOLUME",
+          "OPERATOR_MOUNT"
+        ],
+        "type": "string"
+      },
+      "ProjectState": {
+        "enum": [
+          "DRAFT",
+          "ACTIVE",
+          "PAUSED",
+          "ARCHIVED"
+        ],
+        "type": "string"
+      },
+      "ReasoningEffortCapability": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "reasoning_effort": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "reasoning_effort",
+          "description"
+        ],
+        "type": "object"
+      },
+      "Revision": {
+        "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+        "maxLength": 19,
+        "minLength": 1,
+        "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])",
+        "type": "string"
+      },
+      "RunKind": {
+        "enum": [
+          "AGENT_RESEARCH",
+          "DATA_VALIDATE",
+          "ALPHA_EVALUATE",
+          "PORTFOLIO_BUILD",
+          "PORTFOLIO_SIMULATE",
+          "FORWARD_EVALUATE",
+          "EXPORT",
+          "IMPORT"
+        ],
+        "type": "string"
+      },
+      "RunSnapshotV1": {
+        "additionalProperties": false,
+        "properties": {
+          "active_attempt_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "cancellation_requested_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "current_attempt_no": {
+            "format": "int32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "cycle_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "deadline_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "finished_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "input_set_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RunKind"
+          },
+          "last_event_seq": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "queued_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/RunState"
+          },
+          "terminal_reason_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "schema_version",
+          "id",
+          "project_id",
+          "kind",
+          "input_set_id",
+          "state",
+          "current_attempt_no",
+          "last_event_seq",
+          "deadline_at",
+          "queued_at",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "RunState": {
+        "enum": [
+          "QUEUED",
+          "DISPATCHING",
+          "RUNNING",
+          "RECONCILING",
+          "CANCEL_REQUESTED",
+          "SUCCEEDED",
+          "FAILED",
+          "CANCELLED"
+        ],
+        "type": "string"
+      },
+      "SavedModelSettingsV1": {
+        "additionalProperties": false,
+        "properties": {
+          "saved_fast_mode": {
+            "type": "boolean"
+          },
+          "saved_model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "saved_reasoning_effort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "use_default_model_settings": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "schema_version",
+          "use_default_model_settings",
+          "saved_fast_mode"
+        ],
+        "type": "object"
+      },
+      "SchemaV1": {
+        "enum": [
+          1
+        ],
+        "maximum": 1,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "StopRuleV1": {
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "stop_on_budget": {
+            "type": "boolean"
+          },
+          "stop_on_invalid_data": {
+            "type": "boolean"
+          },
+          "stop_on_no_improvement_trials": {
+            "format": "int32",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "stop_on_qualified_count": {
+            "format": "int32",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "schema_version",
+          "stop_on_qualified_count",
+          "stop_on_budget",
+          "stop_on_invalid_data"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Shared scalar, budget, Codex-settings, run and metric contracts. No HTTP endpoint or full-system acceptance is implied.",
+    "license": {
+      "name": ""
+    },
+    "title": "QuaZonai typed domain contracts (initial slice)",
+    "version": "2.0.0-dev.1"
+  },
+  "openapi": "3.1.0",
+  "paths": {}
+}
