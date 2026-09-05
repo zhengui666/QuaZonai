@@ -183,3 +183,28 @@ fn metric_nullable_fields_are_present_not_silently_defaulted() {
         .contains("-7"));
     assert!(from_value::<Id>(json!(Id::new().as_uuid().simple().to_string())).is_err());
 }
+
+#[test]
+fn native_decimal_parser_matches_the_shared_wire_boundary_corpus() {
+    let cases: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("../../../tests/contracts/decimal-wire.json")).unwrap();
+    for case in cases {
+        assert_eq!(
+            from_value::<DecimalValue>(case["input"].clone()).is_ok(),
+            case["valid"].as_bool().unwrap(),
+            "{}",
+            case["input"]
+        );
+    }
+    let smallest: DecimalValue = "0.000000000000000001".parse().unwrap();
+    let largest: DecimalValue = "99999999999999999999.999999999999999999".parse().unwrap();
+    assert!(largest.checked_add(&smallest).is_none());
+    assert_eq!(
+        smallest.checked_add(&smallest).unwrap(),
+        "0.000000000000000002".parse().unwrap()
+    );
+    assert_eq!(
+        smallest.checked_add(&DecimalValue::zero()).unwrap(),
+        smallest
+    );
+}

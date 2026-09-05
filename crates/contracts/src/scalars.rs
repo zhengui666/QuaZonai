@@ -184,13 +184,46 @@ impl From<Revision> for String {
 }
 
 /// NUMERIC(38,18), not rust_decimal's smaller 96-bit coefficient or f64.
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, ToSchema)]
-#[schema(value_type = String, example = "0.250000000000000001")]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct DecimalValue(BigDecimal);
+
+impl utoipa::PartialSchema for DecimalValue {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        // The final lookahead anchors the true end, including a trailing newline.
+        // Leading zeros and trailing fractional zeros match BigDecimal's accepted
+        // exact inputs; significant precision is capped at 20 + 18 digits.
+        utoipa::openapi::schema::ObjectBuilder::new()
+            .schema_type(utoipa::openapi::schema::Type::String)
+            .description(Some(
+                "Plain decimal exactly representable by NUMERIC(38,18).",
+            ))
+            .min_length(Some(1))
+            .max_length(Some(64))
+            .pattern(Some(
+                r"^[+-]?(?:0*[0-9]{1,20}(?:\.[0-9]{0,18}0*)?|\.[0-9]{1,18}0*)(?![\s\S])",
+            ))
+            .into()
+    }
+}
+impl ToSchema for DecimalValue {}
 
 impl DecimalValue {
     pub fn as_decimal(&self) -> &BigDecimal {
         &self.0
+    }
+
+    pub fn zero() -> Self {
+        Self(BigDecimal::from(0))
+    }
+
+    pub fn is_nonnegative(&self) -> bool {
+        self.0 >= BigDecimal::from(0)
+    }
+
+    /// Native exact addition, revalidated against the same NUMERIC(38,18) range.
+    /// No floating-point budget accounting or silent rounding.
+    pub fn checked_add(&self, other: &Self) -> Option<Self> {
+        (&self.0 + &other.0).to_plain_string().parse().ok()
     }
 
     pub fn is_positive(&self) -> bool {

@@ -124,14 +124,6 @@ pub fn evaluate_metrics(
             ));
             continue;
         };
-        if metric.status == MetricStatus::InvalidInput {
-            invalid = true;
-            reasons.push(format!(
-                "{}:{}:INVALID_INPUT",
-                metric.metric_code, metric.scope
-            ));
-            continue;
-        }
         let native_supported = capabilities.iter().any(|capability| {
             capability.metric_code == metric.metric_code
                 && capability.method_id == metric.method_id
@@ -146,6 +138,16 @@ pub fn evaluate_metrics(
             unsupported = true;
             reasons.push(format!(
                 "{}:{}:UNSUPPORTED_METHOD",
+                metric.metric_code, metric.scope
+            ));
+            continue;
+        }
+        // Only recognized producers may classify the input as invalid. A stale
+        // method, version, unit or frequency cannot drive stop_on_invalid_data.
+        if metric.status == MetricStatus::InvalidInput {
+            invalid = true;
+            reasons.push(format!(
+                "{}:{}:INVALID_INPUT",
                 metric.metric_code, metric.scope
             ));
             continue;

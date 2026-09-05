@@ -131,8 +131,10 @@
         "type": "string"
       },
       "DecimalValue": {
-        "description": "NUMERIC(38,18), not rust_decimal's smaller 96-bit coefficient or f64.",
-        "example": "0.250000000000000001",
+        "description": "Plain decimal exactly representable by NUMERIC(38,18).",
+        "maxLength": 64,
+        "minLength": 1,
+        "pattern": "^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])",
         "type": "string"
       },
       "Decision": {

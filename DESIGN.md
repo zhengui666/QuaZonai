@@ -273,7 +273,7 @@ Demo 一条文档命令启动，synthetic/fixture 明显且不能生产领取；
 - `Id=UUIDv7`，JSON 标准 UUID 字符串；外部 ID 单独保存，不冒充本地 FK。
 - `Time=timestamptz`，JSON UTC RFC3339；市场 ns 为 Arrow timestamp(ns,UTC)，JSON 十进制字符串，不经 JS Number 截断。
 - `Rev=bigint>=1`，JSON 十进制字符串；可变对象 `expected_revision` CAS。计数依字段范围，涉及 bigint 的 wire 值用字符串。
-- `Decimal=numeric(38,18)`，JSON 十进制字符串；Money 带 ISO currency。tick/lot/price precision 复用 Nautilus，不另造算法；是否允许负权重由 mandate 决定。
+- `Decimal=numeric(38,18)`，JSON 十进制字符串；线格式为1–64个ASCII字符、可选正负号、非指数普通小数。允许前导/尾随零及`.5`/`1.`，但规范化后整数最多20位、有效小数最多18位，不截断或舍入；JSON Schema同时限制词法、长度和可表示范围。Money 带 ISO currency。tick/lot/price precision 复用 Nautilus，不另造算法；是否允许负权重由 mandate 决定。
 - `Metric=finite f64|null`；不接受 NaN/Infinity，null 带 status/reason。bool 只接受 bool，不混淆省略/null/false。
 - 每表 `id:Id PK, created_at:Time`。可变表另有 `updated_at:Time, revision:Rev`；immutable 禁 UPDATE/DELETE，撤销/修订追加；append-only 没有伪 mutable revision。
 - 默认归档，不级联删除引用的研究/评估/审批/交付。封闭 enum 与合同/DB CHECK 一致；状态迁移带当前 state/revision，不接受客户端终态赋值。
@@ -339,6 +339,11 @@ research_cycles [mutable]
   reserved_experiments: int >= 0
   used_experiments: int >= 0
   reserved_cpu_seconds: bigint >= 0
+  reserved_tokens: bigint >= 0
+  used_tokens: bigint >= 0
+  reserved_model_cost: Decimal? >= 0
+  used_model_cost: Decimal? >= 0
+  model_cost_currency: char(3)?
   started_at: Time?
   ended_at: Time?
   next_action: text?
@@ -371,7 +376,11 @@ StopRuleV1:
   stop_on_invalid_data: bool default true
 ```
 
-无准确计费能力不得接受 EXACT；费用值/币种配对。Optuna 内部 trial 使用预分配预算，不能藏在一次 job 无限搜索。资源/turn/并行上限必须有效正值且符合 runtime capability；修复 turn 不超过总 turn。停止规则由用户冻结，Agent 不能扩大。
+无准确计费能力不得接受 EXACT；费用值/币种配对。 模型预算准入必须在同一Cycle锁下读取已经消耗和仍在预约中的Token/费用，比较 `used + reserved + requested <= frozen_limit` 后才提交预约和入队。费用使用BigDecimal精确运算，所有加法检查PostgreSQL bigint及NUMERIC边界；不同币种不能相加或自动兑换。配置成本上限时，三个成本字段必须完整已知且币种与政策一致；缺用量或缺新请求估算报不可用，不将null当0。新模型请求必须预约正Token上限，估算成本允许有可信依据的显式0；只有受信任分派器认定的非模型任务才可不带模型预约。此区分和预算不能由Agent自报。
+
+每次原生模型请求、工具后的后续Turn、修复和重试均纳入预约，不因沿用Thread、失败或新Attempt清零。消耗结算必须绑定精确的原生请求/Attempt并幂等转移预约到已用计数；结果未知保留预约，不能因断线/取消请求提前退款。实际用量超过预约也要如实记录并阻断后续准入，不能将账本裁到上限。ESTIMATED只对估算预算作准入，不承诺Provider最终账单严格不超过金额，缺准确计费继续拒绝EXACT。纯领域函数的这部分检查不等于正式Worker与数据库结算链路已经交付。
+
+Optuna 内部 trial 使用预分配预算，不能藏在一次 job 无限搜索。资源/turn/并行上限必须有效正值且符合 runtime capability；修复 turn 不超过总 turn。停止规则由用户冻结，Agent 不能扩大。
 
 ## A2. 数据、Universe、基准与执行假设
 
@@ -560,6 +569,8 @@ alpha_version_id: utf8 non-null
 
 `available_at <= asof < horizon_end`；score/expected_return 按 signal_kind 校验；uncertainty 未估计为 null，不能填 confidence=1；唯一 `(alpha_version_id,instrument_id,asof_ns,horizon_end_ns)`。元数据含币种、单位、horizon、dataset revision。预测表不含 broker_key/order_id/quantity/真实 account/position。
 
+原生产物身份必须唯一：`UNIQUE(storage_backend,storage_object_ref,storage_version)`。登记前由受信任存储适配器解析规范原生引用，不允许路径、bucket或挂载别名产生新身份。相同原生身份及完整不可变元数据的重试返回原artifact_id；origin、access_class、schema、project或其他不可变字段冲突返回409，不能借新UUID将FIXTURE/已暴露证据改标REAL/DELIVERY。不能以修改UUID或自建内容hash替代这一约束。
+
 ## A4. 输入、政策、评估、资格与暴露
 
 ```text
@@ -648,7 +659,11 @@ evidence_exposures [append-only]
   purpose: text
 ```
 
-sealed 使用预约先提交再授予 evaluator 能力，失败/取消不抹去机会。Exposure 包括原始行、样本、指标、图、摘要和 legacy unknown。后续反馈按冻结披露政策，不能洗白相同 sealed。缺 required metric、实现不支持、样本不足、方法不适用或过期均 INCONCLUSIVE；无“全部 Gate 缺值自动跳过”。
+输入项要求 `UNIQUE(input_set_id,ordinal)`，并对非null的 `(input_set_id,dataset_revision_id)` 和 `(input_set_id,artifact_id)` 分别建立唯一部分索引。相同位置及同一不可变引用/role重试幂等返回原项；位置冲突或相同对象重复位置返回409，不自动改ordinal、拼接或重复消费。原生任务输入严格按ordinal升序；整个InputSet及其项目引用在同事务完整发布并冻结。
+
+Qualification必须绑定被评估的精确Alpha版本和政策：评估表提供 `UNIQUE(id,subject_alpha_version_id,policy_id)`，qualification的 `(qualifying_evaluation_id,alpha_version_id,policy_id)` 复合FK引用它；qualification另外提供 `UNIQUE(id,alpha_version_id)`，candidate_alphas的 `(qualification_id,alpha_version_id)` 必须使用复合FK而不是两条互不关联的FK。授予与使用时仍要事务检查同项目、VALID/PASS、新鲜度、撤销及Mandate政策，不允许未合格版本借用其他版本资格。
+
+sealed 使用预约先提交再授予 evaluator 能力，失败/取消不抹去机会。Exposure 包括原始行、样本、指标、图、摘要和 legacy unknown。后续反馈按冻结披露政策，不能洗白相同 sealed。缺 required metric、实现不支持、样本不足、方法不适用或过期均 INCONCLUSIVE；无“全部 Gate 缺值自动跳过”。 对INVALID_INPUT亦必须先验证原生方法/版本/单位/频率与冻结allowlist；来源未登记或过期归UNSUPPORTED，不得驱动stop_on_invalid_data。仅可信且合同匹配的INVALID_INPUT保留INVALID。
 
 ```text
 MetricRequirementV1:

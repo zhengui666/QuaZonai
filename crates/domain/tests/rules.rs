@@ -49,6 +49,9 @@ fn empty_usage() -> BudgetUsage {
         used_experiments: 0,
         reserved_cpu_seconds: DbCounter::ZERO,
         active_runs: 0,
+        reserved_tokens: DbCounter::ZERO,
+        used_tokens: DbCounter::ZERO,
+        cost: None,
     }
 }
 fn request() -> Reservation {
@@ -58,6 +61,7 @@ fn request() -> Reservation {
         wall_seconds: 60,
         memory_mib: 256,
         output_bytes: count(1024),
+        model: None,
     }
 }
 fn lease() -> AttemptLease {
@@ -78,16 +82,22 @@ fn admissions_require_active_project_and_preserve_failed_reservations() {
         ProjectState::Archived,
     ] {
         assert_eq!(
-            reserve(state, &budget(), &stop(), usage, request()),
+            reserve(state, &budget(), &stop(), &usage, &request()),
             Err(DomainError::AdmissionClosed)
         );
     }
-    let first = reserve(ProjectState::Active, &budget(), &stop(), usage, request()).unwrap();
+    let first = reserve(ProjectState::Active, &budget(), &stop(), &usage, &request()).unwrap();
     assert_eq!(first.reserved_experiments, 3);
     assert_eq!(first.active_runs, 1);
-    let second = reserve(ProjectState::Active, &budget(), &stop(), first, request()).unwrap();
+    let second = reserve(ProjectState::Active, &budget(), &stop(), &first, &request()).unwrap();
     assert_eq!(
-        reserve(ProjectState::Active, &budget(), &stop(), second, request()),
+        reserve(
+            ProjectState::Active,
+            &budget(),
+            &stop(),
+            &second,
+            &request()
+        ),
         Err(DomainError::BudgetExhausted("parallel_runs"))
     );
     assert_eq!(usage, empty_usage());
@@ -101,7 +111,7 @@ fn every_resource_and_all_internal_optuna_trials_consume_budget() {
         ..empty_usage()
     };
     assert_eq!(
-        reserve(ProjectState::Active, &budget(), &stop(), usage, request()),
+        reserve(ProjectState::Active, &budget(), &stop(), &usage, &request()),
         Err(DomainError::BudgetExhausted("experiments"))
     );
     let usage = BudgetUsage {
@@ -109,7 +119,7 @@ fn every_resource_and_all_internal_optuna_trials_consume_budget() {
         ..empty_usage()
     };
     assert_eq!(
-        reserve(ProjectState::Active, &budget(), &stop(), usage, request()),
+        reserve(ProjectState::Active, &budget(), &stop(), &usage, &request()),
         Err(DomainError::BudgetExhausted("cpu_seconds"))
     );
     for r in [
@@ -127,7 +137,7 @@ fn every_resource_and_all_internal_optuna_trials_consume_budget() {
         },
     ] {
         assert_eq!(
-            reserve(ProjectState::Active, &budget(), &stop(), empty_usage(), r),
+            reserve(ProjectState::Active, &budget(), &stop(), &empty_usage(), &r),
             Err(DomainError::BudgetExhausted("job_resource_limit"))
         );
     }
@@ -135,12 +145,12 @@ fn every_resource_and_all_internal_optuna_trials_consume_budget() {
         used_experiments: u32::MAX,
         ..empty_usage()
     };
-    assert!(reserve(ProjectState::Active, &budget(), &stop(), usage, request()).is_err());
+    assert!(reserve(ProjectState::Active, &budget(), &stop(), &usage, &request()).is_err());
     let usage = BudgetUsage {
         reserved_cpu_seconds: count(i64::MAX as u64),
         ..empty_usage()
     };
-    assert!(reserve(ProjectState::Active, &budget(), &stop(), usage, request()).is_err());
+    assert!(reserve(ProjectState::Active, &budget(), &stop(), &usage, &request()).is_err());
 }
 
 #[test]
@@ -153,7 +163,7 @@ fn configurable_stop_flags_do_not_disable_the_hard_budget() {
         used_experiments: 20,
         ..empty_usage()
     };
-    assert!(reserve(ProjectState::Active, &budget(), &rule, usage, request()).is_err());
+    assert!(reserve(ProjectState::Active, &budget(), &rule, &usage, &request()).is_err());
 }
 
 #[test]
@@ -179,8 +189,8 @@ fn estimated_cost_is_never_promoted_to_exact_enforcement() {
 proptest! {
     #[test]
     fn accepted_reservation_cannot_exceed_any_frozen_aggregate(used in 0u32..25, reserved in 0u32..25, cpu in 0u64..8000, active in 0u16..5, trials in 1u32..25) {
-        let usage=BudgetUsage {used_experiments:used,reserved_experiments:reserved,reserved_cpu_seconds:count(cpu),active_runs:active};
-        if let Ok(next)=reserve(ProjectState::Active,&budget(),&stop(),usage,Reservation {experiments:trials,..request()}) {
+        let usage=BudgetUsage {used_experiments:used,reserved_experiments:reserved,reserved_cpu_seconds:count(cpu),active_runs:active,..empty_usage()};
+        if let Ok(next)=reserve(ProjectState::Active,&budget(),&stop(),&usage,&Reservation {experiments:trials,..request()}) {
             prop_assert_eq!(next.used_experiments,used);
             prop_assert_eq!(next.reserved_experiments,reserved+trials);
             prop_assert!(next.used_experiments+next.reserved_experiments<=20);
@@ -674,5 +684,331 @@ fn cost_currency_uses_iso_library_membership_not_ascii_shape() {
     for code in ["ZZZ", "QQQ", "US", "usd", "USDT", "", " USD"] {
         b.cost_currency = Some(code.into());
         assert!(validate_budget(&b, &stop()).is_err(), "accepted {code}");
+    }
+}
+
+#[test]
+fn invalid_input_requires_registered_native_provenance_and_policy_allowlist() {
+    let id = Id::new();
+    let original = MetricValueV1 {
+        status: MetricStatus::InvalidInput,
+        value: None,
+        reason_code: Some("BAD_INPUT".into()),
+        ..metric(id)
+    };
+    for m in [
+        MetricValueV1 {
+            method_id: "unregistered".into(),
+            ..original.clone()
+        },
+        MetricValueV1 {
+            method_version: "unreviewed".into(),
+            ..original.clone()
+        },
+        MetricValueV1 {
+            unit: "wrong-unit".into(),
+            ..original.clone()
+        },
+        MetricValueV1 {
+            frequency: "wrong-frequency".into(),
+            ..original.clone()
+        },
+    ] {
+        let gate = evaluate_metrics(id, &[requirement()], &[m], &[capability()]).unwrap();
+        assert_eq!(gate.evidence_status, EvidenceStatus::Unsupported);
+        assert_eq!(gate.decision, Decision::Inconclusive);
+        assert!(gate
+            .reasons
+            .iter()
+            .all(|reason| !reason.ends_with(":INVALID_INPUT")));
+    }
+    let mut denied = requirement();
+    denied.method_allowlist = vec!["another-method".into()];
+    let gate = evaluate_metrics(
+        id,
+        &[denied],
+        std::slice::from_ref(&original),
+        &[capability()],
+    )
+    .unwrap();
+    assert_eq!(gate.evidence_status, EvidenceStatus::Unsupported);
+    let gate = evaluate_metrics(id, &[requirement()], &[original], &[capability()]).unwrap();
+    assert_eq!(gate.evidence_status, EvidenceStatus::Invalid);
+}
+
+fn model_request(tokens: u64, estimate: Option<(&str, &str)>) -> Reservation {
+    Reservation {
+        model: Some(ModelReservation {
+            tokens: count(tokens),
+            estimated_cost: estimate.map(|(currency, amount)| CostEstimate {
+                currency: currency.into(),
+                amount: amount.parse().unwrap(),
+            }),
+        }),
+        ..request()
+    }
+}
+
+fn estimated_budget() -> BudgetV1 {
+    BudgetV1 {
+        max_tokens: Some(count(1000)),
+        max_cost_decimal: Some("1.000000000000000001".parse().unwrap()),
+        cost_currency: Some("USD".into()),
+        cost_enforcement: CostEnforcement::Estimated,
+        ..budget()
+    }
+}
+
+fn cost_usage(reserved: &str, used: &str) -> BudgetUsage {
+    BudgetUsage {
+        cost: Some(CostUsage {
+            currency: "USD".into(),
+            reserved: reserved.parse().unwrap(),
+            used: used.parse().unwrap(),
+        }),
+        ..empty_usage()
+    }
+}
+
+#[test]
+fn tokens_count_consumed_and_outstanding_grants_at_the_exact_limit() {
+    let policy = BudgetV1 {
+        max_tokens: Some(count(1000)),
+        ..budget()
+    };
+    let usage = BudgetUsage {
+        used_tokens: count(800),
+        reserved_tokens: count(100),
+        ..empty_usage()
+    };
+    let before = usage.clone();
+    let accepted = reserve(
+        ProjectState::Active,
+        &policy,
+        &stop(),
+        &usage,
+        &model_request(100, None),
+    )
+    .unwrap();
+    assert_eq!(accepted.reserved_tokens, count(200));
+    assert_eq!(accepted.used_tokens, count(800));
+    assert_eq!(
+        reserve(
+            ProjectState::Active,
+            &policy,
+            &stop(),
+            &usage,
+            &model_request(101, None)
+        ),
+        Err(DomainError::BudgetExhausted("tokens"))
+    );
+    assert_eq!(usage, before);
+    assert_eq!(
+        reserve(
+            ProjectState::Active,
+            &policy,
+            &stop(),
+            &usage,
+            &model_request(0, None)
+        ),
+        Err(DomainError::Invalid("model_token_reservation"))
+    );
+}
+
+#[test]
+fn token_accounting_never_wraps_even_without_a_configured_cap() {
+    for usage in [
+        BudgetUsage {
+            reserved_tokens: count(i64::MAX as u64),
+            ..empty_usage()
+        },
+        BudgetUsage {
+            used_tokens: count(i64::MAX as u64),
+            ..empty_usage()
+        },
+    ] {
+        assert_eq!(
+            reserve(
+                ProjectState::Active,
+                &budget(),
+                &stop(),
+                &usage,
+                &model_request(1, None)
+            ),
+            Err(DomainError::BudgetExhausted("tokens"))
+        );
+    }
+}
+
+#[test]
+fn estimated_cost_uses_native_exact_decimal_arithmetic_not_f64() {
+    let policy = estimated_budget();
+    let usage = cost_usage("0.2", "0.7");
+    let before = usage.clone();
+    let next = reserve(
+        ProjectState::Active,
+        &policy,
+        &stop(),
+        &usage,
+        &model_request(10, Some(("USD", "0.100000000000000001"))),
+    )
+    .unwrap();
+    assert_eq!(
+        next.cost.unwrap().reserved,
+        "0.300000000000000001".parse().unwrap()
+    );
+    assert_eq!(
+        reserve(
+            ProjectState::Active,
+            &policy,
+            &stop(),
+            &usage,
+            &model_request(10, Some(("USD", "0.100000000000000002")))
+        ),
+        Err(DomainError::BudgetExhausted("estimated_cost"))
+    );
+    assert_eq!(usage, before);
+}
+
+#[test]
+fn unknown_costs_and_currency_mismatches_do_not_become_free_requests() {
+    let policy = estimated_budget();
+    let request = model_request(10, Some(("USD", "0.1")));
+    assert_eq!(
+        reserve(
+            ProjectState::Active,
+            &policy,
+            &stop(),
+            &empty_usage(),
+            &request
+        ),
+        Err(DomainError::CapabilityUnavailable("cost_usage_unknown"))
+    );
+    let usage = cost_usage("0", "0");
+    assert_eq!(
+        reserve(
+            ProjectState::Active,
+            &policy,
+            &stop(),
+            &usage,
+            &model_request(10, None)
+        ),
+        Err(DomainError::CapabilityUnavailable("cost_estimate_missing"))
+    );
+    for estimate in [("EUR", "0.1"), ("USD", "-0.1")] {
+        assert_eq!(
+            reserve(
+                ProjectState::Active,
+                &policy,
+                &stop(),
+                &usage,
+                &model_request(10, Some(estimate))
+            ),
+            Err(DomainError::Invalid("cost_estimate"))
+        );
+    }
+    let mut wrong = usage.clone();
+    wrong.cost.as_mut().unwrap().currency = "EUR".into();
+    assert_eq!(
+        reserve(ProjectState::Active, &policy, &stop(), &wrong, &request),
+        Err(DomainError::Invalid("cost_usage"))
+    );
+    for invalid in [cost_usage("-0.1", "0"), cost_usage("0", "-0.1")] {
+        assert_eq!(
+            reserve(ProjectState::Active, &policy, &stop(), &invalid, &request),
+            Err(DomainError::Invalid("cost_usage"))
+        );
+    }
+    assert!(reserve(
+        ProjectState::Active,
+        &policy,
+        &stop(),
+        &usage,
+        &model_request(10, Some(("USD", "0")))
+    )
+    .is_ok()); // explicit known zero, not missing
+}
+
+#[test]
+fn non_model_jobs_do_not_add_cost_but_cannot_hide_an_existing_overrun() {
+    let policy = estimated_budget();
+    let usage = cost_usage("0.1", "0.2");
+    let next = reserve(ProjectState::Active, &policy, &stop(), &usage, &request()).unwrap();
+    assert_eq!(next.cost, usage.cost);
+    assert_eq!(next.reserved_tokens, usage.reserved_tokens);
+    assert_eq!(
+        reserve(
+            ProjectState::Active,
+            &policy,
+            &stop(),
+            &cost_usage("0", "2"),
+            &request()
+        ),
+        Err(DomainError::BudgetExhausted("estimated_cost"))
+    );
+    let overrun = BudgetUsage {
+        used_tokens: count(1001),
+        ..usage
+    };
+    assert_eq!(
+        reserve(ProjectState::Active, &policy, &stop(), &overrun, &request()),
+        Err(DomainError::BudgetExhausted("tokens"))
+    );
+}
+
+#[test]
+fn estimated_cost_overflow_is_rejected_and_inactive_accounting_is_not_silently_ignored() {
+    let policy = estimated_budget();
+    let usage = cost_usage("99999999999999999999", "0");
+    assert_eq!(
+        reserve(
+            ProjectState::Active,
+            &policy,
+            &stop(),
+            &usage,
+            &model_request(10, Some(("USD", "1")))
+        ),
+        Err(DomainError::BudgetExhausted("estimated_cost"))
+    );
+    assert_eq!(
+        reserve(
+            ProjectState::Active,
+            &budget(),
+            &stop(),
+            &empty_usage(),
+            &model_request(10, Some(("USD", "1")))
+        ),
+        Err(DomainError::Invalid("unconfigured_cost_accounting"))
+    );
+    assert_eq!(
+        reserve(
+            ProjectState::Active,
+            &budget(),
+            &stop(),
+            &cost_usage("0", "0"),
+            &request()
+        ),
+        Err(DomainError::Invalid("unconfigured_cost_accounting"))
+    );
+}
+
+proptest! {
+    #[test]
+    fn model_admission_never_exceeds_frozen_token_or_cost_caps(
+        used in 0u64..1100, reserved in 0u64..1100, wanted in 1u64..1100,
+        used_cents in 0u32..120, reserved_cents in 0u32..120, wanted_cents in 0u32..120
+    ) {
+        let cents = |value: u32| format!("{}.{:02}", value / 100, value % 100);
+        let usage = BudgetUsage {
+            used_tokens: count(used), reserved_tokens: count(reserved),
+            ..cost_usage(&cents(reserved_cents), &cents(used_cents))
+        };
+        let request = model_request(wanted, Some(("USD", &cents(wanted_cents))));
+        let result = reserve(ProjectState::Active, &estimated_budget(), &stop(), &usage, &request);
+        prop_assert_eq!(result.is_ok(), used + reserved + wanted <= 1000 && used_cents + reserved_cents + wanted_cents <= 100);
+        if let Ok(next) = result {
+            prop_assert_eq!(next.used_tokens, count(used));
+            prop_assert_eq!(next.reserved_tokens, count(reserved+wanted));
+        }
     }
 }
