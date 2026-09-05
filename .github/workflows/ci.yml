@@ -27,7 +27,7 @@ jobs:
           rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
           cargo fmt --all -- --check
           cargo clippy --locked --workspace --all-targets -- -D warnings
-          cargo test --locked --workspace
+          cargo test --locked --workspace --exclude store
           cargo build --locked --workspace --all-targets
           cargo tree --locked -e normal > /tmp/native-evidence/dependencies.txt
           if grep -Eq '(^|[[:space:]])pyo3(-ffi)? v' /tmp/native-evidence/dependencies.txt; then
@@ -116,16 +116,68 @@ jobs:
       - name: Remove disposable database
         if: always()
         run: docker rm --force --volumes native-database
+  store-postgres:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      PGMQ_IMAGE: ghcr.io/pgmq/pg18-pgmq@sha256:bfb3537068ce453609744518ece92b178ac89dff53747d47ca6fab91c2fc66a6
+      DATABASE_URL: postgres://postgres:fixture-only-disposable@127.0.0.1:55432/postgres
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Start isolated PostgreSQL and verify extension version
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/store-evidence
+          git rev-parse HEAD > /tmp/store-evidence/tested-commit.txt
+          docker pull "$PGMQ_IMAGE"
+          docker run --detach --name store-database --publish 127.0.0.1:55432:5432 --env POSTGRES_PASSWORD=fixture-only-disposable "$PGMQ_IMAGE"
+          for attempt in $(seq 1 60); do
+            if docker exec store-database pg_isready -U postgres; then break; fi
+            sleep 1
+          done
+          docker exec store-database pg_isready -U postgres
+          docker exec store-database psql -U postgres -v ON_ERROR_STOP=1 -c 'SELECT version()' > /tmp/store-evidence/database-version.txt
+          docker image inspect --format '{{json .RepoDigests}}' "$PGMQ_IMAGE" > /tmp/store-evidence/image.json
+      - name: Run every Store test against real independently migrated databases
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal
+          cargo test --locked -p store -- --test-threads=4 2>&1 | tee /tmp/store-evidence/tests.log
+          git diff --exit-code
+      - name: Preserve exact migrations and qualification of the evidence
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/store-evidence
+          cp Cargo.lock /tmp/store-evidence/Cargo.lock
+          cp migrations/*.sql /tmp/store-evidence/
+          printf 'Relational and per-turn Store tests only. Not complete API, model, security, or product acceptance.\n' > /tmp/store-evidence/SCOPE.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: store-evidence-${{ github.sha }}
+          path: /tmp/store-evidence/
+          retention-days: 7
+          if-no-files-found: error
+      - name: Remove only this disposable database
+        if: always()
+        run: docker rm --force --volumes store-database
   foundation-checks:
     if: always()
-    needs: [rust-native-contracts, database-native]
+    needs: [rust-native-contracts, database-native, store-postgres]
     runs-on: ubuntu-24.04
     steps:
       - name: Require every foundation check to succeed
         env:
           RUST_RESULT: ${{ needs.rust-native-contracts.result }}
           DATABASE_RESULT: ${{ needs.database-native.result }}
+          STORE_RESULT: ${{ needs.store-postgres.result }}
         run: |
           test "$RUST_RESULT" = success
           test "$DATABASE_RESULT" = success
+          test "$STORE_RESULT" = success
           echo 'Foundation checks passed; incomplete product acceptance remains documented and PR stays Draft.'

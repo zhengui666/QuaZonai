@@ -1,0 +1,22 @@
+[package]
+name = "store"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+contracts = { path = "../contracts" }
+domain = { path = "../domain" }
+serde.workspace = true
+serde_json.workspace = true
+sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-native-roots", "postgres", "uuid", "chrono", "bigdecimal", "json", "migrate", "macros"] }
+uuid = { version = "=1.26.0", features = ["v7", "serde"] }
+chrono = { version = "=0.4.41", features = ["serde"] }
+bigdecimal = { version = "=0.4.8", features = ["serde"] }
+thiserror = "=2.0.20"
+
+[dev-dependencies]
+tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread", "time", "sync"] }

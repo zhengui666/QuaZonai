@@ -55,3 +55,17 @@ Nautilus示例复用保留原版权/LGPL声明；QZ原有AGPL/NOTICE不修改。
 33952841460是单独的复用研究运行；其中临时resolver/vendor结果只是开发输入，不是产品已提交锁的验收。正式源代码更新后必须按实际Head使用已提交Cargo.lock执行fmt check、Clippy、unit/proptest、原生回测/solver/IPC及合同diff；禁止CI格式化/改写源码后宣称原提交通过。
 
 已有原生fixture/纯领域函数不代表新数据库/API/Worker/完整Agent/多Alpha/交付/Ant Design/迁移/恢复完成。最终仍须W0–W8、T01–T42、最新Head全部适用CI、明确无问题Codex review、零未解决线程，才允许合并并复核main。
+
+## PostgreSQL / SQLx 逐轮账本复用（2026-09-05）
+
+采用 Rust SQLx **0.8.6**（原生 PostgreSQL driver、Tokio、migration、test 宏），在独立数据库复用 PostgreSQL **18** 与 PGMQ **1.10.0**。本地实际测试版本为 PostgreSQL18.1；CI 继续固定原有原生 OCI digest 并输出实际版本。没有新增 Python 例外，也没有自建消息队列、迁移运行器或模型工具循环。
+
+上游依据：
+- [SQLx0.8.6 test 宏](https://docs.rs/sqlx/0.8.6/sqlx/attr.test.html)：每个测试创建隔离数据库并应用指定迁移；失败保留用于诊断。采用 `#[sqlx::test(migrations="../../migrations")]`，不以 SQLite/in-memory mock 代替 PostgreSQL。
+- [SQLx0.8.6 migrate 宏](https://docs.rs/sqlx/0.8.6/sqlx/macro.migrate.html)：复用原生 embedded migration runner；build.rs 监听 migrations，新增迁移也触发重编译。
+- [PostgreSQL18 约束](https://www.postgresql.org/docs/18/ddl-constraints.html)：跨表身份用复合外键和唯一约束；CHECK 为 NULL 也可能通过，故 UUID 变体等检查显式要求 TRUE。原生 numeric domain 约束避免 typmod 提前舍入。
+- [PostgreSQL18 事务隔离](https://www.postgresql.org/docs/18/transaction-iso.html)：短事务行锁协调预算/身份；外部模型调用不持数据库行锁。发送前持久唯一 intent，未知结果不重新发送、不退还预约。
+
+QZ 独有的部分仅为字段关系、许可/资格引用、不可变发布、同一 Mission/Turn 的预算和阶段规则。队列读写/归档、连接池、事务、迁移、精确数值和测试数据库管理均由成熟组件承接。`Store` 不是另一份 LLM Harness，也不把 PGMQ 的至少一次投递解释为外部模型 exactly-once。
+
+初始 DDL 只实现记录和关系约束，严格 JSON 参数、身份认证、资格授权、Sealed sandbox 与完整模型闭环仍须由相应服务实现并验收；不能把60张表或 fixture 关系的存在作为产品完成证据。

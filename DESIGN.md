@@ -380,9 +380,9 @@ StopRuleV1:
 
 每次原生模型请求、工具后的后续Turn、修复和重试均纳入预约，不因沿用Thread、失败或新Attempt清零。消耗结算必须绑定精确的原生请求/Attempt并幂等转移预约到已用计数；结果未知保留预约，不能因断线/取消请求提前退款。实际用量超过预约也要如实记录并阻断后续准入，不能将账本裁到上限。ESTIMATED只对估算预算作准入，不承诺Provider最终账单严格不超过金额，缺准确计费继续拒绝EXACT。纯领域函数的这部分检查不等于正式Worker与数据库结算链路已经交付。
 
-模型轮数与 token/费用在相同准入事务内预约，但轮数属于精确 Mission（run_id），不能把整个 Cycle 的多个 Mission 合并计数。每个模型请求必须给出可信调度器绑定的 mission_id 和 turn_kind=RESEARCH|REPAIR；每次恰好预约一轮，REPAIR 同时占总轮数和修复轮数。Mission 持久化 used_turns/reserved_turns/used_repair_turns/reserved_repair_turns（u16，JSON整数，数据库非负约束），repair 分别不超过相应 total；准入使用 used+reserved+1 与冻结 max_turns_per_mission/max_repair_turns 比较，checked_add 溢出必须拒绝。研究者不能自行创建新 Mission 或更改 turn kind 来重置/扩大预算。续轮/工具后续轮使用同一 Mission 的单独 model-turn 准入，不重复占用实验数、运行并发槽或 job CPU；真正新任务仍要完整预约。不同 Mission 的轮数隔离，Cycle 的 token/费用仍全局累计。缺失或身份不一致的 Mission 账目报错，不默认为零。
+模型轮数与 token/费用在相同准入事务内预约，但轮数属于精确 Mission（run_id），不能把整个 Cycle 的多个 Mission 合并计数。每个模型请求必须给出可信调度器绑定的 mission_id 和 turn_kind=RESEARCH|REPAIR；每次恰好预约一轮，REPAIR 同时占总轮数和修复轮数。Mission 从不可变逐轮账本投影 used_turns/reserved_turns/used_repair_turns/reserved_repair_turns（u16，JSON整数，数据库非负约束），不另存可被重置的权威计数，repair 分别不超过相应 total；准入使用 used+reserved+1 与冻结 max_turns_per_mission/max_repair_turns 比较，checked_add 溢出必须拒绝。研究者不能自行创建新 Mission 或更改 turn kind 来重置/扩大预算。续轮/工具后续轮使用同一 Mission 的单独 model-turn 准入，不重复占用实验数、运行并发槽或 job CPU；真正新任务仍要完整预约。不同 Mission 的轮数隔离，Cycle 的 token/费用仍全局累计。缺失或身份不一致的 Mission 账目报错，不默认为零。
 
-模型发送前将轮数预约、token/费用预约、原生请求意图和幂等 receipt 同事务持久化。ACK 丢失不释放预约/重新开轮，必须先按原生 Thread/Turn 对账；已发送轮即使失败/取消也计已用，重试和修复同样占额。只有确认从未发送才释放未用预约。首次 Mission 的零账目只能由可信服务和新的 run 在同事务创建；独立 Reviewer 是独立受控 Mission，不用重置研究者计数冒充隔离。
+模型发送前先在同一事务持久化轮数/token/费用预约与 pgmq.send；原生分派器在独立短事务持久化唯一发送意图，再做外部 I/O。命令幂等绑定与最终实际用量 receipt 分开，准确阶段见 A6.1。ACK 丢失不释放预约/重新开轮，必须先按原生 Thread/Turn 对账；已发送轮即使失败/取消也计已用，重试和修复同样占额。只有确认从未发送才释放未用预约。首次 Mission 的零账目只能由可信服务和新的 run 在同事务创建；独立 Reviewer 是独立受控 Mission，不用重置研究者计数冒充隔离。
 
 Optuna 内部 trial 使用预分配预算，不能藏在一次 job 无限搜索。资源/turn/并行上限必须有效正值且符合 runtime capability；修复 turn 不超过总 turn。停止规则由用户冻结，Agent 不能扩大。
 
@@ -578,10 +578,12 @@ alpha_version_id: utf8 non-null
 ## A4. 输入、政策、评估、资格与暴露
 
 ```text
-input_sets [immutable]
+input_sets [DRAFT mutable; FROZEN immutable]
   project_id: Id FK projects
   purpose: DISCOVERY|VALIDATION|SEALED|PORTFOLIO|FORWARD
   decision_cutoff: Time
+  frozen_at: Time?  # null only while its membership is assembled
+  revision: Rev
 
 input_set_items [immutable]
   input_set_id: Id FK input_sets
@@ -714,6 +716,17 @@ missing_required_metric: INCONCLUSIVE
 
 拒绝unknown字段；所有FK同project且family/root一致，candidate_count不超过冻结max_experiments，所选方法/单位/频率为真实native capability。policy/family引用环在同事务分配ID+DEFERRABLE FK。实验后规则不可改。比较集合包含同family/lineage/输入/执行假设/评估类型的全部试验，失败/取消/无效/淘汰留账本及排除理由，不以0填入排名。冻结实际experiment/evaluation ID清单；仅VALID/required指标完整且同方法口径参与finite值排序，direction优先，相等按UUID原生16字节升序。每experiment只一次；不足返回实际数量+INCONCLUSIVE，不复制赢家、不扩大政策、不重置sealed。
 
+### A4.2 不经 f64 舍入的冻结阈值
+
+阈值和 BETWEEN 的两端始终保留 A0 Decimal 精度，由 BigDecimal 比较；禁止先转
+f64 再判断区间次序或 PASS。Metric 仍是原生 finite f64：比较语义以已锁定 Serde JSON
+实际序列化出的最短 round-trip 数字作为报告值，由 BigDecimal 解析该数字后与精确
+阈值比较。统计值没有因此变成数学上的精确估计，更不能拿它保存金额/权重。
+例如报告值0.1不满足GE 0.10000000000000001；两个会舍入到同一f64的反向Decimal
+上下界仍必须拒绝。相等的报告十进制在GE/LE闭边界通过，在GT/LT开边界拒绝。
+所有u16/u32字段的生成合同同时声明本机类型上界65535/4294967295；业务最小值
+和数据库更窄限制仍由相应领域校验，不以wire类型可解析替代可执行性。
+
 ## A5. Mandate、Candidate、目标与 Release
 
 ```text
@@ -781,6 +794,12 @@ releases [immutable]
   valid_until: Time
   environment: DEMO|REAL
 ```
+
+Release 必须以复合 FK `(evaluation_id,candidate_id)` 引用
+`evaluations(id,subject_candidate_id)` 的唯一键；Alpha 评估、其他 Candidate 的
+PASS 都不能借用。另以 `(candidate_id,mandate_id)` 绑定 Candidate 的精确 Mandate。
+非空关联不足以授权：服务仍须验证独立组合模拟类型、VALID/PASS、有效期、数据用途、
+资格及不可变 Package；复合 FK 不替代这些 Gate。
 
 历史目标序列存 Arrow/Parquet，不每 bar 建业务对象。不可行 cash/targets 均 null；LAST_TARGET 是假设，真实权重输入来自下游签发 snapshot，QZ 不建真实账户账本。`sum(asset_weights)+cash_weight=1` 在 mandate tolerance 内，现金字段/保留代码明确；gross/net、组、成本、参与率原生计算，领域层独立合同/容差验证。
 
@@ -861,9 +880,11 @@ run_events [append-only]
 
 codex_sessions [mutable native references, not copied chat store]
   project_id: Id FK projects
+  cycle_id: Id FK research_cycles
   run_id: Id FK runs
   role: RESEARCHER|INDEPENDENT_REVIEWER
   profile_id: Id FK codex_profiles
+  profile_revision: Rev  # immutable settings snapshot, not mutable profile cache
   thread_id: text
   active_turn_id: text?
   used_turns: int >= 0
@@ -883,6 +904,108 @@ codex_sessions [mutable native references, not copied chat store]
 `unique(run_id,attempt_no)`、`unique(run_id,seq)`；external_job_id 在 runtime 唯一。lease 使用 DB 时间；接管同一次外部任务可增 owner_epoch，不因超时直接建新 attempt。持 run 行锁分配 seq、插事件、更新 last_event_seq，同一 run 已提交顺序一致；全局自增 ID 分配顺序不是事务提交顺序。
 
 EffectiveCodexRequestV1 记录 schema_version、profile/connection 来源和实际发送的非秘密可选 model/effort/Fast 覆盖；default 开启的省略与 saved 配置区分，observed 只能来自协议可观察事实。TypedEventPayload 为注册事件的封闭版本化 union，不记录秘密、任意原始 traceback 或隐藏推理。
+
+### A6.1 单一 Mission 会话与原生 Turn 明细
+
+`unique(codex_sessions.run_id)` 将 Mission（AGENT_RESEARCH Run）绑定到一个会话；
+`unique(profile_id,thread_id)` 防止两个 Mission 共享同一原生 Thread。重试同一
+run/profile/thread/role 返回原会话，不同绑定409；role/profile/thread/run/project
+绑定不可修改或删除，接管 Worker 不创建新会话。Reviewer 必须是不同 Run/Thread。
+`active_turn_id` 仅可作为非权威投影，不得用于重置轮数或辨认丢失的请求。
+
+以下五类记录是预算和原生发送的权威只追加账本，不复制聊天正文/工具循环/隐藏推理。
+每表仍有 A0 的 id/created_at。所有关联以复合 FK 保证 session、run、cycle、project
+属于同一个 Mission；标量均采用 A0 的 bigint 字符串/精确 Decimal。
+
+```text
+model_turn_reservations [immutable]
+  project_id: Id FK projects
+  cycle_id: Id FK research_cycles
+  run_id: Id FK runs
+  session_id: Id FK codex_sessions
+  attempt_id: Id FK run_attempts
+  owner_epoch: Rev  # reservation-time owner, never changed on takeover
+  profile_revision: Rev  # exact settings revision frozen in the Session
+  ordinal: int in [1,65535]
+  command_key: nonempty text <= 200 bytes
+  turn_kind: RESEARCH|REPAIR
+  reserved_tokens: bigint > 0
+  reserved_cost: Decimal? >= 0
+  cost_currency: char(3)?
+  request_artifact_id: Id FK artifacts  # immutable nonsecret structured request
+  deadline_at: Time
+  UNIQUE(session_id, command_key), UNIQUE(run_id,ordinal), UNIQUE(session_id,ordinal)
+
+model_turn_dispatches [immutable; at most one per reservation]
+  reservation_id: Id FK model_turn_reservations UNIQUE
+  owner_epoch: bigint >= 1
+  rpc_request_id: nonempty text <= 200 bytes
+  UNIQUE(reservation_id, rpc_request_id)
+
+model_turn_bindings [immutable; only native-observed acknowledgements]
+  reservation_id: Id FK model_turn_reservations UNIQUE
+  session_id: Id FK codex_sessions
+  native_turn_id: nonempty text <= 200 bytes
+  UNIQUE(session_id, native_turn_id)
+
+model_turn_terminals [immutable; at most one per reservation]
+  reservation_id: Id FK model_turn_reservations UNIQUE
+  native_turn_id: text?  # null only for NOT_SENT
+  outcome: SUCCEEDED|FAILED|CANCELLED|NOT_SENT
+  reason_code: nonempty text <= 120 bytes
+  observed_at: Time
+  UNIQUE(reservation_id,outcome)
+  FK(reservation_id,native_turn_id) -> model_turn_bindings
+
+model_turn_receipts [immutable; at most one per reservation]
+  reservation_id: Id FK model_turn_reservations UNIQUE
+  outcome: SUCCEEDED|FAILED|CANCELLED|NOT_SENT
+  actual_tokens: bigint >= 0
+  actual_cost: Decimal? >= 0
+  cost_currency: char(3)?
+  usage_source: NATIVE_REPORT|CONFIRMED_NOT_SENT
+  reason_code: nonempty text <= 120 bytes
+```
+
+模型四个轮数计数、已用/预约 token 和费用由这些不可变明细和唯一 receipt 在同一
+Cycle/Mission 锁内通过 SQL 聚合投影；不另外维护一套可被重置的权威聚合缓存。
+未有 receipt 的条目继续占用所有预约。NATIVE_REPORT 的任何 outcome 都计一轮已用，
+REPAIR 同时计总轮和修复轮；NOT_SENT 不计已用且 actual_tokens/cost 必须为0。
+已发但缺原生用量不写虚构零 receipt，不提前释放预约。一次会话只允许一个尚未
+settle 的预约，完成工具后的续轮沿用同一会话；跨会话仍可按 Cycle 预算并发。
+
+创建 reservation、预约校验及原生 `pgmq.send('model_turns', {reservation_id})`
+同事务。command_key 重放必须比较 kind/请求产物/资源/期限/原始attempt等精确字段，
+相同返回原条目且不重复发送，不同409；只保存非秘密字段，不引入请求hash。
+新发送按 project→cycle→run→session 固定锁序，验证项目/周期状态、当前attempt、
+owner epoch、数据库时钟 lease 与 deadline，然后先提交唯一 dispatch intent。
+首次成功插入 intent 的 Worker 才得到 Send 一次的许可；已存在 intent 一律 Reconcile，
+绝不能把 JSON-RPC id 当成原生幂等保证再次 turn/start。
+
+若 intent 提交后在写管道前崩溃，仍按 UNKNOWN 保留占用；只有原生证据能唯一识别
+该请求时才绑定 Turn。不能证明未发送就不得退额/重发；不能用相邻 Turn 的位置猜。
+原生 binding 必须引用该 reservation 的相同 session，已绑定后不能换 native ID。
+可信适配器可先调用 `observe_turn_terminal` 持久化原生终态，稍后用原生 usage 结算；
+终态本身不退还任何预约，也不确认队列消息。缺用量时不得只存在内存或强造零 receipt。
+相同终态（包括原生 ID、原因、观察时间）重传幂等，不同事实409。
+`settle_turn` 要求 receipt 的 (reservation_id,outcome) 精确引用终态，原因一致；
+同一原生事件若同时含终态与用量，两条记录可在同一事务产生。单纯绑定 ACK 不是完成事实。
+已结算相同事实返回原 receipt，不同事实409。
+当前 owner 在 lease 内才能新增绑定/结算，陈旧 Worker 不可采纳；重试时既有
+相同 receipt 可读但不产生第二副作用。NOT_SENT 只允许尚无 dispatch 的条目，
+一旦存在 intent 即保守拒绝。真实消耗超过预约/预算仍如实入账，后续准入阻断；
+若总量无法表示为A0范围，整事务失败并保持预约，绝不 wrap/截断或称成功。
+
+这是一段正式持久化合同；其实现与原生模型发送/同Thread结果消费、账号隔离的
+验收分别记证据，不能以数据库测试冒充已接通模型。
+
+实现命名与先前 C2–C4 规范的对应关系：Mission 即 `run_id`；不可变
+reservation `id` 同时是请求身份，`command_key` 提供同 Session 的幂等命令身份，
+不另造第二个重复 request UUID；`model_turn_bindings` 即原生 ACK，
+`model_turn_receipts` 即用量 settlement。Profile/Thread 由不可变 Session 复合关联取得，
+Session 冻结 `profile_revision`，预约引用相同 (session_id,profile_revision)。
+`ordinal` 在 Session 锁内递增，NOT_SENT 不回收序号；原始 owner_epoch 只记录事实，
+后续接管必须验证同 Attempt 的当前 DB owner_epoch。所有历史关联保留，不能换记录清零。
 
 ## A7. 自动化、审批、交付、Forward 与 Wake
 
@@ -982,6 +1105,12 @@ wake_events [mutable delivery state]
 ```
 
 唯一 `(downstream_id,environment,delivery_sequence)`、`(downstream_id,external_message_id)`；同 observation 不重复同类自动 Wake。Correction 追加替代引用，不覆盖旧消息；重叠窗口不能加总 observation_count。自动晋级事务验证 ACTIVE、Operator 政策有效未撤销、Release/资格/数据新鲜、完整足量新鲜 Paper、无阻塞观察、readiness/合同通过、无重复交付。Agent 文本不满足这些条件。
+
+`approvals(id,release_id,downstream_id,environment)` 必须有 UNIQUE；
+`handoff_offers(approval_id,release_id,downstream_id,environment)` 用一个复合 FK
+引用完整授权 tuple，不用四个独立 FK 代替。Paper 的批准不能作为 Live 或其他
+Release/下游的授权；不同元组409/约束失败。撤销/期限/人工拒绝/Readiness 仍在
+每次 Offer/Claim 的领域事务重查。
 
 ### A7.1 逻辑消息与人工拒绝
 
@@ -1099,7 +1228,7 @@ machine_credential_revocations [append-only]
 
 MachineScopeV1闭合集合：RESEARCH_READ、EXPERIMENT_SUBMIT、ARTIFACT_SUBMIT、EVIDENCE_READ、RUN_READ、RUN_CANCEL、DOWNSTREAM_CLAIM、DOWNSTREAM_ACK、FORWARD_SUBMIT、DOCTOR_READ。无wildcard/SQL/Secret/Operator管理能力。除只读doctor主体外project绑定必填；DOWNSTREAM绑定下游且仅自身offer；MISSION绑定活动同项目run、expires<=deadline，不能拥有downstream或其他run权限。主体绑定发行后不扩大，改范围须新主体+撤销旧证；enabled/epoch可控制撤销。每次请求验证native opaque verifier/期满/撤销/epoch/归属，命令事务重查；只发证时显示token一次，不入receipt/日志。Secret/密码学复用成熟库，不自制hash gate。MISSION_SERVICE仅内部为已授权run派生更窄证，不能产生CLI/Operator身份。
 
-Operator-only CLI操作仍是人类动作，使用近期TOTP获取绑定CLI主体、命令、target的单次授权（独立于普通machine scope）：`operator_command_grants [immutable]` 包含 credential_id FK、operation（API命令封闭枚举）、target_id、auth_epoch、authenticated_at、expires_at（<=300秒）；`operator_command_consumptions [append-only]` 包含grant_id UNIQUE FK、command_receipt_id FK。该授权只能近期人类认证发出，Agent/Automation/Downstream不能获取，消费与命令同事务；幂等重试仅返回已执行receipt。管理权限不得放入普通scope来绕过近期认证。
+Operator-only CLI操作仍是人类动作，使用近期TOTP获取绑定CLI主体、命令、target的单次授权（独立于普通machine scope）：`operator_command_grants [immutable]` 包含 credential_id FK、operation（API命令封闭枚举）、target_id、auth_epoch、authenticated_at、expires_at（<=300秒）；`operator_command_consumptions [append-only]` 包含grant_id UNIQUE FK、command_receipt_id UNIQUE FK、operation（与grant一致的命令）、target_id（与grant一致的目标）。grant的(id,operation,target_id)、receipt的(id,operation,resource_id)各自UNIQUE，consumption以两个复合FK绑定同一命令及目标；不得把一次人类授权用于另一个资源或多个回执。该授权只能近期人类认证发出，Agent/Automation/Downstream不能获取，消费与命令同事务；幂等重试仅返回已执行receipt。管理权限不得放入普通scope来绕过近期认证。
 
 ## A9. 索引、保留与迁移核对
 
@@ -1439,79 +1568,36 @@ Known Limitations / Residual Risks:
 填有链接的完整证据不是授权跳过任何检查。第12节顺序不可降低：完整实现 → 最新Head CI全绿且Codex明确无问题 → merged → main复核/证据回填；不满足即部分完成，不关闭Issue。
 
 
-## C. 精确数值、Mission 原生 Turn 账本与交付复合关系
+## B12. PostgreSQL 初始持久化与逐轮 Store 实施合同
 
-本节补齐 A4/A6/A7 的规范约束；不是已建成 SQL/API 或全量验收的声明。已有必填性、权限、不可变性和项目隔离约束同时生效。
+`migrations/202609050001_domain.sql` 在新数据库建立领域关系；`202609050002_model_turns.sql` 建立逐轮阶段约束与计数投影。仅使用 SQLx 原生 migration runner/事务/测试数据库管理与 PostgreSQL/PGMQ；不是自研迁移、队列、工作流或 Agent Harness。首次运行不能指向旧业务库，迁移角色与运行角色分离；运行角色不得拥有 schema、DDL、TRUNCATE 或超级用户权限。当前 DDL 的版本化 JSON CHECK 只验证容器/版本，不能替代领域服务的完整参数、权限和资格检查；创建表不是开放相应 API。
 
-### C1. 指标的可观察十进制语义
+InputSet 与 Brief 的关联成员在草稿期组装，在相同事务中冻结。冻结后禁止改写/删除父记录以及新增/改写/删除成员；登记相同成员命令需在服务层先幂等读取，而不是用 `ON CONFLICT` 绕过冻结检查。发布的 Run 必须引用冻结 InputSet；执行服务在启动/采纳时重查，不能把未完成草稿交给远端。
 
-Metric 的有限 f64 由 Serde 原生 JSON 序列化为可往返的十进制数值，再用 BigDecimal 原生解析，与冻结的 Decimal 阈值精确比较。不得把阈值先转为 f64，也不把未通过 wire 暴露的二进制尾数当成额外有效数字。0.1 与 0.1 相等；0.1 不满足 GE 0.10000000000000001。BETWEEN 的上下界按完整 Decimal 比较，不能先舍入后接受逆序区间。NaN/Infinity 一律拒绝。u16 的生成 wire 上限为65535，u32为4294967295；DB/资源政策可进一步收窄，不默默截断。
+数据库时间为有限 PostgreSQL timestamptz（微秒精度），逐轮命令拒绝非零的亚微秒部分，防止首次写入静默截断后重试变成不同命令。市场纳秒仍由 Arrow 保存，不经数据库 Time 丢精度。UUIDv7 校验对未知 RFC 变体返回 NULL 的情况也明确拒绝，只有可选字段的真实 NULL 允许；钱/权重使用 native numeric domain 检查有效 scale/range，避免 typmod 先舍入再通过 CHECK。
 
-### C2. 一个 Mission 的唯一原生会话
+Store 的模型续轮入口为 `reserve_turn` → `claim_turn_dispatch` → `bind_native_turn` → `observe_turn_terminal` → `settle_turn`。它们需要可信服务绑定的当前 Attempt/OwnerEpoch 与 DB 租约，研究代码不能获取 Store/数据库凭据。事务锁序为 project、cycle、run、attempt、session；锁等待后使用 `clock_timestamp()`，而不是事务开始时间。Cycle token/费用从其所有不可变轮次投影；未决预约、实际失败、实际超额都不能清零。新发起阶段要求 ACTIVE/RUNNING 和 deadline，新授发送能力前再核验一次；暂停/取消不妨碍已发送轮的真实结果对账。
 
-数据库必须建立 UNIQUE(codex_sessions.run_id) 和 UNIQUE(codex_sessions.profile_id,thread_id)。run_id 是 Mission 身份；Reviewer 必须是不同的 Mission/Run，不能靠同一 Mission 换 session_id 重置预算。同一 Mission 的会话创建重试须返回相同 session/profile/thread；不一致返回409。身份字段一经绑定禁止改写。原生 thread/start 的未知结果进入恢复，不盲目创建另一条 Thread。四个已用/预约 Turn 计数是下述账本的事务投影，不能作为唯一恢复事实。
+发送意图首次提交者才得到 Send，所有后续调用只得到 Reconcile 或 Settled；原生 JSON-RPC ID 不是上游幂等键。相同 Session 只允许一个未结算预约；无法确定之前的真实 Turn 时保持未决，不猜测重新调用。已发出的轮只有在可信原生适配器观察到 Turn identity 和终态用量后结算。实际费用仍是 ESTIMATED，而非声称精确账单。全新 Attempt 不得接管旧预约的采纳权限；同一 Attempt 增长 owner_epoch 后可以对账。未决旧任务必须先安全处理，不通过重开 Attempt 洗白预算。
 
-### C3. 每次模型请求的持久账本
+`acknowledge_settled_turn_message` 仅接受精确 reservation_id 对应的已提交不可变 receipt 与原生消息内容；其原生 archive 幂等，错误消息引用返回冲突。它不授予结果采纳/发送权限，旧 lease 过期不妨碍安全清理已结算通知；未结算不能归档。结算与 ACK 之间崩溃会产生重投，但不会再次产生原生调用或再次累计已用。
 
-所有记录继承 A0 的 UUIDv7、时间和不可变约束；各本地 ID 都是实际 FK。
+新建库、约束和 Store 集成测试可以使用独立 ephemeral fixture 写入来构造故障，不能把它们标成 T42 的 Web/CLI 完整流程或受保护真实账号验收。所有新 Store 测试在单独 PostgreSQL/PGMQ CI job 中执行，foundation 汇总必须依赖它；未设置 DATABASE_URL 必须失败，不能变 skipped green。
 
-```text
-model_turn_reservations [immutable]
-  project_id: Id FK projects
-  cycle_id: Id FK research_cycles
-  mission_id: Id FK runs
-  session_id: Id FK codex_sessions
-  attempt_id: Id FK run_attempts
-  owner_epoch: Rev
-  request_id: Id UNIQUE
-  ordinal: int in [1,65535]
-  turn_kind: RESEARCH|REPAIR
-  input_artifact_id: Id FK artifacts
-  reserved_tokens: bigint > 0
-  reserved_estimated_cost: Decimal? >= 0
-  cost_currency: ISO4217?
-  profile_revision: Rev
+## C. 已落实到 A4/A6/A7 的精确数值与关联补充
 
-model_turn_dispatches [immutable, one per reservation]
-  reservation_id: Id UNIQUE FK model_turn_reservations
-  thread_id: nonempty text
-  dispatch_intent_at: Time
+本节保留先前 C1–C4 的语义，不建立第二套表名或状态机。指标的有限 f64 使用
+Serde 原生 JSON 的可往返十进制表示，再由 BigDecimal 原生解析，与冻结阈值
+精确比较；不得先把阈值转 f64，也不把未通过 wire 暴露的二进制尾数当额外有效位。
+0.1 与 0.1 相等，但不满足 GE 0.10000000000000001。BETWEEN 按完整 Decimal
+验证上下界；NaN/Infinity 拒绝。u16/u32 wire 最大值分别为65535/4294967295。
 
-model_turn_acknowledgements [immutable, one per reservation]
-  reservation_id: Id UNIQUE FK model_turn_reservations
-  profile_id: Id FK codex_profiles
-  thread_id: nonempty text
-  native_turn_id: nonempty text
-  acknowledged_at: Time
+A6.1 的五类明细落实 Mission 单一会话、请求身份、原始 owner_epoch、Profile
+配置版本、确定性序号、发送意图、ACK、独立终态与延后结算；终态而用量未知时，
+保留占用与待对账，不盲目重发或退款。它们不实现 Codex 工具循环。
 
-model_turn_terminals [immutable, one per reservation]
-  reservation_id: Id UNIQUE FK model_turn_reservations
-  native_turn_id: text?
-  outcome: COMPLETED|FAILED|INTERRUPTED|CONFIRMED_NOT_SENT
-  reason_code: text?
-  observed_at: Time
-
-model_turn_settlements [immutable, one per reservation]
-  reservation_id: Id UNIQUE FK model_turn_reservations
-  used_tokens: bigint >= 0
-  used_estimated_cost: Decimal? >= 0
-  cost_currency: ISO4217?
-  usage_source: NATIVE_USAGE|CONFIRMED_NOT_SENT
-  settled_at: Time
-```
-
-UNIQUE(mission_id,ordinal) 与 UNIQUE(session_id,ordinal) 阻止重复消费。预约的 session 必须属于精确 mission/project，attempt 必须属于精确 mission，cycle/输入必须属于该项目。费用及币种同时存在或同时为空；有费用上限时不允许未知账目。ACK 对 (profile_id,thread_id,native_turn_id) 全局唯一，profile/thread 必须等于该 session，且只能在持久 dispatch intent 后写入。除 CONFIRMED_NOT_SENT 外，terminal 的 (reservation_id,native_turn_id) 必须引用该预约的 ACK。
-
-锁顺序为项目/周期 → Run → Attempt → Session → Reservation。准入在同事务内核对当前 lease/epoch、冻结政策、项目状态/期限与所有预算，追加预约并更新周期 token/费用与 Mission total/repair 计数。每个 Session 同时最多一条未结算预约；request_id 同语义重试返回旧记录，异义409，不再次占用预算。Repair 同时消耗总 Turn 和 repair Turn。
-
-先提交 dispatch intent 再调用原生 App Server，外部调用不持 DB 锁。网络超时、进程退出或 ACK 丢失不能推定未发送，更不能退还占用；按原生 Thread/Turn 恢复并关联已有预约，无法证明关联则明确 RECONCILING，不盲目重发。CONFIRMED_NOT_SENT 只允许没有 dispatch intent 的预约，不能用本地超时替代证明。
-
-新 owner 只接管既有 Run/Attempt，并以当前 DB epoch 验证恢复权限，不改写旧预约归属。终态与可信 usage 均已观察到后，追加一次 settlement，并在同事务把相应 reserved 转为 used。原生实际消耗超出预约也如实记录，不裁剪或丢弃；超额阻止下一次准入。缺少可信用量则保留待结算占用；暂停、取消、过期不得阻止记录已发生的消耗。结算重传相同内容返回旧记录，不同内容409；不得同时记录两种 outcome 或重复计费。已用 Turn 不因失败、取消或恢复清零。
-
-### C4. 精确绑定评估和交付授权
-
-在 evaluations 建立 UNIQUE(id,subject_candidate_id)，releases 的 (evaluation_id,candidate_id) 复合 FK 必须引用该组合；Alpha 评估或其他 Candidate 的 PASS 不能用于当前 Release。Mandate、项目、输入、资格、独立评估状态、新鲜度等 Gate 仍要事务验证，FK 不代表已合格。
-
-在 approvals 建立 UNIQUE(id,release_id,downstream_id,environment)，handoff_offers 的 (approval_id,release_id,downstream_id,environment) 必须作为同一复合 FK 引用。Paper 审批不能授权 Live，其他下游或其他 Release 的审批不能借用。Offer/Claim 的权限、到期/撤销、人工拒绝、数据授权及 readiness 检查不得因复合 FK 存在而省略。
-
-T10/T23–T26 必须增加真实 DB 的预约并发、相同 request_id 重试、dispatch-before-ACK 崩溃、旧 owner 回报、未知用量不退款、重复结算、实际超额及暂停后结算测试；T28/T29 必须负向验证错 Candidate、错 Release、错下游和 Paper/Live 混用。纯函数或文档不替代这些集成证据。
+Release 的 (evaluation_id,candidate_id) 必须引用同一 Candidate 的评估；
+Alpha 或其他 Candidate 的 PASS 不可借用。Offer 的
+(approval_id,release_id,downstream_id,environment) 必须完整引用审批元组，
+Paper 审批不可转用 Live 或别的下游。相关复合 FK 是最低关联约束，不取代
+事务内新鲜度、撤销、项目、人工拒绝与资格检查。

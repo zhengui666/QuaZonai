@@ -2,7 +2,7 @@
 
 证据优先的自托管量化研究工作台：目标是将想法变成可追溯研究、合格Alpha和目标组合包，不是Broker、交易执行控制面或收益保证。
 
-> **正在重写，尚不可作为完整产品部署。** 本分支已删除旧服务、旧前端和兼容层；不要沿用旧Docker/uv启动命令。当前可运行内容是Rust合同/领域测试、原生科学计算和Codex协议探针。完整Web、API、研究/交付、迁移和恢复尚未通过验收，PR #63仍须保持Draft。
+> **正在重写，尚不可作为完整产品部署。** 本分支已删除旧服务、旧前端和兼容层；不要沿用旧Docker/uv启动命令。当前可运行内容是Rust合同/领域测试、PostgreSQL逐轮Store与关系测试、原生科学计算和Codex协议探针。完整Web、API、研究/交付、迁移和恢复尚未通过验收，PR #63仍须保持Draft。
 
 ## 已有实现与边界
 
@@ -12,6 +12,7 @@
 | 原生求解 | Clarabel Rust 0.11.1，最小方差手算参考0.8/0.2及不可行约束测试；不是完整生产组合流程 |
 | Arrow | Rust IPC RecordBatch写入/回读，明确FIXTURE不可交付 |
 | 领域基础 | 精确UUIDv7/bigint/Decimal、预算、租约/终态、Codex覆盖及required指标判定；不是完整数据库权限证明 |
+| PostgreSQL Store | 新库SQLx迁移、逐轮不可变预约/发送/结算、同Mission幂等与预算投影、关系唯一/复合外键；不是完整应用鉴权或Worker |
 | Codex | 锁定官方App Server stdio、全分页模型及Thread启动探针；真实账号/同Thread工具闭环还需验收 |
 | 交付与UX | 全量Ant Design、审批/反馈/晋级/唤醒、旧数据导入、恢复与隔离仍在实施，不虚构页面或状态 |
 
@@ -22,11 +23,26 @@
 ```sh
 cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets -- -D warnings
-cargo test --locked --workspace
+cargo test --locked --workspace --exclude store
 cargo build --locked --workspace --all-targets
 cargo run --locked -q -p contracts --example generate > /tmp/domain-v1.openapi.json
 diff -u contracts/generated/domain-v1.openapi.json /tmp/domain-v1.openapi.json
 ```
+
+上述命令明确只运行不依赖数据库的单元/原生测试，不等于全量检查。
+
+完整 workspace 检查必须设置指向**可丢弃测试实例**的 `DATABASE_URL`；实例需要 PostgreSQL18、PGMQ1.10.0，以及仅供测试的创建数据库权限。不得使用生产 URL，SQLx 为各测试创建独立新库并应用迁移。缺少连接应失败，而不是跳过：
+
+```sh
+# DATABASE_URL must already refer to the disposable test instance described above.
+make check
+# Run only the actual PostgreSQL transaction/constraint tests:
+make check-store
+```
+
+`make check-unit` 是无数据库的明确子集；不能拿其通过替代 Store 测试。
+新 CI 的 `store-postgres` job 使用固定原生 PGMQ 镜像，整体基础检查依赖该 job 成功。
+这仍不代表 Web/CLI 完整产品或受保护真实账号验收。
 
 执行原生fixture，输出目录必须不存在：
 

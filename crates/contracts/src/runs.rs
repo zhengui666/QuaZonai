@@ -55,7 +55,7 @@ pub struct RunSnapshotV1 {
     pub kind: RunKind,
     pub input_set_id: Id,
     pub state: RunState,
-    #[schema(maximum = 4294967295u64)]
+    #[schema(format = Int64, maximum = 4294967295u64)]
     pub current_attempt_no: u32,
     pub active_attempt_id: Option<Id>,
     pub last_event_seq: DbCounter,

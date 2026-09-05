@@ -33,13 +33,13 @@
             "type": "integer"
           },
           "max_experiments": {
-            "format": "int32",
+            "format": "int64",
             "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           },
           "max_memory_mib": {
-            "format": "int32",
+            "format": "int64",
             "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
@@ -76,13 +76,13 @@
             "type": "integer"
           },
           "max_wall_seconds": {
-            "format": "int32",
+            "format": "int64",
             "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
           },
           "min_cycle_interval_seconds": {
-            "format": "int32",
+            "format": "int64",
             "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
@@ -452,7 +452,7 @@
             ]
           },
           "current_attempt_no": {
-            "format": "int32",
+            "format": "int64",
             "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"

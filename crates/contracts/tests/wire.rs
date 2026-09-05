@@ -223,3 +223,62 @@ fn generated_bigint_schemas_share_the_native_postgres_boundary() {
         assert_eq!(accepted, case["valid"].as_bool().unwrap(), "{case}");
     }
 }
+
+#[test]
+fn all_unsigned_numeric_fields_publish_the_native_upper_bound() {
+    let schema: serde_json::Value =
+        serde_json::from_str(&contracts::openapi_json().unwrap()).unwrap();
+    for (name, fields, maximum) in [
+        (
+            "BudgetV1",
+            vec![
+                "max_parallel_runs",
+                "max_turns_per_mission",
+                "max_repair_turns",
+                "max_cycles_per_day",
+            ],
+            65535u64,
+        ),
+        (
+            "StopRuleV1",
+            vec!["stop_on_qualified_count", "stop_on_no_improvement_trials"],
+            65535u64,
+        ),
+        (
+            "BudgetV1",
+            vec![
+                "max_experiments",
+                "max_wall_seconds",
+                "max_memory_mib",
+                "min_cycle_interval_seconds",
+            ],
+            4294967295u64,
+        ),
+        ("RunSnapshotV1", vec!["current_attempt_no"], 4294967295u64),
+    ] {
+        for field in fields {
+            assert_eq!(
+                schema["components"]["schemas"][name]["properties"][field]["maximum"],
+                json!(maximum),
+                "{name}.{field}"
+            );
+        }
+    }
+    let valid = json!({"schema_version":1,"max_experiments":20,"max_parallel_runs":2,
+        "max_turns_per_mission":16,"max_repair_turns":2,"max_wall_seconds":3600,
+        "max_cpu_seconds":"7200","max_memory_mib":4096,"max_output_bytes":"67108864",
+        "max_cycles_per_day":3,"min_cycle_interval_seconds":120,"max_tokens":null,
+        "max_cost_decimal":null,"cost_currency":null,"cost_enforcement":"UNAVAILABLE"});
+    for field in [
+        "max_parallel_runs",
+        "max_turns_per_mission",
+        "max_repair_turns",
+        "max_cycles_per_day",
+    ] {
+        let mut value = valid.clone();
+        value[field] = json!(65535);
+        assert!(from_value::<BudgetV1>(value.clone()).is_ok());
+        value[field] = json!(65536);
+        assert!(from_value::<BudgetV1>(value).is_err());
+    }
+}

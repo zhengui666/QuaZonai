@@ -38,13 +38,80 @@ The earlier native fixture run produced weights
 The upstream feasibility run 33952841460 is a development study, not a final
 product check. Every new Head still needs independent read-only CI and review.
 
+## Store integration rebased onto `b39771c`
+
+This iteration preserves the exact numeric fixes already present at
+`b39771c41f0300438023be5a2f9330c4d9db9d86` (native tree
+`2683600c2cacc6c2353d7f61201f1c559232b62d`) and integrates the previously local
+Store code. The source is not full product acceptance. Its eventual GitHub
+commit and CI must be checked separately; local tests cannot certify remote runs.
+
+SQLx0.8.6 migrations create 61 field-bearing domain tables and the per-turn
+accounting view. The mature libraries own migrations, transactions, test databases,
+queue delivery, numeric parsing and schema generation. First-party code owns QZ
+relationships, permission boundaries, budgets and reconciliation decisions.
+
+A Mission has one immutable Session/Thread binding. Each reservation freezes its
+attempt, original epoch, settings revision, ordinal, inputs, tokens and estimated
+cost. Reservation and native PGMQ send commit together. Dispatch intent grants
+one send only; a replay reconciles without sending again. Native acknowledgement,
+terminal observation and usage receipt are independent immutable facts, so a
+completed turn with missing usage survives restart without fabricated zero spend.
+Exact receipts precede queue acknowledgement. Taking over the same attempt checks
+the new epoch; a new attempt cannot adopt an old reservation. Pause/cancellation
+cannot erase actual usage; configured caps still block subsequent admissions.
+
+The schema enforces exact native artifact identity, frozen input membership,
+Qualification/Alpha/evaluation relationships, Release/candidate evaluations and
+Offer/approval/release/downstream/environment tuples. A single-use human grant is
+bound to one command target. These relational constraints do not replace the
+unimplemented application authentication or independent scientific qualification.
+
+### Verification scope
+
+The local build uses Rust1.98.0, PostgreSQL18.1 and PGMQ1.10.0. SQLx creates a
+separate real database per test and applies the actual migrations. The disposable
+local PostgreSQL configuration is reconstructed solely for these tests; it is
+not a deployed production image or a claim of backup/restore acceptance.
+The committed Cargo lock preserves all previous native dependency versions and
+adds the Store dependency graph using Cargo. No manual checksum or resolver edits.
+
+The checked suites define **87 tests**: 12 contracts, 40 domain, 8 native/report,
+and 27 PostgreSQL tests (7 relational, 16 turn transactions, 4 terminal ledger).
+The shared Node/Rust wire corpus contains 204 decimal and 242 bigint cases.
+Each successful command must correspond to actual logs; a future Head must rerun.
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo build --locked --workspace --all-targets
+DATABASE_URL=postgres://TEST_USER@127.0.0.1:55432/postgres cargo test --locked --workspace
+cargo run --locked -q -p contracts --example generate > /tmp/domain-v1.openapi.json
+diff -u contracts/generated/domain-v1.openapi.json /tmp/domain-v1.openapi.json
+node tests/contracts/decimal-wire.mjs
+node tests/contracts/bigint-wire.mjs
+```
+
+The lost-memory test recreates a Store client after dispatch; it is not an OS-kill
+or real model-inference test. The lease test performs a real database lock wait
+and reads the clock afterward. The missing-queue test causes a native SQL error
+and checks atomic rollback. Terminal tests preserve reservations across a client
+restart, reject unproven refunds and unrelated/contradictory native identities.
+Test-only SQL fixtures are not a fresh-instance Web/CLI product workflow.
+
+A mandatory `store-postgres` CI job now covers these migrations and tests; the
+foundation aggregate requires its success. This workflow must run against the
+published Head. No green result from the earlier pre-Store commit applies to it.
+
 ## Explicit gaps
 
-Full Store/migrations/API/Worker/CLI/MCP, autonomous same-Thread model/tool/job/evidence cycle, independent Reviewer, PIT/sealed isolation, multi-Alpha shared-capital portfolio, target-only approvals/Paper/Live/Forward/Wake, Ant Design product UI/PWA, migration/backup/restore and protected real-account acceptance remain incomplete. Removing legacy tests does not satisfy new acceptance. Do not merge until all W0–W8/T01–T42 and CI/review boundaries are met.
-
-Earlier references to nonexistent commits0f1b84a and2e98539 were incorrect and must not be used as evidence. The actual starting tree was45153c6956f556449d5a5acb4b3abfef0a68df9e at eea0f2e; only successfully published and reread GitHub Heads count.
-
-
-## Verification record scope
-
-Numeric test totals in the historical section belong to that earlier source and dependency context, not an assertion of the current Head. The current suites and exact dependency combination are established by locked CI logs and their tested commit. A local development/vendor lock is not the product lock and cannot replace that evidence. This repair adds exact decimal-bound comparisons and integer schema regressions; generated contracts must be regenerated with utoipa, committed, and independently compared in read-only CI. New model-turn ledger and composite-FK requirements remain implementation targets until the Store and real database fault tests are committed and pass.
+The relational schema and per-turn Store are implemented, but complete Run
+admission/takeover, services and authentication, API/Worker/CLI/MCP, native
+same-Thread model/tool/job/evidence cycle, independent Reviewer, PIT/sealed
+isolation, multi-Alpha shared-capital portfolio, target-only approval/feedback/
+wake services, Ant Design UI/PWA, data migration, backup/restore and protected
+real-account acceptance remain incomplete. Existing JSON checks verify structure
+and versions, not a complete policy or authorization decision. Non-owner database
+role provisioning and deployed user-data migration still require validation.
+Removing legacy tests is not acceptance. Do not merge until every W0–W8/T01–T42
+requirement and the latest-Head CI/review conditions are met.

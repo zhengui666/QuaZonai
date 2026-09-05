@@ -1249,3 +1249,89 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn frozen_decimal_threshold_is_not_rounded_into_the_reported_float() {
+    let id = Id::new();
+    let mut rule = requirement();
+    rule.comparator = Comparator::Ge;
+    rule.threshold_low = Some("0.10000000000000001".parse().unwrap());
+    rule.threshold_high = None;
+    assert_eq!(
+        evaluate_metrics(id, &[rule], &[metric(id)], &[capability()])
+            .unwrap()
+            .decision,
+        Decision::Reject
+    );
+}
+
+#[test]
+fn reversed_bounds_remain_invalid_even_when_both_round_to_the_same_float() {
+    let id = Id::new();
+    let mut rule = requirement();
+    rule.comparator = Comparator::Between;
+    rule.threshold_low = Some("0.10000000000000001".parse().unwrap());
+    rule.threshold_high = Some("0.1".parse().unwrap());
+    assert!(evaluate_metrics(id, &[rule], &[metric(id)], &[capability()]).is_err());
+}
+
+#[test]
+fn decimal_metric_comparisons_obey_open_and_closed_boundaries_in_both_directions() {
+    let id = Id::new();
+    for (value, bound) in [
+        (0.1, "0.1"),
+        (-0.1, "-0.1"),
+        (0.0, "0"),
+        (1e-18, "0.000000000000000001"),
+    ] {
+        for (comparator, passes) in [
+            (Comparator::Ge, true),
+            (Comparator::Le, true),
+            (Comparator::Gt, false),
+            (Comparator::Lt, false),
+            (Comparator::Between, true),
+        ] {
+            let mut rule = requirement();
+            rule.comparator = comparator;
+            rule.threshold_low = match comparator {
+                Comparator::Lt | Comparator::Le => None,
+                _ => Some(bound.parse().unwrap()),
+            };
+            rule.threshold_high = match comparator {
+                Comparator::Gt | Comparator::Ge => None,
+                _ => Some(bound.parse().unwrap()),
+            };
+            let mut report = metric(id);
+            report.value = Some(value);
+            let gate = evaluate_metrics(id, &[rule], &[report], &[capability()]).unwrap();
+            assert_eq!(
+                gate.decision,
+                if passes {
+                    Decision::Pass
+                } else {
+                    Decision::Reject
+                },
+                "{value}: {comparator:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn metric_extremes_are_compared_without_money_range_truncation() {
+    let id = Id::new();
+    for (value, decision) in [
+        (f64::MAX, Decision::Reject),
+        (-f64::MAX, Decision::Pass),
+        (f64::from_bits(1), Decision::Pass),
+    ] {
+        let mut report = metric(id);
+        report.value = Some(value);
+        assert_eq!(
+            evaluate_metrics(id, &[requirement()], &[report], &[capability()])
+                .unwrap()
+                .decision,
+            decision
+        );
+    }
+}
