@@ -1,0 +1,81 @@
+name: Temporary native development inputs
+on:
+  pull_request:
+    paths: ['.github/workflows/development-inputs.yml']
+permissions:
+  contents: read
+jobs:
+  inputs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Export public dependency sources without credentials or product mutations
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/native-development /tmp/control-plane/src
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
+          cat > /tmp/control-plane/Cargo.toml <<'TOML'
+          [package]
+          name = "control-plane-development-inputs"
+          version = "0.0.0"
+          edition = "2021"
+          rust-version = "1.98"
+          publish = false
+          [dependencies]
+          serde = { version = "=1.0.229", features = ["derive"] }
+          serde_json = "=1.0.151"
+          uuid = { version = "=1.26.0", features = ["v7", "serde"] }
+          chrono = { version = "=0.4.41", features = ["serde"] }
+          bigdecimal = { version = "=0.4.8", features = ["serde"] }
+          sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-native-roots", "postgres", "uuid", "chrono", "bigdecimal", "json", "migrate", "macros"] }
+          axum = { version = "=0.8.4", features = ["macros"] }
+          tokio = { version = "=1.47.1", features = ["full"] }
+          tokio-stream = { version = "=0.1.17", features = ["sync"] }
+          tower = { version = "=0.5.2", features = ["util", "limit", "timeout"] }
+          tower-http = { version = "=0.6.6", features = ["trace", "timeout", "limit", "fs", "set-header", "sensitive-headers"] }
+          tower-sessions = "=0.14.0"
+          tower-sessions-sqlx-store = { version = "=0.15.0", features = ["postgres"] }
+          totp-rs = { version = "=5.7.0", features = ["gen_secret", "otpauth"] }
+          chacha20poly1305 = "=0.10.1"
+          secrecy = { version = "=0.10.3", features = ["serde"] }
+          zeroize = "=1.8.1"
+          argon2 = "=0.5.3"
+          base64 = "=0.22.1"
+          rand = "=0.9.2"
+          clap = { version = "=4.5.46", features = ["derive", "env"] }
+          reqwest = { version = "=0.12.23", default-features = false, features = ["json", "rustls-tls", "stream"] }
+          rmcp = { version = "=0.6.1", features = ["server", "transport-io"] }
+          bollard = "=0.19.1"
+          utoipa = { version = "=5.4.0", features = ["chrono", "uuid"] }
+          thiserror = "=2.0.20"
+          tracing = "=0.1.41"
+          tracing-subscriber = { version = "=0.3.19", features = ["env-filter", "json"] }
+          futures-util = "=0.3.31"
+          async-stream = "=0.3.6"
+          url = "=2.5.7"
+          tempfile = "=3.27.0"
+          proptest = "=1.7.0"
+          time = "=0.3.41"
+          TOML
+          echo 'fn main() {}' > /tmp/control-plane/src/main.rs
+          cargo generate-lockfile --manifest-path /tmp/control-plane/Cargo.toml
+          cargo vendor --locked --sync /tmp/control-plane/Cargo.toml /tmp/native-development/vendor > /tmp/native-development/config.toml
+          cp /tmp/control-plane/Cargo.toml /tmp/native-development/candidate.toml
+          cp /tmp/control-plane/Cargo.lock /tmp/native-development/candidate.lock
+          cp Cargo.lock /tmp/native-development/product.lock
+          tar -C /tmp/native-development -czf /tmp/native-development/vendor.tar.gz vendor
+          git diff --exit-code
+          printf 'Public development dependencies only. No account homes or credentials. Not product acceptance.\n' > /tmp/native-development/README.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-development-${{ github.sha }}
+          path: |
+            /tmp/native-development/*.tar.gz
+            /tmp/native-development/*.toml
+            /tmp/native-development/*.lock
+            /tmp/native-development/*.txt
+          if-no-files-found: error
+          retention-days: 1
