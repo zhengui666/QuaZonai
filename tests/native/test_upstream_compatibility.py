@@ -36,8 +36,12 @@ class NativeCompatibilityTest(unittest.TestCase):
             max_weights=1.0,
             budget=1.0,
             solver="CLARABEL",
+            scale_objective=10_000.0,
+            save_problem=True,
+            solver_params={"tol_gap_abs": 1e-12, "tol_gap_rel": 1e-12, "tol_feas": 1e-12},
         )
         estimator.fit(returns)
+        self.assertEqual(estimator.problem_.status, cp.OPTIMAL)
         np.testing.assert_allclose(estimator.weights_, [0.8, 0.2], atol=1e-5, rtol=0)
 
 

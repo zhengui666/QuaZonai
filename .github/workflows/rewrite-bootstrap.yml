@@ -71,19 +71,28 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          mkdir -p /tmp/qz-dev-tools
-          # Explicit installed tool directories only. Never archive HOME, .git,
-          # runner temp, authentication files, environment dumps, or credentials.
-          tar -C "$HOME/.rustup/toolchains" -I 'zstd -T0 -3' -cf /tmp/qz-dev-tools/rust-1.90.tar.zst 1.90.0-x86_64-unknown-linux-gnu
-          cargo vendor --locked /tmp/qz-vendor > /tmp/qz-dev-tools/vendor-config.toml
-          tar -C /tmp -I 'zstd -T0 -3' -cf /tmp/qz-dev-tools/vendor.tar.zst qz-vendor
-          tar -C "$pythonLocation" -I 'zstd -T0 -3' -cf /tmp/qz-dev-tools/python-science.tar.zst bin lib include share
-      - name: Upload isolated development toolchains
+          mkdir -p /tmp/qz-dev-rust /tmp/qz-dev-science
+          # Only installed tool directories: never HOME, .git, runner temp,
+          # authentication files, environment dumps, or application data.
+          tar -C "$HOME/.rustup/toolchains" -I 'zstd -T0 -3' -cf /tmp/qz-dev-rust/rust-1.90.tar.zst 1.90.0-x86_64-unknown-linux-gnu
+          cargo vendor --locked /tmp/qz-vendor > /tmp/qz-dev-rust/vendor-config.toml
+          tar -C /tmp -I 'zstd -T0 -3' -cf /tmp/qz-dev-rust/vendor.tar.zst qz-vendor
+          tar -C "$pythonLocation" -I 'zstd -T0 -3' -cf /tmp/qz-dev-science/python-science.tar.zst bin lib include share
+      - name: Upload isolated Rust development toolchain
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: rewrite-dev-tools-${{ github.sha }}
-          path: /tmp/qz-dev-tools/
+          name: rewrite-dev-rust-${{ github.sha }}
+          path: /tmp/qz-dev-rust/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+      - name: Upload isolated native development libraries
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rewrite-dev-science-${{ github.sha }}
+          path: /tmp/qz-dev-science/
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
