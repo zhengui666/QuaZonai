@@ -1,6 +1,8 @@
 # W0 resolution inputs. The resolved, exact transitive lock is a CI artifact
 # until it has been inspected and committed; this is not a release lock.
 nautilus-trader==1.231.0
-skfolio==1.0.4
+# GitHub v1.0.4 is not on PyPI; verify the actually published wheel.
+# CPCV is NOT accepted by this probe and requires separate native purge tests.
+skfolio==1.0.3
 pyarrow==25.0.1
 optuna==4.9.0
