@@ -154,6 +154,35 @@ The source also formats the existing evidence-binding suite without weakening CI
 test.** The modified source must obtain its own published-Head CI logs and review;
 the historical 68-test result above must not be reused for it.
 
+## Native upgrade cutover and control-plane vertical
+
+The current source adds `Store::migrate` with the native SQLx migration lock on a
+closed-on-exit dedicated connection and a transaction covering ordered PostgreSQL
+application-table write barriers plus all pending native migrations. The existing
+migration files retain their original bytes/checksums. Additive migration 0006
+repairs a possible pre-guard cutover gap and invalidates all historical browser
+epochs once, with an immutable audit receipt; it does not delete historical facts.
+Upgrade regressions use real prior-schema writers, lock waits, failed batches,
+connection cancellation and a bad observation committed while migration waits.
+
+`contracts::control`, `domain::control`, `store::authority/commands/control` and
+`server::access/control` implement a real Project/identity vertical. Native
+Argon2id verifies bounded opaque Bearer capabilities from encrypted SecretVault
+objects. Cookie and Bearer channels cannot be mixed or used as fallbacks. The
+locked business transaction rechecks exact credential epoch, expiry, revocation,
+project/Mission and scopes. Recent human authority, one-time CLI grants with full
+request snapshots, CAS and immutable original response receipts are enforced in
+the same transaction. No token/verifier enters public DTOs or receipts; issuance
+retries never return the raw secret again.
+
+The source tests cover real HTTP/private-cookie/TOTP/Argon2/SecretVault/database
+requests, cross-project reads, forbidden automation management, grant substitution
+and parent-resource binding, actual revocation lock waits, concurrent same-key
+commands, stale CAS and rollback. These are bounded implementation proofs, not a
+claim that the still-missing research/CLI/MCP/UI/worker/production acceptance is
+complete. Current totals and outcomes must be taken from the exact tested commit's
+CI log; historical totals above remain explicitly historical.
+
 ## Verification commands and evidence rules
 
 Run with the committed lock; do not format or regenerate tracked code inside a

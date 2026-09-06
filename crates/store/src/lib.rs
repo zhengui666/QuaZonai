@@ -4,6 +4,11 @@
 #![forbid(unsafe_code)]
 
 pub mod auth;
+pub mod authority;
+mod commands;
+pub mod control;
+mod db;
+mod migration;
 pub mod turns;
 
 use sqlx::{postgres::PgPoolOptions, PgPool};
@@ -29,6 +34,14 @@ pub enum StoreError {
     RecentAuthenticationRequired,
     #[error("authentication rate limit exceeded")]
     AuthRateLimited { retry_after_seconds: u32 },
+    #[error("operation is not permitted for this identity")]
+    Forbidden,
+    #[error("object revision changed")]
+    RevisionConflict { current: contracts::Revision },
+    #[error("idempotency key was already used with different command content")]
+    IdempotencyConflict,
+    #[error("stored contract integrity check failed")]
+    Integrity,
     #[error("record not found")]
     NotFound,
     #[error("conflicting immutable command or native identity")]
@@ -88,12 +101,5 @@ impl Store {
             .connect(url)
             .await?;
         Ok(Self { pool })
-    }
-
-    /// Invoke with the separate migration role against a new database. The
-    /// application role must not own the schema or hold DDL/TRUNCATE privilege.
-    pub async fn migrate(&self) -> Result<(), StoreError> {
-        sqlx::migrate!("../../migrations").run(&self.pool).await?;
-        Ok(())
     }
 }

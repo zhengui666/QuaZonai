@@ -178,13 +178,15 @@ async fn global_doctor_and_mission_lifetimes_cannot_expand_authority(pool: PgPoo
             .unwrap_err(),
         "23514",
     );
-    sqlx::query("UPDATE app.machine_principals SET enabled=false WHERE id=$1")
+    sqlx::query("UPDATE app.machine_principals SET enabled=false,credential_epoch=credential_epoch+1 WHERE id=$1")
         .bind(doctor.as_uuid())
         .execute(&pool)
         .await
         .unwrap();
+    // The current epoch is supplied: rejection must be caused by disabled state,
+    // not by accidentally testing only a stale credential epoch.
     sqlstate(
-        credential(&pool, doctor, "{DOCTOR_READ}", "OPERATOR", 1, 600)
+        credential(&pool, doctor, "{DOCTOR_READ}", "OPERATOR", 2, 600)
             .await
             .unwrap_err(),
         "23514",

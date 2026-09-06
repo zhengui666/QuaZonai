@@ -1,6 +1,6 @@
 # CLI 命令
 
-完整产品合同在 DESIGN。当前已实现原生验证、逐轮 Store 和浏览器认证服务；研究/组合/交付命令仍待实现，不提供绕过 API 的手工 SQL 业务路径。
+完整产品合同在 DESIGN。当前已实现原生验证、逐轮 Store、浏览器认证和 Project/机器身份 HTTP 控制面；研究/组合/交付命令仍待实现，不提供绕过 API 的手工 SQL 业务路径。
 
 ## 认证服务与本机管理
 
@@ -26,6 +26,12 @@ cargo run --locked -p server -- serve --state-dir ./var \
 `DATABASE_URL` 支持环境变量；不要把真实密码写到命令行、Git 或日志。默认启动拒绝具有 schema CREATE、表 TRUNCATE 或超级用户权限的应用角色。master key 必须独立于数据库和加密对象备份。
 
 本地开发可显式使用 `--development-http --public-url http://127.0.0.1:8080`，同时监听地址必须为 loopback。此选项只调整本地传输和 cookie 的 Secure 属性，不跳过初始化、TOTP、会话撤销、Origin 或数据库角色校验。
+
+## 已实现的控制面 HTTP 合同
+
+`server openapi` 包含实际 Project 与机器身份路由，不是手写路径清单或待实现占位。项目命令的 HTTP/CLI/MCP 统一以服务端事务为准，不提供 SQL 业务后门。控制面专用远程 CLI 与 MCP 仍在同一 PR 中接通，不能把本机 `server` 管理命令视作已实现全部研究命令。
+
+真实浏览器：原生 TOTP 登录后使用同源私有 cookie，写操作携带 Origin、Idempotency-Key 和 DTO 的 expected_revision。机器：只使用独立 Bearer token，不复制浏览器 cookie；`GET /api/v2/auth/machine` 显示自身公开归属/权限/到期，`GET /api/v2/projects` 只返回授权项目。项目和凭据管理要求 Operator 浏览器的最近认证，或专属 CLI 身份提交原生 TOTP 后获得一次性精确命令 grant；Agent、自动化和下游不能取得该人工授权。
 
 ## 原生组件与合同验证
 

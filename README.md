@@ -2,7 +2,7 @@
 
 证据优先的自托管量化研究工作台：目标是将想法变成可追溯研究、合格Alpha和目标组合包，不是Broker、交易执行控制面或收益保证。
 
-> **正在重写，尚不可作为完整产品部署。** 本分支已删除旧服务、旧前端和兼容层；不要沿用旧Docker/uv启动命令。当前可运行内容包括真实 Axum 认证 API、本机初始化命令、Rust 合同/领域测试、PostgreSQL 逐轮 Store、原生科学计算和 Codex 协议探针。完整 Web 产品、研究/交付、迁移和恢复尚未通过验收，PR #63仍须保持Draft。
+> **正在重写，尚不可作为完整产品部署。** 本分支已删除旧服务、旧前端和兼容层；不要沿用旧Docker/uv启动命令。当前可运行内容包括真实 Axum 认证/Project/机器凭据 API、本机初始化命令、Rust 合同/领域测试、PostgreSQL 逐轮 Store、原生科学计算和 Codex 协议探针。完整 Web 产品、研究/交付、迁移和恢复尚未通过验收，PR #63仍须保持Draft。
 
 ## 已有实现与边界
 
@@ -13,7 +13,8 @@
 | Arrow | Rust IPC RecordBatch写入/回读，明确FIXTURE不可交付 |
 | 领域基础 | 精确UUIDv7/bigint/Decimal、预算、租约/终态、Codex覆盖及required指标判定；不是完整数据库权限证明 |
 | 认证 API | Axum + PostgreSQL 原生会话、一次性本机初始化、六位 TOTP 登录、防重放、持久注销/设备撤销；普通服务使用非 owner 数据库角色 |
-| PostgreSQL Store | 新库SQLx迁移、逐轮不可变预约/发送/结算、同Mission幂等与预算投影、关系唯一/复合外键；不是完整机器身份/研究权限体系或 Worker |
+| Project 与机器身份 | 真正的项目分页/创建/更新、乐观并发、不可变命令回执、机器 token 一次性签发与撤销；机器只读授权项目，人工 CLI 管理操作另需原生 TOTP 单次授权 |
+| PostgreSQL Store | 新库SQLx迁移、逐轮不可变预约/发送/结算、同Mission幂等与预算投影、关系唯一/复合外键；研究/评估权限全链路与 Worker 仍待完整验收 |
 | Codex | 锁定官方App Server stdio、全分页模型及Thread启动探针；真实账号/同Thread工具闭环还需验收 |
 | 交付与UX | 全量Ant Design、审批/反馈/晋级/唤醒、旧数据导入、恢复与隔离仍在实施，不虚构页面或状态 |
 

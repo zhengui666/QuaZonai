@@ -37,6 +37,7 @@ pub struct ApiError {
     code: &'static str,
     detail: &'static str,
     retry_after: Option<u32>,
+    current_revision: Option<Revision>,
 }
 impl ApiError {
     pub fn new(status: StatusCode, code: &'static str, detail: &'static str) -> Self {
@@ -45,6 +46,7 @@ impl ApiError {
             code,
             detail,
             retry_after: None,
+            current_revision: None,
         }
     }
     pub fn internal() -> Self {
@@ -85,7 +87,7 @@ impl IntoResponse for ApiError {
             code: self.code,
             detail: self.detail,
             request_id,
-            current_revision: None,
+            current_revision: self.current_revision,
             field_errors: Vec::new(),
             safe_next_actions: match self.code {
                 "AUTH_REQUIRED" | "RECENT_AUTH_REQUIRED" => vec!["AUTHENTICATE"],
@@ -149,6 +151,26 @@ impl From<StoreError> for ApiError {
                 error.retry_after = Some(retry_after_seconds);
                 error
             }
+            StoreError::Forbidden => Self::new(
+                StatusCode::FORBIDDEN,
+                "FORBIDDEN",
+                "当前身份没有执行此操作的权限。",
+            ),
+            StoreError::RevisionConflict { current } => {
+                let mut error = Self::new(
+                    StatusCode::CONFLICT,
+                    "REVISION_CONFLICT",
+                    "记录已被其他请求更新，请载入当前版本后重试。",
+                );
+                error.current_revision = Some(current);
+                error
+            }
+            StoreError::IdempotencyConflict => Self::new(
+                StatusCode::CONFLICT,
+                "IDEMPOTENCY_CONFLICT",
+                "此幂等键已用于不同请求，不能重用。",
+            ),
+            StoreError::Integrity => Self::internal(),
             StoreError::NotFound => Self::new(
                 StatusCode::NOT_FOUND,
                 "NOT_FOUND",
@@ -165,6 +187,7 @@ impl From<StoreError> for ApiError {
                 "TURN_PENDING",
                 "此前模型请求仍待确认，不能重复发送。",
             ),
+            StoreError::Domain(domain::DomainError::Invalid(_)) => Self::validation(),
             StoreError::Domain(_) => Self::new(
                 StatusCode::CONFLICT,
                 "DOMAIN_CONFLICT",

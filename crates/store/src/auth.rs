@@ -404,7 +404,7 @@ fn authority(row: &sqlx::postgres::PgRow) -> Result<LoginAuthority, StoreError> 
     })
 }
 
-async fn lock_login(
+pub(crate) async fn lock_login(
     tx: &mut Tx<'_>,
     login_id: Id,
     recent: bool,
@@ -418,7 +418,7 @@ async fn lock_login(
     Ok(result)
 }
 
-async fn consume_step(
+pub(crate) async fn consume_step(
     tx: &mut Tx<'_>,
     snapshot: &AuthSnapshot,
     verified_step: i64,

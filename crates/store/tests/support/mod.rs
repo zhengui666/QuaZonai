@@ -210,3 +210,12 @@ pub async fn wait_for_database_lock(pool: &PgPool, backend: i32) {
     }
     panic!("backend {backend} did not enter the required native lock wait");
 }
+
+/// Assert the native failure class, not just any connection/query error.
+pub fn sqlstate(error: sqlx::Error, expected: &str) {
+    assert_eq!(
+        error.as_database_error().and_then(|e| e.code()).as_deref(),
+        Some(expected),
+        "{error:?}"
+    );
+}

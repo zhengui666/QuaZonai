@@ -202,14 +202,15 @@ async fn operator_grant_consumption_is_once_and_bound_to_its_command_target(pool
         .bind(principal.as_uuid()).bind(f.project.as_uuid()).execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO app.machine_credentials(id,principal_id,public_token_id,verifier_ref,principal_epoch,scope_codes,issued_at,expires_at,issued_by) VALUES($1,$2,'fixture-public-id','fixture-verifier',1,'{RESEARCH_READ}',now(),now()+interval '1 hour','OPERATOR')")
         .bind(credential.as_uuid()).bind(principal.as_uuid()).execute(&pool).await.unwrap();
+    sqlx::query("UPDATE app.operator_auth_state SET initialized=true,totp_secret_ref='fixture',setup_completed_at=now() WHERE singleton").execute(&pool).await.unwrap();
     let grant = Id::new();
-    sqlx::query("INSERT INTO app.operator_command_grants(id,credential_id,operation,target_id,auth_epoch,authenticated_at,expires_at) VALUES($1,$2,'RELEASE_APPROVE',$3,1,now(),now()+interval '5 minutes')")
+    sqlx::query("INSERT INTO app.operator_command_grants(id,credential_id,operation,target_id,auth_epoch,authenticated_at,expires_at,normalized_nonsecret_request) VALUES($1,$2,'RELEASE_APPROVE',$3,1,now(),now()+interval '5 minutes','{\"schema_version\":1}')")
         .bind(grant.as_uuid()).bind(credential.as_uuid()).bind(f.run.as_uuid()).execute(&pool).await.unwrap();
     let receipt = Id::new();
     let other_receipt = Id::new();
     for (receipt_id, resource_id) in [(receipt, f.run), (other_receipt, f.project)] {
-        sqlx::query("INSERT INTO app.command_receipts(id,principal_scope,operation,idempotency_key,normalized_nonsecret_request,resource_id,response_status) VALUES($1,'test-cli','RELEASE_APPROVE',$2,'{\"schema_version\":1}',$3,201)")
-            .bind(receipt_id.as_uuid()).bind(receipt_id.to_string()).bind(resource_id.as_uuid()).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO app.command_receipts(id,principal_scope,operation,idempotency_key,normalized_nonsecret_request,resource_id,response_status) VALUES($1,$4,'RELEASE_APPROVE',$2,'{\"schema_version\":1}',$3,201)")
+            .bind(receipt_id.as_uuid()).bind(receipt_id.to_string()).bind(resource_id.as_uuid()).bind(format!("CREDENTIAL:{credential}")).execute(&pool).await.unwrap();
     }
     let insert = "INSERT INTO app.operator_command_consumptions(grant_id,command_receipt_id,operation,target_id) VALUES($1,$2,'RELEASE_APPROVE',$3)";
     for target in [f.run, f.project] {

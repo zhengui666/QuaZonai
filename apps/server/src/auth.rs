@@ -20,7 +20,7 @@ use tower_sessions::{Expiry, Session};
 const LOGIN: &str = "operator_login";
 const ENROLLMENT_BINDING: &str = "enrollment_binding";
 
-async fn crypto<T: Send + 'static>(
+pub(crate) async fn crypto<T: Send + 'static>(
     state: &AppState,
     task: impl FnOnce() -> Result<T, ApiError> + Send + 'static,
 ) -> Result<T, ApiError> {
@@ -42,7 +42,7 @@ async fn crypto<T: Send + 'static>(
     .await
     .map_err(|_| ApiError::internal())?
 }
-fn json<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, ApiError> {
+pub(crate) fn json<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, ApiError> {
     body.map(|Json(value)| value)
         .map_err(|_| ApiError::validation())
 }

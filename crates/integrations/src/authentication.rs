@@ -95,3 +95,69 @@ pub fn accepted_step(
     }
     Ok(None)
 }
+
+/// A bounded routing identifier plus an opaque secret. This is not a JWT and
+/// carries no roles, scopes, expiry or client-selected authority.
+pub struct MachineToken<'a> {
+    pub public_token_id: contracts::Id,
+    pub capability: &'a str,
+}
+
+pub fn machine_token(value: &str) -> Result<MachineToken<'_>, AuthenticationError> {
+    if value.len() != 84 {
+        return Err(AuthenticationError::Invalid);
+    }
+    let mut parts = value.split('.');
+    if parts.next() != Some("qz2") {
+        return Err(AuthenticationError::Invalid);
+    }
+    let public = parts.next().ok_or(AuthenticationError::Invalid)?;
+    let capability = parts.next().ok_or(AuthenticationError::Invalid)?;
+    if parts.next().is_some()
+        || public.len() != 36
+        || capability.len() != 43
+        || URL_SAFE_NO_PAD
+            .decode(capability)
+            .map_or(true, |bytes| bytes.len() != 32)
+    {
+        return Err(AuthenticationError::Invalid);
+    }
+    Ok(MachineToken {
+        public_token_id: contracts::Id::try_from(public.to_owned())
+            .map_err(|_| AuthenticationError::Invalid)?,
+        capability,
+    })
+}
+
+pub fn format_machine_token(
+    public: contracts::Id,
+    secret: &str,
+) -> Result<String, AuthenticationError> {
+    let value = format!("qz2.{public}.{secret}");
+    machine_token(&value)?;
+    Ok(value)
+}
+
+#[cfg(test)]
+mod machine_token_tests {
+    use super::*;
+    #[test]
+    fn machine_token_has_one_bounded_native_id_and_opaque_secret() {
+        let public = contracts::Id::new();
+        let secret = random_capability();
+        let value = format_machine_token(public, &secret).unwrap();
+        let parsed = machine_token(&value).unwrap();
+        assert_eq!(parsed.public_token_id, public);
+        assert_eq!(parsed.capability, secret);
+        for bad in [
+            format!(" {value}"),
+            format!("{value}.extra"),
+            value.replace("qz2.", "qz3."),
+            format!("qz2.550e8400-e29b-41d4-a716-446655440000.{secret}"),
+            format!("qz2.{public}.{}", "!".repeat(43)),
+            format!("qz2.{public}.{}", "a".repeat(42)),
+        ] {
+            assert!(machine_token(&bad).is_err());
+        }
+    }
+}

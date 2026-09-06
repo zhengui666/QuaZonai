@@ -168,6 +168,6 @@ impl SecretVault {
 fn valid_purpose(purpose: &str) -> bool {
     matches!(
         purpose,
-        "TOTP" | "RUNTIME" | "DOWNSTREAM" | "CUSTOM_PROVIDER" | "SESSION_KEY"
+        "TOTP" | "RUNTIME" | "DOWNSTREAM" | "CUSTOM_PROVIDER" | "SESSION_KEY" | "MACHINE_VERIFIER"
     )
 }

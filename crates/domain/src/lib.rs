@@ -7,6 +7,7 @@
 
 pub mod admission;
 pub mod codex;
+pub mod control;
 pub mod evidence;
 pub mod runs;
 

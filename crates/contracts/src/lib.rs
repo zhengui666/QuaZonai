@@ -7,6 +7,7 @@
 pub mod auth;
 pub mod budget;
 pub mod codex;
+pub mod control;
 pub mod evidence;
 pub mod runs;
 pub mod scalars;
@@ -17,6 +18,21 @@ use utoipa::OpenApi;
 
 #[derive(OpenApi)]
 #[openapi(components(schemas(
+    control::MachineSessionView,
+    control::ProjectCreate,
+    control::ProjectUpdate,
+    control::ProjectView,
+    control::ListQuery,
+    control::PrincipalCreate,
+    control::PrincipalUpdate,
+    control::PrincipalView,
+    control::CredentialIssue,
+    control::CredentialRevoke,
+    control::CredentialView,
+    control::CredentialCreated,
+    control::OperatorCommand,
+    control::OperatorGrantRequest,
+    control::OperatorGrantView,
     auth::BootstrapStart,
     auth::BootstrapEnrollment,
     auth::BootstrapConfirm,

@@ -278,6 +278,10 @@ Cookie Secure/HttpOnly/SameSite，同源 Origin/CSRF；机器/CLI 使用独立�
 
 ## 11. 迁移、删除与 README
 
+升级的写入切换点：先暂停新 HTTP/CLI/MCP 命令与 Worker 调度，结束旧事务，再用 `cargo run --locked -p server -- migrate`。Store 在专用连接上先取得 SQLx 原生迁移 advisory lock，随后开启 READ COMMITTED 外层事务，从原生 catalog 读取现有 app 普通/分区表，先认证状态、后其余表按名称稳定顺序取得 SHARE ROW EXCLUSIVE 锁；取得全部锁后才运行 SQLx Migrator。SQLx 原样校验已应用 checksum、用原生嵌套 savepoint 执行所有待应用文件，外层提交同时公开整个批次及迁移记录；禁止 no-transaction 迁移。新库无 app 表时仍由原生迁移锁串行化。锁等待超时或校验失败整体回滚，专用连接关闭以释放 session advisory lock，不返回运行连接池；不能用独立 SQLx CLI/逐条 SQL 对活跃实例升级。本合同不声称零停机升级；锁获取之前已提交的旧事实必须被新的回填/检查看见，不能宣称锁请求一发出旧事务就已停止。
+
+对曾部署 0005 的实例，0006 是独立、原样可核验的修复迁移：第一步锁相关表，补齐旧窗口漏掉的 evaluation_publications，再检查全部 Degradation 精确关联。非法历史不删除、不改标签，迁移失败并保留。已初始化认证强制令 session_epoch 大于当前值及全部历史 browser_logins/trusted_devices/operator_command_grants 的 epoch 最大值，避免“先回退、再加一”误复活旧会话；超过 bigint 范围则整个升级失败，不回绕。以 command_receipts 的 SYSTEM_MIGRATOR/AUTH_UPGRADE_INVALIDATE/固定迁移版本记录原、新 epoch 和原因，resource_id 绑定真实 auth_state.id，不记录秘密。已有登录、信任设备和一次性授权失效，用户重新 TOTP 登录；未初始化新库不做无意义撤销。已应用迁移重跑只验证 checksum，不重复撤销。后续每次升级继续使用同一个外层写入隔离入口。
+
 新数据库/数据卷/API v2，不不可恢复重置原库：冻结旧写入 → 一致性备份/导出 → 新 schema → 导入映射/校验 → 只读对照 → 全链路验收 → 显式切换 → 观察/回滚窗口。不长期双写，不为语言删除有依据的合格复用；被替代的旧入口/架构/重复真相必须移除。
 
 旧 Research/Run/Artifact 保留追溯；不能证明等价的 Strategy 为 LEGACY_REVALIDATION_REQUIRED，旧 PASS 不自动变新 qualification；旧审批/Handoff 只读不自动触发 Live。认证迁移独立，默认保留旧凭据，选择新原生 profile 则显式登录，不偷读/删除宿主 auth.json。导入报告包含 ID 映射、逐类行数、关系完整性、时间/精度、产物可读率、失败/人工决策/legacy 重验及未继承权限/审批/凭据，不能只看脚本无异常。
@@ -1237,6 +1241,7 @@ command_receipts [immutable result binding]
   normalized_nonsecret_request: StrictCommandV1
   resource_id: Id
   response_status: int
+  response_nonsecret_body: StrictResponseV1?
   expires_at: Time?
 ```
 
@@ -1251,6 +1256,18 @@ credential_ref 只被可信进程解析；API 仅 configured/status/last_checked
 Readiness snapshot 至少：`integration_id,integration_revision,capability_version,scope,status,reason_code,checked_at,valid_until`。事务外 probe，事务内只采纳配置 revision 一致且未过期的快照；不持锁等待 HTTP。
 
 ### A8.1 持久机器主体与权限
+
+控制面 wire/事务细化：机器令牌仅通过单个 Authorization Bearer 头传输，固定 `qz2.<UUIDv7 public_token_id>.<43字符原生随机capability>`；拒绝 query/body 令牌、多个头、Cookie+Bearer 混合、错误Bearer回退Cookie。只有首次签发返回完整token，公开CredentialView不含verifier_ref；重试返回原credential metadata且token=null/replayed=true。随机数/Argon2id/SecretVault复用既有组件，单个请求的密码学验证不代替领域事务的期满/撤销/epoch/归属检查。普通机器事务按 project→Mission run→principal→credential 锁顺序复核，写命令使用 principal FOR UPDATE 串行化同一主体。credential_epoch只能保持/增加；enabled变化必须严格增加，重启/重新启用不能复活旧证。
+
+Operator业务写命令统一先锁单一 operator_auth_state FOR UPDATE，再锁真实BrowserLogin或已验证CLI credential；这是本系统单Operator合同下的原生串行化，不新增intent/队列/锁服务。在该锁下检查command_receipts同scope/operation/key，执行领域变更，再一次INSERT完整不可变receipt并同事务提交；不用先插入后UPDATE不可变receipt，也不新增事务identity。receipt增加 `response_nonsecret_body: StrictResponseV1?`，历史行为原样保留，新控制面命令必须在插入时完整保存非秘密原响应。重试返回原响应快照而不是资源后来的状态；同key不同规范化请求409，失败不留下receipt。机器写命令在主体锁下复用同一幂等机制。Idempotency-Key为1–200字节，不含控制字符或首尾空白。
+
+人工CLI授权进一步绑定完整非秘密命令：`OperatorGrantRequest(schema_version, command: OperatorCommandV1, target_id?, code)`；command是按operation标记的封闭union，request为该真实端点的严格DTO，不能任意JSON。credential_id由已验证的CLI Bearer派生，创建operation的target_id必须null并由服务器分配；更新/撤销的target必须准确。grant增加 `normalized_nonsecret_request: StrictCommandV1?`，历史空值grant不能被新服务消费，不补造授权。新grant的operation/target/完整非秘密request/credential/auth_epoch/到期必须全匹配，防止更换下游、环境、scope或其他参数。TOTP仍走原生限流/重放防护，code永不进入receipt/grant。有效性与消费在提交事务内再核对；完全相同已消费grant+key仅可读原receipt，不续期、不重复操作。
+
+首批OperatorCommandV1变体：PROJECT_CREATE(ProjectCreate)、PROJECT_UPDATE(ProjectUpdate)、PRINCIPAL_CREATE(PrincipalCreate)、PRINCIPAL_UPDATE(PrincipalUpdate)、CREDENTIAL_ISSUE(CredentialIssue)、CREDENTIAL_REVOKE(CredentialRevoke)。已记录的Release/Policy历史操作保留枚举，未提供真实端点前不允许新grant签发。后续B2命令以具体DTO扩展同一封闭union。CLI普通机器scope（含只读doctor）不会改变；单次grant是用户这次输入TOTP的人工授权，不是Doctor或Agent取得持久Operator权限。MISSION/AUTOMATION/DOWNSTREAM不能取得该授权。
+
+ProjectCreate(schema_version,name[1..120],description[0..8000],fork_from_project_id?)只允许Operator；服务端建立NEW/FORK谱系及DRAFT项目，不接id/root_lineage/current_brief/revision。ProjectUpdate(schema_version,expected_revision,name,description,state)不接不可变谱系/批准政策；ACTIVE必须已绑定同项目FROZEN Brief，归档需无未终态Run，ARCHIVED不得原地复活。ProjectView明确列出id/root_lineage/name/description/state/current_brief/current_automation_policy/created_by/archived_at/created_at/updated_at/revision，不输出其他表字段。所有列表limit默认50、1..100，按UUIDv7 id倒序，cursor为上一页末尾Id；机器查询只返回其授权项目，跨项目返回404。
+
+PrincipalCreate(schema_version,name[1..120],kind=CLI|DOWNSTREAM|AUTOMATION,project_id?,downstream_id?,enabled)，PrincipalUpdate(schema_version,expected_revision,name,enabled)，CredentialIssue(schema_version,scope_codes:MachineScopeV1[1..10]非空唯一,expires_at)，CredentialRevoke(schema_version,reason[1..2000])。公开入口不接受MISSION/run_id/epoch/issuer/时间等服务事实。签发由服务器固定epoch/issuer/issued_at，期限须晚于数据库当前时刻且不超出主体限制；disabled/epoch切换、per-credential撤销与正在执行的命令使用相同原生锁顺序。
 
 ```text
 machine_principals [operator mutable]

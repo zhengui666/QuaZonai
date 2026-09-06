@@ -1,6 +1,14 @@
 {
   "components": {
     "schemas": {
+      "AssignablePrincipalKind": {
+        "enum": [
+          "CLI",
+          "DOWNSTREAM",
+          "AUTOMATION"
+        ],
+        "type": "string"
+      },
       "BootstrapConfirm": {
         "additionalProperties": false,
         "properties": {
@@ -269,6 +277,145 @@
         ],
         "type": "string"
       },
+      "CredentialCreated": {
+        "additionalProperties": false,
+        "properties": {
+          "replayed": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/CredentialView"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "token": {
+            "description": "Only the initial response contains the token; it is never recoverable.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "schema_version",
+          "replayed",
+          "resource"
+        ],
+        "type": "object"
+      },
+      "CredentialIssue": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "scope_codes": {
+            "items": {
+              "$ref": "#/components/schemas/MachineScope"
+            },
+            "maxItems": 10,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "schema_version",
+          "scope_codes",
+          "expires_at"
+        ],
+        "type": "object"
+      },
+      "CredentialIssueIntent": {
+        "additionalProperties": false,
+        "properties": {
+          "principal_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "request": {
+            "$ref": "#/components/schemas/CredentialIssue"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "principal_id",
+          "request"
+        ],
+        "type": "object"
+      },
+      "CredentialRevoke": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "CredentialView": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "issued_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "principal_epoch": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "principal_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "public_token_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "revoked_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope_codes": {
+            "items": {
+              "$ref": "#/components/schemas/MachineScope"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "principal_id",
+          "public_token_id",
+          "principal_epoch",
+          "scope_codes",
+          "issued_at",
+          "expires_at"
+        ],
+        "type": "object"
+      },
       "DbCounter": {
         "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
         "maxLength": 19,
@@ -334,6 +481,29 @@
         "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
         "type": "string"
       },
+      "ListQuery": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "limit": {
+            "default": 50,
+            "format": "int32",
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
       "LoginRequest": {
         "additionalProperties": false,
         "properties": {
@@ -361,6 +531,84 @@
           "schema_version",
           "code",
           "trust_device"
+        ],
+        "type": "object"
+      },
+      "MachineScope": {
+        "enum": [
+          "RESEARCH_READ",
+          "EXPERIMENT_SUBMIT",
+          "ARTIFACT_SUBMIT",
+          "EVIDENCE_READ",
+          "RUN_READ",
+          "RUN_CANCEL",
+          "DOWNSTREAM_CLAIM",
+          "DOWNSTREAM_ACK",
+          "FORWARD_SUBMIT",
+          "DOCTOR_READ"
+        ],
+        "type": "string"
+      },
+      "MachineSessionView": {
+        "additionalProperties": false,
+        "description": "Public identity of this verified machine credential, never a secret lookup.",
+        "properties": {
+          "credential_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "downstream_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PrincipalKind"
+          },
+          "project_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "run_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "scope_codes": {
+            "items": {
+              "$ref": "#/components/schemas/MachineScope"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "schema_version",
+          "credential_id",
+          "kind",
+          "scope_codes",
+          "expires_at"
         ],
         "type": "object"
       },
@@ -575,10 +823,397 @@
         ],
         "type": "object"
       },
+      "OperatorCommand": {
+        "oneOf": [
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "PROJECT_CREATE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/ProjectCreate"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "PROJECT_UPDATE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/ProjectUpdate"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "PRINCIPAL_CREATE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/PrincipalCreate"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "PRINCIPAL_UPDATE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/PrincipalUpdate"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "CREDENTIAL_ISSUE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/CredentialIssueIntent"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "CREDENTIAL_REVOKE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/CredentialRevoke"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "OperatorGrantRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "maxLength": 6,
+            "minLength": 6,
+            "pattern": "^[0-9]{6}$",
+            "type": "string"
+          },
+          "command": {
+            "$ref": "#/components/schemas/OperatorCommand"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "target_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          }
+        },
+        "required": [
+          "schema_version",
+          "command",
+          "code"
+        ],
+        "type": "object"
+      },
+      "OperatorGrantView": {
+        "additionalProperties": false,
+        "properties": {
+          "auth_epoch": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "authenticated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "credential_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "operation": {
+            "$ref": "#/components/schemas/OperatorOperation"
+          },
+          "target_id": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "id",
+          "credential_id",
+          "operation",
+          "target_id",
+          "auth_epoch",
+          "authenticated_at",
+          "expires_at"
+        ],
+        "type": "object"
+      },
+      "OperatorOperation": {
+        "enum": [
+          "PROJECT_CREATE",
+          "PROJECT_UPDATE",
+          "PRINCIPAL_CREATE",
+          "PRINCIPAL_UPDATE",
+          "CREDENTIAL_ISSUE",
+          "CREDENTIAL_REVOKE"
+        ],
+        "type": "string"
+      },
+      "PrincipalCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "downstream_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AssignablePrincipalKind"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "project_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "name",
+          "kind",
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "PrincipalKind": {
+        "enum": [
+          "CLI",
+          "DOWNSTREAM",
+          "AUTOMATION",
+          "MISSION"
+        ],
+        "type": "string"
+      },
+      "PrincipalUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "expected_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "expected_revision",
+          "name",
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "PrincipalView": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "credential_epoch": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "downstream_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PrincipalKind"
+          },
+          "name": {
+            "type": "string"
+          },
+          "project_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "run_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "enabled",
+          "credential_epoch",
+          "created_at",
+          "updated_at",
+          "revision"
+        ],
+        "type": "object"
+      },
       "ProfileOrigin": {
         "enum": [
           "MANAGED_VOLUME",
           "OPERATOR_MOUNT"
+        ],
+        "type": "string"
+      },
+      "ProjectCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "maxLength": 8000,
+            "type": "string"
+          },
+          "fork_from_project_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "name",
+          "description"
+        ],
+        "type": "object"
+      },
+      "ProjectOrigin": {
+        "enum": [
+          "OPERATOR",
+          "IMPORT"
         ],
         "type": "string"
       },
@@ -590,6 +1225,110 @@
           "ARCHIVED"
         ],
         "type": "string"
+      },
+      "ProjectUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "maxLength": 8000,
+            "type": "string"
+          },
+          "expected_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ProjectState"
+          }
+        },
+        "required": [
+          "schema_version",
+          "expected_revision",
+          "name",
+          "description",
+          "state"
+        ],
+        "type": "object"
+      },
+      "ProjectView": {
+        "additionalProperties": false,
+        "properties": {
+          "archived_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_by": {
+            "$ref": "#/components/schemas/ProjectOrigin"
+          },
+          "current_automation_policy_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "current_brief_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "name": {
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "root_lineage_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ProjectState"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "root_lineage_id",
+          "name",
+          "description",
+          "state",
+          "created_by",
+          "created_at",
+          "updated_at",
+          "revision"
+        ],
+        "type": "object"
       },
       "ReasoningEffortCapability": {
         "additionalProperties": false,
