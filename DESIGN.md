@@ -185,6 +185,30 @@ Artifact 只能使用服务端登记原生对象/版本；校验 schema/provenan
 
 ## 8. Release、审批、反馈与唤醒
 
+### 原生持久化的交付边界（2026-09-06 审查修订）
+
+Release 的 `package_artifact_id` 必须引用同 Candidate 项目的独立不可变 `PACKAGE`，
+`media_type=application/json`、`schema_name=qz.target_package`、`schema_version=1`，
+Release 的 `package_schema_version` 同为 `1`，且 `byte_count>0`。不能引用 PARAMETERS、
+别的项目或不同版本的对象。REAL Release 要求该 Package 的 origin=REAL 且
+access_class=DELIVERY；DEMO 也要使用真实的 PACKAGE 类型记录，而不能用任意测试参数充数。
+**DEMO Release 永远不能产生 PAPER/LIVE Approval 或 Handoff Offer。** 这些原生元数据
+约束不替代产物内容校验、真实输入来源、多 Alpha、独立评估和完整交付授权。
+
+首次 Claim 在获得原生行锁后按 `clock_timestamp()` 检查 offered_at<=当前时间<expires_at，
+不能通过客户端回填过期前的 claimed_at 复活目标。该次正式 claimed_at 由数据库写入实际
+采纳时间。后续已领取记录的幂等读取不重新领取，不因 TTL 过去改写或撤回已转移的事实。
+Forward 新消息必须持有对应 Handoff 的共享行锁，并且 Handoff 在该次准入时为
+CLAIMED 或 ACKNOWLEDGED；OFFERED/REVOKED/EXPIRED/REJECTED 均不能新增消息。
+对历史数据的升级检查允许确实曾领取、后来被下游拒绝的合法历史报告，不能以当前拒绝
+状态抹去旧证据；从未领取的历史消息则升级失败，保留原行供显式处理。
+
+Research lineage 的 parent 不可修改，且必须无环。使用 PostgreSQL 原生递归查询的
+CYCLE 检测和 AFTER INSERT 约束触发器，覆盖自身引用及同一语句多行相互引用；
+历史环在升级时使整个事务失败，不能偷偷改 parent、删除或赋新 UUID 洗白暴露。
+
+
+
 先冻结目标包再审批。审批绑定 release、artifact 原生版本、candidate/mandate/policy、下游、证据和有效期；任何目标/依赖变化产生新 Release/审批。Qualification 仅独立 VALID/PASS/新鲜/合法血缘证据产生；无手工 force PASS。
 
 Approval/Offer/Claim 在事务内重新验证版本、撤销、资格、REAL 数据、授权用途、政策、期限、readiness 配置版本与新鲜度；外部 probe 在事务外执行。Claim/revoke/expire 原子竞争只一结果；下游只领自身 offer。CLAIMED 后 QZ 无停止/撤单/伪撤销权限，只可 advisory 或新版本；旧过期目标不能因重试复活。

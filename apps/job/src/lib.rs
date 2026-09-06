@@ -21,11 +21,12 @@ pub struct ProbeReport {
     nautilus_iterations: usize,
     nautilus_order_count: usize,
     nautilus_event_count: usize,
+    nautilus_position_count: usize,
     arrow_file: &'static str,
 }
 pub fn probe(directory: &Path) -> Result<ProbeReport> {
     let weights = optimization::native_minimum_variance()?;
-    let (iterations, orders, events) = backtest::native_backtest()?;
+    let (iterations, orders, events, positions) = backtest::native_backtest()?;
     arrow::write_arrow(directory, &weights)?;
     Ok(ProbeReport {
         schema_version: 1,
@@ -41,6 +42,7 @@ pub fn probe(directory: &Path) -> Result<ProbeReport> {
         nautilus_iterations: iterations,
         nautilus_order_count: orders,
         nautilus_event_count: events,
+        nautilus_position_count: positions,
         arrow_file: "native-weights.arrow",
     })
 }

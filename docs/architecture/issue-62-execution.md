@@ -331,3 +331,23 @@ SSE 多批终态重放/断点续读/权限撤销/连接上限和断线不取消�
 其余已应用迁移原样保留，两个新增领域表的期望计数及生成合同同步更新。CI仍须在
 推送后的精确 Head 上运行；测试定义、本地编译或本节文档均不能冒充远端 CI/Review
 通过。没有在本节写入随后可能失效的当前测试总数或 release-ready 声明。
+
+## 2026-09-06：交付边界与原生仓位审查增量
+
+基于已入 PR 的 `0584a0c34ee931bdf7d31f64ee23c6e017ef17ed`，本轮新增
+`202609060013_delivery_boundary.sql`，原有 SQLx 迁移与 Cargo.lock 不变。
+覆盖 Package 精确项目/角色/版本、REAL 来源元数据、DEMO 不可审批或发出 Offer、
+Research lineage 无环、Claim 行锁后 DB 实时过期检查、Forward 已转移状态与拒绝竞态。
+升级检测到非法历史时原记录及全部迁移历史保持不变，不改写、删除或重新标注证据。
+
+新增9个真实 PostgreSQL测试和1个真实Nautilus引擎测试。修复后的全workspace执行
+得到238项通过，0失败、0忽略；严格Clippy与all-target构建通过。Nautilus Rust0.63.0
+实际输出745 iterations、12 orders、24 events、**12 positions**；报告包含原生
+position count并拒绝零仓位。它仍明确是 `FIXTURE`、`deliverable=false`、无Python。
+
+旧审批/反馈关系测试的正向对照现在创建独立 PACKAGE 元数据和显式 REAL 关系样例，
+DEMO helper始终保留FIXTURE且不能审批，反馈正例必须先真实执行Claim状态转换。
+这些仅是隔离测试库里的身份/约束样例，不包含实际市场数据或声称科学资格，也没有
+生产测试开关、重标现有fixture、下游真实交易或绕过产品Gate的代码。
+
+此处结果不替代新增Head的GitHub CI和独立Review；完整产品仍按DESIGN验收。

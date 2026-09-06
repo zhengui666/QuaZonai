@@ -275,7 +275,7 @@ async fn approval(
 async fn policy_approval_is_bound_to_its_exact_mandate_project_and_downstream(pool: PgPool) {
     let f = fixture(&pool, budget()).await;
     let (mandate, candidate, evaluation) = portfolio(&pool, &f).await;
-    let release = release(&pool, &f, mandate, candidate, evaluation)
+    let release = support::delivery_release_metadata(&pool, &f, mandate, candidate, evaluation)
         .await
         .unwrap();
     let d = downstream(&pool).await;
@@ -293,7 +293,7 @@ async fn policy_approval_is_bound_to_its_exact_mandate_project_and_downstream(po
     );
     let other = fixture(&pool, budget()).await;
     let (other_m, other_c, other_e) = portfolio(&pool, &other).await;
-    let other_r = support::release(&pool, &other, other_m, other_c, other_e)
+    let other_r = support::delivery_release_metadata(&pool, &other, other_m, other_c, other_e)
         .await
         .unwrap();
     let other_evidence = support::approval_inputs(&pool, &other, other_e).await;

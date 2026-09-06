@@ -141,7 +141,9 @@ async fn release_cannot_borrow_another_candidates_pass_evaluation(pool: PgPool) 
 async fn paper_approval_cannot_authorize_live_or_another_downstream(pool: PgPool) {
     let f = fixture(&pool, budget()).await;
     let (m, c, e) = portfolio(&pool, &f).await;
-    let r = release(&pool, &f, m, c, e).await.unwrap();
+    let r = support::delivery_release_metadata(&pool, &f, m, c, e)
+        .await
+        .unwrap();
     let d = Id::new();
     let other = Id::new();
     for id in [d, other] {

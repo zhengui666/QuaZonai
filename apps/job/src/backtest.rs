@@ -87,7 +87,7 @@ fn generate_quotes(instrument_id: InstrumentId) -> Vec<Data> {
     quotes
 }
 
-pub(crate) fn native_backtest() -> anyhow::Result<(usize, usize, usize)> {
+pub(crate) fn native_backtest() -> anyhow::Result<(usize, usize, usize, usize)> {
     let mut engine = BacktestEngine::new(BacktestEngineConfig::default())?;
 
     let outcome = (|| {
@@ -122,8 +122,24 @@ pub(crate) fn native_backtest() -> anyhow::Result<(usize, usize, usize)> {
             result.total_orders > 0 && result.total_events > 0,
             "NO_NATIVE_EXECUTION_EVENTS"
         );
-        Ok((result.iterations, result.total_orders, result.total_events))
+        anyhow::ensure!(result.total_positions > 0, "NO_NATIVE_POSITIONS");
+        Ok((
+            result.iterations,
+            result.total_orders,
+            result.total_events,
+            result.total_positions,
+        ))
     })();
     engine.dispose();
     outcome
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_native_engine_reports_positions_not_just_submitted_orders() {
+        let (iterations, orders, events, positions) = super::native_backtest().unwrap();
+        assert_eq!(iterations, 745);
+        assert!(orders > 0 && events > 0 && positions > 0);
+    }
 }

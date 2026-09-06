@@ -232,7 +232,7 @@ async fn issuer_rechecks_epoch_after_a_real_principal_lock_wait(pool: PgPool) {
 
 async fn offer(pool: &PgPool, f: &Fixture) -> (Id, Id) {
     let (mandate, candidate, evaluation) = portfolio(pool, f).await;
-    let release = release(pool, f, mandate, candidate, evaluation)
+    let release = support::delivery_release_metadata(pool, f, mandate, candidate, evaluation)
         .await
         .unwrap();
     let delivery = downstream(pool).await;
@@ -317,6 +317,8 @@ async fn feedback(
 async fn feedback_revisions_are_contiguous_unforked_and_bound_to_the_logical_stream(pool: PgPool) {
     let f = fixture(&pool, budget()).await;
     let (offer, delivery) = offer(&pool, &f).await;
+    sqlx::query("UPDATE app.handoff_offers SET state='CLAIMED',external_claim_id='positive-control',claimed_at=clock_timestamp() WHERE id=$1")
+        .bind(offer.as_uuid()).execute(&pool).await.unwrap();
     sqlstate(
         feedback(&pool, offer, delivery, f.artifact, 2, None, "nav")
             .await

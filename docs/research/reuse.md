@@ -193,3 +193,20 @@ id/created_at/具名外键保护及原生 revision 增量，并通过新增迁�
 原生数据库/真实 loopback HTTP 测试不替代远端隔离、真实数据、原生 Codex 工具循环
 或科学资格验收。终态接口只对受信任内部适配器开放，manifest 元数据检查不等于实际
 文件内容/模型/科学结论的验证；不存在接收任意 URL/命令/终态的公开接口。
+
+
+## 交付身份、领取时间与原生仓位证明（2026-09-06）
+
+继续复用 PostgreSQL18 原生行锁、不可变外键记录、CHECK/触发器和递归 CYCLE：
+https://www.postgresql.org/docs/18/queries-with.html#QUERIES-WITH-CYCLE
+https://www.postgresql.org/docs/18/explicit-locking.html
+https://www.postgresql.org/docs/18/functions-datetime.html
+`CURRENT_TIMESTAMP` 固定在事务开始，不能用于锁等待后判断领取是否过期；正式 Claim
+用 `clock_timestamp()`，状态及期限判断发生在持有行锁之后。跨进程没有自研内存锁或
+去重 hash。仅检查 Package 类型/归属/来源的元数据不是完整科学证据验证。
+
+Nautilus Rust 0.63.0 的 `BacktestResult.total_positions` 是原生运行结果字段：
+https://docs.rs/nautilus-backtest/0.63.0/nautilus_backtest/result/struct.BacktestResult.html
+锁定源码 `engine.rs::get_result` 与 `result.rs` 已核对；探针直接记录并要求原生非零
+仓位数，而非根据订单条数推算成交。验收用 EmaCross 仍为不可交付 FIXTURE，不是
+多 Alpha 或共享资金生产策略。这些能力已有 Rust 实现，不需要 Python 例外。

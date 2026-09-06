@@ -145,7 +145,9 @@ async fn approvals_require_frozen_release_project_context_with_the_exact_reports
     let f = fixture(&pool, budget()).await;
     let other = fixture(&pool, budget()).await;
     let (m, c, e) = portfolio(&pool, &f).await;
-    let r = release(&pool, &f, m, c, e).await.unwrap();
+    let r = support::delivery_release_metadata(&pool, &f, m, c, e)
+        .await
+        .unwrap();
     let downstream = Id::new();
     sqlx::query("INSERT INTO app.downstream_integrations(id,name,endpoint,credential_ref,accepted_package_versions,environments,enabled) VALUES($1,'fixture','https://example.invalid','fixture','{fixture}','BOTH',true)")
         .bind(downstream.as_uuid()).execute(&pool).await.unwrap();
