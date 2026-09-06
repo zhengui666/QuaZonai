@@ -1,0 +1,90 @@
+name: Temporary public reuse inputs
+on:
+  pull_request:
+    paths: ['.github/workflows/reuse-development-inputs.yml']
+permissions:
+  contents: read
+jobs:
+  public-inputs:
+    if: github.event.pull_request.number == 63 && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Resolve public native components in an isolated development copy
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/reuse-export /tmp/reuse-work
+          git archive HEAD | tar -x -C /tmp/reuse-work
+          cd /tmp/reuse-work
+          rustup toolchain install 1.98.0 --profile minimal
+          python3 - <<'PY'
+          from pathlib import Path
+          additions = {
+            'crates/integrations/Cargo.toml': '''serde.workspace = true
+          serde_json.workspace = true
+          chrono = { version = "=0.4.41", features = ["serde"] }
+          tokio = { version = "=1.53.1", features = ["full"] }
+          reqwest = { version = "=0.12.23", default-features = false, features = ["json", "rustls-tls", "stream"] }
+          url = "=2.5.7"
+          futures-util = "=0.3.34"
+          toml_edit = "=0.25.13"
+          bollard = "=0.21.1"
+          rmcp = { version = "=3.2.0", features = ["server", "client", "macros", "transport-io", "transport-streamable-http-server", "transport-streamable-http-client-reqwest"] }
+          ''',
+            'apps/job/Cargo.toml': '''solow-cv = "=0.7.3"
+          rust-portfolio-opt = "=0.2.0"
+          ndarray = "=0.16.1"
+          '''
+          }
+          for path, text in additions.items():
+              p=Path(path)
+              p.write_text(p.read_text().replace('[dependencies]\n', '[dependencies]\n'+text,1))
+          PY
+          cargo metadata --format-version 1 > /tmp/reuse-export/metadata.json
+          cargo check -p integrations -p job
+          cargo vendor --locked /tmp/reuse-export/vendor > /tmp/reuse-export/vendor-config.toml
+          cp Cargo.lock /tmp/reuse-export/Cargo.lock
+          mkdir /tmp/reuse-export/manifests
+          cp crates/integrations/Cargo.toml /tmp/reuse-export/manifests/integrations.toml
+          cp apps/job/Cargo.toml /tmp/reuse-export/manifests/job.toml
+          tar -czf /tmp/reuse-export/public-vendor.tar.gz -C /tmp/reuse-export vendor
+          rm -rf /tmp/reuse-export/vendor
+      - name: Export pinned public Codex binary and native schema without login
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --prefix runtimes/codex --ignore-scripts --no-audit --no-fund
+          export CODEX_NATIVE_BIN="$PWD/runtimes/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex"
+          test "$("$CODEX_NATIVE_BIN" --version)" = 'codex-cli 0.144.4'
+          cp "$CODEX_NATIVE_BIN" /tmp/reuse-export/codex
+          mkdir /tmp/empty-native-codex-home
+          CODEX_HOME=/tmp/empty-native-codex-home "$CODEX_NATIVE_BIN" app-server generate-json-schema --out /tmp/reuse-export/codex-schema
+      - name: Resolve public web tooling in an empty package directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/web-reuse
+          cd /tmp/web-reuse
+          npm init -y
+          npm pkg set private=true --json
+          npm install --save-exact --ignore-scripts --no-audit --no-fund react react-dom antd @ant-design/icons @tanstack/react-query echarts openapi-fetch zod
+          npm install --save-dev --save-exact --ignore-scripts --no-audit --no-fund typescript vite @vitejs/plugin-react @types/react @types/react-dom @playwright/test openapi-typescript vite-plugin-pwa vitest @testing-library/react @testing-library/user-event jsdom @axe-core/playwright
+          npm ls --json > /tmp/reuse-export/web-versions.json
+          cp package.json package-lock.json /tmp/reuse-export/
+          tar -czf /tmp/reuse-export/public-web-modules.tar.gz node_modules
+          printf 'PUBLIC DEVELOPMENT INPUTS ONLY. Not product acceptance. Native source resolution and public executable/schema; no user home, account, environment, data, database or secrets.\n' > /tmp/reuse-export/SCOPE.txt
+          git -C "$GITHUB_WORKSPACE" rev-parse HEAD > /tmp/reuse-export/source-commit.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: public-reuse-inputs-${{ github.event.pull_request.head.sha }}
+          path: /tmp/reuse-export/
+          retention-days: 1
+          if-no-files-found: error
