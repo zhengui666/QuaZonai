@@ -1,37 +1,60 @@
-name: Temporary locked review development inputs
+name: Temporary verified source publication
 on:
   pull_request:
     paths: ['.github/workflows/review-development-inputs.yml']
 permissions:
-  contents: read
+  contents: write
+  actions: write
 jobs:
-  public-inputs:
-    if: github.event.pull_request.number == 63 && github.event.pull_request.head.repo.full_name == github.repository
+  publish-verified-tree:
+    if: github.event.pull_request.number == 63 && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'rewrite/issue-62-rust-evidence'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 5
+    env:
+      EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+      VERIFIED_BASE: d7ee48c18670ebf991f0ce816db898fa574d8916
+      VERIFIED_TREE: dbd2447b6931c04a7174681344a44e47908338f7
+      GH_TOKEN: ${{ github.token }}
+      GIT_AUTHOR_NAME: QuaZonai implementation assistant
+      GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+      GIT_COMMITTER_NAME: github-actions[bot]
+      GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-          persist-credentials: false
-      - name: Export public toolchain and exact locked dependency sources only
+          fetch-depth: 2
+      - name: Publish only the exact locally validated tree using native Git
         shell: bash
         run: |
           set -euo pipefail
-          rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
-          mkdir -p /tmp/review-inputs
-          toolchain=$(dirname "$(dirname "$(rustup which --toolchain 1.98.0 rustc)")")
-          tar -C "$toolchain" -czf /tmp/review-inputs/rust-1.98.0.tar.gz .
-          cargo vendor --locked /tmp/review-vendor > /tmp/review-inputs/vendor-config.toml
-          tar -C /tmp -czf /tmp/review-inputs/vendor.tar.gz review-vendor
-          cp Cargo.lock /tmp/review-inputs/Cargo.lock
-          git rev-parse HEAD > /tmp/review-inputs/source-commit.txt
-          git diff --exit-code
-          printf 'Public development tools/dependencies only. No home, credentials, databases or acceptance claims. Remove this workflow after retrieval.\n' > /tmp/review-inputs/SCOPE.txt
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: review-public-inputs-${{ github.event.pull_request.head.sha }}
-          path: /tmp/review-inputs/
-          include-hidden-files: true
-          retention-days: 1
-          if-no-files-found: error
+          test "$(git rev-parse HEAD)" = "$EVENT_HEAD"
+          test "$(git rev-parse HEAD^)" = "$VERIFIED_BASE"
+          test "$(git diff --name-only "$VERIFIED_BASE" "$EVENT_HEAD")" = '.github/workflows/review-development-inputs.yml'
+          : > "$RUNNER_TEMP/verified.patch.gz"
+          for blob in 063aa3eb600c21359d37bbd8f158063da5442b03 374855cfab825b3557ccc3a63545de884dcc5d48 2bd9e6a0fc2ae157831e0c4e49fcfeae2769c01f; do
+            gh api "repos/$GITHUB_REPOSITORY/git/blobs/$blob" --jq .content | base64 --decode >> "$RUNNER_TEMP/verified.patch.gz"
+          done
+          gzip --decompress --stdout "$RUNNER_TEMP/verified.patch.gz" > "$RUNNER_TEMP/verified.patch"
+          test "$(wc -c < "$RUNNER_TEMP/verified.patch")" -eq 53890
+          git -c core.hooksPath=/dev/null checkout --detach "$VERIFIED_BASE"
+          git -c core.hooksPath=/dev/null apply --check --index "$RUNNER_TEMP/verified.patch"
+          git -c core.hooksPath=/dev/null apply --index "$RUNNER_TEMP/verified.patch"
+          test "$(git write-tree)" = "$VERIFIED_TREE"
+          git diff --cached --check
+          test ! -e .github/workflows/review-development-inputs.yml
+          test ! -e .github/workflows/review-postgres-tools.yml
+          test -z "$(git diff --cached "$VERIFIED_BASE" -- Cargo.lock .github/workflows/ci.yml migrations/202609050001_domain.sql migrations/202609060001_browser_auth.sql migrations/202609060002_authority_invariants.sql migrations/202609060003_evidence_bindings.sql migrations/202609060004_doctor_boundary.sql)"
+          commit=$(git commit-tree "$VERIFIED_TREE" -p "$EVENT_HEAD" <<'MESSAGE'
+          fix(store): seal evaluation evidence, bind degradation lineage and prevent epoch rollback
+
+          Add an atomic native PostgreSQL evaluation/metric publication boundary and exact degradation policy/release/candidate/Forward input/window linkage. Preserve historical facts and fail invalid upgrades without deleting records. Make browser session epochs monotonic. Verify the observed native Codex product/version exactly rather than using substring matching or an unconditional report value.
+
+          Update DESIGN before implementation; add twelve real PostgreSQL regression tests and two native version parser tests. Preserve the deferred Candidate/allocation-evaluation relationship and test lock-wait races, migrations, and real browser authority. The same twelve PostgreSQL regressions reproduce failures on the original d7ee48c source.
+
+          Locally validated exact tree dbd2447b6931c04a7174681344a44e47908338f7: committed-lock Rust1.98 fmt, full-workspace strict Clippy, 161 passing tests with real PostgreSQL18/PGMQ1.10, all-target build, native-generated contract diffs, shared scalar corpora and Rust scientific probe. GitHub read-only CI must validate this new commit independently. Remove both completed development workflows. Full Issue62 product acceptance remains incomplete; Codex is review-only.
+          MESSAGE
+          )
+          git -c core.hooksPath=/dev/null push origin "$commit:refs/heads/rewrite/issue-62-rust-evidence"
+          printf 'Published exact verified Git tree: %s\nCommit: %s\n' "$VERIFIED_TREE" "$commit" >> "$GITHUB_STEP_SUMMARY"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/dispatches" -f ref='rewrite/issue-62-rust-evidence'
