@@ -170,3 +170,43 @@ pub async fn release(
         .bind(id.as_uuid()).bind(candidate.as_uuid()).bind(f.artifact.as_uuid()).bind(mandate.as_uuid()).bind(evaluation.as_uuid()).execute(pool).await?;
     Ok(id)
 }
+
+/// Native SQLx resolves and verifies historical migrations; only the input
+/// directory is reduced. The current migrations and their checksums are intact.
+pub async fn migrate_before(pool: &PgPool, exclusive_version: i64) {
+    let directory = std::env::temp_dir().join(format!("quazonai-history-{}", Id::new()));
+    std::fs::create_dir(&directory).unwrap();
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations");
+    for entry in std::fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name();
+        let name = name.to_str().unwrap();
+        let version: i64 = name.split('_').next().unwrap().parse().unwrap();
+        if version < exclusive_version {
+            std::fs::copy(entry.path(), directory.join(name)).unwrap();
+        }
+    }
+    let old = sqlx::migrate::Migrator::new(directory.as_path())
+        .await
+        .unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    old.run(pool).await.unwrap();
+}
+
+/// Observe a real lock wait, rather than assuming a sleep created a race.
+pub async fn wait_for_database_lock(pool: &PgPool, backend: i32) {
+    for _ in 0..500 {
+        let waiting: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND wait_event_type='Lock')",
+        )
+        .bind(backend)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        if waiting {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("backend {backend} did not enter the required native lock wait");
+}

@@ -100,3 +100,19 @@ This adapter uses Rust implementations; no Python exception is requested. It is 
 - cap-std 3.4.5 and rustix 1.1.4: bounded directory-relative access and no-follow native file opens; https://docs.rs/cap-std/3.4.5/cap_std/fs/struct.Dir.html and https://docs.rs/rustix/1.1.4/rustix/fs/struct.OFlags.html . Only trusted processes receive the private directory; this does not prove Agent/container isolation.
 
 The local adapter publishes a UUID reference only after file and directory synchronization. Failed partial writes are unreferenced encrypted objects, never successful authority. A damaged or missing master key fails startup; existing keys are not automatically replaced. Actual formatting, compilation and test outcomes are recorded by the development workflow and subsequent read-only CI, not inferred from this research entry.
+
+
+## Exact native Codex version evidence (0.144.4)
+
+The pinned `rust-v0.144.4` implementation formats the initialization response as
+`originator/CARGO_PKG_VERSION` followed by platform and terminal details.
+`initialize_processor` sets the originator from this probe's fixed clientInfo.name;
+the probe clears inherited environment overrides. The adapter compares only this
+first product/version token exactly and writes the verified observed version.
+It does not implement semver compatibility negotiation or infer a version from a
+substring in platform/suffix text. Real native stdio execution is still required.
+
+- https://github.com/openai/codex/blob/rust-v0.144.4/codex-rs/login/src/auth/default_client.rs
+- https://github.com/openai/codex/blob/rust-v0.144.4/codex-rs/app-server/src/request_processors/initialize_processor.rs
+- https://www.postgresql.org/docs/18/sql-createtrigger.html (native deferred aggregate publication)
+- https://www.postgresql.org/docs/18/explicit-locking.html (native row locks and post-wait rechecks)

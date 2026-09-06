@@ -4,7 +4,9 @@ use serde::Serialize;
 use std::{collections::BTreeMap, path::Path};
 mod arrow;
 mod backtest;
+mod native_version;
 mod optimization;
+pub use native_version::verified_codex_version;
 mod report;
 pub use report::write_probe_report;
 

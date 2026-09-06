@@ -711,6 +711,8 @@ evidence_exposures [append-only]
 
 输入项要求 `UNIQUE(input_set_id,ordinal)`，并对非null的 `(input_set_id,dataset_revision_id)` 和 `(input_set_id,artifact_id)` 分别建立唯一部分索引。相同位置及同一不可变引用/role重试幂等返回原项；位置冲突或相同对象重复位置返回409，不自动改ordinal、拼接或重复消费。原生任务输入严格按ordinal升序；整个InputSet及其项目引用在同事务完整发布并冻结。
 
+评估头及指标组成一个原子不可变聚合：创建 `evaluations` 与全部 `metric_values` 必须在同一事务内完成。内部 `evaluation_publications(evaluation_id PRIMARY KEY FK evaluations)` 记录封口，不增加公开状态、hash、事务 ID 或时间戳身份；延迟约束触发器在创建事务提交前写入标记。指标插入先锁对应 evaluation，已封口则拒绝，不能通过晚到指标改写旧 Qualification/Release 的证据。Qualification、Release、Calibration、Exposure、Forward、Degradation 等引用在同事务内先封口评估；封口后同一事务也不能追加指标。迁移为所有已有完成评估补齐封口标记，保留既有头及指标原值。Candidate 的 allocation_evaluation_id 与被评估 Candidate 的循环引用保留原生 deferred FK，允许同一事务先创建 Candidate 头、再创建评估与指标并完整提交，不能用过早的引用守卫破坏这个顺序。指标更正需要新的评估身份及新的下游决定；发布标记只保证组成不可变，不替代完整政策验证或 PASS 判定。
+
 Qualification必须绑定被评估的精确Alpha版本和政策：评估表提供 `UNIQUE(id,subject_alpha_version_id,policy_id)`，qualification的 `(qualifying_evaluation_id,alpha_version_id,policy_id)` 复合FK引用它；qualification另外提供 `UNIQUE(id,alpha_version_id)`，candidate_alphas的 `(qualification_id,alpha_version_id)` 必须使用复合FK而不是两条互不关联的FK。授予与使用时仍要事务检查同项目、VALID/PASS、新鲜度、撤销及Mandate政策，不允许未合格版本借用其他版本资格。
 
 sealed 使用预约先提交再授予 evaluator 能力，失败/取消不抹去机会。Exposure 包括原始行、样本、指标、图、摘要和 legacy unknown。后续反馈按冻结披露政策，不能洗白相同 sealed。缺 required metric、实现不支持、样本不足、方法不适用或过期均 INCONCLUSIVE；无“全部 Gate 缺值自动跳过”。 对INVALID_INPUT亦必须先验证原生方法/版本/单位/频率与冻结allowlist；来源未登记或过期归UNSUPPORTED，不得驱动stop_on_invalid_data。仅可信且合同匹配的INVALID_INPUT保留INVALID。
@@ -1156,6 +1158,8 @@ wake_events [mutable delivery state]
 Release/下游的授权；不同元组409/约束失败。撤销/期限/人工拒绝/Readiness 仍在
 每次 Offer/Claim 的领域事务重查。
 
+Degradation 的 `(project_id,release_id,evaluation_id,policy_id)` 必须整体绑定：项目与 AutomationPolicy、Release 对应 Candidate、Evaluation 相同；政策的 mandate 与 Release 相同；Evaluation 的 subject 必须是该 Release 的精确 Candidate、kind=FORWARD，且输入是同项目已冻结的 FORWARD InputSet。必须存在精确 `(release_id,evaluation_id,input_set_id)` 的 Forward evidence window，不允许另一个项目、Alpha、Discovery、Candidate 或输入快照借出证据。新增观测不满足关联返回23503；升级发现旧关联违规则明确失败，不能删历史或重贴标签。关联有效不代表当前授权/新鲜度有效，Wake 领域事务仍检查期限、撤销、退化阈值和配额。
+
 ### A7.1 逻辑消息与人工拒绝
 
 除了external_message_id，必须 `unique(forward_messages.handoff_id,stream_id,sequence,message_revision)`。换external ID重传不新增逻辑记录：字段及不可变report版本相同返回已有记录，冲突409。Correction必须同handoff/stream/sequence且revision递增、supersedes指向前版；缺前版/分叉待对齐不进观察窗口。只计已采纳最新版；重叠窗口不能简单加样本数。
@@ -1235,6 +1239,8 @@ command_receipts [immutable result binding]
   response_status: int
   expires_at: Time?
 ```
+
+`operator_auth_state.session_epoch` 是全局撤销代数，只能保持或增加；禁止减小、归零、bigint 溢出回绕。相同 epoch 的正常认证状态更新可以继续；已全局失效但未单独撤销的旧 BrowserLogin/TrustedDevice，不能因误写旧 epoch 恢复权限。该不变量由数据库更新守卫执行，锁等待之后仍以实际 OLD 行比较。
 
 幂等唯一 `(principal_scope,operation,idempotency_key)`；同规范化非敏感请求返回原结果，不同请求409。长期不可重复操作另有领域唯一约束，receipt 过期不能再次 Live handoff。secret 操作用原生凭据存储/版本，不把 secret/token/auth JSON/可还原秘密请求存 receipt，也不自制请求哈希 Gate。StrictCommandV1 是各真实命令的严格版本化 union，不是任意 JSON；StrictProviderOptionsV1 来自 pinned provider 允许参数的严格 schema，不让配置指定任意命令、环境泄漏或认证模式兜底。
 

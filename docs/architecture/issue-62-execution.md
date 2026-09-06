@@ -48,6 +48,39 @@ cookie, database replay prevention, expiry/epoch/revocation and atomic rate limi
 Device lists paginate and used trusted devices update activity. This vertical
 does not provide research, Reviewer or approval authority to an Agent.
 
+## Evaluation publication and revocation correction
+
+The additive `202609060005_evaluation_publication.sql` seals a completed
+Evaluation and its metric membership together. A deferred native constraint
+trigger publishes the aggregate before commit; consuming references can seal it
+earlier in that same transaction. Later metric inserts are rejected. Candidate
+and allocation-Evaluation circular creation retains its existing deferred foreign
+key and is covered by a positive regression. Upgrade backfills only the internal
+publication markers and does not rewrite historical evidence.
+
+Degradation observations must join the exact project, policy mandate, Release
+candidate, FORWARD Evaluation and frozen InputSet, backed by the corresponding
+Forward evidence window. Historical incompatible rows abort migration rather than
+being deleted or silently relabeled. This relationship check does not replace
+current policy authorization, freshness, degradation thresholds or Wake admission.
+
+Browser session epochs cannot move backward. Equal epochs allow ordinary state
+maintenance; newer epochs invalidate old authority permanently, with native bigint
+overflow failure rather than wrapping. The regressions check actual browser/device
+authority and a real concurrent row-lock wait, not just the stored integer.
+
+The native Codex probe validates the exact observed `originator/version` product
+token against pinned upstream source and publishes that observed value. It rejects
+version prefixes, prerelease/build suffixes and a matching string elsewhere in the
+user agent. These narrow format regressions do not count as real-account model
+inference. The normal native stdio probe remains a separate required CI execution.
+
+The source adds twelve PostgreSQL regression functions and two native-version
+unit tests. Their definitions alone are not acceptance evidence: each execution
+must identify its exact source/tree, committed lock, command and outcome. Temporary
+public development-input exporters are removed after tools are retrieved; no tool
+archive, user database, secret or standalone patch publisher is part of the product.
+
 ## Historical evidence: exact baseline, not the current Head
 
 At `e8668ca850def834735414ed9ba94fed38d4aa7e`, the suites contained 8 contract,

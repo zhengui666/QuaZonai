@@ -129,9 +129,7 @@ fn probe() -> Result<()> {
         .get("userAgent")
         .and_then(Value::as_str)
         .ok_or("MISSING_NATIVE_VERSION")?;
-    if !user_agent.contains("0.144.4") {
-        return Err("NATIVE_CODEX_VERSION_MISMATCH".into());
-    }
+    let observed_version = job::verified_codex_version(user_agent, "qz_w0_contract", "0.144.4")?;
     server.send(json!({"method": "initialized"}))?;
     let account = server.request("account/read", json!({"refreshToken": false}))?;
     // An isolated fixture HOME must not silently inherit a real credential.
@@ -212,7 +210,7 @@ fn probe() -> Result<()> {
     drop(server);
     // No account identifier, thread ID, model reasoning, config dump, or secret.
     let report = json!({"schema_version": 1, "origin": "FIXTURE", "deliverable": false,
-        "codex_version": "0.144.4", "model_pages": pages, "model_count": models.len(),
+        "codex_version": observed_version, "model_pages": pages, "model_count": models.len(),
         "initialize": true, "unauthenticated_account_read": true,
         "default_thread_start": true, "effort_without_model_thread_start": true,
         "real_account_acceptance": false, "same_thread_inference_tool_loop": false});
