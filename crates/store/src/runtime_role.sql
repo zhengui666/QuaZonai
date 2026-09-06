@@ -13,6 +13,10 @@ SELECT NOT EXISTS (SELECT 1 FROM application_schema) OR EXISTS (
   SELECT 1 FROM reachable_roles r
   WHERE r.rolsuper OR r.rolcreaterole OR r.rolcreatedb OR r.rolbypassrls OR r.rolreplication
      OR EXISTS (
+       SELECT 1 FROM pg_catalog.pg_database d
+       WHERE d.datname = pg_catalog.current_database() AND d.datdba = r.oid
+     )
+     OR EXISTS (
        SELECT 1 FROM application_schema n
        WHERE n.nspowner = r.oid
           OR pg_catalog.has_schema_privilege(r.oid, n.oid, 'CREATE')

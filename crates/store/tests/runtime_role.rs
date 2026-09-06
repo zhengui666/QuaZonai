@@ -1,7 +1,7 @@
 //! Check actual PostgreSQL login, ownership and ACLs, not a role-name convention.
 use contracts::Id;
 use sqlx::{postgres::PgPoolOptions, PgPool};
-use store::Store;
+use store::{Store, StoreError};
 
 async fn role(pool: &PgPool) -> String {
     let name = format!("runtime_test_{}", Id::new().to_string().replace('-', ""));
@@ -193,4 +193,149 @@ async fn set_role_does_not_disguise_an_elevated_session_login(pool: PgPool) {
         .is_err());
     masked.close().await;
     remove_role(&pool, &name).await;
+}
+
+// Native identifiers are quoted before interpolation; credentials are disposable.
+async fn database_identity(pool: &PgPool) -> (String, String) {
+    sqlx::query_as(
+        "SELECT quote_ident(datname), quote_ident(pg_get_userbyid(datdba)) FROM pg_database WHERE datname=current_database()",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+async fn assert_owner_rejected(pool: &PgPool) {
+    assert!(matches!(
+        Store::from_pool(pool.clone()).verify_runtime_role().await,
+        Err(StoreError::Invalid(
+            "runtime_role_must_be_non_owner_and_unprivileged"
+        ))
+    ));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn database_owner_is_rejected_without_role_flags_or_app_objects(pool: PgPool) {
+    let name = role(&pool).await;
+    let app_pool = connect(&pool, &name).await;
+    let (database, original_owner) = database_identity(&pool).await;
+    Store::from_pool(app_pool.clone())
+        .verify_runtime_role()
+        .await
+        .unwrap();
+    execute(&pool, format!("ALTER DATABASE {database} OWNER TO {name}")).await;
+    let flagged: bool = sqlx::query_scalar(
+        "SELECT rolsuper OR rolcreatedb OR rolcreaterole OR rolbypassrls OR rolreplication FROM pg_roles WHERE rolname=current_user",
+    )
+    .fetch_one(&app_pool)
+    .await
+    .unwrap();
+    assert!(
+        !flagged,
+        "database ownership must be the only elevated authority"
+    );
+    let app_authority: bool = sqlx::query_scalar(
+        "SELECT has_schema_privilege(current_user,'app','CREATE') OR EXISTS (SELECT 1 FROM pg_namespace WHERE nspname='app' AND nspowner=current_user::regrole) OR EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='app' AND c.relowner=current_user::regrole)",
+    )
+    .fetch_one(&app_pool)
+    .await
+    .unwrap();
+    assert!(
+        !app_authority,
+        "ownership of app objects must remain separate"
+    );
+    assert_owner_rejected(&app_pool).await;
+    execute(
+        &pool,
+        format!("ALTER DATABASE {database} OWNER TO {original_owner}"),
+    )
+    .await;
+    Store::from_pool(app_pool.clone())
+        .verify_runtime_role()
+        .await
+        .unwrap();
+    app_pool.close().await;
+    remove_role(&pool, &name).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn reachable_database_owner_is_rejected_but_unrelated_login_is_allowed(pool: PgPool) {
+    let name = role(&pool).await;
+    let owner = role(&pool).await;
+    let app_pool = connect(&pool, &name).await;
+    let (database, original_owner) = database_identity(&pool).await;
+    execute(&pool, format!("ALTER DATABASE {database} OWNER TO {owner}")).await;
+    let store = Store::from_pool(app_pool.clone());
+    store.verify_runtime_role().await.unwrap();
+    for options in ["INHERIT TRUE, SET FALSE", "INHERIT FALSE, SET TRUE"] {
+        execute(&pool, format!("GRANT {owner} TO {name} WITH {options}")).await;
+        assert_owner_rejected(&app_pool).await;
+        execute(&pool, format!("REVOKE {owner} FROM {name}")).await;
+        store.verify_runtime_role().await.unwrap();
+    }
+    // Membership alone, with neither usable nor settable authority, is not ownership.
+    execute(
+        &pool,
+        format!("GRANT {owner} TO {name} WITH INHERIT FALSE, SET FALSE"),
+    )
+    .await;
+    store.verify_runtime_role().await.unwrap();
+    execute(&pool, format!("REVOKE {owner} FROM {name}")).await;
+    execute(
+        &pool,
+        format!("ALTER DATABASE {database} OWNER TO {original_owner}"),
+    )
+    .await;
+    app_pool.close().await;
+    remove_role(&pool, &name).await;
+    remove_role(&pool, &owner).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn set_role_cannot_hide_database_owner_session_identity(pool: PgPool) {
+    let name = role(&pool).await;
+    let owner = role(&pool).await;
+    let (database, original_owner) = database_identity(&pool).await;
+    execute(&pool, format!("ALTER DATABASE {database} OWNER TO {owner}")).await;
+    execute(
+        &pool,
+        format!("GRANT {name} TO {owner} WITH INHERIT FALSE, SET TRUE"),
+    )
+    .await;
+    let switched_role = name.clone();
+    let masked = PgPoolOptions::new()
+        .max_connections(1)
+        .after_connect(move |connection, _| {
+            let name = switched_role.clone();
+            Box::pin(async move {
+                sqlx::query(&format!("SET ROLE {name}"))
+                    .execute(connection)
+                    .await?;
+                Ok(())
+            })
+        })
+        .connect_with(
+            pool.connect_options()
+                .as_ref()
+                .clone()
+                .username(&owner)
+                .password("disposable-test-only"),
+        )
+        .await
+        .unwrap();
+    let identities: (String, String) =
+        sqlx::query_as("SELECT current_user::text, session_user::text")
+            .fetch_one(&masked)
+            .await
+            .unwrap();
+    assert_eq!(identities, (name.clone(), owner.clone()));
+    assert_owner_rejected(&masked).await;
+    masked.close().await;
+    execute(
+        &pool,
+        format!("ALTER DATABASE {database} OWNER TO {original_owner}"),
+    )
+    .await;
+    remove_role(&pool, &name).await;
+    remove_role(&pool, &owner).await;
 }
