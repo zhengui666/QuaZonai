@@ -77,3 +77,15 @@ fn compatible_extension_envelopes_reject_invalid_names_versions_and_oversized_pa
         "known state events remain strict"
     );
 }
+
+#[test]
+fn generated_event_payload_requires_an_extensible_version_one_object() {
+    use utoipa::PartialSchema;
+    let schema = to_value(RunEventV1::schema()).unwrap();
+    let payload = &schema["properties"]["payload"];
+    assert_eq!(payload["type"], "object");
+    assert_eq!(payload["required"], json!(["schema_version"]));
+    assert_eq!(payload["properties"]["schema_version"]["type"], "integer");
+    assert_eq!(payload["properties"]["schema_version"]["enum"], json!([1]));
+    assert_eq!(payload["additionalProperties"], true);
+}

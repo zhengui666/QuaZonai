@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 mod access;
 pub mod auth;
+pub mod brief;
 pub mod control;
 pub mod error;
 pub mod research;
@@ -171,6 +172,18 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         )
         .route("/api/v2/input-sets/{id}", get(research::input_set))
         .route(
+            "/api/v2/projects/{id}/briefs",
+            get(brief::list)
+                .post(brief::create)
+                .layer(DefaultBodyLimit::max(64 * 1024)),
+        )
+        .route(
+            "/api/v2/briefs/{id}",
+            get(brief::get)
+                .patch(brief::update)
+                .layer(DefaultBodyLimit::max(64 * 1024)),
+        )
+        .route(
             "/api/v2/evaluation-policies",
             get(research::evaluation_policies)
                 .post(research::create_evaluation_policy)
@@ -277,7 +290,8 @@ control::principals,control::create_principal,control::update_principal,
 control::credentials,control::issue_credential,control::revoke_credential,
 control::machine_session,control::issue_grant,runs::list,runs::get,runs::cancel,runs::events,
 research::input_sets,research::input_set,research::create_input_set,
-research::evaluation_policies,research::evaluation_policy,research::create_evaluation_policy),components(schemas(error::Problem)),tags((name="Authentication",description="Native TOTP and revocable browser sessions")))]
+research::evaluation_policies,research::evaluation_policy,research::create_evaluation_policy,
+brief::list,brief::get,brief::create,brief::update),components(schemas(error::Problem)),tags((name="Authentication",description="Native TOTP and revocable browser sessions")))]
 struct HttpContracts;
 pub fn openapi_json() -> Result<String, serde_json::Error> {
     let mut document = HttpContracts::openapi();

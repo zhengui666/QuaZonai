@@ -129,3 +129,7 @@ ACKNOWLEDGED 被明确标为 LEGACY_CLAIMED_STATE，不冒充历史事件。旧 
 新消息仅接受已记录 CLAIMED/ACKNOWLEDGED 的精确项目 REAL/EVALUATOR_ONLY
 qz.forward_report v1。先接收合法反馈后下游再拒绝时，保留转移事实和既有反馈，
 停止该 Handoff 的新反馈接纳。
+
+## Brief 草稿成员权限
+
+部署迁移仅对 `app.brief_data_bindings` 追加 DELETE，以支持同事务替换DRAFT成员；其他app表仍无DELETE授权。原生触发器锁住父Brief并拒绝FROZEN成员增删改，禁止移除触发器或授予TRUNCATE/TRIGGER。已部署实例运行正式 `server migrate --application-role ...` 补齐原生DML授权，而不是以数据库owner运行API。保存草稿不会执行模型、冻结Brief或发布资格。

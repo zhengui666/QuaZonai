@@ -5,6 +5,7 @@
 
 pub mod auth;
 pub mod authority;
+pub mod brief;
 mod commands;
 pub mod control;
 mod db;

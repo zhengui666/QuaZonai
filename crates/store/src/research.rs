@@ -126,7 +126,7 @@ async fn input(tx: &mut Transaction<'_, Postgres>, id: Id) -> Result<InputSetVie
     }
     Ok(InputSetView { header, items })
 }
-async fn project_for_write(
+pub(crate) async fn project_for_write(
     tx: &mut Transaction<'_, Postgres>,
     project: Id,
 ) -> Result<Id, StoreError> {

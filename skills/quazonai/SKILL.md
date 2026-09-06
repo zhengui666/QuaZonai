@@ -11,7 +11,7 @@ Read ../../DESIGN.md and ../../AGENTS.md before changes. Actual commands are in 
 字符串。输入创建与政策发布需要人工 Operator 授权，技能本身不授予它。
 读取 InputSet/Policy 元数据不允许读取 Sealed 原始数据或原生存储位置。
 FIXTURE、PIT_UNVERIFIED、未核验方法和政策登记成功均不是 PASS，不触发交付。
-不要为尚未接通的可信数据登记/Brief/Worker 路径编造成功结果或使用 SQL 后门。
+不要为尚未接通的可信数据登记/Brief冻结/Worker 路径编造成功结果或使用 SQL 后门。
 
 
 ### Run 事件与失效授权
@@ -21,3 +21,5 @@ Run取消需要近期Operator认证，或精确授权的CLI/AUTOMATION机器权�
 envelope并推进cursor，不猜测业务状态。不兼容主版本应升级，不能跳过来伪造连续流。
 InputSet冻结不是永久许可，后续任务或首次发送可能因撤销/到期被拒绝。未知远端结果
 继续对账，不擅自重发或要求清账。无Cycle管理准入是内部服务能力，不是Agent工具。
+
+Brief草稿详情和列表已接通；创建/完整替换仍是Operator命令，不能凭RESEARCH_READ修改预算、数据角色或政策。人工CLI创建授权还绑定路径project_id和schema_version，更新绑定精确Brief及expected_revision。DRAFT保存不是freeze/PASS，FROZEN只可新建版本。

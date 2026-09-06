@@ -449,3 +449,30 @@ Decimal、242 Bigint、214 Fraction共享语料；真实PostgreSQL18.1/PGMQ1.10�
 公有开发依赖/工具已取回到隔离开发目录，删除完成的client-development-inputs、
 prepare-web-dependencies、web-development-inputs工作流；它们不是验收，不保留
 随每次PR提交重新取依赖的永久开发任务。正式CI仍只读、使用已提交锁文件。
+
+## 2026-09-06：Brief 草稿作者流程与 SSE payload 合同
+
+本地基线为远端205bc4c0fd16b593263dd744895826a7ee5456cf的完整tree
+5456cc177ceb45d0b59e1e46fed89cb3b22dd2f6。该基线独立CI34049936238成功，
+但其Codex审查指出payload生成schema缺少对象/版本约束，不能将Completed当无问题。
+
+新增真实Brief create/read/list/PATCH：完整非秘密规范意图绑定路径project_id与
+schema_version，既有Operator单次CLI grant、幂等原始响应、项目锁/CAS和绑定
+替换同事务。014使用预留迁移号，不改任何已提交迁移或Cargo.lock。父Brief锁将
+DRAFT编辑与FROZEN成员封口串行化。运行身份只新增brief_data_bindings一张表的
+DELETE权限，旧不可变历史守卫与其他表无DELETE/TRUNCATE/TRIGGER边界保持。
+保存草稿不证明当前许可、PIT或原生能力，不提供假成功的freeze入口。
+
+205的payload审查通过原生utoipa发布JSON object、必需schema_version=1及可扩展
+公开属性修复；已有事件类型运行时仍严格校验，未知兼容事件不改状态投影。
+
+新增18项Brief测试（9真实PostgreSQL、4真实HTTP/私有Cookie/TOTP/Argon2、3领域、
+2线协议）和1项SSE schema测试。非owner真实部署身份可创建/替换草稿，不能删除
+其他表或改冻结成员；原生PG锁等待覆盖编辑/冻结，故障注入证明绑定与CAS回滚。
+旧浏览器测试通过原生SessionStore关联合法历史BrowserLogin，不倒退认证时间，
+不关闭触发器或改变生产鉴权。
+
+本地对本增量完整源码运行Rust1.98与原样Cargo.lock：313项workspace/all-target
+测试通过，0失败、0忽略；fmt、严格Clippy、all-target build通过。两份OpenAPI
+由实际Rust生成。发布必须再跑对应新Head独立只读CI和review；本地结果不等于
+完整W0–W8/T01–T42、原生账号验收或可合并状态，Codex仅review。

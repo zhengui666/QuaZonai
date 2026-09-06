@@ -67,6 +67,23 @@ VALIDATION comparison 且不得包含 sealed_revision；SEALED selection 使用
 Brief 冻结、任务准入与独立评估必须另行核验实际原生能力、当前许可和证据资格。
 这个 API 不执行模型、切分、估计或回测，不能用登记成功替代生产可交付结论。
 
+## 已实现的 Brief 草稿 HTTP 作者流程
+
+`GET/POST /api/v2/projects/{id}/briefs` 与 `GET/PATCH /api/v2/briefs/{id}`
+使用严格 BriefCreate/BriefUpdate/BriefView。完整请求由原生 `server openapi` 导出。
+创建只传研究内容、已登记的数据绑定和可选 supersedes_id，服务端分配 DRAFT/版本/身份；
+更新必须携带 expected_revision，并完整替换内容及绑定。相同幂等键返回原响应，冲突409，
+失败不提交半套成员。FROZEN 不可编辑，只能新建版本；归档项目不能新增或编辑。
+
+`BRIEF_CREATE` 人工 CLI grant 的 request 为
+`{schema_version:1,project_id,request:BriefCreate}`，target_id=null；项目绑定不可替换。
+`BRIEF_UPDATE` 的 request 为完整 BriefUpdate、target_id为精确Brief。
+这些命令仍只允许近期 Operator 浏览器或经真实 TOTP 的单次人类 CLI 授权；
+RESEARCH_READ 仅可读自身项目的内容/元数据，不取得 Sealed 原始数据。
+草稿保存验证范围、预算、引用、角色及币种，但不是冻结、原生能力或正式研究资格。
+本批不提供假成功 freeze 或绕过API的手工SQL。部署迁移为草稿成员单表授予受触发器
+约束的 DELETE，不扩大其他app表的历史删除权限。
+
 ## 原生组件与合同验证
 
 ```sh

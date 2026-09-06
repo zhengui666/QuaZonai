@@ -61,6 +61,7 @@ impl Store {
                 for statement in [
                     format!("GRANT USAGE ON SCHEMA app,tower_sessions,pgmq TO {role}"),
                     format!("GRANT SELECT,INSERT,UPDATE ON ALL TABLES IN SCHEMA app TO {role}"),
+                    format!("GRANT DELETE ON app.brief_data_bindings TO {role}"),
                     format!("GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA tower_sessions,pgmq TO {role}"),
                     format!("GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA pgmq TO {role}"),
                 ] {

@@ -123,6 +123,263 @@
         ],
         "type": "object"
       },
+      "BriefBindingV1": {
+        "additionalProperties": false,
+        "properties": {
+          "access_policy": {
+            "$ref": "#/components/schemas/DataAccess"
+          },
+          "dataset_revision_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "role": {
+            "$ref": "#/components/schemas/DataPartition"
+          }
+        },
+        "required": [
+          "dataset_revision_id",
+          "role",
+          "access_policy"
+        ],
+        "type": "object"
+      },
+      "BriefContentV1": {
+        "additionalProperties": false,
+        "properties": {
+          "base_currency": {
+            "maxLength": 3,
+            "minLength": 3,
+            "pattern": "^[A-Z]{3}$",
+            "type": "string"
+          },
+          "benchmark_ref": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "budget": {
+            "$ref": "#/components/schemas/BudgetV1"
+          },
+          "economic_rationale": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "evaluation_policy_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "execution_assumptions_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "horizon_kind": {
+            "$ref": "#/components/schemas/HorizonKind"
+          },
+          "horizon_value": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DbCounter"
+              }
+            ]
+          },
+          "hypothesis": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "stop_rule": {
+            "$ref": "#/components/schemas/StopRuleV1"
+          },
+          "target_kind": {
+            "$ref": "#/components/schemas/TargetKind"
+          },
+          "universe_version_id": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "hypothesis",
+          "economic_rationale",
+          "universe_version_id",
+          "target_kind",
+          "horizon_kind",
+          "base_currency",
+          "evaluation_policy_id",
+          "execution_assumptions_id",
+          "budget",
+          "stop_rule"
+        ],
+        "type": "object"
+      },
+      "BriefCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "bindings": {
+            "items": {
+              "$ref": "#/components/schemas/BriefBindingV1"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "type": "array"
+          },
+          "content": {
+            "$ref": "#/components/schemas/BriefContentV1"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "supersedes_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          }
+        },
+        "required": [
+          "schema_version",
+          "content",
+          "bindings"
+        ],
+        "type": "object"
+      },
+      "BriefCreateIntent": {
+        "additionalProperties": false,
+        "properties": {
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "request": {
+            "$ref": "#/components/schemas/BriefCreate"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "project_id",
+          "request"
+        ],
+        "type": "object"
+      },
+      "BriefState": {
+        "enum": [
+          "DRAFT",
+          "FROZEN"
+        ],
+        "type": "string"
+      },
+      "BriefUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "bindings": {
+            "items": {
+              "$ref": "#/components/schemas/BriefBindingV1"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "type": "array"
+          },
+          "content": {
+            "$ref": "#/components/schemas/BriefContentV1"
+          },
+          "expected_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "expected_revision",
+          "content",
+          "bindings"
+        ],
+        "type": "object"
+      },
+      "BriefView": {
+        "additionalProperties": false,
+        "properties": {
+          "bindings": {
+            "items": {
+              "$ref": "#/components/schemas/BriefBindingV1"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "type": "array"
+          },
+          "content": {
+            "$ref": "#/components/schemas/BriefContentV1"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "frozen_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "state": {
+            "$ref": "#/components/schemas/BriefState"
+          },
+          "supersedes_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "version": {
+            "format": "int32",
+            "maximum": 2147483647,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "version",
+          "revision",
+          "state",
+          "content",
+          "bindings",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "BrowserSession": {
         "additionalProperties": false,
         "properties": {
@@ -435,6 +692,14 @@
         ],
         "type": "object"
       },
+      "DataAccess": {
+        "enum": [
+          "METADATA_ONLY",
+          "RESEARCH_READ",
+          "EVALUATOR_ONLY"
+        ],
+        "type": "string"
+      },
       "DataOrigin": {
         "enum": [
           "REAL",
@@ -730,6 +995,14 @@
           "message"
         ],
         "type": "object"
+      },
+      "HorizonKind": {
+        "enum": [
+          "FIXED_BARS",
+          "FIXED_DURATION",
+          "VARIABLE_INTERVAL"
+        ],
+        "type": "string"
       },
       "Id": {
         "format": "uuid",
@@ -1330,6 +1603,42 @@
             "properties": {
               "operation": {
                 "enum": [
+                  "BRIEF_CREATE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/BriefCreateIntent"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "BRIEF_UPDATE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/BriefUpdate"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
                   "PROJECT_CREATE"
                 ],
                 "type": "string"
@@ -1545,6 +1854,8 @@
       },
       "OperatorOperation": {
         "enum": [
+          "BRIEF_CREATE",
+          "BRIEF_UPDATE",
           "PROJECT_CREATE",
           "PROJECT_UPDATE",
           "PRINCIPAL_CREATE",
@@ -2006,7 +2317,22 @@
             "type": "string"
           },
           "payload": {
-            "description": "Public schema-v1 object. Known state event payloads retain strict validation."
+            "additionalProperties": true,
+            "description": "Public extensible schema-v1 JSON object; serialized UTF-8 is limited to 65536 bytes. Known event types additionally validate their specific payload contract.",
+            "properties": {
+              "schema_version": {
+                "enum": [
+                  1
+                ],
+                "maximum": 1,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "schema_version"
+            ],
+            "type": "object"
           },
           "run_id": {
             "$ref": "#/components/schemas/Id"
@@ -2570,6 +2896,13 @@
           "stop_on_invalid_data"
         ],
         "type": "object"
+      },
+      "TargetKind": {
+        "enum": [
+          "SCORE",
+          "EXPECTED_RETURN"
+        ],
+        "type": "string"
       },
       "TrustedDevice": {
         "additionalProperties": false,

@@ -468,6 +468,16 @@ StopRuleV1:
 
 Optuna 内部 trial 使用预分配预算，不能藏在一次 job 无限搜索。资源/turn/并行上限必须有效正值且符合 runtime capability；修复 turn 不超过总 turn。停止规则由用户冻结，Agent 不能扩大。
 
+### A1.1 Brief 草稿作者事务
+
+`POST /projects/{id}/briefs` 只接受 `BriefCreate={schema_version,content:BriefContentV1,bindings:BriefBindingV1[1..64],supersedes_id?}`；project 从路由派生，人工CLI的 `BriefCreateIntent={project_id,request}` 绑定该完整路由身份与请求，不能借给另一项目。`BriefContentV1` 精确包含 hypothesis/economic_rationale（各1..8000字符）、universe_version_id、target_kind、horizon_kind/horizon_value、ISO base_currency、benchmark_ref?、evaluation_policy_id、execution_assumptions_id、BudgetV1、StopRuleV1；`BriefBindingV1={dataset_revision_id,role,access_policy}`。所有ID已登记，服务端分配Brief ID/version/revision，初始DRAFT；不接受root_lineage/current_brief/frozen_at/终态。
+
+`PATCH /briefs/{id}` 接受 `schema_version,expected_revision,content,bindings`，原子全量替换DRAFT内容和绑定；不可修改project/version/supersedes身份。保存验证预算/停止规则、固定或可变horizon形状、同项目政策、政策执行假设一致、币种与数据Universe一致、成员唯一和原生partition角色。SEALED禁止RESEARCH_READ；非SEALED禁止EVALUATOR_ONLY；METADATA_ONLY不等于执行授权。FROZEN不得保存。保存不宣称当前许可、PIT、原生能力、Sealed机会或资格已经通过；正式freeze另做当前事实检查。
+
+复用既有Operator命令回执与项目行锁；同项目版本checked递增，同key回原响应、换请求409，CAS错误返回真实current_revision且无半套删除或孤儿回执。ARCHIVED禁止新建或修改。014增量迁移使DRAFT子成员可替换；INSERT/UPDATE/DELETE一律锁父Brief，FROZEN一律拒绝，禁止跨父移动与改成员身份。冻结和子写入竞争由同一父锁决定；既有迁移和历史数据不改。
+
+`GET /projects/{id}/briefs` 使用现有limit1..100/UUID倒序cursor；`GET /briefs/{id}` 返回公开BriefView和绑定，无Secret/URL/宿主路径/raw数据。机器只读需要有效RESEARCH_READ且精确project。修改必须近期Operator或完整请求绑定的单次人工CLI grant，增加封闭BRIEF_CREATE/BRIEF_UPDATE操作，不增机器scope。
+
 ## A2. 数据、Universe、基准与执行假设
 
 ```text
@@ -1966,3 +1976,9 @@ Alpha 或其他 Candidate 的 PASS 不可借用。Offer 的
 (approval_id,release_id,downstream_id,environment) 必须完整引用审批元组，
 Paper 审批不可转用 Live 或别的下游。相关复合 FK 是最低关联约束，不取代
 事务内新鲜度、撤销、项目、人工拒绝与资格检查。
+
+#### 消费端事件对象生成约束（3944785219）
+
+RunEventV1.payload 的原生生成schema明确 type=object，required=[schema_version]，schema_version整数严格为1，允许其他公开扩展属性。运行时仍检查65536字节上限，已知run.created/run.state_changed负载严格按RunStatePayload验证；未知兼容事件不得伪造状态投影。对象schema不能代替已知事件语义、权限或负载大小检查。
+
+Brief 草稿成员替换要求部署迁移仅对 app.brief_data_bindings 追加 DELETE 授权；不得对所有 app 表或任何历史账本授予 DELETE/TRUNCATE/TRIGGER。该单表 DELETE 仍经父 Brief 行锁和 DRAFT 状态触发器；FROZEN 后拒绝全部成员改动。必须使用真实非所有者运行身份执行新增/替换/冻结拒绝回归，不能只用数据库owner证明可运行。

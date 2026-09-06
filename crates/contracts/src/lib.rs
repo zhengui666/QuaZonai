@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 pub mod auth;
+pub mod brief;
 pub mod budget;
 pub mod codex;
 pub mod control;
@@ -20,6 +21,10 @@ use utoipa::OpenApi;
 
 #[derive(OpenApi)]
 #[openapi(components(schemas(
+    brief::BriefCreate,
+    brief::BriefCreateIntent,
+    brief::BriefUpdate,
+    brief::BriefView,
     research::InputSetCreate,
     research::InputSetView,
     research::InputSetSummary,

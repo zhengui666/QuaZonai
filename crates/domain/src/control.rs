@@ -47,6 +47,10 @@ pub fn scopes(request: &CredentialIssue) -> Result<(), DomainError> {
 }
 pub fn command(request: &OperatorCommand) -> Result<(), DomainError> {
     match request {
+        OperatorCommand::BriefCreate(r) => {
+            crate::brief::content(&r.request.content, &r.request.bindings)
+        }
+        OperatorCommand::BriefUpdate(r) => crate::brief::content(&r.content, &r.bindings),
         OperatorCommand::ProjectCreate(r) => {
             name(&r.name)?;
             text(&r.description, 0, 8000, true)

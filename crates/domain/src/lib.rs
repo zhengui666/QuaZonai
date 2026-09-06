@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 pub mod admission;
+pub mod brief;
 pub mod codex;
 pub mod control;
 pub mod evidence;

@@ -101,6 +101,7 @@ pub struct RunEventV1 {
     pub event_type: String,
     pub occurred_at: DateTime<Utc>,
     /// Public schema-v1 object. Known state event payloads retain strict validation.
+    #[schema(schema_with = event_payload_schema)]
     pub payload: serde_json::Value,
 }
 
@@ -171,4 +172,16 @@ pub struct RunEventBatchV1 {
     pub events: Vec<RunEventV1>,
     pub last_event_seq: DbCounter,
     pub state: RunState,
+}
+
+fn event_payload_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+    use utoipa::{
+        openapi::schema::{AdditionalProperties, ObjectBuilder, Type},
+        PartialSchema,
+    };
+    ObjectBuilder::new().schema_type(Type::Object)
+        .property("schema_version",SchemaV1::schema()).required("schema_version")
+        .additional_properties(Some(AdditionalProperties::FreeForm(true)))
+        .description(Some("Public extensible schema-v1 JSON object; serialized UTF-8 is limited to 65536 bytes. Known event types additionally validate their specific payload contract."))
+        .into()
 }

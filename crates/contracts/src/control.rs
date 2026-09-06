@@ -209,6 +209,8 @@ pub struct CredentialCreated {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum OperatorOperation {
+    BriefCreate,
+    BriefUpdate,
     ProjectCreate,
     ProjectUpdate,
     PrincipalCreate,
@@ -221,6 +223,8 @@ pub enum OperatorOperation {
 impl OperatorOperation {
     pub fn code(self) -> &'static str {
         match self {
+            Self::BriefCreate => "BRIEF_CREATE",
+            Self::BriefUpdate => "BRIEF_UPDATE",
             Self::ProjectCreate => "PROJECT_CREATE",
             Self::ProjectUpdate => "PROJECT_UPDATE",
             Self::PrincipalCreate => "PRINCIPAL_CREATE",
@@ -234,7 +238,8 @@ impl OperatorOperation {
     pub fn creates(self) -> bool {
         matches!(
             self,
-            Self::ProjectCreate
+            Self::BriefCreate
+                | Self::ProjectCreate
                 | Self::PrincipalCreate
                 | Self::CredentialIssue
                 | Self::InputSetCreate
@@ -250,6 +255,8 @@ impl OperatorOperation {
     deny_unknown_fields
 )]
 pub enum OperatorCommand {
+    BriefCreate(Box<crate::brief::BriefCreateIntent>),
+    BriefUpdate(Box<crate::brief::BriefUpdate>),
     ProjectCreate(ProjectCreate),
     ProjectUpdate(ProjectUpdate),
     PrincipalCreate(PrincipalCreate),
@@ -262,6 +269,8 @@ pub enum OperatorCommand {
 impl OperatorCommand {
     pub fn operation(&self) -> OperatorOperation {
         match self {
+            Self::BriefCreate(_) => OperatorOperation::BriefCreate,
+            Self::BriefUpdate(_) => OperatorOperation::BriefUpdate,
             Self::ProjectCreate(_) => OperatorOperation::ProjectCreate,
             Self::ProjectUpdate(_) => OperatorOperation::ProjectUpdate,
             Self::PrincipalCreate(_) => OperatorOperation::PrincipalCreate,
@@ -274,6 +283,8 @@ impl OperatorCommand {
     }
     pub fn normalized_request(&self) -> Result<serde_json::Value, serde_json::Error> {
         match self {
+            Self::BriefCreate(v) => serde_json::to_value(v),
+            Self::BriefUpdate(v) => serde_json::to_value(v),
             Self::ProjectCreate(v) => serde_json::to_value(v),
             Self::ProjectUpdate(v) => serde_json::to_value(v),
             Self::PrincipalCreate(v) => serde_json::to_value(v),
