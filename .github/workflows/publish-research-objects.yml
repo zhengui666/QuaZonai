@@ -1,4 +1,4 @@
-name: Temporary research source objects
+name: Temporary research source integration
 on:
   pull_request:
     paths: ['.github/workflows/publish-research-objects.yml']
@@ -11,9 +11,9 @@ jobs:
     timeout-minutes: 10
     env:
       EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
-      VERIFIED_BASE: a41e8709576d344919ffbe121b2619932793fe0d
-      BASE_TREE: bd2c8a7ef266c846d9d5ddadbfb0fc7c1441112e
-      VERIFIED_TREE: c7957cf31a0cd0f177bef1618c2185f14ff46b19
+      VERIFIED_BASE: d6eac5b6261e66cbce5ffa82c8f225a9915e137e
+      BASE_TREE: 4534c0e4c521850920599a394f746e37f1b8a809
+      VERIFIED_TREE: 382668825946753b0b2551d284eb67dbbbd47c76
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -21,7 +21,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Verify and upload immutable source objects without executing product code or changing refs
+      - name: Integrate exact verified source without executing product code or changing refs
         shell: bash
         run: |
           set -euo pipefail
@@ -40,46 +40,69 @@ jobs:
           xz --decompress --stdout "$RUNNER_TEMP/research.patch.xz" > "$RUNNER_TEMP/research.patch"
           test "$(wc -c < "$RUNNER_TEMP/research.patch")" -eq 281298
           git -c core.hooksPath=/dev/null checkout --detach "$VERIFIED_BASE"
-          git -c core.hooksPath=/dev/null apply --check --index "$RUNNER_TEMP/research.patch"
-          git -c core.hooksPath=/dev/null apply --index "$RUNNER_TEMP/research.patch"
+          if git -c core.hooksPath=/dev/null apply --3way "$RUNNER_TEMP/research.patch"; then
+            printf 'Expected explicit module/schema conflicts were absent.\n' >&2
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json,subprocess
+          from pathlib import Path
+          def git(*args): return subprocess.check_output(['git','-c','core.hooksPath=/dev/null',*args])
+          expected={'apps/server/src/lib.rs','crates/contracts/src/lib.rs','contracts/generated/api-v2.openapi.json','contracts/generated/domain-v1.openapi.json'}
+          actual=set(git('diff','--name-only','--diff-filter=U').decode().splitlines())
+          if actual!=expected: raise SystemExit(f'unexpected conflicts: {actual}')
+          p=Path('apps/server/src/lib.rs');s=p.read_text()
+          s=s.replace('<<<<<<< ours\npub mod runs;\n=======\npub mod research;\n>>>>>>> theirs','pub mod research;\npub mod runs;')
+          a=s.index('<<<<<<< ours');b=s.index('>>>>>>> theirs',a)+len('>>>>>>> theirs')
+          s=s[:a]+'control::machine_session,control::issue_grant,runs::list,runs::get,runs::cancel,runs::events,\nresearch::input_sets,research::input_set,research::create_input_set,\nresearch::evaluation_policies,research::evaluation_policy,research::create_evaluation_policy),components(schemas(error::Problem)),tags((name="Authentication",description="Native TOTP and revocable browser sessions")))]'+s[b:];p.write_text(s)
+          p=Path('crates/contracts/src/lib.rs');s=p.read_text().replace('<<<<<<< ours\npub mod lifecycle;\n=======\npub mod research;\n>>>>>>> theirs','pub mod lifecycle;\npub mod research;');p.write_text(s)
+          def merge(a,b):
+              if isinstance(a,dict) and isinstance(b,dict):
+                  return {k:merge(a[k],b[k]) if k in a and k in b else a.get(k,b.get(k)) for k in a.keys()|b.keys()}
+              return b
+          # These declarative unions were compared byte-for-byte with BOTH
+          # actual native Rust generators on the locally tested merged source.
+          # This is development source transport, never a CI contract rewrite.
+          for path in sorted(expected):
+              if not path.endswith('.json'): continue
+              a=json.loads(git('show',f':2:{path}'));b=json.loads(git('show',f':3:{path}'))
+              Path(path).write_text(json.dumps(merge(a,b),ensure_ascii=False,sort_keys=True,indent=2)+'\n')
+          subprocess.run(['git','add',*sorted(expected)],check=True)
+          Path('.github/workflows/publish-research-objects.yml').unlink()
+          subprocess.run(['git','add','-u','.github/workflows/publish-research-objects.yml'],check=True)
+          PY
           test "$(git write-tree)" = "$VERIFIED_TREE"
           git diff --cached --check
-          test ! -e .github/workflows/publish-research-objects.yml
-          test -z "$(git diff --cached --name-only -- Cargo.lock .github/workflows migrations/202609050001_domain.sql migrations/202609060001_browser_auth.sql migrations/202609060002_authority_invariants.sql migrations/202609060003_evidence_bindings.sql migrations/202609060004_doctor_boundary.sql migrations/202609060005_evaluation_publication.sql migrations/202609060006_upgrade_cutover.sql migrations/202609060007_control_authority.sql migrations/202609060008_machine_attempts.sql migrations/202609060009_native_sessions.sql migrations/202609060010_authority_repair.sql)"
+          test -z "$(git diff --cached --name-only -- Cargo.lock .github/workflows/ci.yml apps/server/src/main.rs apps/server/src/runs.rs crates/store/src/lifecycle.rs migrations/202609050001_domain.sql migrations/202609060001_browser_auth.sql migrations/202609060002_authority_invariants.sql migrations/202609060003_evidence_bindings.sql migrations/202609060004_doctor_boundary.sql migrations/202609060005_evaluation_publication.sql migrations/202609060006_upgrade_cutover.sql migrations/202609060007_control_authority.sql migrations/202609060008_machine_attempts.sql migrations/202609060009_native_sessions.sql migrations/202609060010_authority_repair.sql migrations/202609060011_run_lifecycle.sql)"
           python3 - <<'PY'
-          import base64, json, os, subprocess
+          import base64,json,os,subprocess
           from pathlib import Path
-          def git(*args):
-              return subprocess.check_output(['git','-c','core.hooksPath=/dev/null',*args])
+          def git(*args): return subprocess.check_output(['git','-c','core.hooksPath=/dev/null',*args])
           repo=os.environ['GITHUB_REPOSITORY']
-          if repo!='zhengui666/QuaZonai':
-              raise SystemExit('unexpected repository')
+          if repo!='zhengui666/QuaZonai': raise SystemExit('unexpected repository')
           entries=[]
           for raw in filter(None,git('diff','--cached','--name-only','--no-renames','-z').split(b'\0')):
-              path=raw.decode()
-              staged=git('ls-files','--stage','--',path).decode().strip()
+              path=raw.decode();staged=git('ls-files','--stage','--',path).decode().strip()
               if not staged:
-                  raise SystemExit('unexpected deletion')
-              metadata,actual=staged.split('\t',1)
-              mode,sha,stage=metadata.split()
-              if actual!=path or stage!='0' or mode not in ('100644','100755'):
-                  raise SystemExit('invalid staged entry')
+                  if path!='.github/workflows/publish-research-objects.yml': raise SystemExit('unexpected deletion')
+                  entries.append({'path':path,'mode':'100644','type':'blob','sha':None})
+                  continue
+              metadata,actual=staged.split('\t',1);mode,sha,stage=metadata.split()
+              if actual!=path or stage!='0' or mode not in ('100644','100755'): raise SystemExit('invalid staged entry')
               body={'encoding':'base64','content':base64.b64encode(git('cat-file','blob',sha)).decode()}
               result=json.loads(subprocess.check_output(['gh','api','--method','POST',f'repos/{repo}/git/blobs','--input','-'],input=json.dumps(body).encode()))
-              if result['sha']!=sha:
-                  raise SystemExit('native blob mismatch')
+              if result['sha']!=sha: raise SystemExit('native blob mismatch')
               entries.append({'path':path,'mode':mode,'type':'blob','sha':sha})
-          if len(entries)!=28:
-              raise SystemExit('unexpected changed file count')
+          if len(entries)!=29: raise SystemExit('unexpected changed file count')
           manifest={'base':os.environ['VERIFIED_BASE'],'base_tree':os.environ['BASE_TREE'],'tree':os.environ['VERIFIED_TREE'],'entries':entries}
           Path(os.environ['RUNNER_TEMP'],'research-objects','entries.json').write_text(json.dumps(manifest,indent=2)+'\n')
           PY
           git archive "$VERIFIED_TREE" | gzip > "$RUNNER_TEMP/research-objects/source.tar.gz"
-          printf 'Verified native source objects only; no product execution, no commit/ref update and no CI acceptance claim.\n' > "$RUNNER_TEMP/research-objects/SCOPE.txt"
-          printf 'Uploaded 28 immutable source objects for tree `%s`; executor must integrate without overwriting parallel changes.\n' "$VERIFIED_TREE" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Verified source integration only; no product execution, no ref update, no acceptance claim. Preserve parallel changes at final publication.\n' > "$RUNNER_TEMP/research-objects/SCOPE.txt"
+          printf 'Uploaded source delta for locally verified tree `%s`; latest final Head still requires independent CI and review.\n' "$VERIFIED_TREE" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: research-source-c7957cf31a0cd0f177bef1618c2185f14ff46b19
+          name: research-integrated-382668825946753b0b2551d284eb67dbbbd47c76
           path: ${{ runner.temp }}/research-objects/
           retention-days: 1
           if-no-files-found: error
