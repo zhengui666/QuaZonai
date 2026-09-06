@@ -19,17 +19,16 @@ struct Alpha {
     qualification: Id,
 }
 async fn alpha(pool: &PgPool, f: &Fixture) -> Alpha {
-    let family = Id::new();
+    let family: uuid::Uuid = sqlx::query_scalar("SELECT f.id FROM app.experiment_families f JOIN app.research_briefs b ON b.evaluation_policy_id=f.selection_policy_id WHERE b.project_id=$1")
+        .bind(f.project.as_uuid()).fetch_one(pool).await.unwrap();
     let experiment = Id::new();
     let alpha = Id::new();
     let version = Id::new();
     let evaluation = Id::new();
     let qualification = Id::new();
     let mut tx = pool.begin().await.unwrap();
-    sqlx::query("INSERT INTO app.experiment_families(id,project_id,root_lineage_id,question,selection_policy_id) SELECT $1,p.id,p.root_lineage_id,'fixture',b.evaluation_policy_id FROM app.projects p JOIN app.research_briefs b ON b.project_id=p.id WHERE p.id=$2")
-        .bind(family.as_uuid()).bind(f.project.as_uuid()).execute(&mut *tx).await.unwrap();
     sqlx::query("INSERT INTO app.experiments(id,project_id,cycle_id,family_id,ordinal,hypothesis,expected_failure_modes,proposal_artifact_id,code_artifact_id,parameter_artifact_id,trial_source,run_id,outcome,conclusion_artifact_id) VALUES($1,$2,$3,$4,(SELECT coalesce(max(ordinal),0)+1 FROM app.experiments WHERE cycle_id=$3),'fixture','fixture',$5,$5,$5,'OPERATOR',$6,'SUPPORTED',$5)")
-        .bind(experiment.as_uuid()).bind(f.project.as_uuid()).bind(f.cycle.as_uuid()).bind(family.as_uuid())
+        .bind(experiment.as_uuid()).bind(f.project.as_uuid()).bind(f.cycle.as_uuid()).bind(family)
         .bind(f.artifact.as_uuid()).bind(f.run.as_uuid()).execute(&mut *tx).await.unwrap();
     sqlx::query(
         "INSERT INTO app.alphas(id,project_id,name,lifecycle) VALUES($1,$2,'fixture','RESEARCH')",

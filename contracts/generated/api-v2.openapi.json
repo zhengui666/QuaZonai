@@ -253,6 +253,8 @@
                 "items": {
                   "$ref": "#/components/schemas/MetricRequirementV1"
                 },
+                "maxItems": 64,
+                "minItems": 1,
                 "type": "array"
               },
               "minimum_observations": {
@@ -265,6 +267,8 @@
                 "$ref": "#/components/schemas/Id"
               },
               "question": {
+                "maxLength": 8000,
+                "minLength": 1,
                 "type": "string"
               },
               "require_real_data": {
@@ -274,6 +278,7 @@
                 "items": {
                   "type": "string"
                 },
+                "maxItems": 64,
                 "type": "array"
               },
               "selection_rule": {
@@ -1034,6 +1039,8 @@
             "items": {
               "$ref": "#/components/schemas/MetricRequirementV1"
             },
+            "maxItems": 64,
+            "minItems": 1,
             "type": "array"
           },
           "minimum_observations": {
@@ -1046,6 +1053,8 @@
             "$ref": "#/components/schemas/Id"
           },
           "question": {
+            "maxLength": 8000,
+            "minLength": 1,
             "type": "string"
           },
           "require_real_data": {
@@ -1055,6 +1064,7 @@
             "items": {
               "type": "string"
             },
+            "maxItems": 64,
             "type": "array"
           },
           "selection_rule": {
@@ -1420,11 +1430,18 @@
           },
           "method_allowlist": {
             "items": {
+              "maxLength": 120,
+              "minLength": 1,
               "type": "string"
             },
-            "type": "array"
+            "maxItems": 64,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
           },
           "metric_code": {
+            "maxLength": 120,
+            "minLength": 1,
             "type": "string"
           },
           "minimum_observations": {
@@ -1437,6 +1454,8 @@
             "$ref": "#/components/schemas/SchemaV1"
           },
           "scope": {
+            "maxLength": 120,
+            "minLength": 1,
             "type": "string"
           },
           "threshold_high": {
@@ -1810,6 +1829,8 @@
                   "items": {
                     "$ref": "#/components/schemas/MetricRequirementV1"
                   },
+                  "maxItems": 64,
+                  "minItems": 1,
                   "type": "array"
                 },
                 "minimum_observations": {
@@ -1822,6 +1843,8 @@
                   "$ref": "#/components/schemas/Id"
                 },
                 "question": {
+                  "maxLength": 8000,
+                  "minLength": 1,
                   "type": "string"
                 },
                 "require_real_data": {
@@ -1831,6 +1854,7 @@
                   "items": {
                     "type": "string"
                   },
+                  "maxItems": 64,
                   "type": "array"
                 },
                 "selection_rule": {
@@ -3005,18 +3029,28 @@
             "$ref": "#/components/schemas/Id"
           },
           "frequency": {
+            "maxLength": 120,
+            "minLength": 1,
             "type": "string"
           },
           "method_id": {
+            "maxLength": 120,
+            "minLength": 1,
             "type": "string"
           },
           "method_version": {
+            "maxLength": 120,
+            "minLength": 1,
             "type": "string"
           },
           "metric_code": {
+            "maxLength": 120,
+            "minLength": 1,
             "type": "string"
           },
           "metric_scope": {
+            "maxLength": 120,
+            "minLength": 1,
             "type": "string"
           },
           "missing_required_metric": {
@@ -3032,6 +3066,8 @@
             "$ref": "#/components/schemas/SelectionTieBreak"
           },
           "unit": {
+            "maxLength": 120,
+            "minLength": 1,
             "type": "string"
           }
         },

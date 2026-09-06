@@ -123,3 +123,46 @@ fn policy_selection_and_metric_contracts_never_round_or_skip_required_values() {
     r["metric_requirements"][0]["threshold_high"] = json!("0.1");
     invalid(r, "EXACT_THRESHOLD_BOUNDS");
 }
+
+#[test]
+fn comparator_diagnostics_identify_only_the_invalid_endpoints() {
+    for (cmp, low, high, expected) in [
+        ("GT", Value::Null, Value::Null, vec!["threshold_low"]),
+        ("GE", json!("1"), json!("2"), vec!["threshold_high"]),
+        ("LT", Value::Null, Value::Null, vec!["threshold_high"]),
+        ("LE", json!("1"), json!("2"), vec!["threshold_low"]),
+        ("BETWEEN", Value::Null, json!("2"), vec!["threshold_low"]),
+        ("BETWEEN", json!("1"), Value::Null, vec!["threshold_high"]),
+        (
+            "BETWEEN",
+            Value::Null,
+            Value::Null,
+            vec!["threshold_low", "threshold_high"],
+        ),
+        (
+            "BETWEEN",
+            json!("2"),
+            json!("1"),
+            vec!["threshold_low", "threshold_high"],
+        ),
+    ] {
+        let mut r = base();
+        r["metric_requirements"][0]["comparator"] = json!(cmp);
+        r["metric_requirements"][0]["threshold_low"] = low;
+        r["metric_requirements"][0]["threshold_high"] = high;
+        let Err(DomainError::Fields(fields)) =
+            evaluation_policy(&serde_json::from_value(r).unwrap())
+        else {
+            panic!("missing diagnostics for {cmp}")
+        };
+        assert!(fields.iter().all(|f| f.code == "EXACT_THRESHOLD_BOUNDS"));
+        assert_eq!(
+            fields.iter().map(|f| f.field.as_str()).collect::<Vec<_>>(),
+            expected
+                .iter()
+                .map(|f| format!("metric_requirements.0.{f}"))
+                .collect::<Vec<_>>(),
+            "{cmp}"
+        );
+    }
+}

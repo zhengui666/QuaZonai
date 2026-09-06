@@ -202,7 +202,7 @@ async fn source_disable_and_grant_revocation_are_rechecked_after_real_lock_waits
     let task = tokio::spawn(async move { s.create_input_set(&a, "revoked", &r).await });
     wait_for_query_lock(
         &pool,
-        "SELECT id,source_id,valid_from,valid_until FROM app.data_use_grants",
+        "SELECT id,source_id,valid_from,valid_until,allowed_uses FROM app.data_use_grants",
     )
     .await;
     blocker.commit().await.unwrap();
@@ -609,7 +609,7 @@ async fn runtime_disable_and_policy_reconsumption_cannot_reuse_a_stale_preflight
     let task = tokio::spawn(async move { s.create_evaluation_policy(&a, "stale-grant", &r).await });
     wait_for_query_lock(
         &pool,
-        "SELECT id,source_id,valid_from,valid_until FROM app.data_use_grants",
+        "SELECT id,source_id,valid_from,valid_until,allowed_uses FROM app.data_use_grants",
     )
     .await;
     blocker.commit().await.unwrap();

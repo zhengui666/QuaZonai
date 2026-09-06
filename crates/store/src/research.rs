@@ -18,7 +18,7 @@ use std::collections::BTreeSet;
 const INPUT: &str = "id,project_id,purpose,decision_cutoff,frozen_at,revision,created_at";
 const POLICY: &str = "p.id,p.project_id,p.version,p.created_at,p.selection_rule,p.split_policy,p.metric_requirements,p.minimum_observations,p.maximum_missing_fraction,p.require_real_data,p.required_capabilities,p.maximum_sealed_uses_per_lineage,p.validity_seconds,f.question,f.project_id AS family_project_id,f.root_lineage_id AS family_root_id,f.selection_policy_id AS family_policy_id";
 const FAMILY: &str =
-    "LEFT JOIN app.experiment_families f ON f.id=(p.selection_rule->>'family_id')::uuid";
+    "JOIN app.experiment_families f ON f.id=p.family_id AND f.project_id=p.project_id AND f.selection_policy_id=p.id AND f.root_lineage_id=p.root_lineage_id";
 
 fn summary(r: &PgRow) -> Result<InputSetSummary, StoreError> {
     Ok(InputSetSummary {
@@ -159,6 +159,7 @@ async fn validate_inputs(
                 *role,
                 format!("items.{index}.dataset_revision_id"),
                 Some(request.decision_cutoff),
+                request.purpose,
             )),
             InputItemV1::Artifact { artifact_id, role } => {
                 let r = sqlx::query(
@@ -191,12 +192,13 @@ async fn validate_inputs(
             DataPartition::Sealed,
             "split_policy.sealed_revision_id".into(),
             None,
+            InputPurpose::Sealed,
         ));
     }
     let mut facts = Vec::with_capacity(datasets.len());
     let mut source_ids = BTreeSet::new();
     let mut grant_ids = BTreeSet::new();
-    for (id, role, field, cutoff) in datasets {
+    for (id, role, field, cutoff, purpose) in datasets {
         let r=sqlx::query("SELECT source_id,data_use_grant_id,partition_role,available_through,pit_status FROM app.dataset_revisions WHERE id=$1")
             .bind(id.as_uuid()).fetch_optional(&mut **tx).await?.ok_or_else(|| invalid(&field,"REFERENCE_UNAVAILABLE"))?;
         let available: Timestamp = r.try_get("available_through")?;
@@ -210,7 +212,7 @@ async fn validate_inputs(
         let grant: uuid::Uuid = r.try_get("data_use_grant_id")?;
         source_ids.insert(source);
         grant_ids.insert(grant);
-        facts.push((source, grant, field));
+        facts.push((source, grant, field, purpose));
     }
     let sources = sqlx::query(
         "SELECT id,runtime_id,enabled FROM app.data_sources WHERE id=ANY($1) ORDER BY id FOR SHARE",
@@ -229,7 +231,7 @@ async fn validate_inputs(
     )
     .fetch_all(&mut **tx)
     .await?;
-    let grants=sqlx::query("SELECT id,source_id,valid_from,valid_until FROM app.data_use_grants WHERE id=ANY($1) ORDER BY id FOR SHARE")
+    let grants=sqlx::query("SELECT id,source_id,valid_from,valid_until,allowed_uses FROM app.data_use_grants WHERE id=ANY($1) ORDER BY id FOR SHARE")
         .bind(grant_ids.iter().copied().collect::<Vec<_>>()).fetch_all(&mut **tx).await?;
     // A separate statement AFTER LockRows waits establishes current time and
     // committed revocations, not the stale snapshot from before taking the lock.
@@ -241,7 +243,7 @@ async fn validate_inputs(
     }
     let revoked:Vec<uuid::Uuid>=sqlx::query_scalar("SELECT DISTINCT grant_id FROM app.data_use_revocations WHERE grant_id=ANY($1) AND effective_at<=$2")
         .bind(grant_ids.into_iter().collect::<Vec<_>>()).bind(now).fetch_all(&mut **tx).await?;
-    for (source, grant, field) in facts {
+    for (source, grant, field, purpose) in facts {
         let s = sources
             .iter()
             .find(|r| r.try_get::<uuid::Uuid, _>("id").ok() == Some(source))
@@ -265,6 +267,10 @@ async fn validate_inputs(
             || revoked.contains(&grant)
         {
             return Err(invalid(&field, "DATA_USE_NOT_AUTHORIZED").into());
+        }
+        let allowed: DataUse = db::enum_value(g, "allowed_uses")?;
+        if !allowed.permits_preparation(purpose) {
+            return Err(invalid(&field, "DATA_USE_PURPOSE_NOT_AUTHORIZED").into());
         }
     }
     Ok(())

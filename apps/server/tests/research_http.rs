@@ -466,3 +466,95 @@ async fn research_request_size_and_missing_project_fail_without_creating_records
         .unwrap();
     assert_eq!(n, 0);
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn review_errors_return_the_actual_license_and_threshold_fields(pool: PgPool) {
+    let (f, cookie, _, data) = authenticated(pool.clone()).await;
+    let denied = browser(
+        &f,
+        &cookie,
+        "denied-use",
+        "POST",
+        "/api/v2/input-sets",
+        serde_json::to_value(data.input(InputPurpose::Portfolio)).unwrap(),
+    )
+    .await;
+    assert_eq!(denied.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        denied.body["field_errors"][0]["field"],
+        "items.0.dataset_revision_id"
+    );
+    assert_eq!(
+        denied.body["field_errors"][0]["code"],
+        "DATA_USE_PURPOSE_NOT_AUTHORIZED"
+    );
+    let r = browser(
+        &f,
+        &cookie,
+        "comparison",
+        "POST",
+        "/api/v2/input-sets",
+        serde_json::to_value(data.input(InputPurpose::Validation)).unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED);
+    let input: InputSetView = serde_json::from_value(r.body["resource"].clone()).unwrap();
+    let base = serde_json::to_value(data.policy(input.header.id)).unwrap();
+    for (cmp, low, high, expected) in [
+        (
+            "LT",
+            Value::Null,
+            Value::Null,
+            vec!["metric_requirements.0.threshold_high"],
+        ),
+        (
+            "LE",
+            Value::Null,
+            Value::Null,
+            vec!["metric_requirements.0.threshold_high"],
+        ),
+        (
+            "BETWEEN",
+            json!("2"),
+            json!("1"),
+            vec![
+                "metric_requirements.0.threshold_low",
+                "metric_requirements.0.threshold_high",
+            ],
+        ),
+    ] {
+        let mut body = base.clone();
+        body["metric_requirements"][0]["comparator"] = json!(cmp);
+        body["metric_requirements"][0]["threshold_low"] = low;
+        body["metric_requirements"][0]["threshold_high"] = high;
+        let r = browser(
+            &f,
+            &cookie,
+            cmp,
+            "POST",
+            "/api/v2/evaluation-policies",
+            body,
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(
+            r.body["field_errors"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|e| e["field"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(r.headers[header::CACHE_CONTROL], "no-store");
+    }
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM app.command_receipts WHERE operation='EVALUATION_POLICY_CREATE'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
+}

@@ -76,3 +76,19 @@ fn generated_policy_schema_exposes_native_scalar_and_array_boundaries() {
     );
     assert!(schemas["DbCounter"]["maxLength"].as_u64().is_some());
 }
+
+#[test]
+fn nested_metric_schema_has_both_array_and_item_boundaries() {
+    let schema: Value = serde_json::from_str(&contracts::openapi_json().unwrap()).unwrap();
+    let m = &schema["components"]["schemas"]["MetricRequirementV1"]["properties"];
+    for name in ["metric_code", "scope"] {
+        assert_eq!(m[name]["minLength"], 1, "{name}");
+        assert_eq!(m[name]["maxLength"], 120, "{name}");
+    }
+    let a = &m["method_allowlist"];
+    assert_eq!(a["minItems"], 1);
+    assert_eq!(a["maxItems"], 64);
+    assert_eq!(a["uniqueItems"], true);
+    assert_eq!(a["items"]["minLength"], 1);
+    assert_eq!(a["items"]["maxLength"], 120);
+}

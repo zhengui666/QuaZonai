@@ -84,6 +84,14 @@ impl ResearchFixture {
     }
 }
 pub async fn setup(pool: &PgPool, store: &Store, actor: &Actor) -> ResearchFixture {
+    setup_with_use(pool, store, actor, DataUse::Research).await
+}
+pub async fn setup_with_use(
+    pool: &PgPool,
+    store: &Store,
+    actor: &Actor,
+    allowed: DataUse,
+) -> ResearchFixture {
     let project = store
         .create_project(
             actor,
@@ -123,8 +131,8 @@ pub async fn setup(pool: &PgPool, store: &Store, actor: &Actor) -> ResearchFixtu
         .bind(f.runtime.as_uuid()).execute(&mut *tx).await.unwrap();
     sqlx::query("INSERT INTO app.data_sources(id,name,runtime_id,native_catalog_ref,provider_kind,enabled) VALUES($1,'fixture',$2,$3,'fixture',true)")
         .bind(f.source.as_uuid()).bind(f.runtime.as_uuid()).bind(format!("native-fixture/{}",f.source)).execute(&mut *tx).await.unwrap();
-    sqlx::query("INSERT INTO app.data_use_grants(id,source_id,version,license_reference,evidence_artifact_id,allowed_uses,valid_from,valid_until,authorized_by) VALUES($1,$2,1,'fixture',$3,'RESEARCH',clock_timestamp()-interval '1 day',clock_timestamp()+interval '1 day','OPERATOR')")
-        .bind(f.grant.as_uuid()).bind(f.source.as_uuid()).bind(f.artifact.as_uuid()).execute(&mut *tx).await.unwrap();
+    sqlx::query("INSERT INTO app.data_use_grants(id,source_id,version,license_reference,evidence_artifact_id,allowed_uses,valid_from,valid_until,authorized_by) VALUES($1,$2,1,'fixture',$3,$4,clock_timestamp()-interval '1 day',clock_timestamp()+interval '1 day','OPERATOR')")
+        .bind(f.grant.as_uuid()).bind(f.source.as_uuid()).bind(f.artifact.as_uuid()).bind(allowed.code()).execute(&mut *tx).await.unwrap();
     for (id, partition) in [
         (f.discovery, "DISCOVERY"),
         (f.validation, "VALIDATION"),

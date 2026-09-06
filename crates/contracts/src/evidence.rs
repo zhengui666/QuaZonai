@@ -46,13 +46,16 @@ pub enum Comparator {
 #[serde(deny_unknown_fields)]
 pub struct MetricRequirementV1 {
     pub schema_version: SchemaV1,
+    #[schema(min_length = 1, max_length = 120)]
     pub metric_code: String,
+    #[schema(min_length = 1, max_length = 120)]
     pub scope: String,
     pub comparator: Comparator,
     pub threshold_low: Option<DecimalValue>,
     pub threshold_high: Option<DecimalValue>,
     pub required: bool,
     pub minimum_observations: DbCounter,
+    #[schema(schema_with = method_allowlist_schema)]
     pub method_allowlist: Vec<String>,
 }
 
@@ -108,4 +111,21 @@ fn deserialize_finite_optional<'de, D: serde::Deserializer<'de>>(
         return Err(serde::de::Error::custom("non-finite metric"));
     }
     Ok(value)
+}
+
+// Keep the public Vec<String> wire shape. Native builders express both layers
+// without incorrectly attaching string bounds to the enclosing array.
+fn method_allowlist_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+    use utoipa::openapi::schema::{ArrayBuilder, ObjectBuilder, Type};
+    ArrayBuilder::new()
+        .min_items(Some(1))
+        .max_items(Some(64))
+        .unique_items(true)
+        .items(
+            ObjectBuilder::new()
+                .schema_type(Type::String)
+                .min_length(Some(1))
+                .max_length(Some(120)),
+        )
+        .into()
 }

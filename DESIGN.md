@@ -821,6 +821,30 @@ f64 再判断区间次序或 PASS。Metric 仍是原生 finite f64：比较语�
 
 ### A4.3 不可变研究输入与评估政策登记
 
+#### 2026-09-06 独立审查修订：用途、关系列和诊断
+
+数据许可的用途不是仅存在于元数据。登记时在已锁定grant上读取封闭
+`DataUse=RESEARCH|RESEARCH_AND_PAPER|RESEARCH_PAPER_LIVE`：DISCOVERY/VALIDATION/SEALED
+接受三种许可，PORTFOLIO/FORWARD至少要求RESEARCH_AND_PAPER。最高许可包含前两级，
+但此登记不授权Live，实际Live审批/Claim仍须重查RESEARCH_PAPER_LIVE。
+额外Sealed选择样本按研究用途核对；不足在对应dataset字段返回
+`DATA_USE_PURPOSE_NOT_AUTHORIZED`。期限/撤销在锁等待后复查；准确旧回执只读，不是新消费。
+
+Policy/Family在关系层一一对应：policy的`family_id`和`root_lineage_id`是从已冻结
+selection_rule提取的PostgreSQL STORED generated UUIDv7 NOT NULL列，不允许另一份
+独立客户端赋值。Policy的`(family_id,project_id,id,root_lineage_id)`与Family的
+`(id,project_id,selection_policy_id,root_lineage_id)`双向复合外键均DEFERRABLE
+INITIALLY DEFERRED；两侧原生复合唯一约束支持精确匹配。同一事务可以按任一顺序
+建立完整配对，孤立/错误项目/错误血缘/额外Family在提交时拒绝。迁移015先锁两表，
+由原生生成列和外键校验全部历史；坏历史使整批升级回滚，绝不修改旧selection或洗新UUID。
+
+MetricRequirementV1的metric_code/scope为1..120字符，method_allowlist为1..64项且
+每项1..120字符、无重复；原生生成Schema同时约束数组和items。冻结Selection及PolicyView
+维持相同可表达边界。阈值比较继续使用精确Decimal函数，字段级错误code保持
+EXACT_THRESHOLD_BOUNDS：GT/GE缺low或意外high分别定位对应字段；LT/LE缺high或意外low
+分别定位对应字段；BETWEEN缺端点定位该端点、逆序同时返回两个端点。诊断不回显输入值。
+
+
 本节是研究准备命令，不是实际评估、算法支持或资格判定。Policy 可以登记尚待原生
 能力确认的意图；**Brief 冻结和任务准入仍必须核对实际原生方法/版本/单位/频率、
 固定 horizon、数据许可/PIT、预算与暴露**，不能把登记成功视作 SUPPORTED 或 PASS。

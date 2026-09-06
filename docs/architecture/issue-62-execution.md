@@ -388,3 +388,28 @@ DEMO helper始终保留FIXTURE且不能审批，反馈正例必须先真实执�
 生产测试开关、重标现有fixture、下游真实交易或绕过产品Gate的代码。
 
 此处结果不替代新增Head的GitHub CI和独立Review；完整产品仍按DESIGN验收。
+
+## 2026-09-06：研究用途、Policy/Family 与字段诊断审查修复
+
+基线为 PR Head `6191ceadb79ab2db03c2af1d0f214687200ef2d3`。
+锁住的 DataUseGrant 事实现在包含封闭 allowed_uses；RESEARCH 不能登记
+PORTFOLIO/FORWARD 用途，较高授权仅允许对应准备，不替代后续 Live 发布检查。
+Policy 与 Family 通过原生生成的 UUIDv7 关系列、两个精确复合延迟外键一一绑定，
+同事务可按任一顺序创建；不存在/错项目/错根/额外 Family 均不能永久提交。
+新增 015 迁移审计历史而不改写它，保留 014 的 Brief 作者工作包序号。
+
+指标代码、scope、方法列表及各项字符串的边界由原生 utoipa 发布到两份生成合同，
+不手写第二套 schema。精确 Decimal 比较器保持不变，阈值错误现在指向真正的
+缺失/多余端点，BETWEEN 倒序同时标记两端，不向客户端回显数值。
+
+修复前对原 6191 源码实跑：6 项真实 PostgreSQL 回归、1 项原生 schema 回归、
+1 项 Domain 诊断回归均复现失败。修复后新增总计 13 项回归，包括 10 项真实 PG、
+1 项真实 HTTP、1 项生成 schema、1 项比较器诊断；还覆盖合法历史升级、坏历史
+整体回滚、生成列不可覆盖和用途矩阵。原并发测试的 pg_stat_activity 精确查询
+前缀同步新增 allowed_uses 字段，仍须观察真实 PostgreSQL 锁等待，未删除断言。
+
+当前候选源使用原样 Cargo.lock、Rust 1.98.0、真实 PostgreSQL 18.1/PGMQ 1.10.0
+执行全部 273 项 workspace/all-target 测试：0 失败、0 忽略。严格 Clippy、fmt、
+全目标构建和两份原生生成合同已核对；204 Decimal、242 Bigint 共享语料通过。
+本地结果不代表新提交 CI 或独立审查已通过；这些仍必须针对实际推送 Head 完成。
+本增量不改变完整 W0–W8/T01–T42 验收、Draft 状态或 Codex review-only 边界。

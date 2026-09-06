@@ -33,6 +33,26 @@ impl InputPurpose {
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum DataUse {
+    Research,
+    ResearchAndPaper,
+    ResearchPaperLive,
+}
+impl DataUse {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Research => "RESEARCH",
+            Self::ResearchAndPaper => "RESEARCH_AND_PAPER",
+            Self::ResearchPaperLive => "RESEARCH_PAPER_LIVE",
+        }
+    }
+    pub fn permits_preparation(self, purpose: InputPurpose) -> bool {
+        !matches!(purpose, InputPurpose::Portfolio | InputPurpose::Forward)
+            || matches!(self, Self::ResearchAndPaper | Self::ResearchPaperLive)
+    }
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum DataPartition {
     Discovery,
     Validation,
@@ -237,11 +257,17 @@ pub struct SelectionRuleV1 {
     pub comparison_input_set_id: Id,
     pub execution_assumptions_id: Id,
     pub evaluation_kind: SelectionEvaluationKind,
+    #[schema(min_length = 1, max_length = 120)]
     pub metric_code: String,
+    #[schema(min_length = 1, max_length = 120)]
     pub metric_scope: String,
+    #[schema(min_length = 1, max_length = 120)]
     pub method_id: String,
+    #[schema(min_length = 1, max_length = 120)]
     pub method_version: String,
+    #[schema(min_length = 1, max_length = 120)]
     pub unit: String,
+    #[schema(min_length = 1, max_length = 120)]
     pub frequency: String,
     pub direction: SelectionDirection,
     #[schema(minimum = 1, maximum = 65535)]
@@ -280,14 +306,17 @@ pub struct EvaluationPolicyView {
     #[schema(minimum = 1, maximum = 2147483647)]
     pub version: u32,
     pub created_at: DateTime<Utc>,
+    #[schema(min_length = 1, max_length = 8000)]
     pub question: String,
     pub selection_rule: SelectionRuleV1,
     pub split_policy: SplitPolicyV1,
+    #[schema(min_items = 1, max_items = 64)]
     pub metric_requirements: Vec<MetricRequirementV1>,
     #[schema(minimum = 1, maximum = 2147483647)]
     pub minimum_observations: u32,
     pub maximum_missing_fraction: DecimalValue,
     pub require_real_data: bool,
+    #[schema(max_items = 64)]
     pub required_capabilities: Vec<String>,
     #[schema(minimum = 1, maximum = 2147483647)]
     pub maximum_sealed_uses_per_lineage: u32,

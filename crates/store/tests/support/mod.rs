@@ -39,6 +39,7 @@ pub async fn fixture(pool: &PgPool, budget: BudgetV1) -> Fixture {
     let universe = Id::new();
     let assumptions = Id::new();
     let policy = Id::new();
+    let family = Id::new();
     let brief = Id::new();
     let cycle = Id::new();
     let input_set = Id::new();
@@ -55,7 +56,9 @@ pub async fn fixture(pool: &PgPool, budget: BudgetV1) -> Fixture {
     sqlx::query("INSERT INTO app.execution_assumptions(id,venue_capability_ref,engine_image_ref,price_type,starting_capital,base_currency,fee_schedule_artifact_id,slippage_model,fill_model,cost_assumption_status,calendar_version,settlement_rule_ref) VALUES($1,'fixture','fixture','BAR',100,'USD',$2,$3,$3,'CONSERVATIVE_ASSUMPTION','1','fixture')")
         .bind(assumptions.as_uuid()).bind(artifact.as_uuid()).bind(json!({"schema_version":1})).execute(&mut *tx).await.unwrap();
     sqlx::query("INSERT INTO app.evaluation_policies(id,project_id,version,selection_rule,split_policy,metric_requirements,minimum_observations,maximum_missing_fraction,require_real_data,required_capabilities,maximum_sealed_uses_per_lineage,validity_seconds) VALUES($1,$2,1,$3,$3,'[]',1,0,true,'{}',1,3600)")
-        .bind(policy.as_uuid()).bind(project.as_uuid()).bind(json!({"schema_version":1})).execute(&mut *tx).await.unwrap();
+        .bind(policy.as_uuid()).bind(project.as_uuid()).bind(json!({"schema_version":1,"family_id":family,"root_lineage_id":lineage})).execute(&mut *tx).await.unwrap();
+    sqlx::query("INSERT INTO app.experiment_families(id,project_id,root_lineage_id,question,selection_policy_id) VALUES($1,$2,$3,'isolated SQL regression fixture',$4)")
+        .bind(family.as_uuid()).bind(project.as_uuid()).bind(lineage.as_uuid()).bind(policy.as_uuid()).execute(&mut *tx).await.unwrap();
     let stop = json!({"schema_version":1,"stop_on_qualified_count":1,"stop_on_budget":true,"stop_on_no_improvement_trials":null,"stop_on_invalid_data":true});
     sqlx::query("INSERT INTO app.research_briefs(id,project_id,version,hypothesis,economic_rationale,universe_version_id,target_kind,horizon_kind,horizon_value,base_currency,evaluation_policy_id,execution_assumptions_id,budget,stop_rule,state,frozen_at) VALUES($1,$2,1,'fixture','fixture',$3,'SCORE','FIXED_BARS',1,'USD',$4,$5,$6,$7,'FROZEN',clock_timestamp())")
         .bind(brief.as_uuid()).bind(project.as_uuid()).bind(universe.as_uuid()).bind(policy.as_uuid()).bind(assumptions.as_uuid())

@@ -1,6 +1,9 @@
 //! QZ preparation invariants only. No split algorithm, estimator or capability registry.
 use crate::{control::text, evidence::thresholds, DomainError};
-use contracts::research::*;
+use contracts::{
+    evidence::{Comparator, MetricRequirementV1},
+    research::*,
+};
 use std::collections::BTreeSet;
 
 /// Static field diagnostics contain no user data, native paths or secret values.
@@ -190,8 +193,7 @@ pub fn evaluation_policy(request: &EvaluationPolicyCreate) -> Result<(), DomainE
         if !metrics.insert((&m.metric_code, &m.scope)) {
             return Err(invalid(field, "DUPLICATE_METRIC"));
         }
-        thresholds(m)
-            .map_err(|_| invalid(format!("{field}.threshold_low"), "EXACT_THRESHOLD_BOUNDS"))?;
+        metric_thresholds(m, &field)?;
         if !(1..=64).contains(&m.method_allowlist.len()) {
             return Err(invalid(format!("{field}.method_allowlist"), "METHOD_COUNT"));
         }
@@ -216,4 +218,30 @@ pub fn evaluation_policy(request: &EvaluationPolicyCreate) -> Result<(), DomainE
         return Err(invalid("selection", "REQUIRED_ALLOWED_METRIC"));
     }
     Ok(())
+}
+
+/// Reuse exact comparison validation; only the invalid field projection differs
+/// by comparator. A reversed interval needs both controls corrected together.
+fn metric_thresholds(m: &MetricRequirementV1, prefix: &str) -> Result<(), DomainError> {
+    if thresholds(m).is_ok() {
+        return Ok(());
+    }
+    let low_missing = m.threshold_low.is_none();
+    let high_missing = m.threshold_high.is_none();
+    let (low, high) = match m.comparator {
+        Comparator::Gt | Comparator::Ge => (low_missing, !high_missing),
+        Comparator::Lt | Comparator::Le => (!low_missing, high_missing),
+        Comparator::Between if low_missing || high_missing => (low_missing, high_missing),
+        Comparator::Between => (true, true),
+    };
+    let fields = [(low, "threshold_low"), (high, "threshold_high")]
+        .into_iter()
+        .filter(|(failed, _)| *failed)
+        .map(|(_, name)| FieldIssue {
+            field: format!("{prefix}.{name}"),
+            code: "EXACT_THRESHOLD_BOUNDS".into(),
+            message: "该阈值端点不符合比较器要求，请检查是否缺失、意外出现或区间倒序。".into(),
+        })
+        .collect();
+    Err(DomainError::Fields(fields))
 }
