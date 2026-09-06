@@ -1,0 +1,37 @@
+name: Temporary locked review development inputs
+on:
+  pull_request:
+    paths: ['.github/workflows/review-development-inputs.yml']
+permissions:
+  contents: read
+jobs:
+  public-inputs:
+    if: github.event.pull_request.number == 63 && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Export public toolchain and exact locked dependency sources only
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
+          mkdir -p /tmp/review-inputs
+          toolchain=$(dirname "$(dirname "$(rustup which --toolchain 1.98.0 rustc)")")
+          tar -C "$toolchain" -czf /tmp/review-inputs/rust-1.98.0.tar.gz .
+          cargo vendor --locked /tmp/review-vendor > /tmp/review-inputs/vendor-config.toml
+          tar -C /tmp -czf /tmp/review-inputs/vendor.tar.gz review-vendor
+          cp Cargo.lock /tmp/review-inputs/Cargo.lock
+          git rev-parse HEAD > /tmp/review-inputs/source-commit.txt
+          git diff --exit-code
+          printf 'Public development tools/dependencies only. No home, credentials, databases or acceptance claims. Remove this workflow after retrieval.\n' > /tmp/review-inputs/SCOPE.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: review-public-inputs-${{ github.event.pull_request.head.sha }}
+          path: /tmp/review-inputs/
+          include-hidden-files: true
+          retention-days: 1
+          if-no-files-found: error
