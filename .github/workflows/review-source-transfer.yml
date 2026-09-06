@@ -1,0 +1,78 @@
+name: Temporary research review source transport
+on:
+  pull_request:
+    paths: ['.github/workflows/review-source-transfer.yml']
+permissions:
+  contents: write
+jobs:
+  source:
+    if: github.event.pull_request.number == 63 && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'rewrite/issue-62-rust-evidence'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+      BASE: 6191ceadb79ab2db03c2af1d0f214687200ef2d3
+      BASE_TREE: 6adb024319120e4996a2bd814f2d6bf1b3ed592e
+      TREE: 469e918b0eacaf193416e8d2cf133c38e1e57bdd
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Verify and upload exact source objects only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EVENT_HEAD"
+          test "$(git rev-parse HEAD^)" = "$BASE"
+          test "$(git rev-parse "$BASE^{tree}")" = "$BASE_TREE"
+          test "$(git diff --name-only "$BASE" HEAD)" = '.github/workflows/review-source-transfer.yml'
+          : > "$RUNNER_TEMP/review.patch.xz"
+          for blob in 7abd6406398e8f6ee8adf77e76b0cea00c9ee8c1 9502b063b354bf846f9f2edac938819a164650f5 bf4589c77d08f73f142f80a7bef1168a7ebe2365; do
+            gh api "repos/$GITHUB_REPOSITORY/git/blobs/$blob" --jq .content | base64 --decode >> "$RUNNER_TEMP/review.patch.xz"
+          done
+          test "$(wc -c < "$RUNNER_TEMP/review.patch.xz")" -eq 13296
+          xz --decompress --stdout "$RUNNER_TEMP/review.patch.xz" > "$RUNNER_TEMP/review.patch"
+          test "$(wc -c < "$RUNNER_TEMP/review.patch")" -eq 52861
+          git -c core.hooksPath=/dev/null checkout --detach "$BASE"
+          git -c core.hooksPath=/dev/null apply --check --index "$RUNNER_TEMP/review.patch"
+          git -c core.hooksPath=/dev/null apply --index "$RUNNER_TEMP/review.patch"
+          test "$(git write-tree)" = "$TREE"
+          git diff --cached --check
+          test ! -e .github/workflows/review-source-transfer.yml
+          test -z "$(git diff --cached --name-only -- Cargo.lock .github/workflows)"
+          mkdir -p "$RUNNER_TEMP/review-source"
+          python3 - <<'PY'
+          import os,json,base64,subprocess
+          from pathlib import Path
+          def git(*args): return subprocess.check_output(['git',*args])
+          def api(path,body):
+              return json.loads(subprocess.check_output(['gh','api','--method','POST',path,'--input','-'],input=json.dumps(body).encode()))
+          repo=os.environ['GITHUB_REPOSITORY']
+          if repo!='zhengui666/QuaZonai': raise SystemExit('repository mismatch')
+          entries=[]
+          for raw in filter(None,git('diff','--cached','--name-only','--no-renames','-z').split(b'\0')):
+              path=raw.decode()
+              metadata,actual=git('ls-files','--stage','--',path).decode().strip().split('\t',1)
+              mode,sha,stage=metadata.split()
+              if actual!=path or stage!='0' or mode!='100644': raise SystemExit('index mismatch')
+              result=api(f'repos/{repo}/git/blobs',{'encoding':'base64','content':base64.b64encode(git('cat-file','blob',sha)).decode()})
+              if result['sha']!=sha: raise SystemExit('blob mismatch')
+              entries.append({'path':path,'mode':mode,'type':'blob','sha':sha})
+          if len(entries)!=17: raise SystemExit('file count mismatch')
+          output={'base':os.environ['BASE'],'base_tree':os.environ['BASE_TREE'],'tree':os.environ['TREE'],'entries':entries}
+          Path(os.environ['RUNNER_TEMP'],'review-source','entries.json').write_text(json.dumps(output,indent=2))
+          result=api(f'repos/{repo}/git/trees',{'base_tree':os.environ['BASE_TREE'],'tree':entries})
+          if result['sha']!=os.environ['TREE']: raise SystemExit('tree mismatch')
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:
+              f.write(f"Uploaded exact Git tree `{result['sha']}`; no commit/ref change, no product execution or acceptance claim.\n")
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: research-review-source-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/review-source/
+          retention-days: 1
+          if-no-files-found: error
