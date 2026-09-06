@@ -1,0 +1,85 @@
+name: Temporary delivery source objects
+on:
+  pull_request:
+    paths: ['.github/workflows/publish-delivery-objects.yml']
+permissions:
+  contents: write
+jobs:
+  upload:
+    if: github.event.pull_request.number == 63 && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'rewrite/issue-62-rust-evidence'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+      VERIFIED_BASE: 0584a0c34ee931bdf7d31f64ee23c6e017ef17ed
+      BASE_TREE: d4fa98522706d8208be821191c191062b92ade9b
+      VERIFIED_TREE: 864214a3efb1933aa757cc863597baba76321c7b
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify and transfer native source objects without executing product code
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EVENT_HEAD"
+          git merge-base --is-ancestor "$VERIFIED_BASE" "$EVENT_HEAD"
+          test "$(git rev-parse "$VERIFIED_BASE^{tree}")" = "$BASE_TREE"
+          mkdir -p "$RUNNER_TEMP/delivery-objects"
+          git archive "$EVENT_HEAD" | gzip > "$RUNNER_TEMP/delivery-objects/event-source.tar.gz"
+          git rev-parse HEAD > "$RUNNER_TEMP/delivery-objects/event-commit.txt"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/delivery-objects/event-tree.txt"
+          : > "$RUNNER_TEMP/delivery.patch.xz"
+          for blob in 1a8c2585f73d143bab960368e9cc93a68d94fa13 7f04dc384bd40d7a368266c1448b2f552f7a5e69; do
+            gh api "repos/$GITHUB_REPOSITORY/git/blobs/$blob" --jq .content | base64 --decode >> "$RUNNER_TEMP/delivery.patch.xz"
+          done
+          test "$(wc -c < "$RUNNER_TEMP/delivery.patch.xz")" -eq 10820
+          test "$(git hash-object "$RUNNER_TEMP/delivery.patch.xz")" = b3a14e62bfcfe287195adee00293e9f8d8bcca81
+          xz --decompress --stdout "$RUNNER_TEMP/delivery.patch.xz" > "$RUNNER_TEMP/delivery.patch"
+          test "$(wc -c < "$RUNNER_TEMP/delivery.patch")" -eq 39484
+          git -c core.hooksPath=/dev/null checkout --detach "$VERIFIED_BASE"
+          git -c core.hooksPath=/dev/null apply --check --index "$RUNNER_TEMP/delivery.patch"
+          git -c core.hooksPath=/dev/null apply --index "$RUNNER_TEMP/delivery.patch"
+          git diff --cached --check
+          test "$(git write-tree)" = "$VERIFIED_TREE"
+          test -z "$(git diff --cached --name-only -- Cargo.lock .github/workflows)"
+          python3 - <<'PY'
+          import base64, json, os, subprocess
+          from pathlib import Path
+          def git(*args):
+              return subprocess.check_output(['git','-c','core.hooksPath=/dev/null',*args])
+          def post(endpoint, body):
+              return json.loads(subprocess.check_output(['gh','api','--method','POST',endpoint,'--input','-'],input=json.dumps(body).encode()))
+          repo=os.environ['GITHUB_REPOSITORY']
+          if repo!='zhengui666/QuaZonai':
+              raise SystemExit('unexpected repository')
+          entries=[]
+          for raw in filter(None,git('diff','--cached','--name-only','--no-renames','-z').split(b'\0')):
+              path=raw.decode()
+              staged=git('ls-files','--stage','--',path).decode().strip()
+              metadata,actual=staged.split('\t',1)
+              mode,sha,stage=metadata.split()
+              if actual!=path or stage!='0' or mode not in ('100644','100755'):
+                  raise SystemExit('invalid staged entry')
+              result=post(f'repos/{repo}/git/blobs',{'encoding':'base64','content':base64.b64encode(git('cat-file','blob',sha)).decode()})
+              if result['sha']!=sha:
+                  raise SystemExit('native blob mismatch')
+              entries.append({'path':path,'mode':mode,'type':'blob','sha':sha})
+          if len(entries)!=12:
+              raise SystemExit('unexpected changed file count')
+          result=post(f'repos/{repo}/git/trees',{'base_tree':os.environ['BASE_TREE'],'tree':entries})
+          if result['sha']!=os.environ['VERIFIED_TREE']:
+              raise SystemExit('native tree mismatch')
+          Path(os.environ['RUNNER_TEMP'],'delivery-objects','entries.json').write_text(json.dumps(entries,indent=2)+'\n')
+          PY
+          printf 'Verified source objects only. No product execution, credentials export, commit/ref update or acceptance claim.\n' > "$RUNNER_TEMP/delivery-objects/SCOPE.txt"
+          printf 'Uploaded native tree `%s`; preserve parallel changes during integration.\n' "$VERIFIED_TREE" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: delivery-objects-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/delivery-objects/
+          retention-days: 1
+          if-no-files-found: error
