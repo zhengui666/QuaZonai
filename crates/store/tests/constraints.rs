@@ -128,36 +128,6 @@ async fn input_order_is_unique_and_publication_freezes_members(pool: PgPool) {
     );
 }
 
-async fn candidate(pool: &PgPool, f: &Fixture, mandate: Id) -> Id {
-    let id = Id::new();
-    sqlx::query("INSERT INTO app.portfolio_candidates(id,project_id,mandate_id,input_set_id,decision_asof,run_id,solver_status,evidence_status,diagnostics_artifact_id,current_weights_source) VALUES($1,$2,$3,$4,clock_timestamp(),$5,'OPTIMAL','VALID',$6,'NONE')")
-        .bind(id.as_uuid()).bind(f.project.as_uuid()).bind(mandate.as_uuid()).bind(f.input_set.as_uuid()).bind(f.run.as_uuid()).bind(f.artifact.as_uuid()).execute(pool).await.unwrap();
-    id
-}
-async fn portfolio(pool: &PgPool, f: &Fixture) -> (Id, Id, Id) {
-    let mandate = Id::new();
-    sqlx::query("INSERT INTO app.portfolio_mandates(id,project_id,version,objective,risk_measure,base_currency,capital_assumption,universe_version_id,covariance_estimator,alpha_ensemble,optimizer,constraints,rebalance_schedule,required_evaluation_policy_id,execution_assumptions_id,exposure_tolerance) SELECT $1,b.project_id,1,'MIN_RISK','VARIANCE','USD',100,b.universe_version_id,'{\"schema_version\":1}','{\"schema_version\":1}','{\"schema_version\":1}','{\"schema_version\":1}','{\"schema_version\":1}',b.evaluation_policy_id,b.execution_assumptions_id,0.00001 FROM app.research_briefs b WHERE b.project_id=$2")
-        .bind(mandate.as_uuid()).bind(f.project.as_uuid()).execute(pool).await.unwrap();
-    let candidate = candidate(pool, f, mandate).await;
-    let evaluation = Id::new();
-    sqlx::query("INSERT INTO app.evaluations(id,project_id,subject_candidate_id,input_set_id,policy_id,run_id,evaluation_kind,execution_status,evidence_status,decision,report_artifact_id,method_versions_artifact_id,concluded_at,valid_until) SELECT $1,$2,$3,$4,b.evaluation_policy_id,$5,'PORTFOLIO','SUCCEEDED','VALID','PASS',$6,$6,clock_timestamp(),clock_timestamp()+interval '1 hour' FROM app.research_briefs b WHERE b.project_id=$2")
-        .bind(evaluation.as_uuid()).bind(f.project.as_uuid()).bind(candidate.as_uuid()).bind(f.input_set.as_uuid()).bind(f.run.as_uuid()).bind(f.artifact.as_uuid()).execute(pool).await.unwrap();
-    (mandate, candidate, evaluation)
-}
-
-async fn release(
-    pool: &PgPool,
-    f: &Fixture,
-    mandate: Id,
-    candidate: Id,
-    evaluation: Id,
-) -> Result<Id, sqlx::Error> {
-    let id = Id::new();
-    sqlx::query("INSERT INTO app.releases(id,candidate_id,package_artifact_id,package_schema_version,mandate_id,evaluation_id,market_capability_version,asof,valid_from,valid_until,environment) VALUES($1,$2,$3,'fixture',$4,$5,'fixture',now(),now(),now()+interval '1 hour','DEMO')")
-        .bind(id.as_uuid()).bind(candidate.as_uuid()).bind(f.artifact.as_uuid()).bind(mandate.as_uuid()).bind(evaluation.as_uuid()).execute(pool).await?;
-    Ok(id)
-}
-
 #[sqlx::test(migrations = "../../migrations")]
 async fn release_cannot_borrow_another_candidates_pass_evaluation(pool: PgPool) {
     let f = fixture(&pool, budget()).await;
@@ -209,12 +179,16 @@ async fn new_database_migrations_are_repeatable_without_legacy_side_effects(pool
     store.migrate().await.unwrap();
     let tables:i64=sqlx::query_scalar("SELECT count(*) FROM information_schema.tables WHERE table_schema='app' AND table_type='BASE TABLE'").fetch_one(&pool).await.unwrap();
     assert_eq!(tables, 65);
-    let migration_count: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations WHERE success")
-            .fetch_one(&pool)
+    let applied: Vec<i64> =
+        sqlx::query_scalar("SELECT version FROM _sqlx_migrations WHERE success ORDER BY version")
+            .fetch_all(&pool)
             .await
             .unwrap();
-    assert_eq!(migration_count, 3);
+    let expected: Vec<_> = sqlx::migrate!("../../migrations")
+        .iter()
+        .map(|migration| migration.version)
+        .collect();
+    assert_eq!(applied, expected);
 }
 
 #[sqlx::test(migrations = "../../migrations")]
