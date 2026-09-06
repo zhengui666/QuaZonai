@@ -161,38 +161,9 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             application_role,
         } => {
             let store = Store::connect(&database.database_url).await?;
-            let pool = store.native_pool();
-            let mut guard = pool.begin().await?;
-            // Native transaction-scoped lock also serializes the third-party
-            // session backend's own migration, without copying its DDL.
-            tower_sessions_sqlx_store::sqlx::query("SELECT pg_advisory_xact_lock(63062026)")
-                .execute(&mut *guard)
+            store
+                .migrate_with_application_role(application_role.as_deref())
                 .await?;
-            store.migrate().await?;
-            PostgresStore::new(pool.clone()).migrate().await?;
-            if let Some(role) = application_role {
-                let exists: bool = tower_sessions_sqlx_store::sqlx::query_scalar(
-                    "SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname=$1)",
-                )
-                .bind(&role)
-                .fetch_one(&pool)
-                .await?;
-                if !exists {
-                    return Err("application role does not exist; create it with native PostgreSQL administration first".into());
-                }
-                let quoted: String =
-                    tower_sessions_sqlx_store::sqlx::query_scalar("SELECT quote_ident($1)")
-                        .bind(role)
-                        .fetch_one(&pool)
-                        .await?;
-                for statement in [format!("GRANT USAGE ON SCHEMA app,tower_sessions,pgmq TO {quoted}"),
-                    format!("GRANT SELECT,INSERT,UPDATE ON ALL TABLES IN SCHEMA app TO {quoted}"),
-                    format!("GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA tower_sessions,pgmq TO {quoted}"),
-                    format!("GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA pgmq TO {quoted}")]{
-                    tower_sessions_sqlx_store::sqlx::query(&statement).execute(&pool).await?;
-                }
-            }
-            guard.commit().await?;
             println!("Domain and native session migrations completed. Run serve with the non-owner application identity.");
         }
         Command::Bootstrap { database } => {

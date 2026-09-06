@@ -47,3 +47,13 @@ cargo run --locked -p server -- prune-unpublished-verifiers --state-dir ./var
 ## 尚待完成的产品部署验收
 
 研究/组合/交付 UI、Worker/MCP/Codex 真闭环、受信任 runtime 与 job 隔离、多 Alpha/共享资金、Paper/Live/Forward/Wake，以及完整恢复/迁移仍未完成。普通 PR CI 不携带生产秘密，真实受保护验收只运行经过审查的固定 Head。QZ 不持有 Broker 凭据或真实执行控制权。
+
+### 完整迁移命令的提交边界
+
+`cargo run --locked -p server -- migrate --application-role '<已创建的运行角色>'`
+在一个专用连接/外层事务内运行完整领域与原生 session DDL、验证表合同并授予
+运行角色 DML 权限，最后一次性提交。执行前停止应用写入并完成备份；这不是
+零停机承诺。不再额外运行独立的 `PostgresStore::migrate()`。角色不存在、既有
+session 表不兼容或任一授权失败时，不保留半次升级及 epoch 失效副作用。
+已有数据/会话不会被删表“修复”。网络在 COMMIT 阶段断开时结果未知，应在
+主库重连后通过原生迁移记录和权限复核，不直接宣称回滚或重复恢复备份。

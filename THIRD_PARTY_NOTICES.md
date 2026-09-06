@@ -23,3 +23,33 @@ Original QuaZonai code remains AGPL-3.0-only under LICENSE/NOTICE. Third-party s
 | sqlx-0.8.6 | MIT OR Apache-2.0 | Rust authentication / HTTP / persistence / CLI integration |
 
 A dependency inventory is not a completed license audit. Before distribution, generate a complete license report/SBOM for the exact resolved graph, inspect upstream license texts and NOTICE requirements, and comply with LGPL requirements for redistribution/linking (including relinking/source obligations as applicable). No license is changed by a directory rename or rewrite. The repository does not vendor Cargo dependencies or toolchains.
+
+## Native PostgreSQL session-schema adaptation
+
+`migrations/202609060009_native_sessions.sql` reuses the default DDL from
+`tower-sessions-sqlx-store 0.15.0`, upstream commit
+`b34a2f363217c0c557ee332c8847f4e2d1b5e6b4`, `sqlx-store/src/postgres_store.rs`.
+The SQL is executed by SQLx in the deployment transaction; the upstream Rust
+SessionStore remains unmodified. Upstream MIT notice follows:
+
+MIT License
+
+Copyright (c) 2024 Max Countryman
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

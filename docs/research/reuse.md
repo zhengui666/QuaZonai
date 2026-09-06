@@ -116,3 +116,23 @@ substring in platform/suffix text. Real native stdio execution is still required
 - https://github.com/openai/codex/blob/rust-v0.144.4/codex-rs/app-server/src/request_processors/initialize_processor.rs
 - https://www.postgresql.org/docs/18/sql-createtrigger.html (native deferred aggregate publication)
 - https://www.postgresql.org/docs/18/explicit-locking.html (native row locks and post-wait rechecks)
+
+## Complete deployment transaction and native session DDL
+
+The pinned `tower-sessions-sqlx-store 0.15.0` exposes only `migrate(&self)`;
+it acquires and commits a new transaction from its private PgPool. It cannot
+participate in the caller's migration transaction. Reusing this method after
+a committed domain migration is not atomic. Pool injection, a fork, a new
+SessionStore, or pretending an advisory lock makes separate commits atomic
+would add risk without providing the required behavior.
+
+The minimal adapter reuses its two default-schema DDL statements in an additive
+SQLx migration, preserving MIT attribution. Native SQLx still owns versioning,
+checksums, transaction/savepoint execution, and migration locks. Native
+PostgresStore still owns all session serialization and CRUD. Native catalog
+comparison against a table produced by the actual upstream migrator, plus real
+upstream CRUD using the application role, guards against drift. Existing schema
+mismatches fail the deployment without deleting or rewriting user sessions.
+
+Source: https://github.com/maxcountryman/tower-sessions-stores/blob/b34a2f363217c0c557ee332c8847f4e2d1b5e6b4/sqlx-store/src/postgres_store.rs
+License: https://github.com/maxcountryman/tower-sessions-stores/blob/b34a2f363217c0c557ee332c8847f4e2d1b5e6b4/LICENSE

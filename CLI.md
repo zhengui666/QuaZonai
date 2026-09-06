@@ -55,3 +55,13 @@ DATABASE_URL=postgres://TEST_USER:TEST_PASSWORD@127.0.0.1:55432/postgres \
 ```
 
 SQLx 创建独立测试数据库并执行提交的迁移；不要使用生产 DATABASE_URL。HTTP 测试运行真实 Axum、Argon2、TOTP、AEAD、PostgreSQL Session Store，并另测非 owner 角色与 loopback TCP。它们不是完整研究/组合/交付的验收结果。
+
+### 完整迁移命令的提交边界
+
+`cargo run --locked -p server -- migrate --application-role '<已创建的运行角色>'`
+在一个专用连接/外层事务内运行完整领域与原生 session DDL、验证表合同并授予
+运行角色 DML 权限，最后一次性提交。执行前停止应用写入并完成备份；这不是
+零停机承诺。不再额外运行独立的 `PostgresStore::migrate()`。角色不存在、既有
+session 表不兼容或任一授权失败时，不保留半次升级及 epoch 失效副作用。
+已有数据/会话不会被删表“修复”。网络在 COMMIT 阶段断开时结果未知，应在
+主库重连后通过原生迁移记录和权限复核，不直接宣称回滚或重复恢复备份。
