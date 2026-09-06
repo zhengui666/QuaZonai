@@ -1,0 +1,82 @@
+name: Temporary research source objects
+on:
+  pull_request:
+    paths: ['.github/workflows/publish-research-objects.yml']
+permissions:
+  contents: write
+jobs:
+  upload-objects:
+    if: github.event.pull_request.number == 63 && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'rewrite/issue-62-rust-evidence'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+      VERIFIED_BASE: a41e8709576d344919ffbe121b2619932793fe0d
+      BASE_TREE: bd2c8a7ef266c846d9d5ddadbfb0fc7c1441112e
+      VERIFIED_TREE: c7957cf31a0cd0f177bef1618c2185f14ff46b19
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify and upload immutable source objects without executing product code or changing refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EVENT_HEAD"
+          git merge-base --is-ancestor "$VERIFIED_BASE" "$EVENT_HEAD"
+          test "$(git rev-parse "$VERIFIED_BASE^{tree}")" = "$BASE_TREE"
+          : > "$RUNNER_TEMP/research.patch.xz"
+          for blob in a153b76797c758e36e13c0d0c39c321909e6ba2d 5f3a7be1b5b29acce55e8a3163ed090d42948d2d 6e4c3f91c146892165e708c12bc2d76d331b0bc7 eaa87d57929bebcf8f8017f77f88fae8ecf32dc6 64f9f8ec58f59f96df082446e92d3f1b7b3257fd ae0ec288055669763ca5014d65c1eecdaa2823a0 47331ad4b9210f86da3350c9f45a104fcf36d45a 52ffb63741fe4278ea6cee1d5859040d9dea5155 48c2632e5fc973f699febeeb572014a486bb3af8; do
+            gh api "repos/$GITHUB_REPOSITORY/git/blobs/$blob" --jq .content | base64 --decode >> "$RUNNER_TEMP/research.patch.xz"
+          done
+          test "$(wc -c < "$RUNNER_TEMP/research.patch.xz")" -eq 40392
+          xz --decompress --stdout "$RUNNER_TEMP/research.patch.xz" > "$RUNNER_TEMP/research.patch"
+          test "$(wc -c < "$RUNNER_TEMP/research.patch")" -eq 281298
+          git -c core.hooksPath=/dev/null checkout --detach "$VERIFIED_BASE"
+          git -c core.hooksPath=/dev/null apply --check --index "$RUNNER_TEMP/research.patch"
+          git -c core.hooksPath=/dev/null apply --index "$RUNNER_TEMP/research.patch"
+          test "$(git write-tree)" = "$VERIFIED_TREE"
+          git diff --cached --check
+          test ! -e .github/workflows/publish-research-objects.yml
+          test -z "$(git diff --cached --name-only -- Cargo.lock .github/workflows migrations/202609050001_domain.sql migrations/202609060001_browser_auth.sql migrations/202609060002_authority_invariants.sql migrations/202609060003_evidence_bindings.sql migrations/202609060004_doctor_boundary.sql migrations/202609060005_evaluation_publication.sql migrations/202609060006_upgrade_cutover.sql migrations/202609060007_control_authority.sql migrations/202609060008_machine_attempts.sql migrations/202609060009_native_sessions.sql migrations/202609060010_authority_repair.sql)"
+          mkdir -p "$RUNNER_TEMP/research-objects"
+          python3 - <<'PY'
+          import base64, json, os, subprocess
+          from pathlib import Path
+          def git(*args):
+              return subprocess.check_output(['git','-c','core.hooksPath=/dev/null',*args])
+          repo=os.environ['GITHUB_REPOSITORY']
+          if repo!='zhengui666/QuaZonai':
+              raise SystemExit('unexpected repository')
+          entries=[]
+          for raw in filter(None,git('diff','--cached','--name-only','--no-renames','-z').split(b'\0')):
+              path=raw.decode()
+              staged=git('ls-files','--stage','--',path).decode().strip()
+              if not staged:
+                  raise SystemExit('unexpected deletion')
+              metadata,actual=staged.split('\t',1)
+              mode,sha,stage=metadata.split()
+              if actual!=path or stage!='0' or mode not in ('100644','100755'):
+                  raise SystemExit('invalid staged entry')
+              body={'encoding':'base64','content':base64.b64encode(git('cat-file','blob',sha)).decode()}
+              result=json.loads(subprocess.check_output(['gh','api','--method','POST',f'repos/{repo}/git/blobs','--input','-'],input=json.dumps(body).encode()))
+              if result['sha']!=sha:
+                  raise SystemExit('native blob mismatch')
+              entries.append({'path':path,'mode':mode,'type':'blob','sha':sha})
+          if len(entries)!=28:
+              raise SystemExit('unexpected changed file count')
+          manifest={'base':os.environ['VERIFIED_BASE'],'base_tree':os.environ['BASE_TREE'],'tree':os.environ['VERIFIED_TREE'],'entries':entries}
+          Path(os.environ['RUNNER_TEMP'],'research-objects','entries.json').write_text(json.dumps(manifest,indent=2)+'\n')
+          PY
+          git archive "$VERIFIED_TREE" | gzip > "$RUNNER_TEMP/research-objects/source.tar.gz"
+          printf 'Verified native source objects only; no product execution, no commit/ref update and no CI acceptance claim.\n' > "$RUNNER_TEMP/research-objects/SCOPE.txt"
+          printf 'Uploaded 28 immutable source objects for tree `%s`; executor must integrate without overwriting parallel changes.\n' "$VERIFIED_TREE" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: research-source-c7957cf31a0cd0f177bef1618c2185f14ff46b19
+          path: ${{ runner.temp }}/research-objects/
+          retention-days: 1
+          if-no-files-found: error
