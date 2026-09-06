@@ -114,6 +114,7 @@ struct Mission {
     stop: StopRuleV1,
     project_state: ProjectState,
     cycle_state: String,
+    brief_state: String,
     run_state: String,
     run_deadline: DateTime<Utc>,
     now: DateTime<Utc>,
@@ -176,11 +177,20 @@ async fn lock_mission(
         "ARCHIVED" => ProjectState::Archived,
         _ => return Err(StoreError::Invalid("project_state")),
     };
-    let cycle=sqlx::query("SELECT c.state,c.budget_snapshot,b.stop_rule FROM app.research_cycles c JOIN app.research_briefs b ON b.id=c.brief_id WHERE c.id=$1 AND c.project_id=$2 FOR UPDATE OF c")
+    let cycle=sqlx::query("SELECT state,budget_snapshot,brief_id::uuid FROM app.research_cycles WHERE id=$1 AND project_id=$2 FOR UPDATE")
         .bind(cycle_id).bind(project_id).fetch_one(&mut **tx).await?;
+    // Lock the referenced Brief too: a mutable draft is never an admission
+    // contract. This lock is held through the reservation and queue commit.
+    let brief = sqlx::query(
+        "SELECT state,stop_rule FROM app.research_briefs WHERE id=$1 AND project_id=$2 FOR SHARE",
+    )
+    .bind(cycle.try_get::<Uuid, _>("brief_id")?)
+    .bind(project_id)
+    .fetch_one(&mut **tx)
+    .await?;
     let budget: BudgetV1 = serde_json::from_value(cycle.try_get("budget_snapshot")?)
         .map_err(|_| StoreError::Invalid("budget_snapshot"))?;
-    let stop: StopRuleV1 = serde_json::from_value(cycle.try_get("stop_rule")?)
+    let stop: StopRuleV1 = serde_json::from_value(brief.try_get("stop_rule")?)
         .map_err(|_| StoreError::Invalid("stop_rule"))?;
     let run=sqlx::query("SELECT kind,state,active_attempt_id::uuid,deadline_at::timestamptz FROM app.runs WHERE id=$1 AND project_id=$2 AND cycle_id=$3 FOR UPDATE")
         .bind(run_id.as_uuid()).bind(project_id).bind(cycle_id).fetch_one(&mut **tx).await?;
@@ -218,6 +228,7 @@ async fn lock_mission(
         stop,
         project_state,
         cycle_state: cycle.try_get("state")?,
+        brief_state: brief.try_get("state")?,
         run_state: run.try_get("state")?,
         run_deadline: run.try_get("deadline_at")?,
         now,
@@ -228,6 +239,7 @@ impl Mission {
     fn admit(&self, deadline: DateTime<Utc>) -> Result<(), StoreError> {
         if self.project_state != ProjectState::Active
             || self.cycle_state != "RUNNING"
+            || self.brief_state != "FROZEN"
             || self.run_state != "RUNNING"
         {
             return Err(DomainError::AdmissionClosed.into());
@@ -574,17 +586,27 @@ impl Store {
         }
         let mut tx = self.pool.begin().await?;
         let item = load_reservation(&mut tx, reservation_id).await?;
-        let mission = lock_mission(&mut tx, item.run_id, fence).await?;
         if item.attempt_id != fence.attempt_id {
             return Err(DomainError::StaleAttempt.into());
         }
-        if let Some(old) = receipt(&mut tx, reservation_id).await? {
-            if old != *usage {
-                return Err(StoreError::Conflict);
-            }
+        // An exact immutable receipt is a read, not another settlement. A lost
+        // response must remain recoverable after this worker loses its lease.
+        if exact_receipt(&mut tx, reservation_id, usage).await? {
             tx.commit().await?;
             return Ok(());
         }
+        let mission = match lock_mission(&mut tx, item.run_id, fence).await {
+            Ok(mission) => Some(mission),
+            Err(StoreError::Domain(DomainError::StaleAttempt)) => None,
+            Err(error) => return Err(error),
+        };
+        // Another owner may have committed while we waited for the Mission
+        // locks. Re-read before treating even a now-stale fence as a failure.
+        if exact_receipt(&mut tx, reservation_id, usage).await? {
+            tx.commit().await?;
+            return Ok(());
+        }
+        let mission = mission.ok_or(DomainError::StaleAttempt)?;
         if usage.currency != item.cost_currency
             || usage.actual_cost.is_some() != item.reserved_cost.is_some()
         {
@@ -633,6 +655,18 @@ impl Store {
         mission.usage(&mut tx).await?;
         tx.commit().await?;
         Ok(())
+    }
+}
+
+async fn exact_receipt(
+    tx: &mut Tx<'_>,
+    reservation_id: Id,
+    expected: &UsageReceipt,
+) -> Result<bool, StoreError> {
+    match receipt(tx, reservation_id).await? {
+        Some(old) if old == *expected => Ok(true),
+        Some(_) => Err(StoreError::Conflict),
+        None => Ok(false),
     }
 }
 
