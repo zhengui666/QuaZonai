@@ -1,0 +1,33 @@
+name: Temporary PostgreSQL review libraries
+on:
+  pull_request:
+    paths: ['.github/workflows/review-postgres-tools.yml']
+permissions:
+  contents: read
+jobs:
+  public-libraries:
+    if: github.event.pull_request.number == 63 && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      PGMQ_IMAGE: ghcr.io/pgmq/pg18-pgmq@sha256:bfb3537068ce453609744518ece92b178ac89dff53747d47ca6fab91c2fc66a6
+    steps:
+      - name: Export only libraries of public image tools, never database or credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/postgres-review
+          docker pull "$PGMQ_IMAGE"
+          docker run --rm --entrypoint bash "$PGMQ_IMAGE" -ceu '
+            ldd /usr/lib/postgresql/18/bin/{postgres,psql,initdb,pg_ctl,pg_dump,pg_restore} | awk '\''/=> \// {print $3}'\'' | sort -u > /tmp/public-libraries.txt
+            test -s /tmp/public-libraries.txt
+            tar --dereference -czf - -T /tmp/public-libraries.txt
+          ' > /tmp/postgres-review/public-libraries.tar.gz
+          docker image inspect --format '{{json .RepoDigests}}' "$PGMQ_IMAGE" > /tmp/postgres-review/image.json
+          printf 'Public image dynamic libraries only; no user data, credentials or acceptance claims. Remove this workflow after retrieval.\n' > /tmp/postgres-review/SCOPE.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: postgres-review-libraries-${{ github.event.pull_request.head.sha }}
+          path: /tmp/postgres-review/
+          retention-days: 1
+          if-no-files-found: error
