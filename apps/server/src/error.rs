@@ -170,6 +170,16 @@ impl From<StoreError> for ApiError {
                 "IDEMPOTENCY_CONFLICT",
                 "此幂等键已用于不同请求，不能重用。",
             ),
+            StoreError::EventCursorExpired => Self::new(
+                StatusCode::GONE,
+                "EVENT_CURSOR_EXPIRED",
+                "事件游标不可继续使用，请重新载入运行快照。",
+            ),
+            StoreError::EventContractUnsupported => Self::new(
+                StatusCode::CONFLICT,
+                "CONTRACT_VERSION_UNSUPPORTED",
+                "持久事件合同不受当前客户端版本支持。",
+            ),
             StoreError::Integrity | StoreError::SecretCleanup => Self::internal(),
             StoreError::NotFound => Self::new(
                 StatusCode::NOT_FOUND,

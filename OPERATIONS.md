@@ -67,3 +67,27 @@ CHECK/额外唯一性、触发器、规则、继承及降低时间精度。错�
 `native_session_schema_incompatible`，原会话字节、epoch、旧迁移记录全部保留。
 应先检查并由操作者明确处理结构冲突再重跑，不删除用户会话或绕过检查。
 使用原生默认排序/opclass 的简单非唯一 B-tree（例如 expiry_date 查询索引）允许保留。
+
+## Run admission / Attempt / SSE 运维边界
+
+新增迁移 `202609060011_run_lifecycle.sql` 由既有原生 SQLx 部署事务执行：添加
+不可变 admission/terminal receipt 及约束，不重写已应用迁移。运行身份仍只有现有
+最小 DML；不能依赖管理员身份规避保护。升级新增的两张表由同一既有授权阶段处理。
+
+队列重复出现不等于重新执行许可。先看当前 Run/Attempt/owner_epoch、域租约和
+发送意图；SENT_UNKNOWN 或 ACKNOWLEDGED 应查询稳定外部 ID，不盲目重新提交。
+接管保留既有 Attempt 和冻结的 runtime 配置。未知或未确认的取消保留待对账状态；
+不要删除 Run/回执、手工降低计数、清空 PGMQ 或将未知结果改成成功。
+
+正式结果回执完成后才允许 archive；archive 响应丢失可按同一原生 message_id 重读
+归档结果。实验次数转入已使用，失败/取消同样保留，CPU 预约为累计承诺不重复退款。
+模型 token/费用仍由原有逐 Turn 账本独立结算，不把计算取消当成模型费用退款。
+
+SSE 为每批最多16条的持久查询，不要求内存消息通知和 sticky session；每批重新核验
+权限。反向代理不得缓存事件或业务 API，应允许 text/event-stream 与至少10秒心跳。
+60秒连接期限与每进程32连接上限只控制浏览器读资源，不取消计算或下游交付。
+运行角色凭据和 runtime_snapshot 中的 credential_ref 不向事件流或公开 Run DTO 输出。
+
+这些是受信任 Store 与 HTTP 的已实现入口，不是远端 Job 网关/隔离容器、完整研究
+调度、科学 PASS 或交付资格的验收。当前不提供任意任务 JSON、任意 URL 或任意
+命令的公开 enqueue/terminal 入口；尚未接通的研究服务必须使用同一准入事务。

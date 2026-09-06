@@ -3395,6 +3395,7 @@ dependencies = [
  "clap",
  "contracts",
  "domain",
+ "futures-util",
  "integrations",
  "reqwest",
  "serde",

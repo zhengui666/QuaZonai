@@ -92,3 +92,9 @@ capability；正常登录只提交六位 TOTP。注销、设备撤销、认证 e
 ## License
 
 原创代码保持[AGPL-3.0-only](LICENSE)。第三方代码保留上游许可证，Nautilus示例保留LGPL版权说明，见[NOTICE](NOTICE)和[第三方说明](THIRD_PARTY_NOTICES.md)。
+
+### Run 与事件接口增量
+
+已实现受信任 Store 的事务准入、同 Attempt 接管/取消/终态回执，以及带认证的
+Run 查询、取消和持久 SSE HTTP；完整路径和权限见 [CLI](CLI.md)。这不代表
+完整 Worker/远端隔离、研究业务、科学资格、前端或交付闭环已完成。

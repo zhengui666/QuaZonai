@@ -160,3 +160,36 @@ SET ROLE 隐藏 session_user 和良性对照。测试中的对象/账号都是�
 明确 `pg_read_server_files`、`pg_write_server_files`、`pg_execute_server_program`
 可绕过数据库级检查并取得相当于超级用户的权限。因此同一运行角色检查也拒绝直接或
 可管理成员链上的这些原生角色；数据导入使用受限客户端协议而非授予服务器文件权限。
+
+## Run 生命周期与持久 SSE（2026-09-06）
+
+本路径全部使用 Rust 与 PostgreSQL 原生能力，没有 Python 例外。
+
+| 所需能力 | 已锁定的复用对象 | QZ 保留的最小职责 |
+|---|---|---|
+| 事务与数据库锁 | SQLx 0.8.6 `Transaction`；PostgreSQL18行锁/FK/trigger | 冻结预算、精确 Run/Attempt 关联、唯一回执与终态 |
+| 至少一次任务投递 | PGMQ1.10.0 `send`/`read`/`archive` | 先持久化发送意图、同 Attempt 接管、旧 epoch 拒绝；不声称 exactly-once 外部执行 |
+| 事件流 | Axum0.8.9 `Sse`/`Event`/`KeepAlive`；futures-util0.3.34 `unfold` | 从现有 run_events 按原生序列分页，每批核验角色与作用域 |
+| 连接与时限 | Tokio1.53.1 Semaphore/timeout | 每进程32条流、每批16条、60秒重连，不另造消息总线/后台广播任务 |
+
+依据：
+- https://docs.rs/sqlx/0.8.6/sqlx/struct.Transaction.html
+- https://www.postgresql.org/docs/18/explicit-locking.html
+- https://pgmq.github.io/pgmq/api/sql/functions/
+- 锁定 Axum 源码 `src/response/sse.rs`：原生 Event 编码/JSON/KeepAlive。
+- https://docs.rs/futures-util/0.3.34/futures_util/stream/fn.unfold.html
+- https://www.postgresql.org/docs/18/plpgsql-trigger.html
+
+PGMQ visibility 不是业务租约；QZ 只消费其原生表和函数，不增加另一种队列。
+Run/预算/事件/PGMQ 入队同事务，正式终态回执与预算转消耗同事务，最后才能 archive。
+SSE 不依赖易丢的内存通知；断线只丢弃流及许可，不发送取消业务命令。
+
+首次运行新端到端 Store 用例暴露了既有零参数 `guard_revision()` 的真实 PostgreSQL
+错误：`FOREACH expression must not be null`。修复对 TG_ARGV 作空数组归一化，保留
+id/created_at/具名外键保护及原生 revision 增量，并通过新增迁移发布，不修改已应用
+迁移。它允许正常 runtime 配置变更，但已发送任务仍绑定原 endpoint/credential_ref，
+不能因新配置被重定向。runtime 行锁等待后的 lease/deadline 复核使用 DB 当前时间。
+
+原生数据库/真实 loopback HTTP 测试不替代远端隔离、真实数据、原生 Codex 工具循环
+或科学资格验收。终态接口只对受信任内部适配器开放，manifest 元数据检查不等于实际
+文件内容/模型/科学结论的验证；不存在接收任意 URL/命令/终态的公开接口。

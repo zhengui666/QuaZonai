@@ -5,6 +5,7 @@ mod access;
 pub mod auth;
 pub mod control;
 pub mod error;
+pub mod runs;
 pub mod secrets;
 
 use axum::{
@@ -88,6 +89,7 @@ pub struct AppState {
     policy: WebPolicy,
     pub crypto_slots: Arc<Semaphore>,
     pub machine_crypto_slots: Arc<Semaphore>,
+    pub run_stream_slots: Arc<Semaphore>,
 }
 impl AppState {
     pub fn new(store: Store, vault: SecretVault, policy: WebPolicy) -> Self {
@@ -97,6 +99,7 @@ impl AppState {
             policy,
             crypto_slots: Arc::new(Semaphore::new(2)),
             machine_crypto_slots: Arc::new(Semaphore::new(2)),
+            run_stream_slots: Arc::new(Semaphore::new(32)),
         }
     }
 }
@@ -150,6 +153,10 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
             "/api/v2/machine-credentials/{id}/revoke",
             post(control::revoke_credential),
         )
+        .route("/api/v2/runs", get(runs::list))
+        .route("/api/v2/runs/{id}", get(runs::get))
+        .route("/api/v2/runs/{id}/cancel", post(runs::cancel))
+        .route("/api/v2/runs/{id}/events", get(runs::events))
         .route("/api/v2/auth/machine", get(control::machine_session))
         .route(
             "/api/v2/auth/operator-command-grants",
@@ -250,7 +257,7 @@ async fn browser_boundary(State(state): State<AppState>, request: Request, next:
 control::projects,control::project,control::create_project,control::update_project,
 control::principals,control::create_principal,control::update_principal,
 control::credentials,control::issue_credential,control::revoke_credential,
-control::machine_session,control::issue_grant),components(schemas(error::Problem)),tags((name="Authentication",description="Native TOTP and revocable browser sessions")))]
+control::machine_session,control::issue_grant,runs::list,runs::get,runs::cancel,runs::events),components(schemas(error::Problem)),tags((name="Authentication",description="Native TOTP and revocable browser sessions")))]
 struct HttpContracts;
 pub fn openapi_json() -> Result<String, serde_json::Error> {
     let mut document = HttpContracts::openapi();
@@ -308,6 +315,8 @@ fn describe_authority(document: &mut utoipa::openapi::OpenApi) {
                     vec![bearer]
                 } else if browser_auth || (!write && browser_read) {
                     vec![cookie]
+                } else if write && path.ends_with("/cancel") && path.starts_with("/api/v2/runs/") {
+                    vec![cookie, bearer]
                 } else if write {
                     vec![
                         cookie,

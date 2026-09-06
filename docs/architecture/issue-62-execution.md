@@ -305,3 +305,29 @@ review findings resolved and an explicit no-findings Codex review of that Head;
 only then merge. Verify main and required migration/isolation/recovery/end-to-end
 evidence before closing #62. **On GitHub, Codex is review-only: never ask it to fix,
 implement, commit or autonomously handle problems.**
+
+## Run/Attempt 与持久 SSE 实现增量
+
+新增 `crates/store/src/lifecycle.rs`、`crates/contracts/src/lifecycle.rs` 和
+`apps/server/src/runs.rs`。复用 SQLx/PostgreSQL/PGMQ/Axum/Tokio，提供受信任域服务
+准入、单 Attempt 接管/发送意图、取消/终态回执/归档，以及带认证作用域的 Run 查询
+和 SSE；不是开放任意命令执行，也未把远端结果当成科学 qualification。
+
+验证入口：
+
+```sh
+cargo test --locked -p store --test run_lifecycle
+cargo test --locked -p server --test runs_http
+cargo test --locked -p contracts --test lifecycle_wire
+```
+
+数据库套件验证同键并发、预算超发、PGMQ/事件故障整体回滚、lease/epoch、丢 ACK、
+取消/完成竞态、锁等待后过期、回执关联与真实失败代码。HTTP套件以真实 TCP listener、
+Axum middleware、原生加密/会话及 PostgreSQL 检查 cookie/Bearer、跨项目拒绝、
+SSE 多批终态重放/断点续读/权限撤销/连接上限和断线不取消。共享 fixture 仅提供
+领域记录，不模拟 HTTP 认证或将 FIXTURE 变为 REAL。
+
+首次回归复现原有零参数 revision trigger 错误；新增迁移修复空 TG_ARGV。
+其余已应用迁移原样保留，两个新增领域表的期望计数及生成合同同步更新。CI仍须在
+推送后的精确 Head 上运行；测试定义、本地编译或本节文档均不能冒充远端 CI/Review
+通过。没有在本节写入随后可能失效的当前测试总数或 release-ready 声明。

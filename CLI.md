@@ -65,3 +65,25 @@ SQLx 创建独立测试数据库并执行提交的迁移；不要使用生产 DA
 session 表不兼容或任一授权失败时，不保留半次升级及 epoch 失效副作用。
 已有数据/会话不会被删表“修复”。网络在 COMMIT 阶段断开时结果未知，应在
 主库重连后通过原生迁移记录和权限复核，不直接宣称回滚或重复恢复备份。
+
+## Run 查询、持久事件与取消 HTTP
+
+以下路由包含于原生生成的 `server openapi`，不需要数据库直连权限：
+
+| 路由 | 语义 |
+|---|---|
+| `GET /api/v2/runs?project_id=UUID&state=QUEUED&limit=50&cursor=UUID` | 稳定 UUID 顺序的受限分页；limit 为1–100 |
+| `GET /api/v2/runs/{id}` | 同一事务快照的 state/revision/last_event_seq |
+| `GET /api/v2/runs/{id}/events` | `text/event-stream`；`Last-Event-ID: <run UUID>:<decimal seq>`；不存在 cursor 时从0开始 |
+| `POST /api/v2/runs/{id}/cancel` | body为 `{"schema_version":1,"expected_revision":"当前版本"}`，另带 Idempotency-Key；接受后202，版本过期409 |
+
+浏览器使用现有同源私有会话。机器需要该项目的 RUN_READ 或 RUN_CANCEL；Mission
+只读自身 Run，不能扩大到其他项目或取得操作员授权。取消仅停止计算，不表示下游
+交易停止。尚未 dispatch 的任务可以直接 CANCELLED；已涉及远端的任务先显示
+CANCEL_REQUESTED，须确认远端终止后才能终结，真实失败保留 FAILED。
+
+SSE 每条 id 与 data.seq 对应。按最后收到的 id 重连，客户端对序列去重；过期或超前
+cursor 在开始流之前410，错误 UUID/数字形状422。认证撤销、版本不兼容等发生在
+已建立的流中时发送不带新 cursor 的 reset-required，客户端应重新认证/读快照。
+每个 API 进程最多32条流，连接满额429；连接60秒后重连以更新认证。关闭浏览器不会
+取消任务或确认队列。该节不声明远程 CLI/MCP 或完整 Worker 执行器已实现。

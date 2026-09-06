@@ -481,6 +481,47 @@
         "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
         "type": "string"
       },
+      "JobLimitsV1": {
+        "additionalProperties": false,
+        "properties": {
+          "cpu_seconds": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "experiments": {
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "memory_mib": {
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "output_bytes": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "wall_seconds": {
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "schema_version",
+          "experiments",
+          "cpu_seconds",
+          "wall_seconds",
+          "memory_mib",
+          "output_bytes"
+        ],
+        "type": "object"
+      },
       "ListQuery": {
         "additionalProperties": false,
         "properties": {
@@ -1353,6 +1394,103 @@
         "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])",
         "type": "string"
       },
+      "RunCancelV1": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "expected_revision"
+        ],
+        "type": "object"
+      },
+      "RunEventBatchV1": {
+        "additionalProperties": false,
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/RunEventV1"
+            },
+            "type": "array"
+          },
+          "last_event_seq": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "run_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "state": {
+            "$ref": "#/components/schemas/RunState"
+          }
+        },
+        "required": [
+          "schema_version",
+          "run_id",
+          "events",
+          "last_event_seq",
+          "state"
+        ],
+        "type": "object"
+      },
+      "RunEventKind": {
+        "enum": [
+          "run.created",
+          "run.state_changed"
+        ],
+        "type": "string"
+      },
+      "RunEventV1": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "event_type": {
+            "$ref": "#/components/schemas/RunEventKind"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/RunStatePayload"
+          },
+          "run_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "seq": {
+            "$ref": "#/components/schemas/DbCounter"
+          }
+        },
+        "required": [
+          "schema_version",
+          "run_id",
+          "seq",
+          "event_type",
+          "occurred_at",
+          "payload"
+        ],
+        "type": "object"
+      },
       "RunKind": {
         "enum": [
           "AGENT_RESEARCH",
@@ -1363,6 +1501,65 @@
           "FORWARD_EVALUATE",
           "EXPORT",
           "IMPORT"
+        ],
+        "type": "string"
+      },
+      "RunListQuery": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "limit": {
+            "default": 50,
+            "format": "int32",
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "project_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "state": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RunState"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "RunReason": {
+        "enum": [
+          "ADMITTED",
+          "DISPATCH_RESERVED",
+          "RUNTIME_RUNNING",
+          "LEASE_TAKEN_OVER",
+          "CANCEL_REQUESTED",
+          "CANCELLED_BEFORE_DISPATCH",
+          "RUNTIME_SUCCEEDED",
+          "RUNTIME_FAILED",
+          "RUNTIME_CANCELLED",
+          "RESULT_DISCARDED_AFTER_CANCEL",
+          "DEADLINE_EXCEEDED"
         ],
         "type": "string"
       },
@@ -1482,6 +1679,26 @@
           "CANCELLED"
         ],
         "type": "string"
+      },
+      "RunStatePayload": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "$ref": "#/components/schemas/RunReason"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "state": {
+            "$ref": "#/components/schemas/RunState"
+          }
+        },
+        "required": [
+          "schema_version",
+          "state",
+          "reason"
+        ],
+        "type": "object"
       },
       "SavedModelSettingsV1": {
         "additionalProperties": false,

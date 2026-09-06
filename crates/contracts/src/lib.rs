@@ -9,6 +9,7 @@ pub mod budget;
 pub mod codex;
 pub mod control;
 pub mod evidence;
+pub mod lifecycle;
 pub mod runs;
 pub mod scalars;
 
@@ -64,7 +65,12 @@ use utoipa::OpenApi;
     runs::ProjectState,
     runs::RunState,
     runs::RunKind,
-    runs::RunSnapshotV1
+    runs::RunSnapshotV1,
+    lifecycle::JobLimitsV1,
+    lifecycle::RunCancelV1,
+    lifecycle::RunListQuery,
+    lifecycle::RunEventV1,
+    lifecycle::RunEventBatchV1
 )))]
 struct DomainContracts;
 

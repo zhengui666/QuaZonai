@@ -8,6 +8,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+futures-util = "=0.3.34"
 contracts = { path = "../../crates/contracts" }
 domain = { path = "../../crates/domain" }
 store = { path = "../../crates/store" }

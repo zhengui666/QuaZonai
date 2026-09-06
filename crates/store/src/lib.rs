@@ -8,6 +8,7 @@ pub mod authority;
 mod commands;
 pub mod control;
 mod db;
+pub mod lifecycle;
 pub mod machine_auth;
 mod migration;
 pub mod turns;
@@ -45,6 +46,10 @@ pub enum StoreError {
     Integrity,
     #[error("secret reconciliation could not be completed")]
     SecretCleanup,
+    #[error("event cursor no longer matches the durable stream")]
+    EventCursorExpired,
+    #[error("event contract is not supported by this reader")]
+    EventContractUnsupported,
     #[error("record not found")]
     NotFound,
     #[error("conflicting immutable command or native identity")]

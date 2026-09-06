@@ -1535,6 +1535,55 @@ Approval/Offer/Claim锁相关对象，按DB时间重查政策撤销/到期/版�
 
 Forward真实消息 → 去重/对齐 → native指标 → Observation → Wake → 状态/冷却/预算 → 新Cycle；同Observation单事务不能两次开Cycle。PAUSED/ARCHIVED不启动；暂停现有任务按用户明确选择继续或申请取消，保留结果。缺数据INSUFFICIENT_DATA不假称健康/劣化。自动Live全部条件依第8节/A7逐项事务复核。
 
+### B5.6 Run 生命周期持久化实现合同
+
+原生 revision trigger 必须允许零个额外 immutable 字段（runtime/downstream 配置）；TG_ARGV 的空值按空数组处理，仍保护 id/created_at 并递增 revision。已有迁移保持不变，修正通过新增迁移发布。
+
+Run 的工作准入由受信任领域服务调用 `Store::enqueue_run`，不是浏览器/Agent 可提交任意
+镜像或 shell 的通用执行接口。输入必须是同项目、已冻结的 input set，Cycle 与冻结 Brief
+预算逐字段一致；job kind 必须在指定 runtime 的登记能力中。一个不可变 `run_admissions`
+保存精确 run/project/cycle、资源预约、runtime revision 与非秘密运行配置快照、PGMQ 初始
+消息 ID。command key 在 Cycle 内唯一；同 key 同请求返回原 run，冲突失败。预约、Run、
+首个持久事件与原生 pgmq.send 同一事务；CPU 额度按已承诺的上界累计，不因失败/取消退款。
+全部 trial（含内部搜索）在准入时计数；终态把预约 trial 转为已用，不删失败历史。
+
+`read_run_messages` 复用 PGMQ 原生 visibility/read count。领取必须重新锁住 project→cycle→
+run→attempt；visibility 不授予结果采纳权。活动租约不被别的 Worker 抢占；过期接管保持
+同 attempt 和 `<run_id>/<attempt_no>`，只递增 owner epoch，并进入 RECONCILING。
+`begin_run_dispatch` 先持久 SENT_UNKNOWN 再允许首次外部 submit；重试返回需 reconcile，
+不第二次授予首次发送。runtime 快照供恢复使用，不随 Operator 后续改连接而指向其他服务器。
+真实远端生命周期仍须由隔离 runtime 适配器实现，本存储接口本身不是远端隔离或工具闭环证明。
+
+取消请求与结果采纳按同 Run 行串行化。未 dispatch 的排队工作可直接取消；已经领取/发送的
+工作先 CANCEL_REQUESTED，必须有受信任适配器返回的终止事实才能落终态。真实 FAILED
+不改成 CANCELLED；取消意图先提交时原生成功产物只作诊断。`run_terminal_receipts` 追加
+精确 run/attempt、原生终态、manifest（可空）、原因与观测时间及采纳后的 Run 终态。同一
+run 最多一个终态回执。完全相同重传可只读确认；变化字段、跨 attempt、旧 owner 的新事实
+均失败。SUCCEEDED 必须绑定已由可信适配器验证、同 run/attempt 的登记 REPORT manifest，
+不能用别的运行或任意 UUID 冒充；存储层不据此生成 PASS/Qualification。
+
+只有持久终态及回执已经提交，才可 archive PGMQ 消息。消息丢失/ACK 丢失不重复转用额度、
+追加终态或发布。新 Run 重试是新的明确准入，不在 UNKNOWN 时创建第二个 attempt。
+
+读取接口 GET `/runs`（project_id、state、cursor、limit）、GET `/runs/{id}`、GET
+`/runs/{id}/events` 及 POST `/runs/{id}/cancel` 共享现有浏览器/Bearer 权限。机器必须具有
+RUN_READ/RUN_CANCEL 且绑定同项目；Mission 只能读自己 Run，不能取消。取消为计算控制，
+不消费审批 grant、触发 Broker 动作或修改下游交易。取消体包含 schema_version、
+expected_revision；还需 Idempotency-Key。同一 key 的重传返回当时原响应，不覆盖新状态。
+
+事件序号沿用数据库现有原生触发器，在 Run 锁下追加并更新 cursor。状态事件只包含允许的
+state/reason，不含 provider原文、secret、工作区路径、隐藏推理或任意消息。查询事务在
+授权后锁 Run 快照并读取 seq>cursor；缺口/超前/不适用 cursor 失败，不以空数组掩盖丢失。
+SSE 复用 Axum 原生 Event/Sse 和成熟 Stream adapter，逐批从持久表读取并重新核对撤销/
+到期；bounded batch/总连接数避免无限堆积。断连只停止读取，不取消计算，不持有数据库
+事务或连接等待客户端。未实现的实时百分比不伪造。没有通知也会轮询持久事件。
+
+首次 dispatch 的 runtime 配置锁等待结束后重新检查 DB lease 与 deadline；不能沿用等待前的有效性。续租只延长不缩短既有有效租约，返回数据库实际提交的新到期时间。
+
+原生失败必须保留冻结的 failure_class 和受控 failure_code（1–64 个大写 ASCII/数字/下划线），不得存原始 stderr；明确不存在的任务不得同时提交 manifest。终态回执的项目/Run/Attempt/状态与 revision/event cursor 必须与同事务锁定的 Run 一致，不能单独插入可供 ACK 的伪回执。
+
+此 Store 增量只接受已登记的 `kind=REPORT`、`media_type=application/json`、`schema_name=qz.job_result`、`schema_version=1` 的 result manifest；生产 run/attempt/project 及字节上限一致。这个名字是业务产物 schema，不是新的目录或内容哈希。实际 JSON 内容、输出引用和科学字段仍须可信 runtime adapter 在登记之前按 ResultManifestV1 校验；单独插入元数据不算完成该验证。
+
 ## B6. SSE 与恢复
 
 GET run 同一快照返回 state/revision/last_event_seq；随后 `Last-Event-ID=<run_id>:<seq>` 从持久表读 seq>cursor。

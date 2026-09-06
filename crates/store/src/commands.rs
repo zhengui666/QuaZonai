@@ -302,3 +302,29 @@ impl Store {
         Ok(result)
     }
 }
+
+/// The Run service already holds the resource and verified scope locks. Reuse
+/// the same immutable receipt format without turning RUN_CANCEL into an
+/// Operator approval capability or accepting a client-supplied principal scope.
+pub(crate) async fn run_cancel(
+    tx: &mut Transaction<'_, Postgres>,
+    scope: String,
+    idempotency_key: &str,
+    target: Id,
+    request: Value,
+) -> Result<Prepared, StoreError> {
+    key(idempotency_key)?;
+    let previous = prior(tx, &scope, "RUN_CANCEL", idempotency_key, &request).await?;
+    if previous.as_ref().is_some_and(|p| p.target != target) {
+        return Err(StoreError::IdempotencyConflict);
+    }
+    Ok(Prepared {
+        target,
+        scope,
+        operation: "RUN_CANCEL",
+        key: idempotency_key.into(),
+        request,
+        grant: None,
+        replay: previous.map(|p| p.response),
+    })
+}
