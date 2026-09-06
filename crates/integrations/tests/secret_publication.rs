@@ -15,5 +15,8 @@ fn published_secret_is_read_only_and_readable_after_reopening_the_vault() {
     let metadata = fs::metadata(root.join(id.to_string())).unwrap();
     assert_eq!(metadata.permissions().mode() & 0o777, 0o400);
     let reopened = SecretVault::open(&root, &key).unwrap();
-    assert_eq!(reopened.read(id, "TOTP").unwrap(), b"disposable-reopen-fixture");
+    assert_eq!(
+        reopened.read(id, "TOTP").unwrap(),
+        b"disposable-reopen-fixture"
+    );
 }
