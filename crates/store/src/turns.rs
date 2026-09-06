@@ -111,6 +111,7 @@ struct Mission {
     session_id: Uuid,
     profile_revision: i64,
     budget: BudgetV1,
+    budget_matches_brief: bool,
     stop: StopRuleV1,
     project_state: ProjectState,
     cycle_state: String,
@@ -182,14 +183,16 @@ async fn lock_mission(
     // Lock the referenced Brief too: a mutable draft is never an admission
     // contract. This lock is held through the reservation and queue commit.
     let brief = sqlx::query(
-        "SELECT state,stop_rule FROM app.research_briefs WHERE id=$1 AND project_id=$2 FOR SHARE",
+        "SELECT state,budget,stop_rule FROM app.research_briefs WHERE id=$1 AND project_id=$2 FOR SHARE",
     )
     .bind(cycle.try_get::<Uuid, _>("brief_id")?)
     .bind(project_id)
     .fetch_one(&mut **tx)
     .await?;
-    let budget: BudgetV1 = serde_json::from_value(cycle.try_get("budget_snapshot")?)
-        .map_err(|_| StoreError::Invalid("budget_snapshot"))?;
+    let snapshot: serde_json::Value = cycle.try_get("budget_snapshot")?;
+    let budget_matches_brief = snapshot == brief.try_get::<serde_json::Value, _>("budget")?;
+    let budget: BudgetV1 =
+        serde_json::from_value(snapshot).map_err(|_| StoreError::Invalid("budget_snapshot"))?;
     let stop: StopRuleV1 = serde_json::from_value(brief.try_get("stop_rule")?)
         .map_err(|_| StoreError::Invalid("stop_rule"))?;
     let run=sqlx::query("SELECT kind,state,active_attempt_id::uuid,deadline_at::timestamptz FROM app.runs WHERE id=$1 AND project_id=$2 AND cycle_id=$3 FOR UPDATE")
@@ -225,6 +228,7 @@ async fn lock_mission(
         session_id: session.try_get("id")?,
         profile_revision: session.try_get("profile_revision")?,
         budget,
+        budget_matches_brief,
         stop,
         project_state,
         cycle_state: cycle.try_get("state")?,
@@ -243,6 +247,12 @@ impl Mission {
             || self.run_state != "RUNNING"
         {
             return Err(DomainError::AdmissionClosed.into());
+        }
+        // Only an exact copy of the locked frozen Brief may authorize new
+        // spending. Keep reconciliation separate: existing real usage must not
+        // disappear merely because an earlier Cycle snapshot was invalid.
+        if !self.budget_matches_brief {
+            return Err(StoreError::Invalid("frozen_budget_snapshot_mismatch"));
         }
         if deadline <= self.now || deadline > self.run_deadline {
             return Err(StoreError::Invalid("turn_deadline"));
@@ -559,10 +569,27 @@ impl Store {
     ) -> Result<(), StoreError> {
         let mut tx = self.pool.begin().await?;
         let item = load_reservation(&mut tx, reservation_id).await?;
-        let mission = lock_mission(&mut tx, item.run_id, fence).await?;
         if item.attempt_id != fence.attempt_id {
             return Err(DomainError::StaleAttempt.into());
         }
+        // An exact committed terminal is a read, not new result adoption. A
+        // lost acknowledgement remains recoverable after lease loss/takeover.
+        if exact_terminal(&mut tx, reservation_id, terminal).await? {
+            tx.commit().await?;
+            return Ok(());
+        }
+        let mission = match lock_mission(&mut tx, item.run_id, fence).await {
+            Ok(mission) => Some(mission),
+            Err(StoreError::Domain(DomainError::StaleAttempt)) => None,
+            Err(error) => return Err(error),
+        };
+        // The first report can commit while this transaction waits for locks.
+        // Do not turn its now-visible immutable fact into a stale-worker error.
+        if exact_terminal(&mut tx, reservation_id, terminal).await? {
+            tx.commit().await?;
+            return Ok(());
+        }
+        let mission = mission.ok_or(DomainError::StaleAttempt)?;
         record_terminal(&mut tx, reservation_id, terminal, mission.now).await?;
         tx.commit().await?;
         Ok(())
@@ -701,6 +728,18 @@ fn outcome(text: &str) -> Result<TurnOutcome, StoreError> {
         _ => Err(StoreError::Invalid("terminal_outcome")),
     }
 }
+async fn exact_terminal(
+    tx: &mut Tx<'_>,
+    reservation_id: Id,
+    expected: &TurnTerminal,
+) -> Result<bool, StoreError> {
+    match load_terminal(tx, reservation_id).await? {
+        Some(old) if old == *expected => Ok(true),
+        Some(_) => Err(StoreError::Conflict),
+        None => Ok(false),
+    }
+}
+
 async fn load_terminal(
     tx: &mut Tx<'_>,
     reservation_id: Id,

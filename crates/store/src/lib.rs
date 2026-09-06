@@ -54,8 +54,13 @@ impl Store {
     }
 
     pub async fn verify_runtime_role(&self) -> Result<(), StoreError> {
-        let elevated: bool = sqlx::query_scalar("SELECT rolsuper OR rolcreaterole OR rolcreatedb OR rolbypassrls OR has_schema_privilege(current_user,'app','CREATE') OR has_table_privilege(current_user,'app.operator_auth_state','TRUNCATE') FROM pg_roles WHERE rolname=current_user")
-            .fetch_one(&self.pool).await?;
+        // Inspect native ownership/ACLs across the entire application schema,
+        // including authority reachable through inherited or SET ROLE grants.
+        // Checking one authentication table would miss destructive access to
+        // unrelated immutable research/evidence records.
+        let elevated: bool = sqlx::query_scalar(include_str!("runtime_role.sql"))
+            .fetch_one(&self.pool)
+            .await?;
         if elevated {
             return Err(StoreError::Invalid(
                 "runtime_role_must_be_non_owner_and_unprivileged",

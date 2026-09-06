@@ -376,3 +376,140 @@ async fn declared_hot_path_indexes_exist_with_the_required_key_order(pool: PgPoo
         assert!(definition.contains(keys), "{name}: {definition}");
     }
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn doctor_is_read_only_cli_or_automation_not_downstream_or_agent_authority(pool: PgPool) {
+    let f = fixture(&pool, budget()).await;
+    let d = downstream(&pool).await;
+    for project in [None, Some(f.project)] {
+        let delivery = principal(&pool, "DOWNSTREAM", project, None, Some(d))
+            .await
+            .unwrap();
+        for scopes in ["{DOCTOR_READ}", "{DOWNSTREAM_CLAIM,DOCTOR_READ}"] {
+            sqlstate(
+                credential(&pool, delivery, scopes, "OPERATOR", 1, 600)
+                    .await
+                    .unwrap_err(),
+                "23514",
+            );
+        }
+        for kind in ["CLI", "AUTOMATION"] {
+            let doctor = principal(&pool, kind, project, None, None).await.unwrap();
+            credential(&pool, doctor, "{DOCTOR_READ}", "OPERATOR", 1, 600)
+                .await
+                .unwrap();
+            sqlstate(
+                credential(&pool, doctor, "{DOCTOR_READ,RUN_READ}", "OPERATOR", 1, 600)
+                    .await
+                    .unwrap_err(),
+                "23514",
+            );
+        }
+    }
+    let agent = principal(&pool, "MISSION", Some(f.project), Some(f.run), None)
+        .await
+        .unwrap();
+    for scopes in ["{DOCTOR_READ}", "{RUN_READ,DOCTOR_READ}"] {
+        sqlstate(
+            credential(&pool, agent, scopes, "MISSION_SERVICE", 1, 600)
+                .await
+                .unwrap_err(),
+            "23514",
+        );
+    }
+    // Existing valid research and delivery authority is not disabled by the fix.
+    credential(&pool, agent, "{RUN_READ}", "MISSION_SERVICE", 1, 600)
+        .await
+        .unwrap();
+    let delivery = principal(&pool, "DOWNSTREAM", Some(f.project), None, Some(d))
+        .await
+        .unwrap();
+    credential(
+        &pool,
+        delivery,
+        "{DOWNSTREAM_CLAIM,DOWNSTREAM_ACK,FORWARD_SUBMIT}",
+        "OPERATOR",
+        1,
+        600,
+    )
+    .await
+    .unwrap();
+}
+
+#[sqlx::test(migrations = false)]
+async fn doctor_upgrade_requires_explicit_revocation_and_preserves_original_issuance(pool: PgPool) {
+    // Native SQLx still resolves, checksums, locks and applies every migration.
+    // Only the test's input directory selects the historical pre-fix version.
+    let directory = std::env::temp_dir().join(format!("quazonai-migration-test-{}", Id::new()));
+    std::fs::create_dir(&directory).unwrap();
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations");
+    for entry in std::fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name();
+        let name = name.to_str().unwrap();
+        let version: i64 = name.split('_').next().unwrap().parse().unwrap();
+        if version < 202609060004 {
+            std::fs::copy(entry.path(), directory.join(name)).unwrap();
+        }
+    }
+    let old = sqlx::migrate::Migrator::new(directory.as_path())
+        .await
+        .unwrap();
+    std::fs::remove_dir_all(&directory).unwrap();
+    old.run(&pool).await.unwrap();
+    let delivery = principal(
+        &pool,
+        "DOWNSTREAM",
+        None,
+        None,
+        Some(downstream(&pool).await),
+    )
+    .await
+    .unwrap();
+    credential(&pool, delivery, "{DOCTOR_READ}", "OPERATOR", 1, 600)
+        .await
+        .unwrap();
+    let before: serde_json::Value = sqlx::query_scalar(
+        "SELECT to_jsonb(c) FROM app.machine_credentials c WHERE principal_id=$1",
+    )
+    .bind(delivery.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let latest = sqlx::migrate!("../../migrations");
+    let mut failed = pool.acquire().await.unwrap();
+    match latest.run(&mut *failed).await.unwrap_err() {
+        sqlx::migrate::MigrateError::ExecuteMigration(error, 202609060004) => {
+            sqlstate(error, "23514");
+        }
+        other => panic!("unexpected migration failure: {other:?}"),
+    }
+    // Closing the native session also releases the migrator's advisory lock
+    // after this intentionally failed migration. Do not leak it into the pool.
+    failed.close().await.unwrap();
+    let applied: i64 = sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(applied < 202609060004);
+    sqlx::query("INSERT INTO app.machine_credential_revocations(credential_id,effective_at,reason) SELECT id,clock_timestamp(),'operator revocation for migration test' FROM app.machine_credentials WHERE principal_id=$1")
+        .bind(delivery.as_uuid()).execute(&pool).await.unwrap();
+    latest.run(&pool).await.unwrap();
+    let after: serde_json::Value = sqlx::query_scalar(
+        "SELECT to_jsonb(c) FROM app.machine_credentials c WHERE principal_id=$1",
+    )
+    .bind(delivery.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        before, after,
+        "historical issuance must remain byte-for-field equivalent"
+    );
+    sqlstate(
+        credential(&pool, delivery, "{DOCTOR_READ}", "OPERATOR", 1, 600)
+            .await
+            .unwrap_err(),
+        "23514",
+    );
+}

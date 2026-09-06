@@ -1,163 +1,174 @@
 # Issue62 implementation evidence
 
-DESIGN is the normative contract; this file records evidence, not a second design.
+DESIGN.md is the normative contract. This file records implementation and
+version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
-## Current changes
+## Implemented source boundaries
 
-- Rename apps/job, crates/contracts, crates/domain and related package/build paths without qz- directories.
-- Delete legacy backend/frontend/plugin/deployment implementations, obsolete tests and archived design; retain Git history, LICENSE/NOTICE and user-data boundaries. There is no legacy compatibility service.
-- Replace PyO3 scientific probes with Rust-native Nautilus0.63.0, Clarabel0.11.1 and Arrow56.2.0. Upgrade Rust1.98.0 rather than using an old compiler as a Python exception.
-- Fix mandatory nullable metric keys, INVALID_INPUT evidence classification, UUIDv7 schema, Fast=false omission, cancellation-after-real-failure and ISO currency membership. Preserve version/lease/terminal and precision tests.
-- Complete previously missing design contracts for SelectionRule, immutable data authorization, native snapshot identity, logical feedback deduplication, operator rejection, candidate uniqueness, integration setup and machine credentials. These design additions do not claim their SQL/API implementation exists.
+The first-party tree uses `apps/job`, `apps/server`, `crates/contracts`,
+`crates/domain`, `crates/store` and `crates/integrations`, without `qz-` directories.
+Legacy backend/frontend/plugin/deployment implementations, compatibility services,
+obsolete tests and archived designs have been removed. Git history, LICENSE,
+NOTICE, third-party notices and user-data boundaries remain intact.
 
-## Verification contexts (do not inherit results across Heads)
+Scientific foundations reuse Rust-native Nautilus0.63.0, Clarabel0.11.1 and
+Arrow56.2.0 on Rust1.98.0. There is no production Python bridge. Native feasibility
+is not complete shared-capital research/portfolio acceptance. The earlier native
+fixture produced weights 0.7999999999997491 / 0.20000000000025078, 745 iterations,
+12 native orders and 24 native events with an Arrow round-trip. It is explicitly
+FIXTURE, `deliverable=false`, `python_runtime=false`, not investment evidence.
 
-At `e8668ca850def834735414ed9ba94fed38d4aa7e`, the committed suites contain
-8 contract, 28 domain and 8 native/report tests: **44 total**, not the earlier 35.
+The typed contracts and pure rules include decimal/bigint boundaries, metric
+nullability, UUIDv7, ISO currencies, Codex default-setting omission, budget and
+mission-turn limits, qualification, cancellation, version and lease fencing.
+Both Rust parsing and generated schemas consume shared decimal/bigint corpora.
+These rules do not replace persistent authorization or native component tests.
+
+SQLx0.8.6 owns migrations, transactions and independently migrated test databases;
+PostgreSQL/PGMQ owns durable queue delivery. The Store owns project-specific
+relationships, immutable identities, budgets and reconciliation decisions. A
+Mission has one immutable Session/Thread. Reservation plus PGMQ send is atomic;
+one committed dispatch intent grants one send, while retries reconcile. Native
+binding, terminal and usage receipt are separate immutable facts. Missing usage
+retains reservations; pause, cancellation or lease loss never fabricates a refund.
+Exact receipts precede queue acknowledgement.
+
+The relational constraints bind artifacts, inputs, experiment ancestry, Alpha
+qualification, frozen candidate contents, evaluations, Release and approval/offer
+identities. They also bind machine principals/scopes, forward corrections,
+Codex profile revisions, event cursors and run/attempt result manifests. Creating
+these records does not itself expose or implement all corresponding services.
+
+The HTTP authentication vertical in `apps/server` reuses Axum0.8.9,
+tower-sessions0.14, PostgreSQL PostgresStore0.15, totp-rs5.7, Argon2id,
+RustCrypto XChaCha20Poly1305 and cap-std. There is no memory-session fallback.
+Clap exposes `init-state`, `migrate`, local one-use `bootstrap`, `serve` and native
+OpenAPI. Login uses TOTP only, with a bounded bootstrap capability, native private
+cookie, database replay prevention, expiry/epoch/revocation and atomic rate limits.
+Device lists paginate and used trusted devices update activity. This vertical
+does not provide research, Reviewer or approval authority to an Agent.
+
+## Historical evidence: exact baseline, not the current Head
+
+At `e8668ca850def834735414ed9ba94fed38d4aa7e`, the suites contained 8 contract,
+28 domain and 8 native/report tests: **44 total**.
 [CI 33962063262](https://github.com/zhengui666/QuaZonai/actions/runs/33962063262)
-validated that exact dependency lock. The historical local 36 contract/domain
-checks used a development lock and did not establish product-lock acceptance.
+validated that historical dependency lock. The upstream feasibility run
+33952841460 is a development study, not a final product gate.
 
-The subsequent mission-turn/bigint review-fix source has been tested locally on
-Rust 1.98.0 **with the unchanged committed Cargo.lock**: 9 contract, 35 domain,
-8 native/report tests, **52 total**, zero ignored/failed. Strict workspace Clippy
-and `cargo fmt --all -- --check` pass. Both Rust parsing and generated schema
-checks consume the shared corpora: 242 bigint and 204 decimal cases.
+The latest baseline inspected for this correction is
+`19496333808afc71d794af0871e5ef9704a3507a` with
+[CI 34007972993](https://github.com/zhengui666/QuaZonai/actions/runs/34007972993):
 
-Mission turn reservations count used plus outstanding total and repair turns,
-are bound to the exact Mission identity, and share the cycle token/cost guard.
-A follow-up model turn does not reserve another experiment or job slot. Tests
-cover disabled repairs, exact caps, overflow, missing/mismatched Mission usage,
-used and in-flight turns, failed-reservation nonmutation and property cases.
-These are pure rules, not yet a claim of persistent worker/lease admission.
+| Job | Actual result at that exact baseline |
+| --- | --- |
+| `database-native` | Success: native PostgreSQL/PGMQ transaction contract |
+| `store-postgres` | Success: **61 Store + 7 server = 68 tests**, zero failed/ignored |
+| `rust-native-contracts` | Failure at `cargo fmt --all -- --check` on `evidence_bindings.rs` |
+| `foundation-checks` | Failure, because not every required job succeeded |
 
-The earlier native fixture run produced weights
-0.7999999999997491 / 0.20000000000025078, 745 iterations, 12 native orders and
-24 native events with Arrow round-trip. This is explicitly FIXTURE,
-`deliverable=false`, `python_runtime=false`, not full business acceptance.
-The upstream feasibility run 33952841460 is a development study, not a final
-product check. Every new Head still needs independent read-only CI and review.
+The 61 Store tests in that job were auth 8, authority invariants 7, relational
+constraints 7, device activity 3, evidence bindings 12, terminals 4, turn recovery
+4 and turn transactions 16. The server suite had 7 tests; its database-backed
+cases include an actual loopback HTTP listener using a distinct non-owner login.
+The artifact `store-evidence-19496333808afc71d794af0871e5ef9704a3507a`
+contains `tests.log`, `tested-commit.txt`, exact migrations, Cargo.lock and native
+database/image versions. This count describes that artifact only.
 
-## Store integration rebased onto `b39771c`
+Clippy, Rust tests, native scientific verification and Codex protocol probes were
+**not completed by the failed native job at that baseline**. The separate passing
+Store job cannot turn those skipped steps into success. Earlier unqualified
+52/87/97-test snapshots are retired as current evidence: never combine different
+commands, development locks or commits into a latest-Head pass count.
 
-This iteration preserves the exact numeric fixes already present at
-`b39771c41f0300438023be5a2f9330c4d9db9d86` (native tree
-`2683600c2cacc6c2353d7f61201f1c559232b62d`) and integrates the previously local
-Store code. The source is not full product acceptance. Its eventual GitHub
-commit and CI must be checked separately; local tests cannot certify remote runs.
+## Review correction in this source
 
-SQLx0.8.6 migrations create 61 field-bearing domain tables and the per-turn
-accounting view. The mature libraries own migrations, transactions, test databases,
-queue delivery, numeric parsing and schema generation. First-party code owns QZ
-relationships, permission boundaries, budgets and reconciliation decisions.
+`verify_runtime_role` inspects native PostgreSQL role membership, ACLs and ownership
+across the entire `app` schema rather than sampling `operator_auth_state`. It
+rejects destructive table privileges, schema CREATE, app object ownership and
+elevated roles reachable by inheritance or SET ROLE, including an elevated
+`session_user` hidden behind a restricted `current_user`. Ordinary non-owner DML
+access remains supported. This is a startup guard, not a substitute for continuing
+least-privilege administration or a complete machine-authorization service.
 
-A Mission has one immutable Session/Thread binding. Each reservation freezes its
-attempt, original epoch, settings revision, ordinal, inputs, tokens and estimated
-cost. Reservation and native PGMQ send commit together. Dispatch intent grants
-one send only; a replay reconciles without sending again. Native acknowledgement,
-terminal observation and usage receipt are independent immutable facts, so a
-completed turn with missing usage survives restart without fabricated zero spend.
-Exact receipts precede queue acknowledgement. Taking over the same attempt checks
-the new epoch; a new attempt cannot adopt an old reservation. Pause/cancellation
-cannot erase actual usage; configured caps still block subsequent admissions.
+Before a new reservation or first dispatch, the Store holds the referenced Brief
+lock and requires its frozen budget to equal the Cycle snapshot. The complete JSON
+comparison includes tokens, costs/currency, turns, repairs and resource limits.
+Existing receipt/terminal reads and actual-usage reconciliation remain separate
+from permission to start new spending. Historical malformed snapshots cannot
+expand new work or justify deleting actual consumption.
 
-The schema enforces exact native artifact identity, frozen input membership,
-Qualification/Alpha/evaluation relationships, Release/candidate evaluations and
-Offer/approval/release/downstream/environment tuples. A single-use human grant is
-bound to one command target. These relational constraints do not replace the
-remaining domain authorization or independent scientific qualification.
+The additive `202609060004_doctor_boundary.sql` migration confines DOCTOR_READ to
+a read-only CLI/AUTOMATION credential, never DOWNSTREAM/MISSION or a mixed research/
+delivery scope. Existing issuer, epoch, project, Mission-lifetime and lock checks
+remain. Previously issued invalid Doctor credentials require an explicit effective
+revocation before migration can succeed; their immutable issuance stays in audit.
+The upgrade regression uses native SQLx to apply the old migrations, verifies the
+specific failing migration/SQLSTATE, then revokes and reapplies without rewriting
+historical rows or changing applied migration checksums.
 
-### Verification scope
+Terminal retries first verify the exact reservation/attempt binding, then compare
+all immutable terminal fields before requiring a live fence. They recheck after
+lock waits. Identical committed facts remain readable after lease expiry/takeover;
+conflicting outcome, native identity, reason or observation time is a conflict.
+Creating a missing terminal still requires current owner/epoch/lease. A terminal
+never creates a usage receipt, releases a reservation or acknowledges the queue.
 
-The local build uses Rust1.98.0, PostgreSQL18.1 and PGMQ1.10.0. SQLx creates a
-separate real database per test and applies the actual migrations. The disposable
-local PostgreSQL configuration is reconstructed solely for these tests; it is
-not a deployed production image or a claim of backup/restore acceptance.
-The committed Cargo lock preserves all previous native dependency versions and
-adds the Store dependency graph using Cargo. No manual checksum or resolver edits.
+The correction adds 12 PostgreSQL regression test functions: 4 runtime-role,
+2 budget-authority, 2 Doctor boundary/upgrade and 4 terminal retry/race tests.
+The source also formats the existing evidence-binding suite without weakening CI.
+**A test definition or successful `--no-run` compilation is not a passed database
+test.** The modified source must obtain its own published-Head CI logs and review;
+the historical 68-test result above must not be reused for it.
 
-The checked suites define **87 tests**: 12 contracts, 40 domain, 8 native/report,
-and 27 PostgreSQL tests (7 relational, 16 turn transactions, 4 terminal ledger).
-The shared Node/Rust wire corpus contains 204 decimal and 242 bigint cases.
-Each successful command must correspond to actual logs; a future Head must rerun.
+## Verification commands and evidence rules
+
+Run with the committed lock; do not format or regenerate tracked code inside a
+read-only acceptance job. Generated outputs must compare equal to committed files.
+Use an isolated native PostgreSQL/PGMQ database, never an existing user database.
+The CI workflow pins and verifies the exact pull-request Head before execution.
 
 ```sh
 cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo build --locked --workspace --all-targets
-DATABASE_URL=postgres://TEST_USER@127.0.0.1:55432/postgres cargo test --locked --workspace
+cargo test --locked --workspace --exclude store --exclude server
+DATABASE_URL=postgres://TEST_USER@127.0.0.1:55432/postgres \
+  cargo test --locked -p store -p server -- --test-threads=4
 cargo run --locked -q -p contracts --example generate > /tmp/domain-v1.openapi.json
 diff -u contracts/generated/domain-v1.openapi.json /tmp/domain-v1.openapi.json
+cargo run --locked -q -p server -- openapi > /tmp/api-v2.openapi.json
+diff -u contracts/generated/api-v2.openapi.json /tmp/api-v2.openapi.json
 node tests/contracts/decimal-wire.mjs
 node tests/contracts/bigint-wire.mjs
 ```
 
-The lost-memory test recreates a Store client after dispatch; it is not an OS-kill
-or real model-inference test. The lease test performs a real database lock wait
-and reads the clock afterward. The missing-queue test causes a native SQL error
-and checks atomic rollback. Terminal tests preserve reservations across a client
-restart, reject unproven refunds and unrelated/contradictory native identities.
-Test-only SQL fixtures are not a fresh-instance Web/CLI product workflow.
+The workflow additionally executes the native solver/Nautilus/Arrow report,
+locked official Codex stdio/schema probe, PostgreSQL/PGMQ transactions and legacy-
+path rejection. The aggregate requires every foundation job. Record the actual
+commit, command, zero/nonzero exit, passed/failed/ignored counts and artifact/run;
+compile-only, missing credentials, skipped steps or cancelled runs are not passes.
+No test fixture or source archive is evidence of a real subscribed model request.
 
-A mandatory `store-postgres` CI job now covers these migrations and tests; the
-foundation aggregate requires its success. This workflow must run against the
-published Head. No green result from the earlier pre-Store commit applies to it.
+Store restart tests recreate a client, not an OS/container crash. Real lock waits,
+lease clock checks, missing-queue rollback and independent test databases cover
+specific relational/concurrency contracts; they do not prove deployed isolation,
+production TLS, backup restoration or end-to-end research. Crypto is native, but
+a passing authentication test does not establish all role-specific research rights.
 
-## Browser authentication vertical (2026-09-06)
+## Explicit gaps and completion boundary
 
-The first actual HTTP entrypoint now lives in `apps/server`. It reuses Axum0.8.9,
-tower-sessions0.14 with **only PostgreSQL persistence**, PostgresStore0.15,
-totp-rs5.7, Argon2id and RustCrypto XChaCha20Poly1305. A native `cap-std` directory
-and private key protect enrolled TOTP material. There is no memory-session fallback.
-`init-state`, native `migrate`, one-use local `bootstrap`, `serve` and native OpenAPI
-are real Clap commands. None provides research/approval authority to an Agent.
+Complete Run admission/takeover, research services and machine authorization,
+remaining API/Worker/CLI/MCP, same-Thread model/tool/job/evidence integration,
+independent Reviewer, PIT/sealed isolation, multi-Alpha shared-capital portfolio,
+target-only approval/feedback/wake services, Ant Design UI/PWA, user-data migration,
+backup/restore, protected real-account acceptance and production deployment remain
+incomplete. JSON container/version checks are not complete policy validation.
+Removing legacy tests is not acceptance, and foundation CI is not full W0–W8/T01–T42.
 
-Initialization requires a bounded local capability and the same private browser
-session; the global database singleton makes concurrent binding mutually exclusive.
-Normal login uses six-digit TOTP only. A fresh six-digit code is required for
-sensitive device revocation. PostgreSQL commits replay steps, login authority,
-fixed expiry, epoch and revocation independently of the cookie transport; an old
-or concurrently saved native session cannot resurrect a revoked login. Rate limits
-are atomic database counters, not process-local counts. Argon2 work is concurrency
-bounded. Secret/verifier/credential values are absent from response errors and logs.
-
-### New verification context
-
-The selective locked local command below passed **97 tests**: 12 contracts,
-40 domain, 3 native authentication/vault integrations, 35 actual PostgreSQL Store
-tests and 7 server tests. Six of the server tests use real independent PostgreSQL
-databases; one additionally sends real HTTP over a loopback TCP listener using
-a distinct non-owner PostgreSQL role. That role can execute the authentication
-flow but cannot alter or truncate domain tables. Native crypto is not mocked.
-The HTTP tests also cover missing/wrong origin, host mismatch, malformed JSON,
-cookie tampering, replay, rate limiting, logout and device revocation. Device
-lists paginate rather than hiding revocable records after the first 100.
-
-```sh
-DATABASE_URL=postgres://TEST_USER@127.0.0.1:55432/postgres \
-  cargo test --locked -p contracts -p domain -p integrations -p store -p server
-cargo run --locked -q -p server -- openapi > /tmp/api-v2.openapi.json
-diff -u contracts/generated/api-v2.openapi.json /tmp/api-v2.openapi.json
-```
-
-The existing eight scientific/native-report tests were **not rerun by that selective
-command**; they retain their separate baseline/CI evidence. Do not add them to the
-new local pass count or claim full-system acceptance. The committed workflow now
-requires real Store **and HTTP** tests with PostgreSQL and compares both generated
-contracts without rewriting tracked output. The exact new GitHub Head and run must
-be checked after publication; preceding CI results do not validate these changes.
-
-## Explicit gaps
-
-The relational schema and per-turn Store are implemented, but complete Run
-admission/takeover, research services and machine authorization, the remaining
-API/Worker/CLI/MCP, native
-same-Thread model/tool/job/evidence cycle, independent Reviewer, PIT/sealed
-isolation, multi-Alpha shared-capital portfolio, target-only approval/feedback/
-wake services, Ant Design UI/PWA, data migration, backup/restore and protected
-real-account acceptance remain incomplete. Existing JSON checks verify structure
-and versions, not a complete policy or authorization decision. Non-owner database
-role authentication is exercised locally; production TLS, isolated deployment,
-role-specific research permissions and deployed user-data migration still require validation.
-Removing legacy tests is not acceptance. Do not merge until every W0–W8/T01–T42
-requirement and the latest-Head CI/review conditions are met.
+Keep PR #63 Draft until the entire Issue #62 contract is implemented and evidenced.
+Completion requires the PR, all applicable CI on its latest Head passing, all
+review findings resolved and an explicit no-findings Codex review of that Head;
+only then merge. Verify main and required migration/isolation/recovery/end-to-end
+evidence before closing #62. **On GitHub, Codex is review-only: never ask it to fix,
+implement, commit or autonomously handle problems.**
