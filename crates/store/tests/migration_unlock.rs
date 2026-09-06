@@ -39,3 +39,34 @@ async fn failed_upgrade_acknowledges_unlock_before_returning_to_the_caller(pool:
         .bind(name).fetch_one(&pool).await.unwrap();
     assert_eq!(locks, 0);
 }
+
+#[sqlx::test(migrations = false)]
+async fn review_migration_has_no_request_timeout_and_does_not_change_pool_defaults(pool: PgPool) {
+    sqlx::raw_sql("CREATE FUNCTION public.delay_migration_ddl() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(0.025); END $$; CREATE EVENT TRIGGER delay_migration_ddl ON ddl_command_start WHEN TAG IN ('CREATE TABLE') EXECUTE FUNCTION public.delay_migration_ddl();")
+        .execute(&pool).await.unwrap();
+    let short = PgPoolOptions::new()
+        .max_connections(1)
+        .after_connect(|c, _| {
+            Box::pin(async move {
+                sqlx::query("SET statement_timeout='10ms'")
+                    .execute(c)
+                    .await?;
+                Ok(())
+            })
+        })
+        .connect_with(pool.connect_options().as_ref().clone())
+        .await
+        .unwrap();
+    Store::from_pool(short.clone())
+        .migrate()
+        .await
+        .expect("deployment migration must not inherit request timeout");
+    let default: String = sqlx::query_scalar("SHOW statement_timeout")
+        .fetch_one(&short)
+        .await
+        .unwrap();
+    assert_eq!(
+        default, "10ms",
+        "the dedicated migration connection must not change ordinary pool defaults"
+    );
+}

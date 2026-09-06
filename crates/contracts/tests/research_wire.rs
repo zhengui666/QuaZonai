@@ -92,3 +92,36 @@ fn nested_metric_schema_has_both_array_and_item_boundaries() {
     assert_eq!(a["items"]["minLength"], 1);
     assert_eq!(a["items"]["maxLength"], 120);
 }
+
+#[test]
+fn review_policy_fraction_and_capabilities_publish_the_remaining_bounds() {
+    let schema: Value = serde_json::from_str(&contracts::openapi_json().unwrap()).unwrap();
+    for name in ["EvaluationPolicyCreate", "EvaluationPolicyView"] {
+        let p = &schema["components"]["schemas"][name]["properties"];
+        assert!(
+            p["maximum_missing_fraction"]["allOf"].is_array(),
+            "{name}: exact decimal plus fraction bounds"
+        );
+        let caps = &p["required_capabilities"];
+        assert_eq!(caps["maxItems"], 64);
+        assert_eq!(caps["uniqueItems"], true);
+        assert_eq!(caps["items"]["minLength"], 1);
+        assert_eq!(caps["items"]["maxLength"], 120);
+    }
+}
+
+#[test]
+fn fraction_wire_corpus_matches_native_exact_decimal_validation() {
+    let rows: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("../../../tests/contracts/fraction-wire.json")).unwrap();
+    for row in rows {
+        let actual = serde_json::from_value::<contracts::DecimalValue>(row["input"].clone())
+            .is_ok_and(|value| value.is_fraction());
+        assert_eq!(
+            actual,
+            row["valid"].as_bool().unwrap(),
+            "{:?}",
+            row["input"]
+        );
+    }
+}

@@ -413,3 +413,39 @@ Policy 与 Family 通过原生生成的 UUIDv7 关系列、两个精确复合延
 全目标构建和两份原生生成合同已核对；204 Decimal、242 Bigint 共享语料通过。
 本地结果不代表新提交 CI 或独立审查已通过；这些仍必须针对实际推送 Head 完成。
 本增量不改变完整 W0–W8/T01–T42 验收、Draft 状态或 Codex review-only 边界。
+
+
+## 2026-09-06：Run 恢复、当前许可与 Forward 来源审查修复
+
+本地基线是远端 a52fa0fd88f44aeeee59a6d7f1bccfadf7b11fe0 的原生 tree
+469e918b0eacaf193416e8d2cf133c38e1e57bdd；原样 Cargo.lock/Rust1.98。
+新增016/017迁移，001–015原字节保留，014仍为Brief作者流程的预留序号。
+
+修复前新增回归实跑复现六项故障：10ms请求超时杀掉25ms迁移DDL、过期NOT_SENT
+仍被续租、终态Attempt仍可改、成功Attempt含错误码、未知兼容事件拒绝、旧浏览器
+可取消。另用未安装017的真实数据库复现了跨项目Forward报告被接受。负向结果是
+旧缺陷证明，不作为通过结果。原有终态重传测试改为真正等待活动期设置的短租约
+过期，不再通过修改已终结Attempt安排测试；PGMQ批量读取的测试一次保留两个消息，
+不在其visibility窗口内错误地二次读取。并发测试仍要求观察原生锁等待。
+
+实现复用SQLx原生事务/锁、PGMQ、BigDecimal、utoipa和Axum SSE：新消费重新授权，
+确切回执与未知结果对账不受事后撤销抹账；无Cycle只允许有界管理任务；未发送过期
+保存NOT_DISPATCHED事实而非伪造远端失败；已终结Run的任何Attempt写入均拒绝。
+部署连接独立取消statement_timeout而不污染请求池。政策fraction与capabilities
+由原生schema生成并用214条共享精确语料检验，不重建Decimal实现。
+
+Forward保存一次性领取元组和显式legacy来源，拒绝领取前的历史消息、凭拒绝状态
+伪造领取，以及不符合精确项目/角色/schema/origin/access的报告。合法既有反馈在
+随后拒绝时保留；坏历史令升级整体回滚。测试中的REAL元数据仅为可丢弃库内的
+关系正例，没有市场数据/报告字节，不宣称产品验收。
+
+验证入口：全workspace/all-target locked测试、严格Clippy、all-target构建，
+contracts/example generate与server openapi原生生成后比对，两份schema的204
+Decimal、242 Bigint、214 Fraction共享语料；真实PostgreSQL18.1/PGMQ1.10与HTTP。
+实际通过结果绑定发布Head的CI/PR证据，不在本节冒充远端Review已通过。
+完整W0–W8/T01–T42仍须继续交付，Codex仅独立review。
+
+
+公有开发依赖/工具已取回到隔离开发目录，删除完成的client-development-inputs、
+prepare-web-dependencies、web-development-inputs工作流；它们不是验收，不保留
+随每次PR提交重新取依赖的永久开发任务。正式CI仍只读、使用已提交锁文件。

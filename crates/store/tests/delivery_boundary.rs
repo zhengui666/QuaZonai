@@ -54,7 +54,11 @@ async fn delivery(pool: &PgPool, ttl: f64) -> (Id, Id, Id) {
     let i = support::approval_inputs(pool, &f, e).await;
     let a = approve(pool, r, d, i, "PAPER").await.unwrap();
     let o = offer(pool, r, a, d, ttl).await;
-    (o, d, f.report)
+    (
+        o,
+        d,
+        support::forward_report_metadata(pool, f.project).await,
+    )
 }
 async fn claim(c: &mut PgConnection, o: Id) -> Result<(), sqlx::Error> {
     // Deliberately untrusted/backdated proposed time. The database must not use
@@ -351,4 +355,218 @@ async fn upgrade_rejects_historical_demo_authority_without_erasing_it(pool: PgPo
     .fetch_one(&pool)
     .await
     .unwrap());
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn review_forward_reports_require_exact_project_kind_origin_and_contract(pool: PgPool) {
+    use serde_json::json;
+    let (o, d, report) = delivery(&pool, 60.0).await;
+    let mut c = pool.acquire().await.unwrap();
+    claim(&mut c, o).await.unwrap();
+    let other = fixture(&pool, budget()).await;
+    let base: serde_json::Value =
+        sqlx::query_scalar("SELECT to_jsonb(a) FROM app.artifacts a WHERE id=$1")
+            .bind(report.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    for (field, value) in [
+        ("project_id", json!(other.project)),
+        ("kind", json!("PARAMETERS")),
+        ("media_type", json!("text/plain")),
+        ("schema_name", json!("qz.unrelated")),
+        ("schema_version", json!("2")),
+        ("origin", json!("FIXTURE")),
+        ("access_class", json!("RESEARCH")),
+        ("byte_count", json!(0)),
+    ] {
+        let id = Id::new();
+        let mut row = base.clone();
+        row["id"] = json!(id);
+        row["storage_object_ref"] = json!(format!("relational-negative/{id}"));
+        row[field] = value;
+        sqlx::query(
+            "INSERT INTO app.artifacts SELECT (jsonb_populate_record(NULL::app.artifacts,$1)).*",
+        )
+        .bind(row)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlstate(feedback(&mut c, o, d, id).await.unwrap_err(), "23503");
+    }
+    feedback(&mut c, o, d, report).await.unwrap();
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM app.forward_messages")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn review_forward_rejection_cannot_fabricate_a_transfer(pool: PgPool) {
+    let (o, _, _) = delivery(&pool, 60.0).await;
+    sqlstate(sqlx::query("UPDATE app.handoff_offers SET state='REJECTED',external_claim_id='invented',claimed_at=clock_timestamp() WHERE id=$1")
+        .bind(o.as_uuid()).execute(&pool).await.unwrap_err(), "23514");
+    sqlx::query("UPDATE app.handoff_offers SET state='REJECTED' WHERE id=$1")
+        .bind(o.as_uuid())
+        .execute(&pool)
+        .await
+        .unwrap();
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM app.handoff_transfers WHERE handoff_id=$1")
+            .bind(o.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn review_forward_valid_history_survives_post_claim_rejection(pool: PgPool) {
+    let (o, d, r) = delivery(&pool, 60.0).await;
+    let mut c = pool.acquire().await.unwrap();
+    claim(&mut c, o).await.unwrap();
+    feedback(&mut c, o, d, r).await.unwrap();
+    let before: serde_json::Value =
+        sqlx::query_scalar("SELECT to_jsonb(t) FROM app.handoff_transfers t WHERE handoff_id=$1")
+            .bind(o.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(before["provenance"], "RECORDED_TRANSITION");
+    sqlx::query("UPDATE app.handoff_offers SET state='REJECTED' WHERE id=$1")
+        .bind(o.as_uuid())
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlstate(feedback(&mut c, o, d, r).await.unwrap_err(), "23514");
+    for sql in [
+        "UPDATE app.handoff_transfers SET provenance='LEGACY_CLAIMED_STATE' WHERE handoff_id=$1",
+        "DELETE FROM app.handoff_transfers WHERE handoff_id=$1",
+    ] {
+        sqlstate(
+            sqlx::query(sql)
+                .bind(o.as_uuid())
+                .execute(&pool)
+                .await
+                .unwrap_err(),
+            "23000",
+        );
+    }
+    let after: serde_json::Value =
+        sqlx::query_scalar("SELECT to_jsonb(t) FROM app.handoff_transfers t WHERE handoff_id=$1")
+            .bind(o.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(before, after);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.forward_messages")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        1
+    );
+    store::Store::from_pool(pool.clone())
+        .migrate()
+        .await
+        .unwrap();
+}
+
+async fn assert_forward_upgrade_preserves_failure(pool: &PgPool) {
+    let before:serde_json::Value=sqlx::query_scalar("SELECT jsonb_build_object('offers',(SELECT jsonb_agg(to_jsonb(h) ORDER BY id) FROM app.handoff_offers h),'feedback',(SELECT jsonb_agg(to_jsonb(m) ORDER BY id) FROM app.forward_messages m),'versions',(SELECT jsonb_agg(version ORDER BY version) FROM _sqlx_migrations))")
+        .fetch_one(pool).await.unwrap();
+    assert!(store::Store::from_pool(pool.clone())
+        .migrate()
+        .await
+        .is_err());
+    let after:serde_json::Value=sqlx::query_scalar("SELECT jsonb_build_object('offers',(SELECT jsonb_agg(to_jsonb(h) ORDER BY id) FROM app.handoff_offers h),'feedback',(SELECT jsonb_agg(to_jsonb(m) ORDER BY id) FROM app.forward_messages m),'versions',(SELECT jsonb_agg(version ORDER BY version) FROM _sqlx_migrations))")
+        .fetch_one(pool).await.unwrap();
+    assert_eq!(before, after);
+    assert!(
+        sqlx::query_scalar::<_, bool>("SELECT to_regclass('app.handoff_transfers') IS NULL")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    );
+}
+
+#[sqlx::test(migrations = false)]
+async fn review_forward_upgrade_rejects_feedback_created_before_actual_claim(pool: PgPool) {
+    support::migrate_before(&pool, 202609060013).await;
+    let (o, d, r) = delivery(&pool, 60.0).await;
+    let mut c = pool.acquire().await.unwrap();
+    feedback(&mut c, o, d, r).await.unwrap();
+    sqlx::query("UPDATE app.handoff_offers SET state='CLAIMED',external_claim_id='later-native-claim',claimed_at=clock_timestamp() WHERE id=$1")
+        .bind(o.as_uuid()).execute(&pool).await.unwrap();
+    let out_of_order:bool=sqlx::query_scalar("SELECT m.created_at<h.claimed_at AND m.received_at<h.claimed_at FROM app.forward_messages m JOIN app.handoff_offers h ON h.id=m.handoff_id WHERE h.id=$1")
+        .bind(o.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert!(
+        out_of_order,
+        "must reproduce the actual historical chronology"
+    );
+    assert_forward_upgrade_preserves_failure(&pool).await;
+}
+
+#[sqlx::test(migrations = false)]
+async fn review_forward_upgrade_rejects_ambiguous_rejected_claim_fields(pool: PgPool) {
+    support::migrate_before(&pool, 202609060013).await;
+    let (o, d, r) = delivery(&pool, 60.0).await;
+    sqlx::query("UPDATE app.handoff_offers SET state='REJECTED',external_claim_id='never-claimed',claimed_at=clock_timestamp() WHERE id=$1")
+        .bind(o.as_uuid()).execute(&pool).await.unwrap();
+    feedback(&mut pool.acquire().await.unwrap(), o, d, r)
+        .await
+        .unwrap();
+    assert_forward_upgrade_preserves_failure(&pool).await;
+}
+
+#[sqlx::test(migrations = false)]
+async fn review_forward_upgrade_rejects_unrelated_report_preserving_history(pool: PgPool) {
+    support::migrate_before(&pool, 202609060017).await;
+    let (o, d, _) = delivery(&pool, 60.0).await;
+    let other = fixture(&pool, budget()).await;
+    let mut c = pool.acquire().await.unwrap();
+    claim(&mut c, o).await.unwrap();
+    feedback(&mut c, o, d, other.artifact).await.unwrap();
+    assert_forward_upgrade_preserves_failure(&pool).await;
+}
+
+#[sqlx::test(migrations = false)]
+async fn review_forward_upgrade_records_valid_legacy_state_without_rewriting_feedback(
+    pool: PgPool,
+) {
+    support::migrate_before(&pool, 202609060017).await;
+    let (o, d, r) = delivery(&pool, 60.0).await;
+    let mut c = pool.acquire().await.unwrap();
+    claim(&mut c, o).await.unwrap();
+    feedback(&mut c, o, d, r).await.unwrap();
+    let before: serde_json::Value =
+        sqlx::query_scalar("SELECT to_jsonb(m) FROM app.forward_messages m WHERE handoff_id=$1")
+            .bind(o.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let store = store::Store::from_pool(pool.clone());
+    store.migrate().await.unwrap();
+    store.migrate().await.unwrap();
+    let after: serde_json::Value =
+        sqlx::query_scalar("SELECT to_jsonb(m) FROM app.forward_messages m WHERE handoff_id=$1")
+            .bind(o.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(before, after);
+    let provenance: String =
+        sqlx::query_scalar("SELECT provenance FROM app.handoff_transfers WHERE handoff_id=$1")
+            .bind(o.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(provenance, "LEGACY_CLAIMED_STATE");
+    sqlx::query("UPDATE app.handoff_offers SET state='REJECTED' WHERE id=$1")
+        .bind(o.as_uuid())
+        .execute(&pool)
+        .await
+        .unwrap();
+    store.migrate().await.unwrap();
 }

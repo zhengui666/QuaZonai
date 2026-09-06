@@ -328,3 +328,15 @@ impl<'de> Deserialize<'de> for DecimalValue {
             .map_err(serde::de::Error::custom)
     }
 }
+
+/// Native DecimalValue precision plus the exact [0, 1] wire subset. The existing
+/// BigDecimal implementation remains the sole numeric validation authority.
+pub fn fraction_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+    use utoipa::openapi::schema::{AllOfBuilder, ObjectBuilder, Type};
+    AllOfBuilder::new()
+        .item(<DecimalValue as utoipa::PartialSchema>::schema())
+        .item(ObjectBuilder::new().schema_type(Type::String).pattern(Some(
+            r"^(?:\+?(?:0*1(?:\.0*)?|0+(?:\.[0-9]*)?|\.[0-9]+)|-(?:0+(?:\.0*)?|\.0+))(?![\s\S])",
+        )))
+        .into()
+}

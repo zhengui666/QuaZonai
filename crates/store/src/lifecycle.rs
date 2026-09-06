@@ -38,6 +38,17 @@ pub struct RunSubmission {
     pub kind: RunKind,
     pub limits: JobLimitsV1,
 }
+/// Explicit bounded non-research job limits supplied by trusted deployment services.
+#[derive(Clone)]
+pub struct StandaloneRunSubmission {
+    pub project_id: Id,
+    pub input_set_id: Id,
+    pub runtime_id: Id,
+    pub runtime_revision: Revision,
+    pub kind: RunKind,
+    pub limits: JobLimitsV1,
+    pub max_parallel_runs: u16,
+}
 #[derive(Clone, Debug)]
 pub struct RunMessage {
     pub message_id: i64,
@@ -183,7 +194,25 @@ struct LockedRun {
     run: RunSnapshotV1,
     admission: PgRow,
     project_state: ProjectState,
-    cycle_state: String,
+    cycle_state: Option<String>,
+}
+impl LockedRun {
+    fn admission_open(&self) -> bool {
+        if self.run.cycle_id.is_some() {
+            self.project_state == ProjectState::Active
+                && self.cycle_state.as_deref() == Some("RUNNING")
+        } else {
+            standalone_kind(self.run.kind)
+                && (self.project_state != ProjectState::Archived
+                    || self.run.kind == RunKind::Export)
+        }
+    }
+}
+fn standalone_kind(kind: RunKind) -> bool {
+    matches!(
+        kind,
+        RunKind::Import | RunKind::Export | RunKind::DataValidate
+    )
 }
 /// Establish the same project -> cycle -> Run ordering used by model spending.
 async fn lock_run(tx: &mut Tx<'_>, id: Id) -> Result<LockedRun, StoreError> {
@@ -193,23 +222,26 @@ async fn lock_run(tx: &mut Tx<'_>, id: Id) -> Result<LockedRun, StoreError> {
         .await?
         .ok_or(StoreError::NotFound)?;
     let project: uuid::Uuid = refs.try_get("project_id")?;
-    let cycle: uuid::Uuid = refs
-        .try_get::<Option<uuid::Uuid>, _>("cycle_id")?
-        .ok_or(StoreError::Invalid("run_cycle_required"))?;
+    let cycle: Option<uuid::Uuid> = refs.try_get("cycle_id")?;
     let p = sqlx::query("SELECT state FROM app.projects WHERE id=$1 FOR UPDATE")
         .bind(project)
         .fetch_one(&mut **tx)
         .await?;
-    let c = sqlx::query(
-        "SELECT state FROM app.research_cycles WHERE id=$1 AND project_id=$2 FOR UPDATE",
-    )
-    .bind(cycle)
-    .bind(project)
-    .fetch_one(&mut **tx)
-    .await?;
+    let cycle_state = match cycle {
+        Some(cycle) => Some(
+            sqlx::query_scalar::<_, String>(
+                "SELECT state FROM app.research_cycles WHERE id=$1 AND project_id=$2 FOR UPDATE",
+            )
+            .bind(cycle)
+            .bind(project)
+            .fetch_one(&mut **tx)
+            .await?,
+        ),
+        None => None,
+    };
     let run = snapshot(&run_row(tx, id, true).await?)?;
     let admission = sqlx::query(
-        "SELECT * FROM app.run_admissions WHERE run_id=$1 AND project_id=$2 AND cycle_id=$3",
+        "SELECT * FROM app.run_admissions WHERE run_id=$1 AND project_id=$2 AND cycle_id IS NOT DISTINCT FROM $3::uuid",
     )
     .bind(id.as_uuid())
     .bind(project)
@@ -221,7 +253,7 @@ async fn lock_run(tx: &mut Tx<'_>, id: Id) -> Result<LockedRun, StoreError> {
         run,
         admission,
         project_state: db::enum_value(&p, "state")?,
-        cycle_state: c.try_get("state")?,
+        cycle_state,
     })
 }
 async fn attempt(tx: &mut Tx<'_>, run: &RunSnapshotV1) -> Result<PgRow, StoreError> {
@@ -321,12 +353,15 @@ async fn finish(
 ) -> Result<RunSnapshotV1, StoreError> {
     let limits: JobLimitsV1 = serde_json::from_value(locked.admission.try_get("limits")?)
         .map_err(|_| StoreError::Integrity)?;
-    let cycle = locked.run.cycle_id.ok_or(StoreError::Integrity)?;
-    // Consumed/cancelled trials are retained. CPU is a cumulative committed cap,
-    // not a floating-point usage estimate that may be refunded twice on retry.
-    let changed=sqlx::query("UPDATE app.research_cycles SET reserved_experiments=reserved_experiments-$2,used_experiments=used_experiments+$2 WHERE id=$1 AND reserved_experiments >= $2")
-        .bind(cycle.as_uuid()).bind(i64::from(limits.experiments)).execute(&mut **tx).await?;
-    if changed.rows_affected() != 1 {
+    // Retain consumed/cancelled trials. Management jobs have no research
+    // budget and cannot be used to erase or refund a cycle's reservations.
+    if let Some(cycle) = locked.run.cycle_id {
+        let changed=sqlx::query("UPDATE app.research_cycles SET reserved_experiments=reserved_experiments-$2,used_experiments=used_experiments+$2 WHERE id=$1 AND reserved_experiments >= $2")
+            .bind(cycle.as_uuid()).bind(i64::from(limits.experiments)).execute(&mut **tx).await?;
+        if changed.rows_affected() != 1 {
+            return Err(StoreError::Integrity);
+        }
+    } else if limits.experiments != 0 || !standalone_kind(locked.run.kind) {
         return Err(StoreError::Integrity);
     }
     sqlx::query("UPDATE app.runs SET state=$2,terminal_reason_code=$3,finished_at=clock_timestamp() WHERE id=$1")
@@ -380,10 +415,13 @@ impl Store {
             serde_json::from_value(budget_json).map_err(|_| StoreError::Integrity)?;
         let stop: StopRuleV1 =
             serde_json::from_value(b.try_get("stop_rule")?).map_err(|_| StoreError::Integrity)?;
-        let frozen:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.input_sets WHERE id=$1 AND project_id=$2 AND frozen_at IS NOT NULL)").bind(request.input_set_id.as_uuid()).bind(project).fetch_one(&mut *tx).await?;
-        if !frozen {
-            return Err(StoreError::Invalid("frozen_inputs_required"));
-        }
+        crate::research::revalidate_frozen_inputs(
+            &mut tx,
+            request.input_set_id,
+            db::id(project)?,
+            request.runtime_id,
+        )
+        .await?;
         let r = sqlx::query("SELECT * FROM app.runtime_integrations WHERE id=$1 FOR SHARE")
             .bind(request.runtime_id.as_uuid())
             .fetch_optional(&mut *tx)
@@ -481,6 +519,106 @@ impl Store {
         })
     }
 
+    /// Trusted administration only. No public generic execution DTO, model
+    /// calls, research trials or implicit creation of a research Cycle.
+    pub async fn enqueue_standalone_run(
+        &self,
+        key: &str,
+        request: &StandaloneRunSubmission,
+    ) -> Result<CommandResult<RunSnapshotV1>, StoreError> {
+        commands::key(key)?;
+        let l = &request.limits;
+        if !standalone_kind(request.kind)
+            || l.experiments != 0
+            || l.cpu_seconds.get() == 0
+            || l.wall_seconds == 0
+            || l.memory_mib == 0
+            || l.output_bytes.get() == 0
+            || request.max_parallel_runs == 0
+        {
+            return Err(StoreError::Invalid("standalone_run_limits_or_kind"));
+        }
+        let normalized = json!({"schema_version":1,"project_id":request.project_id,"input_set_id":request.input_set_id,
+            "runtime_id":request.runtime_id,"runtime_revision":request.runtime_revision,"kind":request.kind,
+            "limits":l,"max_parallel_runs":request.max_parallel_runs});
+        let mut tx = self.pool.begin().await?;
+        let p = sqlx::query("SELECT state FROM app.projects WHERE id=$1 FOR UPDATE")
+            .bind(request.project_id.as_uuid())
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(StoreError::NotFound)?;
+        if let Some(prior) = sqlx::query("SELECT normalized_request,initial_snapshot FROM app.run_admissions WHERE project_id=$1 AND cycle_id IS NULL AND command_key=$2")
+            .bind(request.project_id.as_uuid()).bind(key).fetch_optional(&mut *tx).await?
+        {
+            if prior.try_get::<Value, _>("normalized_request")? != normalized {
+                return Err(StoreError::IdempotencyConflict);
+            }
+            let resource = serde_json::from_value(prior.try_get("initial_snapshot")?).map_err(|_| StoreError::Integrity)?;
+            tx.commit().await?;
+            return Ok(CommandResult { schema_version: SchemaV1, replayed: true, resource });
+        }
+        if db::enum_value::<ProjectState>(&p, "state")? == ProjectState::Archived
+            && request.kind != RunKind::Export
+        {
+            return Err(DomainError::AdmissionClosed.into());
+        }
+        crate::research::revalidate_frozen_inputs(
+            &mut tx,
+            request.input_set_id,
+            request.project_id,
+            request.runtime_id,
+        )
+        .await?;
+        let r = sqlx::query("SELECT * FROM app.runtime_integrations WHERE id=$1 FOR SHARE")
+            .bind(request.runtime_id.as_uuid())
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(StoreError::NotFound)?;
+        let caps: Vec<String> = r.try_get("allowed_capabilities")?;
+        if !r.try_get::<bool, _>("enabled")?
+            || r.try_get::<i64, _>("revision")? != request.runtime_revision.get() as i64
+            || !caps.contains(&db::code(&request.kind)?)
+        {
+            return Err(DomainError::CapabilityUnavailable("runtime_job_kind_or_revision").into());
+        }
+        let active: i64 = sqlx::query_scalar("SELECT count(*) FROM app.runs WHERE project_id=$1 AND cycle_id IS NULL AND state NOT IN ('SUCCEEDED','FAILED','CANCELLED')")
+            .bind(request.project_id.as_uuid()).fetch_one(&mut *tx).await?;
+        if active >= i64::from(request.max_parallel_runs) {
+            return Err(DomainError::BudgetExhausted("standalone_parallel_runs").into());
+        }
+        let runtime = RuntimeSnapshot {
+            schema_version: SchemaV1,
+            endpoint: r.try_get("endpoint")?,
+            credential_ref: r.try_get("credential_ref")?,
+            tls_policy: r.try_get("tls_policy")?,
+            protocol_version: r.try_get("protocol_version")?,
+            allowed_capabilities: caps,
+        };
+        let time = now(&mut tx).await?;
+        let deadline = time
+            .checked_add_signed(Duration::seconds(i64::from(l.wall_seconds)))
+            .ok_or(StoreError::Invalid("deadline"))?;
+        let id = Id::new();
+        sqlx::query("INSERT INTO app.runs(id,project_id,cycle_id,kind,input_set_id,state,deadline_at,queued_at) VALUES($1,$2,NULL,$3,$4,'QUEUED',$5,$6)")
+            .bind(id.as_uuid()).bind(request.project_id.as_uuid()).bind(db::code(&request.kind)?).bind(request.input_set_id.as_uuid())
+            .bind(deadline).bind(time).execute(&mut *tx).await?;
+        let run = append(&mut tx, id, RunEventKind::Created, RunReason::Admitted).await?;
+        let msg: i64 = sqlx::query_scalar("SELECT pgmq.send('runs',$1)")
+            .bind(json!({"schema_version":1,"run_id":id}))
+            .fetch_one(&mut *tx)
+            .await?;
+        sqlx::query("INSERT INTO app.run_admissions(run_id,project_id,cycle_id,command_key,normalized_request,initial_snapshot,limits,runtime_id,runtime_revision,runtime_snapshot,initial_queue_message_id) VALUES($1,$2,NULL,$3,$4,$5,$6,$7,$8,$9,$10)")
+            .bind(id.as_uuid()).bind(request.project_id.as_uuid()).bind(key).bind(normalized).bind(db::json(&run)?)
+            .bind(db::json(l)?).bind(request.runtime_id.as_uuid()).bind(request.runtime_revision.get() as i64)
+            .bind(db::json(&runtime)?).bind(msg).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(CommandResult {
+            schema_version: SchemaV1,
+            replayed: false,
+            resource: run,
+        })
+    }
+
     pub async fn read_run_messages(
         &self,
         visibility_seconds: i32,
@@ -536,7 +674,7 @@ impl Store {
                 tx.commit().await?;
                 return Ok(ClaimResult::Terminal(run));
             }
-            if locked.project_state != ProjectState::Active || locked.cycle_state != "RUNNING" {
+            if !locked.admission_open() {
                 return Err(DomainError::AdmissionClosed.into());
             }
             if locked.run.state != RunState::Queued {
@@ -566,6 +704,20 @@ impl Store {
                 let lease = lease_view(locked, &old)?;
                 tx.commit().await?;
                 return Ok(ClaimResult::Leased(Box::new(lease)));
+            }
+            if locked.run.deadline_at <= time
+                && old.try_get::<String, _>("dispatch_state")? == "NOT_SENT"
+            {
+                // This identity was never authorized for a wire write. Close the
+                // local attempt without inventing an observed remote failure.
+                sqlx::query("UPDATE app.run_attempts SET dispatch_state='TERMINAL' WHERE id=$1")
+                    .bind(locked.run.active_attempt_id.map(Id::as_uuid))
+                    .execute(&mut *tx)
+                    .await?;
+                let result = finish(&mut tx, &mut locked, RunState::Failed, RunReason::DeadlineExceeded,
+                    json!({"schema_version":1,"source":"NOT_DISPATCHED","reason":"DEADLINE_EXCEEDED"})).await?;
+                tx.commit().await?;
+                return Ok(ClaimResult::Terminal(result));
             }
             let epoch = current.owner_epoch.next().ok_or(StoreError::Integrity)?;
             sqlx::query("UPDATE app.run_attempts SET worker_owner_id=$2,owner_epoch=$3,lease_expires_at=$4 WHERE id=$1")
@@ -609,12 +761,16 @@ impl Store {
             tx.commit().await?;
             return Ok(false);
         }
-        if locked.project_state != ProjectState::Active
-            || locked.cycle_state != "RUNNING"
-            || locked.run.deadline_at <= now(&mut tx).await?
-        {
+        if !locked.admission_open() || locked.run.deadline_at <= now(&mut tx).await? {
             return Err(DomainError::AdmissionClosed.into());
         }
+        crate::research::revalidate_frozen_inputs(
+            &mut tx,
+            locked.run.input_set_id,
+            locked.run.project_id,
+            db::id(locked.admission.try_get("runtime_id")?)?,
+        )
+        .await?;
         let runtime = sqlx::query(
             "SELECT enabled,revision::bigint FROM app.runtime_integrations WHERE id=$1 FOR SHARE",
         )
@@ -813,7 +969,7 @@ impl Store {
             _ => "CANCELLED",
         };
         sqlx::query("UPDATE app.run_attempts SET dispatch_state='TERMINAL',runtime_state=$2,result_manifest_artifact_id=$3,accepted_at=CASE WHEN $3::uuid IS NULL THEN NULL ELSE clock_timestamp() END,error_class=$4,error_code=$5 WHERE id=$1")
-            .bind(owner.attempt_id.as_uuid()).bind(runtime_state).bind(observation.manifest_artifact_id.map(Id::as_uuid)).bind(observation.failure_class.as_ref().map(db::code).transpose()?).bind(observation.failure_code.clone().unwrap_or(db::code(&reason)?)).execute(&mut *tx).await?;
+            .bind(owner.attempt_id.as_uuid()).bind(runtime_state).bind(observation.manifest_artifact_id.map(Id::as_uuid)).bind(observation.failure_class.as_ref().map(db::code).transpose()?).bind(observation.failure_code.as_deref()).execute(&mut *tx).await?;
         let result = finish(&mut tx, &mut locked, state, reason, expected).await?;
         tx.commit().await?;
         Ok(CommandResult {
@@ -970,18 +1126,19 @@ impl Store {
             if row.try_get::<i32, _>("schema_version")? != 1 {
                 return Err(StoreError::EventContractUnsupported);
             }
-            let payload: RunStatePayload = serde_json::from_value(row.try_get("payload")?)
-                .map_err(|_| StoreError::EventContractUnsupported)?;
-            events.push(RunEventV1 {
+            let event = RunEventV1 {
                 schema_version: SchemaV1,
                 run_id: id,
                 seq,
                 attempt_id: db::optional_id(&row, "attempt_id")?,
-                event_type: db::enum_value(&row, "event_type")
-                    .map_err(|_| StoreError::EventContractUnsupported)?,
+                event_type: row.try_get("event_type")?,
                 occurred_at: row.try_get("occurred_at")?,
-                payload,
-            });
+                payload: row.try_get("payload")?,
+            };
+            event
+                .validate()
+                .map_err(|_| StoreError::EventContractUnsupported)?;
+            events.push(event);
             cursor = seq;
         }
         if events.is_empty() && after < run.last_event_seq {
@@ -1009,7 +1166,7 @@ impl Store {
         // checks follow the already locked project, avoiding SHARE->UPDATE
         // upgrade deadlocks between simultaneous machine cancellations.
         if matches!(actor, Actor::Browser { .. }) {
-            authority::browser(&mut tx, actor, false, false).await?;
+            authority::browser(&mut tx, actor, true, false).await?;
         }
         let mut locked = lock_run(&mut tx, id).await?;
         let scope = match actor {

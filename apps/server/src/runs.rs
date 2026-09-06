@@ -131,7 +131,7 @@ pub async fn events(
             if let Some(item) = context.pending.pop_front() {
                 let frame = Event::default()
                     .id(format!("{}:{}", item.run_id, item.seq.get()))
-                    .event(item.event_type.code())
+                    .event(&item.event_type)
                     .json_data(&item);
                 match frame {
                     Ok(frame) => {

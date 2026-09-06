@@ -316,40 +316,41 @@ async fn feedback(
 #[sqlx::test(migrations = "../../migrations")]
 async fn feedback_revisions_are_contiguous_unforked_and_bound_to_the_logical_stream(pool: PgPool) {
     let f = fixture(&pool, budget()).await;
+    let report = support::forward_report_metadata(&pool, f.project).await;
     let (offer, delivery) = offer(&pool, &f).await;
     sqlx::query("UPDATE app.handoff_offers SET state='CLAIMED',external_claim_id='positive-control',claimed_at=clock_timestamp() WHERE id=$1")
         .bind(offer.as_uuid()).execute(&pool).await.unwrap();
     sqlstate(
-        feedback(&pool, offer, delivery, f.artifact, 2, None, "nav")
+        feedback(&pool, offer, delivery, report, 2, None, "nav")
             .await
             .unwrap_err(),
         "23514",
     );
-    let first = feedback(&pool, offer, delivery, f.artifact, 1, None, "nav")
+    let first = feedback(&pool, offer, delivery, report, 1, None, "nav")
         .await
         .unwrap();
     sqlstate(
-        feedback(&pool, offer, delivery, f.artifact, 3, Some(first), "nav")
+        feedback(&pool, offer, delivery, report, 3, Some(first), "nav")
             .await
             .unwrap_err(),
         "23514",
     );
-    let second = feedback(&pool, offer, delivery, f.artifact, 2, Some(first), "nav")
+    let second = feedback(&pool, offer, delivery, report, 2, Some(first), "nav")
         .await
         .unwrap();
     sqlstate(
-        feedback(&pool, offer, delivery, f.artifact, 2, Some(first), "nav")
+        feedback(&pool, offer, delivery, report, 2, Some(first), "nav")
             .await
             .unwrap_err(),
         "23505",
     );
     sqlstate(
-        feedback(&pool, offer, delivery, f.artifact, 3, Some(second), "other")
+        feedback(&pool, offer, delivery, report, 3, Some(second), "other")
             .await
             .unwrap_err(),
         "23503",
     );
-    feedback(&pool, offer, delivery, f.artifact, 3, Some(second), "nav")
+    feedback(&pool, offer, delivery, report, 3, Some(second), "nav")
         .await
         .unwrap();
 }

@@ -49,6 +49,7 @@ jobs:
           cargo run --locked -q -p server -- --help > /tmp/native-evidence/server-help.txt
           node tests/contracts/decimal-wire.mjs | tee /tmp/native-evidence/decimal-wire.log
           node tests/contracts/bigint-wire.mjs | tee /tmp/native-evidence/bigint-wire.log
+          node tests/contracts/fraction-wire.mjs | tee /tmp/native-evidence/fraction-wire.log
       - name: Execute real Rust solver, Nautilus and Arrow round-trip
         run: target/debug/job verify-native --output /tmp/native-evidence/native
       - name: Install locked official Codex and verify native stdio

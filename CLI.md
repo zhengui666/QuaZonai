@@ -109,7 +109,8 @@ session 表不兼容或任一授权失败时，不保留半次升级及 epoch �
 | `GET /api/v2/runs/{id}/events` | `text/event-stream`；`Last-Event-ID: <run UUID>:<decimal seq>`；不存在 cursor 时从0开始 |
 | `POST /api/v2/runs/{id}/cancel` | body为 `{"schema_version":1,"expected_revision":"当前版本"}`，另带 Idempotency-Key；接受后202，版本过期409 |
 
-浏览器使用现有同源私有会话。机器需要该项目的 RUN_READ 或 RUN_CANCEL；Mission
+浏览器使用现有同源私有会话；取消是写操作，必须在最近五分钟内完成 TOTP 认证，
+超时先重新认证，读取不受该近期窗口限制。机器需要该项目的 RUN_READ 或 RUN_CANCEL；Mission
 只读自身 Run，不能扩大到其他项目或取得操作员授权。取消仅停止计算，不表示下游
 交易停止。尚未 dispatch 的任务可以直接 CANCELLED；已涉及远端的任务先显示
 CANCEL_REQUESTED，须确认远端终止后才能终结，真实失败保留 FAILED。
@@ -117,5 +118,22 @@ CANCEL_REQUESTED，须确认远端终止后才能终结，真实失败保留 FAI
 SSE 每条 id 与 data.seq 对应。按最后收到的 id 重连，客户端对序列去重；过期或超前
 cursor 在开始流之前410，错误 UUID/数字形状422。认证撤销、版本不兼容等发生在
 已建立的流中时发送不带新 cursor 的 reset-required，客户端应重新认证/读快照。
+兼容的 schema-v1 新事件保留事件名和公开 JSON envelope，推进游标但不更新未知的
+状态投影；已知状态事件仍严格解析。未知主版本不是可跳过事件，应升级客户端。
 每个 API 进程最多32条流，连接满额429；连接60秒后重连以更新认证。关闭浏览器不会
 取消任务或确认队列。该节不声明远程 CLI/MCP 或完整 Worker 执行器已实现。
+
+### 任务与迁移恢复边界
+
+冻结 InputSet 保存当时的证据，不能延长数据许可。每次新任务准入和唯一首次发送
+均在领域事务中重新锁定并核对当前授权；撤销后既有未知任务仍可对账，原始回执仍
+可重读，不能盲目退款或重新发送。已经领取但从未发送、且租约和 deadline 均过期的
+任务终结为 FAILED/DEADLINE_EXCEEDED；这不是远端失败或停止证明。
+
+IMPORT/EXPORT/DATA_VALIDATE 可由受信任内部服务以无 Cycle 路径准入；实验预约
+固定为零，仍需有界资源与项目并发限制。没有向 Agent 开放通用无预算执行入口，
+也不把这个内部准入能力说成导入/导出业务已完成。
+
+迁移命令在专用连接取消请求级 statement_timeout，保持五秒锁等待限制；迁移完成
+或失败后关闭该连接。业务连接的请求超时不改变。升级前停止写入并备份；不要在
+生产库用零散 SQL 文件代替完整迁移入口。

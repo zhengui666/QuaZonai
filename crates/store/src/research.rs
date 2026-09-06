@@ -146,6 +146,7 @@ async fn validate_inputs(
     tx: &mut Transaction<'_, Postgres>,
     request: &InputSetCreate,
     extra_sealed: Option<Id>,
+    execution_runtime: Option<Id>,
 ) -> Result<(), StoreError> {
     domain::research::input_set(request)?;
     let mut datasets = Vec::new();
@@ -220,15 +221,17 @@ async fn validate_inputs(
     .bind(source_ids.iter().copied().collect::<Vec<_>>())
     .fetch_all(&mut **tx)
     .await?;
+    // Lock all data and execution runtimes in the same stable ordering before
+    // any grant lock. A later execution-runtime check only rereads held locks.
+    let mut runtime_ids = sources
+        .iter()
+        .map(|r| r.try_get::<uuid::Uuid, _>("runtime_id"))
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    runtime_ids.extend(execution_runtime.map(Id::as_uuid));
     let runtimes = sqlx::query(
         "SELECT id,enabled FROM app.runtime_integrations WHERE id=ANY($1) ORDER BY id FOR SHARE",
     )
-    .bind(
-        sources
-            .iter()
-            .map(|r| r.try_get::<uuid::Uuid, _>("runtime_id"))
-            .collect::<Result<Vec<_>, _>>()?,
-    )
+    .bind(runtime_ids.into_iter().collect::<Vec<_>>())
     .fetch_all(&mut **tx)
     .await?;
     let grants=sqlx::query("SELECT id,source_id,valid_from,valid_until,allowed_uses FROM app.data_use_grants WHERE id=ANY($1) ORDER BY id FOR SHARE")
@@ -274,6 +277,31 @@ async fn validate_inputs(
         }
     }
     Ok(())
+}
+
+/// Frozen membership records historical input identity, not continuing access.
+/// Caller owns the project lock before this function takes source/runtime/grant
+/// locks. Historical receipts and reconciliation intentionally do not call it.
+pub(crate) async fn revalidate_frozen_inputs(
+    tx: &mut Transaction<'_, Postgres>,
+    id: Id,
+    project: Id,
+    runtime: Id,
+) -> Result<(), StoreError> {
+    let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.input_sets WHERE id=$1 AND project_id=$2 AND frozen_at IS NOT NULL)")
+        .bind(id.as_uuid()).bind(project.as_uuid()).fetch_one(&mut **tx).await?;
+    if !valid {
+        return Err(StoreError::Invalid("frozen_inputs_required"));
+    }
+    let view = input(tx, id).await?;
+    let request = InputSetCreate {
+        schema_version: contracts::SchemaV1,
+        project_id: view.header.project_id,
+        purpose: view.header.purpose,
+        decision_cutoff: view.header.decision_cutoff,
+        items: view.items.into_iter().map(|item| item.item).collect(),
+    };
+    validate_inputs(tx, &request, None, Some(runtime)).await
 }
 
 impl Store {
@@ -342,7 +370,7 @@ impl Store {
             return Ok(result);
         }
         project_for_write(&mut tx, request.project_id).await?;
-        validate_inputs(&mut tx, request, None).await?;
+        validate_inputs(&mut tx, request, None, None).await?;
         let id = prepared.target;
         sqlx::query(
             "INSERT INTO app.input_sets(id,project_id,purpose,decision_cutoff) VALUES($1,$2,$3,$4)",
@@ -479,6 +507,7 @@ impl Store {
                 items,
             },
             Some(request.split_policy.sealed_revision_id),
+            None,
         )
         .await?;
         let assumptions=sqlx::query("SELECT a.project_id AS fee_project,l.project_id AS liquidity_project FROM app.execution_assumptions e JOIN app.artifacts a ON a.id=e.fee_schedule_artifact_id LEFT JOIN app.artifacts l ON l.id=e.liquidity_artifact_id WHERE e.id=$1")

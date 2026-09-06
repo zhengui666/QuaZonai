@@ -473,3 +473,52 @@ async fn sse_connections_are_bounded_and_disconnected_permits_are_released(pool:
         .unwrap();
     assert_eq!(status, "QUEUED");
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn sse_preserves_compatible_extension_between_known_events_and_resumes(pool: PgPool) {
+    let (f, cookie) = authenticated(pool.clone()).await;
+    let run = admitted(&pool, &f, "extension").await;
+    let payload = json!({"schema_version":1,"completed":"9007199254740993","unit":"observations"});
+    sqlx::query("INSERT INTO app.run_events(run_id,seq,event_type,schema_version,payload,occurred_at) VALUES($1,2,'run.observations_processed',1,$2,clock_timestamp())")
+        .bind(run.id.as_uuid()).bind(payload.clone()).execute(&pool).await.unwrap();
+    let http = Http::start(f.app.clone()).await;
+    let path = format!("/api/v2/runs/{}", run.id);
+    let current = json_reply(http.get(&path, Some(&cookie)).await, StatusCode::OK).await;
+    let response = http
+        .request(
+            reqwest::Method::POST,
+            &format!("{path}/cancel"),
+            Some(&cookie),
+        )
+        .header("idempotency-key", "cancel-extension")
+        .json(&json!({"schema_version":1,"expected_revision":current["revision"]}))
+        .send()
+        .await
+        .unwrap();
+    json_reply(response, StatusCode::ACCEPTED).await;
+    let text = http
+        .get(&format!("{path}/events"), Some(&cookie))
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert_eq!(frame_ids(&text), vec![1, 2, 3]);
+    assert!(text.contains("run.observations_processed"));
+    assert!(text.contains("9007199254740993"));
+    assert!(!text.contains("reset-required"));
+    let text = http
+        .request(
+            reqwest::Method::GET,
+            &format!("{path}/events"),
+            Some(&cookie),
+        )
+        .header("last-event-id", format!("{}:2", run.id))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert_eq!(frame_ids(&text), vec![3]);
+    assert!(!text.contains("run.observations_processed"));
+}

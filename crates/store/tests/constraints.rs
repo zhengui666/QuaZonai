@@ -181,7 +181,14 @@ async fn new_database_migrations_are_repeatable_without_legacy_side_effects(pool
     let store = store::Store::from_pool(pool.clone());
     store.migrate().await.unwrap();
     let tables:i64=sqlx::query_scalar("SELECT count(*) FROM information_schema.tables WHERE table_schema='app' AND table_type='BASE TABLE'").fetch_one(&pool).await.unwrap();
-    assert_eq!(tables, 70);
+    // Migration 017 adds the immutable, exact-tuple handoff transfer ledger.
+    assert_eq!(tables, 71);
+    let transfers_exist: bool =
+        sqlx::query_scalar("SELECT to_regclass('app.handoff_transfers') IS NOT NULL")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(transfers_exist);
     let windows_exist: bool =
         sqlx::query_scalar("SELECT to_regclass('app.machine_auth_rate_windows') IS NOT NULL")
             .fetch_one(&pool)

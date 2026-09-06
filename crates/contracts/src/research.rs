@@ -290,9 +290,10 @@ pub struct EvaluationPolicyCreate {
     pub metric_requirements: Vec<MetricRequirementV1>,
     #[schema(minimum = 1, maximum = 2147483647)]
     pub minimum_observations: u32,
+    #[schema(schema_with = crate::scalars::fraction_schema)]
     pub maximum_missing_fraction: DecimalValue,
     pub require_real_data: bool,
-    #[schema(max_items = 64)]
+    #[schema(schema_with = capabilities_schema)]
     pub required_capabilities: Vec<String>,
     #[schema(minimum = 1, maximum = 2147483647)]
     pub maximum_sealed_uses_per_lineage: u32,
@@ -314,9 +315,10 @@ pub struct EvaluationPolicyView {
     pub metric_requirements: Vec<MetricRequirementV1>,
     #[schema(minimum = 1, maximum = 2147483647)]
     pub minimum_observations: u32,
+    #[schema(schema_with = crate::scalars::fraction_schema)]
     pub maximum_missing_fraction: DecimalValue,
     pub require_real_data: bool,
-    #[schema(max_items = 64)]
+    #[schema(schema_with = capabilities_schema)]
     pub required_capabilities: Vec<String>,
     #[schema(minimum = 1, maximum = 2147483647)]
     pub maximum_sealed_uses_per_lineage: u32,
@@ -327,5 +329,20 @@ fn required_interval_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema:
     utoipa::openapi::schema::ObjectBuilder::new()
         .schema_type(utoipa::openapi::schema::Type::Boolean)
         .enum_values(Some([true]))
+        .into()
+}
+
+fn capabilities_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+    use utoipa::openapi::schema::{ArrayBuilder, ObjectBuilder, Type};
+    ArrayBuilder::new()
+        .min_items(Some(0))
+        .max_items(Some(64))
+        .unique_items(true)
+        .items(
+            ObjectBuilder::new()
+                .schema_type(Type::String)
+                .min_length(Some(1))
+                .max_length(Some(120)),
+        )
         .into()
 }

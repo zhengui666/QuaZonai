@@ -821,6 +821,11 @@ f64 再判断区间次序或 PASS。Metric 仍是原生 finite f64：比较语�
 
 ### A4.3 不可变研究输入与评估政策登记
 
+Create/View.maximum_missing_fraction 继续采用精确 decimal-string；生成合同以原生 allOf
+组合 DecimalValue 精度/长度格式与 [0,1] 数值字符串约束，保留前导零、正号和负零等原有合法
+表示，运行时仍由 BigDecimal/is_fraction 判定。required_capabilities 为 0–64 个不重复的
+1–120 字符字符串，Create/View 生成合同相同；Rust 和 JavaScript 使用同一组边界语料验证。
+
 #### 2026-09-06 独立审查修订：用途、关系列和诊断
 
 数据许可的用途不是仅存在于元数据。登记时在已锁定grant上读取封闭
@@ -1266,6 +1271,15 @@ handoff_offers [mutable state; immutable bindings]
   claimed_at: Time?
   acknowledged_at: Time?
 
+handoff_transfers [immutable, native transition evidence]
+  handoff_id: Id UNIQUE FK handoff_offers
+  downstream_id: Id FK downstream_integrations
+  external_claim_id: text
+  claimed_at: Time
+  provenance: RECORDED_TRANSITION|LEGACY_CLAIMED_STATE
+  FK (handoff_id,downstream_id,external_claim_id,claimed_at)
+    -> handoff_offers(id,downstream_id,external_claim_id,claimed_at)
+
 forward_messages [append-only]
   downstream_id: Id FK downstream_integrations
   external_message_id: text
@@ -1347,6 +1361,28 @@ unique(candidate_id,downstream_id,environment,ordinal)；release属于candidate�
 产物（同一报告可只登记一次）。因此同项目但无关的证据集合、Discovery 输入、草稿或
 他项目证据都不能成为交付授权。Paper/Live、自动政策及资格/新鲜度门禁继续独立重查；
 仅满足关系约束不是授予审批的权限。新数据库约束不篡改过去已冻结的错误审批。
+
+### A7.2 领取历史与 Forward 报告来源（增量迁移 017）
+
+`handoff_transfers` 复用 A0 的 id/created_at；一条 Handoff 至多一次转移。
+新的 OFFERED→CLAIMED 在已取得父行锁、校验数据库实际时钟后，由原生 AFTER
+触发器同事务写入 RECORDED_TRANSITION，精确绑定领取元组。OFFERED→REJECTED
+不得凭空附带领取字段。合法领取后再拒绝必须保留已有转移事实及已接受反馈，不能回写历史。
+新建转移记录禁止使用 LEGACY_CLAIMED_STATE；该来源仅为升级时明确标记的历史回填。
+
+迁移先锁 Handoff/Forward，再审计原行。仅当前 CLAIMED/ACKNOWLEDGED 且领取元组
+完整的旧行可生成 LEGACY_CLAIMED_STATE；当前 REJECTED 但带 claimed_at 的旧行不能
+独立证明曾领取，必须升级失败并保留原行，待原生下游证据的显式人工核对，不得猜测补造。
+旧 Forward 的不可变 created_at 与 received_at 均不得早于所属领取时间，且必须具有
+精确 Handoff/Downstream 转移记录。不能因升级时已领取而把领取前写入的反馈洗成有效。
+
+新反馈在父行共享锁内仍只接受 CLAIMED/ACKNOWLEDGED，必须存在精确转移记录；
+拒绝、撤销与插入按同一父锁串行化。`report_artifact_id` 必须属于 Release/Candidate
+同项目，kind=REPORT、media_type=application/json、schema_name=qz.forward_report、
+schema_version=1、origin=REAL、access_class=EVALUATOR_ONLY、byte_count>0。
+报告内容及其签发者/版本仍须由实际接入服务验证；关系元数据不能代替真实报告字节或
+受保护产品验收。禁止原地改写错误历史、把 FIXTURE 重标 REAL 或向研究/PWA 泄露原始报告。
+所有既有迁移保持原字节；不兼容历史令整个升级批次回滚。
 
 ## A8. 集成、身份与幂等
 
@@ -1723,7 +1759,53 @@ SSE 复用 Axum 原生 Event/Sse 和成熟 Stream adapter，逐批从持久表�
 
 此 Store 增量只接受已登记的 `kind=REPORT`、`media_type=application/json`、`schema_name=qz.job_result`、`schema_version=1` 的 result manifest；生产 run/attempt/project 及字节上限一致。这个名字是业务产物 schema，不是新的目录或内容哈希。实际 JSON 内容、输出引用和科学字段仍须可信 runtime adapter 在登记之前按 ResultManifestV1 校验；单独插入元数据不算完成该验证。
 
+### B5.7 准入授权、无 Cycle 工作与终态保护（2026-09-06 审查修订）
+
+冻结 InputSet 是不可变历史，不是永久读取许可。每次新 `enqueue_run` 和每个 Attempt
+唯一首次 `begin_run_dispatch` 事务都复用 A4.3 的成员验证；按 source→runtime（包括执行
+runtime）→grant 的稳定顺序锁定，最后读取数据库当前时间与已提交的撤销，再验证启用状态、
+用途、source/grant 绑定、partition/PIT/as-of、生效和到期。校验失败时不得增加预算、消息、
+Run、发送意图或事件。已经提交的准确幂等回执、SENT_UNKNOWN 对账和真实终态结算不因
+事后撤销而删除、重发或退款。锁外预检不能替代这些事务内检查。
+
+受信任 `enqueue_standalone_run` 只接 `project_id/input_set_id/runtime_id/runtime_revision/
+kind/limits/max_parallel_runs`。仅 IMPORT、EXPORT、DATA_VALIDATE 可用；limits.experiments
+必须 0，cpu_seconds/wall_seconds/memory_mib/output_bytes 正值且满足原生整数边界；部署侧
+可信调用者给出 1–65535 的项目管理任务并发上限，不能由 Agent 降格研究任务。EXPORT 可读取
+归档项目；IMPORT/DATA_VALIDATE 不在归档项目开始。无 Cycle 任务仍须同项目冻结输入、
+当前数据许可和登记的原生 runtime 能力。没有伪造的 Cycle，也不借此绕过研究预算。
+
+`run_admissions.cycle_id` 可空，但 `(run_id,project_id)` 必须精确引用 Run，cycle_id 必须与
+Run 完全一致（含 NULL）。有 Cycle 继续 UNIQUE(cycle_id,command_key)；无 Cycle 使用
+partial UNIQUE(project_id,command_key) WHERE cycle_id IS NULL。身份、规范请求、资源、
+运行配置与初始消息快照仍不可变。锁序 project→可选 cycle→run→attempt；只有有 Cycle 的
+终态结转实验预约，无 Cycle 不修改研究账本。上述接口是内部受信任准入，不是公开任意执行入口。
+
+已领取 Attempt 若 lease 与 deadline 均过期且 dispatch_state=NOT_SENT，恢复事务直接把
+本地 dispatch_state 设 TERMINAL、Run 设 FAILED/DEADLINE_EXCEEDED，并追加唯一终态回执/
+事件及一次性额度结转，不再续租。保留原 owner/epoch/external_job_id；runtime_state 保持
+UNKNOWN，回执明确 source=NOT_DISPATCHED，不能捏造远端失败或不存在证明。尚有效的其他
+owner 租约不抢占；SENT_UNKNOWN/ACKNOWLEDGED 仍对账，不能据本地超时宣告远端已停。
+
+Run 进入终态后，其所有 Attempt 的新增、修改、删除均被持有父 Run 行锁的原生触发器拒绝，
+包括没有 manifest/accepted_at 的失败与取消。正确采纳先修改 Attempt 再同事务终结 Run/
+receipt；之后的准确重传只读原始回执。Attempt.error_class/error_code 仅存真实失败元数据，
+成功和成功后取消不存 RUNTIME_SUCCEEDED 等 Run 原因；Run.terminal_reason_code 仍保留原因。
+旧终态历史不通过迁移原地改写。浏览器取消必须 300 秒内的 TOTP 认证；读取不要求近期认证，
+机器取消仍仅允许精确项目的 CLI/AUTOMATION RUN_CANCEL，不赋予 Mission/Downstream 权限。
+
+部署迁移使用脱离请求池的专用连接，在原生迁移 advisory lock 前 SET statement_timeout=0，
+仍使用 lock_timeout=5s。全部批次和角色授权同事务；结束后关闭连接，不把该设置归还请求池。
+正常请求的 15 秒超时不变。失败证据由实际返回确认，不把正在运行的 CI/review 当成失败。
+
 ## B6. SSE 与恢复
+
+生产端使用封闭 RunEventKind 和严格 RunStatePayload；消费端 RunEventV1.event_type 保留
+1–120 字节安全 ASCII 名称（首字母 a–z，其余 a–z/0–9/下划线/点），payload 是不超过
+65536 UTF-8 字节且 schema_version=1 的公开 JSON 对象。已知 run.created/run.state_changed
+仍经严格原生 Serde 校验；未知但兼容的事件保留 envelope 并推进游标，不更改状态投影。
+主版本不兼容、非法名称、非对象或超大负载仍失败，不跳过错误行伪造连续性。浏览器和 CLI
+复用原生 SSE；未知类型不触发永久 reset-required 循环。
 
 GET run 同一快照返回 state/revision/last_event_seq；随后 `Last-Event-ID=<run_id>:<seq>` 从持久表读 seq>cursor。
 

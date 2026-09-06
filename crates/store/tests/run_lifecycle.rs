@@ -268,6 +268,9 @@ async fn terminal_receipt_survives_lost_ack_without_double_consumption(pool: PgP
         .begin_run_dispatch(run.id, &lease.fence)
         .await
         .unwrap());
+    // Expire a real short lease after adoption, never mutate terminal history.
+    sqlx::query("UPDATE app.run_attempts SET lease_expires_at=clock_timestamp()+interval '1 second' WHERE id=$1")
+        .bind(lease.fence.attempt_id.as_uuid()).execute(&pool).await.unwrap();
     let report = manifest(&pool, &lease).await;
     let obs = observed(&pool, &lease, NativeOutcome::Succeeded, Some(report)).await;
     let (one, two) = tokio::join!(
@@ -280,7 +283,8 @@ async fn terminal_receipt_survives_lost_ack_without_double_consumption(pool: PgP
     assert_eq!(one.resource.state, RunState::Succeeded);
     assert_eq!(usage(&pool, f.cycle).await, (0, 1, 100));
     // A committed result remains identifiable after a worker lease ends.
-    sqlx::query("UPDATE app.run_attempts SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1").bind(lease.fence.attempt_id.as_uuid()).execute(&pool).await.unwrap();
+    sqlx::query("SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM lease_expires_at-clock_timestamp()))+0.02) FROM app.run_attempts WHERE id=$1")
+        .bind(lease.fence.attempt_id.as_uuid()).execute(&pool).await.unwrap();
     assert!(
         store
             .accept_run_terminal(run.id, &lease.fence, &obs)
@@ -634,7 +638,7 @@ async fn first_dispatch_rechecks_lease_after_real_runtime_lock_wait(pool: PgPool
         tokio::spawn(async move { store.begin_run_dispatch(run.id, &fence).await })
     };
     tokio::time::timeout(std::time::Duration::from_secs(3),async {
-        loop {let waiting:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT enabled,revision%')").fetch_one(&pool).await.unwrap();if waiting{break}tokio::time::sleep(std::time::Duration::from_millis(10)).await;}
+        loop {let waiting:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT id,enabled FROM app.runtime_integrations%')").fetch_one(&pool).await.unwrap();if waiting{break}tokio::time::sleep(std::time::Duration::from_millis(10)).await;}
     }).await.unwrap();
     sqlx::query(
         "SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM $1::timestamptz-clock_timestamp()))+0.05)",
@@ -740,4 +744,430 @@ async fn false_terminal_receipts_and_unstructured_failure_reasons_are_rejected(p
     assert_eq!(error_code, "UPSTREAM_FAILURE");
     let current = store.get_run(&actor, run.id).await.unwrap();
     assert_eq!(current.state, RunState::Failed);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn review_expired_unsent_attempt_is_finalized_without_releasing_another_lease(pool: PgPool) {
+    let (store, f, mut request, actor) = setup(&pool).await;
+    request.limits.wall_seconds = 1;
+    let run = store
+        .enqueue_run("overdue", &request)
+        .await
+        .unwrap()
+        .resource;
+    let m = message(&store, run.id).await;
+    let ClaimResult::Leased(lease) = store.claim_run(&m, "original", 1).await.unwrap() else {
+        panic!("lease")
+    };
+    sqlx::query(
+        "SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM $1::timestamptz-clock_timestamp()))+0.02)",
+    )
+    .bind(lease.lease_expires_at.max(run.deadline_at))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let ClaimResult::Terminal(ended) = store.claim_run(&m, "recovery", 60).await.unwrap() else {
+        panic!("an expired NOT_SENT attempt must terminate instead of receiving a fresh lease")
+    };
+    assert_eq!(ended.state, RunState::Failed);
+    assert_eq!(
+        ended.terminal_reason_code.as_deref(),
+        Some("DEADLINE_EXCEEDED")
+    );
+    let attempt: (String, i64, String, String) = sqlx::query_as("SELECT worker_owner_id,owner_epoch::bigint,dispatch_state,runtime_state FROM app.run_attempts WHERE id=$1")
+        .bind(lease.fence.attempt_id.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        attempt,
+        ("original".into(), 1, "TERMINAL".into(), "UNKNOWN".into())
+    );
+    assert_eq!(usage(&pool, f.cycle).await, (0, 1, 100));
+    assert!(matches!(
+        store.claim_run(&m, "again", 60).await.unwrap(),
+        ClaimResult::Terminal(_)
+    ));
+    store.acknowledge_run(&m).await.unwrap();
+    store.acknowledge_run(&m).await.unwrap();
+    assert_eq!(usage(&pool, f.cycle).await, (0, 1, 100));
+    assert_eq!(store.get_run(&actor, run.id).await.unwrap(), ended);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn review_terminal_attempt_without_manifest_cannot_be_rewritten(pool: PgPool) {
+    let (store, _, request, _) = setup(&pool).await;
+    let run = store
+        .enqueue_run("failed", &request)
+        .await
+        .unwrap()
+        .resource;
+    let m = message(&store, run.id).await;
+    let lease = leased(&store, &m, "worker").await;
+    store
+        .begin_run_dispatch(run.id, &lease.fence)
+        .await
+        .unwrap();
+    let obs = observed(&pool, &lease, NativeOutcome::Failed, None).await;
+    store
+        .accept_run_terminal(run.id, &lease.fence, &obs)
+        .await
+        .unwrap();
+    for change in [
+        "worker_owner_id='different'",
+        "owner_epoch=owner_epoch+1",
+        "lease_expires_at=clock_timestamp()+interval '1 hour'",
+        "external_job_id='different'",
+        "dispatch_state='SENT_UNKNOWN'",
+        "runtime_state='RUNNING'",
+        "error_code='DIFFERENT'",
+    ] {
+        let mut tx = pool.begin().await.unwrap();
+        let result = sqlx::query(&format!("UPDATE app.run_attempts SET {change} WHERE id=$1"))
+            .bind(lease.fence.attempt_id.as_uuid())
+            .execute(&mut *tx)
+            .await;
+        tx.rollback().await.unwrap();
+        assert!(result.is_err(), "terminal attempt accepted: {change}");
+    }
+    let replay = store
+        .accept_run_terminal(run.id, &lease.fence, &obs)
+        .await
+        .unwrap();
+    assert!(replay.replayed);
+    store.acknowledge_run(&m).await.unwrap();
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn review_success_is_not_an_attempt_error(pool: PgPool) {
+    let (store, _, request, _) = setup(&pool).await;
+    let run = store
+        .enqueue_run("success", &request)
+        .await
+        .unwrap()
+        .resource;
+    let m = message(&store, run.id).await;
+    let lease = leased(&store, &m, "worker").await;
+    store
+        .begin_run_dispatch(run.id, &lease.fence)
+        .await
+        .unwrap();
+    let report = manifest(&pool, &lease).await;
+    let obs = observed(&pool, &lease, NativeOutcome::Succeeded, Some(report)).await;
+    let ended = store
+        .accept_run_terminal(run.id, &lease.fence, &obs)
+        .await
+        .unwrap();
+    assert_eq!(ended.resource.state, RunState::Succeeded);
+    let error: (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT error_class,error_code FROM app.run_attempts WHERE id=$1")
+            .bind(lease.fence.attempt_id.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(error, (None, None));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn review_compatible_unknown_event_retains_its_envelope_and_cursor(pool: PgPool) {
+    let (store, _, request, actor) = setup(&pool).await;
+    let run = store
+        .enqueue_run("events-extension", &request)
+        .await
+        .unwrap()
+        .resource;
+    let payload = serde_json::json!({"schema_version":1,"completed":"2","unit":"observations"});
+    sqlx::query("INSERT INTO app.run_events(run_id,seq,event_type,schema_version,payload,occurred_at) VALUES($1,2,'run.observations_processed',1,$2,clock_timestamp())")
+        .bind(run.id.as_uuid()).bind(&payload).execute(&pool).await.unwrap();
+    let current = store.get_run(&actor, run.id).await.unwrap();
+    store
+        .cancel_run(
+            &actor,
+            "cancel-extension",
+            run.id,
+            &RunCancelV1 {
+                schema_version: SchemaV1,
+                expected_revision: current.revision,
+            },
+        )
+        .await
+        .unwrap();
+    let batch = store
+        .run_events(&actor, run.id, DbCounter::ZERO, 100)
+        .await
+        .unwrap();
+    let wire = serde_json::to_value(&batch).unwrap();
+    assert_eq!(batch.events.len(), 3);
+    assert_eq!(
+        wire["events"][1]["event_type"],
+        "run.observations_processed"
+    );
+    assert_eq!(wire["events"][1]["payload"], payload);
+    assert_eq!(batch.events[2].seq.get(), 3);
+    let resumed = store
+        .run_events(&actor, run.id, DbCounter::new(2).unwrap(), 100)
+        .await
+        .unwrap();
+    assert_eq!(resumed.events.len(), 1);
+    assert_eq!(resumed.events[0].seq.get(), 3);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn review_browser_cancel_requires_recent_authentication_but_reads_do_not(pool: PgPool) {
+    let (store, _, request, _) = setup(&pool).await;
+    let id = Id::new();
+    sqlx::query("INSERT INTO app.browser_logins(id,auth_epoch,authenticated_at,expires_at) SELECT $1,session_epoch,clock_timestamp()-interval '10 minutes',clock_timestamp()+interval '1 hour' FROM app.operator_auth_state")
+        .bind(id.as_uuid()).execute(&pool).await.unwrap();
+    let stale = Actor::Browser { login_id: id };
+    let run = store
+        .enqueue_run("recent", &request)
+        .await
+        .unwrap()
+        .resource;
+    assert!(store.get_run(&stale, run.id).await.is_ok());
+    assert!(matches!(
+        store
+            .cancel_run(
+                &stale,
+                "recent",
+                run.id,
+                &RunCancelV1 {
+                    schema_version: SchemaV1,
+                    expected_revision: run.revision
+                }
+            )
+            .await,
+        Err(StoreError::RecentAuthenticationRequired)
+    ));
+    assert_eq!(
+        store.get_run(&stale, run.id).await.unwrap().state,
+        RunState::Queued
+    );
+}
+
+async fn licensed_inputs(
+    pool: &PgPool,
+    store: &Store,
+    f: &support::Fixture,
+    actor: &Actor,
+    runtime: Id,
+    until: Option<chrono::DateTime<Utc>>,
+) -> (Id, Id, Id) {
+    use contracts::research::*;
+    let source = Id::new();
+    let grant = Id::new();
+    let dataset = Id::new();
+    sqlx::query("INSERT INTO app.data_sources(id,name,runtime_id,native_catalog_ref,provider_kind,enabled) VALUES($1,'grant fixture',$2,$3,'fixture',true)")
+        .bind(source.as_uuid()).bind(runtime.as_uuid()).bind(format!("fixture/{source}")).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO app.data_use_grants(id,source_id,version,license_reference,evidence_artifact_id,allowed_uses,valid_from,valid_until,authorized_by) VALUES($1,$2,1,'test-only reference',$3,'RESEARCH',clock_timestamp()-interval '1 day',$4,'OPERATOR')")
+        .bind(grant.as_uuid()).bind(source.as_uuid()).bind(f.artifact.as_uuid()).bind(until).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO app.dataset_revisions(id,source_id,data_use_grant_id,native_snapshot_ref,native_storage_version,universe_version_id,schema_version,data_kind,partition_role,event_start,event_end,available_through,row_count,timezone,quality_artifact_id,pit_status,revision_policy,origin) SELECT $1,$2,$3,$4,'1',b.universe_version_id,'1','BAR','DISCOVERY','2010-01-01','2020-01-01','2020-01-02',1000,'UTC',$5,'UNVERIFIED','AS_KNOWN_THEN','FIXTURE' FROM app.research_briefs b WHERE b.project_id=$6 LIMIT 1")
+        .bind(dataset.as_uuid()).bind(source.as_uuid()).bind(grant.as_uuid()).bind(format!("fixture/{dataset}"))
+        .bind(f.artifact.as_uuid()).bind(f.project.as_uuid()).execute(pool).await.unwrap();
+    let cutoff: chrono::DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let input = store
+        .create_input_set(
+            actor,
+            &Id::new().to_string(),
+            &InputSetCreate {
+                schema_version: SchemaV1,
+                project_id: f.project,
+                purpose: InputPurpose::Discovery,
+                decision_cutoff: cutoff,
+                items: vec![InputItemV1::Dataset {
+                    dataset_revision_id: dataset,
+                    role: DataPartition::Discovery,
+                }],
+            },
+        )
+        .await
+        .unwrap()
+        .resource
+        .header
+        .id;
+    (input, grant, source)
+}
+async fn revoke_data(pool: &PgPool, grant: Id) {
+    sqlx::query("INSERT INTO app.data_use_revocations(grant_id,reason_code,reason,effective_at) VALUES($1,'TEST_WITHDRAWAL','test withdrawal',clock_timestamp())")
+        .bind(grant.as_uuid()).execute(pool).await.unwrap();
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn review_frozen_data_does_not_authorize_new_admission_after_revocation(pool: PgPool) {
+    let (store, f, mut request, actor) = setup(&pool).await;
+    let (input, grant, _) =
+        licensed_inputs(&pool, &store, &f, &actor, request.runtime_id, None).await;
+    request.input_set_id = input;
+    let original = store.enqueue_run("before", &request).await.unwrap();
+    revoke_data(&pool, grant).await;
+    assert!(store.enqueue_run("after", &request).await.is_err());
+    assert_eq!(usage(&pool, f.cycle).await, (1, 0, 100));
+    let counts: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM app.run_admissions),(SELECT count(*) FROM pgmq.q_runs)",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(counts, (1, 1));
+    let replay = store.enqueue_run("before", &request).await.unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.resource, original.resource);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn review_first_dispatch_rechecks_grants_but_unknown_outcomes_remain_reconcilable(
+    pool: PgPool,
+) {
+    let (store, f, mut request, actor) = setup(&pool).await;
+    let (input, grant, _) =
+        licensed_inputs(&pool, &store, &f, &actor, request.runtime_id, None).await;
+    request.input_set_id = input;
+    let sent = store.enqueue_run("sent", &request).await.unwrap().resource;
+    let unsent = store
+        .enqueue_run("unsent", &request)
+        .await
+        .unwrap()
+        .resource;
+    // One PGMQ read leases the complete batch. Do not read again for the second
+    // message while the first read's visibility timeout still owns it.
+    let messages = store.read_run_messages(30, 100).await.unwrap();
+    let sent_message = messages.iter().find(|m| m.run_id == sent.id).unwrap();
+    let unsent_message = messages.iter().find(|m| m.run_id == unsent.id).unwrap();
+    let sent_lease = leased(&store, sent_message, "sent").await;
+    let unsent_lease = leased(&store, unsent_message, "unsent").await;
+    assert!(store
+        .begin_run_dispatch(sent.id, &sent_lease.fence)
+        .await
+        .unwrap());
+    revoke_data(&pool, grant).await;
+    assert!(store
+        .begin_run_dispatch(unsent.id, &unsent_lease.fence)
+        .await
+        .is_err());
+    let state: String =
+        sqlx::query_scalar("SELECT dispatch_state FROM app.run_attempts WHERE id=$1")
+            .bind(unsent_lease.fence.attempt_id.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(state, "NOT_SENT");
+    assert!(!store
+        .begin_run_dispatch(sent.id, &sent_lease.fence)
+        .await
+        .unwrap());
+    let failed = observed(&pool, &sent_lease, NativeOutcome::Failed, None).await;
+    assert_eq!(
+        store
+            .accept_run_terminal(sent.id, &sent_lease.fence, &failed)
+            .await
+            .unwrap()
+            .resource
+            .state,
+        RunState::Failed
+    );
+    assert_eq!(usage(&pool, f.cycle).await, (1, 1, 200));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn review_grant_revocation_wait_is_rechecked_before_queue_commit(pool: PgPool) {
+    let (store, f, mut request, actor) = setup(&pool).await;
+    let (input, grant, _) =
+        licensed_inputs(&pool, &store, &f, &actor, request.runtime_id, None).await;
+    request.input_set_id = input;
+    let mut revoke = pool.begin().await.unwrap();
+    sqlx::query("INSERT INTO app.data_use_revocations(grant_id,reason_code,reason,effective_at) VALUES($1,'TEST_WITHDRAWAL','concurrent withdrawal',clock_timestamp())")
+        .bind(grant.as_uuid()).execute(&mut *revoke).await.unwrap();
+    let task = {
+        let store = store.clone();
+        tokio::spawn(async move { store.enqueue_run("wait-revoke", &request).await })
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(5),async{
+        loop{let waiting:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT id,source_id,valid_from,valid_until,allowed_uses%')").fetch_one(&pool).await.unwrap();
+            if waiting{break;}tokio::time::sleep(std::time::Duration::from_millis(10)).await;}
+    }).await.expect("must observe real grant lock wait");
+    revoke.commit().await.unwrap();
+    assert!(task.await.unwrap().is_err());
+    assert_eq!(usage(&pool, f.cycle).await, (0, 0, 0));
+    let queued: i64 = sqlx::query_scalar("SELECT count(*) FROM pgmq.q_runs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(queued, 0);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn review_standalone_work_uses_no_cycle_and_cannot_hide_research_trials(pool: PgPool) {
+    let (store, f, request, actor) = setup(&pool).await;
+    let mut limits = request.limits.clone();
+    limits.experiments = 0;
+    let admin = StandaloneRunSubmission {
+        project_id: f.project,
+        input_set_id: request.input_set_id,
+        runtime_id: request.runtime_id,
+        runtime_revision: request.runtime_revision,
+        kind: RunKind::DataValidate,
+        limits,
+        max_parallel_runs: 1,
+    };
+    let (a, b) = tokio::join!(
+        store.enqueue_standalone_run("admin", &admin),
+        store.enqueue_standalone_run("admin", &admin)
+    );
+    let (a, b) = (a.unwrap(), b.unwrap());
+    assert_ne!(a.replayed, b.replayed);
+    assert_eq!(a.resource, b.resource);
+    assert_eq!(a.resource.cycle_id, None);
+    assert!(store.enqueue_standalone_run("full", &admin).await.is_err());
+    let mut invalid = admin.clone();
+    invalid.kind = RunKind::AgentResearch;
+    assert!(store
+        .enqueue_standalone_run("research", &invalid)
+        .await
+        .is_err());
+    invalid = admin.clone();
+    invalid.limits.experiments = 1;
+    assert!(store
+        .enqueue_standalone_run("hidden", &invalid)
+        .await
+        .is_err());
+    let msg = message(&store, a.resource.id).await;
+    let lease = leased(&store, &msg, "management").await;
+    assert!(store
+        .begin_run_dispatch(a.resource.id, &lease.fence)
+        .await
+        .unwrap());
+    let report = manifest(&pool, &lease).await;
+    let obs = observed(&pool, &lease, NativeOutcome::Succeeded, Some(report)).await;
+    let terminal = store
+        .accept_run_terminal(a.resource.id, &lease.fence, &obs)
+        .await
+        .unwrap();
+    assert_eq!(terminal.resource.state, RunState::Succeeded);
+    store.acknowledge_run(&msg).await.unwrap();
+    store.acknowledge_run(&msg).await.unwrap();
+    assert_eq!(usage(&pool, f.cycle).await, (0, 0, 0));
+    assert!(store
+        .get_run(&actor, a.resource.id)
+        .await
+        .unwrap()
+        .cycle_id
+        .is_none());
+    let next = store
+        .enqueue_standalone_run("next", &admin)
+        .await
+        .unwrap()
+        .resource;
+    store
+        .cancel_run(
+            &actor,
+            "cancel-admin",
+            next.id,
+            &RunCancelV1 {
+                schema_version: SchemaV1,
+                expected_revision: next.revision,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(usage(&pool, f.cycle).await, (0, 0, 0));
 }

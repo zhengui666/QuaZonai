@@ -77,6 +77,8 @@ use utoipa::OpenApi;
     lifecycle::JobLimitsV1,
     lifecycle::RunCancelV1,
     lifecycle::RunListQuery,
+    lifecycle::RunEventKind,
+    lifecycle::RunStatePayload,
     lifecycle::RunEventV1,
     lifecycle::RunEventBatchV1
 )))]

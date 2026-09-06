@@ -19,6 +19,9 @@ impl Store {
     ) -> Result<(), StoreError> {
         let mut connection = self.pool.acquire().await?.detach();
         let result = async {
+            sqlx::query("SET statement_timeout = '0'")
+                .execute(&mut connection)
+                .await?;
             sqlx::query("SET lock_timeout='5s'").execute(&mut connection).await?;
             Migrate::lock(&mut connection).await?;
             let mut tx = connection.begin().await?;

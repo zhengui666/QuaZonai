@@ -285,3 +285,12 @@ pub async fn approval_inputs(pool: &PgPool, f: &Fixture, evaluation: Id) -> Id {
     tx.commit().await.unwrap();
     inputs
 }
+
+/// Only a relational fixture. The test database has no native market data or
+/// report object; REAL metadata here is never product acceptance evidence.
+pub async fn forward_report_metadata(pool: &PgPool, project: Id) -> Id {
+    let id = Id::new();
+    sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,'REPORT','application/json','qz.forward_report','1','LOCAL',$3,'1',32,'EVALUATOR_ONLY','REAL','OPERATOR','AUDIT')")
+        .bind(id.as_uuid()).bind(project.as_uuid()).bind(format!("relational-fixture/{id}")).execute(pool).await.unwrap();
+    id
+}

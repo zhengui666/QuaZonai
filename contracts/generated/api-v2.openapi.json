@@ -241,7 +241,19 @@
                 "$ref": "#/components/schemas/Id"
               },
               "maximum_missing_fraction": {
-                "$ref": "#/components/schemas/DecimalValue"
+                "allOf": [
+                  {
+                    "description": "Plain decimal exactly representable by NUMERIC(38,18).",
+                    "maxLength": 64,
+                    "minLength": 1,
+                    "pattern": "^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])",
+                    "type": "string"
+                  },
+                  {
+                    "pattern": "^(?:\\+?(?:0*1(?:\\.0*)?|0+(?:\\.[0-9]*)?|\\.[0-9]+)|-(?:0+(?:\\.0*)?|\\.0+))(?![\\s\\S])",
+                    "type": "string"
+                  }
+                ]
               },
               "maximum_sealed_uses_per_lineage": {
                 "format": "int32",
@@ -276,10 +288,14 @@
               },
               "required_capabilities": {
                 "items": {
+                  "maxLength": 120,
+                  "minLength": 1,
                   "type": "string"
                 },
                 "maxItems": 64,
-                "type": "array"
+                "minItems": 0,
+                "type": "array",
+                "uniqueItems": true
               },
               "selection_rule": {
                 "$ref": "#/components/schemas/SelectionRuleV1"
@@ -945,7 +961,19 @@
             "$ref": "#/components/schemas/Id"
           },
           "maximum_missing_fraction": {
-            "$ref": "#/components/schemas/DecimalValue"
+            "allOf": [
+              {
+                "description": "Plain decimal exactly representable by NUMERIC(38,18).",
+                "maxLength": 64,
+                "minLength": 1,
+                "pattern": "^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])",
+                "type": "string"
+              },
+              {
+                "pattern": "^(?:\\+?(?:0*1(?:\\.0*)?|0+(?:\\.[0-9]*)?|\\.[0-9]+)|-(?:0+(?:\\.0*)?|\\.0+))(?![\\s\\S])",
+                "type": "string"
+              }
+            ]
           },
           "maximum_sealed_uses_per_lineage": {
             "format": "int32",
@@ -980,10 +1008,14 @@
           },
           "required_capabilities": {
             "items": {
+              "maxLength": 120,
+              "minLength": 1,
               "type": "string"
             },
             "maxItems": 64,
-            "type": "array"
+            "minItems": 0,
+            "type": "array",
+            "uniqueItems": true
           },
           "schema_version": {
             "$ref": "#/components/schemas/SchemaV1"
@@ -1027,7 +1059,19 @@
             "$ref": "#/components/schemas/Id"
           },
           "maximum_missing_fraction": {
-            "$ref": "#/components/schemas/DecimalValue"
+            "allOf": [
+              {
+                "description": "Plain decimal exactly representable by NUMERIC(38,18).",
+                "maxLength": 64,
+                "minLength": 1,
+                "pattern": "^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])",
+                "type": "string"
+              },
+              {
+                "pattern": "^(?:\\+?(?:0*1(?:\\.0*)?|0+(?:\\.[0-9]*)?|\\.[0-9]+)|-(?:0+(?:\\.0*)?|\\.0+))(?![\\s\\S])",
+                "type": "string"
+              }
+            ]
           },
           "maximum_sealed_uses_per_lineage": {
             "format": "int32",
@@ -1062,10 +1106,14 @@
           },
           "required_capabilities": {
             "items": {
+              "maxLength": 120,
+              "minLength": 1,
               "type": "string"
             },
             "maxItems": 64,
-            "type": "array"
+            "minItems": 0,
+            "type": "array",
+            "uniqueItems": true
           },
           "selection_rule": {
             "$ref": "#/components/schemas/SelectionRuleV1"
@@ -1817,7 +1865,19 @@
                   "$ref": "#/components/schemas/Id"
                 },
                 "maximum_missing_fraction": {
-                  "$ref": "#/components/schemas/DecimalValue"
+                  "allOf": [
+                    {
+                      "description": "Plain decimal exactly representable by NUMERIC(38,18).",
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "pattern": "^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])",
+                      "type": "string"
+                    },
+                    {
+                      "pattern": "^(?:\\+?(?:0*1(?:\\.0*)?|0+(?:\\.[0-9]*)?|\\.[0-9]+)|-(?:0+(?:\\.0*)?|\\.0+))(?![\\s\\S])",
+                      "type": "string"
+                    }
+                  ]
                 },
                 "maximum_sealed_uses_per_lineage": {
                   "format": "int32",
@@ -1852,10 +1912,14 @@
                 },
                 "required_capabilities": {
                   "items": {
+                    "maxLength": 120,
+                    "minLength": 1,
                     "type": "string"
                   },
                   "maxItems": 64,
-                  "type": "array"
+                  "minItems": 0,
+                  "type": "array",
+                  "uniqueItems": true
                 },
                 "selection_rule": {
                   "$ref": "#/components/schemas/SelectionRuleV1"
@@ -2704,15 +2768,7 @@
         ],
         "type": "object"
       },
-      "RunEventKind": {
-        "enum": [
-          "run.created",
-          "run.state_changed"
-        ],
-        "type": "string"
-      },
       "RunEventV1": {
-        "additionalProperties": false,
         "properties": {
           "attempt_id": {
             "oneOf": [
@@ -2725,14 +2781,17 @@
             ]
           },
           "event_type": {
-            "$ref": "#/components/schemas/RunEventKind"
+            "maxLength": 120,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_.]*(?![\\s\\S])",
+            "type": "string"
           },
           "occurred_at": {
             "format": "date-time",
             "type": "string"
           },
           "payload": {
-            "$ref": "#/components/schemas/RunStatePayload"
+            "description": "Public schema-v1 object. Known state event payloads retain strict validation."
           },
           "run_id": {
             "$ref": "#/components/schemas/Id"
@@ -2764,22 +2823,6 @@
           "FORWARD_EVALUATE",
           "EXPORT",
           "IMPORT"
-        ],
-        "type": "string"
-      },
-      "RunReason": {
-        "enum": [
-          "ADMITTED",
-          "DISPATCH_RESERVED",
-          "RUNTIME_RUNNING",
-          "LEASE_TAKEN_OVER",
-          "CANCEL_REQUESTED",
-          "CANCELLED_BEFORE_DISPATCH",
-          "RUNTIME_SUCCEEDED",
-          "RUNTIME_FAILED",
-          "RUNTIME_CANCELLED",
-          "RESULT_DISCARDED_AFTER_CANCEL",
-          "DEADLINE_EXCEEDED"
         ],
         "type": "string"
       },
@@ -2899,26 +2942,6 @@
           "CANCELLED"
         ],
         "type": "string"
-      },
-      "RunStatePayload": {
-        "additionalProperties": false,
-        "properties": {
-          "reason": {
-            "$ref": "#/components/schemas/RunReason"
-          },
-          "schema_version": {
-            "$ref": "#/components/schemas/SchemaV1"
-          },
-          "state": {
-            "$ref": "#/components/schemas/RunState"
-          }
-        },
-        "required": [
-          "schema_version",
-          "state",
-          "reason"
-        ],
-        "type": "object"
       },
       "SchemaV1": {
         "enum": [

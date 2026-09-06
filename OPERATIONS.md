@@ -112,3 +112,20 @@ SSE 为每批最多16条的持久查询，不要求内存消息通知和 sticky 
 这些是受信任 Store 与 HTTP 的已实现入口，不是远端 Job 网关/隔离容器、完整研究
 调度、科学 PASS 或交付资格的验收。当前不提供任意任务 JSON、任意 URL 或任意
 命令的公开 enqueue/terminal 入口；尚未接通的研究服务必须使用同一准入事务。
+
+## 增量升级：转移历史与请求超时
+
+部署迁移使用专用连接，statement_timeout=0、lock_timeout=5s。长审计/回填不再
+被普通请求的15秒 statement_timeout中断；锁冲突仍失败并整批回滚。请求池的
+超时不因此放宽，迁移专用连接始终关闭。执行前完成备份、停止应用写入并排空旧事务。
+
+017保存一次性 Handoff 转移记录；新领取与原生记录同事务提交。旧 CLAIMED/
+ACKNOWLEDGED 被明确标为 LEGACY_CLAIMED_STATE，不冒充历史事件。旧 REJECTED
+若带领取字段却无独立历史证明，或 Forward 消息早于领取、报告归属/角色不符，
+升级失败并保留全部旧行和迁移历史。此时先保留库和原生下游记录供显式核对；禁止
+删除反馈、回填猜测时间、将 FIXTURE 重标 REAL 或编辑已应用迁移来让检查变绿。
+
+领域关系样例不是真实报告；正式 Forward 接入仍须验证报告字节、签发者和许可。
+新消息仅接受已记录 CLAIMED/ACKNOWLEDGED 的精确项目 REAL/EVALUATOR_ONLY
+qz.forward_report v1。先接收合法反馈后下游再拒绝时，保留转移事实和既有反馈，
+停止该 Handoff 的新反馈接纳。
