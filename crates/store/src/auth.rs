@@ -277,9 +277,35 @@ impl Store {
     }
 
     pub async fn browser_authority(&self, login_id: Id) -> Result<LoginAuthority, StoreError> {
-        let row=sqlx::query("SELECT l.id,l.auth_epoch,l.authenticated_at,l.expires_at,l.device_id,clock_timestamp() AS now FROM app.browser_logins l JOIN app.operator_auth_state a ON a.singleton LEFT JOIN app.trusted_devices d ON d.id=l.device_id WHERE l.id=$1 AND a.initialized AND l.auth_epoch=a.session_epoch AND l.revoked_at IS NULL AND l.expires_at>clock_timestamp() AND (l.device_id IS NULL OR (d.revoked_at IS NULL AND d.expires_at>clock_timestamp() AND d.auth_epoch=a.session_epoch))")
-            .bind(login_id.as_uuid()).fetch_optional(&self.pool).await?.ok_or(StoreError::AuthenticationRequired)?;
-        authority(&row)
+        let mut tx = self.pool.begin().await?;
+        // Keep epoch changes, logout and revocation ordered with this successful
+        // use. A stale cookie must never refresh a device's activity timestamp.
+        sqlx::query("SELECT singleton FROM app.operator_auth_state WHERE singleton FOR SHARE")
+            .fetch_one(&mut *tx)
+            .await?;
+        let mut result = lock_login(&mut tx, login_id, false).await?;
+        if let Some(device_id) = result.device_id {
+            let updated = sqlx::query(
+                "UPDATE app.trusted_devices SET last_used_at=greatest(last_used_at,clock_timestamp()) WHERE id=$1 AND revoked_at IS NULL AND expires_at>clock_timestamp() AND auth_epoch=$2",
+            )
+            .bind(device_id.as_uuid())
+            .bind(result.epoch.get() as i64)
+            .execute(&mut *tx)
+            .await?;
+            if updated.rows_affected() != 1 {
+                return Err(StoreError::AuthenticationRequired);
+            }
+        }
+        // Check time after lock waits. Activity is metadata, not reauthentication:
+        // authenticated_at and both fixed expiry fields remain untouched.
+        result.database_now = sqlx::query_scalar("SELECT clock_timestamp()")
+            .fetch_one(&mut *tx)
+            .await?;
+        if result.expires_at <= result.database_now {
+            return Err(StoreError::AuthenticationRequired);
+        }
+        tx.commit().await?;
+        Ok(result)
     }
 
     pub async fn reauthenticate(
