@@ -1,185 +1,156 @@
-# QuaZonai CLI、Codex Harness 与 Mission Tool 合同
+# CLI 命令
 
-> 上位事实源：[DESIGN.md](DESIGN.md)。本文件只描述已发布的 CLI 语法和
-> Codex/MCP 边界；它不创建产品事实，也不把规划当成实现证据。
+完整产品合同在 DESIGN。当前已实现原生验证、逐轮 Store、浏览器认证、Project/机器身份和不可变研究准备 HTTP 控制面；研究/组合/交付命令仍待实现，不提供绕过 API 的手工 SQL 业务路径。
 
-## 1. 边界
+## 认证服务与本机管理
 
-QuaZonai 有三条彼此独立的通道：
+以下入口复用 Clap；`cargo run --locked -p server -- --help` 展示实际命令。
 
-```text
-Web operator → FastAPI Core
-local human / automation → quazonai CLI → loopback FastAPI Core
-per-Mission Codex App Server → one mission-scoped stdio MCP server → Core
+```sh
+# 目录必须不存在；生成私有 master.key、原生 session key 和加密 secrets 目录。
+cargo run --locked -p server -- init-state --state-dir ./var
+
+# DATABASE_URL 此时是独立的新库迁移身份。原生 PostgreSQL 管理预先创建
+# quazonai_app 登录角色；本命令只授予应用所需 DML，不创建或输出数据库密码。
+cargo run --locked -p server -- migrate --application-role quazonai_app
+
+# 将 DATABASE_URL 切换为非 owner、非 superuser 的应用身份。
+# 此本机命令显示一次15分钟有效的初始化 capability；没有远程发证接口。
+cargo run --locked -p server -- bootstrap
+
+# PUBLIC_URL 必须是实际同源 HTTPS 入口。API 不在启动时执行 DDL。
+cargo run --locked -p server -- serve --state-dir ./var \
+  --bind 127.0.0.1:8080 --public-url https://research.example
 ```
 
-CLI 是本地薄客户端。它不访问 PostgreSQL、数据卷、Program worktree、Codex
-profile 或下游运行时。Built-in Codex 也不 shell-out CLI；它只能通过受合同限制的
-Mission MCP 操作研究事实。
+`DATABASE_URL` 支持环境变量；不要把真实密码写到命令行、Git 或日志。默认启动拒绝具有 schema CREATE、表 TRUNCATE 或超级用户权限的应用角色。master key 必须独立于数据库和加密对象备份。
 
-QuaZonai 只拥有研究、Alpha 信号、目标权重、Package、Approval 与 Handoff 事实。
-它不拥有 broker 凭据、订单、成交、仓位、账户、NAV 或下游运行控制。Candidate
-Package 只包含 `TargetPortfolioFrame` 和受控证据，绝不包含执行代码、订单或运行时
-控制指令。
+本地开发可显式使用 `--development-http --public-url http://127.0.0.1:8080`，同时监听地址必须为 loopback。此选项只调整本地传输和 cookie 的 Secure 属性，不跳过初始化、TOTP、会话撤销、Origin 或数据库角色校验。
 
-## 2. 本地 CLI
+本机维护：`cargo run --locked -p server -- prune-unpublished-verifiers --state-dir ./var` 在数据库发布锁下，只回收无任何历史凭据引用、原生用途认证为 MACHINE_VERIFIER 的孤儿。数据库错误时不删除；不提供远程/Agent删除密钥接口。详见 OPERATIONS。
 
-`quazonai` 默认连接 `http://127.0.0.1:8000`，只接受 `127.0.0.1`、`localhost`
-或 `::1` 的 HTTP(S) endpoint。启用 Operator Authentication 时，它从
-`QUAZONAI_API_TOKEN` 读取 machine Bearer credential；它不会读取浏览器 TOTP
-setup secret、session 或 trusted-browser cookie。
+## 已实现的控制面 HTTP 合同
 
-```bash
-# Required when QUAZONAI_AUTH_ENABLED=true:
-export QUAZONAI_API_TOKEN='<machine token configured on the API>'
-quazonai readiness
+`server openapi` 包含实际 Project 与机器身份路由，不是手写路径清单或待实现占位。项目命令的 HTTP/CLI/MCP 统一以服务端事务为准，不提供 SQL 业务后门。控制面专用远程 CLI 与 MCP 仍在同一 PR 中接通，不能把本机 `server` 管理命令视作已实现全部研究命令。
+
+真实浏览器：原生 TOTP 登录后使用同源私有 cookie，写操作携带 Origin、Idempotency-Key 和 DTO 的 expected_revision。机器：只使用独立 Bearer token，不复制浏览器 cookie；`GET /api/v2/auth/machine` 显示自身公开归属/权限/到期，`GET /api/v2/projects` 只返回授权项目。项目和凭据管理要求 Operator 浏览器的最近认证，或专属 CLI 身份提交原生 TOTP 后获得一次性精确命令 grant；Agent、自动化和下游不能取得该人工授权。
+
+## 已实现的研究准备 HTTP 合同
+
+`GET/POST /api/v2/input-sets`、`GET /api/v2/input-sets/{id}` 与
+`GET/POST /api/v2/evaluation-policies`、`GET /api/v2/evaluation-policies/{id}`
+均已接通 Rust 业务事务。集合 GET 必须给 `project_id`，`limit` 为1–100，
+后续页使用响应中的 UUID `next_cursor`。完整字段由 `server openapi` 生成；
+这些新增路径尚没有专属远程 CLI 子命令，不把本机管理入口当作研究客户端。
+
+输入创建提交目的、微秒精度的 `decision_cutoff` 和1–256个已登记原生对象的
+类型化引用；id、连续 ordinal、冻结时间由服务端生成。结果只含元数据，
+不会返回 Sealed 原始字节、宿主路径或原生存储位置。数据源停用、许可过期或
+撤销、跨项目产物和分区不匹配会拒绝新登记；不要手工写 SQL 创建引用来绕过。
+目前数据源/数据版本和执行假设的可信登记入口仍须在后续工作包接通。
+
+评估政策创建需要同项目已冻结 comparison 输入、执行假设和完整 selection、
+split、required 指标等意图。policy 版本和 experiment_family/root_lineage
+由服务端同事务分配，客户端不能挑选新谱系来清除暴露。WALK_FORWARD 使用
+VALIDATION comparison 且不得包含 sealed_revision；SEALED selection 使用
+包含精确 sealed_revision 的 SEALED comparison。策略、输入和成员创建后不能
+原地追加或改写；相同幂等请求只返回首次冻结的元数据。
+
+写操作仍要求近期 Operator 浏览器认证，或 CLI 的一次性 TOTP grant：
+`INPUT_SET_CREATE` / `EVALUATION_POLICY_CREATE` 的 target 为 null，授权绑定
+完整非秘密请求。RESEARCH_READ 的机器只能读精确授权项目，不因此得到发布
+或验证权限。输入/政策 POST 与完整人工授权请求上限64KiB，超过直接拒绝；
+其他原有路径仍保留其上限。422 的 `field_errors` 指明安全字段路径和原因，
+不包含输入数据、密钥、存储路径或 SQL。
+
+保存 FIXTURE/UNVERIFIED 输入及未核验方法的政策，仅表示如实保存研究准备；
+Brief 冻结、任务准入与独立评估必须另行核验实际原生能力、当前许可和证据资格。
+这个 API 不执行模型、切分、估计或回测，不能用登记成功替代生产可交付结论。
+
+## 已实现的 Brief 草稿 HTTP 作者流程
+
+`GET/POST /api/v2/projects/{id}/briefs` 与 `GET/PATCH /api/v2/briefs/{id}`
+使用严格 BriefCreate/BriefUpdate/BriefView。完整请求由原生 `server openapi` 导出。
+创建只传研究内容、已登记的数据绑定和可选 supersedes_id，服务端分配 DRAFT/版本/身份；
+更新必须携带 expected_revision，并完整替换内容及绑定。相同幂等键返回原响应，冲突409，
+失败不提交半套成员。FROZEN 不可编辑，只能新建版本；归档项目不能新增或编辑。
+
+`BRIEF_CREATE` 人工 CLI grant 的 request 为
+`{schema_version:1,project_id,request:BriefCreate}`，target_id=null；项目绑定不可替换。
+`BRIEF_UPDATE` 的 request 为完整 BriefUpdate、target_id为精确Brief。
+这些命令仍只允许近期 Operator 浏览器或经真实 TOTP 的单次人类 CLI 授权；
+RESEARCH_READ 仅可读自身项目的内容/元数据，不取得 Sealed 原始数据。
+草稿保存验证范围、预算、引用、角色及币种，但不是冻结、原生能力或正式研究资格。
+本批不提供假成功 freeze 或绕过API的手工SQL。部署迁移为草稿成员单表授予受触发器
+约束的 DELETE，不扩大其他app表的历史删除权限。
+
+## 原生组件与合同验证
+
+```sh
+cargo run --locked -p job -- verify-native --output NEW_DIRECTORY
+cargo run --locked -q -p contracts --example generate
+cargo run --locked -q -p server -- openapi
 ```
 
-所有 CLI mutation 自动发送新的 `Idempotency-Key`。Idea 答复、Idea Start 与
-Program lifecycle mutation 明确要求 `--expected-revision`；先重新读取资源，再把
-返回的 revision 用于写入。成功时 CLI 向 stdout 打印 Core API 返回的 JSON 值；
-下游注册响应中的一次性 `service_token` 会被脱敏，失败时向 stderr 打印错误。
+`job` 命令只运行固定 Rust Clarabel/Nautilus/Arrow fixture，输出不可交付；不能生成正式资格或目标包。`contracts` 生成共享 DTO；`server openapi` 生成实际 HTTP 路由合同。原生 Codex 兼容性命令仍为 `cargo run --locked -p job --example codex_contract`，需 `CODEX_NATIVE_BIN` 与不存在的 `CODEX_PROBE_DIR`；不是完整模型工具循环。
 
-## 3. 已实现命令
+## 开发测试
 
-### Idea Draft → Charter → Program
+仅对可丢弃的 PostgreSQL18 + PGMQ1.10.0 使用：
 
-这是唯一的新 Program 创建路径。没有 preview 或直接创建 Program 的 CLI 路径。
-
-```bash
-quazonai idea create --text "<RESEARCH_IDEA>"
-quazonai idea show <DRAFT_ID>
-quazonai idea answer <DRAFT_ID> \
-  --expected-revision <REVISION> \
-  --answer market_scope="<SCOPE>" \
-  --answer horizon="<HORIZON>" \
-  --answer data_scope="<DATA_SCOPE>"
-quazonai idea start <DRAFT_ID> --expected-revision <REVISION> [--title "<TITLE>"]
+```sh
+DATABASE_URL=postgres://TEST_USER:TEST_PASSWORD@127.0.0.1:55432/postgres \
+  cargo test --locked -p store -p server
 ```
 
-`idea answer` accepts one or more `KEY=VALUE` pairs. The server owns the
-questions, validates their keys, and freezes the immutable Charter only after
-all required answers exist. `idea start` creates the first bounded Research
-Cycle and its fixed Mission DAG.
+SQLx 创建独立测试数据库并执行提交的迁移；不要使用生产 DATABASE_URL。HTTP 测试运行真实 Axum、Argon2、TOTP、AEAD、PostgreSQL Session Store，并另测非 owner 角色与 loopback TCP。它们不是完整研究/组合/交付的验收结果。
 
-### Research and Mission inspection
+### 完整迁移命令的提交边界
 
-```bash
-quazonai research list
-quazonai research show <PROGRAM_ID>
-quazonai research cycles <PROGRAM_ID>
-quazonai research graph <PROGRAM_ID>
+`cargo run --locked -p server -- migrate --application-role '<已创建的运行角色>'`
+在一个专用连接/外层事务内运行完整领域与原生 session DDL、验证表合同并授予
+运行角色 DML 权限，最后一次性提交。执行前停止应用写入并完成备份；这不是
+零停机承诺。不再额外运行独立的 `PostgresStore::migrate()`。角色不存在、既有
+session 表不兼容或任一授权失败时，不保留半次升级及 epoch 失效副作用。
+已有数据/会话不会被删表“修复”。网络在 COMMIT 阶段断开时结果未知，应在
+主库重连后通过原生迁移记录和权限复核，不直接宣称回滚或重复恢复备份。
 
-quazonai mission show <MISSION_ID>
-quazonai mission turns <MISSION_ID>
-quazonai mission artifacts <MISSION_ID>
-```
+## Run 查询、持久事件与取消 HTTP
 
-The graph and cycle resources replace the retired Program activity and Mission
-list paths. A Mission failure is not automatically an Alpha failure; preserve
-the returned category and evidence state.
+以下路由包含于原生生成的 `server openapi`，不需要数据库直连权限：
 
-### Research lifecycle
+| 路由 | 语义 |
+|---|---|
+| `GET /api/v2/runs?project_id=UUID&state=QUEUED&limit=50&cursor=UUID` | 稳定 UUID 顺序的受限分页；limit 为1–100 |
+| `GET /api/v2/runs/{id}` | 同一事务快照的 state/revision/last_event_seq |
+| `GET /api/v2/runs/{id}/events` | `text/event-stream`；`Last-Event-ID: <run UUID>:<decimal seq>`；不存在 cursor 时从0开始 |
+| `POST /api/v2/runs/{id}/cancel` | body为 `{"schema_version":1,"expected_revision":"当前版本"}`，另带 Idempotency-Key；接受后202，版本过期409 |
 
-```bash
-quazonai research pause <PROGRAM_ID> --expected-revision <REVISION> [--reason "<TEXT>"]
-quazonai research resume <PROGRAM_ID> --expected-revision <REVISION> [--reason "<TEXT>"]
-quazonai research archive <PROGRAM_ID> --expected-revision <REVISION> [--reason "<TEXT>"]
-quazonai research wake <PROGRAM_ID> --expected-revision <REVISION> [--reason "<TEXT>"]
-```
+浏览器使用现有同源私有会话；取消是写操作，必须在最近五分钟内完成 TOTP 认证，
+超时先重新认证，读取不受该近期窗口限制。机器需要该项目的 RUN_READ 或 RUN_CANCEL；Mission
+只读自身 Run，不能扩大到其他项目或取得操作员授权。取消仅停止计算，不表示下游
+交易停止。尚未 dispatch 的任务可以直接 CANCELLED；已涉及远端的任务先显示
+CANCEL_REQUESTED，须确认远端终止后才能终结，真实失败保留 FAILED。
 
-`research wake` 是显式生命周期 mutation；自动由反馈/degradation 生成 Wake/Replan
-尚未验收。无论何种 Wake，这些命令都不会停止或改变独立下游 runtime。
+SSE 每条 id 与 data.seq 对应。按最后收到的 id 重连，客户端对序列去重；过期或超前
+cursor 在开始流之前410，错误 UUID/数字形状422。认证撤销、版本不兼容等发生在
+已建立的流中时发送不带新 cursor 的 reset-required，客户端应重新认证/读快照。
+兼容的 schema-v1 新事件保留事件名和公开 JSON envelope，推进游标但不更新未知的
+状态投影；已知状态事件仍严格解析。未知主版本不是可跳过事件，应升级客户端。
+每个 API 进程最多32条流，连接满额429；连接60秒后重连以更新认证。关闭浏览器不会
+取消任务或确认队列。该节不声明远程 CLI/MCP 或完整 Worker 执行器已实现。
 
-### Fresh-install configuration
+### 任务与迁移恢复边界
 
-配置写入只走 `/api/v1/*` 的 canonical resource endpoint。每个 `--json` 必须是完整 JSON object，原样
-交由 Core 做 schema、public-secret 与不可变版本校验：
+冻结 InputSet 保存当时的证据，不能延长数据许可。每次新任务准入和唯一首次发送
+均在领域事务中重新锁定并核对当前授权；撤销后既有未知任务仍可对账，原始回执仍
+可重读，不能盲目退款或重新发送。已经领取但从未发送、且租约和 deadline 均过期的
+任务终结为 FAILED/DEADLINE_EXCEEDED；这不是远端失败或停止证明。
 
-```text
-quazonai universe create --json '<UNIVERSE_CREATE_JSON>'
-quazonai universe version <UNIVERSE_VERSION_ID> --json '<UNIVERSE_VERSION_JSON>'
-quazonai data-source create --json '<DATA_SOURCE_JSON>'
-quazonai data-source preflight <DATA_SOURCE_ID>
-quazonai dataset materialize --json '<DATASET_MATERIALIZATION_JSON>'
-quazonai dataset status <OPERATION_ID>
-quazonai evaluation-dataset-selection create --json '<EVALUATION_DATASET_SELECTION_JSON>'
-quazonai evaluation-design-version create --json '<EVALUATION_DESIGN_VERSION_JSON>'
-quazonai promotion-policy-version create --json '<PROMOTION_POLICY_VERSION_JSON>'
-quazonai mandate create --json '<MANDATE_CREATE_JSON>'
-quazonai mandate version <MANDATE_ID> --json '<MANDATE_VERSION_JSON>'
-quazonai downstream register --json '<DOWNSTREAM_JSON>'
-```
+IMPORT/EXPORT/DATA_VALIDATE 可由受信任内部服务以无 Cycle 路径准入；实验预约
+固定为零，仍需有界资源与项目并发限制。没有向 Agent 开放通用无预算执行入口，
+也不把这个内部准入能力说成导入/导出业务已完成。
 
-`data-source preflight` 只提交 `{}`，只消费已登记 Source 的受治理事实并返回 durable
-operation；用 `dataset status` 读取其状态。它不接受 URL、endpoint、plugin path 或 credential。
-`dataset materialize` 返回 durable operation；它和新 Dataset Revision 初始都是
-`PENDING`/non-promotable，不能把请求成功当作可研究、Paper 或 Live 的证据。`downstream
-register` 的 `public_config` 不得放 credential，CLI 绝不打印返回的一次性 service token。
-
-Trusted Alpha configuration 的三个 `create` 命令只转发完整 JSON object，由 Core 校验
-Dataset Selection、统计设计和 Promotion Policy。CLI 不选择“latest” Dataset、不补阈值、gate、
-downstream 或 mode，也不创建快捷 activation。它们是低频 Administration 写入，必须有明确授权。
-
-### Existing read and human-only surfaces
-
-```bash
-quazonai alpha list
-quazonai alpha show <QUALIFICATION_ID>
-quazonai portfolio mandates
-quazonai portfolio programs
-quazonai portfolio candidate <CANDIDATE_ID>
-quazonai approval list
-quazonai approval show <APPROVAL_ID>
-quazonai handoff list
-quazonai data-source list
-quazonai evaluation-dataset-selection list
-quazonai evaluation-design-version list
-quazonai promotion-policy-version list
-quazonai datasets
-quazonai universes
-quazonai downstreams
-```
-
-`approval approve` and `approval reject` exist only for a human operator to
-run after review. No Codex or other Agent profile may execute either command.
-`handoff revoke` 和所有 configuration 写入都需要明确用户请求与最终 readback。
-
-## 4. Mission runtime and MCP
-
-Each Mission gets a finite App Server child, exclusive temporary worktree,
-durable Codex Thread, and durable turn/activity records. After a worker crash,
-the worker resumes the same Thread when possible; otherwise it records an
-interruption before a new attempt. A Program is not an unbounded chat Thread.
-
-The App Server uses stable stdio and one `quazonai_mission` MCP server. The
-server filters tools using the immutable Mission Contract, revalidates state,
-scope, revision and idempotency on every mutation, and returns only structured
-facts. It never exposes Sealed raw data, database credentials, provider or
-downstream secrets, Approval/Handoff mutation, admin mutation, or any
-execution capability.
-
-Agent output is not domain fact by itself. Domain validation accepts a typed
-artifact or result before a Mission can advance. Persist observable tool calls,
-file changes, tests and structured summaries; do not persist hidden reasoning.
-Use UUIDs, explicit versions and revisions for business identity. Do not add a
-SHA, hash, checksum, digest or fingerprint gate.
-
-## 5. Contract checks
-
-The release checks must prove the narrow boundaries rather than inferred
-intent:
-
-- CLI documentation and `--help` describe the same parser tree;
-- Draft answers and lifecycle writes carry idempotency and expected revision;
-- an interrupted Mission resumes its durable Thread without reusing a deleted
-  worktree or silently starting execution work;
-- MCP lists only contract-permitted tools and rejects direct hard-denied calls;
-- Sealed data, secrets, database access and downstream control remain outside
-  the Mission process;
-- a Portfolio with fewer than two eligible Alpha qualifications is
-  `INFEASIBLE`, never a single-Alpha 100% fallback.
-
-Fresh-install E2E 只有在 Web 或 CLI 配置产生真实持久事实并通过独立验证后才能成立；
-当前 CLI 命令、test seed 和文档本身都不是该证据。Package-before-Approval、Auto Live
-与自动 Wake/Replan 仍需各自的 E2E 验收。
+迁移命令在专用连接取消请求级 statement_timeout，保持五秒锁等待限制；迁移完成
+或失败后关闭该连接。业务连接的请求超时不改变。升级前停止写入并备份；不要在
+生产库用零散 SQL 文件代替完整迁移入口。

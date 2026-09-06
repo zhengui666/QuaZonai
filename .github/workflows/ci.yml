@@ -1,187 +1,199 @@
 name: CI
-
 on:
   pull_request:
   push:
-    branches:
-      - main
-
+    branches: [main]
+  workflow_dispatch:
 permissions:
   contents: read
-
+env:
+  EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+concurrency:
+  group: native-ci-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
-  python:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:18-alpine
-        env:
-          POSTGRES_DB: quazonai
-          POSTGRES_USER: quazonai
-          POSTGRES_PASSWORD: quazonai
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U quazonai -d quazonai"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
+  rust-native-contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     env:
-      QUAZONAI_ENV: test
-      QUAZONAI_DATABASE_URL: postgresql+psycopg://quazonai:quazonai@127.0.0.1:5432/quazonai
-      QUAZONAI_ALEMBIC_URL: postgresql+psycopg://quazonai:quazonai@127.0.0.1:5432/quazonai
-      QUAZONAI_MASTER_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          python-version: '3.14'
-      - name: Nautilus-first ownership boundary
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Require the exact event Head before executing repository code
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+      - name: Verify committed Rust sources and native dependency graph
         run: |
-          test ! -e backend/src/api/deployments.py
-          test ! -e backend/src/api/risk.py
-          test ! -e backend/src/api/integrations.py
-          test ! -e backend/src/db/deployment_models.py
-          test ! -e backend/src/db/risk_models.py
-          test ! -e backend/src/runners/live.py
-          test ! -e backend/src/runners/live_node.py
-          test ! -e backend/src/runners/live_supervisor.py
-          test ! -d backend/src/mcp_gateway
-          test ! -d native/quazonai_nautilus_risk
-          ! grep -R -n -E '/api/v1/(deployments|risk-accounts|execution-connections)|quazonai-live-supervisor|quazonai-mcp-gateway|mcp_gateway|QUAZONAI_MCP_' backend/src compose.yml backend/pyproject.toml deploy/Dockerfile.backend
-          ! grep -R -n -E 'mcp_gateway|PyJWT' backend/pyproject.toml deploy/Dockerfile.backend THIRD_PARTY_NOTICES.md
-          grep -q '"mcp>=' backend/pyproject.toml
-          allowed='backend/src/runners/nautilus_remote_runtime.py'
-          imports=$(grep -R -l -E '(^|[[:space:]])(from|import)[[:space:]]+nautilus_trader' backend/src || true)
-          for path in $imports; do
-            test "$path" = "$allowed" || { echo "NautilusTrader import escaped remote runtime boundary: $path"; exit 1; }
-          done
-          ! grep -R -n -E 'TradingNode|LiveNode|submit_order|cancel_order|modify_order' backend/src/api backend/src/quant_runtime
-      - name: Install product and test runtimes
-        run: python -m pip install -e 'backend[dev,research,agent,nautilus-runtime]'
-      - name: PMXT plugin regression tests
+          set -euo pipefail
+          mkdir -p /tmp/native-evidence
+          rustup toolchain install 1.98.0 --profile minimal --component rustfmt --component clippy
+          cargo fmt --all -- --check
+          cargo clippy --locked --workspace --all-targets -- -D warnings
+          cargo test --locked --workspace --exclude store --exclude server
+          cargo build --locked --workspace --all-targets
+          cargo tree --locked -e normal > /tmp/native-evidence/dependencies.txt
+          if grep -Eq '(^|[[:space:]])pyo3(-ffi)? v' /tmp/native-evidence/dependencies.txt; then
+            echo 'Unexpected Python bridge in the native runtime' >&2
+            exit 1
+          fi
+      - name: Compare native-generated contracts without changing the checkout
         run: |
-          mkdir -p /tmp/quazonai-pmxt-wheel
-          python -m pip wheel --no-deps --wheel-dir /tmp/quazonai-pmxt-wheel plugins/pmxt-archive
-          python -m pip install --no-deps /tmp/quazonai-pmxt-wheel/*.whl
-          pytest -q plugins/pmxt-archive/tests
-      - name: Compile
-        run: python -m compileall -q backend/src
-      - name: Lint
-        run: ruff check --config backend/pyproject.toml backend/src backend/tests
-      - name: Type check
-        run: mypy --config-file backend/pyproject.toml backend/src
-      - name: Runtime import smoke
+          set -euo pipefail
+          cargo run --locked -q -p contracts --example generate > /tmp/native-evidence/domain-v1.openapi.json
+          diff -u contracts/generated/domain-v1.openapi.json /tmp/native-evidence/domain-v1.openapi.json
+          cargo run --locked -q -p server -- openapi > /tmp/native-evidence/api-v2.openapi.json
+          diff -u contracts/generated/api-v2.openapi.json /tmp/native-evidence/api-v2.openapi.json
+          cargo run --locked -q -p server -- --help > /tmp/native-evidence/server-help.txt
+          node tests/contracts/decimal-wire.mjs | tee /tmp/native-evidence/decimal-wire.log
+          node tests/contracts/bigint-wire.mjs | tee /tmp/native-evidence/bigint-wire.log
+          node tests/contracts/fraction-wire.mjs | tee /tmp/native-evidence/fraction-wire.log
+      - name: Execute real Rust solver, Nautilus and Arrow round-trip
+        run: target/debug/job verify-native --output /tmp/native-evidence/native
+      - name: Install locked official Codex and verify native stdio
         run: |
-          python - <<'PY'
-          import openai_codex
-          import optuna
-          import pyarrow
-          import quant_runtime
-          import quazonai
-          print(quazonai.__version__)
-          print(quant_runtime.PINNED_NAUTILUS_VERSION)
-          PY
-      - name: Database preflight and migration
+          set -euo pipefail
+          npm ci --prefix runtimes/codex --ignore-scripts --no-audit --no-fund
+          export CODEX_NATIVE_BIN="$PWD/runtimes/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex"
+          test "$("$CODEX_NATIVE_BIN" --version)" = 'codex-cli 0.144.4'
+          mkdir /tmp/codex-schema-home
+          CODEX_HOME=/tmp/codex-schema-home "$CODEX_NATIVE_BIN" app-server generate-json-schema --out /tmp/native-evidence/codex-schema
+          export CODEX_PROBE_DIR=/tmp/codex-probe
+          timeout --kill-after=5s 90s cargo run --locked -p job --example codex_contract
+          cp /tmp/codex-probe/codex-probe.json /tmp/native-evidence/codex-probe.json
+      - name: Reject legacy paths and prefixed directories
         run: |
-          python -m db.preflight
-          alembic -c backend/alembic.ini upgrade head
-          python -m db.preflight
-      - name: Core tests
-        run: pytest -q -m 'not nautilus' backend/tests
-      - name: Remote Nautilus integration
-        env:
-          QUAZONAI_NAUTILUS_RUNTIME_URL: http://127.0.0.1:8011
-          QUAZONAI_NAUTILUS_RUNTIME_TOKEN: ci-remote-nautilus-token
-          QUAZONAI_NAUTILUS_SEALED_RUNTIME_URL: http://127.0.0.1:8012
-          QUAZONAI_NAUTILUS_SEALED_RUNTIME_TOKEN: ci-sealed-nautilus-token
-          QUAZONAI_NAUTILUS_CATALOG_ROOT: /tmp/quazonai-nautilus-catalogs
-          QUAZONAI_NAUTILUS_VERSION: 1.231.0
-          QUAZONAI_NAUTILUS_CONTRACT_VERSION: '2'
-          QUAZONAI_NAUTILUS_RUNTIME_VERIFY_TLS: 'false'
+          set -euo pipefail
+          if git ls-files | grep -E '(^|/)qz-[^/]*/|^(backend|plugins)/'; then
+            echo 'Forbidden legacy or prefixed directory remains' >&2
+            exit 1
+          fi
+          test ! -e compose.yml
+          test ! -d runtimes/science
+          test ! -d .github/updates
+          test ! -d .github/changes
+          test ! -e .github/workflows/publish-native-source.yml
+          test ! -e .github/workflows/apply-review-fixes.yml
+          git diff --exit-code
+      - name: Record exactly tested source and actual outcomes
+        if: always()
         run: |
-          rm -rf "$QUAZONAI_NAUTILUS_CATALOG_ROOT"
-          QUAZONAI_NAUTILUS_RUNTIME_TOKEN=ci-remote-nautilus-token QUAZONAI_NAUTILUS_CATALOG_ROOT="$QUAZONAI_NAUTILUS_CATALOG_ROOT/research" QUAZONAI_NAUTILUS_PORT=8011 quazonai-nautilus-runtime > /tmp/nautilus-research-runtime.log 2>&1 &
-          research_pid=$!
-          QUAZONAI_NAUTILUS_RUNTIME_TOKEN=ci-sealed-nautilus-token QUAZONAI_NAUTILUS_CATALOG_ROOT="$QUAZONAI_NAUTILUS_CATALOG_ROOT/sealed" QUAZONAI_NAUTILUS_PORT=8012 quazonai-nautilus-runtime > /tmp/nautilus-sealed-runtime.log 2>&1 &
-          sealed_pid=$!
-          cleanup() {
-            kill "$research_pid" "$sealed_pid" 2>/dev/null || true
-            cat /tmp/nautilus-research-runtime.log
-            cat /tmp/nautilus-sealed-runtime.log
-          }
-          trap cleanup EXIT
+          set -euo pipefail
+          mkdir -p /tmp/native-evidence
+          git rev-parse HEAD > /tmp/native-evidence/tested-commit.txt
+          git archive --format=tar HEAD | gzip > /tmp/native-evidence/source.tar.gz
+          cp Cargo.lock /tmp/native-evidence/Cargo.lock
+          printf 'Native foundation only. This is not full W0-W8/T01-T42 acceptance.\n' > /tmp/native-evidence/SCOPE.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: native-evidence-${{ env.EXPECTED_HEAD }}
+          path: /tmp/native-evidence/
+          retention-days: 7
+          if-no-files-found: error
+  database-native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      PGMQ_IMAGE: ghcr.io/pgmq/pg18-pgmq@sha256:bfb3537068ce453609744518ece92b178ac89dff53747d47ca6fab91c2fc66a6
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Require the exact event Head before executing repository code
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+      - name: Execute PostgreSQL and PGMQ transaction contract
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/database-evidence
+          git rev-parse HEAD > /tmp/database-evidence/tested-commit.txt
+          docker pull "$PGMQ_IMAGE"
+          docker run --detach --name native-database --env POSTGRES_PASSWORD=fixture-only-disposable "$PGMQ_IMAGE"
           for attempt in $(seq 1 60); do
-            research_ok=0
-            sealed_ok=0
-            curl --fail --silent -H 'Authorization: Bearer ci-remote-nautilus-token' -H 'X-QuaZonai-Quant-Contract: 2' http://127.0.0.1:8011/v1/capabilities > /tmp/nautilus-research-capabilities.json && research_ok=1
-            curl --fail --silent -H 'Authorization: Bearer ci-sealed-nautilus-token' -H 'X-QuaZonai-Quant-Contract: 2' http://127.0.0.1:8012/v1/capabilities > /tmp/nautilus-sealed-capabilities.json && sealed_ok=1
-            if [ "$research_ok" = 1 ] && [ "$sealed_ok" = 1 ]; then
-              break
-            fi
-            if [ "$attempt" = 60 ]; then
-              exit 1
-            fi
+            if docker exec native-database pg_isready -h 127.0.0.1 -U postgres; then break; fi
             sleep 1
           done
-          pytest -q -m nautilus backend/tests/integration/test_nautilus_remote_runtime.py
-      - name: Compose configuration
-        run: docker compose --env-file .env.example config --quiet
-      - name: Production control-plane image build
-        run: |
-          docker build --file deploy/Dockerfile.backend --tag quazonai-ci .
-          docker run --rm --entrypoint python quazonai-ci - <<'PY'
-          import importlib.util
-          assert importlib.util.find_spec('nautilus_trader') is None
-          PY
-      - name: Remote Nautilus image build
-        run: |
-          docker build --file deploy/Dockerfile.nautilus-runtime --tag quazonai-nautilus-ci .
-          docker run --rm --entrypoint python quazonai-nautilus-ci - <<'PY'
-          import nautilus_trader
-          assert nautilus_trader.__version__ == '1.231.0'
-          PY
-      - name: Research service smoke
-        env:
-          QUAZONAI_MASTER_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-          QUAZONAI_DATABASE_URL: postgresql+psycopg://quazonai:quazonai-local@postgres:5432/quazonai
-          QUAZONAI_ALEMBIC_URL: postgresql+psycopg://quazonai:quazonai-local@postgres:5432/quazonai
-        run: |
-          docker network inspect quazonai-runtime >/dev/null 2>&1 || docker network create quazonai-runtime
-          docker compose --env-file .env.example up --detach --build
-          proxy_id=$(docker compose --env-file .env.example ps -q nautilus-runtime-proxy)
-          test -n "$proxy_id"
-          test "$(docker inspect "$proxy_id" --format '{{.State.Status}}')" = running
-          test "$(docker inspect "$proxy_id" --format '{{.RestartCount}}')" = 0
-          for attempt in $(seq 1 60); do
-            if curl --fail --silent http://127.0.0.1:8000/api/v1/system/health > /tmp/quazonai-health.json; then
-              python - <<'PY'
-          import json
-          data = json.load(open('/tmp/quazonai-health.json', encoding='utf-8'))
-          if not data.get('live') or not data.get('ready'):
-              raise SystemExit(1)
-          PY
-              break
-            fi
-            if [ "$attempt" = 60 ]; then
-              docker compose --env-file .env.example ps
-              docker compose --env-file .env.example logs --no-color
-              exit 1
-            fi
-            sleep 2
-          done
-          for proxy_attempt in $(seq 1 15); do
-            proxy_status=$(docker inspect "$proxy_id" --format '{{.State.Status}}')
-            proxy_restarts=$(docker inspect "$proxy_id" --format '{{.RestartCount}}')
-            if [ "$proxy_status" != running ] || [ "$proxy_restarts" != 0 ]; then
-              docker compose --env-file .env.example ps
-              docker compose --env-file .env.example logs --no-color nautilus-runtime-proxy
-              exit 1
-            fi
-            sleep 2
-          done
-          curl --fail --silent http://127.0.0.1:8000/ | grep -q '<div id="root"'
-          docker compose --env-file .env.example ps
-      - name: Stop Compose
+          docker exec native-database pg_isready -h 127.0.0.1 -U postgres
+          docker exec -i --env PGPASSWORD=fixture-only-disposable native-database psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 < tests/native/pgmq_contract.sql | tee /tmp/database-evidence/contract.log
+          docker image inspect --format '{{json .RepoDigests}}' "$PGMQ_IMAGE" > /tmp/database-evidence/image.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
-        run: docker compose --env-file .env.example down --volumes --remove-orphans
+        with:
+          name: database-evidence-${{ env.EXPECTED_HEAD }}
+          path: /tmp/database-evidence/
+          retention-days: 7
+          if-no-files-found: error
+      - name: Remove disposable database
+        if: always()
+        run: docker rm --force --volumes native-database
+  store-postgres:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      PGMQ_IMAGE: ghcr.io/pgmq/pg18-pgmq@sha256:bfb3537068ce453609744518ece92b178ac89dff53747d47ca6fab91c2fc66a6
+      DATABASE_URL: postgres://postgres:fixture-only-disposable@127.0.0.1:55432/postgres
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Require the exact event Head before executing repository code
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+      - name: Start isolated PostgreSQL and verify extension version
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/store-evidence
+          git rev-parse HEAD > /tmp/store-evidence/tested-commit.txt
+          docker pull "$PGMQ_IMAGE"
+          docker run --detach --name store-database --publish 127.0.0.1:55432:5432 --env POSTGRES_PASSWORD=fixture-only-disposable "$PGMQ_IMAGE"
+          for attempt in $(seq 1 60); do
+            if docker exec store-database pg_isready -h 127.0.0.1 -U postgres; then break; fi
+            sleep 1
+          done
+          docker exec store-database pg_isready -h 127.0.0.1 -U postgres
+          docker exec --env PGPASSWORD=fixture-only-disposable store-database psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -c 'SELECT version()' > /tmp/store-evidence/database-version.txt
+          docker image inspect --format '{{json .RepoDigests}}' "$PGMQ_IMAGE" > /tmp/store-evidence/image.json
+      - name: Run every Store test against real independently migrated databases
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal
+          cargo test --locked -p store -p server -- --test-threads=4 2>&1 | tee /tmp/store-evidence/tests.log
+          git diff --exit-code
+      - name: Preserve exact migrations and qualification of the evidence
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/store-evidence
+          cp Cargo.lock /tmp/store-evidence/Cargo.lock
+          cp migrations/*.sql /tmp/store-evidence/
+          printf 'Relational and per-turn Store tests only. Not complete API, model, security, or product acceptance.\n' > /tmp/store-evidence/SCOPE.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: store-evidence-${{ env.EXPECTED_HEAD }}
+          path: /tmp/store-evidence/
+          retention-days: 7
+          if-no-files-found: error
+      - name: Remove only this disposable database
+        if: always()
+        run: docker rm --force --volumes store-database
+  foundation-checks:
+    if: always()
+    needs: [rust-native-contracts, database-native, store-postgres]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every foundation check to succeed
+        env:
+          RUST_RESULT: ${{ needs.rust-native-contracts.result }}
+          DATABASE_RESULT: ${{ needs.database-native.result }}
+          STORE_RESULT: ${{ needs.store-postgres.result }}
+        run: |
+          test "$RUST_RESULT" = success
+          test "$DATABASE_RESULT" = success
+          test "$STORE_RESULT" = success
+          echo 'Foundation checks passed; incomplete product acceptance remains documented and PR stays Draft.'

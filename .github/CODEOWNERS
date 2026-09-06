@@ -1,6 +1,1 @@
-# Replace these placeholders with GitHub teams or handles before enabling required review.
-# Example: * @quazonai/maintainers
-* @quazonai-maintainers
-
-/.github/ @quazonai-maintainers
-/docs/ @quazonai-maintainers
+* @zhengui666

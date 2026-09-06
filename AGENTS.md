@@ -1,281 +1,47 @@
 # QuaZonai Agent 治理
 
-本文件是开发 Agent 的最小治理入口。它定义事实源、不可突破边界、工作顺序和完成标准；产品与架构事实只在 `DESIGN.md` 定义。
+本文件只定义开发治理与导航，不复制产品状态机。产品、领域、接口、数据、安全、运维和完整验收合同统一在 `DESIGN.md`。
 
-## 1. 事实源与读取顺序
+## 事实源与顺序
 
-1. `DESIGN.md`：QuaZonai 唯一完整的产品、领域与技术架构事实源；
-2. `OPERATIONS.md`：单用户运行视图；不得创造新的产品事实；
-3. `CLI.md`：CLI、Codex App Server、Mission Tool 和外部 Skill 的实现展开；
-4. `skills/quazonai/SKILL.md`：外部/人工 Codex 使用的薄工作流，不是业务状态机；
-5. `README.md`：入口、当前实现状态、Quick Start 和文档链接；
-6. 代码、配置、测试、运行结果：实现证据，不能静默改写设计。
+1. `DESIGN.md`：唯一完整的产品与架构事实源，包含字段级附录 A、接口/状态机/测试附录 B，以及所有者对 #62 的语言与复用修订。
+2. `OPERATIONS.md`：用户运行说明；`CLI.md`：命令和原生协议的实现展开；二者不得另创产品事实。
+3. `skills/quazonai/SKILL.md`：薄工作流、真实命令和权限边界，不是另一套业务引擎。
+4. `README.md`：入口、当前实现状态、可执行启动和文档索引。
+5. 代码、测试、CI/Review、`docs/architecture/issue-62-execution.md` 和兼容性矩阵：可核验实现证据，不得把目标写成已交付。
 
-任何跨层产品、领域、API、Agent Runtime、数据、Evaluation、Alpha、Portfolio、Approval、Package、Handoff 或插件变更前，先读取 `DESIGN.md` 对应章节。若设计没有明确行为，先更新 `DESIGN.md`。
+外部 Issue/评论是需求出处，不是随时可变的架构依赖。需求变更先进入 DESIGN，再改代码。旧实现只存在于 Git 历史，不在活动源码树保留兼容层或归档代码。用户数据、备份和许可证不属于可删除旧代码。
 
-## 2. 不可突破的产品边界
+## 所有者修订与实现纪律
 
-### 2.1 QuaZonai ownership
+- 第一方目录不得以 `qz-` 开头；直接使用 `apps/server`、`apps/runtime`、`apps/job`、`crates/contracts`、`crates/domain`、`crates/store`。
+- 旧代码无需兼容或保留；删除旧服务、旧前端、重复引擎、旧专属测试与部署配置，不能移动到 legacy/archives 伪装删除。保留用户数据、Git 历史、LICENSE/NOTICE。
+- 能复用 Rust 组件的能力必须采用 Rust；先查目标版本的真实 API、特性、成熟性、许可和运行结果。不能用本机缺工具链、一次编译错误或语言占比作为选 Python 的理由。
+- Python 仅限已提交 `docs/research/reuse.md` 的具体例外：必须列出所需能力、核查的 Rust 候选与具体缺口、上游证据、锁定版本、薄适配和隔离边界及退出条件；不需要再次问用户。不能泛称“Rust 生态不成熟”。
+- 只实现 QZ 独有规则、权限、关联和最小适配；不重建数值优化、回测撮合、Agent 工具循环、OAuth 刷新、消息投递、认证算法或容器平台。
+- 使用 Ponytail 原则：删除无真实需求的抽象；平台原生能力优先；旧错误路径不加永久兼容 wrapper；不为每张表建立服务、Repository/Factory 或通用 Workflow DSL。
+- 前端仍必须使用 React/TypeScript/官方 Ant Design；语言修订不改变这项要求。
 
-QuaZonai 只拥有：
+## 不可越过的边界
 
-- Idea / Research Charter；
-- Research Program / Branch / Mission；
-- Data Source Registry / Dataset Revision；
-- Search Ledger / Evidence Exposure；
-- Feature / Alpha / Calibration / Alpha Library；
-- Portfolio Mandate / Portfolio Program / Portfolio Candidate；
-- Independent Evaluation；
-- Approval Snapshot；
-- Candidate Package；
-- Handoff Registry / Feedback / Forward Evidence；
-- Degradation Monitoring；
-- Codex Harness 研究运行时与 Web 工作台。
+- QZ 是研究与 target-only 交付系统，不拥有 Broker/Exchange 凭据、真实订单/成交/仓位/账户/NAV、下游执行风控或启停/撤单/平仓权限。
+- Agent 不拥有 Operator/Reviewer/Downstream 身份，不能审批、交付、改政策、写数据库、读 Sealed raw data、Secret 或任意 URL/宿主路径。
+- 原生 Codex App Server 管理模型会话、工具循环和认证；任务有界、Thread 持久、Reviewer 独立；不复制 canonical 聊天数据库。
+- 不读取、索取、保存或展示模型隐藏 chain-of-thought。审计只记录可观察调用、变更、真实结果、公开总结和领域事件。
+- 不可变版本、审批、Package、试验账本和证据暴露不得原地改写或因复制 UUID 清零；取消不能假称远端已停止。
+- 不新增应用级 SHA/hash/checksum/digest/fingerprint 身份或业务门禁。Git、OCI、wheel、存储、成熟密码学组件的原生完整性机制不受此禁令影响，但不能冒充领域资格。
+- 不销毁用户旧数据、擅自变更 LICENSE/NOTICE、将 Demo 变成生产可交付证据，或向未审查 PR 代码提供生产秘密。
 
-QuaZonai **不拥有**：
+## 工作顺序与验证
 
-- broker/exchange credential；
-- order、fill、position、account、NAV；
-- TradingNode、Paper/Live runtime；
-- execution risk、heartbeat、recovery、venue reconciliation；
-- 下游启动/停止/撤单/平仓/强制下线。
+读取 DESIGN 对应章节 → 确认 ownership/data flow → 必要时先更新 DESIGN → 同步用户文档/CLI/Skill → 最小正确实现 → 最窄有效验证 → 跨边界验证 → 独立 review → 汇总已验证与未验证项。
 
-NautilusTrader、LEAN 或自定义交易系统都是独立 downstream consumer。任何实现把 QZ 重新做成 Execution Control Plane 都是架构违规。
+每项检查说明要发现的失败及失败后的行动。不能仅用 mock 证明原生 Codex/MCP/Thread resume、PGMQ/数据库并发、Sealed/Secret/文件系统隔离、原生科学数值、Package/Claim 竞态、SSE 恢复或备份迁移。具体 T01–T42 与检查族完整定义在 DESIGN 附录 B。
 
-### 2.2 人类操作承诺
+## PR #63 / Issue #62 完成边界
 
-正常 Research Program 生命周期只允许两类常规人工动作：
+同一 PR 完成全部工作包和合同 → 最新 Head 的全部适用 CI 通过、所有 Review Thread 解决且 `@codex review` 明确无问题 → 才允许 merged → main 检查及迁移/完整链路/隔离/恢复/文档证据复核 → 才关闭 #62。
 
-1. 提出 Idea；
-2. 审批系统推荐的 Paper/Live Handoff Candidate。
+Head 变化必须重新验证。缺失、失败、取消、应执行却跳过、额度不足、未回复或仅 emoji 均不是通过。局部 W0、文档更新、创建 PR、页面壳或大量 mock 不能替代完成。
 
-Pause/Resume/Archive/Restore、数据授权、Codex 登录、Mandate/Universe/Downstream/Plugin 配置和故障处理属于低频 Administration，不得被开发成每个 Program 的必经人工步骤。
-
-### 2.3 不可变事实
-
-以下正式对象不原地改写语义：
-
-- Research Charter；
-- Dataset Revision；
-- Feature/Alpha/Calibration Version；
-- Alpha Qualification Version；
-- Evaluation Episode disclosure/exposure；
-- Portfolio Mandate Version；
-- Capital Context Version；
-- Portfolio Candidate；
-- Approval Snapshot；
-- Candidate Package；
-- Handoff Offer 的历史终态。
-
-改变依赖就创建新 Version/Candidate/Snapshot，而不是 patch 旧事实。
-
-### 2.4 No custom hash gates
-
-不得新增应用级 SHA、hash、checksum、digest、fingerprint、内容寻址身份或以其为 Gate 的完整性流程。
-
-允许 Git、wheel、数据库等底层工具自身使用内部 hash，但 QZ 业务身份、幂等、审批、发布、插件、Package、Workspace 或验证不得依赖这些值。
-
-## 3. Codex Harness 边界
-
-### 3.1 App Server
-
-- 内置 Agent Runtime 使用官方 `codex app-server`；
-- V1 稳定生产传输使用 stdio；
-- experimental WebSocket、dynamicTools、project/environments 等不能成为 V1 必需能力；
-- Codex Thread/Turn/Item 是执行上下文，不是业务事实源；
-- 一个 Mission 对应一个 durable Thread；Program 不使用无限长 Thread。
-
-### 3.2 Mission isolation
-
-默认 Mission：
-
-- 独立 Codex App Server child；
-- 临时独占 Git worktree；
-- `workspace-write`；
-- network disabled；
-- `approvalPolicy=never`；
-- 只允许 Mission worktree root；
-- 不访问 QZ source repo、其他 Program、Sealed data、Secrets、Docker socket 或数据库凭据。
-
-需要数据、实验或受控外部能力时，通过 mission-scoped stdio MCP Tool Server。
-
-### 3.3 Agent 不能做什么
-
-任何 Codex profile 都不能：
-
-- approve/reject Candidate；
-- publish Handoff；
-- 修改 Charter/Mandate/Sealed result；
-- 访问 provider/downstream secret；
-- 写 PostgreSQL；
-- 读取 Sealed raw data；
-- 控制 downstream runtime；
-- 用 Git branch/commit/merge/rebase/worktree 管理绕过 QZ Workspace Manager。
-
-Agent 输出必须通过 schema、artifact validation 和 Domain Validator 才能推进状态。
-
-### 3.4 隐藏推理
-
-不得把模型隐藏 chain-of-thought 当作产品事实、审计证据或 UI 内容。只保存可验证活动：Tool 调用、文件 diff、测试、命令结果、结构化结论、Domain Event。
-
-## 4. Research / Evidence 边界
-
-- Discovery、Sealed Promotion、Forward Evidence 三层必须分离；
-- Sealed raw data 不进入 Codex workspace/MCP；
-- Level 1 disclosure 由 deterministic policy 生成；
-- Search Ledger 保存失败和被淘汰尝试；
-- Evidence Exposure 沿 lineage 继承；
-- Episode 一旦披露后不能重新作为该 lineage 的独立证据；
-- 数据必须保留 point-in-time `available_at` 语义；
-- Data Quality failure 不得偷换成 Alpha failure。
-
-## 5. Alpha / Portfolio 边界
-
-- Alpha 不发订单，只发 score/expected return + uncertainty；
-- relative score 未校准时不得冒充 expected return；
-- Alpha Qualification 绑定 Universe + Horizon；
-- Shadow Alpha 只能参加受限 Portfolio Contribution research，不能直接 Handoff；
-- Portfolio Program 必须绑定 Mandate Version；
-- Candidate 任一关键依赖变化就创建新 Candidate；
-- Multi-Universe Portfolio 必须使用 universe-specific cost/capacity 与 cross-universe risk；
-- Material Improvement Gate 控制 Approval 噪音；
-- 不允许在 Approval 页面手工改 Alpha、权重或 Mandate。
-
-## 6. Handoff / Downstream 边界
-
-- Candidate Package 只输出 TargetPortfolioFrame，不输出订单；
-- Approval 绑定一个逻辑 downstream system；
-- Paper 与 Live 分开审批；
-- 未领取 Offer 可 revoke；`CLAIMED` 后 QZ 无 stop/revoke runtime 权限；
-- 缺失/迟到/部分 feedback 不等于 Candidate failure；
-- 只有 complete valid Paper feedback 才能进入 Live Promotion；
-- Degradation 只能产生 Research wake/advisory，不自动换仓或停止交易。
-
-## 7. Runtime Plugin 边界
-
-插件只允许：
-
-```text
-DATA_CONNECTOR
-DATA_TRANSFORM_ADAPTER
-RESEARCH_ADAPTER
-HANDOFF_CONNECTOR
-```
-
-禁止 broker/execution/order capability。
-
-- 只接受 wheel；禁止 sdist/editable/Git URL/运行时源码编译；
-- 每个 release side-by-side；已有资源固定具体 release；
-- 第三方插件只在 validator/connector runner child 中 import；
-- 长进程不得 import plugin；
-- 动态卸载依赖进程退出，不使用 `reload()` 或 `sys.modules` 热替换；
-- Secret 不暴露给 Codex。
-
-## 8. 文档优先工作流
-
-顺序固定：
-
-```text
-确认事实源
-→ 画 ownership / data flow
-→ 更新 DESIGN.md
-→ 同步 OPERATIONS.md / CLI.md / README / Skill
-→ 实现最小正确改动
-→ 运行最窄有效验证
-→ 跨边界验证
-→ 独立复核
-→ 汇总已验证/未验证项
-```
-
-不得让 README、OPERATIONS、CLI、Skill、代码注释或聊天记录成为竞争事实源。
-
-## 9. 实现纪律
-
-使用 Ponytail 原则：
-
-1. 没有真实需求就删除；
-2. 先复用平台和标准，不自建平行机制；
-3. 删除优先于兼容 wrapper；
-4. 状态、接口和抽象只为真实边界存在；
-5. CLI 是薄客户端；
-6. Agent Tool Server 只做 capability-enforced domain bridge，不复制业务状态机；
-7. 能由 PostgreSQL transaction、Arrow、Polars、Optuna、CVXPY、MCP SDK、Codex App Server 可靠承担的，不重复造轮子；
-8. 旧 Nautilus execution-control code 没有兼容义务，应删除而非迁移到新抽象里。
-
-## 10. Ownership
-
-- Frontend：展示和用户输入，不决定领域状态；
-- API：wire validation、operator mutation、SSE、统一错误；
-- Domain：全部状态机和业务 Gate；
-- Orchestrator：Mission/Program scheduling、Cooling/Wake、Promotion；
-- Agent Worker：Codex child/process/thread/worktree lifecycle；
-- Mission Tool Server：按 MissionContract 暴露受限 MCP tools；
-- Research Engine：Arrow/Polars/evaluator/Optuna/CVXPY；
-- Sealed Evaluator：独立 Promotion Evaluation；
-- Plugin Manager：data/handoff plugin release/runtime；
-- Worker：data/plugin/package/handoff/degradation jobs；
-- PostgreSQL：业务事实、jobs、events、Search Ledger、Exposure；
-- Persistent volumes：datasets、artifacts、packages、plugin runtimes、Program repos；
-- Downstream：运行、订单、仓位、账户和执行安全。
-
-## 11. 验证纪律
-
-每个检查前明确：
-
-1. 要发现什么具体失败；
-2. 失败会如何改变下一步。
-
-最少层次：
-
-1. 文档/术语/路径一致性；
-2. 受影响模块 unit；
-3. PostgreSQL transaction/integration；
-4. process isolation；
-5. Codex App Server / MCP contract；
-6. Sealed non-leakage；
-7. browser + fake downstream E2E；
-8. 只有真实边界扩大时才跑更宽检查。
-
-不能只用 mock 证明：
-
-- Codex stdio protocol lifecycle；
-- thread resume；
-- Mission worktree isolation；
-- MCP capability hard deny；
-- Sealed raw data 不可达；
-- PostgreSQL concurrency/idempotency；
-- plugin wheel install/entry point/process isolation；
-- Candidate Package Reference Fixture conformance；
-- Handoff claim vs revoke 原子竞争；
-- event replay / SSE reconnect。
-
-## 12. 文档任务完成标准
-
-- `DESIGN.md` 仍是唯一完整事实源；
-- `OPERATIONS.md` 只写用户运行视图；
-- `CLI.md` 只展开接口/Agent Runtime；
-- `README.md` 不承诺未实现能力；
-- Skill 不复制完整领域模型；
-- 不再出现 QZ 管理 Nautilus execution/deployment/recovery/risk 的当前目标描述；
-- Codex built-in runtime 与 optional external automation 区分清楚；
-- 无应用级 hash gate；
-- 术语、状态、路径、API、服务名一致；
-- 独立 Documentation/Architecture review 无阻断意见。
-
-## 13. 代码任务完成标准
-
-交付前确认：
-
-- 目标行为已先进入 `DESIGN.md`；
-- 变更位于正确 ownership；
-- 无 broker/order/position/deployment control 回流 QZ；
-- Codex 无 Secret/Sealed/DB 越权；
-- immutable versions、idempotency 和 expected revision 有测试；
-- Search Ledger/Exposure 不因复制对象被重置；
-- Candidate/Approval/Package 不被原地修改；
-- downstream claim 后 QZ 不提供 runtime stop；
-- plugin 不在长进程热加载/热卸载；
-- 无新增应用级 hash/checksum/digest/fingerprint 业务逻辑；
-- 实现报告与独立复核报告均已提交。
-
-未满足任一项，只能标记为部分完成，不得宣称 conforming/release-ready。
+**GitHub 上 Codex 只用于 review；禁止要求 Codex 修复、实现、提交或自动处理问题。修复由实际执行者完成并补测，再 push 后重新请求 review。** 未满足合同只能报告部分完成，不能合并骨架或宣称 release-ready。

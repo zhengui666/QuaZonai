@@ -1,166 +1,105 @@
 # QuaZonai
 
-QuaZonai is a single-user, self-hosted research and portfolio-construction
-control plane. Its current product path is:
+证据优先的自托管量化研究工作台：目标是将想法变成可追溯研究、合格Alpha和目标组合包，不是Broker、交易执行控制面或收益保证。
 
-```text
-Idea Draft → frozen Charter → bounded Research Cycle / Mission DAG
-→ PIT-valid Alpha signals → independent evaluation / qualification
-→ deterministic multi-Alpha target weights → target-only Package
-→ Paper Handoff → Forward Evidence → Live promotion or degradation wake
+> **正在重写，尚不可作为完整产品部署。** 本分支已删除旧服务、旧前端和兼容层；不要沿用旧Docker/uv启动命令。当前可运行内容包括真实 Axum 认证/Project/机器凭据与不可变研究准备 API、本机初始化命令、Rust 合同/领域测试、PostgreSQL 逐轮 Store、原生科学计算和 Codex 协议探针。完整 Web 产品、研究/交付、迁移和恢复尚未通过验收，PR #63仍须保持Draft。
+
+## 已有实现与边界
+
+| 内容 | 当前事实 |
+|---|---|
+| 原生回测 | Nautilus Rust 0.63.0直接调用BacktestEngine/EmaCross，不再使用Python；固定745个synthetic quote，用原生事件/订单计数验证 |
+| 原生求解 | Clarabel Rust 0.11.1，最小方差手算参考0.8/0.2及不可行约束测试；不是完整生产组合流程 |
+| Arrow | Rust IPC RecordBatch写入/回读，明确FIXTURE不可交付 |
+| 领域基础 | 精确UUIDv7/bigint/Decimal、预算、租约/终态、Codex覆盖及required指标判定；不是完整数据库权限证明 |
+| 认证 API | Axum + PostgreSQL 原生会话、一次性本机初始化、六位 TOTP 登录、防重放、持久注销/设备撤销；普通服务使用非 owner 数据库角色 |
+| Project 与机器身份 | 真正的项目分页/创建/更新、乐观并发、不可变命令回执、机器 token 一次性签发与撤销；机器只读授权项目，人工 CLI 管理操作另需原生 TOTP 单次授权 |
+| 研究准备 | 同事务冻结输入集合、不可变评估政策与实验族登记，严格分区/许可/项目关联和分页授权；登记验证意图不代表已运行原生算法、验证 PIT 或得到 PASS |
+| PostgreSQL Store | 新库SQLx迁移、逐轮不可变预约/发送/结算、同Mission幂等与预算投影、关系唯一/复合外键；研究/评估权限全链路与 Worker 仍待完整验收 |
+| Codex | 锁定官方App Server stdio、全分页模型及Thread启动探针；真实账号/同Thread工具闭环还需验收 |
+| 交付与UX | 全量Ant Design、审批/反馈/晋级/唤醒、旧数据导入、恢复与隔离仍在实施，不虚构页面或状态 |
+
+## 开发验证
+
+需要Linux x86_64、原生Rust 1.98.0工具链和C工具链；Nautilus发布族2.0.0rc4仍为RC，不隐瞒预发行风险。此路径不安装Python。
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace --exclude store --exclude server
+cargo build --locked --workspace --all-targets
+cargo run --locked -q -p contracts --example generate > /tmp/domain-v1.openapi.json
+diff -u contracts/generated/domain-v1.openapi.json /tmp/domain-v1.openapi.json
 ```
 
-QuaZonai owns research facts, Alpha signals, target weights, Package,
-Approval, Handoff and evidence. It does not own broker credentials, orders,
-fills, positions, accounts, NAV, execution risk, or downstream runtime
-control. A downstream independently consumes a target-only Package.
+上述命令明确只运行不依赖数据库的单元/原生测试，不等于全量检查。
 
-## Status
+完整 workspace 检查必须设置指向**可丢弃测试实例**的 `DATABASE_URL`；实例需要 PostgreSQL18、PGMQ1.10.0，以及仅供测试的创建数据库权限。不得使用生产 URL，SQLx 为各测试创建独立新库并应用迁移。缺少连接应失败，而不是跳过：
 
-Issue #58 replaces the retired preview/single-Alpha workflow. The
-published operator surface starts with `IdeaDraft`; direct Program creation and
-execution-shaped artifacts are not supported paths.
-Release readiness requires the fresh-install, persisted-facts E2E contract and
-green independent review; this document is not evidence that those checks have
-passed.
-
-## Stack
-
-- Python 3.14, FastAPI, SQLAlchemy 2, PostgreSQL 18, Alembic
-- PyArrow / Parquet, NumPy, CVXPY
-- Official `openai-codex` SDK with App Server stdio and mission-scoped MCP
-- React, TypeScript, Vite, Docker Compose
-
-## Quick start
-
-```bash
-cp .env.example .env
-# Set a strong PostgreSQL password.
-# Set QUAZONAI_MASTER_KEY to base64 encoding of exactly 32 random bytes.
+```sh
+# DATABASE_URL must already refer to the disposable test instance described above.
+make check
+# Run only the actual PostgreSQL transaction/constraint tests:
+make check-store
+# Test actual Axum routes, cryptography and independent PostgreSQL databases:
+make check-http
 ```
 
-Authentication is opt-in. A direct-access deployment must remain loopback-only
-or behind an explicitly trusted access boundary:
+`make check-unit` 是无数据库的明确子集；不能拿其通过替代 Store 测试。
+新 CI 的 `store-postgres` job 使用固定原生 PGMQ 镜像，整体基础检查依赖该 job 成功。
+这仍不代表 Web/CLI 完整产品或受保护真实账号验收。
 
-```dotenv
-QUAZONAI_AUTH_ENABLED=false
+执行原生fixture，输出目录必须不存在：
+
+```sh
+cargo run --locked -p job -- verify-native --output /tmp/quazonai-native-example
 ```
 
-For a new authenticated installation, generate independent master and browser
-cookie keys plus a CLI machine token:
+`native-probe.json`仅在完整写入/同步后发布；`origin=FIXTURE`、`deliverable=false`。结果不是收益证明，不能生成正式审批/交付。失败、已有目录或不可行约束不会返回隐藏的成功/单资产兜底。
 
-```bash
-python - <<'PY'
-import base64
-import secrets
+Codex无账号协议探针：
 
-print("QUAZONAI_MASTER_KEY=" + base64.b64encode(secrets.token_bytes(32)).decode())
-print("QUAZONAI_AUTH_COOKIE_KEY=" + base64.b64encode(secrets.token_bytes(32)).decode())
-print("QUAZONAI_API_TOKEN=" + secrets.token_urlsafe(32))
-PY
+```sh
+npm ci --prefix runtimes/codex --ignore-scripts --no-audit --no-fund
+export CODEX_NATIVE_BIN="$PWD/runtimes/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex"
+export CODEX_PROBE_DIR=/tmp/quazonai-codex-example
+timeout --kill-after=5s 90s cargo run --locked -p job --example codex_contract
 ```
 
-Copy the generated values to `.env` without printing them in chat, logs, or
-screenshots:
+这使用独立空profile，不读取或修改宿主登录。真实SYSTEM/官方订阅/custom-provider路径不可被此探针替代。
 
-```dotenv
-QUAZONAI_AUTH_ENABLED=true
-QUAZONAI_MASTER_KEY=<generated base64 master key>
-QUAZONAI_AUTH_COOKIE_KEY=<generated base64 key>
-QUAZONAI_API_TOKEN=<generated machine token>
-QUAZONAI_AUTH_PUBLIC_ORIGIN=http://127.0.0.1:8000
-```
+## 文档
 
-The browser setup is TOTP-only and binds the single `local-operator` on the
-first trusted visit. Keep initial setup on loopback, VPN, SSH tunnel, or a
-protected proxy. Do not use browser credentials from the CLI. A narrow trusted
-proxy CIDR and HTTPS are required before public exposure.
+- [完整设计和验收合同](DESIGN.md)
+- [Rust复用调查与Python例外证据](docs/research/reuse.md)
+- [治理](AGENTS.md)、[实际命令](CLI.md)、[运行限制](OPERATIONS.md)
+- [实现证据](docs/architecture/issue-62-execution.md)、[兼容矩阵](docs/architecture/compatibility-matrix.md)
 
-Start the stack:
+目录不用qz-前缀；旧代码只存在Git历史，源码清理不删除用户数据。Rust可用就用Rust，Python须先提交具体能力证据。不自研成熟数值、认证、Agent、队列或容器平台。
 
-```bash
-docker compose --env-file .env up --build
-```
+完整W0–W8/T01–T42、最新Head全部适用CI、明确无问题Codex review和零未解决线程之前不得合并；旧测试删除或少数检查绿色不代表完整产品通过。
 
-Then open `http://127.0.0.1:8000`. The Web client and `/api/v1/*` share that
-origin in the default deployment.
 
-## First research
+## 已实现的认证 API
 
-Create and complete the Draft through the Web workbench, or use the local CLI:
+`apps/server` 已提供真实 Axum 认证服务与本机 `init-state`、`migrate`、`bootstrap` 命令，
+复用 tower-sessions/PostgreSQL、totp-rs、Argon2 和 RustCrypto。初始化需要本机一次性
+capability；正常登录只提交六位 TOTP。注销、设备撤销、认证 epoch 与重放检查由数据库
+持久化，旧 cookie 不能恢复已撤销权限。运行步骤见 [CLI](CLI.md) 和 [运维](OPERATIONS.md)。
 
-```bash
-python -m pip install ./backend
-# Required only when QUAZONAI_AUTH_ENABLED=true:
-export QUAZONAI_API_TOKEN='<machine token configured for the API>'
+这是可运行的认证 API，不是研究产品已全部完成的声明；前端、研究/组合/交付全链路
+仍须按 DESIGN 实现和验收。API 合同由 `server openapi` 从实际路由生成，不手写平行协议。
 
-quazonai idea create --text "Research liquid equities with point-in-time data"
-quazonai idea show <DRAFT_ID>
-quazonai idea answer <DRAFT_ID> \
-  --expected-revision <REVISION> \
-  --answer market_scope="US equities" \
-  --answer horizon="one day" \
-  --answer data_scope="approved discovery data"
-quazonai idea start <DRAFT_ID> --expected-revision <REVISION>
-quazonai research graph <PROGRAM_ID>
-```
+## License
 
-The returned Draft determines the clarification keys. Do not invent
-optimizer/model/weight questions, submit a direct Program request, or retry a
-write after uncertainty without reading the current resource first.
+原创代码保持[AGPL-3.0-only](LICENSE)。第三方代码保留上游许可证，Nautilus示例保留LGPL版权说明，见[NOTICE](NOTICE)和[第三方说明](THIRD_PARTY_NOTICES.md)。
 
-## Agent Skill
+### Run 与事件接口增量
 
-[`skills/quazonai/`](skills/quazonai/) is the portable operator Skill. Install
-the entire directory so its authenticated CLI reference and workflows travel
-together.
+已实现受信任 Store 的事务准入、同 Attempt 接管/取消/终态回执，以及带认证的
+Run 查询、取消和持久 SSE HTTP；完整路径和权限见 [CLI](CLI.md)。这不代表
+完整 Worker/远端隔离、研究业务、科学资格、前端或交付闭环已完成。
 
-For a user-level Codex installation, symlink it into `$CODEX_HOME/skills`:
+### Brief 草稿作者流程
 
-```bash
-(
-  set -eu
-  CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
-  SKILL_SOURCE="$(pwd)/skills/quazonai"
-  SKILL_DEST="${CODEX_HOME}/skills/quazonai"
-
-  mkdir -p "${CODEX_HOME}/skills"
-  if [ -L "${SKILL_DEST}" ]; then
-    rm "${SKILL_DEST}"
-  elif [ -e "${SKILL_DEST}" ]; then
-    printf 'Refusing to replace existing directory or file: %s\n' "${SKILL_DEST}" >&2
-    printf 'Move or remove it explicitly, then run this installer again.\n' >&2
-    exit 1
-  fi
-  ln -s "${SKILL_SOURCE}" "${SKILL_DEST}"
-)
-```
-
-The Skill may prepare an approval or rejection command, but a human executes
-that capital-allocation decision. It never controls a downstream runtime.
-
-## Verification
-
-```bash
-make ci
-```
-
-Targeted checks should include the affected unit/integration tests, fresh
-Alembic migration from an empty database, parser/documentation contract, and
-the security/isolation boundary relevant to the change.
-
-## Source of truth
-
-- [DESIGN.md](DESIGN.md): complete product, domain and technical facts.
-- [AGENTS.md](AGENTS.md): engineering governance and hard boundaries.
-- [OPERATIONS.md](OPERATIONS.md): operator journey.
-- [CLI.md](CLI.md): CLI, App Server and MCP contract.
-- [skills/quazonai/SKILL.md](skills/quazonai/SKILL.md): portable external
-  operator workflow.
-
-## Mobile Web / PWA
-
-Desktop, mobile Web and installed PWA use one responsive client. The PWA
-precaches only the static shell; `/api/**` is NetworkOnly and never fabricates
-cached research or authentication data. An update needs explicit confirmation;
-offline mode states that server data and mutations are unavailable.
+现有控制面还支持研究Brief草稿的真实创建、读取、版本化和完整替换，包含当前机器权限、近期人工认证、原始响应幂等和数据库CAS。接口与授权形状见[CLI.md](CLI.md)。冻结后的内容和数据绑定不可改写；本条不表示完整Brief冻结、原生研究、组合交付或Web产品已验收。
