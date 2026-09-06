@@ -1,0 +1,73 @@
+name: Temporary Brief source objects
+on:
+  pull_request:
+    paths: ['.github/workflows/publish-brief-objects.yml']
+permissions:
+  contents: write
+jobs:
+  upload-objects:
+    if: github.event.pull_request.number == 63 && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'rewrite/issue-62-rust-evidence'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+      VERIFIED_BASE: 205bc4c0fd16b593263dd744895826a7ee5456cf
+      BASE_TREE: 5456cc177ceb45d0b59e1e46fed89cb3b22dd2f6
+      VERIFIED_TREE: 65df1368c971477177feba042bc1b9c584ce9b97
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Verify and upload fixed native Git objects without changing refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EVENT_HEAD"
+          test "$(git rev-parse HEAD^)" = "$VERIFIED_BASE"
+          test "$(git diff --name-only "$VERIFIED_BASE" "$EVENT_HEAD")" = '.github/workflows/publish-brief-objects.yml'
+          : > "$RUNNER_TEMP/brief.patch.xz"
+          for blob in 39ac30032fca0d125c12466ed6c920fc364d1a74 411d9152c4e7855cf8f1aac9d546c3aea7c17c21 3189a0284418b98bbe4b1dfac8be3271222ca3e8 5965c6a51d9243dcfa194fc9683f89cd8312cc04 cc35cb51165eaa4f390601d6b064e15d548afeb2; do
+            gh api "repos/$GITHUB_REPOSITORY/git/blobs/$blob" --jq .content | base64 --decode >> "$RUNNER_TEMP/brief.patch.xz"
+          done
+          test "$(wc -c < "$RUNNER_TEMP/brief.patch.xz")" -eq 22512
+          xz --decompress --stdout "$RUNNER_TEMP/brief.patch.xz" > "$RUNNER_TEMP/brief.patch"
+          test "$(wc -c < "$RUNNER_TEMP/brief.patch")" -eq 123692
+          git -c core.hooksPath=/dev/null checkout --detach "$VERIFIED_BASE"
+          git -c core.hooksPath=/dev/null apply --check --unidiff-zero --index "$RUNNER_TEMP/brief.patch"
+          git -c core.hooksPath=/dev/null apply --unidiff-zero --index "$RUNNER_TEMP/brief.patch"
+          test "$(git write-tree)" = "$VERIFIED_TREE"
+          git diff --cached --check
+          test ! -e .github/workflows/publish-brief-objects.yml
+          test -z "$(git diff --cached --name-only --diff-filter=M "$VERIFIED_BASE" -- Cargo.lock migrations/ .github/workflows/)"
+          python3 - <<'PY'
+          import base64,json,os,subprocess
+          def git(*args):
+              return subprocess.check_output(['git',*args])
+          def api(endpoint,body):
+              result=subprocess.run(['gh','api','--method','POST',endpoint,'--input','-'],input=json.dumps(body).encode(),stdout=subprocess.PIPE,check=True)
+              return json.loads(result.stdout)
+          repo=os.environ['GITHUB_REPOSITORY']
+          if repo!='zhengui666/QuaZonai':
+              raise SystemExit('unexpected repository')
+          entries=[]
+          for raw in filter(None,git('diff','--cached','--name-only','--no-renames','-z').split(b'\0')):
+              path=raw.decode('utf-8')
+              metadata,actual=git('ls-files','--stage','--',path).decode().strip().split('\t',1)
+              mode,sha,stage=metadata.split()
+              if actual!=path or stage!='0' or mode not in ('100644','100755'):
+                  raise SystemExit('unexpected index')
+              result=api(f'repos/{repo}/git/blobs',{'content':base64.b64encode(git('cat-file','blob',sha)).decode(),'encoding':'base64'})
+              if result['sha']!=sha:
+                  raise SystemExit('native blob mismatch')
+              entries.append({'path':path,'mode':mode,'type':'blob','sha':sha})
+          if len(entries)!=29:
+              raise SystemExit('unexpected file count')
+          result=api(f'repos/{repo}/git/trees',{'base_tree':os.environ['BASE_TREE'],'tree':entries})
+          if result['sha']!=os.environ['VERIFIED_TREE']:
+              raise SystemExit('native tree mismatch')
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as summary:
+              summary.write(f"Uploaded exact native Git tree `{result['sha']}`,29 changed files. No commit or ref changed; transport is not acceptance.\n")
+          PY
