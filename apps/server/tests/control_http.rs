@@ -520,3 +520,319 @@ async fn unknown_fields_missing_keys_and_unscoped_doctor_permissions_fail_closed
     .await;
     assert_eq!(missing.status, StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn grant_replay_precedes_fresh_totp_and_reauth_quota_but_not_current_authority(pool: PgPool) {
+    let (f, cookie, native) = authenticated(pool.clone()).await;
+    let (_, token, _) = credential(&f, &cookie, None, "CLI").await;
+    let bearer = format!("Bearer {token}");
+    let now = f
+        .store
+        .authentication_snapshot()
+        .await
+        .unwrap()
+        .database_now
+        .timestamp() as u64;
+    let payload = json!({"schema_version":1,"name":"already authorized","description":"","fork_from_project_id":null});
+    let mut request = json!({"schema_version":1,"command":{"operation":"PROJECT_CREATE","request":payload},"target_id":null,"code":native.generate((now/30+1)*30)});
+    let headers = [
+        ("authorization", bearer.as_str()),
+        ("idempotency-key", "lost-grant-response"),
+    ];
+    let first = command(
+        &f,
+        "POST",
+        "/api/v2/auth/operator-command-grants",
+        request.clone(),
+        &headers,
+    )
+    .await;
+    assert_eq!(first.status, StatusCode::CREATED, "{}", first.body);
+    // Saturate the real PostgreSQL REAUTH window; retries must not consume it.
+    for _ in 1..5 {
+        f.store
+            .reserve_auth_attempt(store::auth::AuthOperation::Reauth)
+            .await
+            .unwrap();
+    }
+    let repeated = command(
+        &f,
+        "POST",
+        "/api/v2/auth/operator-command-grants",
+        request.clone(),
+        &headers,
+    )
+    .await;
+    assert_eq!(repeated.status, StatusCode::CREATED, "{}", repeated.body);
+    assert_eq!(repeated.body["resource"], first.body["resource"]);
+    assert_eq!(repeated.body["replayed"], true);
+    // Code is explicitly not part of the persisted, nonsecret idempotency body.
+    // Use a native authenticator output proven outside the acceptance window.
+    let mut stale = native.generate(now - 300);
+    if integrations::authentication::accepted_step(&native.secret, &stale, now as i64)
+        .unwrap()
+        .is_some()
+    {
+        stale = native.generate(now - 600);
+    }
+    assert!(
+        integrations::authentication::accepted_step(&native.secret, &stale, now as i64)
+            .unwrap()
+            .is_none()
+    );
+    request["code"] = json!(stale);
+    let reply = command(
+        &f,
+        "POST",
+        "/api/v2/auth/operator-command-grants",
+        request.clone(),
+        &headers,
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+    assert_eq!(
+        reply.body["resource"], first.body["resource"],
+        "replay must not extend expiry"
+    );
+    let attempts: i32 =
+        sqlx::query_scalar("SELECT attempts FROM app.auth_rate_windows WHERE operation='REAUTH'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(attempts, 5);
+    let mut changed = request.clone();
+    changed["command"]["request"]["name"] = json!("substituted");
+    let conflict = command(
+        &f,
+        "POST",
+        "/api/v2/auth/operator-command-grants",
+        changed,
+        &headers,
+    )
+    .await;
+    assert_eq!(conflict.status, StatusCode::CONFLICT);
+    assert_eq!(conflict.body["code"], "IDEMPOTENCY_CONFLICT");
+    sqlx::query("UPDATE app.operator_auth_state SET session_epoch=session_epoch+1 WHERE singleton")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let revoked = command(
+        &f,
+        "POST",
+        "/api/v2/auth/operator-command-grants",
+        request,
+        &headers,
+    )
+    .await;
+    assert_eq!(revoked.status, StatusCode::FORBIDDEN);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn concurrent_issuance_materializes_only_one_verifier_and_database_failure_cleans_it(
+    pool: PgPool,
+) {
+    let (f, cookie, _) = authenticated(pool.clone()).await;
+    let p = create_project(&f, &cookie, "verifier-owner").await;
+    let created=browser(&f,&cookie,"verifier-principal","POST","/api/v2/machine-principals",json!({"schema_version":1,"name":"CLI","kind":"CLI","project_id":p["id"],"downstream_id":null,"enabled":true})).await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    let path = format!(
+        "/api/v2/machine-principals/{}/credentials",
+        created.body["resource"]["id"].as_str().unwrap()
+    );
+    let request = json!({"schema_version":1,"scope_codes":["RESEARCH_READ"],"expires_at":Utc::now()+Duration::hours(1)});
+    let directory = f._state.path().join("secrets");
+    let before = std::fs::read_dir(&directory).unwrap().count();
+    let (a, b) = tokio::join!(
+        browser(
+            &f,
+            &cookie,
+            "concurrent-issue",
+            "POST",
+            &path,
+            request.clone()
+        ),
+        browser(
+            &f,
+            &cookie,
+            "concurrent-issue",
+            "POST",
+            &path,
+            request.clone()
+        )
+    );
+    assert_eq!(a.status, StatusCode::CREATED, "{}", a.body);
+    assert_eq!(b.status, StatusCode::CREATED, "{}", b.body);
+    assert_eq!(a.body["resource"], b.body["resource"]);
+    assert_ne!(a.body["token"].is_null(), b.body["token"].is_null());
+    assert_eq!(std::fs::read_dir(&directory).unwrap().count(), before + 1);
+    // Genuine server-side rejection after encryption, not a mocked Store.
+    sqlx::raw_sql("CREATE FUNCTION app.reject_issuance_fixture() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='fixture database refusal'; END $$; CREATE TRIGGER reject_fixture BEFORE INSERT ON app.machine_credentials FOR EACH ROW EXECUTE FUNCTION app.reject_issuance_fixture();").execute(&pool).await.unwrap();
+    let failed = browser(&f, &cookie, "db-refused", "POST", &path, request).await;
+    assert_eq!(
+        failed.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        failed.body
+    );
+    assert_eq!(
+        std::fs::read_dir(&directory).unwrap().count(),
+        before + 1,
+        "a definitely unreferenced verifier must be removed"
+    );
+    let receipts: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM app.command_receipts WHERE idempotency_key='db-refused'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(receipts, 0);
+    let vault = std::sync::Arc::new(
+        integrations::secrets::SecretVault::open(&directory, &f._state.path().join("master.key"))
+            .unwrap(),
+    );
+    let orphan = vault
+        .put("MACHINE_VERIFIER", b"interrupted unpublished fixture")
+        .unwrap();
+    let totp = vault.put("TOTP", b"must remain").unwrap();
+    assert_eq!(
+        server::secrets::prune_unpublished_verifiers(&f.store, vault.clone())
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(!directory.join(orphan.to_string()).exists());
+    assert!(directory.join(totp.to_string()).exists());
+    assert_eq!(std::fs::read_dir(&directory).unwrap().count(), before + 2);
+    assert_eq!(
+        server::secrets::prune_unpublished_verifiers(&f.store, vault)
+            .await
+            .unwrap(),
+        0
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn native_machine_failures_are_bounded_without_consuming_human_crypto_slots(pool: PgPool) {
+    let mut f = fixture(pool.clone()).await;
+    let state = server::AppState::new(
+        f.store.clone(),
+        integrations::secrets::SecretVault::open(
+            &f._state.path().join("secrets"),
+            &f._state.path().join("master.key"),
+        )
+        .unwrap(),
+        server::WebPolicy::new(
+            "https://research.example",
+            "127.0.0.1:8080".parse().unwrap(),
+            false,
+        )
+        .unwrap(),
+    );
+    let machine_slots = state.machine_crypto_slots.clone();
+    f.app = server::router(state, tower_sessions::cookie::Key::generate());
+    let (enrollment, anonymous, native) = start(&f).await;
+    let (confirmed, _) = confirm(&f, &enrollment, &anonymous, &native, true).await;
+    assert_eq!(confirmed.status, StatusCode::OK);
+    let cookie = confirmed.cookie.unwrap();
+    let (issued, token, _) = credential(&f, &cookie, None, "CLI").await;
+    let bad = format!(
+        "Bearer qz2.{}.{}",
+        issued["public_token_id"].as_str().unwrap(),
+        integrations::authentication::random_capability()
+    );
+    for _ in 0..5 {
+        assert_eq!(
+            command(
+                &f,
+                "GET",
+                "/api/v2/auth/machine",
+                Value::Null,
+                &[("authorization", &bad)]
+            )
+            .await
+            .status,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    let denied = command(
+        &f,
+        "GET",
+        "/api/v2/auth/machine",
+        Value::Null,
+        &[("authorization", &bad)],
+    )
+    .await;
+    assert_eq!(denied.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(denied.body["code"], "AUTH_RATE_LIMITED");
+    assert!(denied.headers.contains_key("retry-after"));
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM app.machine_auth_rate_windows")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 2);
+    for _ in 0..3 {
+        let unknown = format!(
+            "Bearer qz2.{}.{}",
+            Id::new(),
+            integrations::authentication::random_capability()
+        );
+        assert_eq!(
+            command(
+                &f,
+                "GET",
+                "/api/v2/auth/machine",
+                Value::Null,
+                &[("authorization", &unknown)]
+            )
+            .await
+            .status,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.machine_auth_rate_windows")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        2
+    );
+    sqlx::query("UPDATE app.machine_auth_rate_windows SET window_started_at=clock_timestamp()-interval '61 seconds'").execute(&pool).await.unwrap();
+    let held = machine_slots.acquire_many_owned(2).await.unwrap();
+    let bearer = format!("Bearer {token}");
+    let busy = command(
+        &f,
+        "GET",
+        "/api/v2/auth/machine",
+        Value::Null,
+        &[("authorization", &bearer)],
+    )
+    .await;
+    assert_eq!(busy.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(busy.body["code"], "CRYPTO_BUSY");
+    let now = f
+        .store
+        .authentication_snapshot()
+        .await
+        .unwrap()
+        .database_now
+        .timestamp() as u64;
+    let verified = call(
+        &f,
+        "POST",
+        "/api/v2/auth/verify",
+        json!({"schema_version":1,"code":native.generate((now/30+1)*30)}),
+        Some(&cookie),
+    )
+    .await;
+    assert_eq!(verified.status, StatusCode::OK, "{}", verified.body);
+    drop(held);
+    let ok = command(
+        &f,
+        "GET",
+        "/api/v2/auth/machine",
+        Value::Null,
+        &[("authorization", &bearer)],
+    )
+    .await;
+    assert_eq!(ok.status, StatusCode::OK, "{}", ok.body);
+}

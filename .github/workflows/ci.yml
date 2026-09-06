@@ -112,11 +112,11 @@ jobs:
           docker pull "$PGMQ_IMAGE"
           docker run --detach --name native-database --env POSTGRES_PASSWORD=fixture-only-disposable "$PGMQ_IMAGE"
           for attempt in $(seq 1 60); do
-            if docker exec native-database pg_isready -U postgres; then break; fi
+            if docker exec native-database pg_isready -h 127.0.0.1 -U postgres; then break; fi
             sleep 1
           done
-          docker exec native-database pg_isready -U postgres
-          docker exec -i native-database psql -U postgres -v ON_ERROR_STOP=1 < tests/native/pgmq_contract.sql | tee /tmp/database-evidence/contract.log
+          docker exec native-database pg_isready -h 127.0.0.1 -U postgres
+          docker exec -i --env PGPASSWORD=fixture-only-disposable native-database psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 < tests/native/pgmq_contract.sql | tee /tmp/database-evidence/contract.log
           docker image inspect --format '{{json .RepoDigests}}' "$PGMQ_IMAGE" > /tmp/database-evidence/image.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
@@ -151,11 +151,11 @@ jobs:
           docker pull "$PGMQ_IMAGE"
           docker run --detach --name store-database --publish 127.0.0.1:55432:5432 --env POSTGRES_PASSWORD=fixture-only-disposable "$PGMQ_IMAGE"
           for attempt in $(seq 1 60); do
-            if docker exec store-database pg_isready -U postgres; then break; fi
+            if docker exec store-database pg_isready -h 127.0.0.1 -U postgres; then break; fi
             sleep 1
           done
-          docker exec store-database pg_isready -U postgres
-          docker exec store-database psql -U postgres -v ON_ERROR_STOP=1 -c 'SELECT version()' > /tmp/store-evidence/database-version.txt
+          docker exec store-database pg_isready -h 127.0.0.1 -U postgres
+          docker exec --env PGPASSWORD=fixture-only-disposable store-database psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -c 'SELECT version()' > /tmp/store-evidence/database-version.txt
           docker image inspect --format '{{json .RepoDigests}}' "$PGMQ_IMAGE" > /tmp/store-evidence/image.json
       - name: Run every Store test against real independently migrated databases
         run: |

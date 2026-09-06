@@ -183,6 +183,25 @@ claim that the still-missing research/CLI/MCP/UI/worker/production acceptance is
 complete. Current totals and outcomes must be taken from the exact tested commit's
 CI log; historical totals above remain explicitly historical.
 
+## Control review corrections: replay, verifier ownership and native rate limits
+
+The grant HTTP path checks the authenticated CLI's exact existing receipt before
+fresh TOTP/reauth quota, while still enforcing current authority and global epoch.
+Credential issuance now holds the existing command transaction before materializing
+a verifier. Reconciliation locks that same authority row and consults immutable
+credential history on the primary before deleting only an authenticated, unpublished
+MACHINE_VERIFIER object. A local maintenance command covers cancellation/crash orphans;
+unknown database outcomes preserve files. No secret enters receipts or metadata.
+
+PostgreSQL shared global/per-credential windows bound failed/in-flight native Argon2
+checks. Successful verification refunds only its original windows, with independent
+machine and human crypto slots. Native HTTP, SQL concurrency/rollback, filesystem
+purpose/symlink and bounded-window tests exercise these paths. Counts and results
+belong to the exact CI Head, not an unversioned claim in this document.
+
+The database-native CI waits for final TCP readiness, not the official image's
+initialization-only Unix socket server. The PGMQ contract itself remains unchanged.
+
 ## Verification commands and evidence rules
 
 Run with the committed lock; do not format or regenerate tracked code inside a

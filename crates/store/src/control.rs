@@ -366,47 +366,16 @@ impl Store {
         tx.commit().await?;
         Ok(result)
     }
-    /// Avoid producing another encrypted verifier on an ordinary idempotent
-    /// retry. A fresh command is still fully reauthorized after crypto/IO.
-    pub async fn credential_issue_replay(
+    /// Holds the existing Operator command lock until publication or rollback.
+    /// Callers must generate a verifier only for the New branch, while this
+    /// transaction is alive. Reconciliation uses the same lock as its barrier.
+    pub async fn prepare_credential_issuance(
         &self,
         actor: &Actor,
         key: &str,
         principal_id: Id,
         request: &CredentialIssue,
-    ) -> Result<Option<CommandResult<CredentialView>>, StoreError> {
-        domain::control::scopes(request)?;
-        let mut tx = self.pool.begin().await?;
-        let intent = CredentialIssueIntent {
-            schema_version: SchemaV1,
-            principal_id,
-            request: request.clone(),
-        };
-        let command = commands::operator(
-            &mut tx,
-            actor,
-            OperatorOperation::CredentialIssue,
-            key,
-            None,
-            db::json(&intent)?,
-        )
-        .await?;
-        let result = command.replay()?;
-        if result.is_none() {
-            validate_issuance(&mut tx, principal_id, request).await?;
-        }
-        tx.commit().await?;
-        Ok(result)
-    }
-    pub async fn issue_credential(
-        &self,
-        actor: &Actor,
-        key: &str,
-        principal_id: Id,
-        request: &CredentialIssue,
-        public_token_id: Id,
-        verifier_ref: Id,
-    ) -> Result<CommandResult<CredentialView>, StoreError> {
+    ) -> Result<CredentialPreparation, StoreError> {
         domain::control::scopes(request)?;
         let mut tx = self.pool.begin().await?;
         let intent = CredentialIssueIntent {
@@ -425,22 +394,46 @@ impl Store {
         .await?;
         if let Some(result) = command.replay()? {
             tx.commit().await?;
-            return Ok(result);
+            return Ok(CredentialPreparation::Replay(result));
         }
         let principal = validate_issuance(&mut tx, principal_id, request).await?;
-        sqlx::query("INSERT INTO app.machine_credentials(id,principal_id,public_token_id,verifier_ref,principal_epoch,scope_codes,issued_at,expires_at,issued_by) VALUES($1,$2,$3,$4,$5,$6,clock_timestamp(),$7,'OPERATOR')")
-            .bind(command.target.as_uuid()).bind(principal_id.as_uuid()).bind(public_token_id.to_string()).bind(verifier_ref.to_string())
-            .bind(principal.credential_epoch.get() as i64).bind(request.scope_codes.iter().map(|s|s.code()).collect::<Vec<_>>()).bind(request.expires_at)
-            .execute(&mut *tx).await?;
-        let row = sqlx::query(&format!(
-            "SELECT {CREDENTIAL} FROM app.machine_credentials c WHERE c.id=$1"
-        ))
-        .bind(command.target.as_uuid())
+        Ok(CredentialPreparation::New(Box::new(CredentialIssuance {
+            tx,
+            command,
+            principal,
+            actor: actor.clone(),
+            request: request.clone(),
+        })))
+    }
+
+    /// Trusted local reconciliation only. The lock also waits behind a commit
+    /// whose response was lost; a non-reference read without that barrier is
+    /// insufficient evidence to delete a verifier. The callback never runs for
+    /// an immutable credential reference, including revoked/expired credentials.
+    pub async fn reconcile_unpublished_verifier<F, Fut>(
+        &self,
+        reference: Id,
+        remove: F,
+    ) -> Result<bool, StoreError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<(), StoreError>>,
+    {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT singleton FROM app.operator_auth_state WHERE singleton FOR UPDATE")
+            .fetch_one(&mut *tx)
+            .await?;
+        let referenced: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM app.machine_credentials WHERE verifier_ref=$1)",
+        )
+        .bind(reference.to_string())
         .fetch_one(&mut *tx)
         .await?;
-        let result = commands::finish(&mut tx, command, credential(&row)?, 201).await?;
+        if !referenced {
+            remove().await?;
+        }
         tx.commit().await?;
-        Ok(result)
+        Ok(!referenced)
     }
     pub async fn revoke_credential(
         &self,
@@ -531,4 +524,61 @@ async fn validate_issuance(
         return Err(StoreError::Invalid("credential_expiry"));
     }
     Ok(p)
+}
+
+/// One-time verifier materialization after authoritative command ownership.
+/// Neither variant is a public wire type.
+pub enum CredentialPreparation {
+    Replay(CommandResult<CredentialView>),
+    New(Box<CredentialIssuance>),
+}
+pub struct CredentialIssuance {
+    tx: Transaction<'static, Postgres>,
+    command: commands::Prepared,
+    principal: PrincipalView,
+    actor: Actor,
+    request: CredentialIssue,
+}
+impl CredentialIssuance {
+    pub async fn publish(
+        self,
+        public_token_id: Id,
+        verifier_ref: Id,
+    ) -> Result<CommandResult<CredentialView>, StoreError> {
+        let Self {
+            mut tx,
+            command,
+            principal,
+            actor,
+            request,
+        } = self;
+        // Native crypto/IO is bounded but can cross a time boundary. The held
+        // row locks preserve revocation/epoch; check time again before issuance.
+        match &actor {
+            Actor::Browser { login_id } => {
+                crate::auth::lock_login(&mut tx, *login_id, true).await?;
+            }
+            Actor::Machine { operator_grant, .. } => {
+                authority::machine(&mut tx, &actor, true).await?;
+                let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.operator_command_grants WHERE id=$1 AND expires_at>clock_timestamp())")
+                    .bind(operator_grant.map(Id::as_uuid)).fetch_one(&mut *tx).await?;
+                if !valid {
+                    return Err(StoreError::Forbidden);
+                }
+            }
+        }
+        sqlx::query("INSERT INTO app.machine_credentials(id,principal_id,public_token_id,verifier_ref,principal_epoch,scope_codes,issued_at,expires_at,issued_by) VALUES($1,$2,$3,$4,$5,$6,clock_timestamp(),$7,'OPERATOR')")
+            .bind(command.target.as_uuid()).bind(principal.id.as_uuid()).bind(public_token_id.to_string()).bind(verifier_ref.to_string())
+            .bind(principal.credential_epoch.get() as i64).bind(request.scope_codes.iter().map(|s|s.code()).collect::<Vec<_>>()).bind(request.expires_at)
+            .execute(&mut *tx).await?;
+        let row = sqlx::query(&format!(
+            "SELECT {CREDENTIAL} FROM app.machine_credentials c WHERE c.id=$1"
+        ))
+        .bind(command.target.as_uuid())
+        .fetch_one(&mut *tx)
+        .await?;
+        let result = commands::finish(&mut tx, command, credential(&row)?, 201).await?;
+        tx.commit().await?;
+        Ok(result)
+    }
 }

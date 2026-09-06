@@ -24,17 +24,19 @@ pub(crate) async fn crypto<T: Send + 'static>(
     state: &AppState,
     task: impl FnOnce() -> Result<T, ApiError> + Send + 'static,
 ) -> Result<T, ApiError> {
-    let permit = state
-        .crypto_slots
-        .clone()
-        .try_acquire_owned()
-        .map_err(|_| {
-            ApiError::new(
-                StatusCode::TOO_MANY_REQUESTS,
-                "CRYPTO_BUSY",
-                "验证服务繁忙，请稍后重新尝试。",
-            )
-        })?;
+    crypto_with_slots(state.crypto_slots.clone(), task).await
+}
+pub(crate) async fn crypto_with_slots<T: Send + 'static>(
+    slots: std::sync::Arc<tokio::sync::Semaphore>,
+    task: impl FnOnce() -> Result<T, ApiError> + Send + 'static,
+) -> Result<T, ApiError> {
+    let permit = slots.try_acquire_owned().map_err(|_| {
+        ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "CRYPTO_BUSY",
+            "验证服务繁忙，请稍后重新尝试。",
+        )
+    })?;
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
         task()

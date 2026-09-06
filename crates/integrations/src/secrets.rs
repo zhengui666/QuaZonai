@@ -113,17 +113,61 @@ impl SecretVault {
             options.mode(0o600);
         }
         let mut file = self.root.open_with(id.to_string(), &options)?.into_std();
-        file.write_all(PREFIX)?;
-        file.write_all(&nonce)?;
-        file.write_all(&ciphertext)?;
-        file.sync_all()?;
-        #[cfg(unix)]
-        file.set_permissions(fs::Permissions::from_mode(0o400))?;
-        // Persist the read-only inode mode as well as the ciphertext before the
-        // directory entry (and then its database reference) can be published.
-        file.sync_all()?;
+        let written = (|| -> Result<(), SecretError> {
+            file.write_all(PREFIX)?;
+            file.write_all(&nonce)?;
+            file.write_all(&ciphertext)?;
+            file.sync_all()?;
+            #[cfg(unix)]
+            file.set_permissions(fs::Permissions::from_mode(0o400))?;
+            file.sync_all()?;
+            self.root.open(".")?.into_std().sync_all()?;
+            Ok(())
+        })();
+        if written.is_err() {
+            // create_new already succeeded. Never remove an earlier/colliding
+            // object, and never publish a reference to a partially written file.
+            let _ = self.root.remove_file(id.to_string());
+            let _ = self.root.open(".").and_then(|d| d.into_std().sync_all());
+        }
+        written.map(|()| id)
+    }
+
+    /// Trusted maintenance only; returned identities are not secret contents.
+    /// Other purposes and unauthenticated/tampered objects are never candidates.
+    pub fn machine_verifier_ids(&self) -> Result<Vec<Id>, SecretError> {
+        let mut ids = Vec::new();
+        for entry in self.root.entries()? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            let Ok(id) = Id::try_from(name) else { continue };
+            match self.read(id, "MACHINE_VERIFIER") {
+                Ok(_) => ids.push(id),
+                Err(SecretError::Authentication | SecretError::Invalid) => {}
+                Err(SecretError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        ids.sort();
+        Ok(ids)
+    }
+
+    /// The caller must hold the database publication barrier and prove this
+    /// exact verifier is unreferenced. Never expose this via an Agent/HTTP API.
+    pub fn remove_unpublished_verifier(&self, id: Id) -> Result<(), SecretError> {
+        match self.read(id, "MACHINE_VERIFIER") {
+            Ok(_) => {}
+            Err(SecretError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        }
+        self.root.remove_file(id.to_string())?;
         self.root.open(".")?.into_std().sync_all()?;
-        Ok(id)
+        Ok(())
     }
 
     /// Trusted process only. The UUID path and authenticated purpose prevent

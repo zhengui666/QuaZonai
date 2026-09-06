@@ -178,7 +178,13 @@ async fn new_database_migrations_are_repeatable_without_legacy_side_effects(pool
     let store = store::Store::from_pool(pool.clone());
     store.migrate().await.unwrap();
     let tables:i64=sqlx::query_scalar("SELECT count(*) FROM information_schema.tables WHERE table_schema='app' AND table_type='BASE TABLE'").fetch_one(&pool).await.unwrap();
-    assert_eq!(tables, 67);
+    assert_eq!(tables, 68);
+    let windows_exist: bool =
+        sqlx::query_scalar("SELECT to_regclass('app.machine_auth_rate_windows') IS NOT NULL")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(windows_exist);
     let applied: Vec<i64> =
         sqlx::query_scalar("SELECT version FROM _sqlx_migrations WHERE success ORDER BY version")
             .fetch_all(&pool)

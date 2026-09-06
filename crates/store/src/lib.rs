@@ -8,6 +8,7 @@ pub mod authority;
 mod commands;
 pub mod control;
 mod db;
+pub mod machine_auth;
 mod migration;
 pub mod turns;
 
@@ -42,6 +43,8 @@ pub enum StoreError {
     IdempotencyConflict,
     #[error("stored contract integrity check failed")]
     Integrity,
+    #[error("secret reconciliation could not be completed")]
+    SecretCleanup,
     #[error("record not found")]
     NotFound,
     #[error("conflicting immutable command or native identity")]

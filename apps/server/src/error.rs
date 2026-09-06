@@ -170,7 +170,7 @@ impl From<StoreError> for ApiError {
                 "IDEMPOTENCY_CONFLICT",
                 "此幂等键已用于不同请求，不能重用。",
             ),
-            StoreError::Integrity => Self::internal(),
+            StoreError::Integrity | StoreError::SecretCleanup => Self::internal(),
             StoreError::NotFound => Self::new(
                 StatusCode::NOT_FOUND,
                 "NOT_FOUND",

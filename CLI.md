@@ -27,6 +27,8 @@ cargo run --locked -p server -- serve --state-dir ./var \
 
 本地开发可显式使用 `--development-http --public-url http://127.0.0.1:8080`，同时监听地址必须为 loopback。此选项只调整本地传输和 cookie 的 Secure 属性，不跳过初始化、TOTP、会话撤销、Origin 或数据库角色校验。
 
+本机维护：`cargo run --locked -p server -- prune-unpublished-verifiers --state-dir ./var` 在数据库发布锁下，只回收无任何历史凭据引用、原生用途认证为 MACHINE_VERIFIER 的孤儿。数据库错误时不删除；不提供远程/Agent删除密钥接口。详见 OPERATIONS。
+
 ## 已实现的控制面 HTTP 合同
 
 `server openapi` 包含实际 Project 与机器身份路由，不是手写路径清单或待实现占位。项目命令的 HTTP/CLI/MCP 统一以服务端事务为准，不提供 SQL 业务后门。控制面专用远程 CLI 与 MCP 仍在同一 PR 中接通，不能把本机 `server` 管理命令视作已实现全部研究命令。

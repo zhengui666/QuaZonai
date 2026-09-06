@@ -5,6 +5,7 @@ mod access;
 pub mod auth;
 pub mod control;
 pub mod error;
+pub mod secrets;
 
 use axum::{
     extract::{DefaultBodyLimit, Request, State},
@@ -86,6 +87,7 @@ pub struct AppState {
     pub vault: Arc<SecretVault>,
     policy: WebPolicy,
     pub crypto_slots: Arc<Semaphore>,
+    pub machine_crypto_slots: Arc<Semaphore>,
 }
 impl AppState {
     pub fn new(store: Store, vault: SecretVault, policy: WebPolicy) -> Self {
@@ -94,6 +96,7 @@ impl AppState {
             vault: Arc::new(vault),
             policy,
             crypto_slots: Arc::new(Semaphore::new(2)),
+            machine_crypto_slots: Arc::new(Semaphore::new(2)),
         }
     }
 }
@@ -287,6 +290,18 @@ fn describe_authority(document: &mut utoipa::openapi::OpenApi) {
             if let Some(operation) = operation {
                 let cookie = SecurityRequirement::new("BrowserSession", std::iter::empty::<&str>());
                 let bearer = SecurityRequirement::new("MachineBearer", std::iter::empty::<&str>());
+                if !anonymous && !browser_auth {
+                    operation.responses.responses.insert(
+                        "429".into(),
+                        utoipa::openapi::ResponseBuilder::new()
+                            .description("Shared native machine attempt limit or bounded crypto capacity; respect Retry-After.")
+                            .content("application/problem+json", utoipa::openapi::Content::new(
+                                Some(utoipa::openapi::Ref::from_schema_name("Problem"))))
+                            .header("Retry-After", utoipa::openapi::Header::new(
+                                utoipa::openapi::ObjectBuilder::new().schema_type(utoipa::openapi::Type::String)))
+                            .build().into(),
+                    );
+                }
                 operation.security = Some(if anonymous {
                     vec![]
                 } else if only_machine {

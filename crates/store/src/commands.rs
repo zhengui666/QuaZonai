@@ -185,7 +185,57 @@ pub(crate) async fn finish<T: Serialize>(
     Ok(result)
 }
 
+fn grant_request(command: &OperatorCommand, target: Option<Id>) -> Result<Value, StoreError> {
+    domain::control::command(command)?;
+    if command.operation().creates() != target.is_none() {
+        return Err(StoreError::Invalid("operation_target"));
+    }
+    Ok(json!({"schema_version":1,"command":command,"target_id":target}))
+}
+
+async fn grant_replay(
+    tx: &mut Transaction<'_, Postgres>,
+    scope: &str,
+    key: &str,
+    request: &Value,
+    epoch: i64,
+) -> Result<Option<CommandResult<OperatorGrantView>>, StoreError> {
+    let Some(receipt) = prior(tx, scope, "OPERATOR_GRANT_ISSUE", key, request).await? else {
+        return Ok(None);
+    };
+    let mut result: CommandResult<OperatorGrantView> =
+        serde_json::from_value(receipt.response).map_err(|_| StoreError::Integrity)?;
+    if result.resource.auth_epoch.get() != epoch as u64 {
+        return Err(StoreError::Forbidden);
+    }
+    result.replayed = true;
+    Ok(Some(result))
+}
+
 impl Store {
+    /// Possession and current authority are still required. An already committed
+    /// grant is read-only evidence, not a new authentication or a renewed grant.
+    pub async fn operator_grant_replay(
+        &self,
+        actor: &Actor,
+        idempotency_key: &str,
+        command: &OperatorCommand,
+        requested_target: Option<Id>,
+    ) -> Result<Option<CommandResult<OperatorGrantView>>, StoreError> {
+        key(idempotency_key)?;
+        let request = grant_request(command, requested_target)?;
+        let mut tx = self.pool.begin().await?;
+        let epoch: i64 = sqlx::query_scalar("SELECT session_epoch::bigint FROM app.operator_auth_state WHERE singleton AND initialized FOR UPDATE")
+            .fetch_optional(&mut *tx).await?.ok_or(StoreError::AuthenticationRequired)?;
+        let machine = authority::machine(&mut tx, actor, true).await?;
+        if machine.kind != PrincipalKind::Cli {
+            return Err(StoreError::Forbidden);
+        }
+        let scope = format!("CREDENTIAL:{}", machine.credential_id);
+        let result = grant_replay(&mut tx, &scope, idempotency_key, &request, epoch).await?;
+        tx.commit().await?;
+        Ok(result)
+    }
     /// The adapter has cryptographically verified the code against this native
     /// snapshot; this transaction consumes its exact step and binds one command.
     pub async fn issue_operator_grant(
@@ -198,12 +248,8 @@ impl Store {
         verified_step: i64,
     ) -> Result<CommandResult<OperatorGrantView>, StoreError> {
         key(idempotency_key)?;
-        domain::control::command(command)?;
+        let request = grant_request(command, requested_target)?;
         let operation = command.operation();
-        if operation.creates() != requested_target.is_none() {
-            return Err(StoreError::Invalid("operation_target"));
-        }
-        let request = json!({"schema_version":1,"command":command,"target_id":requested_target});
         let mut tx = self.pool.begin().await?;
         let epoch:i64=sqlx::query_scalar("SELECT session_epoch::bigint FROM app.operator_auth_state WHERE singleton AND initialized FOR UPDATE")
             .fetch_optional(&mut *tx).await?.ok_or(StoreError::AuthenticationRequired)?;
@@ -212,21 +258,9 @@ impl Store {
             return Err(StoreError::Forbidden);
         }
         let scope = format!("CREDENTIAL:{}", machine.credential_id);
-        if let Some(receipt) = prior(
-            &mut tx,
-            &scope,
-            "OPERATOR_GRANT_ISSUE",
-            idempotency_key,
-            &request,
-        )
-        .await?
+        if let Some(result) =
+            grant_replay(&mut tx, &scope, idempotency_key, &request, epoch).await?
         {
-            let mut result: CommandResult<OperatorGrantView> =
-                serde_json::from_value(receipt.response).map_err(|_| StoreError::Integrity)?;
-            if result.resource.auth_epoch.get() != epoch as u64 {
-                return Err(StoreError::Forbidden);
-            }
-            result.replayed = true;
             tx.commit().await?;
             return Ok(result);
         }

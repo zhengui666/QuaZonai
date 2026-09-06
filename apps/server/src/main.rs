@@ -57,6 +57,13 @@ enum Command {
         #[arg(long, env = "DEVELOPMENT_HTTP", default_value_t = false)]
         development_http: bool,
     },
+    /// Reconcile only unreferenced machine verifiers; never removes credential history.
+    PruneUnpublishedVerifiers {
+        #[command(flatten)]
+        database: Database,
+        #[arg(long, env = "STATE_DIR", default_value = "var")]
+        state_dir: PathBuf,
+    },
     /// Export native-generated HTTP contracts to stdout without connecting to a DB.
     Openapi,
 }
@@ -134,6 +141,20 @@ async fn main() {
 async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
     match command {
         Command::InitState { state_dir } => initialize_state(&state_dir)?,
+        Command::PruneUnpublishedVerifiers {
+            database,
+            state_dir,
+        } => {
+            let store = Store::connect(&database.database_url).await?;
+            let (vault, _) = load_state(&state_dir)?;
+            let removed =
+                server::secrets::prune_unpublished_verifiers(&store, std::sync::Arc::new(vault))
+                    .await?;
+            println!(
+                "{}",
+                serde_json::json!({"schema_version":1,"removed_unpublished_verifiers":removed})
+            );
+        }
         Command::Openapi => print!("{}", server::openapi_json()?),
         Command::Migrate {
             database,

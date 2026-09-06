@@ -140,21 +140,24 @@ pub async fn issue_credential(
     let principal = path(id)?;
     let request = json(body)?;
     let key = idempotency_key(&headers)?;
-    if let Some(replay) = state
+    let prepared = match state
         .store
-        .credential_issue_replay(&actor, key, principal, &request)
+        .prepare_credential_issuance(&actor, key, principal, &request)
         .await?
     {
-        return Ok((
-            StatusCode::CREATED,
-            Json(CredentialCreated {
-                schema_version: SchemaV1,
-                replayed: true,
-                resource: replay.resource,
-                token: None,
-            }),
-        ));
-    }
+        store::control::CredentialPreparation::Replay(replay) => {
+            return Ok((
+                StatusCode::CREATED,
+                Json(CredentialCreated {
+                    schema_version: SchemaV1,
+                    replayed: true,
+                    resource: replay.resource,
+                    token: None,
+                }),
+            ));
+        }
+        store::control::CredentialPreparation::New(prepared) => prepared,
+    };
     let public = Id::new();
     let vault = state.vault.clone();
     let (token, verifier_ref) = crypto(&state, move || {
@@ -167,10 +170,23 @@ pub async fn issue_credential(
         Ok((token, reference))
     })
     .await?;
-    let result = state
-        .store
-        .issue_credential(&actor, key, principal, &request, public, verifier_ref)
-        .await?;
+    let result = match prepared.publish(public, verifier_ref).await {
+        Ok(result) => result,
+        Err(error) => {
+            if crate::secrets::reconcile_verifier(&state.store, state.vault.clone(), verifier_ref)
+                .await
+                .is_err()
+            {
+                // Preserve on uncertainty. The local reconciliation command can
+                // retry after DB recovery; never delete a potentially committed key.
+                tracing::warn!(
+                    code = "VERIFIER_RECONCILIATION_REQUIRED",
+                    "unpublished verifier requires reconciliation"
+                );
+            }
+            return Err(error.into());
+        }
+    };
     Ok((
         StatusCode::CREATED,
         Json(CredentialCreated {
@@ -220,6 +236,13 @@ pub async fn issue_grant(
         return Err(store::StoreError::Forbidden.into());
     }
     domain::control::command(&request.command).map_err(store::StoreError::Domain)?;
+    if let Some(replay) = state
+        .store
+        .operator_grant_replay(&actor, key, &request.command, request.target_id)
+        .await?
+    {
+        return Ok((StatusCode::CREATED, Json(replay)));
+    }
     state
         .store
         .reserve_auth_attempt(AuthOperation::Reauth)

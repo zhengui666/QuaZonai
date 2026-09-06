@@ -60,26 +60,26 @@ async fn machine(
         .await
         .unwrap()
         .resource;
-    let c = store
-        .issue_credential(
-            actor,
-            &Id::new().to_string(),
-            p.id,
-            &CredentialIssue {
-                schema_version: SchemaV1,
-                scope_codes: vec![if project.is_some() {
-                    MachineScope::ResearchRead
-                } else {
-                    MachineScope::DoctorRead
-                }],
-                expires_at: Utc::now() + Duration::hours(1),
-            },
-            Id::new(),
-            Id::new(),
-        )
-        .await
-        .unwrap()
-        .resource;
+    let c = fixture_credential(
+        store,
+        actor,
+        &Id::new().to_string(),
+        p.id,
+        &CredentialIssue {
+            schema_version: SchemaV1,
+            scope_codes: vec![if project.is_some() {
+                MachineScope::ResearchRead
+            } else {
+                MachineScope::DoctorRead
+            }],
+            expires_at: Utc::now() + Duration::hours(1),
+        },
+        Id::new(),
+        Id::new(),
+    )
+    .await
+    .unwrap()
+    .resource;
     let challenge = store.machine_challenge(c.public_token_id).await.unwrap();
     let machine = challenge.verified_actor(None);
     (p, c, machine)
@@ -258,20 +258,20 @@ async fn epochs_scopes_and_mission_deadlines_are_rechecked_not_claimed_by_actor(
         Err(StoreError::InvalidCredentials)
     ));
     assert!(matches!(
-        store
-            .issue_credential(
-                &actor,
-                "no-manual-mission",
-                principal,
-                &CredentialIssue {
-                    schema_version: SchemaV1,
-                    scope_codes: vec![MachineScope::ResearchRead],
-                    expires_at: f.deadline
-                },
-                Id::new(),
-                Id::new()
-            )
-            .await,
+        fixture_credential(
+            &store,
+            &actor,
+            "no-manual-mission",
+            principal,
+            &CredentialIssue {
+                schema_version: SchemaV1,
+                scope_codes: vec![MachineScope::ResearchRead],
+                expires_at: f.deadline
+            },
+            Id::new(),
+            Id::new()
+        )
+        .await,
         Err(StoreError::Forbidden)
     ));
 }
@@ -305,48 +305,44 @@ async fn grant_binds_parent_resource_and_is_not_reusable_by_another_credential(p
         actor
     };
     assert!(matches!(
-        store
-            .issue_credential(
-                &with_grant(cli.clone()),
-                "execute",
-                p2.id,
-                &issue,
-                Id::new(),
-                Id::new()
-            )
-            .await,
+        fixture_credential(
+            &store,
+            &with_grant(cli.clone()),
+            "execute",
+            p2.id,
+            &issue,
+            Id::new(),
+            Id::new()
+        )
+        .await,
         Err(StoreError::Forbidden)
     ));
     assert!(matches!(
-        store
-            .issue_credential(
-                &with_grant(other_cli),
-                "execute",
-                p1.id,
-                &issue,
-                Id::new(),
-                Id::new()
-            )
-            .await,
+        fixture_credential(
+            &store,
+            &with_grant(other_cli),
+            "execute",
+            p1.id,
+            &issue,
+            Id::new(),
+            Id::new()
+        )
+        .await,
         Err(StoreError::Forbidden)
     ));
     let a = with_grant(cli);
-    let result = store
-        .issue_credential(&a, "execute", p1.id, &issue, Id::new(), Id::new())
+    let result = fixture_credential(&store, &a, "execute", p1.id, &issue, Id::new(), Id::new())
         .await
         .unwrap();
     assert_eq!(result.resource.id, granted.target_id);
     assert!(
-        store
-            .issue_credential(&a, "execute", p1.id, &issue, Id::new(), Id::new())
+        fixture_credential(&store, &a, "execute", p1.id, &issue, Id::new(), Id::new())
             .await
             .unwrap()
             .replayed
     );
     assert!(matches!(
-        store
-            .issue_credential(&a, "another", p1.id, &issue, Id::new(), Id::new())
-            .await,
+        fixture_credential(&store, &a, "another", p1.id, &issue, Id::new(), Id::new()).await,
         Err(StoreError::Conflict)
     ));
 }
@@ -378,8 +374,8 @@ async fn issued_credential_retry_never_rebinds_its_native_verifier_and_rollback_
         expires_at: Utc::now() + Duration::hours(1),
     };
     let (a, b) = tokio::join!(
-        store.issue_credential(&actor, "issue", p.id, &issue, Id::new(), Id::new()),
-        store.issue_credential(&actor, "issue", p.id, &issue, Id::new(), Id::new())
+        fixture_credential(&store, &actor, "issue", p.id, &issue, Id::new(), Id::new()),
+        fixture_credential(&store, &actor, "issue", p.id, &issue, Id::new(), Id::new())
     );
     let (a, b) = (a.unwrap(), b.unwrap());
     assert_eq!(a.resource.id, b.resource.id);
@@ -388,9 +384,7 @@ async fn issued_credential_retry_never_rebinds_its_native_verifier_and_rollback_
     let mut invalid = issue.clone();
     invalid.scope_codes = vec![MachineScope::DoctorRead, MachineScope::DoctorRead];
     assert!(matches!(
-        store
-            .issue_credential(&actor, "bad", p.id, &invalid, Id::new(), Id::new())
-            .await,
+        fixture_credential(&store, &actor, "bad", p.id, &invalid, Id::new(), Id::new()).await,
         Err(StoreError::Domain(domain::DomainError::Invalid(
             "scope_codes"
         )))
@@ -407,4 +401,206 @@ async fn issued_credential_retry_never_rebinds_its_native_verifier_and_rollback_
     .await
     .unwrap();
     assert_eq!(receipts, 1);
+}
+
+async fn fixture_credential(
+    store: &Store,
+    actor: &Actor,
+    key: &str,
+    principal: Id,
+    request: &CredentialIssue,
+    public: Id,
+    verifier: Id,
+) -> Result<CommandResult<CredentialView>, StoreError> {
+    match store
+        .prepare_credential_issuance(actor, key, principal, request)
+        .await?
+    {
+        store::control::CredentialPreparation::Replay(result) => Ok(result),
+        store::control::CredentialPreparation::New(prepared) => {
+            prepared.publish(public, verifier).await
+        }
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn native_machine_windows_rollback_partial_reservations_and_refund_only_matching_windows(
+    pool: PgPool,
+) {
+    let (store, actor) = operator(&pool).await;
+    let (_, c, _) = machine(&store, &actor, None, AssignablePrincipalKind::Cli).await;
+    let mut attempts = Vec::new();
+    for _ in 0..5 {
+        attempts.push(store.reserve_machine_auth_attempt(c.id).await.unwrap());
+    }
+    assert!(matches!(
+        store.reserve_machine_auth_attempt(c.id).await,
+        Err(StoreError::AuthRateLimited { .. })
+    ));
+    let global: i32 = sqlx::query_scalar(
+        "SELECT attempts FROM app.machine_auth_rate_windows WHERE credential_id IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        global, 5,
+        "per-token failure rolls back the global reservation"
+    );
+    store
+        .machine_auth_succeeded(attempts.pop().unwrap())
+        .await
+        .unwrap();
+    let old = store.reserve_machine_auth_attempt(c.id).await.unwrap();
+    sqlx::query("UPDATE app.machine_auth_rate_windows SET window_started_at=clock_timestamp()-interval '61 seconds'").execute(&pool).await.unwrap();
+    let current = store.reserve_machine_auth_attempt(c.id).await.unwrap();
+    store.machine_auth_succeeded(old).await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT sum(attempts)::bigint FROM app.machine_auth_rate_windows"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        2,
+        "late success must not refund another window"
+    );
+    store.machine_auth_succeeded(current).await.unwrap();
+    for _ in 0..70 {
+        let ticket = store.reserve_machine_auth_attempt(c.id).await.unwrap();
+        store.machine_auth_succeeded(ticket).await.unwrap();
+    }
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT sum(attempts)::bigint FROM app.machine_auth_rate_windows"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0,
+        "successful requests are not a five-requests-per-minute quota"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn native_machine_attempt_reservation_is_atomic_under_concurrency_and_globally_bounded(
+    pool: PgPool,
+) {
+    let (store, actor) = operator(&pool).await;
+    let (_, c, _) = machine(&store, &actor, None, AssignablePrincipalKind::Cli).await;
+    let mut tasks = Vec::new();
+    for _ in 0..12 {
+        let store = store.clone();
+        tasks.push(tokio::spawn(async move {
+            store.reserve_machine_auth_attempt(c.id).await
+        }));
+    }
+    let mut accepted = 0;
+    for task in tasks {
+        match task.await.unwrap() {
+            Ok(_) => accepted += 1,
+            Err(StoreError::AuthRateLimited { .. }) => {}
+            Err(error) => panic!("unexpected reservation failure: {error}"),
+        }
+    }
+    assert_eq!(accepted, 5);
+    for _ in 0..5 {
+        let (_, next, _) = machine(&store, &actor, None, AssignablePrincipalKind::Cli).await;
+        for _ in 0..5 {
+            store.reserve_machine_auth_attempt(next.id).await.unwrap();
+        }
+    }
+    let (_, last, _) = machine(&store, &actor, None, AssignablePrincipalKind::Cli).await;
+    for _ in 0..2 {
+        store.reserve_machine_auth_attempt(last.id).await.unwrap();
+    }
+    assert!(matches!(
+        store.reserve_machine_auth_attempt(last.id).await,
+        Err(StoreError::AuthRateLimited { .. })
+    ));
+    assert_eq!(
+        sqlx::query_scalar::<_, i32>(
+            "SELECT attempts FROM app.machine_auth_rate_windows WHERE credential_id IS NULL"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        32
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn verifier_reconciliation_waits_for_publication_and_retains_referenced_history(
+    pool: PgPool,
+) {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    let (store, actor) = operator(&pool).await;
+    let (principal, _, _) = machine(&store, &actor, None, AssignablePrincipalKind::Cli).await;
+    let request = CredentialIssue {
+        schema_version: SchemaV1,
+        scope_codes: vec![MachineScope::DoctorRead],
+        expires_at: Utc::now() + Duration::hours(1),
+    };
+    let prepared = match store
+        .prepare_credential_issuance(&actor, "pending-publication", principal.id, &request)
+        .await
+        .unwrap()
+    {
+        store::control::CredentialPreparation::New(p) => p,
+        _ => panic!("expected newly owned issuance"),
+    };
+    let reference = Id::new();
+    let ran = Arc::new(AtomicBool::new(false));
+    let flag = ran.clone();
+    let other = store.clone();
+    let prune = tokio::spawn(async move {
+        other
+            .reconcile_unpublished_verifier(reference, || async move {
+                flag.store(true, Ordering::SeqCst);
+                Ok(())
+            })
+            .await
+    });
+    // Poll actual PostgreSQL lock waits rather than assuming a task was scheduled.
+    tokio::time::timeout(std::time::Duration::from_secs(5),async {
+        loop {
+            let waiting:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT singleton FROM app.operator_auth_state%')").fetch_one(&pool).await.unwrap();
+            if waiting {break}
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    }).await.unwrap();
+    assert!(!ran.load(Ordering::SeqCst));
+    let c = prepared
+        .publish(Id::new(), reference)
+        .await
+        .unwrap()
+        .resource;
+    assert!(!prune.await.unwrap().unwrap());
+    assert!(!ran.load(Ordering::SeqCst));
+    store
+        .revoke_credential(
+            &actor,
+            "revoke-protect",
+            c.id,
+            &CredentialRevoke {
+                schema_version: SchemaV1,
+                reason: "history still owns verifier".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(!store
+        .reconcile_unpublished_verifier(reference, || async {
+            panic!("referenced revoked verifier must remain")
+        })
+        .await
+        .unwrap());
+    let never_published = Id::new();
+    assert!(store
+        .reconcile_unpublished_verifier(never_published, || async { Ok(()) })
+        .await
+        .unwrap());
 }
