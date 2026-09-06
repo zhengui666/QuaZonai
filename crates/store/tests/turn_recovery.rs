@@ -174,7 +174,7 @@ async fn draft_brief_cannot_authorize_a_new_model_turn(pool: PgPool) {
     request.deadline_at = deadline;
     let store = Store::from_pool(pool.clone());
     assert!(matches!(
-        store.reserve_turn(run, &f.fence, &request).await,
+        store.reserve_turn(run, &fence, &request).await,
         Err(StoreError::Domain(DomainError::AdmissionClosed))
     ));
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM app.model_turn_reservations")
