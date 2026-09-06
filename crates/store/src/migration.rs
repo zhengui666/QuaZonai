@@ -68,7 +68,10 @@ impl Store {
             Ok(())
         }.await;
         // The commit result, not a subsequent socket-close outcome, is decisive.
-        // Closing also releases SQLx's native session advisory lock on failure.
+        // Await the native unlock acknowledgement instead of racing backend
+        // teardown. SQLx flushes any queued transaction rollback first.
+        // On transport failure, closing still disposes this dedicated session.
+        let _ = Migrate::unlock(&mut connection).await;
         let _ = connection.close().await;
         result
     }
