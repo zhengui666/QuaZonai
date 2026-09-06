@@ -23,9 +23,12 @@ jobs:
           set -euo pipefail
           rustup toolchain install 1.98.0 --profile minimal
           mkdir -p /tmp/client-export /tmp/client-inspect/src
-          cargo +1.98.0 install --locked --version '=0.8.0' --root /tmp/client-generator openapi-to-rust
+          printf 'PUBLIC DEVELOPMENT INPUTS ONLY. Preserve generation/compile failures as failures. No product acceptance, account, secrets, user home or data.\n' > /tmp/client-export/SCOPE.txt
+          git rev-parse HEAD > /tmp/client-export/source-commit.txt
+          cargo +1.98.0 install --locked --version '=0.15.0' --root /tmp/client-generator openapi-to-rust
           cp /tmp/client-generator/bin/openapi-to-rust /tmp/client-export/
-          /tmp/client-generator/bin/openapi-to-rust --version | tee /tmp/client-export/generator-version.txt
+          test "$(/tmp/client-generator/bin/openapi-to-rust --version)" = 'openapi-to-rust 0.15.0'
+          /tmp/client-generator/bin/openapi-to-rust --version > /tmp/client-export/generator-version.txt
           cp contracts/generated/api-v2.openapi.json /tmp/client-inspect/api.json
           cat > /tmp/client-inspect/openapi-to-rust.toml <<'TOML'
           [generator]
@@ -46,7 +49,7 @@ jobs:
           header_name = 'Authorization'
           TOML
           cd /tmp/client-inspect
-          /tmp/client-generator/bin/openapi-to-rust generate --config openapi-to-rust.toml
+          /tmp/client-generator/bin/openapi-to-rust generate --config openapi-to-rust.toml 2>&1 | tee /tmp/client-export/generation.log
           cat > Cargo.toml <<'TOML'
           [package]
           name = 'client-inspection'
@@ -57,15 +60,15 @@ jobs:
           TOML
           cat src/generated/REQUIRED_DEPS.toml >> Cargo.toml
           printf 'pub mod generated;\n' > src/lib.rs
-          cargo +1.98.0 check
+          tar -czf /tmp/client-export/generated-inspection.tar.gz src openapi-to-rust.toml
+          cp Cargo.toml /tmp/client-export/
+          cargo +1.98.0 check 2>&1 | tee /tmp/client-export/compile.log
           cargo +1.98.0 vendor --locked /tmp/client-vendor > /tmp/client-export/vendor-config.toml
           tar -czf /tmp/client-export/public-client-vendor.tar.gz -C /tmp client-vendor
-          cp Cargo.toml Cargo.lock /tmp/client-export/
-          tar -czf /tmp/client-export/generated-inspection.tar.gz src openapi-to-rust.toml
-          printf 'PUBLIC DEVELOPMENT INPUTS ONLY: pinned generator and generated-client compile inspection; no product source changes or acceptance claims. No account home, credentials, secrets, user data or production database exported.\n' > /tmp/client-export/SCOPE.txt
+          cp Cargo.lock /tmp/client-export/
           git -C "$GITHUB_WORKSPACE" diff --exit-code
-          git -C "$GITHUB_WORKSPACE" rev-parse HEAD > /tmp/client-export/source-commit.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
         with:
           name: public-client-inputs-${{ github.event.pull_request.head.sha }}
           path: /tmp/client-export/
