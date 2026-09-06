@@ -57,3 +57,13 @@ cargo run --locked -p server -- prune-unpublished-verifiers --state-dir ./var
 session 表不兼容或任一授权失败时，不保留半次升级及 epoch 失效副作用。
 已有数据/会话不会被删表“修复”。网络在 COMMIT 阶段断开时结果未知，应在
 主库重连后通过原生迁移记录和权限复核，不直接宣称回滚或重复恢复备份。
+
+原生服务 schema 也必须保持最低权限：`tower_sessions` 和 `pgmq` 的对象 owner、
+CREATE、TRUNCATE、TRIGGER 与 `app` 一样禁止，角色继承或 SET ROLE 不能绕过。
+缺少任何服务 schema 时先完成迁移，不用高权限运行账号让服务勉强启动。
+
+迁移还会拒绝改变会话读写/持久性的已有表定义，包括 UNLOGGED、RLS/策略、
+CHECK/额外唯一性、触发器、规则、继承及降低时间精度。错误为
+`native_session_schema_incompatible`，原会话字节、epoch、旧迁移记录全部保留。
+应先检查并由操作者明确处理结构冲突再重跑，不删除用户会话或绕过检查。
+使用原生默认排序/opclass 的简单非唯一 B-tree（例如 expiry_date 查询索引）允许保留。

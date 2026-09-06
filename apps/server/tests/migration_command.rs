@@ -218,3 +218,66 @@ async fn concurrent_complete_deployments_use_one_native_migration_lock(pool: PgP
     assert_eq!(locks, 0);
     remove_role(&pool, &name).await;
 }
+
+#[sqlx::test(migrations = false)]
+async fn behavior_changing_session_definitions_roll_back_the_complete_migration(pool: PgPool) {
+    old_initialized(&pool).await;
+    PostgresStore::new(pool.clone()).migrate().await.unwrap();
+    let mut record = Record {
+        id: Default::default(),
+        data: [("preserve".into(), json!({"user": "original"}))].into(),
+        expiry_date: OffsetDateTime::now_utc() + Duration::days(1),
+    };
+    PostgresStore::new(pool.clone())
+        .create(&mut record)
+        .await
+        .unwrap();
+    let versions = version_rows(&pool).await;
+    for (change, undo) in [
+        ("ALTER TABLE tower_sessions.session ADD CONSTRAINT blocks_insert CHECK (length(id)=0) NOT VALID", "ALTER TABLE tower_sessions.session DROP CONSTRAINT blocks_insert"),
+        ("CREATE FUNCTION tower_sessions.ignore_write() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END $$; CREATE TRIGGER ignore_write BEFORE INSERT ON tower_sessions.session FOR EACH ROW EXECUTE FUNCTION tower_sessions.ignore_write()", "DROP TRIGGER ignore_write ON tower_sessions.session; DROP FUNCTION tower_sessions.ignore_write()"),
+        ("ALTER TABLE tower_sessions.session ENABLE ROW LEVEL SECURITY", "ALTER TABLE tower_sessions.session DISABLE ROW LEVEL SECURITY"),
+        ("ALTER TABLE tower_sessions.session FORCE ROW LEVEL SECURITY", "ALTER TABLE tower_sessions.session NO FORCE ROW LEVEL SECURITY"),
+        ("CREATE POLICY inactive_policy ON tower_sessions.session USING (false)", "DROP POLICY inactive_policy ON tower_sessions.session"),
+        ("ALTER TABLE tower_sessions.session SET UNLOGGED", "ALTER TABLE tower_sessions.session SET LOGGED"),
+        ("CREATE RULE ignore_insert AS ON INSERT TO tower_sessions.session DO INSTEAD NOTHING", "DROP RULE ignore_insert ON tower_sessions.session"),
+        ("ALTER TABLE tower_sessions.session ADD CONSTRAINT unexpected_unique UNIQUE(data)", "ALTER TABLE tower_sessions.session DROP CONSTRAINT unexpected_unique"),
+        ("CREATE UNIQUE INDEX unexpected_unique ON tower_sessions.session(data)", "DROP INDEX tower_sessions.unexpected_unique"),
+        ("ALTER TABLE tower_sessions.session ALTER COLUMN expiry_date TYPE timestamptz(0)", "ALTER TABLE tower_sessions.session ALTER COLUMN expiry_date TYPE timestamptz"),
+        ("ALTER TABLE tower_sessions.session ALTER COLUMN data SET DEFAULT ''::bytea", "ALTER TABLE tower_sessions.session ALTER COLUMN data DROP DEFAULT"),
+        ("CREATE TABLE tower_sessions.parent(id text NOT NULL,data bytea NOT NULL,expiry_date timestamptz NOT NULL); ALTER TABLE tower_sessions.session INHERIT tower_sessions.parent", "ALTER TABLE tower_sessions.session NO INHERIT tower_sessions.parent; DROP TABLE tower_sessions.parent"),
+        ("CREATE TABLE tower_sessions.child() INHERITS (tower_sessions.session)", "DROP TABLE tower_sessions.child"),
+        ("ALTER TABLE tower_sessions.session ALTER COLUMN id TYPE text COLLATE \"C\"", "ALTER TABLE tower_sessions.session ALTER COLUMN id TYPE text COLLATE \"default\""),
+    ] {
+        sqlx::raw_sql(change).execute(&pool).await.unwrap();
+        let snapshot: Value = sqlx::query_scalar("SELECT to_jsonb(s) FROM tower_sessions.session s").fetch_one(&pool).await.unwrap();
+        let result = deploy(&pool, None).await;
+        assert!(!result.status.success(), "migration accepted {change}");
+        assert!(String::from_utf8_lossy(&result.stderr).contains("native_session_schema_incompatible"), "{change}: {}", String::from_utf8_lossy(&result.stderr));
+        assert_eq!(epoch(&pool).await, 7, "{change}");
+        assert_eq!(versions, version_rows(&pool).await, "{change}");
+        let after: Value = sqlx::query_scalar("SELECT to_jsonb(s) FROM tower_sessions.session s").fetch_one(&pool).await.unwrap();
+        assert_eq!(snapshot, after, "failed migration must not rewrite user sessions");
+        sqlx::raw_sql(undo).execute(&pool).await.unwrap();
+    }
+    // Safe native lookup indexes are not data-changing constraints.
+    sqlx::query("CREATE INDEX session_expiry_lookup ON tower_sessions.session(expiry_date)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(deploy(&pool, None).await.status.success());
+    assert_eq!(epoch(&pool).await, 8);
+    let native = PostgresStore::new(pool.clone());
+    assert_eq!(
+        native.load(&record.id).await.unwrap().unwrap().data,
+        record.data
+    );
+    record.data.insert("after".into(), json!(true));
+    native.save(&record).await.unwrap();
+    assert_eq!(
+        native.load(&record.id).await.unwrap().unwrap().data,
+        record.data
+    );
+    native.delete(&record.id).await.unwrap();
+    assert!(native.load(&record.id).await.unwrap().is_none());
+}

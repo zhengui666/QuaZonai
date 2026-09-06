@@ -237,6 +237,30 @@ specific relational/concurrency contracts; they do not prove deployed isolation,
 production TLS, backup restoration or end-to-end research. Crypto is native, but
 a passing authentication test does not establish all role-specific research rights.
 
+## Native service schema hardening (2026-09-06)
+
+Based on remote `0f71046d4bb69b8d37b76429000e2d33daea57be`, the runtime
+privilege query now covers app, tower_sessions and pgmq; missing service schemas,
+object/schema ownership, CREATE, TRUNCATE, TRIGGER and reachable delegated
+privileges fail closed. Ordinary native session and queue DML remains allowed.
+The session catalog contract also verifies persistence, RLS, constraints, triggers,
+rules, inheritance, column semantics and native index operator classes.
+
+Three new PostgreSQL runtime-role tests and one real CLI migration test exercise
+these boundaries. The migration test tries fourteen incompatible definitions and
+checks that the epoch, exact migration history and existing session bytes stay
+unchanged after each failed command; an ordinary expiry index and native session
+CRUD remain positive controls. The two representative new tests were also run
+against the unchanged baseline SQL and reproduced the original missing rejection,
+not a connection/setup failure. No existing migration or Cargo.lock was edited.
+
+The full locked local workspace, strict Clippy, formatting, build and native
+contract/scalar comparisons passed for this candidate. Exact test totals and the
+candidate tree are recorded in the PR evidence comment; this paragraph is not a
+permanent claim that every future Head passed. Remote CI and independent review
+must validate the published Head separately, and none of these checks replaces
+complete product acceptance.
+
 ## Explicit gaps and completion boundary
 
 Complete Run admission/takeover, research services and machine authorization,

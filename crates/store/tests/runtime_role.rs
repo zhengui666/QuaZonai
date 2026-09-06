@@ -339,3 +339,133 @@ async fn set_role_cannot_hide_database_owner_session_identity(pool: PgPool) {
     remove_role(&pool, &name).await;
     remove_role(&pool, &owner).await;
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn native_session_and_queue_tables_have_the_same_non_owner_boundary(pool: PgPool) {
+    let name = role(&pool).await;
+    execute(
+        &pool,
+        format!("GRANT USAGE ON SCHEMA tower_sessions,pgmq TO {name}"),
+    )
+    .await;
+    execute(&pool, format!("GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA tower_sessions,pgmq TO {name}")).await;
+    let runtime = connect(&pool, &name).await;
+    let store = Store::from_pool(runtime.clone());
+    store.verify_runtime_role().await.unwrap();
+    for table in [
+        "tower_sessions.session",
+        "pgmq.q_runs",
+        "pgmq.a_runs",
+        "pgmq.q_model_turns",
+    ] {
+        for privilege in ["TRUNCATE", "TRIGGER"] {
+            execute(&pool, format!("GRANT {privilege} ON {table} TO {name}")).await;
+            assert_owner_rejected(&runtime).await;
+            execute(&pool, format!("REVOKE {privilege} ON {table} FROM {name}")).await;
+            store.verify_runtime_role().await.unwrap();
+        }
+    }
+    runtime.close().await;
+    remove_role(&pool, &name).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn native_service_schema_and_object_ownership_is_rejected_after_create_revoke(pool: PgPool) {
+    let name = role(&pool).await;
+    let runtime = connect(&pool, &name).await;
+    let store = Store::from_pool(runtime.clone());
+    let owner: String = sqlx::query_scalar("SELECT quote_ident(current_user)")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    for schema in ["tower_sessions", "pgmq"] {
+        execute(
+            &pool,
+            format!("GRANT USAGE,CREATE ON SCHEMA {schema} TO {name}"),
+        )
+        .await;
+        assert_owner_rejected(&runtime).await;
+        execute(
+            &pool,
+            format!("REVOKE CREATE ON SCHEMA {schema} FROM {name}"),
+        )
+        .await;
+        store.verify_runtime_role().await.unwrap();
+        for (kind, create, suffix) in [
+            ("TABLE", "CREATE TABLE", "(id integer)"),
+            ("SEQUENCE", "CREATE SEQUENCE", ""),
+            (
+                "FUNCTION",
+                "CREATE FUNCTION",
+                "() RETURNS integer LANGUAGE sql AS 'SELECT 1'",
+            ),
+            ("DOMAIN", "CREATE DOMAIN", " AS integer"),
+        ] {
+            execute(&pool, format!("{create} {schema}.runtime_probe{suffix}")).await;
+            execute(&pool, format!("GRANT CREATE ON SCHEMA {schema} TO {name}")).await;
+            let identity = if kind == "FUNCTION" {
+                "runtime_probe()"
+            } else {
+                "runtime_probe"
+            };
+            execute(
+                &pool,
+                format!("ALTER {kind} {schema}.{identity} OWNER TO {name}"),
+            )
+            .await;
+            execute(
+                &pool,
+                format!("REVOKE CREATE ON SCHEMA {schema} FROM {name}"),
+            )
+            .await;
+            assert_owner_rejected(&runtime).await;
+            execute(&pool, format!("DROP {kind} {schema}.{identity}")).await;
+            store.verify_runtime_role().await.unwrap();
+        }
+        execute(&pool, format!("ALTER SCHEMA {schema} OWNER TO {name}")).await;
+        execute(
+            &pool,
+            format!("REVOKE CREATE ON SCHEMA {schema} FROM {name}"),
+        )
+        .await;
+        assert_owner_rejected(&runtime).await;
+        execute(&pool, format!("ALTER SCHEMA {schema} OWNER TO {owner}")).await;
+        store.verify_runtime_role().await.unwrap();
+    }
+    runtime.close().await;
+    remove_role(&pool, &name).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn delegated_native_table_privileges_and_missing_service_schema_fail_closed(pool: PgPool) {
+    let name = role(&pool).await;
+    let delegate = role(&pool).await;
+    let runtime = connect(&pool, &name).await;
+    let store = Store::from_pool(runtime.clone());
+    for table in ["tower_sessions.session", "pgmq.q_runs"] {
+        execute(&pool, format!("GRANT TRUNCATE ON {table} TO {delegate}")).await;
+        // An unrelated privileged role is not authority possessed by this login.
+        store.verify_runtime_role().await.unwrap();
+        for options in ["INHERIT TRUE, SET FALSE", "INHERIT FALSE, SET TRUE"] {
+            execute(&pool, format!("GRANT {delegate} TO {name} WITH {options}")).await;
+            assert_owner_rejected(&runtime).await;
+            execute(&pool, format!("REVOKE {delegate} FROM {name}")).await;
+        }
+        execute(&pool, format!("REVOKE TRUNCATE ON {table} FROM {delegate}")).await;
+    }
+    execute(
+        &pool,
+        "ALTER SCHEMA tower_sessions RENAME TO unavailable_sessions".into(),
+    )
+    .await;
+    assert_owner_rejected(&runtime).await;
+    execute(
+        &pool,
+        "ALTER SCHEMA unavailable_sessions RENAME TO tower_sessions".into(),
+    )
+    .await;
+    store.verify_runtime_role().await.unwrap();
+    runtime.close().await;
+    remove_role(&pool, &name).await;
+    remove_role(&pool, &delegate).await;
+}

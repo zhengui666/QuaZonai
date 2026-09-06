@@ -278,6 +278,10 @@ Cookie Secure/HttpOnly/SameSite，同源 Origin/CSRF；机器/CLI 使用独立�
 
 ## 11. 迁移、删除与 README
 
+运行数据库身份的无 owner/DDL/TRUNCATE/TRIGGER 边界覆盖 `app`、`tower_sessions` 与 `pgmq` 三个服务 schema；缺任一 schema 也拒绝启动。原生 current_user/session_user 的可继承、可 SET ROLE 权限均须检查；普通会话/队列 DML（含删除）不被误拒。部署只授权 DML，不把外部组件的 schema 排除在安全边界外。
+
+原生会话表兼容性同时约束结构与行为：必须是普通 logged heap 表；三列、原生默认 collation/未缩减类型精度、NOT NULL 与立即生效 id 主键；不得含默认/生成/identity、RLS/策略、继承/分区、自定义规则/触发器、额外唯一性/CHECK/FK/exclusion 约束。PostgreSQL18 的原生 NOT NULL catalog 记录是合法结构。仅允许使用原生默认 opclass/collation 的简单非唯一 B-tree 性能索引，不接受表达式/条件索引或额外 UNIQUE。检查真实 catalog 记录而非可能滞后的 relhas* 提示位。失败沿用 native_session_schema_incompatible，并回滚整个部署事务；绝不通过清表或删除用户定义静默修复。
+
 升级的写入切换点：先暂停新 HTTP/CLI/MCP 命令与 Worker 调度，结束旧事务，再用 `cargo run --locked -p server -- migrate`。Store 在专用连接上先取得 SQLx 原生迁移 advisory lock，随后开启 READ COMMITTED 外层事务，从原生 catalog 读取现有 app 普通/分区表，先认证状态、后其余表按名称稳定顺序取得 SHARE ROW EXCLUSIVE 锁；取得全部锁后才运行 SQLx Migrator。SQLx 原样校验已应用 checksum、用原生嵌套 savepoint 执行所有待应用文件，外层提交同时公开整个批次及迁移记录；禁止 no-transaction 迁移。新库无 app 表时仍由原生迁移锁串行化。锁等待超时或校验失败整体回滚，专用连接关闭以释放 session advisory lock，不返回运行连接池；不能用独立 SQLx CLI/逐条 SQL 对活跃实例升级。本合同不声称零停机升级；锁获取之前已提交的旧事实必须被新的回填/检查看见，不能宣称锁请求一发出旧事务就已停止。
 
 完整 CLI 命令的原子性覆盖领域迁移、原生 session 表、可选运行角色的存在性检查与 DML 授权；这些步骤必须共享上述唯一 PgConnection/外层事务，全部成功后仅一次 COMMIT。不得先提交 Store 再从 pool 执行 `PostgresStore::migrate` 或 GRANT，也不能让另一连接的 advisory guard 冒充同事务。锁定 tower-sessions-sqlx-store 0.15.0 的 migrate API 不接受调用方事务；新增 `202609060009_native_sessions.sql` 原样复用该版本的默认 schema/table DDL，注明上游许可，交由 SQLx 版本管理。原生 PostgresStore 继续处理序列化及全部 session 操作，不 fork 或重写。每次正式迁移均在提交前核对 session 三列类型/非空与主键合同；已有不兼容对象明确失败而不删除/重建。锁定范围包含已有 `tower_sessions` 普通/分区表。运行角色名通过参数核对及原生 quote_ident，GRANT 不另开连接；会话合同、角色或任一权限操作失败，整个批次和 epoch 撤销均回滚。连接在异常/取消后关闭以释放原生锁；COMMIT 应答丢失只能记录提交结果未知，不能声称服务器一定回滚。上游今后支持外部事务时可替换适配，但已发布迁移字节保留。原生迁移参考表的 catalog 对比和原生 PostgresStore CRUD 是必需合同测试。
