@@ -1,73 +1,41 @@
-name: Temporary exact source transport
+name: Temporary source recovery
 on:
   pull_request:
     paths: ['.github/workflows/transfer-reviewed-source.yml']
 permissions:
-  contents: write
+  contents: read
 jobs:
-  transfer:
+  recover:
     if: github.event.pull_request.number == 63 && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'rewrite/issue-62-rust-evidence'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 5
     env:
-      EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
-      VERIFIED_BASE: 6cada81a6f94bfa29831cf4ede220c8d3ca4e711
-      BASE_TREE: c2924bbd5625867c90c8e199fe74cc88f5c817f3
-      VERIFIED_TREE: 359fd171862b42a3c99648bad7dcd0ff8288d173
       GH_TOKEN: ${{ github.token }}
+      SOURCE_COMMIT: 183b2a591d948298502833394fe66536e0981868
+      SOURCE_TREE: 12be492cfd0c07681e1caab5fe8f93a1f8417e86
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 2
+          fetch-depth: 3
           persist-credentials: false
-      - name: Verify exact executor source and upload native Git objects only
+      - name: Recover existing public source and previous patch, without executing either
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$EVENT_HEAD"
-          test "$(git rev-parse HEAD^)" = "$VERIFIED_BASE"
-          test "$(git diff --name-only "$VERIFIED_BASE" HEAD)" = '.github/workflows/transfer-reviewed-source.yml'
-          gh api "repos/$GITHUB_REPOSITORY/git/blobs/f1def1a529c6770327a6d859b9a5debcbb0cb2fa" --jq .content | base64 --decode > "$RUNNER_TEMP/source.patch.xz"
-          test "$(wc -c < "$RUNNER_TEMP/source.patch.xz")" -eq 11640
-          xz --decompress --stdout "$RUNNER_TEMP/source.patch.xz" > "$RUNNER_TEMP/source.patch"
-          test "$(wc -c < "$RUNNER_TEMP/source.patch")" -eq 45653
-          git -c core.hooksPath=/dev/null checkout --detach "$VERIFIED_BASE"
-          git -c core.hooksPath=/dev/null apply --check --index "$RUNNER_TEMP/source.patch"
-          git -c core.hooksPath=/dev/null apply --index "$RUNNER_TEMP/source.patch"
-          git diff --cached --check
-          test "$(git write-tree)" = "$VERIFIED_TREE"
-          test ! -e .github/workflows/transfer-reviewed-source.yml
-          test -z "$(git diff --cached --name-only -- Cargo.lock .github/workflows)"
-          python3 - <<'PY'
-          import base64, json, os, subprocess
-          def git(*args):
-              return subprocess.check_output(['git', '-c', 'core.hooksPath=/dev/null', *args])
-          def post(endpoint, value):
-              return json.loads(subprocess.check_output(['gh','api','--method','POST',endpoint,'--input','-'], input=json.dumps(value).encode()))
-          repo = os.environ['GITHUB_REPOSITORY']
-          if repo != 'zhengui666/QuaZonai':
-              raise SystemExit('unexpected repository')
-          entries=[]
-          for raw in filter(None, git('diff','--cached','--name-only','--no-renames','-z').split(b'\0')):
-              path=raw.decode()
-              line=git('ls-files','--stage','--',path).decode().strip()
-              if not line:
-                  entries.append({'path':path,'mode':'100644','type':'blob','sha':None})
-                  continue
-              meta, actual=line.split('\t',1)
-              mode, sha, stage=meta.split()
-              if stage!='0' or mode not in ('100644','100755') or actual!=path:
-                  raise SystemExit('invalid staged entry')
-              result=post(f'repos/{repo}/git/blobs',{'encoding':'base64','content':base64.b64encode(git('cat-file','blob',sha)).decode()})
-              if result['sha']!=sha:
-                  raise SystemExit('blob identity mismatch')
-              entries.append({'path':path,'mode':mode,'type':'blob','sha':sha})
-          if len(entries)!=14:
-              raise SystemExit('unexpected change count')
-          tree=post(f'repos/{repo}/git/trees',{'base_tree':os.environ['BASE_TREE'],'tree':entries})
-          if tree['sha']!=os.environ['VERIFIED_TREE']:
-              raise SystemExit('tree identity mismatch')
-          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:
-              f.write(f"Uploaded exact native Git tree `{tree['sha']}`. No source code was executed; no commit or ref was changed. This is transport, not product acceptance.\n")
-          PY
+          mkdir -p /tmp/source-recovery
+          test "$(git rev-parse "$SOURCE_COMMIT^{tree}")" = "$SOURCE_TREE"
+          git archive "$SOURCE_COMMIT" | gzip > /tmp/source-recovery/source.tar.gz
+          printf '%s\n' "$SOURCE_COMMIT" > /tmp/source-recovery/source-commit.txt
+          printf '%s\n' "$SOURCE_TREE" > /tmp/source-recovery/source-tree.txt
+          gh api "repos/$GITHUB_REPOSITORY/git/blobs/f1def1a529c6770327a6d859b9a5debcbb0cb2fa" --jq .content | base64 --decode > /tmp/source-recovery/prior.patch.xz
+          test "$(wc -c < /tmp/source-recovery/prior.patch.xz)" -eq 11640
+          xz --decompress --stdout /tmp/source-recovery/prior.patch.xz > /tmp/source-recovery/prior.patch
+          test "$(wc -c < /tmp/source-recovery/prior.patch)" -eq 45653
+          printf 'Existing public repository source and prior candidate only; comparison inputs, not validation or acceptance. No accounts, home, data or secrets. No product refs changed.\n' > /tmp/source-recovery/SCOPE.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: source-recovery-${{ github.event.pull_request.head.sha }}
+          path: /tmp/source-recovery/
+          retention-days: 1
+          if-no-files-found: error
