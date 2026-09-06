@@ -119,6 +119,9 @@ impl SecretVault {
         file.sync_all()?;
         #[cfg(unix)]
         file.set_permissions(fs::Permissions::from_mode(0o400))?;
+        // Persist the read-only inode mode as well as the ciphertext before the
+        // directory entry (and then its database reference) can be published.
+        file.sync_all()?;
         self.root.open(".")?.into_std().sync_all()?;
         Ok(id)
     }

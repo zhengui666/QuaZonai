@@ -6,6 +6,8 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+env:
+  EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
 concurrency:
   group: native-ci-${{ github.ref }}
   cancel-in-progress: false
@@ -19,7 +21,10 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Require the exact event Head before executing repository code
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
       - name: Verify committed Rust sources and native dependency graph
         run: |
           set -euo pipefail
@@ -83,7 +88,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: native-evidence-${{ github.sha }}
+          name: native-evidence-${{ env.EXPECTED_HEAD }}
           path: /tmp/native-evidence/
           retention-days: 7
           if-no-files-found: error
@@ -95,11 +100,15 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Require the exact event Head before executing repository code
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
       - name: Execute PostgreSQL and PGMQ transaction contract
         run: |
           set -euo pipefail
           mkdir -p /tmp/database-evidence
+          git rev-parse HEAD > /tmp/database-evidence/tested-commit.txt
           docker pull "$PGMQ_IMAGE"
           docker run --detach --name native-database --env POSTGRES_PASSWORD=fixture-only-disposable "$PGMQ_IMAGE"
           for attempt in $(seq 1 60); do
@@ -112,7 +121,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: database-evidence-${{ github.sha }}
+          name: database-evidence-${{ env.EXPECTED_HEAD }}
           path: /tmp/database-evidence/
           retention-days: 7
           if-no-files-found: error
@@ -130,7 +139,10 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Require the exact event Head before executing repository code
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
       - name: Start isolated PostgreSQL and verify extension version
         run: |
           set -euo pipefail
@@ -162,7 +174,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: store-evidence-${{ github.sha }}
+          name: store-evidence-${{ env.EXPECTED_HEAD }}
           path: /tmp/store-evidence/
           retention-days: 7
           if-no-files-found: error
