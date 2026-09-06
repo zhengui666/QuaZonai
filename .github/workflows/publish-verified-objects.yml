@@ -1,0 +1,71 @@
+name: Temporary verified Git objects
+on:
+  pull_request:
+    paths: ['.github/workflows/publish-verified-objects.yml']
+permissions:
+  contents: write
+jobs:
+  upload-objects:
+    if: github.event.pull_request.number == 63 && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'rewrite/issue-62-rust-evidence'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+      VERIFIED_BASE: 0f71046d4bb69b8d37b76429000e2d33daea57be
+      BASE_TREE: b230f9e1d68ac3ca86462e99f546ecf476d67541
+      VERIFIED_TREE: c2924bbd5625867c90c8e199fe74cc88f5c817f3
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Upload only exact verified source objects, never execute application code
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EVENT_HEAD"
+          test "$(git rev-parse HEAD^)" = "$VERIFIED_BASE"
+          test "$(git rev-parse "$VERIFIED_BASE^{tree}")" = "$BASE_TREE"
+          test "$(git diff --name-only "$VERIFIED_BASE" "$EVENT_HEAD")" = '.github/workflows/publish-verified-objects.yml'
+          gh api "repos/$GITHUB_REPOSITORY/git/blobs/a08532105e87d0ca155340d96772fbc661fb3308" --jq .content | base64 --decode > "$RUNNER_TEMP/source.patch.xz"
+          test "$(wc -c < "$RUNNER_TEMP/source.patch.xz")" -eq 7688
+          xz --decompress --stdout "$RUNNER_TEMP/source.patch.xz" > "$RUNNER_TEMP/source.patch"
+          test "$(wc -c < "$RUNNER_TEMP/source.patch")" -eq 23719
+          git -c core.hooksPath=/dev/null checkout --detach "$VERIFIED_BASE"
+          git -c core.hooksPath=/dev/null apply --check --index "$RUNNER_TEMP/source.patch"
+          git -c core.hooksPath=/dev/null apply --index "$RUNNER_TEMP/source.patch"
+          test "$(git write-tree)" = "$VERIFIED_TREE"
+          git diff --cached --check
+          test -z "$(git diff --cached "$VERIFIED_BASE" -- Cargo.lock migrations .github/workflows)"
+          python3 - <<'PY'
+          import base64, json, os, subprocess
+          def git(*args):
+              return subprocess.check_output(['git', *args])
+          def api(endpoint, body):
+              result = subprocess.run(['gh','api','--method','POST',endpoint,'--input','-'], input=json.dumps(body).encode(), stdout=subprocess.PIPE, check=True)
+              return json.loads(result.stdout)
+          repo = os.environ['GITHUB_REPOSITORY']
+          if repo != 'zhengui666/QuaZonai':
+              raise SystemExit('unexpected repository')
+          entries = []
+          for raw in filter(None, git('diff','--cached','--name-only','--no-renames','-z').split(b'\0')):
+              path = raw.decode('utf-8')
+              staged = git('ls-files','--stage','--',path).decode().strip()
+              metadata, actual_path = staged.split('\t',1)
+              mode, sha, stage = metadata.split()
+              if actual_path != path or stage != '0' or mode not in ('100644','100755'):
+                  raise SystemExit('unexpected index entry')
+              result = api(f'repos/{repo}/git/blobs', {'content':base64.b64encode(git('cat-file','blob',sha)).decode(), 'encoding':'base64'})
+              if result['sha'] != sha:
+                  raise SystemExit('native blob mismatch')
+              entries.append({'path':path,'mode':mode,'type':'blob','sha':sha})
+          if len(entries) != 7:
+              raise SystemExit('unexpected changed file count')
+          result = api(f'repos/{repo}/git/trees', {'base_tree':os.environ['BASE_TREE'],'tree':entries})
+          if result['sha'] != os.environ['VERIFIED_TREE']:
+              raise SystemExit('native tree mismatch')
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as summary:
+              summary.write(f"Uploaded exact native Git tree `{result['sha']}`. No commit/ref changed. Transport only, not CI acceptance.\n")
+          PY
