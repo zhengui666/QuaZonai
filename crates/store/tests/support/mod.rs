@@ -15,6 +15,7 @@ pub struct Fixture {
     pub profile: Id,
     pub input_set: Id,
     pub artifact: Id,
+    pub report: Id,
     pub budget: BudgetV1,
     pub fence: WorkerFence,
     pub deadline: DateTime<Utc>,
@@ -74,6 +75,7 @@ pub async fn fixture(pool: &PgPool, budget: BudgetV1) -> Fixture {
         .bind(profile.as_uuid()).bind(format!("fixture/{profile}")).execute(&mut *tx).await.unwrap();
     tx.commit().await.unwrap();
     let (run, session, fence, deadline) = mission(pool, project, cycle, input_set, profile).await;
+    let report = report_artifact(pool, project, run, fence.attempt_id).await;
     Fixture {
         project,
         cycle,
@@ -82,6 +84,7 @@ pub async fn fixture(pool: &PgPool, budget: BudgetV1) -> Fixture {
         profile,
         input_set,
         artifact,
+        report,
         budget,
         fence,
         deadline,
@@ -154,7 +157,7 @@ pub async fn portfolio(pool: &PgPool, f: &Fixture) -> (Id, Id, Id) {
     let candidate = candidate(pool, f, mandate).await;
     let evaluation = Id::new();
     sqlx::query("INSERT INTO app.evaluations(id,project_id,subject_candidate_id,input_set_id,policy_id,run_id,evaluation_kind,execution_status,evidence_status,decision,report_artifact_id,method_versions_artifact_id,concluded_at,valid_until) SELECT $1,$2,$3,$4,b.evaluation_policy_id,$5,'PORTFOLIO','SUCCEEDED','VALID','PASS',$6,$6,clock_timestamp(),clock_timestamp()+interval '1 hour' FROM app.research_briefs b WHERE b.project_id=$2")
-        .bind(evaluation.as_uuid()).bind(f.project.as_uuid()).bind(candidate.as_uuid()).bind(f.input_set.as_uuid()).bind(f.run.as_uuid()).bind(f.artifact.as_uuid()).execute(pool).await.unwrap();
+        .bind(evaluation.as_uuid()).bind(f.project.as_uuid()).bind(candidate.as_uuid()).bind(f.input_set.as_uuid()).bind(f.run.as_uuid()).bind(f.report.as_uuid()).execute(pool).await.unwrap();
     (mandate, candidate, evaluation)
 }
 
@@ -218,4 +221,29 @@ pub fn sqlstate(error: sqlx::Error, expected: &str) {
         Some(expected),
         "{error:?}"
     );
+}
+
+/// A structural fixture from the evaluated run. Never REAL or deliverable.
+pub async fn report_artifact(pool: &PgPool, project: Id, run: Id, attempt: Id) -> Id {
+    let report = Id::new();
+    sqlx::query("INSERT INTO app.artifacts(id,project_id,producer_run_id,producer_attempt_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,$3,$4,'REPORT','application/json','fixture.evaluation','1','LOCAL',$5,'1',1,'EVALUATOR_ONLY','FIXTURE','RUNTIME','AUDIT')")
+        .bind(report.as_uuid()).bind(project.as_uuid()).bind(run.as_uuid()).bind(attempt.as_uuid())
+        .bind(format!("fixture/{report}")).execute(pool).await.unwrap();
+    report
+}
+/// Frozen approval context includes the exact reports, not the research inputs.
+pub async fn approval_inputs(pool: &PgPool, f: &Fixture, evaluation: Id) -> Id {
+    let inputs = Id::new();
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query("INSERT INTO app.input_sets(id,project_id,purpose,decision_cutoff) VALUES($1,$2,'PORTFOLIO',clock_timestamp())")
+        .bind(inputs.as_uuid()).bind(f.project.as_uuid()).execute(&mut *tx).await.unwrap();
+    sqlx::query("INSERT INTO app.input_set_items(input_set_id,artifact_id,role,ordinal) SELECT $1,artifact,'REPORT',(row_number() OVER (ORDER BY artifact)-1)::integer FROM (SELECT report_artifact_id AS artifact FROM app.evaluations WHERE id=$2 UNION SELECT method_versions_artifact_id FROM app.evaluations WHERE id=$2) reports")
+        .bind(inputs.as_uuid()).bind(evaluation.as_uuid()).execute(&mut *tx).await.unwrap();
+    sqlx::query("UPDATE app.input_sets SET frozen_at=clock_timestamp() WHERE id=$1")
+        .bind(inputs.as_uuid())
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    inputs
 }

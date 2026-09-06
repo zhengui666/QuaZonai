@@ -136,3 +136,27 @@ mismatches fail the deployment without deleting or rewriting user sessions.
 
 Source: https://github.com/maxcountryman/tower-sessions-stores/blob/b34a2f363217c0c557ee332c8847f4e2d1b5e6b4/sqlx-store/src/postgres_store.rs
 License: https://github.com/maxcountryman/tower-sessions-stores/blob/b34a2f363217c0c557ee332c8847f4e2d1b5e6b4/LICENSE
+
+## PostgreSQL ADMIN OPTION 与证据来源边界（2026-09-06）
+
+依据 [PostgreSQL18 GRANT](https://www.postgresql.org/docs/18/sql-grant.html)、
+[角色成员关系](https://www.postgresql.org/docs/18/role-membership.html) 和
+[`pg_auth_members`](https://www.postgresql.org/docs/18/catalog-pg-auth-members.html)：
+ADMIN OPTION 的持有者可以重新授予 SET/INHERIT，即使当前两个选项均为 false。
+因此不能仅以 `pg_has_role(..., 'USAGE'|'SET')` 排除间接所有者权限。运行角色检测
+从 `current_user` 及 `session_user` 沿原生 INHERIT/SET/ADMIN 成员边进行闭包查询，
+再使用原生 catalog/ACL 判断数据库、服务 schema 和对象的危险权限；没有自行维护
+角色目录或密码学。无可用选项的纯成员边不视为权限，管理无危险权限的角色仍可使用。
+
+`runtime_role.rs` 新回归在真实 PostgreSQL 上先确认 ADMIN-only 的 USAGE/SET 均为
+false，再实际由该低权限登录重新授予自己 SET 并验证原生 TRUNCATE 权限；另覆盖多跳、
+SET ROLE 隐藏 session_user 和良性对照。测试中的对象/账号都是隔离、可丢弃的 fixture。
+
+新证据绑定复用 PostgreSQL 事务、触发器和原生 FK：评估报告、方法版本及指标产物必须
+来自精确项目/Run；审批必须使用已冻结且包含精确评估报告的本项目证据集合。新增迁移
+不改旧 checksum，不重标错误历史，也不据关系完整就判定科学有效或授予交付权限。
+
+[PostgreSQL18预定义角色](https://www.postgresql.org/docs/18/predefined-roles.html)
+明确 `pg_read_server_files`、`pg_write_server_files`、`pg_execute_server_program`
+可绕过数据库级检查并取得相当于超级用户的权限。因此同一运行角色检查也拒绝直接或
+可管理成员链上的这些原生角色；数据导入使用受限客户端协议而非授予服务器文件权限。

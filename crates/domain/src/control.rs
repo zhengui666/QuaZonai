@@ -27,7 +27,9 @@ pub fn list(request: &ListQuery) -> Result<(), DomainError> {
 }
 pub fn principal(request: &PrincipalCreate) -> Result<(), DomainError> {
     name(&request.name)?;
-    if (request.kind == AssignablePrincipalKind::Downstream) != request.downstream_id.is_some() {
+    if (request.kind == AssignablePrincipalKind::Downstream) != request.downstream_id.is_some()
+        || (request.kind == AssignablePrincipalKind::Downstream && request.project_id.is_none())
+    {
         return Err(DomainError::Invalid("principal_identity"));
     }
     Ok(())
@@ -57,5 +59,45 @@ pub fn command(request: &OperatorCommand) -> Result<(), DomainError> {
         OperatorCommand::PrincipalUpdate(r) => name(&r.name),
         OperatorCommand::CredentialIssue(r) => scopes(&r.request),
         OperatorCommand::CredentialRevoke(r) => text(&r.reason, 1, 2000, true),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use contracts::{Id, SchemaV1};
+
+    #[test]
+    fn downstream_requires_exact_project_and_downstream_bindings() {
+        let mut request = PrincipalCreate {
+            schema_version: SchemaV1,
+            name: "delivery".into(),
+            kind: AssignablePrincipalKind::Downstream,
+            project_id: None,
+            downstream_id: Some(Id::new()),
+            enabled: true,
+        };
+        assert!(principal(&request).is_err());
+        request.project_id = Some(Id::new());
+        assert!(principal(&request).is_ok());
+        request.downstream_id = None;
+        assert!(principal(&request).is_err());
+        for kind in [
+            AssignablePrincipalKind::Cli,
+            AssignablePrincipalKind::Automation,
+        ] {
+            request.kind = kind;
+            request.project_id = None;
+            assert!(
+                principal(&request).is_ok(),
+                "projectless doctor remains valid"
+            );
+            request.downstream_id = Some(Id::new());
+            assert!(
+                principal(&request).is_err(),
+                "non-delivery identity cannot bind downstream"
+            );
+            request.downstream_id = None;
+        }
     }
 }

@@ -147,8 +147,9 @@ async fn paper_approval_cannot_authorize_live_or_another_downstream(pool: PgPool
     for id in [d, other] {
         sqlx::query("INSERT INTO app.downstream_integrations(id,name,endpoint,credential_ref,accepted_package_versions,environments,enabled) VALUES($1,'fixture','https://example.invalid','fixture','{fixture}','BOTH',true)").bind(id.as_uuid()).execute(&pool).await.unwrap();
     }
+    let evidence = support::approval_inputs(&pool, &f, e).await;
     let approval = Id::new();
-    sqlx::query("INSERT INTO app.approvals(id,release_id,environment,downstream_id,authority_kind,evidence_set_id,granted_at,valid_until) VALUES($1,$2,'PAPER',$3,'OPERATOR',$4,now(),now()+interval '1 hour')").bind(approval.as_uuid()).bind(r.as_uuid()).bind(d.as_uuid()).bind(f.input_set.as_uuid()).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO app.approvals(id,release_id,environment,downstream_id,authority_kind,evidence_set_id,granted_at,valid_until) VALUES($1,$2,'PAPER',$3,'OPERATOR',$4,now(),now()+interval '1 hour')").bind(approval.as_uuid()).bind(r.as_uuid()).bind(d.as_uuid()).bind(evidence.as_uuid()).execute(&pool).await.unwrap();
     let query="INSERT INTO app.handoff_offers(release_id,approval_id,downstream_id,environment,delivery_sequence,state,offered_at,expires_at) VALUES($1,$2,$3,$4,1,'OFFERED',now(),now()+interval '1 hour')";
     for (target, environment) in [(d, "LIVE"), (other, "PAPER")] {
         sqlstate(

@@ -264,6 +264,10 @@ Secret 文件格式使用 XChaCha20-Poly1305，随机 nonce 与明确 UUID/purpo
 
 浏览器正常登录只输入 Google Authenticator-compatible 6 位 TOTP，不提交 username/password。首次初始化需要本机 CLI 一次性 bootstrap capability 或可信本地入口，不能公网抢绑；二维码/secret 仅受控 enrollment 展示，确认后 CAS 初始化并关闭 setup。TOTP 原生算法、防重放 last step、限流、信任浏览器撤销、注销/session epoch 均测试。
 
+运行数据库身份检查包含 PostgreSQL 原生 ADMIN OPTION 委派闭包（即使 INHERIT/SET
+暂为 false），并拒绝可达的服务器文件读写/程序执行预定义角色，不能仅核对
+`rolsuper` 或单张表的 ACL。只有成员身份但无 INHERIT/SET/ADMIN 的边不产生权限。
+
 Cookie Secure/HttpOnly/SameSite，同源 Origin/CSRF；机器/CLI 使用独立范围受限可撤销 token，不把浏览器 cookie/TOTP secret/动态码当 API token。Agent MCP 不复用 Operator session。TOTP/session/AEAD/随机 verifier 使用成熟库，依第 0 节选语言，不自制密码学。Secret 仅受信任进程解析；UI 只见 configured/status/last_checked；日志不含 auth 文件、token、完整 Provider/stderr/traceback。
 
 目标 Compose 为 server、worker、PostgreSQL+PGMQ；Codex/远端按 profile 配置，单机也保持权限分区。生产同源 HTTPS，未认证写接口不能暴露。默认不托管在线 wheel 上传/安装/插件市场；受支持集成经显式版本/能力登记，既有使用固定 release。上游 Python import 只在隔离 job/必要受控适配，不长期热加载/卸载不可信插件。
@@ -724,6 +728,14 @@ evidence_exposures [append-only]
 评估头及指标组成一个原子不可变聚合：创建 `evaluations` 与全部 `metric_values` 必须在同一事务内完成。内部 `evaluation_publications(evaluation_id PRIMARY KEY FK evaluations)` 记录封口，不增加公开状态、hash、事务 ID 或时间戳身份；延迟约束触发器在创建事务提交前写入标记。指标插入先锁对应 evaluation，已封口则拒绝，不能通过晚到指标改写旧 Qualification/Release 的证据。Qualification、Release、Calibration、Exposure、Forward、Degradation 等引用在同事务内先封口评估；封口后同一事务也不能追加指标。迁移为所有已有完成评估补齐封口标记，保留既有头及指标原值。Candidate 的 allocation_evaluation_id 与被评估 Candidate 的循环引用保留原生 deferred FK，允许同一事务先创建 Candidate 头、再创建评估与指标并完整提交，不能用过早的引用守卫破坏这个顺序。指标更正需要新的评估身份及新的下游决定；发布标记只保证组成不可变，不替代完整政策验证或 PASS 判定。
 
 Qualification必须绑定被评估的精确Alpha版本和政策：评估表提供 `UNIQUE(id,subject_alpha_version_id,policy_id)`，qualification的 `(qualifying_evaluation_id,alpha_version_id,policy_id)` 复合FK引用它；qualification另外提供 `UNIQUE(id,alpha_version_id)`，candidate_alphas的 `(qualification_id,alpha_version_id)` 必须使用复合FK而不是两条互不关联的FK。授予与使用时仍要事务检查同项目、VALID/PASS、新鲜度、撤销及Mandate政策，不允许未合格版本借用其他版本资格。
+
+评估产物必须与 `evaluations.project_id/run_id` 精确绑定：`report_artifact_id` 和
+`method_versions_artifact_id` 都只能引用同项目、由该 Run 产生的 `REPORT`。
+一个原生报告同时包含结果和方法版本时可供两者引用；不能用纯参数、日志、他项目或他
+Run 的报告代替。`metric_values.source_artifact_id` 同样必须属于该评估的项目和 Run，
+且类型是 `REPORT|METRICS`。这些是不可变来源关联，不构成 PASS；实际产物 schema、
+方法能力、独立评估资格和数值仍由可信服务验证。迁移不重标历史来源，遇到不合法旧
+关联明确失败，保留原始数据供审计。
 
 sealed 使用预约先提交再授予 evaluator 能力，失败/取消不抹去机会。Exposure 包括原始行、样本、指标、图、摘要和 legacy unknown。后续反馈按冻结披露政策，不能洗白相同 sealed。缺 required metric、实现不支持、样本不足、方法不适用或过期均 INCONCLUSIVE；无“全部 Gate 缺值自动跳过”。 对INVALID_INPUT亦必须先验证原生方法/版本/单位/频率与冻结allowlist；来源未登记或过期归UNSUPPORTED，不得驱动stop_on_invalid_data。仅可信且合同匹配的INVALID_INPUT保留INVALID。
 
@@ -1190,6 +1202,12 @@ release_decisions [append-only; operator only]
 ```
 
 unique(candidate_id,downstream_id,environment,ordinal)；release属于candidate。锁candidate并按expected_latest_decision_id CAS追加，首次只REJECT；REOPEN引用最新REJECT且近期Operator认证，不能自批。活动REJECT阻断相同candidate/downstream/environment的新推荐、审批、offer、claim/自动授权，另建Release UUID不绕过；REOPEN不恢复旧审批。Claim后的拒绝仅限制未来操作，无撤单权限。人工拒绝与downstream REJECTED分离并有审计。
+
+审批的 `evidence_set_id` 必须属于 Release 的精确 Candidate 所在项目，且已冻结，
+用途只能为 `PORTFOLIO|FORWARD`，其中必须包含 Release 所引用评估的报告及方法版本
+产物（同一报告可只登记一次）。因此同项目但无关的证据集合、Discovery 输入、草稿或
+他项目证据都不能成为交付授权。Paper/Live、自动政策及资格/新鲜度门禁继续独立重查；
+仅满足关系约束不是授予审批的权限。新数据库约束不篡改过去已冻结的错误审批。
 
 ## A8. 集成、身份与幂等
 

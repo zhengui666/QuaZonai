@@ -44,7 +44,7 @@ async fn alpha(pool: &PgPool, f: &Fixture) -> Alpha {
         .bind(f.artifact.as_uuid()).bind(f.project.as_uuid()).execute(&mut *tx).await.unwrap();
     sqlx::query("INSERT INTO app.evaluations(id,project_id,subject_alpha_version_id,input_set_id,policy_id,run_id,evaluation_kind,execution_status,evidence_status,decision,report_artifact_id,method_versions_artifact_id,concluded_at,valid_until) SELECT $1,$2,$3,$4,b.evaluation_policy_id,$5,'SEALED','SUCCEEDED','VALID','PASS',$6,$6,statement_timestamp(),statement_timestamp()+interval '1 hour' FROM app.research_briefs b WHERE b.project_id=$2")
         .bind(evaluation.as_uuid()).bind(f.project.as_uuid()).bind(version.as_uuid())
-        .bind(f.input_set.as_uuid()).bind(f.run.as_uuid()).bind(f.artifact.as_uuid()).execute(&mut *tx).await.unwrap();
+        .bind(f.input_set.as_uuid()).bind(f.run.as_uuid()).bind(f.report.as_uuid()).execute(&mut *tx).await.unwrap();
     sqlx::query("INSERT INTO app.qualifications(id,alpha_version_id,policy_id,qualifying_evaluation_id,granted_at,valid_until) SELECT $1,$2,policy_id,id,concluded_at,valid_until FROM app.evaluations WHERE id=$3")
         .bind(qualification.as_uuid()).bind(version.as_uuid()).bind(evaluation.as_uuid()).execute(&mut *tx).await.unwrap();
     tx.commit().await.unwrap();
@@ -283,11 +283,10 @@ async fn policy_approval_is_bound_to_its_exact_mandate_project_and_downstream(po
     let policy = Id::new();
     sqlx::query("INSERT INTO app.automation_policies(id,project_id,mode,mandate_id,downstream_id,required_paper_observations,minimum_paper_elapsed_seconds,max_feedback_age_seconds,promotion_metric_requirements,degradation_metric_requirements,authorized_at,valid_until,enabled_for_new_rebalances,max_rebalances_per_day) VALUES($1,$2,'AUTO_HANDOFF',$3,$4,1,1,60,'[]','[]',statement_timestamp(),statement_timestamp()+interval '1 hour',true,1)")
         .bind(policy.as_uuid()).bind(f.project.as_uuid()).bind(mandate.as_uuid()).bind(d.as_uuid()).execute(&pool).await.unwrap();
-    approval(&pool, release, policy, d, f.input_set)
-        .await
-        .unwrap();
+    let evidence = support::approval_inputs(&pool, &f, evaluation).await;
+    approval(&pool, release, policy, d, evidence).await.unwrap();
     sqlstate(
-        approval(&pool, release, policy, other_d, f.input_set)
+        approval(&pool, release, policy, other_d, evidence)
             .await
             .unwrap_err(),
         "23503",
@@ -297,8 +296,9 @@ async fn policy_approval_is_bound_to_its_exact_mandate_project_and_downstream(po
     let other_r = support::release(&pool, &other, other_m, other_c, other_e)
         .await
         .unwrap();
+    let other_evidence = support::approval_inputs(&pool, &other, other_e).await;
     sqlstate(
-        approval(&pool, other_r, policy, d, other.input_set)
+        approval(&pool, other_r, policy, d, other_evidence)
             .await
             .unwrap_err(),
         "23503",

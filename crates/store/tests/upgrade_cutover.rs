@@ -175,7 +175,7 @@ async fn upgrade_locks_auth_and_evidence_before_running_any_pending_migration(po
     migrating.await.unwrap().unwrap();
     sqlstate(stale.await.unwrap().unwrap_err(), "23514");
     insert.await.unwrap();
-    late_metric(&pool, evaluation, f.artifact).await;
+    late_metric(&pool, evaluation, f.report).await;
     no_locks(&pool, &name).await;
 }
 
@@ -192,7 +192,7 @@ async fn evaluation_committing_before_the_cutover_is_included_in_the_backfill(po
     waiting_backend(&pool, &name).await;
     writer.commit().await.unwrap();
     migrating.await.unwrap().unwrap();
-    late_metric(&pool, evaluation, f.artifact).await;
+    late_metric(&pool, evaluation, f.report).await;
     let missing:i64=sqlx::query_scalar("SELECT count(*) FROM app.evaluations e LEFT JOIN app.evaluation_publications p ON p.evaluation_id=e.id WHERE p.evaluation_id IS NULL").fetch_one(&pool).await.unwrap();
     assert_eq!(missing, 0);
 }

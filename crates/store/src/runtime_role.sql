@@ -1,17 +1,27 @@
 -- Native PostgreSQL privilege inspection, not a sampled table allowlist.
 -- Include session_user: SET ROLE must not hide an elevated login identity.
-WITH reachable_roles AS (
-  SELECT r.* FROM pg_catalog.pg_roles r
-  WHERE pg_catalog.pg_has_role(current_user, r.oid, 'USAGE')
-     OR pg_catalog.pg_has_role(current_user, r.oid, 'SET')
-     OR pg_catalog.pg_has_role(session_user, r.oid, 'USAGE')
-     OR pg_catalog.pg_has_role(session_user, r.oid, 'SET')
+-- ADMIN OPTION is authority even with INHERIT/SET disabled: its holder can
+-- re-grant membership with SET TRUE. Follow the native grant graph, including
+-- multi-hop administrative delegation. Plain membership with all flags false
+-- does not confer this authority. UNION deduplicates identities.
+WITH RECURSIVE reachable_role_ids(oid) AS (
+  SELECT oid FROM pg_catalog.pg_roles WHERE rolname IN (current_user, session_user)
+  UNION
+  SELECT membership.roleid
+  FROM reachable_role_ids held
+  JOIN pg_catalog.pg_auth_members membership ON membership.member = held.oid
+  WHERE membership.inherit_option OR membership.set_option OR membership.admin_option
+), reachable_roles AS (
+  SELECT role.* FROM pg_catalog.pg_roles role JOIN reachable_role_ids held USING (oid)
 ), service_schemas AS (
   SELECT oid, nspowner FROM pg_catalog.pg_namespace WHERE nspname IN ('app','tower_sessions','pgmq')
 )
 SELECT (SELECT count(*) FROM service_schemas) <> 3 OR EXISTS (
   SELECT 1 FROM reachable_roles r
   WHERE r.rolsuper OR r.rolcreaterole OR r.rolcreatedb OR r.rolbypassrls OR r.rolreplication
+     -- PostgreSQL documents these as bypassing database-level protection and
+     -- potentially granting superuser-equivalent server access.
+     OR r.rolname IN ('pg_read_server_files','pg_write_server_files','pg_execute_server_program')
      OR EXISTS (
        SELECT 1 FROM pg_catalog.pg_database d
        WHERE d.datname = pg_catalog.current_database() AND d.datdba = r.oid

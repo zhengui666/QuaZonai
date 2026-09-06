@@ -469,3 +469,179 @@ async fn delegated_native_table_privileges_and_missing_service_schema_fail_close
     remove_role(&pool, &name).await;
     remove_role(&pool, &delegate).await;
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn admin_only_membership_is_rejected_before_self_regrant(pool: PgPool) {
+    let runtime = role(&pool).await;
+    let owner = role(&pool).await;
+    execute(
+        &pool,
+        format!("GRANT TRUNCATE ON app.run_events TO {owner}"),
+    )
+    .await;
+    execute(
+        &pool,
+        format!("GRANT {owner} TO {runtime} WITH ADMIN TRUE, INHERIT FALSE, SET FALSE"),
+    )
+    .await;
+    let app = connect(&pool, &runtime).await;
+    let (usable, settable): (bool, bool) = sqlx::query_as(
+        "SELECT pg_has_role(current_user,$1,'USAGE'),pg_has_role(current_user,$1,'SET')",
+    )
+    .bind(&owner)
+    .fetch_one(&app)
+    .await
+    .unwrap();
+    assert_eq!((usable, settable), (false, false));
+    assert_owner_rejected(&app).await;
+    // Prove the privilege escalation using PostgreSQL itself, not a mocked graph.
+    execute(&app, format!("GRANT {owner} TO {runtime} WITH SET TRUE")).await;
+    let mut connection = app.acquire().await.unwrap();
+    sqlx::query(&format!("SET ROLE {owner}"))
+        .execute(&mut *connection)
+        .await
+        .unwrap();
+    assert!(sqlx::query_scalar::<_, bool>(
+        "SELECT has_table_privilege(current_user,'app.run_events','TRUNCATE')"
+    )
+    .fetch_one(&mut *connection)
+    .await
+    .unwrap());
+    sqlx::query("RESET ROLE")
+        .execute(&mut *connection)
+        .await
+        .unwrap();
+    drop(connection);
+    app.close().await;
+    remove_role(&pool, &runtime).await;
+    remove_role(&pool, &owner).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn multi_hop_admin_authority_and_masked_session_are_rejected(pool: PgPool) {
+    let runtime = role(&pool).await;
+    let intermediate = role(&pool).await;
+    let owner = role(&pool).await;
+    let (database, original_owner) = database_identity(&pool).await;
+    execute(&pool, format!("ALTER DATABASE {database} OWNER TO {owner}")).await;
+    execute(
+        &pool,
+        format!("GRANT {owner} TO {intermediate} WITH ADMIN TRUE, INHERIT FALSE, SET FALSE"),
+    )
+    .await;
+    let app = connect(&pool, &runtime).await;
+    Store::from_pool(app.clone())
+        .verify_runtime_role()
+        .await
+        .unwrap();
+    execute(
+        &pool,
+        format!("GRANT {intermediate} TO {runtime} WITH ADMIN TRUE, INHERIT FALSE, SET FALSE"),
+    )
+    .await;
+    assert_owner_rejected(&app).await;
+
+    // A narrow current_user must not conceal session_user's ability to re-grant.
+    let narrow = role(&pool).await;
+    execute(
+        &pool,
+        format!("GRANT {narrow} TO {runtime} WITH INHERIT FALSE, SET TRUE"),
+    )
+    .await;
+    let mut connection = app.acquire().await.unwrap();
+    sqlx::query(&format!("SET ROLE {narrow}"))
+        .execute(&mut *connection)
+        .await
+        .unwrap();
+    let elevated: bool = sqlx::query_scalar(include_str!("../src/runtime_role.sql"))
+        .fetch_one(&mut *connection)
+        .await
+        .unwrap();
+    assert!(elevated);
+    sqlx::query("RESET ROLE")
+        .execute(&mut *connection)
+        .await
+        .unwrap();
+    drop(connection);
+    execute(&pool, format!("REVOKE {intermediate} FROM {runtime}")).await;
+    Store::from_pool(app.clone())
+        .verify_runtime_role()
+        .await
+        .unwrap();
+    app.close().await;
+    execute(
+        &pool,
+        format!("ALTER DATABASE {database} OWNER TO {original_owner}"),
+    )
+    .await;
+    remove_role(&pool, &runtime).await;
+    remove_role(&pool, &intermediate).await;
+    remove_role(&pool, &owner).await;
+    remove_role(&pool, &narrow).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn harmless_admin_memberships_remain_allowed_and_plain_membership_is_not_authority(
+    pool: PgPool,
+) {
+    let runtime = role(&pool).await;
+    let harmless = role(&pool).await;
+    let privileged = role(&pool).await;
+    execute(
+        &pool,
+        format!("GRANT TRUNCATE ON app.run_events TO {privileged}"),
+    )
+    .await;
+    execute(
+        &pool,
+        format!("GRANT {harmless} TO {runtime} WITH ADMIN TRUE, INHERIT FALSE, SET FALSE"),
+    )
+    .await;
+    execute(
+        &pool,
+        format!("GRANT {privileged} TO {harmless} WITH ADMIN FALSE, INHERIT FALSE, SET FALSE"),
+    )
+    .await;
+    let app = connect(&pool, &runtime).await;
+    Store::from_pool(app.clone())
+        .verify_runtime_role()
+        .await
+        .unwrap();
+    execute(
+        &pool,
+        format!("GRANT {privileged} TO {harmless} WITH ADMIN TRUE, INHERIT FALSE, SET FALSE"),
+    )
+    .await;
+    assert_owner_rejected(&app).await;
+    app.close().await;
+    remove_role(&pool, &runtime).await;
+    remove_role(&pool, &harmless).await;
+    remove_role(&pool, &privileged).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn server_file_and_program_capabilities_cannot_hide_behind_admin_only_membership(
+    pool: PgPool,
+) {
+    let runtime = role(&pool).await;
+    let app = connect(&pool, &runtime).await;
+    for privileged in [
+        "pg_read_server_files",
+        "pg_write_server_files",
+        "pg_execute_server_program",
+    ] {
+        execute(
+            &pool,
+            format!("GRANT {privileged} TO {runtime} WITH ADMIN TRUE, INHERIT FALSE, SET FALSE"),
+        )
+        .await;
+        assert_owner_rejected(&app).await;
+        execute(&pool, format!("REVOKE {privileged} FROM {runtime}")).await;
+        Store::from_pool(app.clone())
+            .verify_runtime_role()
+            .await
+            .unwrap();
+    }
+    app.close().await;
+    remove_role(&pool, &runtime).await;
+}

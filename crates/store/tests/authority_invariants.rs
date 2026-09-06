@@ -236,10 +236,11 @@ async fn offer(pool: &PgPool, f: &Fixture) -> (Id, Id) {
         .await
         .unwrap();
     let delivery = downstream(pool).await;
+    let evidence = support::approval_inputs(pool, f, evaluation).await;
     let approval = Id::new();
     sqlx::query("INSERT INTO app.approvals(id,release_id,environment,downstream_id,authority_kind,evidence_set_id,granted_at,valid_until) VALUES($1,$2,'PAPER',$3,'OPERATOR',$4,statement_timestamp(),statement_timestamp()+interval '1 hour')")
         .bind(approval.as_uuid()).bind(release.as_uuid()).bind(delivery.as_uuid())
-        .bind(f.input_set.as_uuid()).execute(pool).await.unwrap();
+        .bind(evidence.as_uuid()).execute(pool).await.unwrap();
     let offer = Id::new();
     sqlx::query("INSERT INTO app.handoff_offers(id,release_id,approval_id,downstream_id,environment,delivery_sequence,state,offered_at,expires_at) VALUES($1,$2,$3,$4,'PAPER',1,'OFFERED',statement_timestamp(),statement_timestamp()+interval '1 hour')")
         .bind(offer.as_uuid()).bind(release.as_uuid()).bind(approval.as_uuid()).bind(delivery.as_uuid())

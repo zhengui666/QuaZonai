@@ -50,10 +50,10 @@ async fn evaluation_and_metrics_publish_atomically_and_cannot_gain_late_evidence
     let (_, _, base) = portfolio(&pool, &f).await;
     let mut tx = pool.begin().await.unwrap();
     let evaluation = copy_evaluation(&mut tx, base, "SUCCEEDED", "VALID", "PASS").await;
-    metric(&mut tx, evaluation, f.artifact, "metric_a")
+    metric(&mut tx, evaluation, f.report, "metric_a")
         .await
         .unwrap();
-    metric(&mut tx, evaluation, f.artifact, "metric_b")
+    metric(&mut tx, evaluation, f.report, "metric_b")
         .await
         .unwrap();
     assert_eq!(
@@ -64,7 +64,7 @@ async fn evaluation_and_metrics_publish_atomically_and_cannot_gain_late_evidence
     tx.commit().await.unwrap();
     let mut connection = pool.acquire().await.unwrap();
     sqlstate(
-        metric(&mut connection, evaluation, f.artifact, "late")
+        metric(&mut connection, evaluation, f.report, "late")
             .await
             .unwrap_err(),
         "23000",
@@ -102,7 +102,7 @@ async fn all_completed_statuses_are_sealed_including_empty_or_failed_evaluations
         let evaluation =
             copy_evaluation(&mut connection, base, execution, evidence, decision).await;
         sqlstate(
-            metric(&mut connection, evaluation, f.artifact, "late")
+            metric(&mut connection, evaluation, f.report, "late")
                 .await
                 .unwrap_err(),
             "23000",
@@ -110,7 +110,7 @@ async fn all_completed_statuses_are_sealed_including_empty_or_failed_evaluations
         assert_eq!(count(&pool, evaluation).await, 0);
     }
     sqlstate(
-        metric(&mut connection, Id::new(), f.artifact, "missing")
+        metric(&mut connection, Id::new(), f.report, "missing")
             .await
             .unwrap_err(),
         "23503",
@@ -123,13 +123,13 @@ async fn consuming_an_evaluation_seals_its_metrics_before_transaction_commit(poo
     let (_, _, base) = portfolio(&pool, &f).await;
     let mut tx = pool.begin().await.unwrap();
     let evaluation = copy_evaluation(&mut tx, base, "SUCCEEDED", "VALID", "PASS").await;
-    metric(&mut tx, evaluation, f.artifact, "before")
+    metric(&mut tx, evaluation, f.report, "before")
         .await
         .unwrap();
     sqlx::query("INSERT INTO app.calibrations(estimator_kind,estimator_version,model_artifact_id,train_input_set_id,fit_end_available_at,output_unit,horizon_kind,validation_evaluation_id) VALUES('fixture','1',$1,$2,clock_timestamp(),'ratio','FIXED_BARS',$3)")
         .bind(f.artifact.as_uuid()).bind(f.input_set.as_uuid()).bind(evaluation.as_uuid()).execute(&mut *tx).await.unwrap();
     sqlstate(
-        metric(&mut tx, evaluation, f.artifact, "after-consumption")
+        metric(&mut tx, evaluation, f.report, "after-consumption")
             .await
             .unwrap_err(),
         "23000",
@@ -163,7 +163,7 @@ async fn metric_insertion_rechecks_publication_after_a_real_row_lock_wait(pool: 
         .fetch_one(&mut *connection)
         .await
         .unwrap();
-    let insert = metric(&mut connection, evaluation, f.artifact, "late");
+    let insert = metric(&mut connection, evaluation, f.report, "late");
     let release = async {
         wait_for_database_lock(&pool, backend).await;
         blocker.commit().await.unwrap();
@@ -179,7 +179,7 @@ async fn upgrade_seals_existing_metrics_without_rewriting_any_evidence(pool: PgP
     let f = fixture(&pool, budget()).await;
     let (_, _, evaluation) = portfolio(&pool, &f).await;
     let mut connection = pool.acquire().await.unwrap();
-    metric(&mut connection, evaluation, f.artifact, "original")
+    metric(&mut connection, evaluation, f.report, "original")
         .await
         .unwrap();
     let query="SELECT jsonb_build_object('evaluation',to_jsonb(e),'metrics',(SELECT jsonb_agg(to_jsonb(m) ORDER BY m.id) FROM app.metric_values m WHERE m.evaluation_id=e.id)) FROM app.evaluations e WHERE e.id=$1";
@@ -196,7 +196,7 @@ async fn upgrade_seals_existing_metrics_without_rewriting_any_evidence(pool: PgP
         .unwrap();
     assert_eq!(before, after);
     sqlstate(
-        metric(&mut connection, evaluation, f.artifact, "late")
+        metric(&mut connection, evaluation, f.report, "late")
             .await
             .unwrap_err(),
         "23000",
@@ -218,13 +218,13 @@ async fn candidate_and_allocation_evaluation_keep_their_deferred_atomic_creation
         .bind(f.run.as_uuid()).bind(f.artifact.as_uuid()).bind(evaluation.as_uuid()).execute(&mut *tx).await.unwrap();
     sqlx::query("INSERT INTO app.evaluations(id,project_id,subject_candidate_id,input_set_id,policy_id,run_id,evaluation_kind,execution_status,evidence_status,decision,report_artifact_id,method_versions_artifact_id,concluded_at,valid_until) SELECT $1,project_id,$3,input_set_id,policy_id,run_id,evaluation_kind,execution_status,evidence_status,decision,report_artifact_id,method_versions_artifact_id,concluded_at,valid_until FROM app.evaluations WHERE id=$2")
         .bind(evaluation.as_uuid()).bind(base.as_uuid()).bind(candidate.as_uuid()).execute(&mut *tx).await.unwrap();
-    metric(&mut tx, evaluation, f.artifact, "allocation")
+    metric(&mut tx, evaluation, f.report, "allocation")
         .await
         .unwrap();
     tx.commit().await.unwrap();
     let mut connection = pool.acquire().await.unwrap();
     sqlstate(
-        metric(&mut connection, evaluation, f.artifact, "late")
+        metric(&mut connection, evaluation, f.report, "late")
             .await
             .unwrap_err(),
         "23000",

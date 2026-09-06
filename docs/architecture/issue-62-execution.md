@@ -261,6 +261,34 @@ permanent claim that every future Head passed. Remote CI and independent review
 must validate the published Head separately, and none of these checks replaces
 complete product acceptance.
 
+## Administrative delegation and exact evidence producers (2026-09-06)
+
+This iteration starts from remote `6cada81a6f94bfa29831cf4ede220c8d3ca4e711`.
+Native PostgreSQL membership traversal includes ADMIN OPTION even when INHERIT
+and SET are false, follows delegated paths, and retains the original session
+identity. It also rejects reachable native server-file/program roles. Four new
+PostgreSQL tests include a real self-regrant counterexample, multi-hop and masked
+session cases, and harmless-membership positive controls; no OS command is run.
+
+Downstream principals require a project when created. The domain and Store
+regressions prove rejection without a stranded principal or command receipt.
+The new additive `202609060010_evidence_producers.sql` binds evaluation reports
+and metric sources to the exact project/run and expected artifact roles.
+Approval context must be frozen, belong to the release project, and contain its
+exact evaluation reports. Four PostgreSQL tests cover both valid source layouts,
+wrong projects/runs/kinds, draft or unrelated approval contexts, and rollback of
+an upgrade containing incompatible historical evidence. Prior migrations, the
+product Cargo.lock, original test assertions and historical evidence are retained.
+
+Local validation of this code snapshot used Rust 1.98.0, the committed Cargo.lock,
+and isolated native PostgreSQL 18.1 with PGMQ 1.10.0. The complete workspace test
+command passed 206 tests, zero failures and zero ignored; strict Clippy, rustfmt,
+the all-target build, generated API/domain diffs, and the 204 decimal plus 242
+bigint shared Node cases passed. Exact source-tree identity and published-Head
+CI are recorded in the PR, not retroactively assigned to these local logs.
+These source/authorization regressions do not establish the still-missing
+production research, runtime-isolation, portfolio or protected-account acceptance.
+
 ## Explicit gaps and completion boundary
 
 Complete Run admission/takeover, research services and machine authorization,

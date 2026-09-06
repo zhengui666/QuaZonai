@@ -604,3 +604,34 @@ async fn verifier_reconciliation_waits_for_publication_and_retains_referenced_hi
         .await
         .unwrap());
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn rejected_projectless_downstream_leaves_no_principal_or_receipt(pool: PgPool) {
+    let (store, actor) = operator(&pool).await;
+    let request = PrincipalCreate {
+        schema_version: SchemaV1,
+        name: "invalid delivery".into(),
+        kind: AssignablePrincipalKind::Downstream,
+        project_id: None,
+        downstream_id: Some(Id::new()),
+        enabled: true,
+    };
+    assert!(matches!(
+        store
+            .create_principal(&actor, "invalid-downstream", &request)
+            .await,
+        Err(StoreError::Domain(domain::DomainError::Invalid(
+            "principal_identity"
+        )))
+    ));
+    let counts: (i64,i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM app.machine_principals),(SELECT count(*) FROM app.command_receipts WHERE operation='PRINCIPAL_CREATE')"
+    ).fetch_one(&pool).await.unwrap();
+    assert_eq!(counts, (0, 0));
+    // Existing supported projectless doctor onboarding remains usable.
+    let (_, _, doctor) = machine(&store, &actor, None, AssignablePrincipalKind::Cli).await;
+    assert_eq!(
+        store.machine_session(&doctor).await.unwrap().scope_codes,
+        vec![MachineScope::DoctorRead]
+    );
+}
