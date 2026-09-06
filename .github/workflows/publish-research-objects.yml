@@ -28,6 +28,10 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EVENT_HEAD"
           git merge-base --is-ancestor "$VERIFIED_BASE" "$EVENT_HEAD"
           test "$(git rev-parse "$VERIFIED_BASE^{tree}")" = "$BASE_TREE"
+          mkdir -p "$RUNNER_TEMP/research-objects"
+          git archive "$EVENT_HEAD" | gzip > "$RUNNER_TEMP/research-objects/event-source.tar.gz"
+          git rev-parse HEAD > "$RUNNER_TEMP/research-objects/event-commit.txt"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/research-objects/event-tree.txt"
           : > "$RUNNER_TEMP/research.patch.xz"
           for blob in a153b76797c758e36e13c0d0c39c321909e6ba2d 5f3a7be1b5b29acce55e8a3163ed090d42948d2d 6e4c3f91c146892165e708c12bc2d76d331b0bc7 eaa87d57929bebcf8f8017f77f88fae8ecf32dc6 64f9f8ec58f59f96df082446e92d3f1b7b3257fd ae0ec288055669763ca5014d65c1eecdaa2823a0 47331ad4b9210f86da3350c9f45a104fcf36d45a 52ffb63741fe4278ea6cee1d5859040d9dea5155 48c2632e5fc973f699febeeb572014a486bb3af8; do
             gh api "repos/$GITHUB_REPOSITORY/git/blobs/$blob" --jq .content | base64 --decode >> "$RUNNER_TEMP/research.patch.xz"
@@ -42,7 +46,6 @@ jobs:
           git diff --cached --check
           test ! -e .github/workflows/publish-research-objects.yml
           test -z "$(git diff --cached --name-only -- Cargo.lock .github/workflows migrations/202609050001_domain.sql migrations/202609060001_browser_auth.sql migrations/202609060002_authority_invariants.sql migrations/202609060003_evidence_bindings.sql migrations/202609060004_doctor_boundary.sql migrations/202609060005_evaluation_publication.sql migrations/202609060006_upgrade_cutover.sql migrations/202609060007_control_authority.sql migrations/202609060008_machine_attempts.sql migrations/202609060009_native_sessions.sql migrations/202609060010_authority_repair.sql)"
-          mkdir -p "$RUNNER_TEMP/research-objects"
           python3 - <<'PY'
           import base64, json, os, subprocess
           from pathlib import Path
