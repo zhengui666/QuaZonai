@@ -1,0 +1,84 @@
+name: Temporary recovery source objects
+on:
+  pull_request:
+    paths: ['.github/workflows/publish-recovery-objects.yml']
+permissions:
+  contents: write
+jobs:
+  upload-objects:
+    if: github.event.pull_request.number == 63 && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'rewrite/issue-62-rust-evidence'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+      VERIFIED_BASE: a52fa0fd88f44aeeee59a6d7f1bccfadf7b11fe0
+      BASE_TREE: 469e918b0eacaf193416e8d2cf133c38e1e57bdd
+      VERIFIED_TREE: 5456cc177ceb45d0b59e1e46fed89cb3b22dd2f6
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Reconstruct and upload only the fixed native Git objects
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EVENT_HEAD"
+          test "$(git rev-parse HEAD^)" = "$VERIFIED_BASE"
+          test "$(git diff --name-only "$VERIFIED_BASE" "$EVENT_HEAD")" = '.github/workflows/publish-recovery-objects.yml'
+          : > "$RUNNER_TEMP/recovery.patch.xz"
+          for blob in 0bfb4bc77f95de9c050d14865adbd3351ce992c5 cf5fe4dd2ecb84e5554628282574ccd10464b151 2feb1016e717869f4308d4e0f991661afbb6df59 1a289841c7404ab113dcf77d6259bb29074fcfc2 c83393bb0b2fdb01ba61786cb217783cc310866e; do
+            gh api "repos/$GITHUB_REPOSITORY/git/blobs/$blob" --jq .content | base64 --decode >> "$RUNNER_TEMP/recovery.patch.xz"
+          done
+          test "$(wc -c < "$RUNNER_TEMP/recovery.patch.xz")" -eq 27472
+          xz --decompress --stdout "$RUNNER_TEMP/recovery.patch.xz" > "$RUNNER_TEMP/recovery.patch"
+          test "$(wc -c < "$RUNNER_TEMP/recovery.patch")" -eq 119893
+          gh api "repos/$GITHUB_REPOSITORY/git/blobs/2a30a8ee4209a6303c8219b0ccf8ced1e332100b" --jq .content | base64 --decode > "$RUNNER_TEMP/inventory.patch"
+          git -c core.hooksPath=/dev/null checkout --detach "$VERIFIED_BASE"
+          git -c core.hooksPath=/dev/null apply --check --unidiff-zero --index "$RUNNER_TEMP/recovery.patch"
+          git -c core.hooksPath=/dev/null apply --unidiff-zero --index "$RUNNER_TEMP/recovery.patch"
+          test "$(git write-tree)" = 'f8a291da154f5809d8d2b17309641939c7b23d56'
+          git -c core.hooksPath=/dev/null apply --check --unidiff-zero --index "$RUNNER_TEMP/inventory.patch"
+          git -c core.hooksPath=/dev/null apply --unidiff-zero --index "$RUNNER_TEMP/inventory.patch"
+          test "$(git write-tree)" = "$VERIFIED_TREE"
+          git diff --cached --check
+          test ! -e .github/workflows/publish-recovery-objects.yml
+          test ! -e .github/workflows/client-development-inputs.yml
+          test ! -e .github/workflows/prepare-web-dependencies.yml
+          test ! -e .github/workflows/web-development-inputs.yml
+          test -z "$(git diff --cached --name-only --diff-filter=M "$VERIFIED_BASE" -- Cargo.lock migrations/)"
+          python3 - <<'PY'
+          import base64, json, os, subprocess
+          def git(*args):
+              return subprocess.check_output(['git', *args])
+          def api(endpoint, body):
+              result = subprocess.run(['gh','api','--method','POST',endpoint,'--input','-'], input=json.dumps(body).encode(), stdout=subprocess.PIPE, check=True)
+              return json.loads(result.stdout)
+          repo = os.environ['GITHUB_REPOSITORY']
+          if repo != 'zhengui666/QuaZonai':
+              raise SystemExit('unexpected repository')
+          entries = []
+          for raw in filter(None, git('diff','--cached','--name-only','--no-renames','-z').split(b'\0')):
+              path = raw.decode('utf-8')
+              staged = git('ls-files','--stage','--',path).decode().strip()
+              if not staged:
+                  entries.append({'path':path,'mode':'100644','type':'blob','sha':None})
+                  continue
+              metadata, actual_path = staged.split('\t',1)
+              mode, sha, stage = metadata.split()
+              if actual_path != path or stage != '0' or mode not in ('100644','100755'):
+                  raise SystemExit('unexpected index entry')
+              result = api(f'repos/{repo}/git/blobs', {'content':base64.b64encode(git('cat-file','blob',sha)).decode(), 'encoding':'base64'})
+              if result['sha'] != sha:
+                  raise SystemExit('native blob mismatch')
+              entries.append({'path':path,'mode':mode,'type':'blob','sha':sha})
+          if len(entries) != 32:
+              raise SystemExit('unexpected changed file count')
+          result = api(f'repos/{repo}/git/trees', {'base_tree':os.environ['BASE_TREE'],'tree':entries})
+          if result['sha'] != os.environ['VERIFIED_TREE']:
+              raise SystemExit('native tree mismatch')
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as summary:
+              summary.write(f"Uploaded exact Git tree `{result['sha']}` (32 changed files). No commit or ref changed. Object transport is not CI acceptance.\n")
+          PY
