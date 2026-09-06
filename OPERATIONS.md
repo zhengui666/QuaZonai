@@ -30,6 +30,27 @@ Operator 可创建独立 CLI/AUTOMATION/DOWNSTREAM 主体，系统任务的 MISS
 
 机器 capability 的原生 Argon2 校验前，PostgreSQL 原子预约60秒窗口：每凭据最多5个、全局最多32个失败或在途尝试。成功仅归还所属原窗口的占用，失败、取消和计算槽繁忙保留至窗口重置；429响应含 Retry-After。机器计算使用独立2个槽，不占用浏览器 TOTP 的2个槽；多个实例共享数据库窗口。不要以增加实例绕过限流。
 
+## 不可变研究准备与数据撤销
+
+研究准备入口为 `/api/v2/input-sets` 和 `/api/v2/evaluation-policies`，详情和
+权限见 CLI 与 native-generated OpenAPI。InputSet 头、全部成员、冻结时间及
+幂等回执一次提交；policy 与精确 experiment_family 同事务登记。登记不是
+原生算法能力检查或研究任务执行，也不把 FIXTURE/PIT_UNVERIFIED 改成合格数据。
+同项目已冻结对象可读取历史元数据；新登记会重新检查当前可用性，不使用历史
+读权限代替新任务准入。
+
+新输入和政策按稳定顺序锁定项目、数据源、运行端、数据使用许可；许可撤销
+插入也取得同一 grant 行锁。停用/撤销先胜出时，等待后的创建请求会拒绝；
+创建先胜出时，完成的冻结事实保留，之后的任务仍须重新核验许可。查询只返回
+元数据，Sealed 原始字节依然不属于研究身份权限。禁止把许可撤销记录删除，
+或重新登记同一原生对象为另一个分区以获得新资格。
+
+增量迁移 `202609060012_research_contracts.sql` 保留旧迁移字节，增加研究准备
+命令的封闭授权、撤销串行化和查询索引；同时修复原生版本触发器收到零个参数时
+NULL TG_ARGV 导致 Runtime/Downstream 正常更新失败的问题。身份、已绑定来源、
+created_at 仍不可变，revision 仍必须递增且不得溢出。升级使用前述完整 migrate
+入口和停写/备份流程，不在业务请求中跑 DDL。
+
 ## 数据和密钥
 
 私有状态目录包含 master.key、session-key.ref、secrets。master key 为0600的32字节原生随机密钥；每个 secret 使用 RustCrypto XChaCha20Poly1305、独立随机 nonce，并绑定 UUID 和用途。加密对象先同步、只读发布，再写数据库引用。不要把 master key 放进普通数据库备份、源码、Agent workspace 或 job 容器。密钥丢失无法靠数据库恢复，需要独立安全备份。

@@ -9,12 +9,15 @@ pub mod admission;
 pub mod codex;
 pub mod control;
 pub mod evidence;
+pub mod research;
 pub mod runs;
 
 use thiserror::Error;
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum DomainError {
+    #[error("research contract fields are invalid")]
+    Fields(Vec<contracts::research::FieldIssue>),
     #[error("invalid contract field: {0}")]
     Invalid(&'static str),
     #[error("project does not admit new research")]

@@ -1,6 +1,19 @@
 {
   "components": {
     "schemas": {
+      "ArtifactInputRole": {
+        "enum": [
+          "CODE",
+          "PARAMETERS",
+          "SIGNALS",
+          "TARGETS",
+          "MODEL",
+          "REPORT",
+          "METRICS",
+          "DATA_QUALITY"
+        ],
+        "type": "string"
+      },
       "AssignablePrincipalKind": {
         "enum": [
           "CLI",
@@ -252,6 +265,12 @@
         ],
         "type": "object"
       },
+      "ComparableScope": {
+        "enum": [
+          "FAMILY_LINEAGE"
+        ],
+        "type": "string"
+      },
       "Comparator": {
         "enum": [
           "GT",
@@ -416,6 +435,24 @@
         ],
         "type": "object"
       },
+      "DataOrigin": {
+        "enum": [
+          "REAL",
+          "SYNTHETIC",
+          "FIXTURE",
+          "LEGACY_UNKNOWN"
+        ],
+        "type": "string"
+      },
+      "DataPartition": {
+        "enum": [
+          "DISCOVERY",
+          "VALIDATION",
+          "SEALED",
+          "FORWARD"
+        ],
+        "type": "string"
+      },
       "DbCounter": {
         "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
         "maxLength": 19,
@@ -467,6 +504,167 @@
         ],
         "type": "object"
       },
+      "EvaluationPolicyCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "comparison_input_set_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "execution_assumptions_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "maximum_missing_fraction": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "maximum_sealed_uses_per_lineage": {
+            "format": "int32",
+            "maximum": 2147483647,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "metric_requirements": {
+            "items": {
+              "$ref": "#/components/schemas/MetricRequirementV1"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "type": "array"
+          },
+          "minimum_observations": {
+            "format": "int32",
+            "maximum": 2147483647,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "question": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "require_real_data": {
+            "type": "boolean"
+          },
+          "required_capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/SelectionParametersV1"
+          },
+          "split_policy": {
+            "$ref": "#/components/schemas/SplitPolicyV1"
+          },
+          "validity_seconds": {
+            "$ref": "#/components/schemas/DbCounter"
+          }
+        },
+        "required": [
+          "schema_version",
+          "project_id",
+          "question",
+          "comparison_input_set_id",
+          "execution_assumptions_id",
+          "selection",
+          "split_policy",
+          "metric_requirements",
+          "minimum_observations",
+          "maximum_missing_fraction",
+          "require_real_data",
+          "required_capabilities",
+          "maximum_sealed_uses_per_lineage",
+          "validity_seconds"
+        ],
+        "type": "object"
+      },
+      "EvaluationPolicyView": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "maximum_missing_fraction": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "maximum_sealed_uses_per_lineage": {
+            "format": "int32",
+            "maximum": 2147483647,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "metric_requirements": {
+            "items": {
+              "$ref": "#/components/schemas/MetricRequirementV1"
+            },
+            "type": "array"
+          },
+          "minimum_observations": {
+            "format": "int32",
+            "maximum": 2147483647,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "question": {
+            "type": "string"
+          },
+          "require_real_data": {
+            "type": "boolean"
+          },
+          "required_capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "selection_rule": {
+            "$ref": "#/components/schemas/SelectionRuleV1"
+          },
+          "split_policy": {
+            "$ref": "#/components/schemas/SplitPolicyV1"
+          },
+          "validity_seconds": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "version": {
+            "format": "int32",
+            "maximum": 2147483647,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "version",
+          "created_at",
+          "question",
+          "selection_rule",
+          "split_policy",
+          "metric_requirements",
+          "minimum_observations",
+          "maximum_missing_fraction",
+          "require_real_data",
+          "required_capabilities",
+          "maximum_sealed_uses_per_lineage",
+          "validity_seconds"
+        ],
+        "type": "object"
+      },
       "EvidenceStatus": {
         "enum": [
           "VALID",
@@ -476,10 +674,219 @@
         ],
         "type": "string"
       },
+      "FieldIssue": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "field": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "code",
+          "message"
+        ],
+        "type": "object"
+      },
       "Id": {
         "format": "uuid",
         "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
         "type": "string"
+      },
+      "InputItemV1": {
+        "oneOf": [
+          {
+            "properties": {
+              "dataset_revision_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "kind": {
+                "enum": [
+                  "DATASET"
+                ],
+                "type": "string"
+              },
+              "role": {
+                "$ref": "#/components/schemas/DataPartition"
+              }
+            },
+            "required": [
+              "dataset_revision_id",
+              "role",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "artifact_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "kind": {
+                "enum": [
+                  "ARTIFACT"
+                ],
+                "type": "string"
+              },
+              "role": {
+                "$ref": "#/components/schemas/ArtifactInputRole"
+              }
+            },
+            "required": [
+              "artifact_id",
+              "role",
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "InputItemView": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "item": {
+            "$ref": "#/components/schemas/InputItemV1"
+          },
+          "ordinal": {
+            "format": "int32",
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/DataOrigin"
+          },
+          "pit_status": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PitStatus"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "ordinal",
+          "item",
+          "origin"
+        ],
+        "type": "object"
+      },
+      "InputPurpose": {
+        "enum": [
+          "DISCOVERY",
+          "VALIDATION",
+          "SEALED",
+          "PORTFOLIO",
+          "FORWARD"
+        ],
+        "type": "string"
+      },
+      "InputSetCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "decision_cutoff": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/InputItemV1"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "purpose": {
+            "$ref": "#/components/schemas/InputPurpose"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "project_id",
+          "purpose",
+          "decision_cutoff",
+          "items"
+        ],
+        "type": "object"
+      },
+      "InputSetSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decision_cutoff": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "frozen_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "purpose": {
+            "$ref": "#/components/schemas/InputPurpose"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "purpose",
+          "decision_cutoff",
+          "frozen_at",
+          "revision",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "InputSetView": {
+        "additionalProperties": false,
+        "properties": {
+          "header": {
+            "$ref": "#/components/schemas/InputSetSummary"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/InputItemView"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "header",
+          "items"
+        ],
+        "type": "object"
       },
       "JobLimitsV1": {
         "additionalProperties": false,
@@ -812,6 +1219,12 @@
         ],
         "type": "object"
       },
+      "MissingSelectionMetric": {
+        "enum": [
+          "INCONCLUSIVE"
+        ],
+        "type": "string"
+      },
       "ModelCapabilityV1": {
         "additionalProperties": false,
         "properties": {
@@ -973,6 +1386,42 @@
               "operation"
             ],
             "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "INPUT_SET_CREATE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/InputSetCreate"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "EVALUATION_POLICY_CREATE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/EvaluationPolicyCreate"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -1054,7 +1503,17 @@
           "PRINCIPAL_CREATE",
           "PRINCIPAL_UPDATE",
           "CREDENTIAL_ISSUE",
-          "CREDENTIAL_REVOKE"
+          "CREDENTIAL_REVOKE",
+          "INPUT_SET_CREATE",
+          "EVALUATION_POLICY_CREATE"
+        ],
+        "type": "string"
+      },
+      "PitStatus": {
+        "enum": [
+          "VERIFIED",
+          "UNVERIFIED",
+          "INVALID"
         ],
         "type": "string"
       },
@@ -1384,6 +1843,35 @@
         "required": [
           "reasoning_effort",
           "description"
+        ],
+        "type": "object"
+      },
+      "ResearchListQuery": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "limit": {
+            "default": 50,
+            "format": "int32",
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "project_id"
         ],
         "type": "object"
       },
@@ -1739,6 +2227,252 @@
         "maximum": 1,
         "minimum": 1,
         "type": "integer"
+      },
+      "SelectionDirection": {
+        "enum": [
+          "MAXIMIZE",
+          "MINIMIZE"
+        ],
+        "type": "string"
+      },
+      "SelectionEvaluationKind": {
+        "enum": [
+          "WALK_FORWARD",
+          "SEALED"
+        ],
+        "type": "string"
+      },
+      "SelectionParametersV1": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_count": {
+            "format": "int32",
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/SelectionDirection"
+          },
+          "evaluation_kind": {
+            "$ref": "#/components/schemas/SelectionEvaluationKind"
+          },
+          "frequency": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "method_id": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "method_version": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "metric_code": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "metric_scope": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "unit": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "evaluation_kind",
+          "metric_code",
+          "metric_scope",
+          "method_id",
+          "method_version",
+          "unit",
+          "frequency",
+          "direction",
+          "candidate_count"
+        ],
+        "type": "object"
+      },
+      "SelectionRuleV1": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_count": {
+            "format": "int32",
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "comparable_scope": {
+            "$ref": "#/components/schemas/ComparableScope"
+          },
+          "comparison_input_set_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/SelectionDirection"
+          },
+          "evaluation_kind": {
+            "$ref": "#/components/schemas/SelectionEvaluationKind"
+          },
+          "execution_assumptions_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "family_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "frequency": {
+            "type": "string"
+          },
+          "method_id": {
+            "type": "string"
+          },
+          "method_version": {
+            "type": "string"
+          },
+          "metric_code": {
+            "type": "string"
+          },
+          "metric_scope": {
+            "type": "string"
+          },
+          "missing_required_metric": {
+            "$ref": "#/components/schemas/MissingSelectionMetric"
+          },
+          "root_lineage_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "tie_break": {
+            "$ref": "#/components/schemas/SelectionTieBreak"
+          },
+          "unit": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "comparable_scope",
+          "root_lineage_id",
+          "family_id",
+          "comparison_input_set_id",
+          "execution_assumptions_id",
+          "evaluation_kind",
+          "metric_code",
+          "metric_scope",
+          "method_id",
+          "method_version",
+          "unit",
+          "frequency",
+          "direction",
+          "candidate_count",
+          "tie_break",
+          "missing_required_metric"
+        ],
+        "type": "object"
+      },
+      "SelectionTieBreak": {
+        "enum": [
+          "EXPERIMENT_ID_ASC"
+        ],
+        "type": "string"
+      },
+      "SplitKind": {
+        "enum": [
+          "WALK_FORWARD",
+          "CPCV_FIXED_HORIZON"
+        ],
+        "type": "string"
+      },
+      "SplitPolicyV1": {
+        "additionalProperties": false,
+        "properties": {
+          "embargo_observations": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "group_count": {
+            "format": "int32",
+            "maximum": 65535,
+            "minimum": 2,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "interval_validation_required": {
+            "enum": [
+              true
+            ],
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SplitKind"
+          },
+          "label_horizon_observations": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DbCounter"
+              }
+            ]
+          },
+          "purge_observations": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "sealed_revision_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "step_size": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DbCounter"
+              }
+            ]
+          },
+          "test_group_count": {
+            "format": "int32",
+            "maximum": 65534,
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "test_size": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "train_size": {
+            "$ref": "#/components/schemas/DbCounter"
+          }
+        },
+        "required": [
+          "schema_version",
+          "kind",
+          "train_size",
+          "test_size",
+          "purge_observations",
+          "embargo_observations",
+          "interval_validation_required",
+          "sealed_revision_id"
+        ],
+        "type": "object"
       },
       "StopRuleV1": {
         "additionalProperties": false,

@@ -1,6 +1,19 @@
 {
   "components": {
     "schemas": {
+      "ArtifactInputRole": {
+        "enum": [
+          "CODE",
+          "PARAMETERS",
+          "SIGNALS",
+          "TARGETS",
+          "MODEL",
+          "REPORT",
+          "METRICS",
+          "DATA_QUALITY"
+        ],
+        "type": "string"
+      },
       "AssignablePrincipalKind": {
         "enum": [
           "CLI",
@@ -197,6 +210,141 @@
               "scope_codes",
               "issued_at",
               "expires_at"
+            ],
+            "type": "object"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "replayed",
+          "resource"
+        ],
+        "type": "object"
+      },
+      "CommandResult_EvaluationPolicyView": {
+        "additionalProperties": false,
+        "properties": {
+          "replayed": {
+            "type": "boolean"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "created_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "maximum_missing_fraction": {
+                "$ref": "#/components/schemas/DecimalValue"
+              },
+              "maximum_sealed_uses_per_lineage": {
+                "format": "int32",
+                "maximum": 2147483647,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "metric_requirements": {
+                "items": {
+                  "$ref": "#/components/schemas/MetricRequirementV1"
+                },
+                "type": "array"
+              },
+              "minimum_observations": {
+                "format": "int32",
+                "maximum": 2147483647,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "project_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "question": {
+                "type": "string"
+              },
+              "require_real_data": {
+                "type": "boolean"
+              },
+              "required_capabilities": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "selection_rule": {
+                "$ref": "#/components/schemas/SelectionRuleV1"
+              },
+              "split_policy": {
+                "$ref": "#/components/schemas/SplitPolicyV1"
+              },
+              "validity_seconds": {
+                "$ref": "#/components/schemas/DbCounter"
+              },
+              "version": {
+                "format": "int32",
+                "maximum": 2147483647,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "project_id",
+              "version",
+              "created_at",
+              "question",
+              "selection_rule",
+              "split_policy",
+              "metric_requirements",
+              "minimum_observations",
+              "maximum_missing_fraction",
+              "require_real_data",
+              "required_capabilities",
+              "maximum_sealed_uses_per_lineage",
+              "validity_seconds"
+            ],
+            "type": "object"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "replayed",
+          "resource"
+        ],
+        "type": "object"
+      },
+      "CommandResult_InputSetView": {
+        "additionalProperties": false,
+        "properties": {
+          "replayed": {
+            "type": "boolean"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "header": {
+                "$ref": "#/components/schemas/InputSetSummary"
+              },
+              "items": {
+                "items": {
+                  "$ref": "#/components/schemas/InputItemView"
+                },
+                "maxItems": 256,
+                "minItems": 1,
+                "type": "array"
+              }
+            },
+            "required": [
+              "header",
+              "items"
             ],
             "type": "object"
           },
@@ -566,6 +714,22 @@
         ],
         "type": "object"
       },
+      "ComparableScope": {
+        "enum": [
+          "FAMILY_LINEAGE"
+        ],
+        "type": "string"
+      },
+      "Comparator": {
+        "enum": [
+          "GT",
+          "GE",
+          "LT",
+          "LE",
+          "BETWEEN"
+        ],
+        "type": "string"
+      },
       "CredentialCreated": {
         "additionalProperties": false,
         "properties": {
@@ -705,11 +869,36 @@
         ],
         "type": "object"
       },
+      "DataOrigin": {
+        "enum": [
+          "REAL",
+          "SYNTHETIC",
+          "FIXTURE",
+          "LEGACY_UNKNOWN"
+        ],
+        "type": "string"
+      },
+      "DataPartition": {
+        "enum": [
+          "DISCOVERY",
+          "VALIDATION",
+          "SEALED",
+          "FORWARD"
+        ],
+        "type": "string"
+      },
       "DbCounter": {
         "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
         "maxLength": 19,
         "minLength": 1,
         "pattern": "^(?:[1-9][0-9]{0,17}|0|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])",
+        "type": "string"
+      },
+      "DecimalValue": {
+        "description": "Plain decimal exactly representable by NUMERIC(38,18).",
+        "maxLength": 64,
+        "minLength": 1,
+        "pattern": "^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])",
         "type": "string"
       },
       "DeviceList": {
@@ -741,6 +930,167 @@
         ],
         "type": "object"
       },
+      "EvaluationPolicyCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "comparison_input_set_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "execution_assumptions_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "maximum_missing_fraction": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "maximum_sealed_uses_per_lineage": {
+            "format": "int32",
+            "maximum": 2147483647,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "metric_requirements": {
+            "items": {
+              "$ref": "#/components/schemas/MetricRequirementV1"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "type": "array"
+          },
+          "minimum_observations": {
+            "format": "int32",
+            "maximum": 2147483647,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "question": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "require_real_data": {
+            "type": "boolean"
+          },
+          "required_capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/SelectionParametersV1"
+          },
+          "split_policy": {
+            "$ref": "#/components/schemas/SplitPolicyV1"
+          },
+          "validity_seconds": {
+            "$ref": "#/components/schemas/DbCounter"
+          }
+        },
+        "required": [
+          "schema_version",
+          "project_id",
+          "question",
+          "comparison_input_set_id",
+          "execution_assumptions_id",
+          "selection",
+          "split_policy",
+          "metric_requirements",
+          "minimum_observations",
+          "maximum_missing_fraction",
+          "require_real_data",
+          "required_capabilities",
+          "maximum_sealed_uses_per_lineage",
+          "validity_seconds"
+        ],
+        "type": "object"
+      },
+      "EvaluationPolicyView": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "maximum_missing_fraction": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "maximum_sealed_uses_per_lineage": {
+            "format": "int32",
+            "maximum": 2147483647,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "metric_requirements": {
+            "items": {
+              "$ref": "#/components/schemas/MetricRequirementV1"
+            },
+            "type": "array"
+          },
+          "minimum_observations": {
+            "format": "int32",
+            "maximum": 2147483647,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "question": {
+            "type": "string"
+          },
+          "require_real_data": {
+            "type": "boolean"
+          },
+          "required_capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "selection_rule": {
+            "$ref": "#/components/schemas/SelectionRuleV1"
+          },
+          "split_policy": {
+            "$ref": "#/components/schemas/SplitPolicyV1"
+          },
+          "validity_seconds": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "version": {
+            "format": "int32",
+            "maximum": 2147483647,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "version",
+          "created_at",
+          "question",
+          "selection_rule",
+          "split_policy",
+          "metric_requirements",
+          "minimum_observations",
+          "maximum_missing_fraction",
+          "require_real_data",
+          "required_capabilities",
+          "maximum_sealed_uses_per_lineage",
+          "validity_seconds"
+        ],
+        "type": "object"
+      },
       "FieldError": {
         "properties": {
           "code": {
@@ -764,6 +1114,195 @@
         "format": "uuid",
         "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
         "type": "string"
+      },
+      "InputItemV1": {
+        "oneOf": [
+          {
+            "properties": {
+              "dataset_revision_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "kind": {
+                "enum": [
+                  "DATASET"
+                ],
+                "type": "string"
+              },
+              "role": {
+                "$ref": "#/components/schemas/DataPartition"
+              }
+            },
+            "required": [
+              "dataset_revision_id",
+              "role",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "artifact_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "kind": {
+                "enum": [
+                  "ARTIFACT"
+                ],
+                "type": "string"
+              },
+              "role": {
+                "$ref": "#/components/schemas/ArtifactInputRole"
+              }
+            },
+            "required": [
+              "artifact_id",
+              "role",
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "InputItemView": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "item": {
+            "$ref": "#/components/schemas/InputItemV1"
+          },
+          "ordinal": {
+            "format": "int32",
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/DataOrigin"
+          },
+          "pit_status": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PitStatus"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "ordinal",
+          "item",
+          "origin"
+        ],
+        "type": "object"
+      },
+      "InputPurpose": {
+        "enum": [
+          "DISCOVERY",
+          "VALIDATION",
+          "SEALED",
+          "PORTFOLIO",
+          "FORWARD"
+        ],
+        "type": "string"
+      },
+      "InputSetCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "decision_cutoff": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/InputItemV1"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "purpose": {
+            "$ref": "#/components/schemas/InputPurpose"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "project_id",
+          "purpose",
+          "decision_cutoff",
+          "items"
+        ],
+        "type": "object"
+      },
+      "InputSetSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decision_cutoff": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "frozen_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "purpose": {
+            "$ref": "#/components/schemas/InputPurpose"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "purpose",
+          "decision_cutoff",
+          "frozen_at",
+          "revision",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "InputSetView": {
+        "additionalProperties": false,
+        "properties": {
+          "header": {
+            "$ref": "#/components/schemas/InputSetSummary"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/InputItemView"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "header",
+          "items"
+        ],
+        "type": "object"
       },
       "LoginRequest": {
         "additionalProperties": false,
@@ -872,6 +1411,71 @@
           "expires_at"
         ],
         "type": "object"
+      },
+      "MetricRequirementV1": {
+        "additionalProperties": false,
+        "properties": {
+          "comparator": {
+            "$ref": "#/components/schemas/Comparator"
+          },
+          "method_allowlist": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "metric_code": {
+            "type": "string"
+          },
+          "minimum_observations": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "threshold_high": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DecimalValue"
+              }
+            ]
+          },
+          "threshold_low": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DecimalValue"
+              }
+            ]
+          }
+        },
+        "required": [
+          "schema_version",
+          "metric_code",
+          "scope",
+          "comparator",
+          "required",
+          "minimum_observations",
+          "method_allowlist"
+        ],
+        "type": "object"
+      },
+      "MissingSelectionMetric": {
+        "enum": [
+          "INCONCLUSIVE"
+        ],
+        "type": "string"
       },
       "OperatorCommand": {
         "oneOf": [
@@ -982,6 +1586,42 @@
               "operation"
             ],
             "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "INPUT_SET_CREATE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/InputSetCreate"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "EVALUATION_POLICY_CREATE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/EvaluationPolicyCreate"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -1063,7 +1703,9 @@
           "PRINCIPAL_CREATE",
           "PRINCIPAL_UPDATE",
           "CREDENTIAL_ISSUE",
-          "CREDENTIAL_REVOKE"
+          "CREDENTIAL_REVOKE",
+          "INPUT_SET_CREATE",
+          "EVALUATION_POLICY_CREATE"
         ],
         "type": "string"
       },
@@ -1116,6 +1758,177 @@
                 "scope_codes",
                 "issued_at",
                 "expires_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "items"
+        ],
+        "type": "object"
+      },
+      "Page_EvaluationPolicyView": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "maximum_missing_fraction": {
+                  "$ref": "#/components/schemas/DecimalValue"
+                },
+                "maximum_sealed_uses_per_lineage": {
+                  "format": "int32",
+                  "maximum": 2147483647,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "metric_requirements": {
+                  "items": {
+                    "$ref": "#/components/schemas/MetricRequirementV1"
+                  },
+                  "type": "array"
+                },
+                "minimum_observations": {
+                  "format": "int32",
+                  "maximum": 2147483647,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "project_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "question": {
+                  "type": "string"
+                },
+                "require_real_data": {
+                  "type": "boolean"
+                },
+                "required_capabilities": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "selection_rule": {
+                  "$ref": "#/components/schemas/SelectionRuleV1"
+                },
+                "split_policy": {
+                  "$ref": "#/components/schemas/SplitPolicyV1"
+                },
+                "validity_seconds": {
+                  "$ref": "#/components/schemas/DbCounter"
+                },
+                "version": {
+                  "format": "int32",
+                  "maximum": 2147483647,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "project_id",
+                "version",
+                "created_at",
+                "question",
+                "selection_rule",
+                "split_policy",
+                "metric_requirements",
+                "minimum_observations",
+                "maximum_missing_fraction",
+                "require_real_data",
+                "required_capabilities",
+                "maximum_sealed_uses_per_lineage",
+                "validity_seconds"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "items"
+        ],
+        "type": "object"
+      },
+      "Page_InputSetSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "decision_cutoff": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "frozen_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "project_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "purpose": {
+                  "$ref": "#/components/schemas/InputPurpose"
+                },
+                "revision": {
+                  "$ref": "#/components/schemas/Revision"
+                }
+              },
+              "required": [
+                "id",
+                "project_id",
+                "purpose",
+                "decision_cutoff",
+                "frozen_at",
+                "revision",
+                "created_at"
               ],
               "type": "object"
             },
@@ -1467,6 +2280,14 @@
           "items"
         ],
         "type": "object"
+      },
+      "PitStatus": {
+        "enum": [
+          "VERIFIED",
+          "UNVERIFIED",
+          "INVALID"
+        ],
+        "type": "string"
       },
       "PrincipalCreate": {
         "additionalProperties": false,
@@ -2082,6 +2903,252 @@
         "maximum": 1,
         "minimum": 1,
         "type": "integer"
+      },
+      "SelectionDirection": {
+        "enum": [
+          "MAXIMIZE",
+          "MINIMIZE"
+        ],
+        "type": "string"
+      },
+      "SelectionEvaluationKind": {
+        "enum": [
+          "WALK_FORWARD",
+          "SEALED"
+        ],
+        "type": "string"
+      },
+      "SelectionParametersV1": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_count": {
+            "format": "int32",
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/SelectionDirection"
+          },
+          "evaluation_kind": {
+            "$ref": "#/components/schemas/SelectionEvaluationKind"
+          },
+          "frequency": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "method_id": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "method_version": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "metric_code": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "metric_scope": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "unit": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "evaluation_kind",
+          "metric_code",
+          "metric_scope",
+          "method_id",
+          "method_version",
+          "unit",
+          "frequency",
+          "direction",
+          "candidate_count"
+        ],
+        "type": "object"
+      },
+      "SelectionRuleV1": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_count": {
+            "format": "int32",
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "comparable_scope": {
+            "$ref": "#/components/schemas/ComparableScope"
+          },
+          "comparison_input_set_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/SelectionDirection"
+          },
+          "evaluation_kind": {
+            "$ref": "#/components/schemas/SelectionEvaluationKind"
+          },
+          "execution_assumptions_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "family_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "frequency": {
+            "type": "string"
+          },
+          "method_id": {
+            "type": "string"
+          },
+          "method_version": {
+            "type": "string"
+          },
+          "metric_code": {
+            "type": "string"
+          },
+          "metric_scope": {
+            "type": "string"
+          },
+          "missing_required_metric": {
+            "$ref": "#/components/schemas/MissingSelectionMetric"
+          },
+          "root_lineage_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "tie_break": {
+            "$ref": "#/components/schemas/SelectionTieBreak"
+          },
+          "unit": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "comparable_scope",
+          "root_lineage_id",
+          "family_id",
+          "comparison_input_set_id",
+          "execution_assumptions_id",
+          "evaluation_kind",
+          "metric_code",
+          "metric_scope",
+          "method_id",
+          "method_version",
+          "unit",
+          "frequency",
+          "direction",
+          "candidate_count",
+          "tie_break",
+          "missing_required_metric"
+        ],
+        "type": "object"
+      },
+      "SelectionTieBreak": {
+        "enum": [
+          "EXPERIMENT_ID_ASC"
+        ],
+        "type": "string"
+      },
+      "SplitKind": {
+        "enum": [
+          "WALK_FORWARD",
+          "CPCV_FIXED_HORIZON"
+        ],
+        "type": "string"
+      },
+      "SplitPolicyV1": {
+        "additionalProperties": false,
+        "properties": {
+          "embargo_observations": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "group_count": {
+            "format": "int32",
+            "maximum": 65535,
+            "minimum": 2,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "interval_validation_required": {
+            "enum": [
+              true
+            ],
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SplitKind"
+          },
+          "label_horizon_observations": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DbCounter"
+              }
+            ]
+          },
+          "purge_observations": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "sealed_revision_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "step_size": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DbCounter"
+              }
+            ]
+          },
+          "test_group_count": {
+            "format": "int32",
+            "maximum": 65534,
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "test_size": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "train_size": {
+            "$ref": "#/components/schemas/DbCounter"
+          }
+        },
+        "required": [
+          "schema_version",
+          "kind",
+          "train_size",
+          "test_size",
+          "purge_observations",
+          "embargo_observations",
+          "interval_validation_required",
+          "sealed_revision_id"
+        ],
+        "type": "object"
       },
       "TrustedDevice": {
         "additionalProperties": false,
@@ -2777,6 +3844,652 @@
         "security": [],
         "tags": [
           "Authentication"
+        ]
+      }
+    },
+    "/api/v2/evaluation-policies": {
+      "get": {
+        "operationId": "evaluation_policies",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_EvaluationPolicyView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Shared native machine attempt limit or bounded crypto capacity; respect Retry-After.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Research preparation"
+        ]
+      },
+      "post": {
+        "operationId": "create_evaluation_policy",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvaluationPolicyCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult_EvaluationPolicyView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Shared native machine attempt limit or bounded crypto capacity; respect Retry-After.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": [],
+            "OperatorCommandGrant": []
+          }
+        ],
+        "tags": [
+          "Research preparation"
+        ]
+      }
+    },
+    "/api/v2/evaluation-policies/{id}": {
+      "get": {
+        "operationId": "evaluation_policy",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvaluationPolicyView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Shared native machine attempt limit or bounded crypto capacity; respect Retry-After.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Research preparation"
+        ]
+      }
+    },
+    "/api/v2/input-sets": {
+      "get": {
+        "operationId": "input_sets",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_InputSetSummary"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Shared native machine attempt limit or bounded crypto capacity; respect Retry-After.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Research preparation"
+        ]
+      },
+      "post": {
+        "operationId": "create_input_set",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InputSetCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult_InputSetView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Shared native machine attempt limit or bounded crypto capacity; respect Retry-After.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": [],
+            "OperatorCommandGrant": []
+          }
+        ],
+        "tags": [
+          "Research preparation"
+        ]
+      }
+    },
+    "/api/v2/input-sets/{id}": {
+      "get": {
+        "operationId": "input_set",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InputSetView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Shared native machine attempt limit or bounded crypto capacity; respect Retry-After.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Research preparation"
         ]
       }
     },

@@ -10,6 +10,7 @@ pub mod codex;
 pub mod control;
 pub mod evidence;
 pub mod lifecycle;
+pub mod research;
 pub mod runs;
 pub mod scalars;
 
@@ -19,6 +20,13 @@ use utoipa::OpenApi;
 
 #[derive(OpenApi)]
 #[openapi(components(schemas(
+    research::InputSetCreate,
+    research::InputSetView,
+    research::InputSetSummary,
+    research::ResearchListQuery,
+    research::EvaluationPolicyCreate,
+    research::EvaluationPolicyView,
+    research::FieldIssue,
     control::MachineSessionView,
     control::ProjectCreate,
     control::ProjectUpdate,

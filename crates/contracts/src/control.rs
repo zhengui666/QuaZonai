@@ -215,6 +215,8 @@ pub enum OperatorOperation {
     PrincipalUpdate,
     CredentialIssue,
     CredentialRevoke,
+    InputSetCreate,
+    EvaluationPolicyCreate,
 }
 impl OperatorOperation {
     pub fn code(self) -> &'static str {
@@ -225,12 +227,18 @@ impl OperatorOperation {
             Self::PrincipalUpdate => "PRINCIPAL_UPDATE",
             Self::CredentialIssue => "CREDENTIAL_ISSUE",
             Self::CredentialRevoke => "CREDENTIAL_REVOKE",
+            Self::InputSetCreate => "INPUT_SET_CREATE",
+            Self::EvaluationPolicyCreate => "EVALUATION_POLICY_CREATE",
         }
     }
     pub fn creates(self) -> bool {
         matches!(
             self,
-            Self::ProjectCreate | Self::PrincipalCreate | Self::CredentialIssue
+            Self::ProjectCreate
+                | Self::PrincipalCreate
+                | Self::CredentialIssue
+                | Self::InputSetCreate
+                | Self::EvaluationPolicyCreate
         )
     }
 }
@@ -248,6 +256,8 @@ pub enum OperatorCommand {
     PrincipalUpdate(PrincipalUpdate),
     CredentialIssue(CredentialIssueIntent),
     CredentialRevoke(CredentialRevoke),
+    InputSetCreate(crate::research::InputSetCreate),
+    EvaluationPolicyCreate(Box<crate::research::EvaluationPolicyCreate>),
 }
 impl OperatorCommand {
     pub fn operation(&self) -> OperatorOperation {
@@ -258,6 +268,8 @@ impl OperatorCommand {
             Self::PrincipalUpdate(_) => OperatorOperation::PrincipalUpdate,
             Self::CredentialIssue(_) => OperatorOperation::CredentialIssue,
             Self::CredentialRevoke(_) => OperatorOperation::CredentialRevoke,
+            Self::InputSetCreate(_) => OperatorOperation::InputSetCreate,
+            Self::EvaluationPolicyCreate(_) => OperatorOperation::EvaluationPolicyCreate,
         }
     }
     pub fn normalized_request(&self) -> Result<serde_json::Value, serde_json::Error> {
@@ -268,6 +280,8 @@ impl OperatorCommand {
             Self::PrincipalUpdate(v) => serde_json::to_value(v),
             Self::CredentialIssue(v) => serde_json::to_value(v),
             Self::CredentialRevoke(v) => serde_json::to_value(v),
+            Self::InputSetCreate(v) => serde_json::to_value(v),
+            Self::EvaluationPolicyCreate(v) => serde_json::to_value(v),
         }
     }
 }

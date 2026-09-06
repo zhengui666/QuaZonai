@@ -1,6 +1,6 @@
 # CLI 命令
 
-完整产品合同在 DESIGN。当前已实现原生验证、逐轮 Store、浏览器认证和 Project/机器身份 HTTP 控制面；研究/组合/交付命令仍待实现，不提供绕过 API 的手工 SQL 业务路径。
+完整产品合同在 DESIGN。当前已实现原生验证、逐轮 Store、浏览器认证、Project/机器身份和不可变研究准备 HTTP 控制面；研究/组合/交付命令仍待实现，不提供绕过 API 的手工 SQL 业务路径。
 
 ## 认证服务与本机管理
 
@@ -34,6 +34,38 @@ cargo run --locked -p server -- serve --state-dir ./var \
 `server openapi` 包含实际 Project 与机器身份路由，不是手写路径清单或待实现占位。项目命令的 HTTP/CLI/MCP 统一以服务端事务为准，不提供 SQL 业务后门。控制面专用远程 CLI 与 MCP 仍在同一 PR 中接通，不能把本机 `server` 管理命令视作已实现全部研究命令。
 
 真实浏览器：原生 TOTP 登录后使用同源私有 cookie，写操作携带 Origin、Idempotency-Key 和 DTO 的 expected_revision。机器：只使用独立 Bearer token，不复制浏览器 cookie；`GET /api/v2/auth/machine` 显示自身公开归属/权限/到期，`GET /api/v2/projects` 只返回授权项目。项目和凭据管理要求 Operator 浏览器的最近认证，或专属 CLI 身份提交原生 TOTP 后获得一次性精确命令 grant；Agent、自动化和下游不能取得该人工授权。
+
+## 已实现的研究准备 HTTP 合同
+
+`GET/POST /api/v2/input-sets`、`GET /api/v2/input-sets/{id}` 与
+`GET/POST /api/v2/evaluation-policies`、`GET /api/v2/evaluation-policies/{id}`
+均已接通 Rust 业务事务。集合 GET 必须给 `project_id`，`limit` 为1–100，
+后续页使用响应中的 UUID `next_cursor`。完整字段由 `server openapi` 生成；
+这些新增路径尚没有专属远程 CLI 子命令，不把本机管理入口当作研究客户端。
+
+输入创建提交目的、微秒精度的 `decision_cutoff` 和1–256个已登记原生对象的
+类型化引用；id、连续 ordinal、冻结时间由服务端生成。结果只含元数据，
+不会返回 Sealed 原始字节、宿主路径或原生存储位置。数据源停用、许可过期或
+撤销、跨项目产物和分区不匹配会拒绝新登记；不要手工写 SQL 创建引用来绕过。
+目前数据源/数据版本和执行假设的可信登记入口仍须在后续工作包接通。
+
+评估政策创建需要同项目已冻结 comparison 输入、执行假设和完整 selection、
+split、required 指标等意图。policy 版本和 experiment_family/root_lineage
+由服务端同事务分配，客户端不能挑选新谱系来清除暴露。WALK_FORWARD 使用
+VALIDATION comparison 且不得包含 sealed_revision；SEALED selection 使用
+包含精确 sealed_revision 的 SEALED comparison。策略、输入和成员创建后不能
+原地追加或改写；相同幂等请求只返回首次冻结的元数据。
+
+写操作仍要求近期 Operator 浏览器认证，或 CLI 的一次性 TOTP grant：
+`INPUT_SET_CREATE` / `EVALUATION_POLICY_CREATE` 的 target 为 null，授权绑定
+完整非秘密请求。RESEARCH_READ 的机器只能读精确授权项目，不因此得到发布
+或验证权限。输入/政策 POST 与完整人工授权请求上限64KiB，超过直接拒绝；
+其他原有路径仍保留其上限。422 的 `field_errors` 指明安全字段路径和原因，
+不包含输入数据、密钥、存储路径或 SQL。
+
+保存 FIXTURE/UNVERIFIED 输入及未核验方法的政策，仅表示如实保存研究准备；
+Brief 冻结、任务准入与独立评估必须另行核验实际原生能力、当前许可和证据资格。
+这个 API 不执行模型、切分、估计或回测，不能用登记成功替代生产可交付结论。
 
 ## 原生组件与合同验证
 

@@ -11,6 +11,7 @@ mod db;
 pub mod lifecycle;
 pub mod machine_auth;
 mod migration;
+pub mod research;
 pub mod turns;
 
 use sqlx::{postgres::PgPoolOptions, PgPool};

@@ -89,7 +89,7 @@ async fn locked_principal(
     .await?;
     principal(&row)
 }
-fn page<T>(mut items: Vec<T>, limit: u16, id: impl Fn(&T) -> Id) -> Page<T> {
+pub(crate) fn page<T>(mut items: Vec<T>, limit: u16, id: impl Fn(&T) -> Id) -> Page<T> {
     let more = items.len() > usize::from(limit);
     items.truncate(usize::from(limit));
     let next_cursor = if more { items.last().map(id) } else { None };

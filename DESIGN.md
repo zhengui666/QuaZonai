@@ -819,6 +819,97 @@ f64 再判断区间次序或 PASS。Metric 仍是原生 finite f64：比较语�
 所有u16/u32字段的生成合同同时声明本机类型上界65535/4294967295；业务最小值
 和数据库更窄限制仍由相应领域校验，不以wire类型可解析替代可执行性。
 
+### A4.3 不可变研究输入与评估政策登记
+
+本节是研究准备命令，不是实际评估、算法支持或资格判定。Policy 可以登记尚待原生
+能力确认的意图；**Brief 冻结和任务准入仍必须核对实际原生方法/版本/单位/频率、
+固定 horizon、数据许可/PIT、预算与暴露**，不能把登记成功视作 SUPPORTED 或 PASS。
+未知方法不自动替换，已有政策不改写，已消耗的研究机会不因创建政策或 family 重置。
+
+`POST /api/v2/input-sets` 接受严格 `InputSetCreate`：`schema_version=1`、
+`project_id:Id`、`purpose:DISCOVERY|VALIDATION|SEALED|PORTFOLIO|FORWARD`、
+`decision_cutoff:Time`、`items:InputItemV1[1..256]`。`InputItemV1` 是带 `kind`
+判别字段的封闭联合：`DATASET(dataset_revision_id:Id,role:DISCOVERY|VALIDATION|SEALED|FORWARD)`
+或 `ARTIFACT(artifact_id:Id,role:CODE|PARAMETERS|SIGNALS|TARGETS|MODEL|REPORT|METRICS|DATA_QUALITY)`。
+不得同时给两个引用、传入 id/ordinal、宿主路径或 URL，未知字段拒绝；重复原生本地
+引用拒绝，不自动去重改变输入。服务端按请求数组顺序分配0起连续 ordinal。整个
+头、成员及 frozen_at 和公开原始命令回执同事务提交；没有公开的草稿或追加接口。
+
+非归档项目才能登记。DATASET 的 role 必须等于 immutable partition_role，purpose
+必须匹配该 role；PORTFOLIO 只允许 DISCOVERY/VALIDATION。SEALED 原始数据不能进入
+其他目的的输入。登记时 data source/runtime 仍启用，数据许可在数据库当前时间生效
+且未被已生效撤销；dataset.available_through 不晚于 decision_cutoff。cutoff 不能是
+未来时间，非零亚微秒部分拒绝，不能先截断改变point-in-time边界。INVALID PIT 拒绝；UNVERIFIED/PIT 和非 REAL 来源可作为明确标记的研究准备
+输入，但不授予投产/资格，`require_real_data` 或验证政策在后续准入强制落实。
+ARTIFACT 必须属于同项目，role 等于实际 kind；EVALUATOR_ONLY 只可进入 SEALED。
+Secret、LOG、PACKAGE、MIGRATION 等不是可由该命令伪装的数据输入。
+
+`InputSetView` 返回 `header:InputSetSummary` 与有序 `items:InputItemView[]`。
+header 含 id/project_id/purpose/decision_cutoff/frozen_at/revision/created_at；item 含
+id/ordinal/item/origin/pit_status（artifact 时null）。没有 storage_object_ref、原生路径或
+原始字节。`GET /api/v2/input-sets?project_id=...&cursor=...&limit=1..100` 返回有界
+`Page<InputSetSummary>`；`GET /api/v2/input-sets/{id}` 返回详情。只能读已冻结输入，
+未知/跨项目均404；机器必须 RESEARCH_READ 和精确 project，能看 SEALED 引用元数据
+并不等于可读取其字节。全部读取使用同一事务进行当前授权复核。
+
+`POST /api/v2/evaluation-policies` 接受严格 `EvaluationPolicyCreate`：
+`schema_version/project_id`、`question:text[1..8000]`、`comparison_input_set_id:Id`、
+`execution_assumptions_id:Id`、`selection:SelectionParametersV1`、`split_policy:SplitPolicyV1`、
+`metric_requirements:MetricRequirementV1[1..64]`、`minimum_observations:u32[1..2147483647]`、
+`maximum_missing_fraction:Decimal[0,1]`、`require_real_data:bool`、
+`required_capabilities:text[1..120][0..64]`（非空字符串、不重复）、
+`maximum_sealed_uses_per_lineage:u32[1..2147483647]`、`validity_seconds:DbCounter>0`。
+validity_seconds 必须可由原生时间库从数据库当前时间表示为有限未来时刻。
+
+SelectionParameters 只包含 A4.1 的 evaluation_kind、metric_code、metric_scope、method_id、
+method_version、unit、frequency、direction、candidate_count；各文本1..120且无控制字符，
+candidate_count是1..65535。服务端在项目行锁下分配policy.version和同项目root的新
+experiment_family，question保存于family，形成完整 SelectionRuleV1。comparable_scope固定
+FAMILY_LINEAGE，tie_break固定EXPERIMENT_ID_ASC，missing_required_metric固定INCONCLUSIVE；
+root/family不得由请求指定。政策、family、精确选择引用与原始命令回执同事务提交。
+comparison input须同项目且FROZEN；SEALED选择必须指向SEALED purpose，WALK_FORWARD
+必须指向VALIDATION purpose。execution assumptions的费用/流动性产物只能属于该项目
+或部署级共享（project_id=null）配置，不能借用另一项目的产物。
+
+SplitPolicy 各字段具有schema_version=1：train_size/test_size为正DbCounter，
+step_size为可空DbCounter，purge_observations/embargo_observations为DbCounter；
+group_count/test_group_count为可空u16，label_horizon_observations为可空正DbCounter；
+interval_validation_required必须true，sealed_revision_id为真实SEALED分区且仍有当前许可的Id。
+WALK_FORWARD要求正step_size，group_count/test_group_count均null；可空label_horizon，
+有值时必须正数。CPCV_FIXED_HORIZON要求step_size=null、group_count>=2、
+1<=test_group_count<group_count、正label_horizon。观察数相加必须不溢出bigint；
+这些校验不自行执行切分或证明区间无泄漏。sealed_revision不可出现在WALK_FORWARD
+comparison input；SEALED选择则comparison input必须包含这一精确sealed_revision，不能
+以另一个SEALED引用代替。任何超出原生能力的split在实际准入仍失败。
+
+required metric至少一项；(metric_code,scope)不重复；code/scope/method_allowlist元素
+1..120，allowlist非空不重复且最多64项。比较器和Decimal端点复用A4.2精确规则。
+selection须对应required项，其method_id在该项allowlist中。没有根据候选数据自动
+选择政策/提高阈值，未登记原生方法不会被标为已支持。
+
+`EvaluationPolicyView` 含 id/project_id/version/created_at、question、完整selection_rule、
+split_policy和其余上述政策字段。GET列表要求project_id，稳定UUID倒序cursor和1..100
+分页；详情按同项目授权，没有PUT/DELETE或原地更改。遇到无法解析的历史不完整合同
+返回明确服务完整性失败，不静默将旧证据转换成新政策或从列表消失。
+
+上述两种写命令复用现有OperatorCommand与原始响应幂等回执，新增封闭操作
+INPUT_SET_CREATE/EVALUATION_POLICY_CREATE。浏览器仍需近期真实认证；人工CLI只经绑定
+完整非秘密请求的一次性TOTP grant。RESEARCH_READ机器、Mission与Automation不能创建。
+规范请求不含密码/secret，失败无头记录、成员、family或回执；准确重试返回原始成功
+响应，不重新验证当前数据许可以改写历史成功，也不执行第二次登记。后续新消费必须
+再次核对当前许可。数据库错误不向客户端暴露；已知字段拒绝返回422及字段路径/原因码。
+
+锁序复用Operator auth→project；随后按稳定UUID顺序锁source、runtime和grant。
+source的runtime/native_catalog/provider绑定本来不可变；source/runtime采用FOR SHARE，
+授权grant采用FOR SHARE。data_use_revocations的插入取得同grant FOR UPDATE，确保
+撤销先取得锁时后续消费重新核对并拒绝；消费先取得锁时在撤销前线性化。未来新任务
+准入必须再次核对而非沿用本次成功。输入成员的数据库原生封口触发器保持不变。通用revision触发器允许零个额外绑定参数（Runtime/Downstream）：将原生NULL TG_ARGV视为空数组，仍强制id/created_at不变、revision递增及溢出拒绝，不拒绝合法停用。
+
+HTTP请求体上限64KiB用于这两个研究准备POST及承载相同完整请求的operator-command-grants；其他接口仍使用既有更小上限；不因
+有界数组而取消字节上限。metadata分页不读取原始市场字节。原生回归覆盖事务回滚、
+幂等并发、项目/Sealed隔离、许可撤销与停用锁等待、字段/时间边界和真实HTTP认证；
+生成OpenAPI从同一Rust DTO和实际处理器导出，不手抄平行schema。
+
 ## A5. Mandate、Candidate、目标与 Release
 
 ```text

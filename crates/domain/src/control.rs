@@ -59,6 +59,8 @@ pub fn command(request: &OperatorCommand) -> Result<(), DomainError> {
         OperatorCommand::PrincipalUpdate(r) => name(&r.name),
         OperatorCommand::CredentialIssue(r) => scopes(&r.request),
         OperatorCommand::CredentialRevoke(r) => text(&r.reason, 1, 2000, true),
+        OperatorCommand::InputSetCreate(r) => crate::research::input_set(r),
+        OperatorCommand::EvaluationPolicyCreate(r) => crate::research::evaluation_policy(r),
     }
 }
 

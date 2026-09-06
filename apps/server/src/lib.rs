@@ -5,6 +5,7 @@ mod access;
 pub mod auth;
 pub mod control;
 pub mod error;
+pub mod research;
 pub mod runs;
 pub mod secrets;
 
@@ -160,7 +161,24 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         .route("/api/v2/auth/machine", get(control::machine_session))
         .route(
             "/api/v2/auth/operator-command-grants",
-            post(control::issue_grant),
+            post(control::issue_grant).layer(DefaultBodyLimit::max(64 * 1024)),
+        )
+        .route(
+            "/api/v2/input-sets",
+            get(research::input_sets)
+                .post(research::create_input_set)
+                .layer(DefaultBodyLimit::max(64 * 1024)),
+        )
+        .route("/api/v2/input-sets/{id}", get(research::input_set))
+        .route(
+            "/api/v2/evaluation-policies",
+            get(research::evaluation_policies)
+                .post(research::create_evaluation_policy)
+                .layer(DefaultBodyLimit::max(64 * 1024)),
+        )
+        .route(
+            "/api/v2/evaluation-policies/{id}",
+            get(research::evaluation_policy),
         )
         .fallback(|| async {
             ApiError::new(StatusCode::NOT_FOUND, "NOT_FOUND", "接口不存在。")
@@ -257,7 +275,9 @@ async fn browser_boundary(State(state): State<AppState>, request: Request, next:
 control::projects,control::project,control::create_project,control::update_project,
 control::principals,control::create_principal,control::update_principal,
 control::credentials,control::issue_credential,control::revoke_credential,
-control::machine_session,control::issue_grant,runs::list,runs::get,runs::cancel,runs::events),components(schemas(error::Problem)),tags((name="Authentication",description="Native TOTP and revocable browser sessions")))]
+control::machine_session,control::issue_grant,runs::list,runs::get,runs::cancel,runs::events,
+research::input_sets,research::input_set,research::create_input_set,
+research::evaluation_policies,research::evaluation_policy,research::create_evaluation_policy),components(schemas(error::Problem)),tags((name="Authentication",description="Native TOTP and revocable browser sessions")))]
 struct HttpContracts;
 pub fn openapi_json() -> Result<String, serde_json::Error> {
     let mut document = HttpContracts::openapi();

@@ -26,7 +26,7 @@ pub struct MetricGate {
     pub reasons: Vec<String>,
 }
 
-fn thresholds(
+pub(crate) fn thresholds(
     requirement: &MetricRequirementV1,
 ) -> Result<
     (

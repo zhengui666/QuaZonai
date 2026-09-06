@@ -38,6 +38,7 @@ pub struct ApiError {
     detail: &'static str,
     retry_after: Option<u32>,
     current_revision: Option<Revision>,
+    field_errors: Vec<FieldError>,
 }
 impl ApiError {
     pub fn new(status: StatusCode, code: &'static str, detail: &'static str) -> Self {
@@ -47,6 +48,7 @@ impl ApiError {
             detail,
             retry_after: None,
             current_revision: None,
+            field_errors: Vec::new(),
         }
     }
     pub fn internal() -> Self {
@@ -88,7 +90,7 @@ impl IntoResponse for ApiError {
             detail: self.detail,
             request_id,
             current_revision: self.current_revision,
-            field_errors: Vec::new(),
+            field_errors: self.field_errors,
             safe_next_actions: match self.code {
                 "AUTH_REQUIRED" | "RECENT_AUTH_REQUIRED" => vec!["AUTHENTICATE"],
                 "AUTH_RATE_LIMITED" => vec!["RETRY_AFTER"],
@@ -197,6 +199,18 @@ impl From<StoreError> for ApiError {
                 "TURN_PENDING",
                 "此前模型请求仍待确认，不能重复发送。",
             ),
+            StoreError::Domain(domain::DomainError::Fields(fields)) => {
+                let mut error = Self::validation();
+                error.field_errors = fields
+                    .into_iter()
+                    .map(|f| FieldError {
+                        field: f.field,
+                        code: f.code,
+                        message: f.message,
+                    })
+                    .collect();
+                error
+            }
             StoreError::Domain(domain::DomainError::Invalid(_)) => Self::validation(),
             StoreError::Domain(_) => Self::new(
                 StatusCode::CONFLICT,

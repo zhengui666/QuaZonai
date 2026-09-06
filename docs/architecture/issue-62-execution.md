@@ -289,6 +289,43 @@ CI are recorded in the PR, not retroactively assigned to these local logs.
 These source/authorization regressions do not establish the still-missing
 production research, runtime-isolation, portfolio or protected-account acceptance.
 
+## Immutable research preparation (2026-09-06)
+
+This implementation starts from remote `a41e8709576d344919ffbe121b2619932793fe0d`
+and adds typed InputSet and EvaluationPolicy HTTP/Store commands, with DESIGN A4.3
+written before code. Public input metadata never contains native storage references
+or sealed bytes. Metadata registration is neither algorithm execution nor capability,
+PIT, PASS, qualification or deliverability proof. Complete Brief/worker/native runtime
+admission remains separate work, including rechecking current data authority.
+
+The existing OperatorCommand/receipt path authorizes and atomically publishes a
+frozen input aggregate or a policy/family bound to the project's immutable lineage.
+Policy versions are allocated under the project lock. Dataset role/cutoff, source
+and runtime availability, current immutable grant/revocation and exact artifact
+ownership are rechecked with native row locks. Revocation inserts lock the same
+grant; a separate read after lock acquisition uses a fresh READ COMMITTED snapshot.
+Only exact scoped machine reads are enabled; no new MachineScope or SQL backdoor.
+
+Twenty-two new tests cover three native wire/schema cases, two pure contract cases,
+twelve real PostgreSQL cases and five real Axum/native-authentication cases. The
+latter use actual Cookie/Bearer, TOTP, Argon2 and SecretVault with disposable migrated
+databases; the new HTTP suite uses the actual router, not a mocked API. Real lock
+waits, opposite-order revocation/consumption, concurrent idempotency, versions,
+sealed/WF identity rules, complete CLI-grant request binding, safe field diagnostics,
+large request limits and full rollback of failed receipts are exercised.
+
+These tests exposed an existing zero-argument `guard_revision` defect: PostgreSQL
+provides NULL TG_ARGV, and FOREACH failed with SQLSTATE 22004 for otherwise legitimate
+Runtime/Downstream updates. The additive 0012 migration coalesces only that native
+argument array; the regression executes the unchanged original function to reproduce
+22004, then verifies updates, versioning and immutable-identity/source rejection
+under the replacement. Applied migrations and Cargo.lock remain untouched.
+
+Validation results, exact source tree and the independent published-Head CI/review
+are recorded in the PR, not inferred from test definitions or a historical Head.
+Parallel Run/SSE/CLI and Ant Design implementation is preserved and is not claimed
+as part of this preparation slice.
+
 ## Explicit gaps and completion boundary
 
 Complete Run admission/takeover, research services and machine authorization,
