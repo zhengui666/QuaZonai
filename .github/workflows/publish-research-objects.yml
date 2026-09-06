@@ -11,9 +11,8 @@ jobs:
     timeout-minutes: 10
     env:
       EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
-      VERIFIED_BASE: d6eac5b6261e66cbce5ffa82c8f225a9915e137e
-      BASE_TREE: 4534c0e4c521850920599a394f746e37f1b8a809
-      VERIFIED_TREE: 382668825946753b0b2551d284eb67dbbbd47c76
+      ANCESTOR: d6eac5b6261e66cbce5ffa82c8f225a9915e137e
+      ANCESTOR_TREE: 8a49b1fa66cea3c8c0f511c383ea0641bc4cfd97
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -21,17 +20,19 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Integrate exact verified source without executing product code or changing refs
+      - name: Assemble source without executing product code or changing refs
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$EVENT_HEAD"
-          git merge-base --is-ancestor "$VERIFIED_BASE" "$EVENT_HEAD"
-          test "$(git rev-parse "$VERIFIED_BASE^{tree}")" = "$BASE_TREE"
           mkdir -p "$RUNNER_TEMP/research-objects"
+          exec > >(tee "$RUNNER_TEMP/research-objects/assembly.log") 2>&1
+          test "$(git rev-parse HEAD)" = "$EVENT_HEAD"
+          git merge-base --is-ancestor "$ANCESTOR" "$EVENT_HEAD"
+          test "$(git rev-parse "$ANCESTOR^{tree}")" = "$ANCESTOR_TREE"
           git archive "$EVENT_HEAD" | gzip > "$RUNNER_TEMP/research-objects/event-source.tar.gz"
           git rev-parse HEAD > "$RUNNER_TEMP/research-objects/event-commit.txt"
           git rev-parse HEAD^{tree} > "$RUNNER_TEMP/research-objects/event-tree.txt"
+          printf 'Original source recorded; assembling fixed native research objects.\n'
           : > "$RUNNER_TEMP/research.patch.xz"
           for blob in a153b76797c758e36e13c0d0c39c321909e6ba2d 5f3a7be1b5b29acce55e8a3163ed090d42948d2d 6e4c3f91c146892165e708c12bc2d76d331b0bc7 eaa87d57929bebcf8f8017f77f88fae8ecf32dc6 64f9f8ec58f59f96df082446e92d3f1b7b3257fd ae0ec288055669763ca5014d65c1eecdaa2823a0 47331ad4b9210f86da3350c9f45a104fcf36d45a 52ffb63741fe4278ea6cee1d5859040d9dea5155 48c2632e5fc973f699febeeb572014a486bb3af8; do
             gh api "repos/$GITHUB_REPOSITORY/git/blobs/$blob" --jq .content | base64 --decode >> "$RUNNER_TEMP/research.patch.xz"
@@ -39,7 +40,6 @@ jobs:
           test "$(wc -c < "$RUNNER_TEMP/research.patch.xz")" -eq 40392
           xz --decompress --stdout "$RUNNER_TEMP/research.patch.xz" > "$RUNNER_TEMP/research.patch"
           test "$(wc -c < "$RUNNER_TEMP/research.patch")" -eq 281298
-          git -c core.hooksPath=/dev/null checkout --detach "$VERIFIED_BASE"
           if git -c core.hooksPath=/dev/null apply --3way "$RUNNER_TEMP/research.patch"; then
             printf 'Expected explicit module/schema conflicts were absent.\n' >&2
             exit 1
@@ -60,20 +60,23 @@ jobs:
               if isinstance(a,dict) and isinstance(b,dict):
                   return {k:merge(a[k],b[k]) if k in a and k in b else a.get(k,b.get(k)) for k in a.keys()|b.keys()}
               return b
-          # These declarative unions were compared byte-for-byte with BOTH
-          # actual native Rust generators on the locally tested merged source.
-          # This is development source transport, never a CI contract rewrite.
+          # Development source assembly only. The executor must regenerate BOTH
+          # schemas with the real merged Rust code and compare before publication.
           for path in sorted(expected):
               if not path.endswith('.json'): continue
               a=json.loads(git('show',f':2:{path}'));b=json.loads(git('show',f':3:{path}'))
               Path(path).write_text(json.dumps(merge(a,b),ensure_ascii=False,sort_keys=True,indent=2)+'\n')
+          for path in sorted(expected):
+              if not path.endswith('.json') and any(marker in Path(path).read_text() for marker in ('<<<<<<<','=======','>>>>>>>')):
+                  raise SystemExit('unresolved source conflict')
           subprocess.run(['git','add',*sorted(expected)],check=True)
-          Path('.github/workflows/publish-research-objects.yml').unlink()
-          subprocess.run(['git','add','-u','.github/workflows/publish-research-objects.yml'],check=True)
+          for path in ['.github/workflows/publish-research-objects.yml','.github/workflows/capture-integration-diagnostics.yml']:
+              if Path(path).exists():
+                  Path(path).unlink()
+                  subprocess.run(['git','add','-u',path],check=True)
           PY
-          test "$(git write-tree)" = "$VERIFIED_TREE"
           git diff --cached --check
-          test -z "$(git diff --cached --name-only -- Cargo.lock .github/workflows/ci.yml apps/server/src/main.rs apps/server/src/runs.rs crates/store/src/lifecycle.rs migrations/202609050001_domain.sql migrations/202609060001_browser_auth.sql migrations/202609060002_authority_invariants.sql migrations/202609060003_evidence_bindings.sql migrations/202609060004_doctor_boundary.sql migrations/202609060005_evaluation_publication.sql migrations/202609060006_upgrade_cutover.sql migrations/202609060007_control_authority.sql migrations/202609060008_machine_attempts.sql migrations/202609060009_native_sessions.sql migrations/202609060010_authority_repair.sql migrations/202609060011_run_lifecycle.sql)"
+          test -z "$(git diff --cached --name-only -- Cargo.lock .github/workflows/ci.yml apps/server/src/main.rs apps/server/src/runs.rs apps/server/src/client.rs crates/store/src/lifecycle.rs apps/job/src/backtest.rs apps/job/src/lib.rs migrations/202609050001_domain.sql migrations/202609060001_browser_auth.sql migrations/202609060002_authority_invariants.sql migrations/202609060003_evidence_bindings.sql migrations/202609060004_doctor_boundary.sql migrations/202609060005_evaluation_publication.sql migrations/202609060006_upgrade_cutover.sql migrations/202609060007_control_authority.sql migrations/202609060008_machine_attempts.sql migrations/202609060009_native_sessions.sql migrations/202609060010_authority_repair.sql migrations/202609060011_run_lifecycle.sql migrations/202609060013_delivery_boundary.sql)"
           python3 - <<'PY'
           import base64,json,os,subprocess
           from pathlib import Path
@@ -84,7 +87,7 @@ jobs:
           for raw in filter(None,git('diff','--cached','--name-only','--no-renames','-z').split(b'\0')):
               path=raw.decode();staged=git('ls-files','--stage','--',path).decode().strip()
               if not staged:
-                  if path!='.github/workflows/publish-research-objects.yml': raise SystemExit('unexpected deletion')
+                  if path not in ('.github/workflows/publish-research-objects.yml','.github/workflows/capture-integration-diagnostics.yml'): raise SystemExit('unexpected deletion')
                   entries.append({'path':path,'mode':'100644','type':'blob','sha':None})
                   continue
               metadata,actual=staged.split('\t',1);mode,sha,stage=metadata.split()
@@ -93,16 +96,17 @@ jobs:
               result=json.loads(subprocess.check_output(['gh','api','--method','POST',f'repos/{repo}/git/blobs','--input','-'],input=json.dumps(body).encode()))
               if result['sha']!=sha: raise SystemExit('native blob mismatch')
               entries.append({'path':path,'mode':mode,'type':'blob','sha':sha})
-          if len(entries)!=29: raise SystemExit('unexpected changed file count')
-          manifest={'base':os.environ['VERIFIED_BASE'],'base_tree':os.environ['BASE_TREE'],'tree':os.environ['VERIFIED_TREE'],'entries':entries}
+          if len(entries) not in (29,30): raise SystemExit('unexpected changed file count')
+          tree=git('write-tree').decode().strip()
+          manifest={'base':os.environ['EVENT_HEAD'],'base_tree':git('rev-parse','HEAD^{tree}').decode().strip(),'tree':tree,'entries':entries}
           Path(os.environ['RUNNER_TEMP'],'research-objects','entries.json').write_text(json.dumps(manifest,indent=2)+'\n')
           PY
-          git archive "$VERIFIED_TREE" | gzip > "$RUNNER_TEMP/research-objects/source.tar.gz"
-          printf 'Verified source integration only; no product execution, no ref update, no acceptance claim. Preserve parallel changes at final publication.\n' > "$RUNNER_TEMP/research-objects/SCOPE.txt"
-          printf 'Uploaded source delta for locally verified tree `%s`; latest final Head still requires independent CI and review.\n' "$VERIFIED_TREE" >> "$GITHUB_STEP_SUMMARY"
+          git archive "$(git write-tree)" | gzip > "$RUNNER_TEMP/research-objects/source.tar.gz"
+          printf 'Source assembly only, not acceptance. No product execution or ref update. Independently validate this full tree before creating a commit.\n' > "$RUNNER_TEMP/research-objects/SCOPE.txt"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
         with:
-          name: research-integrated-382668825946753b0b2551d284eb67dbbbd47c76
+          name: research-assembled-${{ github.event.pull_request.head.sha }}
           path: ${{ runner.temp }}/research-objects/
           retention-days: 1
           if-no-files-found: error
