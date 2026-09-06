@@ -1,16 +1,17 @@
 name: Temporary verified Git objects
 on:
-  pull_request:
+  push:
+    branches: ['rewrite/issue-62-rust-evidence']
     paths: ['.github/workflows/publish-verified-objects.yml']
 permissions:
   contents: write
 jobs:
   upload-objects:
-    if: github.event.pull_request.number == 63 && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'rewrite/issue-62-rust-evidence'
+    if: github.repository == 'zhengui666/QuaZonai' && github.ref == 'refs/heads/rewrite/issue-62-rust-evidence'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
-      EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+      EVENT_HEAD: ${{ github.sha }}
       VERIFIED_BASE: 0471ee08acfafd71c599138ff3a442e672810110
       BASE_TREE: 6b85afd88de8ffed0ff155b1aef0ee6f287d4e67
       VERIFIED_TREE: b230f9e1d68ac3ca86462e99f546ecf476d67541
@@ -18,15 +19,15 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 2
+          ref: ${{ github.sha }}
+          fetch-depth: 3
           persist-credentials: false
       - name: Upload verified native source objects without changing any ref
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EVENT_HEAD"
-          test "$(git rev-parse HEAD^)" = "$VERIFIED_BASE"
+          git merge-base --is-ancestor "$VERIFIED_BASE" "$EVENT_HEAD"
           test "$(git rev-parse "$VERIFIED_BASE^{tree}")" = "$BASE_TREE"
           test "$(git diff --name-only "$VERIFIED_BASE" "$EVENT_HEAD")" = '.github/workflows/publish-verified-objects.yml'
           : > "$RUNNER_TEMP/verified.patch.xz"
