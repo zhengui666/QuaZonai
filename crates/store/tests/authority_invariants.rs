@@ -198,11 +198,13 @@ async fn issuer_rechecks_epoch_after_a_real_principal_lock_wait(pool: PgPool) {
         .await
         .unwrap();
     let mut revoke = pool.begin().await.unwrap();
-    sqlx::query("UPDATE app.machine_principals SET credential_epoch=credential_epoch+1 WHERE id=$1")
-        .bind(cli.as_uuid())
-        .execute(&mut *revoke)
-        .await
-        .unwrap();
+    sqlx::query(
+        "UPDATE app.machine_principals SET credential_epoch=credential_epoch+1 WHERE id=$1",
+    )
+    .bind(cli.as_uuid())
+    .execute(&mut *revoke)
+    .await
+    .unwrap();
     let issue = credential(&pool, cli, "{RESEARCH_READ}", "OPERATOR", 1, 600);
     let release = async {
         let mut waiting = false;
@@ -228,7 +230,9 @@ async fn issuer_rechecks_epoch_after_a_real_principal_lock_wait(pool: PgPool) {
 
 async fn offer(pool: &PgPool, f: &Fixture) -> (Id, Id) {
     let (mandate, candidate, evaluation) = portfolio(pool, f).await;
-    let release = release(pool, f, mandate, candidate, evaluation).await.unwrap();
+    let release = release(pool, f, mandate, candidate, evaluation)
+        .await
+        .unwrap();
     let delivery = downstream(pool).await;
     let approval = Id::new();
     sqlx::query("INSERT INTO app.approvals(id,release_id,environment,downstream_id,authority_kind,evidence_set_id,granted_at,valid_until) VALUES($1,$2,'PAPER',$3,'OPERATOR',$4,statement_timestamp(),statement_timestamp()+interval '1 hour')")
