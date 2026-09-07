@@ -96,6 +96,18 @@ cargo run --locked -q -p server -- openapi
 
 ## 开发测试
 
+先选择仓库固定的编译器补丁，避免发行版 Cargo 或本机覆盖设置绕过 `rust-toolchain.toml`：
+
+```sh
+rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy
+rustup run 1.98.1 rustc -Vv
+rustup run 1.98.1 cargo fmt --all -- --check
+rustup run 1.98.1 cargo check --locked -p contracts -p domain -p store -p server
+```
+
+下列 Cargo 命令在同一固定工具链运行；存在本机覆盖时使用 `rustup run 1.98.1 cargo`。
+原生安装/版本/检查日志才是执行证据，配置文件里的版本不是已运行的编译器。
+
 仅对可丢弃的 PostgreSQL18 + PGMQ1.10.0 使用：
 
 ```sh
@@ -104,6 +116,22 @@ DATABASE_URL=postgres://TEST_USER:TEST_PASSWORD@127.0.0.1:55432/postgres \
 ```
 
 SQLx 创建独立测试数据库并执行提交的迁移；不要使用生产 DATABASE_URL。HTTP 测试运行真实 Axum、Argon2、TOTP、AEAD、PostgreSQL Session Store，并另测非 owner 角色与 loopback TCP。它们不是完整研究/组合/交付的验收结果。
+
+### Cycle/Run 事务组合与 HTTP 合同回归
+
+```sh
+# 在上述可丢弃 PostgreSQL/PGMQ 环境中，检查首任务与调用方事务的共同提交/回滚。
+cargo test --locked -p store --test atomic_cycle_admission --test run_lifecycle
+
+# 直接生成真实 HTTP OpenAPI 并检查引用；本测试本身不连接数据库。
+cargo test --locked -p server --test http_openapi_references
+```
+
+内部服务可将原生 SQLx 事务交给 `Store::enqueue_run_in_transaction`；成功后取回事务，
+完成其余领域写入并提交，不能把尚未提交的返回值发给用户或 Worker。失败不返回事务，
+由 SQLx 回滚其拥有的范围。此接口复用原有准入，不是新增 `qz cycle start` 命令、
+Brief 冻结接口或 Agent 通用执行工具。上述是验证命令，不是已有通过记录；完整链路
+仍须满足 DESIGN 的数据/原生能力、权限及 W0–W8/T01–T42 合同。
 
 ### 完整迁移命令的提交边界
 

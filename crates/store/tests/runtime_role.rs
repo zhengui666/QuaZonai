@@ -74,6 +74,27 @@ async fn runtime_checks_every_table_not_just_the_authentication_singleton(pool: 
     )
     .await;
     store.verify_runtime_role().await.unwrap();
+    execute(&pool, format!("GRANT DELETE ON app.run_events TO {name}")).await;
+    assert!(
+        store.verify_runtime_role().await.is_err(),
+        "DELETE outside the one draft-binding replacement table is destructive authority"
+    );
+    execute(
+        &pool,
+        format!("REVOKE DELETE ON app.run_events FROM {name}"),
+    )
+    .await;
+    execute(
+        &pool,
+        format!("GRANT DELETE ON app.brief_data_bindings TO {name}"),
+    )
+    .await;
+    store.verify_runtime_role().await.unwrap();
+    execute(
+        &pool,
+        format!("REVOKE DELETE ON app.brief_data_bindings FROM {name}"),
+    )
+    .await;
     app_pool.close().await;
     remove_role(&pool, &name).await;
 }

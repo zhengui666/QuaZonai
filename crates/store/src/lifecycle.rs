@@ -382,8 +382,30 @@ impl Store {
         request: &RunSubmission,
     ) -> Result<CommandResult<RunSnapshotV1>, StoreError> {
         commands::key(key)?;
+        let tx = self.pool.begin().await?;
+        let (tx, result) = Self::enqueue_run_in_transaction(tx, key, request).await?;
+        tx.commit().await?;
+        Ok(result)
+    }
+
+    /// Compose admission with a caller's authorized Cycle/experiment transaction.
+    ///
+    /// This consumes the native transaction: an error or a dropped future rolls
+    /// back the whole operation, including facts the caller inserted before us.
+    /// On success, BOTH fresh and replayed results remain provisional until the
+    /// caller commits the returned transaction. Do not dispatch or return HTTP
+    /// success before that commit; commit acknowledgement loss is still unknown.
+    ///
+    /// The caller must authorize the domain operation and respect the existing
+    /// authority -> project -> cycle -> run lock order. No HTTP/MCP endpoint or
+    /// native readiness/qualification authority is granted by this Rust API.
+    pub async fn enqueue_run_in_transaction<'a>(
+        mut tx: Transaction<'a, Postgres>,
+        key: &str,
+        request: &RunSubmission,
+    ) -> Result<(Transaction<'a, Postgres>, CommandResult<RunSnapshotV1>), StoreError> {
+        commands::key(key)?;
         let normalized = json!({"schema_version":1,"cycle_id":request.cycle_id,"input_set_id":request.input_set_id,"runtime_id":request.runtime_id,"runtime_revision":request.runtime_revision,"kind":request.kind,"limits":request.limits});
-        let mut tx = self.pool.begin().await?;
         let project: uuid::Uuid =
             sqlx::query_scalar("SELECT project_id::uuid FROM app.research_cycles WHERE id=$1")
                 .bind(request.cycle_id.as_uuid())
@@ -396,10 +418,28 @@ impl Store {
             .await?;
         let c=sqlx::query("SELECT brief_id::uuid,state,budget_snapshot,reserved_experiments::bigint,used_experiments::bigint,reserved_cpu_seconds::bigint FROM app.research_cycles WHERE id=$1 AND project_id=$2 FOR UPDATE")
             .bind(request.cycle_id.as_uuid()).bind(project).fetch_one(&mut *tx).await?;
-        if let Some(row)=sqlx::query("SELECT normalized_request,initial_snapshot FROM app.run_admissions WHERE cycle_id=$1 AND command_key=$2").bind(request.cycle_id.as_uuid()).bind(key).fetch_optional(&mut *tx).await?{
-            if row.try_get::<Value,_>("normalized_request")?!=normalized{return Err(StoreError::IdempotencyConflict);}
-            let run=serde_json::from_value(row.try_get("initial_snapshot")?).map_err(|_|StoreError::Integrity)?;
-            tx.commit().await?;return Ok(CommandResult{schema_version:SchemaV1,replayed:true,resource:run});
+        if let Some(row) = sqlx::query(
+            "SELECT normalized_request,initial_snapshot FROM app.run_admissions \
+             WHERE cycle_id=$1 AND command_key=$2",
+        )
+        .bind(request.cycle_id.as_uuid())
+        .bind(key)
+        .fetch_optional(&mut *tx)
+        .await?
+        {
+            if row.try_get::<Value, _>("normalized_request")? != normalized {
+                return Err(StoreError::IdempotencyConflict);
+            }
+            let run = serde_json::from_value(row.try_get("initial_snapshot")?)
+                .map_err(|_| StoreError::Integrity)?;
+            return Ok((
+                tx,
+                CommandResult {
+                    schema_version: SchemaV1,
+                    replayed: true,
+                    resource: run,
+                },
+            ));
         }
         let b=sqlx::query("SELECT state,budget,stop_rule FROM app.research_briefs WHERE id=$1 AND project_id=$2 FOR SHARE").bind(c.try_get::<uuid::Uuid,_>("brief_id")?).bind(project).fetch_one(&mut *tx).await?;
         if b.try_get::<String, _>("state")? != "FROZEN"
@@ -511,12 +551,14 @@ impl Store {
             .await?;
         sqlx::query("INSERT INTO app.run_admissions(run_id,project_id,cycle_id,command_key,normalized_request,initial_snapshot,limits,runtime_id,runtime_revision,runtime_snapshot,initial_queue_message_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)")
             .bind(id.as_uuid()).bind(project).bind(request.cycle_id.as_uuid()).bind(key).bind(normalized).bind(db::json(&run)?).bind(db::json(l)?).bind(request.runtime_id.as_uuid()).bind(request.runtime_revision.get() as i64).bind(db::json(&runtime)?).bind(msg).execute(&mut *tx).await?;
-        tx.commit().await?;
-        Ok(CommandResult {
-            schema_version: SchemaV1,
-            replayed: false,
-            resource: run,
-        })
+        Ok((
+            tx,
+            CommandResult {
+                schema_version: SchemaV1,
+                replayed: false,
+                resource: run,
+            },
+        ))
     }
 
     /// Trusted administration only. No public generic execution DTO, model

@@ -36,7 +36,14 @@ SELECT (SELECT count(*) FROM service_schemas) <> 3 OR EXISTS (
        JOIN service_schemas n ON n.oid = c.relnamespace
        WHERE c.relowner = r.oid
           OR (c.relkind IN ('r','p','v','m','f')
-              AND pg_catalog.has_table_privilege(r.oid, c.oid, 'TRUNCATE,TRIGGER'))
+              AND (
+                pg_catalog.has_table_privilege(r.oid, c.oid, 'TRUNCATE,TRIGGER')
+                OR (
+                  n.oid = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = 'app')
+                  AND c.relname <> 'brief_data_bindings'
+                  AND pg_catalog.has_table_privilege(r.oid, c.oid, 'DELETE')
+                )
+              ))
      )
      OR EXISTS (
        SELECT 1 FROM pg_catalog.pg_proc p

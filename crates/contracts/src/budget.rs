@@ -15,24 +15,27 @@ pub enum CostEnforcement {
 #[serde(deny_unknown_fields)]
 pub struct BudgetV1 {
     pub schema_version: SchemaV1,
-    #[schema(format = Int64, maximum = 4294967295u64)]
+    #[schema(format = Int64, minimum = 1, maximum = 4294967295u64)]
     pub max_experiments: u32,
-    #[schema(maximum = 65535)]
+    #[schema(minimum = 1, maximum = 65535)]
     pub max_parallel_runs: u16,
-    #[schema(maximum = 65535)]
+    #[schema(minimum = 1, maximum = 65535)]
     pub max_turns_per_mission: u16,
-    #[schema(maximum = 65535)]
+    #[schema(minimum = 0, maximum = 65535)]
     pub max_repair_turns: u16,
-    #[schema(format = Int64, maximum = 4294967295u64)]
+    #[schema(format = Int64, minimum = 1, maximum = 4294967295u64)]
     pub max_wall_seconds: u32,
+    #[schema(schema_with = crate::scalars::positive_db_counter_schema)]
     pub max_cpu_seconds: DbCounter,
-    #[schema(format = Int64, maximum = 4294967295u64)]
+    #[schema(format = Int64, minimum = 1, maximum = 4294967295u64)]
     pub max_memory_mib: u32,
+    #[schema(schema_with = crate::scalars::positive_db_counter_schema)]
     pub max_output_bytes: DbCounter,
-    #[schema(maximum = 65535)]
+    #[schema(minimum = 1, maximum = 65535)]
     pub max_cycles_per_day: u16,
-    #[schema(format = Int64, maximum = 4294967295u64)]
+    #[schema(format = Int64, minimum = 0, maximum = 4294967295u64)]
     pub min_cycle_interval_seconds: u32,
+    #[schema(schema_with = crate::scalars::optional_positive_db_counter_schema)]
     pub max_tokens: Option<DbCounter>,
     pub max_cost_decimal: Option<DecimalValue>,
     pub cost_currency: Option<String>,
@@ -43,10 +46,10 @@ pub struct BudgetV1 {
 #[serde(deny_unknown_fields)]
 pub struct StopRuleV1 {
     pub schema_version: SchemaV1,
-    #[schema(maximum = 65535)]
+    #[schema(minimum = 1, maximum = 65535)]
     pub stop_on_qualified_count: u16,
     pub stop_on_budget: bool,
-    #[schema(maximum = 65535)]
+    #[schema(minimum = 1, maximum = 65535)]
     pub stop_on_no_improvement_trials: Option<u16>,
     pub stop_on_invalid_data: bool,
 }

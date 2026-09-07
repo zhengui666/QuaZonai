@@ -26,6 +26,12 @@
 - 已确认并实测：Nautilus `nautilus-backtest/model/trading 0.63.0`（官方 `v2.0.0rc4`）、Clarabel 0.11.1、Apache Arrow Rust 56.2.0；使用 Rust 1.98.0 满足上游 MSRV。第一方 job 不再通过 PyO3/CPython 调用这些能力。
 - 当前提交只实现受测原生适配与合同/领域基础，不声称完整控制面/UX/研究/交付已就绪。删除旧测试不满足新系统 T01–T42；缺失检查仍阻塞最终合并。
 
+## 0.2 编译器补丁基线（2026-09-07）
+
+正式构建和本地验证固定 Rust **1.98.1**，不使用浮动 stable、不降低上游 MSRV。Rust 官方于 2026-09-03 发布该补丁，修复 1.98.0 的 trait-object vtable 错误生成及其未定义行为：<https://blog.rust-lang.org/2026/09/03/Rust-1.98.1/>。更新 `rust-toolchain.toml`、workspace `rust-version` 与 CI 安装/选择；依赖版本和 Cargo.lock 不因工具链升级重新解析。
+
+历史 1.98.0 的已执行证据原样保留且仅作为历史；本补丁基线需重新执行原生合同、领域/数据库/HTTP、Clippy 与科学探针后才能记录通过。宿主可能用发行版 cargo 或覆盖变量绕过 rustup，不能只看文件内容推定实际编译器：验证入口使用明确的 `rustup run 1.98.1`，记录实际 `rustc -Vv`、Cargo/rustfmt 版本。安装工具链是本机执行器的环境操作，不是让其修改源码；失败返回真实诊断，由网页作者处理。
+
 ## 1. 当前实现与完整目标
 
 | 部分 | 已有事实 | 必须完成的目标 |
@@ -127,7 +133,7 @@ DSR/PBO 默认不支持：未确认选定 skfolio 版本具备满足本项目的
 - Codex 探针沿用官方 pinned二进制 stdio initialize/initialized/account/read/完整model分页/thread启动；QZ只保留受控适配，不获取隐藏推理/凭据。无真实账号推理和同Thread工具链的测试不能当作T07/T08。
 - 原生 PostgreSQL+PGMQ 事务探针保留；临时fixture表不是正式生产Store。
 
-Rust 1.98.0，Nautilus Rust crates0.63.0（Python2.0.0rc4发布族），Clarabel0.11.1，Arrow56.2.0，Codex0.144.4，PGMQ1.10.0；Linux x86_64。Cargo.lock来自原生Cargo，所有验收 locked，不现场生成锁。没有任何生产Python例外被此处批准；旧science requirements/lock/checker随旧桥接删除，供应链改由Cargo原生锁验证。
+Rust 1.98.1，Nautilus Rust crates0.63.0（Python2.0.0rc4发布族），Clarabel0.11.1，Arrow56.2.0，Codex0.144.4，PGMQ1.10.0；Linux x86_64。Cargo.lock来自原生Cargo，所有验收 locked，不现场生成锁。没有任何生产Python例外被此处批准；旧science requirements/lock/checker随旧桥接删除，供应链改由Cargo原生锁验证。
 
 Nautilus2.0发布族仍为release candidate，不能隐瞒预发行风险或仅因为版本较新宣称稳定；正式目标组合、目录、结算、隔离/资源/取消必须单独验收。原生引擎日志的NaN不能直接当正式指标，正式Metric wire层拒绝非有限值。
 
@@ -1731,6 +1737,27 @@ Run 的工作准入由受信任领域服务调用 `Store::enqueue_run`，不是�
 消息 ID。command key 在 Cycle 内唯一；同 key 同请求返回原 run，冲突失败。预约、Run、
 首个持久事件与原生 pgmq.send 同一事务；CPU 额度按已承诺的上界累计，不因失败/取消退款。
 全部 trial（含内部搜索）在准入时计数；终态把预约 trial 转为已用，不删失败历史。
+
+#### Cycle/Experiment 与 Run 的同事务组合入口
+
+`Store::enqueue_run_in_transaction(tx, key, submission)` 接收调用方持有的原生 SQLx
+Transaction 所有权，沿用同一套 Run 准入实现；不另开连接、不自行提交、不复制预算或
+PGMQ 逻辑。成功返回 `(tx, CommandResult<RunSnapshotV1>)`；新建和幂等重放分支都交回
+原事务。返回的 Run snapshot 仍为未提交结果，只有外层 COMMIT 成功后才能响应成功或
+允许分派。COMMIT 应答丢失仍为结果未知，不能声称已回滚或盲目重建。
+
+任何领域/SQL 错误不交回事务；丢弃执行 future 同样由 SQLx 原生 Drop 回滚所传事务范围。
+正式 Cycle 启动必须传入包含 Cycle 创建的最外层事务，不能先提交 Cycle、再传新事务或
+仅包住入队的 savepoint。已有 `enqueue_run` 只是开始最外层事务、调用该入口、提交并返回
+的便捷入口。调用方仍先完成精确操作授权，并按 authority→project→cycle→run 锁序组合
+Brief/Cycle/Experiment/命令回执；不能在锁后重新取得更早的 authority 锁。
+
+本入口不创建公开通用任务执行接口，不授予 Brief 冻结、原生能力、Sealed、模型发送或
+Qualification 权限。正式冻结/启动服务仍须核验当前数据/PIT/方法能力、项目版本、冷却/
+每日配额等完整合同；此处的可组合事务能力不能冒充这些服务已经完成。对应真实
+PostgreSQL 回归在 `crates/store/tests/atomic_cycle_admission.rs`：独立连接提交前不可见、
+显式回滚、同事务/已提交重放不提前提交、队列注入失败、预算/命令拒绝、延迟外键提交
+失败及锁等待期间取消。测试代码存在不代表已执行或通过，也不等于 T42 无 SQL 用户链路。
 
 `read_run_messages` 复用 PGMQ 原生 visibility/read count。领取必须重新锁住 project→cycle→
 run→attempt；visibility 不授予结果采纳权。活动租约不被别的 Worker 抢占；过期接管保持

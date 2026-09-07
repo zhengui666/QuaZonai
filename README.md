@@ -21,7 +21,7 @@
 
 ## 开发验证
 
-需要Linux x86_64、原生Rust 1.98.0工具链和C工具链；Nautilus发布族2.0.0rc4仍为RC，不隐瞒预发行风险。此路径不安装Python。
+需要Linux x86_64、原生Rust 1.98.1工具链和C工具链；Nautilus发布族2.0.0rc4仍为RC，不隐瞒预发行风险。此路径不安装Python。
 
 ```sh
 cargo fmt --all -- --check

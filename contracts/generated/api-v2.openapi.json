@@ -144,79 +144,711 @@
         "type": "object"
       },
       "BriefContentV1": {
-        "additionalProperties": false,
-        "properties": {
-          "base_currency": {
-            "maxLength": 3,
-            "minLength": 3,
-            "pattern": "^[A-Z]{3}$",
-            "type": "string"
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "base_currency": {
+                "maxLength": 3,
+                "minLength": 3,
+                "pattern": "^[A-Z]{3}$",
+                "type": "string"
+              },
+              "benchmark_ref": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "format": "uuid",
+                    "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                    "type": "string"
+                  }
+                ]
+              },
+              "budget": {
+                "additionalProperties": false,
+                "properties": {
+                  "cost_currency": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "cost_enforcement": {
+                    "$ref": "#/components/schemas/CostEnforcement"
+                  },
+                  "max_cost_decimal": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "$ref": "#/components/schemas/DecimalValue"
+                      }
+                    ]
+                  },
+                  "max_cpu_seconds": {
+                    "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+                    "maxLength": 19,
+                    "minLength": 1,
+                    "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])",
+                    "type": "string"
+                  },
+                  "max_cycles_per_day": {
+                    "format": "int32",
+                    "maximum": 65535,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "max_experiments": {
+                    "format": "int64",
+                    "maximum": 4294967295,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "max_memory_mib": {
+                    "format": "int64",
+                    "maximum": 4294967295,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "max_output_bytes": {
+                    "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+                    "maxLength": 19,
+                    "minLength": 1,
+                    "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])",
+                    "type": "string"
+                  },
+                  "max_parallel_runs": {
+                    "format": "int32",
+                    "maximum": 65535,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "max_repair_turns": {
+                    "format": "int32",
+                    "maximum": 65535,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "max_tokens": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+                        "maxLength": 19,
+                        "minLength": 1,
+                        "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "max_turns_per_mission": {
+                    "format": "int32",
+                    "maximum": 65535,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "max_wall_seconds": {
+                    "format": "int64",
+                    "maximum": 4294967295,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "min_cycle_interval_seconds": {
+                    "format": "int64",
+                    "maximum": 4294967295,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "schema_version": {
+                    "$ref": "#/components/schemas/SchemaV1"
+                  }
+                },
+                "required": [
+                  "schema_version",
+                  "max_experiments",
+                  "max_parallel_runs",
+                  "max_turns_per_mission",
+                  "max_repair_turns",
+                  "max_wall_seconds",
+                  "max_cpu_seconds",
+                  "max_memory_mib",
+                  "max_output_bytes",
+                  "max_cycles_per_day",
+                  "min_cycle_interval_seconds",
+                  "cost_enforcement"
+                ],
+                "type": "object"
+              },
+              "economic_rationale": {
+                "maxLength": 8000,
+                "minLength": 1,
+                "type": "string"
+              },
+              "evaluation_policy_id": {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              "execution_assumptions_id": {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              "horizon_kind": {
+                "enum": [
+                  "FIXED_BARS"
+                ],
+                "type": "string"
+              },
+              "horizon_value": {
+                "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+                "maxLength": 19,
+                "minLength": 1,
+                "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])",
+                "type": "string"
+              },
+              "hypothesis": {
+                "maxLength": 8000,
+                "minLength": 1,
+                "type": "string"
+              },
+              "stop_rule": {
+                "additionalProperties": false,
+                "properties": {
+                  "schema_version": {
+                    "$ref": "#/components/schemas/SchemaV1"
+                  },
+                  "stop_on_budget": {
+                    "type": "boolean"
+                  },
+                  "stop_on_invalid_data": {
+                    "type": "boolean"
+                  },
+                  "stop_on_no_improvement_trials": {
+                    "format": "int32",
+                    "maximum": 65535,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "stop_on_qualified_count": {
+                    "format": "int32",
+                    "maximum": 65535,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "schema_version",
+                  "stop_on_qualified_count",
+                  "stop_on_budget",
+                  "stop_on_invalid_data"
+                ],
+                "type": "object"
+              },
+              "target_kind": {
+                "enum": [
+                  "SCORE",
+                  "EXPECTED_RETURN"
+                ],
+                "type": "string"
+              },
+              "universe_version_id": {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "hypothesis",
+              "economic_rationale",
+              "universe_version_id",
+              "target_kind",
+              "horizon_kind",
+              "base_currency",
+              "evaluation_policy_id",
+              "execution_assumptions_id",
+              "budget",
+              "stop_rule",
+              "horizon_value"
+            ],
+            "type": "object"
           },
-          "benchmark_ref": {
-            "oneOf": [
-              {
+          {
+            "additionalProperties": false,
+            "properties": {
+              "base_currency": {
+                "maxLength": 3,
+                "minLength": 3,
+                "pattern": "^[A-Z]{3}$",
+                "type": "string"
+              },
+              "benchmark_ref": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "format": "uuid",
+                    "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                    "type": "string"
+                  }
+                ]
+              },
+              "budget": {
+                "additionalProperties": false,
+                "properties": {
+                  "cost_currency": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "cost_enforcement": {
+                    "$ref": "#/components/schemas/CostEnforcement"
+                  },
+                  "max_cost_decimal": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "$ref": "#/components/schemas/DecimalValue"
+                      }
+                    ]
+                  },
+                  "max_cpu_seconds": {
+                    "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+                    "maxLength": 19,
+                    "minLength": 1,
+                    "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])",
+                    "type": "string"
+                  },
+                  "max_cycles_per_day": {
+                    "format": "int32",
+                    "maximum": 65535,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "max_experiments": {
+                    "format": "int64",
+                    "maximum": 4294967295,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "max_memory_mib": {
+                    "format": "int64",
+                    "maximum": 4294967295,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "max_output_bytes": {
+                    "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+                    "maxLength": 19,
+                    "minLength": 1,
+                    "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])",
+                    "type": "string"
+                  },
+                  "max_parallel_runs": {
+                    "format": "int32",
+                    "maximum": 65535,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "max_repair_turns": {
+                    "format": "int32",
+                    "maximum": 65535,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "max_tokens": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+                        "maxLength": 19,
+                        "minLength": 1,
+                        "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "max_turns_per_mission": {
+                    "format": "int32",
+                    "maximum": 65535,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "max_wall_seconds": {
+                    "format": "int64",
+                    "maximum": 4294967295,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "min_cycle_interval_seconds": {
+                    "format": "int64",
+                    "maximum": 4294967295,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "schema_version": {
+                    "$ref": "#/components/schemas/SchemaV1"
+                  }
+                },
+                "required": [
+                  "schema_version",
+                  "max_experiments",
+                  "max_parallel_runs",
+                  "max_turns_per_mission",
+                  "max_repair_turns",
+                  "max_wall_seconds",
+                  "max_cpu_seconds",
+                  "max_memory_mib",
+                  "max_output_bytes",
+                  "max_cycles_per_day",
+                  "min_cycle_interval_seconds",
+                  "cost_enforcement"
+                ],
+                "type": "object"
+              },
+              "economic_rationale": {
+                "maxLength": 8000,
+                "minLength": 1,
+                "type": "string"
+              },
+              "evaluation_policy_id": {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              "execution_assumptions_id": {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              "horizon_kind": {
+                "enum": [
+                  "FIXED_DURATION"
+                ],
+                "type": "string"
+              },
+              "horizon_value": {
+                "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+                "maxLength": 19,
+                "minLength": 1,
+                "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])",
+                "type": "string"
+              },
+              "hypothesis": {
+                "maxLength": 8000,
+                "minLength": 1,
+                "type": "string"
+              },
+              "stop_rule": {
+                "additionalProperties": false,
+                "properties": {
+                  "schema_version": {
+                    "$ref": "#/components/schemas/SchemaV1"
+                  },
+                  "stop_on_budget": {
+                    "type": "boolean"
+                  },
+                  "stop_on_invalid_data": {
+                    "type": "boolean"
+                  },
+                  "stop_on_no_improvement_trials": {
+                    "format": "int32",
+                    "maximum": 65535,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "stop_on_qualified_count": {
+                    "format": "int32",
+                    "maximum": 65535,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "schema_version",
+                  "stop_on_qualified_count",
+                  "stop_on_budget",
+                  "stop_on_invalid_data"
+                ],
+                "type": "object"
+              },
+              "target_kind": {
+                "enum": [
+                  "SCORE",
+                  "EXPECTED_RETURN"
+                ],
+                "type": "string"
+              },
+              "universe_version_id": {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "hypothesis",
+              "economic_rationale",
+              "universe_version_id",
+              "target_kind",
+              "horizon_kind",
+              "base_currency",
+              "evaluation_policy_id",
+              "execution_assumptions_id",
+              "budget",
+              "stop_rule",
+              "horizon_value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "base_currency": {
+                "maxLength": 3,
+                "minLength": 3,
+                "pattern": "^[A-Z]{3}$",
+                "type": "string"
+              },
+              "benchmark_ref": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "format": "uuid",
+                    "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                    "type": "string"
+                  }
+                ]
+              },
+              "budget": {
+                "additionalProperties": false,
+                "properties": {
+                  "cost_currency": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "cost_enforcement": {
+                    "$ref": "#/components/schemas/CostEnforcement"
+                  },
+                  "max_cost_decimal": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "$ref": "#/components/schemas/DecimalValue"
+                      }
+                    ]
+                  },
+                  "max_cpu_seconds": {
+                    "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+                    "maxLength": 19,
+                    "minLength": 1,
+                    "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])",
+                    "type": "string"
+                  },
+                  "max_cycles_per_day": {
+                    "format": "int32",
+                    "maximum": 65535,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "max_experiments": {
+                    "format": "int64",
+                    "maximum": 4294967295,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "max_memory_mib": {
+                    "format": "int64",
+                    "maximum": 4294967295,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "max_output_bytes": {
+                    "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+                    "maxLength": 19,
+                    "minLength": 1,
+                    "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])",
+                    "type": "string"
+                  },
+                  "max_parallel_runs": {
+                    "format": "int32",
+                    "maximum": 65535,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "max_repair_turns": {
+                    "format": "int32",
+                    "maximum": 65535,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "max_tokens": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+                        "maxLength": 19,
+                        "minLength": 1,
+                        "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "max_turns_per_mission": {
+                    "format": "int32",
+                    "maximum": 65535,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "max_wall_seconds": {
+                    "format": "int64",
+                    "maximum": 4294967295,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "min_cycle_interval_seconds": {
+                    "format": "int64",
+                    "maximum": 4294967295,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "schema_version": {
+                    "$ref": "#/components/schemas/SchemaV1"
+                  }
+                },
+                "required": [
+                  "schema_version",
+                  "max_experiments",
+                  "max_parallel_runs",
+                  "max_turns_per_mission",
+                  "max_repair_turns",
+                  "max_wall_seconds",
+                  "max_cpu_seconds",
+                  "max_memory_mib",
+                  "max_output_bytes",
+                  "max_cycles_per_day",
+                  "min_cycle_interval_seconds",
+                  "cost_enforcement"
+                ],
+                "type": "object"
+              },
+              "economic_rationale": {
+                "maxLength": 8000,
+                "minLength": 1,
+                "type": "string"
+              },
+              "evaluation_policy_id": {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              "execution_assumptions_id": {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              "horizon_kind": {
+                "enum": [
+                  "VARIABLE_INTERVAL"
+                ],
+                "type": "string"
+              },
+              "horizon_value": {
                 "type": "null"
               },
-              {
-                "$ref": "#/components/schemas/Id"
-              }
-            ]
-          },
-          "budget": {
-            "$ref": "#/components/schemas/BudgetV1"
-          },
-          "economic_rationale": {
-            "maxLength": 8000,
-            "minLength": 1,
-            "type": "string"
-          },
-          "evaluation_policy_id": {
-            "$ref": "#/components/schemas/Id"
-          },
-          "execution_assumptions_id": {
-            "$ref": "#/components/schemas/Id"
-          },
-          "horizon_kind": {
-            "$ref": "#/components/schemas/HorizonKind"
-          },
-          "horizon_value": {
-            "oneOf": [
-              {
-                "type": "null"
+              "hypothesis": {
+                "maxLength": 8000,
+                "minLength": 1,
+                "type": "string"
               },
-              {
-                "$ref": "#/components/schemas/DbCounter"
+              "stop_rule": {
+                "additionalProperties": false,
+                "properties": {
+                  "schema_version": {
+                    "$ref": "#/components/schemas/SchemaV1"
+                  },
+                  "stop_on_budget": {
+                    "type": "boolean"
+                  },
+                  "stop_on_invalid_data": {
+                    "type": "boolean"
+                  },
+                  "stop_on_no_improvement_trials": {
+                    "format": "int32",
+                    "maximum": 65535,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "stop_on_qualified_count": {
+                    "format": "int32",
+                    "maximum": 65535,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "schema_version",
+                  "stop_on_qualified_count",
+                  "stop_on_budget",
+                  "stop_on_invalid_data"
+                ],
+                "type": "object"
+              },
+              "target_kind": {
+                "enum": [
+                  "SCORE",
+                  "EXPECTED_RETURN"
+                ],
+                "type": "string"
+              },
+              "universe_version_id": {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
               }
-            ]
-          },
-          "hypothesis": {
-            "maxLength": 8000,
-            "minLength": 1,
-            "type": "string"
-          },
-          "stop_rule": {
-            "$ref": "#/components/schemas/StopRuleV1"
-          },
-          "target_kind": {
-            "$ref": "#/components/schemas/TargetKind"
-          },
-          "universe_version_id": {
-            "$ref": "#/components/schemas/Id"
+            },
+            "required": [
+              "hypothesis",
+              "economic_rationale",
+              "universe_version_id",
+              "target_kind",
+              "horizon_kind",
+              "base_currency",
+              "evaluation_policy_id",
+              "execution_assumptions_id",
+              "budget",
+              "stop_rule"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "hypothesis",
-          "economic_rationale",
-          "universe_version_id",
-          "target_kind",
-          "horizon_kind",
-          "base_currency",
-          "evaluation_policy_id",
-          "execution_assumptions_id",
-          "budget",
-          "stop_rule"
-        ],
-        "type": "object"
+        ]
       },
       "BriefCreate": {
         "additionalProperties": false,
@@ -439,33 +1071,41 @@
             ]
           },
           "max_cpu_seconds": {
-            "$ref": "#/components/schemas/DbCounter"
+            "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+            "maxLength": 19,
+            "minLength": 1,
+            "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])",
+            "type": "string"
           },
           "max_cycles_per_day": {
             "format": "int32",
             "maximum": 65535,
-            "minimum": 0,
+            "minimum": 1,
             "type": "integer"
           },
           "max_experiments": {
             "format": "int64",
             "maximum": 4294967295,
-            "minimum": 0,
+            "minimum": 1,
             "type": "integer"
           },
           "max_memory_mib": {
             "format": "int64",
             "maximum": 4294967295,
-            "minimum": 0,
+            "minimum": 1,
             "type": "integer"
           },
           "max_output_bytes": {
-            "$ref": "#/components/schemas/DbCounter"
+            "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+            "maxLength": 19,
+            "minLength": 1,
+            "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])",
+            "type": "string"
           },
           "max_parallel_runs": {
             "format": "int32",
             "maximum": 65535,
-            "minimum": 0,
+            "minimum": 1,
             "type": "integer"
           },
           "max_repair_turns": {
@@ -480,20 +1120,24 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/DbCounter"
+                "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+                "maxLength": 19,
+                "minLength": 1,
+                "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])",
+                "type": "string"
               }
             ]
           },
           "max_turns_per_mission": {
             "format": "int32",
             "maximum": 65535,
-            "minimum": 0,
+            "minimum": 1,
             "type": "integer"
           },
           "max_wall_seconds": {
             "format": "int64",
             "maximum": 4294967295,
-            "minimum": 0,
+            "minimum": 1,
             "type": "integer"
           },
           "min_cycle_interval_seconds": {
@@ -1634,14 +2278,6 @@
           "message"
         ],
         "type": "object"
-      },
-      "HorizonKind": {
-        "enum": [
-          "FIXED_BARS",
-          "FIXED_DURATION",
-          "VARIABLE_INTERVAL"
-        ],
-        "type": "string"
       },
       "Id": {
         "format": "uuid",
@@ -3849,7 +4485,7 @@
           "stop_on_no_improvement_trials": {
             "format": "int32",
             "maximum": 65535,
-            "minimum": 0,
+            "minimum": 1,
             "type": [
               "integer",
               "null"
@@ -3858,7 +4494,7 @@
           "stop_on_qualified_count": {
             "format": "int32",
             "maximum": 65535,
-            "minimum": 0,
+            "minimum": 1,
             "type": "integer"
           }
         },
@@ -3869,13 +4505,6 @@
           "stop_on_invalid_data"
         ],
         "type": "object"
-      },
-      "TargetKind": {
-        "enum": [
-          "SCORE",
-          "EXPECTED_RETURN"
-        ],
-        "type": "string"
       },
       "TrustedDevice": {
         "additionalProperties": false,

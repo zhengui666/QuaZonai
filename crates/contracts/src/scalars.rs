@@ -138,6 +138,26 @@ fn bigint_schema(nonzero: bool) -> utoipa::openapi::RefOr<utoipa::openapi::schem
         .into()
 }
 
+/// Reuse the exact PostgreSQL bigint wire boundary when a containing contract
+/// requires a strictly positive counter. `DbCounter` itself remains
+/// non-negative because usage/reservation ledgers legitimately encode zero.
+pub(crate) fn positive_db_counter_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema>
+{
+    bigint_schema(true)
+}
+
+/// Optional positive counter: omission/null means the cap is unavailable,
+/// while a present value must be strictly positive.
+pub(crate) fn optional_positive_db_counter_schema(
+) -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+    use utoipa::openapi::schema::{ObjectBuilder, OneOfBuilder, Type};
+
+    OneOfBuilder::new()
+        .item(ObjectBuilder::new().schema_type(Type::Null))
+        .item(positive_db_counter_schema())
+        .into()
+}
+
 impl utoipa::PartialSchema for DbCounter {
     fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
         bigint_schema(false)

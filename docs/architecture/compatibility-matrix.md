@@ -2,7 +2,7 @@
 
 | Component | Pin | Verified boundary |
 |---|---|---|
-| Rust | 1.98.0 | Toolchain required by Nautilus 0.63.0 |
+| Rust | 1.98.1 | Pinned compiler patch for the 1.98.0 vtable miscompilation; current-pin revalidation is required, historical 1.98.0 runs are not new evidence |
 | Nautilus backtest/model/trading | 0.63.0, release family v2.0.0rc4 | Rust-only synthetic EMA fixture,745 iterations/12 orders/24 events; target-weight/market/isolation acceptance remains separate |
 | Clarabel | 0.11.1 | Native QP golden and infeasible certificate; no Python binding |
 | Arrow | 56.2.0 | Rust RecordBatch IPC schema/provenance/value round-trip |
