@@ -7,6 +7,8 @@ pub mod auth;
 pub mod brief;
 pub mod control;
 pub mod error;
+#[cfg(test)]
+mod header_tests;
 pub mod mcp;
 pub mod research;
 pub mod runs;
@@ -350,6 +352,26 @@ fn describe_authority(document: &mut utoipa::openapi::OpenApi) {
             (true, &mut item.put),
         ] {
             if let Some(operation) = operation {
+                // Match the actual HeaderValue transport and access validator,
+                // without copying constraints into every route annotation.
+                for parameter in operation.parameters.iter_mut().flatten() {
+                    if parameter.name.eq_ignore_ascii_case("Idempotency-Key")
+                        && parameter.parameter_in == utoipa::openapi::path::ParameterIn::Header
+                    {
+                        parameter.required = utoipa::openapi::Required::True;
+                        parameter.schema = Some(
+                            utoipa::openapi::schema::ObjectBuilder::new()
+                                .schema_type(utoipa::openapi::schema::Type::String)
+                                .min_length(Some(1))
+                                .max_length(Some(200))
+                                .pattern(Some(r"^[!-~]([ -~]*[!-~])?(?![\s\S])"))
+                                .into(),
+                        );
+                        parameter.description = Some(
+                            "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.".into(),
+                        );
+                    }
+                }
                 let cookie = SecurityRequirement::new("BrowserSession", std::iter::empty::<&str>());
                 let bearer = SecurityRequirement::new("MachineBearer", std::iter::empty::<&str>());
                 if !anonymous && !browser_auth {

@@ -1,4 +1,4 @@
-import { App, Alert, Button, Card, Divider, Drawer, Form, Input, Select, Space, Table, Typography } from 'antd';
+import { App, Alert, Button, Card, ConfigProvider, Divider, Drawer, Form, Input, Select, Space, Table, Typography } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { api, ApiFailure, dataOf, Intent } from './api';
@@ -6,6 +6,7 @@ import type { Schema } from './api';
 import { uuidPattern } from './auth';
 import { briefContent, initialBudget, initialStop } from './brief-fields';
 import { BudgetFields, counterRules } from './budget-fields';
+import { bindingAccessOptions } from './authoring-options';
 import { ErrorNotice, NoData, Pager, QueryPanel, ResourceFacts, StateTag, useGuard, useOnline } from './ui';
 
 type Brief = Schema['BriefView'];
@@ -65,7 +66,8 @@ function BriefEditor({ projectId, brief, close }: { projectId: string; brief?: B
       {readOnly && <Alert showIcon type="info" title="冻结版本不可修改。" action={<Button disabled={!online} onClick={() => { setFork(true); setDirty(true); }}>以此创建新版本</Button>} />}
       <ErrorNotice error={mutation.error} />
       {conflict && <Button onClick={() => { void client.invalidateQueries({ queryKey: ['briefs', projectId] }); dismiss(); }}>关闭并重载服务器版本</Button>}
-      <Form form={form} layout="vertical" disabled={disabled} scrollToFirstError initialValues={brief ? { content: brief.content, bindings: brief.bindings } : {
+      <ConfigProvider getPopupContainer={trigger => trigger?.parentElement ?? document.body}>
+      <Form className="authoring-form" form={form} layout="vertical" disabled={disabled} scrollToFirstError initialValues={brief ? { content: brief.content, bindings: brief.bindings } : {
         content: { target_kind: 'SCORE', horizon_kind: 'FIXED_BARS', horizon_value: '1', base_currency: 'USD', budget: initialBudget, stop_rule: initialStop }, bindings: [],
       }} onValuesChange={() => setDirty(true)} onFinish={value => { if (!disabled) mutation.mutate(value); }}>
         <Typography.Title level={3}>假设与预测目标</Typography.Title>
@@ -88,16 +90,32 @@ function BriefEditor({ projectId, brief, close }: { projectId: string; brief?: B
             {fields.map(field => <Card key={field.key} size="small" title={`数据绑定 ${field.name + 1}`} extra={<Button danger disabled={disabled} onClick={() => remove(field.name)}>删除绑定 {field.name + 1}</Button>}>
               <Form.Item name={[field.name, 'dataset_revision_id']} label="数据集版本" rules={uuidRules}><Input /></Form.Item>
               <div className="field-grid">
-                <Form.Item name={[field.name, 'role']} label="数据角色" rules={[{ required: true }]}><Select options={['DISCOVERY', 'VALIDATION', 'SEALED', 'FORWARD'].map(value => ({ value, label: value }))} /></Form.Item>
-                <Form.Item name={[field.name, 'access_policy']} label="访问边界" rules={[{ required: true }]}><Select options={['METADATA_ONLY', 'RESEARCH_READ', 'EVALUATOR_ONLY'].map(value => ({ value, label: value }))} /></Form.Item>
+                <Form.Item name={[field.name, 'role']} label="数据角色" rules={[{ required: true }]}>
+                  <Select options={['DISCOVERY', 'VALIDATION', 'SEALED', 'FORWARD'].map(value => ({ value, label: value }))}
+                    onChange={role => {
+                      const name: ['bindings', number, 'access_policy'] = ['bindings', field.name, 'access_policy'];
+                      if (!bindingAccessOptions(role).some(option => option.value === form.getFieldValue(name))) {
+                        form.setFieldValue(name, undefined);
+                      }
+                    }} />
+                </Form.Item>
+                <Form.Item noStyle shouldUpdate={(previous, current) => previous.bindings?.[field.name]?.role !== current.bindings?.[field.name]?.role}>
+                  {({ getFieldValue }) => <Form.Item name={[field.name, 'access_policy']} label="访问边界"
+                    dependencies={[[ 'bindings', field.name, 'role' ]]}
+                    rules={[{ required: true }, { validator: (_, value: unknown) => bindingAccessOptions(getFieldValue(['bindings', field.name, 'role'])).some(option => option.value === value)
+                      ? Promise.resolve() : Promise.reject(new Error('访问边界必须符合所选数据角色，请明确重选。')) }]}>
+                    <Select options={bindingAccessOptions(getFieldValue(['bindings', field.name, 'role']))} placeholder="请选择兼容的访问边界" />
+                  </Form.Item>}
+                </Form.Item>
               </div>
             </Card>)}
             <Form.ErrorList errors={errors} /><Button disabled={disabled || fields.length >= 64} onClick={() => add({ role: 'DISCOVERY', access_policy: 'METADATA_ONLY' })}>添加数据绑定</Button>
           </Space>}
         </Form.List>
         <Divider /><BudgetFields />
-        {!readOnly && <Button type="primary" htmlType="submit" loading={mutation.isPending} disabled={disabled}>保存 Brief 草稿</Button>}
+        {!readOnly && <Button type="primary" htmlType="submit" aria-label="保存 Brief 草稿" aria-busy={mutation.isPending} loading={mutation.isPending} disabled={disabled}>保存 Brief 草稿</Button>}
       </Form>
+      </ConfigProvider>
     </Space>
   </Drawer>;
 }

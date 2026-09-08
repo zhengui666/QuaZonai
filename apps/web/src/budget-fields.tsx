@@ -1,5 +1,6 @@
 import { Checkbox, Form, Input, InputNumber, Select, Typography } from 'antd';
 import { isCounter, isDecimal } from './api';
+import { costOptions } from './authoring-options';
 export const counterRules = [{ required: true }, { validator: (_: unknown, value: unknown) => typeof value === 'string' && isCounter(value, true) ? Promise.resolve() : Promise.reject(new Error('请输入 1 至 9223372036854775807 的整数字符串。')) }];
 export function BudgetFields() {
   return <>
@@ -16,7 +17,12 @@ export function BudgetFields() {
       <Form.Item name={['content', 'budget', 'max_tokens']} label="最大 Token 数（可选）" rules={[{ validator: (_, value: unknown) => !value || (typeof value === 'string' && isCounter(value, true)) ? Promise.resolve() : Promise.reject(new Error('需要正整数字符串。')) }]}><Input inputMode="numeric" maxLength={19} /></Form.Item>
       <Form.Item name={['content', 'budget', 'max_cost_decimal']} label="最大费用（可选，十进制）" rules={[{ validator: (_, value: unknown) => !value || (typeof value === 'string' && isDecimal(value)) ? Promise.resolve() : Promise.reject(new Error('请输入普通十进制字符串，不使用指数。')) }]}><Input inputMode="decimal" maxLength={64} /></Form.Item>
       <Form.Item name={['content', 'budget', 'cost_currency']} label="费用币种（配置费用时必填）" rules={[{ pattern: /^[A-Z]{3}$/ }]}><Input maxLength={3} /></Form.Item>
-      <Form.Item name={['content', 'budget', 'cost_enforcement']} label="费用约束方式" rules={[{ required: true }]}><Select options={[{ value: 'UNAVAILABLE', label: '没有可用费用度量' }, { value: 'ESTIMATED', label: '估算值（不等于实际账单）' }, { value: 'EXACT', label: '精确账单（运行前须证实支持）' }]} /></Form.Item>
+      <Form.Item name={['content', 'budget', 'cost_enforcement']} label="费用约束方式"
+        extra="精确账单能力尚未接通，不能选择 EXACT。已有不支持值需明确修改。"
+        rules={[{ required: true }, { validator: (_, value: unknown) => costOptions.some(option => option.value === value)
+          ? Promise.resolve() : Promise.reject(new Error('请选择当前已支持的费用约束方式。')) }]}>
+        <Select options={costOptions} />
+      </Form.Item>
     </div>
     <Typography.Title level={3}>停止条件</Typography.Title>
     <div className="field-grid">

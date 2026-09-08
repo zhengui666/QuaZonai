@@ -7,6 +7,7 @@ import type { Schema } from './api';
 import { ErrorNotice, NoData, Pager, QueryPanel, ResourceFacts, StateTag, useGuard, useOnline } from './ui';
 import { Briefs } from './briefs';
 import { Runs } from './runs';
+import { projectStateOptions } from './authoring-options';
 
 type Project = Schema['ProjectView'];
 type Fields = Pick<Project, 'name' | 'description' | 'state'>;
@@ -63,6 +64,16 @@ function ProjectEditor({ project, close }: { project?: Project; close: () => voi
   const client = useQueryClient();
   const online = useOnline();
   const { message, modal } = App.useApp();
+  const currentBriefId = project?.current_brief_id;
+  const currentBrief = useQuery({
+    queryKey: ['project-state-brief', project?.id, currentBriefId],
+    enabled: !!currentBriefId && project?.state !== 'ARCHIVED', retry: false,
+    queryFn: async ({ signal }) => {
+      if (!currentBriefId) throw new ApiFailure('BRIEF_REQUIRED', '项目尚无当前 Brief。');
+      return dataOf(await api.GET('/api/v2/briefs/{id}', { params: { path: { id: currentBriefId } }, signal }));
+    },
+  });
+  const states = project ? projectStateOptions(project, currentBrief.isError ? undefined : currentBrief.data) : [];
   const mutation = useMutation({
     mutationFn: async (value: Fields) => {
       if (project) {
@@ -96,9 +107,14 @@ function ProjectEditor({ project, close }: { project?: Project; close: () => voi
         onFinish={value => { if (!mutation.isPending && online && !conflict) mutation.mutate(value); }} disabled={mutation.isPending || !online || conflict}>
         <Form.Item name="name" label="研究名称" rules={[{ required: true, whitespace: true, max: 120 }]}><Input maxLength={120} /></Form.Item>
         <Form.Item name="description" label="研究说明" rules={[{ max: 8000 }]}><Input.TextArea autoSize={{ minRows: 4, maxRows: 12 }} maxLength={8000} showCount /></Form.Item>
-        {project && <Form.Item name="state" label="项目状态" rules={[{ required: true }]}><Select options={[
-          { value: 'DRAFT', label: '草稿' }, { value: 'ACTIVE', label: '启用' }, { value: 'PAUSED', label: '暂停' }, { value: 'ARCHIVED', label: '归档' },
-        ]} /></Form.Item>}
+        {project && <Form.Item name="state" label="项目状态"
+          extra={project.state === 'ARCHIVED' ? '归档状态不可退出，仍可编辑名称和说明。'
+            : '启用须核实当前冻结 Brief；最终状态、权限和活动运行仍由服务器在提交时检查。'}
+          rules={[{ required: true }, { validator: (_, value: unknown) => states.some(option => option.value === value)
+            ? Promise.resolve() : Promise.reject(new Error('当前项目或 Brief 状态不允许此选择，请重新选择。')) }]}>
+          <Select options={states} loading={!!currentBriefId && currentBrief.isFetching} />
+        </Form.Item>}
+        {currentBriefId && project?.state !== 'ARCHIVED' && <ErrorNotice error={currentBrief.error} retry={() => { void currentBrief.refetch(); }} />}
         <Space wrap><Button htmlType="submit" type="primary" aria-label="保存项目" aria-busy={mutation.isPending} loading={mutation.isPending} disabled={!online || mutation.isPending || conflict}>保存项目</Button><Button disabled={mutation.isPending} onClick={dismiss}>取消</Button></Space>
       </Form>
     </Space>

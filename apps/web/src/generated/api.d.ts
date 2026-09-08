@@ -1652,6 +1652,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
                 "Idempotency-Key": string;
             };
             path?: never;
@@ -2045,6 +2046,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
                 "Idempotency-Key": string;
             };
             path?: never;
@@ -2370,6 +2372,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
                 "Idempotency-Key": string;
             };
             path: {
@@ -2512,6 +2515,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
                 "Idempotency-Key": string;
             };
             path?: never;
@@ -2715,6 +2719,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
                 "Idempotency-Key": string;
             };
             path?: never;
@@ -2853,6 +2858,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
                 "Idempotency-Key": string;
             };
             path: {
@@ -2970,6 +2976,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
                 "Idempotency-Key": string;
             };
             path?: never;
@@ -3037,6 +3044,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
                 "Idempotency-Key": string;
             };
             path: {
@@ -3164,6 +3172,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
                 "Idempotency-Key": string;
             };
             path: {
@@ -3289,6 +3298,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
                 "Idempotency-Key": string;
             };
             path?: never;
@@ -3403,6 +3413,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
                 "Idempotency-Key": string;
             };
             path: {
@@ -3538,6 +3549,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
                 "Idempotency-Key": string;
             };
             path: {
@@ -3736,6 +3748,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
                 "Idempotency-Key": string;
             };
             path: {

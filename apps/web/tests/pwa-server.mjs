@@ -8,22 +8,40 @@ import { resolve, extname, relative, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../dist/', import.meta.url));
 
-// The build owns this directory. Open once: a path replacement after fstat must
-// never make the response read a different file. This is not a general file API.
+// Linux test-host adapter, not a product file API. A held directory descriptor
+// anchors each single-component open even if its old pathname is replaced.
 export async function readStaticAsset(directory, pathname) {
+  if (process.platform !== 'linux') throw new Error('The PWA fixture requires Linux directory descriptors');
   const decoded = decodeURIComponent(pathname === '/' ? '/index.html' : pathname);
   if (!decoded.startsWith('/') || decoded.includes('\0')) throw new Error('Invalid static asset');
   const target = resolve(directory, '.' + decoded);
   const location = relative(directory, target);
-  if (isAbsolute(location) || location === '..' || location.startsWith('../')) {
-    throw new Error('Static asset outside build directory');
+  const parts = location.split('/');
+  if (isAbsolute(location) || parts.length > 32 || parts.some(part => !part || part === '.' || part === '..')) {
+    throw new Error('Static asset outside build directory or depth limit');
   }
-  const file = await fs.open(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  const flags = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
+  const handles = [];
   try {
-    if (!(await file.stat()).isFile()) throw new Error('Static asset must be a regular file');
-    return { bytes: await file.readFile(), extension: extname(target) };
+    let parent = await fs.open(resolve(directory), flags | constants.O_DIRECTORY);
+    handles.push(parent);
+    for (let index = 0; index < parts.length; index++) {
+      const final = index === parts.length - 1;
+      const file = await fs.open(`/proc/self/fd/${parent.fd}/${parts[index]}`,
+        final ? flags : flags | constants.O_DIRECTORY);
+      handles.push(file);
+      if (final) {
+        if (!(await file.stat()).isFile()) throw new Error('Static asset must be a regular file');
+        return { bytes: await file.readFile(), extension: extname(target) };
+      }
+      parent = file;
+    }
+    throw new Error('Static asset missing');
   } finally {
-    await file.close();
+    // Attempt every close even if one native close fails; never leak its parents.
+    const closed = await Promise.allSettled(handles.reverse().map(handle => handle.close()));
+    const failure = closed.find(item => item.status === 'rejected');
+    if (failure) throw failure.reason;
   }
 }
 

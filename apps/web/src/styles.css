@@ -17,6 +17,8 @@ body { margin: 0; min-width: 320px; }
 .console-footer { padding: 24px max(24px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left)); color: #596273; line-height: 1.6; }
 .page-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }
 .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 20px; }
+/* Ant Design's popup anchor stays inside the long, independently scrolling form. */
+.authoring-form .ant-form-item-control-input-content { position: relative; }
 .global-notice { margin-bottom: 24px; }
 .update-bar:empty { display: none; }
 .update-bar { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 12px; padding-inline: 16px; background: #fff; }

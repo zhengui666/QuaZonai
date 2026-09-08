@@ -1358,7 +1358,8 @@
             },
             "maxItems": 10,
             "minItems": 1,
-            "type": "array"
+            "type": "array",
+            "uniqueItems": true
           }
         },
         "required": [

@@ -165,7 +165,9 @@ pub struct PrincipalView {
 #[serde(deny_unknown_fields)]
 pub struct CredentialIssue {
     pub schema_version: SchemaV1,
-    #[schema(min_items = 1, max_items = 10)]
+    // Schema uses the native set shape; Vec preserves duplicate wire entries so
+    // domain validation rejects them instead of silently changing the request.
+    #[schema(value_type = std::collections::BTreeSet<MachineScope>, min_items = 1, max_items = 10)]
     pub scope_codes: Vec<MachineScope>,
     pub expires_at: DateTime<Utc>,
 }

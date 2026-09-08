@@ -248,6 +248,16 @@ PWA 只缓存静态 shell；业务 API/认证/证据/审批/产物/SSE NetworkOn
 
 浏览器验收分离两种证据：三视口/axe/PWA故障展示用受控HTTP fixture；真实入口验收必须启动当前 `server` 原生二进制、PostgreSQL18/PGMQ1.10的新库和独立非owner应用角色，执行原生迁移、一次性bootstrap、真实 `/bootstrap/confirm` TOTP绑定、项目写入、丢ACK同键重放、跨源拒绝和确认退出。不能用页面文案或mock响应代替数据库事务。原生Playwright使用单独配置，不混入fixture测试；原始error-context等输出只放本次私有临时目录并清理，公开证据仅包含脱敏摘要。浏览器/Vite子进程只获得环境白名单，禁止继承管理员URL、数据库密码和GitHub/模型令牌；Vite关闭隐式.env加载。收到终止信号后先终止并等待本次子进程，再清理本次库/角色，脱敏清单失败不得阻止资源清理或发布原始日志。Web CI必须与Rust基线一致：固定1.98.1、仓库实际server包、固定PG18/PGMQ镜像、精确PR Head和生成合同无差异。此验收覆盖认证及研究组织入口，不冒充T42的Alpha/组合/交付全链路。
 
+### 9.1 已知不可提交选项与开发文件边界
+
+长 Brief 抽屉的下拉菜单通过官方 ConfigProvider/getPopupContainer 锚定到可滚动表单内、相对定位的字段容器，而非固定到锁定滚动的 body。三视口验收使用真实鼠标操作字段和可见选项，不使用 force/DOM click/键盘绕过不可点击菜单来制造通过；费用、数据角色和访问边界须在滚动后仍可操作。依据：Ant Design Select 的 getPopupContainer 与 FAQ（https://ant.design/components/select/）。
+
+表单不能把当前服务端必定拒绝的值当作可操作能力。费用目前仅有 UNAVAILABLE/ESTIMATED；EXACT 尚未接通，草稿编辑不提供该选项，已载入的不支持值必须先由用户明确修改而非自动替换。项目为 ARCHIVED 时只允许保留 ARCHIVED；ACTIVE 选项须取得该项目 current_brief_id 对应的真实 Brief，校验精确项目/编号、FROZEN 及 frozen_at，加载/错误/缺失时不可用。这只是基于服务端事实的字段约束，不授予权限，不替代提交事务对状态、活动 Run、近期认证与 revision 的再次检查。SEALED 的访问候选仅 METADATA_ONLY/EVALUATOR_ONLY；其他分区仅 METADATA_ONLY/RESEARCH_READ。分区变化使旧选择不兼容时清空该字段并要求用户重选，不能自动升级权限；依赖校验同时拒绝程序化或残留的不合法组合。
+
+PWA 生命周期 fixture 的宿主与 CI 限 Linux；浏览器产品不受此限制。静态内容读取使用 Node FileHandle 与 Linux `/proc/self/fd` 的已打开目录句柄，逐个单路径组件以 O_DIRECTORY/O_NOFOLLOW 打开中间目录、以 O_NOFOLLOW 打开最终普通文件；构建根和任意子目录软链均拒绝。单请求最多32层，每个目录锚点保持打开到读取结束，不因路径被 rename/软链替换而重新解析旧路径。最后只在同一个文件句柄上 fstat/readFile，所有已取得句柄在成功/错误路径都关闭；缺少原生能力时失败，不降级成先 realpath/lstat 再按路径读取。该最小 fixture 适配不用于产品 Artifact 服务，不声称防止可信构建目录拥有者原地改写文件或进行特权 mount。
+
+公开 HTTP `Idempotency-Key` 为单个头值，1–200个可打印ASCII字节；首尾不得为空格，内部空格允许，控制字符、非ASCII、重复头均拒绝。HTTP原生HeaderValue的可见ASCII检查与既有运行时校验不变；实际HTTP OpenAPI统一用原生utoipa字符串 minLength/maxLength/pattern发布同一可表达范围。CredentialIssue.scope_codes继续使用Vec和原生domain/DB拒绝重复；其生成Schema必须uniqueItems=true，不能改成反序列化Set悄悄删除重复值。
+
 ## 10. 身份、安全与运维
 
 ### 10.1 浏览器认证的具体实现合同

@@ -118,7 +118,7 @@ export function isCounter(value: string, positive = false): boolean {
     && BigInt(value) <= 9223372036854775807n && (!positive || value !== '0');
 }
 export function isDecimal(value: string): boolean {
-  if (value.length > 64 || !/^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/.test(value)) return false;
+  if (value.length > 64 || !/^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?![\s\S])/.test(value)) return false;
   const [integer = '', fraction = ''] = value.replace(/^-/, '').split('.');
   return integer.length <= 20 && fraction.length <= 18;
 }

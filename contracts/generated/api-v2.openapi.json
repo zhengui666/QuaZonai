@@ -2105,7 +2105,8 @@
             },
             "maxItems": 10,
             "minItems": 1,
-            "type": "array"
+            "type": "array",
+            "uniqueItems": true
           }
         },
         "required": [
@@ -5024,10 +5025,14 @@
         "operationId": "create",
         "parameters": [
           {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
               "type": "string"
             }
           }
@@ -5587,10 +5592,14 @@
         "operationId": "issue_grant",
         "parameters": [
           {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
               "type": "string"
             }
           }
@@ -6043,10 +6052,14 @@
             }
           },
           {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
               "type": "string"
             }
           }
@@ -6271,10 +6284,14 @@
         "operationId": "create_evaluation_policy",
         "parameters": [
           {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
               "type": "string"
             }
           }
@@ -6594,10 +6611,14 @@
         "operationId": "create_input_set",
         "parameters": [
           {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
               "type": "string"
             }
           }
@@ -6813,10 +6834,14 @@
             }
           },
           {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
               "type": "string"
             }
           }
@@ -7000,10 +7025,14 @@
         "operationId": "create_principal",
         "parameters": [
           {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
               "type": "string"
             }
           }
@@ -7114,10 +7143,14 @@
             }
           },
           {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
               "type": "string"
             }
           }
@@ -7327,10 +7360,14 @@
             }
           },
           {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
               "type": "string"
             }
           }
@@ -7527,10 +7564,14 @@
         "operationId": "create_project",
         "parameters": [
           {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
               "type": "string"
             }
           }
@@ -7714,10 +7755,14 @@
             }
           },
           {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
               "type": "string"
             }
           }
@@ -7940,10 +7985,14 @@
             }
           },
           {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
               "type": "string"
             }
           }
@@ -8271,10 +8320,14 @@
             }
           },
           {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
               "type": "string"
             }
           }
