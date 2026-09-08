@@ -697,6 +697,8 @@ alpha_version_id: utf8 non-null
 
 复用现有 command_receipts，保存完整非内容元数据和首次公开响应；不复制算法内容到命令账本，不新增内容 hash。相同 key 的重放还必须与首次原生对象逐字节比较，内容不同（即使长度相同）409；重放不重复写对象、不重复计量。上传授权、Run 输出额度和数据库发表通过已有 PostgreSQL 锁及事务串行化，机器写入按 project→run→principal→credential 顺序取得写锁，避免两次产物上传持共享 Run 锁再互相升级。DB 提交失败或 ACK 丢失不删除可能已经被引用的对象。
 
+目录能力的生产依赖明确固定 cap-std 3.4.6，沿用其已修补的 cap-primitives 3.4.6，不以主机存在 openat2 代替回退路径验收。GHSA-hp8f-xmx4-4qrg 涉及多层软链与尾斜杠的手工路径解析；本次检查时既有 Cargo.lock 的底层 cap-primitives 已为3.4.6，故不宣称当时运行的底层仍有该漏洞。提升 facade 最低版本以避免重新解析依赖时退回旧底层，并对真实默认路径、强制 ENOSYS、强制 EPERM 三种环境运行相同目录边界。仅测试使用成熟 seccompiler 在全新子进程屏蔽 openat2；不写自制 BPF，不更改生产进程/系统配置。所有越界哨兵只位于同一个私有临时目录内的兄弟测试目录，同时验证合法根内软链和真实 ArtifactStore/SecretVault 仍可工作。这些证据不是完整 Agent/OCI/Sealed 隔离验收的替代。来源：https://github.com/bytecodealliance/cap-std/security/advisories/GHSA-hp8f-xmx4-4qrg 。
+
 本地存储复用 cap-std 的目录能力与 OS create_new/hard_link/fsync：服务端生成 UUID 对象键，私有 pending 文件完整写入并 fsync、设只读并再次 fsync 后，原子 create-if-absent 发布，再 fsync 目录。对象键、LOCAL 和固定本地存储版本 1 共同标识一次不可覆盖写入；不是应用内容散列。私有 artifacts 目录拒绝软链/宽权限；对象读拒绝软链、非普通文件、尺寸变化和可写文件，不接受客户端路径。不经 API 授权不能由 UUID 直接读取磁盘。
 
 `GET /api/v2/artifacts?project_id=...`、`GET /api/v2/artifacts/{id}` 返回公开元数据，无原生地址/凭据；稳定 UUID cursor，limit1..100。机器 RESEARCH_READ 只见同项目 RESEARCH；浏览器可见 RESEARCH/OPERATOR/DELIVERY。EVALUATOR_ONLY 对上述路径一律不可见，不能绕过未来的 evidence disclosure/exposure 服务。`GET /api/v2/artifacts/{id}/content` 先走相同权限，再限额读取本地原生对象；下载使用服务端生成文件名的 attachment 和 nosniff/no-store，不内联执行用户 HTML/脚本。成功体为 application/octet-stream 原始字节，OpenAPI 必须使用 native utoipa 的 string/binary 合同而非 Vec<u8> 默认的 JSON 整数数组；生成合同回归同时断言该媒体类型和二进制形状，实际下载仍由原生字节比较回归验证。原生 Catalog/Object Store 产物的内容不会误用宿主文件路径，未接通的后端返回明确不可用。此切片不宣称已实现受信任市场数据登记、原生计算或全部 T01–T42。

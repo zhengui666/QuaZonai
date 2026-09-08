@@ -210,3 +210,13 @@ https://docs.rs/nautilus-backtest/0.63.0/nautilus_backtest/result/struct.Backtes
 锁定源码 `engine.rs::get_result` 与 `result.rs` 已核对；探针直接记录并要求原生非零
 仓位数，而非根据订单条数推算成交。验收用 EmaCross 仍为不可交付 FIXTURE，不是
 多 Alpha 或共享资金生产策略。这些能力已有 Rust 实现，不需要 Python 例外。
+
+## 原生目录能力的回退路径（2026-09-08）
+
+上游 GHSA-hp8f-xmx4-4qrg 指出：含尾斜杠的多层软链可突破旧版手工路径解析；Linux openat2 不可用/被阻止时也会触发该后端。官方3.x修复版本为3.4.6，4.x为4.0.3。本工作区检查时 cap-std facade=3.4.5，但已锁定的 cap-primitives=3.4.6，不能据 facade 名字宣称正在运行的解析器仍有漏洞。本次将 facade 同步固定3.4.6，令最小依赖要求亦覆盖补丁，不转向4.x或重写路径解析。
+
+- 官方通告：https://github.com/bytecodealliance/cap-std/security/advisories/GHSA-hp8f-xmx4-4qrg
+- 固定3.x发行：https://docs.rs/crate/cap-std/3.4.6
+- 测试复用：https://docs.rs/seccompiler/0.5.0/seccompiler/ （Rust VMM原生seccomp构建/加载）
+
+`directory_confinement.rs` 在全新测试子进程用成熟 seccompiler 令 openat2 分别返回 ENOSYS/EPERM，先通过 rustix 原生 openat2 确认注入生效，再执行完全相同的原生目录打开/文件读取/文件创建拒绝和合法根内软链对照。仅使用测试私有临时目录的兄弟哨兵；没有宿主真实文件、生产密钥或数据库操作。真实 ArtifactStore/SecretVault 原生字节发布/读取亦在每种模式内测试；父进程不安装过滤器，不用mock成功回执。seccompiler和libc直接依赖仅属于Linux dev-dependencies，不把测试注入带入运行服务。测试是否通过必须以实际命令和最新Head CI为证，不能把依赖声明或内核探测当完整T34/T35通过。
