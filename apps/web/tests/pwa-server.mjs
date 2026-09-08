@@ -2,10 +2,31 @@
 // It serves the real build and varies a comment in the actual generated worker
 // to exercise browser update/activation without modifying any product file.
 import { createServer } from 'node:http';
-import { readFile, stat } from 'node:fs/promises';
-import { resolve, extname, relative } from 'node:path';
+import fs from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { resolve, extname, relative, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../dist/', import.meta.url));
+
+// The build owns this directory. Open once: a path replacement after fstat must
+// never make the response read a different file. This is not a general file API.
+export async function readStaticAsset(directory, pathname) {
+  const decoded = decodeURIComponent(pathname === '/' ? '/index.html' : pathname);
+  if (!decoded.startsWith('/') || decoded.includes('\0')) throw new Error('Invalid static asset');
+  const target = resolve(directory, '.' + decoded);
+  const location = relative(directory, target);
+  if (isAbsolute(location) || location === '..' || location.startsWith('../')) {
+    throw new Error('Static asset outside build directory');
+  }
+  const file = await fs.open(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    if (!(await file.stat()).isFile()) throw new Error('Static asset must be a regular file');
+    return { bytes: await file.readFile(), extension: extname(target) };
+  } finally {
+    await file.close();
+  }
+}
+
 let release = 1;
 const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
 const policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self' data:; worker-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
@@ -21,13 +42,11 @@ const server = createServer(async (request, response) => {
     if (path === '/api/v2/projects') return json({ schema_version: 1, items: [], next_cursor: null });
     if (path === '/api/fixture-private') return json({ fixture: 'SYNTHETIC-PRIVATE-CACHE-MARKER' });
     if (path.startsWith('/api/') || !['GET', 'HEAD'].includes(request.method)) return json({ fixture: 'NOT_IMPLEMENTED' }, 404);
-    const target = resolve(root, '.' + decodeURIComponent(path === '/' ? '/index.html' : path));
-    const location = relative(root, target);
-    if (location.startsWith('..') || location.includes('\0') || !(await stat(target)).isFile()) return json({ fixture: 'NOT_FOUND' }, 404);
-    let contents = await readFile(target);
+    const asset = await readStaticAsset(root, path);
+    let contents = asset.bytes;
     if (path === '/sw.js') contents = Buffer.concat([contents, Buffer.from(`\n// Synthetic lifecycle release ${release}\n`)]);
     response.writeHead(200, {
-      'Content-Type': mime[extname(target)] ?? 'application/octet-stream',
+      'Content-Type': mime[asset.extension] ?? 'application/octet-stream',
       'Cache-Control': path.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache',
       'Content-Security-Policy': policy, 'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY',
@@ -35,5 +54,7 @@ const server = createServer(async (request, response) => {
     response.end(request.method === 'HEAD' ? undefined : contents);
   } catch { if (!response.headersSent) json({ fixture: 'NOT_FOUND' }, 404); else response.end(); }
 });
-server.listen(4180, '127.0.0.1', () => console.log('Synthetic PWA lifecycle fixture listening on loopback:4180'));
-for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { server.closeAllConnections(); server.close(() => process.exit(0)); });
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  server.listen(4180, '127.0.0.1', () => console.log('Synthetic PWA lifecycle fixture listening on loopback:4180'));
+  for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { server.closeAllConnections(); server.close(() => process.exit(0)); });
+}

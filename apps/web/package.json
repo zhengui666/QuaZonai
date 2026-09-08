@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "build": "npm run generate && npm run typecheck && vite build",
     "preview": "vite preview --host 127.0.0.1 --port 4173 --strictPort",
-    "test": "vitest run",
+    "test": "vitest run && node --test scripts/pwa-files.test.mjs",
     "test:e2e": "playwright test",
     "test:e2e:native": "node scripts/native-browser.mjs"
   },
