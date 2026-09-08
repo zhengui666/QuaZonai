@@ -10,7 +10,8 @@ struct BudgetDocument;
 #[test]
 fn cost_currency_schema_matches_the_pinned_native_lookup_exhaustively() {
     let document: Value = serde_json::to_value(BudgetDocument::openapi()).unwrap();
-    let schema = &document["components"]["schemas"]["BudgetV1"]["properties"]["cost_currency"];
+    let schema =
+        &document["components"]["schemas"]["BudgetV1"]["allOf"][0]["properties"]["cost_currency"];
     let alternatives = schema["oneOf"].as_array().unwrap();
     assert_eq!(alternatives.len(), 2);
     assert!(alternatives.iter().any(|value| value["type"] == "null"));

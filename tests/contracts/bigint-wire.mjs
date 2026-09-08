@@ -34,7 +34,7 @@ for (const document of ['domain-v1', 'api-v2']) {
     checkBigint(schemas[name], `${document}/${name}`, corpus);
   }
 
-  const budget = schemas.BudgetV1;
+  const budget = schemas.BudgetV1.allOf[0];
   for (const field of ['max_cpu_seconds', 'max_output_bytes']) {
     assert.ok(budget.required.includes(field), `${field}: required cap`);
     checkBigint(budget.properties[field], `${document}/BudgetV1.${field}`, positiveCases);

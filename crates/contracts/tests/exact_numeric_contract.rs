@@ -12,22 +12,22 @@ fn generated_integer_bounds_match_native_wire_representations() {
         "max_cycles_per_day",
     ] {
         assert_eq!(
-            schemas["BudgetV1"]["properties"][field]["minimum"],
+            schemas["BudgetV1"]["allOf"][0]["properties"][field]["minimum"],
             json!(1),
             "{field}"
         );
         assert_eq!(
-            schemas["BudgetV1"]["properties"][field]["maximum"],
+            schemas["BudgetV1"]["allOf"][0]["properties"][field]["maximum"],
             json!(65535),
             "{field}"
         );
     }
     assert_eq!(
-        schemas["BudgetV1"]["properties"]["max_repair_turns"]["minimum"],
+        schemas["BudgetV1"]["allOf"][0]["properties"]["max_repair_turns"]["minimum"],
         json!(0)
     );
     assert_eq!(
-        schemas["BudgetV1"]["properties"]["max_repair_turns"]["maximum"],
+        schemas["BudgetV1"]["allOf"][0]["properties"]["max_repair_turns"]["maximum"],
         json!(65535)
     );
     for field in ["stop_on_qualified_count", "stop_on_no_improvement_trials"] {
@@ -44,22 +44,22 @@ fn generated_integer_bounds_match_native_wire_representations() {
     }
     for field in ["max_experiments", "max_wall_seconds", "max_memory_mib"] {
         assert_eq!(
-            schemas["BudgetV1"]["properties"][field]["minimum"],
+            schemas["BudgetV1"]["allOf"][0]["properties"][field]["minimum"],
             json!(1),
             "{field}"
         );
         assert_eq!(
-            schemas["BudgetV1"]["properties"][field]["maximum"],
+            schemas["BudgetV1"]["allOf"][0]["properties"][field]["maximum"],
             json!(4294967295u64),
             "{field}"
         );
     }
     assert_eq!(
-        schemas["BudgetV1"]["properties"]["min_cycle_interval_seconds"]["minimum"],
+        schemas["BudgetV1"]["allOf"][0]["properties"]["min_cycle_interval_seconds"]["minimum"],
         json!(0)
     );
     assert_eq!(
-        schemas["BudgetV1"]["properties"]["min_cycle_interval_seconds"]["maximum"],
+        schemas["BudgetV1"]["allOf"][0]["properties"]["min_cycle_interval_seconds"]["maximum"],
         json!(4294967295u64)
     );
     // Revision already has the canonical strictly-positive bigint boundary,
@@ -68,11 +68,11 @@ fn generated_integer_bounds_match_native_wire_representations() {
     let positive = &schemas["Revision"];
     for field in ["max_cpu_seconds", "max_output_bytes"] {
         assert_eq!(
-            &schemas["BudgetV1"]["properties"][field], positive,
+            &schemas["BudgetV1"]["allOf"][0]["properties"][field], positive,
             "{field}"
         );
     }
-    let max_tokens = schemas["BudgetV1"]["properties"]["max_tokens"]["oneOf"]
+    let max_tokens = schemas["BudgetV1"]["allOf"][0]["properties"]["max_tokens"]["oneOf"]
         .as_array()
         .unwrap();
     assert_eq!(max_tokens.len(), 2);

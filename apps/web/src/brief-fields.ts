@@ -1,6 +1,8 @@
 import type { Schema } from './api';
 import { ApiFailure, isCounter } from './api';
 import { costBudgetErrors } from './cost-budget';
+import { budgetRelationError } from './authoring-constraints';
+import { validateBaseCurrency } from './generated/responses.cjs';
 export type BriefContent = Schema['BriefContentV1'];
 export const initialBudget: Schema['BudgetV1'] = {
   schema_version: 1, max_experiments: 10, max_parallel_runs: 1, max_turns_per_mission: 10,
@@ -13,6 +15,11 @@ export const initialStop: Schema['StopRuleV1'] = {
   stop_on_no_improvement_trials: 20, stop_on_invalid_data: true,
 };
 export function briefContent(value: BriefContent): BriefContent {
+  if (!validateBaseCurrency(value.base_currency)) throw new ApiFailure('VALIDATION_ERROR', '基础币种必须属于服务器原生币种表。');
+  for (const relation of ['turns', 'experiments'] as const) {
+    const problem = budgetRelationError(value, relation);
+    if (problem) throw new ApiFailure('VALIDATION_ERROR', problem);
+  }
   const costError = Object.values(costBudgetErrors(value.budget)).find(message => message !== undefined);
   if (costError) throw new ApiFailure('VALIDATION_ERROR', costError);
   const budget = { ...value.budget, schema_version: 1 as const };

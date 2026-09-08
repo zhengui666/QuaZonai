@@ -262,6 +262,16 @@ PWA 生命周期 fixture 的宿主与 CI 限 Linux；浏览器产品不受此限
 
 公开 HTTP `Idempotency-Key` 为单个头值，1–200个可打印ASCII字节；首尾不得为空格，内部空格允许，控制字符、非ASCII、重复头均拒绝。HTTP原生HeaderValue的可见ASCII检查与既有运行时校验不变；实际HTTP OpenAPI统一用原生utoipa字符串 minLength/maxLength/pattern发布同一可表达范围。CredentialIssue.scope_codes继续使用Vec和原生domain/DB拒绝重复；其生成Schema必须uniqueItems=true，不能改成反序列化Set悄悄删除重复值。
 
+### 9.2 失败合同、联合约束与验收资源（Review 5144502684）
+
+客户端Ajv standalone使用原生inlineRefs=false复用组件校验函数，不在每个操作展开重复Problem/Brief代码；保持仓库既有Workbox 3MiB单文件预缓存上限，本次不提高上限，也不能省略校验来掩盖生成代码膨胀。
+
+所有 HTTP 响应（包括非2xx）按已生成 operation/status/media/schema 组合核验；Problem 必须使用 application/problem+json、有效 UUIDv7 request_id 与精确十进制 revision，body.status 必须等于 HTTP status。格式错误响应不能触发认证事件、重试或业务错误展示。只移除手写的宽松 Problem 形状检查，不放宽 binary/SSE 的成功响应边界。
+
+BudgetV1 继续保留既有 Rust/serde 字段，原生 OpenAPI 用公共字段与费用模式 oneOf 联合表达：UNAVAILABLE 金额/币种省略或 null；有费用上限的模式必须显式正金额和原生币种。EXACT 的结构有效不表示该能力已实现，仍由现有 domain/能力检查拒绝；不能用 schema 伪造准确账单。基础币种复用同一 iso_currency0.7.0 成员表。Brief 表单对 dataset_revision_id 去重只做拒绝，不删除或合并用户绑定；修复轮数≤总轮数、合格目标数≤实验数按完整路径双向依赖重验，不自动扩大预算。
+
+真实浏览器验收在发出 CREATE ROLE/CREATE DATABASE 前登记本次随机名字的创建意图，终止或 ACK 丢失后在子进程退出后仍对这些精确名字执行 DROP IF EXISTS；不凭收到创建 ACK 的布尔值决定是否清理。随机名字冲突必须预检拒绝，不能清理已有对象；不扩展到名字前缀匹配或其他实例。清理失败保留失败回执，不声称资源已删除。真实原生 PostgreSQL 的丢 ACK 与 SIGTERM 回归必须确认无遗留本次资源。
+
 ## 10. 身份、安全与运维
 
 ### 10.1 浏览器认证的具体实现合同

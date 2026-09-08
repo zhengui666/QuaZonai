@@ -152,7 +152,7 @@ fn generated_schema_describes_initial_slice_not_nonexistent_http_routes() {
     );
     assert_eq!(schema["components"]["schemas"]["SchemaV1"]["minimum"], 1);
     assert_eq!(
-        schema["components"]["schemas"]["BudgetV1"]["additionalProperties"],
+        schema["components"]["schemas"]["BudgetV1"]["allOf"][0]["additionalProperties"],
         false
     );
 }
@@ -256,9 +256,14 @@ fn all_unsigned_numeric_fields_publish_the_native_upper_bound() {
         ),
         ("RunSnapshotV1", vec!["current_attempt_no"], 4294967295u64),
     ] {
+        let object = if name == "BudgetV1" {
+            &schema["components"]["schemas"][name]["allOf"][0]
+        } else {
+            &schema["components"]["schemas"][name]
+        };
         for field in fields {
             assert_eq!(
-                schema["components"]["schemas"][name]["properties"][field]["maximum"],
+                object["properties"][field]["maximum"],
                 json!(maximum),
                 "{name}.{field}"
             );

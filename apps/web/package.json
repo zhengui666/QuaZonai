@@ -12,7 +12,7 @@
     "preview": "vite preview --host 127.0.0.1 --port 4173 --strictPort",
     "test": "vitest run && node --test scripts/pwa-files.test.mjs",
     "test:e2e": "playwright test",
-    "test:e2e:native": "node scripts/native-browser.mjs"
+    "test:e2e:native": "node --test scripts/native-cleanup.test.mjs && node scripts/native-browser.mjs"
   },
   "dependencies": {
     "@ant-design/icons": "6.3.1",

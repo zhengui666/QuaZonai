@@ -27,7 +27,7 @@ describe('same-origin strict API client', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
   it('keeps revision conflicts precise above Number.MAX_SAFE_INTEGER', async () => {
-    const failure = await responseFailure(Response.json(problem, { status: 409 }));
+    const failure = await responseFailure(Response.json(problem, { status: 409, headers: { 'Content-Type': 'application/problem+json' } }));
     expect(failure).toBeInstanceOf(ApiFailure);
     expect(failure.problem?.current_revision).toBe('9007199254740993');
     expect(failure.code).toBe('REVISION_CONFLICT');

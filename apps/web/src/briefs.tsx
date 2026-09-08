@@ -7,6 +7,8 @@ import { uuidPattern } from './auth';
 import { briefContent, initialBudget, initialStop } from './brief-fields';
 import { BudgetFields, counterRules } from './budget-fields';
 import { bindingAccessOptions } from './authoring-options';
+import { bindingListError } from './authoring-constraints';
+import { validateBaseCurrency } from './generated/responses.cjs';
 import { ErrorNotice, NoData, Pager, QueryPanel, ResourceFacts, StateTag, useGuard, useOnline } from './ui';
 
 type Brief = Schema['BriefView'];
@@ -41,6 +43,8 @@ function BriefEditor({ projectId, brief, close }: { projectId: string; brief?: B
   const horizon: Content['horizon_kind'] | undefined = Form.useWatch(['content', 'horizon_kind'], form);
   const readOnly = brief?.state === 'FROZEN' && !fork;
   const mutation = useMutation({ mutationFn: async (value: Fields) => {
+    const bindingError = bindingListError(value.bindings);
+    if (bindingError) throw new ApiFailure('VALIDATION_ERROR', bindingError);
     const content = briefContent(value.content);
     if (brief && !fork) {
       const body: Schema['BriefUpdate'] = { schema_version: 1, expected_revision: brief.revision, content, bindings: value.bindings };
@@ -75,7 +79,7 @@ function BriefEditor({ projectId, brief, close }: { projectId: string; brief?: B
         <Form.Item name={['content', 'economic_rationale']} label="经济依据" rules={[{ required: true, whitespace: true, max: 8000 }]}><Input.TextArea rows={3} maxLength={8000} /></Form.Item>
         <div className="field-grid">
           <Form.Item name={['content', 'target_kind']} label="预测单位" rules={[{ required: true }]}><Select options={[{ value: 'SCORE', label: '无量纲分数' }, { value: 'EXPECTED_RETURN', label: '预期收益' }]} /></Form.Item>
-          <Form.Item name={['content', 'base_currency']} label="基础币种（ISO 4217）" rules={[{ required: true, pattern: /^[A-Z]{3}$/ }]}><Input maxLength={3} /></Form.Item>
+          <Form.Item name={['content', 'base_currency']} label="基础币种（ISO 4217）" rules={[{ required: true }, { validator: (_, value: unknown) => validateBaseCurrency(value) ? Promise.resolve() : Promise.reject(new Error('基础币种必须属于服务器原生币种表。')) }]}><Input maxLength={3} /></Form.Item>
           <Form.Item name={['content', 'horizon_kind']} label="预测周期" rules={[{ required: true }]}><Select options={[{ value: 'FIXED_BARS', label: '固定 K 线数' }, { value: 'FIXED_DURATION', label: '固定时长' }, { value: 'VARIABLE_INTERVAL', label: '可变区间' }]} /></Form.Item>
           {horizon !== 'VARIABLE_INTERVAL' && <Form.Item name={['content', 'horizon_value']} label="固定周期值（整数）" rules={counterRules}><Input inputMode="numeric" maxLength={19} /></Form.Item>}
         </div>
@@ -85,7 +89,10 @@ function BriefEditor({ projectId, brief, close }: { projectId: string; brief?: B
           {([['universe_version_id', '投资域版本'], ['evaluation_policy_id', '评估策略'], ['execution_assumptions_id', '执行假设']] as const).map(([field, label]) => <Form.Item key={field} name={['content', field]} label={label} rules={uuidRules}><Input /></Form.Item>)}
           <Form.Item name={['content', 'benchmark_ref']} label="基准引用（可选）" rules={[{ pattern: uuidPattern }]}><Input /></Form.Item>
         </div>
-        <Form.List name="bindings" rules={[{ validator: (_, values: unknown[]) => Array.isArray(values) && values.length >= 1 && values.length <= 64 ? Promise.resolve() : Promise.reject(new Error('需要 1 至 64 项真实数据绑定。')) }]}>
+        <Form.List name="bindings" rules={[{ validator: async (_, values: unknown) => {
+          const problem = bindingListError(values);
+          if (problem) throw new Error(problem);
+        } }]}>
           {(fields, { add, remove }, { errors }) => <Space orientation="vertical" className="full-width">
             {fields.map(field => <Card key={field.key} size="small" title={`数据绑定 ${field.name + 1}`} extra={<Button danger disabled={disabled} onClick={() => remove(field.name)}>删除绑定 {field.name + 1}</Button>}>
               <Form.Item name={[field.name, 'dataset_revision_id']} label="数据集版本" rules={uuidRules}><Input /></Form.Item>

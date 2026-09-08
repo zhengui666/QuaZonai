@@ -84,14 +84,7 @@ fn brief_content_variant(
                 .enum_values(Some([horizon_kind])),
         )
         .required("horizon_kind")
-        .property(
-            "base_currency",
-            ObjectBuilder::new()
-                .schema_type(Type::String)
-                .min_length(Some(3))
-                .max_length(Some(3))
-                .pattern(Some("^[A-Z]{3}$")),
-        )
+        .property("base_currency", crate::budget::currency_schema())
         .required("base_currency")
         .property("benchmark_ref", Option::<Id>::schema())
         .property("evaluation_policy_id", Id::schema())

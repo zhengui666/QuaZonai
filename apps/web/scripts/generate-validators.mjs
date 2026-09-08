@@ -10,7 +10,9 @@ const output = new URL('../src/generated/', import.meta.url);
 const document = JSON.parse(fs.readFileSync(source, 'utf8'));
 if (!document.paths || !document.components?.schemas) throw new Error('Native HTTP document is incomplete');
 const root = 'urn:quazonai:http-contract:v2';
-const ajv = new Ajv2020({ strict: false, allErrors: false, validateFormats: true,
+// Reuse generated functions for native component references instead of
+// repeating Problem and nested Brief validators in every operation's bundle.
+const ajv = new Ajv2020({ strict: false, allErrors: false, validateFormats: true, inlineRefs: false,
   code: { source: true, esm: false, lines: true } });
 addFormats(ajv);
 ajv.addSchema(document, root);
@@ -40,7 +42,7 @@ for (const [path, item] of Object.entries(document.paths)) {
     const operation = item[method];
     if (!operation) continue;
     for (const [status, responseValue] of Object.entries(operation.responses ?? {})) {
-      if (!/^2[0-9]{2}$/.test(status)) continue;
+      if (!/^[2-5][0-9]{2}$/.test(status)) continue;
       const response = local(responseValue);
       const key = `${method.toUpperCase()} ${path} ${status}`;
       const entry = { empty: false, media: {} };
@@ -51,8 +53,7 @@ for (const [path, item] of Object.entries(document.paths)) {
         for (const [mime, content] of Object.entries(response.content ?? {})) {
           const media = mime.toLowerCase();
           if (media === 'application/json' || /^application\/[a-z0-9.+-]+\+json$/.test(media)) {
-            if (!content.schema) throw new Error(`JSON success schema missing: ${key}`);
-            // Keep local references attached to the same complete native document.
+            if (!content.schema) throw new Error(`JSON response schema missing: ${key}`);
             const pointer = responseValue.$ref
               ? `${responseValue.$ref}/content/${escapePointer(mime)}/schema`
               : `#/paths/${escapePointer(path)}/${method}/responses/${status}/content/${escapePointer(mime)}/schema`;
@@ -68,10 +69,9 @@ for (const [path, item] of Object.entries(document.paths)) {
     }
   }
 }
-if (!document.components.schemas.BudgetV1?.properties?.cost_currency) {
-  throw new Error('Native budget currency schema missing');
-}
-validator('nativeCostCurrency', { $ref: `${root}#/components/schemas/BudgetV1/properties/cost_currency` });
+validator('nativeCostCurrency', { $ref: `${root}#/components/schemas/BudgetV1/allOf/0/properties/cost_currency` });
+validator('nativeBaseCurrency', { $ref: `${root}#/components/schemas/BriefContentV1/oneOf/0/properties/base_currency` });
+validator('nativeProblem', { $ref: `${root}#/components/schemas/Problem` });
 const runtime = `
 const responseRegistry = ${JSON.stringify(registry, null, 2)};
 function mediaType(value) { return typeof value === 'string' ? value.split(';', 1)[0].trim().toLowerCase() : ''; }
@@ -90,10 +90,15 @@ exports.validateResponse = function(path, method, status, value, contentType) {
   return media?.kind === 'json' && exports[media.validator](value);
 };
 exports.validateCostCurrency = function(value) { return exports.nativeCostCurrency(value); };
+exports.validateBaseCurrency = function(value) { return exports.nativeBaseCurrency(value); };
+exports.validateProblem = function(value) { return exports.nativeProblem(value); };
 `;
 fs.mkdirSync(output, { recursive: true });
-fs.writeFileSync(new URL('responses.cjs', output), standaloneCode(ajv, exported) + runtime);
+fs.writeFileSync(new URL('responses.cjs', output), '// Generated from Rust OpenAPI. Do not edit.\n' + standaloneCode(ajv, exported) + runtime);
 fs.writeFileSync(new URL('responses.d.cts', output),
+  '// Generated from Rust OpenAPI. Do not edit.\n' +
   'export declare function validateResponse(path: string, method: string, status: number, value: unknown, contentType?: string | null): boolean;\n' +
   'export declare function responseKind(path: string, method: string, status: number, contentType?: string | null): "json" | "binary" | "event-stream" | "empty" | undefined;\n' +
-  'export declare function validateCostCurrency(value: unknown): boolean;\n');
+  'export declare function validateCostCurrency(value: unknown): boolean;\n' +
+  'export declare function validateBaseCurrency(value: unknown): boolean;\n' +
+  'export declare function validateProblem(value: unknown): value is import("./api").components["schemas"]["Problem"];\n');

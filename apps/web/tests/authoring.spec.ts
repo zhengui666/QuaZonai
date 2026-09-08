@@ -107,7 +107,7 @@ test('partition changes clear incompatible access rather than granting a stronge
 test('schema-valid but unsupported loaded cost and access values cannot submit', async ({ page }) => {
   const state = await fixture(page);
   const draft = brief('DRAFT');
-  draft.content.budget.cost_enforcement = 'EXACT';
+  draft.content.budget = { ...draft.content.budget, cost_enforcement: 'EXACT', max_cost_decimal: '1', cost_currency: 'USD' };
   draft.bindings = [{ dataset_revision_id: id(14), role: 'SEALED', access_policy: 'RESEARCH_READ' }];
   await page.route(url => url.pathname === `/api/v2/projects/${project.id}/briefs`, route => reply(route, { schema_version: 1, items: [draft], next_cursor: null }));
   await page.goto('/'); await page.getByRole('button', { name: project.name, exact: true }).click();

@@ -35,8 +35,9 @@ let redactionsFile;
 let adminEnv;
 let database;
 let role;
-let databaseCreated = false;
-let roleCreated = false;
+// Creation may commit even when the client never receives its acknowledgement.
+let databaseCreationAttempted = false;
+let roleCreationAttempted = false;
 let cleanupPromise;
 let stopping = false;
 
@@ -179,12 +180,12 @@ function cleanup() {
           : 'Diagnostics withheld: private redaction manifest unavailable.\n', { mode: 0o600 });
       } catch (error) { failure ??= error; }
     }
-    if (databaseCreated) {
-      try { await sql('drop-owned-database', `DROP DATABASE "${database}" WITH (FORCE);\n`, adminEnv, true); }
+    if (databaseCreationAttempted) {
+      try { await sql('drop-owned-database', `DROP DATABASE IF EXISTS "${database}" WITH (FORCE);\n`, adminEnv, true); }
       catch (error) { failure ??= error; }
     }
-    if (roleCreated) {
-      try { await sql('drop-owned-role', `DROP ROLE "${role}";\n`, adminEnv, true); }
+    if (roleCreationAttempted) {
+      try { await sql('drop-owned-role', `DROP ROLE IF EXISTS "${role}";\n`, adminEnv, true); }
       catch (error) { failure ??= error; }
     }
     if (privateDir) await rm(privateDir, { recursive: true, force: true });
@@ -223,10 +224,16 @@ async function main() {
   privateValues.add(ownerUrl); privateValues.add(applicationUrl);
   const ownerEnv = { ...childEnv, DATABASE_URL: ownerUrl };
   const applicationEnv = { ...childEnv, DATABASE_URL: applicationUrl, RUST_LOG: 'warn' };
+  await sql('require-fresh-names', `DO $fresh$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='${role}')
+       OR EXISTS (SELECT 1 FROM pg_database WHERE datname='${database}') THEN
+      RAISE EXCEPTION 'Native acceptance resource name collision';
+    END IF;
+  END $fresh$;\n`);
+  roleCreationAttempted = true;
   await sql('create-owned-role', `CREATE ROLE "${role}" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD '${password}';\n`);
-  roleCreated = true;
+  databaseCreationAttempted = true;
   await sql('create-owned-database', `CREATE DATABASE "${database}";\n`);
-  databaseCreated = true;
   await run('migrations', binary, ['migrate', '--application-role', role], { env: ownerEnv });
   const state = resolve(privateDir, 'state');
   await run('init-state', binary, ['init-state', '--state-dir', state], { env: applicationEnv });

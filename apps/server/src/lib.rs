@@ -386,6 +386,21 @@ fn describe_authority(document: &mut utoipa::openapi::OpenApi) {
                             .build().into(),
                     );
                 }
+                // ApiError always emits Problem media, not ordinary JSON.
+                // Keep each route's declared statuses and schema; change only
+                // the native annotation's default JSON media for that DTO.
+                for (status, response) in &mut operation.responses.responses {
+                    if !status.parse::<u16>().is_ok_and(|code| code >= 400) {
+                        continue;
+                    }
+                    if let utoipa::openapi::RefOr::T(response) = response {
+                        if let Some(content) = response.content.shift_remove("application/json") {
+                            response
+                                .content
+                                .insert("application/problem+json".into(), content);
+                        }
+                    }
+                }
                 operation.security = Some(if anonymous {
                     vec![]
                 } else if only_machine {

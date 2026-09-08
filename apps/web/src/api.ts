@@ -1,25 +1,12 @@
 import createClient from 'openapi-fetch';
 import type { components, paths } from './generated/api';
-import { responseKind, validateResponse } from './generated/responses.cjs';
+import { responseKind, validateProblem, validateResponse } from './generated/responses.cjs';
 
 export type Schema = components['schemas'];
 export type Problem = Schema['Problem'];
 export const AUTH_CHANGED = 'quazonai-auth-changed';
 export const REAUTH_REQUIRED = 'quazonai-reauth-required';
 
-function record(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-function isProblem(value: unknown): value is Problem {
-  return record(value) && typeof value.code === 'string'
-    && typeof value.detail === 'string' && typeof value.request_id === 'string'
-    && typeof value.status === 'number' && typeof value.retryable === 'boolean'
-    && typeof value.title === 'string' && typeof value.type === 'string'
-    && (value.current_revision === undefined || typeof value.current_revision === 'string')
-    && Array.isArray(value.safe_next_actions) && value.safe_next_actions.every(v => typeof v === 'string')
-    && Array.isArray(value.field_errors) && value.field_errors.every(v => record(v)
-      && typeof v.field === 'string' && typeof v.code === 'string' && typeof v.message === 'string');
-}
 export class ApiFailure extends Error {
   constructor(
     readonly code: string,
@@ -37,10 +24,17 @@ export function retryAt(value: string | null, now = Date.now()): number {
   const timestamp = /^\d+$/.test(value) ? now + Number(value) * 1000 : Date.parse(value);
   return Number.isFinite(timestamp) && timestamp > now ? timestamp : 0;
 }
-export async function responseFailure(response: Response): Promise<ApiFailure> {
+export async function responseFailure(response: Response, schemaPath?: string, method = 'GET'): Promise<ApiFailure> {
+  const contentType = response.headers.get('content-type');
+  const media = contentType?.split(';', 1)[0]?.trim().toLowerCase();
+  const declared = media === 'application/problem+json' && response.status >= 400
+    && (schemaPath === undefined || responseKind(schemaPath, method, response.status, contentType) === 'json');
   let value: unknown;
-  try { value = await response.json(); } catch { value = undefined; }
-  if (isProblem(value) && value.status === response.status) {
+  if (declared) {
+    try { value = await response.json(); } catch { value = undefined; }
+  }
+  if (declared && validateProblem(value) && value.status === response.status
+    && (schemaPath === undefined || validateResponse(schemaPath, method, response.status, value, contentType))) {
     return new ApiFailure(value.code, value.detail, response.status, value, retryAt(response.headers.get('retry-after')));
   }
   return new ApiFailure('HTTP_CONTRACT_ERROR', `服务返回了无法识别的响应（HTTP ${response.status}）。未将它当成空列表或成功结果。`, response.status);
@@ -81,7 +75,7 @@ export function makeClient(baseUrl: string, fetcher: typeof fetch = fetch) {
         }
         return response;
       }
-      const failure = await responseFailure(response);
+      const failure = await responseFailure(response, schemaPath, request.method);
       if (typeof window !== 'undefined') {
         if (failure.code === 'AUTH_REQUIRED' && new URL(request.url).pathname !== '/api/v2/auth/session') {
           window.dispatchEvent(new Event(AUTH_CHANGED));

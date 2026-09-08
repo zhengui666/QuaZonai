@@ -31,7 +31,7 @@ function object(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 export async function reply(route: Route, json: unknown, status = 200) {
-  await route.fulfill({ status, json, headers: { 'Cache-Control': 'no-store' } });
+  await route.fulfill({ status, json, contentType: status >= 400 ? 'application/problem+json' : 'application/json', headers: { 'Cache-Control': 'no-store' } });
 }
 export type Captured = { path: string; method: string; key: string | null; body: unknown };
 export async function fixture(page: Page, options: { authenticated?: boolean; loseFirstCreate?: boolean; conflict?: boolean; requireVerify?: boolean } = {}) {
