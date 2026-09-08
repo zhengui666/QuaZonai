@@ -1,6 +1,7 @@
 use clap::{Args, Parser, Subcommand};
 use contracts::Id;
 use integrations::{
+    artifacts::ArtifactStore,
     authentication::{capability_verifier, random_capability},
     secrets::SecretVault,
 };
@@ -27,6 +28,23 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Serve native stdio MCP for one existing Mission; no DB or Operator authority.
+    Mcp {
+        #[arg(long)]
+        api_origin: String,
+        #[arg(long, value_parser = parse_id)]
+        project_id: Id,
+        #[arg(long, value_parser = parse_id)]
+        cycle_id: Id,
+        #[arg(long, value_parser = parse_id)]
+        run_id: Id,
+        #[arg(long, value_parser = parse_id)]
+        attempt_id: Id,
+        #[arg(long, value_parser = parse_id)]
+        brief_id: Id,
+        #[arg(long, default_value_t = false)]
+        development_http: bool,
+    },
     /// Create a NEW private state directory and native encryption/session keys.
     InitState {
         #[arg(long, env = "STATE_DIR", default_value = "var")]
@@ -73,6 +91,10 @@ struct Database {
     database_url: String,
 }
 
+fn parse_id(value: &str) -> Result<Id, &'static str> {
+    Id::try_from(value.to_owned()).map_err(|_| "expected a canonical UUIDv7")
+}
+
 fn private_dir(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(unix)]
     {
@@ -88,6 +110,7 @@ fn private_dir(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
 fn initialize_state(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     private_dir(root)?;
     private_dir(&root.join("secrets"))?;
+    ArtifactStore::open(&root.join("artifacts"))?;
     SecretVault::initialize_key(&root.join("master.key"))?;
     let vault = SecretVault::open(&root.join("secrets"), &root.join("master.key"))?;
     let key = Key::generate();
@@ -129,7 +152,8 @@ async fn main() {
     // Authentication arguments, headers and bodies are never logged.
     tracing_subscriber::fmt()
         .with_target(false)
-        .with_env_filter("server=info")
+        .with_env_filter("off,server=info")
+        .with_writer(std::io::stderr)
         .json()
         .init();
     if let Err(error) = execute(cli.command).await {
@@ -140,6 +164,31 @@ async fn main() {
 
 async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
     match command {
+        Command::Mcp {
+            api_origin,
+            project_id,
+            cycle_id,
+            run_id,
+            attempt_id,
+            brief_id,
+            development_http,
+        } => {
+            let token = std::env::var("QUAZONAI_MCP_TOKEN")
+                .map_err(|_| server::mcp::Failure::Configuration)?;
+            let binding = server::mcp::MissionBinding {
+                project_id,
+                cycle_id,
+                run_id,
+                attempt_id,
+                brief_id,
+            };
+            let mcp =
+                server::mcp::MissionMcp::connect(&api_origin, development_http, &token, binding)
+                    .await?;
+            drop(token);
+            mcp.serve_io(tokio::io::stdin(), tokio::io::stdout())
+                .await?;
+        }
         Command::InitState { state_dir } => initialize_state(&state_dir)?,
         Command::PruneUnpublishedVerifiers {
             database,
@@ -200,7 +249,11 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             });
-            let app = server::router(AppState::new(store, vault, policy), key);
+            let objects = ArtifactStore::open(&state_dir.join("artifacts"))?;
+            let app = server::router(
+                AppState::new(store, vault, policy).with_artifact_store(objects),
+                key,
+            );
             let listener = tokio::net::TcpListener::bind(bind).await?;
             tracing::info!(address=%listener.local_addr()?,"authenticated HTTP API listening");
             let result = axum::serve(listener, app)

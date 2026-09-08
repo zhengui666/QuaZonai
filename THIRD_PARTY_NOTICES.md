@@ -21,6 +21,17 @@ Original QuaZonai code remains AGPL-3.0-only under LICENSE/NOTICE. Third-party s
 | cap-std-3.4.5 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | Rust authentication / HTTP / persistence / CLI integration |
 | clap-4.5.46 | MIT OR Apache-2.0 | Rust authentication / HTTP / persistence / CLI integration |
 | sqlx-0.8.6 | MIT OR Apache-2.0 | Rust authentication / HTTP / persistence / CLI integration |
+| rmcp / rmcp-macros 3.2.0 | Apache-2.0 | Official native MCP stdio transport, protocol lifecycle, tool routing and strict argument schemas; no copied JSON-RPC implementation |
+| reqwest 0.12.23 | MIT OR Apache-2.0 | Fixed-route Mission control API client; no redirects, automatic retries, ambient proxy or browser authority |
+
+The MCP adapter is `apps/server/src/mcp/`; its transport regression is
+`apps/server/tests/mcp_transport.rs`. The official SDK pin is
+https://github.com/modelcontextprotocol/rust-sdk/tree/rmcp-v3.2.0 .
+Only `server`, `macros`, `transport-io` and the test-only `client` features are
+requested. Resource bounds and Mission authorization adapt existing domain/API
+contracts; the SDK owns protocol parsing and service lifecycle. The native
+`Cargo.lock` records the exact transitive graph. Protocol fixture tests do not
+establish a complete Codex research loop or a finished license audit.
 
 A dependency inventory is not a completed license audit. Before distribution, generate a complete license report/SBOM for the exact resolved graph, inspect upstream license texts and NOTICE requirements, and comply with LGPL requirements for redistribution/linking (including relinking/source obligations as applicable). No license is changed by a directory rename or rewrite. The repository does not vendor Cargo dependencies or toolchains.
 

@@ -12,7 +12,7 @@ contracts = { path = "../contracts" }
 chrono = { version = "=0.4.41", features = ["serde"] }
 thiserror = "=2.0.20"
 iso_currency = "=0.7.0"
+serde_json.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
 proptest = "=1.7.0"

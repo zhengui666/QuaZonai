@@ -4,6 +4,7 @@
 //! independent evaluation, or the complete Issue 62 acceptance contract.
 #![forbid(unsafe_code)]
 
+pub mod artifacts;
 pub mod auth;
 pub mod brief;
 pub mod budget;
@@ -21,6 +22,8 @@ use utoipa::OpenApi;
 
 #[derive(OpenApi)]
 #[openapi(components(schemas(
+    artifacts::ArtifactCreate,
+    artifacts::ArtifactView,
     brief::BriefCreate,
     brief::BriefCreateIntent,
     brief::BriefUpdate,

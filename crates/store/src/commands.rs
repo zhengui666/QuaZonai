@@ -303,6 +303,28 @@ impl Store {
     }
 }
 
+/// Research uploads use scoped identity, not an Operator grant. The native object
+/// adapter must compare existing bytes before completing an idempotent replay.
+/// This receipt deliberately contains metadata only, never uploaded source text.
+pub(crate) async fn artifact_submit(
+    tx: &mut Transaction<'_, Postgres>,
+    scope: String,
+    idempotency_key: &str,
+    request: Value,
+) -> Result<Prepared, StoreError> {
+    key(idempotency_key)?;
+    let previous = prior(tx, &scope, "ARTIFACT_SUBMIT", idempotency_key, &request).await?;
+    Ok(Prepared {
+        target: previous.as_ref().map(|p| p.target).unwrap_or_default(),
+        scope,
+        operation: "ARTIFACT_SUBMIT",
+        key: idempotency_key.into(),
+        request,
+        grant: None,
+        replay: previous.map(|p| p.response),
+    })
+}
+
 /// The Run service already holds the resource and verified scope locks. Reuse
 /// the same immutable receipt format without turning RUN_CANCEL into an
 /// Operator approval capability or accepting a client-supplied principal scope.

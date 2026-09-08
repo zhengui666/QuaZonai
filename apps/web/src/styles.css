@@ -1,0 +1,42 @@
+:root { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #1d2535; background: #f6f7fa; font-synthesis: none; text-rendering: optimizeLegibility; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; }
+.full-width { width: 100%; }
+.break-word { overflow-wrap: anywhere; word-break: break-word; }
+.auth-page { min-height: 100dvh; display: grid; place-items: center; padding: max(24px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom)); }
+.auth-card { width: min(100%, 520px); }
+.auth-card .ant-form, .auth-card .ant-alert { margin-top: 20px; }
+.auth-card h1 { font-size: clamp(24px, 5vw, 32px); }
+.eyebrow { font-size: 12px; letter-spacing: .1em; }
+.enrollment { display: grid; justify-items: center; gap: 16px; margin: 24px 0; }
+.console-layout { min-height: 100dvh; }
+.console-sidebar { border-right: 1px solid #e6e8ed; }
+.brand { padding: 28px 24px 14px; }
+.console-header { height: auto; min-height: 80px; padding: max(12px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) 12px max(24px, env(safe-area-inset-left)); display: flex; align-items: center; justify-content: space-between; gap: 16px; background: #fff; border-bottom: 1px solid #e6e8ed; line-height: 1.5; }
+.console-content { padding: 32px; width: 100%; max-width: 1600px; margin-inline: auto; }
+.console-footer { padding: 24px max(24px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left)); color: #596273; line-height: 1.6; }
+.page-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }
+.field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 20px; }
+.global-notice { margin-bottom: 24px; }
+.update-bar:empty { display: none; }
+.update-bar { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 12px; padding-inline: 16px; background: #fff; }
+.table-title { white-space: normal; height: auto; min-height: 44px; text-align: left; }
+.state-select { width: 220px; max-width: 100%; }
+.skip-link { position: absolute; left: -10000px; z-index: 2000; background: white; padding: 12px; }
+.skip-link:focus { left: 16px; top: 16px; }
+:focus-visible { outline: 3px solid #2857b4; outline-offset: 3px; }
+.ant-btn, .ant-menu-item { min-height: 44px; }
+.ant-drawer-content-wrapper { max-width: 100vw; }
+.ant-descriptions-item-content { overflow-wrap: anywhere; }
+.ant-typography { overflow-wrap: anywhere; }
+@media (max-width: 767px) {
+  .console-content { padding: 20px 12px; }
+  .console-header { padding-inline: 12px; gap: 8px; }
+  .console-header > .ant-space { min-width: 0; }
+  .page-heading { flex-direction: column; gap: 4px; }
+  .field-grid { grid-template-columns: minmax(0, 1fr); }
+  .ant-drawer-body { padding: 20px 16px !important; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}

@@ -17,7 +17,9 @@
 | 研究准备 | 同事务冻结输入集合、不可变评估政策与实验族登记，严格分区/许可/项目关联和分页授权；登记验证意图不代表已运行原生算法、验证 PIT 或得到 PASS |
 | PostgreSQL Store | 新库SQLx迁移、逐轮不可变预约/发送/结算、同Mission幂等与预算投影、关系唯一/复合外键；研究/评估权限全链路与 Worker 仍待完整验收 |
 | Codex | 锁定官方App Server stdio、全分页模型及Thread启动探针；真实账号/同Thread工具闭环还需验收 |
-| 交付与UX | 全量Ant Design、审批/反馈/晋级/唤醒、旧数据导入、恢复与隔离仍在实施，不虚构页面或状态 |
+| Ant Design Web/PWA | 已实现 TOTP 初始化/登录、研究项目与 Brief 草稿、Run/SSE/取消、设备管理；桌面/平板/手机与更新提示。真实浏览器入口测试覆盖首次绑定、项目提交幂等、CSRF 和退出；不代表全部研究业务完成 |
+| 产物与 MCP | 同项目受限产物提交/不可变存储，按 Mission Attempt 授权和计量；官方 rmcp stdio 与固定 HTTP 工具适配。研究上传不是可信评估，不授予资格或审批 |
+| 交付与完整研究 | Alpha/组合/审批/反馈/晋级/唤醒、旧数据导入、完整恢复与隔离仍在实施；未接通的页面明确标示，不填充假结果 |
 
 ## 开发验证
 
@@ -67,6 +69,25 @@ timeout --kill-after=5s 90s cargo run --locked -p job --example codex_contract
 ```
 
 这使用独立空profile，不读取或修改宿主登录。真实SYSTEM/官方订阅/custom-provider路径不可被此探针替代。
+
+## Web 开发与真实浏览器验证
+
+`apps/web` 使用官方 Ant Design 与原生生成的 HTTP 类型/运行时验证器。UI 的 API 始终同源；开发代理仅接受显式的回环地址，不从 `.env` 注入后端或秘密。运行 Rust API 的迁移、私有状态目录及公共 Origin 设置见 [CLI](CLI.md)。
+
+```sh
+cd apps/web
+npm ci --ignore-scripts --no-audit --no-fund
+npm run generate
+npm run typecheck
+npm test
+npm run build
+node node_modules/@playwright/test/cli.js install chromium
+npm run test:e2e
+```
+
+三视口与 PWA 套件使用明确的合成界面合同；真实服务另行执行 `npm run test:e2e:native`。该命令要求显式 `QUAZONAI_WEB_TEST_ADMIN_URL` 指向可丢弃的回环 PostgreSQL18/PGMQ1.10 实例，并已构建 `target/debug/server`。它创建独立应用角色和新库，执行真实初始化/TOTP、项目写入与丢 ACK 重试、CSRF 拒绝、布局和退出失效，结束仅删除自己创建的测试资源。不要传生产地址，也不要把原始绑定诊断或验证码上传到 CI artifacts；公开证据只有脱敏摘要。
+
+上述入口已能操作当前实现的研究组织与运行管理，**不代表 Alpha、组合和目标交付全链路已经完成**。完整生产部署和 T42 仍须独立验收。
 
 ## 文档
 

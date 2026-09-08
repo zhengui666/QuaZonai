@@ -14,6 +14,30 @@ FIXTURE、PIT_UNVERIFIED、未核验方法和政策登记成功均不是 PASS，
 不要为尚未接通的可信数据登记/Brief冻结/Worker 路径编造成功结果或使用 SQL 后门。
 
 
+### 研究产物
+
+POST /api/v2/artifacts 仅在凭据明确具有项目 ARTIFACT_SUBMIT 时使用，提交
+schema_version=1、project_id、kind=CODE/PARAMETERS/REPORT、content原文及
+Idempotency-Key；文本最多2 MiB UTF-8，JSON文档必须含整数schema_version=1。
+不提交路径、origin、producer或任意Run/Attempt，不把报告自报PASS当证据。
+相同键的重试必须保留完全相同字节；409不能通过改UUID洗掉试验或输出配额。
+读取元数据/内容需RESEARCH_READ，EVALUATOR_ONLY在这些普通接口不可见。
+Mission凭据绑定签发时Attempt；过期/撤销/旧Attempt拒绝后交由可信任务服务对账，
+不能自行签发身份、请求Operator授权或直连数据库。SYNTHETIC研究提交不是REAL
+评估或PACKAGE。完整字段及原生下载行为见CLI「研究产物」。
+
+### 已实现的 Mission MCP
+
+可信任务启动器可运行 `cargo run --locked -p server -- mcp`，精确参数见 CLI。
+只通过环境 QUAZONAI_MCP_TOKEN 传入已签发的 Mission 能力；不要复制浏览器会话、
+Provider 凭据或数据库配置，也不要自行启动带更广身份/不同绑定的服务。
+当前原生 tools/list 只有 `research.get_brief {brief_id}` 和 `run.get {run_id}`。
+前者仅返回绑定的冻结版本，后者仅返回该 Mission 的真实 Run/Attempt；未知工具
+不是可由任意 HTTP/Shell/SQL 替代的能力。必须保留原生 UUIDv7 和十进制版本字符串。
+每次调用会重新检查到期、撤销及 Attempt 接管，失败不能靠更换 ID、扩大权限或
+循环重试绕过。stdout 是协议，不打印解释或 token；任务断开不等于远端 Run 取消。
+该入口尚不实现完整发证、原生 Codex 循环和其余研究工具；不得用协议测试冒充生产验收。
+
 ### Run 事件与失效授权
 
 Run取消需要近期Operator认证，或精确授权的CLI/AUTOMATION机器权限；研究Mission

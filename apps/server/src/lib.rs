@@ -2,10 +2,12 @@
 //! reference; PostgreSQL independently owns initialization, expiry and revocation.
 #![forbid(unsafe_code)]
 mod access;
+pub mod artifacts;
 pub mod auth;
 pub mod brief;
 pub mod control;
 pub mod error;
+pub mod mcp;
 pub mod research;
 pub mod runs;
 pub mod secrets;
@@ -92,6 +94,8 @@ pub struct AppState {
     pub crypto_slots: Arc<Semaphore>,
     pub machine_crypto_slots: Arc<Semaphore>,
     pub run_stream_slots: Arc<Semaphore>,
+    pub artifact_store: Option<Arc<integrations::artifacts::ArtifactStore>>,
+    pub artifact_slots: Arc<Semaphore>,
 }
 impl AppState {
     pub fn new(store: Store, vault: SecretVault, policy: WebPolicy) -> Self {
@@ -102,7 +106,13 @@ impl AppState {
             crypto_slots: Arc::new(Semaphore::new(2)),
             machine_crypto_slots: Arc::new(Semaphore::new(2)),
             run_stream_slots: Arc::new(Semaphore::new(32)),
+            artifact_store: None,
+            artifact_slots: Arc::new(Semaphore::new(4)),
         }
+    }
+    pub fn with_artifact_store(mut self, store: integrations::artifacts::ArtifactStore) -> Self {
+        self.artifact_store = Some(Arc::new(store));
+        self
     }
 }
 
@@ -155,6 +165,16 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
             "/api/v2/machine-credentials/{id}/revoke",
             post(control::revoke_credential),
         )
+        .route(
+            "/api/v2/artifacts",
+            get(artifacts::list)
+                .post(artifacts::create)
+                .layer(DefaultBodyLimit::max(
+                    contracts::artifacts::MAX_UPLOAD_BODY_BYTES,
+                )),
+        )
+        .route("/api/v2/artifacts/{id}", get(artifacts::get))
+        .route("/api/v2/artifacts/{id}/content", get(artifacts::content))
         .route("/api/v2/runs", get(runs::list))
         .route("/api/v2/runs/{id}", get(runs::get))
         .route("/api/v2/runs/{id}/cancel", post(runs::cancel))
@@ -291,7 +311,8 @@ control::credentials,control::issue_credential,control::revoke_credential,
 control::machine_session,control::issue_grant,runs::list,runs::get,runs::cancel,runs::events,
 research::input_sets,research::input_set,research::create_input_set,
 research::evaluation_policies,research::evaluation_policy,research::create_evaluation_policy,
-brief::list,brief::get,brief::create,brief::update),components(schemas(error::Problem)),tags((name="Authentication",description="Native TOTP and revocable browser sessions")))]
+brief::list,brief::get,brief::create,brief::update,
+artifacts::list,artifacts::get,artifacts::create,artifacts::content),components(schemas(error::Problem)),tags((name="Authentication",description="Native TOTP and revocable browser sessions")))]
 struct HttpContracts;
 pub fn openapi_json() -> Result<String, serde_json::Error> {
     let mut document = HttpContracts::openapi();
@@ -349,7 +370,10 @@ fn describe_authority(document: &mut utoipa::openapi::OpenApi) {
                     vec![bearer]
                 } else if browser_auth || (!write && browser_read) {
                     vec![cookie]
-                } else if write && path.ends_with("/cancel") && path.starts_with("/api/v2/runs/") {
+                } else if write
+                    && (path == "/api/v2/artifacts"
+                        || (path.ends_with("/cancel") && path.starts_with("/api/v2/runs/")))
+                {
                     vec![cookie, bearer]
                 } else if write {
                     vec![

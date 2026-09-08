@@ -1,6 +1,42 @@
 {
   "components": {
     "schemas": {
+      "ArtifactAccess": {
+        "enum": [
+          "OPERATOR",
+          "RESEARCH",
+          "EVALUATOR_ONLY",
+          "DELIVERY"
+        ],
+        "type": "string"
+      },
+      "ArtifactCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "description": "At most 2 MiB of UTF-8, including JSON whitespace; the original bytes are preserved.",
+            "maxLength": 2097152,
+            "minLength": 1,
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ResearchArtifactKind"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "project_id",
+          "kind",
+          "content"
+        ],
+        "type": "object"
+      },
       "ArtifactInputRole": {
         "enum": [
           "CODE",
@@ -13,6 +49,88 @@
           "DATA_QUALITY"
         ],
         "type": "string"
+      },
+      "ArtifactProducer": {
+        "enum": [
+          "OPERATOR",
+          "RUNTIME",
+          "AGENT",
+          "IMPORT"
+        ],
+        "type": "string"
+      },
+      "ArtifactView": {
+        "additionalProperties": false,
+        "properties": {
+          "access_class": {
+            "$ref": "#/components/schemas/ArtifactAccess"
+          },
+          "byte_count": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_by": {
+            "$ref": "#/components/schemas/ArtifactProducer"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "media_type": {
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/DataOrigin"
+          },
+          "producer_attempt_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "producer_run_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_name": {
+            "type": "string"
+          },
+          "schema_version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "kind",
+          "media_type",
+          "schema_name",
+          "schema_version",
+          "byte_count",
+          "access_class",
+          "origin",
+          "created_by",
+          "created_at"
+        ],
+        "type": "object"
       },
       "AssignablePrincipalKind": {
         "enum": [
@@ -1163,6 +1281,96 @@
           "max_cycles_per_day",
           "min_cycle_interval_seconds",
           "cost_enforcement"
+        ],
+        "type": "object"
+      },
+      "CommandResult_ArtifactView": {
+        "additionalProperties": false,
+        "properties": {
+          "replayed": {
+            "type": "boolean"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "access_class": {
+                "$ref": "#/components/schemas/ArtifactAccess"
+              },
+              "byte_count": {
+                "$ref": "#/components/schemas/DbCounter"
+              },
+              "created_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "created_by": {
+                "$ref": "#/components/schemas/ArtifactProducer"
+              },
+              "id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "media_type": {
+                "type": "string"
+              },
+              "origin": {
+                "$ref": "#/components/schemas/DataOrigin"
+              },
+              "producer_attempt_id": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Id"
+                  }
+                ]
+              },
+              "producer_run_id": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Id"
+                  }
+                ]
+              },
+              "project_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "schema_name": {
+                "type": "string"
+              },
+              "schema_version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "project_id",
+              "kind",
+              "media_type",
+              "schema_name",
+              "schema_version",
+              "byte_count",
+              "access_class",
+              "origin",
+              "created_by",
+              "created_at"
+            ],
+            "type": "object"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "replayed",
+          "resource"
         ],
         "type": "object"
       },
@@ -2925,6 +3133,105 @@
         ],
         "type": "string"
       },
+      "Page_ArtifactView": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "access_class": {
+                  "$ref": "#/components/schemas/ArtifactAccess"
+                },
+                "byte_count": {
+                  "$ref": "#/components/schemas/DbCounter"
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "created_by": {
+                  "$ref": "#/components/schemas/ArtifactProducer"
+                },
+                "id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "media_type": {
+                  "type": "string"
+                },
+                "origin": {
+                  "$ref": "#/components/schemas/DataOrigin"
+                },
+                "producer_attempt_id": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  ]
+                },
+                "producer_run_id": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  ]
+                },
+                "project_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "schema_name": {
+                  "type": "string"
+                },
+                "schema_version": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "project_id",
+                "kind",
+                "media_type",
+                "schema_name",
+                "schema_version",
+                "byte_count",
+                "access_class",
+                "origin",
+                "created_by",
+                "created_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "items"
+        ],
+        "type": "object"
+      },
       "Page_BriefView": {
         "additionalProperties": false,
         "properties": {
@@ -3991,6 +4298,14 @@
         ],
         "type": "object"
       },
+      "ResearchArtifactKind": {
+        "enum": [
+          "CODE",
+          "PARAMETERS",
+          "REPORT"
+        ],
+        "type": "string"
+      },
       "Revision": {
         "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
         "maxLength": 19,
@@ -4592,6 +4907,425 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v2/artifacts": {
+      "get": {
+        "operationId": "list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_ArtifactView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Shared native machine attempt limit or bounded crypto capacity; respect Retry-After.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Artifacts"
+        ]
+      },
+      "post": {
+        "operationId": "create",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArtifactCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult_ArtifactView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Shared native machine attempt limit or bounded crypto capacity; respect Retry-After.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Artifacts"
+        ]
+      }
+    },
+    "/api/v2/artifacts/{id}": {
+      "get": {
+        "operationId": "get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Shared native machine attempt limit or bounded crypto capacity; respect Retry-After.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Artifacts"
+        ]
+      }
+    },
+    "/api/v2/artifacts/{id}/content": {
+      "get": {
+        "operationId": "content",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "description": "OpenAPI-only binary shape; the actual handler streams the original bytes.",
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Attachment with original native bytes; never rendered inline."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Shared native machine attempt limit or bounded crypto capacity; respect Retry-After.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Artifacts"
+        ]
+      }
+    },
     "/api/v2/auth/devices": {
       "get": {
         "operationId": "devices",
@@ -5205,7 +5939,7 @@
     },
     "/api/v2/briefs/{id}": {
       "get": {
-        "operationId": "get",
+        "operationId": "get_brief",
         "parameters": [
           {
             "in": "path",
@@ -7083,7 +7817,7 @@
     },
     "/api/v2/projects/{id}/briefs": {
       "get": {
-        "operationId": "list",
+        "operationId": "list_briefs",
         "parameters": [
           {
             "in": "path",
@@ -7195,7 +7929,7 @@
         ]
       },
       "post": {
-        "operationId": "create",
+        "operationId": "create_brief",
         "parameters": [
           {
             "in": "path",
@@ -7319,7 +8053,7 @@
     },
     "/api/v2/runs": {
       "get": {
-        "operationId": "list",
+        "operationId": "list_runs",
         "parameters": [
           {
             "in": "query",
@@ -7441,7 +8175,7 @@
     },
     "/api/v2/runs/{id}": {
       "get": {
-        "operationId": "get",
+        "operationId": "get_run",
         "parameters": [
           {
             "in": "path",

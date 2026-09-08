@@ -33,7 +33,7 @@ fn id(path: Result<Path<Id>, PathRejection>) -> Result<Id, ApiError> {
     path.map(|Path(id)| id).map_err(|_| ApiError::validation())
 }
 
-#[utoipa::path(get,path="/api/v2/runs",tag="Runs",params(("project_id"=Option<Id>,Query),("state"=Option<contracts::runs::RunState>,Query),("cursor"=Option<Id>,Query),("limit"=Option<u16>,Query,minimum=1,maximum=100)),responses((status=200,body=Page<RunSnapshotV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
+#[utoipa::path(get,path="/api/v2/runs",operation_id="list_runs",tag="Runs",params(("project_id"=Option<Id>,Query),("state"=Option<contracts::runs::RunState>,Query),("cursor"=Option<Id>,Query),("limit"=Option<u16>,Query,minimum=1,maximum=100)),responses((status=200,body=Page<RunSnapshotV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
 pub async fn list(
     State(state): State<AppState>,
     Authority(actor): Authority,
@@ -42,7 +42,7 @@ pub async fn list(
     let Query(query) = q.map_err(|_| ApiError::validation())?;
     Ok(Json(state.store.list_runs(&actor, &query).await?))
 }
-#[utoipa::path(get,path="/api/v2/runs/{id}",tag="Runs",params(("id"=Id,Path)),responses((status=200,body=RunSnapshotV1),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem)))]
+#[utoipa::path(get,path="/api/v2/runs/{id}",operation_id="get_run",tag="Runs",params(("id"=Id,Path)),responses((status=200,body=RunSnapshotV1),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem)))]
 pub async fn get(
     State(state): State<AppState>,
     Authority(actor): Authority,

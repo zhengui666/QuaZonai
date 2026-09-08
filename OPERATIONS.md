@@ -51,6 +51,34 @@ NULL TG_ARGV 导致 Runtime/Downstream 正常更新失败的问题。身份、�
 created_at 仍不可变，revision 仍必须递增且不得溢出。升级使用前述完整 migrate
 入口和停写/备份流程，不在业务请求中跑 DDL。
 
+## 研究产物存储与018升级
+
+`init-state` 创建私有 `artifacts` 子目录；`serve` 必须能够打开它，旧状态目录升级时只会
+创建此前不存在的空目录。已有目录必须是非符号链接的私有目录；不会替操作者放宽或
+修复权限。产物保存为原始字节，不属于 SecretVault 加密对象；宿主卷和备份必须限制
+访问，不将此目录挂进研究 Agent 或任意 job。Secret/TOTP/model token仍不得作为研究
+产物上传。状态卷的容量告警和空间预算不能省略。
+
+本地对象在完整写入、只读同步和原子发布后，才在数据库提交元数据/原始命令回执。
+文件成功但数据库提交未知时，保留文件并用相同 Idempotency-Key 与相同字节重试核对；
+不能见到文件就手工补数据库，也不能因客户端断开就删除文件。未引用的私有 pending/
+对象可能留作孤儿，回收必须在停止写入后核验原生目录与数据库引用；当前没有在线自动
+删除产物的管理接口。数据库与产物卷应在停止写入的同一维护窗口备份/恢复，单独恢复
+数据库不保证内容仍可读。下载缺失/损坏/权限不符时返回503，不返回另一个对象的内容。
+
+新增迁移 `202609080018_artifact_submission.sql` 为机器凭据增加不可变的
+issuer_attempt_id；新 Mission 签发由数据库锁住并绑定精确当前 Attempt。统一鉴权对
+所有 Mission scope（包括读取和机器身份自省）要求该列非空且等于当前 Attempt。
+旧凭据不猜测历史归属、原样保留 null 作为审计记录，但升级后不再拥有 Mission 权限；
+由可信 Mission 服务重新签发当前 Attempt 凭据，普通 Operator/Agent接口不能伪造该列。
+已绑定旧 Attempt 的凭据在接管为新 Attempt 后同样失效，不能直连 HTTP 恢复权限。
+非 Mission 身份不因此失效。升级沿用停写、备份、正式 migrate 流程，不编辑旧迁移。
+
+每进程最多四个上传/下载，上传文本最多2 MiB UTF-8、HTTP转义体最多12 MiB+16 KiB。
+本地读取上限64 MiB；下载流在完成或断开前保留容量许可，慢客户端不会释放大缓冲的
+占用后继续堆积请求。429遵守Retry-After。Mission全部历史上传按同一Run的冻结输出
+额度累计；跨Attempt不能清零。产物接口只保存研究内容，不产生原生评估或交付资格。
+
 ## 数据和密钥
 
 私有状态目录包含 master.key、session-key.ref、secrets。master key 为0600的32字节原生随机密钥；每个 secret 使用 RustCrypto XChaCha20Poly1305、独立随机 nonce，并绑定 UUID 和用途。加密对象先同步、只读发布，再写数据库引用。不要把 master key 放进普通数据库备份、源码、Agent workspace 或 job 容器。密钥丢失无法靠数据库恢复，需要独立安全备份。

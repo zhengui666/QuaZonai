@@ -84,6 +84,56 @@ RESEARCH_READ 仅可读自身项目的内容/元数据，不取得 Sealed 原始
 本批不提供假成功 freeze 或绕过API的手工SQL。部署迁移为草稿成员单表授予受触发器
 约束的 DELETE，不扩大其他app表的历史删除权限。
 
+## 研究产物：真实字节上传与受限下载
+
+`POST /api/v2/artifacts` 使用 `ArtifactCreate={schema_version:1,project_id,kind,content}` 和
+Idempotency-Key，kind 只接受 CODE、PARAMETERS、REPORT。content 是原始 UTF-8 文本，
+最多2 MiB；PARAMETERS/REPORT 必须为包含整数 schema_version=1 的 JSON object。
+CODE 不在 API 进程编译或执行。所有此类用户/Agent提交均标记 SYNTHETIC/RESEARCH，
+不能提交 origin、路径、producer、Run/Attempt、状态或 REAL/PACKAGE/METRICS 权限。
+
+浏览器须近期 Operator；CLI/AUTOMATION/MISSION 使用精确项目的 ARTIFACT_SUBMIT。
+这里不需要也不授予 Operator grant。Mission 凭据必须由受信任任务服务签发并绑定当前
+Attempt；同一 Run 的所有历史上传累计占用冻结 output_bytes，不因换 Attempt 清零。
+相同幂等键和完全相同原始字节返回原产物；哪怕字节长度相同但内容不同，也返回409。
+
+`GET /api/v2/artifacts?project_id=UUID&limit=50&cursor=UUID` 返回公开元数据和下一游标；
+`GET /api/v2/artifacts/{id}` 返回详情，`GET /api/v2/artifacts/{id}/content` 下载原生内容。
+机器读取需 RESEARCH_READ，只有同项目 RESEARCH 可见；EVALUATOR_ONLY 不由这些接口
+披露。下载为 attachment/application/octet-stream、no-store、nosniff，不直接运行 HTML。
+429应遵守 Retry-After；503存储不可用或未知提交应保留同key核对，不能凭本地文件存在
+认定数据库已发表。上传内容不要写进Issue、错误日志或命令行参数；尚无专属远程CLI
+子命令，不以手工SQL代替HTTP。接口本身不生成评估或资格，也不是原生模型工具闭环。
+
+## 已接通的原生 stdio MCP
+
+`server mcp` 复用官方 Rust MCP SDK，只服务一个由可信任务启动器绑定的 Mission。
+运行入口实际为 `cargo run --locked -p server -- mcp --help`，不是另一个尚未存在的
+CLI/MCP package。启动器必须已通过正常控制面取得有效 Mission 凭据；本命令不签发
+身份、不创建 Run、不读取数据库、STATE_DIR、Provider 配置或浏览器 Cookie。
+
+必填参数为 `--api-origin`、`--project-id`、`--cycle-id`、`--run-id`、`--attempt-id`、
+`--brief-id`；五个 ID 使用既有 UUIDv7 合同。凭据仅由启动器通过 `QUAZONAI_MCP_TOKEN`
+传入，不提供 token 命令行参数，也不要写入对话、Issue 或日志。生产必须 HTTPS origin，
+不能带 userinfo、额外路径、query 或 fragment；开发 HTTP 还须显式 `--development-http`
+并使用字面 loopback IP。禁止环境代理、Cookie、重定向和自动重试。
+
+当前 tools/list **只有两个真实工具**：`research.get_brief {brief_id}` 读取启动绑定的
+同项目 FROZEN Brief；`run.get {run_id}` 读取当前 Mission 的原生 RunSnapshotV1。
+每次调用重新检查 MISSION 类型、RUN_READ/RESEARCH_READ、项目/Run/周期/Attempt、
+凭据到期与 Run deadline；不同任务、草稿、未知字段、非 UUIDv7、撤销和接管均拒绝。
+启动参数本身不是授权，服务端事务才是最终事实源。其他 DESIGN B3 工具仍未接通，
+不允许用任意 HTTP、Shell、SQL 或原始数据访问来替代它们。
+
+stdout 只传原生 MCP，日志使用 stderr。最多同时4次工具调用、不排等待队列；
+连接超时3秒、单 HTTP 请求10秒、单工具15秒，均受任务/凭据到期约束；每个响应累计
+最多1 MiB，整个 stdio 会话最多输入8 MiB（不是单帧或模型 token 预算）。断开客户
+端或到期关闭协议不会取消远端 Run。错误仅含安全代码/HTTP状态，不返回上游正文。
+
+原生协议回归：`cargo test --locked -p server --test mcp_transport`。这些测试使用真实
+SDK、stdio 子进程和 HTTP 故障服务；故障服务不等于实际 PostgreSQL Mission 发证、
+完整 Codex 研究工具循环或生产隔离验收。完整发证/启动/实验/评估链仍按 DESIGN 验收。
+
 ## 原生组件与合同验证
 
 ```sh

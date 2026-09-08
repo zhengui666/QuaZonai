@@ -21,7 +21,7 @@ use contracts::{
 fn path(value: Result<Path<Id>, PathRejection>) -> Result<Id, ApiError> {
     value.map(|Path(id)| id).map_err(|_| ApiError::validation())
 }
-#[utoipa::path(get,path="/api/v2/projects/{id}/briefs",tag="Research briefs",params(("id"=Id,Path),("cursor"=Option<Id>,Query),("limit"=Option<u16>,Query,minimum=1,maximum=100)),responses((status=200,body=Page<BriefView>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
+#[utoipa::path(get,path="/api/v2/projects/{id}/briefs",operation_id="list_briefs",tag="Research briefs",params(("id"=Id,Path),("cursor"=Option<Id>,Query),("limit"=Option<u16>,Query,minimum=1,maximum=100)),responses((status=200,body=Page<BriefView>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
 pub async fn list(
     State(state): State<AppState>,
     Authority(actor): Authority,
@@ -31,7 +31,7 @@ pub async fn list(
     let q = q.map(|Query(q)| q).map_err(|_| ApiError::validation())?;
     Ok(Json(state.store.briefs(&actor, path(id)?, &q).await?))
 }
-#[utoipa::path(get,path="/api/v2/briefs/{id}",tag="Research briefs",params(("id"=Id,Path)),responses((status=200,body=BriefView),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
+#[utoipa::path(get,path="/api/v2/briefs/{id}",operation_id="get_brief",tag="Research briefs",params(("id"=Id,Path)),responses((status=200,body=BriefView),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
 pub async fn get(
     State(state): State<AppState>,
     Authority(actor): Authority,
@@ -39,7 +39,7 @@ pub async fn get(
 ) -> Result<Json<BriefView>, ApiError> {
     Ok(Json(state.store.brief(&actor, path(id)?).await?))
 }
-#[utoipa::path(post,path="/api/v2/projects/{id}/briefs",tag="Research briefs",params(("id"=Id,Path),("Idempotency-Key"=String,Header)),request_body=BriefCreate,responses((status=201,body=CommandResult<BriefView>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem)))]
+#[utoipa::path(post,path="/api/v2/projects/{id}/briefs",operation_id="create_brief",tag="Research briefs",params(("id"=Id,Path),("Idempotency-Key"=String,Header)),request_body=BriefCreate,responses((status=201,body=CommandResult<BriefView>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem)))]
 pub async fn create(
     State(state): State<AppState>,
     Authority(actor): Authority,

@@ -246,6 +246,8 @@ Forward 按 downstream/external_message_id 去重；保留 stream/sequence/revis
 
 PWA 只缓存静态 shell；业务 API/认证/证据/审批/产物/SSE NetworkOnly。离线禁止 mutation。新版本由 Service Worker 生命周期检测并提示用户确认；未保存表单/审批对话框不强刷，不循环刷新。浏览器断线不取消运行。
 
+浏览器验收分离两种证据：三视口/axe/PWA故障展示用受控HTTP fixture；真实入口验收必须启动当前 `server` 原生二进制、PostgreSQL18/PGMQ1.10的新库和独立非owner应用角色，执行原生迁移、一次性bootstrap、真实 `/bootstrap/confirm` TOTP绑定、项目写入、丢ACK同键重放、跨源拒绝和确认退出。不能用页面文案或mock响应代替数据库事务。原生Playwright使用单独配置，不混入fixture测试；原始error-context等输出只放本次私有临时目录并清理，公开证据仅包含脱敏摘要。浏览器/Vite子进程只获得环境白名单，禁止继承管理员URL、数据库密码和GitHub/模型令牌；Vite关闭隐式.env加载。收到终止信号后先终止并等待本次子进程，再清理本次库/角色，脱敏清单失败不得阻止资源清理或发布原始日志。Web CI必须与Rust基线一致：固定1.98.1、仓库实际server包、固定PG18/PGMQ镜像、精确PR Head和生成合同无差异。此验收覆盖认证及研究组织入口，不冒充T42的Alpha/组合/交付全链路。
+
 ## 10. 身份、安全与运维
 
 ### 10.1 浏览器认证的具体实现合同
@@ -672,6 +674,20 @@ alpha_version_id: utf8 non-null
 `available_at <= asof < horizon_end`；score/expected_return 按 signal_kind 校验；uncertainty 未估计为 null，不能填 confidence=1；唯一 `(alpha_version_id,instrument_id,asof_ns,horizon_end_ns)`。元数据含币种、单位、horizon、dataset revision。预测表不含 broker_key/order_id/quantity/真实 account/position。
 
 原生产物身份必须唯一：`UNIQUE(storage_backend,storage_object_ref,storage_version)`。登记前由受信任存储适配器解析规范原生引用，不允许路径、bucket或挂载别名产生新身份。相同原生身份及完整不可变元数据的重试返回原artifact_id；origin、access_class、schema、project或其他不可变字段冲突返回409，不能借新UUID将FIXTURE/已暴露证据改标REAL/DELIVERY。不能以修改UUID或自建内容hash替代这一约束。
+
+### A3.1 研究产物提交与本地原生对象
+
+`POST /api/v2/artifacts` 接受严格 `ArtifactCreate={schema_version:1,project_id:Id,kind:CODE|PARAMETERS|REPORT,content:string}`，另带 Idempotency-Key。内容最多 2 MiB UTF-8；JSON 传输最多 12 MiB+16 KiB（覆盖合法转义），每进程最多四个并行产物请求。CODE 是待隔离验证的 Rust 源码，不在 API 进程编译/执行；PARAMETERS/REPORT 必须是 schema_version=1 的 JSON object，保存原始字节，不把报告文字或其中的 PASS 当证据。调用方不能设置 origin、access_class、storage_ref、producer、Run/Attempt、id 或创建时间。
+
+此提交路径一律保存 SYNTHETIC+RESEARCH，kind 决定 media_type 和 schema_name；它只接收研究输入/说明，不提供 REAL、METRICS、DATA_QUALITY、MODEL、SIGNALS、TARGETS 或 PACKAGE 的自助登记后门。真正的市场数据/native evaluator 输出必须由后续受信任运行适配器单独登记，不能把本接口提交结果升格成资格。浏览器需近期 Operator；机器仅 CLI/AUTOMATION/MISSION 且精确项目 ARTIFACT_SUBMIT，普通权限、Downstream、过期/撤销的 Mission 均拒绝。Mission 的 producer_run_id/producer_attempt_id 从服务端当前 Run 和 active Attempt 派生；同一 Run 历史产物字节总和与本次字节合计不得超过 run_admissions 冻结 output_bytes，重试或新 Attempt 不清零。无真实准入账目不能默认为无限额度。Mission 凭据的 `issuer_attempt_id: Id?` 由数据库签发触发器在 project→run→principal 锁序下绑定签发当时的 active Attempt，非 Mission 必须为 null；上传与最终发表都要求它等于当前 Attempt，不能把旧进程的输出记到新 Attempt。018 后续增量迁移不猜测旧凭据的历史 Attempt：旧行保留 null 作为审计记录，但统一鉴权拒绝其所有 Mission scope（包括读取和机器身份自省），需由受信任 Mission 服务按当前 Attempt 重新签发；其他非 Mission 身份的既有权限不因此改变，历史签发内容不能扩大或伪造。
+
+复用现有 command_receipts，保存完整非内容元数据和首次公开响应；不复制算法内容到命令账本，不新增内容 hash。相同 key 的重放还必须与首次原生对象逐字节比较，内容不同（即使长度相同）409；重放不重复写对象、不重复计量。上传授权、Run 输出额度和数据库发表通过已有 PostgreSQL 锁及事务串行化，机器写入按 project→run→principal→credential 顺序取得写锁，避免两次产物上传持共享 Run 锁再互相升级。DB 提交失败或 ACK 丢失不删除可能已经被引用的对象。
+
+本地存储复用 cap-std 的目录能力与 OS create_new/hard_link/fsync：服务端生成 UUID 对象键，私有 pending 文件完整写入并 fsync、设只读并再次 fsync 后，原子 create-if-absent 发布，再 fsync 目录。对象键、LOCAL 和固定本地存储版本 1 共同标识一次不可覆盖写入；不是应用内容散列。私有 artifacts 目录拒绝软链/宽权限；对象读拒绝软链、非普通文件、尺寸变化和可写文件，不接受客户端路径。不经 API 授权不能由 UUID 直接读取磁盘。
+
+`GET /api/v2/artifacts?project_id=...`、`GET /api/v2/artifacts/{id}` 返回公开元数据，无原生地址/凭据；稳定 UUID cursor，limit1..100。机器 RESEARCH_READ 只见同项目 RESEARCH；浏览器可见 RESEARCH/OPERATOR/DELIVERY。EVALUATOR_ONLY 对上述路径一律不可见，不能绕过未来的 evidence disclosure/exposure 服务。`GET /api/v2/artifacts/{id}/content` 先走相同权限，再限额读取本地原生对象；下载使用服务端生成文件名的 attachment 和 nosniff/no-store，不内联执行用户 HTML/脚本。成功体为 application/octet-stream 原始字节，OpenAPI 必须使用 native utoipa 的 string/binary 合同而非 Vec<u8> 默认的 JSON 整数数组；生成合同回归同时断言该媒体类型和二进制形状，实际下载仍由原生字节比较回归验证。原生 Catalog/Object Store 产物的内容不会误用宿主文件路径，未接通的后端返回明确不可用。此切片不宣称已实现受信任市场数据登记、原生计算或全部 T01–T42。
+
+生产 serve 显式打开 state-dir/artifacts；旧私有 state-dir 首次升级可创建不存在的空目录，不覆盖已有对象，不调整用户其他目录权限。未提交/中断上传可能留下无 DB 引用的私有对象，保留而不自动删未知提交；回收必须在停止写入的维护窗口核验原生对象与数据库引用，不能通过 git clean 或在线猜测删除。
 
 ## A4. 输入、政策、评估、资格与暴露
 
@@ -1644,6 +1660,20 @@ HTTP 400/422 输入、401认证、403权限、404不存在/需隐藏、409版本
 
 approve/publish/handoff.claim/policy.update/db.query/secret.read/http.fetch_any 不存在于工具集。Reviewer 不是 Operator，研究者不能把别的 service token 带回 shell。最小真实闭环：原生 thread/start或resume → turn/start → 实际 tool请求 → 真实外部job → artifact/evaluation → 同thread后续turn引用实际evaluation_id → 结论。空工具列表、启动日志、漂亮解释/fake metrics不算。
 
+### B3.1 原生 stdio MCP 入口与只读 Mission 边界
+
+`quazonai mcp` 复用官方 `rmcp = 3.2.0` 的 stdio framing、初始化、工具路由、参数校验与取消；不实现另一套 JSON-RPC，不向 Agent 开放 HTTP 代理或数据库连接。入口不加载 DATABASE_URL、STATE_DIR、SecretVault、Operator session 或 Provider 凭据。启动参数由可信 Mission launcher 传入：`api_origin, project_id, cycle_id, run_id, attempt_id, brief_id, development_http`；五个身份必须是已有合同的 UUIDv7，不能来自工具参数。独立范围受限机器能力仅从 `QUAZONAI_MCP_TOKEN` 环境变量读取，拒绝空值/非法原生 token；不提供 token 命令行选项，不将其写入日志、错误、MCP 内容或子进程。启动参数不是授权事实，必须向现有 `/auth/machine` 与精确 Run 接口重新验证。
+
+启动与每次工具调用均验证：机器类型严格为 MISSION，project/run 与启动绑定一致，downstream 为空、凭据未到期；Run 为该项目/周期的 AGENT_RESEARCH，active_attempt_id 与启动 attempt 一致，状态为 DISPATCHING/RUNNING、deadline 未过。必须同时具有 RUN_READ 和 RESEARCH_READ；撤销、认证失效、身份/Attempt变化和不兼容响应拒绝调用。机器/API 事务的原生授权仍是最终事实源，不能因为 MCP 缓存过一次成功就跳过。MCP 同时最多4个调用，单次总时限最多15秒且不晚于启动时读取的 Run/凭据到期时刻；到期时结束 stdio 服务，不因断线取消远端 Run。
+
+origin 只能是无userinfo/query/fragment/额外路径的 HTTPS origin；HTTP 仅在显式 development_http 且 host 为原生 IPv4/IPv6 loopback 时允许，不能用任意主机名作开发豁免。HTTP 客户端禁止重定向、环境代理、Cookie 与自动重试，连接超时3秒、单请求超时10秒；读取过程累计限额1MiB，不依赖 Content-Length。请求地址只能由固定路由和已验证 Id 构造。stdio 输入在交给原生 SDK 前使用 Tokio AsyncRead 的累计8MiB会话配额，避免对端不发送换行时无限缓冲；这是整个连接的字节额度，不是单帧或模型 token 预算，不另造 JSON-RPC parser。stdout 只用于 SDK 协议，结构化日志移到 stderr；默认关闭 SDK/HTTP 正文跟踪，只保留服务自身安全日志。失败返回封闭安全错误码/HTTP状态，不回显上游原始正文、URL、请求头或底层错误文本。
+
+Attempt fencing 不得只在 Artifact 写入或 MCP 配置层实施：统一 `authority::machine` 必须在原生 Project/Run/Principal/Credential 锁顺序内读取 `runs.active_attempt_id` 和不可变的 `machine_credentials.issuer_attempt_id`。所有 MISSION scope 的有效性都要求两者非空且相等；旧 Attempt 的读取、自省和写入同时失效，不能通过直接调用普通 HTTP 绕开 MCP。历史 NULL 绑定原样保留作为审计记录，但不再构成 Mission 授权；不回填猜测的当前 Attempt、不修改历史签发内容，必须由可信任务服务为当前 Attempt 重新签发。CLI/AUTOMATION/DOWNSTREAM 的非 Mission 语义不因此改变，公开 DTO 不暴露新秘密。
+
+首批实际接入的工具是 `research.get_brief{brief_id}` 与 `run.get{run_id}`：请求严格拒绝未知字段，Id 的 JSON Schema 直接复用 `contracts::Id` 的原生 schema。Brief 只能是启动绑定的同项目版本，state=FROZEN 且 frozen_at 存在；不能以 DRAFT 或另一个有效 Brief 代替已冻结任务。Run 只能读取绑定 Mission，返回现有 RunSnapshotV1，不能替客户端猜百分比或任务成功。工具只返回已反序列化的公开 DTO，未知字段/合同版本不兼容明确失败。未完成的 B3 工具不登记为假成功/空实现；本入口不是完整 W2/W3/T01–T42 的验收替代，实验提交、科学任务、证据披露、原生 Codex 闭环及其全部隔离仍必须在同一 PR 完成。
+
+回归必须包括官方 SDK client 的实际 stdio/duplex 初始化与 tools/list/call、未知工具与未知字段、非UUIDv7、错 Mission/项目/周期/Attempt、非冻结 Brief、撤销后下一调用失败、截止时间、并发上限、响应超额、重定向不跟随与无秘密错误。协议/HTTP故障测试可以使用有明确标记的测试服务，但不能称为 PostgreSQL授权或原生 Codex生产闭环证明；真正授权链另外以实际 Axum/原生 PostgreSQL/Mission issuance 测试验证。依赖锁与生成物只能由原生工具产生后检查，禁止手造 registry checksum。
+
 ## B4. Runtime 协议
 
 ```text
@@ -1941,6 +1971,14 @@ T16可用两资产独立手算最小方差/费用前后差，不维护第二生�
 | rewrite-complete | 汇总所有结果和交付矩阵，失败/取消/缺失/应运行而skip必须失败 |
 
 普通PR CI无生产密钥，本地Provider fixture不能代替T07或受保护真实链路。真实账号由Operator在同一受保护profile登录，经审查锁定Head最小权限执行。额度/账号/数据/权限缺失为待处理/阻塞，不视通过；真实订阅集成不证明收益或Codex review。复用现成测试/coverage/license/SBOM工具，不另建Gate平台；不能删测试/全skip/关闭核心功能造绿。
+
+### B9.1 CodeQL 的语言迁移与精确源版本
+
+旧默认配置仍按 Python 扫描已删除 Python 的重写 Head，会因无源码失败；不能通过放回假 Python 文件、跳过 queries 或忽略该失败造绿。采用 GitHub 官方 CodeQL advanced setup，按 Git 对应 commit 的已跟踪文件决定 Rust、JavaScript/TypeScript、Actions、Python 的实际分析范围。PR 的 Head 与仍在使用旧代码的 main/base 分别检出和分析，上传各自精确 ref/sha；base 检查明确标为 base，不能冒充 Head 验证。Rust 用官方支持的 build-mode=none（仍需原生 rustup/cargo，RustAnalyzer可能执行构建脚本），普通PR不注入生产秘密。
+
+切换是一次受控的开发环境操作：先保存默认配置，确认已审阅工作流与提交、GitHub权限及本地完整验证，再解除 default setup 对 advanced upload 的原生互斥并推送同一PR。发布失败且未形成远端提交时恢复旧默认设置；不删除历史分析/告警、不撤销分支保护、不降低查询集。新工作流必须实际运行并上传成功后才算接通，配置写入不代表已扫描。默认主干仍为旧版本期间，PR附带真实base分析保留其Python等语言覆盖；合并后push/schedule继续分析实际main。最终交付仍要求适用检查无失败，不将旧默认配置的失败伪称通过。
+
+依据：GitHub 官方 [Rust 构建选项](https://docs.github.com/en/code-security/reference/code-scanning/codeql/build-options-for-compiled-languages)、[两种设置互斥](https://docs.github.com/en/code-security/reference/code-scanning/troubleshoot-analysis-errors/two-codeql-workflows)、以及固定 CodeQL Action `cdf488f595d80d6e07e03d4674febd5ab45fa938` 的原生 `languages/build-mode` 和 `ref/sha/category` 输入。工作流不复制扫描引擎或生成伪 SARIF。
 
 ## B10. 交付映射与恢复证据
 

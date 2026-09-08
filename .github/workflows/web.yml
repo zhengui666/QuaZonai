@@ -1,0 +1,90 @@
+name: Web console
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+  RUSTUP_TOOLCHAIN: '1.98.1'
+  CARGO_BUILD_JOBS: '2'
+  CARGO_PROFILE_DEV_DEBUG: '0'
+concurrency:
+  group: web-console-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  web-console:
+    name: Web / contracts, browser and real Rust API
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: ghcr.io/pgmq/pg18-pgmq@sha256:bfb3537068ce453609744518ece92b178ac89dff53747d47ca6fab91c2fc66a6
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: native-web-ci-only
+          POSTGRES_DB: postgres
+        ports:
+          - 127.0.0.1:55434:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Require exact event Head
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install locked dependencies without lifecycle hooks
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Build real Rust API and verify native HTTP contract
+        working-directory: .
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+          rustup run "$RUSTUP_TOOLCHAIN" rustc -Vv
+          rustup run "$RUSTUP_TOOLCHAIN" cargo build --locked -p server --bin server
+          rustup run "$RUSTUP_TOOLCHAIN" cargo run --locked -q -p server -- openapi > /tmp/web-http.openapi.json
+          diff -u contracts/generated/api-v2.openapi.json /tmp/web-http.openapi.json
+      - name: Verify generated client and runtime validators
+        run: |
+          npm --ignore-scripts run generate
+          git diff --exit-code -- src/generated/
+      - name: Typecheck and unit tests
+        run: |
+          npm --ignore-scripts run typecheck
+          npm --ignore-scripts run test
+      - name: Build production static assets
+        run: node node_modules/vite/bin/vite.js build
+      - name: Install Chromium and native browser dependencies
+        run: node node_modules/@playwright/test/cli.js install --with-deps chromium
+      - name: Three-viewport presentation, accessibility and PWA tests
+        run: npm --ignore-scripts run test:e2e
+      - name: Real browser, TOTP, idempotency and database acceptance
+        env:
+          QUAZONAI_WEB_TEST_ADMIN_URL: postgresql://postgres:native-web-ci-only@127.0.0.1:55434/postgres
+        run: npm --ignore-scripts run test:e2e:native
+      - name: Require unchanged generated and handwritten source
+        run: git diff --exit-code
+      - name: Preserve sanitized native acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-web-acceptance-${{ env.EXPECTED_HEAD }}
+          path: apps/web/test-results/native-summary/
+          if-no-files-found: warn
+          retention-days: 7
+          # Raw Playwright diagnostics and enrollment fixtures stay in private tmp.

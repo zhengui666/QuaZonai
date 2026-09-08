@@ -3,6 +3,7 @@
 //! untrusted agents and workers executing research code never get this pool.
 #![forbid(unsafe_code)]
 
+pub mod artifacts;
 pub mod auth;
 pub mod authority;
 pub mod brief;

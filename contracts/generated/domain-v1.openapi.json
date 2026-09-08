@@ -1,6 +1,42 @@
 {
   "components": {
     "schemas": {
+      "ArtifactAccess": {
+        "enum": [
+          "OPERATOR",
+          "RESEARCH",
+          "EVALUATOR_ONLY",
+          "DELIVERY"
+        ],
+        "type": "string"
+      },
+      "ArtifactCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "description": "At most 2 MiB of UTF-8, including JSON whitespace; the original bytes are preserved.",
+            "maxLength": 2097152,
+            "minLength": 1,
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ResearchArtifactKind"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "project_id",
+          "kind",
+          "content"
+        ],
+        "type": "object"
+      },
       "ArtifactInputRole": {
         "enum": [
           "CODE",
@@ -13,6 +49,88 @@
           "DATA_QUALITY"
         ],
         "type": "string"
+      },
+      "ArtifactProducer": {
+        "enum": [
+          "OPERATOR",
+          "RUNTIME",
+          "AGENT",
+          "IMPORT"
+        ],
+        "type": "string"
+      },
+      "ArtifactView": {
+        "additionalProperties": false,
+        "properties": {
+          "access_class": {
+            "$ref": "#/components/schemas/ArtifactAccess"
+          },
+          "byte_count": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_by": {
+            "$ref": "#/components/schemas/ArtifactProducer"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "media_type": {
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/DataOrigin"
+          },
+          "producer_attempt_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "producer_run_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_name": {
+            "type": "string"
+          },
+          "schema_version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "kind",
+          "media_type",
+          "schema_name",
+          "schema_version",
+          "byte_count",
+          "access_class",
+          "origin",
+          "created_by",
+          "created_at"
+        ],
+        "type": "object"
       },
       "AssignablePrincipalKind": {
         "enum": [
@@ -2839,6 +2957,14 @@
           "description"
         ],
         "type": "object"
+      },
+      "ResearchArtifactKind": {
+        "enum": [
+          "CODE",
+          "PARAMETERS",
+          "REPORT"
+        ],
+        "type": "string"
       },
       "ResearchListQuery": {
         "additionalProperties": false,

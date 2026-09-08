@@ -131,10 +131,14 @@ pub(crate) async fn machine(
     let run = db::optional_id(&bindings, "run_id")?;
     let kind: PrincipalKind = db::enum_value(&bindings, "kind")?;
     let project_active = if let Some(project) = project {
-        sqlx::query_scalar::<_, String>("SELECT state FROM app.projects WHERE id=$1 FOR SHARE")
-            .bind(project.as_uuid())
-            .fetch_one(&mut **tx)
-            .await?
+        sqlx::query_scalar::<_, String>(if write {
+            "SELECT state FROM app.projects WHERE id=$1 FOR UPDATE"
+        } else {
+            "SELECT state FROM app.projects WHERE id=$1 FOR SHARE"
+        })
+        .bind(project.as_uuid())
+        .fetch_one(&mut **tx)
+        .await?
             == "ACTIVE"
     } else {
         false
@@ -142,9 +146,11 @@ pub(crate) async fn machine(
     let mission = if kind == PrincipalKind::Mission {
         let run = run.ok_or(StoreError::InvalidCredentials)?;
         Some(
-            sqlx::query(
-                "SELECT state,deadline_at FROM app.runs WHERE id=$1 AND project_id=$2 FOR SHARE",
-            )
+            sqlx::query(if write {
+                "SELECT state,deadline_at,active_attempt_id FROM app.runs WHERE id=$1 AND project_id=$2 FOR UPDATE"
+            } else {
+                "SELECT state,deadline_at,active_attempt_id FROM app.runs WHERE id=$1 AND project_id=$2 FOR SHARE"
+            })
             .bind(run.as_uuid())
             .bind(project.map(Id::as_uuid))
             .fetch_optional(&mut **tx)
@@ -156,7 +162,7 @@ pub(crate) async fn machine(
     };
     let principal=sqlx::query(if write {"SELECT enabled,credential_epoch,downstream_id FROM app.machine_principals WHERE id=$1 FOR UPDATE"}else{"SELECT enabled,credential_epoch,downstream_id FROM app.machine_principals WHERE id=$1 FOR SHARE"})
         .bind(principal_id).fetch_one(&mut **tx).await?;
-    let credential=sqlx::query(if write {"SELECT principal_epoch,scope_codes,issued_at,expires_at FROM app.machine_credentials WHERE id=$1 FOR UPDATE"}else{"SELECT principal_epoch,scope_codes,issued_at,expires_at FROM app.machine_credentials WHERE id=$1 FOR SHARE"})
+    let credential=sqlx::query(if write {"SELECT principal_epoch,scope_codes,issued_at,expires_at,issuer_attempt_id FROM app.machine_credentials WHERE id=$1 FOR UPDATE"}else{"SELECT principal_epoch,scope_codes,issued_at,expires_at,issuer_attempt_id FROM app.machine_credentials WHERE id=$1 FOR SHARE"})
         .bind(credential_id.as_uuid()).fetch_one(&mut **tx).await?;
     let now: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
         .fetch_one(&mut **tx)
@@ -176,6 +182,13 @@ pub(crate) async fn machine(
     if let Some(mission) = mission {
         let state: String = mission.try_get("state")?;
         let deadline: DateTime<Utc> = mission.try_get("deadline_at")?;
+        let active_attempt: Option<uuid::Uuid> = mission.try_get("active_attempt_id")?;
+        let issuer_attempt: Option<uuid::Uuid> = credential.try_get("issuer_attempt_id")?;
+        // Fence every Mission scope, including reads and identity introspection.
+        // Historical unbound credentials remain audit records, not new authority.
+        if active_attempt.is_none() || issuer_attempt != active_attempt {
+            return Err(StoreError::InvalidCredentials);
+        }
         if !project_active
             || !matches!(state.as_str(), "DISPATCHING" | "RUNNING" | "RECONCILING")
             || deadline <= now
