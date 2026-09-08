@@ -97,8 +97,9 @@ impl IntoResponse for ApiError {
                 "REVISION_CONFLICT" => vec!["RELOAD"],
                 _ => Vec::new(),
             },
-            retryable: self.status == StatusCode::SERVICE_UNAVAILABLE
-                || self.status == StatusCode::TOO_MANY_REQUESTS,
+            retryable: self.code != "BUDGET_EXHAUSTED"
+                && (self.status == StatusCode::SERVICE_UNAVAILABLE
+                    || self.status == StatusCode::TOO_MANY_REQUESTS),
         };
         let mut response = (self.status, Json(problem)).into_response();
         response.headers_mut().insert(
@@ -212,6 +213,34 @@ impl From<StoreError> for ApiError {
                 error
             }
             StoreError::Domain(domain::DomainError::Invalid(_)) => Self::validation(),
+            StoreError::Domain(domain::DomainError::BudgetExhausted(resource)) => {
+                let mut error = Self::new(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "BUDGET_EXHAUSTED",
+                    "请求超过已冻结的资源预算。请检查运行预算；不要自动重试或更换任务来绕过额度。",
+                );
+                // Domain errors carry internal tags; only this closed vocabulary
+                // is public. Never reflect a future tag containing private data.
+                let field = match resource {
+                    "artifact_output_bytes"
+                    | "experiments"
+                    | "cpu_seconds"
+                    | "parallel_runs"
+                    | "standalone_parallel_runs"
+                    | "tokens"
+                    | "estimated_cost"
+                    | "mission_turns"
+                    | "repair_turns"
+                    | "job_resource_limit" => resource,
+                    _ => "budget",
+                };
+                error.field_errors.push(FieldError {
+                    field: field.to_owned(),
+                    code: "BUDGET_EXHAUSTED".to_owned(),
+                    message: "该资源的冻结预算不足。".to_owned(),
+                });
+                error
+            }
             StoreError::Domain(_) => Self::new(
                 StatusCode::CONFLICT,
                 "DOMAIN_CONFLICT",

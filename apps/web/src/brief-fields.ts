@@ -1,5 +1,6 @@
 import type { Schema } from './api';
 import { ApiFailure, isCounter } from './api';
+import { costBudgetErrors } from './cost-budget';
 export type BriefContent = Schema['BriefContentV1'];
 export const initialBudget: Schema['BudgetV1'] = {
   schema_version: 1, max_experiments: 10, max_parallel_runs: 1, max_turns_per_mission: 10,
@@ -12,6 +13,8 @@ export const initialStop: Schema['StopRuleV1'] = {
   stop_on_no_improvement_trials: 20, stop_on_invalid_data: true,
 };
 export function briefContent(value: BriefContent): BriefContent {
+  const costError = Object.values(costBudgetErrors(value.budget)).find(message => message !== undefined);
+  if (costError) throw new ApiFailure('VALIDATION_ERROR', costError);
   const budget = { ...value.budget, schema_version: 1 as const };
   budget.max_tokens ||= null;
   budget.max_cost_decimal ||= null;

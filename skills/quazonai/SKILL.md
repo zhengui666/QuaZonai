@@ -21,6 +21,8 @@ schema_version=1、project_id、kind=CODE/PARAMETERS/REPORT、content原文及
 Idempotency-Key；文本最多2 MiB UTF-8，JSON文档必须含整数schema_version=1。
 不提交路径、origin、producer或任意Run/Attempt，不把报告自报PASS当证据。
 相同键的重试必须保留完全相同字节；409不能通过改UUID洗掉试验或输出配额。
+BUDGET_EXHAUSTED为HTTP429且retryable=false，不自动重试或换Attempt；安全资源标记
+在field_errors中。它不同于带Retry-After的AUTH_RATE_LIMITED，不能把额度不足当临时限流。
 读取元数据/内容需RESEARCH_READ，EVALUATOR_ONLY在这些普通接口不可见。
 Mission凭据绑定签发时Attempt；过期/撤销/旧Attempt拒绝后交由可信任务服务对账，
 不能自行签发身份、请求Operator授权或直连数据库。SYNTHETIC研究提交不是REAL

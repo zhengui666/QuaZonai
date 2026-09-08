@@ -745,6 +745,7 @@ version = "2.0.0-dev.1"
 dependencies = [
  "bigdecimal",
  "chrono",
+ "iso_currency",
  "serde",
  "serde_json",
  "utoipa",

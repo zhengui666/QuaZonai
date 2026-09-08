@@ -38,8 +38,37 @@ pub struct BudgetV1 {
     #[schema(schema_with = crate::scalars::optional_positive_db_counter_schema)]
     pub max_tokens: Option<DbCounter>,
     pub max_cost_decimal: Option<DecimalValue>,
+    #[schema(schema_with = optional_cost_currency_schema)]
     pub cost_currency: Option<String>,
     pub cost_enforcement: CostEnforcement,
+}
+
+fn optional_cost_currency_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+    use utoipa::openapi::schema::{ObjectBuilder, OneOfBuilder, Type};
+    // Enumerate only the finite wire alphabet. The pinned upstream lookup, also
+    // used by domain validation, owns membership; no second currency table.
+    let mut codes = Vec::new();
+    for a in b'A'..=b'Z' {
+        for b in b'A'..=b'Z' {
+            for c in b'A'..=b'Z' {
+                let bytes = [a, b, c];
+                let code = std::str::from_utf8(&bytes).expect("ASCII currency code");
+                if iso_currency::Currency::from_code(code).is_some() {
+                    codes.push(code.to_owned());
+                }
+            }
+        }
+    }
+    OneOfBuilder::new()
+        .item(ObjectBuilder::new().schema_type(Type::Null))
+        .item(
+            ObjectBuilder::new()
+                .schema_type(Type::String)
+                .min_length(Some(3))
+                .max_length(Some(3))
+                .enum_values(Some(codes)),
+        )
+        .into()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]

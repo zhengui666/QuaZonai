@@ -1,8 +1,24 @@
 import { Checkbox, Form, Input, InputNumber, Select, Typography } from 'antd';
-import { isCounter, isDecimal } from './api';
+import { isCounter } from './api';
+import type { Schema } from './api';
 import { costOptions } from './authoring-options';
+import { costBudgetErrors } from './cost-budget';
+import type { CostFields } from './cost-budget';
+
 export const counterRules = [{ required: true }, { validator: (_: unknown, value: unknown) => typeof value === 'string' && isCounter(value, true) ? Promise.resolve() : Promise.reject(new Error('请输入 1 至 9223372036854775807 的整数字符串。')) }];
+type BudgetForm = { content: { budget: Schema['BudgetV1'] } };
+const costDependencies: ['content', 'budget', keyof CostFields][] = [
+  ['content', 'budget', 'cost_enforcement'], ['content', 'budget', 'max_cost_decimal'], ['content', 'budget', 'cost_currency'],
+];
+
 export function BudgetFields() {
+  const form = Form.useFormInstance<BudgetForm>();
+  function costRules(field: keyof CostFields) {
+    return [{ validator: async () => {
+      const problem = costBudgetErrors(form.getFieldValue(['content', 'budget']) ?? {})[field];
+      if (problem) throw new Error(problem);
+    } }];
+  }
   return <>
     <Typography.Title level={3}>预算上限</Typography.Title>
     <Typography.Paragraph type="secondary">初始值仅是可修改的草稿建议，不代表实测资源、模型报价或获准运行。</Typography.Paragraph>
@@ -15,13 +31,26 @@ export function BudgetFields() {
       ] as const).map(([name, label, min, max]) => <Form.Item key={name} name={['content', 'budget', name]} label={label} rules={[{ required: true, type: 'integer', min, max }]}><InputNumber min={min} max={max} precision={0} className="full-width" /></Form.Item>)}
       {([['max_cpu_seconds', '最大 CPU 秒数'], ['max_output_bytes', '最大产物字节数']] as const).map(([name, label]) => <Form.Item key={name} name={['content', 'budget', name]} label={label} rules={counterRules}><Input inputMode="numeric" maxLength={19} /></Form.Item>)}
       <Form.Item name={['content', 'budget', 'max_tokens']} label="最大 Token 数（可选）" rules={[{ validator: (_, value: unknown) => !value || (typeof value === 'string' && isCounter(value, true)) ? Promise.resolve() : Promise.reject(new Error('需要正整数字符串。')) }]}><Input inputMode="numeric" maxLength={19} /></Form.Item>
-      <Form.Item name={['content', 'budget', 'max_cost_decimal']} label="最大费用（可选，十进制）" rules={[{ validator: (_, value: unknown) => !value || (typeof value === 'string' && isDecimal(value)) ? Promise.resolve() : Promise.reject(new Error('请输入普通十进制字符串，不使用指数。')) }]}><Input inputMode="decimal" maxLength={64} /></Form.Item>
-      <Form.Item name={['content', 'budget', 'cost_currency']} label="费用币种（配置费用时必填）" rules={[{ pattern: /^[A-Z]{3}$/ }]}><Input maxLength={3} /></Form.Item>
+      <Form.Item name={['content', 'budget', 'max_cost_decimal']} label="费用上限（估算模式必填）"
+        dependencies={costDependencies.filter(path => path[2] !== 'max_cost_decimal')} rules={costRules('max_cost_decimal')}>
+        <Input inputMode="decimal" maxLength={64} allowClear />
+      </Form.Item>
+      <Form.Item name={['content', 'budget', 'cost_currency']} label="费用币种（估算模式必填）"
+        dependencies={costDependencies.filter(path => path[2] !== 'cost_currency')} rules={costRules('cost_currency')}>
+        <Input maxLength={3} allowClear />
+      </Form.Item>
       <Form.Item name={['content', 'budget', 'cost_enforcement']} label="费用约束方式"
-        extra="精确账单能力尚未接通，不能选择 EXACT。已有不支持值需明确修改。"
-        rules={[{ required: true }, { validator: (_, value: unknown) => costOptions.some(option => option.value === value)
-          ? Promise.resolve() : Promise.reject(new Error('请选择当前已支持的费用约束方式。')) }]}>
-        <Select options={costOptions} />
+        extra="精确账单能力尚未接通。估算模式须填写正金额及受支持币种；切换为没有费用度量会清空这两项。"
+        dependencies={costDependencies.filter(path => path[2] !== 'cost_enforcement')}
+        rules={[{ required: true }, ...costRules('cost_enforcement')]}>
+        <Select options={costOptions} onChange={value => {
+          // Only an explicit user action clears an incompatible tuple. Loading a
+          // saved or frozen record must never rewrite its historical values.
+          if (value === 'UNAVAILABLE') {
+            form.setFieldValue(['content', 'budget', 'max_cost_decimal'], null);
+            form.setFieldValue(['content', 'budget', 'cost_currency'], null);
+          }
+        }} />
       </Form.Item>
     </div>
     <Typography.Title level={3}>停止条件</Typography.Title>

@@ -743,7 +743,18 @@ async fn concurrent_mission_outputs_obey_one_budget_and_cannot_borrow_a_new_atte
         (results.1, "right", results.0)
     };
     assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
-    assert_eq!(failed.status, StatusCode::CONFLICT, "{}", failed.body);
+    assert_eq!(
+        failed.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "{}",
+        failed.body
+    );
+    assert_eq!(failed.body["code"], "BUDGET_EXHAUSTED");
+    assert_eq!(failed.body["retryable"], false);
+    assert_eq!(
+        failed.body["field_errors"][0]["field"],
+        "artifact_output_bytes"
+    );
     assert_eq!(created.body["resource"]["producer_run_id"], run.to_string());
     assert_eq!(
         created.body["resource"]["producer_attempt_id"],
@@ -806,7 +817,13 @@ async fn concurrent_mission_outputs_obey_one_budget_and_cannot_borrow_a_new_atte
         Some(&new_token),
     )
     .await;
-    assert_eq!(over.status, StatusCode::CONFLICT, "{}", over.body);
+    assert_eq!(over.status, StatusCode::TOO_MANY_REQUESTS, "{}", over.body);
+    assert_eq!(over.body["code"], "BUDGET_EXHAUSTED");
+    assert_eq!(over.body["retryable"], false);
+    assert_eq!(
+        over.body["field_errors"][0]["field"],
+        "artifact_output_bytes"
+    );
     let exact = send(
         &f,
         "POST",

@@ -250,6 +250,10 @@ PWA 只缓存静态 shell；业务 API/认证/证据/审批/产物/SSE NetworkOn
 
 ### 9.1 已知不可提交选项与开发文件边界
 
+费用字段按原生域合同联合校验：UNAVAILABLE 要求金额/币种均为空；ESTIMATED 要求正的精确十进制金额和所锁 iso_currency 0.7.0 接受的币种。可选空字符串只在线协议转换处变 null，不 trim/浮点转换非空金额。浏览器使用从同一 Rust 原生币种表生成的 Ajv 字段校验器，不维护第二份 ISO 清单或把三字母正则当币种目录。用户明确切换到 UNAVAILABLE 时清空金额/币种；载入的历史不一致值不可静默删除，须提示并拒绝提交。只读冻结记录不因表单 effect 被改写。
+
+BUDGET_EXHAUSTED 作为独立 HTTP429 Problem 保留，field_errors 仅使用封闭的资源字段映射，未知内部标记不反射。冻结额度耗尽不标 retryable，也不编造 Retry-After；AUTH_RATE_LIMITED 的原有限流重试语义不变。客户端成功响应依据实际 OpenAPI 的 operation/status/media type 选择原生 JSON/Ajv、无内容或 binary/stream 处理；仅声明过的二进制操作可透传未消费的 Response。服务器返回错误媒体类型、未知成功状态或 JSON DTO 违约仍失败，不能以 parseAs=blob 或任意非JSON绕过响应合同。二进制错误响应继续按 Problem 处理与认证失效，不吞成下载成功。
+
 长 Brief 抽屉的下拉菜单通过官方 ConfigProvider/getPopupContainer 锚定到可滚动表单内、相对定位的字段容器，而非固定到锁定滚动的 body。三视口验收使用真实鼠标操作字段和可见选项，不使用 force/DOM click/键盘绕过不可点击菜单来制造通过；费用、数据角色和访问边界须在滚动后仍可操作。依据：Ant Design Select 的 getPopupContainer 与 FAQ（https://ant.design/components/select/）。
 
 表单不能把当前服务端必定拒绝的值当作可操作能力。费用目前仅有 UNAVAILABLE/ESTIMATED；EXACT 尚未接通，草稿编辑不提供该选项，已载入的不支持值必须先由用户明确修改而非自动替换。项目为 ARCHIVED 时只允许保留 ARCHIVED；ACTIVE 选项须取得该项目 current_brief_id 对应的真实 Brief，校验精确项目/编号、FROZEN 及 frozen_at，加载/错误/缺失时不可用。这只是基于服务端事实的字段约束，不授予权限，不替代提交事务对状态、活动 Run、近期认证与 revision 的再次检查。SEALED 的访问候选仅 METADATA_ONLY/EVALUATOR_ONLY；其他分区仅 METADATA_ONLY/RESEARCH_READ。分区变化使旧选择不兼容时清空该字段并要求用户重选，不能自动升级权限；依赖校验同时拒绝程序化或残留的不合法组合。

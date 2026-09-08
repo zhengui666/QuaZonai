@@ -101,8 +101,11 @@ Attempt；同一 Run 的所有历史上传累计占用冻结 output_bytes，不�
 `GET /api/v2/artifacts/{id}` 返回详情，`GET /api/v2/artifacts/{id}/content` 下载原生内容。
 机器读取需 RESEARCH_READ，只有同项目 RESEARCH 可见；EVALUATOR_ONLY 不由这些接口
 披露。下载为 attachment/application/octet-stream、no-store、nosniff，不直接运行 HTML。
-429应遵守 Retry-After；503存储不可用或未知提交应保留同key核对，不能凭本地文件存在
-认定数据库已发表。上传内容不要写进Issue、错误日志或命令行参数；尚无专属远程CLI
+429须区分错误码：AUTH_RATE_LIMITED按原生Retry-After等待；BUDGET_EXHAUSTED的
+retryable=false且没有Retry-After，field_errors只返回安全资源标记（上传为artifact_output_bytes），
+不能自动重试或换Attempt绕过。503存储不可用或未知提交应保留同key核对，不能凭本地文件存在
+认定数据库已发表。生成Web客户端的该下载接口使用parseAs: 'blob'、'arrayBuffer'或'stream'，
+按实际OpenAPI媒体合同保留原始字节；普通JSON接口不会因此跳过验证。上传内容不要写进Issue、错误日志或命令行参数；尚无专属远程CLI
 子命令，不以手工SQL代替HTTP。接口本身不生成评估或资格，也不是原生模型工具闭环。
 
 ## 已接通的原生 stdio MCP

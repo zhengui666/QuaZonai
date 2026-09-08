@@ -1,6 +1,6 @@
 import createClient from 'openapi-fetch';
 import type { components, paths } from './generated/api';
-import { validateResponse } from './generated/responses.cjs';
+import { responseKind, validateResponse } from './generated/responses.cjs';
 
 export type Schema = components['schemas'];
 export type Problem = Schema['Problem'];
@@ -64,12 +64,19 @@ export function makeClient(baseUrl: string, fetcher: typeof fetch = fetch) {
     },
     async onResponse({ response, request, schemaPath }) {
       if (response.ok) {
+        const kind = responseKind(schemaPath, request.method, response.status, response.headers.get('content-type'));
+        if (kind === undefined) {
+          throw new ApiFailure('HTTP_CONTRACT_ERROR', '响应状态或媒体类型不符合已生成的接口合同。', response.status);
+        }
+        // Only a declared operation/status/media combination may retain its body.
+        // openapi-fetch, not this middleware, owns parseAs for bytes and streams.
+        if (kind === 'binary' || kind === 'event-stream') return response;
         let value: unknown;
-        if (response.status !== 204) {
+        if (kind === 'json') {
           try { value = await response.clone().json(); }
           catch { throw new ApiFailure('HTTP_CONTRACT_ERROR', '服务没有返回合同规定的 JSON 响应。'); }
         }
-        if (!validateResponse(schemaPath, request.method, response.status, value)) {
+        if (!validateResponse(schemaPath, request.method, response.status, value, response.headers.get('content-type'))) {
           throw new ApiFailure('HTTP_CONTRACT_ERROR', '响应字段或合同版本不兼容。未将它当成空列表或成功操作。');
         }
         return response;

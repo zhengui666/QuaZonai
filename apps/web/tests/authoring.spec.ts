@@ -25,6 +25,15 @@ async function menu(page: Page, label: string) {
 }
 async function choose(page: Page, label: string, value: string) {
   await (await menu(page, label)).filter({ hasText: new RegExp(`^${value}$`) }).click();
+  const control = page.getByLabel(label);
+  await expect(control).toHaveAttribute('aria-expanded', 'false');
+  // A click completing is not proof that a controlled form accepted the choice.
+  // Observe this field's committed presentation before changing a dependent field.
+  const field = page.locator('.ant-form-item').filter({ has: control });
+  // The v6 content and its leaving popup can both contain the same label.
+  // Observe the committed selection and wait for the real popup to finish closing.
+  await expect(field.locator('.ant-select-content')).toHaveText(value);
+  await expect(field.locator('.ant-select-dropdown:visible')).toHaveCount(0);
 }
 
 test('archived projects never offer an exit transition', async ({ page }) => {

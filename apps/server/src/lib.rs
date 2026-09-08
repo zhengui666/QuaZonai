@@ -378,7 +378,7 @@ fn describe_authority(document: &mut utoipa::openapi::OpenApi) {
                     operation.responses.responses.insert(
                         "429".into(),
                         utoipa::openapi::ResponseBuilder::new()
-                            .description("Shared native machine attempt limit or bounded crypto capacity; respect Retry-After.")
+                            .description("Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.")
                             .content("application/problem+json", utoipa::openapi::Content::new(
                                 Some(utoipa::openapi::Ref::from_schema_name("Problem"))))
                             .header("Retry-After", utoipa::openapi::Header::new(
