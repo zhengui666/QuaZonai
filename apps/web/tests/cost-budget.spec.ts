@@ -55,6 +55,20 @@ test('explicitly disabling metering clears amount and currency but loading never
   expect(state.commands).toHaveLength(0);
 });
 
+for (const amount of ['+000.0100', '.1', '1.']) {
+  test(`native decimal spelling ${amount} reaches HTTP unchanged`, async ({ page }) => {
+    const state = await editor(page);
+    await mode(page, '估算值（不等于实际账单）');
+    await page.getByLabel('费用上限（估算模式必填）').fill(amount);
+    await page.getByLabel('费用币种（估算模式必填）').fill('USD');
+    await save(page).click();
+    await expect.poll(() => state.commands.filter(command => command.method === 'PATCH').length).toBe(1);
+    expect(state.commands.find(command => command.method === 'PATCH')?.body).toMatchObject({
+      content: { budget: { cost_enforcement: 'ESTIMATED', max_cost_decimal: amount, cost_currency: 'USD' } },
+    });
+  });
+}
+
 test('valid estimates preserve the exact decimal string in the dispatched request', async ({ page }) => {
   const state = await editor(page);
   await mode(page, '估算值（不等于实际账单）');

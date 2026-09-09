@@ -72153,6 +72153,149 @@ return errors === 0;
 }
 validate1486.evaluated = {"props":{"code":true,"current_revision":true,"detail":true,"field_errors":true,"request_id":true,"retryable":true,"safe_next_actions":true,"status":true,"title":true,"type":true},"dynamicProps":false,"dynamicItems":false};
 
+exports.nativeDecimal = validate1492;
+const schema472 = {"$ref":"urn:quazonai:http-contract:v2#/components/schemas/DecimalValue"};
+
+function validate1493(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
+let vErrors = null;
+let errors = 0;
+const evaluated0 = validate1493.evaluated;
+if(evaluated0.dynamicProps){
+evaluated0.props = undefined;
+}
+if(evaluated0.dynamicItems){
+evaluated0.items = undefined;
+}
+if(errors === 0){
+if(typeof data === "string"){
+if(func2(data) > 64){
+validate1493.errors = [{instancePath,schemaPath:"#/maxLength",keyword:"maxLength",params:{limit: 64},message:"must NOT have more than 64 characters"}];
+return false;
+}
+else {
+if(func2(data) < 1){
+validate1493.errors = [{instancePath,schemaPath:"#/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
+return false;
+}
+else {
+if(!pattern7.test(data)){
+validate1493.errors = [{instancePath,schemaPath:"#/pattern",keyword:"pattern",params:{pattern: "^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"},message:"must match pattern \""+"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"+"\""}];
+return false;
+}
+}
+}
+}
+else {
+validate1493.errors = [{instancePath,schemaPath:"#/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
+}
+validate1493.errors = vErrors;
+return errors === 0;
+}
+validate1493.evaluated = {"dynamicProps":false,"dynamicItems":false};
+
+
+function validate1492(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
+let vErrors = null;
+let errors = 0;
+const evaluated0 = validate1492.evaluated;
+if(evaluated0.dynamicProps){
+evaluated0.props = undefined;
+}
+if(evaluated0.dynamicItems){
+evaluated0.items = undefined;
+}
+if(!(validate1493(data, {instancePath,parentData,parentDataProperty,rootData,dynamicAnchors}))){
+vErrors = vErrors === null ? validate1493.errors : vErrors.concat(validate1493.errors);
+errors = vErrors.length;
+}
+validate1492.errors = vErrors;
+return errors === 0;
+}
+validate1492.evaluated = {"dynamicProps":false,"dynamicItems":false};
+
+exports.nativeCostAmount = validate1495;
+const schema474 = {"$ref":"urn:quazonai:http-contract:v2#/components/schemas/BudgetV1/allOf/1/oneOf/1/properties/max_cost_decimal"};
+const schema475 = {"allOf":[{"description":"Plain decimal exactly representable by NUMERIC(38,18).","maxLength":64,"minLength":1,"pattern":"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])","type":"string"},{"pattern":"^(?!-)(?=[0-9+.]*[1-9])","type":"string"}]};
+
+function validate1496(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
+let vErrors = null;
+let errors = 0;
+const evaluated0 = validate1496.evaluated;
+if(evaluated0.dynamicProps){
+evaluated0.props = undefined;
+}
+if(evaluated0.dynamicItems){
+evaluated0.items = undefined;
+}
+const _errs0 = errors;
+if(errors === _errs0){
+if(typeof data === "string"){
+if(func2(data) > 64){
+validate1496.errors = [{instancePath,schemaPath:"#/allOf/0/maxLength",keyword:"maxLength",params:{limit: 64},message:"must NOT have more than 64 characters"}];
+return false;
+}
+else {
+if(func2(data) < 1){
+validate1496.errors = [{instancePath,schemaPath:"#/allOf/0/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
+return false;
+}
+else {
+if(!pattern7.test(data)){
+validate1496.errors = [{instancePath,schemaPath:"#/allOf/0/pattern",keyword:"pattern",params:{pattern: "^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"},message:"must match pattern \""+"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"+"\""}];
+return false;
+}
+}
+}
+}
+else {
+validate1496.errors = [{instancePath,schemaPath:"#/allOf/0/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
+}
+var valid0 = _errs0 === errors;
+if(valid0){
+const _errs2 = errors;
+if(errors === _errs2){
+if(typeof data === "string"){
+if(!pattern12.test(data)){
+validate1496.errors = [{instancePath,schemaPath:"#/allOf/1/pattern",keyword:"pattern",params:{pattern: "^(?!-)(?=[0-9+.]*[1-9])"},message:"must match pattern \""+"^(?!-)(?=[0-9+.]*[1-9])"+"\""}];
+return false;
+}
+}
+else {
+validate1496.errors = [{instancePath,schemaPath:"#/allOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
+}
+var valid0 = _errs2 === errors;
+}
+validate1496.errors = vErrors;
+return errors === 0;
+}
+validate1496.evaluated = {"dynamicProps":false,"dynamicItems":false};
+
+
+function validate1495(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
+let vErrors = null;
+let errors = 0;
+const evaluated0 = validate1495.evaluated;
+if(evaluated0.dynamicProps){
+evaluated0.props = undefined;
+}
+if(evaluated0.dynamicItems){
+evaluated0.items = undefined;
+}
+if(!(validate1496(data, {instancePath,parentData,parentDataProperty,rootData,dynamicAnchors}))){
+vErrors = vErrors === null ? validate1496.errors : vErrors.concat(validate1496.errors);
+errors = vErrors.length;
+}
+validate1495.errors = vErrors;
+return errors === 0;
+}
+validate1495.evaluated = {"dynamicProps":false,"dynamicItems":false};
+
 const responseRegistry = {
   "GET /api/v2/artifacts 200": {
     "empty": false,
@@ -74024,3 +74167,5 @@ exports.validateResponse = function(path, method, status, value, contentType) {
 exports.validateCostCurrency = function(value) { return exports.nativeCostCurrency(value); };
 exports.validateBaseCurrency = function(value) { return exports.nativeBaseCurrency(value); };
 exports.validateProblem = function(value) { return exports.nativeProblem(value); };
+exports.validateDecimal = function(value) { return exports.nativeDecimal(value); };
+exports.validateCostAmount = function(value) { return exports.nativeCostAmount(value); };

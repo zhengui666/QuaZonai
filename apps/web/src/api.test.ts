@@ -27,13 +27,13 @@ describe('same-origin strict API client', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
   it('keeps revision conflicts precise above Number.MAX_SAFE_INTEGER', async () => {
-    const failure = await responseFailure(Response.json(problem, { status: 409, headers: { 'Content-Type': 'application/problem+json' } }));
+    const failure = await responseFailure(Response.json(problem, { status: 409, headers: { 'Content-Type': 'application/problem+json' } }), '/api/v2/projects/{id}', 'PATCH');
     expect(failure).toBeInstanceOf(ApiFailure);
     expect(failure.problem?.current_revision).toBe('9007199254740993');
     expect(failure.code).toBe('REVISION_CONFLICT');
   });
   it('does not display proxy HTML or fabricated raw errors', async () => {
-    const failure = await responseFailure(new Response('<h1>private proxy details</h1>', { status: 502 }));
+    const failure = await responseFailure(new Response('<h1>private proxy details</h1>', { status: 502 }), '/api/v2/projects', 'GET');
     expect(failure.code).toBe('HTTP_CONTRACT_ERROR');
     expect(failure.message).not.toContain('private proxy');
   });

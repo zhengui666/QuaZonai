@@ -266,7 +266,9 @@ PWA 生命周期 fixture 的宿主与 CI 限 Linux；浏览器产品不受此限
 
 客户端Ajv standalone使用原生inlineRefs=false复用组件校验函数，不在每个操作展开重复Problem/Brief代码；保持仓库既有Workbox 3MiB单文件预缓存上限，本次不提高上限，也不能省略校验来掩盖生成代码膨胀。
 
-所有 HTTP 响应（包括非2xx）按已生成 operation/status/media/schema 组合核验；Problem 必须使用 application/problem+json、有效 UUIDv7 request_id 与精确十进制 revision，body.status 必须等于 HTTP status。格式错误响应不能触发认证事件、重试或业务错误展示。只移除手写的宽松 Problem 形状检查，不放宽 binary/SSE 的成功响应边界。
+所有 HTTP 响应（包括非2xx）按已生成 operation/status/media/schema 组合核验；Problem 必须使用 application/problem+json、有效 UUIDv7 request_id 与精确十进制 revision，body.status 必须等于 HTTP status。格式错误响应不能触发认证事件、重试或业务错误展示。只移除手写的宽松 Problem 形状检查，不放宽 binary/SSE 的成功响应边界。responseFailure 的 schemaPath/method 必填；手工 fetch 的 RunEvents 也绑定 GET /api/v2/runs/{id}/events，不提供省略操作上下文的宽松路径。SSE 只有生成合同认可的成功状态/媒体才能连接；格式错误401不触发退出，只有已验证 AUTH_REQUIRED 可以。
+
+费用表单与 isDecimal 复用从原生 DecimalValue、BudgetV1 正金额字段生成的 Ajv standalone 校验器，不维护第二套较窄语法。+000.0100、.1、1. 等原生可表示的正金额保留原文提交；零/负数、溢出、尾随控制字符仍拒绝。共享 decimal-wire/cost-tuples 同时覆盖Rust、Schema和实际表单派发，schema-valid 不等于当前 EXACT 能力可用。
 
 BudgetV1 继续保留既有 Rust/serde 字段，原生 OpenAPI 用公共字段与费用模式 oneOf 联合表达：UNAVAILABLE 金额/币种省略或 null；有费用上限的模式必须显式正金额和原生币种。EXACT 的结构有效不表示该能力已实现，仍由现有 domain/能力检查拒绝；不能用 schema 伪造准确账单。基础币种复用同一 iso_currency0.7.0 成员表。Brief 表单对 dataset_revision_id 去重只做拒绝，不删除或合并用户绑定；修复轮数≤总轮数、合格目标数≤实验数按完整路径双向依赖重验，不自动扩大预算。
 

@@ -1,9 +1,17 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { costBudgetErrors } from './cost-budget';
-import { validateCostCurrency } from './generated/responses.cjs';
+import type { CostFields } from './cost-budget';
+import { validateCostAmount, validateCostCurrency } from './generated/responses.cjs';
 
 const estimated = { cost_enforcement: 'ESTIMATED', max_cost_decimal: '0.000000000000000001', cost_currency: 'USD' };
+const tuples: { tuple: CostFields; admissible: boolean }[] = JSON.parse(readFileSync(
+  new URL('../../../tests/contracts/cost-tuples.json', import.meta.url), 'utf8',
+));
 describe('joint cost mode, exact amount and native currency validation', () => {
+  it.each(tuples)('matches native admission for the shared cost tuple $tuple', ({ tuple, admissible }) => {
+    expect(Object.keys(costBudgetErrors(tuple)).length === 0).toBe(admissible);
+  });
   it('accepts only empty amount/currency with unavailable metering', () => {
     for (const amount of [null, undefined, '']) for (const currency of [null, undefined, '']) {
       expect(costBudgetErrors({ cost_enforcement: 'UNAVAILABLE', max_cost_decimal: amount, cost_currency: currency })).toEqual({});
@@ -16,7 +24,13 @@ describe('joint cost mode, exact amount and native currency validation', () => {
     expect(costBudgetErrors({ cost_enforcement: 'ESTIMATED' })).toHaveProperty('max_cost_decimal');
     expect(costBudgetErrors({ cost_enforcement: 'ESTIMATED' })).toHaveProperty('cost_currency');
   });
-  it.each([null, undefined, '', '0', '0.000', '-0', '-1', '1e3', ' 1', '1\n', 1, '0.0000000000000000001'])('rejects invalid estimated amount %j without coercion', amount => {
+  it.each(['+000.0100', '.1', '1.', '01', '+.1', '1.0000000000000000000'])('accepts the native positive grammar %s without rewriting it', amount => {
+    const value = Object.freeze({ ...estimated, max_cost_decimal: amount });
+    expect(validateCostAmount(amount)).toBe(true);
+    expect(costBudgetErrors(value)).toEqual({});
+    expect(value.max_cost_decimal).toBe(amount);
+  });
+  it.each([null, undefined, '', '0', '0.000', '+000.0', '-0', '-1', '1e3', ' 1', '1\n', 1, '0.0000000000000000001'])('rejects invalid estimated amount %j without coercion', amount => {
     expect(costBudgetErrors({ ...estimated, max_cost_decimal: amount })).toHaveProperty('max_cost_decimal');
   });
   it.each([null, undefined, '', 'ZZZ', 'usd', ' USD', 'USD\n', 'US', 'USDC', 123])('rejects unsupported or malformed currency %j', currency => {

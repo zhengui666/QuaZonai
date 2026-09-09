@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiFailure, AUTH_CHANGED, dataOf, displayTime, Intent, responseFailure, terminal } from './api';
+import { responseKind } from './generated/responses.cjs';
 import type { Schema } from './api';
 import { decodeRunEvent } from './run-events';
 import { ErrorNotice, NoData, Pager, QueryPanel, StateTag, useGuard, useOnline } from './ui';
@@ -111,11 +112,13 @@ function RunEvents({ snapshot }: { snapshot: Run }) {
       async onopen(response) {
         if (controller.signal.aborted) return;
         if (!response.ok) {
-          const failure = await responseFailure(response);
-          if (failure.status === 401) window.dispatchEvent(new Event(AUTH_CHANGED));
+          const failure = await responseFailure(response, '/api/v2/runs/{id}/events', 'GET');
+          if (failure.code === 'AUTH_REQUIRED') window.dispatchEvent(new Event(AUTH_CHANGED));
           throw failure;
         }
-        if (!response.headers.get('content-type')?.startsWith('text/event-stream')) throw new ApiFailure('HTTP_CONTRACT_ERROR', '运行事件接口没有返回事件流。');
+        if (responseKind('/api/v2/runs/{id}/events', 'GET', response.status, response.headers.get('content-type')) !== 'event-stream') {
+          throw new ApiFailure('HTTP_CONTRACT_ERROR', '运行事件接口没有返回合同声明的事件流。', response.status);
+        }
         retries = 0; setConnection('已连接');
       },
       onmessage(frame) {

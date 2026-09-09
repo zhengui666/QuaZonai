@@ -1,6 +1,6 @@
 import createClient from 'openapi-fetch';
 import type { components, paths } from './generated/api';
-import { responseKind, validateProblem, validateResponse } from './generated/responses.cjs';
+import { responseKind, validateDecimal, validateProblem, validateResponse } from './generated/responses.cjs';
 
 export type Schema = components['schemas'];
 export type Problem = Schema['Problem'];
@@ -24,17 +24,17 @@ export function retryAt(value: string | null, now = Date.now()): number {
   const timestamp = /^\d+$/.test(value) ? now + Number(value) * 1000 : Date.parse(value);
   return Number.isFinite(timestamp) && timestamp > now ? timestamp : 0;
 }
-export async function responseFailure(response: Response, schemaPath?: string, method = 'GET'): Promise<ApiFailure> {
+export async function responseFailure(response: Response, schemaPath: string, method: string): Promise<ApiFailure> {
   const contentType = response.headers.get('content-type');
   const media = contentType?.split(';', 1)[0]?.trim().toLowerCase();
   const declared = media === 'application/problem+json' && response.status >= 400
-    && (schemaPath === undefined || responseKind(schemaPath, method, response.status, contentType) === 'json');
+    && responseKind(schemaPath, method, response.status, contentType) === 'json';
   let value: unknown;
   if (declared) {
     try { value = await response.json(); } catch { value = undefined; }
   }
   if (declared && validateProblem(value) && value.status === response.status
-    && (schemaPath === undefined || validateResponse(schemaPath, method, response.status, value, contentType))) {
+    && validateResponse(schemaPath, method, response.status, value, contentType)) {
     return new ApiFailure(value.code, value.detail, response.status, value, retryAt(response.headers.get('retry-after')));
   }
   return new ApiFailure('HTTP_CONTRACT_ERROR', `服务返回了无法识别的响应（HTTP ${response.status}）。未将它当成空列表或成功结果。`, response.status);
@@ -118,11 +118,8 @@ export function isCounter(value: string, positive = false): boolean {
   return /^(0|[1-9][0-9]{0,18})(?![\s\S])/.test(value)
     && BigInt(value) <= 9223372036854775807n && (!positive || value !== '0');
 }
-export function isDecimal(value: string): boolean {
-  if (value.length > 64 || !/^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?![\s\S])/.test(value)) return false;
-  const [integer = '', fraction = ''] = value.replace(/^-/, '').split('.');
-  return integer.length <= 20 && fraction.length <= 18;
-}
+// The generated native schema owns decimal syntax, precision and byte boundaries.
+export const isDecimal = validateDecimal;
 export function displayTime(value: string | null | undefined): string {
   if (value === null || value === undefined) return '尚无记录';
   const date = new Date(value);

@@ -72,6 +72,8 @@ for (const [path, item] of Object.entries(document.paths)) {
 validator('nativeCostCurrency', { $ref: `${root}#/components/schemas/BudgetV1/allOf/0/properties/cost_currency` });
 validator('nativeBaseCurrency', { $ref: `${root}#/components/schemas/BriefContentV1/oneOf/0/properties/base_currency` });
 validator('nativeProblem', { $ref: `${root}#/components/schemas/Problem` });
+validator('nativeDecimal', { $ref: `${root}#/components/schemas/DecimalValue` });
+validator('nativeCostAmount', { $ref: `${root}#/components/schemas/BudgetV1/allOf/1/oneOf/1/properties/max_cost_decimal` });
 const runtime = `
 const responseRegistry = ${JSON.stringify(registry, null, 2)};
 function mediaType(value) { return typeof value === 'string' ? value.split(';', 1)[0].trim().toLowerCase() : ''; }
@@ -92,6 +94,8 @@ exports.validateResponse = function(path, method, status, value, contentType) {
 exports.validateCostCurrency = function(value) { return exports.nativeCostCurrency(value); };
 exports.validateBaseCurrency = function(value) { return exports.nativeBaseCurrency(value); };
 exports.validateProblem = function(value) { return exports.nativeProblem(value); };
+exports.validateDecimal = function(value) { return exports.nativeDecimal(value); };
+exports.validateCostAmount = function(value) { return exports.nativeCostAmount(value); };
 `;
 fs.mkdirSync(output, { recursive: true });
 fs.writeFileSync(new URL('responses.cjs', output), '// Generated from Rust OpenAPI. Do not edit.\n' + standaloneCode(ajv, exported) + runtime);
@@ -101,4 +105,6 @@ fs.writeFileSync(new URL('responses.d.cts', output),
   'export declare function responseKind(path: string, method: string, status: number, contentType?: string | null): "json" | "binary" | "event-stream" | "empty" | undefined;\n' +
   'export declare function validateCostCurrency(value: unknown): boolean;\n' +
   'export declare function validateBaseCurrency(value: unknown): boolean;\n' +
+  'export declare function validateDecimal(value: unknown): boolean;\n' +
+  'export declare function validateCostAmount(value: unknown): boolean;\n' +
   'export declare function validateProblem(value: unknown): value is import("./api").components["schemas"]["Problem"];\n');

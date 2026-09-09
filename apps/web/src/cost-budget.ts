@@ -1,6 +1,5 @@
 // Joint authoring constraints. The server remains the authority at submission.
-import { isDecimal } from './api';
-import { validateCostCurrency } from './generated/responses.cjs';
+import { validateCostAmount, validateCostCurrency } from './generated/responses.cjs';
 import { costOptions } from './authoring-options';
 
 export type CostFields = {
@@ -23,8 +22,7 @@ export function costBudgetErrors(value: CostFields): CostErrors {
     if (Object.keys(errors).length) errors.cost_enforcement = '请清空金额和币种，或明确选择估算费用模式。';
     return errors;
   }
-  const amount = value.max_cost_decimal;
-  if (typeof amount !== 'string' || !isDecimal(amount) || amount.startsWith('-') || !/[1-9]/.test(amount)) {
+  if (!validateCostAmount(value.max_cost_decimal)) {
     errors.max_cost_decimal = '估算费用必须是严格大于零的精确十进制金额。';
   }
   if (typeof value.cost_currency !== 'string' || !validateCostCurrency(value.cost_currency)) {
