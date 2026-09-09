@@ -11,6 +11,7 @@ pub mod brief;
 pub mod codex;
 pub mod control;
 pub mod evidence;
+pub mod portfolio;
 pub mod research;
 pub mod runs;
 

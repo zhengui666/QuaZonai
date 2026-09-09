@@ -4,11 +4,17 @@ use serde::Serialize;
 use std::{collections::BTreeMap, path::Path};
 mod arrow;
 mod backtest;
+pub mod catalog;
+pub mod forecast;
 mod native_version;
 mod optimization;
 pub use native_version::verified_codex_version;
+pub use optimization::allocate;
 mod report;
 pub use report::write_probe_report;
+pub mod signals;
+pub mod simulation;
+pub mod validation;
 
 #[derive(Serialize)]
 pub struct ProbeReport {

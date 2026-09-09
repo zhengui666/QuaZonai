@@ -1,7 +1,12 @@
 /target/
 **/node_modules/
 **/dist/
+# Local developer handoffs, copied upstream sources, and execution evidence.
+/.ai-bridge/
+# Default private application state: never stage master keys or runtime objects.
+/var/
 .env
-.env.local
+.env.*
+!.env.example
 *.log
 .DS_Store

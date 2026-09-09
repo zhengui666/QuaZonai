@@ -211,6 +211,16 @@ https://docs.rs/nautilus-backtest/0.63.0/nautilus_backtest/result/struct.Backtes
 仓位数，而非根据订单条数推算成交。验收用 EmaCross 仍为不可交付 FIXTURE，不是
 多 Alpha 或共享资金生产策略。这些能力已有 Rust 实现，不需要 Python 例外。
 
+## 固定期限验证、原生估计与有界研究代码（2026-09-09）
+
+- 固定 `solow-cv=0.7.3`，只复用 `TimeSeriesSplit` 和 `CombinatorialPurgedKFold`。已读取下载的精确源码：前者提供 test_size/gap/max_train_size，后者枚举全部 C(group_count,test_group_count) 测试块组合并按块边界剔除 purge/embargo。入口先限制观测、组数、折数和全部索引，避免上游组合数/乘法无界；独立小例逐个验证实际索引，不把 crate 名称当正确性证明。上游2026-09-05的新发行并无长期生产保证，启用范围只依据固定源码审查和本仓库原生回归。来源：https://docs.rs/crate/solow-cv/0.7.3 。
+- 不采用 `torsh-series=0.2.0` 的同名 CombinatorialPurgedCV：原生源码是若干 offset 的向前窗口，不是所有测试块组合；其 PurgedTimeSeriesCV 首段还可能选择测试后的训练数据，不符合本项目 walk-forward 合同。`sklears-model-selection=0.2.0` 的 PurgedGroupTimeSeriesSplit 也不是本合同的 CPCV。不是语言生态结论，而是这两个具体 API 的不匹配。
+- 样本协方差复用 `ndarray-stats=0.7.0` 的 CorrelationExt::cov(ddof=1)，固定 `ndarray=0.17.1`。每行是一个资产、每列是同一观测时刻，先检查非空、至少两期、等长、有限及资产顺序；不补零、默默丢列或隐式年化。来源：https://docs.rs/ndarray-stats/latest/ndarray_stats/trait.CorrelationExt.html 。
+- SCORE 的仿射校准复用 `linregress=0.5.4` 的原生 FormulaRegressionBuilder/RegressionModel，只向 fit 提供该折被允许的训练标签，保存原生系数与精确训练输入/期限。固定公式 return ~ score，不接受用户公式/任意列。预测只应用冻结模型，不再次估计、不拿验证或 sealed 标签拟合。常数、缺值、非有限和样本不足明确拒绝；没有无条件“score即收益”转换。来源：https://docs.rs/linregress/0.5.4/linregress/ 。
+- `wasmi=2.0.0` 无WASI/任何宿主导入，显式stable+portable-dispatch，原生fuel、内存、表和栈限制。实际未优化无限循环回归曾暴露未选择portable dispatch的宿主栈溢出；启用上游portable loop后，11项真正Wasm执行/拒绝测试全部通过。此处不是Wasmi2.0已被审计或整个宿主编译隔离已验收的声明。来源：https://docs.rs/wasmi/2.0.0/wasmi/#crate-features 。
+
+没有新增Python例外，没有自写CV、协方差估计器、回归拟合器、解释器或优化算法。每个结果仍需同Run/Attempt、输入、政策、权限、独立评估与生产门禁验证。数值功能存在不能代替完整Issue62交付。
+
 ## 原生目录能力的回退路径（2026-09-08）
 
 上游 GHSA-hp8f-xmx4-4qrg 指出：含尾斜杠的多层软链可突破旧版手工路径解析；Linux openat2 不可用/被阻止时也会触发该后端。官方3.x修复版本为3.4.6，4.x为4.0.3。本工作区检查时 cap-std facade=3.4.5，但已锁定的 cap-primitives=3.4.6，不能据 facade 名字宣称正在运行的解析器仍有漏洞。本次将 facade 同步固定3.4.6，令最小依赖要求亦覆盖补丁，不转向4.x或重写路径解析。

@@ -93,7 +93,7 @@ pub struct MetricValueV1 {
 
 // serde_json normally encodes non-finite floats as null. That would erase the
 // distinction between corrupt evidence and an honestly missing observation.
-fn serialize_finite_optional<S: serde::Serializer>(
+pub(crate) fn serialize_finite_optional<S: serde::Serializer>(
     value: &Option<f64>,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
@@ -103,7 +103,7 @@ fn serialize_finite_optional<S: serde::Serializer>(
     }
 }
 
-fn deserialize_finite_optional<'de, D: serde::Deserializer<'de>>(
+pub(crate) fn deserialize_finite_optional<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<f64>, D::Error> {
     let value = Option::<f64>::deserialize(deserializer)?;

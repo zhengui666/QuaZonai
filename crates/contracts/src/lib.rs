@@ -12,9 +12,11 @@ pub mod codex;
 pub mod control;
 pub mod evidence;
 pub mod lifecycle;
+pub mod portfolio;
 pub mod research;
 pub mod runs;
 pub mod scalars;
+pub mod science;
 
 pub use scalars::{DbCounter, DecimalValue, Id, Revision, SchemaV1, Timestamp};
 
@@ -88,7 +90,13 @@ use utoipa::OpenApi;
     lifecycle::RunEventKind,
     lifecycle::RunStatePayload,
     lifecycle::RunEventV1,
-    lifecycle::RunEventBatchV1
+    lifecycle::RunEventBatchV1,
+    portfolio::AllocationInputV1,
+    portfolio::AllocationResultV1,
+    science::NativeForecastRequestV1,
+    science::NativeForecastResultV1,
+    science::NativeSimulationRequestV1,
+    science::NativeSimulationResultV1
 )))]
 struct DomainContracts;
 

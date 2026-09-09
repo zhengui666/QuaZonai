@@ -512,3 +512,27 @@ DELETE权限，旧不可变历史守卫与其他表无DELETE/TRUNCATE/TRIGGER边
 测试通过，0失败、0忽略；fmt、严格Clippy、all-target build通过。两份OpenAPI
 由实际Rust生成。发布必须再跑对应新Head独立只读CI和review；本地结果不等于
 完整W0–W8/T01–T42、原生账号验收或可合并状态，Codex仅review。
+
+## 2026-09-09：可执行原生预测、组合求解与共享资金模拟
+
+在 `ace5c6502dbf1988a4891aa572da6ddbe735842b` 上的网页作者工作树，执行器实际运行
+`cargo test --locked -p job --tests`（62通过）、`cargo test --locked -p contracts -p domain`
+（25+55通过）、workspace/all-targets Clippy 和格式检查，均为exit 0。原生任务覆盖
+目录Parquet读写、严格资产/时间/步长检查、受fuel限制的Wasm预测、冻结标签、Clarabel
+约束、原生Walk-forward/CPCV/协方差/OLS、真实CLI和独立并发模拟进程。
+
+该回执绑定计划 `3ab3630ca819cd57b9f65627da5be7615ce61ba2e8cdaab833e785ee0b57e10b`，
+结束于2026-09-09T09:15:24.624Z。原始命令输出位于本地忽略目录
+`.ai-bridge/owner-science-9/`；本记录不是远端CI成功声明，也不包含本轮Store/Server
+数据库回归。之后网页作者按同次原生输出补全domain OpenAPI；其一致性需再次执行比对，
+HTTP OpenAPI在该次原生生成中无差异。不要把handoff进程exit 0替代每个命令的结果。
+
+发现并修复的实际问题：Wasmi默认分派在未优化无限循环回归中溢出宿主栈，使用上游
+portable-dispatch后保留预算和回归；Nautilus logger使用具体LoggerConfig；原生收益的
+position fallback不能当组合资本收益，适配改为唯一账户原生equity snapshots的日收益；
+跨日全现金0收益与日内样本不足分开。同进程内核复用导致相互干扰的测试改为实际生产
+一任务一进程边界，并用四个同时运行的原生job保留账户、权益及0收益断言，不加串行锁。
+
+这些计算入口仍不拥有HTTP/MCP调用方的任意路径、REAL来源、PIT、资格或交付授权。
+正式数据登记、Brief冻结/Cycle启动、Worker/Codex、独立评估发布、两Alpha组合和
+交付/Forward/Wake以及完整UI验收仍按DESIGN完成；本增量不得被当作整个Issue62关闭依据。

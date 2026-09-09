@@ -2,6 +2,36 @@
 
 完整产品合同在 DESIGN。当前已实现原生验证、逐轮 Store、浏览器认证、Project/机器身份和不可变研究准备 HTTP 控制面；研究/组合/交付命令仍待实现，不提供绕过 API 的手工 SQL 业务路径。
 
+## 原生科学任务入口
+
+`job` 是受信任运行时启动的一次性计算进程，不是浏览器/Agent 的任意命令执行代理。每次调用只运行一个任务，API/Worker 不在本进程内嵌入 Nautilus。Clap 原生帮助：
+
+```sh
+cargo run --locked -p job -- --help
+cargo run --locked -p job -- allocate < tests/contracts/allocation-input.json
+```
+
+第二条是明确标记的合成两资产数值回归输入，不产生生产资格或交付权。`allocate` 使用真实 Clarabel 求解并检查存储用十进制目标；无解/失败不输出备用权重，必须检查 `solver_status` 而非只看进程退出码。
+
+已有受授权只读 Nautilus Parquet 快照、实际 Wasm 模型和相应冻结请求文件时，运行时使用以下入口；路径不是 HTTP/MCP 请求字段：
+
+```sh
+job forecast --catalog /input/catalog --model /input/model.wasm < forecast-request.json
+job simulate --catalog /input/catalog < simulation-request.json
+```
+
+请求分别是 `NativeForecastRequestV1`、`NativeSimulationRequestV1`，由同一 Rust 合同生成。stdin 上限8MiB；stdout为完整JSON，计算失败为非零退出码及安全的 `QZ_NATIVE_JOB_FAILED`，不回显原生异常、路径或输入。`--catalog` 只允许运行时的已登记只读挂载，`--model` 不接受软链/FIFO/超限文件；外层仍须配置真实进程、文件系统、网络和资源隔离，不能直接用这些本地参数授予Agent宿主访问权。
+
+`forecast` 保留未完成标签与指标预热的 null+reason，Wasm没有宿主导入且受fuel/内存/栈限制。`simulate` 在一个原生账户执行全部资产的冻结目标，先确认减仓成交再提交增仓，保留原生费用、数量步长及独立结果。公开 `returns_kind=PORTFOLIO_DAILY` 仅含原生权益快照的UTC日收益，绝不使用单仓收益回退；日内数据不足时 `returns_status=INSUFFICIENT_DATA`、`returns_reason=PORTFOLIO_DAILY_RETURNS_UNAVAILABLE`，不是0收益。跨日全现金的真实0收益可以为OK，但仍须符合评估最小样本要求。
+
+验证这些入口及native协方差、OLS校准、Walk-forward/CPCV使用：
+
+```sh
+cargo test --locked -p job --tests
+```
+
+目录许可/PIT、来源、Run/Attempt、独立评估、资格及审批仍由上层可信服务核验；成功退出不等于 REAL、PASS 或 Issue62 完整验收。
+
 ## 认证服务与本机管理
 
 以下入口复用 Clap；`cargo run --locked -p server -- --help` 展示实际命令。

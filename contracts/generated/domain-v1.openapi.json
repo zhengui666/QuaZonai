@@ -1,6 +1,831 @@
 {
   "components": {
     "schemas": {
+      "AllocationAssetV1": {
+        "additionalProperties": false,
+        "properties": {
+          "available_notional": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DecimalValue",
+                "description": "Observed eligible notional at the decision cut-off, in the base currency."
+              }
+            ]
+          },
+          "currency": {
+            "enum": [
+              "AED",
+              "AFN",
+              "ALL",
+              "AMD",
+              "AOA",
+              "ARS",
+              "AUD",
+              "AWG",
+              "AZN",
+              "BAM",
+              "BBD",
+              "BDT",
+              "BGN",
+              "BHD",
+              "BIF",
+              "BMD",
+              "BND",
+              "BOB",
+              "BOV",
+              "BRL",
+              "BSD",
+              "BTN",
+              "BWP",
+              "BYN",
+              "BZD",
+              "CAD",
+              "CDF",
+              "CHE",
+              "CHF",
+              "CHW",
+              "CLF",
+              "CLP",
+              "CNY",
+              "COP",
+              "COU",
+              "CRC",
+              "CUC",
+              "CUP",
+              "CVE",
+              "CZK",
+              "DJF",
+              "DKK",
+              "DOP",
+              "DZD",
+              "EGP",
+              "ERN",
+              "ETB",
+              "EUR",
+              "FJD",
+              "FKP",
+              "GBP",
+              "GEL",
+              "GHS",
+              "GIP",
+              "GMD",
+              "GNF",
+              "GTQ",
+              "GYD",
+              "HKD",
+              "HNL",
+              "HRK",
+              "HTG",
+              "HUF",
+              "IDR",
+              "ILS",
+              "INR",
+              "IQD",
+              "IRR",
+              "ISK",
+              "JMD",
+              "JOD",
+              "JPY",
+              "KES",
+              "KGS",
+              "KHR",
+              "KMF",
+              "KPW",
+              "KRW",
+              "KWD",
+              "KYD",
+              "KZT",
+              "LAK",
+              "LBP",
+              "LKR",
+              "LRD",
+              "LSL",
+              "LYD",
+              "MAD",
+              "MDL",
+              "MGA",
+              "MKD",
+              "MMK",
+              "MNT",
+              "MOP",
+              "MRU",
+              "MUR",
+              "MVR",
+              "MWK",
+              "MXN",
+              "MXV",
+              "MYR",
+              "MZN",
+              "NAD",
+              "NGN",
+              "NIO",
+              "NOK",
+              "NPR",
+              "NZD",
+              "OMR",
+              "PAB",
+              "PEN",
+              "PGK",
+              "PHP",
+              "PKR",
+              "PLN",
+              "PYG",
+              "QAR",
+              "RON",
+              "RSD",
+              "RUB",
+              "RWF",
+              "SAR",
+              "SBD",
+              "SCR",
+              "SDG",
+              "SEK",
+              "SGD",
+              "SHP",
+              "SLE",
+              "SLL",
+              "SOS",
+              "SRD",
+              "SSP",
+              "STN",
+              "SVC",
+              "SYP",
+              "SZL",
+              "THB",
+              "TJS",
+              "TMT",
+              "TND",
+              "TOP",
+              "TRY",
+              "TTD",
+              "TWD",
+              "TZS",
+              "UAH",
+              "UGX",
+              "USD",
+              "USN",
+              "UYI",
+              "UYU",
+              "UYW",
+              "UZS",
+              "VED",
+              "VES",
+              "VND",
+              "VUV",
+              "WST",
+              "XAD",
+              "XAF",
+              "XAG",
+              "XAU",
+              "XBA",
+              "XBB",
+              "XBC",
+              "XBD",
+              "XCD",
+              "XCG",
+              "XDR",
+              "XOF",
+              "XPD",
+              "XPF",
+              "XPT",
+              "XSU",
+              "XTS",
+              "XUA",
+              "XXX",
+              "YER",
+              "ZAR",
+              "ZMW",
+              "ZWG",
+              "ZWL"
+            ],
+            "maxLength": 3,
+            "minLength": 3,
+            "type": "string"
+          },
+          "current_weight": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "expected_return": {
+            "format": "double",
+            "type": "number"
+          },
+          "groups": {
+            "items": {
+              "maxLength": 120,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "instrument_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "transaction_cost_rate": {
+            "$ref": "#/components/schemas/DecimalValue",
+            "description": "Frozen all-in cost per unit of traded notional, never an inferred zero."
+          }
+        },
+        "required": [
+          "instrument_id",
+          "currency",
+          "expected_return",
+          "current_weight",
+          "transaction_cost_rate",
+          "groups"
+        ],
+        "type": "object"
+      },
+      "AllocationInputV1": {
+        "additionalProperties": false,
+        "properties": {
+          "assets": {
+            "items": {
+              "$ref": "#/components/schemas/AllocationAssetV1"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "base_currency": {
+            "enum": [
+              "AED",
+              "AFN",
+              "ALL",
+              "AMD",
+              "AOA",
+              "ARS",
+              "AUD",
+              "AWG",
+              "AZN",
+              "BAM",
+              "BBD",
+              "BDT",
+              "BGN",
+              "BHD",
+              "BIF",
+              "BMD",
+              "BND",
+              "BOB",
+              "BOV",
+              "BRL",
+              "BSD",
+              "BTN",
+              "BWP",
+              "BYN",
+              "BZD",
+              "CAD",
+              "CDF",
+              "CHE",
+              "CHF",
+              "CHW",
+              "CLF",
+              "CLP",
+              "CNY",
+              "COP",
+              "COU",
+              "CRC",
+              "CUC",
+              "CUP",
+              "CVE",
+              "CZK",
+              "DJF",
+              "DKK",
+              "DOP",
+              "DZD",
+              "EGP",
+              "ERN",
+              "ETB",
+              "EUR",
+              "FJD",
+              "FKP",
+              "GBP",
+              "GEL",
+              "GHS",
+              "GIP",
+              "GMD",
+              "GNF",
+              "GTQ",
+              "GYD",
+              "HKD",
+              "HNL",
+              "HRK",
+              "HTG",
+              "HUF",
+              "IDR",
+              "ILS",
+              "INR",
+              "IQD",
+              "IRR",
+              "ISK",
+              "JMD",
+              "JOD",
+              "JPY",
+              "KES",
+              "KGS",
+              "KHR",
+              "KMF",
+              "KPW",
+              "KRW",
+              "KWD",
+              "KYD",
+              "KZT",
+              "LAK",
+              "LBP",
+              "LKR",
+              "LRD",
+              "LSL",
+              "LYD",
+              "MAD",
+              "MDL",
+              "MGA",
+              "MKD",
+              "MMK",
+              "MNT",
+              "MOP",
+              "MRU",
+              "MUR",
+              "MVR",
+              "MWK",
+              "MXN",
+              "MXV",
+              "MYR",
+              "MZN",
+              "NAD",
+              "NGN",
+              "NIO",
+              "NOK",
+              "NPR",
+              "NZD",
+              "OMR",
+              "PAB",
+              "PEN",
+              "PGK",
+              "PHP",
+              "PKR",
+              "PLN",
+              "PYG",
+              "QAR",
+              "RON",
+              "RSD",
+              "RUB",
+              "RWF",
+              "SAR",
+              "SBD",
+              "SCR",
+              "SDG",
+              "SEK",
+              "SGD",
+              "SHP",
+              "SLE",
+              "SLL",
+              "SOS",
+              "SRD",
+              "SSP",
+              "STN",
+              "SVC",
+              "SYP",
+              "SZL",
+              "THB",
+              "TJS",
+              "TMT",
+              "TND",
+              "TOP",
+              "TRY",
+              "TTD",
+              "TWD",
+              "TZS",
+              "UAH",
+              "UGX",
+              "USD",
+              "USN",
+              "UYI",
+              "UYU",
+              "UYW",
+              "UZS",
+              "VED",
+              "VES",
+              "VND",
+              "VUV",
+              "WST",
+              "XAD",
+              "XAF",
+              "XAG",
+              "XAU",
+              "XBA",
+              "XBB",
+              "XBC",
+              "XBD",
+              "XCD",
+              "XCG",
+              "XDR",
+              "XOF",
+              "XPD",
+              "XPF",
+              "XPT",
+              "XSU",
+              "XTS",
+              "XUA",
+              "XXX",
+              "YER",
+              "ZAR",
+              "ZMW",
+              "ZWG",
+              "ZWL"
+            ],
+            "maxLength": 3,
+            "minLength": 3,
+            "type": "string"
+          },
+          "capital_assumption": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "constraints": {
+            "$ref": "#/components/schemas/PortfolioConstraintsV1"
+          },
+          "covariance": {
+            "items": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 256,
+              "minItems": 1,
+              "type": "array"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "current_cash_weight": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "exposure_tolerance": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "objective": {
+            "$ref": "#/components/schemas/AllocationObjective"
+          },
+          "risk": {
+            "$ref": "#/components/schemas/AllocationRisk"
+          },
+          "risk_aversion": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/AllocatorSettingsV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "objective",
+          "risk",
+          "base_currency",
+          "capital_assumption",
+          "risk_aversion",
+          "current_cash_weight",
+          "exposure_tolerance",
+          "constraints",
+          "settings",
+          "assets",
+          "covariance"
+        ],
+        "type": "object"
+      },
+      "AllocationObjective": {
+        "enum": [
+          "MIN_RISK",
+          "MAX_UTILITY",
+          "RISK_BUDGETING"
+        ],
+        "type": "string"
+      },
+      "AllocationResultV1": {
+        "additionalProperties": false,
+        "properties": {
+          "cash_weight": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DecimalValue"
+              }
+            ]
+          },
+          "dual_residual": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "iterations": {
+            "format": "int32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "objective_value": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "primal_residual": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "solver_status": {
+            "$ref": "#/components/schemas/SolverStatus"
+          },
+          "targets": {
+            "description": "A failed solve has no targets, not an empty or fallback allocation.",
+            "items": {
+              "$ref": "#/components/schemas/AllocationTargetV1"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "schema_version",
+          "solver_status",
+          "iterations",
+          "objective_value",
+          "primal_residual",
+          "dual_residual"
+        ],
+        "type": "object"
+      },
+      "AllocationRisk": {
+        "enum": [
+          "VARIANCE",
+          "CVAR"
+        ],
+        "type": "string"
+      },
+      "AllocationTargetV1": {
+        "additionalProperties": false,
+        "properties": {
+          "currency": {
+            "enum": [
+              "AED",
+              "AFN",
+              "ALL",
+              "AMD",
+              "AOA",
+              "ARS",
+              "AUD",
+              "AWG",
+              "AZN",
+              "BAM",
+              "BBD",
+              "BDT",
+              "BGN",
+              "BHD",
+              "BIF",
+              "BMD",
+              "BND",
+              "BOB",
+              "BOV",
+              "BRL",
+              "BSD",
+              "BTN",
+              "BWP",
+              "BYN",
+              "BZD",
+              "CAD",
+              "CDF",
+              "CHE",
+              "CHF",
+              "CHW",
+              "CLF",
+              "CLP",
+              "CNY",
+              "COP",
+              "COU",
+              "CRC",
+              "CUC",
+              "CUP",
+              "CVE",
+              "CZK",
+              "DJF",
+              "DKK",
+              "DOP",
+              "DZD",
+              "EGP",
+              "ERN",
+              "ETB",
+              "EUR",
+              "FJD",
+              "FKP",
+              "GBP",
+              "GEL",
+              "GHS",
+              "GIP",
+              "GMD",
+              "GNF",
+              "GTQ",
+              "GYD",
+              "HKD",
+              "HNL",
+              "HRK",
+              "HTG",
+              "HUF",
+              "IDR",
+              "ILS",
+              "INR",
+              "IQD",
+              "IRR",
+              "ISK",
+              "JMD",
+              "JOD",
+              "JPY",
+              "KES",
+              "KGS",
+              "KHR",
+              "KMF",
+              "KPW",
+              "KRW",
+              "KWD",
+              "KYD",
+              "KZT",
+              "LAK",
+              "LBP",
+              "LKR",
+              "LRD",
+              "LSL",
+              "LYD",
+              "MAD",
+              "MDL",
+              "MGA",
+              "MKD",
+              "MMK",
+              "MNT",
+              "MOP",
+              "MRU",
+              "MUR",
+              "MVR",
+              "MWK",
+              "MXN",
+              "MXV",
+              "MYR",
+              "MZN",
+              "NAD",
+              "NGN",
+              "NIO",
+              "NOK",
+              "NPR",
+              "NZD",
+              "OMR",
+              "PAB",
+              "PEN",
+              "PGK",
+              "PHP",
+              "PKR",
+              "PLN",
+              "PYG",
+              "QAR",
+              "RON",
+              "RSD",
+              "RUB",
+              "RWF",
+              "SAR",
+              "SBD",
+              "SCR",
+              "SDG",
+              "SEK",
+              "SGD",
+              "SHP",
+              "SLE",
+              "SLL",
+              "SOS",
+              "SRD",
+              "SSP",
+              "STN",
+              "SVC",
+              "SYP",
+              "SZL",
+              "THB",
+              "TJS",
+              "TMT",
+              "TND",
+              "TOP",
+              "TRY",
+              "TTD",
+              "TWD",
+              "TZS",
+              "UAH",
+              "UGX",
+              "USD",
+              "USN",
+              "UYI",
+              "UYU",
+              "UYW",
+              "UZS",
+              "VED",
+              "VES",
+              "VND",
+              "VUV",
+              "WST",
+              "XAD",
+              "XAF",
+              "XAG",
+              "XAU",
+              "XBA",
+              "XBB",
+              "XBC",
+              "XBD",
+              "XCD",
+              "XCG",
+              "XDR",
+              "XOF",
+              "XPD",
+              "XPF",
+              "XPT",
+              "XSU",
+              "XTS",
+              "XUA",
+              "XXX",
+              "YER",
+              "ZAR",
+              "ZMW",
+              "ZWG",
+              "ZWL"
+            ],
+            "maxLength": 3,
+            "minLength": 3,
+            "type": "string"
+          },
+          "instrument_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "weight": {
+            "$ref": "#/components/schemas/DecimalValue"
+          }
+        },
+        "required": [
+          "instrument_id",
+          "currency",
+          "weight"
+        ],
+        "type": "object"
+      },
+      "AllocatorSettingsV1": {
+        "additionalProperties": false,
+        "properties": {
+          "accept_inaccurate": {
+            "type": "boolean"
+          },
+          "max_iterations": {
+            "format": "int32",
+            "maximum": 100000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "solver_tolerance": {
+            "$ref": "#/components/schemas/DecimalValue",
+            "description": "Numerical stopping tolerance, not permission to violate the mandate."
+          }
+        },
+        "required": [
+          "schema_version",
+          "max_iterations",
+          "solver_tolerance",
+          "accept_inaccurate"
+        ],
+        "type": "object"
+      },
       "ArtifactAccess": {
         "enum": [
           "OPERATOR",
@@ -129,6 +954,28 @@
           "origin",
           "created_by",
           "created_at"
+        ],
+        "type": "object"
+      },
+      "AssetBoundV1": {
+        "additionalProperties": false,
+        "properties": {
+          "instrument_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "max": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "min": {
+            "$ref": "#/components/schemas/DecimalValue"
+          }
+        },
+        "required": [
+          "instrument_id",
+          "min",
+          "max"
         ],
         "type": "object"
       },
@@ -4995,6 +5842,35 @@
         ],
         "type": "object"
       },
+      "ForecastMissingReason": {
+        "enum": [
+          "INDICATOR_WARMUP",
+          "LABEL_NOT_COMPLETE"
+        ],
+        "type": "string"
+      },
+      "GroupBoundV1": {
+        "additionalProperties": false,
+        "properties": {
+          "group_id": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "max": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "min": {
+            "$ref": "#/components/schemas/DecimalValue"
+          }
+        },
+        "required": [
+          "group_id",
+          "min",
+          "max"
+        ],
+        "type": "object"
+      },
       "Id": {
         "format": "uuid",
         "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
@@ -5588,6 +6464,700 @@
         ],
         "type": "object"
       },
+      "NativeAccountKind": {
+        "enum": [
+          "CASH",
+          "MARGIN"
+        ],
+        "type": "string"
+      },
+      "NativeBarSelectionV1": {
+        "additionalProperties": false,
+        "properties": {
+          "bar_types": {
+            "description": "Complete native BarType strings, never SQL or directory prefixes.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "decision_cutoff_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "event_end_ns": {
+            "$ref": "#/components/schemas/DbCounter",
+            "description": "Exclusive event-time boundary."
+          },
+          "event_start_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "maximum_rows": {
+            "format": "int32",
+            "maximum": 1000000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "bar_types",
+          "event_start_ns",
+          "event_end_ns",
+          "decision_cutoff_ns",
+          "maximum_rows"
+        ],
+        "type": "object"
+      },
+      "NativeFeeRateV1": {
+        "additionalProperties": false,
+        "properties": {
+          "instrument_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maker": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "taker": {
+            "$ref": "#/components/schemas/DecimalValue"
+          }
+        },
+        "required": [
+          "instrument_id",
+          "maker",
+          "taker"
+        ],
+        "type": "object"
+      },
+      "NativeForecastParametersV1": {
+        "additionalProperties": false,
+        "properties": {
+          "fast_period": {
+            "format": "int32",
+            "maximum": 10000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "label_horizon_observations": {
+            "format": "int32",
+            "maximum": 100000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "slow_period": {
+            "format": "int32",
+            "maximum": 10000,
+            "minimum": 2,
+            "type": "integer"
+          },
+          "total_fuel": {
+            "$ref": "#/components/schemas/DbCounter"
+          }
+        },
+        "required": [
+          "schema_version",
+          "fast_period",
+          "slow_period",
+          "label_horizon_observations",
+          "total_fuel"
+        ],
+        "type": "object"
+      },
+      "NativeForecastPointV1": {
+        "additionalProperties": false,
+        "properties": {
+          "available_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "event_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "forecast": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "forecast_reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ForecastMissingReason"
+              }
+            ]
+          },
+          "instrument_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "label_available_ns": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DbCounter"
+              }
+            ]
+          },
+          "label_reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ForecastMissingReason"
+              }
+            ]
+          },
+          "label_return": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "ordinal": {
+            "format": "int32",
+            "maximum": 999999,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "instrument_id",
+          "ordinal",
+          "event_ns",
+          "available_ns",
+          "forecast",
+          "label_return"
+        ],
+        "type": "object"
+      },
+      "NativeForecastRequestV1": {
+        "additionalProperties": false,
+        "properties": {
+          "parameters": {
+            "$ref": "#/components/schemas/NativeForecastParametersV1"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/NativeBarSelectionV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "selection",
+          "parameters"
+        ],
+        "type": "object"
+      },
+      "NativeForecastResultV1": {
+        "additionalProperties": false,
+        "properties": {
+          "consumed_fuel": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "native_versions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/NativeForecastPointV1"
+            },
+            "maxItems": 1000000,
+            "minItems": 1,
+            "type": "array"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "native_versions",
+          "consumed_fuel",
+          "points"
+        ],
+        "type": "object"
+      },
+      "NativeReturnV1": {
+        "additionalProperties": false,
+        "properties": {
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timestamp_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "value": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "timestamp_ns",
+          "value"
+        ],
+        "type": "object"
+      },
+      "NativeReturnsKind": {
+        "enum": [
+          "PORTFOLIO_DAILY"
+        ],
+        "type": "string"
+      },
+      "NativeSimulationRequestV1": {
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/NativeBarSelectionV1"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/NativeSimulationSettingsV1"
+          },
+          "target_points": {
+            "items": {
+              "$ref": "#/components/schemas/NativeTargetPointV1"
+            },
+            "maxItems": 10000,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "schema_version",
+          "selection",
+          "settings",
+          "target_points"
+        ],
+        "type": "object"
+      },
+      "NativeSimulationResultV1": {
+        "additionalProperties": false,
+        "properties": {
+          "canonical_result": {
+            "description": "Unmodified native canonical document; stored as restricted simulation evidence."
+          },
+          "consumed_target_points": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "events": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "iterations": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "native_version": {
+            "type": "string"
+          },
+          "orders": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "positions": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "returns": {
+            "items": {
+              "$ref": "#/components/schemas/NativeReturnV1"
+            },
+            "type": "array"
+          },
+          "returns_kind": {
+            "$ref": "#/components/schemas/NativeReturnsKind",
+            "description": "UTC daily equity changes from native snapshots, never per-position fallback."
+          },
+          "returns_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "returns_status": {
+            "$ref": "#/components/schemas/MetricStatus"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "statistics": {
+            "items": {
+              "$ref": "#/components/schemas/NativeStatisticV1"
+            },
+            "type": "array"
+          },
+          "summary": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "schema_version",
+          "native_version",
+          "iterations",
+          "events",
+          "orders",
+          "positions",
+          "consumed_target_points",
+          "summary",
+          "statistics",
+          "returns_kind",
+          "returns_status",
+          "returns",
+          "canonical_result"
+        ],
+        "type": "object"
+      },
+      "NativeSimulationSettingsV1": {
+        "additionalProperties": false,
+        "properties": {
+          "account_kind": {
+            "$ref": "#/components/schemas/NativeAccountKind"
+          },
+          "base_currency": {
+            "enum": [
+              "AED",
+              "AFN",
+              "ALL",
+              "AMD",
+              "AOA",
+              "ARS",
+              "AUD",
+              "AWG",
+              "AZN",
+              "BAM",
+              "BBD",
+              "BDT",
+              "BGN",
+              "BHD",
+              "BIF",
+              "BMD",
+              "BND",
+              "BOB",
+              "BOV",
+              "BRL",
+              "BSD",
+              "BTN",
+              "BWP",
+              "BYN",
+              "BZD",
+              "CAD",
+              "CDF",
+              "CHE",
+              "CHF",
+              "CHW",
+              "CLF",
+              "CLP",
+              "CNY",
+              "COP",
+              "COU",
+              "CRC",
+              "CUC",
+              "CUP",
+              "CVE",
+              "CZK",
+              "DJF",
+              "DKK",
+              "DOP",
+              "DZD",
+              "EGP",
+              "ERN",
+              "ETB",
+              "EUR",
+              "FJD",
+              "FKP",
+              "GBP",
+              "GEL",
+              "GHS",
+              "GIP",
+              "GMD",
+              "GNF",
+              "GTQ",
+              "GYD",
+              "HKD",
+              "HNL",
+              "HRK",
+              "HTG",
+              "HUF",
+              "IDR",
+              "ILS",
+              "INR",
+              "IQD",
+              "IRR",
+              "ISK",
+              "JMD",
+              "JOD",
+              "JPY",
+              "KES",
+              "KGS",
+              "KHR",
+              "KMF",
+              "KPW",
+              "KRW",
+              "KWD",
+              "KYD",
+              "KZT",
+              "LAK",
+              "LBP",
+              "LKR",
+              "LRD",
+              "LSL",
+              "LYD",
+              "MAD",
+              "MDL",
+              "MGA",
+              "MKD",
+              "MMK",
+              "MNT",
+              "MOP",
+              "MRU",
+              "MUR",
+              "MVR",
+              "MWK",
+              "MXN",
+              "MXV",
+              "MYR",
+              "MZN",
+              "NAD",
+              "NGN",
+              "NIO",
+              "NOK",
+              "NPR",
+              "NZD",
+              "OMR",
+              "PAB",
+              "PEN",
+              "PGK",
+              "PHP",
+              "PKR",
+              "PLN",
+              "PYG",
+              "QAR",
+              "RON",
+              "RSD",
+              "RUB",
+              "RWF",
+              "SAR",
+              "SBD",
+              "SCR",
+              "SDG",
+              "SEK",
+              "SGD",
+              "SHP",
+              "SLE",
+              "SLL",
+              "SOS",
+              "SRD",
+              "SSP",
+              "STN",
+              "SVC",
+              "SYP",
+              "SZL",
+              "THB",
+              "TJS",
+              "TMT",
+              "TND",
+              "TOP",
+              "TRY",
+              "TTD",
+              "TWD",
+              "TZS",
+              "UAH",
+              "UGX",
+              "USD",
+              "USN",
+              "UYI",
+              "UYU",
+              "UYW",
+              "UZS",
+              "VED",
+              "VES",
+              "VND",
+              "VUV",
+              "WST",
+              "XAD",
+              "XAF",
+              "XAG",
+              "XAU",
+              "XBA",
+              "XBB",
+              "XBC",
+              "XBD",
+              "XCD",
+              "XCG",
+              "XDR",
+              "XOF",
+              "XPD",
+              "XPF",
+              "XPT",
+              "XSU",
+              "XTS",
+              "XUA",
+              "XXX",
+              "YER",
+              "ZAR",
+              "ZMW",
+              "ZWG",
+              "ZWL"
+            ],
+            "maxLength": 3,
+            "minLength": 3,
+            "type": "string"
+          },
+          "exposure_tolerance": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "fee_rates": {
+            "items": {
+              "$ref": "#/components/schemas/NativeFeeRateV1"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "insert_latency_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "leverage": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "snapshot_interval_ms": {
+            "format": "int32",
+            "maximum": 86400000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "starting_capital": {
+            "$ref": "#/components/schemas/DecimalValue"
+          }
+        },
+        "required": [
+          "schema_version",
+          "base_currency",
+          "starting_capital",
+          "account_kind",
+          "leverage",
+          "insert_latency_ns",
+          "snapshot_interval_ms",
+          "exposure_tolerance",
+          "fee_rates"
+        ],
+        "type": "object"
+      },
+      "NativeStatisticGroup": {
+        "enum": [
+          "PNL",
+          "RETURNS",
+          "GENERAL"
+        ],
+        "type": "string"
+      },
+      "NativeStatisticV1": {
+        "additionalProperties": false,
+        "properties": {
+          "currency": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "group": {
+            "$ref": "#/components/schemas/NativeStatisticGroup"
+          },
+          "native_key": {
+            "type": "string"
+          },
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "value": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "group",
+          "native_key",
+          "value"
+        ],
+        "type": "object"
+      },
+      "NativeTargetPointV1": {
+        "additionalProperties": false,
+        "properties": {
+          "asof_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "cash_weight": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "targets": {
+            "items": {
+              "$ref": "#/components/schemas/AllocationTargetV1"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "valid_until_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          }
+        },
+        "required": [
+          "schema_version",
+          "asof_ns",
+          "valid_until_ns",
+          "targets",
+          "cash_weight"
+        ],
+        "type": "object"
+      },
       "OperatorCommand": {
         "oneOf": [
           {
@@ -5865,6 +7435,105 @@
           "INVALID"
         ],
         "type": "string"
+      },
+      "PortfolioConstraintsV1": {
+        "additionalProperties": false,
+        "properties": {
+          "asset_overrides": {
+            "items": {
+              "$ref": "#/components/schemas/AssetBoundV1"
+            },
+            "maxItems": 256,
+            "type": "array"
+          },
+          "group_bounds": {
+            "items": {
+              "$ref": "#/components/schemas/GroupBoundV1"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "liquidity_ref": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "long_only": {
+            "type": "boolean"
+          },
+          "max_asset_weight": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "max_cash_weight": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "max_ex_ante_risk": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DecimalValue"
+              }
+            ]
+          },
+          "max_gross_exposure": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "max_net_exposure": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "max_participation": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DecimalValue"
+              }
+            ]
+          },
+          "max_turnover_per_rebalance": {
+            "$ref": "#/components/schemas/DecimalValue",
+            "description": "Gross traded asset notional divided by capital; cash is not charged twice."
+          },
+          "min_asset_weight": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "min_cash_weight": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "min_net_exposure": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "transaction_costs_ref": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "schema_version",
+          "long_only",
+          "min_cash_weight",
+          "max_cash_weight",
+          "min_asset_weight",
+          "max_asset_weight",
+          "max_gross_exposure",
+          "min_net_exposure",
+          "max_net_exposure",
+          "max_turnover_per_rebalance",
+          "group_bounds",
+          "asset_overrides",
+          "transaction_costs_ref"
+        ],
+        "type": "object"
       },
       "PrincipalCreate": {
         "additionalProperties": false,
@@ -6769,6 +8438,16 @@
       "SelectionTieBreak": {
         "enum": [
           "EXPERIMENT_ID_ASC"
+        ],
+        "type": "string"
+      },
+      "SolverStatus": {
+        "enum": [
+          "OPTIMAL",
+          "ACCEPTABLE_INACCURATE",
+          "INFEASIBLE",
+          "UNBOUNDED",
+          "FAILED"
         ],
         "type": "string"
       },

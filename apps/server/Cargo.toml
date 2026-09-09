@@ -20,9 +20,9 @@ tokio = { version = "=1.53.1", features = ["full"] }
 tower-sessions = { version = "=0.14.0", default-features = false, features = ["axum-core", "private"] }
 tower-sessions-sqlx-store = { version = "=0.15.0", features = ["postgres"] }
 clap = { version = "=4.5.46", features = ["derive", "env"] }
-chrono = { version = "=0.4.41", features = ["serde"] }
+chrono = { version = "=0.4.45", features = ["serde"] }
 time = "=0.3.41"
-url = "=2.5.7"
+url = "=2.5.8"
 utoipa = { version = "=5.4.0", features = ["chrono", "uuid"] }
 tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.19", features = ["env-filter", "json"] }

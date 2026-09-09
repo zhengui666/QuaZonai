@@ -9,9 +9,10 @@ publish = false
 
 [dependencies]
 contracts = { path = "../contracts" }
-chrono = { version = "=0.4.41", features = ["serde"] }
+chrono = { version = "=0.4.45", features = ["serde"] }
 thiserror = "=2.0.20"
 iso_currency = "=0.7.0"
+bigdecimal = "=0.4.8"
 serde_json.workspace = true
 
 [dev-dependencies]

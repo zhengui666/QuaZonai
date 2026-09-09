@@ -717,6 +717,30 @@ alpha_version_id: utf8 non-null
 
 生产 serve 显式打开 state-dir/artifacts；旧私有 state-dir 首次升级可创建不存在的空目录，不覆盖已有对象，不调整用户其他目录权限。未提交/中断上传可能留下无 DB 引用的私有对象，保留而不自动删未知提交；回收必须在停止写入的维护窗口核验原生对象与数据库引用，不能通过 git clean 或在线猜测删除。
 
+### A3.2 原生目录与共享资金模拟适配
+
+原生科学任务从 `nautilus-persistence 0.63.0::ParquetDataCatalog` 读取运行时已登记、只读挂载的精确快照，不接收Agent指定路径、SQL、URI、存储选项或凭据。任务的NativeBarSelectionV1仅包含完整bar_type列表、event_start_ns/event_end_ns（左闭右开）、decision_cutoff_ns和maximum_rows；Nanos保留既有bigint字符串。调用方把不可变source/snapshot/storage_version与受限挂载关联。原生目录可能按路径子串发现文件，因此读取结果必须再次严格检查完整BarType/InstrumentId集合、唯一版本、数据行边界和类型，不能以宽匹配授权更多数据。每资产时间严格递增、OHLC精度/价格步长/非负volume、event_at<=available_at<=cutoff；未来创建的instrument定义不得回填到早期数据。
+
+Nautilus的ts_init只有在已登记的原生采集来源证明它代表当时可用时间时才可当available_at；历史批量导入的ingest/创建时间、手工令ts_init=ts_event均不自动获得VERIFIED/PASS。科学加载器的顺序校验只验证数值关系，不替代此来源证明。只读快照、许可和PIT证明由运行时/Store受信任登记验证，源管理员修改宿主本身不在Agent威胁边界内。
+
+NativeSimulationRequestV1用同一账户、NETTING、固定Nautilus0.63.0和明确账户/资本/费率/latency/快照周期，消费各资产真实bar和已冻结的整组target/cash。目标的asof必须不晚于本次决策可见时间，valid_until仍有效；所有资产当前价格必须来自同一已完整到达的时点，缺价/未完成指令/原生拒单均明确失败，不补零。权重转原生数量使用同一原生equity、Instrument数量步长及当前原生net_position；交易按减仓优先，且必须等全部原生减仓成交确认后才提交增仓；仅先发送卖单不能视为原生保证金已释放。跨零目标分成明确reduce-only平旧仓与随后开新仓，空头回补同样属于减仓。两阶段保留同一决策equity与目标数量，部分成交/拒单/过期不提前完成该目标点；量化余量保留，不另建账户账本。目标不是基于未来bar的成交指令；至少1ns的原生插入延迟阻止在生成目标的bar内部获得事后价格。
+
+最终订单、成交、持仓、equity snapshots和收益均直接来自原生BacktestResult/CanonicalBacktestResult。原生统计缺值/非有限值转为带原因的INSUFFICIENT_DATA而不是0/PASS；方法版本、原生统计键、频率、样本数与年化约定明确，未知口径不能登记为支持的方法。原生撮合内部的模拟账户不是QZ真实账户；没有交易网关或真实券商凭据。FIXTURE/SYNTHETIC测试数据永远保留其来源，加载/求解成功不升级为REAL或Qualification。
+
+共享资金结果的 `returns` 与 `statistics[group=RETURNS]` 只使用原生 PortfolioAnalyzer 从该唯一账户的真实 PortfolioSnapshot 计算的 UTC 日频权益收益；显式 `returns_kind=PORTFOLIO_DAILY`、`returns_status` 和 `returns_reason` 标明可用性。不得直接将 BacktestResult.returns_series 的仓位收益回退当组合收益：上游在没有跨日权益样本时会退回 position_returns，而仓位收益与账户资本/杠杆口径不同。适配调用原生 set_portfolio_returns_from_snapshots，不自行重采样、拟合或年化；PnL/General 与完整 canonical_result 仍保留原生结果，canonical 中的统计不自动获得方法资格。没有可用日收益时数组为空、状态INSUFFICIENT_DATA、原因PORTFOLIO_DAILY_RETURNS_UNAVAILABLE，不填0；真实跨日全现金的0收益则为原生有效观测。回归同时覆盖20分钟不足样本、日内平仓有position收益却无portfolio收益、跨两个UTC日及跨日全现金；收益可用仍不代表满足独立评估的最小样本数。来源：Nautilus0.63.0锁定analyzer.rs与 https://nautilustrader.io/docs/latest/concepts/portfolio/#returns-position-vs-portfolio 。
+
+原生模拟的集成与并发验收必须执行真实 `job simulate` 子进程，与一任务一进程的生产合同一致；不得在共享进程池反复创建多个研究内核。2026-09-09回归观察到同进程测试组的全现金权益序列缺失，但精确单独执行通过，故保留原断言并新增四个同时运行的独立job（两组全现金、两组持仓）验证原生账户/权益曲线不互扰，不使用测试串行锁、提高重试次数或补零。该子进程测试只证明进程生命周期与真实JSON入口，文件系统/网络/cgroup隔离仍须独立验收。代码中的公共Rust函数供该单次job入口使用，不允许API/Worker嵌入科学内核。
+
+### A3.3 原生有界预测 ABI
+
+预测按经目录校验的每个instrument单独构造原生EMA和Wasm实例；warmup行明确forecast=null/INDICATOR_WARMUP，不填零。未来收益标签只在该行预测调用完成后计算，记录label_available_ns；没有完整固定horizon的尾部标签为null/LABEL_NOT_COMPLETE，不删除真实观测。标签是受限科学证据，不能因位于同一产物就披露Sealed。任务只有一个total_fuel，实例化及预测实际消费累计扣减，不能每个instrument重新获得总额度。每个独立训练/验证折必须重新调用并使用自己的允许输入，通用预测文件本身不代表已完成分折或独立验证。
+
+第一条可执行研究代码路径使用Rust编译到 `wasm32-unknown-unknown` 的纯计算模块，复用Wasmi2.0.0解释执行；不新增脚本语言或Agent框架。唯一预测入口固定为 `predict(f64,f64,f64,f64,f64,f64,f64,f64)->f64`，依次接收完整已可用观测的 close、previous_close、原生EMA快值、原生EMA慢值、volume、open、high、low。指标由Nautilus原生组件从当前及过去记录计算，模块拿不到未来标签；Score/ExpectedReturn单位仍由冻结Alpha合同和独立校准决定，不把分数直接当收益。
+
+模块必须是合法Wasm二进制，大小不超过2MiB，无任何导入、无start函数，无WASI、宿主文件/环境/时钟/网络函数。Wasmi显式启用stable与portable-dispatch，避免关闭default-features后在未优化构建中依赖宿主尾调用消除；同一生产/测试配置保留原生校验、deterministic、extra-checks、严格编译结构限制和fuel。2026-09-09原生无限循环回归暴露了旧配置的宿主栈溢出，不能通过增加线程栈、降低测试fuel或只测release绕过。采用上游已有portable loop dispatch，不修改解释器；其行为见 https://docs.rs/wasmi/2.0.0/wasmi/#crate-features 。每实例最多一个16MiB线性内存、一个4096项表、有限栈和调用深度；每次预测与整次任务有分开的原生fuel上限。trap、非有限输入/输出、超额或ABI不符直接失败，实例失效，不返回零信号或重新置零预算继续调用。每个instrument/fold/受隔离评估使用独立实例，不能复用一个带历史状态的实例跨验证边界。
+
+编译用户Rust同样是执行不可信输入：由原生运行时的既有进程/文件系统隔离执行固定rustc参数，只读标准工具链、当前代码目录及本次独立输出目录；不挂载Codex home、DB、SecretVault、Docker socket、其他任务或Sealed数据。Wasmi的内存/fuel只保护预测执行，不替代编译、解析和整个job的原生cgroup/CPU/墙钟/输出限制。MODEL制品只能由绑定Run/Attempt的原生编译结果产生，不能以用户上传的标记自行声称可信执行或REAL数据来源。此ABI适配不拥有资格/审批/交付权限。
+
 ## A4. 输入、政策、评估、资格与暴露
 
 ```text
@@ -999,6 +1023,14 @@ HTTP请求体上限64KiB用于这两个研究准备POST及承载相同完整请�
 幂等并发、项目/Sealed隔离、许可撤销与停用锁等待、字段/时间边界和真实HTTP认证；
 生成OpenAPI从同一Rust DTO和实际处理器导出，不手抄平行schema。
 
+### A4.4 固定期限原生分折与估计适配
+
+固定 `solow-cv 0.7.3` 的原生索引输出。WALK_FORWARD 的 train_size/test_size 是固定窗口大小，step_size 是相邻测试窗口起点距离；每个截止前缀用原生 TimeSeriesSplit(test_size,gap=purge+embargo,max_train_size=train_size)产生最后一折，不从其余折拼接训练集。入口要求至少三个训练样本，train_size>test_size+gap（锁定上游双折 API 的实际前提），不满足给明确能力/样本错误，不填充假样本。起点按冻结step推进；结果只含已完成标签的观测。CPCV_FIXED_HORIZON使用原生CombinatorialPurgedKFold的全部测试块组合，train_size/test_size分别是每折最低有效训练/测试观测数；group_count限制2..16且组合折数最多256，不能因预算不足只留下赢家折。所有分折均在分配前检查累计索引上限800万、观测上限100万，固定label_horizon已验证且purge_observations不小于它；未支持的VARIABLE_INTERVAL仍明确拒绝。
+
+独立结果检查要求每折训练/测试索引有序、无重复、在范围内且不相交。WALK_FORWARD训练标签严格早于测试；CPCV允许非相邻训练块但剔除每个测试块两边purge以及后侧embargo，并不等于PIT已经成立。训练/校准只能使用各折训练索引；重叠测试窗口的样本不能重复计为独立观测。公开元数据只能披露政策允许的折统计；sealed索引、预测与标签同样属于受限证据。
+
+样本协方差复用ndarray-stats0.7.0(ddof=1)，不隐式年化、不丢失/补零；SCORE校准复用linregress0.5.4的固定一元含截距OLS。拟合输入由可信调用方按折及数据许可提供，不能把验证/封存标签混入。模型与数据来源单独冻结，预测应用同一原生模型；缺失、常数、非有限、秩不足或样本不足不产生伪校准。原生返回的系数/协方差再做有限性与维度检查，参数不是手工给定的scale冒充拟合。上述适配不产生Qualification，也不替代完整独立评估发布、许可、血缘和新鲜度检查。
+
 ## A5. Mandate、Candidate、目标与 Release
 
 ```text
@@ -1106,6 +1138,16 @@ RebalanceScheduleV1:
 ### A5.1 候选子对象唯一性
 
 `unique(candidate_alphas.candidate_id,alpha_version_id)`、`unique(candidate_targets.candidate_id,instrument_id)` 是数据库约束，不是普通索引。重复相同请求幂等，冲突409；至少两个不同alpha_id的合格版本才满足多Alpha，不以同Alpha多个版本或重复条目凑数。发布验证每资产唯一权重，再校验sum/gross/net/cash/约束。
+
+### A5.2 原生组合求解的可执行合同
+
+组合求解复用已有 Clarabel 0.11.1，不另写优化算法。原生 job 接受固定资产顺序的预测、同顺序协方差、明确的当前目标/现金、资本与数据支持的费用/流动性，不从两个独立 NAV 的平均值构造组合。资产集合上限256；重复或缺失身份、矩阵尺寸/对称性/正定性问题、非有限数、缺当前权重或费用、无真实来源的流动性均明确失败，不补零。协方差必须来自冻结输入的原生估计，单位为每决策周期收益协方差；年化只在明确参数下用于报告，不隐式乘252。
+
+`PortfolioConstraintsV1` 的现金、全局资产上下界、逐资产覆盖、组上下界、gross/net、turnover及参与率都进入同一个原生问题。turnover明确为本次所有资产的绝对目标变动之和（买卖各计一次，现金是剩余资金，不重复计入交易费用）；当前权重及现金必须来自同一个有来源的快照并在容差内合计1。max_participation按每资产可用成交额除以冻结capital换算，缺流动性不放宽。费用为该资产每单位交易名义金额的明确费率，通过原生目标函数纳入；最终共享资金模拟仍使用同一冻结费用假设，不能二次从模拟净收益扣除。
+
+第一条受支持的求解配置为 CLARABEL/0.11.1 的 MIN_RISK、VARIANCE，包含上述线性约束；MAX_UTILITY将有明确单位的预测及正risk_aversion加入相同QP。RISK_BUDGETING、CVAR及尚未验证的ex-ante非线性上限必须以原生能力不可用拒绝，不能以另一目标静默替代。逐项扩展必须附原生数值与独立小例验证；这段受支持范围不删除Issue62的完整交付项。
+
+原生输出保留OPTIMAL/ACCEPTABLE_INACCURATE/INFEASIBLE/UNBOUNDED/FAILED，只有策略明确接受的成功状态且全部发布约束在冻结容差内再次通过时，才带targets与cash。无解、数值失败、迭代上限、后验约束不通过时，两者均为空，不生成100%单资产或平滑修正的备用权重。权重只在求解器数值边界转换，公开存储继续使用DecimalValue；转换后的权重必须重新验证总和及全部限额。求解成功本身不是Qualification/Release批准。
 
 ## A6. Run、Attempt、事件和原生会话
 
