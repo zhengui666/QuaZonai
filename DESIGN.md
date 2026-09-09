@@ -741,6 +741,18 @@ NativeSimulationRequestV1用同一账户、NETTING、固定Nautilus0.63.0和明�
 
 编译用户Rust同样是执行不可信输入：由原生运行时的既有进程/文件系统隔离执行固定rustc参数，只读标准工具链、当前代码目录及本次独立输出目录；不挂载Codex home、DB、SecretVault、Docker socket、其他任务或Sealed数据。Wasmi的内存/fuel只保护预测执行，不替代编译、解析和整个job的原生cgroup/CPU/墙钟/输出限制。MODEL制品只能由绑定Run/Attempt的原生编译结果产生，不能以用户上传的标记自行声称可信执行或REAL数据来源。此ABI适配不拥有资格/审批/交付权限。
 
+### A3.4 实验提案、作者绑定与受限结果投影
+
+实验提案使用现有 `experiments`、Operator/机器权限、项目/周期行锁和 `command_receipts`，不增加工作流引擎。`POST /api/v2/experiments` 的 `ExperimentProposalV1` 只接 schema_version、cycle_id、family_id、可空parent_experiment_id、hypothesis、expected_failure_modes、proposal_artifact_id、parameter_artifact_id和可空code_artifact_id；请求最多64KiB。id/project/root/ordinal/trial_source/run/outcome/qualification一律由可信服务确定，客户端不能给PASS或扩大预算。报告/参数/代码引用必须是同项目、RESEARCH访问级别、真实已发布且非空的对应REPORT/PARAMETERS/CODE，不能引用Sealed、Reviewer报告或他项目对象。
+
+近期认证的Operator浏览器，以及精确项目EXPERIMENT_SUBMIT的CLI/MISSION可提交；AUTOMATION/DOWNSTREAM不能借此获得研究作者身份。MISSION还必须属于同Cycle的AGENT_RESEARCH、持当前issuer_attempt绑定且状态DISPATCHING/RUNNING、未过期。复用现有authority取得项目写锁后，锁Cycle；项目行作为跨命令共同串行屏障，所有后续锁等待结束再检查身份和时限。新提案要求项目ACTIVE、周期RUNNING、Brief FROZEN；family必须等于该Brief冻结政策的family且同根血缘，parent只能引用同family的已有实验。原始幂等请求经过当前身份检查后返回首次资源，不能更换字段或命令键复制已用预算。
+
+每Cycle持锁检查全部已登记实验数量不超过冻结max_experiments，分配单调ordinal；失败/无效/已淘汰提案也占此不可删除的试验账本上限。这是提案数量约束，不再次更新run_admission的reserved_experiments/used_experiments；实际科学执行仍在原生Run准入事务预约，避免把一次试验双重计费。实验创建、作者记录与原始命令回执共同提交；任一步失败全部回滚。
+
+`experiment_authorship` 是不可变的精确来源关联，不是新的用户主对象：experiment_id/project_id、actor_kind=OPERATOR|CLI|MISSION、credential_id?、author_run_id?、author_attempt_id?、created_at。OPERATOR不带机器字段；CLI只带精确credential；MISSION必须同时关联credential、同项目/同Cycle的原生Mission Run与issuer Attempt。历史实验没有此记录时保留未知来源，不回填猜测身份或授予跨Run读取权限；实验的run_id继续仅代表该实验科学执行，不混作作者Mission。
+
+`GET /api/v2/experiments` 与 `/{id}` 使用项目RESEARCH_READ或Operator身份、原生游标和1–100分页。返回提案及原生作者Run/Attempt元数据，不返回机器秘密/存储路径。结果投影显式 `result_visibility=PENDING|RESEARCH|RESTRICTED`：未产生结果的PENDING可显示；已知DISCOVERY/VALIDATION运行且输入不含Sealed、结论为同项目RESEARCH报告时才显示实际outcome/公开reason/conclusion_ref。未知来源、Sealed或EVALUATOR_ONLY结果全部字段置null并标RESTRICTED，不伪装PENDING，不因Operator/RESEARCH_READ就自动披露摘要。专门证据披露仍须冻结政策和暴露预约，不能由此GET绕过。此提案入口不启动科学任务、不制造Alpha/资格，也不替代正式冻结/Cycle/Worker服务。
+
 ## A4. 输入、政策、评估、资格与暴露
 
 ```text
@@ -1743,6 +1755,16 @@ Attempt fencing 不得只在 Artifact 写入或 MCP 配置层实施：统一 `au
 首批实际接入的工具是 `research.get_brief{brief_id}` 与 `run.get{run_id}`：请求严格拒绝未知字段，Id 的 JSON Schema 直接复用 `contracts::Id` 的原生 schema。Brief 只能是启动绑定的同项目版本，state=FROZEN 且 frozen_at 存在；不能以 DRAFT 或另一个有效 Brief 代替已冻结任务。Run 只能读取绑定 Mission，返回现有 RunSnapshotV1，不能替客户端猜百分比或任务成功。工具只返回已反序列化的公开 DTO，未知字段/合同版本不兼容明确失败。未完成的 B3 工具不登记为假成功/空实现；本入口不是完整 W2/W3/T01–T42 的验收替代，实验提交、科学任务、证据披露、原生 Codex 闭环及其全部隔离仍必须在同一 PR 完成。
 
 回归必须包括官方 SDK client 的实际 stdio/duplex 初始化与 tools/list/call、未知工具与未知字段、非UUIDv7、错 Mission/项目/周期/Attempt、非冻结 Brief、撤销后下一调用失败、截止时间、并发上限、响应超额、重定向不跟随与无秘密错误。协议/HTTP故障测试可以使用有明确标记的测试服务，但不能称为 PostgreSQL授权或原生 Codex生产闭环证明；真正授权链另外以实际 Axum/原生 PostgreSQL/Mission issuance 测试验证。依赖锁与生成物只能由原生工具产生后检查，禁止手造 registry checksum。
+
+### B3.2 受限研究写工具与工作区文件能力
+
+`artifact.submit` 与 `experiment.propose` 调用现有 HTTP 产物/实验服务，不直接写数据库，不创造另一个上传或幂等机制。工具参数严格拒绝未知字段；`artifact.submit` 接 `schema_version=1, kind=CODE|PARAMETERS|REPORT, workspace_relative_path, idempotency_key`，`experiment.propose` 接 `idempotency_key, proposal:ExperimentProposalV1`。提案的 cycle_id 必须等于启动绑定；服务端仍重新核对当前 Mission/Attempt/租约、项目、Family、产物与预算。创建成功仅代表产物或提案发布，不是科学运行成功、REAL、PASS、Alpha 或 Qualification。
+
+文件根只由可信 launcher 的 `--workspace-root` 绝对路径传入；未配置时文件工具明确返回 MCP_CONFIGURATION_INVALID，不猜当前目录。客户端不能提供根路径、URL、环境变量、身份或token。`MissionFiles` 持有原生目录文件描述符，根打开时 O_DIRECTORY/O_NOFOLLOW；内部复用 rustix 的 `openat`，逐个单路径组件相对于仍持有的父目录描述符，以 O_DIRECTORY/O_NOFOLLOW/O_NONBLOCK/O_CLOEXEC 打开中间目录，最终以 O_NOFOLLOW/O_NONBLOCK/O_CLOEXEC 打开普通文件。此入口以 rustix 的逐组件 `openat` 明确实施拒绝软链，而不依赖高层目录库如何解释 custom flags。必须分别测试根内软链和越界软链；原有回执未证明旧实现的根内软链反例，不能将推测写成已复现失败。拒绝绝对路径、空组件、`.`/`..`、反斜杠、控制字符、任意隐藏组件（含 .git/.env）、超过32层或512字节的相对名，拒绝软链、非单链接文件、FIFO/设备、空文件、非UTF-8或超过2MiB的文件。读取只使用已打开句柄，复核长度和原生修改时间；根目录被替换不转向新根。此处的时间复核只是发现并发修改，不作为不可变业务身份或内容证明；真实发布仍由 ArtifactStore 和 HTTP 事务完成。
+
+每次写调用先重验 authority；文件读取前检查 ARTIFACT_SUBMIT，提案前检查 EXPERIMENT_SUBMIT，文件读取后、网络提交前再检查当前 Mission 与截止。非可取消 blocking I/O 使用独立4槽持有到实际读取结束，不因工具超时释放其文件读取容量。累计响应仍限1MiB，传输禁止重定向/代理/自动重试，POST只构造固定 `/api/v2/artifacts` 或 `/api/v2/experiments`。原生 idempotency_key 形状与普通 HTTP 相同；客户端结果不明时保留原key重放，不能自动换键。仅接受201及严格CommandResult DTO；产物须精确project/run/attempt、AGENT/SYNTHETIC/RESEARCH和对应schema/字节长度，提案须精确cycle/family/原始字段及CODEX作者绑定、初始PENDING且没有科学结果。异常响应不能当成功或直接回显上游正文。
+
+tools/list 中登记的写工具都有真实 HTTP 实现；没有所需机器scope、未配置工作区或当前任务失效时清楚拒绝，而非成功返回空对象。原有读工具不因新增写工具取得Operator能力；approve/publish/handoff.claim/db.query/secret.read/http.fetch_any仍不存在。对应测试分别证明原生SDK协议、真实文件句柄安全和真实Axum/PostgreSQL/加密发证的工具写事务；关系fixture用于构造父Cycle/Run时须明确标识，不冒充T42全新业务入口或原生Codex完整研究闭环。
 
 ## B4. Runtime 协议
 

@@ -7,6 +7,7 @@ pub mod auth;
 pub mod brief;
 pub mod control;
 pub mod error;
+pub mod experiments;
 #[cfg(test)]
 mod header_tests;
 pub mod mcp;
@@ -177,6 +178,13 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         )
         .route("/api/v2/artifacts/{id}", get(artifacts::get))
         .route("/api/v2/artifacts/{id}/content", get(artifacts::content))
+        .route(
+            "/api/v2/experiments",
+            get(experiments::list)
+                .post(experiments::propose)
+                .layer(DefaultBodyLimit::max(64 * 1024)),
+        )
+        .route("/api/v2/experiments/{id}", get(experiments::get))
         .route("/api/v2/runs", get(runs::list))
         .route("/api/v2/runs/{id}", get(runs::get))
         .route("/api/v2/runs/{id}/cancel", post(runs::cancel))
@@ -314,6 +322,7 @@ control::machine_session,control::issue_grant,runs::list,runs::get,runs::cancel,
 research::input_sets,research::input_set,research::create_input_set,
 research::evaluation_policies,research::evaluation_policy,research::create_evaluation_policy,
 brief::list,brief::get,brief::create,brief::update,
+experiments::propose,experiments::list,experiments::get,
 artifacts::list,artifacts::get,artifacts::create,artifacts::content),components(schemas(error::Problem)),tags((name="Authentication",description="Native TOTP and revocable browser sessions")))]
 struct HttpContracts;
 pub fn openapi_json() -> Result<String, serde_json::Error> {
@@ -409,6 +418,7 @@ fn describe_authority(document: &mut utoipa::openapi::OpenApi) {
                     vec![cookie]
                 } else if write
                     && (path == "/api/v2/artifacts"
+                        || path == "/api/v2/experiments"
                         || (path.ends_with("/cancel") && path.starts_with("/api/v2/runs/")))
                 {
                     vec![cookie, bearer]

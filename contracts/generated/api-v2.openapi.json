@@ -4881,6 +4881,176 @@
         ],
         "type": "object"
       },
+      "CommandResult_ExperimentView": {
+        "additionalProperties": false,
+        "properties": {
+          "replayed": {
+            "type": "boolean"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "author_attempt_id": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Id"
+                  }
+                ]
+              },
+              "author_run_id": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Id"
+                  }
+                ]
+              },
+              "code_artifact_id": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Id"
+                  }
+                ]
+              },
+              "conclusion_artifact_id": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Id"
+                  }
+                ]
+              },
+              "created_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "cycle_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "expected_failure_modes": {
+                "type": "string"
+              },
+              "family_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "hypothesis": {
+                "type": "string"
+              },
+              "id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "ordinal": {
+                "format": "int32",
+                "maximum": 2147483647,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "outcome": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ExperimentOutcome",
+                    "description": "Restricted results are null, not fabricated PENDING or successful results."
+                  }
+                ]
+              },
+              "outcome_reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "parameter_artifact_id": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Id"
+                  }
+                ]
+              },
+              "parent_experiment_id": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Id"
+                  }
+                ]
+              },
+              "project_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "proposal_artifact_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "result_visibility": {
+                "$ref": "#/components/schemas/ExperimentResultVisibility"
+              },
+              "revision": {
+                "$ref": "#/components/schemas/Revision"
+              },
+              "run_id": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Id",
+                    "description": "The science execution, distinct from the Mission which authored this proposal."
+                  }
+                ]
+              },
+              "trial_source": {
+                "$ref": "#/components/schemas/ExperimentSource"
+              },
+              "updated_at": {
+                "format": "date-time",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "project_id",
+              "cycle_id",
+              "family_id",
+              "ordinal",
+              "hypothesis",
+              "expected_failure_modes",
+              "proposal_artifact_id",
+              "trial_source",
+              "result_visibility",
+              "revision",
+              "created_at",
+              "updated_at"
+            ],
+            "type": "object"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "replayed",
+          "resource"
+        ],
+        "type": "object"
+      },
       "CommandResult_InputSetView": {
         "additionalProperties": false,
         "properties": {
@@ -5702,6 +5872,262 @@
           "required_capabilities",
           "maximum_sealed_uses_per_lineage",
           "validity_seconds"
+        ],
+        "type": "object"
+      },
+      "ExperimentOutcome": {
+        "enum": [
+          "PENDING",
+          "SUPPORTED",
+          "REJECTED",
+          "INVALID",
+          "INCONCLUSIVE"
+        ],
+        "type": "string"
+      },
+      "ExperimentProposalV1": {
+        "additionalProperties": false,
+        "properties": {
+          "code_artifact_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              }
+            ]
+          },
+          "cycle_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "type": "string"
+          },
+          "expected_failure_modes": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "family_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "type": "string"
+          },
+          "hypothesis": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "parameter_artifact_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "type": "string"
+          },
+          "parent_experiment_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              }
+            ]
+          },
+          "proposal_artifact_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "type": "string"
+          },
+          "schema_version": {
+            "enum": [
+              1
+            ],
+            "maximum": 1,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "schema_version",
+          "cycle_id",
+          "family_id",
+          "hypothesis",
+          "expected_failure_modes",
+          "proposal_artifact_id",
+          "parameter_artifact_id"
+        ],
+        "type": "object"
+      },
+      "ExperimentResultVisibility": {
+        "enum": [
+          "PENDING",
+          "RESEARCH",
+          "RESTRICTED"
+        ],
+        "type": "string"
+      },
+      "ExperimentSource": {
+        "enum": [
+          "CODEX",
+          "OPTUNA",
+          "OPERATOR"
+        ],
+        "type": "string"
+      },
+      "ExperimentView": {
+        "additionalProperties": false,
+        "properties": {
+          "author_attempt_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "author_run_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "code_artifact_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "conclusion_artifact_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "cycle_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "expected_failure_modes": {
+            "type": "string"
+          },
+          "family_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "hypothesis": {
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "ordinal": {
+            "format": "int32",
+            "maximum": 2147483647,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "outcome": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExperimentOutcome",
+                "description": "Restricted results are null, not fabricated PENDING or successful results."
+              }
+            ]
+          },
+          "outcome_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parameter_artifact_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "parent_experiment_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "proposal_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "result_visibility": {
+            "$ref": "#/components/schemas/ExperimentResultVisibility"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "run_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id",
+                "description": "The science execution, distinct from the Mission which authored this proposal."
+              }
+            ]
+          },
+          "trial_source": {
+            "$ref": "#/components/schemas/ExperimentSource"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "cycle_id",
+          "family_id",
+          "ordinal",
+          "hypothesis",
+          "expected_failure_modes",
+          "proposal_artifact_id",
+          "trial_source",
+          "result_visibility",
+          "revision",
+          "created_at",
+          "updated_at"
         ],
         "type": "object"
       },
@@ -6742,6 +7168,185 @@
                 "required_capabilities",
                 "maximum_sealed_uses_per_lineage",
                 "validity_seconds"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "items"
+        ],
+        "type": "object"
+      },
+      "Page_ExperimentView": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "author_attempt_id": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  ]
+                },
+                "author_run_id": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  ]
+                },
+                "code_artifact_id": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  ]
+                },
+                "conclusion_artifact_id": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  ]
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "cycle_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "expected_failure_modes": {
+                  "type": "string"
+                },
+                "family_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "hypothesis": {
+                  "type": "string"
+                },
+                "id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "ordinal": {
+                  "format": "int32",
+                  "maximum": 2147483647,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "outcome": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ExperimentOutcome",
+                      "description": "Restricted results are null, not fabricated PENDING or successful results."
+                    }
+                  ]
+                },
+                "outcome_reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "parameter_artifact_id": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  ]
+                },
+                "parent_experiment_id": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  ]
+                },
+                "project_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "proposal_artifact_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "result_visibility": {
+                  "$ref": "#/components/schemas/ExperimentResultVisibility"
+                },
+                "revision": {
+                  "$ref": "#/components/schemas/Revision"
+                },
+                "run_id": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Id",
+                      "description": "The science execution, distinct from the Mission which authored this proposal."
+                    }
+                  ]
+                },
+                "trial_source": {
+                  "$ref": "#/components/schemas/ExperimentSource"
+                },
+                "updated_at": {
+                  "format": "date-time",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "project_id",
+                "cycle_id",
+                "family_id",
+                "ordinal",
+                "hypothesis",
+                "expected_failure_modes",
+                "proposal_artifact_id",
+                "trial_source",
+                "result_visibility",
+                "revision",
+                "created_at",
+                "updated_at"
               ],
               "type": "object"
             },
@@ -9727,6 +10332,362 @@
         ],
         "tags": [
           "Research preparation"
+        ]
+      }
+    },
+    "/api/v2/experiments": {
+      "get": {
+        "operationId": "list_experiments",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_ExperimentView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Experiments"
+        ]
+      },
+      "post": {
+        "operationId": "propose_experiment",
+        "parameters": [
+          {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExperimentProposalV1"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult_ExperimentView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Experiments"
+        ]
+      }
+    },
+    "/api/v2/experiments/{id}": {
+      "get": {
+        "operationId": "get_experiment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExperimentView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Experiments"
         ]
       }
     },

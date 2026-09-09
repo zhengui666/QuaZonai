@@ -2,13 +2,19 @@
 use super::{Failure, MissionBinding};
 use chrono::{DateTime, Utc};
 use contracts::{
+    artifacts::{ArtifactAccess, ArtifactCreate, ArtifactProducer, ArtifactView},
     brief::{BriefState, BriefView},
-    control::{MachineScope, MachineSessionView, PrincipalKind},
+    control::{CommandResult, MachineScope, MachineSessionView, PrincipalKind},
+    experiments::{
+        ExperimentOutcome, ExperimentProposalV1, ExperimentResultVisibility, ExperimentSource,
+        ExperimentView,
+    },
+    research::DataOrigin,
     runs::{RunKind, RunSnapshotV1, RunState},
     Id,
 };
 use reqwest::{header, redirect::Policy, Client};
-use serde::de::DeserializeOwned;
+use serde::{de::DeserializeOwned, Serialize};
 use std::time::Duration;
 use url::{Host, Url};
 
@@ -78,21 +84,24 @@ impl ControlClient {
         })
     }
 
-    async fn get<T: DeserializeOwned>(&self, route: Route) -> Result<T, Failure> {
+    fn url(&self, route: Route) -> Url {
         let path = match route {
             Route::Identity => "/api/v2/auth/machine".to_owned(),
             Route::Run(id) => format!("/api/v2/runs/{id}"),
             Route::Brief(id) => format!("/api/v2/briefs/{id}"),
+            Route::Artifacts => "/api/v2/artifacts".to_owned(),
+            Route::Experiments => "/api/v2/experiments".to_owned(),
         };
         let mut url = self.origin.clone();
         url.set_path(&path);
-        let mut response = self
-            .http
-            .get(url)
-            .send()
-            .await
-            .map_err(|_| Failure::Unavailable)?;
-        if response.status() != reqwest::StatusCode::OK {
+        url
+    }
+
+    async fn response<T: DeserializeOwned>(
+        mut response: reqwest::Response,
+        expected: reqwest::StatusCode,
+    ) -> Result<T, Failure> {
+        if response.status() != expected {
             // Never parse/forward arbitrary upstream error bodies or redirects.
             return Err(Failure::Http(response.status().as_u16()));
         }
@@ -120,7 +129,54 @@ impl ControlClient {
         serde_json::from_slice(&bytes).map_err(|_| Failure::Contract)
     }
 
+    async fn get<T: DeserializeOwned>(&self, route: Route) -> Result<T, Failure> {
+        let response = self
+            .http
+            .get(self.url(route))
+            .send()
+            .await
+            .map_err(|_| Failure::Unavailable)?;
+        Self::response(response, reqwest::StatusCode::OK).await
+    }
+
+    async fn post<T: DeserializeOwned>(
+        &self,
+        route: Route,
+        key: &str,
+        body: &impl Serialize,
+    ) -> Result<T, Failure> {
+        // Reuse the actual HTTP entrypoint's key validator. No automatic retries:
+        // a lost POST response remains unknown and the caller retains this key.
+        let mut headers = axum::http::HeaderMap::new();
+        let header = axum::http::HeaderValue::from_str(key).map_err(|_| Failure::Contract)?;
+        headers.insert("idempotency-key", header);
+        crate::access::idempotency_key(&headers).map_err(|_| Failure::Contract)?;
+        let response = self
+            .http
+            .post(self.url(route))
+            .header("idempotency-key", key)
+            .json(body)
+            .send()
+            .await
+            .map_err(|_| Failure::Unavailable)?;
+        Self::response(response, reqwest::StatusCode::CREATED).await
+    }
+
     pub(super) async fn authority(&self) -> Result<(RunSnapshotV1, DateTime<Utc>), Failure> {
+        self.checked_authority(None).await
+    }
+
+    pub(super) async fn require(
+        &self,
+        scope: MachineScope,
+    ) -> Result<(RunSnapshotV1, DateTime<Utc>), Failure> {
+        self.checked_authority(Some(scope)).await
+    }
+
+    async fn checked_authority(
+        &self,
+        required: Option<MachineScope>,
+    ) -> Result<(RunSnapshotV1, DateTime<Utc>), Failure> {
         let session: MachineSessionView = self.get(Route::Identity).await?;
         let now = Utc::now();
         if session.kind != PrincipalKind::Mission
@@ -130,6 +186,7 @@ impl ControlClient {
             || session.expires_at <= now
             || !session.scope_codes.contains(&MachineScope::ResearchRead)
             || !session.scope_codes.contains(&MachineScope::RunRead)
+            || required.is_some_and(|scope| !session.scope_codes.contains(&scope))
             || session.scope_codes.iter().any(|scope| {
                 matches!(
                     scope,
@@ -169,12 +226,82 @@ impl ControlClient {
         }
         Ok(brief)
     }
+
+    pub(super) async fn artifact(
+        &self,
+        key: &str,
+        request: &ArtifactCreate,
+    ) -> Result<CommandResult<ArtifactView>, Failure> {
+        if request.project_id != self.binding.project_id {
+            return Err(Failure::Authority);
+        }
+        let (_, expires) = self.require(MachineScope::ArtifactSubmit).await?;
+        if expires <= Utc::now() {
+            return Err(Failure::Deadline);
+        }
+        let result: CommandResult<ArtifactView> = self.post(Route::Artifacts, key, request).await?;
+        let artifact = &result.resource;
+        if artifact.project_id != self.binding.project_id
+            || artifact.producer_run_id != Some(self.binding.run_id)
+            || artifact.producer_attempt_id != Some(self.binding.attempt_id)
+            || artifact.kind != request.kind.code()
+            || artifact.media_type != request.kind.media_type()
+            || artifact.schema_name != request.kind.schema_name()
+            || artifact.schema_version != "1"
+            || artifact.byte_count.get() != request.content.len() as u64
+            || artifact.origin != DataOrigin::Synthetic
+            || artifact.access_class != ArtifactAccess::Research
+            || artifact.created_by != ArtifactProducer::Agent
+        {
+            return Err(Failure::Contract);
+        }
+        Ok(result)
+    }
+
+    pub(super) async fn propose(
+        &self,
+        key: &str,
+        request: &ExperimentProposalV1,
+    ) -> Result<CommandResult<ExperimentView>, Failure> {
+        if request.cycle_id != self.binding.cycle_id {
+            return Err(Failure::Authority);
+        }
+        domain::experiments::proposal(request).map_err(|_| Failure::Contract)?;
+        self.require(MachineScope::ExperimentSubmit).await?;
+        let result: CommandResult<ExperimentView> =
+            self.post(Route::Experiments, key, request).await?;
+        let experiment = &result.resource;
+        if experiment.project_id != self.binding.project_id
+            || experiment.cycle_id != self.binding.cycle_id
+            || experiment.family_id != request.family_id
+            || experiment.parent_experiment_id != request.parent_experiment_id
+            || experiment.hypothesis != request.hypothesis
+            || experiment.expected_failure_modes != request.expected_failure_modes
+            || experiment.proposal_artifact_id != request.proposal_artifact_id
+            || experiment.parameter_artifact_id != Some(request.parameter_artifact_id)
+            || experiment.code_artifact_id != request.code_artifact_id
+            || experiment.author_run_id != Some(self.binding.run_id)
+            || experiment.author_attempt_id != Some(self.binding.attempt_id)
+            || experiment.trial_source != ExperimentSource::Codex
+            || experiment.ordinal == 0
+            || experiment.result_visibility != ExperimentResultVisibility::Pending
+            || experiment.outcome != Some(ExperimentOutcome::Pending)
+            || experiment.outcome_reason.is_some()
+            || experiment.conclusion_artifact_id.is_some()
+            || experiment.run_id.is_some()
+        {
+            return Err(Failure::Contract);
+        }
+        Ok(result)
+    }
 }
 
 enum Route {
     Identity,
     Run(Id),
     Brief(Id),
+    Artifacts,
+    Experiments,
 }
 
 #[cfg(test)]

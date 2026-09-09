@@ -3,4 +3,5 @@
 
 pub mod artifacts;
 pub mod authentication;
+pub mod mission_files;
 pub mod secrets;

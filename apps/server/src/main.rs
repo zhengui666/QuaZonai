@@ -42,6 +42,9 @@ enum Command {
         attempt_id: Id,
         #[arg(long, value_parser = parse_id)]
         brief_id: Id,
+        /// Trusted launcher-selected absolute worktree; never read from a tool request.
+        #[arg(long)]
+        workspace_root: Option<PathBuf>,
         #[arg(long, default_value_t = false)]
         development_http: bool,
     },
@@ -171,6 +174,7 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             run_id,
             attempt_id,
             brief_id,
+            workspace_root,
             development_http,
         } => {
             let token = std::env::var("QUAZONAI_MCP_TOKEN")
@@ -186,6 +190,10 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
                 server::mcp::MissionMcp::connect(&api_origin, development_http, &token, binding)
                     .await?;
             drop(token);
+            let mcp = match workspace_root {
+                Some(root) => mcp.with_workspace(&root)?,
+                None => mcp,
+            };
             mcp.serve_io(tokio::io::stdin(), tokio::io::stdout())
                 .await?;
         }

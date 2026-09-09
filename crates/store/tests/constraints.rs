@@ -181,8 +181,15 @@ async fn new_database_migrations_are_repeatable_without_legacy_side_effects(pool
     let store = store::Store::from_pool(pool.clone());
     store.migrate().await.unwrap();
     let tables:i64=sqlx::query_scalar("SELECT count(*) FROM information_schema.tables WHERE table_schema='app' AND table_type='BASE TABLE'").fetch_one(&pool).await.unwrap();
-    // Migration 017 adds the immutable, exact-tuple handoff transfer ledger.
-    assert_eq!(tables, 71);
+    // Migration 019 adds immutable experiment authorship, separately from the
+    // science Run. The exact table inventory must include that new relation.
+    assert_eq!(tables, 72);
+    let authors_exist: bool =
+        sqlx::query_scalar("SELECT to_regclass('app.experiment_authorship') IS NOT NULL")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(authors_exist);
     let transfers_exist: bool =
         sqlx::query_scalar("SELECT to_regclass('app.handoff_transfers') IS NOT NULL")
             .fetch_one(&pool)

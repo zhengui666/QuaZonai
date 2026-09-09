@@ -33,9 +33,15 @@ Mission凭据绑定签发时Attempt；过期/撤销/旧Attempt拒绝后交由可
 可信任务启动器可运行 `cargo run --locked -p server -- mcp`，精确参数见 CLI。
 只通过环境 QUAZONAI_MCP_TOKEN 传入已签发的 Mission 能力；不要复制浏览器会话、
 Provider 凭据或数据库配置，也不要自行启动带更广身份/不同绑定的服务。
-当前原生 tools/list 只有 `research.get_brief {brief_id}` 和 `run.get {run_id}`。
-前者仅返回绑定的冻结版本，后者仅返回该 Mission 的真实 Run/Attempt；未知工具
-不是可由任意 HTTP/Shell/SQL 替代的能力。必须保留原生 UUIDv7 和十进制版本字符串。
+当前原生 tools/list 包含 `research.get_brief {brief_id}`、`run.get {run_id}`、
+`artifact.submit` 和 `experiment.propose`。前两项只返回精确冻结 Brief/本 Mission Run。
+`artifact.submit` 需要 ARTIFACT_SUBMIT 和可信启动器的 --workspace-root；参数只有
+schema_version、CODE/PARAMETERS/REPORT、workspace_relative_path、idempotency_key，
+不能指定根目录或自行带入秘密。文件最多2MiB、普通单链接UTF-8，隐藏路径与软链拒绝。
+`experiment.propose` 需要 EXPERIMENT_SUBMIT，参数为 idempotency_key 与完整
+ExperimentProposalV1，Cycle 必须等于本 Mission；返回 PENDING 不是科学运行或资格。
+提交响应未知时保留同一 key 和原始文件/请求重放；不同内容409不能改键绕过预算。
+未知工具不是可由任意 HTTP/Shell/SQL 替代的能力。保留 UUIDv7 和十进制版本字符串。
 每次调用会重新检查到期、撤销及 Attempt 接管，失败不能靠更换 ID、扩大权限或
 循环重试绕过。stdout 是协议，不打印解释或 token；任务断开不等于远端 Run 取消。
 该入口尚不实现完整发证、原生 Codex 循环和其余研究工具；不得用协议测试冒充生产验收。

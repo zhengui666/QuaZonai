@@ -189,7 +189,15 @@ async fn native_protocol_lists_only_real_tools_and_checks_arguments() {
     let tools = client.list_tools(Default::default()).await.unwrap();
     let mut names: Vec<_> = tools.tools.iter().map(|t| t.name.as_ref()).collect();
     names.sort_unstable();
-    assert_eq!(names, ["research.get_brief", "run.get"]);
+    assert_eq!(
+        names,
+        [
+            "artifact.submit",
+            "experiment.propose",
+            "research.get_brief",
+            "run.get"
+        ]
+    );
     let result = run(&client, api.binding.run_id).await;
     assert_ne!(result["isError"], true);
     assert_eq!(body(&result)["id"], json!(api.binding.run_id));

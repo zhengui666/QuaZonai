@@ -325,6 +325,27 @@ pub(crate) async fn artifact_submit(
     })
 }
 
+/// Proposal writes already hold the authenticated project barrier. Preserve the
+/// same original-result semantics without granting policy/approval authority.
+pub(crate) async fn experiment_propose(
+    tx: &mut Transaction<'_, Postgres>,
+    scope: String,
+    idempotency_key: &str,
+    request: Value,
+) -> Result<Prepared, StoreError> {
+    key(idempotency_key)?;
+    let previous = prior(tx, &scope, "EXPERIMENT_PROPOSE", idempotency_key, &request).await?;
+    Ok(Prepared {
+        target: previous.as_ref().map(|p| p.target).unwrap_or_default(),
+        scope,
+        operation: "EXPERIMENT_PROPOSE",
+        key: idempotency_key.into(),
+        request,
+        grant: None,
+        replay: previous.map(|p| p.response),
+    })
+}
+
 /// The Run service already holds the resource and verified scope locks. Reuse
 /// the same immutable receipt format without turning RUN_CANCEL into an
 /// Operator approval capability or accepting a client-supplied principal scope.

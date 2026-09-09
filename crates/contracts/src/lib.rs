@@ -11,6 +11,7 @@ pub mod budget;
 pub mod codex;
 pub mod control;
 pub mod evidence;
+pub mod experiments;
 pub mod lifecycle;
 pub mod portfolio;
 pub mod research;
@@ -80,6 +81,8 @@ use utoipa::OpenApi;
     evidence::Comparator,
     evidence::MetricRequirementV1,
     evidence::MetricValueV1,
+    experiments::ExperimentProposalV1,
+    experiments::ExperimentView,
     runs::ProjectState,
     runs::RunState,
     runs::RunKind,

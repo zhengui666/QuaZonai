@@ -5822,6 +5822,262 @@
         ],
         "type": "string"
       },
+      "ExperimentOutcome": {
+        "enum": [
+          "PENDING",
+          "SUPPORTED",
+          "REJECTED",
+          "INVALID",
+          "INCONCLUSIVE"
+        ],
+        "type": "string"
+      },
+      "ExperimentProposalV1": {
+        "additionalProperties": false,
+        "properties": {
+          "code_artifact_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              }
+            ]
+          },
+          "cycle_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "type": "string"
+          },
+          "expected_failure_modes": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "family_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "type": "string"
+          },
+          "hypothesis": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "parameter_artifact_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "type": "string"
+          },
+          "parent_experiment_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              }
+            ]
+          },
+          "proposal_artifact_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "type": "string"
+          },
+          "schema_version": {
+            "enum": [
+              1
+            ],
+            "maximum": 1,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "schema_version",
+          "cycle_id",
+          "family_id",
+          "hypothesis",
+          "expected_failure_modes",
+          "proposal_artifact_id",
+          "parameter_artifact_id"
+        ],
+        "type": "object"
+      },
+      "ExperimentResultVisibility": {
+        "enum": [
+          "PENDING",
+          "RESEARCH",
+          "RESTRICTED"
+        ],
+        "type": "string"
+      },
+      "ExperimentSource": {
+        "enum": [
+          "CODEX",
+          "OPTUNA",
+          "OPERATOR"
+        ],
+        "type": "string"
+      },
+      "ExperimentView": {
+        "additionalProperties": false,
+        "properties": {
+          "author_attempt_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "author_run_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "code_artifact_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "conclusion_artifact_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "cycle_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "expected_failure_modes": {
+            "type": "string"
+          },
+          "family_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "hypothesis": {
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "ordinal": {
+            "format": "int32",
+            "maximum": 2147483647,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "outcome": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExperimentOutcome",
+                "description": "Restricted results are null, not fabricated PENDING or successful results."
+              }
+            ]
+          },
+          "outcome_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parameter_artifact_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "parent_experiment_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "proposal_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "result_visibility": {
+            "$ref": "#/components/schemas/ExperimentResultVisibility"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "run_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id",
+                "description": "The science execution, distinct from the Mission which authored this proposal."
+              }
+            ]
+          },
+          "trial_source": {
+            "$ref": "#/components/schemas/ExperimentSource"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "cycle_id",
+          "family_id",
+          "ordinal",
+          "hypothesis",
+          "expected_failure_modes",
+          "proposal_artifact_id",
+          "trial_source",
+          "result_visibility",
+          "revision",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "FieldIssue": {
         "additionalProperties": false,
         "properties": {

@@ -63,7 +63,11 @@ jobs:
           mkdir /tmp/codex-schema-home
           CODEX_HOME=/tmp/codex-schema-home "$CODEX_NATIVE_BIN" app-server generate-json-schema --out /tmp/native-evidence/codex-schema
           export CODEX_PROBE_DIR=/tmp/codex-probe
-          timeout --kill-after=5s 90s rustup run "$RUSTUP_TOOLCHAIN" cargo run --locked -p job --example codex_contract
+          # The workspace/all-targets build above already produced this binary.
+          # Keep compilation outside the native protocol's 90-second deadline:
+          # a separate cargo run can rebuild a differently unified dependency graph.
+          test -x target/debug/examples/codex_contract
+          timeout --kill-after=5s 90s target/debug/examples/codex_contract
           cp /tmp/codex-probe/codex-probe.json /tmp/native-evidence/codex-probe.json
       - name: Reject legacy paths and prefixed directories
         run: |

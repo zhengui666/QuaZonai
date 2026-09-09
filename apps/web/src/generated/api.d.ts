@@ -276,6 +276,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/experiments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_experiments"];
+        put?: never;
+        post: operations["propose_experiment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/experiments/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_experiment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/input-sets": {
         parameters: {
             query?: never;
@@ -936,6 +968,37 @@ export interface components {
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
+        CommandResult_ExperimentView: {
+            replayed: boolean;
+            resource: {
+                author_attempt_id?: null | components["schemas"]["Id"];
+                author_run_id?: null | components["schemas"]["Id"];
+                code_artifact_id?: null | components["schemas"]["Id"];
+                conclusion_artifact_id?: null | components["schemas"]["Id"];
+                /** Format: date-time */
+                created_at: string;
+                cycle_id: components["schemas"]["Id"];
+                expected_failure_modes: string;
+                family_id: components["schemas"]["Id"];
+                hypothesis: string;
+                id: components["schemas"]["Id"];
+                /** Format: int32 */
+                ordinal: number;
+                outcome?: null | components["schemas"]["ExperimentOutcome"];
+                outcome_reason?: string | null;
+                parameter_artifact_id?: null | components["schemas"]["Id"];
+                parent_experiment_id?: null | components["schemas"]["Id"];
+                project_id: components["schemas"]["Id"];
+                proposal_artifact_id: components["schemas"]["Id"];
+                result_visibility: components["schemas"]["ExperimentResultVisibility"];
+                revision: components["schemas"]["Revision"];
+                run_id?: null | components["schemas"]["Id"];
+                trial_source: components["schemas"]["ExperimentSource"];
+                /** Format: date-time */
+                updated_at: string;
+            };
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         CommandResult_InputSetView: {
             replayed: boolean;
             resource: {
@@ -1121,6 +1184,55 @@ export interface components {
             validity_seconds: components["schemas"]["DbCounter"];
             /** Format: int32 */
             version: number;
+        };
+        /** @enum {string} */
+        ExperimentOutcome: "PENDING" | "SUPPORTED" | "REJECTED" | "INVALID" | "INCONCLUSIVE";
+        ExperimentProposalV1: {
+            code_artifact_id?: null | string;
+            /** Format: uuid */
+            cycle_id: string;
+            expected_failure_modes: string;
+            /** Format: uuid */
+            family_id: string;
+            hypothesis: string;
+            /** Format: uuid */
+            parameter_artifact_id: string;
+            parent_experiment_id?: null | string;
+            /** Format: uuid */
+            proposal_artifact_id: string;
+            /** @enum {integer} */
+            schema_version: 1;
+        };
+        /** @enum {string} */
+        ExperimentResultVisibility: "PENDING" | "RESEARCH" | "RESTRICTED";
+        /** @enum {string} */
+        ExperimentSource: "CODEX" | "OPTUNA" | "OPERATOR";
+        ExperimentView: {
+            author_attempt_id?: null | components["schemas"]["Id"];
+            author_run_id?: null | components["schemas"]["Id"];
+            code_artifact_id?: null | components["schemas"]["Id"];
+            conclusion_artifact_id?: null | components["schemas"]["Id"];
+            /** Format: date-time */
+            created_at: string;
+            cycle_id: components["schemas"]["Id"];
+            expected_failure_modes: string;
+            family_id: components["schemas"]["Id"];
+            hypothesis: string;
+            id: components["schemas"]["Id"];
+            /** Format: int32 */
+            ordinal: number;
+            outcome?: null | components["schemas"]["ExperimentOutcome"];
+            outcome_reason?: string | null;
+            parameter_artifact_id?: null | components["schemas"]["Id"];
+            parent_experiment_id?: null | components["schemas"]["Id"];
+            project_id: components["schemas"]["Id"];
+            proposal_artifact_id: components["schemas"]["Id"];
+            result_visibility: components["schemas"]["ExperimentResultVisibility"];
+            revision: components["schemas"]["Revision"];
+            run_id?: null | components["schemas"]["Id"];
+            trial_source: components["schemas"]["ExperimentSource"];
+            /** Format: date-time */
+            updated_at: string;
         };
         FieldError: {
             code: string;
@@ -1345,6 +1457,37 @@ export interface components {
                 validity_seconds: components["schemas"]["DbCounter"];
                 /** Format: int32 */
                 version: number;
+            }[];
+            next_cursor?: null | components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        Page_ExperimentView: {
+            items: {
+                author_attempt_id?: null | components["schemas"]["Id"];
+                author_run_id?: null | components["schemas"]["Id"];
+                code_artifact_id?: null | components["schemas"]["Id"];
+                conclusion_artifact_id?: null | components["schemas"]["Id"];
+                /** Format: date-time */
+                created_at: string;
+                cycle_id: components["schemas"]["Id"];
+                expected_failure_modes: string;
+                family_id: components["schemas"]["Id"];
+                hypothesis: string;
+                id: components["schemas"]["Id"];
+                /** Format: int32 */
+                ordinal: number;
+                outcome?: null | components["schemas"]["ExperimentOutcome"];
+                outcome_reason?: string | null;
+                parameter_artifact_id?: null | components["schemas"]["Id"];
+                parent_experiment_id?: null | components["schemas"]["Id"];
+                project_id: components["schemas"]["Id"];
+                proposal_artifact_id: components["schemas"]["Id"];
+                result_visibility: components["schemas"]["ExperimentResultVisibility"];
+                revision: components["schemas"]["Revision"];
+                run_id?: null | components["schemas"]["Id"];
+                trial_source: components["schemas"]["ExperimentSource"];
+                /** Format: date-time */
+                updated_at: string;
             }[];
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
@@ -2717,6 +2860,234 @@ export interface operations {
             429: {
                 headers: {
                     "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_experiments: {
+        parameters: {
+            query: {
+                project_id: components["schemas"]["Id"];
+                cursor?: components["schemas"]["Id"];
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_ExperimentView"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    propose_experiment: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExperimentProposalV1"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_ExperimentView"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_experiment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExperimentView"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
                     [name: string]: unknown;
                 };
                 content: {

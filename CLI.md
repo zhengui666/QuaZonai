@@ -151,12 +151,22 @@ CLI/MCP package。启动器必须已通过正常控制面取得有效 Mission �
 不能带 userinfo、额外路径、query 或 fragment；开发 HTTP 还须显式 `--development-http`
 并使用字面 loopback IP。禁止环境代理、Cookie、重定向和自动重试。
 
-当前 tools/list **只有两个真实工具**：`research.get_brief {brief_id}` 读取启动绑定的
-同项目 FROZEN Brief；`run.get {run_id}` 读取当前 Mission 的原生 RunSnapshotV1。
-每次调用重新检查 MISSION 类型、RUN_READ/RESEARCH_READ、项目/Run/周期/Attempt、
-凭据到期与 Run deadline；不同任务、草稿、未知字段、非 UUIDv7、撤销和接管均拒绝。
-启动参数本身不是授权，服务端事务才是最终事实源。其他 DESIGN B3 工具仍未接通，
-不允许用任意 HTTP、Shell、SQL 或原始数据访问来替代它们。
+tools/list 的实际入口包含 `research.get_brief {brief_id}`、`run.get {run_id}`、
+`artifact.submit` 和 `experiment.propose`。前两个读取精确 FROZEN Brief/本 Mission Run；
+写工具调用同一 HTTP 产物与实验事务，不产生科学成功或资格。每次调用重新检查 MISSION、
+RUN_READ/RESEARCH_READ、项目/周期/Run/Attempt、撤销、凭据期限与任务截止。
+
+`artifact.submit` 参数为 `{schema_version:1,kind,workspace_relative_path,idempotency_key}`，
+kind 为 CODE/PARAMETERS/REPORT。启动器另外通过 `--workspace-root /absolute/worktree`
+明确授予本 Mission 目录；参数不是 Agent 工具字段，未配置不猜当前目录。还需 ARTIFACT_SUBMIT；
+只读取这个已打开目录句柄内的非隐藏单链接普通 UTF-8 文件，最多2MiB，拒绝软链、FIFO、
+越界及绝对路径。内容通过现有 HTTP 发布并绑定实际作者 Run/Attempt，保持 SYNTHETIC/RESEARCH。
+
+`experiment.propose` 参数为 `{idempotency_key,proposal:ExperimentProposalV1}`，还需
+EXPERIMENT_SUBMIT。proposal.cycle_id 必须等于启动绑定；Family/提案/参数/代码引用和额度
+由现有 Store 核对，返回初始 PENDING 和真实作者身份，不启动科学 Run。请求响应丢失时复用原key，
+同key不同文件字节或提案字段仍409；不要自动换键。其他 DESIGN B3 工具只在相应真实服务接通后
+登记，不以任意 HTTP、Shell、SQL 或原始数据访问代替。启动参数不是授权事实，服务端事务最终裁决。
 
 stdout 只传原生 MCP，日志使用 stderr。最多同时4次工具调用、不排等待队列；
 连接超时3秒、单 HTTP 请求10秒、单工具15秒，均受任务/凭据到期约束；每个响应累计
