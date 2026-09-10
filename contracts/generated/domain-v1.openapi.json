@@ -5419,6 +5419,20 @@
           }
         ]
       },
+      "CatalogVersionQuery": {
+        "additionalProperties": false,
+        "properties": {
+          "storage_version": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "storage_version"
+        ],
+        "type": "object"
+      },
       "ComparableScope": {
         "enum": [
           "FAMILY_LINEAGE"
@@ -5830,6 +5844,14 @@
           "VALIDATION",
           "SEALED",
           "FORWARD"
+        ],
+        "type": "string"
+      },
+      "DataRevisionPolicy": {
+        "enum": [
+          "AS_KNOWN_THEN",
+          "RESTATED",
+          "UNKNOWN"
         ],
         "type": "string"
       },
@@ -7596,6 +7618,93 @@
         ],
         "type": "object"
       },
+      "NativeDataQualityReportV1": {
+        "additionalProperties": false,
+        "properties": {
+          "checked_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "datasets": {
+            "items": {
+              "$ref": "#/components/schemas/NativeDatasetQualityV1"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "native_version": {
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "native_version",
+          "checked_at",
+          "datasets"
+        ],
+        "type": "object"
+      },
+      "NativeDatasetQualityV1": {
+        "additionalProperties": false,
+        "properties": {
+          "available_through_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "dataset_revision_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "first_event_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "instrument_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "last_event_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "row_count": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/NativeBarSelectionV1"
+          }
+        },
+        "required": [
+          "dataset_revision_id",
+          "selection",
+          "row_count",
+          "instrument_ids",
+          "first_event_ns",
+          "last_event_ns",
+          "available_through_ns"
+        ],
+        "type": "object"
+      },
+      "NativeDatasetSelectionV1": {
+        "additionalProperties": false,
+        "properties": {
+          "dataset_revision_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/NativeBarSelectionV1"
+          }
+        },
+        "required": [
+          "dataset_revision_id",
+          "selection"
+        ],
+        "type": "object"
+      },
       "NativeFeeRateV1": {
         "additionalProperties": false,
         "properties": {
@@ -7782,6 +7891,63 @@
           "native_versions",
           "consumed_fuel",
           "points"
+        ],
+        "type": "object"
+      },
+      "NativeJobOutputIndexV1": {
+        "additionalProperties": false,
+        "properties": {
+          "artifacts": {
+            "items": {
+              "$ref": "#/components/schemas/RuntimeOutputV1"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "type": "array"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "artifacts"
+        ],
+        "type": "object"
+      },
+      "NativeModelCompilationV1": {
+        "additionalProperties": false,
+        "properties": {
+          "abi": {
+            "type": "string"
+          },
+          "code_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "model_storage_ref": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "module_bytes": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "rustc_version": {
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "code_artifact_id",
+          "model_storage_ref",
+          "rustc_version",
+          "target",
+          "abi",
+          "module_bytes"
         ],
         "type": "object"
       },
@@ -8238,6 +8404,231 @@
           "valid_until_ns",
           "targets",
           "cash_weight"
+        ],
+        "type": "object"
+      },
+      "NativeTaskParametersV1": {
+        "description": "Compilation is a DATA_VALIDATE preparation run with no dataset mounts.\nIts successful immutable MODEL becomes an input of a separate scientific run.",
+        "oneOf": [
+          {
+            "properties": {
+              "code_artifact_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "operation": {
+                "enum": [
+                  "COMPILE_MODEL"
+                ],
+                "type": "string"
+              },
+              "schema_version": {
+                "$ref": "#/components/schemas/SchemaV1"
+              }
+            },
+            "required": [
+              "schema_version",
+              "code_artifact_id",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "VALIDATE_DATA"
+                ],
+                "type": "string"
+              },
+              "schema_version": {
+                "$ref": "#/components/schemas/SchemaV1"
+              },
+              "selections": {
+                "items": {
+                  "$ref": "#/components/schemas/NativeDatasetSelectionV1"
+                },
+                "maxItems": 256,
+                "minItems": 1,
+                "type": "array"
+              }
+            },
+            "required": [
+              "schema_version",
+              "selections",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "dataset_revision_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "model_artifact_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "operation": {
+                "enum": [
+                  "EVALUATE_ALPHA"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/NativeForecastRequestV1"
+              },
+              "schema_version": {
+                "$ref": "#/components/schemas/SchemaV1"
+              }
+            },
+            "required": [
+              "schema_version",
+              "dataset_revision_id",
+              "model_artifact_id",
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "BUILD_PORTFOLIO"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/AllocationInputV1"
+              },
+              "schema_version": {
+                "$ref": "#/components/schemas/SchemaV1"
+              }
+            },
+            "required": [
+              "schema_version",
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "dataset_revision_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "operation": {
+                "enum": [
+                  "SIMULATE_PORTFOLIO"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/NativeSimulationRequestV1"
+              },
+              "schema_version": {
+                "$ref": "#/components/schemas/SchemaV1"
+              }
+            },
+            "required": [
+              "schema_version",
+              "dataset_revision_id",
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "NativeUniverseMemberV1": {
+        "additionalProperties": false,
+        "properties": {
+          "available_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "instrument_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "valid_from": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "instrument_id",
+          "valid_from",
+          "available_at"
+        ],
+        "type": "object"
+      },
+      "NativeUniverseV1": {
+        "additionalProperties": false,
+        "properties": {
+          "calendar_ref": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "calendar_version": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "coverage_end": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "coverage_start": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "has_historical_membership": {
+            "type": "boolean"
+          },
+          "instrument_definitions": {
+            "description": "Original native serialized definitions, checked by the native catalog job.\nThis document is metadata, not a second instrument or matching engine.",
+            "items": {},
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "membership": {
+            "items": {
+              "$ref": "#/components/schemas/NativeUniverseMemberV1"
+            },
+            "maxItems": 4096,
+            "minItems": 1,
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "selection_asof": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "calendar_ref",
+          "calendar_version",
+          "selection_asof",
+          "has_historical_membership",
+          "coverage_start",
+          "coverage_end",
+          "membership",
+          "instrument_definitions"
         ],
         "type": "object"
       },
@@ -9746,6 +10137,103 @@
         ],
         "type": "object"
       },
+      "RuntimeCatalogMetadataV1": {
+        "additionalProperties": false,
+        "properties": {
+          "availability_provenance": {
+            "description": "A recorded source explanation. Never inferred merely from ts_init <= cutoff.",
+            "maxLength": 8000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "available_through": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "data_kind": {
+            "$ref": "#/components/schemas/RuntimeDataKind"
+          },
+          "event_end": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "event_start": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "native_snapshot_ref": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/DataOrigin"
+          },
+          "partition": {
+            "$ref": "#/components/schemas/DataPartition"
+          },
+          "pit_status": {
+            "$ref": "#/components/schemas/PitStatus"
+          },
+          "provenance_reference": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "provider_kind": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "quality": {
+            "$ref": "#/components/schemas/NativeDataQualityReportV1",
+            "description": "Exact original quality report generated by the native source owner.\nFresh DATA_VALIDATE still reopens the registered snapshot before consumption."
+          },
+          "registered_ref": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "revision_policy": {
+            "$ref": "#/components/schemas/DataRevisionPolicy"
+          },
+          "row_count": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "storage_version": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "universe": {
+            "$ref": "#/components/schemas/NativeUniverseV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "registered_ref",
+          "native_snapshot_ref",
+          "storage_version",
+          "provider_kind",
+          "data_kind",
+          "partition",
+          "event_start",
+          "event_end",
+          "available_through",
+          "row_count",
+          "origin",
+          "pit_status",
+          "revision_policy",
+          "provenance_reference",
+          "availability_provenance",
+          "universe",
+          "quality"
+        ],
+        "type": "object"
+      },
       "RuntimeConfigurationV1": {
         "additionalProperties": false,
         "properties": {
@@ -10105,9 +10593,9 @@
           },
           "output_bytes": {
             "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
-            "maxLength": 19,
+            "maxLength": 8,
             "minLength": 1,
-            "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])",
+            "pattern": "^(?:[1-9][0-9]{0,6}|[1-5][0-9]{7}|6[0-6][0-9]{6}|67[0-0][0-9]{5}|6710[0-7][0-9]{3}|67108[0-7][0-9]{2}|671088[0-5][0-9]{1}|6710886[0-3][0-9]{0}|67108864)(?![\\s\\S])",
             "type": "string"
           },
           "wall_seconds": {
@@ -10221,55 +10709,405 @@
         ],
         "type": "object"
       },
-      "RuntimeOutputKind": {
-        "enum": [
-          "MODEL",
-          "SIGNALS",
-          "TARGETS",
-          "REPORT",
-          "METRICS",
-          "DATA_QUALITY"
-        ],
-        "type": "string"
-      },
       "RuntimeOutputV1": {
-        "additionalProperties": false,
-        "properties": {
-          "byte_count": {
-            "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
-            "maxLength": 19,
-            "minLength": 1,
-            "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])",
-            "type": "string"
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "byte_count": {
+                "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+                "maxLength": 8,
+                "minLength": 1,
+                "pattern": "^(?:[1-9][0-9]{0,6}|[1-5][0-9]{7}|6[0-6][0-9]{6}|67[0-0][0-9]{5}|6710[0-7][0-9]{3}|67108[0-7][0-9]{2}|671088[0-5][0-9]{1}|6710886[0-3][0-9]{0}|67108864)(?![\\s\\S])",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "MODEL"
+                ],
+                "type": "string"
+              },
+              "media_type": {
+                "enum": [
+                  "application/wasm"
+                ],
+                "type": "string"
+              },
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "enum": [
+                      "qz.wasm_model"
+                    ],
+                    "type": "string"
+                  },
+                  "version": {
+                    "enum": [
+                      "1"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "version"
+                ],
+                "type": "object"
+              },
+              "storage_ref": {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              "storage_version": {
+                "enum": [
+                  "1"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "schema",
+              "storage_ref",
+              "storage_version",
+              "byte_count",
+              "media_type"
+            ],
+            "type": "object"
           },
-          "kind": {
-            "$ref": "#/components/schemas/RuntimeOutputKind"
+          {
+            "additionalProperties": false,
+            "properties": {
+              "byte_count": {
+                "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+                "maxLength": 8,
+                "minLength": 1,
+                "pattern": "^(?:[1-9][0-9]{0,6}|[1-5][0-9]{7}|6[0-6][0-9]{6}|67[0-0][0-9]{5}|6710[0-7][0-9]{3}|67108[0-7][0-9]{2}|671088[0-5][0-9]{1}|6710886[0-3][0-9]{0}|67108864)(?![\\s\\S])",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "REPORT"
+                ],
+                "type": "string"
+              },
+              "media_type": {
+                "enum": [
+                  "application/json"
+                ],
+                "type": "string"
+              },
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "enum": [
+                      "qz.model_compilation"
+                    ],
+                    "type": "string"
+                  },
+                  "version": {
+                    "enum": [
+                      "1"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "version"
+                ],
+                "type": "object"
+              },
+              "storage_ref": {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              "storage_version": {
+                "enum": [
+                  "1"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "schema",
+              "storage_ref",
+              "storage_version",
+              "byte_count",
+              "media_type"
+            ],
+            "type": "object"
           },
-          "media_type": {
-            "maxLength": 120,
-            "minLength": 1,
-            "type": "string"
+          {
+            "additionalProperties": false,
+            "properties": {
+              "byte_count": {
+                "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+                "maxLength": 8,
+                "minLength": 1,
+                "pattern": "^(?:[1-9][0-9]{0,6}|[1-5][0-9]{7}|6[0-6][0-9]{6}|67[0-0][0-9]{5}|6710[0-7][0-9]{3}|67108[0-7][0-9]{2}|671088[0-5][0-9]{1}|6710886[0-3][0-9]{0}|67108864)(?![\\s\\S])",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "DATA_QUALITY"
+                ],
+                "type": "string"
+              },
+              "media_type": {
+                "enum": [
+                  "application/json"
+                ],
+                "type": "string"
+              },
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "enum": [
+                      "qz.data_quality"
+                    ],
+                    "type": "string"
+                  },
+                  "version": {
+                    "enum": [
+                      "1"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "version"
+                ],
+                "type": "object"
+              },
+              "storage_ref": {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              "storage_version": {
+                "enum": [
+                  "1"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "schema",
+              "storage_ref",
+              "storage_version",
+              "byte_count",
+              "media_type"
+            ],
+            "type": "object"
           },
-          "schema": {
-            "$ref": "#/components/schemas/RuntimeArtifactSchemaV1"
+          {
+            "additionalProperties": false,
+            "properties": {
+              "byte_count": {
+                "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+                "maxLength": 8,
+                "minLength": 1,
+                "pattern": "^(?:[1-9][0-9]{0,6}|[1-5][0-9]{7}|6[0-6][0-9]{6}|67[0-0][0-9]{5}|6710[0-7][0-9]{3}|67108[0-7][0-9]{2}|671088[0-5][0-9]{1}|6710886[0-3][0-9]{0}|67108864)(?![\\s\\S])",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "REPORT"
+                ],
+                "type": "string"
+              },
+              "media_type": {
+                "enum": [
+                  "application/json"
+                ],
+                "type": "string"
+              },
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "enum": [
+                      "qz.native_forecast"
+                    ],
+                    "type": "string"
+                  },
+                  "version": {
+                    "enum": [
+                      "1"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "version"
+                ],
+                "type": "object"
+              },
+              "storage_ref": {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              "storage_version": {
+                "enum": [
+                  "1"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "schema",
+              "storage_ref",
+              "storage_version",
+              "byte_count",
+              "media_type"
+            ],
+            "type": "object"
           },
-          "storage_ref": {
-            "$ref": "#/components/schemas/Id",
-            "description": "Runtime-owned immutable object key. Downloads stay under this exact job."
+          {
+            "additionalProperties": false,
+            "properties": {
+              "byte_count": {
+                "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+                "maxLength": 8,
+                "minLength": 1,
+                "pattern": "^(?:[1-9][0-9]{0,6}|[1-5][0-9]{7}|6[0-6][0-9]{6}|67[0-0][0-9]{5}|6710[0-7][0-9]{3}|67108[0-7][0-9]{2}|671088[0-5][0-9]{1}|6710886[0-3][0-9]{0}|67108864)(?![\\s\\S])",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "REPORT"
+                ],
+                "type": "string"
+              },
+              "media_type": {
+                "enum": [
+                  "application/json"
+                ],
+                "type": "string"
+              },
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "enum": [
+                      "qz.native_allocation"
+                    ],
+                    "type": "string"
+                  },
+                  "version": {
+                    "enum": [
+                      "1"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "version"
+                ],
+                "type": "object"
+              },
+              "storage_ref": {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              "storage_version": {
+                "enum": [
+                  "1"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "schema",
+              "storage_ref",
+              "storage_version",
+              "byte_count",
+              "media_type"
+            ],
+            "type": "object"
           },
-          "storage_version": {
-            "$ref": "#/components/schemas/Revision"
+          {
+            "additionalProperties": false,
+            "properties": {
+              "byte_count": {
+                "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+                "maxLength": 8,
+                "minLength": 1,
+                "pattern": "^(?:[1-9][0-9]{0,6}|[1-5][0-9]{7}|6[0-6][0-9]{6}|67[0-0][0-9]{5}|6710[0-7][0-9]{3}|67108[0-7][0-9]{2}|671088[0-5][0-9]{1}|6710886[0-3][0-9]{0}|67108864)(?![\\s\\S])",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "REPORT"
+                ],
+                "type": "string"
+              },
+              "media_type": {
+                "enum": [
+                  "application/json"
+                ],
+                "type": "string"
+              },
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "enum": [
+                      "qz.native_simulation"
+                    ],
+                    "type": "string"
+                  },
+                  "version": {
+                    "enum": [
+                      "1"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "version"
+                ],
+                "type": "object"
+              },
+              "storage_ref": {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              "storage_version": {
+                "enum": [
+                  "1"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "schema",
+              "storage_ref",
+              "storage_version",
+              "byte_count",
+              "media_type"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "kind",
-          "schema",
-          "storage_ref",
-          "storage_version",
-          "byte_count",
-          "media_type"
-        ],
-        "type": "object"
+        ]
       },
       "RuntimeProbeFailure": {
         "enum": [

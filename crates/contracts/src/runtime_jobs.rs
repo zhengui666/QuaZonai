@@ -11,6 +11,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use utoipa::ToSchema;
 
+mod schema;
+
+pub const MAX_JOB_OUTPUT_BYTES: u64 = 64 * 1024 * 1024;
+pub const MAX_INPUT_OBJECT_BYTES: u64 = 64 * 1024 * 1024;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeJobLimitsV1 {
@@ -22,7 +27,7 @@ pub struct RuntimeJobLimitsV1 {
     pub memory_mib: u32,
     #[schema(minimum = 1, maximum = 4294967295u64, format = Int64)]
     pub wall_seconds: u32,
-    #[schema(schema_with = crate::scalars::positive_db_counter_schema)]
+    #[schema(schema_with = schema::job_output_bytes)]
     pub output_bytes: DbCounter,
 }
 
@@ -148,7 +153,7 @@ impl RuntimeOutputKind {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeOutputV1 {
     pub kind: RuntimeOutputKind,
@@ -156,10 +161,58 @@ pub struct RuntimeOutputV1 {
     /// Runtime-owned immutable object key. Downloads stay under this exact job.
     pub storage_ref: Id,
     pub storage_version: Revision,
-    #[schema(schema_with = crate::scalars::positive_db_counter_schema)]
     pub byte_count: DbCounter,
-    #[schema(min_length = 1, max_length = 120)]
     pub media_type: String,
+}
+
+/// The currently implemented native output contracts. Metadata validation and
+/// native schema generation consume the same table; this is not a plugin registry.
+pub struct NativeOutputContract {
+    pub name: &'static str,
+    pub kind: RuntimeOutputKind,
+    pub media_type: &'static str,
+}
+
+pub const NATIVE_OUTPUT_CONTRACTS: &[NativeOutputContract] = &[
+    NativeOutputContract {
+        name: "qz.wasm_model",
+        kind: RuntimeOutputKind::Model,
+        media_type: "application/wasm",
+    },
+    NativeOutputContract {
+        name: "qz.model_compilation",
+        kind: RuntimeOutputKind::Report,
+        media_type: "application/json",
+    },
+    NativeOutputContract {
+        name: "qz.data_quality",
+        kind: RuntimeOutputKind::DataQuality,
+        media_type: "application/json",
+    },
+    NativeOutputContract {
+        name: "qz.native_forecast",
+        kind: RuntimeOutputKind::Report,
+        media_type: "application/json",
+    },
+    NativeOutputContract {
+        name: "qz.native_allocation",
+        kind: RuntimeOutputKind::Report,
+        media_type: "application/json",
+    },
+    NativeOutputContract {
+        name: "qz.native_simulation",
+        kind: RuntimeOutputKind::Report,
+        media_type: "application/json",
+    },
+];
+
+pub fn native_output_contract(name: &str, version: &str) -> Option<&'static NativeOutputContract> {
+    if version != "1" {
+        return None;
+    }
+    NATIVE_OUTPUT_CONTRACTS
+        .iter()
+        .find(|contract| contract.name == name)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

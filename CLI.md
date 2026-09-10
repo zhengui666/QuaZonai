@@ -32,6 +32,24 @@ cargo test --locked -p job --tests
 
 目录许可/PIT、来源、Run/Attempt、独立评估、资格及审批仍由上层可信服务核验；成功退出不等于 REAL、PASS 或 Issue62 完整验收。
 
+## 原生 Runtime 网关与受管 job
+
+网关使用自己的原生 SQLite 任务日志和 Docker Unix socket，不连接研究 PostgreSQL、不读取 Codex profile、不持有真实券商权限。配置、凭据文件、原生镜像装配、TLS 与隔离验收步骤见 [runtimes/native/README.md](runtimes/native/README.md)。
+
+```sh
+cargo run --locked -p runtime -- openapi
+cargo run --locked -p runtime -- doctor --config /absolute/runtime.json
+cargo run --locked -p runtime -- serve --config /absolute/runtime.json
+```
+
+`doctor` 经真实 Docker 与已登记镜像验证能力；`serve` 支持已有任务状态、唯一请求重放、受限对象传输与取消。Docker 暂不可用不抹去 SQLite 中的既有身份，也不构成重新执行许可。对外只允许同机 TLS 反向代理连接 loopback 监听端口；不要将明文端口或 Docker socket 暴露给浏览器/Agent。
+
+生产镜像固定调用 `job run-bounded`，从只读 `/input/spec.json` 读取剩余绝对截止时间和墙钟上限，交给原生 GNU timeout 再执行 `job execute`。编译、目录验证、预测、组合求解与共享资金模拟使用封闭 `NativeTaskParametersV1`；HTTP/MCP 没有任意命令、环境、挂载或路径字段。受信任本机诊断可使用 `job execute --input-root /absolute/input --output-root /absolute/output`，该 CLI 覆盖不能变成远程调用者权限。
+
+`GET /runtime/v1/jobs/{external_job_id}/artifacts/{storage_ref}` 返回已封口 manifest 中的精确对象：原生 Wasm 为 application/wasm，登记的原生 JSON 报告为 application/json；不返回任意路径或跨任务对象。storage_version 固定原生版本1，schema/kind/media_type 由同一 Rust 登记表绑定，未知输出不是可采纳的科学证据。
+
+普通 Runtime 单元/SQLite/HTTP 测试不证明 OCI 隔离；`.github/workflows/native-runtime.yml` 对精确源码启用独立必跑的 `native-oci` 测试。缺 Docker、固定镜像或 cgroup 前提会失败，不能按跳过处理成通过。取消时只有原生进程已停止且晚到 CREATE/START 已被持久身份屏障阻断才报告 CANCELLED，404 或超时不等于取消确认。
+
 ## 认证服务与本机管理
 
 以下入口复用 Clap；`cargo run --locked -p server -- --help` 展示实际命令。

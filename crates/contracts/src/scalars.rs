@@ -111,8 +111,22 @@ fn parse_db_unsigned(text: &str, nonzero: bool) -> Result<u64, String> {
 /// alternative shares a prefix with i64::MAX and has a strictly smaller next
 /// digit, or is the exact maximum. The end assertion rejects a final newline.
 fn bigint_schema(nonzero: bool) -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
-    let maximum = i64::MAX.to_string();
-    let mut alternatives = vec![format!("[1-9][0-9]{{0,{}}}", maximum.len() - 2)];
+    bounded_bigint_schema(i64::MAX as u64, nonzero)
+}
+
+/// Use the same native canonical-decimal schema generator for a narrower field
+/// bound. `maximum` is a source-level contract constant, never client input.
+pub(crate) fn bounded_bigint_schema(
+    maximum: u64,
+    nonzero: bool,
+) -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+    assert!(maximum > 0 && maximum <= i64::MAX as u64);
+    let maximum = maximum.to_string();
+    let length = maximum.len();
+    let mut alternatives = Vec::new();
+    if length > 1 {
+        alternatives.push(format!("[1-9][0-9]{{0,{}}}", length - 2));
+    }
     if !nonzero {
         alternatives.push("0".into());
     }
@@ -133,7 +147,7 @@ fn bigint_schema(nonzero: bool) -> utoipa::openapi::RefOr<utoipa::openapi::schem
         .schema_type(utoipa::openapi::schema::Type::String)
         .description(Some("Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions."))
         .min_length(Some(1))
-        .max_length(Some(19))
+        .max_length(Some(length))
         .pattern(Some(format!(r"^(?:{})(?![\s\S])", alternatives.join("|"))))
         .into()
 }

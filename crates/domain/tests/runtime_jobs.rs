@@ -229,6 +229,68 @@ fn duplicate_inputs_schemas_and_excessive_resources_are_rejected() {
 }
 
 #[test]
+fn output_schema_kind_and_media_are_one_registered_contract() {
+    let mut spec = spec();
+    let observed = now() + Duration::seconds(2);
+    for contract in NATIVE_OUTPUT_CONTRACTS {
+        spec.requested_output_schemas[0].name = contract.name.into();
+        let mut value = result(&spec);
+        value.artifacts[0].schema = spec.requested_output_schemas[0].clone();
+        value.artifacts[0].kind = contract.kind;
+        value.artifacts[0].media_type = contract.media_type.into();
+        manifest(&value, &spec, now(), observed).unwrap();
+        for wrong in [
+            RuntimeOutputKind::Model,
+            RuntimeOutputKind::Signals,
+            RuntimeOutputKind::Targets,
+            RuntimeOutputKind::Report,
+            RuntimeOutputKind::Metrics,
+            RuntimeOutputKind::DataQuality,
+        ] {
+            if wrong == contract.kind {
+                continue;
+            }
+            value.artifacts[0].kind = wrong;
+            assert!(manifest(&value, &spec, now(), observed).is_err());
+        }
+    }
+    let mut value = result(&spec);
+    spec.requested_output_schemas[0].name = "qz.unregistered_output".into();
+    value.artifacts[0].schema = spec.requested_output_schemas[0].clone();
+    assert!(manifest(&value, &spec, now(), observed).is_err());
+}
+
+#[test]
+fn invalid_oci_names_never_become_probe_or_job_admission_authority() {
+    let digest = format!("sha256:{}", "a".repeat(64));
+    for name in [
+        "https://registry.example/image",
+        "../image",
+        "./image",
+        "/image",
+        "registry.example//image",
+        "registry.example/UPPER",
+        "registry.example/image/",
+    ] {
+        let reference = format!("{name}@{digest}");
+        let mut caps = capabilities();
+        caps.image_refs[0].image_ref = reference.clone();
+        assert!(domain::runtime::capabilities(&caps, now()).is_err());
+        let mut request = spec();
+        request.image_ref = reference;
+        assert!(spec_shape(&request).is_err());
+        assert!(admit_spec(&request, &caps, now()).is_err());
+    }
+    for reference in [
+        digest.clone(),
+        format!("registry.example:5000/team/native@{digest}"),
+        format!("library/native:v1@{digest}"),
+    ] {
+        assert!(domain::runtime::pinned_image(&reference));
+    }
+}
+
+#[test]
 fn result_identity_resources_and_immutable_output_contract_are_all_required() {
     let spec = spec();
     let original = result(&spec);

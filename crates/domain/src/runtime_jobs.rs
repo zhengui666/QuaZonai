@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 
 pub const MAX_JOB_REQUEST_BYTES: usize = 1024 * 1024;
 pub const MAX_RESULT_MANIFEST_BYTES: usize = 1024 * 1024;
-pub const MAX_INPUT_OBJECT_BYTES: u64 = 64 * 1024 * 1024;
+pub use contracts::runtime_jobs::MAX_INPUT_OBJECT_BYTES;
 pub const MAX_INPUT_OBJECTS_BYTES: u64 = 256 * 1024 * 1024;
 
 fn bad(field: &str) -> DomainError {
@@ -66,7 +66,7 @@ pub fn spec_shape(value: &JobSpecV1) -> Result<(), DomainError> {
         || limits.memory_mib == 0
         || limits.wall_seconds == 0
         || limits.output_bytes.get() == 0
-        || limits.output_bytes.get() > MAX_INPUT_OBJECT_BYTES
+        || limits.output_bytes.get() > MAX_JOB_OUTPUT_BYTES
         || u128::from(limits.cpu_seconds.get())
             > u128::from(limits.cpu) * u128::from(limits.wall_seconds)
     {
@@ -231,16 +231,9 @@ pub fn error(code: RuntimeFailureCode) -> RuntimeJobErrorV1 {
 }
 
 fn media_type(output: &RuntimeOutputV1) -> bool {
-    output.media_type
-        == match output.kind {
-            RuntimeOutputKind::Model => "application/wasm",
-            RuntimeOutputKind::Signals | RuntimeOutputKind::Targets => {
-                "application/vnd.apache.arrow.file"
-            }
-            RuntimeOutputKind::Report
-            | RuntimeOutputKind::Metrics
-            | RuntimeOutputKind::DataQuality => "application/json",
-        }
+    native_output_contract(&output.schema.name, &output.schema.version).is_some_and(|contract| {
+        output.kind == contract.kind && output.media_type == contract.media_type
+    })
 }
 
 /// Validate identity, metadata and resource accounting before reading artifacts.

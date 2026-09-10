@@ -21,6 +21,15 @@ struct Arguments {
 
 #[derive(Subcommand)]
 enum Operation {
+    /// Apply the immutable native wall deadline before executing the fixed job entrypoint.
+    RunBounded,
+    /// Execute one typed native operation. Root overrides are trusted local CLI only.
+    Execute {
+        #[arg(long, default_value = "/input")]
+        input_root: PathBuf,
+        #[arg(long, default_value = "/output")]
+        output_root: PathBuf,
+    },
     /// Run native compatibility fixtures in a new private directory.
     VerifyNative {
         #[arg(long)]
@@ -96,6 +105,17 @@ fn model_bytes(path: &Path) -> Result<Vec<u8>> {
 
 fn run(operation: Operation) -> Result<()> {
     match operation {
+        Operation::RunBounded => {
+            job::bounded::run()?;
+            Ok(())
+        }
+        Operation::Execute {
+            input_root,
+            output_root,
+        } => {
+            job::managed::execute(&input_root, &output_root)?;
+            Ok(())
+        }
         Operation::Allocate => output(&job::allocate(&input()?)?),
         Operation::Forecast { catalog, model } => output(&job::forecast::forecast(
             &catalog,

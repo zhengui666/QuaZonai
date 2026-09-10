@@ -37,6 +37,16 @@ Nautilus示例复用保留原版权/LGPL声明；QZ原有AGPL/NOTICE不修改。
 
 这些是选型，不声称上述全部控制面已经实现。Codex官方Rust app-server-client的in-process路径会嵌入完整runtime；其remote路径使用WebSocket。不能为了复用包名违反本项目稳定stdio/独立进程边界。采用官方生成schema及标准JSONL薄适配不等于另造Agent Harness；实际账号、同Thread工具闭环及秘密隔离仍须受保护验收。
 
+## 原生 Runtime 与 OCI 引用复用（2026-09-10）
+
+`apps/runtime` 使用既有SQLx **0.8.6** 的原生SQLite driver/migration、WAL与FULL同步模式，通过短 `BEGIN IMMEDIATE` 事务管理远端任务身份、对象BLOB与唯一终态；PostgreSQL/PGMQ仍是研究预算与业务权威，不复制业务队列。依据为[原生SQLx事务入口](https://docs.rs/sqlx/0.8.6/sqlx/struct.Pool.html#method.begin_with)及[SQLite WAL语义](https://sqlite.org/wal.html)。真实SQLite并发、重开、取消与输出/manifest事务已进入实际测试，不能用这些测试替代PostgreSQL或Docker隔离。
+
+固定 **Bollard0.21.1** 的Unix pipe与生成Docker模型承接create/inspect/start/kill/remove/stats；我方仅保存固定JobSpec→原生容器映射、一次START意图和取消屏障。`job run-bounded`复用镜像内GNU timeout及Docker init/cgroup，而不建立应用级无限后台watchdog。[Bollard官方源码](https://github.com/fussybeaver/bollard)、[GNU timeout](https://www.gnu.org/software/coreutils/manual/html_node/timeout-invocation.html)提供原生接口依据。原生工作区已完成该固定依赖的编译和常规测试；真正UID/网络/文件/cgroup/取消/崩溃验收是精确Head独立OCI CI，未取得实际结果之前不得宣称通过。
+
+OCI分发引用使用 **oci-spec0.10.0** 的 `distribution::Reference`，仅启用distribution feature，复用官方Docker distribution格式解析，不再以自写允许字符列表误把URL或相对路径当镜像。来源：[Reference API](https://docs.rs/oci-spec/0.10.0/oci_spec/distribution/struct.Reference.html)、[原生features](https://docs.rs/crate/oci-spec/0.10.0/features)。同机Docker完整 `sha256:<64hex>` ID属于原生本地镜像身份，独立按固定格式识别，不当分发仓库解析、不增加应用内容散列或资格门禁。路径/URL/空组件/无digest/大写非法repository等负例在真实Rust领域回归中验证。
+
+上述依赖只由原生Cargo在精确手写manifest基础上产生Cargo.lock；不写registry checksum或升级既有锁定版本来掩盖失败。原生镜像装配只包含选定job二进制、明确rustup工具链/目标标准库、必要原生ELF依赖和timeout，保留可取得的发行许可说明；不复制checkout、模型profile、密钥或开发执行器。没有新增生产Python例外。
+
 ## 科学能力继续逐项核查，不能默认Python
 
 | 候选 | 已确认公开API | 尚需证明/决策 |

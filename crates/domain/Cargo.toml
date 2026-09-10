@@ -15,6 +15,7 @@ iso_currency = "=0.7.0"
 bigdecimal = "=0.4.8"
 serde_json.workspace = true
 url = "=2.5.8"
+oci-spec = { version = "=0.10.0", default-features = false, features = ["distribution"] }
 
 [dev-dependencies]
 proptest = "=1.7.0"

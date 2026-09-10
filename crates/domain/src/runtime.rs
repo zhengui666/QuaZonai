@@ -29,18 +29,27 @@ pub fn job_limits(
 }
 
 pub fn pinned_image(value: &str) -> bool {
-    let Some((name, digest)) = value.rsplit_once("@sha256:") else {
-        return false;
-    };
-    !name.is_empty()
-        && value.len() <= 512
-        && name.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'/' | b'_' | b'-' | b':')
+    let native_sha256 = |value: &str| {
+        value.strip_prefix("sha256:").is_some_and(|digest| {
+            digest.len() == 64
+                && digest
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
         })
-        && digest.len() == 64
-        && digest
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    };
+    // A local Docker content-addressed image ID is not a distribution repository.
+    if value.starts_with("sha256:") {
+        return native_sha256(value);
+    }
+    if value.len() > 512 || !value.bytes().all(|byte| (b'!'..=b'~').contains(&byte)) {
+        return false;
+    }
+    // Reuse the OCI/Docker distribution parser; URL or filesystem-shaped strings
+    // are not image names merely because each individual character looks allowed.
+    oci_spec::distribution::Reference::try_from(value)
+        .ok()
+        .and_then(|reference| reference.digest().map(native_sha256))
+        .unwrap_or(false)
 }
 
 fn unique<T: PartialEq>(values: &[T], minimum: usize, maximum: usize) -> bool {

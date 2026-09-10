@@ -80,14 +80,35 @@ pub async fn probe(
             },
             Err(reason) => RuntimeProbeOutcomeV1::Unavailable { reason },
         };
-        store
-            .complete_runtime_probe(ticket, outcome, move |artifact, bytes| async move {
-                tokio::task::spawn_blocking(move || objects.put(artifact, &bytes))
-                    .await
-                    .map_err(|_| StoreError::Integrity)?
-                    .map_err(|_| StoreError::Integrity)
+        let mut publication = None;
+        let publishing_objects = objects.clone();
+        let result = store
+            .complete_runtime_probe(ticket, outcome, |artifact, bytes| {
+                publication = Some(artifact);
+                async move {
+                    tokio::task::spawn_blocking(move || publishing_objects.put(artifact, &bytes))
+                        .await
+                        .map_err(|_| StoreError::Integrity)?
+                        .map_err(|_| StoreError::Integrity)
+                }
             })
-            .await
+            .await;
+        if let Some(artifact) = publication.filter(|_| result.is_err()) {
+            let cleanup = store
+                .discard_unpublished_runtime_probe(artifact, move |artifact| async move {
+                    tokio::task::spawn_blocking(move || objects.discard_unpublished(artifact))
+                        .await
+                        .map_err(|_| StoreError::Integrity)?
+                        .map_err(|_| StoreError::Integrity)
+                })
+                .await;
+            if cleanup.is_err() {
+                // The original failure remains the response. Never delete on an
+                // uncertain database read or expose storage/native diagnostics.
+                tracing::warn!(artifact_id = %artifact, "runtime_probe_cleanup_deferred");
+            }
+        }
+        result
     })
     .await?;
     Ok(Json(result))

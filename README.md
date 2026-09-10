@@ -16,6 +16,7 @@
 | Project 与机器身份 | 真正的项目分页/创建/更新、乐观并发、不可变命令回执、机器 token 一次性签发与撤销；机器只读授权项目，人工 CLI 管理操作另需原生 TOTP 单次授权 |
 | 研究准备 | 同事务冻结输入集合、不可变评估政策与实验族登记，严格分区/许可/项目关联和分页授权；登记验证意图不代表已运行原生算法、验证 PIT 或得到 PASS |
 | 集成配置与探测 | 只写加密凭据、Runtime／Downstream 管理；Runtime 经部署允许列表和真实 TLS 探测，观察绑定配置版本与有效期。保存配置不等于连接成功 |
+| 原生 Runtime | 已编写 SQLite 持久任务身份、固定 Docker 原生执行、不可变输入/输出、独立墙钟限制、取消屏障及恢复服务；普通 SQLite/HTTP/数值回归和独立必跑 OCI 验收明确分离。部署与实际验证入口见 [原生 Runtime](runtimes/native/README.md)，完整 Worker/研究资格链仍未完成 |
 | Brief 与 Cycle 启动 | 正式冻结执行上下文和三个分区输入；启动时重验许可、当前 Runtime 能力与预算，在同一事务创建 Cycle、首个数据验证 Run、事件和 PGMQ 消息。不代表 Worker 已执行该任务 |
 | PostgreSQL Store | 新库SQLx迁移、逐轮不可变预约/发送/结算、同Mission幂等与预算投影、关系唯一/复合外键；研究/评估权限全链路与 Worker 仍待完整验收 |
 | Codex | 锁定官方App Server stdio、全分页模型及Thread启动探针；真实账号/同Thread工具闭环还需验收 |

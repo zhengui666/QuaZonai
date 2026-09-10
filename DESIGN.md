@@ -1845,6 +1845,38 @@ ResultManifestV1 为 schema_version、run_id、attempt_no、external_job_id、in
 
 控制面继续使用 PostgreSQL/PGMQ/Store 的发送意图、租约、结算回执和 ACK 顺序。远端持久化只管理原生 job 的身份/撤销/结果，以成熟嵌入数据库事务和原生 OCI container ID 恢复；不增加第二套研究预算、工作流或任务队列。整个原生任务只创建/启动一次，crash-after-submit 先查原身份。合同测试只是边界回归，必须另有真实 OCI、网络/文件/资源隔离、崩溃恢复和完整 Web/CLI 证据后才能勾选 T01/T24/T34/T35/T42。
 
+### B4.4 远端原生执行器与持久身份
+
+`apps/runtime` 使用既有 Rust Axum/Tokio/Serde 合同及 SQLx 0.8.6 的 SQLite 后端，原生 Docker API 复用 Bollard 0.21.1；不建立第二套研究业务数据库、预算或工作流。SQLite WAL + synchronous FULL、短 `BEGIN IMMEDIATE` 事务管理远端身份、不可变有界对象和终态；宿主原生文件锁保证同一状态目录只运行一个执行监督进程。部署根与 Docker Unix socket 由操作者明确配置，不接受网络命令指定路径、环境、命令或挂载。参考原生 API：<https://docs.rs/sqlx/0.8.6/sqlx/struct.Pool.html#method.begin_with>、<https://docs.rs/bollard/latest/bollard/struct.Docker.html>、<https://docs.rs/bollard/latest/bollard/models/struct.HostConfig.html>。版本以 Cargo.lock 和实际原生验证为准，不用浮动 latest 构建。
+
+网关的 `runtime_meta` 只保存服务器分配的 instance_id；`runtime_jobs` 以 canonical external_id 为主键，同时唯一 run_id/attempt_no，保存不可变 spec_json、首次 owner_epoch/submitted_us/deadline_us、一次写入的原生 ContainerCreateBody/容器ID/START intent，以及单调取消owner、取消时间、停止原因、隔离屏障ID和唯一终态/manifest。内部 phase 为 QUEUED/CREATING/CREATED/STARTING/RUNNING/TERMINAL，公开状态仍使用 B4.3；不把内部phase作为研究状态。`input_objects` 保存UUID/原生storage_version/精确BLOB/byte_count，同身份版本与原始字节才重放；`job_outputs` 以 external_id/storage_ref 唯一并原子保存元数据与原始字节，全部输出、manifest和终态同事务发表。64MiB单对象、256MiB研究对象总输入、1MiB请求/manifest及部署磁盘总额度分别检查；满额明确拒绝，不自动删除引用或terminal tombstone。SQLite BLOB事务代替额外的文件与元数据提交间隙，不新增应用内容hash。
+
+网关先打开配置及持久journal，使Docker停机时仍可读取原任务、接收取消tombstone和幂等重放；这不表示执行readiness。实际引擎调用首次通过Bollard原生API版本协商建立客户端，失败不缓存假成功，不改用另一个socket或放宽权限。服务的doctor/capabilities检查必须独立执行，未通过不能接受新任务。调度仅读取最多4096条小型身份/phase/deadline元数据，不把全部大JobSpec装入内存；配置降低并发或pending上限不能隐藏已有任务/取消/到期记录。
+
+每项 JobKind 只映射部署登记的digest固定镜像和固定 `job execute` 入口。可信配置将已有不可变对象及原生目录挂载到固定 `/input`，仅该Job的输出目录可写。原生镜像、协议与方法版本先经Docker inspect核验才公布能力；缺引擎/镜像/实现的JobKind不能虚报AVAILABLE。数值、目录、预测、优化和模拟继续由独立job中的Nautilus/Clarabel/Arrow/Wasmi等真实组件完成，网关不嵌入第二计算引擎、不授予科学PASS。
+
+持久CREATE/START意图先于原生外部调用；不持SQLite事务等待Docker。恢复只认原生container ID和精确实例/Run/Attempt标签，不因启动ACK丢失新建身份，也不重启已退出容器。已持久化START但无法证明请求未发送时，不再次START：先按原身份恢复或安全终结，再由控制面的有界基础设施重试政策裁决。取消先保存tombstone/owner；普通404不能证明晚到CREATE/START不会发生。已存在或可能正在创建的任务，确认停止并移除其旧container ID，再以相同原生名称建立永不启动的屏障容器，才可封口取消；晚到CREATE冲突、晚到START旧ID失败。未知结果保持待对账，不谎报CANCELLED。终态不可更新，进程重启和迟到重复请求不能复活身份。
+
+镜像引用允许登记仓库原生 `name@sha256:<64hex>`，或同一Docker引擎原生 `sha256:<64hex>` image ID；两者均由Docker解析不可变镜像，绝不接受tag/短ID或由应用计算替代身份。后者用于同机已构建镜像与原生CI，无需为本机测试另建registry。Job使用non-root、只读rootfs、无网络、cap-drop、no-new-privileges、固定只读输入、受限临时空间、PIDs/CPU/内存/文件/墙钟/输出额度；仅可信网关持有Docker socket。固定 `job run-bounded` 在实际启动时从只读JobSpec计算剩余绝对deadline和wall_seconds，exec镜像内GNU timeout，再运行同一job execute；复用原生timeout和Docker init/cgroup收束子进程，Gateway退出不撤销已运行任务的墙钟限制。停止容器不会重启，接管不再次发送START。原生资源观测缺失保留null，实际超限保留失败，绝不裁成成功。原生结果回到控制面仍必须做精确关联、实际字节/schema、授权和独立评估；Runtime终态成功不是Qualification。
+
+原生SQLite并发/事务/重开、真实HTTP及真正Docker隔离/取消/重启测试分别验收。开发环境没有Docker权限不允许跳过后宣称成功；在精确Head的独立Docker CI运行相同测试，结果缺失或失败继续阻塞交付。此细化不删除其余W0–W8/T01–T42，Gateway、Worker、真实研究、完整Web/CLI与恢复链均须实际完成。
+
+### B4.5 Runtime 线合同与探测回收补充
+
+针对1649b4d7的原生review，Runtime输出以同一Rust登记表绑定schema名/版本、kind与media_type；返回qz.data_quality却标REPORT不再合法，未知或未接通的输出schema明确拒绝。已支持的输出原生storage_version固定字符串`"1"`，1字节至64MiB的output_bytes边界与原生DbCounter使用相同的生成器形成精确字符串schema，不能仅发布PostgreSQL bigint总范围。范围生成不增加第二个数值解析器，运行校验仍复用原生整数/领域上限。
+
+仓库OCI名称由固定`oci-spec 0.10.0`的distribution::Reference解析，复用官方Docker distribution语法；只允许带完整小写sha256 digest的引用，拒绝URL、相对目录、空组件、标签单独引用与无效仓库名。同机Docker的原生完整sha256 image ID仍按其固定原生形状单独接受；不把它作为分发仓库名解析、不计算新的业务散列。上游API与feature依据：<https://docs.rs/oci-spec/0.10.0/oci_spec/distribution/struct.Reference.html>、<https://docs.rs/crate/oci-spec/latest/features>；仅启用distribution，不重建OCI语法或引入另一个容器执行平台。
+
+探测发布失败或发布后票据过期时，原始事务先结束；可信服务对本次确实分配并尝试发布的精确快照ID，在新的短事务重新获取Operator命令的同一全局authority行锁，然后在主库确认没有app.artifacts引用，才通过原生ArtifactStore删除该未引用对象并同步目录。未知提交若已成功，则原生记录存在，必须保留；无法重获锁或判断时保留而不猜测删除。不开放客户端指定ID/路径的删除接口、不扫描或删除其他业务产物，也不把“回收失败”改写成探测成功。重复同键重放不发布另一个对象；明确失败的回收允许幂等重试。
+
+### B4.6 固定科学子任务与编译隔离
+
+`NativeTaskParametersV1` 以 operation 作封闭判别，参数由冻结Parameters产物读取：COMPILE_MODEL(code_artifact_id)、VALIDATE_DATA(selections[dataset_revision_id,NativeBarSelectionV1])、EVALUATE_ALPHA(dataset_revision_id,model_artifact_id,NativeForecastRequestV1)、BUILD_PORTFOLIO(AllocationInputV1)、SIMULATE_PORTFOLIO(dataset_revision_id,NativeSimulationRequestV1)。不得用任意Shell、环境变量、宿主路径、动态模块或URL扩展operation。编译及目录验证属于DATA_VALIDATE准备任务，其余分别映射ALPHA_EVALUATE/PORTFOLIO_BUILD/PORTFOLIO_SIMULATE。操作、JobKind、完整输入成员及输出schema在准入、材料化和job入口都以同一Rust领域规则核对。
+
+Rust预处理本身可读取文件，因此COMPILE_MODEL必须是无数据目录的独立Run：只挂该Code与该Parameters，禁止任何额外Dataset、Model、其他研究产物或Sealed。固定rustc 1.98.1/wasm32-unknown-unknown和纯predict ABI；编译无Cargo依赖、build.rs、网络或用户可选参数，失败不生成可信MODEL。后续EVALUATE_ALPHA使用已发布的MODEL与精确授权目录，Wasmi无导入的实例拿不到编译器、环境或标签；不能把“编译器和Sealed数据在同容器但没主动读取”当隔离。一次实验的trial预约只在首个阶段计入，编译失败仍保留该trial，后续阶段不得再计同一个trial或绕过累计CPU/输出预算。
+
+固定job入口 `job execute` 默认读取运行时提供的/input/spec.json、/input/objects/UUID和/input/catalogs/datasetUUID，输出仅位于本次/output。与既有forecast/simulate本机入口一致，受信任本机诊断/原生子进程回归可显式给 `--input-root` / `--output-root`；它们不是HTTP/MCP字段，Gateway固定传递默认挂载并禁止JobSpec替换命令或参数。大型输出原始字节以服务器分配UUID写入，逐次写入累计检查output_bytes，最后发表唯一NativeJobOutputIndexV1；索引至多1MiB、64个产物，未封口索引不能作为成功。编译输出qz.wasm_model与qz.model_compilation；目录验证qz.data_quality；预测qz.native_forecast；优化qz.native_allocation；模拟qz.native_simulation，均明确v1。优化INFEASIBLE保留真实诊断与空目标，不变造等权目标。原生预测含标签的报告为受限科学输入，不冒充带AlphaVersion/单位/可见时间语义的qz.alpha_signal.v1；后者必须由独立受信任科学发布服务验证和形成。
+
 ## B5. 事务与状态机
 
 ### B5.0 正式研究冻结与周期启动

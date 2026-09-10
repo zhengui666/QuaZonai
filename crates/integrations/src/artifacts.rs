@@ -88,6 +88,28 @@ impl ArtifactStore {
         result
     }
 
+    /// Trusted failed-publication recovery only. The caller must hold the original
+    /// Store authority lock and have proved this native object is unreferenced.
+    /// Never accepts a path, follows a link, scans a directory or removes a secret.
+    pub fn discard_unpublished(&self, id: Id) -> Result<(), ArtifactError> {
+        let name = id.to_string();
+        let metadata = match self.root.symlink_metadata(&name) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error.into()),
+        };
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return Err(ArtifactError::Invalid);
+        }
+        #[cfg(unix)]
+        if cap_std::fs::PermissionsExt::mode(&metadata.permissions()) & 0o777 != 0o400 {
+            return Err(ArtifactError::Invalid);
+        }
+        self.root.remove_file(&name)?;
+        self.root.open(".")?.into_std().sync_all()?;
+        Ok(())
+    }
+
     pub fn read(&self, id: Id, expected_bytes: DbCounter) -> Result<Vec<u8>, ArtifactError> {
         let count = expected_bytes.get();
         if count == 0 || count > MAX_LOCAL_OBJECT_BYTES {
@@ -148,6 +170,52 @@ mod tests {
         assert!(store.read(id, DbCounter::new(7).unwrap()).is_err());
         assert!(store.read(id, DbCounter::new(9).unwrap()).is_err());
         assert_eq!(fs::read_dir(path).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn trusted_discard_is_idempotent_and_never_scans_other_native_objects() {
+        let parent = tempfile::tempdir().unwrap();
+        let store = ArtifactStore::open(&parent.path().join("objects")).unwrap();
+        let abandoned = Id::new();
+        let retained = Id::new();
+        store.put(abandoned, b"abandoned").unwrap();
+        store.put(retained, b"retained").unwrap();
+        store.discard_unpublished(abandoned).unwrap();
+        store.discard_unpublished(abandoned).unwrap();
+        assert_eq!(
+            store.read(retained, DbCounter::new(8).unwrap()).unwrap(),
+            b"retained"
+        );
+        assert!(!parent
+            .path()
+            .join("objects")
+            .join(abandoned.to_string())
+            .exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn trusted_discard_refuses_links_and_nonpublished_permissions() {
+        use std::os::unix::fs::symlink;
+        let parent = tempfile::tempdir().unwrap();
+        let root = parent.path().join("objects");
+        let store = ArtifactStore::open(&root).unwrap();
+        let original = Id::new();
+        let link = Id::new();
+        store.put(original, b"original").unwrap();
+        symlink(root.join(original.to_string()), root.join(link.to_string())).unwrap();
+        assert!(store.discard_unpublished(link).is_err());
+        assert_eq!(
+            store.read(original, DbCounter::new(8).unwrap()).unwrap(),
+            b"original"
+        );
+        fs::set_permissions(
+            root.join(original.to_string()),
+            fs::Permissions::from_mode(0o600),
+        )
+        .unwrap();
+        assert!(store.discard_unpublished(original).is_err());
+        assert!(root.join(original.to_string()).is_file());
     }
 
     #[test]

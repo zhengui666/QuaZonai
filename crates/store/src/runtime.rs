@@ -209,6 +209,42 @@ impl Store {
         Ok(result)
     }
 
+    /// Only the trusted probe publisher supplies an ID allocated by its failed
+    /// publication attempt. No HTTP/CLI caller can use this as an artifact delete.
+    /// Reacquiring the exact original command lock waits out an uncertain commit;
+    /// a committed metadata row or native object reference always wins retention.
+    pub async fn discard_unpublished_runtime_probe<F, Fut>(
+        &self,
+        artifact: Id,
+        discard: F,
+    ) -> Result<bool, StoreError>
+    where
+        F: FnOnce(Id) -> Fut,
+        Fut: std::future::Future<Output = Result<(), StoreError>>,
+    {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SET LOCAL lock_timeout = '5s'")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("SELECT singleton FROM app.operator_auth_state WHERE singleton FOR UPDATE")
+            .fetch_one(&mut *tx)
+            .await?;
+        // A separate statement after the authority lock observes every completed
+        // original publication. Check native references as well as the row ID.
+        let referenced: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.artifacts WHERE id=$1 OR (storage_backend='LOCAL' AND storage_object_ref=$2))")
+            .bind(artifact.as_uuid())
+            .bind(artifact.to_string())
+            .fetch_one(&mut *tx)
+            .await?;
+        if referenced {
+            tx.commit().await?;
+            return Ok(false);
+        }
+        discard(artifact).await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
     pub async fn runtime_readiness(
         &self,
         actor: &Actor,

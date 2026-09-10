@@ -8,10 +8,12 @@ pub mod artifacts;
 pub mod auth;
 pub mod brief;
 pub mod budget;
+pub mod catalogs;
 pub mod codex;
 pub mod control;
 pub mod cycles;
 pub mod evidence;
+pub mod execution;
 pub mod experiments;
 pub mod lifecycle;
 pub mod portfolio;
@@ -34,7 +36,14 @@ use utoipa::OpenApi;
     cycles::CycleStartIntent,
     cycles::CycleViewV1,
     cycles::CycleStartedV1,
+    catalogs::RuntimeCatalogMetadataV1,
+    catalogs::CatalogVersionQuery,
     runtime::RuntimeCapabilitiesV1,
+    execution::NativeTaskParametersV1,
+    execution::NativeJobOutputIndexV1,
+    execution::NativeDatasetQualityV1,
+    execution::NativeDataQualityReportV1,
+    execution::NativeModelCompilationV1,
     runtime_jobs::JobSpecV1,
     runtime_jobs::RuntimeJobStatusV1,
     runtime_jobs::RuntimeCancelV1,

@@ -8,9 +8,11 @@
 pub mod admission;
 pub mod artifacts;
 pub mod brief;
+pub mod catalogs;
 pub mod codex;
 pub mod control;
 pub mod evidence;
+pub mod execution;
 pub mod experiments;
 pub mod portfolio;
 pub mod research;

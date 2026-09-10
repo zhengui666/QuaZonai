@@ -2,6 +2,8 @@
 //! artifact/PostgreSQL observation. Remote capabilities remain protocol fixtures.
 #[path = "support/runtime_native.rs"]
 mod native;
+#[path = "support/runtime_probe_cleanup.rs"]
+mod probe_cleanup;
 mod support;
 use axum::{
     body::Body,
