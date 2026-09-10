@@ -1638,10 +1638,55 @@ export interface components {
             header: components["schemas"]["InputSetSummary"];
             items: components["schemas"]["InputItemView"][];
         };
-        IntegrationSecretCreate: {
-            intent: components["schemas"]["IntegrationSecretIntent"];
+        IntegrationSecretCreate: ({
+            intent: {
+                label: string;
+                purpose: components["schemas"]["IntegrationSecretPurpose"];
+                schema_version: components["schemas"]["SchemaV1"];
+            };
             value: string;
-        };
+        } & {
+            intent?: {
+                /** @enum {string} */
+                purpose?: "RUNTIME";
+            };
+        }) | ({
+            intent: {
+                label: string;
+                purpose: components["schemas"]["IntegrationSecretPurpose"];
+                schema_version: components["schemas"]["SchemaV1"];
+            };
+            value: string;
+        } & {
+            intent?: {
+                /** @enum {string} */
+                purpose?: "DOWNSTREAM";
+            };
+        }) | ({
+            intent: {
+                label: string;
+                purpose: components["schemas"]["IntegrationSecretPurpose"];
+                schema_version: components["schemas"]["SchemaV1"];
+            };
+            value: string;
+        } & {
+            intent?: {
+                /** @enum {string} */
+                purpose?: "CUSTOM_PROVIDER";
+            };
+        }) | ({
+            intent: {
+                label: string;
+                purpose: components["schemas"]["IntegrationSecretPurpose"];
+                schema_version: components["schemas"]["SchemaV1"];
+            };
+            value: string;
+        } & {
+            intent?: {
+                /** @enum {string} */
+                purpose?: "TLS_CA";
+            };
+        });
         IntegrationSecretIntent: {
             label: string;
             purpose: components["schemas"]["IntegrationSecretPurpose"];
@@ -2225,11 +2270,37 @@ export interface components {
             tls_policy: components["schemas"]["TlsPolicy"];
         };
         RuntimeCreate: {
-            ca_certificate_ref?: null | components["schemas"]["Id"];
-            configuration: components["schemas"]["RuntimeConfigurationV1"];
-            credential_ref: components["schemas"]["Id"];
-            schema_version: components["schemas"]["SchemaV1"];
-        };
+            ca_certificate_ref?: null | string;
+            configuration: {
+                allowed_capabilities: components["schemas"]["RunKind"][];
+                /** @description Both this setting and the deployment must explicitly permit literal-loopback HTTP. */
+                development_http: boolean;
+                enabled: boolean;
+                /** @description Only an origin. Registration does not send network traffic or attest readiness. */
+                endpoint: string;
+                name: string;
+                tls_policy: components["schemas"]["TlsPolicy"];
+            };
+            /** Format: uuid */
+            credential_ref: string;
+            /** @enum {integer} */
+            schema_version: 1;
+        } & ({
+            ca_certificate_ref?: null;
+            configuration?: {
+                /** @enum {string} */
+                tls_policy?: "SYSTEM_CA";
+            };
+        } | {
+            /** Format: uuid */
+            ca_certificate_ref: string;
+            configuration?: {
+                /** @enum {boolean} */
+                development_http?: false;
+                /** @enum {string} */
+                tls_policy?: "PINNED_CA";
+            };
+        });
         /** @enum {string} */
         RuntimeDataKind: "BAR" | "QUOTE" | "TRADE" | "ORDER_BOOK" | "FUNDAMENTAL" | "EVENT" | "DERIVED_FEATURE";
         RuntimeImageV1: {
@@ -2274,12 +2345,36 @@ export interface components {
             state: components["schemas"]["RuntimeReadinessState"];
         };
         RuntimeUpdate: {
-            ca_certificate_ref?: null | components["schemas"]["Id"];
-            configuration: components["schemas"]["RuntimeConfigurationV1"];
-            credential_ref?: null | components["schemas"]["Id"];
-            expected_revision: components["schemas"]["Revision"];
-            schema_version: components["schemas"]["SchemaV1"];
-        };
+            ca_certificate_ref?: null | string;
+            configuration: {
+                allowed_capabilities: components["schemas"]["RunKind"][];
+                /** @description Both this setting and the deployment must explicitly permit literal-loopback HTTP. */
+                development_http: boolean;
+                enabled: boolean;
+                /** @description Only an origin. Registration does not send network traffic or attest readiness. */
+                endpoint: string;
+                name: string;
+                tls_policy: components["schemas"]["TlsPolicy"];
+            };
+            credential_ref?: null | string;
+            /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
+            expected_revision: string;
+            /** @enum {integer} */
+            schema_version: 1;
+        } & ({
+            ca_certificate_ref?: null;
+            configuration?: {
+                /** @enum {string} */
+                tls_policy?: "SYSTEM_CA";
+            };
+        } | {
+            configuration?: {
+                /** @enum {boolean} */
+                development_http?: false;
+                /** @enum {string} */
+                tls_policy?: "PINNED_CA";
+            };
+        });
         RuntimeVenueV1: {
             data_kinds: components["schemas"]["RuntimeDataKind"][];
             expiry_and_settlement: boolean;

@@ -11,7 +11,10 @@ use std::{
 use store::lifecycle::RuntimeSnapshot;
 use url::{Host, Url};
 
-const MAX_RESPONSE: usize = 1024 * 1024;
+mod jobs;
+mod json;
+
+pub use jobs::{ReceivedRuntimeResult, RuntimeRequestError};
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -137,19 +140,6 @@ pub struct RuntimeTransport {
     credential: String,
 }
 
-fn reflects_credential(value: &serde_json::Value, credential: &str) -> bool {
-    match value {
-        serde_json::Value::String(value) => value.contains(credential),
-        serde_json::Value::Array(values) => values
-            .iter()
-            .any(|value| reflects_credential(value, credential)),
-        serde_json::Value::Object(values) => values
-            .iter()
-            .any(|(key, value)| key.contains(credential) || reflects_credential(value, credential)),
-        _ => false,
-    }
-}
-
 impl RuntimeTransport {
     pub fn new(
         targets: &RuntimeTargets,
@@ -229,60 +219,20 @@ impl RuntimeTransport {
     pub async fn capabilities(&self) -> Result<RuntimeCapabilitiesV1, RuntimeProbeFailure> {
         let mut url = self.origin.clone();
         url.set_path("/runtime/v1/capabilities");
-        let mut response = self
+        let response = self
             .client
             .get(url)
             .send()
             .await
             .map_err(|_| RuntimeProbeFailure::Unavailable)?;
-        if response.status() != StatusCode::OK {
-            return Err(match response.status().as_u16() {
-                401 | 403 => RuntimeProbeFailure::Authentication,
-                400..=499 => RuntimeProbeFailure::ContractUnsupported,
-                _ => RuntimeProbeFailure::Unavailable,
-            });
-        }
-        let media = response
-            .headers()
-            .get(header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.split(';').next());
-        if !media.is_some_and(|value| value.trim().eq_ignore_ascii_case("application/json"))
-            || response
-                .headers()
-                .get(header::CONTENT_ENCODING)
-                .is_some_and(|value| value != "identity")
-        {
-            return Err(RuntimeProbeFailure::ContractUnsupported);
-        }
-        if response
-            .content_length()
-            .is_some_and(|bytes| bytes > MAX_RESPONSE as u64)
-        {
-            return Err(RuntimeProbeFailure::ResponseLimit);
-        }
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
+        let (capabilities, _) = self
+            .json_response(
+                response,
+                &[StatusCode::OK],
+                domain::runtime_jobs::MAX_RESULT_MANIFEST_BYTES,
+            )
             .await
-            .map_err(|_| RuntimeProbeFailure::Unavailable)?
-        {
-            if chunk.len() > MAX_RESPONSE.saturating_sub(bytes.len()) {
-                return Err(RuntimeProbeFailure::ResponseLimit);
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        // Check decoded strings as well as keys: escaped response text must not
-        // turn an Authorization reflection into a persisted public observation.
-        let decoded: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|_| RuntimeProbeFailure::ContractUnsupported)?;
-        if reflects_credential(&decoded, &self.credential) {
-            return Err(RuntimeProbeFailure::ContractUnsupported);
-        }
-        // Deserialize the original bytes again so duplicate known fields remain
-        // errors rather than being silently collapsed by Value's object map.
-        let capabilities: RuntimeCapabilitiesV1 =
-            serde_json::from_slice(&bytes).map_err(|_| RuntimeProbeFailure::ContractUnsupported)?;
+            .map_err(RuntimeRequestError::probe)?;
         domain::runtime::capabilities(&capabilities, chrono::Utc::now())
             .map_err(|_| RuntimeProbeFailure::ContractUnsupported)?;
         Ok(capabilities)

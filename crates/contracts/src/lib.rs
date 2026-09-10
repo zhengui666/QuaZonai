@@ -18,6 +18,7 @@ pub mod portfolio;
 pub mod research;
 pub mod runs;
 pub mod runtime;
+pub mod runtime_jobs;
 pub mod scalars;
 pub mod science;
 pub mod settings;
@@ -34,6 +35,11 @@ use utoipa::OpenApi;
     cycles::CycleViewV1,
     cycles::CycleStartedV1,
     runtime::RuntimeCapabilitiesV1,
+    runtime_jobs::JobSpecV1,
+    runtime_jobs::RuntimeJobStatusV1,
+    runtime_jobs::RuntimeCancelV1,
+    runtime_jobs::ResultManifestV1,
+    runtime_jobs::RuntimeObjectReceiptV1,
     runtime::RuntimeProbeRequestV1,
     runtime::RuntimeProbeViewV1,
     runtime::RuntimeReadinessV1,

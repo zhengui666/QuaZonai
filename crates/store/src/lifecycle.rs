@@ -474,12 +474,14 @@ impl Store {
             .await?
             .ok_or(StoreError::NotFound)?;
         let caps: Vec<String> = r.try_get("allowed_capabilities")?;
-        if !r.try_get::<bool, _>("enabled")?
-            || r.try_get::<i64, _>("revision")? != request.runtime_revision.get() as i64
-            || !caps.contains(&db::code(&request.kind)?)
-        {
-            return Err(DomainError::CapabilityUnavailable("runtime_job_kind_or_revision").into());
-        }
+        crate::runtime::require_job(
+            &mut tx,
+            request.runtime_id,
+            request.runtime_revision,
+            request.kind,
+            &request.limits,
+        )
+        .await?;
         let runtime = RuntimeSnapshot {
             schema_version: SchemaV1,
             endpoint: r.try_get("endpoint")?,
@@ -632,12 +634,14 @@ impl Store {
             .await?
             .ok_or(StoreError::NotFound)?;
         let caps: Vec<String> = r.try_get("allowed_capabilities")?;
-        if !r.try_get::<bool, _>("enabled")?
-            || r.try_get::<i64, _>("revision")? != request.runtime_revision.get() as i64
-            || !caps.contains(&db::code(&request.kind)?)
-        {
-            return Err(DomainError::CapabilityUnavailable("runtime_job_kind_or_revision").into());
-        }
+        crate::runtime::require_job(
+            &mut tx,
+            request.runtime_id,
+            request.runtime_revision,
+            request.kind,
+            &request.limits,
+        )
+        .await?;
         let active: i64 = sqlx::query_scalar("SELECT count(*) FROM app.runs WHERE project_id=$1 AND cycle_id IS NULL AND state NOT IN ('SUCCEEDED','FAILED','CANCELLED')")
             .bind(request.project_id.as_uuid()).fetch_one(&mut *tx).await?;
         if active >= i64::from(request.max_parallel_runs) {
@@ -830,18 +834,16 @@ impl Store {
             db::id(locked.admission.try_get("runtime_id")?)?,
         )
         .await?;
-        let runtime = sqlx::query(
-            "SELECT enabled,revision::bigint FROM app.runtime_integrations WHERE id=$1 FOR SHARE",
+        let limits: JobLimitsV1 = serde_json::from_value(locked.admission.try_get("limits")?)
+            .map_err(|_| StoreError::Integrity)?;
+        crate::runtime::require_job(
+            &mut tx,
+            db::id(locked.admission.try_get("runtime_id")?)?,
+            db::revision(locked.admission.try_get("runtime_revision")?)?,
+            locked.run.kind,
+            &limits,
         )
-        .bind(locked.admission.try_get::<uuid::Uuid, _>("runtime_id")?)
-        .fetch_one(&mut *tx)
         .await?;
-        if !runtime.try_get::<bool, _>("enabled")?
-            || runtime.try_get::<i64, _>("revision")?
-                != locked.admission.try_get::<i64, _>("runtime_revision")?
-        {
-            return Err(DomainError::CapabilityUnavailable("runtime_revision_changed").into());
-        }
         // Runtime configuration can be locked by an Operator update. A lease
         // valid before that wait is not authority after it; query DB time only
         // after the last potentially conflicting authority lock.

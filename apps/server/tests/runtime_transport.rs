@@ -52,6 +52,31 @@ async fn native_http_returns_the_actual_strict_observation_once() {
 }
 
 #[tokio::test]
+async fn short_runtime_credentials_fail_authentication_before_any_native_request() {
+    let server = native_http(StatusCode::OK, b"{}".to_vec(), None, false).await;
+    let endpoint = format!("http://{}", server.address);
+    let targets = RuntimeTargets::new(
+        vec![RuntimeTarget {
+            origin: endpoint.clone(),
+            addresses: vec![server.address],
+        }],
+        true,
+    )
+    .unwrap();
+    for value in [
+        b"a".as_slice(),
+        b"schema_version".as_slice(),
+        b"1234567890123456789012345678901".as_slice(),
+    ] {
+        assert!(matches!(
+            RuntimeTransport::new(&targets, &snapshot(endpoint.clone(), true), value, None),
+            Err(RuntimeProbeFailure::Authentication)
+        ));
+    }
+    assert_eq!(server.requests.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn redirection_never_transfers_the_runtime_credential_to_another_listener() {
     let sink = native_http(StatusCode::OK, b"{}".to_vec(), None, false).await;
     let redirect = native_http(

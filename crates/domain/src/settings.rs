@@ -16,8 +16,12 @@ pub fn secret_value(purpose: IntegrationSecretPurpose, value: &str) -> Result<()
             !value.is_empty() && value.len() <= 65536 && value.is_ascii()
         }
         _ => {
-            !value.is_empty()
-                && value.len() <= 8192
+            let minimum = if purpose == IntegrationSecretPurpose::Runtime {
+                RUNTIME_CREDENTIAL_MIN_LENGTH
+            } else {
+                1
+            };
+            (minimum..=8192).contains(&value.len())
                 && value.bytes().all(|byte| (b'!'..=b'~').contains(&byte))
         }
     };

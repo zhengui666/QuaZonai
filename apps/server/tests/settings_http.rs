@@ -1,4 +1,5 @@
 //! Actual Axum/native private sessions, TOTP, AEAD and PostgreSQL. No fake auth.
+//! Failure diagnostics never print responses, decrypted bytes or tokens.
 mod support;
 use axum::{
     body::Body,
@@ -16,7 +17,7 @@ async fn authenticated(pool: PgPool) -> (Fixture, String) {
     let f = fixture(pool).await;
     let (enrollment, anonymous, native) = start(&f).await;
     let (reply, _) = confirm(&f, &enrollment, &anonymous, &native, true).await;
-    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    assert_eq!(reply.status, StatusCode::OK);
     let cookie = reply.cookie.unwrap();
     (f, cookie)
 }
@@ -82,7 +83,7 @@ async fn plaintext_never_enters_public_response_or_database_receipt(pool: PgPool
     let (f, cookie) = authenticated(pool.clone()).await;
     let value = "RANDOM_INTEGRATION_SECRET_SENTINEL_8t3GvX";
     let response = secret(&f, &cookie, "one", "RUNTIME", value).await;
-    assert_eq!(response.status, StatusCode::CREATED, "{}", response.body);
+    assert_eq!(response.status, StatusCode::CREATED);
     assert_eq!(response.headers[header::CACHE_CONTROL], "no-store");
     assert!(!response.body.to_string().contains(value));
     assert!(response.body["resource"].get("value").is_none());
@@ -92,7 +93,10 @@ async fn plaintext_never_enters_public_response_or_database_receipt(pool: PgPool
         .to_owned()
         .try_into()
         .unwrap();
-    assert_eq!(vault(&f).read(id, "RUNTIME").unwrap(), value.as_bytes());
+    assert!(
+        vault(&f).read(id, "RUNTIME").unwrap() == value.as_bytes(),
+        "native secret value mismatch"
+    );
     let encrypted = fs::read(f._state.path().join("secrets").join(id.to_string())).unwrap();
     assert!(!encrypted
         .windows(value.len())
@@ -102,11 +106,27 @@ async fn plaintext_never_enters_public_response_or_database_receipt(pool: PgPool
     assert!(!records[0].to_string().contains(value));
     let again = secret(&f, &cookie, "one", "RUNTIME", value).await;
     assert_eq!(again.status, StatusCode::CREATED);
-    assert_eq!(again.body["replayed"], true);
-    assert_eq!(again.body["resource"], response.body["resource"]);
-    let conflict = secret(&f, &cookie, "one", "RUNTIME", "different-native-secret").await;
+    assert!(
+        again.body["replayed"] == true,
+        "secret replay flag mismatch"
+    );
+    assert!(
+        again.body["resource"] == response.body["resource"],
+        "secret replay resource mismatch"
+    );
+    let conflict = secret(
+        &f,
+        &cookie,
+        "one",
+        "RUNTIME",
+        "different-native-secret-fixture-32-byte-minimum",
+    )
+    .await;
     assert_eq!(conflict.status, StatusCode::CONFLICT);
-    assert_eq!(vault(&f).read(id, "RUNTIME").unwrap(), value.as_bytes());
+    assert!(
+        vault(&f).read(id, "RUNTIME").unwrap() == value.as_bytes(),
+        "native secret value mismatch"
+    );
     let forbidden = http(
         &f,
         "GET",
@@ -121,7 +141,14 @@ async fn plaintext_never_enters_public_response_or_database_receipt(pool: PgPool
 #[sqlx::test(migrations = "../../migrations")]
 async fn runtime_configuration_uses_native_reference_and_never_claims_probe_success(pool: PgPool) {
     let (f, cookie) = authenticated(pool.clone()).await;
-    let credential = secret(&f, &cookie, "runtime-key", "RUNTIME", "original-capability").await;
+    let credential = secret(
+        &f,
+        &cookie,
+        "runtime-key",
+        "RUNTIME",
+        "original-capability-fixture-32-byte-minimum",
+    )
+    .await;
     assert_eq!(credential.status, StatusCode::CREATED);
     let original = runtime(credential.body["resource"]["id"].clone());
     let response = browser(
@@ -133,10 +160,13 @@ async fn runtime_configuration_uses_native_reference_and_never_claims_probe_succ
         original.clone(),
     )
     .await;
-    assert_eq!(response.status, StatusCode::CREATED, "{}", response.body);
+    assert_eq!(response.status, StatusCode::CREATED);
     let resource = &response.body["resource"];
-    assert_eq!(resource["credential_configured"], true);
-    assert_eq!(resource["ca_configured"], false);
+    assert!(
+        resource["credential_configured"] == true,
+        "credential state mismatch"
+    );
+    assert!(resource["ca_configured"] == false, "CA state mismatch");
     assert!(resource.get("credential_ref").is_none());
     assert!(resource.get("readiness").is_none());
     assert!(resource["last_capability_snapshot_artifact_id"].is_null());
@@ -152,8 +182,11 @@ async fn runtime_configuration_uses_native_reference_and_never_claims_probe_succ
         update.clone(),
     )
     .await;
-    assert_eq!(result.status, StatusCode::OK, "{}", result.body);
-    assert_eq!(result.body["resource"]["configuration"]["enabled"], false);
+    assert_eq!(result.status, StatusCode::OK);
+    assert!(
+        result.body["resource"]["configuration"]["enabled"] == false,
+        "runtime disabled state mismatch"
+    );
     let stale = browser(
         &f,
         &cookie,
@@ -164,9 +197,9 @@ async fn runtime_configuration_uses_native_reference_and_never_claims_probe_succ
     )
     .await;
     assert_eq!(stale.status, StatusCode::CONFLICT);
-    assert_eq!(
-        stale.body["current_revision"],
-        result.body["resource"]["revision"]
+    assert!(
+        stale.body["current_revision"] == result.body["resource"]["revision"],
+        "stale revision response mismatch"
     );
     let replay = browser(
         &f,
@@ -177,8 +210,14 @@ async fn runtime_configuration_uses_native_reference_and_never_claims_probe_succ
         original,
     )
     .await;
-    assert_eq!(replay.body["resource"], *resource);
-    assert_eq!(replay.body["replayed"], true);
+    assert!(
+        replay.body["resource"] == *resource,
+        "runtime replay mismatch"
+    );
+    assert!(
+        replay.body["replayed"] == true,
+        "runtime replay flag mismatch"
+    );
     let page = http(
         &f,
         "GET",
@@ -213,12 +252,7 @@ async fn wrong_secret_purpose_invalid_ca_and_production_http_do_not_publish(pool
         value.clone(),
     )
     .await;
-    assert_eq!(
-        denied.status,
-        StatusCode::UNPROCESSABLE_ENTITY,
-        "{}",
-        denied.body
-    );
+    assert_eq!(denied.status, StatusCode::UNPROCESSABLE_ENTITY);
     let invalid = secret(
         &f,
         &cookie,
@@ -250,7 +284,7 @@ async fn wrong_secret_purpose_invalid_ca_and_production_http_do_not_publish(pool
         &f,
         "POST",
         "/api/v2/settings/credentials",
-        json!({"intent":{"schema_version":1,"purpose":"RUNTIME","label":"test"},"value":"secret"}),
+        json!({"intent":{"schema_version":1,"purpose":"RUNTIME","label":"test"},"value":"authorization-boundary-fixture-32-byte-minimum"}),
         &[
             ("origin", "https://research.example"),
             ("idempotency-key", "anonymous"),
@@ -281,11 +315,11 @@ async fn downstream_and_doctor_authority_follow_the_real_machine_channel(pool: P
         request.clone(),
     )
     .await;
-    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    assert_eq!(created.status, StatusCode::CREATED);
     let principal=browser(&f,&cookie,"doctor","POST","/api/v2/machine-principals",json!({"schema_version":1,"name":"Read-only doctor","kind":"CLI","project_id":null,"downstream_id":null,"enabled":true})).await;
-    assert_eq!(principal.status, StatusCode::CREATED, "{}", principal.body);
+    assert_eq!(principal.status, StatusCode::CREATED);
     let issued=browser(&f,&cookie,"doctor-credential","POST",&format!("/api/v2/machine-principals/{}/credentials",principal.body["resource"]["id"].as_str().unwrap()),json!({"schema_version":1,"scope_codes":["DOCTOR_READ"],"expires_at":Utc::now()+Duration::hours(1)})).await;
-    assert_eq!(issued.status, StatusCode::CREATED, "{}", issued.body);
+    assert_eq!(issued.status, StatusCode::CREATED);
     let bearer = format!("Bearer {}", issued.body["token"].as_str().unwrap());
     let read = http(
         &f,
@@ -295,7 +329,7 @@ async fn downstream_and_doctor_authority_follow_the_real_machine_channel(pool: P
         &[("authorization", &bearer)],
     )
     .await;
-    assert_eq!(read.status, StatusCode::OK, "{}", read.body);
+    assert_eq!(read.status, StatusCode::OK);
     assert!(!read.body.to_string().contains("recipient-capability"));
     assert!(read.body["items"][0].get("credential_ref").is_none());
     let denied = http(
@@ -310,7 +344,7 @@ async fn downstream_and_doctor_authority_follow_the_real_machine_channel(pool: P
     )
     .await;
     assert_eq!(denied.status, StatusCode::FORBIDDEN);
-    let denied=http(&f,"POST","/api/v2/settings/credentials",json!({"intent":{"schema_version":1,"purpose":"RUNTIME","label":"forbidden"},"value":"secret"}),&[("authorization",&bearer),("idempotency-key","machine-secret")]).await;
+    let denied=http(&f,"POST","/api/v2/settings/credentials",json!({"intent":{"schema_version":1,"purpose":"RUNTIME","label":"forbidden"},"value":"authorization-boundary-fixture-32-byte-minimum"}),&[("authorization",&bearer),("idempotency-key","machine-secret")]).await;
     assert_eq!(denied.status, StatusCode::FORBIDDEN);
 }
 
@@ -318,13 +352,31 @@ async fn downstream_and_doctor_authority_follow_the_real_machine_channel(pool: P
 async fn concurrent_identical_secret_writes_keep_one_native_object_and_receipt(pool: PgPool) {
     let (f, cookie) = authenticated(pool.clone()).await;
     let (a, b) = tokio::join!(
-        secret(&f, &cookie, "same", "RUNTIME", "one-capability"),
-        secret(&f, &cookie, "same", "RUNTIME", "one-capability")
+        secret(
+            &f,
+            &cookie,
+            "same",
+            "RUNTIME",
+            "one-capability-fixture-32-byte-minimum"
+        ),
+        secret(
+            &f,
+            &cookie,
+            "same",
+            "RUNTIME",
+            "one-capability-fixture-32-byte-minimum"
+        )
     );
-    assert_eq!(a.status, StatusCode::CREATED, "{}", a.body);
-    assert_eq!(b.status, StatusCode::CREATED, "{}", b.body);
-    assert_eq!(a.body["resource"], b.body["resource"]);
-    assert_ne!(a.body["replayed"], b.body["replayed"]);
+    assert_eq!(a.status, StatusCode::CREATED);
+    assert_eq!(b.status, StatusCode::CREATED);
+    assert!(
+        a.body["resource"] == b.body["resource"],
+        "concurrent secret resource mismatch"
+    );
+    assert!(
+        a.body["replayed"] != b.body["replayed"],
+        "concurrent secret replay flags must differ"
+    );
     let count: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM app.command_receipts WHERE operation='INTEGRATION_SECRET_REGISTER'",
     )
@@ -338,7 +390,10 @@ async fn concurrent_identical_secret_writes_keep_one_native_object_and_receipt(p
         .to_owned()
         .try_into()
         .unwrap();
-    assert_eq!(vault(&f).read(id, "RUNTIME").unwrap(), b"one-capability");
+    assert!(
+        vault(&f).read(id, "RUNTIME").unwrap() == b"one-capability-fixture-32-byte-minimum",
+        "native secret value mismatch"
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -360,7 +415,7 @@ async fn disconnected_request_preserves_the_single_admitted_secret_command(pool:
             .header(header::HOST,"research.example").header(header::ORIGIN,"https://research.example")
             .header(header::COOKIE,cookie_copy).header(header::CONTENT_TYPE,"application/json")
             .header("idempotency-key","disconnected")
-            .body(Body::from(json!({"intent":{"schema_version":1,"purpose":"RUNTIME","label":"Private integration credential"},"value":"survives-disconnection"}).to_string())).unwrap();
+            .body(Body::from(json!({"intent":{"schema_version":1,"purpose":"RUNTIME","label":"Private integration credential"},"value":"survives-disconnection-fixture-32-byte-minimum"}).to_string())).unwrap();
         exchange(&app, request).await
     });
     tokio::time::timeout(std::time::Duration::from_secs(10),async {
@@ -386,19 +441,22 @@ async fn disconnected_request_preserves_the_single_admitted_secret_command(pool:
         &cookie,
         "disconnected",
         "RUNTIME",
-        "survives-disconnection",
+        "survives-disconnection-fixture-32-byte-minimum",
     )
     .await;
-    assert_eq!(retry.status, StatusCode::CREATED, "{}", retry.body);
-    assert_eq!(retry.body["replayed"], true);
+    assert_eq!(retry.status, StatusCode::CREATED);
+    assert!(
+        retry.body["replayed"] == true,
+        "disconnected secret replay flag mismatch"
+    );
     let id: Id = retry.body["resource"]["id"]
         .as_str()
         .unwrap()
         .to_owned()
         .try_into()
         .unwrap();
-    assert_eq!(
-        vault(&f).read(id, "RUNTIME").unwrap(),
-        b"survives-disconnection"
+    assert!(
+        vault(&f).read(id, "RUNTIME").unwrap() == b"survives-disconnection-fixture-32-byte-minimum",
+        "native secret value mismatch"
     );
 }

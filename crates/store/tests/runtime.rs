@@ -4,7 +4,7 @@
 mod research;
 #[path = "../../../tests/support/runtime.rs"]
 mod support;
-use contracts::{runs::RunKind, runtime::*, settings::*, DbCounter, Id, SchemaV1};
+use contracts::{runs::RunKind, runtime::*, settings::*, Id, SchemaV1};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use store::{
@@ -53,13 +53,10 @@ async fn prepare(store: &Store, actor: &Actor, runtime: &RuntimeView, key: &str)
         _ => panic!("fresh native probe ticket expected"),
     }
 }
-fn bytes(outcome: &RuntimeProbeOutcomeV1) -> DbCounter {
-    DbCounter::new(
-        serde_json::to_vec(&json!({"schema_version":1,"result":outcome}))
-            .unwrap()
-            .len() as u64,
-    )
-    .unwrap()
+async fn publish_fixture(_: Id, bytes: Vec<u8>) -> Result<(), StoreError> {
+    let document: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(document["schema_version"], json!(1));
+    Ok(())
 }
 fn available() -> RuntimeProbeOutcomeV1 {
     RuntimeProbeOutcomeV1::Available {
@@ -81,7 +78,7 @@ async fn real_observation_not_saved_configuration_controls_readiness(pool: PgPoo
     let ticket = prepare(&store, &actor, &runtime, "probe").await;
     let outcome = available();
     let result = store
-        .complete_runtime_probe(ticket, outcome.clone(), Id::new(), bytes(&outcome))
+        .complete_runtime_probe(ticket, outcome.clone(), publish_fixture)
         .await
         .unwrap();
     let readiness = store.runtime_readiness(&actor, runtime.id).await.unwrap();
@@ -119,8 +116,7 @@ async fn failures_invalidate_previous_success_and_original_replays_do_not_probe_
         .complete_runtime_probe(
             prepare(&store, &actor, &runtime, "first").await,
             initial.clone(),
-            Id::new(),
-            bytes(&initial),
+            publish_fixture,
         )
         .await
         .unwrap();
@@ -131,8 +127,7 @@ async fn failures_invalidate_previous_success_and_original_replays_do_not_probe_
         .complete_runtime_probe(
             prepare(&store, &actor, &runtime, "second").await,
             failed.clone(),
-            Id::new(),
-            bytes(&failed),
+            publish_fixture,
         )
         .await
         .unwrap();
@@ -187,7 +182,7 @@ async fn native_io_holds_no_db_lock_and_changed_configuration_cannot_adopt_its_r
     let outcome = available();
     assert!(matches!(
         store
-            .complete_runtime_probe(ticket, outcome.clone(), Id::new(), bytes(&outcome))
+            .complete_runtime_probe(ticket, outcome.clone(), publish_fixture)
             .await,
         Err(StoreError::RevisionConflict { .. })
     ));
@@ -216,7 +211,7 @@ async fn credential_authority_is_rechecked_after_the_native_roundtrip(pool: PgPo
         .unwrap();
     let outcome = available();
     assert!(store
-        .complete_runtime_probe(ticket, outcome.clone(), Id::new(), bytes(&outcome))
+        .complete_runtime_probe(ticket, outcome.clone(), publish_fixture)
         .await
         .is_err());
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM app.runtime_probe_observations")
@@ -232,16 +227,61 @@ async fn concurrent_same_command_accepts_one_original_observation(pool: PgPool) 
     let a = prepare(&store, &actor, &runtime, "same").await;
     let b = prepare(&store, &actor, &runtime, "same").await;
     let outcome = available();
+    let publications = std::sync::atomic::AtomicUsize::new(0);
+    let published = &publications;
+    let publish = |id, bytes| async move {
+        published.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        publish_fixture(id, bytes).await
+    };
     let (a, b) = tokio::join!(
-        store.complete_runtime_probe(a, outcome.clone(), Id::new(), bytes(&outcome)),
-        store.complete_runtime_probe(b, outcome.clone(), Id::new(), bytes(&outcome))
+        store.complete_runtime_probe(a, outcome.clone(), publish),
+        store.complete_runtime_probe(b, outcome.clone(), publish)
     );
+    assert_eq!(publications.load(std::sync::atomic::Ordering::SeqCst), 1);
     let (a, b) = (a.unwrap(), b.unwrap());
     assert_ne!(a.replayed, b.replayed);
     assert_eq!(a.resource.id, b.resource.id);
     let counts: (i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.runtime_probe_observations),(SELECT count(*) FROM app.command_receipts WHERE operation='RUNTIME_PROBE')")
         .fetch_one(&pool).await.unwrap();
     assert_eq!(counts, (1, 1));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn failed_native_publication_leaves_no_metadata_or_receipt_and_retry_can_succeed(
+    pool: PgPool,
+) {
+    let (store, actor, runtime) = fixture(&pool).await;
+    let ticket = prepare(&store, &actor, &runtime, "publication-retry").await;
+    let result = store
+        .complete_runtime_probe(ticket, available(), |_, _| async {
+            Err(StoreError::Invalid("publication_failure_fixture"))
+        })
+        .await;
+    assert!(matches!(
+        result,
+        Err(StoreError::Invalid("publication_failure_fixture"))
+    ));
+    let counts: (i64, i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.runtime_probe_observations),(SELECT count(*) FROM app.command_receipts WHERE operation='RUNTIME_PROBE'),(SELECT count(*) FROM app.artifacts WHERE schema_name='qz.runtime_probe')")
+        .fetch_one(&pool).await.unwrap();
+    assert_eq!(counts, (0, 0, 0));
+    let ticket = prepare(&store, &actor, &runtime, "publication-retry").await;
+    let outcome = available();
+    let expected = serde_json::to_vec(&json!({"schema_version":1,"result":outcome})).unwrap();
+    let size = expected.len() as i64;
+    let result = store
+        .complete_runtime_probe(ticket, outcome, |_, bytes| async move {
+            assert_eq!(bytes, expected);
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert!(!result.replayed);
+    let stored: i64 = sqlx::query_scalar("SELECT byte_count FROM app.artifacts WHERE id=$1")
+        .bind(result.resource.snapshot_artifact_id.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stored, size);
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -252,8 +292,7 @@ async fn old_observation_and_disabled_runtime_never_admit_capabilities(pool: PgP
         .complete_runtime_probe(
             prepare(&store, &actor, &runtime, "initial").await,
             outcome.clone(),
-            Id::new(),
-            bytes(&outcome),
+            publish_fixture,
         )
         .await
         .unwrap();

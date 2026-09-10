@@ -4,6 +4,11 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+mod schema;
+
+/// A wire-shape minimum, not an assertion about credential entropy.
+pub const RUNTIME_CREDENTIAL_MIN_LENGTH: usize = 32;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum IntegrationSecretPurpose {
@@ -33,11 +38,10 @@ pub struct IntegrationSecretIntent {
 }
 
 // Deliberately no Debug: this write-only request contains a secret.
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct IntegrationSecretCreate {
     pub intent: IntegrationSecretIntent,
-    #[schema(min_length = 1, max_length = 65536, write_only)]
     pub value: String,
 }
 
@@ -74,7 +78,7 @@ pub struct RuntimeConfigurationV1 {
     pub development_http: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeCreate {
     pub schema_version: SchemaV1,
@@ -83,7 +87,7 @@ pub struct RuntimeCreate {
     pub ca_certificate_ref: Option<Id>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeUpdate {
     pub schema_version: SchemaV1,

@@ -12,7 +12,6 @@ use contracts::{
     runtime::{RuntimeProbeOutcomeV1, RuntimeProbeRequestV1},
     DbCounter, Id, SchemaV1,
 };
-use serde_json::json;
 use sqlx::PgPool;
 use store::{authority::Actor, runtime::ProbePreparation, Store};
 
@@ -60,21 +59,23 @@ pub async fn setup(pool: &PgPool, store: &Store, actor: &Actor) -> Fixture {
     else {
         panic!("native fixture ticket expected")
     };
+    let mut observed = runtime_support::capabilities(Utc::now());
+    observed
+        .job_kinds
+        .push(contracts::runs::RunKind::AgentResearch);
+    observed
+        .image_refs
+        .push(contracts::runtime::RuntimeImageV1 {
+            job_kind: contracts::runs::RunKind::AgentResearch,
+            image_ref: observed.image_refs[0].image_ref.clone(),
+        });
     let outcome = RuntimeProbeOutcomeV1::Available {
-        capabilities: Box::new(runtime_support::capabilities(Utc::now())),
+        capabilities: Box::new(observed),
     };
-    let count = serde_json::to_vec(&json!({"schema_version":1,"result":outcome}))
-        .unwrap()
-        .len();
     // This trusted adapter outcome is explicitly synthetic test setup. The
     // independent runtime_http test exercises actual TLS and ArtifactStore bytes.
     store
-        .complete_runtime_probe(
-            *ticket,
-            outcome,
-            Id::new(),
-            DbCounter::new(count as u64).unwrap(),
-        )
+        .complete_runtime_probe(*ticket, outcome, |_, _| async { Ok(()) })
         .await
         .unwrap();
     let cutoff = DateTime::parse_from_rfc3339("2020-01-03T00:00:00Z")

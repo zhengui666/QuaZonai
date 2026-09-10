@@ -604,6 +604,16 @@ data_use_revocations [append-only]
 
 必须 `unique(dataset_revisions.source_id,native_snapshot_ref,native_storage_version)` 和 `unique(data_sources.runtime_id,native_catalog_ref)`；相同原生身份同请求返回已有记录，不同partition/授权等409。服务端registry规范化来源；迁移/别名映射已有身份并继承暴露，无法证明独立时LEGACY_UNKNOWN，不能获得sealed资格。此项不得以应用内容hash实现。
 
+### Runtime 实际可用性与调度边界
+
+Runtime 配置中的 enabled、allowed_capabilities 仅表达 Operator 意图，不是实际可用性。Cycle 与 standalone Run 的共同准入事务，以及 Attempt 首次由 NOT_SENT 转为 SENT_UNKNOWN 前，必须读取当前配置 revision 对应、尚未过期的成功原生探测，核对 job kind 和实际 max_wall_seconds / max_memory_mib / max_output_bytes。预算上限不能代替执行环境上限；cpu_seconds 是累计记账预算，不得错误解释为申请的 CPU 核数。拒绝必须与 Run、预算预留、事件、PGMQ 消息、幂等回执一起回滚。已经发出但结果未知的稳定远端身份仍须查询、取消和对账，不能因当前 Runtime 不健康而跳过恢复，也不能重建新 Attempt 重跑研究。
+
+探测网络 I/O 在事务外执行。网络返回后，只有取得命令幂等回执所有权的一方可通过有界本地存储回调发布 Store 分配的快照 ID 与精确字节；并发重放不调用回调、不留下额外快照。发布后再次检查授权和探测有效期，再原子提交快照元数据、观测与回执。数据库提交结果未知时保留可能已被引用的对象，不以猜测为依据删除。探测只证明集成可用性，不构成科学评估证据。
+
+Runtime bearer 凭据的线缆形状为 32–8192 字节可打印且不含空白的 ASCII；这是最小形状约束而非熵证明。注册和原生传输构造使用同一规则，旧短凭据在发送请求前返回认证不可用，避免短字符串与固定协议字段相撞而被误判为响应泄密。Downstream / Custom Provider 保留各自上游兼容的 1–8192 字节边界；TLS CA 保留 1–65536 字节 ASCII 形状并继续由原生证书解析器验证。响应中的解码后凭据反射检测不得移除。
+
+Rust 单一契约生成请求依赖关系：Runtime Create 的 PINNED_CA 必须附非空 CA 引用且 development_http=false；SYSTEM_CA 只允许省略或 null CA。Runtime Update 的 PINNED_CA 允许省略/null CA 以保留已存引用，转换配置时仍由领域校验与 Store 检查真实旧状态。engine_versions 必须有 1–64 个条目，键和值均为 1–120 字符的非空、非控制文本。JSON Schema / OpenAPI / TypeScript / Ajv 必须由同一 Rust 源生生成，新增回归同时覆盖长度、映射键、TLS 依赖、并发快照以及首次派发与已发出恢复的区别。
+
 ## A3. 实验、产物、Alpha 与校准
 
 ```text
@@ -1816,6 +1826,24 @@ Run admission 的原生 RuntimeSnapshot 同时冻结 ca_certificate_ref 与 deve
 `POST /api/v2/integrations/runtimes/{id}/probe` 接收 schema_version/expected_revision；命令是近期 Operator 或精确单次 CLI grant 的 RUNTIME_PROBE，目标为 Runtime 而不是客户端指定的观察ID。前置短事务重验权限、原始幂等回执、enabled和revision，产生仅供可信服务持有的探测票据；网络和原生TLS在事务外执行。后置事务再次验证授权/epoch/expiry、精确配置revision和20秒总票据期限，只发布真实原生响应或封闭失败原因，不接受客户端自报capabilities。解码后的键和值也不得包含出站凭据，重定向和原始错误响应不披露。失败同样形成不可变观察，不沿用上一条成功。
 
 观察保存到 runtime_probe_observations，并以同事务绑定真实 ArtifactStore 已发布的 qz.runtime_probe/1 原始文档。该产物是 Operator 范围的运行环境观察，不是研究评估、Alpha资格或目标Package。观察有效期固定为探测开始后60秒，原始回执重放不能延长期限。Runtime 自报 checked_at 不得早于这次探测开始5秒以上。配置表的 last_capability_snapshot_artifact_id 仅是观察指针：刷新它不改变 integration_revision；真正配置变更增加revision并清空指针。旧的不可变观察继续可审计，但不得供新配置准入。只读 readiness 返回 NOT_CHECKED/DISABLED/STALE/UNAVAILABLE/AVAILABLE、准确版本、最近观察和 configured∩observed 的 available_job_kinds；连接可用但交集为空时没有任何任务准入资格。
+
+### B4.3 原生任务线协议、不可变输入复制与恢复边界
+
+本节细化 B4，而不建立第二套领域队列、Agent Harness 或资格判断。JobSpecV1/ResultManifestV1 使用 Rust Serde+utoipa 生成；未知字段拒绝，任务 JSON 和结果 manifest 各最多1MiB。external_job_id 必须精确为小写规范 UUIDv7 run_id + `/` + 无前导零的正 u32 attempt_no；HTTP 客户端通过原生 URL path-segment 编码，将整个 external_job_id 作为一个段，不拼接客户端路径。所有 DB 时间为 UTC 微秒。原生 Serde 逐项检查原始响应的解码键和值，拒绝重复键（包括转义后相同的键）及凭据反射；不得先折叠成 JSON map 后遗漏前一个值。
+
+JobSpecV1 完整字段是 schema_version=1、run_id、attempt_no、首次发送的 owner_epoch、external_job_id、job_kind、固定OCI image_ref、input_set_id、按冻结 ordinal 排序的 inputs、parameters_artifact_id、limits、deadline_at、requested_output_schemas。RuntimeInputV1 仅有 DATASET(revision_id,registered_ref,storage_version,role) 或 ARTIFACT(artifact_id,storage_version,byte_count,role)；registered_ref 必须命中部署目录注册表，不是 URL 或宿主路径。请求不接受 command、environment、任意挂载、workdir、Docker socket、上游 bearer 或资格状态。parameters_artifact_id 是可信 Worker 根据已冻结对象建立的不可变执行配置；可以独立于冻结 InputSet 的研究成员，但必须被精确 Run/Attempt 的发送记录绑定，不能追加/改写已冻结 InputSet。若它也在 inputs 中，其 role 只能是 PARAMETERS。外部接管仍对账原始 JobSpec，不以当前 epoch 或新配置改写旧发送意图。
+
+RuntimeJobLimitsV1 为 cpu:u16[1,1024]、cpu_seconds:正 DbCounter、memory_mib:正 u32、wall_seconds:正 u32、output_bytes:正 DbCounter。cpu_seconds 不超过 cpu*wall_seconds；运行时以原生 CPU 配额及独立墙钟限额限制整个任务，实际越额保留为失败证据，不把观测裁回预约。输出当前实现上限64MiB，单个研究输入对象上限64MiB，总研究对象输入上限256MiB，inputs1..256，输出 schema1..64且(name,version)唯一；部署能力可以更小，不能由模型放大。方法、数据、图像及准入依赖真实 capability，不从类型声明推定可运行。
+
+为不依赖控制面与远端共享宿主目录，增加仅可信服务可用的 `PUT /runtime/v1/objects/{artifact_id}`：Content-Type 固定 application/octet-stream，`X-QZ-Storage-Version` 是1–120个非空白可打印 ASCII 字节的原生不可变版本；二进制体严格有界，原始对象身份/版本/完整字节相同幂等返回，任一冲突409。成功200/201返回 RuntimeObjectReceiptV1(schema_version,artifact_id,storage_version,byte_count)，不是自由 JSON。上传者不能指定宿主路径、对象后端或原生输出 origin；每任务只装入精确 JobSpec 的对象和可信参数，不能因对象已在远端就给另一个任务读权限。输出增加 `GET /runtime/v1/jobs/{external_job_id}/artifacts/{storage_ref}`，storage_ref 为 UUIDv7，必须属于该任务已封口 manifest，不能用 URL/bucket 名/跨任务对象取代。以上不是浏览器/研究 Agent 的任意文件接口；对象复制同样受服务认证、大小、数量、磁盘可用量和任务授权限制。
+
+RuntimeJobStatusV1 包含 schema_version、run_id、attempt_no、external_job_id、state=ACCEPTED|RUNNING|CANCEL_REQUESTED|SUCCEEDED|FAILED|CANCELLED、has_result、submitted_at、started_at?、finished_at?。终态与 finished_at 必须对应；成功必须有已开始时间和真实结果。取消请求 RuntimeCancelV1 包含 schema_version、run_id、attempt_no、owner_epoch。取消要先持久化原生身份的撤销记录，再使已经建立的原生任务停止；未见过的身份也建立永久 tombstone，迟到 POST 不得复活。只有已经停止或明确永久不能再启动才返回 CANCELLED；单独 GET404、HTTP 超时、断线或本进程失去 lease 均不是这种证据。已终态的精确任务重放原终态，完成/取消并发只采纳一个结果。
+
+ResultManifestV1 为 schema_version、run_id、attempt_no、external_job_id、input_set_id、state=SUCCEEDED|FAILED|CANCELLED、真实 engine_versions、started_at?、finished_at、resource_usage、artifacts、error?。resource_usage 的 wall_milliseconds/output_bytes 为 DbCounter，cpu_nanoseconds/peak_memory_bytes 可空；缺精确最终观测保留 null，不补0。output_bytes 指实际发表输出载荷之和，不包括 manifest 本身；控制面采纳时另将 manifest 原生字节计入 Run 总产物额度。每个 RuntimeOutputV1 包含 kind=MODEL|SIGNALS|TARGETS|REPORT|METRICS|DATA_QUALITY、schema(name,version)、storage_ref:Id、storage_version:Revision（当前为1）、byte_count、media_type；不包含用户可自选的 origin、access_class、资格或审批。必须唯一、实际大小合计吻合、种类/媒体类型/请求 schema 匹配。成功需要全部请求 schema 和真实输出，错误/取消不能带可发表的科学输出。
+
+错误是封闭 RuntimeFailureClass/RuntimeFailureCode 及由 code 唯一导出的静态 safe_message，不接受上游 stderr、请求体、堆栈或凭据反射。Worker 除严格反序列化，还要按精确 Run/Attempt、原 input_set、原生镜像/方法版本、当前授权、实际对象字节/schema/来源与资源约束验证后才进入 Store 的 fenced 采纳事务。解析 manifest 不等于校验真实 Arrow/JSON/Wasm 或授予 PASS。成功进程可以产生 INCONCLUSIVE/REJECT 科学结论，资格服务独立决定。
+
+控制面继续使用 PostgreSQL/PGMQ/Store 的发送意图、租约、结算回执和 ACK 顺序。远端持久化只管理原生 job 的身份/撤销/结果，以成熟嵌入数据库事务和原生 OCI container ID 恢复；不增加第二套研究预算、工作流或任务队列。整个原生任务只创建/启动一次，crash-after-submit 先查原身份。合同测试只是边界回归，必须另有真实 OCI、网络/文件/资源隔离、崩溃恢复和完整 Web/CLI 证据后才能勾选 T01/T24/T34/T35/T42。
 
 ## B5. 事务与状态机
 

@@ -37,7 +37,14 @@ async fn command(
     exchange(&f.app, request).await
 }
 async fn setup(pool: PgPool, allow_endpoint: bool) -> (Fixture, String, NativeTls, Value) {
-    let tls = native_tls().await;
+    setup_with_tls(pool, allow_endpoint, native_tls().await).await
+}
+
+async fn setup_with_tls(
+    pool: PgPool,
+    allow_endpoint: bool,
+    tls: NativeTls,
+) -> (Fixture, String, NativeTls, Value) {
     let targets = if allow_endpoint {
         RuntimeTargets::new(
             vec![RuntimeTarget {
@@ -58,16 +65,11 @@ async fn setup(pool: PgPool, allow_endpoint: bool) -> (Fixture, String, NativeTl
     let credential = command(&f, &cookie, "runtime-secret", "POST", "/api/v2/settings/credentials", json!({
         "intent":{"schema_version":1,"purpose":"RUNTIME","label":"Native Runtime credential"},"value":SECRET
     })).await;
-    assert_eq!(
-        credential.status,
-        StatusCode::CREATED,
-        "{}",
-        credential.body
-    );
+    assert_eq!(credential.status, StatusCode::CREATED);
     let ca = command(&f, &cookie, "runtime-ca", "POST", "/api/v2/settings/credentials", json!({
         "intent":{"schema_version":1,"purpose":"TLS_CA","label":"Native test CA"},"value":String::from_utf8(tls.ca.clone()).unwrap()
     })).await;
-    assert_eq!(ca.status, StatusCode::CREATED, "{}", ca.body);
+    assert_eq!(ca.status, StatusCode::CREATED);
     let runtime = command(&f, &cookie, "runtime-config", "POST", "/api/v2/integrations/runtimes", json!({
         "schema_version":1,"configuration":{"name":"Native Runtime","endpoint":tls.endpoint(),"tls_policy":"PINNED_CA","allowed_capabilities":["DATA_VALIDATE"],"enabled":true,"development_http":false},
         "credential_ref":credential.body["resource"]["id"],"ca_certificate_ref":ca.body["resource"]["id"]
@@ -167,6 +169,74 @@ async fn real_tls_probe_publishes_actual_bytes_and_a_revision_bound_receipt(pool
         json!(["DATA_VALIDATE"])
     );
     assert_eq!(readiness.body["integration_revision"], runtime["revision"]);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn concurrent_native_tls_probes_publish_one_file_observation_and_receipt(pool: PgPool) {
+    let tls = native::native_tls_concurrent().await;
+    let (f, cookie, tls, runtime) = setup_with_tls(pool.clone(), true, tls).await;
+    let path = format!(
+        "/api/v2/integrations/runtimes/{}/probe",
+        runtime["id"].as_str().unwrap()
+    );
+    let intent = json!({"schema_version":1,"expected_revision":runtime["revision"]});
+    let (a, b) = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        tokio::join!(
+            command(
+                &f,
+                &cookie,
+                "concurrent-native-probe",
+                "POST",
+                &path,
+                intent.clone()
+            ),
+            command(
+                &f,
+                &cookie,
+                "concurrent-native-probe",
+                "POST",
+                &path,
+                intent.clone()
+            )
+        )
+    })
+    .await
+    .expect("concurrent native probe completion");
+    assert_eq!(a.status, StatusCode::OK);
+    assert_eq!(b.status, StatusCode::OK);
+    assert_eq!(a.body["resource"]["outcome"]["status"], "AVAILABLE");
+    assert_eq!(a.body["resource"], b.body["resource"]);
+    assert_ne!(a.body["replayed"], b.body["replayed"]);
+    assert_eq!(tls.server.requests.load(Ordering::SeqCst), 2);
+    let counts: (i64, i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.runtime_probe_observations),(SELECT count(*) FROM app.command_receipts WHERE operation='RUNTIME_PROBE'),(SELECT count(*) FROM app.artifacts WHERE schema_name='qz.runtime_probe')")
+        .fetch_one(&pool).await.unwrap();
+    assert_eq!(counts, (1, 1, 1));
+    let objects: Vec<_> = std::fs::read_dir(f._state.path().join("artifacts"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(
+        objects.len(),
+        1,
+        "replayed publication must not leave an extra native file"
+    );
+    assert_eq!(
+        objects[0].to_str().unwrap(),
+        a.body["resource"]["snapshot_artifact_id"].as_str().unwrap()
+    );
+    let replay = command(
+        &f,
+        &cookie,
+        "concurrent-native-probe",
+        "POST",
+        &path,
+        intent,
+    )
+    .await;
+    assert_eq!(replay.status, StatusCode::OK);
+    assert_eq!(replay.body["resource"], a.body["resource"]);
+    assert_eq!(replay.body["replayed"], true);
+    assert_eq!(tls.server.requests.load(Ordering::SeqCst), 2);
 }
 
 #[sqlx::test(migrations = "../../migrations")]

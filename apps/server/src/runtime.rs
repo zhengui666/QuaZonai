@@ -14,7 +14,7 @@ use axum::{
     http::HeaderMap,
     Json,
 };
-use contracts::{control::CommandResult, runtime::*, DbCounter, Id};
+use contracts::{control::CommandResult, runtime::*, Id};
 use store::{runtime::ProbePreparation, StoreError};
 
 #[utoipa::path(post,path="/api/v2/integrations/runtimes/{id}/probe",tag="Runtime readiness",request_body=RuntimeProbeRequestV1,params(("id"=Id,Path),("Idempotency-Key"=String,Header)),responses((status=200,body=CommandResult<RuntimeProbeViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
@@ -80,16 +80,13 @@ pub async fn probe(
             },
             Err(reason) => RuntimeProbeOutcomeV1::Unavailable { reason },
         };
-        let bytes = serde_json::to_vec(&serde_json::json!({"schema_version":1,"result":outcome}))
-            .map_err(|_| StoreError::Integrity)?;
-        let count = DbCounter::new(bytes.len() as u64).map_err(|_| StoreError::Integrity)?;
-        let artifact = Id::new();
-        tokio::task::spawn_blocking(move || objects.put(artifact, &bytes))
-            .await
-            .map_err(|_| StoreError::Integrity)?
-            .map_err(|_| StoreError::Integrity)?;
         store
-            .complete_runtime_probe(ticket, outcome, artifact, count)
+            .complete_runtime_probe(ticket, outcome, move |artifact, bytes| async move {
+                tokio::task::spawn_blocking(move || objects.put(artifact, &bytes))
+                    .await
+                    .map_err(|_| StoreError::Integrity)?
+                    .map_err(|_| StoreError::Integrity)
+            })
             .await
     })
     .await?;

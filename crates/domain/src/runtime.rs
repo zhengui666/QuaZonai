@@ -4,6 +4,30 @@ use chrono::{DateTime, Duration, Utc};
 use contracts::runtime::*;
 use std::collections::BTreeSet;
 
+/// Accounting budgets cannot attest that a Runtime can execute the requested job.
+/// cpu_seconds is cumulative accounting, not the requested number of CPU cores.
+pub fn job_limits(
+    capabilities: &RuntimeCapabilitiesV1,
+    limits: &contracts::lifecycle::JobLimitsV1,
+) -> Result<(), DomainError> {
+    let failure = if limits.wall_seconds == 0 || limits.wall_seconds > capabilities.max_wall_seconds
+    {
+        Some("runtime_wall_seconds")
+    } else if limits.memory_mib == 0 || limits.memory_mib > capabilities.max_memory_mib {
+        Some("runtime_memory_mib")
+    } else if limits.output_bytes.get() == 0
+        || limits.output_bytes.get() > capabilities.max_output_bytes.get()
+    {
+        Some("runtime_output_bytes")
+    } else {
+        None
+    };
+    match failure {
+        Some(reason) => Err(DomainError::CapabilityUnavailable(reason)),
+        None => Ok(()),
+    }
+}
+
 pub fn pinned_image(value: &str) -> bool {
     let Some((name, digest)) = value.rsplit_once("@sha256:") else {
         return false;

@@ -5,6 +5,30 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use utoipa::ToSchema;
 
+/// Map keys are values too: publish the native count/text constraints for both.
+pub(crate) fn engine_versions_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+    use utoipa::openapi::schema::{ObjectBuilder, Type};
+    let text = || {
+        ObjectBuilder::new()
+            .schema_type(Type::String)
+            .min_length(Some(1))
+            .max_length(Some(120))
+            // Rust's Unicode White_Space set, not JavaScript's extra BOM whitespace.
+            .pattern(Some(concat!(
+                r"^(?=[\s\S]*[^\u0009-\u000D\u0020\u0085\u00A0\u1680",
+                r"\u2000-\u200A\u2028\u2029\u202F\u205F\u3000])",
+                r"[^\u0000-\u001F\u007F-\u009F]+(?![\s\S])"
+            )))
+    };
+    ObjectBuilder::new()
+        .schema_type(Type::Object)
+        .min_properties(Some(1))
+        .max_properties(Some(64))
+        .property_names(Some(text()))
+        .additional_properties(Some(text()))
+        .into()
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum RuntimeDataKind {
@@ -69,6 +93,7 @@ pub struct RuntimeCapabilitiesV1 {
     pub protocol_versions: Vec<SchemaV1>,
     #[schema(min_length = 1, max_length = 120)]
     pub runtime_version: String,
+    #[schema(schema_with = engine_versions_schema)]
     pub engine_versions: BTreeMap<String, String>,
     #[schema(min_items = 1, max_items = 8)]
     pub image_refs: Vec<RuntimeImageV1>,

@@ -107,9 +107,25 @@ fn secret_intent_excludes_plaintext_and_value_validation_is_purpose_bounded() {
     let mut serialized = serde_json::to_value(&intent).unwrap();
     serialized["value"] = json!("SECRET_SENTINEL");
     assert!(serde_json::from_value::<IntegrationSecretIntent>(serialized).is_err());
-    for good in ["opaque_native_capability", "a.b-c_123", "a+b/c="] {
+    for good in [
+        "opaque_native_capability_32_bytes_minimum",
+        "a.b-c_123".repeat(4).as_str(),
+        "a+b/c=".repeat(6).as_str(),
+    ] {
         assert!(secret_value(intent.purpose, good).is_ok());
     }
+    for purpose in [
+        IntegrationSecretPurpose::Downstream,
+        IntegrationSecretPurpose::CustomProvider,
+    ] {
+        assert!(secret_value(purpose, "a").is_ok());
+        assert!(secret_value(purpose, &"x".repeat(8192)).is_ok());
+        assert!(secret_value(purpose, &"x".repeat(8193)).is_err());
+    }
+    for length in [0, 1, 31] {
+        assert!(secret_value(intent.purpose, &"x".repeat(length)).is_err());
+    }
+    assert!(secret_value(intent.purpose, &"x".repeat(32)).is_ok());
     for bad in ["", " abc", "abc ", "abc\n", "abc\0", "中文"] {
         assert!(secret_value(intent.purpose, bad).is_err());
     }

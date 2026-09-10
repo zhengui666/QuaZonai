@@ -1,5 +1,7 @@
 //! Real native MCP and HTTP test infrastructure; only parent research data is a fixture.
 use super::{experiment_support, research_support};
+#[path = "../../../../tests/support/runtime_observation.rs"]
+mod runtime_observation;
 use contracts::{
     lifecycle::JobLimitsV1, research::InputPurpose, runs::RunKind, DbCounter, Id, SchemaV1,
 };
@@ -50,6 +52,7 @@ pub async fn fixture(pool: &PgPool, scopes: &[&str]) -> Fixture {
             .fetch_one(pool)
             .await
             .unwrap();
+    runtime_observation::ready(pool, research.data.runtime).await;
     let input = store
         .create_input_set(
             &operator,

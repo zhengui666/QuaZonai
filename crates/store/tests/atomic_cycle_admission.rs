@@ -1,5 +1,7 @@
 //! Transaction-composition regressions against real PostgreSQL/PGMQ. The shared
 //! fixture is relational test input, not a production Brief-freeze or Agent flow.
+#[path = "../../../tests/support/runtime_observation.rs"]
+mod runtime_observation;
 mod support;
 
 use contracts::{lifecycle::JobLimitsV1, runs::RunKind, DbCounter, Id, Revision, SchemaV1};
@@ -21,6 +23,7 @@ async fn setup(pool: &PgPool) -> (support::Fixture, RunSubmission) {
     .execute(pool)
     .await
     .unwrap();
+    runtime_observation::ready(pool, runtime).await;
     let request = RunSubmission {
         cycle_id: Id::new(),
         input_set_id: fixture.input_set,

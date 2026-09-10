@@ -652,6 +652,9 @@ async fn mission_token_scoped(
         reference,
     )
 }
+#[path = "../../../tests/support/runtime_observation.rs"]
+mod runtime_observation;
+
 async fn mission(f: &Fixture, pool: &PgPool) -> (Id, Id, Id, Id) {
     use contracts::{lifecycle::JobLimitsV1, runs::RunKind, DbCounter, Revision, SchemaV1};
     use store::lifecycle::{ClaimResult, RunSubmission};
@@ -666,6 +669,7 @@ async fn mission(f: &Fixture, pool: &PgPool) -> (Id, Id, Id, Id) {
     let runtime = Id::new();
     sqlx::query("INSERT INTO app.runtime_integrations(id,name,endpoint,tls_policy,credential_ref,allowed_capabilities,protocol_version,enabled) VALUES($1,'artifact fixture','https://runtime.example','SYSTEM_CA','fixture',ARRAY['AGENT_RESEARCH'],'1',true)")
         .bind(runtime.as_uuid()).execute(pool).await.unwrap();
+    runtime_observation::ready(pool, runtime).await;
     let request = RunSubmission {
         cycle_id: data.cycle,
         input_set_id: data.input_set,

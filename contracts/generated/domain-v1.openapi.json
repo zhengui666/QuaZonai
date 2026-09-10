@@ -6746,23 +6746,244 @@
         "type": "object"
       },
       "IntegrationSecretCreate": {
-        "additionalProperties": false,
-        "properties": {
-          "intent": {
-            "$ref": "#/components/schemas/IntegrationSecretIntent"
+        "oneOf": [
+          {
+            "allOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "intent": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "label": {
+                        "maxLength": 120,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "purpose": {
+                        "$ref": "#/components/schemas/IntegrationSecretPurpose"
+                      },
+                      "schema_version": {
+                        "$ref": "#/components/schemas/SchemaV1"
+                      }
+                    },
+                    "required": [
+                      "schema_version",
+                      "purpose",
+                      "label"
+                    ],
+                    "type": "object"
+                  },
+                  "value": {
+                    "maxLength": 8192,
+                    "minLength": 32,
+                    "pattern": "^[\\u0021-\\u007E]+(?![\\s\\S])",
+                    "type": "string",
+                    "writeOnly": true
+                  }
+                },
+                "required": [
+                  "intent",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "intent": {
+                    "properties": {
+                      "purpose": {
+                        "enum": [
+                          "RUNTIME"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              }
+            ]
           },
-          "value": {
-            "maxLength": 65536,
-            "minLength": 1,
-            "type": "string",
-            "writeOnly": true
+          {
+            "allOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "intent": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "label": {
+                        "maxLength": 120,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "purpose": {
+                        "$ref": "#/components/schemas/IntegrationSecretPurpose"
+                      },
+                      "schema_version": {
+                        "$ref": "#/components/schemas/SchemaV1"
+                      }
+                    },
+                    "required": [
+                      "schema_version",
+                      "purpose",
+                      "label"
+                    ],
+                    "type": "object"
+                  },
+                  "value": {
+                    "maxLength": 8192,
+                    "minLength": 1,
+                    "pattern": "^[\\u0021-\\u007E]+(?![\\s\\S])",
+                    "type": "string",
+                    "writeOnly": true
+                  }
+                },
+                "required": [
+                  "intent",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "intent": {
+                    "properties": {
+                      "purpose": {
+                        "enum": [
+                          "DOWNSTREAM"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "intent": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "label": {
+                        "maxLength": 120,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "purpose": {
+                        "$ref": "#/components/schemas/IntegrationSecretPurpose"
+                      },
+                      "schema_version": {
+                        "$ref": "#/components/schemas/SchemaV1"
+                      }
+                    },
+                    "required": [
+                      "schema_version",
+                      "purpose",
+                      "label"
+                    ],
+                    "type": "object"
+                  },
+                  "value": {
+                    "maxLength": 8192,
+                    "minLength": 1,
+                    "pattern": "^[\\u0021-\\u007E]+(?![\\s\\S])",
+                    "type": "string",
+                    "writeOnly": true
+                  }
+                },
+                "required": [
+                  "intent",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "intent": {
+                    "properties": {
+                      "purpose": {
+                        "enum": [
+                          "CUSTOM_PROVIDER"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "intent": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "label": {
+                        "maxLength": 120,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "purpose": {
+                        "$ref": "#/components/schemas/IntegrationSecretPurpose"
+                      },
+                      "schema_version": {
+                        "$ref": "#/components/schemas/SchemaV1"
+                      }
+                    },
+                    "required": [
+                      "schema_version",
+                      "purpose",
+                      "label"
+                    ],
+                    "type": "object"
+                  },
+                  "value": {
+                    "maxLength": 65536,
+                    "minLength": 1,
+                    "pattern": "^[\\u0000-\\u007F]+(?![\\s\\S])",
+                    "type": "string",
+                    "writeOnly": true
+                  }
+                },
+                "required": [
+                  "intent",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "intent": {
+                    "properties": {
+                      "purpose": {
+                        "enum": [
+                          "TLS_CA"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              }
+            ]
           }
-        },
-        "required": [
-          "intent",
-          "value"
-        ],
-        "type": "object"
+        ]
       },
       "IntegrationSecretIntent": {
         "additionalProperties": false,
@@ -6866,6 +7087,86 @@
           "wall_seconds",
           "memory_mib",
           "output_bytes"
+        ],
+        "type": "object"
+      },
+      "JobSpecV1": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt_no": {
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "deadline_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "external_job_id": {
+            "maxLength": 47,
+            "minLength": 38,
+            "type": "string"
+          },
+          "image_ref": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "input_set_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "inputs": {
+            "items": {
+              "$ref": "#/components/schemas/RuntimeInputV1"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "job_kind": {
+            "$ref": "#/components/schemas/RunKind"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/RuntimeJobLimitsV1"
+          },
+          "owner_epoch": {
+            "$ref": "#/components/schemas/Revision",
+            "description": "The first dispatch owner's epoch. Takeover never rewrites this frozen spec."
+          },
+          "parameters_artifact_id": {
+            "$ref": "#/components/schemas/Id",
+            "description": "Trusted native configuration stored under an immutable Artifact identity.\nIt does not change frozen InputSet membership or provide arbitrary commands."
+          },
+          "requested_output_schemas": {
+            "items": {
+              "$ref": "#/components/schemas/RuntimeArtifactSchemaV1"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "type": "array"
+          },
+          "run_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "run_id",
+          "attempt_no",
+          "owner_epoch",
+          "external_job_id",
+          "job_kind",
+          "image_ref",
+          "input_set_id",
+          "inputs",
+          "parameters_artifact_id",
+          "limits",
+          "deadline_at",
+          "requested_output_schemas"
         ],
         "type": "object"
       },
@@ -8841,6 +9142,94 @@
         ],
         "type": "object"
       },
+      "ResultManifestV1": {
+        "additionalProperties": false,
+        "properties": {
+          "artifacts": {
+            "items": {
+              "$ref": "#/components/schemas/RuntimeOutputV1"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "attempt_no": {
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "engine_versions": {
+            "additionalProperties": {
+              "maxLength": 120,
+              "minLength": 1,
+              "pattern": "^(?=[\\s\\S]*[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000])[^\\u0000-\\u001F\\u007F-\\u009F]+(?![\\s\\S])",
+              "type": "string"
+            },
+            "maxProperties": 64,
+            "minProperties": 1,
+            "propertyNames": {
+              "maxLength": 120,
+              "minLength": 1,
+              "pattern": "^(?=[\\s\\S]*[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000])[^\\u0000-\\u001F\\u007F-\\u009F]+(?![\\s\\S])",
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "error": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RuntimeJobErrorV1"
+              }
+            ]
+          },
+          "external_job_id": {
+            "type": "string"
+          },
+          "finished_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "input_set_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "resource_usage": {
+            "$ref": "#/components/schemas/RuntimeResourceUsageV1"
+          },
+          "run_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "started_at": {
+            "description": "Null only when native execution was never started.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/RuntimeResultState"
+          }
+        },
+        "required": [
+          "schema_version",
+          "run_id",
+          "attempt_no",
+          "external_job_id",
+          "input_set_id",
+          "state",
+          "engine_versions",
+          "finished_at",
+          "resource_usage",
+          "artifacts"
+        ],
+        "type": "object"
+      },
       "Revision": {
         "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
         "maxLength": 19,
@@ -9191,6 +9580,34 @@
         ],
         "type": "object"
       },
+      "RuntimeCancelV1": {
+        "additionalProperties": false,
+        "description": "Cancellation is durable even when the original submission has not arrived yet.\nThe native identity is closed; a later matching or conflicting POST cannot start it.",
+        "properties": {
+          "attempt_no": {
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "owner_epoch": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "run_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "run_id",
+          "attempt_no",
+          "owner_epoch"
+        ],
+        "type": "object"
+      },
       "RuntimeCapabilitiesV1": {
         "additionalProperties": false,
         "properties": {
@@ -9216,9 +9633,17 @@
           },
           "engine_versions": {
             "additionalProperties": {
+              "maxLength": 120,
+              "minLength": 1,
+              "pattern": "^(?=[\\s\\S]*[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000])[^\\u0000-\\u001F\\u007F-\\u009F]+(?![\\s\\S])",
               "type": "string"
             },
+            "maxProperties": 64,
+            "minProperties": 1,
             "propertyNames": {
+              "maxLength": 120,
+              "minLength": 1,
+              "pattern": "^(?=[\\s\\S]*[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000])[^\\u0000-\\u001F\\u007F-\\u009F]+(?![\\s\\S])",
               "type": "string"
             },
             "type": "object"
@@ -9366,34 +9791,141 @@
         "type": "object"
       },
       "RuntimeCreate": {
-        "additionalProperties": false,
-        "properties": {
-          "ca_certificate_ref": {
+        "allOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ca_certificate_ref": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "format": "uuid",
+                    "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                    "type": "string"
+                  }
+                ]
+              },
+              "configuration": {
+                "additionalProperties": false,
+                "properties": {
+                  "allowed_capabilities": {
+                    "items": {
+                      "$ref": "#/components/schemas/RunKind"
+                    },
+                    "maxItems": 8,
+                    "minItems": 1,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "development_http": {
+                    "description": "Both this setting and the deployment must explicitly permit literal-loopback HTTP.",
+                    "type": "boolean"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "endpoint": {
+                    "description": "Only an origin. Registration does not send network traffic or attest readiness.",
+                    "maxLength": 2048,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "name": {
+                    "maxLength": 120,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "tls_policy": {
+                    "$ref": "#/components/schemas/TlsPolicy"
+                  }
+                },
+                "required": [
+                  "name",
+                  "endpoint",
+                  "tls_policy",
+                  "allowed_capabilities",
+                  "enabled",
+                  "development_http"
+                ],
+                "type": "object"
+              },
+              "credential_ref": {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              "schema_version": {
+                "enum": [
+                  1
+                ],
+                "maximum": 1,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "schema_version",
+              "configuration",
+              "credential_ref"
+            ],
+            "type": "object"
+          },
+          {
             "oneOf": [
               {
-                "type": "null"
+                "properties": {
+                  "ca_certificate_ref": {
+                    "type": "null"
+                  },
+                  "configuration": {
+                    "properties": {
+                      "tls_policy": {
+                        "enum": [
+                          "SYSTEM_CA"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": "object"
               },
               {
-                "$ref": "#/components/schemas/Id"
+                "properties": {
+                  "ca_certificate_ref": {
+                    "format": "uuid",
+                    "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                    "type": "string"
+                  },
+                  "configuration": {
+                    "properties": {
+                      "development_http": {
+                        "enum": [
+                          false
+                        ],
+                        "type": "boolean"
+                      },
+                      "tls_policy": {
+                        "enum": [
+                          "PINNED_CA"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "ca_certificate_ref"
+                ],
+                "type": "object"
               }
             ]
-          },
-          "configuration": {
-            "$ref": "#/components/schemas/RuntimeConfigurationV1"
-          },
-          "credential_ref": {
-            "$ref": "#/components/schemas/Id"
-          },
-          "schema_version": {
-            "$ref": "#/components/schemas/SchemaV1"
           }
-        },
-        "required": [
-          "schema_version",
-          "configuration",
-          "credential_ref"
-        ],
-        "type": "object"
+        ]
       },
       "RuntimeDataKind": {
         "enum": [
@@ -9404,6 +9936,31 @@
           "FUNDAMENTAL",
           "EVENT",
           "DERIVED_FEATURE"
+        ],
+        "type": "string"
+      },
+      "RuntimeFailureClass": {
+        "enum": [
+          "RETRYABLE_INFRA",
+          "PERMANENT_CONFIG",
+          "INVALID_INPUT",
+          "RESOURCE_LIMIT"
+        ],
+        "type": "string"
+      },
+      "RuntimeFailureCode": {
+        "enum": [
+          "ENGINE_UNAVAILABLE",
+          "IMAGE_UNAVAILABLE",
+          "CONTRACT_UNSUPPORTED",
+          "INPUT_UNAVAILABLE",
+          "INVALID_INPUT",
+          "NATIVE_JOB_FAILED",
+          "INVALID_OUTPUT",
+          "CPU_LIMIT",
+          "MEMORY_LIMIT",
+          "OUTPUT_LIMIT",
+          "DEADLINE_EXCEEDED"
         ],
         "type": "string"
       },
@@ -9423,6 +9980,294 @@
         "required": [
           "job_kind",
           "image_ref"
+        ],
+        "type": "object"
+      },
+      "RuntimeInputV1": {
+        "oneOf": [
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "DATASET"
+                ],
+                "type": "string"
+              },
+              "registered_ref": {
+                "description": "Exact registry key, never a filesystem path or a URL to fetch.",
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              "revision_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "role": {
+                "$ref": "#/components/schemas/DataPartition"
+              },
+              "storage_version": {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "revision_id",
+              "registered_ref",
+              "storage_version",
+              "role",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "artifact_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "byte_count": {
+                "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+                "maxLength": 19,
+                "minLength": 1,
+                "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "ARTIFACT"
+                ],
+                "type": "string"
+              },
+              "role": {
+                "$ref": "#/components/schemas/ArtifactInputRole"
+              },
+              "storage_version": {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "artifact_id",
+              "storage_version",
+              "byte_count",
+              "role",
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "RuntimeJobErrorV1": {
+        "additionalProperties": false,
+        "properties": {
+          "class": {
+            "$ref": "#/components/schemas/RuntimeFailureClass"
+          },
+          "code": {
+            "$ref": "#/components/schemas/RuntimeFailureCode"
+          },
+          "safe_message": {
+            "description": "A code-derived static message, never native stderr, input text or an HTTP body.",
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "class",
+          "code",
+          "safe_message"
+        ],
+        "type": "object"
+      },
+      "RuntimeJobLimitsV1": {
+        "additionalProperties": false,
+        "properties": {
+          "cpu": {
+            "format": "int32",
+            "maximum": 1024,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "cpu_seconds": {
+            "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+            "maxLength": 19,
+            "minLength": 1,
+            "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])",
+            "type": "string"
+          },
+          "memory_mib": {
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "output_bytes": {
+            "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+            "maxLength": 19,
+            "minLength": 1,
+            "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])",
+            "type": "string"
+          },
+          "wall_seconds": {
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "cpu",
+          "cpu_seconds",
+          "memory_mib",
+          "wall_seconds",
+          "output_bytes"
+        ],
+        "type": "object"
+      },
+      "RuntimeJobState": {
+        "enum": [
+          "ACCEPTED",
+          "RUNNING",
+          "CANCEL_REQUESTED",
+          "SUCCEEDED",
+          "FAILED",
+          "CANCELLED"
+        ],
+        "type": "string"
+      },
+      "RuntimeJobStatusV1": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt_no": {
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "external_job_id": {
+            "type": "string"
+          },
+          "finished_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "has_result": {
+            "type": "boolean"
+          },
+          "run_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/RuntimeJobState"
+          },
+          "submitted_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "run_id",
+          "attempt_no",
+          "external_job_id",
+          "state",
+          "has_result",
+          "submitted_at"
+        ],
+        "type": "object"
+      },
+      "RuntimeObjectReceiptV1": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "byte_count": {
+            "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+            "maxLength": 19,
+            "minLength": 1,
+            "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])",
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "storage_version": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "artifact_id",
+          "storage_version",
+          "byte_count"
+        ],
+        "type": "object"
+      },
+      "RuntimeOutputKind": {
+        "enum": [
+          "MODEL",
+          "SIGNALS",
+          "TARGETS",
+          "REPORT",
+          "METRICS",
+          "DATA_QUALITY"
+        ],
+        "type": "string"
+      },
+      "RuntimeOutputV1": {
+        "additionalProperties": false,
+        "properties": {
+          "byte_count": {
+            "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+            "maxLength": 19,
+            "minLength": 1,
+            "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RuntimeOutputKind"
+          },
+          "media_type": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "schema": {
+            "$ref": "#/components/schemas/RuntimeArtifactSchemaV1"
+          },
+          "storage_ref": {
+            "$ref": "#/components/schemas/Id",
+            "description": "Runtime-owned immutable object key. Downloads stay under this exact job."
+          },
+          "storage_version": {
+            "$ref": "#/components/schemas/Revision"
+          }
+        },
+        "required": [
+          "kind",
+          "schema",
+          "storage_ref",
+          "storage_version",
+          "byte_count",
+          "media_type"
         ],
         "type": "object"
       },
@@ -9583,47 +10428,194 @@
         ],
         "type": "object"
       },
-      "RuntimeUpdate": {
+      "RuntimeResourceUsageV1": {
         "additionalProperties": false,
         "properties": {
-          "ca_certificate_ref": {
+          "cpu_nanoseconds": {
             "oneOf": [
               {
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/Id",
-                "description": "None retains the current CA for PINNED_CA. SYSTEM_CA explicitly clears only the binding."
+                "$ref": "#/components/schemas/DbCounter",
+                "description": "Native cgroup measurement, or null when no exact final sample is available."
               }
             ]
           },
-          "configuration": {
-            "$ref": "#/components/schemas/RuntimeConfigurationV1"
+          "output_bytes": {
+            "$ref": "#/components/schemas/DbCounter",
+            "description": "Sum of the immutable output payload sizes, excluding the manifest envelope."
           },
-          "credential_ref": {
+          "peak_memory_bytes": {
             "oneOf": [
               {
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/Id",
-                "description": "None retains the current immutable credential object; not a request for unauthenticated access."
+                "$ref": "#/components/schemas/DbCounter"
               }
             ]
           },
-          "expected_revision": {
-            "$ref": "#/components/schemas/Revision"
-          },
-          "schema_version": {
-            "$ref": "#/components/schemas/SchemaV1"
+          "wall_milliseconds": {
+            "$ref": "#/components/schemas/DbCounter"
           }
         },
         "required": [
-          "schema_version",
-          "expected_revision",
-          "configuration"
+          "wall_milliseconds",
+          "output_bytes"
         ],
         "type": "object"
+      },
+      "RuntimeResultState": {
+        "enum": [
+          "SUCCEEDED",
+          "FAILED",
+          "CANCELLED"
+        ],
+        "type": "string"
+      },
+      "RuntimeUpdate": {
+        "allOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ca_certificate_ref": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "format": "uuid",
+                    "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                    "type": "string"
+                  }
+                ]
+              },
+              "configuration": {
+                "additionalProperties": false,
+                "properties": {
+                  "allowed_capabilities": {
+                    "items": {
+                      "$ref": "#/components/schemas/RunKind"
+                    },
+                    "maxItems": 8,
+                    "minItems": 1,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "development_http": {
+                    "description": "Both this setting and the deployment must explicitly permit literal-loopback HTTP.",
+                    "type": "boolean"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "endpoint": {
+                    "description": "Only an origin. Registration does not send network traffic or attest readiness.",
+                    "maxLength": 2048,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "name": {
+                    "maxLength": 120,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "tls_policy": {
+                    "$ref": "#/components/schemas/TlsPolicy"
+                  }
+                },
+                "required": [
+                  "name",
+                  "endpoint",
+                  "tls_policy",
+                  "allowed_capabilities",
+                  "enabled",
+                  "development_http"
+                ],
+                "type": "object"
+              },
+              "credential_ref": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "format": "uuid",
+                    "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                    "type": "string"
+                  }
+                ]
+              },
+              "expected_revision": {
+                "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+                "maxLength": 19,
+                "minLength": 1,
+                "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])",
+                "type": "string"
+              },
+              "schema_version": {
+                "enum": [
+                  1
+                ],
+                "maximum": 1,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "schema_version",
+              "configuration",
+              "expected_revision"
+            ],
+            "type": "object"
+          },
+          {
+            "oneOf": [
+              {
+                "properties": {
+                  "ca_certificate_ref": {
+                    "type": "null"
+                  },
+                  "configuration": {
+                    "properties": {
+                      "tls_policy": {
+                        "enum": [
+                          "SYSTEM_CA"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "configuration": {
+                    "properties": {
+                      "development_http": {
+                        "enum": [
+                          false
+                        ],
+                        "type": "boolean"
+                      },
+                      "tls_policy": {
+                        "enum": [
+                          "PINNED_CA"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              }
+            ]
+          }
+        ]
       },
       "RuntimeVenueV1": {
         "additionalProperties": false,

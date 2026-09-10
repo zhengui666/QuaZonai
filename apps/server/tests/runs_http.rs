@@ -2,6 +2,8 @@
 //! Scientific outcomes are not synthesized into qualification or delivery evidence.
 #[path = "../../../crates/store/tests/support/mod.rs"]
 mod domain_fixture;
+#[path = "../../../tests/support/runtime_observation.rs"]
+mod runtime_observation;
 mod support;
 use axum::Router;
 use chrono::{Duration, Utc};
@@ -68,6 +70,7 @@ async fn admitted(pool: &PgPool, f: &Fixture, key: &str) -> contracts::runs::Run
     sqlx::query("UPDATE app.runs SET state='FAILED',finished_at=clock_timestamp(),terminal_reason_code='FIXTURE_ENDED' WHERE id=$1").bind(d.run.as_uuid()).execute(pool).await.unwrap();
     let runtime = Id::new();
     sqlx::query("INSERT INTO app.runtime_integrations(id,name,endpoint,tls_policy,credential_ref,allowed_capabilities,protocol_version,enabled) VALUES($1,'Native fixture','https://runtime.example','SYSTEM_CA','fixture',ARRAY['DATA_VALIDATE'],'1',true)").bind(runtime.as_uuid()).execute(pool).await.unwrap();
+    runtime_observation::ready(pool, runtime).await;
     f.store
         .enqueue_run(
             key,

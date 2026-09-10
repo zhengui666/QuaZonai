@@ -5,7 +5,7 @@ use chrono::{DateTime, Duration, Utc};
 use contracts::{
     control::{CommandResult, OperatorOperation},
     runtime::*,
-    DbCounter, Id, Revision, SchemaV1,
+    Id, Revision, SchemaV1,
 };
 use serde_json::json;
 use sqlx::{postgres::PgRow, Postgres, Row, Transaction};
@@ -115,18 +115,19 @@ impl Store {
         })))
     }
 
-    /// Native artifact publication succeeded before this call. Unknown database
-    /// outcomes retain that object; a retry may return the original receipt.
-    pub async fn complete_runtime_probe(
+    /// Network I/O has ended. Only the receipt owner invokes bounded local
+    /// publication; a concurrent replay never creates an additional object.
+    /// Unknown commits retain objects rather than deleting possible references.
+    pub async fn complete_runtime_probe<F, Fut>(
         &self,
         ticket: ProbeTicket,
         outcome: RuntimeProbeOutcomeV1,
-        artifact: Id,
-        bytes: DbCounter,
-    ) -> Result<CommandResult<RuntimeProbeViewV1>, StoreError> {
-        if bytes.get() == 0 || bytes.get() > 1024 * 1024 {
-            return Err(StoreError::Invalid("runtime_probe_artifact_size"));
-        }
+        publish: F,
+    ) -> Result<CommandResult<RuntimeProbeViewV1>, StoreError>
+    where
+        F: FnOnce(Id, Vec<u8>) -> Fut,
+        Fut: std::future::Future<Output = Result<(), StoreError>>,
+    {
         let mut tx = self.pool.begin().await?;
         let request = RuntimeProbeRequestV1 {
             schema_version: SchemaV1,
@@ -177,11 +178,23 @@ impl Store {
         }
         let document = json!({"schema_version":1,"result":outcome});
         let exact = serde_json::to_vec(&document).map_err(|_| StoreError::Integrity)?;
-        if exact.len() as u64 != bytes.get() {
-            return Err(StoreError::Integrity);
+        if exact.is_empty() || exact.len() > 1024 * 1024 {
+            return Err(StoreError::Invalid("runtime_probe_artifact_size"));
+        }
+        let bytes = exact.len() as i64;
+        let artifact = Id::new();
+        publish(artifact, exact).await?;
+        commands::recheck_authority(&mut tx, &ticket.actor, &prepared).await?;
+        let now: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+            .fetch_one(&mut *tx)
+            .await?;
+        if now < ticket.started_at || now > ticket.started_at + Duration::seconds(20) {
+            return Err(
+                domain::DomainError::CapabilityUnavailable("probe_expired_or_disabled").into(),
+            );
         }
         sqlx::query("INSERT INTO app.artifacts(id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,'REPORT','application/json','qz.runtime_probe','1','LOCAL',$2,'1',$3,'OPERATOR','REAL','OPERATOR','AUDIT')")
-            .bind(artifact.as_uuid()).bind(artifact.to_string()).bind(bytes.get() as i64)
+            .bind(artifact.as_uuid()).bind(artifact.to_string()).bind(bytes)
             .execute(&mut *tx).await?;
         let id = Id::new();
         let row = sqlx::query("INSERT INTO app.runtime_probe_observations(id,runtime_id,integration_revision,snapshot_artifact_id,observed_at,valid_until,outcome) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *")
@@ -240,6 +253,20 @@ impl Store {
             available_job_kinds: kinds,
         })
     }
+}
+
+/// Fresh admissions and their first wire dispatch share this native gate.
+/// Reconciliation of a possibly sent remote job must not call this helper.
+pub(crate) async fn require_job(
+    tx: &mut Transaction<'_, Postgres>,
+    runtime: Id,
+    revision: Revision,
+    kind: contracts::runs::RunKind,
+    limits: &contracts::lifecycle::JobLimitsV1,
+) -> Result<(), StoreError> {
+    let capabilities = require_capabilities(tx, runtime, revision, kind).await?;
+    domain::runtime::job_limits(&capabilities, limits)?;
+    Ok(())
 }
 
 /// Trusted admission paths call this under their existing short transaction.

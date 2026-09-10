@@ -1,5 +1,9 @@
 //! Real PostgreSQL and PGMQ; remote outcomes here are trusted adapter fixtures,
 //! not evidence that an isolated runtime or model tool loop has been delivered.
+#[path = "support/runtime_admission.rs"]
+mod runtime_admission_regressions;
+#[path = "../../../tests/support/runtime_observation.rs"]
+mod runtime_observation;
 mod support;
 use chrono::{Duration, Utc};
 use contracts::{
@@ -50,6 +54,7 @@ async fn setup_with_budget(
         .await
         .unwrap();
     let actor = Actor::Browser { login_id: login.id };
+    runtime_observation::ready(pool, runtime).await;
     let request = RunSubmission {
         cycle_id: f.cycle,
         input_set_id: f.input_set,
@@ -82,6 +87,7 @@ async fn mission_admission_preserves_the_only_science_slot_and_charges_both_cpu_
     .await
     .unwrap();
     science.runtime_revision = revision.to_string().try_into().unwrap();
+    runtime_observation::ready(&pool, science.runtime_id).await;
     let mut mission = science.clone();
     mission.kind = RunKind::AgentResearch;
     mission.limits.experiments = 0;
@@ -138,6 +144,7 @@ async fn transport_ca_is_frozen_with_the_run_not_reloaded_from_mutable_settings(
     .await
     .unwrap();
     request.runtime_revision = revision.to_string().try_into().unwrap();
+    runtime_observation::ready(&pool, request.runtime_id).await;
     let run = store
         .enqueue_run("frozen-tls", &request)
         .await

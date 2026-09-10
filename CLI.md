@@ -70,8 +70,10 @@ cargo run --locked -p server -- serve --state-dir ./var \
 `POST /api/v2/settings/credentials` 接收 `{intent:{schema_version:1,purpose,label},value}`。
 purpose 仅 RUNTIME、DOWNSTREAM、CUSTOM_PROVIDER、TLS_CA；value 只写，不返回、记日志或
 写入 SQL/幂等回执。返回的 id 是原生不可变加密对象引用；同 key、同 intent、同原始值才重放，
-不同值409。凭据轮换创建新对象，不能覆盖旧值。TLS_CA 须为原生 TLS 实现可接受的非空 PEM
-证书集合；其他凭据为1–8192个可打印非空白 ASCII 字节。不要把真实值放在 CLI 参数、Issue 或 Git。
+不同值409。凭据轮换创建新对象，不能覆盖旧值。TLS_CA 须为1–65536字节ASCII、原生TLS实现可接受的非空PEM
+证书集合；RUNTIME须为32–8192个可打印非空白ASCII字节，DOWNSTREAM / CUSTOM_PROVIDER为1–8192字节。
+最小长度不是熵保证；旧短Runtime凭据须在真实运行端轮换，并通过正式凭据登记和Runtime更新入口绑定后重新探测。
+不要把真实值放在CLI参数、Issue或Git，也不得补字符或手工改SQL绕过验证。
 
 Runtime 使用 `GET/POST /api/v2/integrations/runtimes` 和 `GET/PATCH /{id}`；Downstream 使用
 对应的 `/api/v2/integrations/downstreams`。create 传 schema_version、严格 configuration 和

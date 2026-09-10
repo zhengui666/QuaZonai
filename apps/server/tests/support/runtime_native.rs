@@ -55,7 +55,10 @@ pub async fn native_http(
             let redirect = redirect.clone();
             async move {
                 count.fetch_add(1, Ordering::SeqCst);
-                assert_eq!(headers[header::AUTHORIZATION], format!("Bearer {SECRET}"));
+                assert!(
+                    headers[header::AUTHORIZATION] == format!("Bearer {SECRET}"),
+                    "native credential header mismatch"
+                );
                 assert!(headers.get(header::COOKIE).is_none());
                 let mut response = Response::builder()
                     .status(status)
@@ -111,6 +114,14 @@ fn openssl(root: &std::path::Path, args: &[&str]) {
     );
 }
 pub async fn native_tls() -> NativeTls {
+    native_tls_with_barrier(None).await
+}
+
+pub async fn native_tls_concurrent() -> NativeTls {
+    native_tls_with_barrier(Some(Arc::new(tokio::sync::Barrier::new(2)))).await
+}
+
+async fn native_tls_with_barrier(barrier: Option<Arc<tokio::sync::Barrier>>) -> NativeTls {
     let files = tempfile::tempdir().unwrap();
     let root = files.path();
     openssl(
@@ -221,31 +232,45 @@ pub async fn native_tls() -> NativeTls {
     let requests = Arc::new(AtomicUsize::new(0));
     let count = requests.clone();
     let task = tokio::spawn(async move {
+        // The owner retains every connection task; aborting the fixture drops
+        // this JoinSet and cancels its children instead of detaching listeners.
+        let mut connections = tokio::task::JoinSet::new();
         loop {
-            let (socket, _) = listener.accept().await.unwrap();
-            let Ok(mut socket) = acceptor.accept(socket).await else {
-                continue;
-            };
-            let mut request = Vec::new();
-            loop {
-                let byte = socket.read_u8().await.unwrap();
-                request.push(byte);
-                assert!(request.len() <= 8192);
-                if request.ends_with(b"\r\n\r\n") {
-                    break;
+            tokio::select! {
+                accepted = listener.accept(), if connections.len() < 16 => {
+                    let (socket, _) = accepted.unwrap();
+                    let acceptor = acceptor.clone();
+                    let count = count.clone();
+                    let barrier = barrier.clone();
+                    connections.spawn(async move {
+                        tokio::time::timeout(std::time::Duration::from_secs(10), async move {
+                            let Ok(mut socket) = acceptor.accept(socket).await else {
+                                return;
+                            };
+                            let mut request = Vec::new();
+                            loop {
+                                let byte = socket.read_u8().await.unwrap();
+                                request.push(byte);
+                                assert!(request.len() <= 8192);
+                                if request.ends_with(b"\r\n\r\n") { break; }
+                            }
+                            let request = String::from_utf8(request).unwrap();
+                            assert!(request.starts_with("GET /runtime/v1/capabilities HTTP/1.1\r\n"));
+                            assert!(request.to_ascii_lowercase().contains("host: runtime-native.invalid:"));
+                            assert!(request.contains(&format!("authorization: Bearer {SECRET}")));
+                            count.fetch_add(1, Ordering::SeqCst);
+                            if let Some(barrier) = barrier { barrier.wait().await; }
+                            let payload = serde_json::to_vec(&capabilities(chrono::Utc::now())).unwrap();
+                            socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", payload.len()).as_bytes()).await.unwrap();
+                            socket.write_all(&payload).await.unwrap();
+                            socket.shutdown().await.unwrap();
+                        }).await.expect("native TLS fixture connection deadline");
+                    });
+                }
+                completed = connections.join_next(), if !connections.is_empty() => {
+                    completed.unwrap().expect("native TLS fixture connection failed");
                 }
             }
-            let request = String::from_utf8(request).unwrap();
-            assert!(request.starts_with("GET /runtime/v1/capabilities HTTP/1.1\r\n"));
-            assert!(request
-                .to_ascii_lowercase()
-                .contains("host: runtime-native.invalid:"));
-            assert!(request.contains(&format!("authorization: Bearer {SECRET}")));
-            count.fetch_add(1, Ordering::SeqCst);
-            let payload = serde_json::to_vec(&capabilities(chrono::Utc::now())).unwrap();
-            socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", payload.len()).as_bytes()).await.unwrap();
-            socket.write_all(&payload).await.unwrap();
-            socket.shutdown().await.unwrap();
         }
     });
     NativeTls {
