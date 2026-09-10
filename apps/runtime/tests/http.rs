@@ -313,6 +313,57 @@ async fn unknown_fields_paths_and_catalog_versions_are_not_generic_execution_cap
     assert!(f.service.journal().scheduling().await.unwrap().is_empty());
 }
 
+#[tokio::test]
+async fn every_generated_runtime_operation_requires_the_actual_bearer_and_declares_its_401() {
+    let f = fixture().await;
+    let document = serde_json::to_value(runtime::http::RuntimeApi::openapi()).unwrap();
+    let scheme = &document["components"]["securitySchemes"]["RuntimeBearer"];
+    assert_eq!(scheme["type"], "http");
+    assert_eq!(scheme["scheme"], "bearer");
+    let requirement = json!([{"RuntimeBearer":[]}]);
+    assert_eq!(document["security"], requirement);
+    let id = Id::new().to_string();
+    let mut operations = 0;
+    for (template, item) in document["paths"].as_object().unwrap() {
+        for (method, operation) in item.as_object().unwrap() {
+            if ![
+                "get", "post", "put", "patch", "delete", "head", "options", "trace",
+            ]
+            .contains(&method.as_str())
+            {
+                continue;
+            }
+            operations += 1;
+            assert_eq!(operation["security"], requirement);
+            assert_eq!(
+                operation["responses"]["401"]["content"]["application/json"]["schema"]["$ref"],
+                "#/components/schemas/RuntimeProblem"
+            );
+            assert_eq!(
+                operation["responses"]["401"]["headers"]["WWW-Authenticate"]["schema"]["enum"],
+                json!(["Bearer"])
+            );
+            let path = template
+                .replace("{external_job_id}", &format!("{id}%2F1"))
+                .replace("{artifact_id}", &id)
+                .replace("{storage_ref}", &id)
+                .replace("{registered_ref}", "not-registered");
+            let (status, body) = request(
+                &f,
+                method.to_ascii_uppercase().parse().unwrap(),
+                &path,
+                &[],
+                b"{}".to_vec(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED);
+            assert_eq!(body["status"], 401);
+            assert_eq!(body["code"], "RUNTIME_AUTHENTICATION_REQUIRED");
+        }
+    }
+    assert_eq!(operations, 8);
+}
+
 #[test]
 fn native_runtime_openapi_keeps_binary_upload_and_stable_job_contracts() {
     let document = serde_json::to_value(runtime::http::RuntimeApi::openapi()).unwrap();

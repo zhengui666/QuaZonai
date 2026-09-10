@@ -6,12 +6,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { spawnSync } from 'node:child_process';
+import { copyNativeFile, nativeDestination } from './native-files.mjs';
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const { values } = parseArgs({ options: {
   profile: { type: 'string', default: 'release' },
   'output-dir': { type: 'string' },
   'isolation-probe': { type: 'string' },
+  'prepare-only': { type: 'boolean', default: false },
 }, allowPositionals: false });
 if (!['debug', 'release'].includes(values.profile) || !values['output-dir']) {
   throw new Error('Use --profile debug|release --output-dir NEW_DIRECTORY');
@@ -39,20 +41,10 @@ function run(name, binary, args, allowed = [0]) {
   return result;
 }
 function destination(absolute) {
-  if (!path.isAbsolute(absolute) || path.normalize(absolute) !== absolute) throw new Error('Noncanonical native image path');
-  return path.join(root, absolute.slice(1));
+  return nativeDestination(root, absolute);
 }
 function copyNative(source, target) {
-  const metadata = fs.statSync(source);
-  if (!metadata.isFile()) throw new Error('Expected an original native regular file');
-  const selected = destination(target);
-  fs.mkdirSync(path.dirname(selected), { recursive: true, mode: 0o755 });
-  if (fs.existsSync(selected)) {
-    if (!fs.readFileSync(selected).equals(fs.readFileSync(source))) throw new Error('Conflicting native library');
-    return;
-  }
-  fs.copyFileSync(source, selected, fs.constants.COPYFILE_EXCL);
-  fs.chmodSync(selected, metadata.mode & 0o777);
+  copyNativeFile(root, source, target);
 }
 function isElf(file) {
   const header = Buffer.alloc(4);
@@ -79,7 +71,7 @@ try {
   const timeoutBinary = '/usr/bin/timeout';
   const timeoutVersion = run('timeout-version', timeoutBinary, ['--version']).stdout;
   if (!timeoutVersion.includes('GNU coreutils')) throw new Error('Native GNU timeout required');
-  run('tested-source', 'git', ['rev-parse', 'HEAD']);
+  const sourceCommit = run('tested-source', 'git', ['rev-parse', 'HEAD']).stdout.trim();
   copyNative(executable, '/usr/local/bin/job');
   copyNative(timeoutBinary, '/usr/bin/timeout');
   fs.mkdirSync(destination('/opt/rust'), { recursive: true, mode: 0o755 });
@@ -91,11 +83,15 @@ try {
     copyNative(probe, '/usr/local/bin/isolation-probe');
     nativeFiles.push(probe);
   }
-  for (const [index, file] of [...new Set(nativeFiles)].entries()) {
-    const result = run('native-ldd-' + index, 'ldd', [file], [0, 1]);
+  const inspectedFiles = [...new Set(nativeFiles.map(file => fs.realpathSync(file)))];
+  fs.writeFileSync(path.join(directory, 'native-elf-inputs.json'), JSON.stringify(inspectedFiles, null, 2) + '\n', { mode: 0o600 });
+  for (const [index, file] of inspectedFiles.entries()) {
+    // Resolve symlink aliases before ldd so $ORIGIN is the actual executable's
+    // directory. Rustup supplies the pinned toolchain's native loader search path.
+    const result = run('native-ldd-' + index, 'rustup', ['run', '1.98.1', 'ldd', file], [0, 1]);
     const text = (result.stdout ?? '') + (result.stderr ?? '');
-    if (result.status !== 0 && !/not a dynamic executable|statically linked/.test(text)) throw new Error('Unrecognized native dependency inspection');
-    if (/not found/.test(text)) throw new Error('A required native shared library is unavailable');
+    if (result.status !== 0 && !/not a dynamic executable|statically linked/.test(text)) throw new Error('Unrecognized native dependency inspection: native-ldd-' + index);
+    if (/not found/.test(text)) throw new Error('A required native shared library is unavailable: native-ldd-' + index + ' (' + path.basename(file) + ')');
     for (const line of text.split('\n')) {
       const match = line.match(/=>\s+(\/.*?)\s+\(0x/) ?? line.match(/^\s*(\/.*?)\s+\(0x/);
       if (!match) continue;
@@ -129,16 +125,20 @@ try {
   };
   normalizeDirectories(root);
   fs.chmodSync(destination('/tmp'), 0o1777);
-  const dockerfile = path.join(repository, 'runtimes/native/native-job.Dockerfile');
-  run('native-image-build', 'docker', ['build', '--network=none', '--platform=linux/amd64', '--iidfile', path.join(directory, 'image-id.txt'), '--file', dockerfile, context]);
-  const image = fs.readFileSync(path.join(directory, 'image-id.txt'), 'utf8').trim();
-  if (!/^sha256:[0-9a-f]{64}$/.test(image)) throw new Error('Docker did not return a native immutable image ID');
-  const info = JSON.parse(run('native-image-inspect', 'docker', ['image', 'inspect', image]).stdout)[0];
-  if (info.Id !== image || info.Os !== 'linux' || info.Architecture !== 'amd64') throw new Error('Native image identity mismatch');
-  run('native-image-job-version', 'docker', ['run', '--rm', '--network=none', '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges', image, '--version']);
-  const report = { native_image_id: image, profile: values.profile, compiler: '1.98.1', target: 'wasm32-unknown-unknown', test_probe_included: Boolean(values['isolation-probe']), base: 'scratch', commands };
+  const report = { stage: 'PREPARED_NOT_BUILT', native_image_id: null, source_commit: sourceCommit, profile: values.profile, compiler: '1.98.1', target: 'wasm32-unknown-unknown', test_probe_included: Boolean(values['isolation-probe']), base: 'scratch', commands };
+  if (!values['prepare-only']) {
+    const dockerfile = path.join(repository, 'runtimes/native/native-job.Dockerfile');
+    run('native-image-build', 'docker', ['build', '--network=none', '--platform=linux/amd64', '--iidfile', path.join(directory, 'image-id.txt'), '--file', dockerfile, context]);
+    const image = fs.readFileSync(path.join(directory, 'image-id.txt'), 'utf8').trim();
+    if (!/^sha256:[0-9a-f]{64}$/.test(image)) throw new Error('Docker did not return a native immutable image ID');
+    const info = JSON.parse(run('native-image-inspect', 'docker', ['image', 'inspect', image]).stdout)[0];
+    if (info.Id !== image || info.Os !== 'linux' || info.Architecture !== 'amd64') throw new Error('Native image identity mismatch');
+    run('native-image-job-version', 'docker', ['run', '--rm', '--network=none', '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges', image, '--version']);
+    report.native_image_id = image;
+    report.stage = 'BUILT_AND_EXECUTED';
+  }
   fs.writeFileSync(path.join(directory, 'result.json'), JSON.stringify(report, null, 2) + '\n', { mode: 0o600 });
-  console.log(image);
+  console.log(report.native_image_id ?? 'PREPARED_NOT_BUILT');
 } catch (error) {
   fs.writeFileSync(path.join(directory, 'failure.txt'), String(error instanceof Error ? error.message : error) + '\n', { mode: 0o600 });
   throw error;

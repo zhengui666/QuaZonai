@@ -63,11 +63,14 @@ pub fn forecast(
             } else {
                 None
             };
-            // A future price is read only after the prediction returns. It never
-            // enters the module, feature state, or the current decision timestamp.
-            let future = series
-                .bars
-                .get(index + parameters.label_horizon_observations as usize);
+            // No label is formed for a warmup row that never called predict.
+            // A future price is read only after a successful prediction returns;
+            // it never enters the module or the current feature state.
+            let future = prediction.and_then(|_| {
+                series
+                    .bars
+                    .get(index + parameters.label_horizon_observations as usize)
+            });
             let label = future.map(|future| future.close.as_f64() / close - 1.0);
             ensure!(label.is_none_or(f64::is_finite), "FORECAST_LABEL_NONFINITE");
             points.push(NativeForecastPointV1 {
@@ -83,9 +86,13 @@ pub fn forecast(
                 label_available_ns: future
                     .map(|future| counter(future.ts_init.as_u64()))
                     .transpose()?,
-                label_reason: future
-                    .is_none()
-                    .then_some(ForecastMissingReason::LabelNotComplete),
+                label_reason: if prediction.is_none() {
+                    Some(ForecastMissingReason::IndicatorWarmup)
+                } else {
+                    future
+                        .is_none()
+                        .then_some(ForecastMissingReason::LabelNotComplete)
+                },
             });
         }
         // The next instrument receives the unspent remainder, not another full budget.

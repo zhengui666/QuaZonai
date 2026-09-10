@@ -15,6 +15,9 @@ use std::{
     sync::Arc,
 };
 
+mod cache;
+pub use cache::{cleanup_terminal, recover};
+
 pub struct Materialized {
     pub output: PathBuf,
     pub mounts: Vec<Mount>,
@@ -61,7 +64,81 @@ pub async fn parameters(
             }
         }
     }
+    let selections: Vec<_> = match &parameters {
+        NativeTaskParametersV1::ValidateData { selections, .. } => selections
+            .iter()
+            .map(|selected| (selected.dataset_revision_id, &selected.selection))
+            .collect(),
+        NativeTaskParametersV1::EvaluateAlpha {
+            dataset_revision_id,
+            request,
+            ..
+        } => {
+            vec![(*dataset_revision_id, &request.selection)]
+        }
+        NativeTaskParametersV1::SimulatePortfolio {
+            dataset_revision_id,
+            request,
+            ..
+        } => {
+            vec![(*dataset_revision_id, &request.selection)]
+        }
+        NativeTaskParametersV1::CompileModel { .. }
+        | NativeTaskParametersV1::BuildPortfolio { .. } => Vec::new(),
+    };
+    for (revision, selection) in selections {
+        let catalog = spec
+            .inputs
+            .iter()
+            .find_map(|input| match input {
+                RuntimeInputV1::Dataset {
+                    revision_id,
+                    registered_ref,
+                    storage_version,
+                    ..
+                } if *revision_id == revision => Some((registered_ref, storage_version)),
+                _ => None,
+            })
+            .ok_or(Failure::Invalid("catalog_binding"))?;
+        selection_scope(registered(catalogs, catalog.0, catalog.1)?, selection)?;
+    }
     Ok(parameters)
+}
+
+fn selection_scope(
+    catalog: &RegisteredCatalog,
+    selection: &contracts::science::NativeBarSelectionV1,
+) -> Result<()> {
+    use nautilus_model::data::BarType;
+    let [attested] = catalog.metadata.quality.datasets.as_slice() else {
+        return Err(Failure::Invalid("catalog_quality_scope"));
+    };
+    if selection.event_start_ns < attested.selection.event_start_ns
+        || selection.event_end_ns > attested.selection.event_end_ns
+    {
+        return Err(Failure::Invalid("catalog_event_scope"));
+    }
+    for name in &selection.bar_types {
+        // Use the upstream identity parser, not a second grammar based on string splitting.
+        let native: BarType = name
+            .parse()
+            .map_err(|_| Failure::Invalid("catalog_bar_type_scope"))?;
+        if native.to_string() != *name || !attested.selection.bar_types.contains(name) {
+            return Err(Failure::Invalid("catalog_bar_type_scope"));
+        }
+        let instrument = native.instrument_id().to_string();
+        if !attested.instrument_ids.contains(&instrument)
+            || !catalog
+                .metadata
+                .universe
+                .membership
+                .iter()
+                .any(|member| member.instrument_id == instrument)
+        {
+            return Err(Failure::Invalid("catalog_instrument_scope"));
+        }
+    }
+    Ok(())
 }
 
 pub async fn inputs(
@@ -125,6 +202,9 @@ pub async fn inputs(
             )?);
         }
     }
+    // This covers the additional filesystem copies as well as bounded output
+    // staging. The immutable SQLite objects already consume their own quota.
+    journal.reserve_materialization(spec).await?;
     let spec = spec.clone();
     tokio::task::spawn_blocking(move || {
         let destination = root.job(spec.run_id, spec.attempt_no);
@@ -142,7 +222,10 @@ pub async fn inputs(
                 }
             }
         } else {
-            let staging = root.path.join("staging").join(Id::new().to_string());
+            // The exact reserved slot is never an OCI mount. An interrupted
+            // partial copy is discarded rather than allocating unbounded siblings.
+            cache::discard_staging(&root, &spec)?;
+            let staging = cache::staging(&root, &spec);
             files::private_directory(&staging)?;
             let input = staging.join("input");
             files::private_directory(&input)?;

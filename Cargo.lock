@@ -4928,6 +4928,7 @@ dependencies = [
  "domain",
  "futures-util",
  "integrations",
+ "nautilus-model",
  "reqwest",
  "rustix",
  "serde",

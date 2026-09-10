@@ -100,6 +100,7 @@ impl RuntimeService {
         }
         let journal =
             Journal::open(&path, config.storage_quota_bytes, config.max_pending_jobs).await?;
+        materialize::recover(root.clone(), &journal).await?;
         let config = Arc::new(config);
         let engine = NativeEngine::new(config.clone())?;
         Ok(Arc::new(Self {
@@ -127,6 +128,7 @@ impl RuntimeService {
     /// native jobs and cancellations are always reconciled before new launches.
     pub async fn poll_once(&self) -> Result<usize> {
         let _owner = self.poll.lock().await;
+        materialize::cleanup_terminal(self.root.clone(), &self.journal).await?;
         let pending = self.journal.scheduling().await?;
         let active = pending
             .iter()
@@ -372,20 +374,10 @@ impl RuntimeService {
         }
         let spec = row.spec()?;
         let finished = observed.finished_at.ok_or(Failure::Integrity)?;
-        let reason = if observed.oom_killed {
-            Some(RuntimeFailureCode::MemoryLimit)
-        } else if observed.exit_code == Some(124)
-            || finished > spec.deadline_at
-            || observed.started_at.is_some_and(|started| {
-                finished - started > chrono::Duration::seconds(i64::from(spec.limits.wall_seconds))
-            })
-        {
-            Some(RuntimeFailureCode::DeadlineExceeded)
-        } else if observed.exit_code != Some(0) {
-            Some(RuntimeFailureCode::NativeJobFailed)
-        } else {
-            None
-        };
+        let reason = self
+            .journal
+            .record_native_exit(&row.external_id, &observed)
+            .await?;
         if let Some(reason) = reason {
             let manifest = failure_manifest(&row, Some(reason), finished)?;
             self.journal
@@ -470,6 +462,16 @@ impl RuntimeService {
             if observed.running {
                 self.engine.kill(&observed.id).await?;
             } else {
+                if !observed.created_only
+                    && row.container_id.as_deref() == Some(observed.id.as_str())
+                {
+                    // Record the original process before deletion. A cancellation
+                    // requested after a native failure must not erase that failure,
+                    // including when the gateway restarts before installing its barrier.
+                    self.journal
+                        .record_native_exit(&row.external_id, &observed)
+                        .await?;
+                }
                 // Native non-force removal loses a race to a late START safely:
                 // it fails while running, so no terminal cancellation is published.
                 self.engine.remove_stopped(&observed.id).await?;

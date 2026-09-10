@@ -10,6 +10,9 @@ use sqlx::{
 };
 use std::{path::Path, time::Duration};
 
+mod exits;
+mod materialization;
+
 #[derive(Clone)]
 pub struct Journal {
     pool: SqlitePool,
@@ -168,7 +171,7 @@ impl Journal {
     }
 
     async fn capacity(&self, tx: &mut Transaction<'_, Sqlite>, additional: i64) -> Result<()> {
-        let occupied: i64 = sqlx::query_scalar("SELECT COALESCE((SELECT SUM(byte_count) FROM input_objects),0)+COALESCE((SELECT SUM(byte_count) FROM job_outputs),0)+COALESCE((SELECT SUM(output_reservation) FROM runtime_jobs),0)")
+        let occupied: i64 = sqlx::query_scalar("SELECT COALESCE((SELECT SUM(byte_count) FROM input_objects),0)+COALESCE((SELECT SUM(byte_count) FROM job_outputs),0)+COALESCE((SELECT SUM(output_reservation) FROM runtime_jobs),0)+COALESCE((SELECT SUM(byte_count) FROM materialization_reservations),0)")
             .fetch_one(&mut **tx).await?;
         if additional < 0 || occupied > self.quota.saturating_sub(additional) {
             return Err(Failure::Capacity);
@@ -543,7 +546,22 @@ impl Journal {
         if row.launch_json.is_some() && row.container_id.is_none() && row.barrier_id.is_none() {
             return Err(Failure::Integrity);
         }
-        if let Some(reason) = row.stop_code {
+        let earlier_failure = Self::failure_before_cancellation(&mut tx, &row).await?;
+        if let Some((reason, finished)) = earlier_failure.filter(|_| row.stop_code.is_none()) {
+            // The original process had already failed before cancellation was
+            // requested. Its durable observation survives removal and restart.
+            manifest.state = RuntimeResultState::Failed;
+            manifest.error = Some(boundary::error(reason));
+            manifest.finished_at = finished;
+            let elapsed = manifest.started_at.map_or(0, |started| {
+                (finished - started).num_milliseconds().max(0) as u64
+            });
+            manifest.resource_usage.wall_milliseconds =
+                DbCounter::new(elapsed).map_err(|_| Failure::Integrity)?;
+            manifest.artifacts.clear();
+            outputs.clear();
+            manifest.resource_usage.output_bytes = DbCounter::ZERO;
+        } else if let Some(reason) = row.stop_code {
             let reason: RuntimeFailureCode =
                 serde_json::from_value(serde_json::Value::String(reason))?;
             manifest.state = RuntimeResultState::Failed;
@@ -552,9 +570,7 @@ impl Journal {
             outputs.clear();
             manifest.resource_usage.output_bytes =
                 DbCounter::new(0).map_err(|_| Failure::Integrity)?;
-        } else if row.cancel_requested_us.is_some()
-            && manifest.state == RuntimeResultState::Succeeded
-        {
+        } else if row.cancel_requested_us.is_some() {
             manifest.state = RuntimeResultState::Cancelled;
             manifest.error = None;
             manifest.finished_at = now();

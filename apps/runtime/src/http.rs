@@ -385,6 +385,68 @@ fn response(media: &str, bytes: Vec<u8>) -> Result<Response> {
         object,
         artifact
     ),
-    components(schemas(RuntimeProblem))
+    components(schemas(RuntimeProblem)),
+    modifiers(&RuntimeAuthority)
 )]
 pub struct RuntimeApi;
+
+struct RuntimeAuthority;
+
+impl utoipa::Modify for RuntimeAuthority {
+    fn modify(&self, document: &mut utoipa::openapi::OpenApi) {
+        use utoipa::openapi::security::{
+            HttpAuthScheme, HttpBuilder, SecurityRequirement, SecurityScheme,
+        };
+        use utoipa::openapi::{Content, Header, ObjectBuilder, Ref, ResponseBuilder, Type};
+        document.components.get_or_insert_with(Default::default).add_security_scheme(
+            "RuntimeBearer",
+            SecurityScheme::Http(
+                HttpBuilder::new()
+                    .scheme(HttpAuthScheme::Bearer)
+                    .bearer_format("opaque Runtime service credential")
+                    .description(Some("Exactly one Authorization: Bearer header is required. The configured 32–8192 printable non-whitespace ASCII credential is not a JWT or a browser session. Cookie and duplicate Authorization headers are rejected."))
+                    .build(),
+            ),
+        );
+        let authority = SecurityRequirement::new("RuntimeBearer", std::iter::empty::<&str>());
+        document.security = Some(vec![authority.clone()]);
+        let unauthorized = ResponseBuilder::new()
+            .description("Missing, invalid, duplicate or Cookie-mixed Runtime bearer credential.")
+            .content(
+                "application/json",
+                Content::new(Some(Ref::from_schema_name("RuntimeProblem"))),
+            )
+            .header(
+                "WWW-Authenticate",
+                Header::new(
+                    ObjectBuilder::new()
+                        .schema_type(Type::String)
+                        .enum_values(Some(["Bearer"])),
+                ),
+            )
+            .build();
+        for item in document.paths.paths.values_mut() {
+            for operation in [
+                &mut item.get,
+                &mut item.post,
+                &mut item.put,
+                &mut item.patch,
+                &mut item.delete,
+                &mut item.head,
+                &mut item.options,
+                &mut item.trace,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                // Every route is behind the same actual middleware. Keep additions
+                // authenticated even when a route annotation forgets the common contract.
+                operation.security = Some(vec![authority.clone()]);
+                operation
+                    .responses
+                    .responses
+                    .insert("401".into(), unauthorized.clone().into());
+            }
+        }
+    }
+}

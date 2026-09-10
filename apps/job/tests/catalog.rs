@@ -62,8 +62,49 @@ fn native_catalog_round_trip_preserves_identity_values_and_times() {
     assert!(load_catalog(directory.path(), &limited).is_err());
     let mut before = selection;
     before.event_end_ns = DbCounter::new(240_000_000_000).unwrap();
+    before.maximum_rows = 3;
     let result = load_catalog(directory.path(), &before).unwrap();
     assert_eq!(result.rows, 3, "event interval is half-open");
+}
+
+#[test]
+fn native_event_pushdown_keeps_late_available_rows_and_counts_only_the_requested_slice() {
+    let directory = tempfile::tempdir().unwrap();
+    let (instrument, mut bars, mut selection) = fixture();
+    // The first two event rows were available only after the requested interval
+    // ended. They are still valid for the later decision cutoff.
+    bars[0].ts_init = 200_000_000_000_u64.into();
+    bars[1].ts_init = 220_000_000_000_u64.into();
+    bars[2].ts_init = 260_000_000_000_u64.into();
+    bars[3].ts_init = 320_000_000_000_u64.into();
+    let catalog = ParquetDataCatalog::from_uri(
+        directory.path().to_str().unwrap(),
+        None,
+        Some(2),
+        None,
+        None,
+    )
+    .unwrap();
+    catalog.write_instruments(vec![instrument]).unwrap();
+    catalog.write_to_parquet(&bars, None, None, None).unwrap();
+    selection.event_end_ns = DbCounter::new(150_000_000_000).unwrap();
+    selection.maximum_rows = 2;
+    let selected = load_catalog(directory.path(), &selection).unwrap();
+    assert_eq!(selected.series[0].bars, bars[..2]);
+    assert_eq!(selected.rows, 2);
+    selection.maximum_rows = 1;
+    assert!(load_catalog(directory.path(), &selection).is_err());
+    selection.maximum_rows = 2;
+    selection.decision_cutoff_ns = DbCounter::new(210_000_000_000).unwrap();
+    let earlier = load_catalog(directory.path(), &selection).unwrap();
+    assert_eq!(earlier.series[0].bars, bars[..1]);
+    // Broadening only the event interval still does not make the fourth row,
+    // which was available after the decision cutoff, visible.
+    selection.event_end_ns = DbCounter::new(300_000_000_000).unwrap();
+    selection.decision_cutoff_ns = selection.event_end_ns;
+    selection.maximum_rows = 3;
+    let full_visible = load_catalog(directory.path(), &selection).unwrap();
+    assert_eq!(full_visible.series[0].bars, bars[..3]);
 }
 
 #[test]

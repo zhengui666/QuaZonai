@@ -17,6 +17,16 @@ fn catalog_features_produce_causal_predictions_and_separate_completed_labels() {
         result.points[0].forecast_reason,
         Some(ForecastMissingReason::IndicatorWarmup)
     );
+    for index in [0, 1, 20, 21] {
+        let warmup = &result.points[index];
+        assert_eq!(warmup.forecast, None);
+        assert_eq!(warmup.label_return, None);
+        assert_eq!(warmup.label_available_ns, None);
+        assert_eq!(
+            warmup.label_reason,
+            Some(ForecastMissingReason::IndicatorWarmup)
+        );
+    }
     assert!((result.points[2].forecast.unwrap() - (1.003 / 1.002 - 1.0)).abs() < 1e-12);
     assert!((result.points[2].label_return.unwrap() - (1.005 / 1.003 - 1.0)).abs() < 1e-12);
     assert_eq!(

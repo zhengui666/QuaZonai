@@ -604,6 +604,24 @@ data_use_revocations [append-only]
 
 必须 `unique(dataset_revisions.source_id,native_snapshot_ref,native_storage_version)` 和 `unique(data_sources.runtime_id,native_catalog_ref)`；相同原生身份同请求返回已有记录，不同partition/授权等409。服务端registry规范化来源；迁移/别名映射已有身份并继承暴露，无法证明独立时LEGACY_UNKNOWN，不能获得sealed资格。此项不得以应用内容hash实现。
 
+### A2.2 正式数据管理与原生登记
+
+Source、许可、撤销、Dataset、Universe沿用A2既有表，不新增业务数据源、内容hash或通用CRUD平台。`POST /data/sources`使用DataSourceCreate(schema_version,name,runtime_id,native_catalog_ref,provider_kind=NAUTILUS_CATALOG,enabled)，PATCH只接schema_version/expected_revision/name/enabled；Runtime、原生登记key、provider身份不可变。native_catalog_ref是已配置Runtime的精确registry key，不是URL、绝对/相对宿主路径、SQL或调用方自选fetch。保存配置没有网络副作用，不等于数据或引擎可用。已登记原生Source在不同命令键下重复创建明确409，不把原生唯一约束冲突报告成503。
+
+DataGrantCreate显式包含schema_version/source_id/license_reference/evidence_artifact_id/allowed_uses/valid_from/valid_until；完整Source绑定同时进入规范化OperatorCommand意图，不能只在可更换的HTTP父路径里。证据必须引用已发布非空、OPERATOR作者、非Sealed的本地REPORT。Source锁下分配单调version，授权者/时间由服务端生成。DataGrantRevoke(schema_version,effective_at?,reason_code,reason)追加记录；省略生效时间用锁后的数据库实时钟，显式值只能未来生效，不能回溯改写发生过的读取机会。许可读取同时返回原始字段与checked_at时的ACTIVE/NOT_YET_VALID/EXPIRED/REVOKED，read-time状态不构成新的授权或续期。
+
+`POST /data/revisions`使用DatasetRegister(schema_version,source_id,grant_id,expected_source_revision,expected_runtime_revision,native_storage_version,existing_universe_version_id?)，不接受origin、PIT、计数、质量、原生快照正文、URL或宿主路径。该命令与RuntimeProbe相同，作用目标是已有Source，返回原生登记的Dataset及完整命令回执，HTTP统一200；目标不是预先由CLI grant分配的新Dataset。这样相同原生身份可在另一个幂等键下返回原Dataset，不被一次性人工授权强迫制造第二个UUID。SourceCreate和GrantCreate仍是服务端分配新资源的201创建命令。
+
+原生登记先在短Operator事务读取原回执并按Source→Runtime→Grant共享锁顺序验证精确配置版本、enabled、许可和撤销；锁后实际数据库时间产生20秒票据。事务外复用已验证的RuntimeTransport读取固定 `/runtime/v1/catalogs/{registered_ref}/metadata?storage_version=...`：原生URL段/query编码、部署origin/SocketAddr/TLS、无代理/重定向/自动重试、1MiB累计响应、原始重复字段及解码凭据反射拒绝。RuntimeCatalogMetadataV1必须精确匹配登记Source/key/version/provider，保留真实native_snapshot_ref、来源、PIT说明、原生quality及Universe。结构与时间排序校验不是历史PIT证明，测试数据不会升级REAL。连接或集成暂不可用返回503/INTEGRATION_UNAVAILABLE，不伪装成字段冲突或空数据集。
+
+完成事务重取原命令锁并优先处理回执，复核票据/配置/许可/授权，只有命令所有者才能发布Store分配的原生对象批次。发表qz.native_catalog_metadata/1原始JSON、qz.data_quality/1、qz.universe_membership/1、qz.instrument_definitions/1，然后在同一事务提交只读Artifact元数据、必要的新Universe、Dataset、dataset_registration_evidence和完整回执；网络I/O不在此事务。全局原生管理证据为OPERATOR访问级别、RUNTIME作者、保留真实origin，不作为Agent提交的RESEARCH报告或正式评估PASS。
+
+原生唯一(source_id,native_snapshot_ref,storage_version)存在时，只有原Grant、指定Universe及原metadata的完整内容一致才重放；冲突409/NATIVE_IDENTITY_CONFLICT，不能更换许可、来源、UUID或原生别名洗掉历史。旧Dataset缺正式registration evidence时保留历史并拒绝推断填补。DatasetRegistrationEvidence仅增加dataset_revision_id PK/FK、native_metadata_artifact_id UNIQUE/FK、source_revision、runtime_revision、observed_at、created_at，不改旧不可变记录。native版本的登记仅授予可供受信任验证的引用，首个DATA_VALIDATE仍必须实际打开原生快照。
+
+Dataset可显式重用既有Universe，前提是名称/calendar/version/selection_asof/覆盖/历史成员及原始instrument definitions全部一致，且origin一致；否则409。由此Discovery/Validation/Sealed可共享同一冻结Universe，不靠复制相同成员为三个新身份。已发布原生对象而DB失败时，原事务结束后重新取得原Operator锁并逐个确认精确对象无正式引用才回收；不确定则保留，不扫描或删除其他产物，复用现有原生Operator发表恢复机制。
+
+管理写入仅近期Operator浏览器或完整意图单次CLI人工grant。全局管理元数据读只允许Operator或严格只读DOCTOR_READ CLI，不因此赋予Mission/Automation/Downstream数据管理、Sealed raw、Secret、SQL能力；Mission仍通过项目授权InputSet的数据工具。列表保持UUID cursor、默认50/上限100；Source/许可/撤销/Dataset/Universe真实API与同一CLI/Ant Design管理界面逐项回归。新鲜授权、原生事务/文件/真实TLS、故障回滚及同键/原生身份并发重放必须实测，不能以DTO或页面存在替代。
+
 ### Runtime 实际可用性与调度边界
 
 Runtime 配置中的 enabled、allowed_capabilities 仅表达 Operator 意图，不是实际可用性。Cycle 与 standalone Run 的共同准入事务，以及 Attempt 首次由 NOT_SENT 转为 SENT_UNKNOWN 前，必须读取当前配置 revision 对应、尚未过期的成功原生探测，核对 job kind 和实际 max_wall_seconds / max_memory_mib / max_output_bytes。预算上限不能代替执行环境上限；cpu_seconds 是累计记账预算，不得错误解释为申请的 CPU 核数。拒绝必须与 Run、预算预留、事件、PGMQ 消息、幂等回执一起回滚。已经发出但结果未知的稳定远端身份仍须查询、取消和对账，不能因当前 Runtime 不健康而跳过恢复，也不能重建新 Attempt 重跑研究。
@@ -1876,6 +1894,18 @@ ResultManifestV1 为 schema_version、run_id、attempt_no、external_job_id、in
 Rust预处理本身可读取文件，因此COMPILE_MODEL必须是无数据目录的独立Run：只挂该Code与该Parameters，禁止任何额外Dataset、Model、其他研究产物或Sealed。固定rustc 1.98.1/wasm32-unknown-unknown和纯predict ABI；编译无Cargo依赖、build.rs、网络或用户可选参数，失败不生成可信MODEL。后续EVALUATE_ALPHA使用已发布的MODEL与精确授权目录，Wasmi无导入的实例拿不到编译器、环境或标签；不能把“编译器和Sealed数据在同容器但没主动读取”当隔离。一次实验的trial预约只在首个阶段计入，编译失败仍保留该trial，后续阶段不得再计同一个trial或绕过累计CPU/输出预算。
 
 固定job入口 `job execute` 默认读取运行时提供的/input/spec.json、/input/objects/UUID和/input/catalogs/datasetUUID，输出仅位于本次/output。与既有forecast/simulate本机入口一致，受信任本机诊断/原生子进程回归可显式给 `--input-root` / `--output-root`；它们不是HTTP/MCP字段，Gateway固定传递默认挂载并禁止JobSpec替换命令或参数。大型输出原始字节以服务器分配UUID写入，逐次写入累计检查output_bytes，最后发表唯一NativeJobOutputIndexV1；索引至多1MiB、64个产物，未封口索引不能作为成功。编译输出qz.wasm_model与qz.model_compilation；目录验证qz.data_quality；预测qz.native_forecast；优化qz.native_allocation；模拟qz.native_simulation，均明确v1。优化INFEASIBLE保留真实诊断与空目标，不变造等权目标。原生预测含标签的报告为受限科学输入，不冒充带AlphaVersion/单位/可见时间语义的qz.alpha_signal.v1；后者必须由独立受信任科学发布服务验证和形成。
+
+### B4.7 原生 Runtime 审查修订：物化配额、终态与认证合同
+
+SQLite 中的输入/结果 BLOB 配额不能漏掉执行目录中的副本。增量迁移增加仅用于原生磁盘占用的 `materialization_reservations(external_id PRIMARY KEY REFERENCES runtime_jobs, byte_count>0, reserved_us)`；它不持有研究预算或工作流。物化前，在原生 SQLite 写事务内为精确 JobSpec 的全部复制输入、spec、输出上限与1MiB索引预约磁盘额度；同任务重试复用同一预约。该额度与已存输入、输出 BLOB 及未完成输出预约共同计入 storage_quota_bytes。只有已确认唯一终态、结果与实际输出已在 SQLite 原子封口，才可回收该任务自己的物化副本；原始输入BLOB、正式输出BLOB、manifest、Run身份、取消屏障和tombstone全部保留。先完成原生文件删除/fsync，再删除预约，失败/提交不明保留占用并在恢复时重试，不能先释放额度后猜测删除。新物化采用确定性的原生run/attempt暂存名，失败或重启不能积累无限随机暂存副本。升级恢复在独占状态目录下识别现有任务的副本与原始spec；未知或不可验证目录保留并明确阻塞自动回收，不把用户文件当垃圾。
+
+取消请求不改写已经发生的原生失败。处理已退出容器时，在删除容器前保存真实退出/OOM/超时原因及原生完成时间；若该失败发生于 cancel_requested_us 之前，则屏障建立后的终态仍为 FAILED，而不是 CANCELLED。故障事实、开始/结束时间与失败原因使用同一原生journal不可变记录恢复，不能因网关在删除容器后崩溃丢失证据。成功/失败/取消仍只发布一个终态；对运行中任务发出取消后的信号退出不能倒推成先前失败。
+
+所有 `/runtime/v1` 操作的原生 OpenAPI 明确声明 `RuntimeBearer` HTTP bearer security scheme、必需的单一认证头和401 RuntimeProblem/application-json响应；不声明匿名或Cookie认证。缺失/重复/混合Cookie凭据均由同一真实中间件拒绝，生成合同与逐路由原生HTTP回归一致。
+
+原生目录请求不仅绑定registered_ref/version/partition，还必须逐项绑定质量报告中已经登记的完整BarType及Instrument集合。VALIDATE_DATA、EVALUATE_ALPHA、SIMULATE_PORTFOLIO都在挂载前校验；目录后来出现的其他品种不能因目录路径相同而获得授权。原生查询同时限定事件区间与当时可见截止，先由上游查询引擎过滤，再执行maximum_rows解码上限，不能把区间外较新记录计入请求行数，也不能丢掉区间内迟到但在cutoff前已可得的记录。预测预热行没有成功predict调用，future label和label_available都必须为null，label_reason为INDICATOR_WARMUP；仅成功预测后才形成未来标签，样本末尾真正未完成的标签另用LABEL_NOT_COMPLETE。
+
+原生镜像组装使用已打开文件描述符校验/复制依赖，目标create-exclusive，不以先exists/stat再按路径读取作身份依据；遇同名已存在对象只按已打开描述符逐字节核对。工具链内动态库解析使用该固定工具链的真实库目录，不忽略ldd的not-found；生成准备目录与实际Docker build/run分别记录，准备完成不能冒充OCI运行通过。失败回执保留对应原生ldd输出和命令，不上传整份工具链、镜像根或秘密。
 
 ## B5. 事务与状态机
 

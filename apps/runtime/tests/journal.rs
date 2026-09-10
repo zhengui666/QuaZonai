@@ -1,4 +1,6 @@
 //! Real SQLite transactions/reopen/concurrency. Controlled native IDs are not OCI evidence.
+#[path = "support/exit_observations.rs"]
+mod exit_observations;
 #[path = "../../../tests/support/runtime.rs"]
 mod protocol;
 use contracts::{

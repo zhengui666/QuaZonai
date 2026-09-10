@@ -28,6 +28,8 @@ tokio = { version = "=1.53.1", features = ["full"] }
 futures-util = "=0.3.34"
 sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros", "chrono"] }
 bollard = { version = "=0.21.1", default-features = false, features = ["pipe"] }
+# Parse native instrument identities only; the gateway does not run a research engine.
+nautilus-model = { version = "=0.63.0", default-features = false }
 chrono = { version = "=0.4.45", features = ["serde"] }
 clap = { version = "=4.5.46", features = ["derive"] }
 utoipa = { version = "=5.4.0", features = ["chrono", "uuid"] }

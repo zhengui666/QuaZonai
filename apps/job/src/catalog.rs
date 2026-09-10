@@ -87,14 +87,22 @@ pub fn load_catalog(root: &Path, selection: &NativeBarSelectionV1) -> Result<Nat
         None,
         Some(UnixNanos::from(selection.decision_cutoff_ns.get())),
     )?;
-    // Stop native decoding at the admission limit instead of materializing an
-    // arbitrarily large Vec and only checking its length afterwards. The native
-    // query engine still runs under the job's external memory/CPU limits.
+    // The upstream query filters ts_init through the actual availability cutoff.
+    // Also push the half-open event interval into that same native query before
+    // applying the decoded-row cap. This preserves in-range late arrivals while
+    // excluding unrelated newer rows; callers cannot supply a SQL expression.
+    let event_interval = format!(
+        "ts_event >= {} AND ts_event < {}",
+        selection.event_start_ns.get(),
+        selection.event_end_ns.get()
+    );
+    // Native decoding is bounded instead of first materializing an arbitrary Vec.
+    // The query engine itself still runs under external job memory/CPU limits.
     let query = catalog.query::<Bar>(
         Some(selection.bar_types.clone()),
         Some(UnixNanos::from(selection.event_start_ns.get())),
         Some(UnixNanos::from(selection.decision_cutoff_ns.get())),
-        None,
+        Some(&event_interval),
         None,
         true,
     )?;
