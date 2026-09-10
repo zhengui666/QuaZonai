@@ -74,6 +74,80 @@ fn request() -> Reservation {
         model: None,
     }
 }
+#[test]
+fn non_trial_work_still_reserves_resources_without_consuming_an_experiment() {
+    let mut job = request();
+    job.experiments = 0;
+    let prepared = reserve_non_trial(
+        ProjectState::Active,
+        &budget(),
+        &stop(),
+        &empty_usage(),
+        &job,
+    )
+    .unwrap();
+    assert_eq!(prepared.reserved_experiments, 0);
+    assert_eq!(prepared.reserved_cpu_seconds, job.cpu_seconds);
+    assert_eq!(prepared.active_runs, 1);
+    assert!(matches!(
+        reserve(
+            ProjectState::Active,
+            &budget(),
+            &stop(),
+            &empty_usage(),
+            &job
+        ),
+        Err(DomainError::Invalid("reservation"))
+    ));
+    job.experiments = 1;
+    assert!(matches!(
+        reserve_non_trial(
+            ProjectState::Active,
+            &budget(),
+            &stop(),
+            &empty_usage(),
+            &job
+        ),
+        Err(DomainError::Invalid("reservation"))
+    ));
+    job.experiments = 0;
+    job.cpu_seconds = budget().max_cpu_seconds.checked_add(1).unwrap();
+    assert!(matches!(
+        reserve_non_trial(
+            ProjectState::Active,
+            &budget(),
+            &stop(),
+            &empty_usage(),
+            &job
+        ),
+        Err(DomainError::BudgetExhausted("cpu_seconds"))
+    ));
+}
+
+#[test]
+fn mission_concurrency_is_one_and_does_not_borrow_science_parallel_limit() {
+    let mut limits = budget();
+    limits.max_parallel_runs = 10;
+    let mut job = request();
+    job.experiments = 0;
+    let first =
+        reserve_mission(ProjectState::Active, &limits, &stop(), &empty_usage(), &job).unwrap();
+    assert_eq!(first.active_runs, 1);
+    assert!(matches!(
+        reserve_mission(ProjectState::Active, &limits, &stop(), &first, &job),
+        Err(DomainError::BudgetExhausted("parallel_runs"))
+    ));
+    limits.max_parallel_runs = 1;
+    assert!(reserve(
+        ProjectState::Active,
+        &limits,
+        &stop(),
+        &empty_usage(),
+        &request()
+    )
+    .is_ok());
+}
+
 fn lease() -> AttemptLease {
     AttemptLease {
         attempt_no: 1,

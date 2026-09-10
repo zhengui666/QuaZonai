@@ -1,12 +1,23 @@
 // Generate validators and response media dispatch from the actual Rust OpenAPI.
 // No independent response DTOs, currency list, or permissive binary fallback.
 import fs from 'node:fs';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
 import standaloneCode from 'ajv/dist/standalone/index.js';
 
 const source = new URL('../../../contracts/generated/api-v2.openapi.json', import.meta.url);
-const output = new URL('../src/generated/', import.meta.url);
+const args = process.argv.slice(2);
+if (args.length !== 0 && (args.length !== 2 || args[0] !== '--output-dir' || !args[1])) {
+  throw new Error('Usage: generate-validators.mjs [--output-dir directory]');
+}
+// Verification can compare native outputs in a new private directory without
+// changing checked-in artifacts. The schema source remains fixed in this repo.
+const output = args.length === 2
+  ? pathToFileURL(path.resolve(args[1]) + path.sep)
+  : new URL('../src/generated/', import.meta.url);
 const document = JSON.parse(fs.readFileSync(source, 'utf8'));
 if (!document.paths || !document.components?.schemas) throw new Error('Native HTTP document is incomplete');
 const root = 'urn:quazonai:http-contract:v2';
@@ -17,6 +28,8 @@ const ajv = new Ajv2020({ strict: false, allErrors: false, validateFormats: true
 addFormats(ajv);
 ajv.addSchema(document, root);
 const exported = {};
+const aliases = {};
+const nativeExports = new Map();
 const registry = {};
 const escapePointer = value => value.replaceAll('~', '~0').replaceAll('/', '~1');
 function local(value) {
@@ -31,9 +44,23 @@ function local(value) {
   return value;
 }
 function validator(name, schema) {
-  const id = `${root}:${name}`;
-  ajv.addSchema(schema, id);
-  exported[name] = id;
+  // Export the native cached schema function directly. Registering a new
+  // wrapper schema for every operation recompiles equivalent response roots.
+  // The original document remains the reference-resolution authority.
+  if (typeof schema.$ref !== 'string' || Object.keys(schema).length !== 1) {
+    throw new Error('Expected one exact native schema reference');
+  }
+  const native = ajv.getSchema(schema.$ref);
+  if (!native) throw new Error('Native validator reference could not be compiled');
+  const first = nativeExports.get(native);
+  if (first !== undefined) {
+    // A repeated standalone export can repeat its function declaration in Ajv
+    // 8.17.1. Export each native function once, then share its exact identity.
+    aliases[name] = first;
+  } else {
+    nativeExports.set(native, name);
+    exported[name] = schema.$ref;
+  }
   return name;
 }
 let sequence = 0;
@@ -54,9 +81,15 @@ for (const [path, item] of Object.entries(document.paths)) {
           const media = mime.toLowerCase();
           if (media === 'application/json' || /^application\/[a-z0-9.+-]+\+json$/.test(media)) {
             if (!content.schema) throw new Error(`JSON response schema missing: ${key}`);
-            const pointer = responseValue.$ref
+            const responsePointer = responseValue.$ref
               ? `${responseValue.$ref}/content/${escapePointer(mime)}/schema`
               : `#/paths/${escapePointer(path)}/${method}/responses/${status}/content/${escapePointer(mime)}/schema`;
+            // Only a pure $ref may reuse the component root. A sibling keyword
+            // (including a constraint) must retain the exact response schema.
+            const pureReference = typeof content.schema.$ref === 'string'
+              && Object.keys(content.schema).length === 1;
+            const pointer = pureReference ? content.schema.$ref : responsePointer;
+            if (!pointer.startsWith('#/')) throw new Error('Nonlocal native response schema');
             entry.media[media] = { kind: 'json', validator: validator(`response${sequence++}`, { $ref: root + pointer }) };
           } else if (media === 'text/event-stream') {
             entry.media[media] = { kind: 'event-stream' };
@@ -97,8 +130,21 @@ exports.validateProblem = function(value) { return exports.nativeProblem(value);
 exports.validateDecimal = function(value) { return exports.nativeDecimal(value); };
 exports.validateCostAmount = function(value) { return exports.nativeCostAmount(value); };
 `;
+const aliasCode = Object.entries(aliases)
+  .map(([name, first]) => `exports[${JSON.stringify(name)}] = exports[${JSON.stringify(first)}];`)
+  .join('\n');
+const generated = '// Generated from Rust OpenAPI. Do not edit.\n'
+  + standaloneCode(ajv, exported) + '\n' + aliasCode + '\n' + runtime;
+// CJS parsing alone permits duplicate function declarations that fail when
+// Vite/Vitest loads the same code as a module. Check module syntax, not execute it.
+const syntax = spawnSync(process.execPath, ['--input-type=module', '--check'], {
+  input: generated, encoding: 'utf8', env: {}, timeout: 15000, maxBuffer: 8192,
+});
+if (syntax.error || syntax.status !== 0) {
+  throw new Error('Native standalone validator generation produced invalid module syntax');
+}
 fs.mkdirSync(output, { recursive: true });
-fs.writeFileSync(new URL('responses.cjs', output), '// Generated from Rust OpenAPI. Do not edit.\n' + standaloneCode(ajv, exported) + runtime);
+fs.writeFileSync(new URL('responses.cjs', output), generated);
 fs.writeFileSync(new URL('responses.d.cts', output),
   '// Generated from Rust OpenAPI. Do not edit.\n' +
   'export declare function validateResponse(path: string, method: string, status: number, value: unknown, contentType?: string | null): boolean;\n' +

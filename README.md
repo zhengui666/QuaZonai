@@ -8,13 +8,15 @@
 
 | 内容 | 当前事实 |
 |---|---|
-| 原生回测 | Nautilus Rust 0.63.0直接调用BacktestEngine/EmaCross，不再使用Python；固定745个synthetic quote，用原生事件/订单计数验证 |
-| 原生求解 | Clarabel Rust 0.11.1，最小方差手算参考0.8/0.2及不可行约束测试；不是完整生产组合流程 |
+| 原生回测 | Nautilus Rust 0.63.0 的原生不可变 Catalog 读取、受限预测和共享资金目标序列模拟；另保留明确标记 FIXTURE 的原生兼容探针。模拟结果不自动成为资格或交付证据 |
+| 原生求解 | Clarabel Rust 0.11.1 接收冻结输入，检查现金、敞口、分组、换手、成本与参与率；不可行时不提供备用权重。尚非完整 Portfolio Candidate 交付流程 |
 | Arrow | Rust IPC RecordBatch写入/回读，明确FIXTURE不可交付 |
 | 领域基础 | 精确UUIDv7/bigint/Decimal、预算、租约/终态、Codex覆盖及required指标判定；不是完整数据库权限证明 |
 | 认证 API | Axum + PostgreSQL 原生会话、一次性本机初始化、六位 TOTP 登录、防重放、持久注销/设备撤销；普通服务使用非 owner 数据库角色 |
 | Project 与机器身份 | 真正的项目分页/创建/更新、乐观并发、不可变命令回执、机器 token 一次性签发与撤销；机器只读授权项目，人工 CLI 管理操作另需原生 TOTP 单次授权 |
 | 研究准备 | 同事务冻结输入集合、不可变评估政策与实验族登记，严格分区/许可/项目关联和分页授权；登记验证意图不代表已运行原生算法、验证 PIT 或得到 PASS |
+| 集成配置与探测 | 只写加密凭据、Runtime／Downstream 管理；Runtime 经部署允许列表和真实 TLS 探测，观察绑定配置版本与有效期。保存配置不等于连接成功 |
+| Brief 与 Cycle 启动 | 正式冻结执行上下文和三个分区输入；启动时重验许可、当前 Runtime 能力与预算，在同一事务创建 Cycle、首个数据验证 Run、事件和 PGMQ 消息。不代表 Worker 已执行该任务 |
 | PostgreSQL Store | 新库SQLx迁移、逐轮不可变预约/发送/结算、同Mission幂等与预算投影、关系唯一/复合外键；研究/评估权限全链路与 Worker 仍待完整验收 |
 | Codex | 锁定官方App Server stdio、全分页模型及Thread启动探针；真实账号/同Thread工具闭环还需验收 |
 | Ant Design Web/PWA | 已实现 TOTP 初始化/登录、研究项目与 Brief 草稿、Run/SSE/取消、设备管理；桌面/平板/手机与更新提示。真实浏览器入口测试覆盖首次绑定、项目提交幂等、CSRF 和退出；不代表全部研究业务完成 |
@@ -65,7 +67,8 @@ Codex无账号协议探针：
 npm ci --prefix runtimes/codex --ignore-scripts --no-audit --no-fund
 export CODEX_NATIVE_BIN="$PWD/runtimes/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex"
 export CODEX_PROBE_DIR=/tmp/quazonai-codex-example
-timeout --kill-after=5s 90s cargo run --locked -p job --example codex_contract
+cargo build --locked -p job --example codex_contract
+timeout --kill-after=5s 90s target/debug/examples/codex_contract
 ```
 
 这使用独立空profile，不读取或修改宿主登录。真实SYSTEM/官方订阅/custom-provider路径不可被此探针替代。

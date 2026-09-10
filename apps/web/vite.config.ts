@@ -36,7 +36,9 @@ export default defineConfig({
         // Only build-owned static files enter the precache. No authenticated URL
         // is ever a runtime cache key, nor is an API error converted into HTML.
         globPatterns: ['**/*.{js,css,html,svg,webmanifest}'],
-        maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
+        // Keep the native 2 MiB per-file gate: oversized chunks must be fixed,
+        // not silently excluded from the installable application's precache.
+        maximumFileSizeToCacheInBytes: 2 * 1024 * 1024,
         navigateFallback: null,
         cleanupOutdatedCaches: true,
         skipWaiting: false,
@@ -56,6 +58,11 @@ export default defineConfig({
   preview: { host: '127.0.0.1', strictPort: true, proxy },
   build: { target: ['es2022', 'safari16'], sourcemap: false,
     commonjsOptions: { include: [/node_modules/, /generated\/responses\.cjs$/] },
+    // Native Rollup splitting keeps stable third-party code separate from the
+    // changing Rust-contract validators. Both chunks remain in the PWA precache.
+    rollupOptions: { output: {
+      manualChunks(id) { return id.includes('/node_modules/') ? 'vendor' : undefined; },
+    } },
   },
   test: { include: ['src/**/*.test.ts'], environment: 'node', restoreMocks: true },
 });

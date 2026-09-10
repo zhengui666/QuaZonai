@@ -142,7 +142,7 @@ pub(crate) async fn project_for_write(
 }
 // Input membership contains no permission in itself. Revalidate current source,
 // runtime and grant authority after obtaining all locks, including after waits.
-async fn validate_inputs(
+pub(crate) async fn validate_inputs(
     tx: &mut Transaction<'_, Postgres>,
     request: &InputSetCreate,
     extra_sealed: Option<Id>,

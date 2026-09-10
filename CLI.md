@@ -65,6 +65,52 @@ cargo run --locked -p server -- serve --state-dir ./var \
 
 真实浏览器：原生 TOTP 登录后使用同源私有 cookie，写操作携带 Origin、Idempotency-Key 和 DTO 的 expected_revision。机器：只使用独立 Bearer token，不复制浏览器 cookie；`GET /api/v2/auth/machine` 显示自身公开归属/权限/到期，`GET /api/v2/projects` 只返回授权项目。项目和凭据管理要求 Operator 浏览器的最近认证，或专属 CLI 身份提交原生 TOTP 后获得一次性精确命令 grant；Agent、自动化和下游不能取得该人工授权。
 
+## 集成配置与只写凭据 HTTP
+
+`POST /api/v2/settings/credentials` 接收 `{intent:{schema_version:1,purpose,label},value}`。
+purpose 仅 RUNTIME、DOWNSTREAM、CUSTOM_PROVIDER、TLS_CA；value 只写，不返回、记日志或
+写入 SQL/幂等回执。返回的 id 是原生不可变加密对象引用；同 key、同 intent、同原始值才重放，
+不同值409。凭据轮换创建新对象，不能覆盖旧值。TLS_CA 须为原生 TLS 实现可接受的非空 PEM
+证书集合；其他凭据为1–8192个可打印非空白 ASCII 字节。不要把真实值放在 CLI 参数、Issue 或 Git。
+
+Runtime 使用 `GET/POST /api/v2/integrations/runtimes` 和 `GET/PATCH /{id}`；Downstream 使用
+对应的 `/api/v2/integrations/downstreams`。create 传 schema_version、严格 configuration 和
+credential_ref；update 另带 expected_revision，credential_ref=null 表示保留原对象。
+PINNED_CA 必须关联 TLS_CA 用途的 ca_certificate_ref；更新为空表示保留原CA，明确选择
+SYSTEM_CA 则只移除绑定，不删除旧加密对象。配置查询只显示 credential_configured/ca_configured，
+不回传对象路径或凭据引用。注册配置不访问网络，enabled 不代表 readiness；实际 probe 单独执行。
+
+所有这些写操作仍需近期 Operator 浏览器，或 CLI 的一次性完整命令 grant。新增 operation 为
+INTEGRATION_SECRET_REGISTER（request 仅 intent，不含 value）、RUNTIME_CREATE/UPDATE、
+DOWNSTREAM_CREATE/UPDATE。未提供 grant 的 DOCTOR_READ 只可读无秘密配置，不可写。
+Production 只接受 HTTPS origin；literal-loopback HTTP 还须配置和部署双方显式允许。
+本节给出实际 HTTP 合同，不把尚未实现的专属远程 CLI 子命令或 Runtime 网络执行说成已验收。
+
+回归入口为 `cargo test --locked -p domain --test settings`、
+`cargo test --locked -p integrations --test secret_identity` 及隔离 PostgreSQL 上
+`cargo test --locked -p store --test settings` / `cargo test --locked -p server --test settings_http`。
+
+## Runtime 探测与版本化 readiness
+
+`POST /api/v2/integrations/runtimes/{id}/probe` 接收 schema_version=1、expected_revision，
+需要近期人类认证或 RUNTIME_PROBE 单次 CLI grant。响应200表示探测已记录；必须检查
+resource.outcome.status，UNAVAILABLE 不是可执行。`GET /api/v2/integrations/runtimes/{id}/readiness`
+返回当前配置版本、最近观察、是否失效和精确 available_job_kinds。相同 key 重放原结果，不刷新有效期。
+
+`serve` 的 `RUNTIME_TARGETS` 是仅由部署管理的 JSON 数组，默认 `[]` 拒绝所有出站探测。例如：
+
+```json
+[{"origin":"https://runtime.example:8443","addresses":["10.0.0.4:8443"]}]
+```
+
+每项最多16个批准地址，端口必须与origin一致，主机名仍用于原生TLS的Host/SNI验证；不会再次
+依赖系统DNS或环境代理。配置保存不修改此部署允许列表。明确开发模式才允许literal-loopback
+HTTP；PINNED_CA必须绑定原生CA证书，缺失时不回退到SYSTEM_CA。metadata/link-local等目标拒绝。
+
+观察有效期最长60秒，配置变更和新的失败观察立即使旧成功不再准入。产物是运行环境审计，
+不是Alpha资格、数据授权或科学PASS。原生验证命令：`cargo test --locked -p server --test runtime_transport`、
+隔离PostgreSQL上的`cargo test --locked -p server --test runtime_http`及`cargo test --locked -p store --test runtime`。
+
 ## 已实现的研究准备 HTTP 合同
 
 `GET/POST /api/v2/input-sets`、`GET /api/v2/input-sets/{id}` 与

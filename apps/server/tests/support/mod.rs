@@ -25,6 +25,12 @@ pub struct Fixture {
     pub _state: tempfile::TempDir,
 }
 pub async fn fixture(pool: PgPool) -> Fixture {
+    fixture_with_runtime_targets(pool, None).await
+}
+pub async fn fixture_with_runtime_targets(
+    pool: PgPool,
+    targets: Option<server::runtime_transport::RuntimeTargets>,
+) -> Fixture {
     PostgresStore::new(pool.clone()).migrate().await.unwrap();
     let root = tempfile::tempdir().unwrap();
     let secrets = root.path().join("secrets");
@@ -39,14 +45,17 @@ pub async fn fixture(pool: PgPool) -> Fixture {
         false,
     )
     .unwrap();
-    let app = server::router(
-        AppState::new(
-            store.clone(),
-            SecretVault::open(&secrets, &key).unwrap(),
-            policy,
-        ),
-        Key::generate(),
+    let mut state = AppState::new(
+        store.clone(),
+        SecretVault::open(&secrets, &key).unwrap(),
+        policy,
     );
+    if let Some(targets) = targets {
+        state = state.with_runtime_targets(targets).with_artifact_store(
+            integrations::artifacts::ArtifactStore::open(&root.path().join("artifacts")).unwrap(),
+        );
+    }
+    let app = server::router(state, Key::generate());
     Fixture {
         app,
         store,

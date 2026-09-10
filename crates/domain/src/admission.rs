@@ -117,11 +117,63 @@ pub fn reserve(
     usage: &BudgetUsage,
     request: &Reservation,
 ) -> Result<BudgetUsage, DomainError> {
+    reserve_job(
+        project,
+        budget,
+        stop,
+        usage,
+        request,
+        true,
+        budget.max_parallel_runs,
+    )
+}
+
+/// Data preparation and portfolio stages consume execution resources but do not
+/// invent new scientific trials. Only the trusted dispatcher chooses this path.
+pub fn reserve_non_trial(
+    project: ProjectState,
+    budget: &BudgetV1,
+    stop: &StopRuleV1,
+    usage: &BudgetUsage,
+    request: &Reservation,
+) -> Result<BudgetUsage, DomainError> {
+    reserve_job(
+        project,
+        budget,
+        stop,
+        usage,
+        request,
+        false,
+        budget.max_parallel_runs,
+    )
+}
+
+/// A bounded Mission control session has its own single slot so awaiting a
+/// science tool result cannot occupy the last science execution slot.
+pub fn reserve_mission(
+    project: ProjectState,
+    budget: &BudgetV1,
+    stop: &StopRuleV1,
+    usage: &BudgetUsage,
+    request: &Reservation,
+) -> Result<BudgetUsage, DomainError> {
+    reserve_job(project, budget, stop, usage, request, false, 1)
+}
+
+fn reserve_job(
+    project: ProjectState,
+    budget: &BudgetV1,
+    stop: &StopRuleV1,
+    usage: &BudgetUsage,
+    request: &Reservation,
+    scientific_trial: bool,
+    parallel_limit: u16,
+) -> Result<BudgetUsage, DomainError> {
     validate_budget(budget, stop)?;
     if project != ProjectState::Active {
         return Err(DomainError::AdmissionClosed);
     }
-    if request.experiments == 0
+    if scientific_trial != (request.experiments > 0)
         || request.cpu_seconds.get() == 0
         || request.wall_seconds == 0
         || request.memory_mib == 0
@@ -157,7 +209,7 @@ pub fn reserve(
         .active_runs
         .checked_add(1)
         .ok_or(DomainError::BudgetExhausted("parallel_runs"))?;
-    if active_runs > budget.max_parallel_runs {
+    if active_runs > parallel_limit {
         return Err(DomainError::BudgetExhausted("parallel_runs"));
     }
     let mut next = reserve_model_resources(budget, usage, request.model.as_ref())?;

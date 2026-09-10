@@ -77,6 +77,14 @@ enum Command {
         public_url: String,
         #[arg(long, env = "DEVELOPMENT_HTTP", default_value_t = false)]
         development_http: bool,
+        /// Deployment-only origin/socket allowlist; no credentials or model-selected URLs.
+        #[arg(
+            long,
+            env = "RUNTIME_TARGETS",
+            default_value = "[]",
+            hide_env_values = true
+        )]
+        runtime_targets: String,
     },
     /// Reconcile only unreferenced machine verifiers; never removes credential history.
     PruneUnpublishedVerifiers {
@@ -241,8 +249,18 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             bind,
             public_url,
             development_http,
+            runtime_targets,
         } => {
             let policy = WebPolicy::new(&public_url, bind, development_http)?;
+            if runtime_targets.len() > 65536 {
+                return Err("RUNTIME_TARGETS exceeds deployment configuration limit".into());
+            }
+            let targets = serde_json::from_str::<Vec<server::runtime_transport::RuntimeTarget>>(
+                &runtime_targets,
+            )
+            .map_err(|_| "invalid RUNTIME_TARGETS deployment configuration")?;
+            let targets = server::runtime_transport::RuntimeTargets::new(targets, development_http)
+                .map_err(|_| "RUNTIME_TARGETS contains an unsafe or inconsistent endpoint")?;
             let (vault, key) = load_state(&state_dir)?;
             let store = Store::connect(&database.database_url).await?;
             store.verify_runtime_role().await?;
@@ -259,7 +277,9 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             });
             let objects = ArtifactStore::open(&state_dir.join("artifacts"))?;
             let app = server::router(
-                AppState::new(store, vault, policy).with_artifact_store(objects),
+                AppState::new(store, vault, policy)
+                    .with_artifact_store(objects)
+                    .with_runtime_targets(targets),
                 key,
             );
             let listener = tokio::net::TcpListener::bind(bind).await?;

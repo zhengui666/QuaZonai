@@ -13,7 +13,13 @@ use sqlx::PgPool;
 use store::{authority::Actor, lifecycle::*, Store, StoreError};
 
 async fn setup(pool: &PgPool) -> (Store, support::Fixture, RunSubmission, Actor) {
-    let f = support::fixture(pool, support::budget()).await;
+    setup_with_budget(pool, support::budget()).await
+}
+async fn setup_with_budget(
+    pool: &PgPool,
+    budget: contracts::budget::BudgetV1,
+) -> (Store, support::Fixture, RunSubmission, Actor) {
+    let f = support::fixture(pool, budget).await;
     // End the unrelated model-ledger fixture before testing admission slots.
     sqlx::query("UPDATE app.runs SET state='FAILED',finished_at=clock_timestamp() WHERE id=$1")
         .bind(f.run.as_uuid())
@@ -21,7 +27,7 @@ async fn setup(pool: &PgPool) -> (Store, support::Fixture, RunSubmission, Actor)
         .await
         .unwrap();
     let runtime = Id::new();
-    sqlx::query("INSERT INTO app.runtime_integrations(id,name,endpoint,tls_policy,credential_ref,allowed_capabilities,protocol_version,enabled) VALUES($1,'runtime fixture','https://runtime.example','SYSTEM_CA','fixture-credential',ARRAY['DATA_VALIDATE'],'1',true)").bind(runtime.as_uuid()).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO app.runtime_integrations(id,name,endpoint,tls_policy,credential_ref,allowed_capabilities,protocol_version,enabled) VALUES($1,'runtime fixture','https://runtime.example','SYSTEM_CA','fixture-credential',ARRAY['DATA_VALIDATE','ALPHA_EVALUATE'],'1',true)").bind(runtime.as_uuid()).execute(pool).await.unwrap();
     let store = Store::from_pool(pool.clone());
     let cap = store
         .issue_bootstrap_capability("$argon2id$fixture-native-verification")
@@ -49,7 +55,7 @@ async fn setup(pool: &PgPool) -> (Store, support::Fixture, RunSubmission, Actor)
         input_set_id: f.input_set,
         runtime_id: runtime,
         runtime_revision: Revision::INITIAL,
-        kind: RunKind::DataValidate,
+        kind: RunKind::AlphaEvaluate,
         limits: JobLimitsV1 {
             schema_version: SchemaV1,
             experiments: 1,
@@ -61,6 +67,49 @@ async fn setup(pool: &PgPool) -> (Store, support::Fixture, RunSubmission, Actor)
     };
     (store, f, request, actor)
 }
+#[sqlx::test(migrations = "../../migrations")]
+async fn mission_admission_preserves_the_only_science_slot_and_charges_both_cpu_limits(
+    pool: PgPool,
+) {
+    let mut budget = support::budget();
+    budget.max_parallel_runs = 1;
+    let (store, fixture, mut science, _) = setup_with_budget(&pool, budget).await;
+    let revision: i64 = sqlx::query_scalar(
+        "UPDATE app.runtime_integrations SET allowed_capabilities=ARRAY['AGENT_RESEARCH','ALPHA_EVALUATE'] WHERE id=$1 RETURNING revision",
+    )
+    .bind(science.runtime_id.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    science.runtime_revision = revision.to_string().try_into().unwrap();
+    let mut mission = science.clone();
+    mission.kind = RunKind::AgentResearch;
+    mission.limits.experiments = 0;
+    let (a, b) = tokio::join!(
+        store.enqueue_run("control-session", &mission),
+        store.enqueue_run("scientific-trial", &science)
+    );
+    assert!(a.is_ok(), "Mission admission failed");
+    assert!(b.is_ok(), "science admission failed");
+    assert_eq!(usage(&pool, fixture.cycle).await, (1, 0, 200));
+    for (key, request) in [("second-mission", &mission), ("second-science", &science)] {
+        assert!(matches!(
+            store.enqueue_run(key, request).await,
+            Err(StoreError::Domain(DomainError::BudgetExhausted(
+                "parallel_runs"
+            )))
+        ));
+    }
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM app.run_admissions WHERE cycle_id=$1")
+            .bind(fixture.cycle.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 2);
+    assert_eq!(usage(&pool, fixture.cycle).await, (1, 0, 200));
+}
+
 async fn message(store: &Store, id: Id) -> RunMessage {
     store
         .read_run_messages(30, 100)
@@ -76,6 +125,46 @@ async fn leased(store: &Store, m: &RunMessage, owner: &str) -> RunLease {
         _ => panic!("expected native lease"),
     }
 }
+#[sqlx::test(migrations = "../../migrations")]
+async fn transport_ca_is_frozen_with_the_run_not_reloaded_from_mutable_settings(pool: PgPool) {
+    let (store, _, mut request, _) = setup(&pool).await;
+    let ca = Id::new().to_string();
+    let revision: i64 = sqlx::query_scalar(
+        "UPDATE app.runtime_integrations SET tls_policy='PINNED_CA',ca_certificate_ref=$2 WHERE id=$1 RETURNING revision",
+    )
+    .bind(request.runtime_id.as_uuid())
+    .bind(&ca)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    request.runtime_revision = revision.to_string().try_into().unwrap();
+    let run = store
+        .enqueue_run("frozen-tls", &request)
+        .await
+        .unwrap()
+        .resource;
+    sqlx::query("UPDATE app.runtime_integrations SET endpoint='https://replacement.example',tls_policy='SYSTEM_CA',ca_certificate_ref=NULL WHERE id=$1")
+        .bind(request.runtime_id.as_uuid()).execute(&pool).await.unwrap();
+    let lease = leased(&store, &message(&store, run.id).await, "snapshot-owner").await;
+    assert_eq!(lease.runtime.endpoint, "https://runtime.example");
+    assert_eq!(lease.runtime.tls_policy, "PINNED_CA");
+    assert_eq!(
+        lease.runtime.ca_certificate_ref.as_deref(),
+        Some(ca.as_str())
+    );
+    assert!(!lease.runtime.development_http);
+}
+
+#[test]
+fn historical_transport_snapshot_is_readable_without_inventing_a_ca() {
+    let snapshot: RuntimeSnapshot = serde_json::from_value(serde_json::json!({
+        "schema_version": 1, "endpoint": "https://runtime.example", "credential_ref": "native-reference",
+        "tls_policy": "PINNED_CA", "protocol_version": "1", "allowed_capabilities": ["DATA_VALIDATE"]
+    })).unwrap();
+    assert!(snapshot.ca_certificate_ref.is_none());
+    assert!(!snapshot.development_http);
+}
+
 async fn manifest(pool: &PgPool, lease: &RunLease) -> Id {
     let id = Id::new();
     sqlx::query("INSERT INTO app.artifacts(id,project_id,producer_run_id,producer_attempt_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,$3,$4,'REPORT','application/json','qz.job_result','1','LOCAL',$5,'1',12,'EVALUATOR_ONLY','FIXTURE','RUNTIME','AUDIT')")

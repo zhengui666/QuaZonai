@@ -211,6 +211,14 @@ pub struct CredentialCreated {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum OperatorOperation {
+    BriefFreeze,
+    CycleStart,
+    IntegrationSecretRegister,
+    RuntimeProbe,
+    RuntimeCreate,
+    RuntimeUpdate,
+    DownstreamCreate,
+    DownstreamUpdate,
     BriefCreate,
     BriefUpdate,
     ProjectCreate,
@@ -225,6 +233,14 @@ pub enum OperatorOperation {
 impl OperatorOperation {
     pub fn code(self) -> &'static str {
         match self {
+            Self::BriefFreeze => "BRIEF_FREEZE",
+            Self::CycleStart => "CYCLE_START",
+            Self::IntegrationSecretRegister => "INTEGRATION_SECRET_REGISTER",
+            Self::RuntimeProbe => "RUNTIME_PROBE",
+            Self::RuntimeCreate => "RUNTIME_CREATE",
+            Self::RuntimeUpdate => "RUNTIME_UPDATE",
+            Self::DownstreamCreate => "DOWNSTREAM_CREATE",
+            Self::DownstreamUpdate => "DOWNSTREAM_UPDATE",
             Self::BriefCreate => "BRIEF_CREATE",
             Self::BriefUpdate => "BRIEF_UPDATE",
             Self::ProjectCreate => "PROJECT_CREATE",
@@ -240,7 +256,11 @@ impl OperatorOperation {
     pub fn creates(self) -> bool {
         matches!(
             self,
-            Self::BriefCreate
+            Self::IntegrationSecretRegister
+                | Self::CycleStart
+                | Self::RuntimeCreate
+                | Self::DownstreamCreate
+                | Self::BriefCreate
                 | Self::ProjectCreate
                 | Self::PrincipalCreate
                 | Self::CredentialIssue
@@ -257,6 +277,14 @@ impl OperatorOperation {
     deny_unknown_fields
 )]
 pub enum OperatorCommand {
+    BriefFreeze(crate::cycles::BriefFreezeV1),
+    CycleStart(crate::cycles::CycleStartIntent),
+    IntegrationSecretRegister(crate::settings::IntegrationSecretIntent),
+    RuntimeProbe(crate::runtime::RuntimeProbeRequestV1),
+    RuntimeCreate(crate::settings::RuntimeCreate),
+    RuntimeUpdate(crate::settings::RuntimeUpdate),
+    DownstreamCreate(crate::settings::DownstreamCreate),
+    DownstreamUpdate(crate::settings::DownstreamUpdate),
     BriefCreate(Box<crate::brief::BriefCreateIntent>),
     BriefUpdate(Box<crate::brief::BriefUpdate>),
     ProjectCreate(ProjectCreate),
@@ -271,6 +299,14 @@ pub enum OperatorCommand {
 impl OperatorCommand {
     pub fn operation(&self) -> OperatorOperation {
         match self {
+            Self::BriefFreeze(_) => OperatorOperation::BriefFreeze,
+            Self::CycleStart(_) => OperatorOperation::CycleStart,
+            Self::IntegrationSecretRegister(_) => OperatorOperation::IntegrationSecretRegister,
+            Self::RuntimeProbe(_) => OperatorOperation::RuntimeProbe,
+            Self::RuntimeCreate(_) => OperatorOperation::RuntimeCreate,
+            Self::RuntimeUpdate(_) => OperatorOperation::RuntimeUpdate,
+            Self::DownstreamCreate(_) => OperatorOperation::DownstreamCreate,
+            Self::DownstreamUpdate(_) => OperatorOperation::DownstreamUpdate,
             Self::BriefCreate(_) => OperatorOperation::BriefCreate,
             Self::BriefUpdate(_) => OperatorOperation::BriefUpdate,
             Self::ProjectCreate(_) => OperatorOperation::ProjectCreate,
@@ -285,6 +321,14 @@ impl OperatorCommand {
     }
     pub fn normalized_request(&self) -> Result<serde_json::Value, serde_json::Error> {
         match self {
+            Self::BriefFreeze(v) => serde_json::to_value(v),
+            Self::CycleStart(v) => serde_json::to_value(v),
+            Self::IntegrationSecretRegister(v) => serde_json::to_value(v),
+            Self::RuntimeProbe(v) => serde_json::to_value(v),
+            Self::RuntimeCreate(v) => serde_json::to_value(v),
+            Self::RuntimeUpdate(v) => serde_json::to_value(v),
+            Self::DownstreamCreate(v) => serde_json::to_value(v),
+            Self::DownstreamUpdate(v) => serde_json::to_value(v),
             Self::BriefCreate(v) => serde_json::to_value(v),
             Self::BriefUpdate(v) => serde_json::to_value(v),
             Self::ProjectCreate(v) => serde_json::to_value(v),

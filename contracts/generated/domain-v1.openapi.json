@@ -4435,6 +4435,58 @@
         ],
         "type": "object"
       },
+      "BriefExecutionContextV1": {
+        "additionalProperties": false,
+        "properties": {
+          "discovery_input_set_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "runtime_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "runtime_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "sealed_input_set_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "validation_input_set_id": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "schema_version",
+          "runtime_id",
+          "runtime_revision",
+          "discovery_input_set_id",
+          "validation_input_set_id",
+          "sealed_input_set_id"
+        ],
+        "type": "object"
+      },
+      "BriefFreezeV1": {
+        "additionalProperties": false,
+        "properties": {
+          "execution_context": {
+            "$ref": "#/components/schemas/BriefExecutionContextV1"
+          },
+          "expected_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "expected_revision",
+          "execution_context"
+        ],
+        "type": "object"
+      },
       "BriefState": {
         "enum": [
           "DRAFT",
@@ -5538,6 +5590,223 @@
         ],
         "type": "object"
       },
+      "CycleOutcome": {
+        "enum": [
+          "QUALIFIED_CANDIDATES",
+          "NO_SUPPORTED_CANDIDATE",
+          "BUDGET_EXHAUSTED",
+          "INCONCLUSIVE"
+        ],
+        "type": "string"
+      },
+      "CycleReadAction": {
+        "enum": [
+          "VIEW_BRIEF",
+          "VIEW_RUNS",
+          "VIEW_EXPERIMENTS"
+        ],
+        "type": "string"
+      },
+      "CycleStartIntent": {
+        "additionalProperties": false,
+        "properties": {
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "request": {
+            "$ref": "#/components/schemas/CycleStartV1"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "project_id",
+          "request"
+        ],
+        "type": "object"
+      },
+      "CycleStartV1": {
+        "additionalProperties": false,
+        "properties": {
+          "brief_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "expected_revision": {
+            "$ref": "#/components/schemas/Revision",
+            "description": "The Project revision; the Brief and execution context are immutable."
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "brief_id",
+          "expected_revision"
+        ],
+        "type": "object"
+      },
+      "CycleStartedV1": {
+        "additionalProperties": false,
+        "properties": {
+          "cycle": {
+            "$ref": "#/components/schemas/CycleViewV1"
+          },
+          "run": {
+            "$ref": "#/components/schemas/RunSnapshotV1"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "cycle",
+          "run"
+        ],
+        "type": "object"
+      },
+      "CycleState": {
+        "enum": [
+          "QUEUED",
+          "RUNNING",
+          "WAITING_INPUT",
+          "PAUSING",
+          "PAUSED",
+          "COMPLETED",
+          "CANCELLED",
+          "FAILED"
+        ],
+        "type": "string"
+      },
+      "CycleTrigger": {
+        "enum": [
+          "OPERATOR",
+          "SCHEDULE",
+          "DEGRADATION",
+          "NEW_DATA"
+        ],
+        "type": "string"
+      },
+      "CycleViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "available_actions": {
+            "items": {
+              "$ref": "#/components/schemas/CycleReadAction"
+            },
+            "type": "array"
+          },
+          "brief_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "budget": {
+            "$ref": "#/components/schemas/BudgetV1"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "ended_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "initial_run_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "next_action": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ordinal": {
+            "format": "int32",
+            "maximum": 2147483647,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "outcome": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CycleOutcome"
+              }
+            ]
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "reserved_cpu_seconds": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "reserved_experiments": {
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/CycleState"
+          },
+          "trigger": {
+            "$ref": "#/components/schemas/CycleTrigger"
+          },
+          "used_experiments": {
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "schema_version",
+          "id",
+          "project_id",
+          "brief_id",
+          "ordinal",
+          "revision",
+          "trigger",
+          "state",
+          "budget",
+          "reserved_experiments",
+          "used_experiments",
+          "reserved_cpu_seconds",
+          "created_at",
+          "available_actions"
+        ],
+        "type": "object"
+      },
       "DataAccess": {
         "enum": [
           "METADATA_ONLY",
@@ -5612,6 +5881,141 @@
         "required": [
           "schema_version",
           "items"
+        ],
+        "type": "object"
+      },
+      "DownstreamConfigurationV1": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted_package_versions": {
+            "items": {
+              "$ref": "#/components/schemas/PackageSchemaVersion"
+            },
+            "maxItems": 1,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "development_http": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "endpoint": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "environments": {
+            "$ref": "#/components/schemas/DownstreamEnvironments"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "endpoint",
+          "accepted_package_versions",
+          "environments",
+          "enabled",
+          "development_http"
+        ],
+        "type": "object"
+      },
+      "DownstreamCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "configuration": {
+            "$ref": "#/components/schemas/DownstreamConfigurationV1"
+          },
+          "credential_ref": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "configuration",
+          "credential_ref"
+        ],
+        "type": "object"
+      },
+      "DownstreamEnvironments": {
+        "enum": [
+          "PAPER",
+          "LIVE",
+          "BOTH"
+        ],
+        "type": "string"
+      },
+      "DownstreamUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "configuration": {
+            "$ref": "#/components/schemas/DownstreamConfigurationV1"
+          },
+          "credential_ref": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id",
+                "description": "None retains the current native credential version."
+              }
+            ]
+          },
+          "expected_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "expected_revision",
+          "configuration"
+        ],
+        "type": "object"
+      },
+      "DownstreamView": {
+        "additionalProperties": false,
+        "properties": {
+          "configuration": {
+            "$ref": "#/components/schemas/DownstreamConfigurationV1"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "credential_configured": {
+            "type": "boolean"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "configuration",
+          "credential_configured",
+          "revision",
+          "created_at",
+          "updated_at"
         ],
         "type": "object"
       },
@@ -6105,6 +6509,26 @@
         ],
         "type": "string"
       },
+      "FrozenBriefV1": {
+        "additionalProperties": false,
+        "properties": {
+          "brief": {
+            "$ref": "#/components/schemas/BriefView"
+          },
+          "execution_context": {
+            "$ref": "#/components/schemas/BriefExecutionContextV1"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "brief",
+          "execution_context"
+        ],
+        "type": "object"
+      },
       "GroupBoundV1": {
         "additionalProperties": false,
         "properties": {
@@ -6321,6 +6745,88 @@
         ],
         "type": "object"
       },
+      "IntegrationSecretCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "intent": {
+            "$ref": "#/components/schemas/IntegrationSecretIntent"
+          },
+          "value": {
+            "maxLength": 65536,
+            "minLength": 1,
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "intent",
+          "value"
+        ],
+        "type": "object"
+      },
+      "IntegrationSecretIntent": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "purpose": {
+            "$ref": "#/components/schemas/IntegrationSecretPurpose"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "purpose",
+          "label"
+        ],
+        "type": "object"
+      },
+      "IntegrationSecretPurpose": {
+        "enum": [
+          "RUNTIME",
+          "DOWNSTREAM",
+          "CUSTOM_PROVIDER",
+          "TLS_CA"
+        ],
+        "type": "string"
+      },
+      "IntegrationSecretView": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id",
+            "description": "Native immutable SecretVault object identity; never a path or a plaintext read capability."
+          },
+          "label": {
+            "type": "string"
+          },
+          "purpose": {
+            "$ref": "#/components/schemas/IntegrationSecretPurpose"
+          }
+        },
+        "required": [
+          "id",
+          "purpose",
+          "label",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "IsolationProfile": {
+        "enum": [
+          "OCI_RESEARCH_V1"
+        ],
+        "type": "string"
+      },
       "JobLimitsV1": {
         "additionalProperties": false,
         "properties": {
@@ -6328,7 +6834,7 @@
             "$ref": "#/components/schemas/DbCounter"
           },
           "experiments": {
-            "description": "Zero only for trusted non-research management jobs.",
+            "description": "Zero for trusted non-trial stages or Mission control; scientific trials are positive.",
             "format": "int64",
             "maximum": 4294967295,
             "minimum": 0,
@@ -6360,6 +6866,26 @@
           "wall_seconds",
           "memory_mib",
           "output_bytes"
+        ],
+        "type": "object"
+      },
+      "LabelIntervalSupportV1": {
+        "additionalProperties": false,
+        "properties": {
+          "fixed_bars": {
+            "type": "boolean"
+          },
+          "fixed_duration": {
+            "type": "boolean"
+          },
+          "variable_interval": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "fixed_bars",
+          "fixed_duration",
+          "variable_interval"
         ],
         "type": "object"
       },
@@ -7420,6 +7946,150 @@
             "properties": {
               "operation": {
                 "enum": [
+                  "BRIEF_FREEZE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/BriefFreezeV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "CYCLE_START"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/CycleStartIntent"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "INTEGRATION_SECRET_REGISTER"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/IntegrationSecretIntent"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "RUNTIME_PROBE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/RuntimeProbeRequestV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "RUNTIME_CREATE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/RuntimeCreate"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "RUNTIME_UPDATE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/RuntimeUpdate"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "DOWNSTREAM_CREATE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/DownstreamCreate"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "DOWNSTREAM_UPDATE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/DownstreamUpdate"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
                   "BRIEF_CREATE"
                 ],
                 "type": "string"
@@ -7671,6 +8341,14 @@
       },
       "OperatorOperation": {
         "enum": [
+          "BRIEF_FREEZE",
+          "CYCLE_START",
+          "INTEGRATION_SECRET_REGISTER",
+          "RUNTIME_PROBE",
+          "RUNTIME_CREATE",
+          "RUNTIME_UPDATE",
+          "DOWNSTREAM_CREATE",
+          "DOWNSTREAM_UPDATE",
           "BRIEF_CREATE",
           "BRIEF_UPDATE",
           "PROJECT_CREATE",
@@ -7681,6 +8359,12 @@
           "CREDENTIAL_REVOKE",
           "INPUT_SET_CREATE",
           "EVALUATION_POLICY_CREATE"
+        ],
+        "type": "string"
+      },
+      "PackageSchemaVersion": {
+        "enum": [
+          "1"
         ],
         "type": "string"
       },
@@ -8487,6 +9171,548 @@
         ],
         "type": "object"
       },
+      "RuntimeArtifactSchemaV1": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "version": {
+            "maxLength": 40,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version"
+        ],
+        "type": "object"
+      },
+      "RuntimeCapabilitiesV1": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_schemas": {
+            "items": {
+              "$ref": "#/components/schemas/RuntimeArtifactSchemaV1"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "type": "array"
+          },
+          "checked_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "data_kinds": {
+            "items": {
+              "$ref": "#/components/schemas/RuntimeDataKind"
+            },
+            "maxItems": 7,
+            "minItems": 1,
+            "type": "array"
+          },
+          "engine_versions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "image_refs": {
+            "items": {
+              "$ref": "#/components/schemas/RuntimeImageV1"
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "type": "array"
+          },
+          "isolation_profile": {
+            "$ref": "#/components/schemas/IsolationProfile"
+          },
+          "job_kinds": {
+            "items": {
+              "$ref": "#/components/schemas/RunKind"
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "label_interval_support": {
+            "$ref": "#/components/schemas/LabelIntervalSupportV1"
+          },
+          "max_cpu": {
+            "format": "int32",
+            "maximum": 1024,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_memory_mib": {
+            "format": "int32",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_output_bytes": {
+            "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+            "maxLength": 19,
+            "minLength": 1,
+            "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])",
+            "type": "string"
+          },
+          "max_wall_seconds": {
+            "format": "int32",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "protocol_versions": {
+            "items": {
+              "$ref": "#/components/schemas/SchemaV1"
+            },
+            "maxItems": 1,
+            "minItems": 1,
+            "type": "array"
+          },
+          "runtime_version": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "solver_capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "venues": {
+            "items": {
+              "$ref": "#/components/schemas/RuntimeVenueV1"
+            },
+            "maxItems": 256,
+            "type": "array"
+          }
+        },
+        "required": [
+          "schema_version",
+          "protocol_versions",
+          "runtime_version",
+          "engine_versions",
+          "image_refs",
+          "job_kinds",
+          "artifact_schemas",
+          "data_kinds",
+          "venues",
+          "label_interval_support",
+          "solver_capabilities",
+          "max_cpu",
+          "max_memory_mib",
+          "max_output_bytes",
+          "max_wall_seconds",
+          "isolation_profile",
+          "checked_at"
+        ],
+        "type": "object"
+      },
+      "RuntimeConfigurationV1": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed_capabilities": {
+            "items": {
+              "$ref": "#/components/schemas/RunKind"
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "development_http": {
+            "description": "Both this setting and the deployment must explicitly permit literal-loopback HTTP.",
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "endpoint": {
+            "description": "Only an origin. Registration does not send network traffic or attest readiness.",
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "tls_policy": {
+            "$ref": "#/components/schemas/TlsPolicy"
+          }
+        },
+        "required": [
+          "name",
+          "endpoint",
+          "tls_policy",
+          "allowed_capabilities",
+          "enabled",
+          "development_http"
+        ],
+        "type": "object"
+      },
+      "RuntimeCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "ca_certificate_ref": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "configuration": {
+            "$ref": "#/components/schemas/RuntimeConfigurationV1"
+          },
+          "credential_ref": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "configuration",
+          "credential_ref"
+        ],
+        "type": "object"
+      },
+      "RuntimeDataKind": {
+        "enum": [
+          "BAR",
+          "QUOTE",
+          "TRADE",
+          "ORDER_BOOK",
+          "FUNDAMENTAL",
+          "EVENT",
+          "DERIVED_FEATURE"
+        ],
+        "type": "string"
+      },
+      "RuntimeImageV1": {
+        "additionalProperties": false,
+        "properties": {
+          "image_ref": {
+            "description": "Native immutable OCI reference. Never a model-selected image.",
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "job_kind": {
+            "$ref": "#/components/schemas/RunKind"
+          }
+        },
+        "required": [
+          "job_kind",
+          "image_ref"
+        ],
+        "type": "object"
+      },
+      "RuntimeProbeFailure": {
+        "enum": [
+          "NOT_CONFIGURED",
+          "ENDPOINT_DENIED",
+          "TLS_CONFIGURATION",
+          "AUTHENTICATION",
+          "UNAVAILABLE",
+          "RESPONSE_LIMIT",
+          "CONTRACT_UNSUPPORTED"
+        ],
+        "type": "string"
+      },
+      "RuntimeProbeOutcomeV1": {
+        "oneOf": [
+          {
+            "properties": {
+              "capabilities": {
+                "$ref": "#/components/schemas/RuntimeCapabilitiesV1"
+              },
+              "status": {
+                "enum": [
+                  "AVAILABLE"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "capabilities",
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/RuntimeProbeFailure"
+              },
+              "status": {
+                "enum": [
+                  "UNAVAILABLE"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason",
+              "status"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "RuntimeProbeRequestV1": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "expected_revision"
+        ],
+        "type": "object"
+      },
+      "RuntimeProbeViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "integration_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/RuntimeProbeOutcomeV1"
+          },
+          "runtime_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "snapshot_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "runtime_id",
+          "integration_revision",
+          "snapshot_artifact_id",
+          "observed_at",
+          "valid_until",
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "RuntimeReadinessState": {
+        "enum": [
+          "NOT_CHECKED",
+          "DISABLED",
+          "STALE",
+          "UNAVAILABLE",
+          "AVAILABLE"
+        ],
+        "type": "string"
+      },
+      "RuntimeReadinessV1": {
+        "additionalProperties": false,
+        "properties": {
+          "available_job_kinds": {
+            "items": {
+              "$ref": "#/components/schemas/RunKind"
+            },
+            "type": "array"
+          },
+          "integration_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "latest_observation": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RuntimeProbeViewV1"
+              }
+            ]
+          },
+          "runtime_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "state": {
+            "$ref": "#/components/schemas/RuntimeReadinessState"
+          }
+        },
+        "required": [
+          "schema_version",
+          "runtime_id",
+          "integration_revision",
+          "state",
+          "available_job_kinds"
+        ],
+        "type": "object"
+      },
+      "RuntimeUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "ca_certificate_ref": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id",
+                "description": "None retains the current CA for PINNED_CA. SYSTEM_CA explicitly clears only the binding."
+              }
+            ]
+          },
+          "configuration": {
+            "$ref": "#/components/schemas/RuntimeConfigurationV1"
+          },
+          "credential_ref": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id",
+                "description": "None retains the current immutable credential object; not a request for unauthenticated access."
+              }
+            ]
+          },
+          "expected_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "expected_revision",
+          "configuration"
+        ],
+        "type": "object"
+      },
+      "RuntimeVenueV1": {
+        "additionalProperties": false,
+        "properties": {
+          "data_kinds": {
+            "items": {
+              "$ref": "#/components/schemas/RuntimeDataKind"
+            },
+            "maxItems": 7,
+            "minItems": 1,
+            "type": "array"
+          },
+          "expiry_and_settlement": {
+            "type": "boolean"
+          },
+          "instrument_classes": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "type": "array"
+          },
+          "venue": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "venue",
+          "instrument_classes",
+          "data_kinds",
+          "expiry_and_settlement"
+        ],
+        "type": "object"
+      },
+      "RuntimeView": {
+        "additionalProperties": false,
+        "properties": {
+          "ca_configured": {
+            "type": "boolean"
+          },
+          "configuration": {
+            "$ref": "#/components/schemas/RuntimeConfigurationV1"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "credential_configured": {
+            "type": "boolean"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "last_capability_snapshot_artifact_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "protocol_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "configuration",
+          "protocol_version",
+          "credential_configured",
+          "ca_configured",
+          "revision",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "SavedModelSettingsV1": {
         "additionalProperties": false,
         "properties": {
@@ -8830,6 +10056,13 @@
           "stop_on_invalid_data"
         ],
         "type": "object"
+      },
+      "TlsPolicy": {
+        "enum": [
+          "SYSTEM_CA",
+          "PINNED_CA"
+        ],
+        "type": "string"
       },
       "TrustedDevice": {
         "additionalProperties": false,

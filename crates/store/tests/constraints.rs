@@ -183,7 +183,22 @@ async fn new_database_migrations_are_repeatable_without_legacy_side_effects(pool
     let tables:i64=sqlx::query_scalar("SELECT count(*) FROM information_schema.tables WHERE table_schema='app' AND table_type='BASE TABLE'").fetch_one(&pool).await.unwrap();
     // Migration 019 adds immutable experiment authorship, separately from the
     // science Run. The exact table inventory must include that new relation.
-    assert_eq!(tables, 72);
+    assert_eq!(tables, 75);
+    for table in ["app.brief_execution_contexts", "app.cycle_startups"] {
+        assert!(
+            sqlx::query_scalar::<_, bool>("SELECT to_regclass($1) IS NOT NULL")
+                .bind(table)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        );
+    }
+    assert!(sqlx::query_scalar::<_, bool>(
+        "SELECT to_regclass('app.runtime_probe_observations') IS NOT NULL"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap());
     let authors_exist: bool =
         sqlx::query_scalar("SELECT to_regclass('app.experiment_authorship') IS NOT NULL")
             .fetch_one(&pool)

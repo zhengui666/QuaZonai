@@ -160,9 +160,24 @@ pub(crate) async fn machine(
     } else {
         None
     };
+    let mission_attempt = if let Some(mission) = &mission {
+        let attempt: uuid::Uuid = mission
+            .try_get::<Option<uuid::Uuid>, _>("active_attempt_id")?
+            .ok_or(StoreError::InvalidCredentials)?;
+        Some(
+            sqlx::query("SELECT owner_epoch,lease_expires_at FROM app.run_attempts WHERE id=$1 AND run_id=$2 FOR SHARE")
+                .bind(attempt)
+                .bind(run.map(Id::as_uuid))
+                .fetch_optional(&mut **tx)
+                .await?
+                .ok_or(StoreError::InvalidCredentials)?,
+        )
+    } else {
+        None
+    };
     let principal=sqlx::query(if write {"SELECT enabled,credential_epoch,downstream_id FROM app.machine_principals WHERE id=$1 FOR UPDATE"}else{"SELECT enabled,credential_epoch,downstream_id FROM app.machine_principals WHERE id=$1 FOR SHARE"})
         .bind(principal_id).fetch_one(&mut **tx).await?;
-    let credential=sqlx::query(if write {"SELECT principal_epoch,scope_codes,issued_at,expires_at,issuer_attempt_id FROM app.machine_credentials WHERE id=$1 FOR UPDATE"}else{"SELECT principal_epoch,scope_codes,issued_at,expires_at,issuer_attempt_id FROM app.machine_credentials WHERE id=$1 FOR SHARE"})
+    let credential=sqlx::query(if write {"SELECT principal_epoch,scope_codes,issued_at,expires_at,issuer_attempt_id,issuer_owner_epoch FROM app.machine_credentials WHERE id=$1 FOR UPDATE"}else{"SELECT principal_epoch,scope_codes,issued_at,expires_at,issuer_attempt_id,issuer_owner_epoch FROM app.machine_credentials WHERE id=$1 FOR SHARE"})
         .bind(credential_id.as_uuid()).fetch_one(&mut **tx).await?;
     let now: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
         .fetch_one(&mut **tx)
@@ -184,9 +199,18 @@ pub(crate) async fn machine(
         let deadline: DateTime<Utc> = mission.try_get("deadline_at")?;
         let active_attempt: Option<uuid::Uuid> = mission.try_get("active_attempt_id")?;
         let issuer_attempt: Option<uuid::Uuid> = credential.try_get("issuer_attempt_id")?;
-        // Fence every Mission scope, including reads and identity introspection.
-        // Historical unbound credentials remain audit records, not new authority.
-        if active_attempt.is_none() || issuer_attempt != active_attempt {
+        let issuer_owner: Option<i64> = credential.try_get("issuer_owner_epoch")?;
+        let lease = mission_attempt
+            .as_ref()
+            .ok_or(StoreError::InvalidCredentials)?;
+        // The same Attempt can be taken over. Binding only its UUID would let an
+        // old process borrow the replacement owner's renewed lease for reads.
+        // Unknown historical owner bindings are audit records, never authority.
+        if active_attempt.is_none()
+            || issuer_attempt != active_attempt
+            || issuer_owner != Some(lease.try_get::<i64, _>("owner_epoch")?)
+            || lease.try_get::<DateTime<Utc>, _>("lease_expires_at")? <= now
+        {
             return Err(StoreError::InvalidCredentials);
         }
         if !project_active

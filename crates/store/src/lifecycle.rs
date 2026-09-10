@@ -71,6 +71,12 @@ pub struct RuntimeSnapshot {
     pub endpoint: String,
     pub credential_ref: String,
     pub tls_policy: String,
+    /// Additive snapshot fields preserve original transport identity across takeover.
+    /// Historical snapshots remain readable; transport rejects PINNED_CA without its CA.
+    #[serde(default)]
+    pub ca_certificate_ref: Option<String>,
+    #[serde(default)]
+    pub development_http: bool,
     pub protocol_version: String,
     pub allowed_capabilities: Vec<String>,
 }
@@ -479,10 +485,14 @@ impl Store {
             endpoint: r.try_get("endpoint")?,
             credential_ref: r.try_get("credential_ref")?,
             tls_policy: r.try_get("tls_policy")?,
+            ca_certificate_ref: r.try_get("ca_certificate_ref")?,
+            development_http: r.try_get("development_http")?,
             protocol_version: r.try_get("protocol_version")?,
             allowed_capabilities: caps,
         };
-        let active:i64=sqlx::query_scalar("SELECT count(*) FROM app.runs WHERE cycle_id=$1 AND state NOT IN ('SUCCEEDED','FAILED','CANCELLED')").bind(request.cycle_id.as_uuid()).fetch_one(&mut *tx).await?;
+        let mission = request.kind == RunKind::AgentResearch;
+        let active:i64=sqlx::query_scalar("SELECT count(*) FROM app.runs WHERE cycle_id=$1 AND (kind='AGENT_RESEARCH')=$2 AND state NOT IN ('SUCCEEDED','FAILED','CANCELLED')")
+            .bind(request.cycle_id.as_uuid()).bind(mission).fetch_one(&mut *tx).await?;
         let ledger=sqlx::query("SELECT coalesce(sum(reserved_tokens),0)::bigint reserved_tokens,coalesce(sum(used_tokens),0)::bigint used_tokens,coalesce(sum(reserved_cost),0)::numeric reserved_cost,coalesce(sum(used_cost),0)::numeric used_cost FROM app.model_turn_accounting WHERE cycle_id=$1")
             .bind(request.cycle_id.as_uuid()).fetch_one(&mut *tx).await?;
         let mismatch:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.model_turn_reservations WHERE cycle_id=$1 AND (cost_currency IS DISTINCT FROM $2::text OR (reserved_cost IS NULL) <> ($2::text IS NULL)))")
@@ -522,7 +532,12 @@ impl Store {
             mission: None,
         };
         let l = &request.limits;
-        let reserved = admission::reserve(
+        let reserve = match request.kind {
+            RunKind::AgentResearch => admission::reserve_mission,
+            RunKind::AlphaEvaluate => admission::reserve,
+            _ => admission::reserve_non_trial,
+        };
+        let reserved = reserve(
             db::enum_value(&p, "state")?,
             &budget,
             &stop,
@@ -633,6 +648,8 @@ impl Store {
             endpoint: r.try_get("endpoint")?,
             credential_ref: r.try_get("credential_ref")?,
             tls_policy: r.try_get("tls_policy")?,
+            ca_certificate_ref: r.try_get("ca_certificate_ref")?,
+            development_http: r.try_get("development_http")?,
             protocol_version: r.try_get("protocol_version")?,
             allowed_capabilities: caps,
         };

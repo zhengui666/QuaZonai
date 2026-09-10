@@ -316,12 +316,15 @@ async fn mission_write_requires_an_unexpired_attempt_lease(pool: PgPool) {
     .await;
     sqlx::query("UPDATE app.run_attempts SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1")
         .bind(attempt.as_uuid()).execute(&pool).await.unwrap();
-    assert!(matches!(
-        store
-            .propose_experiment(&actor, "expired-lease", &f.request)
-            .await,
-        Err(StoreError::Forbidden)
-    ));
+    // Lease expiry now invalidates the Mission identity for every scope, before
+    // experiment-specific authorization. Keep the precise authentication error.
+    let result = store
+        .propose_experiment(&actor, "expired-lease", &f.request)
+        .await;
+    assert!(
+        matches!(result, Err(StoreError::InvalidCredentials)),
+        "expired Mission must fail at the shared identity boundary: {result:?}"
+    );
     assert_eq!(counts(&pool, f.cycle).await, (0, 0, 0));
 }
 

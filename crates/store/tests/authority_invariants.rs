@@ -508,15 +508,17 @@ async fn doctor_upgrade_requires_explicit_revocation_and_preserves_original_issu
     .fetch_one(&pool)
     .await
     .unwrap();
-    // The new nullable Attempt provenance column must not fabricate authority
-    // for a historical Operator-issued credential. All old fields remain exact;
-    // no other added, removed or changed field is allowed by this comparison.
+    // Nullable Attempt/owner provenance must not fabricate authority for a
+    // historical Operator-issued credential. Every original field stays exact;
+    // only the two explicitly added NULL columns are allowed by this comparison.
     let mut expected = before;
-    assert!(expected.get("issuer_attempt_id").is_none());
-    expected["issuer_attempt_id"] = serde_json::Value::Null;
+    for field in ["issuer_attempt_id", "issuer_owner_epoch"] {
+        assert!(expected.get(field).is_none());
+        expected[field] = serde_json::Value::Null;
+    }
     assert_eq!(
         expected, after,
-        "historical issuance must remain equivalent with only null Attempt provenance added"
+        "historical issuance must remain exact with only null Attempt/owner provenance added"
     );
     sqlstate(
         credential(&pool, delivery, "{DOCTOR_READ}", "OPERATOR", 1, 600)

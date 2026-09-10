@@ -626,8 +626,12 @@ async fn runtime_disable_and_policy_reconsumption_cannot_reuse_a_stale_preflight
 async fn zero_argument_revision_guard_preserves_native_identity_and_binding_checks(pool: PgPool) {
     let (store, actor) = operator(&pool).await;
     let f = setup(&pool, &store, &actor).await;
-    // Execute the actual unchanged original function to demonstrate the prior bug,
-    // then reinstall only the additive repair. No migration history is edited.
+    // Execute the actual unchanged generic revision function on a zero-argument
+    // Downstream trigger. Runtime now has a separate configuration/observation
+    // revision guard, so replacing the generic function cannot reproduce its old bug.
+    // Both current Runtime and Downstream identity protections remain tested below.
+    let downstream = contracts::Id::new();
+    sqlx::query("INSERT INTO app.downstream_integrations(id,name,endpoint,credential_ref,accepted_package_versions,environments,enabled) VALUES($1,'fixture','https://fixture.invalid','not-secret','{}','PAPER',true)").bind(downstream.as_uuid()).execute(&pool).await.unwrap();
     let original = include_str!("../../../migrations/202609050001_domain.sql");
     let original = original
         .split("CREATE FUNCTION app.guard_revision()")
@@ -642,8 +646,8 @@ async fn zero_argument_revision_guard_preserves_native_identity_and_binding_chec
     .execute(&pool)
     .await
     .unwrap();
-    let err = sqlx::query("UPDATE app.runtime_integrations SET enabled=false WHERE id=$1")
-        .bind(f.runtime.as_uuid())
+    let err = sqlx::query("UPDATE app.downstream_integrations SET enabled=false WHERE id=$1")
+        .bind(downstream.as_uuid())
         .execute(&pool)
         .await
         .unwrap_err();
@@ -669,8 +673,6 @@ async fn zero_argument_revision_guard_preserves_native_identity_and_binding_chec
     .await
     .unwrap();
     assert_eq!(revision, 2);
-    let downstream = contracts::Id::new();
-    sqlx::query("INSERT INTO app.downstream_integrations(id,name,endpoint,credential_ref,accepted_package_versions,environments,enabled) VALUES($1,'fixture','https://fixture.invalid','not-secret','{}','PAPER',true)").bind(downstream.as_uuid()).execute(&pool).await.unwrap();
     let revision: i64 = sqlx::query_scalar(
         "UPDATE app.downstream_integrations SET enabled=false WHERE id=$1 RETURNING revision",
     )

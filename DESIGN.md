@@ -1570,7 +1570,7 @@ Readiness snapshot 至少：`integration_id,integration_revision,capability_vers
 
 ### A8.1 持久机器主体与权限
 
-控制面 wire/事务细化：机器令牌仅通过单个 Authorization Bearer 头传输，固定 `qz2.<UUIDv7 public_token_id>.<43字符原生随机capability>`；拒绝 query/body 令牌、多个头、Cookie+Bearer 混合、错误Bearer回退Cookie。只有首次签发返回完整token，公开CredentialView不含verifier_ref；重试返回原credential metadata且token=null/replayed=true。随机数/Argon2id/SecretVault复用既有组件，单个请求的密码学验证不代替领域事务的期满/撤销/epoch/归属检查。普通机器事务按 project→Mission run→principal→credential 锁顺序复核，写命令使用 principal FOR UPDATE 串行化同一主体。credential_epoch只能保持/增加；enabled变化必须严格增加，重启/重新启用不能复活旧证。
+控制面 wire/事务细化：机器令牌仅通过单个 Authorization Bearer 头传输，固定 `qz2.<UUIDv7 public_token_id>.<43字符原生随机capability>`；拒绝 query/body 令牌、多个头、Cookie+Bearer 混合、错误Bearer回退Cookie。只有首次签发返回完整token，公开CredentialView不含verifier_ref；重试返回原credential metadata且token=null/replayed=true。随机数/Argon2id/SecretVault复用既有组件，单个请求的密码学验证不代替领域事务的期满/撤销/epoch/归属检查。普通机器事务按 project→Mission run→当前 Attempt→principal→credential 锁顺序复核，写命令使用 principal FOR UPDATE 串行化同一主体。credential_epoch只能保持/增加；enabled变化必须严格增加，重启/重新启用不能复活旧证。
 
 Operator业务写命令统一先锁单一 operator_auth_state FOR UPDATE，再锁真实BrowserLogin或已验证CLI credential；这是本系统单Operator合同下的原生串行化，不新增intent/队列/锁服务。在该锁下检查command_receipts同scope/operation/key，执行领域变更，再一次INSERT完整不可变receipt并同事务提交；不用先插入后UPDATE不可变receipt，也不新增事务identity。receipt增加 `response_nonsecret_body: StrictResponseV1?`，历史行为原样保留，新控制面命令必须在插入时完整保存非秘密原响应。重试返回原响应快照而不是资源后来的状态；同key不同规范化请求409，失败不留下receipt。机器写命令在主体锁下复用同一幂等机制。Idempotency-Key为1–200字节，不含控制字符或首尾空白。
 
@@ -1600,6 +1600,8 @@ machine_credentials [immutable issuance]
   public_token_id: text UNIQUE
   verifier_ref: text
   principal_epoch: bigint >= 1
+  issuer_attempt_id: Id? FK run_attempts  # Mission-only immutable issuance binding
+  issuer_owner_epoch: bigint? >= 1  # Mission-only native Attempt owner at issuance
   scope_codes: MachineScopeV1[]  # nonempty, unique
   issued_at: Time
   expires_at: Time
@@ -1614,6 +1616,16 @@ MachineScopeV1闭合集合：RESEARCH_READ、EXPERIMENT_SUBMIT、ARTIFACT_SUBMIT
 
 Operator-only CLI操作仍是人类动作，使用近期TOTP获取绑定CLI主体、命令、target的单次授权（独立于普通machine scope）：`operator_command_grants [immutable]` 包含 credential_id FK、operation（API命令封闭枚举）、target_id、auth_epoch、authenticated_at、expires_at（<=300秒）；`operator_command_consumptions [append-only]` 包含grant_id UNIQUE FK、command_receipt_id UNIQUE FK、operation（与grant一致的命令）、target_id（与grant一致的目标）。grant的(id,operation,target_id)、receipt的(id,operation,resource_id)各自UNIQUE，consumption以两个复合FK绑定同一命令及目标；不得把一次人类授权用于另一个资源或多个回执。该授权只能近期人类认证发出，Agent/Automation/Downstream不能获取，消费与命令同事务；幂等重试仅返回已执行receipt。管理权限不得放入普通scope来绕过近期认证。
 
+Mission 凭据的 `issuer_attempt_id` 与 `issuer_owner_epoch` 必须由受信任发行路径在 project→run→Attempt→principal 的原生行锁下从当前有效租约读取并永久绑定。任何客户端自报的旧 epoch、跨 Run Attempt、已过期租约或非 Mission 的 Attempt/owner 绑定均拒绝。每次机器身份、普通读取和写命令同时复核当前 Attempt、owner_epoch 和数据库实际时钟下的 lease_expires_at；同一 Attempt 的接管只增加 owner_epoch，也必须令旧凭据失效。正常续租保持 epoch 不会使当前凭据失效。023 增量迁移只增加可空发行字段并替换原发行守卫，所有旧凭据的原字段保留；历史缺少 owner 绑定的 Mission 仅作审计，必须重新发行，不能猜测回填为现在的 owner。非 Mission 凭据不因该字段为空而失效。原生 PostgreSQL 锁规则依据 https://www.postgresql.org/docs/18/explicit-locking.html；迁移、接管、到期、续租与锁等待后的时限均用真实数据库验证。
+
+### A8.2 原生凭据引用与集成配置的正式管理入口
+
+`POST /api/v2/settings/credentials` 只创建 RUNTIME、DOWNSTREAM、CUSTOM_PROVIDER 或 TLS_CA 用途的原生 SecretVault 对象。请求的非秘密 intent 为 schema_version/purpose/label；value 为只写、有大小限制的内容，无 Debug/日志/回执。近期 Operator 浏览器或绑定完整 intent 的一次性 CLI grant 才能执行，其他机器身份拒绝。服务器在原有 command transaction 内分配 UUID，由现有 AEAD 实现将该 UUID/purpose 绑定加密并 create_new 发布；不建立另一个密钥库/刷新器/哈希身份。相同键先核对非秘密 intent，再由可信原生解密比较原值，完全相同才返回原对象引用；不同内容409。原文件发布而数据库结果不明时保留对象，不清理可能已引用的秘密。凭据注册返回 id/purpose/label/created_at，不返回原值；配置读取只显示 configured 状态。原生密钥对象属于外部存储引用，不冒充一个可经公开 Artifact API 下载的产物。
+
+Runtime 与 Downstream 配置使用明确的 `/api/v2/integrations/runtimes`、`/downstreams` 集合和 `/{id}`，不开放任意表操作。create/update 分别进入同一 OperatorCommand union；更新要求 expected_revision。Runtime 非秘密配置为 name/endpoint/tls_policy/allowed_capabilities/enabled/development_http，protocol_version 固定当前原生合同1；Downstream 为 name/endpoint/accepted_package_versions/environments/enabled/development_http。配置写入必须验证 SecretVault 引用的精确用途；PINNED_CA 必须有有效原生 PEM CA 引用，SYSTEM_CA 不能混带自选 CA。更新不传新的 credential_ref 表示保留当前版本；转 SYSTEM_CA 明确清除 CA 绑定但不删除旧加密对象。仅部署显式 development-http 且 literal loopback 的端点可以使用 HTTP，生产默认 HTTPS；URL 不接受 userinfo/query/fragment。保存配置不发起网络请求，enabled/声明的 capability 不等于 readiness；后续 probe 必须经部署允许列表与原生 TLS/DNS 绑定，按精确配置 revision 采纳真实结果。
+
+公开配置 DTO 不回传 credential_ref/CA 存储位置，只显示 credential_configured/ca_configured 和实际非秘密配置。Operator 可读配置；DOCTOR_READ 的 CLI/AUTOMATION 只读同一无秘密诊断 DTO，不获得管理或原生对象读取能力。写权限仍为近期人类或一次性完整意图 grant。旧不可变会话/Run 保存其原配置版本，配置更新不能改写已派发任务；当前检查/新准入必须重新判断 revision 与能力有效期。URI 语法、字段/类型/未知字段、原生凭据用途、幂等/CAS、撤销/锁等待、真实 HTTP/数据库和原始命令回执均需回归。此管理入口不是 Runtime 网络或生产完整链路已验收的声明。
+
 ## A9. 索引、保留与迁移核对
 
 必要索引：projects(state,updated_at)；research_cycles(project_id,ordinal DESC)；experiments(family_id,ordinal)；runs(project_id,state,queued_at)；run_attempts(run_id,attempt_no)、活动 lease_expires_at partial index；run_events(run_id,seq)；artifacts(producer_run_id)；input_set_items(input_set_id)；evidence_exposures(root_lineage_id,dataset_revision_id)；evaluations(subject_alpha_version_id,concluded_at DESC)、evaluations(subject_candidate_id)；metric_values(evaluation_id,metric_code,scope)；candidate_alphas(candidate_id,alpha_version_id)；candidate_targets(candidate_id,instrument_id)；releases(candidate_id)；handoff_offers(downstream_id,environment,state,delivery_sequence)；forward_messages(handoff_id,stream_id,sequence,message_revision)；wake_events(state,not_before)。所有 owned FK 有适用 `(id,project_id)` 唯一及复合 FK。
@@ -1627,6 +1639,8 @@ Operator-only CLI操作仍是人类动作，使用近期TOTP获取绑定CLI主�
 ## B0. 合同源、版本与持久化
 
 `contracts` 为默认 Rust 的 HTTP/MCP 共用 DTO、错误、事件、政策、产物源，生成 OpenAPI/JSON Schema/TypeScript；批准的 Python 适配消费同一合同，不复制平行真相。Codex 协议从 pinned 原生二进制生成，不发明近似 DTO。HTTP `/api/v2`，远端 `/runtime/v1`，产物 `qz.*.v1`；不兼容改主版本，可选字段按明确兼容策略，生成物提交且 CI diff。引用环、candidate cash/current weights、草稿冻结、readiness、sealed 预约和允许清单规则已完整纳入 A0–A8。
+
+HTTP 客户端原生 Ajv standalone 生成直接引用原始 schema：重复纯 `$ref` 必须复用同一个原生函数，不能为每个路由包装新 schema 反复编译；存在 sibling keyword 的 schema 仍按原始路径完整编译，不因去重丢失约束。回归以实际 Rust OpenAPI 的每个 route/status/media 与独立 Ajv 编译结果比较，并断言重复引用函数相同。静态依赖与应用合同通过原生 Rollup 分包，所有必要静态 chunk 继续预缓存；每文件保留 Workbox 2 MiB 上限，不能靠增大限制或忽略缺失资源绕过构建失败。API/SSE 仍为 NetworkOnly，缓存只包含构建产物。
 
 ## B1. 通用 wire、权限与错误
 
@@ -1750,7 +1764,7 @@ approve/publish/handoff.claim/policy.update/db.query/secret.read/http.fetch_any 
 
 origin 只能是无userinfo/query/fragment/额外路径的 HTTPS origin；HTTP 仅在显式 development_http 且 host 为原生 IPv4/IPv6 loopback 时允许，不能用任意主机名作开发豁免。HTTP 客户端禁止重定向、环境代理、Cookie 与自动重试，连接超时3秒、单请求超时10秒；读取过程累计限额1MiB，不依赖 Content-Length。请求地址只能由固定路由和已验证 Id 构造。stdio 输入在交给原生 SDK 前使用 Tokio AsyncRead 的累计8MiB会话配额，避免对端不发送换行时无限缓冲；这是整个连接的字节额度，不是单帧或模型 token 预算，不另造 JSON-RPC parser。stdout 只用于 SDK 协议，结构化日志移到 stderr；默认关闭 SDK/HTTP 正文跟踪，只保留服务自身安全日志。失败返回封闭安全错误码/HTTP状态，不回显上游原始正文、URL、请求头或底层错误文本。
 
-Attempt fencing 不得只在 Artifact 写入或 MCP 配置层实施：统一 `authority::machine` 必须在原生 Project/Run/Principal/Credential 锁顺序内读取 `runs.active_attempt_id` 和不可变的 `machine_credentials.issuer_attempt_id`。所有 MISSION scope 的有效性都要求两者非空且相等；旧 Attempt 的读取、自省和写入同时失效，不能通过直接调用普通 HTTP 绕开 MCP。历史 NULL 绑定原样保留作为审计记录，但不再构成 Mission 授权；不回填猜测的当前 Attempt、不修改历史签发内容，必须由可信任务服务为当前 Attempt 重新签发。CLI/AUTOMATION/DOWNSTREAM 的非 Mission 语义不因此改变，公开 DTO 不暴露新秘密。
+Attempt fencing 不得只在 Artifact 写入或 MCP 配置层实施：统一 `authority::machine` 按 A8.1 的 Project→Run→Attempt→Principal→Credential 原生锁顺序，检查 `runs.active_attempt_id` 与不可变发行绑定 `issuer_attempt_id`、`issuer_owner_epoch`，并在锁等待后以数据库实时钟验证当前租约。所有 MISSION scope 都要求当前 Attempt 与发行 Attempt 非空且相同、当前 owner_epoch 与发行 owner_epoch 相同且租约未到期；同一 Attempt 的接管也令旧进程的读取、自省和写入失效，不能通过普通 HTTP 绕开 MCP。历史缺少任何绑定的签发原样保留审计，但不构成当前授权，不推断回填当前 Attempt/owner；可信任务服务为当前有效租约重新签发。CLI/AUTOMATION/DOWNSTREAM 的非 Mission 语义不改变，公开 DTO 不暴露内部发行绑定或秘密。
 
 首批实际接入的工具是 `research.get_brief{brief_id}` 与 `run.get{run_id}`：请求严格拒绝未知字段，Id 的 JSON Schema 直接复用 `contracts::Id` 的原生 schema。Brief 只能是启动绑定的同项目版本，state=FROZEN 且 frozen_at 存在；不能以 DRAFT 或另一个有效 Brief 代替已冻结任务。Run 只能读取绑定 Mission，返回现有 RunSnapshotV1，不能替客户端猜百分比或任务成功。工具只返回已反序列化的公开 DTO，未知字段/合同版本不兼容明确失败。未完成的 B3 工具不登记为假成功/空实现；本入口不是完整 W2/W3/T01–T42 的验收替代，实验提交、科学任务、证据披露、原生 Codex 闭环及其全部隔离仍必须在同一 PR 完成。
 
@@ -1791,7 +1805,27 @@ ResultManifestV1：`schema_version,run_id,attempt_no,external_job_id,state,engin
 
 同 external_job_id + 同 JobSpec 返回已有任务，不同409；使用 OCI身份/状态，不内存锁做唯一事实。terminal identity/tombstone 保留至确认采纳和重试窗口结束，清理不让旧请求立即重建。少量网关映射/tombstone 可复用嵌入式数据库/原子文件，不再建业务库/队列。实际隔离按第7节/T34/T35验证，不用 Prompt 替代。
 
+### B4.1 控制面到 Runtime 的固定出站边界
+
+部署为每个 Runtime 显式登记 HTTPS origin 与允许连接的原生 SocketAddr 列表；此列表不是浏览器可修改的配置，也不来自 Agent/JobSpec。适配器复用 reqwest 0.12.23 的 resolve_to_addrs、原生 TLS、redirect::Policy::none 和 retry::never；保留原 Host/SNI，仅连接部署批准的地址，不再做第二次系统 DNS 查询。禁止环境代理、Cookie、自动重试和压缩解码；总请求10秒、连接3秒、响应累计1MiB。拒绝未登记origin、userinfo/query/fragment、额外路径、metadata/link-local/multicast/unspecified地址、IPv4-mapped旁路；显式开发部署只允许literal-loopback HTTP。秘密用敏感Authorization头，仅在端点与TLS检查后交给原生客户端；错误不回显URL、响应正文或原生诊断。明确批准的同机loopback HTTPS同样可用，仍必须通过原Host/SNI与CA验证，不需要把生产服务切换为HTTP开发模式；允许列表之外的loopback与所有metadata目标继续拒绝。此内部适配器不成为Agent任意HTTP工具。
+
+Run admission 的原生 RuntimeSnapshot 同时冻结 ca_certificate_ref 与 development_http，接管使用原快照而非后来修改的配置。历史缺CA快照只用于审计，不得推断CA或降级信任。020迁移保留历史PINNED_CA记录，以NOT VALID检查避免凭空制造CA；所有新写入/变更仍必须满足绑定，历史不完整配置不能准入真实传输。
+
+### B4.2 Runtime 探测发布与场景准入
+
+`POST /api/v2/integrations/runtimes/{id}/probe` 接收 schema_version/expected_revision；命令是近期 Operator 或精确单次 CLI grant 的 RUNTIME_PROBE，目标为 Runtime 而不是客户端指定的观察ID。前置短事务重验权限、原始幂等回执、enabled和revision，产生仅供可信服务持有的探测票据；网络和原生TLS在事务外执行。后置事务再次验证授权/epoch/expiry、精确配置revision和20秒总票据期限，只发布真实原生响应或封闭失败原因，不接受客户端自报capabilities。解码后的键和值也不得包含出站凭据，重定向和原始错误响应不披露。失败同样形成不可变观察，不沿用上一条成功。
+
+观察保存到 runtime_probe_observations，并以同事务绑定真实 ArtifactStore 已发布的 qz.runtime_probe/1 原始文档。该产物是 Operator 范围的运行环境观察，不是研究评估、Alpha资格或目标Package。观察有效期固定为探测开始后60秒，原始回执重放不能延长期限。Runtime 自报 checked_at 不得早于这次探测开始5秒以上。配置表的 last_capability_snapshot_artifact_id 仅是观察指针：刷新它不改变 integration_revision；真正配置变更增加revision并清空指针。旧的不可变观察继续可审计，但不得供新配置准入。只读 readiness 返回 NOT_CHECKED/DISABLED/STALE/UNAVAILABLE/AVAILABLE、准确版本、最近观察和 configured∩observed 的 available_job_kinds；连接可用但交集为空时没有任何任务准入资格。
+
 ## B5. 事务与状态机
+
+### B5.0 正式研究冻结与周期启动
+
+Brief freeze 使用严格 schema_version/expected_revision/execution_context；execution_context 包含 runtime_id/runtime_revision 和同项目的 discovery_input_set_id/validation_input_set_id/sealed_input_set_id。三个输入必须已冻结、角色及 Dataset 集合与 Brief bindings 完全一致；validation 输入必须就是冻结 SelectionRule 的 comparison_input_set_id，三者 decision_cutoff 一致。冻结事务锁定当前 Operator/项目/Brief，复用现有数据授权重检、验证 Family/Policy/Universe/ExecutionAssumptions、预算与 horizon，读取精确版本的尚有效原生 Runtime capability。需要 REAL/PIT 的政策不能冻结未知来源或未核验数据；原生 label interval 不支持时明确拒绝，不靠自报指标补齐。成功将 execution_context 与 Brief 同事务封口，冻结后更新内容或上下文均禁止，只能新版本。
+
+Cycle start 使用 schema_version/brief_id/expected_revision（Project revision），只接受 ACTIVE Project 与属于它的 FROZEN Brief。重新检查被冻结输入的当前许可及原生 Runtime 当前 readiness，不把 freeze 当永久许可。首个 Run 为 DATA_VALIDATE：通过真实受限 Runtime 再确认登记数据可执行后，由 Worker 进入 Codex Mission；这一步不是另一条研究路径，也不产生 Alpha/PASS。Cycle、budget snapshot、Run、Event、PGMQ消息、启动关联与原始HTTP回执在一个 SQLx/PGMQ 事务中提交，任何后半步失败均回滚；HTTP202返回准确Cycle/Run身份，不允许业务手工SQL补父对象。人工开始和自动唤醒统一受每日周期额度约束，自动入口另受政策cooldown/去重，不能通过换UUID重置历史。
+
+Mission 控制会话与科学任务的并发分别有界：每个 Cycle 同时最多一个活动 Mission，科学任务继续受 max_parallel_runs 约束；等待科学结果的 Mission 不占掉唯一科学槽。只由可信服务确定试验计数，非试验准备/组合/模拟任务和 Mission 使用0，不得把 Alpha试验伪装为管理任务。CPU/内存/输出/墙钟和模型token/turn预算仍适用于非试验任务；0仅表示不新增试验，绝非无限资源。历史已记账的Run不原地改写或退还。
 
 ### B5.1 入队
 

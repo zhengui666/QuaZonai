@@ -15,7 +15,7 @@ async fn setup(pool: &PgPool) -> (support::Fixture, RunSubmission) {
         "INSERT INTO app.runtime_integrations(id,name,endpoint,tls_policy,credential_ref,\
          allowed_capabilities,protocol_version,enabled) \
          VALUES($1,'transaction fixture','https://runtime.example','SYSTEM_CA',\
-         'fixture-credential',ARRAY['DATA_VALIDATE'],'1',true)",
+         'fixture-credential',ARRAY['ALPHA_EVALUATE'],'1',true)",
     )
     .bind(runtime.as_uuid())
     .execute(pool)
@@ -26,7 +26,7 @@ async fn setup(pool: &PgPool) -> (support::Fixture, RunSubmission) {
         input_set_id: fixture.input_set,
         runtime_id: runtime,
         runtime_revision: Revision::INITIAL,
-        kind: RunKind::DataValidate,
+        kind: RunKind::AlphaEvaluate,
         limits: JobLimitsV1 {
             schema_version: SchemaV1,
             experiments: 1,

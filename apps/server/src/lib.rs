@@ -6,6 +6,7 @@ pub mod artifacts;
 pub mod auth;
 pub mod brief;
 pub mod control;
+pub mod cycles;
 pub mod error;
 pub mod experiments;
 #[cfg(test)]
@@ -13,7 +14,10 @@ mod header_tests;
 pub mod mcp;
 pub mod research;
 pub mod runs;
+pub mod runtime;
+pub mod runtime_transport;
 pub mod secrets;
+pub mod settings;
 
 use axum::{
     extract::{DefaultBodyLimit, Request, State},
@@ -99,6 +103,8 @@ pub struct AppState {
     pub run_stream_slots: Arc<Semaphore>,
     pub artifact_store: Option<Arc<integrations::artifacts::ArtifactStore>>,
     pub artifact_slots: Arc<Semaphore>,
+    pub integration_slots: Arc<Semaphore>,
+    pub runtime_targets: Arc<runtime_transport::RuntimeTargets>,
 }
 impl AppState {
     pub fn new(store: Store, vault: SecretVault, policy: WebPolicy) -> Self {
@@ -111,10 +117,16 @@ impl AppState {
             run_stream_slots: Arc::new(Semaphore::new(32)),
             artifact_store: None,
             artifact_slots: Arc::new(Semaphore::new(4)),
+            integration_slots: Arc::new(Semaphore::new(4)),
+            runtime_targets: Arc::new(runtime_transport::RuntimeTargets::default()),
         }
     }
     pub fn with_artifact_store(mut self, store: integrations::artifacts::ArtifactStore) -> Self {
         self.artifact_store = Some(Arc::new(store));
+        self
+    }
+    pub fn with_runtime_targets(mut self, targets: runtime_transport::RuntimeTargets) -> Self {
+        self.runtime_targets = Arc::new(targets);
         self
     }
 }
@@ -185,6 +197,34 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
                 .layer(DefaultBodyLimit::max(64 * 1024)),
         )
         .route("/api/v2/experiments/{id}", get(experiments::get))
+        .route(
+            "/api/v2/settings/credentials",
+            post(settings::register_secret).layer(DefaultBodyLimit::max(512 * 1024)),
+        )
+        .route(
+            "/api/v2/integrations/runtimes",
+            get(settings::runtimes).post(settings::create_runtime),
+        )
+        .route(
+            "/api/v2/integrations/runtimes/{id}",
+            get(settings::runtime).patch(settings::update_runtime),
+        )
+        .route(
+            "/api/v2/integrations/runtimes/{id}/probe",
+            post(runtime::probe),
+        )
+        .route(
+            "/api/v2/integrations/runtimes/{id}/readiness",
+            get(runtime::readiness),
+        )
+        .route(
+            "/api/v2/integrations/downstreams",
+            get(settings::downstreams).post(settings::create_downstream),
+        )
+        .route(
+            "/api/v2/integrations/downstreams/{id}",
+            get(settings::downstream).patch(settings::update_downstream),
+        )
         .route("/api/v2/runs", get(runs::list))
         .route("/api/v2/runs/{id}", get(runs::get))
         .route("/api/v2/runs/{id}/cancel", post(runs::cancel))
@@ -201,6 +241,13 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
                 .layer(DefaultBodyLimit::max(64 * 1024)),
         )
         .route("/api/v2/input-sets/{id}", get(research::input_set))
+        .route("/api/v2/briefs/{id}/freeze", post(cycles::freeze))
+        .route("/api/v2/briefs/{id}/execution-context", get(cycles::frozen))
+        .route(
+            "/api/v2/projects/{id}/cycles",
+            get(cycles::list).post(cycles::start),
+        )
+        .route("/api/v2/cycles/{id}", get(cycles::get))
         .route(
             "/api/v2/projects/{id}/briefs",
             get(brief::list)
@@ -322,7 +369,11 @@ control::machine_session,control::issue_grant,runs::list,runs::get,runs::cancel,
 research::input_sets,research::input_set,research::create_input_set,
 research::evaluation_policies,research::evaluation_policy,research::create_evaluation_policy,
 brief::list,brief::get,brief::create,brief::update,
+cycles::freeze,cycles::frozen,cycles::start,cycles::list,cycles::get,
 experiments::propose,experiments::list,experiments::get,
+settings::register_secret,settings::runtimes,settings::runtime,settings::create_runtime,settings::update_runtime,
+settings::downstreams,settings::downstream,settings::create_downstream,settings::update_downstream,
+runtime::probe,runtime::readiness,
 artifacts::list,artifacts::get,artifacts::create,artifacts::content),components(schemas(error::Problem)),tags((name="Authentication",description="Native TOTP and revocable browser sessions")))]
 struct HttpContracts;
 pub fn openapi_json() -> Result<String, serde_json::Error> {

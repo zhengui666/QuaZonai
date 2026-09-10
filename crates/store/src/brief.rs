@@ -16,7 +16,7 @@ use sqlx::{postgres::PgRow, Postgres, Row, Transaction};
 
 type Tx<'a> = Transaction<'a, Postgres>;
 const FIELDS: &str = "id,project_id,version,revision,state,hypothesis,economic_rationale,universe_version_id,target_kind,horizon_kind,horizon_value,base_currency,benchmark_ref,evaluation_policy_id,execution_assumptions_id,budget,stop_rule,supersedes_id,frozen_at,created_at,updated_at";
-async fn row(tx: &mut Tx<'_>, id: Id, write: bool) -> Result<PgRow, StoreError> {
+pub(crate) async fn row(tx: &mut Tx<'_>, id: Id, write: bool) -> Result<PgRow, StoreError> {
     sqlx::query(&format!(
         "SELECT {FIELDS} FROM app.research_briefs WHERE id=$1 FOR {}",
         if write { "UPDATE" } else { "SHARE" }
@@ -26,7 +26,7 @@ async fn row(tx: &mut Tx<'_>, id: Id, write: bool) -> Result<PgRow, StoreError> 
     .await?
     .ok_or(StoreError::NotFound)
 }
-async fn view(tx: &mut Tx<'_>, r: &PgRow) -> Result<BriefView, StoreError> {
+pub(crate) async fn view(tx: &mut Tx<'_>, r: &PgRow) -> Result<BriefView, StoreError> {
     let id = db::id(r.try_get("id")?)?;
     let bindings = sqlx::query("SELECT dataset_revision_id,role,access_policy FROM app.brief_data_bindings WHERE brief_id=$1 ORDER BY dataset_revision_id")
         .bind(id.as_uuid()).fetch_all(&mut **tx).await?.iter().map(|b| Ok(BriefBindingV1 {
@@ -69,7 +69,7 @@ async fn view(tx: &mut Tx<'_>, r: &PgRow) -> Result<BriefView, StoreError> {
         updated_at: r.try_get("updated_at")?,
     })
 }
-async fn validate_refs(
+pub(crate) async fn validate_refs(
     tx: &mut Tx<'_>,
     project: Id,
     content: &BriefContentV1,

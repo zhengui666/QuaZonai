@@ -244,6 +244,54 @@ export interface paths {
         patch: operations["update"];
         trace?: never;
     };
+    "/api/v2/briefs/{id}/execution-context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getResearchBriefExecutionContext"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/briefs/{id}/freeze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["freezeResearchBrief"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/cycles/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getResearchCycle"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/evaluation-policies": {
         parameters: {
             query?: never;
@@ -332,6 +380,102 @@ export interface paths {
             cookie?: never;
         };
         get: operations["input_set"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/integrations/downstreams": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["downstreams"];
+        put?: never;
+        post: operations["create_downstream"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/integrations/downstreams/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["downstream"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch: operations["update_downstream"];
+        trace?: never;
+    };
+    "/api/v2/integrations/runtimes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["runtimes"];
+        put?: never;
+        post: operations["create_runtime"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/integrations/runtimes/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["runtime"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch: operations["update_runtime"];
+        trace?: never;
+    };
+    "/api/v2/integrations/runtimes/{id}/probe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["probe"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/integrations/runtimes/{id}/readiness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["readiness"];
         put?: never;
         post?: never;
         delete?: never;
@@ -452,6 +596,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/projects/{id}/cycles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listProjectResearchCycles"];
+        put?: never;
+        post: operations["startResearchCycle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/runs": {
         parameters: {
             query?: never;
@@ -510,6 +670,22 @@ export interface paths {
         get: operations["events"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/settings/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["register_secret"];
         delete?: never;
         options?: never;
         head?: never;
@@ -807,6 +983,19 @@ export interface components {
             request: components["schemas"]["BriefCreate"];
             schema_version: components["schemas"]["SchemaV1"];
         };
+        BriefExecutionContextV1: {
+            discovery_input_set_id: components["schemas"]["Id"];
+            runtime_id: components["schemas"]["Id"];
+            runtime_revision: components["schemas"]["Revision"];
+            schema_version: components["schemas"]["SchemaV1"];
+            sealed_input_set_id: components["schemas"]["Id"];
+            validation_input_set_id: components["schemas"]["Id"];
+        };
+        BriefFreezeV1: {
+            execution_context: components["schemas"]["BriefExecutionContextV1"];
+            expected_revision: components["schemas"]["Revision"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         /** @enum {string} */
         BriefState: "DRAFT" | "FROZEN";
         BriefUpdate: {
@@ -944,6 +1133,29 @@ export interface components {
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
+        CommandResult_CycleStartedV1: {
+            replayed: boolean;
+            resource: {
+                cycle: components["schemas"]["CycleViewV1"];
+                run: components["schemas"]["RunSnapshotV1"];
+                schema_version: components["schemas"]["SchemaV1"];
+            };
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        CommandResult_DownstreamView: {
+            replayed: boolean;
+            resource: {
+                configuration: components["schemas"]["DownstreamConfigurationV1"];
+                /** Format: date-time */
+                created_at: string;
+                credential_configured: boolean;
+                id: components["schemas"]["Id"];
+                revision: components["schemas"]["Revision"];
+                /** Format: date-time */
+                updated_at: string;
+            };
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         CommandResult_EvaluationPolicyView: {
             replayed: boolean;
             resource: {
@@ -999,11 +1211,32 @@ export interface components {
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
+        CommandResult_FrozenBriefV1: {
+            replayed: boolean;
+            resource: {
+                brief: components["schemas"]["BriefView"];
+                execution_context: components["schemas"]["BriefExecutionContextV1"];
+                schema_version: components["schemas"]["SchemaV1"];
+            };
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         CommandResult_InputSetView: {
             replayed: boolean;
             resource: {
                 header: components["schemas"]["InputSetSummary"];
                 items: components["schemas"]["InputItemView"][];
+            };
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        CommandResult_IntegrationSecretView: {
+            replayed: boolean;
+            resource: {
+                /** Format: date-time */
+                created_at: string;
+                /** @description Native immutable SecretVault object identity; never a path or a plaintext read capability. */
+                id: components["schemas"]["Id"];
+                label: string;
+                purpose: components["schemas"]["IntegrationSecretPurpose"];
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
@@ -1091,6 +1324,38 @@ export interface components {
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
+        CommandResult_RuntimeProbeViewV1: {
+            replayed: boolean;
+            resource: {
+                id: components["schemas"]["Id"];
+                integration_revision: components["schemas"]["Revision"];
+                /** Format: date-time */
+                observed_at: string;
+                outcome: components["schemas"]["RuntimeProbeOutcomeV1"];
+                runtime_id: components["schemas"]["Id"];
+                snapshot_artifact_id: components["schemas"]["Id"];
+                /** Format: date-time */
+                valid_until: string;
+            };
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        CommandResult_RuntimeView: {
+            replayed: boolean;
+            resource: {
+                ca_configured: boolean;
+                configuration: components["schemas"]["RuntimeConfigurationV1"];
+                /** Format: date-time */
+                created_at: string;
+                credential_configured: boolean;
+                id: components["schemas"]["Id"];
+                last_capability_snapshot_artifact_id?: null | components["schemas"]["Id"];
+                protocol_version: components["schemas"]["SchemaV1"];
+                revision: components["schemas"]["Revision"];
+                /** Format: date-time */
+                updated_at: string;
+            };
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         /** @enum {string} */
         ComparableScope: "FAMILY_LINEAGE";
         /** @enum {string} */
@@ -1133,6 +1398,57 @@ export interface components {
             scope_codes: components["schemas"]["MachineScope"][];
         };
         /** @enum {string} */
+        CycleOutcome: "QUALIFIED_CANDIDATES" | "NO_SUPPORTED_CANDIDATE" | "BUDGET_EXHAUSTED" | "INCONCLUSIVE";
+        /** @enum {string} */
+        CycleReadAction: "VIEW_BRIEF" | "VIEW_RUNS" | "VIEW_EXPERIMENTS";
+        CycleStartIntent: {
+            project_id: components["schemas"]["Id"];
+            request: components["schemas"]["CycleStartV1"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        CycleStartV1: {
+            brief_id: components["schemas"]["Id"];
+            /** @description The Project revision; the Brief and execution context are immutable. */
+            expected_revision: components["schemas"]["Revision"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        CycleStartedV1: {
+            cycle: components["schemas"]["CycleViewV1"];
+            run: components["schemas"]["RunSnapshotV1"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        /** @enum {string} */
+        CycleState: "QUEUED" | "RUNNING" | "WAITING_INPUT" | "PAUSING" | "PAUSED" | "COMPLETED" | "CANCELLED" | "FAILED";
+        /** @enum {string} */
+        CycleTrigger: "OPERATOR" | "SCHEDULE" | "DEGRADATION" | "NEW_DATA";
+        CycleViewV1: {
+            available_actions: components["schemas"]["CycleReadAction"][];
+            brief_id: components["schemas"]["Id"];
+            budget: components["schemas"]["BudgetV1"];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            ended_at?: string | null;
+            id: components["schemas"]["Id"];
+            initial_run_id?: null | components["schemas"]["Id"];
+            next_action?: string | null;
+            /** Format: int32 */
+            ordinal: number;
+            outcome?: null | components["schemas"]["CycleOutcome"];
+            project_id: components["schemas"]["Id"];
+            reserved_cpu_seconds: components["schemas"]["DbCounter"];
+            /** Format: int64 */
+            reserved_experiments: number;
+            revision: components["schemas"]["Revision"];
+            schema_version: components["schemas"]["SchemaV1"];
+            /** Format: date-time */
+            started_at?: string | null;
+            state: components["schemas"]["CycleState"];
+            trigger: components["schemas"]["CycleTrigger"];
+            /** Format: int64 */
+            used_experiments: number;
+        };
+        /** @enum {string} */
         DataAccess: "METADATA_ONLY" | "RESEARCH_READ" | "EVALUATOR_ONLY";
         /** @enum {string} */
         DataOrigin: "REAL" | "SYNTHETIC" | "FIXTURE" | "LEGACY_UNKNOWN";
@@ -1146,6 +1462,37 @@ export interface components {
             items: components["schemas"]["TrustedDevice"][];
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
+        };
+        DownstreamConfigurationV1: {
+            accepted_package_versions: components["schemas"]["PackageSchemaVersion"][];
+            development_http: boolean;
+            enabled: boolean;
+            endpoint: string;
+            environments: components["schemas"]["DownstreamEnvironments"];
+            name: string;
+        };
+        DownstreamCreate: {
+            configuration: components["schemas"]["DownstreamConfigurationV1"];
+            credential_ref: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        /** @enum {string} */
+        DownstreamEnvironments: "PAPER" | "LIVE" | "BOTH";
+        DownstreamUpdate: {
+            configuration: components["schemas"]["DownstreamConfigurationV1"];
+            credential_ref?: null | components["schemas"]["Id"];
+            expected_revision: components["schemas"]["Revision"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        DownstreamView: {
+            configuration: components["schemas"]["DownstreamConfigurationV1"];
+            /** Format: date-time */
+            created_at: string;
+            credential_configured: boolean;
+            id: components["schemas"]["Id"];
+            revision: components["schemas"]["Revision"];
+            /** Format: date-time */
+            updated_at: string;
         };
         EvaluationPolicyCreate: {
             comparison_input_set_id: components["schemas"]["Id"];
@@ -1239,6 +1586,11 @@ export interface components {
             field: string;
             message: string;
         };
+        FrozenBriefV1: {
+            brief: components["schemas"]["BriefView"];
+            execution_context: components["schemas"]["BriefExecutionContextV1"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         /** Format: uuid */
         Id: string;
         InputItemV1: {
@@ -1286,6 +1638,32 @@ export interface components {
             header: components["schemas"]["InputSetSummary"];
             items: components["schemas"]["InputItemView"][];
         };
+        IntegrationSecretCreate: {
+            intent: components["schemas"]["IntegrationSecretIntent"];
+            value: string;
+        };
+        IntegrationSecretIntent: {
+            label: string;
+            purpose: components["schemas"]["IntegrationSecretPurpose"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        /** @enum {string} */
+        IntegrationSecretPurpose: "RUNTIME" | "DOWNSTREAM" | "CUSTOM_PROVIDER" | "TLS_CA";
+        IntegrationSecretView: {
+            /** Format: date-time */
+            created_at: string;
+            /** @description Native immutable SecretVault object identity; never a path or a plaintext read capability. */
+            id: components["schemas"]["Id"];
+            label: string;
+            purpose: components["schemas"]["IntegrationSecretPurpose"];
+        };
+        /** @enum {string} */
+        IsolationProfile: "OCI_RESEARCH_V1";
+        LabelIntervalSupportV1: {
+            fixed_bars: boolean;
+            fixed_duration: boolean;
+            variable_interval: boolean;
+        };
         LoginRequest: {
             code: string;
             device_label?: string | null;
@@ -1320,6 +1698,38 @@ export interface components {
         /** @enum {string} */
         MissingSelectionMetric: "INCONCLUSIVE";
         OperatorCommand: {
+            /** @enum {string} */
+            operation: "BRIEF_FREEZE";
+            request: components["schemas"]["BriefFreezeV1"];
+        } | {
+            /** @enum {string} */
+            operation: "CYCLE_START";
+            request: components["schemas"]["CycleStartIntent"];
+        } | {
+            /** @enum {string} */
+            operation: "INTEGRATION_SECRET_REGISTER";
+            request: components["schemas"]["IntegrationSecretIntent"];
+        } | {
+            /** @enum {string} */
+            operation: "RUNTIME_PROBE";
+            request: components["schemas"]["RuntimeProbeRequestV1"];
+        } | {
+            /** @enum {string} */
+            operation: "RUNTIME_CREATE";
+            request: components["schemas"]["RuntimeCreate"];
+        } | {
+            /** @enum {string} */
+            operation: "RUNTIME_UPDATE";
+            request: components["schemas"]["RuntimeUpdate"];
+        } | {
+            /** @enum {string} */
+            operation: "DOWNSTREAM_CREATE";
+            request: components["schemas"]["DownstreamCreate"];
+        } | {
+            /** @enum {string} */
+            operation: "DOWNSTREAM_UPDATE";
+            request: components["schemas"]["DownstreamUpdate"];
+        } | {
             /** @enum {string} */
             operation: "BRIEF_CREATE";
             request: components["schemas"]["BriefCreateIntent"];
@@ -1378,7 +1788,9 @@ export interface components {
             target_id: components["schemas"]["Id"];
         };
         /** @enum {string} */
-        OperatorOperation: "BRIEF_CREATE" | "BRIEF_UPDATE" | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PRINCIPAL_CREATE" | "PRINCIPAL_UPDATE" | "CREDENTIAL_ISSUE" | "CREDENTIAL_REVOKE" | "INPUT_SET_CREATE" | "EVALUATION_POLICY_CREATE";
+        OperatorOperation: "BRIEF_FREEZE" | "CYCLE_START" | "INTEGRATION_SECRET_REGISTER" | "RUNTIME_PROBE" | "RUNTIME_CREATE" | "RUNTIME_UPDATE" | "DOWNSTREAM_CREATE" | "DOWNSTREAM_UPDATE" | "BRIEF_CREATE" | "BRIEF_UPDATE" | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PRINCIPAL_CREATE" | "PRINCIPAL_UPDATE" | "CREDENTIAL_ISSUE" | "CREDENTIAL_REVOKE" | "INPUT_SET_CREATE" | "EVALUATION_POLICY_CREATE";
+        /** @enum {string} */
+        PackageSchemaVersion: "1";
         Page_ArtifactView: {
             items: {
                 access_class: components["schemas"]["ArtifactAccess"];
@@ -1433,6 +1845,51 @@ export interface components {
                 /** Format: date-time */
                 revoked_at?: string | null;
                 scope_codes: components["schemas"]["MachineScope"][];
+            }[];
+            next_cursor?: null | components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        Page_CycleViewV1: {
+            items: {
+                available_actions: components["schemas"]["CycleReadAction"][];
+                brief_id: components["schemas"]["Id"];
+                budget: components["schemas"]["BudgetV1"];
+                /** Format: date-time */
+                created_at: string;
+                /** Format: date-time */
+                ended_at?: string | null;
+                id: components["schemas"]["Id"];
+                initial_run_id?: null | components["schemas"]["Id"];
+                next_action?: string | null;
+                /** Format: int32 */
+                ordinal: number;
+                outcome?: null | components["schemas"]["CycleOutcome"];
+                project_id: components["schemas"]["Id"];
+                reserved_cpu_seconds: components["schemas"]["DbCounter"];
+                /** Format: int64 */
+                reserved_experiments: number;
+                revision: components["schemas"]["Revision"];
+                schema_version: components["schemas"]["SchemaV1"];
+                /** Format: date-time */
+                started_at?: string | null;
+                state: components["schemas"]["CycleState"];
+                trigger: components["schemas"]["CycleTrigger"];
+                /** Format: int64 */
+                used_experiments: number;
+            }[];
+            next_cursor?: null | components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        Page_DownstreamView: {
+            items: {
+                configuration: components["schemas"]["DownstreamConfigurationV1"];
+                /** Format: date-time */
+                created_at: string;
+                credential_configured: boolean;
+                id: components["schemas"]["Id"];
+                revision: components["schemas"]["Revision"];
+                /** Format: date-time */
+                updated_at: string;
             }[];
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
@@ -1577,6 +2034,23 @@ export interface components {
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
+        Page_RuntimeView: {
+            items: {
+                ca_configured: boolean;
+                configuration: components["schemas"]["RuntimeConfigurationV1"];
+                /** Format: date-time */
+                created_at: string;
+                credential_configured: boolean;
+                id: components["schemas"]["Id"];
+                last_capability_snapshot_artifact_id?: null | components["schemas"]["Id"];
+                protocol_version: components["schemas"]["SchemaV1"];
+                revision: components["schemas"]["Revision"];
+                /** Format: date-time */
+                updated_at: string;
+            }[];
+            next_cursor?: null | components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         /** @enum {string} */
         PitStatus: "VERIFIED" | "UNVERIFIED" | "INVALID";
         PrincipalCreate: {
@@ -1710,6 +2184,121 @@ export interface components {
         };
         /** @enum {string} */
         RunState: "QUEUED" | "DISPATCHING" | "RUNNING" | "RECONCILING" | "CANCEL_REQUESTED" | "SUCCEEDED" | "FAILED" | "CANCELLED";
+        RuntimeArtifactSchemaV1: {
+            name: string;
+            version: string;
+        };
+        RuntimeCapabilitiesV1: {
+            artifact_schemas: components["schemas"]["RuntimeArtifactSchemaV1"][];
+            /** Format: date-time */
+            checked_at: string;
+            data_kinds: components["schemas"]["RuntimeDataKind"][];
+            engine_versions: {
+                [key: string]: string;
+            };
+            image_refs: components["schemas"]["RuntimeImageV1"][];
+            isolation_profile: components["schemas"]["IsolationProfile"];
+            job_kinds: components["schemas"]["RunKind"][];
+            label_interval_support: components["schemas"]["LabelIntervalSupportV1"];
+            /** Format: int32 */
+            max_cpu: number;
+            /** Format: int32 */
+            max_memory_mib: number;
+            /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
+            max_output_bytes: string;
+            /** Format: int32 */
+            max_wall_seconds: number;
+            protocol_versions: components["schemas"]["SchemaV1"][];
+            runtime_version: string;
+            schema_version: components["schemas"]["SchemaV1"];
+            solver_capabilities: string[];
+            venues: components["schemas"]["RuntimeVenueV1"][];
+        };
+        RuntimeConfigurationV1: {
+            allowed_capabilities: components["schemas"]["RunKind"][];
+            /** @description Both this setting and the deployment must explicitly permit literal-loopback HTTP. */
+            development_http: boolean;
+            enabled: boolean;
+            /** @description Only an origin. Registration does not send network traffic or attest readiness. */
+            endpoint: string;
+            name: string;
+            tls_policy: components["schemas"]["TlsPolicy"];
+        };
+        RuntimeCreate: {
+            ca_certificate_ref?: null | components["schemas"]["Id"];
+            configuration: components["schemas"]["RuntimeConfigurationV1"];
+            credential_ref: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        /** @enum {string} */
+        RuntimeDataKind: "BAR" | "QUOTE" | "TRADE" | "ORDER_BOOK" | "FUNDAMENTAL" | "EVENT" | "DERIVED_FEATURE";
+        RuntimeImageV1: {
+            /** @description Native immutable OCI reference. Never a model-selected image. */
+            image_ref: string;
+            job_kind: components["schemas"]["RunKind"];
+        };
+        /** @enum {string} */
+        RuntimeProbeFailure: "NOT_CONFIGURED" | "ENDPOINT_DENIED" | "TLS_CONFIGURATION" | "AUTHENTICATION" | "UNAVAILABLE" | "RESPONSE_LIMIT" | "CONTRACT_UNSUPPORTED";
+        RuntimeProbeOutcomeV1: {
+            capabilities: components["schemas"]["RuntimeCapabilitiesV1"];
+            /** @enum {string} */
+            status: "AVAILABLE";
+        } | {
+            reason: components["schemas"]["RuntimeProbeFailure"];
+            /** @enum {string} */
+            status: "UNAVAILABLE";
+        };
+        RuntimeProbeRequestV1: {
+            expected_revision: components["schemas"]["Revision"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        RuntimeProbeViewV1: {
+            id: components["schemas"]["Id"];
+            integration_revision: components["schemas"]["Revision"];
+            /** Format: date-time */
+            observed_at: string;
+            outcome: components["schemas"]["RuntimeProbeOutcomeV1"];
+            runtime_id: components["schemas"]["Id"];
+            snapshot_artifact_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            valid_until: string;
+        };
+        /** @enum {string} */
+        RuntimeReadinessState: "NOT_CHECKED" | "DISABLED" | "STALE" | "UNAVAILABLE" | "AVAILABLE";
+        RuntimeReadinessV1: {
+            available_job_kinds: components["schemas"]["RunKind"][];
+            integration_revision: components["schemas"]["Revision"];
+            latest_observation?: null | components["schemas"]["RuntimeProbeViewV1"];
+            runtime_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+            state: components["schemas"]["RuntimeReadinessState"];
+        };
+        RuntimeUpdate: {
+            ca_certificate_ref?: null | components["schemas"]["Id"];
+            configuration: components["schemas"]["RuntimeConfigurationV1"];
+            credential_ref?: null | components["schemas"]["Id"];
+            expected_revision: components["schemas"]["Revision"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        RuntimeVenueV1: {
+            data_kinds: components["schemas"]["RuntimeDataKind"][];
+            expiry_and_settlement: boolean;
+            instrument_classes: string[];
+            venue: string;
+        };
+        RuntimeView: {
+            ca_configured: boolean;
+            configuration: components["schemas"]["RuntimeConfigurationV1"];
+            /** Format: date-time */
+            created_at: string;
+            credential_configured: boolean;
+            id: components["schemas"]["Id"];
+            last_capability_snapshot_artifact_id?: null | components["schemas"]["Id"];
+            protocol_version: components["schemas"]["SchemaV1"];
+            revision: components["schemas"]["Revision"];
+            /** Format: date-time */
+            updated_at: string;
+        };
         /** @enum {integer} */
         SchemaV1: 1;
         /** @enum {string} */
@@ -1778,6 +2367,8 @@ export interface components {
             /** Format: int32 */
             stop_on_qualified_count: number;
         };
+        /** @enum {string} */
+        TlsPolicy: "SYSTEM_CA" | "PINNED_CA";
         TrustedDevice: {
             /** Format: date-time */
             expires_at: string;
@@ -2664,6 +3255,234 @@ export interface operations {
             };
         };
     };
+    getResearchBriefExecutionContext: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FrozenBriefV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    freezeResearchBrief: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BriefFreezeV1"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_FrozenBriefV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getResearchCycle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CycleViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     evaluation_policies: {
         parameters: {
             query: {
@@ -3292,6 +4111,757 @@ export interface operations {
             429: {
                 headers: {
                     "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    downstreams: {
+        parameters: {
+            query?: {
+                cursor?: components["schemas"]["Id"];
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_DownstreamView"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    create_downstream: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DownstreamCreate"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_DownstreamView"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    downstream: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownstreamView"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    update_downstream: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DownstreamUpdate"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_DownstreamView"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    runtimes: {
+        parameters: {
+            query?: {
+                cursor?: components["schemas"]["Id"];
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_RuntimeView"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    create_runtime: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuntimeCreate"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_RuntimeView"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    runtime: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeView"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    update_runtime: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuntimeUpdate"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_RuntimeView"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    probe: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuntimeProbeRequestV1"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_RuntimeProbeViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readiness: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeReadinessV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
                     [name: string]: unknown;
                 };
                 content: {
@@ -4069,6 +5639,166 @@ export interface operations {
             };
         };
     };
+    listProjectResearchCycles: {
+        parameters: {
+            query?: {
+                cursor?: components["schemas"]["Id"];
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_CycleViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    startResearchCycle: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CycleStartV1"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_CycleStartedV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     list_runs: {
         parameters: {
             query?: {
@@ -4343,6 +6073,82 @@ export interface operations {
             429: {
                 headers: {
                     "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    register_secret: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IntegrationSecretCreate"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_IntegrationSecretView"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
                     [name: string]: unknown;
                 };
                 content: {

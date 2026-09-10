@@ -70,7 +70,7 @@ pub async fn fixture(pool: &PgPool, scopes: &[&str]) -> Fixture {
                 kind: RunKind::AgentResearch,
                 limits: JobLimitsV1 {
                     schema_version: SchemaV1,
-                    experiments: 1,
+                    experiments: 0,
                     cpu_seconds: DbCounter::new(10).unwrap(),
                     wall_seconds: 3600,
                     memory_mib: 128,

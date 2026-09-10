@@ -47,6 +47,18 @@ pub fn scopes(request: &CredentialIssue) -> Result<(), DomainError> {
 }
 pub fn command(request: &OperatorCommand) -> Result<(), DomainError> {
     match request {
+        OperatorCommand::BriefFreeze(_) => Ok(()),
+        OperatorCommand::CycleStart(_) => Ok(()),
+        OperatorCommand::IntegrationSecretRegister(r) => crate::settings::secret_intent(r),
+        OperatorCommand::RuntimeProbe(_) => Ok(()),
+        OperatorCommand::RuntimeCreate(r) => crate::settings::runtime_create(r),
+        OperatorCommand::RuntimeUpdate(r) => crate::settings::runtime_update(r),
+        OperatorCommand::DownstreamCreate(r) => {
+            crate::settings::downstream_configuration(&r.configuration)
+        }
+        OperatorCommand::DownstreamUpdate(r) => {
+            crate::settings::downstream_configuration(&r.configuration)
+        }
         OperatorCommand::BriefCreate(r) => {
             crate::brief::content(&r.request.content, &r.request.bindings)
         }

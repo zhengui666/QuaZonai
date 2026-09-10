@@ -8,7 +8,7 @@ use utoipa::ToSchema;
 #[serde(deny_unknown_fields)]
 pub struct JobLimitsV1 {
     pub schema_version: SchemaV1,
-    /// Zero only for trusted non-research management jobs.
+    /// Zero for trusted non-trial stages or Mission control; scientific trials are positive.
     #[schema(minimum=0, maximum=4294967295u64, format=Int64)]
     pub experiments: u32,
     pub cpu_seconds: DbCounter,

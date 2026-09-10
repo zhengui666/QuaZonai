@@ -2138,6 +2138,7 @@ dependencies = [
  "proptest",
  "serde_json",
  "thiserror 2.0.20",
+ "url",
 ]
 
 [[package]]
@@ -5139,6 +5140,7 @@ dependencies = [
  "integrations",
  "reqwest",
  "rmcp",
+ "rustls",
  "serde",
  "serde_json",
  "sqlx",
@@ -5146,6 +5148,7 @@ dependencies = [
  "tempfile",
  "time",
  "tokio",
+ "tokio-rustls",
  "totp-rs",
  "tower",
  "tower-sessions",

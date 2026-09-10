@@ -10,14 +10,17 @@ pub mod brief;
 pub mod budget;
 pub mod codex;
 pub mod control;
+pub mod cycles;
 pub mod evidence;
 pub mod experiments;
 pub mod lifecycle;
 pub mod portfolio;
 pub mod research;
 pub mod runs;
+pub mod runtime;
 pub mod scalars;
 pub mod science;
+pub mod settings;
 
 pub use scalars::{DbCounter, DecimalValue, Id, Revision, SchemaV1, Timestamp};
 
@@ -25,6 +28,23 @@ use utoipa::OpenApi;
 
 #[derive(OpenApi)]
 #[openapi(components(schemas(
+    cycles::BriefFreezeV1,
+    cycles::FrozenBriefV1,
+    cycles::CycleStartIntent,
+    cycles::CycleViewV1,
+    cycles::CycleStartedV1,
+    runtime::RuntimeCapabilitiesV1,
+    runtime::RuntimeProbeRequestV1,
+    runtime::RuntimeProbeViewV1,
+    runtime::RuntimeReadinessV1,
+    settings::IntegrationSecretCreate,
+    settings::IntegrationSecretView,
+    settings::RuntimeCreate,
+    settings::RuntimeUpdate,
+    settings::RuntimeView,
+    settings::DownstreamCreate,
+    settings::DownstreamUpdate,
+    settings::DownstreamView,
     artifacts::ArtifactCreate,
     artifacts::ArtifactView,
     brief::BriefCreate,

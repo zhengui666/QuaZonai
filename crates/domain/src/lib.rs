@@ -15,6 +15,8 @@ pub mod experiments;
 pub mod portfolio;
 pub mod research;
 pub mod runs;
+pub mod runtime;
+pub mod settings;
 
 use thiserror::Error;
 

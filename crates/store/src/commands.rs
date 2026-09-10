@@ -161,6 +161,43 @@ pub(crate) async fn operator(
     })
 }
 
+/// Native I/O can outlive a recent-auth or grant deadline even while row locks
+/// serialize revocation. New integration writes recheck the database clock after
+/// that I/O, immediately before recording their immutable result.
+pub(crate) async fn recheck_authority(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: &Actor,
+    prepared: &Prepared,
+) -> Result<(), StoreError> {
+    match actor {
+        Actor::Browser { .. } => authority::browser(tx, actor, true, true).await?,
+        Actor::Machine { .. } => {
+            let machine = authority::machine(tx, actor, true).await?;
+            if machine.kind != PrincipalKind::Cli
+                || prepared.scope != format!("CREDENTIAL:{}", machine.credential_id)
+            {
+                return Err(StoreError::Forbidden);
+            }
+            let grant_id = prepared.grant.ok_or(StoreError::Forbidden)?;
+            let current: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM app.operator_command_grants g \
+                 JOIN app.operator_auth_state a ON a.singleton AND a.initialized \
+                 WHERE g.id=$1 AND g.credential_id=$2 AND g.auth_epoch=a.session_epoch \
+                 AND ($3 OR g.expires_at>clock_timestamp()))",
+            )
+            .bind(grant_id.as_uuid())
+            .bind(machine.credential_id.as_uuid())
+            .bind(prepared.replay.is_some())
+            .fetch_one(&mut **tx)
+            .await?;
+            if !current {
+                return Err(StoreError::Forbidden);
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) async fn finish<T: Serialize>(
     tx: &mut Transaction<'_, Postgres>,
     prepared: Prepared,

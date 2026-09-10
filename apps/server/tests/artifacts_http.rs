@@ -4,6 +4,8 @@
 mod artifact_cancellation;
 #[path = "support/mission_attempt.rs"]
 mod mission_attempt;
+#[path = "support/mission_owner_wait.rs"]
+mod mission_owner_wait;
 #[path = "../../../crates/store/tests/support/mod.rs"]
 mod run_support;
 mod support;
@@ -654,6 +656,13 @@ async fn mission(f: &Fixture, pool: &PgPool) -> (Id, Id, Id, Id) {
     use contracts::{lifecycle::JobLimitsV1, runs::RunKind, DbCounter, Revision, SchemaV1};
     use store::lifecycle::{ClaimResult, RunSubmission};
     let data = run_support::fixture(pool, run_support::budget()).await;
+    // The shared ledger fixture owns an unrelated Mission. End that test-only
+    // setup before admitting the one Mission under test; never relax its slot.
+    sqlx::query("UPDATE app.runs SET state='FAILED',finished_at=clock_timestamp() WHERE id=$1")
+        .bind(data.run.as_uuid())
+        .execute(pool)
+        .await
+        .unwrap();
     let runtime = Id::new();
     sqlx::query("INSERT INTO app.runtime_integrations(id,name,endpoint,tls_policy,credential_ref,allowed_capabilities,protocol_version,enabled) VALUES($1,'artifact fixture','https://runtime.example','SYSTEM_CA','fixture',ARRAY['AGENT_RESEARCH'],'1',true)")
         .bind(runtime.as_uuid()).execute(pool).await.unwrap();
@@ -665,7 +674,7 @@ async fn mission(f: &Fixture, pool: &PgPool) -> (Id, Id, Id, Id) {
         kind: RunKind::AgentResearch,
         limits: JobLimitsV1 {
             schema_version: SchemaV1,
-            experiments: 1,
+            experiments: 0,
             cpu_seconds: DbCounter::new(100).unwrap(),
             wall_seconds: 3600,
             memory_mib: 1024,

@@ -9,12 +9,15 @@ pub mod authority;
 pub mod brief;
 mod commands;
 pub mod control;
+pub mod cycles;
 mod db;
 pub mod experiments;
 pub mod lifecycle;
 pub mod machine_auth;
 mod migration;
 pub mod research;
+pub mod runtime;
+pub mod settings;
 pub mod turns;
 
 use sqlx::{postgres::PgPoolOptions, PgPool};

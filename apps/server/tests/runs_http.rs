@@ -79,7 +79,7 @@ async fn admitted(pool: &PgPool, f: &Fixture, key: &str) -> contracts::runs::Run
                 kind: RunKind::DataValidate,
                 limits: JobLimitsV1 {
                     schema_version: SchemaV1,
-                    experiments: 1,
+                    experiments: 0,
                     cpu_seconds: DbCounter::new(100).unwrap(),
                     wall_seconds: 3600,
                     memory_mib: 1024,

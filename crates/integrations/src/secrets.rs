@@ -88,10 +88,16 @@ impl SecretVault {
     }
 
     pub fn put(&self, purpose: &str, plaintext: &[u8]) -> Result<Id, SecretError> {
+        self.put_at(Id::new(), purpose, plaintext)
+    }
+
+    /// Trusted command transactions may allocate the native object UUID first.
+    /// create_new still forbids replacement, including on retries or collisions.
+    /// This method is never itself a plaintext HTTP or model-facing interface.
+    pub fn put_at(&self, id: Id, purpose: &str, plaintext: &[u8]) -> Result<Id, SecretError> {
         if plaintext.is_empty() || plaintext.len() > LIMIT || !valid_purpose(purpose) {
             return Err(SecretError::Invalid);
         }
-        let id = Id::new();
         let aad = format!("{id}:{purpose}");
         let mut nonce = [0_u8; 24];
         OsRng.fill_bytes(&mut nonce);
@@ -212,6 +218,12 @@ impl SecretVault {
 fn valid_purpose(purpose: &str) -> bool {
     matches!(
         purpose,
-        "TOTP" | "RUNTIME" | "DOWNSTREAM" | "CUSTOM_PROVIDER" | "SESSION_KEY" | "MACHINE_VERIFIER"
+        "TOTP"
+            | "RUNTIME"
+            | "DOWNSTREAM"
+            | "CUSTOM_PROVIDER"
+            | "TLS_CA"
+            | "SESSION_KEY"
+            | "MACHINE_VERIFIER"
     )
 }

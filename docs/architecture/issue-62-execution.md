@@ -3,6 +3,38 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Runtime admission and Mission owner-fence checkpoint, 2026-09-10
+
+The current increment adds typed integration settings, write-only encrypted
+credentials, revision-bound native TCP/TLS Runtime observations, formal Brief
+execution-context freeze and atomic Cycle/initial-Run/PGMQ startup. Registration
+is not a successful connection; queue admission is not proof of Worker execution.
+The frontend uses native Rust-generated contracts, shared Ajv validators and
+Rollup splitting without increasing the Workbox 2 MiB per-file precache limit.
+
+Migration `202609100023_mission_owner_fence.sql` permanently binds each new
+Mission credential to both the active Attempt and its current owner epoch.
+Common machine authority checks that binding and the live database lease on reads
+as well as writes. Historical Mission issuances with an unknown owner remain
+unchanged audit records and require new issuance; valid CLI credentials survive
+that Mission-only cutover. Existing applied migration files are not rewritten.
+
+The regressions in `apps/server/tests/support/mission_attempt.rs` use native
+claim/renew and historical SQLx upgrades. `mission_owner_wait.rs` additionally
+proves actual PostgreSQL lock blocking before letting the native lease expire,
+then requires HTTP 401 or issuance SQLSTATE 23514 after the lock is released.
+It also rejects Attempt/owner injection into non-Mission credentials. These
+fixtures do not constitute the full production Worker, Codex or T42 workflow.
+
+Local `.ai-bridge/runtime-check-GZmgAU` recorded successful targeted HTTP/Store,
+native TCP/TLS and strict Clippy checks with unchanged source. Formatting failed;
+its proposed formatting was subsequently applied by the web author. That run is
+not full-stack or publication approval. The final checkpoint requires a fresh
+stable full Rust/Web/real-browser run and independent generated-output compares.
+Private raw logs, test databases and test credentials must not be committed.
+Latest committed-Head CI and an explicit clean Codex review remain separate gates;
+PR #63 stays Draft until all Issue #62 work packages and acceptance are complete.
+
 ## Local review-patch verification, 2026-09-07
 
 This is local evidence for the web-authored working-tree patch over
