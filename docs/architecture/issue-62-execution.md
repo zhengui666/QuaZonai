@@ -744,3 +744,18 @@ Mission、turn、recovery、Run生命周期、约束回归，80项通过/0失败
 wire检查、生产构建、Codex设置专项及全部168项三尺寸浏览器测试、CLI帮助均通过。
 手写源码前后不变，生成文件无差异。这是ca22a9f4基础上的本地增量验证，不是GitHub
 当前Head CI；未运行真实账户付费研究，也不表示全量W0–W8/T01–T42或交付链路完成。
+
+## 2026-09-12：工具续轮失败不能结算中途用量
+
+锁定原生0.144.4的真实反例：第一条合成模型响应调用原生shell并报告12个token，
+实际工具完成后第二条模型请求收到不含用量的断流。原驱动错误地返回
+FAILED/actual_tokens=12完整回执。`.ai-bridge/verify-3rRkL9`因此16通过/1失败，
+check/fmt/Clippy通过且源码未变、独立PG已停止；不是推测或仅mock客户端。
+修复只在共用原生驱动中限制自动结算为COMPLETED，失败/中断保留终态与未知预约。
+不新增表或计费器；独立可信完整用量仍可由既有Store账本结算。
+
+最终`.ai-bridge/verify-Ftn1NN` exit0：全工作区check/fmt/严格Clippy，以及原生
+HTTP Profile4、MCP5、Mission8共17项通过/0失败/0忽略，源码未变、独立PG确认停止。
+故障回归还核实第二次原生请求包含实际shell结果，不把仅生成工具调用当执行成功。
+这是88990e23基础上的局部增量证据，未证明Provider真实计费、运行中预算中断、
+生产Worker自动Mission、完整科学/Reviewer链路或GitHub最新Head完成。

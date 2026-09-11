@@ -32,6 +32,7 @@ struct Seen {
     prior_context: AtomicBool,
     invalid: AtomicBool,
     slow: AtomicBool,
+    fail_continuation: AtomicBool,
 }
 
 pub struct Provider {
@@ -84,6 +85,11 @@ impl Provider {
     pub fn slow_response(&self) {
         self.seen.slow.store(true, Ordering::SeqCst);
     }
+
+    #[allow(dead_code)] // Mission fault test; other native fixtures share this module.
+    pub fn fail_after_tool(&self) {
+        self.seen.fail_continuation.store(true, Ordering::SeqCst);
+    }
 }
 
 async fn respond(
@@ -92,6 +98,7 @@ async fn respond(
     Json(request): Json<Value>,
 ) -> (StatusCode, [(header::HeaderName, &'static str); 1], String) {
     let ordinal = seen.count.fetch_add(1, Ordering::SeqCst);
+    let fail_continuation = seen.fail_continuation.load(Ordering::SeqCst);
     // Observe only controlled fixture sentinels; don't retain or print requests.
     let input = request.get("input").and_then(Value::as_array);
     let input_text = input
@@ -105,7 +112,8 @@ async fn respond(
         && request["stream"] == true
         && ordinal < 2
         && input.is_some()
-        && input_text.contains(if ordinal == 0 {
+        && (!fail_continuation || ordinal == 0 || input_text.contains("QZ_NATIVE_TOOL_DONE"))
+        && input_text.contains(if ordinal == 0 || fail_continuation {
             FIRST_PROMPT
         } else {
             SECOND_PROMPT
@@ -118,7 +126,7 @@ async fn respond(
             "{}".into(),
         );
     }
-    if ordinal == 1 {
+    if ordinal == 1 && !fail_continuation {
         seen.prior_context.store(
             input_text.contains(FIRST_PROMPT) && input_text.contains(FIRST_REPLY),
             Ordering::SeqCst,
@@ -130,12 +138,38 @@ async fn respond(
         tokio::time::sleep(Duration::from_secs(60)).await;
     }
     let id = format!("qz-local-response-{ordinal}");
+    if fail_continuation && ordinal == 1 {
+        // A real second native model request receives a broken stream with no
+        // usage receipt. The first response's 12 tokens cannot price this request.
+        return (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "text/event-stream")],
+            format!(
+                "event: response.created\ndata: {}\n\n",
+                json!({"type":"response.created","response":{"id":id}})
+            ),
+        );
+    }
+    let item = if fail_continuation {
+        let tool = request["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == "exec_command" || tool["name"] == "shell_command")
+            .expect("native shell tool required");
+        let args = if tool["name"] == "exec_command" {
+            json!({"cmd":"printf QZ_NATIVE_TOOL_DONE","login":false,"yield_time_ms":1000,"max_output_tokens":100})
+        } else {
+            json!({"command":"printf QZ_NATIVE_TOOL_DONE","login":false,"timeout_ms":10000})
+        };
+        json!({"type":"function_call","name":tool["name"],"call_id":"qz-partial-usage-tool","arguments":args.to_string()})
+    } else {
+        json!({"type":"message","role":"assistant","id":format!("qz-local-message-{ordinal}"),
+            "content":[{"type":"output_text","text":if ordinal==0 {FIRST_REPLY} else {SECOND_REPLY}}]})
+    };
     let events = [
         json!({"type":"response.created","response":{"id":id}}),
-        json!({"type":"response.output_item.done","item":{
-            "type":"message","role":"assistant","id":format!("qz-local-message-{ordinal}"),
-            "content":[{"type":"output_text","text":if ordinal==0 {FIRST_REPLY} else {SECOND_REPLY}}]
-        }}),
+        json!({"type":"response.output_item.done","item":item}),
         json!({"type":"response.completed","response":{"id":id,"usage":{
             "input_tokens":10,"input_tokens_details":{"cached_tokens":0},
             "output_tokens":2,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":12

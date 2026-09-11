@@ -139,7 +139,10 @@ impl MissionConnection {
                     .observe_mission_turn_terminal(item.id, fence, outcome, reason)
                     .await?;
                 if let Some(actual_tokens) = tokens {
-                    if item.reserved_cost.is_none() {
+                    // Usage is updated after each native model response, not an
+                    // authoritative final receipt for a failed/interrupted Turn.
+                    // A later tool continuation may have spent unreported tokens.
+                    if outcome == TurnOutcome::Succeeded && item.reserved_cost.is_none() {
                         let receipt = UsageReceipt {
                             outcome,
                             actual_tokens,

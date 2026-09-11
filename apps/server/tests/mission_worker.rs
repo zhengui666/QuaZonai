@@ -450,6 +450,52 @@ async fn unpriced_native_driver_refuses_cost_capped_send_without_spending(pool: 
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn partial_usage_before_failed_tool_continuation_is_not_a_final_receipt(pool: PgPool) {
+    let f = fixture(&pool).await;
+    f.provider.fail_after_tool();
+    let mut connection = f
+        .launcher
+        .open(&f.store, f.vault.clone(), f.lease.run.id, &f.lease.fence)
+        .await
+        .unwrap();
+    prepare(
+        &f,
+        &f.lease,
+        "partial-usage",
+        responses::FIRST_PROMPT,
+        f.lease.run.deadline_at,
+    )
+    .await;
+    let (_alive, shutdown) = tokio::sync::watch::channel(false);
+    let result = connection
+        .drive_turn(
+            &f.store,
+            f.data.objects.clone(),
+            f.lease.run.id,
+            &f.lease.fence,
+            &shutdown,
+        )
+        .await
+        .unwrap();
+    connection.client.close().await.unwrap();
+    assert_eq!(
+        f.provider.request_count(),
+        2,
+        "the native tool continuation really reached upstream"
+    );
+    assert_eq!(result, TurnProgress::Unresolved);
+    let checkpoint = f
+        .store
+        .mission_turn_checkpoint(f.lease.run.id, &f.lease.fence)
+        .await
+        .unwrap();
+    assert_eq!(checkpoint.accounted_tokens.get(), 0);
+    let latest = checkpoint.latest.unwrap();
+    assert!(latest.sent && latest.receipt.is_none());
+    assert_eq!(latest.terminal.unwrap().outcome, TurnOutcome::Failed);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn native_interrupt_follows_committed_deadline_and_does_not_invent_usage(pool: PgPool) {
     let f = fixture(&pool).await;
     let mut connection = f
