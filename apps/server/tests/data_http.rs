@@ -210,6 +210,112 @@ async fn authentic_http_registration_publishes_native_metadata_and_replay_does_n
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn authenticated_http_native_validation_creates_one_real_queued_run_without_sql_preparation(
+    pool: PgPool,
+) {
+    let (f, cookie, tls, registration) = setup(pool.clone(), None).await;
+    let registered = command(
+        &f,
+        &cookie,
+        "validation-dataset",
+        "POST",
+        "/api/v2/data/revisions",
+        registration.clone(),
+    )
+    .await;
+    assert_eq!(registered.status, StatusCode::OK);
+    let source_id = registration["source_id"].as_str().unwrap();
+    let source = command(
+        &f,
+        &cookie,
+        "read-source",
+        "GET",
+        &format!("/api/v2/data/sources/{source_id}"),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(source.status, StatusCode::OK);
+    let runtime_id = source.body["runtime_id"].as_str().unwrap();
+    let probe = command(
+        &f,
+        &cookie,
+        "validation-probe",
+        "POST",
+        &format!("/api/v2/integrations/runtimes/{runtime_id}/probe"),
+        json!({"schema_version":1,"expected_revision":registration["expected_runtime_revision"]}),
+    )
+    .await;
+    assert_eq!(probe.status, StatusCode::OK);
+    assert_eq!(probe.body["resource"]["outcome"]["status"], "AVAILABLE");
+    let projects = command(
+        &f,
+        &cookie,
+        "read-project",
+        "GET",
+        "/api/v2/projects",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(projects.status, StatusCode::OK);
+    let project = projects.body["items"][0]["id"].clone();
+    let input = command(&f, &cookie, "validation-input", "POST", "/api/v2/input-sets", json!({
+        "schema_version":1,"project_id":project,"purpose":"DISCOVERY",
+        "decision_cutoff":metadata_fixture::metadata().available_through,
+        "items":[{"kind":"DATASET","dataset_revision_id":registered.body["resource"]["id"],"role":"DISCOVERY"}]
+    })).await;
+    assert_eq!(input.status, StatusCode::CREATED);
+    let body = json!({"schema_version":1,"project_id":project,"input_set_id":input.body["resource"]["header"]["id"],
+        "runtime_id":runtime_id,"expected_runtime_revision":registration["expected_runtime_revision"],
+        "limits":{"schema_version":1,"experiments":0,"cpu_seconds":"10","wall_seconds":60,"memory_mib":512,"output_bytes":"65536"}});
+    let admitted = command(
+        &f,
+        &cookie,
+        "native-validation",
+        "POST",
+        "/api/v2/data/validate",
+        body.clone(),
+    )
+    .await;
+    assert_eq!(admitted.status, StatusCode::ACCEPTED);
+    assert_eq!(admitted.body["resource"]["state"], "QUEUED");
+    assert_eq!(admitted.body["resource"]["kind"], "DATA_VALIDATE");
+    assert!(admitted.body["resource"]["cycle_id"].is_null());
+    let replay = command(
+        &f,
+        &cookie,
+        "native-validation",
+        "POST",
+        "/api/v2/data/validate",
+        body.clone(),
+    )
+    .await;
+    assert_eq!(replay.status, StatusCode::ACCEPTED);
+    assert_eq!(replay.body["resource"], admitted.body["resource"]);
+    assert_eq!(replay.body["replayed"], true);
+    let anonymous = support::call(&f, "POST", "/api/v2/data/validate", body.clone(), None).await;
+    assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED);
+    let mut changed = body;
+    changed["limits"]["wall_seconds"] = json!(61);
+    let conflict = command(
+        &f,
+        &cookie,
+        "native-validation",
+        "POST",
+        "/api/v2/data/validate",
+        changed,
+    )
+    .await;
+    assert_eq!(conflict.status, StatusCode::CONFLICT);
+    assert_eq!(conflict.body["code"], "IDEMPOTENCY_CONFLICT");
+    // SQL below only inspects real effects; every fixture resource was created
+    // through the same public authenticated HTTP commands available to an operator.
+    let facts: (i64, i64, i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.runs),(SELECT count(*) FROM app.run_native_tasks),(SELECT count(*) FROM pgmq.q_runs),(SELECT count(*) FROM app.qualifications)")
+        .fetch_one(&pool).await.unwrap();
+    assert_eq!(facts, (1, 1, 1, 0));
+    assert_eq!(tls.server.requests.load(Ordering::SeqCst), 2);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn native_metadata_network_wait_does_not_hold_source_runtime_or_grant_locks(pool: PgPool) {
     let entered = Arc::new(tokio::sync::Notify::new());
     let release = Arc::new(tokio::sync::Notify::new());

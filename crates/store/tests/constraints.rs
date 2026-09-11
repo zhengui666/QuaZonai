@@ -181,13 +181,16 @@ async fn new_database_migrations_are_repeatable_without_legacy_side_effects(pool
     let store = store::Store::from_pool(pool.clone());
     store.migrate().await.unwrap();
     let tables:i64=sqlx::query_scalar("SELECT count(*) FROM information_schema.tables WHERE table_schema='app' AND table_type='BASE TABLE'").fetch_one(&pool).await.unwrap();
-    // Migration 024 adds native dataset-registration evidence without replacing
-    // an existing relation or importing an old implementation into the app schema.
-    assert_eq!(tables, 76);
+    // Migration 025 binds fixed native tasks, first-dispatch specifications and
+    // output identities without importing an old implementation or another queue.
+    assert_eq!(tables, 79);
     for table in [
         "app.brief_execution_contexts",
         "app.cycle_startups",
         "app.dataset_registration_evidence",
+        "app.run_native_tasks",
+        "app.run_native_attempts",
+        "app.run_native_outputs",
     ] {
         assert!(
             sqlx::query_scalar::<_, bool>("SELECT to_regclass($1) IS NOT NULL")

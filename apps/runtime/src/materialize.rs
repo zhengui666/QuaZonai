@@ -263,44 +263,8 @@ pub async fn inputs(
 }
 
 fn json_schema(bytes: &[u8], output: &RuntimeOutputV1) -> Result<()> {
-    use contracts::{
-        portfolio::AllocationResultV1,
-        science::{NativeForecastResultV1, NativeSimulationResultV1},
-    };
-    macro_rules! native {
-        ($kind:ty) => {
-            serde_json::from_slice::<$kind>(bytes)
-                .map(|_| ())
-                .map_err(|_| Failure::Invalid("native_output_schema"))
-        };
-    }
-    match (
-        output.schema.name.as_str(),
-        output.kind,
-        output.media_type.as_str(),
-    ) {
-        ("qz.wasm_model", RuntimeOutputKind::Model, "application/wasm")
-            if bytes.starts_with(b"\0asm\x01\0\0\0") && bytes.len() <= 2 * 1024 * 1024 =>
-        {
-            Ok(())
-        }
-        ("qz.model_compilation", RuntimeOutputKind::Report, "application/json") => {
-            native!(NativeModelCompilationV1)
-        }
-        ("qz.data_quality", RuntimeOutputKind::DataQuality, "application/json") => {
-            native!(NativeDataQualityReportV1)
-        }
-        ("qz.native_forecast", RuntimeOutputKind::Report, "application/json") => {
-            native!(NativeForecastResultV1)
-        }
-        ("qz.native_allocation", RuntimeOutputKind::Report, "application/json") => {
-            native!(AllocationResultV1)
-        }
-        ("qz.native_simulation", RuntimeOutputKind::Report, "application/json") => {
-            native!(NativeSimulationResultV1)
-        }
-        _ => Err(Failure::Invalid("native_output_schema")),
-    }
+    domain::execution::output_shape(output, bytes)
+        .map_err(|_| Failure::Invalid("native_output_schema"))
 }
 
 /// Native execution is already stopped. Reopening exact object IDs does not run code.

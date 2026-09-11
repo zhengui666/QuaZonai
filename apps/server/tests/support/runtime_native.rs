@@ -281,20 +281,28 @@ async fn native_tls_with_barrier(
                                 if request.ends_with(b"\r\n\r\n") { break; }
                             }
                             let request = String::from_utf8(request).unwrap();
+                            let probing = request.starts_with("GET /runtime/v1/capabilities HTTP/1.1\r\n");
                             let expected_target = catalog.as_ref().map_or("/runtime/v1/capabilities", |reply| reply.target.as_str());
-                            assert!(request.starts_with(&format!("GET {expected_target} HTTP/1.1\r\n")));
+                            assert!(probing || request.starts_with(&format!("GET {expected_target} HTTP/1.1\r\n")));
                             assert!(request.to_ascii_lowercase().contains("host: runtime-native.invalid:"));
                             assert!(request.contains(&format!("authorization: Bearer {SECRET}")));
                             count.fetch_add(1, Ordering::SeqCst);
                             if let Some(barrier) = barrier { barrier.wait().await; }
-                            let payload = if let Some(reply) = catalog {
+                            let payload = if probing {
+                                let mut observed = capabilities(chrono::Utc::now());
+                                if catalog.is_some() {
+                                    observed.artifact_schemas.push(contracts::runtime::RuntimeArtifactSchemaV1 {
+                                        name: "qz.data_quality".into(), version: "1".into(),
+                                    });
+                                }
+                                serde_json::to_vec(&observed).unwrap()
+                            } else {
+                                let reply = catalog.expect("only the exact registered catalog endpoint is accepted");
                                 if let Some((entered, release)) = &reply.pause {
                                     entered.notify_one();
                                     release.notified().await;
                                 }
                                 reply.payload.clone()
-                            } else {
-                                serde_json::to_vec(&capabilities(chrono::Utc::now())).unwrap()
                             };
                             socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", payload.len()).as_bytes()).await.unwrap();
                             socket.write_all(&payload).await.unwrap();

@@ -6,6 +6,7 @@ import { api, dataOf, displayTime, Intent } from './api';
 import type { Schema } from './api';
 import { ErrorNotice, NoData, Pager, QueryPanel, ResourceFacts, useGuard, useOnline } from './ui';
 import { ResourceSelect } from './resource-select';
+import { validateNativeCatalogKey } from './generated/responses.cjs';
 
 type Source = Schema['DataSourceView'];
 type Grant = Schema['DataGrantView'];
@@ -22,6 +23,10 @@ const uses = [
 ] satisfies { value: Schema['DataUse']; label: string }[];
 const originNames: Record<Schema['DataOrigin'], string> = {
   REAL: '真实来源', SYNTHETIC: '合成数据', FIXTURE: '测试数据', LEGACY_UNKNOWN: '历史来源未核验',
+};
+
+const registrationNames: Record<Schema['UniverseRegistrationState'], string> = {
+  NATIVE_METADATA: '有原生登记证据', LEGACY_UNVERIFIED: '历史记录未核验',
 };
 
 function useDataRefresh() {
@@ -80,7 +85,9 @@ function SourceDialog({ source, close }: { source?: Source; close: () => void })
       {!source && <>
         <Form.Item name="runtime_id" label="所属 Runtime" rules={[required]}><ResourceSelect label="选择已登记的 Runtime" queryKey={['data','runtime-options']}
           load={async (cursor, signal) => { const page = dataOf(await api.GET('/api/v2/integrations/runtimes', { params: { query: { cursor, limit: 50 } }, signal })); return { items: page.items.map(item => ({ value: item.id, label: item.configuration.name, disabled: !item.configuration.enabled })), next_cursor: page.next_cursor }; }} /></Form.Item>
-        <Form.Item name="native_catalog_ref" label="Runtime 原生目录登记键" rules={[required, { max: 512 }]} extra="填写 Runtime 配置中的精确登记键，不是 URL 或宿主文件路径。"><Input maxLength={512} /></Form.Item>
+        <Form.Item name="native_catalog_ref" label="Runtime 原生目录登记键" rules={[required, { validator: async (_, value: unknown) => {
+          if (!validateNativeCatalogKey(value)) throw new Error('登记键不得包含 URL、空目录段、点路径、查询标记或首尾空白，最多 512 个字符。');
+        } }]} extra="填写 Runtime 配置中的精确登记键，不是 URL 或宿主文件路径。"><Input /></Form.Item>
       </>}
       <Form.Item name="enabled" label="允许新消费" valuePropName="checked"><Switch /></Form.Item>
       <ErrorNotice error={mutation.error} />
@@ -159,7 +166,7 @@ function RegisterDialog({ source, runtimeRevision, close }: { source: Source; ru
         load={async (cursor, signal) => { const page = dataOf(await api.GET('/api/v2/data/sources/{id}/grants', { params: { path: { id: source.id }, query: { cursor, limit: 50 } }, signal })); return { items: page.items.map(item => ({ value: item.id, label: `版本 ${item.version} · ${item.license_reference} · ${licenseNames[item.license_state]}`, disabled: item.license_state !== 'ACTIVE' })), next_cursor: page.next_cursor }; }} /></Form.Item>
       <Form.Item name="native_storage_version" label="原生存储版本" rules={[required, { max: 120, pattern: /^[!-~]+$/, message: '填写不含空白的原生版本。' }]}><Input maxLength={120} /></Form.Item>
       <Form.Item name="existing_universe_version_id" label="复用已登记 Universe（可选）"><ResourceSelect allowClear label="不选择则按真实元数据建立 Universe" queryKey={['data','universe-options']}
-        load={async (cursor, signal) => { const page = dataOf(await api.GET('/api/v2/data/universes', { params: { query: { cursor, limit: 50 } }, signal })); return { items: page.items.map(item => ({ value: item.id, label: `${item.name} · ${item.calendar_version} · ${displayTime(item.selection_asof)}` })), next_cursor: page.next_cursor }; }} /></Form.Item>
+        load={async (cursor, signal) => { const page = dataOf(await api.GET('/api/v2/data/universes', { params: { query: { cursor, limit: 50 } }, signal })); return { items: page.items.map(item => ({ value: item.id, label: `${item.name} · ${item.calendar_version} · ${registrationNames[item.registration_state]} · ${displayTime(item.selection_asof)}`, disabled: item.registration_state !== 'NATIVE_METADATA' })), next_cursor: page.next_cursor }; }} /></Form.Item>
       <ErrorNotice error={mutation.error} />
     </Form>
   </Modal>;
@@ -297,11 +304,12 @@ function Universes() {
   const [history, setHistory] = useState<(string | undefined)[]>([undefined]);
   const query = useQuery({ queryKey: ['data','universes',history.at(-1)], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/data/universes', { params: { query: { cursor: history.at(-1), limit: 50 } }, signal })) });
   return <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-    <Alert type="info" showIcon title="Universe 随真实元数据登记并冻结；不存在手工覆盖历史成员或资产定义的按钮。" />
-    <Table<Universe> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 840 }} locale={{ emptyText: <NoData text="尚无原生登记的 Universe 版本。" /> }} columns={[
-      { title: '名称', dataIndex: 'name' }, { title: '日历版本', key: 'calendar', render: (_, item) => `${item.calendar_ref} / ${item.calendar_version}` },
+    <Alert type="info" showIcon title="原生登记与历史记录分开展示；不能覆盖已冻结的成员或资产定义。" description="有原生登记证据只表示版本来源可追溯，不等于真实市场数据、PIT 已验证或研究合格。历史记录未核验时不会补造证据。" />
+    <Table<Universe> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 960 }} locale={{ emptyText: <NoData text="尚无 Universe 版本。" /> }} columns={[
+      { title: '名称', dataIndex: 'name' }, { title: '登记证据', key: 'registration', render: (_, item) => <Tag>{registrationNames[item.registration_state]}</Tag> },
+      { title: '日历版本', key: 'calendar', render: (_, item) => `${item.calendar_ref} / ${item.calendar_version}` },
       { title: '选择时点', key: 'asof', render: (_, item) => displayTime(item.selection_asof) },
-      { title: '历史成员', key: 'history', render: (_, item) => item.has_historical_membership ? '有原生记录' : '未声明历史成员' },
+      { title: '历史成员声明', key: 'history', render: (_, item) => item.has_historical_membership ? '已声明（仍以登记证据为准）' : '未声明历史成员' },
       { title: '覆盖区间', key: 'coverage', render: (_, item) => `${displayTime(item.coverage_start)} — ${displayTime(item.coverage_end)}` },
     ]} expandable={{ expandedRowRender: item => <Descriptions column={1} items={[
       { key: 'id', label: 'Universe 编号', children: <Identity value={item.id} /> },

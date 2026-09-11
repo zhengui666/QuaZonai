@@ -5,4 +5,5 @@ export declare function validateCostCurrency(value: unknown): boolean;
 export declare function validateBaseCurrency(value: unknown): boolean;
 export declare function validateDecimal(value: unknown): boolean;
 export declare function validateCostAmount(value: unknown): boolean;
+export declare function validateNativeCatalogKey(value: unknown): boolean;
 export declare function validateProblem(value: unknown): value is import("./api").components["schemas"]["Problem"];

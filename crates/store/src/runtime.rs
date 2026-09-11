@@ -47,7 +47,10 @@ fn observation(row: &PgRow) -> Result<RuntimeProbeViewV1, StoreError> {
     })
 }
 
-async fn latest(tx: &mut Tx<'_>, runtime: Id) -> Result<Option<RuntimeProbeViewV1>, StoreError> {
+pub(crate) async fn latest(
+    tx: &mut Tx<'_>,
+    runtime: Id,
+) -> Result<Option<RuntimeProbeViewV1>, StoreError> {
     sqlx::query("SELECT * FROM app.runtime_probe_observations WHERE runtime_id=$1 ORDER BY observed_at DESC,id DESC LIMIT 1")
         .bind(runtime.as_uuid())
         .fetch_optional(&mut **tx)
@@ -55,6 +58,72 @@ async fn latest(tx: &mut Tx<'_>, runtime: Id) -> Result<Option<RuntimeProbeViewV
         .as_ref()
         .map(observation)
         .transpose()
+}
+
+/// Shared native wire validation for Operator and owner-fenced Worker probes.
+/// Neither entrypoint can turn a configuration record into a successful observation.
+pub(crate) fn encode_probe(
+    outcome: &RuntimeProbeOutcomeV1,
+    started_at: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> Result<Vec<u8>, StoreError> {
+    if now < started_at || now > started_at + Duration::seconds(20) {
+        return Err(domain::DomainError::CapabilityUnavailable("probe_expired_or_disabled").into());
+    }
+    if let RuntimeProbeOutcomeV1::Available { capabilities } = outcome {
+        domain::runtime::capabilities(capabilities, now)?;
+        if capabilities.checked_at < started_at - Duration::seconds(5) {
+            return Err(domain::DomainError::CapabilityUnavailable(
+                "runtime_observation_predates_probe",
+            )
+            .into());
+        }
+    }
+    let exact = serde_json::to_vec(&json!({"schema_version":1,"result":outcome}))
+        .map_err(|_| StoreError::Integrity)?;
+    if exact.is_empty() || exact.len() > 1024 * 1024 {
+        return Err(StoreError::Invalid("runtime_probe_artifact_size"));
+    }
+    Ok(exact)
+}
+
+pub(crate) struct ProbePublication<'a> {
+    pub runtime_id: Id,
+    pub revision: Revision,
+    pub started_at: DateTime<Utc>,
+    pub artifact: Id,
+    pub outcome: &'a RuntimeProbeOutcomeV1,
+    pub created_by: &'static str,
+}
+
+/// Both callers already hold the exact Runtime lock and have finished bounded
+/// native file publication. The same immutable table/pointer contract is used.
+pub(crate) async fn record_probe(
+    tx: &mut Tx<'_>,
+    value: ProbePublication<'_>,
+) -> Result<RuntimeProbeViewV1, StoreError> {
+    if !matches!(value.created_by, "OPERATOR" | "RUNTIME") {
+        return Err(StoreError::Integrity);
+    }
+    let observed: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&mut **tx)
+        .await?;
+    let bytes = encode_probe(value.outcome, value.started_at, observed)?.len() as i64;
+    sqlx::query("INSERT INTO app.artifacts(id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,'REPORT','application/json','qz.runtime_probe','1','LOCAL',$2,'1',$3,'OPERATOR','REAL',$4,'AUDIT')")
+        .bind(value.artifact.as_uuid()).bind(value.artifact.to_string()).bind(bytes).bind(value.created_by)
+        .execute(&mut **tx).await?;
+    let row = sqlx::query("INSERT INTO app.runtime_probe_observations(runtime_id,integration_revision,snapshot_artifact_id,observed_at,valid_until,outcome) VALUES($1,$2,$3,$4,$5,$6) RETURNING *")
+        .bind(value.runtime_id.as_uuid()).bind(value.revision.get() as i64).bind(value.artifact.as_uuid())
+        .bind(observed).bind(value.started_at + Duration::seconds(60))
+        .bind(json!({"schema_version":1,"result":value.outcome})).fetch_one(&mut **tx).await?;
+    sqlx::query(
+        "UPDATE app.runtime_integrations SET last_capability_snapshot_artifact_id=$2 WHERE id=$1",
+    )
+    .bind(value.runtime_id.as_uuid())
+    .bind(value.artifact.as_uuid())
+    .execute(&mut **tx)
+    .await?;
+    observation(&row)
 }
 
 impl Store {
@@ -167,44 +236,24 @@ impl Store {
                 domain::DomainError::CapabilityUnavailable("probe_expired_or_disabled").into(),
             );
         }
-        if let RuntimeProbeOutcomeV1::Available { capabilities } = &outcome {
-            domain::runtime::capabilities(capabilities, now)?;
-            if capabilities.checked_at < ticket.started_at - Duration::seconds(5) {
-                return Err(domain::DomainError::CapabilityUnavailable(
-                    "runtime_observation_predates_probe",
-                )
-                .into());
-            }
-        }
-        let document = json!({"schema_version":1,"result":outcome});
-        let exact = serde_json::to_vec(&document).map_err(|_| StoreError::Integrity)?;
-        if exact.is_empty() || exact.len() > 1024 * 1024 {
-            return Err(StoreError::Invalid("runtime_probe_artifact_size"));
-        }
-        let bytes = exact.len() as i64;
+        let exact = encode_probe(&outcome, ticket.started_at, now)?;
         let artifact = Id::new();
         publish(artifact, exact).await?;
         commands::recheck_authority(&mut tx, &ticket.actor, &prepared).await?;
-        let now: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
-            .fetch_one(&mut *tx)
-            .await?;
-        if now < ticket.started_at || now > ticket.started_at + Duration::seconds(20) {
-            return Err(
-                domain::DomainError::CapabilityUnavailable("probe_expired_or_disabled").into(),
-            );
-        }
-        sqlx::query("INSERT INTO app.artifacts(id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,'REPORT','application/json','qz.runtime_probe','1','LOCAL',$2,'1',$3,'OPERATOR','REAL','OPERATOR','AUDIT')")
-            .bind(artifact.as_uuid()).bind(artifact.to_string()).bind(bytes)
-            .execute(&mut *tx).await?;
-        let id = Id::new();
-        let row = sqlx::query("INSERT INTO app.runtime_probe_observations(id,runtime_id,integration_revision,snapshot_artifact_id,observed_at,valid_until,outcome) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *")
-            .bind(id.as_uuid()).bind(ticket.runtime_id.as_uuid()).bind(current.get() as i64)
-            .bind(artifact.as_uuid()).bind(now).bind(ticket.started_at + Duration::seconds(60)).bind(document)
-            .fetch_one(&mut *tx).await?;
-        sqlx::query("UPDATE app.runtime_integrations SET last_capability_snapshot_artifact_id=$2 WHERE id=$1")
-            .bind(ticket.runtime_id.as_uuid()).bind(artifact.as_uuid()).execute(&mut *tx).await?;
+        let observation = record_probe(
+            &mut tx,
+            ProbePublication {
+                runtime_id: ticket.runtime_id,
+                revision: current,
+                started_at: ticket.started_at,
+                artifact,
+                outcome: &outcome,
+                created_by: "OPERATOR",
+            },
+        )
+        .await?;
         commands::recheck_authority(&mut tx, &ticket.actor, &prepared).await?;
-        let result = commands::finish(&mut tx, prepared, observation(&row)?, 200).await?;
+        let result = commands::finish(&mut tx, prepared, observation, 200).await?;
         tx.commit().await?;
         Ok(result)
     }

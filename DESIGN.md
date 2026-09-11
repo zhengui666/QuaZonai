@@ -256,6 +256,8 @@ BUDGET_EXHAUSTED 作为独立 HTTP429 Problem 保留，field_errors 仅使用封
 
 长 Brief 抽屉的下拉菜单通过官方 ConfigProvider/getPopupContainer 锚定到可滚动表单内、相对定位的字段容器，而非固定到锁定滚动的 body。三视口验收使用真实鼠标操作字段和可见选项，不使用 force/DOM click/键盘绕过不可点击菜单来制造通过；费用、数据角色和访问边界须在滚动后仍可操作。依据：Ant Design Select 的 getPopupContainer 与 FAQ（https://ant.design/components/select/）。
 
+复合资源选择器通过官方ConfigProvider.useConfig继承Form的disabled上下文；请求在途、离线、首次选项未加载时不能打开选择器或改变原请求引用。菜单容器回调身份保持稳定。系统减少动态效果偏好通过matchMedia订阅映射至Ant Design原生theme.token.motion；reduce时motion=false，其余情况保持原生动画，运行中偏好变化不重建表单或清空选中值。不用全局0.01ms CSS覆盖组件的原生动画生命周期，不增加固定延时、手工坐标、强制点击或关闭无障碍规则。三视口重复验收覆盖reduce/no-preference、偏好变化后选项点击和在途表单不可编辑。依据：官方主题motion配置（https://ant.design/docs/react/customize-theme）与ConfigProvider.useConfig（https://ant.design/components/config-provider/）。
+
 表单不能把当前服务端必定拒绝的值当作可操作能力。费用目前仅有 UNAVAILABLE/ESTIMATED；EXACT 尚未接通，草稿编辑不提供该选项，已载入的不支持值必须先由用户明确修改而非自动替换。项目为 ARCHIVED 时只允许保留 ARCHIVED；ACTIVE 选项须取得该项目 current_brief_id 对应的真实 Brief，校验精确项目/编号、FROZEN 及 frozen_at，加载/错误/缺失时不可用。这只是基于服务端事实的字段约束，不授予权限，不替代提交事务对状态、活动 Run、近期认证与 revision 的再次检查。SEALED 的访问候选仅 METADATA_ONLY/EVALUATOR_ONLY；其他分区仅 METADATA_ONLY/RESEARCH_READ。分区变化使旧选择不兼容时清空该字段并要求用户重选，不能自动升级权限；依赖校验同时拒绝程序化或残留的不合法组合。
 
 PWA 生命周期 fixture 的宿主与 CI 限 Linux；浏览器产品不受此限制。静态内容读取使用 Node FileHandle 与 Linux `/proc/self/fd` 的已打开目录句柄，逐个单路径组件以 O_DIRECTORY/O_NOFOLLOW 打开中间目录、以 O_NOFOLLOW 打开最终普通文件；构建根和任意子目录软链均拒绝。单请求最多32层，每个目录锚点保持打开到读取结束，不因路径被 rename/软链替换而重新解析旧路径。最后只在同一个文件句柄上 fstat/readFile，所有已取得句柄在成功/错误路径都关闭；缺少原生能力时失败，不降级成先 realpath/lstat 再按路径读取。该最小 fixture 适配不用于产品 Artifact 服务，不声称防止可信构建目录拥有者原地改写文件或进行特权 mount。
@@ -626,9 +628,11 @@ DataGrantCreate显式包含schema_version/source_id/license_reference/evidence_a
 
 完成事务重取原命令锁并优先处理回执，复核票据/配置/许可/授权，只有命令所有者才能发布Store分配的原生对象批次。发表qz.native_catalog_metadata/1原始JSON、qz.data_quality/1、qz.universe_membership/1、qz.instrument_definitions/1，然后在同一事务提交只读Artifact元数据、必要的新Universe、Dataset、dataset_registration_evidence和完整回执；网络I/O不在此事务。全局原生管理证据为OPERATOR访问级别、RUNTIME作者、保留真实origin，不作为Agent提交的RESEARCH报告或正式评估PASS。
 
-原生唯一(source_id,native_snapshot_ref,storage_version)存在时，只有原Grant、指定Universe及原metadata的完整内容一致才重放；冲突409/NATIVE_IDENTITY_CONFLICT，不能更换许可、来源、UUID或原生别名洗掉历史。旧Dataset缺正式registration evidence时保留历史并拒绝推断填补。DatasetRegistrationEvidence仅增加dataset_revision_id PK/FK、native_metadata_artifact_id UNIQUE/FK、source_revision、runtime_revision、observed_at、created_at，不改旧不可变记录。native版本的登记仅授予可供受信任验证的引用，首个DATA_VALIDATE仍必须实际打开原生快照。
+原生唯一(source_id,native_snapshot_ref,storage_version)存在时，只有原Grant、指定Universe及原metadata的完整内容一致才重放；两侧比较均使用实际接收的JSON值，不把一侧DateTime重新序列化后与另一侧原始RFC3339字符串比较。已保存metadata先按原Dataset的origin核对，新文档改变origin属于409/NATIVE_IDENTITY_CONFLICT而非422。任何原生身份冲突均不能通过更换许可、来源、UUID或原生别名洗掉历史。旧Dataset缺正式registration evidence时保留历史并拒绝推断填补。DatasetRegistrationEvidence仅增加dataset_revision_id PK/FK、native_metadata_artifact_id UNIQUE/FK、source_revision、runtime_revision、observed_at、created_at，不改旧不可变记录。native版本的登记仅授予可供受信任验证的引用，首个DATA_VALIDATE仍必须实际打开原生快照。
 
 Dataset可显式重用既有Universe，前提是名称/calendar/version/selection_asof/覆盖/历史成员及原始instrument definitions全部一致，且origin一致；否则409。由此Discovery/Validation/Sealed可共享同一冻结Universe，不靠复制相同成员为三个新身份。已发布原生对象而DB失败时，原事务结束后重新取得原Operator锁并逐个确认精确对象无正式引用才回收；不确定则保留，不扫描或删除其他产物，复用现有原生Operator发表恢复机制。
+
+Universe查询派生registration_state=NATIVE_METADATA|LEGACY_UNVERIFIED：只有被正式dataset_registration_evidence关联的数据版本引用时为NATIVE_METADATA；没有证据的既有Universe保留并显式标记LEGACY_UNVERIFIED，不回填、改写或描述成真实原生登记。该状态不代替数据版本的REAL/FIXTURE/PIT/资格。Source原生registry-key的既有语法由Rust发布到OpenAPI，Ant Design使用该原生生成字段验证器，不另维护一套URL/路径规则。
 
 管理写入仅近期Operator浏览器或完整意图单次CLI人工grant。全局管理元数据读只允许Operator或严格只读DOCTOR_READ CLI，不因此赋予Mission/Automation/Downstream数据管理、Sealed raw、Secret、SQL能力；Mission仍通过项目授权InputSet的数据工具。列表保持UUID cursor、默认50/上限100；Source/许可/撤销/Dataset/Universe真实API与同一CLI/Ant Design管理界面逐项回归。新鲜授权、原生事务/文件/真实TLS、故障回滚及同键/原生身份并发重放必须实测，不能以DTO或页面存在替代。
 
@@ -1938,6 +1942,22 @@ Brief freeze 使用严格 schema_version/expected_revision/execution_context；e
 Cycle start 使用 schema_version/brief_id/expected_revision（Project revision），只接受 ACTIVE Project 与属于它的 FROZEN Brief。重新检查被冻结输入的当前许可及原生 Runtime 当前 readiness，不把 freeze 当永久许可。首个 Run 为 DATA_VALIDATE：通过真实受限 Runtime 再确认登记数据可执行后，由 Worker 进入 Codex Mission；这一步不是另一条研究路径，也不产生 Alpha/PASS。Cycle、budget snapshot、Run、Event、PGMQ消息、启动关联与原始HTTP回执在一个 SQLx/PGMQ 事务中提交，任何后半步失败均回滚；HTTP202返回准确Cycle/Run身份，不允许业务手工SQL补父对象。人工开始和自动唤醒统一受每日周期额度约束，自动入口另受政策cooldown/去重，不能通过换UUID重置历史。
 
 Mission 控制会话与科学任务的并发分别有界：每个 Cycle 同时最多一个活动 Mission，科学任务继续受 max_parallel_runs 约束；等待科学结果的 Mission 不占掉唯一科学槽。只由可信服务确定试验计数，非试验准备/组合/模拟任务和 Mission 使用0，不得把 Alpha试验伪装为管理任务。CPU/内存/输出/墙钟和模型token/turn预算仍适用于非试验任务；0仅表示不新增试验，绝非无限资源。历史已记账的Run不原地改写或退还。
+
+### B5.0.1 原生任务定义、Worker 与 DATA_VALIDATE 正式入口
+
+`server worker` 使用现有非owner应用角色、ArtifactStore、SecretVault、显式RuntimeTargets与PGMQ；默认并发2、可配置1–32。每次消息的 claimant 都有唯一 worker_owner_id，不能让同进程的重投消息共享一个尚存租约的主动驱动。Worker与研究job隔离，科学任务只能经固定RuntimeTransport/JobSpec调用原生网关，不在Worker/API里执行科学引擎。AGENT_RESEARCH由原生Codex Mission驱动，不能塞入科学容器伪装完成。
+
+增量原生关联：`run_native_tasks(run_id PK/FK run_admissions, parameters_artifact_id FK artifacts, input_bindings RuntimeInputV1[1..256], image_ref原生不可变镜像, cpu[1..1024], capability_snapshot_artifact_id FK, output_schemas RuntimeArtifactSchemaV1[1..64], origin, access_class RESEARCH|EVALUATOR_ONLY, created_at)`与首次Run/PGMQ同事务创建，禁止后补或改写。`run_native_attempts(attempt_id PK/FK,run_id FK run_native_tasks,spec_json JobSpecV1,created_at)`在当前fence、NOT_SENT下冻结一次；接管保留原始spec、owner_epoch及external_job_id，不因当前owner改变而重建远端身份或发送正文。`run_native_outputs(attempt_id,remote_storage_ref) PK,artifact_id UNIQUE/FK,created_at`记录远端原生对象与Store分配的本地对象关系；三个表均不可变，不新增队列、业务hash或独立研究状态机。
+
+`POST /api/v2/data/validate` 接严格DataValidateRequest(schema_version,project_id,input_set_id,runtime_id,expected_runtime_revision,limits JobLimitsV1)，单次Operator命令目标为已有InputSet，202回执返回唯一排队Run。limits.experiments必须0，其余资源为正且受原生能力约束，最多2个并发无Cycle数据验证。固定任务CPU上限取ceil(cpu_seconds/wall_seconds)，至少1且不超过原生max_cpu；不满足时在入队前拒绝，不能保存一个之后必因JobSpec资源合同失败而无法派发的任务。此管理入口仅允许DISCOVERY/VALIDATION的完整已登记Dataset输入，拒绝artifact-only、SEALED/FORWARD和任意镜像/命令/原始报告/URL。InputSet的项目、授权、原生metadata与Runtime身份必须逐项一致。NativeTaskParametersV1::ValidateData从已发表metadata生成，选择不超过原生bar类型、事件和可见截止范围；InputSet更晚的cutoff不能扩大老snapshot的attested cutoff，使用两者较早者。参数原生发表、任务定义、Run/事件/PGMQ/完整202回执原子提交，复用既有enqueue_standalone_run的事务组合形式，不复制准入/预算规则。
+
+Worker首次发送前核对配置revision及真实新鲜capability；等待过久可在当前Run/Attempt/fence授权下重新探测，不借用Operator权限或要求每分钟人工点击。网络在事务外，发表重用RuntimeProbe的原生共同校验与同一观测表；取消/过期/旧fence拒绝，遇到并发更新的更晚有效观测直接复用，不重复发表文件。已发送未知任务只恢复原身份，不因当前readiness不佳跳过查询/取消。每次上传精确参数/CODE/MODEL原生对象之前和本地读取后重验冻结输入授权，上传回执必须保留原UUID/version/bytes。
+
+现有begin_run_dispatch是唯一发送许可：true才发一次POST；未知ACK、失败响应、重投和接管只查同一identity，不重POST。Accepted只记录ACKNOWLEDGED，不表示科学计算已经RUNNING。Worker每10秒续约60秒，续约future与任务共同拥有，任务退出不能遗留续约循环；失去fence或停止服务后不再发新副作用，已开始的有界I/O/本地发表完成或失败后回收。关闭Worker不等于停止远端job；本机未发送的取消/到期可由数据库证明直接收束，已发送的404不能证明停止。只有网关完整且匹配身份的永久取消tombstone可被识别为ConfirmedAbsent。
+
+采纳完整原始ResultManifestV1、相同任务的原生输出、schema/kind/media/version/bytes和本地producer关系后，当前fence所有者才可发表Store分配的文件批次。原生payload总数/大小受冻结output_bytes；manifest是独立最多1MiB的包络，不错误计作payload。输出、remote/local映射、唯一终态receipt、事件与试验记账使用既有accept_run_terminal的事务组合入口同提交；随后才archive。回执重放必须保持原始manifest字节、当前归属Attempt/owner，旧fence不因任务终态而重新获得发表权。取消胜出时不发表迟到的成功payload，原始manifest可作为失败/取消审计保留。输出缺失/格式错误在已证明远端停止后记录INVALID_INPUT，不制造科学PASS；网络暂不可用继续对账，不把传输错误变成数据无效。
+
+原生计算成功只形成生产者绑定的原始质量或科学产物，仍需独立Evaluation/Exposure/Qualification；FIXTURE/SYNTHETIC/PIT未核验不得升级。数据验证管理任务不增加试验、不读取Sealed，不是逃避研究预算或资格门禁的新入口。文件发表而事务失败只在重新取得原Run锁并确认精确对象无正式引用后回收；未知提交保留，不能扫描删除其他Run/用户数据。
 
 ### B5.1 入队
 

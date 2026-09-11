@@ -24,6 +24,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{postgres::PgRow, Postgres, Row, Transaction};
 
+pub mod native;
+
 type Tx<'a> = Transaction<'a, Postgres>;
 const FIELDS: &str = "r.id::uuid,r.project_id::uuid,r.cycle_id::uuid,r.kind,r.input_set_id::uuid,r.state,r.current_attempt_no::bigint,r.active_attempt_id::uuid,r.last_event_seq::bigint,r.deadline_at::timestamptz,r.cancellation_requested_at::timestamptz,r.terminal_reason_code,r.queued_at::timestamptz,r.started_at::timestamptz,r.finished_at::timestamptz,r.revision::bigint";
 
@@ -585,6 +587,19 @@ impl Store {
         key: &str,
         request: &StandaloneRunSubmission,
     ) -> Result<CommandResult<RunSnapshotV1>, StoreError> {
+        let tx = self.pool.begin().await?;
+        let (tx, result) = Self::enqueue_standalone_run_in_transaction(tx, key, request).await?;
+        tx.commit().await?;
+        Ok(result)
+    }
+
+    /// Compose formal Operator actions with the same admission/queue invariants.
+    /// Returning the owned transaction makes the outer domain command the sole commit owner.
+    pub(crate) async fn enqueue_standalone_run_in_transaction<'a>(
+        mut tx: Tx<'a>,
+        key: &str,
+        request: &StandaloneRunSubmission,
+    ) -> Result<(Tx<'a>, CommandResult<RunSnapshotV1>), StoreError> {
         commands::key(key)?;
         let l = &request.limits;
         if !standalone_kind(request.kind)
@@ -600,7 +615,6 @@ impl Store {
         let normalized = json!({"schema_version":1,"project_id":request.project_id,"input_set_id":request.input_set_id,
             "runtime_id":request.runtime_id,"runtime_revision":request.runtime_revision,"kind":request.kind,
             "limits":l,"max_parallel_runs":request.max_parallel_runs});
-        let mut tx = self.pool.begin().await?;
         let p = sqlx::query("SELECT state FROM app.projects WHERE id=$1 FOR UPDATE")
             .bind(request.project_id.as_uuid())
             .fetch_optional(&mut *tx)
@@ -613,8 +627,7 @@ impl Store {
                 return Err(StoreError::IdempotencyConflict);
             }
             let resource = serde_json::from_value(prior.try_get("initial_snapshot")?).map_err(|_| StoreError::Integrity)?;
-            tx.commit().await?;
-            return Ok(CommandResult { schema_version: SchemaV1, replayed: true, resource });
+            return Ok((tx, CommandResult { schema_version: SchemaV1, replayed: true, resource }));
         }
         if db::enum_value::<ProjectState>(&p, "state")? == ProjectState::Archived
             && request.kind != RunKind::Export
@@ -674,12 +687,14 @@ impl Store {
             .bind(id.as_uuid()).bind(request.project_id.as_uuid()).bind(key).bind(normalized).bind(db::json(&run)?)
             .bind(db::json(l)?).bind(request.runtime_id.as_uuid()).bind(request.runtime_revision.get() as i64)
             .bind(db::json(&runtime)?).bind(msg).execute(&mut *tx).await?;
-        tx.commit().await?;
-        Ok(CommandResult {
-            schema_version: SchemaV1,
-            replayed: false,
-            resource: run,
-        })
+        Ok((
+            tx,
+            CommandResult {
+                schema_version: SchemaV1,
+                replayed: false,
+                resource: run,
+            },
+        ))
     }
 
     pub async fn read_run_messages(
@@ -930,6 +945,21 @@ impl Store {
         owner: &WorkerFence,
         observation: &TerminalObservation,
     ) -> Result<CommandResult<RunSnapshotV1>, StoreError> {
+        let tx = self.pool.begin().await?;
+        let (tx, result) =
+            Self::accept_run_terminal_in_transaction(tx, id, owner, observation).await?;
+        tx.commit().await?;
+        Ok(result)
+    }
+
+    /// The caller can publish producer-bound immutable artifacts and adopt the
+    /// terminal result atomically, without copying any Run or budget transition.
+    pub(crate) async fn accept_run_terminal_in_transaction<'a>(
+        mut tx: Tx<'a>,
+        id: Id,
+        owner: &WorkerFence,
+        observation: &TerminalObservation,
+    ) -> Result<(Tx<'a>, CommandResult<RunSnapshotV1>), StoreError> {
         if !observation
             .observed_at
             .timestamp_subsec_nanos()
@@ -954,12 +984,11 @@ impl Store {
             return Err(StoreError::Invalid("failure_class_or_code"));
         }
         let expected = db::json(observation)?;
-        let mut tx = self.pool.begin().await?;
         let mut locked = lock_run(&mut tx, id).await?;
         if let Some(receipt)=sqlx::query("SELECT attempt_id::uuid,observation,result_snapshot FROM app.run_terminal_receipts WHERE run_id=$1").bind(id.as_uuid()).fetch_optional(&mut *tx).await?{
             if receipt.try_get::<Option<uuid::Uuid>,_>("attempt_id")?!=Some(owner.attempt_id.as_uuid()) || receipt.try_get::<Value,_>("observation")?!=expected{return Err(StoreError::Conflict);}
             let result=serde_json::from_value(receipt.try_get("result_snapshot")?).map_err(|_|StoreError::Integrity)?;
-            tx.commit().await?;return Ok(CommandResult{schema_version:SchemaV1,replayed:true,resource:result});
+            return Ok((tx, CommandResult{schema_version:SchemaV1,replayed:true,resource:result}));
         }
         if locked.run.state.is_terminal() {
             return Err(DomainError::TerminalRun.into());
@@ -988,10 +1017,10 @@ impl Store {
             return Err(StoreError::Invalid("manifest_required"));
         }
         if let Some(manifest) = observation.manifest_artifact_id {
-            let limits: JobLimitsV1 = serde_json::from_value(locked.admission.try_get("limits")?)
-                .map_err(|_| StoreError::Integrity)?;
+            // The native wire contract counts payload output bytes separately.
+            // Its result envelope retains the independent, fixed 1MiB ceiling.
             let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.artifacts WHERE id=$1 AND project_id=$2 AND producer_run_id=$3 AND producer_attempt_id=$4 AND kind='REPORT' AND media_type='application/json' AND schema_name='qz.job_result' AND schema_version='1' AND byte_count>0 AND byte_count<=$5)")
-                .bind(manifest.as_uuid()).bind(locked.run.project_id.as_uuid()).bind(id.as_uuid()).bind(owner.attempt_id.as_uuid()).bind(limits.output_bytes.get() as i64).fetch_one(&mut *tx).await?;
+                .bind(manifest.as_uuid()).bind(locked.run.project_id.as_uuid()).bind(id.as_uuid()).bind(owner.attempt_id.as_uuid()).bind(domain::runtime_jobs::MAX_RESULT_MANIFEST_BYTES as i64).fetch_one(&mut *tx).await?;
             if !valid {
                 return Err(StoreError::Invalid("manifest_exact_producer"));
             }
@@ -1032,12 +1061,14 @@ impl Store {
         sqlx::query("UPDATE app.run_attempts SET dispatch_state='TERMINAL',runtime_state=$2,result_manifest_artifact_id=$3,accepted_at=CASE WHEN $3::uuid IS NULL THEN NULL ELSE clock_timestamp() END,error_class=$4,error_code=$5 WHERE id=$1")
             .bind(owner.attempt_id.as_uuid()).bind(runtime_state).bind(observation.manifest_artifact_id.map(Id::as_uuid)).bind(observation.failure_class.as_ref().map(db::code).transpose()?).bind(observation.failure_code.as_deref()).execute(&mut *tx).await?;
         let result = finish(&mut tx, &mut locked, state, reason, expected).await?;
-        tx.commit().await?;
-        Ok(CommandResult {
-            schema_version: SchemaV1,
-            replayed: false,
-            resource: result,
-        })
+        Ok((
+            tx,
+            CommandResult {
+                schema_version: SchemaV1,
+                replayed: false,
+                resource: result,
+            },
+        ))
     }
 
     pub async fn acknowledge_run(&self, message: &RunMessage) -> Result<(), StoreError> {

@@ -20,6 +20,7 @@ pub mod runtime;
 pub mod runtime_transport;
 pub mod secrets;
 pub mod settings;
+pub mod worker;
 
 use axum::{
     extract::{DefaultBodyLimit, Request, State},
@@ -227,6 +228,7 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
             "/api/v2/integrations/downstreams/{id}",
             get(settings::downstream).patch(settings::update_downstream),
         )
+        .route("/api/v2/data/validate", post(data::validate))
         .route("/api/v2/runs", get(runs::list))
         .route("/api/v2/runs/{id}", get(runs::get))
         .route("/api/v2/runs/{id}/cancel", post(runs::cancel))
@@ -402,7 +404,7 @@ settings::downstreams,settings::downstream,settings::create_downstream,settings:
 runtime::probe,runtime::readiness,
 data::sources,data::source,data::create_source,data::update_source,
 data::grants,data::create_grant,data::revoke_grant,data::revocations,
-data::revisions,data::revision,data::register,data::universes,data::universe,
+data::revisions,data::revision,data::register,data::universes,data::universe,data::validate,
 artifacts::list,artifacts::get,artifacts::create,artifacts::content),components(schemas(error::Problem)),tags((name="Authentication",description="Native TOTP and revocable browser sessions")))]
 struct HttpContracts;
 pub fn openapi_json() -> Result<String, serde_json::Error> {

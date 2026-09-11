@@ -281,6 +281,56 @@ async fn native_cli_writes_one_exact_operator_intent_without_inventing_a_grant_o
 }
 
 #[tokio::test]
+async fn native_cli_data_validation_returns_the_typed_queued_run_without_claiming_completion() {
+    let run = Id::new();
+    let project = Id::new();
+    let input = Id::new();
+    let body = json!({"schema_version":1,"project_id":project,"input_set_id":input,
+        "runtime_id":Id::new(),"expected_runtime_revision":"9007199254740993",
+        "limits":{"schema_version":1,"experiments":0,"cpu_seconds":"10","wall_seconds":60,
+        "memory_mib":512,"output_bytes":"65536"}});
+    let resource = json!({"schema_version":1,"id":run,"project_id":project,"cycle_id":null,
+        "kind":"DATA_VALIDATE","input_set_id":input,"state":"QUEUED","current_attempt_no":0,
+        "active_attempt_id":null,"last_event_seq":"1","deadline_at":"2026-09-11T00:01:00Z",
+        "cancellation_requested_at":null,"terminal_reason_code":null,"queued_at":"2026-09-11T00:00:00Z",
+        "started_at":null,"finished_at":null,"revision":"1"});
+    let expected = resource.clone();
+    let f = Fixture::new(|_| {
+        let mut response =
+            Reply::json(json!({"schema_version":1,"resource":resource,"replayed":false}));
+        response.status = StatusCode::ACCEPTED;
+        vec![response]
+    })
+    .await;
+    let grant = Id::new().to_string();
+    let command = args(&[
+        "--idempotency-key",
+        "native-validation",
+        "--operator-grant",
+        &grant,
+        "data",
+        "validate",
+    ]);
+    let result = f
+        .execute(&command, &serde_json::to_vec(&body).unwrap())
+        .await;
+    assert!(result.status.success());
+    assert!(result.stderr.is_empty());
+    let reply: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(reply["resource"], expected);
+    let seen = f.seen.lock().unwrap();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].method, "POST");
+    assert_eq!(seen[0].uri, "/api/v2/data/validate");
+    assert_eq!(seen[0].key.as_deref(), Some("native-validation"));
+    assert_eq!(seen[0].operator.as_deref(), Some(grant.as_str()));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&seen[0].body).unwrap(),
+        body
+    );
+}
+
+#[tokio::test]
 async fn native_cli_refuses_missing_human_grant_and_unknown_fields_before_the_network() {
     let f = Fixture::new(|_| vec![]).await;
     let valid = json!({"schema_version":1,"name":"Controlled source","runtime_id":Id::new(),"native_catalog_ref":"registered/catalog","provider_kind":"NAUTILUS_CATALOG","enabled":true});

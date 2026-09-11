@@ -2,7 +2,7 @@ import { App as AntApp, Alert, Button, ConfigProvider, Drawer, Grid, Layout, Men
 import zhCN from 'antd/locale/zh_CN';
 import { ApartmentOutlined, ExperimentOutlined, ExportOutlined, FundOutlined, MenuOutlined, PlayCircleOutlined, SettingOutlined } from '@ant-design/icons';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
-import { Component, useContext, useEffect, useRef, useState } from 'react';
+import { Component, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import { api, AUTH_CHANGED, REAUTH_REQUIRED } from './api';
 import type { Schema } from './api';
@@ -11,7 +11,7 @@ import { Projects } from './projects';
 import { Runs } from './runs';
 import { Settings } from './settings';
 import { PwaUpdate } from './pwa';
-import { ErrorNotice, GuardContext, GuardProvider, useGuard, useOnline } from './ui';
+import { ErrorNotice, GuardContext, GuardProvider, useGuard, useOnline, useReducedMotion } from './ui';
 
 const queries = new QueryClient({ defaultOptions: {
   queries: { retry: false, staleTime: 15_000, gcTime: 60_000, networkMode: 'always', refetchOnWindowFocus: true },
@@ -122,10 +122,16 @@ function Console({ session, signedOut }: { session: Schema['BrowserSession']; si
   </Layout>;
 }
 export default function App() {
+  const reducedMotion = useReducedMotion();
+  // Ant Design 6.1.4 inserts its native MotionProvider on the first false token
+  // and then retains that wrapper. Establish it on mount, before the first paint,
+  // so a later OS preference change cannot remount the console or discard a form.
+  const [motionProviderReady, setMotionProviderReady] = useState(false);
+  useLayoutEffect(() => { setMotionProviderReady(true); }, []);
   return <RenderBoundary><ConfigProvider locale={zhCN} button={{ autoInsertSpace: false }} theme={{ token: {
     colorPrimary: '#2857b4', colorLink: '#2857b4', colorLinkHover: '#1f4796', colorLinkActive: '#183b80',
     colorTextSecondary: '#596273', colorTextTertiary: '#596273', colorTextDescription: '#596273', colorTextPlaceholder: '#596273',
-    borderRadius: 8, controlHeight: 44, fontSize: 15,
+    borderRadius: 8, controlHeight: 44, fontSize: 15, motion: motionProviderReady && !reducedMotion,
   } }}>
     <AntApp><QueryClientProvider client={queries}><GuardProvider><AuthenticationRoot /></GuardProvider></QueryClientProvider></AntApp>
   </ConfigProvider></RenderBoundary>;

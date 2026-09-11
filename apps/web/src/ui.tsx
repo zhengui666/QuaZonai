@@ -40,6 +40,15 @@ function subscribeOnline(callback: () => void) {
 export function useOnline() {
   return useSyncExternalStore(subscribeOnline, () => navigator.onLine, () => false);
 }
+const motionQuery = '(prefers-reduced-motion: reduce)';
+function subscribeMotion(callback: () => void) {
+  const preference = window.matchMedia(motionQuery);
+  preference.addEventListener('change', callback);
+  return () => preference.removeEventListener('change', callback);
+}
+export function useReducedMotion() {
+  return useSyncExternalStore(subscribeMotion, () => window.matchMedia(motionQuery).matches, () => true);
+}
 export function useClock() {
   const [now, setNow] = useState(Date.now());
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);

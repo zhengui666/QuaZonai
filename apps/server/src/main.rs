@@ -88,6 +88,24 @@ enum Command {
         )]
         runtime_targets: String,
     },
+    /// Drive registered native jobs through PGMQ and their exact Runtime identities.
+    Worker {
+        #[command(flatten)]
+        database: Database,
+        #[arg(long, env = "STATE_DIR", default_value = "var")]
+        state_dir: PathBuf,
+        #[arg(
+            long,
+            env = "RUNTIME_TARGETS",
+            default_value = "[]",
+            hide_env_values = true
+        )]
+        runtime_targets: String,
+        #[arg(long, env = "DEVELOPMENT_HTTP", default_value_t = false)]
+        development_http: bool,
+        #[arg(long, env = "WORKER_PARALLELISM", default_value_t = 2)]
+        parallelism: usize,
+    },
     /// Reconcile only unreferenced machine verifiers; never removes credential history.
     PruneUnpublishedVerifiers {
         #[command(flatten)]
@@ -106,6 +124,35 @@ struct Database {
 
 fn parse_id(value: &str) -> Result<Id, &'static str> {
     Id::try_from(value.to_owned()).map_err(|_| "expected a canonical UUIDv7")
+}
+
+fn parse_runtime_targets(
+    text: &str,
+    development_http: bool,
+) -> Result<server::runtime_transport::RuntimeTargets, &'static str> {
+    if text.len() > 65536 {
+        return Err("RUNTIME_TARGETS exceeds deployment configuration limit");
+    }
+    let targets = serde_json::from_str::<Vec<server::runtime_transport::RuntimeTarget>>(text)
+        .map_err(|_| "invalid RUNTIME_TARGETS deployment configuration")?;
+    server::runtime_transport::RuntimeTargets::new(targets, development_http)
+        .map_err(|_| "RUNTIME_TARGETS contains an unsafe or inconsistent endpoint")
+}
+
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        if let Ok(mut terminate) =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {},
+                _ = terminate.recv() => {},
+            }
+            return;
+        }
+    }
+    let _ = tokio::signal::ctrl_c().await;
 }
 
 fn private_dir(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -250,6 +297,32 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
                 serde_json::json!({"schema_version":1,"capability_id":issued.id,"capability":capability,"expires_at":issued.expires_at})
             );
         }
+        Command::Worker {
+            database,
+            state_dir,
+            runtime_targets,
+            development_http,
+            parallelism,
+        } => {
+            let targets = parse_runtime_targets(&runtime_targets, development_http)?;
+            let store = Store::connect(&database.database_url).await?;
+            store.verify_runtime_role().await?;
+            store.authentication_snapshot().await?;
+            let vault =
+                SecretVault::open(&state_dir.join("secrets"), &state_dir.join("master.key"))?;
+            let objects = ArtifactStore::open(&state_dir.join("artifacts"))?;
+            let worker = server::worker::Worker::new(store, vault, objects, targets, parallelism)?;
+            let (shutdown, observed) = tokio::sync::watch::channel(false);
+            let run = worker.run(observed);
+            tokio::pin!(run);
+            tokio::select! {
+                result = &mut run => result?,
+                () = shutdown_signal() => {
+                    let _ = shutdown.send(true);
+                    run.await?;
+                }
+            }
+        }
         Command::Serve {
             database,
             state_dir,
@@ -259,15 +332,7 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             runtime_targets,
         } => {
             let policy = WebPolicy::new(&public_url, bind, development_http)?;
-            if runtime_targets.len() > 65536 {
-                return Err("RUNTIME_TARGETS exceeds deployment configuration limit".into());
-            }
-            let targets = serde_json::from_str::<Vec<server::runtime_transport::RuntimeTarget>>(
-                &runtime_targets,
-            )
-            .map_err(|_| "invalid RUNTIME_TARGETS deployment configuration")?;
-            let targets = server::runtime_transport::RuntimeTargets::new(targets, development_http)
-                .map_err(|_| "RUNTIME_TARGETS contains an unsafe or inconsistent endpoint")?;
+            let targets = parse_runtime_targets(&runtime_targets, development_http)?;
             let (vault, key) = load_state(&state_dir)?;
             let store = Store::connect(&database.database_url).await?;
             store.verify_runtime_role().await?;
@@ -292,9 +357,7 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             let listener = tokio::net::TcpListener::bind(bind).await?;
             tracing::info!(address=%listener.local_addr()?,"authenticated HTTP API listening");
             let result = axum::serve(listener, app)
-                .with_graceful_shutdown(async {
-                    let _ = tokio::signal::ctrl_c().await;
-                })
+                .with_graceful_shutdown(shutdown_signal())
                 .await;
             cleanup_task.abort();
             result?;

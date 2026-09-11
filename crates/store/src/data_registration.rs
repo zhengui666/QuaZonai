@@ -175,12 +175,7 @@ where
     F: FnMut(Id, DbCounter) -> Fut,
     Fut: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
 {
-    let row = sqlx::query("SELECT * FROM app.universe_versions WHERE id=$1")
-        .bind(id.as_uuid())
-        .fetch_optional(&mut **tx)
-        .await?
-        .ok_or(StoreError::NotFound)?;
-    let stored = data::universe(&row)?;
+    let stored = data::universe_in_tx(tx, id).await?;
     if stored.name != native.name
         || stored.calendar_ref != native.calendar_ref
         || stored.calendar_version != native.calendar_version
@@ -308,11 +303,15 @@ impl Store {
                 &mut tx,
                 metadata,
                 "qz.native_catalog_metadata",
-                native.origin,
+                previous.origin,
                 &mut reader,
             )
             .await?;
-            if original != serde_json::to_value(&native).map_err(|_| StoreError::Integrity)? {
+            // Both sides are received JSON, including their RFC3339 spelling.
+            // Serializing only the new typed DTO would canonicalize its dates.
+            let received: Value = serde_json::from_slice(&raw_metadata)
+                .map_err(|_| StoreError::Invalid("native_metadata_contract"))?;
+            if original != received {
                 return Err(StoreError::NativeIdentityConflict);
             }
             commands::recheck_authority(&mut tx, &ticket.actor, &prepared).await?;

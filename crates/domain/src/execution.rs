@@ -9,6 +9,56 @@ use contracts::{
 };
 use std::collections::BTreeSet;
 
+/// Shared shape check for the actual fixed native outputs. This is not a PIT,
+/// statistical, investment-performance or qualification decision.
+pub fn output_shape(
+    output: &contracts::runtime_jobs::RuntimeOutputV1,
+    bytes: &[u8],
+) -> Result<(), DomainError> {
+    use contracts::execution::{NativeDataQualityReportV1, NativeModelCompilationV1};
+    let Some(contract) = contracts::runtime_jobs::native_output_contract(
+        &output.schema.name,
+        &output.schema.version,
+    ) else {
+        return Err(invalid(
+            "native_output.schema",
+            "NATIVE_OUTPUT_CONTRACT_INVALID",
+        ));
+    };
+    if output.kind != contract.kind
+        || output.media_type != contract.media_type
+        || output.storage_version.get() != 1
+        || bytes.is_empty()
+        || bytes.len() as u64 != output.byte_count.get()
+        || bytes.len() as u64 > contracts::runtime_jobs::MAX_JOB_OUTPUT_BYTES
+    {
+        return Err(invalid("native_output", "NATIVE_OUTPUT_CONTRACT_INVALID"));
+    }
+    macro_rules! native {
+        ($kind:ty) => {
+            serde_json::from_slice::<$kind>(bytes)
+                .map(|_| ())
+                .map_err(|_| invalid("native_output.body", "NATIVE_OUTPUT_CONTRACT_INVALID"))
+        };
+    }
+    match contract.name {
+        "qz.wasm_model"
+            if bytes.starts_with(b"\0asm\x01\0\0\0") && bytes.len() <= 2 * 1024 * 1024 =>
+        {
+            Ok(())
+        }
+        "qz.model_compilation" => native!(NativeModelCompilationV1),
+        "qz.data_quality" => native!(NativeDataQualityReportV1),
+        "qz.native_forecast" => native!(contracts::science::NativeForecastResultV1),
+        "qz.native_allocation" => native!(contracts::portfolio::AllocationResultV1),
+        "qz.native_simulation" => native!(contracts::science::NativeSimulationResultV1),
+        _ => Err(invalid(
+            "native_output.schema",
+            "NATIVE_OUTPUT_CONTRACT_INVALID",
+        )),
+    }
+}
+
 fn bad(field: &str) -> DomainError {
     invalid(field, "NATIVE_TASK_BINDING_INVALID")
 }

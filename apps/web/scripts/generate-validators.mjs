@@ -107,6 +107,7 @@ validator('nativeBaseCurrency', { $ref: `${root}#/components/schemas/BriefConten
 validator('nativeProblem', { $ref: `${root}#/components/schemas/Problem` });
 validator('nativeDecimal', { $ref: `${root}#/components/schemas/DecimalValue` });
 validator('nativeCostAmount', { $ref: `${root}#/components/schemas/BudgetV1/allOf/1/oneOf/1/properties/max_cost_decimal` });
+validator('nativeCatalogKey', { $ref: `${root}#/components/schemas/DataSourceCreate/properties/native_catalog_ref` });
 const runtime = `
 const responseRegistry = ${JSON.stringify(registry, null, 2)};
 function mediaType(value) { return typeof value === 'string' ? value.split(';', 1)[0].trim().toLowerCase() : ''; }
@@ -129,6 +130,7 @@ exports.validateBaseCurrency = function(value) { return exports.nativeBaseCurren
 exports.validateProblem = function(value) { return exports.nativeProblem(value); };
 exports.validateDecimal = function(value) { return exports.nativeDecimal(value); };
 exports.validateCostAmount = function(value) { return exports.nativeCostAmount(value); };
+exports.validateNativeCatalogKey = function(value) { return exports.nativeCatalogKey(value); };
 `;
 const aliasCode = Object.entries(aliases)
   .map(([name, first]) => `exports[${JSON.stringify(name)}] = exports[${JSON.stringify(first)}];`)
@@ -153,4 +155,5 @@ fs.writeFileSync(new URL('responses.d.cts', output),
   'export declare function validateBaseCurrency(value: unknown): boolean;\n' +
   'export declare function validateDecimal(value: unknown): boolean;\n' +
   'export declare function validateCostAmount(value: unknown): boolean;\n' +
+  'export declare function validateNativeCatalogKey(value: unknown): boolean;\n' +
   'export declare function validateProblem(value: unknown): value is import("./api").components["schemas"]["Problem"];\n');

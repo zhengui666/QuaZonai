@@ -29,7 +29,7 @@ pub struct DataSourceCreate {
     pub name: String,
     pub runtime_id: Id,
     /// Exact Runtime registry key, not an HTTP URL or local filesystem path.
-    #[schema(min_length = 1, max_length = 512)]
+    #[schema(schema_with = native_catalog_key_schema)]
     pub native_catalog_ref: String,
     pub provider_kind: DataProviderKind,
     pub enabled: bool,
@@ -170,11 +170,21 @@ pub struct DatasetView {
     pub checked_at: DateTime<Utc>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum UniverseRegistrationState {
+    NativeMetadata,
+    LegacyUnverified,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UniverseView {
     pub id: Id,
     pub name: String,
+    /// Derived from formal Dataset registration evidence, not from a legacy label.
+    /// Native registration does not imply REAL data, verified PIT or qualification.
+    pub registration_state: UniverseRegistrationState,
     pub membership_artifact_id: Id,
     pub instrument_definitions_artifact_id: Id,
     pub calendar_ref: String,
@@ -184,6 +194,75 @@ pub struct UniverseView {
     pub coverage_start: DateTime<Utc>,
     pub coverage_end: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
+}
+
+/// Start fixed native catalog validation for an already frozen project InputSet.
+/// No image, arbitrary path, origin, PIT claim or result is supplied by the caller.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DataValidateRequest {
+    pub schema_version: SchemaV1,
+    pub project_id: Id,
+    pub input_set_id: Id,
+    pub runtime_id: Id,
+    pub expected_runtime_revision: Revision,
+    #[schema(schema_with = data_validation_limits_schema)]
+    pub limits: crate::lifecycle::JobLimitsV1,
+}
+
+fn data_validation_limits_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+    use utoipa::{
+        openapi::schema::{AllOfBuilder, ObjectBuilder, Type},
+        PartialSchema,
+    };
+    AllOfBuilder::new()
+        .item(crate::lifecycle::JobLimitsV1::schema())
+        .item(
+            ObjectBuilder::new()
+                .schema_type(Type::Object)
+                .property(
+                    "experiments",
+                    ObjectBuilder::new()
+                        .schema_type(Type::Integer)
+                        .enum_values(Some([0])),
+                )
+                .property("cpu_seconds", crate::scalars::positive_db_counter_schema())
+                .property(
+                    "wall_seconds",
+                    ObjectBuilder::new()
+                        .schema_type(Type::Integer)
+                        .minimum(Some(1.0))
+                        .maximum(Some(86400.0)),
+                )
+                .property(
+                    "memory_mib",
+                    ObjectBuilder::new()
+                        .schema_type(Type::Integer)
+                        .minimum(Some(1.0))
+                        .maximum(Some(1048576.0)),
+                )
+                .property(
+                    "output_bytes",
+                    crate::scalars::bounded_bigint_schema(
+                        crate::runtime_jobs::MAX_JOB_OUTPUT_BYTES,
+                        true,
+                    ),
+                ),
+        )
+        .into()
+}
+
+fn native_catalog_key_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+    use utoipa::openapi::schema::{ObjectBuilder, Type};
+    // Rust trim's Unicode White_Space set, not JavaScript's differing BOM rule.
+    // Slash-separated names retain their original spelling; dot/traversal/empty
+    // components and control/URL delimiters are not registry keys.
+    ObjectBuilder::new()
+        .schema_type(Type::String)
+        .min_length(Some(1))
+        .max_length(Some(512))
+        .pattern(Some(r"^(?![ \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000])(?![\s\S]*[ \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000](?![\s\S]))(?!\.{1,2}(?:/|(?![\s\S])))(?![\s\S]*/\.{1,2}(?:/|(?![\s\S])))[^/\\?#\u0000-\u001f\u007f-\u009f]+(?:/[^/\\?#\u0000-\u001f\u007f-\u009f]+)*(?![\s\S])"))
+        .into()
 }
 
 fn default_limit() -> u16 {

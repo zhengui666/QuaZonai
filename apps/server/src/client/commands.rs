@@ -111,6 +111,8 @@ pub enum Cycle {
 }
 #[derive(Subcommand)]
 pub enum Data {
+    /// Start bounded native validation of the frozen InputSet described on stdin.
+    Validate,
     #[command(subcommand)]
     Source(Source),
     #[command(subcommand)]
@@ -393,6 +395,10 @@ impl Command {
                     )?
                 }
             },
+            Self::Data(Data::Validate) => Request::write::<
+                DataValidateRequest,
+                CommandResult<RunSnapshotV1>,
+            >(POST, "/api/v2/data/validate", 202, true)?,
             Self::Data(Data::Source(command)) => {
                 match command {
                     Source::List(page) => {

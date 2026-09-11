@@ -74,10 +74,17 @@ fn revocation(row: &PgRow) -> Result<DataGrantRevocationView, StoreError> {
     })
 }
 
-pub(crate) fn universe(row: &PgRow) -> Result<UniverseView, StoreError> {
+const UNIVERSE_FIELDS: &str = "u.*,EXISTS(SELECT 1 FROM app.dataset_revisions d JOIN app.dataset_registration_evidence e ON e.dataset_revision_id=d.id WHERE d.universe_version_id=u.id) AS native_registered";
+
+fn universe(row: &PgRow) -> Result<UniverseView, StoreError> {
     Ok(UniverseView {
         id: db::id(row.try_get("id")?)?,
         name: row.try_get("name")?,
+        registration_state: if row.try_get("native_registered")? {
+            UniverseRegistrationState::NativeMetadata
+        } else {
+            UniverseRegistrationState::LegacyUnverified
+        },
         membership_artifact_id: db::id(row.try_get("membership_artifact_id")?)?,
         instrument_definitions_artifact_id: db::id(
             row.try_get("instrument_definition_artifact_id")?,
@@ -90,6 +97,17 @@ pub(crate) fn universe(row: &PgRow) -> Result<UniverseView, StoreError> {
         coverage_end: row.try_get("coverage_end")?,
         created_at: row.try_get("created_at")?,
     })
+}
+
+pub(crate) async fn universe_in_tx(tx: &mut Tx<'_>, id: Id) -> Result<UniverseView, StoreError> {
+    let row = sqlx::query(&format!(
+        "SELECT {UNIVERSE_FIELDS} FROM app.universe_versions u WHERE u.id=$1"
+    ))
+    .bind(id.as_uuid())
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(StoreError::NotFound)?;
+    universe(&row)
 }
 
 pub(crate) fn dataset(row: &PgRow, checked: DateTime<Utc>) -> Result<DatasetView, StoreError> {
@@ -501,12 +519,7 @@ impl Store {
     ) -> Result<UniverseView, StoreError> {
         let mut tx = self.pool.begin().await?;
         read_authority(&mut tx, actor).await?;
-        let row = sqlx::query("SELECT * FROM app.universe_versions WHERE id=$1")
-            .bind(id.as_uuid())
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or(StoreError::NotFound)?;
-        let result = universe(&row)?;
+        let result = universe_in_tx(&mut tx, id).await?;
         tx.commit().await?;
         Ok(result)
     }
@@ -519,7 +532,7 @@ impl Store {
         domain::control::list(query)?;
         let mut tx = self.pool.begin().await?;
         read_authority(&mut tx, actor).await?;
-        let rows = sqlx::query("SELECT * FROM app.universe_versions WHERE ($1::uuid IS NULL OR id<$1) ORDER BY id DESC LIMIT $2")
+        let rows = sqlx::query(&format!("SELECT {UNIVERSE_FIELDS} FROM app.universe_versions u WHERE ($1::uuid IS NULL OR u.id<$1) ORDER BY u.id DESC LIMIT $2"))
             .bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit) + 1).fetch_all(&mut *tx).await?;
         let mut items = rows.iter().map(universe).collect::<Result<Vec<_>, _>>()?;
         let next_cursor = if items.len() > query.limit as usize {

@@ -56,6 +56,18 @@ Operator 可创建独立 CLI/AUTOMATION/DOWNSTREAM 主体，系统任务的 MISS
 
 用户命令已接入原生 `server client`，具体命令、单次 TOTP grant、stdin JSON、私有凭据文件、SSE cursor 与导出退出码见 CLI.md。它只经 HTTP 使用现有权限，不能通过直接 SQL、应用 Master Key 或读 Vault 绕过同一 API。机器管理授权请求正文一旦改变，即使使用原 key，也可能先被单次 grant 的完整意图约束拒绝为403；只有当前授权通过后才进入回执冲突检查。正确重放必须保留原命令、正文、目标和幂等键。
 
+## Worker、正式数据验证与025升级
+
+`server worker` 使用与API相同的非owner应用账号、私有状态卷和受信任的Runtime目标配置，作为独立常驻进程启动。它读取现有PGMQ任务，不在控制面运行Nautilus、编译研究模型或维护另一份队列；默认同时驱动2个任务，`WORKER_PARALLELISM` 可设1–32。SIGINT/SIGTERM停止领取新任务并排空已开始的有界I/O，不把停止Worker等同于停止远端计算。
+
+迁移 `202609110025_native_tasks.sql` 新增三个不可变原生关联表：`run_native_tasks` 保存和准入同事务冻结的任务定义，`run_native_attempts` 保存唯一首次派发的JobSpec，`run_native_outputs` 记录远端原生对象与本地生产者产物的精确映射。旧Run不回填或假造这些定义；部署停写并使用正式 `server migrate`，保留旧历史，不直接修改迁移记录或队列表。
+
+`POST /api/v2/data/validate` / `server client data validate` 为同项目已冻结且已正式登记的DISCOVERY/VALIDATION输入排队，严格字段及人工grant流程见CLI。该入口不能读SEALED或接受任意命令、URL、镜像和客户端报告；202不是计算成功，必须继续查看真实Run。累计CPU秒、墙钟、内存和输出均受请求及原生Runtime上限约束，不计入科学试验但不获得无限资源。
+
+Worker可使用当前Run租约刷新到期探测。一次提交应答丢失后，只查询原任务ID；租约接管保持原Attempt和JobSpec，拒绝旧owner。404、网络断开、退出Worker均不允许发布取消成功或提前释放任务；只有匹配身份的原生持久终态可完成对账。终态原始manifest、全部允许的原生产物、生产者关系、事件与唯一回执一起提交后才archive。取消先提交时，迟到的成功payload不发布；格式错误的已完成输出保留失败审计，不能升格为Alpha资格。
+
+Universe的 `registration_state` 必须同时展示：`NATIVE_METADATA` 表示存在正式登记证据，`LEGACY_UNVERIFIED` 表示历史记录尚未核验。该标记不证明真实市场来源、PIT或科学有效性，不能把历史行静默显示成原生登记。原生登记同身份重放比较收到的JSON内容，合法时间字符串原样保存；源origin等身份内容变化返回409，而非生成新版本绕过历史。
+
 ## 不可变研究准备与数据撤销
 
 研究准备入口为 `/api/v2/input-sets` 和 `/api/v2/evaluation-policies`，详情和

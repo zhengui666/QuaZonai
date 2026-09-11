@@ -41,5 +41,7 @@ body { margin: 0; min-width: 320px; }
   .ant-drawer-body { padding: 20px 16px !important; }
 }
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+  /* Ant Design motion is disabled through its native theme token in App.
+     Ultra-short CSS durations can lose the native completion/alignment events. */
+  *, *::before, *::after { scroll-behavior: auto !important; }
 }

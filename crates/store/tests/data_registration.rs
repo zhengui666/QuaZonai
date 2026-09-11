@@ -103,13 +103,15 @@ async fn native_identity_cross_key_replay_cannot_change_grant_origin_or_original
     assert_eq!(counts(&pool).await, (1, 1, 1, 2));
     let mut changed = metadata.clone();
     changed.origin = DataOrigin::Real;
-    assert!(complete(
-        &f,
-        ticket(&f, "origin-conflict", &request).await,
-        serde_json::to_vec(&changed).unwrap()
-    )
-    .await
-    .is_err());
+    assert!(matches!(
+        complete(
+            &f,
+            ticket(&f, "origin-conflict", &request).await,
+            serde_json::to_vec(&changed).unwrap()
+        )
+        .await,
+        Err(StoreError::NativeIdentityConflict)
+    ));
     let mut changed = metadata.clone();
     changed.provenance_reference = "Changed immutable provenance".into();
     assert!(matches!(
@@ -159,6 +161,122 @@ async fn native_identity_cross_key_replay_cannot_change_grant_origin_or_original
             .data_use_grant_id,
         f.grant.id
     );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn received_rfc3339_spelling_is_preserved_on_different_key_native_replay(pool: PgPool) {
+    let f = setup(&pool, None).await;
+    let request = request(&f);
+    let mut document = serde_json::to_value(catalog_fixture::metadata()).unwrap();
+    document["event_start"] = serde_json::json!("1970-01-01T00:01:00+00:00");
+    document["universe"]["selection_asof"] = serde_json::json!("1970-01-01T00:00:00.000000Z");
+    let bytes = serde_json::to_vec(&document).unwrap();
+    let first = complete(
+        &f,
+        ticket(&f, "rfc3339-first", &request).await,
+        bytes.clone(),
+    )
+    .await
+    .unwrap()
+    .resource;
+    let second = f
+        .store
+        .complete_dataset_registration(
+            ticket(&f, "rfc3339-second", &request).await,
+            serde_json::to_vec_pretty(&document).unwrap(),
+            |id, size| read(f.objects.clone(), id, size),
+            |_| async { panic!("unchanged received metadata must not publish another object") },
+        )
+        .await
+        .unwrap()
+        .resource;
+    assert_eq!(first.id, second.id);
+    assert_eq!(
+        first.native_metadata_artifact_id,
+        second.native_metadata_artifact_id
+    );
+    assert_eq!(counts(&pool).await, (1, 1, 1, 2));
+    let size = contracts::DbCounter::new(bytes.len() as u64).unwrap();
+    assert_eq!(
+        f.objects
+            .read(first.native_metadata_artifact_id.unwrap(), size)
+            .unwrap(),
+        bytes
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn native_and_legacy_universes_have_explicit_evidence_state_without_history_rewrite(
+    pool: PgPool,
+) {
+    let f = setup(&pool, None).await;
+    let request = request(&f);
+    let first = complete(
+        &f,
+        ticket(&f, "universe-proof", &request).await,
+        serde_json::to_vec(&catalog_fixture::metadata()).unwrap(),
+    )
+    .await
+    .unwrap()
+    .resource;
+    let legacy = Id::new();
+    // A historical relational record with no registration evidence. Its member
+    // references alone must not be promoted to a formally registered Universe.
+    sqlx::query("INSERT INTO app.universe_versions(id,name,membership_artifact_id,instrument_definition_artifact_id,calendar_ref,calendar_version,selection_asof,has_historical_membership,coverage_start,coverage_end) SELECT $1,'Legacy record',membership_artifact_id,instrument_definition_artifact_id,calendar_ref,calendar_version,selection_asof,has_historical_membership,coverage_start,coverage_end FROM app.universe_versions WHERE id=$2")
+        .bind(legacy.as_uuid()).bind(first.universe_version_id.as_uuid()).execute(&pool).await.unwrap();
+    let historical: serde_json::Value =
+        sqlx::query_scalar("SELECT to_jsonb(u) FROM app.universe_versions u WHERE id=$1")
+            .bind(legacy.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let native = f
+        .store
+        .get_universe_version(&f.actor, first.universe_version_id)
+        .await
+        .unwrap();
+    let old = f
+        .store
+        .get_universe_version(&f.actor, legacy)
+        .await
+        .unwrap();
+    assert_eq!(
+        native.registration_state,
+        UniverseRegistrationState::NativeMetadata
+    );
+    assert_eq!(
+        old.registration_state,
+        UniverseRegistrationState::LegacyUnverified
+    );
+    assert_eq!(first.origin, DataOrigin::Fixture);
+    let page = f
+        .store
+        .list_universe_versions(
+            &f.actor,
+            &ListQuery {
+                cursor: None,
+                limit: 100,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.items.len(), 2);
+    assert_eq!(
+        page.items
+            .iter()
+            .find(|u| u.id == legacy)
+            .unwrap()
+            .registration_state,
+        UniverseRegistrationState::LegacyUnverified
+    );
+    let unchanged: serde_json::Value =
+        sqlx::query_scalar("SELECT to_jsonb(u) FROM app.universe_versions u WHERE id=$1")
+            .bind(legacy.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(historical, unchanged);
+    assert_eq!(counts(&pool).await, (1, 2, 1, 1));
 }
 
 #[sqlx::test(migrations = "../../migrations")]

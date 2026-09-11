@@ -21,6 +21,77 @@ use contracts::{
 };
 use store::{data_registration::RegistrationPreparation, StoreError};
 
+#[utoipa::path(post,path="/api/v2/data/validate",tag="Data administration",request_body=DataValidateRequest,params(("Idempotency-Key"=String,Header)),responses((status=202,body=CommandResult<contracts::runs::RunSnapshotV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
+pub async fn validate(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    headers: HeaderMap,
+    body: Result<Json<DataValidateRequest>, JsonRejection>,
+) -> Result<
+    (
+        StatusCode,
+        Json<CommandResult<contracts::runs::RunSnapshotV1>>,
+    ),
+    ApiError,
+> {
+    let request = json(body)?;
+    let key = idempotency_key(&headers)?.to_owned();
+    let objects = state
+        .artifact_store
+        .clone()
+        .ok_or(StoreError::Invalid("artifact_store_unavailable"))?;
+    let store = state.store.clone();
+    let result = crate::settings::command(&state, async move {
+        let reading = objects.clone();
+        let publishing = objects.clone();
+        let mut allocated = None;
+        let result = store
+            .start_data_validation(
+                &actor,
+                &key,
+                &request,
+                move |id, size| {
+                    let objects = reading.clone();
+                    async move {
+                        tokio::task::spawn_blocking(move || objects.read(id, size))
+                            .await
+                            .map_err(|_| StoreError::Integrity)?
+                            .map_err(|_| StoreError::Integrity)
+                    }
+                },
+                |object| {
+                    allocated = Some(object.id);
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            publishing.put(object.id, &object.bytes)
+                        })
+                        .await
+                        .map_err(|_| StoreError::Integrity)?
+                        .map_err(|_| StoreError::Integrity)
+                    }
+                },
+            )
+            .await;
+        if let Some(id) = allocated.filter(|_| result.is_err()) {
+            if store
+                .discard_unpublished_operator_artifact(id, move |id| async move {
+                    tokio::task::spawn_blocking(move || objects.discard_unpublished(id))
+                        .await
+                        .map_err(|_| StoreError::Integrity)?
+                        .map_err(|_| StoreError::Integrity)
+                })
+                .await
+                .is_err()
+            {
+                tracing::warn!(artifact_id=%id, "native validation parameter cleanup deferred");
+            }
+        }
+        result
+    })
+    .await?;
+    Ok((StatusCode::ACCEPTED, Json(result)))
+}
+
 fn path(value: Result<Path<Id>, PathRejection>) -> Result<Id, ApiError> {
     value.map(|Path(id)| id).map_err(|_| ApiError::validation())
 }

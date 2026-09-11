@@ -26,7 +26,8 @@ server client --origin https://research.example --credential-file /private/cli.t
 | `data source list/show <id>/create/update <id>` | DataSourceCreate/DataSourceUpdate；已登记原生身份不可更改 |
 | `data grant list <source_id>/create <source_id>/revoke <id>/revocations <id>` | DataGrantCreate/DataGrantRevoke；正文source_id须与父路径相同 |
 | `data revision list/show <id>/register` | 列表可加 `--source-id/--partition`；DatasetRegister不接收自报origin/PIT或URL |
-| `data universe list/show <id>` | 原生登记的Universe元数据，不提供手工伪造版本入口 |
+| `data universe list/show <id>` | Universe元数据及 `NATIVE_METADATA/LEGACY_UNVERIFIED` 登记证据状态；历史记录不被冒充为原生登记 |
+| `data validate` | DataValidateRequest；202仅返回唯一排队Run，人工grant目标为已有InputSet，不是新的RunID |
 | `runtime list/show <id>/create/update <id>/probe <id>/readiness <id>` | RuntimeCreate/RuntimeUpdate/RuntimeProbeRequestV1；配置与真实探测分离 |
 | `downstream list/show <id>/create/update <id>` | DownstreamCreate/DownstreamUpdate；配置不是下游订单执行授权 |
 | `input-set list --project-id <id>/show <id>/create` | InputSetCreate；同一不可变数据、许可与用途校验 |
@@ -65,6 +66,24 @@ server client --origin https://research.example --credential-file /private/cli.t
 watch以NDJSON输出 `schema_version/event_id/event`，最后输出 `watch_ended/last_event_id/events_received/cancellation_requested=false`。`$LAST_EVENT_ID` 格式为同一Run的 `UUIDv7:十进制seq`；首次观察可省略 `--after`。流量16MiB、最多3600秒/10000事件；Ctrl-C、断线或达到上限均不取消服务器任务。兼容未知事件只保留公开envelope；reset-required或不兼容合同返回错误，不假装连续。需继续观察时使用最后已验证cursor显式调用，不自动重连。导出失败时调用方不得把空或未完成的重定向文件视为成功产物；必须检查退出码。
 
 当前这些CLI命令与已有HTTP实现同步；Alpha资格、完整组合Release/自动化等B2后续命令仍属于Issue62必交范围，不能因入口列表增加而宣称全量生产验收完成。
+
+## 可信 Worker 与正式数据验证
+
+`server worker` 与 `server serve` 是独立进程；二者连接同一正式数据库、使用同一已初始化 `STATE_DIR` 和明确的 `RUNTIME_TARGETS`。Worker 只驱动固定原生任务，不在控制面执行科学代码；不得使用数据库所有者账号启动。`--parallelism` / `WORKER_PARALLELISM` 默认2，范围1–32；每条消息有独立领取身份。
+
+```sh
+server worker --help
+server worker --state-dir /private/quazonai --parallelism 2
+server client --origin https://research.example --credential-file /private/cli.token \
+  --idempotency-key "validate-input-1" --operator-grant "$GRANT_ID" \
+  data validate < /private/data-validation.json
+```
+
+数据库连接及 Runtime allowlist 由部署环境提供，不在命令中暴露凭据。`data-validation.json` 采用原生 `DataValidateRequest`：`schema_version=1`、`project_id`、`input_set_id`、`runtime_id`、`expected_runtime_revision` 和 `limits`。limits 包含 `schema_version=1`、`experiments=0`、正数十进制字符串 `cpu_seconds`、`wall_seconds`（1–86400）、`memory_mib`（1–1048576）、正数十进制字符串 `output_bytes`（最多67108864），同时不能超过真实 Runtime 探测的能力。CPU核数由累计CPU秒/墙钟上限向上取整，不允许客户端指定镜像、命令或额外文件。
+
+该操作的人工 `OperatorCommand` 为 `DATA_VALIDATE`，grant 的 `target_id` 必须为既有冻结 InputSet。只接受同项目正式登记的 DISCOVERY/VALIDATION 数据，拒绝 SEALED、任意原始报告和artifact-only输入；最多两个并行无Cycle数据验证任务。202返回唯一QUEUED Run，不代表已完成；同一key必须保存相同正文及grant重放。用 `run show/watch` 读取真实状态，用 `run cancel` 申请取消。
+
+Worker在首次提交之前刷新必要的原生探测；提交结果未知时只查询同一远端任务，不能重发新任务。退出Worker只停止新驱动，不等于远端任务已停止，也不会提前archive未知结果。固定任务成功会把原始结果清单和生产者绑定产物原子登记后再确认队列；质量报告不是PIT或Alpha资格。当前该入口及故障回归不替代尚需完成的完整Mission/研究/评估/组合/交付验收。
 
 ## 原生科学任务入口
 

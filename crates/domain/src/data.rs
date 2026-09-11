@@ -113,6 +113,26 @@ pub fn license_state(
     }
 }
 
+pub fn validate_request(value: &DataValidateRequest) -> Result<(), DomainError> {
+    let limits = &value.limits;
+    if limits.experiments != 0 {
+        return Err(bad("limits.experiments"));
+    }
+    if limits.cpu_seconds.get() == 0 {
+        return Err(bad("limits.cpu_seconds"));
+    }
+    if !(1..=86_400).contains(&limits.wall_seconds) {
+        return Err(bad("limits.wall_seconds"));
+    }
+    if !(1..=1_048_576).contains(&limits.memory_mib) {
+        return Err(bad("limits.memory_mib"));
+    }
+    if !(1..=contracts::runtime_jobs::MAX_JOB_OUTPUT_BYTES).contains(&limits.output_bytes.get()) {
+        return Err(bad("limits.output_bytes"));
+    }
+    Ok(())
+}
+
 pub fn list(value: &DataListQuery) -> Result<(), DomainError> {
     if !(1..=100).contains(&value.limit) {
         return Err(bad("limit"));
