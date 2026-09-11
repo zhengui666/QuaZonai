@@ -654,3 +654,18 @@ Mission bootstrap3，共12通过/0失败/0忽略；源码未变，独立PG停止
 
 后续全量`.ai-bridge/verify-DHzFHw` exit0：check/fmt/严格Clippy、领域149、managed6、
 native Codex25、Store+Server469通过，0失败/0忽略；源码快照未变，独立PG确认停止。
+
+## 2026-09-12：逐轮公开请求与恢复投影
+
+`prepare_mission_turn`复用原预约事务逻辑，将原始公开prompt的固定schema产物、
+预算预约和PGMQ消息原子发布；文件I/O之后复核租约/期限，字节计入输出预算。
+重放逐字节比较，不接受改prompt/改key；失败或过期回滚全部数据库半状态，未知文件
+提交沿用现有Run锁定的未引用对象对账。恢复只读取该Run/Session/Attempt/command的
+原请求，checkpoint区分已发送但无ACK、原生Turn绑定、终态与已结算用量。
+配置变化不擦除旧请求或虚构退款。没有读取或复制原生聊天/隐藏推理。
+
+`.ai-bridge/verify-FBFVNA` focused检查exit0：check/fmt/严格Clippy、领域、managed、
+原生Codex及相关Store/HTTP/MCP通过，源码未变、独立PG停止。新增事务并发/失败/
+租约测试与原生同Thread两轮测试均通过；后者现在使用实际保存和重新读取的公开请求，
+不再借准备任务参数代替prompt。模型回答/市场准备/费用仍是标明的fixture；真实
+Worker逐轮驱动、资源约束、定价未知处理和科学结果回送尚未完成，不作为全量或CI证据。

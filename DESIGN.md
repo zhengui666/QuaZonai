@@ -2375,6 +2375,8 @@ Store 的模型续轮入口为 `reserve_turn` → `claim_turn_dispatch` → `bin
 
 新建库、约束和 Store 集成测试可以使用独立 ephemeral fixture 写入来构造故障，不能把它们标成 T42 的 Web/CLI 完整流程或受保护真实账号验收。所有新 Store 测试在单独 PostgreSQL/PGMQ CI job 中执行，foundation 汇总必须依赖它；未设置 DATABASE_URL 必须失败，不能变 skipped green。
 
+可信服务的`prepare_mission_turn`将公开请求的`qz.mission_turn` PARAMETERS产物、预算预约与PGMQ通知放在同一事务，复用`reserve_turn`的全部准入与幂等逻辑。产物只含QZ公开prompt、Run/Session/Attempt、command_key和turn_kind，不含原生聊天、隐藏推理或凭据；逐字节重放不换请求，文件发布后复核数据库lease/deadline。失败或未知提交保留可能发布的对象，由现有Run锁定的未引用对象清理入口对账，不能删潜在已提交产物。请求字节计入Mission输出限额。恢复只读取精确生产者与固定schema的原请求，checkpoint只投影最新预约、发送意图、原生Turn绑定、终态、用量回执和已结算token累计；没有ACK/用量时维持未知与预算占用，不根据队列、空列表或改后的Profile猜测重发/退款。
+
 ## C. 已落实到 A4/A6/A7 的精确数值与关联补充
 
 本节保留先前 C1–C4 的语义，不建立第二套表名或状态机。指标的有限 f64 使用

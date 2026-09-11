@@ -19,6 +19,9 @@ use domain::{
 use sqlx::{postgres::PgRow, Postgres, Row, Transaction};
 use uuid::Uuid;
 
+mod native;
+pub use native::{MissionTurnCheckpoint, NativeTurnCheckpoint};
+
 type Tx<'a> = Transaction<'a, Postgres>;
 
 #[derive(Clone, Debug)]
@@ -367,91 +370,8 @@ impl Store {
         fence: &WorkerFence,
         request: &TurnRequest,
     ) -> Result<Reservation, StoreError> {
-        if !bounded(&request.command_key, 200) {
-            return Err(StoreError::Invalid("command_key"));
-        }
-        if !request
-            .deadline_at
-            .timestamp_subsec_nanos()
-            .is_multiple_of(1000)
-        {
-            return Err(StoreError::Invalid("timestamp_precision"));
-        }
         let mut tx = self.pool.begin().await?;
-        let mission = lock_mission(&mut tx, run_id, fence).await?;
-        let sql=format!("SELECT {RESERVATION_COLUMNS} FROM app.model_turn_reservations WHERE session_id=$1 AND command_key=$2");
-        if let Some(row) = sqlx::query(&sql)
-            .bind(mission.session_id)
-            .bind(&request.command_key)
-            .fetch_optional(&mut *tx)
-            .await?
-        {
-            let original = reservation(row)?;
-            if original.attempt_id != fence.attempt_id
-                || original.turn_kind != request.turn_kind
-                || original.tokens != request.tokens
-                || original.request_artifact_id != request.request_artifact_id
-                || original.deadline_at != request.deadline_at
-                || original.reserved_cost.as_ref()
-                    != request.estimated_cost.as_ref().map(|c| &c.amount)
-                || original.cost_currency.as_ref()
-                    != request.estimated_cost.as_ref().map(|c| &c.currency)
-            {
-                return Err(StoreError::Conflict);
-            }
-            tx.commit().await?;
-            return Ok(original);
-        }
-        mission.admit(request.deadline_at)?;
-        mission.current_profile(&mut tx).await?;
-        let mission = lock_mission(&mut tx, run_id, fence).await?;
-        mission.admit(request.deadline_at)?;
-        let pending:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.model_turn_reservations r WHERE r.session_id=$1 AND NOT EXISTS(SELECT 1 FROM app.model_turn_receipts t WHERE t.reservation_id=r.id))")
-            .bind(mission.session_id).fetch_one(&mut *tx).await?;
-        if pending {
-            return Err(StoreError::TurnPending);
-        }
-        // The request is an immutable, project-scoped, nonsealed artifact. Never
-        // permit an Agent to reference another project's or evaluator-only data.
-        let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.artifacts WHERE id=$1 AND project_id=$2 AND kind='PARAMETERS' AND access_class IN ('OPERATOR','RESEARCH'))")
-            .bind(request.request_artifact_id.as_uuid()).bind(mission.project_id).fetch_one(&mut *tx).await?;
-        if !allowed {
-            return Err(StoreError::Invalid("request_artifact"));
-        }
-        let usage = mission.usage(&mut tx).await?;
-        reserve_model_turn(
-            mission.project_state,
-            &mission.budget,
-            &mission.stop,
-            &usage,
-            &ModelReservation {
-                mission_id: run_id,
-                turn_kind: request.turn_kind,
-                tokens: request.tokens,
-                estimated_cost: request.estimated_cost.clone(),
-            },
-        )?;
-        // The session lock makes ordinal allocation deterministic, including
-        // refunded reservations. A refund cannot erase audit identities.
-        let ordinal: i32 = sqlx::query_scalar(
-            "SELECT coalesce(max(ordinal),0)+1 FROM app.model_turn_reservations WHERE session_id=$1")
-            .bind(mission.session_id).fetch_one(&mut *tx).await?;
-        if ordinal > i32::from(u16::MAX) {
-            return Err(StoreError::Invalid("turn_ordinal_exhausted"));
-        }
-        let new_id = Id::new();
-        sqlx::query("INSERT INTO app.model_turn_reservations(id,project_id,cycle_id,run_id,session_id,attempt_id,command_key,turn_kind,reserved_tokens,reserved_cost,cost_currency,request_artifact_id,deadline_at,owner_epoch,profile_revision,ordinal) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)")
-            .bind(new_id.as_uuid()).bind(mission.project_id).bind(mission.cycle_id).bind(run_id.as_uuid()).bind(mission.session_id)
-            .bind(fence.attempt_id.as_uuid()).bind(&request.command_key).bind(kind_name(request.turn_kind)).bind(request.tokens.get() as i64)
-            .bind(request.estimated_cost.as_ref().map(|c|c.amount.as_decimal())).bind(request.estimated_cost.as_ref().map(|c|c.currency.as_str()))
-            .bind(request.request_artifact_id.as_uuid()).bind(request.deadline_at)
-            .bind(fence.owner_epoch.get() as i64).bind(mission.profile_revision).bind(ordinal).execute(&mut *tx).await?;
-        let message = serde_json::json!({"reservation_id":new_id});
-        sqlx::query("SELECT pgmq.send('model_turns', $1::jsonb)")
-            .bind(message)
-            .execute(&mut *tx)
-            .await?;
-        let result = load_reservation(&mut tx, new_id).await?;
+        let result = reserve_in_transaction(&mut tx, run_id, fence, request).await?;
         tx.commit().await?;
         Ok(result)
     }
@@ -714,6 +634,100 @@ impl Store {
         tx.commit().await?;
         Ok(())
     }
+}
+
+async fn reserve_in_transaction(
+    tx: &mut Tx<'_>,
+    run_id: Id,
+    fence: &WorkerFence,
+    request: &TurnRequest,
+) -> Result<Reservation, StoreError> {
+    if !bounded(&request.command_key, 200) {
+        return Err(StoreError::Invalid("command_key"));
+    }
+    if !request
+        .deadline_at
+        .timestamp_subsec_nanos()
+        .is_multiple_of(1000)
+    {
+        return Err(StoreError::Invalid("timestamp_precision"));
+    }
+    let mission = lock_mission(tx, run_id, fence).await?;
+    let sql=format!("SELECT {RESERVATION_COLUMNS} FROM app.model_turn_reservations WHERE session_id=$1 AND command_key=$2");
+    if let Some(row) = sqlx::query(&sql)
+        .bind(mission.session_id)
+        .bind(&request.command_key)
+        .fetch_optional(&mut **tx)
+        .await?
+    {
+        let original = reservation(row)?;
+        if original.attempt_id != fence.attempt_id
+            || original.turn_kind != request.turn_kind
+            || original.tokens != request.tokens
+            || original.request_artifact_id != request.request_artifact_id
+            || original.deadline_at != request.deadline_at
+            || original.reserved_cost.as_ref() != request.estimated_cost.as_ref().map(|c| &c.amount)
+            || original.cost_currency.as_ref()
+                != request.estimated_cost.as_ref().map(|c| &c.currency)
+        {
+            return Err(StoreError::Conflict);
+        }
+        return Ok(original);
+    }
+    mission.admit(request.deadline_at)?;
+    mission.current_profile(tx).await?;
+    let mission = lock_mission(tx, run_id, fence).await?;
+    mission.admit(request.deadline_at)?;
+    let pending:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.model_turn_reservations r WHERE r.session_id=$1 AND NOT EXISTS(SELECT 1 FROM app.model_turn_receipts t WHERE t.reservation_id=r.id))")
+        .bind(mission.session_id).fetch_one(&mut **tx).await?;
+    if pending {
+        return Err(StoreError::TurnPending);
+    }
+    // The request is an immutable, project-scoped, nonsealed artifact. Never
+    // permit an Agent to reference another project's or evaluator-only data.
+    let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.artifacts WHERE id=$1 AND project_id=$2 AND kind='PARAMETERS' AND access_class IN ('OPERATOR','RESEARCH'))")
+        .bind(request.request_artifact_id.as_uuid()).bind(mission.project_id).fetch_one(&mut **tx).await?;
+    if !allowed {
+        return Err(StoreError::Invalid("request_artifact"));
+    }
+    let usage = mission.usage(tx).await?;
+    reserve_model_turn(
+        mission.project_state,
+        &mission.budget,
+        &mission.stop,
+        &usage,
+        &ModelReservation {
+            mission_id: run_id,
+            turn_kind: request.turn_kind,
+            tokens: request.tokens,
+            estimated_cost: request.estimated_cost.clone(),
+        },
+    )?;
+    // The session lock makes ordinal allocation deterministic, including
+    // refunded reservations. A refund cannot erase audit identities.
+    let ordinal: i32 = sqlx::query_scalar(
+        "SELECT coalesce(max(ordinal),0)+1 FROM app.model_turn_reservations WHERE session_id=$1",
+    )
+    .bind(mission.session_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    if ordinal > i32::from(u16::MAX) {
+        return Err(StoreError::Invalid("turn_ordinal_exhausted"));
+    }
+    let new_id = Id::new();
+    sqlx::query("INSERT INTO app.model_turn_reservations(id,project_id,cycle_id,run_id,session_id,attempt_id,command_key,turn_kind,reserved_tokens,reserved_cost,cost_currency,request_artifact_id,deadline_at,owner_epoch,profile_revision,ordinal) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)")
+        .bind(new_id.as_uuid()).bind(mission.project_id).bind(mission.cycle_id).bind(run_id.as_uuid()).bind(mission.session_id)
+        .bind(fence.attempt_id.as_uuid()).bind(&request.command_key).bind(kind_name(request.turn_kind)).bind(request.tokens.get() as i64)
+        .bind(request.estimated_cost.as_ref().map(|c|c.amount.as_decimal())).bind(request.estimated_cost.as_ref().map(|c|c.currency.as_str()))
+        .bind(request.request_artifact_id.as_uuid()).bind(request.deadline_at)
+        .bind(fence.owner_epoch.get() as i64).bind(mission.profile_revision).bind(ordinal).execute(&mut **tx).await?;
+    let message = serde_json::json!({"reservation_id":new_id});
+    sqlx::query("SELECT pgmq.send('model_turns', $1::jsonb)")
+        .bind(message)
+        .execute(&mut **tx)
+        .await?;
+    let result = load_reservation(tx, new_id).await?;
+    Ok(result)
 }
 
 async fn exact_receipt(

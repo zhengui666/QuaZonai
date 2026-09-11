@@ -34,7 +34,6 @@ struct Fixture {
     store: Store,
     actor: Actor,
     data: cycle_support::Fixture,
-    preparation: Id,
     lease: RunLease,
     message: RunMessage,
     launcher: MissionLauncher,
@@ -123,7 +122,6 @@ async fn fixture(pool: &PgPool) -> Fixture {
         store,
         actor,
         data,
-        preparation,
         lease: *lease,
         message,
         launcher,
@@ -148,7 +146,6 @@ async fn takeover(f: &Fixture, pool: &PgPool, owner: &str) -> RunLease {
 
 async fn turn(
     f: &Fixture,
-    pool: &PgPool,
     lease: &RunLease,
     connection: &mut server::worker::mission::MissionConnection,
     command: &str,
@@ -157,18 +154,17 @@ async fn turn(
 ) {
     let client = &mut connection.client;
     let thread = &connection.session.native.thread_id;
-    let parameters: uuid::Uuid = sqlx::query_scalar(
-        "SELECT parameters_artifact_id FROM app.run_native_tasks WHERE run_id=$1",
-    )
-    .bind(f.preparation.as_uuid())
-    .fetch_one(pool)
-    .await
-    .unwrap();
-    // Reuse an explicit nonsealed PARAMETERS fixture for this bootstrap test;
-    // production turn request publication is a separate Worker integration.
+    let before = f
+        .store
+        .mission_turn_checkpoint(lease.run.id, &lease.fence)
+        .await
+        .unwrap();
+    assert_eq!(before.accounted_tokens.get(), baseline as u64);
+    let reading = f.data.objects.clone();
+    let publishing = f.data.objects.clone();
     let reserved = f
         .store
-        .reserve_turn(
+        .prepare_mission_turn(
             lease.run.id,
             &lease.fence,
             &TurnRequest {
@@ -181,12 +177,52 @@ async fn turn(
                         currency: currency.clone(),
                     },
                 ),
-                request_artifact_id: parameters.to_string().try_into().unwrap(),
+                request_artifact_id: Id::new(),
                 deadline_at: lease.run.deadline_at,
+            },
+            prompt,
+            move |id, size| async move {
+                reading
+                    .read(id, size)
+                    .map_err(|_| store::StoreError::Integrity)
+            },
+            move |object| async move {
+                publishing
+                    .put(object.id, &object.bytes)
+                    .map_err(|_| store::StoreError::Integrity)
             },
         )
         .await
         .unwrap();
+    let checkpoint = f
+        .store
+        .mission_turn_checkpoint(lease.run.id, &lease.fence)
+        .await
+        .unwrap();
+    let latest = checkpoint.latest.unwrap();
+    assert_eq!(latest.reservation, reserved);
+    assert!(
+        !latest.sent
+            && latest.native_turn_id.is_none()
+            && latest.terminal.is_none()
+            && latest.receipt.is_none()
+    );
+    let reading = f.data.objects.clone();
+    let published = f
+        .store
+        .mission_turn_prompt(
+            lease.run.id,
+            &lease.fence,
+            reserved.id,
+            move |id, size| async move {
+                reading
+                    .read(id, size)
+                    .map_err(|_| store::StoreError::Integrity)
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(published, prompt);
     let DispatchDecision::Send { rpc_request_id } = f
         .store
         .claim_turn_dispatch(reserved.id, &lease.fence)
@@ -196,7 +232,7 @@ async fn turn(
         panic!("one native send permit required");
     };
     let actual = client
-        .start_turn(&rpc_request_id, thread, prompt)
+        .start_turn(&rpc_request_id, thread, &published)
         .await
         .unwrap();
     f.store
@@ -223,6 +259,16 @@ async fn turn(
         )
         .await
         .unwrap();
+    let checkpoint = f
+        .store
+        .mission_turn_checkpoint(lease.run.id, &lease.fence)
+        .await
+        .unwrap();
+    assert_eq!(checkpoint.accounted_tokens.get(), baseline as u64 + 12);
+    let latest = checkpoint.latest.unwrap();
+    assert!(latest.sent);
+    assert_eq!(latest.native_turn_id, Some(actual.id));
+    assert!(latest.terminal.is_some() && latest.receipt.is_some());
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -265,7 +311,6 @@ async fn bootstrap_mints_one_credential_binds_before_turn_and_resumes_the_origin
         .is_err());
     turn(
         &f,
-        &pool,
         &f.lease,
         &mut connection,
         "first",
@@ -287,7 +332,6 @@ async fn bootstrap_mints_one_credential_binds_before_turn_and_resumes_the_origin
     );
     turn(
         &f,
-        &pool,
         &next,
         &mut recovered,
         "second",

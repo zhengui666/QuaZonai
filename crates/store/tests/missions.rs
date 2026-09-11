@@ -51,6 +51,211 @@ fn native_thread() -> store::lifecycle::mission::NativeSessionReceipt {
 }
 
 use mission_support::{complete, setup};
+
+async fn prepare_prompt(
+    store: &Store,
+    lease: &store::lifecycle::RunLease,
+    f: &cycle_support::Fixture,
+    request: &store::turns::TurnRequest,
+    prompt: &str,
+) -> Result<store::turns::Reservation, StoreError> {
+    let reading = f.objects.clone();
+    let publishing = f.objects.clone();
+    store.prepare_mission_turn(lease.run.id,&lease.fence,request,prompt,
+        move |id,size| async move {reading.read(id,size).map_err(|_|StoreError::Integrity)},
+        move |object| async move {publishing.put(object.id,&object.bytes).map_err(|_|StoreError::Integrity)}).await
+}
+
+fn prompt_request(
+    f: &cycle_support::Fixture,
+    lease: &store::lifecycle::RunLease,
+) -> store::turns::TurnRequest {
+    store::turns::TurnRequest {
+        command_key: "native-request".into(),
+        turn_kind: domain::admission::TurnKind::Research,
+        tokens: DbCounter::new(100).unwrap(),
+        estimated_cost: f
+            .brief
+            .content
+            .budget
+            .cost_currency
+            .as_ref()
+            .map(|currency| domain::admission::CostEstimate {
+                currency: currency.clone(),
+                amount: "0.01".parse().unwrap(),
+            }),
+        request_artifact_id: Id::new(),
+        deadline_at: lease.run.deadline_at,
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn public_turn_request_and_reservation_commit_once_and_unknown_send_keeps_the_original(
+    pool: PgPool,
+) {
+    let (store, _, f, _, preparation) = setup(&pool).await;
+    complete(&pool, &store, &f, preparation, false).await;
+    store.advance_initial_cycle(preparation).await.unwrap();
+    let lease = mission_lease(&store).await;
+    store
+        .begin_run_dispatch(lease.run.id, &lease.fence)
+        .await
+        .unwrap();
+    store
+        .bind_mission_session(lease.run.id, &lease.fence, &native_thread())
+        .await
+        .unwrap();
+    let request = prompt_request(&f, &lease);
+    let text = "Read the frozen Brief through scoped MCP; never infer a scientific result.";
+    let (first, second) = tokio::join!(
+        prepare_prompt(&store, &lease, &f, &request, text),
+        prepare_prompt(&store, &lease, &f, &request, text)
+    );
+    let reserved = first.unwrap();
+    assert_eq!(second.unwrap(), reserved);
+    let facts:(i64,i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM app.artifacts WHERE schema_name='qz.mission_turn'),(SELECT count(*) FROM app.model_turn_reservations),(SELECT count(*) FROM pgmq.q_model_turns)")
+        .fetch_one(&pool).await.unwrap();
+    assert_eq!(facts, (1, 1, 1));
+    assert!(matches!(
+        prepare_prompt(&store, &lease, &f, &request, "changed prompt").await,
+        Err(StoreError::Conflict)
+    ));
+    let mut changed = request.clone();
+    changed.command_key = "different-turn".into();
+    assert!(matches!(
+        prepare_prompt(&store, &lease, &f, &changed, text).await,
+        Err(StoreError::Conflict)
+    ));
+    changed.request_artifact_id = Id::new();
+    assert!(matches!(
+        prepare_prompt(&store, &lease, &f, &changed, text).await,
+        Err(StoreError::TurnPending)
+    ));
+    assert!(matches!(
+        store
+            .claim_turn_dispatch(reserved.id, &lease.fence)
+            .await
+            .unwrap(),
+        store::turns::DispatchDecision::Send { .. }
+    ));
+    // A changed profile prevents new paid calls, not exact request recovery.
+    sqlx::query("UPDATE app.codex_profiles SET name='changed after original intent' WHERE id=$1")
+        .bind(f.researcher_profile.profile_id.as_uuid())
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        prepare_prompt(&store, &lease, &f, &request, text)
+            .await
+            .unwrap(),
+        reserved
+    );
+    let reading = f.objects.clone();
+    assert_eq!(store.mission_turn_prompt(lease.run.id,&lease.fence,reserved.id,
+        move |id,size|async move{reading.read(id,size).map_err(|_|StoreError::Integrity)}).await.unwrap(),text);
+    let checkpoint = store
+        .mission_turn_checkpoint(lease.run.id, &lease.fence)
+        .await
+        .unwrap();
+    assert_eq!(checkpoint.accounted_tokens, DbCounter::ZERO);
+    let pending = checkpoint.latest.unwrap();
+    assert!(
+        pending.sent
+            && pending.native_turn_id.is_none()
+            && pending.terminal.is_none()
+            && pending.receipt.is_none()
+    );
+    assert_eq!(pending.reservation, reserved);
+    assert!(matches!(
+        store
+            .claim_turn_dispatch(reserved.id, &lease.fence)
+            .await
+            .unwrap(),
+        store::turns::DispatchDecision::Reconcile {
+            native_turn_id: None
+        }
+    ));
+    sqlx::query("UPDATE app.run_attempts SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1")
+        .bind(lease.fence.attempt_id.as_uuid()).execute(&pool).await.unwrap();
+    assert!(matches!(
+        store
+            .mission_turn_checkpoint(lease.run.id, &lease.fence)
+            .await,
+        Err(StoreError::Domain(domain::DomainError::StaleAttempt))
+    ));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn failed_or_lease_expired_request_publication_leaves_no_reservation_or_queue_half_state(
+    pool: PgPool,
+) {
+    let (store, _, f, _, preparation) = setup(&pool).await;
+    complete(&pool, &store, &f, preparation, false).await;
+    store.advance_initial_cycle(preparation).await.unwrap();
+    let lease = mission_lease(&store).await;
+    store
+        .begin_run_dispatch(lease.run.id, &lease.fence)
+        .await
+        .unwrap();
+    store
+        .bind_mission_session(lease.run.id, &lease.fence, &native_thread())
+        .await
+        .unwrap();
+    let request = prompt_request(&f, &lease);
+    assert!(matches!(
+        store
+            .prepare_mission_turn(
+                lease.run.id,
+                &lease.fence,
+                &request,
+                "controlled request",
+                |_, _| async { panic!("new request must not read a nonexistent object") },
+                |_| async { Err(StoreError::Integrity) }
+            )
+            .await,
+        Err(StoreError::Integrity)
+    ));
+    let publishing = f.objects.clone();
+    sqlx::query("UPDATE app.run_attempts SET lease_expires_at=clock_timestamp()+interval '1 second' WHERE id=$1")
+        .bind(lease.fence.attempt_id.as_uuid()).execute(&pool).await.unwrap();
+    let result = store
+        .prepare_mission_turn(
+            lease.run.id,
+            &lease.fence,
+            &request,
+            "controlled request",
+            |_, _| async { panic!("rolled-back metadata must not look published") },
+            move |object| async move {
+                publishing
+                    .put(object.id, &object.bytes)
+                    .map_err(|_| StoreError::Integrity)?;
+                tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+                Ok(())
+            },
+        )
+        .await;
+    assert!(matches!(
+        result,
+        Err(StoreError::Domain(domain::DomainError::StaleAttempt))
+    ));
+    let facts:(i64,i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM app.artifacts WHERE schema_name='qz.mission_turn'),(SELECT count(*) FROM app.model_turn_reservations),(SELECT count(*) FROM pgmq.q_model_turns)")
+        .fetch_one(&pool).await.unwrap();
+    assert_eq!(facts, (0, 0, 0));
+    let objects = f.objects.clone();
+    assert!(store
+        .discard_unpublished_native_object(
+            lease.run.id,
+            request.request_artifact_id,
+            move |id| async move {
+                objects
+                    .discard_unpublished(id)
+                    .map_err(|_| StoreError::Integrity)
+            }
+        )
+        .await
+        .unwrap());
+}
+
 async fn project_state(store: &Store, actor: &Actor, id: Id, state: ProjectState) {
     let p = store.project(actor, id).await.unwrap();
     store
