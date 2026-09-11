@@ -669,3 +669,23 @@ native Codex25、Store+Server469通过，0失败/0忽略；源码快照未变，
 租约测试与原生同Thread两轮测试均通过；后者现在使用实际保存和重新读取的公开请求，
 不再借准备任务参数代替prompt。模型回答/市场准备/费用仍是标明的fixture；真实
 Worker逐轮驱动、资源约束、定价未知处理和科学结果回送尚未完成，不作为全量或CI证据。
+
+## 2026-09-12：原生单轮驱动与未知结果保留
+
+`MissionConnection::drive_turn`现在直接消费真实请求产物及唯一发送许可，核对原生
+Thread/Turn，按同Session累计token差结算。首次原生终态使用数据库接收时间，重复
+查询保留原时间；无用量时只保存终态，不补零或释放预约。未知发送ACK不按列表顺序
+猜身份，不重发。Run或未结算Turn到期由共享数据库入口先提交取消，再调用原生
+interrupt；interrupt ACK不等于用量结算或整个Run已取消。没有可信费用报价时，
+新费用上限调用在发送前明确拒绝；原生费用不可用模式不伪造金额。
+
+第一轮`.ai-bridge/verify-kCWWbm`为14通过/1失败，费用分支测试错误地使用默认
+UNAVAILABLE fixture。已在Draft阶段显式建立USD/ESTIMATED测试预算后冻结；未修改
+冻结预算或放宽断言。原生两轮测试改为调用生产驱动；新增丢ACK、丢用量、费用拒绝及
+真实原生interrupt故障验收，慢模型响应仅是明确的本地HTTP fixture。
+
+随后全量`.ai-bridge/verify-TczpoZ` exit0：check/fmt/严格Clippy、领域149、managed6、
+native Codex25、Store+Server475，共655通过/0失败/0忽略。源码快照未变，独立PG
+已确认停止。这是628b18fe基础上的本地工作增量证据，不是新GitHub Head的CI结果。
+Worker队列/CLI接入、整个进程树资源限制、自动科学结果回送与Reviewer仍未完成，
+不能把单轮驱动通过当作T07/T42、Issue62完成或允许合并。

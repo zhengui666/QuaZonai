@@ -13,8 +13,37 @@ use store::{
 };
 
 pub async fn setup(pool: &PgPool) -> (Store, Actor, cycle_support::Fixture, Id, Id) {
+    setup_with_cost(pool, false).await
+}
+
+pub async fn setup_with_cost(
+    pool: &PgPool,
+    priced: bool,
+) -> (Store, Actor, cycle_support::Fixture, Id, Id) {
     let (store, actor) = research_support::operator(pool).await;
-    let f = cycle_support::setup(pool, &store, &actor).await;
+    let mut f = cycle_support::setup(pool, &store, &actor).await;
+    if priced {
+        let mut content = f.brief.content.clone();
+        content.budget.max_cost_decimal = Some("10".parse().unwrap());
+        content.budget.cost_currency = Some("USD".into());
+        content.budget.cost_enforcement = contracts::budget::CostEnforcement::Estimated;
+        f.brief = store
+            .update_brief(
+                &actor,
+                "cost-capped-native-fixture",
+                f.brief.id,
+                &contracts::brief::BriefUpdate {
+                    schema_version: SchemaV1,
+                    expected_revision: f.brief.revision,
+                    content,
+                    bindings: f.brief.bindings.clone(),
+                },
+            )
+            .await
+            .unwrap()
+            .resource;
+        f.freeze.expected_revision = f.brief.revision;
+    }
     store
         .freeze_brief(&actor, "freeze", f.brief.id, &f.freeze)
         .await

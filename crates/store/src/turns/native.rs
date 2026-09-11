@@ -78,6 +78,39 @@ async fn request_size(
 }
 
 impl Store {
+    /// Native status only; retain the first DB observation time on exact replay.
+    pub async fn observe_mission_turn_terminal(
+        &self,
+        reservation_id: Id,
+        fence: &WorkerFence,
+        outcome: TurnOutcome,
+        reason: &str,
+    ) -> Result<TurnTerminal, StoreError> {
+        let mut tx = self.pool.begin().await?;
+        let item = load_reservation(&mut tx, reservation_id).await?;
+        let mission = lock_mission(&mut tx, item.run_id, fence).await?;
+        if item.attempt_id != fence.attempt_id || outcome == TurnOutcome::NotSent {
+            return Err(StoreError::Conflict);
+        }
+        let native_turn_id: String = sqlx::query_scalar(
+            "SELECT native_turn_id::text FROM app.model_turn_bindings WHERE reservation_id=$1",
+        )
+        .bind(reservation_id.as_uuid())
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(StoreError::Integrity)?;
+        let prior = load_terminal(&mut tx, reservation_id).await?;
+        let terminal = TurnTerminal {
+            outcome,
+            native_turn_id: Some(native_turn_id),
+            reason_code: reason.into(),
+            observed_at: prior.map_or(mission.now, |prior| prior.observed_at),
+        };
+        record_terminal(&mut tx, reservation_id, &terminal, mission.now).await?;
+        tx.commit().await?;
+        Ok(terminal)
+    }
+
     /// Artifact metadata, reservation and PGMQ notification commit together.
     /// The supplied text is QZ's public request, not a native history export.
     pub async fn prepare_mission_turn<R, Read, P, Published>(

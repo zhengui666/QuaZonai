@@ -212,9 +212,18 @@ async fn expire_sent_run(
     locked: &mut LockedRun,
     attempt: &PgRow,
 ) -> Result<(), StoreError> {
+    let deadline = if locked.run.kind == contracts::runs::RunKind::AgentResearch {
+        let turn: Option<DateTime<Utc>> = sqlx::query_scalar("SELECT min(r.deadline_at)::timestamptz FROM app.model_turn_reservations r WHERE r.run_id=$1 AND NOT EXISTS(SELECT 1 FROM app.model_turn_receipts t WHERE t.reservation_id=r.id)")
+            .bind(locked.run.id.as_uuid()).fetch_one(&mut **tx).await?;
+        turn.map_or(locked.run.deadline_at, |turn| {
+            turn.min(locked.run.deadline_at)
+        })
+    } else {
+        locked.run.deadline_at
+    };
     if attempt.try_get::<String, _>("dispatch_state")? != "NOT_SENT"
         && locked.run.state != RunState::CancelRequested
-        && locked.run.deadline_at <= now(tx).await?
+        && deadline <= now(tx).await?
     {
         let state = runs::request_cancel(locked.run.state)?;
         sqlx::query(

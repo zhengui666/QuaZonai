@@ -31,6 +31,7 @@ struct Seen {
     count: AtomicUsize,
     prior_context: AtomicBool,
     invalid: AtomicBool,
+    slow: AtomicBool,
 }
 
 pub struct Provider {
@@ -78,6 +79,11 @@ impl Provider {
     pub fn saw_previous_context(&self) -> bool {
         self.seen.prior_context.load(Ordering::SeqCst)
     }
+
+    #[allow(dead_code)] // Used only by the Mission driver's real interrupt test.
+    pub fn slow_response(&self) {
+        self.seen.slow.store(true, Ordering::SeqCst);
+    }
 }
 
 async fn respond(
@@ -117,6 +123,9 @@ async fn respond(
             input_text.contains(FIRST_PROMPT) && input_text.contains(FIRST_REPLY),
             Ordering::SeqCst,
         );
+    }
+    if seen.slow.load(Ordering::SeqCst) {
+        tokio::time::sleep(Duration::from_secs(5)).await;
     }
     let id = format!("qz-local-response-{ordinal}");
     let events = [

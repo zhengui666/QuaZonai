@@ -15,7 +15,7 @@ use contracts::{runs::RunState, DbCounter, Id, SchemaV1};
 use integrations::secrets::SecretVault;
 use server::{
     codex_profiles::{CodexDeployment, CodexDeploymentBinding, CodexDeploymentConfig},
-    worker::mission::MissionLauncher,
+    worker::mission::{MissionLauncher, TurnProgress},
     AppState, WebPolicy,
 };
 use sqlx::PgPool;
@@ -23,7 +23,7 @@ use std::{fs, os::unix::fs::DirBuilderExt, sync::Arc};
 use store::{
     authority::Actor,
     lifecycle::{ClaimResult, RunLease, RunMessage},
-    turns::{DispatchDecision, TurnOutcome, TurnRequest, UsageReceipt},
+    turns::{DispatchDecision, Reservation, TurnOutcome, TurnRequest},
     Store,
 };
 use tokio::{net::TcpListener, task::JoinHandle};
@@ -49,7 +49,11 @@ impl Drop for Fixture {
 }
 
 async fn fixture(pool: &PgPool) -> Fixture {
-    let (store, actor, data, _, preparation) = mission_support::setup(pool).await;
+    fixture_with_cost(pool, false).await
+}
+
+async fn fixture_with_cost(pool: &PgPool, priced: bool) -> Fixture {
+    let (store, actor, data, _, preparation) = mission_support::setup_with_cost(pool, priced).await;
     mission_support::complete(pool, &store, &data, preparation, false).await;
     assert!(store.advance_initial_cycle(preparation).await.unwrap());
     let message = store.read_mission_messages(60, 10).await.unwrap().remove(0);
@@ -144,26 +148,16 @@ async fn takeover(f: &Fixture, pool: &PgPool, owner: &str) -> RunLease {
     lease.as_ref().clone()
 }
 
-async fn turn(
+async fn prepare(
     f: &Fixture,
     lease: &RunLease,
-    connection: &mut server::worker::mission::MissionConnection,
     command: &str,
     prompt: &str,
-    baseline: i64,
-) {
-    let client = &mut connection.client;
-    let thread = &connection.session.native.thread_id;
-    let before = f
-        .store
-        .mission_turn_checkpoint(lease.run.id, &lease.fence)
-        .await
-        .unwrap();
-    assert_eq!(before.accounted_tokens.get(), baseline as u64);
+    deadline: chrono::DateTime<chrono::Utc>,
+) -> Reservation {
     let reading = f.data.objects.clone();
     let publishing = f.data.objects.clone();
-    let reserved = f
-        .store
+    f.store
         .prepare_mission_turn(
             lease.run.id,
             &lease.fence,
@@ -178,7 +172,7 @@ async fn turn(
                     },
                 ),
                 request_artifact_id: Id::new(),
-                deadline_at: lease.run.deadline_at,
+                deadline_at: deadline,
             },
             prompt,
             move |id, size| async move {
@@ -193,7 +187,24 @@ async fn turn(
             },
         )
         .await
+        .unwrap()
+}
+
+async fn turn(
+    f: &Fixture,
+    lease: &RunLease,
+    connection: &mut server::worker::mission::MissionConnection,
+    command: &str,
+    prompt: &str,
+    baseline: i64,
+) {
+    let before = f
+        .store
+        .mission_turn_checkpoint(lease.run.id, &lease.fence)
+        .await
         .unwrap();
+    assert_eq!(before.accounted_tokens.get(), baseline as u64);
+    let reserved = prepare(f, lease, command, prompt, lease.run.deadline_at).await;
     let checkpoint = f
         .store
         .mission_turn_checkpoint(lease.run.id, &lease.fence)
@@ -207,58 +218,38 @@ async fn turn(
             && latest.terminal.is_none()
             && latest.receipt.is_none()
     );
-    let reading = f.data.objects.clone();
-    let published = f
-        .store
-        .mission_turn_prompt(
+    let (_alive, shutdown) = tokio::sync::watch::channel(false);
+    let result = connection
+        .drive_turn(
+            &f.store,
+            f.data.objects.clone(),
             lease.run.id,
             &lease.fence,
-            reserved.id,
-            move |id, size| async move {
-                reading
-                    .read(id, size)
-                    .map_err(|_| store::StoreError::Integrity)
-            },
+            &shutdown,
         )
         .await
         .unwrap();
-    assert_eq!(published, prompt);
-    let DispatchDecision::Send { rpc_request_id } = f
-        .store
-        .claim_turn_dispatch(reserved.id, &lease.fence)
-        .await
-        .unwrap()
-    else {
-        panic!("one native send permit required");
+    let TurnProgress::Settled(receipt) = &result else {
+        panic!("native receipt required");
     };
-    let actual = client
-        .start_turn(&rpc_request_id, thread, &published)
-        .await
-        .unwrap();
-    f.store
-        .bind_native_turn(reserved.id, &lease.fence, &actual.id)
-        .await
-        .unwrap();
-    f.store
-        .observe_run_running(lease.run.id, &lease.fence, &lease.external_job_id)
-        .await
-        .unwrap();
-    let cumulative = responses::completed(client, thread, &actual.id).await;
-    assert_eq!(cumulative.total - baseline, 12);
-    f.store
-        .settle_turn(
-            reserved.id,
-            &lease.fence,
-            &UsageReceipt {
-                outcome: TurnOutcome::Succeeded,
-                actual_tokens: DbCounter::new(12).unwrap(),
-                actual_cost: reserved.reserved_cost,
-                currency: reserved.cost_currency,
-                reason_code: "CONTROLLED_NATIVE_TURN".into(),
-            },
-        )
-        .await
-        .unwrap();
+    assert_eq!(receipt.actual_tokens.get(), 12);
+    assert_eq!(receipt.outcome, TurnOutcome::Succeeded);
+    assert!(receipt.actual_cost.is_none() && receipt.currency.is_none());
+    let count = f.provider.request_count();
+    assert_eq!(
+        connection
+            .drive_turn(
+                &f.store,
+                f.data.objects.clone(),
+                lease.run.id,
+                &lease.fence,
+                &shutdown
+            )
+            .await
+            .unwrap(),
+        result
+    );
+    assert_eq!(f.provider.request_count(), count);
     let checkpoint = f
         .store
         .mission_turn_checkpoint(lease.run.id, &lease.fence)
@@ -267,8 +258,240 @@ async fn turn(
     assert_eq!(checkpoint.accounted_tokens.get(), baseline as u64 + 12);
     let latest = checkpoint.latest.unwrap();
     assert!(latest.sent);
-    assert_eq!(latest.native_turn_id, Some(actual.id));
+    assert!(latest.native_turn_id.is_some());
     assert!(latest.terminal.is_some() && latest.receipt.is_some());
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn lost_native_send_ack_is_not_retried_and_expired_turn_persists_cancel(pool: PgPool) {
+    let f = fixture(&pool).await;
+    let mut connection = f
+        .launcher
+        .open(&f.store, f.vault.clone(), f.lease.run.id, &f.lease.fence)
+        .await
+        .unwrap();
+    let deadline = sqlx::query_scalar("SELECT clock_timestamp()+interval '1 second'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let reserved = prepare(&f, &f.lease, "unknown", responses::FIRST_PROMPT, deadline).await;
+    assert!(matches!(
+        f.store
+            .claim_turn_dispatch(reserved.id, &f.lease.fence)
+            .await
+            .unwrap(),
+        DispatchDecision::Send { .. }
+    ));
+    let (_alive, shutdown) = tokio::sync::watch::channel(false);
+    assert_eq!(
+        connection
+            .drive_turn(
+                &f.store,
+                f.data.objects.clone(),
+                f.lease.run.id,
+                &f.lease.fence,
+                &shutdown
+            )
+            .await
+            .unwrap(),
+        TurnProgress::Unresolved
+    );
+    assert_eq!(f.provider.request_count(), 0);
+    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+    assert_eq!(
+        connection
+            .drive_turn(
+                &f.store,
+                f.data.objects.clone(),
+                f.lease.run.id,
+                &f.lease.fence,
+                &shutdown
+            )
+            .await
+            .unwrap(),
+        TurnProgress::Unresolved
+    );
+    let run = f.store.get_run(&f.actor, f.lease.run.id).await.unwrap();
+    assert_eq!(run.state, RunState::CancelRequested);
+    assert!(run.cancellation_requested_at.is_some());
+    let item = f
+        .store
+        .mission_turn_checkpoint(run.id, &f.lease.fence)
+        .await
+        .unwrap();
+    assert_eq!(item.accounted_tokens.get(), 0);
+    let latest = item.latest.unwrap();
+    assert!(latest.sent && latest.native_turn_id.is_none() && latest.receipt.is_none());
+    assert_eq!(f.provider.request_count(), 0);
+    connection.client.close().await.unwrap();
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn native_terminal_without_usage_preserves_first_observation_and_budget(pool: PgPool) {
+    let f = fixture(&pool).await;
+    let mut connection = f
+        .launcher
+        .open(&f.store, f.vault.clone(), f.lease.run.id, &f.lease.fence)
+        .await
+        .unwrap();
+    let reserved = prepare(
+        &f,
+        &f.lease,
+        "lost-usage",
+        responses::FIRST_PROMPT,
+        f.lease.run.deadline_at,
+    )
+    .await;
+    let DispatchDecision::Send { rpc_request_id } = f
+        .store
+        .claim_turn_dispatch(reserved.id, &f.lease.fence)
+        .await
+        .unwrap()
+    else {
+        panic!("send permit required");
+    };
+    let turn = connection
+        .client
+        .start_turn(
+            &rpc_request_id,
+            &connection.session.native.thread_id,
+            responses::FIRST_PROMPT,
+        )
+        .await
+        .unwrap();
+    f.store
+        .bind_native_turn(reserved.id, &f.lease.fence, &turn.id)
+        .await
+        .unwrap();
+    // Consume and deliberately lose the real usage event before the driver sees it.
+    let usage = responses::completed(
+        &mut connection.client,
+        &connection.session.native.thread_id,
+        &turn.id,
+    )
+    .await;
+    assert_eq!(usage.total, 12);
+    let (_alive, shutdown) = tokio::sync::watch::channel(false);
+    let mut first = None;
+    for _ in 0..2 {
+        assert_eq!(
+            connection
+                .drive_turn(
+                    &f.store,
+                    f.data.objects.clone(),
+                    f.lease.run.id,
+                    &f.lease.fence,
+                    &shutdown
+                )
+                .await
+                .unwrap(),
+            TurnProgress::Unresolved
+        );
+        let checkpoint = f
+            .store
+            .mission_turn_checkpoint(f.lease.run.id, &f.lease.fence)
+            .await
+            .unwrap();
+        assert_eq!(checkpoint.accounted_tokens.get(), 0);
+        let latest = checkpoint.latest.unwrap();
+        assert!(latest.receipt.is_none());
+        let terminal = latest.terminal.unwrap();
+        assert_eq!(terminal.outcome, TurnOutcome::Succeeded);
+        assert_eq!(terminal.native_turn_id.as_deref(), Some(turn.id.as_str()));
+        if let Some(first) = &first {
+            assert_eq!(first, &terminal);
+        } else {
+            first = Some(terminal);
+        }
+    }
+    assert_eq!(f.provider.request_count(), 1);
+    connection.client.close().await.unwrap();
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn unpriced_native_driver_refuses_cost_capped_send_without_spending(pool: PgPool) {
+    let f = fixture_with_cost(&pool, true).await;
+    let mut connection = f
+        .launcher
+        .open(&f.store, f.vault.clone(), f.lease.run.id, &f.lease.fence)
+        .await
+        .unwrap();
+    prepare(
+        &f,
+        &f.lease,
+        "unknown-cost",
+        responses::FIRST_PROMPT,
+        f.lease.run.deadline_at,
+    )
+    .await;
+    let (_alive, shutdown) = tokio::sync::watch::channel(false);
+    assert!(matches!(
+        connection
+            .drive_turn(
+                &f.store,
+                f.data.objects.clone(),
+                f.lease.run.id,
+                &f.lease.fence,
+                &shutdown
+            )
+            .await,
+        Err(server::worker::WorkerFailure::Codex("COST_UNAVAILABLE", _))
+    ));
+    assert_eq!(f.provider.request_count(), 0);
+    let latest = f
+        .store
+        .mission_turn_checkpoint(f.lease.run.id, &f.lease.fence)
+        .await
+        .unwrap()
+        .latest
+        .unwrap();
+    assert!(!latest.sent && latest.receipt.is_none() && latest.terminal.is_none());
+    connection.client.close().await.unwrap();
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn native_interrupt_follows_committed_deadline_and_does_not_invent_usage(pool: PgPool) {
+    let f = fixture(&pool).await;
+    let mut connection = f
+        .launcher
+        .open(&f.store, f.vault.clone(), f.lease.run.id, &f.lease.fence)
+        .await
+        .unwrap();
+    f.provider.slow_response();
+    let deadline = sqlx::query_scalar("SELECT clock_timestamp()+interval '2 seconds'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    prepare(&f, &f.lease, "interrupt", responses::FIRST_PROMPT, deadline).await;
+    let (_alive, shutdown) = tokio::sync::watch::channel(false);
+    let result = connection
+        .drive_turn(
+            &f.store,
+            f.data.objects.clone(),
+            f.lease.run.id,
+            &f.lease.fence,
+            &shutdown,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result, TurnProgress::Unresolved);
+    let run = f.store.get_run(&f.actor, f.lease.run.id).await.unwrap();
+    assert_eq!(run.state, RunState::CancelRequested);
+    let intent = run.cancellation_requested_at.unwrap();
+    assert!(intent >= deadline);
+    let checkpoint = f
+        .store
+        .mission_turn_checkpoint(run.id, &f.lease.fence)
+        .await
+        .unwrap();
+    assert_eq!(checkpoint.accounted_tokens.get(), 0);
+    let latest = checkpoint.latest.unwrap();
+    assert!(latest.sent && latest.native_turn_id.is_some() && latest.receipt.is_none());
+    let terminal = latest.terminal.unwrap();
+    assert_eq!(terminal.outcome, TurnOutcome::Cancelled);
+    assert!(terminal.observed_at >= intent);
+    assert_eq!(f.provider.request_count(), 1);
+    connection.client.close().await.unwrap();
 }
 
 #[sqlx::test(migrations = "../../migrations")]
