@@ -3,7 +3,7 @@
 use super::*;
 use contracts::{
     artifacts::ArtifactAccess,
-    research::{DataOrigin, DataPartition},
+    research::{ArtifactInputRole, DataOrigin, DataPartition},
     runtime_jobs::{
         JobSpecV1, ResultManifestV1, RuntimeFailureClass, RuntimeInputV1, RuntimeJobLimitsV1,
         RuntimeJobState, RuntimeJobStatusV1, RuntimeOutputV1, RuntimeResultState,
@@ -12,6 +12,7 @@ use contracts::{
 use std::collections::{BTreeMap, BTreeSet};
 
 mod probe;
+mod queue;
 pub use probe::RunProbeTicket;
 
 /// Constructed only by an authorized domain service. Not a public request DTO.
@@ -45,6 +46,12 @@ pub struct NativeObjectPublication {
 pub enum NativePayloads {
     Verified(Vec<(RuntimeOutputV1, Vec<u8>)>),
     InvalidOutput,
+}
+
+#[derive(Clone, Copy)]
+pub enum NativeManifestFailure {
+    Contract,
+    ResponseLimit,
 }
 
 pub(crate) async fn bind_task(
@@ -367,6 +374,59 @@ impl Store {
         Ok(selected)
     }
 
+    /// A verified terminal status proves remote termination even when its immutable
+    /// manifest is unusable. Do not invent a valid manifest, publish bad bytes or
+    /// indefinitely retry a contract error as if it were a connection failure.
+    pub async fn reject_native_manifest(
+        &self,
+        run: Id,
+        owner: &WorkerFence,
+        status: &RuntimeJobStatusV1,
+        failure: NativeManifestFailure,
+    ) -> Result<CommandResult<RunSnapshotV1>, StoreError> {
+        let mut tx = self.pool.begin().await?;
+        let locked = lock_run(&mut tx, run).await?;
+        let attempt = fence(&mut tx, &locked.run, owner).await?;
+        let observed_at = now(&mut tx).await?;
+        domain::runtime_jobs::status(status, run, locked.run.current_attempt_no, observed_at)?;
+        if !status.state.is_terminal()
+            || !status.has_result
+            || status.submitted_at < attempt.try_get::<DateTime<Utc>, _>("created_at")?
+            || attempt.try_get::<String, _>("dispatch_state")? == "NOT_SENT"
+        {
+            return Err(StoreError::Invalid("native_terminal_not_confirmed"));
+        }
+        let defined: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM app.run_native_attempts WHERE attempt_id=$1 AND run_id=$2)",
+        )
+        .bind(owner.attempt_id.as_uuid())
+        .bind(run.as_uuid())
+        .fetch_one(&mut *tx)
+        .await?;
+        if !defined {
+            return Err(StoreError::Invalid("native_spec_not_frozen"));
+        }
+        let observation = TerminalObservation {
+            schema_version: SchemaV1,
+            external_job_id: status.external_job_id.clone(),
+            outcome: NativeOutcome::Failed,
+            manifest_artifact_id: None,
+            failure_class: Some(FailureClass::InvalidInput),
+            failure_code: Some(
+                match failure {
+                    NativeManifestFailure::Contract => "NATIVE_MANIFEST_INVALID",
+                    NativeManifestFailure::ResponseLimit => "NATIVE_MANIFEST_LIMIT",
+                }
+                .to_owned(),
+            ),
+            observed_at,
+        };
+        let (tx, result) =
+            Self::accept_run_terminal_in_transaction(tx, run, owner, &observation).await?;
+        tx.commit().await?;
+        Ok(result)
+    }
+
     /// Raw artifacts, native identity mapping and the unique terminal receipt share
     /// one PostgreSQL transaction. Replays publish no additional filesystem object.
     pub async fn publish_native_result<R, Read, F, Fut>(
@@ -449,7 +509,7 @@ impl Store {
             attempt.try_get("created_at")?,
             now(&mut tx).await?,
         )?;
-        let invalid = matches!(payloads, NativePayloads::InvalidOutput);
+        let mut invalid = matches!(payloads, NativePayloads::InvalidOutput);
         let outputs = match payloads {
             NativePayloads::Verified(outputs) => outputs,
             NativePayloads::InvalidOutput => Vec::new(),
@@ -460,23 +520,19 @@ impl Store {
         if !invalid && outputs.len() != manifest.artifacts.len() {
             return Err(StoreError::Invalid("native_output_count"));
         }
-        let discard_outputs = locked.run.state == RunState::CancelRequested
-            && manifest.state == RuntimeResultState::Succeeded;
         let by_remote: BTreeMap<_, _> = manifest
             .artifacts
             .iter()
             .map(|item| (item.storage_ref, item))
             .collect();
         let mut seen = BTreeSet::new();
-        let mut objects = Vec::with_capacity(outputs.len() + 1);
-        let mut metadata = Vec::with_capacity(outputs.len());
         let mut total = 0u64;
-        for (output, bytes) in outputs {
+        for (output, bytes) in &outputs {
             let expected = by_remote
                 .get(&output.storage_ref)
                 .ok_or(StoreError::Invalid("native_output_identity"))?;
             if !seen.insert(output.storage_ref)
-                || db::json(&output)? != db::json(*expected)?
+                || db::json(output)? != db::json(*expected)?
                 || bytes.len() as u64 != output.byte_count.get()
             {
                 return Err(StoreError::Invalid("native_output_binding"));
@@ -487,15 +543,59 @@ impl Store {
             if total > spec.limits.output_bytes.get() {
                 return Err(StoreError::Invalid("native_output_bytes"));
             }
-            domain::execution::output_shape(&output, &bytes)?;
-            if !discard_outputs {
+        }
+        if !invalid && total != manifest.resource_usage.output_bytes.get() {
+            return Err(StoreError::Invalid("native_output_sum"));
+        }
+        if !invalid && manifest.state == RuntimeResultState::Succeeded {
+            let size = spec
+                .inputs
+                .iter()
+                .find_map(|input| match input {
+                    RuntimeInputV1::Artifact {
+                        artifact_id,
+                        byte_count,
+                        role,
+                        ..
+                    } if *artifact_id == spec.parameters_artifact_id
+                        && *role == ArtifactInputRole::Parameters =>
+                    {
+                        Some(*byte_count)
+                    }
+                    _ => None,
+                })
+                .ok_or(StoreError::Integrity)?;
+            if !(1..=8 * 1024 * 1024).contains(&size.get()) {
+                return Err(StoreError::Integrity);
+            }
+            let bytes = read(spec.parameters_artifact_id, size).await?;
+            if bytes.len() as u64 != size.get() {
+                return Err(StoreError::Integrity);
+            }
+            let parameters: contracts::execution::NativeTaskParametersV1 =
+                serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?;
+            // A damaged local frozen input is a storage problem, not an excuse to
+            // declare that a correct remote result failed scientific validation.
+            domain::execution::task(&spec, &parameters).map_err(|_| StoreError::Integrity)?;
+            invalid = domain::execution::output_bindings(
+                &parameters,
+                manifest.started_at.ok_or(StoreError::Integrity)?,
+                manifest.finished_at,
+                &outputs,
+            )
+            .is_err();
+        }
+        let discard_outputs = invalid
+            || (locked.run.state == RunState::CancelRequested
+                && manifest.state == RuntimeResultState::Succeeded);
+        let mut objects = Vec::with_capacity(outputs.len() + 1);
+        let mut metadata = Vec::with_capacity(outputs.len());
+        if !discard_outputs {
+            for (output, bytes) in outputs {
                 let id = Id::new();
                 metadata.push((id, output));
                 objects.push(NativeObjectPublication { id, bytes });
             }
-        }
-        if !invalid && total != manifest.resource_usage.output_bytes.get() {
-            return Err(StoreError::Invalid("native_output_sum"));
         }
         let manifest_id = Id::new();
         let manifest_size = raw_manifest.len() as i64;

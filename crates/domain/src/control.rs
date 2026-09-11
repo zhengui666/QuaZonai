@@ -47,6 +47,9 @@ pub fn scopes(request: &CredentialIssue) -> Result<(), DomainError> {
 }
 pub fn command(request: &OperatorCommand) -> Result<(), DomainError> {
     match request {
+        OperatorCommand::CodexProfileCreate(r) => crate::codex::settings::profile_create(r),
+        OperatorCommand::CodexProfileUpdate(r) => crate::codex::settings::profile_update(r),
+        OperatorCommand::CodexProbe(_) => Ok(()),
         OperatorCommand::BriefFreeze(_) => Ok(()),
         OperatorCommand::DataSourceCreate(r) => crate::data::source_create(r),
         OperatorCommand::DataSourceUpdate(r) => crate::data::source_update(r),

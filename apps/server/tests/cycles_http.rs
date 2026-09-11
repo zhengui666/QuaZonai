@@ -57,7 +57,10 @@ async fn setup(pool: &PgPool) -> (Fixture, String, cycle_support::Fixture) {
     let actor = Actor::Browser {
         login_id: login_id.try_into().unwrap(),
     };
-    let data = cycle_support::setup(pool, &f.store, &actor).await;
+    let objects = std::sync::Arc::new(
+        integrations::artifacts::ArtifactStore::open(&f._state.path().join("artifacts")).unwrap(),
+    );
+    let data = cycle_support::setup_with_objects(pool, &f.store, &actor, objects).await;
     (f, cookie, data)
 }
 

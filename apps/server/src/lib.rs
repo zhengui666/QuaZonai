@@ -6,6 +6,8 @@ pub mod artifacts;
 pub mod auth;
 pub mod brief;
 pub mod client;
+pub mod codex_native;
+pub mod codex_profiles;
 pub mod control;
 pub mod cycles;
 pub mod data;
@@ -108,6 +110,7 @@ pub struct AppState {
     pub artifact_slots: Arc<Semaphore>,
     pub integration_slots: Arc<Semaphore>,
     pub runtime_targets: Arc<runtime_transport::RuntimeTargets>,
+    pub codex_deployment: Arc<codex_profiles::CodexDeployment>,
 }
 impl AppState {
     pub fn new(store: Store, vault: SecretVault, policy: WebPolicy) -> Self {
@@ -122,7 +125,12 @@ impl AppState {
             artifact_slots: Arc::new(Semaphore::new(4)),
             integration_slots: Arc::new(Semaphore::new(4)),
             runtime_targets: Arc::new(runtime_transport::RuntimeTargets::default()),
+            codex_deployment: Arc::new(codex_profiles::CodexDeployment::default()),
         }
+    }
+    pub fn with_codex_deployment(mut self, deployment: codex_profiles::CodexDeployment) -> Self {
+        self.codex_deployment = Arc::new(deployment);
+        self
     }
     pub fn with_artifact_store(mut self, store: integrations::artifacts::ArtifactStore) -> Self {
         self.artifact_store = Some(Arc::new(store));
@@ -200,6 +208,12 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
                 .layer(DefaultBodyLimit::max(64 * 1024)),
         )
         .route("/api/v2/experiments/{id}", get(experiments::get))
+        .route("/api/v2/settings/codex", get(codex_profiles::profiles).post(codex_profiles::create).patch(codex_profiles::update_selected))
+        .route("/api/v2/settings/codex/{id}", get(codex_profiles::profile).patch(codex_profiles::update))
+        .route("/api/v2/codex/homes", get(codex_profiles::homes))
+        .route("/api/v2/codex/probe", post(codex_profiles::probe))
+        .route("/api/v2/codex/models", get(codex_profiles::models))
+        .route("/api/v2/codex/account", get(codex_profiles::account))
         .route(
             "/api/v2/settings/credentials",
             post(settings::register_secret).layer(DefaultBodyLimit::max(512 * 1024)),
@@ -402,6 +416,8 @@ experiments::propose,experiments::list,experiments::get,
 settings::register_secret,settings::runtimes,settings::runtime,settings::create_runtime,settings::update_runtime,
 settings::downstreams,settings::downstream,settings::create_downstream,settings::update_downstream,
 runtime::probe,runtime::readiness,
+codex_profiles::profiles,codex_profiles::profile,codex_profiles::homes,codex_profiles::create,
+codex_profiles::update,codex_profiles::update_selected,codex_profiles::probe,codex_profiles::models,codex_profiles::account,
 data::sources,data::source,data::create_source,data::update_source,
 data::grants,data::create_grant,data::revoke_grant,data::revocations,
 data::revisions,data::revision,data::register,data::universes,data::universe,data::validate,

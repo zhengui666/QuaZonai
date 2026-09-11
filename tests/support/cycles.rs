@@ -2,6 +2,8 @@
 //! acceptance. Formal freeze/start use the real Store transaction APIs below.
 #![allow(dead_code)]
 use super::{research_support, runtime_support};
+#[path = "cycle_data.rs"]
+mod cycle_data;
 use chrono::{DateTime, Utc};
 use contracts::{
     brief::*,
@@ -12,16 +14,33 @@ use contracts::{
     runtime::{RuntimeProbeOutcomeV1, RuntimeProbeRequestV1},
     DbCounter, Id, SchemaV1,
 };
+use integrations::artifacts::ArtifactStore;
 use sqlx::PgPool;
+use std::sync::Arc;
 use store::{authority::Actor, runtime::ProbePreparation, Store};
 
 pub struct Fixture {
     pub data: research_support::ResearchFixture,
     pub brief: BriefView,
     pub freeze: BriefFreezeV1,
+    pub objects: Arc<ArtifactStore>,
+    _directory: Option<tempfile::TempDir>,
 }
 
 pub async fn setup(pool: &PgPool, store: &Store, actor: &Actor) -> Fixture {
+    let directory = tempfile::tempdir().unwrap();
+    let objects = Arc::new(ArtifactStore::open(&directory.path().join("objects")).unwrap());
+    let mut fixture = setup_with_objects(pool, store, actor, objects).await;
+    fixture._directory = Some(directory);
+    fixture
+}
+
+pub async fn setup_with_objects(
+    pool: &PgPool,
+    store: &Store,
+    actor: &Actor,
+    objects: Arc<ArtifactStore>,
+) -> Fixture {
     let mut data = research_support::setup(pool, store, actor).await;
     let capabilities = runtime_support::capabilities(Utc::now());
     let image = &capabilities.image_refs[0].image_ref;
@@ -30,20 +49,10 @@ pub async fn setup(pool: &PgPool, store: &Store, actor: &Actor) -> Fixture {
         .bind(assumptions.as_uuid()).bind(image).bind(data.assumptions.as_uuid())
         .execute(pool).await.unwrap();
     data.assumptions = assumptions;
-    for (field, start, end) in [
-        (&mut data.discovery, "2010-01-01", "2015-01-01"),
-        (&mut data.validation, "2015-01-01", "2018-01-01"),
-        (&mut data.sealed, "2018-01-01", "2020-01-01"),
-    ] {
-        let original = *field;
-        *field = Id::new();
-        sqlx::query("INSERT INTO app.dataset_revisions(id,source_id,data_use_grant_id,native_snapshot_ref,native_storage_version,universe_version_id,schema_version,data_kind,partition_role,event_start,event_end,available_through,row_count,timezone,quality_artifact_id,pit_status,revision_policy,origin) SELECT $1,source_id,data_use_grant_id,$2,native_storage_version,universe_version_id,schema_version,data_kind,partition_role,$3::timestamptz,$4::timestamptz,available_through,row_count,timezone,quality_artifact_id,pit_status,revision_policy,origin FROM app.dataset_revisions WHERE id=$5")
-            .bind(field.as_uuid()).bind(format!("cycle-fixture/{field}"))
-            .bind(start).bind(end).bind(original.as_uuid()).execute(pool).await.unwrap();
-    }
     let revision: i64 = sqlx::query_scalar("UPDATE app.runtime_integrations SET allowed_capabilities=ARRAY['DATA_VALIDATE','ALPHA_EVALUATE','AGENT_RESEARCH'] WHERE id=$1 RETURNING revision")
         .bind(data.runtime.as_uuid()).fetch_one(pool).await.unwrap();
     let revision = revision.to_string().try_into().unwrap();
+    cycle_data::register(pool, store, actor, &mut data, revision, objects.clone()).await;
     let ProbePreparation::Pending(ticket) = store
         .prepare_runtime_probe(
             actor,
@@ -69,13 +78,25 @@ pub async fn setup(pool: &PgPool, store: &Store, actor: &Actor) -> Fixture {
             job_kind: contracts::runs::RunKind::AgentResearch,
             image_ref: observed.image_refs[0].image_ref.clone(),
         });
+    observed
+        .artifact_schemas
+        .push(contracts::runtime::RuntimeArtifactSchemaV1 {
+            name: "qz.data_quality".into(),
+            version: "1".into(),
+        });
     let outcome = RuntimeProbeOutcomeV1::Available {
         capabilities: Box::new(observed),
     };
-    // This trusted adapter outcome is explicitly synthetic test setup. The
-    // independent runtime_http test exercises actual TLS and ArtifactStore bytes.
+    // Controlled native observation, persisted through the actual immutable
+    // ArtifactStore. The separate transport suite proves actual TCP/TLS behavior.
+    let publishing = objects.clone();
     store
-        .complete_runtime_probe(*ticket, outcome, |_, _| async { Ok(()) })
+        .complete_runtime_probe(*ticket, outcome, move |id, bytes| async move {
+            tokio::task::spawn_blocking(move || publishing.put(id, &bytes))
+                .await
+                .map_err(|_| store::StoreError::Integrity)?
+                .map_err(|_| store::StoreError::Integrity)
+        })
         .await
         .unwrap();
     let cutoff = DateTime::parse_from_rfc3339("2020-01-03T00:00:00Z")
@@ -159,6 +180,43 @@ pub async fn setup(pool: &PgPool, store: &Store, actor: &Actor) -> Fixture {
         data,
         brief,
         freeze,
+        objects,
+        _directory: None,
+    }
+}
+
+impl Fixture {
+    pub async fn start(
+        &self,
+        store: &Store,
+        actor: &Actor,
+        key: &str,
+        request: &CycleStartIntent,
+    ) -> Result<contracts::control::CommandResult<CycleStartedV1>, store::StoreError> {
+        let reading = self.objects.clone();
+        let publishing = self.objects.clone();
+        store
+            .start_cycle(
+                actor,
+                key,
+                request,
+                move |id, size| {
+                    let objects = reading.clone();
+                    async move {
+                        tokio::task::spawn_blocking(move || objects.read(id, size))
+                            .await
+                            .map_err(|_| store::StoreError::Integrity)?
+                            .map_err(|_| store::StoreError::Integrity)
+                    }
+                },
+                move |object| async move {
+                    tokio::task::spawn_blocking(move || publishing.put(object.id, &object.bytes))
+                        .await
+                        .map_err(|_| store::StoreError::Integrity)?
+                        .map_err(|_| store::StoreError::Integrity)
+                },
+            )
+            .await
     }
 }
 

@@ -125,8 +125,8 @@ async fn cycle_run_event_admission_queue_and_receipt_are_created_once(pool: PgPo
         .unwrap();
     let request = cycle_support::start_request(&store, &actor, &f).await;
     let (a, b) = tokio::join!(
-        store.start_cycle(&actor, "start", &request),
-        store.start_cycle(&actor, "start", &request)
+        f.start(&store, &actor, "start", &request),
+        f.start(&store, &actor, "start", &request)
     );
     let (a, b) = (a.unwrap(), b.unwrap());
     assert_ne!(a.replayed, b.replayed);
@@ -164,6 +164,161 @@ async fn cycle_run_event_admission_queue_and_receipt_are_created_once(pool: PgPo
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn initial_cycle_run_has_one_native_definition_with_exact_discovery_parameters(pool: PgPool) {
+    use contracts::{
+        execution::NativeTaskParametersV1,
+        research::{ArtifactInputRole, DataPartition},
+        runtime_jobs::RuntimeInputV1,
+    };
+    use store::lifecycle::ClaimResult;
+    let (store, actor) = research_support::operator(&pool).await;
+    let f = cycle_support::setup(&pool, &store, &actor).await;
+    store
+        .freeze_brief(&actor, "freeze-native", f.brief.id, &f.freeze)
+        .await
+        .unwrap();
+    let request = cycle_support::start_request(&store, &actor, &f).await;
+    let started = f
+        .start(&store, &actor, "native-start", &request)
+        .await
+        .unwrap();
+    let messages = store.read_native_run_messages(30, 100).await.unwrap();
+    assert_eq!(
+        messages.len(),
+        1,
+        "Cycle preparation must be selectable by the native driver"
+    );
+    assert_eq!(messages[0].run_id, started.resource.run.id);
+    let Some(ClaimResult::Leased(lease)) = store
+        .claim_native_run(&messages[0], "cycle-native-owner", 30)
+        .await
+        .unwrap()
+    else {
+        panic!("a genuine native Cycle preparation lease is required");
+    };
+    let job = store
+        .native_job(started.resource.run.id, &lease.fence)
+        .await
+        .unwrap();
+    assert_eq!(job.run.cycle_id, Some(started.resource.cycle.id));
+    assert_eq!(
+        job.spec.input_set_id,
+        f.freeze.execution_context.discovery_input_set_id
+    );
+    let size = job
+        .spec
+        .inputs
+        .iter()
+        .find_map(|item| match item {
+            RuntimeInputV1::Artifact {
+                artifact_id,
+                byte_count,
+                role: ArtifactInputRole::Parameters,
+                ..
+            } if *artifact_id == job.spec.parameters_artifact_id => Some(*byte_count),
+            _ => None,
+        })
+        .unwrap();
+    let bytes = f
+        .objects
+        .read(job.spec.parameters_artifact_id, size)
+        .unwrap();
+    let parameters: NativeTaskParametersV1 = serde_json::from_slice(&bytes).unwrap();
+    domain::execution::task(&job.spec, &parameters).unwrap();
+    let NativeTaskParametersV1::ValidateData { selections, .. } = parameters else {
+        panic!("Cycle startup must use fixed validation parameters");
+    };
+    assert_eq!(selections.len(), 1);
+    assert_eq!(selections[0].dataset_revision_id, f.data.discovery);
+    assert_eq!(
+        job.spec.inputs.len(),
+        2,
+        "unrelated InputSet artifacts must not enter the job"
+    );
+    assert!(
+        matches!(&job.spec.inputs[0], RuntimeInputV1::Dataset { revision_id, role:DataPartition::Discovery, .. } if *revision_id == f.data.discovery)
+    );
+    assert!(job.spec.inputs.iter().all(|item| !matches!(
+        item,
+        RuntimeInputV1::Dataset {
+            role: DataPartition::Sealed,
+            ..
+        }
+    )));
+    let facts: (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM app.run_native_tasks),(SELECT count(*) FROM app.run_native_attempts),(SELECT count(*) FROM app.qualifications)",
+    ).fetch_one(&pool).await.unwrap();
+    assert_eq!(facts, (1, 1, 0));
+    // An exact completed command remains a read even if storage is temporarily
+    // unavailable; it never allocates a replacement Run, object or retry key.
+    let replay = store
+        .start_cycle(
+            &actor,
+            "native-start",
+            &request,
+            |_, _| async { panic!("exact command replay must not read native metadata") },
+            |_| async { panic!("exact command replay must not publish a second parameter object") },
+        )
+        .await
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(
+        serde_json::to_value(replay.resource).unwrap(),
+        serde_json::to_value(started.resource).unwrap()
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn native_cycle_parameter_io_failure_cannot_leave_budget_run_or_queue_half_state(
+    pool: PgPool,
+) {
+    let (store, actor) = research_support::operator(&pool).await;
+    let f = cycle_support::setup(&pool, &store, &actor).await;
+    store
+        .freeze_brief(&actor, "freeze-io", f.brief.id, &f.freeze)
+        .await
+        .unwrap();
+    let request = cycle_support::start_request(&store, &actor, &f).await;
+    let missing = store
+        .start_cycle(
+            &actor,
+            "native-io",
+            &request,
+            |_, _| async { Err(StoreError::Integrity) },
+            |_| async { panic!("missing metadata must not reach publication") },
+        )
+        .await;
+    assert!(matches!(missing, Err(StoreError::Integrity)));
+    assert_eq!(counts(&pool).await, (0, 0, 0, 0, 0, 0));
+    let reader = f.objects.clone();
+    let write_failed = store
+        .start_cycle(
+            &actor,
+            "native-io",
+            &request,
+            move |id, size| {
+                let objects = reader.clone();
+                async move { objects.read(id, size).map_err(|_| StoreError::Integrity) }
+            },
+            |_| async { Err(StoreError::Integrity) },
+        )
+        .await;
+    assert!(matches!(write_failed, Err(StoreError::Integrity)));
+    assert_eq!(counts(&pool).await, (0, 0, 0, 0, 0, 0));
+    let native: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM app.run_native_tasks),(SELECT count(*) FROM app.artifacts WHERE schema_name='qz.native_task')",
+    ).fetch_one(&pool).await.unwrap();
+    assert_eq!(native, (0, 0));
+    assert!(
+        !f.start(&store, &actor, "native-io", &request)
+            .await
+            .unwrap()
+            .replayed
+    );
+    assert_eq!(counts(&pool).await, (1, 1, 1, 1, 1, 1));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn failure_after_queue_enqueue_rolls_back_the_entire_official_start_command(pool: PgPool) {
     let (store, actor) = research_support::operator(&pool).await;
     let f = cycle_support::setup(&pool, &store, &actor).await;
@@ -177,7 +332,7 @@ async fn failure_after_queue_enqueue_rolls_back_the_entire_official_start_comman
     sqlx::query("CREATE TRIGGER fail_startup_fixture BEFORE INSERT ON app.cycle_startups FOR EACH ROW EXECUTE FUNCTION app.fail_startup_fixture()")
         .execute(&pool).await.unwrap();
     assert!(matches!(
-        store.start_cycle(&actor, "atomic", &request).await,
+        f.start(&store, &actor, "atomic", &request).await,
         Err(StoreError::Database(_))
     ));
     assert_eq!(counts(&pool).await, (0, 0, 0, 0, 0, 0));
@@ -186,8 +341,7 @@ async fn failure_after_queue_enqueue_rolls_back_the_entire_official_start_comman
         .await
         .unwrap();
     assert!(
-        !store
-            .start_cycle(&actor, "atomic", &request)
+        !f.start(&store, &actor, "atomic", &request)
             .await
             .unwrap()
             .replayed
@@ -206,10 +360,7 @@ async fn frozen_inputs_do_not_retain_permission_after_revocation(pool: PgPool) {
     let request = cycle_support::start_request(&store, &actor, &f).await;
     sqlx::query("INSERT INTO app.data_use_revocations(grant_id,effective_at,reason_code,reason) VALUES($1,clock_timestamp(),'TEST_REVOKED','test the current license authority')")
         .bind(f.data.grant.as_uuid()).execute(&pool).await.unwrap();
-    assert!(store
-        .start_cycle(&actor, "revoked", &request)
-        .await
-        .is_err());
+    assert!(f.start(&store, &actor, "revoked", &request).await.is_err());
     assert_eq!(counts(&pool).await, (0, 0, 0, 0, 0, 0));
     assert_eq!(
         store.brief(&actor, f.brief.id).await.unwrap().state,
@@ -227,13 +378,12 @@ async fn daily_cycle_quota_and_paused_project_are_checked_in_the_start_transacti
         .unwrap();
     let mut request = cycle_support::start_request(&store, &actor, &f).await;
     for number in 0..f.brief.content.budget.max_cycles_per_day {
-        store
-            .start_cycle(&actor, &format!("daily-{number}"), &request)
+        f.start(&store, &actor, &format!("daily-{number}"), &request)
             .await
             .unwrap();
     }
     assert!(matches!(
-        store.start_cycle(&actor, "quota", &request).await,
+        f.start(&store, &actor, "quota", &request).await,
         Err(StoreError::Domain(domain::DomainError::BudgetExhausted(
             "cycles_per_day"
         )))
@@ -246,7 +396,7 @@ async fn daily_cycle_quota_and_paused_project_are_checked_in_the_start_transacti
             .unwrap();
     request.request.expected_revision = revision.to_string().try_into().unwrap();
     assert!(matches!(
-        store.start_cycle(&actor, "paused", &request).await,
+        f.start(&store, &actor, "paused", &request).await,
         Err(StoreError::Domain(domain::DomainError::AdmissionClosed))
     ));
 }

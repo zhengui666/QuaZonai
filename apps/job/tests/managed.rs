@@ -119,6 +119,34 @@ fn execute(f: &Fixture) -> bool {
 fn result<T: serde::de::DeserializeOwned>(f: &Fixture, schema: &str) -> T {
     let index: NativeJobOutputIndexV1 =
         serde_json::from_slice(&fs::read(f.output.join("index.json")).unwrap()).unwrap();
+    let parameters: NativeTaskParametersV1 = serde_json::from_slice(
+        &fs::read(
+            f.input
+                .join("objects")
+                .join(f.spec.parameters_artifact_id.to_string()),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let outputs = index
+        .artifacts
+        .iter()
+        .map(|item| {
+            (
+                item.clone(),
+                fs::read(f.output.join(item.storage_ref.to_string())).unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    // This validator is also used at the independent Store adoption boundary.
+    // Exercise it against genuine compiler/engine output, not JSON-shaped mocks.
+    domain::execution::output_bindings(
+        &parameters,
+        f.spec.deadline_at - chrono::Duration::seconds(60),
+        chrono::Utc::now(),
+        &outputs,
+    )
+    .unwrap();
     let descriptor = index
         .artifacts
         .iter()

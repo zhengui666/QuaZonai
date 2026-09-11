@@ -211,6 +211,9 @@ pub struct CredentialCreated {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum OperatorOperation {
+    CodexProfileCreate,
+    CodexProfileUpdate,
+    CodexProbe,
     DataSourceCreate,
     DataSourceUpdate,
     DataGrantCreate,
@@ -239,6 +242,9 @@ pub enum OperatorOperation {
 impl OperatorOperation {
     pub fn code(self) -> &'static str {
         match self {
+            Self::CodexProfileCreate => "CODEX_PROFILE_CREATE",
+            Self::CodexProfileUpdate => "CODEX_PROFILE_UPDATE",
+            Self::CodexProbe => "CODEX_PROBE",
             Self::BriefFreeze => "BRIEF_FREEZE",
             Self::DataSourceCreate => "DATA_SOURCE_CREATE",
             Self::DataSourceUpdate => "DATA_SOURCE_UPDATE",
@@ -269,6 +275,7 @@ impl OperatorOperation {
         matches!(
             self,
             Self::IntegrationSecretRegister
+                | Self::CodexProfileCreate
                 | Self::DataSourceCreate
                 | Self::DataGrantCreate
                 | Self::CycleStart
@@ -291,6 +298,9 @@ impl OperatorOperation {
     deny_unknown_fields
 )]
 pub enum OperatorCommand {
+    CodexProfileCreate(crate::codex::CodexProfileCreateV1),
+    CodexProfileUpdate(crate::codex::CodexProfileUpdateV1),
+    CodexProbe(crate::codex::CodexProbeRequestV1),
     BriefFreeze(crate::cycles::BriefFreezeV1),
     DataSourceCreate(crate::data::DataSourceCreate),
     DataSourceUpdate(crate::data::DataSourceUpdate),
@@ -319,6 +329,9 @@ pub enum OperatorCommand {
 impl OperatorCommand {
     pub fn operation(&self) -> OperatorOperation {
         match self {
+            Self::CodexProfileCreate(_) => OperatorOperation::CodexProfileCreate,
+            Self::CodexProfileUpdate(_) => OperatorOperation::CodexProfileUpdate,
+            Self::CodexProbe(_) => OperatorOperation::CodexProbe,
             Self::BriefFreeze(_) => OperatorOperation::BriefFreeze,
             Self::DataSourceCreate(_) => OperatorOperation::DataSourceCreate,
             Self::DataSourceUpdate(_) => OperatorOperation::DataSourceUpdate,
@@ -347,6 +360,9 @@ impl OperatorCommand {
     }
     pub fn normalized_request(&self) -> Result<serde_json::Value, serde_json::Error> {
         match self {
+            Self::CodexProfileCreate(v) => serde_json::to_value(v),
+            Self::CodexProfileUpdate(v) => serde_json::to_value(v),
+            Self::CodexProbe(v) => serde_json::to_value(v),
             Self::BriefFreeze(v) => serde_json::to_value(v),
             Self::DataSourceCreate(v) => serde_json::to_value(v),
             Self::DataSourceUpdate(v) => serde_json::to_value(v),

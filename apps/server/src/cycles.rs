@@ -61,15 +61,61 @@ pub async fn start(
         project_id: path(id)?,
         request: json(body)?,
     };
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(
-            state
-                .store
-                .start_cycle(&actor, idempotency_key(&headers)?, &intent)
-                .await?,
-        ),
-    ))
+    let key = idempotency_key(&headers)?.to_owned();
+    let objects = state
+        .artifact_store
+        .clone()
+        .ok_or(store::StoreError::Invalid("artifact_store_unavailable"))?;
+    let store = state.store.clone();
+    let result = crate::settings::command(&state, async move {
+        let reading = objects.clone();
+        let publishing = objects.clone();
+        let mut allocated = None;
+        let result = store
+            .start_cycle(
+                &actor,
+                &key,
+                &intent,
+                move |id, size| {
+                    let objects = reading.clone();
+                    async move {
+                        tokio::task::spawn_blocking(move || objects.read(id, size))
+                            .await
+                            .map_err(|_| store::StoreError::Integrity)?
+                            .map_err(|_| store::StoreError::Integrity)
+                    }
+                },
+                |object| {
+                    allocated = Some(object.id);
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            publishing.put(object.id, &object.bytes)
+                        })
+                        .await
+                        .map_err(|_| store::StoreError::Integrity)?
+                        .map_err(|_| store::StoreError::Integrity)
+                    }
+                },
+            )
+            .await;
+        if let Some(id) = allocated.filter(|_| result.is_err()) {
+            if store
+                .discard_unpublished_operator_artifact(id, move |id| async move {
+                    tokio::task::spawn_blocking(move || objects.discard_unpublished(id))
+                        .await
+                        .map_err(|_| store::StoreError::Integrity)?
+                        .map_err(|_| store::StoreError::Integrity)
+                })
+                .await
+                .is_err()
+            {
+                tracing::warn!(artifact_id=%id, "cycle parameter cleanup deferred");
+            }
+        }
+        result
+    })
+    .await?;
+    Ok((StatusCode::ACCEPTED, Json(result)))
 }
 
 #[utoipa::path(get,path="/api/v2/projects/{id}/cycles",operation_id="listProjectResearchCycles",tag="Research startup",params(("id"=Id,Path),("cursor"=Option<Id>,Query),("limit"=Option<u16>,Query,minimum=1,maximum=100)),responses((status=200,body=Page<CycleViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]

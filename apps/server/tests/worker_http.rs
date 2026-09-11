@@ -251,6 +251,133 @@ async fn invalid_native_payload_becomes_a_failed_run_without_publishing_bad_scie
     assert_eq!(harness.counts().submits, 1);
 }
 
+async fn assert_native_failure(pool: PgPool, behavior: Behavior, code: &str, manifest_count: i64) {
+    let harness = native::setup(&pool, behavior).await;
+    let f = &harness.fixture;
+    let run = tasks::start(f, "strict-native-output", &f.request)
+        .await
+        .unwrap()
+        .resource;
+    let driver = Driver::start(harness.worker.clone());
+    assert_eq!(terminal(&pool, run.id).await, "FAILED");
+    driver.finish().await;
+    let reason: (String, String) =
+        sqlx::query_as("SELECT error_class,error_code FROM app.run_attempts WHERE run_id=$1")
+            .bind(run.id.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(reason, ("INVALID_INPUT".to_owned(), code.to_owned()));
+    let facts: (i64, i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM app.run_native_outputs o JOIN app.run_attempts a ON a.id=o.attempt_id WHERE a.run_id=$1),(SELECT count(*) FROM app.artifacts WHERE producer_run_id=$1),(SELECT count(*) FROM app.qualifications),(SELECT count(*) FROM pgmq.q_runs),(SELECT count(*) FROM pgmq.a_runs)",
+    ).bind(run.id.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(facts, (0, manifest_count, 0, 0, 1));
+    assert_eq!(harness.counts().submits, 1);
+    assert_eq!(harness.counts().result_reads, 1);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn an_empty_typed_quality_report_is_not_successful_data_validation(pool: PgPool) {
+    assert_native_failure(pool, Behavior::EmptyQuality, "NATIVE_OUTPUT_INVALID", 1).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_valid_quality_report_for_another_dataset_is_not_adopted(pool: PgPool) {
+    assert_native_failure(pool, Behavior::ForeignQuality, "NATIVE_OUTPUT_INVALID", 1).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn remote_quality_cannot_expand_the_original_selection(pool: PgPool) {
+    assert_native_failure(pool, Behavior::ChangedSelection, "NATIVE_OUTPUT_INVALID", 1).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn terminal_status_with_invalid_manifest_closes_as_invalid_input_without_fabricated_file(
+    pool: PgPool,
+) {
+    assert_native_failure(
+        pool,
+        Behavior::InvalidManifest,
+        "NATIVE_MANIFEST_INVALID",
+        0,
+    )
+    .await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn terminal_status_with_oversized_manifest_is_not_retried_forever(pool: PgPool) {
+    assert_native_failure(
+        pool,
+        Behavior::OversizedManifest,
+        "NATIVE_MANIFEST_LIMIT",
+        0,
+    )
+    .await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn unavailable_manifest_remains_unsettled_instead_of_becoming_invalid_input(pool: PgPool) {
+    let harness = native::setup(&pool, Behavior::ResultUnavailable).await;
+    let f = &harness.fixture;
+    let run = tasks::start(f, "unavailable-manifest", &f.request)
+        .await
+        .unwrap()
+        .resource;
+    let message = tasks::message(f, run.id).await;
+    let (_stop, receiver) = watch::channel(false);
+    let result = tokio::time::timeout(
+        Duration::from_secs(10),
+        harness
+            .worker
+            .process_message(message, "unavailable-result-owner", receiver),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(result, Err(WorkerFailure::Runtime)));
+    assert!(!f
+        .data
+        .store
+        .get_run(&f.data.actor, run.id)
+        .await
+        .unwrap()
+        .state
+        .is_terminal());
+    let facts: (i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM app.run_terminal_receipts WHERE run_id=$1),(SELECT count(*) FROM app.artifacts WHERE producer_run_id=$1),(SELECT count(*) FROM pgmq.q_runs),(SELECT count(*) FROM pgmq.a_runs)",
+    ).bind(run.id.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(facts, (0, 0, 1, 0));
+    assert_eq!(harness.counts().submits, 1);
+    assert_eq!(harness.counts().result_reads, 1);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn worker_deadline_commits_database_cancellation_before_its_native_rpc(pool: PgPool) {
+    let harness = native::setup(&pool, Behavior::MissingUntilCancelled).await;
+    let f = &harness.fixture;
+    let mut request = f.request.clone();
+    request.limits.wall_seconds = 2;
+    request.limits.cpu_seconds = contracts::DbCounter::new(1).unwrap();
+    let run = tasks::start(f, "native-deadline-intent", &request)
+        .await
+        .unwrap()
+        .resource;
+    let driver = Driver::start(harness.worker.clone());
+    assert_eq!(terminal(&pool, run.id).await, "CANCELLED");
+    driver.finish().await;
+    // The actual native TCP handler independently asserted the database intent
+    // and event were already committed when its cancel request arrived.
+    assert_eq!(harness.counts().submits, 1);
+    assert_eq!(harness.counts().cancels, 1);
+    let due: bool = sqlx::query_scalar(
+        "SELECT cancellation_requested_at>=deadline_at FROM app.runs WHERE id=$1",
+    )
+    .bind(run.id.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(due);
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn stopping_a_worker_does_not_cancel_or_acknowledge_an_unknown_remote_job(pool: PgPool) {
     let harness = native::setup(&pool, Behavior::MissingUntilCancelled).await;

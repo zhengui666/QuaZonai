@@ -5,6 +5,9 @@ use utoipa::ToSchema;
 
 use crate::{Revision, SchemaV1};
 
+mod settings;
+pub use settings::*;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ConnectionMode {

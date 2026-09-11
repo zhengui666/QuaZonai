@@ -116,6 +116,78 @@ async fn mission_admission_preserves_the_only_science_slot_and_charges_both_cpu_
     assert_eq!(usage(&pool, fixture.cycle).await, (1, 0, 200));
 }
 
+#[sqlx::test(migrations = "../../migrations")]
+async fn native_queue_selection_does_not_hide_or_claim_a_codex_mission(pool: PgPool) {
+    let (store, _, mut science, actor) = setup(&pool).await;
+    let revision: i64 = sqlx::query_scalar(
+        "UPDATE app.runtime_integrations SET allowed_capabilities=ARRAY['AGENT_RESEARCH','ALPHA_EVALUATE'] WHERE id=$1 RETURNING revision",
+    ).bind(science.runtime_id.as_uuid()).fetch_one(&pool).await.unwrap();
+    science.runtime_revision = revision.to_string().try_into().unwrap();
+    runtime_observation::ready(&pool, science.runtime_id).await;
+    let mut mission = science.clone();
+    mission.kind = RunKind::AgentResearch;
+    mission.limits.experiments = 0;
+    let mission = store
+        .enqueue_run("mission-only-driver", &mission)
+        .await
+        .unwrap()
+        .resource;
+    let undefined = store
+        .enqueue_run("undefined-native-task", &science)
+        .await
+        .unwrap()
+        .resource;
+    let before: Vec<(i64, i32, chrono::DateTime<Utc>)> =
+        sqlx::query_as("SELECT msg_id,read_ct,vt FROM pgmq.q_runs ORDER BY msg_id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(before.len(), 2);
+    assert!(store
+        .read_native_run_messages(60, 100)
+        .await
+        .unwrap()
+        .is_empty());
+    let after: Vec<(i64, i32, chrono::DateTime<Utc>)> =
+        sqlx::query_as("SELECT msg_id,read_ct,vt FROM pgmq.q_runs ORDER BY msg_id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        after, before,
+        "native selector must not consume another driver's visibility"
+    );
+    let visible = store.read_run_messages(30, 100).await.unwrap();
+    assert_eq!(
+        visible.len(),
+        2,
+        "the native PGMQ consumer can still receive both messages"
+    );
+    for message in &visible {
+        assert!(store
+            .claim_native_run(message, "wrong-science-driver", 30)
+            .await
+            .unwrap()
+            .is_none());
+    }
+    for id in [mission.id, undefined.id] {
+        let current = store.get_run(&actor, id).await.unwrap();
+        assert_eq!(current.state, RunState::Queued);
+        assert!(current.active_attempt_id.is_none());
+    }
+    let own = visible
+        .iter()
+        .find(|message| message.run_id == mission.id)
+        .unwrap();
+    assert!(matches!(
+        store
+            .claim_run(own, "proper-codex-driver", 30)
+            .await
+            .unwrap(),
+        ClaimResult::Leased(_)
+    ));
+}
+
 async fn message(store: &Store, id: Id) -> RunMessage {
     store
         .read_run_messages(30, 100)

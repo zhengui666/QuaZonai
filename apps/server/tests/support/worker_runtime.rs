@@ -32,6 +32,12 @@ pub enum Behavior {
     LostSubmitAck,
     MissingUntilCancelled,
     InvalidPayload,
+    EmptyQuality,
+    ForeignQuality,
+    ChangedSelection,
+    InvalidManifest,
+    OversizedManifest,
+    ResultUnavailable,
 }
 
 #[derive(Default, Clone)]
@@ -41,6 +47,7 @@ pub struct Counts {
     pub queries: usize,
     pub cancels: usize,
     pub output_reads: usize,
+    pub result_reads: usize,
 }
 
 struct NativeJob {
@@ -59,6 +66,9 @@ struct Endpoint {
     secret: String,
     behavior: Behavior,
     journal: Mutex<Journal>,
+    // Test-only independent observation: every real cancel RPC must follow a
+    // committed database intent, never a process-local wall-clock decision.
+    pool: PgPool,
 }
 
 pub struct Harness {
@@ -170,6 +180,7 @@ pub async fn setup(pool: &PgPool, behavior: Behavior) -> Harness {
         secret,
         behavior,
         journal: Mutex::new(Journal::default()),
+        pool: pool.clone(),
     });
     let router = Router::new()
         .route("/runtime/v1/objects/{id}", put(upload))
@@ -276,6 +287,12 @@ async fn submit(
     assert_eq!(selections.len(), 1);
     quality.datasets[0].dataset_revision_id = selections[0].dataset_revision_id;
     quality.datasets[0].selection = selections[0].selection.clone();
+    match endpoint.behavior {
+        Behavior::EmptyQuality => quality.datasets.clear(),
+        Behavior::ForeignQuality => quality.datasets[0].dataset_revision_id = Id::new(),
+        Behavior::ChangedSelection => quality.datasets[0].selection.maximum_rows += 1,
+        _ => {}
+    }
     let mut bytes = serde_json::to_vec(&quality).unwrap();
     let object = Id::new();
     let descriptor = RuntimeOutputV1 {
@@ -319,19 +336,28 @@ async fn submit(
         started_at: Some(at),
         finished_at: Some(at),
     };
+    let mut raw_manifest = serde_json::to_vec(&manifest).unwrap();
+    match endpoint.behavior {
+        Behavior::InvalidManifest => raw_manifest[0] = b'!',
+        Behavior::OversizedManifest => raw_manifest.resize(1024 * 1024 + 1, b' '),
+        _ => {}
+    }
     journal.jobs.insert(
         spec.external_job_id.clone(),
         NativeJob {
             spec,
             status: status.clone(),
-            manifest: serde_json::to_vec(&manifest).unwrap(),
+            manifest: raw_manifest,
             outputs: BTreeMap::from([(object, bytes)]),
         },
     );
-    if endpoint.behavior == Behavior::InvalidPayload {
-        json(StatusCode::ACCEPTED, status)
-    } else {
+    if matches!(
+        endpoint.behavior,
+        Behavior::LostSubmitAck | Behavior::MissingUntilCancelled
+    ) {
         empty(StatusCode::SERVICE_UNAVAILABLE)
+    } else {
+        json(StatusCode::ACCEPTED, status)
     }
 }
 
@@ -367,6 +393,18 @@ async fn cancel(
         domain::runtime_jobs::parse_external_id(&id).unwrap(),
         (command.run_id, command.attempt_no)
     );
+    let intent: (String, Option<DateTime<Utc>>, bool) = sqlx::query_as(
+        "SELECT state,cancellation_requested_at,EXISTS(SELECT 1 FROM app.run_events WHERE run_id=$1 AND payload->>'state'='CANCEL_REQUESTED') FROM app.runs WHERE id=$1",
+    ).bind(command.run_id.as_uuid()).fetch_one(&endpoint.pool).await.unwrap();
+    assert_eq!(intent.0, "CANCEL_REQUESTED");
+    assert!(
+        intent.1.is_some(),
+        "native cancellation preceded its database intent"
+    );
+    assert!(
+        intent.2,
+        "native cancellation preceded its durable public event"
+    );
     let mut journal = endpoint.journal.lock().unwrap();
     journal.counts.cancels += 1;
     let job = journal.jobs.get_mut(&id).unwrap();
@@ -388,7 +426,11 @@ async fn result(
     if !authorized(&headers, &endpoint) {
         return empty(StatusCode::UNAUTHORIZED);
     }
-    let journal = endpoint.journal.lock().unwrap();
+    let mut journal = endpoint.journal.lock().unwrap();
+    journal.counts.result_reads += 1;
+    if endpoint.behavior == Behavior::ResultUnavailable {
+        return empty(StatusCode::SERVICE_UNAVAILABLE);
+    }
     let Some(job) = journal.jobs.get(&id) else {
         return empty(StatusCode::NOT_FOUND);
     };

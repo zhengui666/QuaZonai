@@ -1,7 +1,7 @@
 //! Trusted finite-concurrency PGMQ driver. Research code runs only at the registered
 //! native Runtime; this process owns no scientific engine or duplicate queue.
 use crate::runtime_transport::{RuntimeRequestError, RuntimeTargets, RuntimeTransport};
-use contracts::{runs::RunKind, runtime_jobs::*, Id, SchemaV1};
+use contracts::{runtime_jobs::*, Id, SchemaV1};
 use integrations::{artifacts::ArtifactStore, secrets::SecretVault};
 use std::{sync::Arc, time::Duration};
 use store::{
@@ -84,7 +84,7 @@ impl Worker {
             }
             if jobs.len() < self.parallelism {
                 let remaining = (self.parallelism - jobs.len()).min(32) as i32;
-                match self.store.read_run_messages(60, remaining).await {
+                match self.store.read_native_run_messages(60, remaining).await {
                     Ok(messages) => {
                         for message in messages {
                             // A visibility replay in this process is a different
@@ -128,19 +128,15 @@ impl Worker {
         owner: &str,
         shutdown: watch::Receiver<bool>,
     ) -> Result<(), WorkerFailure> {
-        let lease = match self.store.claim_run(&message, owner, 60).await? {
-            ClaimResult::Busy => return Ok(()),
-            ClaimResult::Terminal(_) => {
+        let lease = match self.store.claim_native_run(&message, owner, 60).await? {
+            None => return Err(WorkerFailure::TaskKind),
+            Some(ClaimResult::Busy) => return Ok(()),
+            Some(ClaimResult::Terminal(_)) => {
                 self.store.acknowledge_run(&message).await?;
                 return Ok(());
             }
-            ClaimResult::Leased(lease) => *lease,
+            Some(ClaimResult::Leased(lease)) => *lease,
         };
-        if lease.run.kind == RunKind::AgentResearch {
-            // The native Codex driver owns Mission/Thread/Turn. Never execute an
-            // Agent loop through a scientific container or call it a successful job.
-            return Err(WorkerFailure::TaskKind);
-        }
         let (alive, health) = watch::channel(true);
         let heartbeat = async {
             loop {
@@ -234,9 +230,8 @@ impl Worker {
                     }
                 }
             } else {
-                let status = if job.action == NextRuntimeAction::Cancel
-                    || chrono::Utc::now() >= job.spec.deadline_at
-                {
+                // Only the committed database-clock intent can authorize cancel.
+                let status = if job.action == NextRuntimeAction::Cancel {
                     native
                         .cancel_job(
                             &job.spec.external_job_id,
@@ -410,10 +405,42 @@ impl Worker {
             }
             _ => {}
         }
-        let result = native
-            .job_result(&job.spec, job.submitted_not_before)
-            .await
-            .map_err(|_| WorkerFailure::Runtime)?;
+        let result = match native.job_result(&job.spec, job.submitted_not_before).await {
+            Ok(result) => result,
+            Err(error @ (RuntimeRequestError::Contract | RuntimeRequestError::ResponseLimit)) => {
+                let failure = if error == RuntimeRequestError::ResponseLimit {
+                    store::lifecycle::native::NativeManifestFailure::ResponseLimit
+                } else {
+                    store::lifecycle::native::NativeManifestFailure::Contract
+                };
+                self.store
+                    .reject_native_manifest(job.run.id, fence, &status, failure)
+                    .await?;
+                return Ok(true);
+            }
+            // A missing or unavailable result is not by itself termination proof.
+            // The verified status is retained on the Runtime and can be re-read.
+            Err(_) => return Err(WorkerFailure::Runtime),
+        };
+        let expected_state = match result.manifest.state {
+            RuntimeResultState::Succeeded => RuntimeJobState::Succeeded,
+            RuntimeResultState::Failed => RuntimeJobState::Failed,
+            RuntimeResultState::Cancelled => RuntimeJobState::Cancelled,
+        };
+        if status.state != expected_state
+            || status.started_at != result.manifest.started_at
+            || status.finished_at != Some(result.manifest.finished_at)
+        {
+            self.store
+                .reject_native_manifest(
+                    job.run.id,
+                    fence,
+                    &status,
+                    store::lifecycle::native::NativeManifestFailure::Contract,
+                )
+                .await?;
+            return Ok(true);
+        }
         let mut outputs = Vec::new();
         let mut invalid = false;
         for descriptor in &result.manifest.artifacts {

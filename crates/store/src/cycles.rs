@@ -416,12 +416,20 @@ impl Store {
         })
     }
 
-    pub async fn start_cycle(
+    pub async fn start_cycle<R, Read, P, Published>(
         &self,
         actor: &Actor,
         key: &str,
         request: &CycleStartIntent,
-    ) -> Result<CommandResult<CycleStartedV1>, StoreError> {
+        mut read: R,
+        publish: P,
+    ) -> Result<CommandResult<CycleStartedV1>, StoreError>
+    where
+        R: FnMut(Id, DbCounter) -> Read,
+        Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
+        P: FnOnce(crate::lifecycle::native::NativeObjectPublication) -> Published,
+        Published: std::future::Future<Output = Result<(), StoreError>>,
+    {
         let mut tx = self.pool.begin().await?;
         let prepared = commands::operator(
             &mut tx,
@@ -499,6 +507,21 @@ impl Store {
             )
             .map_err(|_| StoreError::Integrity)?,
         };
+        let definition = crate::data_validation::prepare_validation(
+            &mut tx,
+            &contracts::data::DataValidateRequest {
+                schema_version: SchemaV1,
+                project_id: request.project_id,
+                input_set_id: context.discovery_input_set_id,
+                runtime_id: context.runtime_id,
+                expected_runtime_revision: context.runtime_revision,
+                limits: limits.clone(),
+            },
+            &mut read,
+            publish,
+        )
+        .await?;
+        commands::recheck_authority(&mut tx, actor, &prepared).await?;
         let (mut tx, admitted) = Self::enqueue_run_in_transaction(
             tx,
             key,
@@ -512,6 +535,7 @@ impl Store {
             },
         )
         .await?;
+        crate::lifecycle::native::bind_task(&mut tx, &admitted.resource, definition).await?;
         sqlx::query(
             "INSERT INTO app.cycle_startups(cycle_id,project_id,initial_run_id) VALUES($1,$2,$3)",
         )

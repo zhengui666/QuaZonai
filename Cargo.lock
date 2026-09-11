@@ -2201,6 +2201,7 @@ dependencies = [
  "iso_currency",
  "oci-spec",
  "proptest",
+ "serde",
  "serde_json",
  "thiserror 2.0.20",
  "url",

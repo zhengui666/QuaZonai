@@ -7,6 +7,10 @@ license-file.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+# Explicit native-binary acceptance; CI installs and executes the pinned binary.
+native-codex = []
+
 [dependencies]
 futures-util = "=0.3.34"
 contracts = { path = "../../crates/contracts" }

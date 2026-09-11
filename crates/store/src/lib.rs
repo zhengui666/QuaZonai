@@ -7,6 +7,7 @@ pub mod artifacts;
 pub mod auth;
 pub mod authority;
 pub mod brief;
+pub mod codex_profiles;
 mod commands;
 pub mod control;
 pub mod cycles;

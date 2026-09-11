@@ -7,6 +7,10 @@ use contracts::{
 
 use crate::DomainError;
 
+mod native_version;
+pub use native_version::verified_codex_version;
+pub mod settings;
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ModelOverrides {
     pub model: Option<String>,

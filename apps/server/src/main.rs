@@ -87,6 +87,9 @@ enum Command {
             hide_env_values = true
         )]
         runtime_targets: String,
+        /// Deployment-owned JSON file of native Codex homes and executable bindings.
+        #[arg(long, env = "CODEX_DEPLOYMENT", hide_env_values = true)]
+        codex_deployment: Option<PathBuf>,
     },
     /// Drive registered native jobs through PGMQ and their exact Runtime identities.
     Worker {
@@ -137,6 +140,19 @@ fn parse_runtime_targets(
         .map_err(|_| "invalid RUNTIME_TARGETS deployment configuration")?;
     server::runtime_transport::RuntimeTargets::new(targets, development_http)
         .map_err(|_| "RUNTIME_TARGETS contains an unsafe or inconsistent endpoint")
+}
+
+fn load_codex_deployment(path: Option<&Path>) -> Result<server::codex_profiles::CodexDeployment, &'static str> {
+    let Some(path) = path else { return Ok(server::codex_profiles::CodexDeployment::default()); };
+    let file = fs::File::open(path).map_err(|_| "cannot open Codex deployment configuration")?;
+    if !file.metadata().map_err(|_| "cannot inspect Codex deployment configuration")?.is_file() {
+        return Err("Codex deployment configuration must be a regular file");
+    }
+    let mut bytes = Vec::new();
+    file.take(65537).read_to_end(&mut bytes).map_err(|_| "cannot read Codex deployment configuration")?;
+    if bytes.is_empty() || bytes.len()>65536 { return Err("Codex deployment configuration exceeds its limit"); }
+    let configuration = serde_json::from_slice(&bytes).map_err(|_| "invalid Codex deployment configuration")?;
+    server::codex_profiles::CodexDeployment::new(configuration).map_err(|_| "invalid native Codex deployment bindings")
 }
 
 async fn shutdown_signal() {
@@ -330,7 +346,9 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             public_url,
             development_http,
             runtime_targets,
+            codex_deployment,
         } => {
+            let codex = load_codex_deployment(codex_deployment.as_deref())?;
             let policy = WebPolicy::new(&public_url, bind, development_http)?;
             let targets = parse_runtime_targets(&runtime_targets, development_http)?;
             let (vault, key) = load_state(&state_dir)?;
@@ -351,6 +369,7 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             let app = server::router(
                 AppState::new(store, vault, policy)
                     .with_artifact_store(objects)
+                    .with_codex_deployment(codex)
                     .with_runtime_targets(targets),
                 key,
             );

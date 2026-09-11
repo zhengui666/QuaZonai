@@ -1542,6 +1542,21 @@ schema_version=1、origin=REAL、access_class=EVALUATOR_ONLY、byte_count>0。
 
 ## A8. 集成、身份与幂等
 
+### A8.0 原生 Codex 连接与会话适配
+
+Codex固定复用官方0.144.4原生App Server。协议以该版本实际二进制 `app-server generate-json-schema --experimental` 的产物为准；不从新版网页猜测旧版字段，也不把原生stdio握手、model/list或无账号thread/start当真实推理验收。QZ仅编写有界stdio关联、原生结果的非秘密投影、现有Turn账本与领域绑定，不嵌入或重写Codex工具循环、OAuth刷新和canonical聊天存储。
+
+每个连接由可信启动方持有原生子进程、stdin/stdout和单个串行RPC锁；每帧最多2MiB，单次RPC有独立时限，连接只保留至多128条非秘密通知投影。EOF、半帧、超限、错误关联ID或超时都返回结果未知且废弃该连接，不能在相同调用里自动重发写RPC。持久化的Thread/Turn/Run身份与发送意图继续用于恢复。连接关闭只说明本机传输终止，不证明远端科学任务停止或ModelTurn尚未消费；现有Turn的确认和用量账本不得清零。
+
+原生Thread在首个用户Turn进入持久存储前不可resume；仅thread/start成功不代表会话已具备重启恢复能力。启动后、首Turn发送前的进程丢失必须保留已记录的原生身份和未发送事实，不通过创建新Thread或注入history/path伪造恢复。正向恢复验收须让真正的官方App Server完成受控本地Responses Turn，再终止并重启进程，按原ThreadID恢复并验证后续请求携带前次公开上下文；不读取或改写原生历史文件。账户真实推理另在已审查Head的受保护环境验收。
+
+初始化明确关闭原始事件和不需要的reasoning通知；协议包络只按方法名读取允许的状态、身份、原生token计数、登录完成布尔值。忽略字段由原生Serde跳过；不反序列化、不存储、不展示隐藏推理、任意native错误文本、账号token或会话原始items。`thread/turns/list`恢复使用 `itemsView=notLoaded`；会话投影仅含ThreadID、TurnID、状态与可观察配置，不复制turn items。服务器请求不属于本适配器允许的工具或交互时返回JSON-RPC方法不支持错误，不自动授予文件、命令、网络或登录权限。
+
+SYSTEM连接不发送model_provider、base_url、apikey覆盖，由官方Codex读取部署选定的原生HOME/CODEX_HOME及其订阅/配置；“使用默认模型设置”时同时省略model、reasoning effort和service tier，保留但不执行此前保存值。CUSTOM_PROVIDER只通过原生model_providers定义和专用env_key解析当前Vault引用，固定responses线缆；不得在argv、数据库回执或日志中放密钥，不得退回SYSTEM认证。模型和推理强度只接受完整、对应profile revision的原生分页目录；effort-only从原生实际模型观察校验，不能用isDefault猜实际模型。显式模型禁止provider fallback，native报告重路由不能仍标记原选择成功。
+
+远程网页的ChatGPT绑定优先采用原生 `account/login/start {type:chatgptDeviceCode}`：只展示原生loginId、verificationUrl和一次性userCode，完成/取消/注销均复用对应native方法；不接收内部chatgptAuthTokens注入，不自行轮询OAuth端点或刷新token。账号读取仅投影需认证/已配置、认证类型与原生计划类型，不读取或返回auth.json、email、access_token、refresh_token。设置/绑定属于Operator，研究Mission无此权限。模型用量须来自原生Thread累计计数的明确Turn区间或原生Turn回执，不能把工具循环中最后一次请求的last误当整个Turn，未知用量必须保留待对账。
+
+
 ```text
 runtime_integrations [operator mutable]
   name: text
@@ -1667,6 +1682,16 @@ Mission 凭据的 `issuer_attempt_id` 与 `issuer_owner_epoch` 必须由受信�
 Runtime 与 Downstream 配置使用明确的 `/api/v2/integrations/runtimes`、`/downstreams` 集合和 `/{id}`，不开放任意表操作。create/update 分别进入同一 OperatorCommand union；更新要求 expected_revision。Runtime 非秘密配置为 name/endpoint/tls_policy/allowed_capabilities/enabled/development_http，protocol_version 固定当前原生合同1；Downstream 为 name/endpoint/accepted_package_versions/environments/enabled/development_http。配置写入必须验证 SecretVault 引用的精确用途；PINNED_CA 必须有有效原生 PEM CA 引用，SYSTEM_CA 不能混带自选 CA。更新不传新的 credential_ref 表示保留当前版本；转 SYSTEM_CA 明确清除 CA 绑定但不删除旧加密对象。仅部署显式 development-http 且 literal loopback 的端点可以使用 HTTP，生产默认 HTTPS；URL 不接受 userinfo/query/fragment。保存配置不发起网络请求，enabled/声明的 capability 不等于 readiness；后续 probe 必须经部署允许列表与原生 TLS/DNS 绑定，按精确配置 revision 采纳真实结果。
 
 公开配置 DTO 不回传 credential_ref/CA 存储位置，只显示 credential_configured/ca_configured 和实际非秘密配置。Operator 可读配置；DOCTOR_READ 的 CLI/AUTOMATION 只读同一无秘密诊断 DTO，不获得管理或原生对象读取能力。写权限仍为近期人类或一次性完整意图 grant。旧不可变会话/Run 保存其原配置版本，配置更新不能改写已派发任务；当前检查/新准入必须重新判断 revision 与能力有效期。URI 语法、字段/类型/未知字段、原生凭据用途、幂等/CAS、撤销/锁等待、真实 HTTP/数据库和原始命令回执均需回归。此管理入口不是 Runtime 网络或生产完整链路已验收的声明。
+
+### A8.3 Codex Profile 管理与原生目录观测
+
+`/settings/codex` 是 Profile 集合（GET/POST），`/settings/codex/{id}` 提供单项 GET/PATCH；保留 `/settings/codex` PATCH 作为明确携带 profile_id 的当前配置命令，不根据“第一行”选择账号。创建以 name、部署已登记的 home_binding、profile_origin、严格 SYSTEM/CUSTOM_PROVIDER connection 和 SavedModelSettingsV1 为意图。更新绑定 profile_id/expected_revision，只改名称、连接和保存的模型设置；home_binding/profile_origin 是不可变身份，切换原生账号目录须登记新 Profile，不原地接管旧 Thread。一个 home_binding 只能被一个 Profile 占用。公开 binding 仅为1–64字节可打印标识符，不是宿主路径；部署启动文件掌握原生 binary、HOME、CODEX_HOME、working_directory 和显式环境变量名。API 不创建、遍历、复制、chown 或删除原生账号目录，不返回真实路径/环境值。
+
+SYSTEM 请求不得带 base_url/credential_ref；CUSTOM_PROVIDER 创建必须给合法 HTTPS base_url 与 CUSTOM_PROVIDER 用途的不可变 SecretVault 引用，更新省略/null 引用仅在已有 CUSTOM_PROVIDER 时保留。系统不复制 auth.json 或在数据库保存 token。保存任意语法有效的模型/effort 不代表其当前可运行，default=true 保留但不执行这些值。模型目录、实际生效的模型/provider/effort/service_tier 与请求保存值分开显示。
+
+`POST /codex/probe` 明确携带 profile_id/expected_revision，近期 Operator 或绑定完整意图的 CLI grant 可调用。准备事务完成后才启动实际 pinned App Server，读取 account/read 与完整 model/list，并通过无推理 ephemeral Thread 观察原生实际默认配置；显式设置再由原生目录校验及 Thread 响应确认。Fast 仅选择目录实际公告的 priority（或该锁定版本仍公告的 fast）service tier；没有公告则拒绝，不用 isDefault 或字符串相似匹配猜测。default=true 不注入 tier。探测不得发 turn/start、执行研究或触发登录，也不是账号真实推理证明。
+
+探测返回后在原命令幂等事务内再次核对 Profile revision、授权和120秒总期限，写入唯一不可变 codex_profile_observations（id/profile_id/profile_revision/observed_at/valid_until/严格非秘密outcome）与完整命令回执；无原生I/O发生在持锁事务内。Available 目录最多4096个唯一ID，各项有一致 revision/fetched_at；有效期最多60秒。Unavailable 保留明确原因，不制造默认目录；重试同键返回原响应，不再探测。`GET /codex/models?profile_id=...`、`GET /codex/account?profile_id=...` 只读取当前revision最近观测，返回 freshness 与原始 observed_at，不隐式刷新、启动模型进程或把旧成功覆盖最新失败。
 
 ## A9. 索引、保留与迁移核对
 
@@ -1958,6 +1983,22 @@ Worker首次发送前核对配置revision及真实新鲜capability；等待过�
 采纳完整原始ResultManifestV1、相同任务的原生输出、schema/kind/media/version/bytes和本地producer关系后，当前fence所有者才可发表Store分配的文件批次。原生payload总数/大小受冻结output_bytes；manifest是独立最多1MiB的包络，不错误计作payload。输出、remote/local映射、唯一终态receipt、事件与试验记账使用既有accept_run_terminal的事务组合入口同提交；随后才archive。回执重放必须保持原始manifest字节、当前归属Attempt/owner，旧fence不因任务终态而重新获得发表权。取消胜出时不发表迟到的成功payload，原始manifest可作为失败/取消审计保留。输出缺失/格式错误在已证明远端停止后记录INVALID_INPUT，不制造科学PASS；网络暂不可用继续对账，不把传输错误变成数据无效。
 
 原生计算成功只形成生产者绑定的原始质量或科学产物，仍需独立Evaluation/Exposure/Qualification；FIXTURE/SYNTHETIC/PIT未核验不得升级。数据验证管理任务不增加试验、不读取Sealed，不是逃避研究预算或资格门禁的新入口。文件发表而事务失败只在重新取得原Run锁并确认精确对象无正式引用后回收；未知提交保留，不能扫描删除其他Run/用户数据。
+
+### B5.0.2 Worker 独立审查修订（37e5713e）
+
+共享PGMQ runs队列的原生计算消费者先按不可变run_native_tasks与允许的科学kind筛选可见记录，再调用PGMQ1.10原生conditional read；不得先隐藏AGENT_RESEARCH或未定义任务再拒绝。直接驱动入口同样在任何Attempt/Run变更前检查不可变驱动归属。PGMQ负责visibility/read_ct，QZ只选择本消费者负责的领域身份；不新建队列或重写投递算法。
+
+只有Store在真实数据库时间下提交取消状态、cancellation_requested_at及事件后返回Cancel行动，Worker才发送取消RPC；本机时钟不能另开一条无持久意图的取消路径。已收到精确任务的有效终态status后，结果manifest的Contract/ResponseLimit属于不可变输出无效，按当前fence以INVALID_INPUT收束而不反复重试；身份未确认、认证/网络不可用仍保留对账。没有合法manifest时不制造qz.job_result或科学产物，记录静态NATIVE_MANIFEST_INVALID/ NATIVE_MANIFEST_LIMIT原因。
+
+原始产物不仅验证Serde反序列化，还逐项核对任务参数与JobSpec：DATA_VALIDATE报告必须一一对应全部冻结Dataset与原始selection，行数/资产集/时间/可见性在同一冻结范围；编译报告绑定CODE与实际MODEL的native ref/字节数/ABI；预测的资产、时间、单位、期限和模型参数与请求一致；分配结果复用精确权重/约束规则并绑定资产集合；模拟结果的初始资金/币种/区间与原生权益序列一致。Store在结果发表事务内读取原始不可变PARAMETERS再次执行共同关联校验；错误输出形成失败审计而不是成功Run或无限重试。该结构验证不替代后续独立统计评估、PIT或资格。
+
+### B5.0.3 Cycle 首个原生数据任务
+
+Cycle start 与独立 `data/validate` 复用同一个受信任的 metadata→PARAMETERS→NativeTaskDefinition 适配器；不是在收到202后补填原生任务。Cycle启动事务在验证冻结Brief、当前许可/Runtime和预算后，读取精确Discovery元数据产物，原生发表固定参数，创建初始Run/PGMQ、绑定run_native_tasks并写cycle_startups及完整回执，同事务提交。参数读写失败、没有正式登记metadata、原生能力不支持或后半步故障均不留下Cycle、预留或队列半状态；未引用的本次参数由已有Operator原生对象回收路径核对处理。初始任务是有预算的Cycle准备工作，不能以standalone入口绕过周期配额；同命令重放不再读写原始文件。
+
+混合InputSet可以同时引用Dataset与其他研究产物，但DATA_VALIDATE必须逐项选择其中全部Dataset且每项均已有原生登记与当前授权；已有非Dataset产物只保留为输入集合的上下文引用，不读取或上传，不得用其中的用户PARAMETERS替换可信服务生成的验证参数。没有Dataset的artifact-only输入仍拒绝，存在一个未登记或越权Dataset则整体拒绝，不能通过过滤join静默漏掉该成员。
+
+已有历史Cycle若缺少原生定义，不推断参数、不回填成功；读取仍显示其原始状态。新的正式Cycle必须能被当前native Worker选中并按同一Run/Attempt实际验证其登记数据。测试中的合成metadata明确保持FIXTURE/UNVERIFIED，不能借这段启动链路赋予REAL或Alpha资格。
 
 ### B5.1 入队
 
