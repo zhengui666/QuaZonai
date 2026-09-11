@@ -77,13 +77,16 @@ export function QueryPanel({ pending, error, stale, reload, children }: {
   if (error && !stale) return <ErrorNotice error={error} retry={reload} />;
   return <Space orientation="vertical" className="full-width" size="middle">
     {error ? <><Alert type="warning" title="以下是上次成功读取的数据，当前无法确认其最新状态。" showIcon /><ErrorNotice error={error} retry={reload} /></> : null}
-    {children}
+    {/* AntD Space flattens fragments and keys unkeyed children by position.
+        Keep forms mounted when a stale-query warning is inserted or removed. */}
+    <Space key="query-content" orientation="vertical" className="full-width" size="middle">{children}</Space>
   </Space>;
 }
 const states: Record<string, string> = {
   DRAFT: '草稿', ACTIVE: '启用', PAUSED: '暂停', ARCHIVED: '归档', FROZEN: '已冻结',
   QUEUED: '排队', DISPATCHING: '派发中', RUNNING: '运行中', RECONCILING: '核对结果',
   CANCEL_REQUESTED: '已请求取消', SUCCEEDED: '运行成功', FAILED: '运行失败', CANCELLED: '已取消',
+  WAITING_INPUT: '等待输入', PAUSING: '暂停中', COMPLETED: '周期已结束',
 };
 export function StateTag({ value }: { value: string }) {
   return <Tag>{states[value] ?? value}</Tag>;

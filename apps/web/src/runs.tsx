@@ -38,7 +38,7 @@ export function Runs({ projectId }: { projectId?: string }) {
     {selected && <RunDetail id={selected} close={() => setSelected(undefined)} />}
   </Space>;
 }
-function RunDetail({ id, close }: { id: string; close: () => void }) {
+export function RunDetail({ id, close }: { id: string; close: () => void }) {
   const client = useQueryClient(); const online = useOnline();
   const query = useQuery({ queryKey: ['run', id], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/runs/{id}', { params: { path: { id } }, signal })),
     refetchInterval: current => current.state.data && terminal(current.state.data.state) ? false : 5000,

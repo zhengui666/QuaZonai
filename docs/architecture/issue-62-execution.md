@@ -724,3 +724,23 @@ Mission、turn、recovery、Run生命周期、约束回归，80项通过/0失败
 独立PG确认停止。新反例保持used+reserved+requested低于Cycle总额，分别验证token
 超预约和仅小数尾部费用超预约，并验证其他Mission事先预约的首次发送也被阻断。
 这是局部业务账本证据，不是Provider实际计费、全量CI或Issue62完成证明。
+
+## 2026-09-12：浏览器冻结、明确启用与双角色启动
+
+复用既有严格HTTP DTO、ResourceSelect、ProjectEditor和RunDetail，新增Brief执行确认与
+持久Cycle列表，不新增依赖或平行业务状态机。非归档项目可冻结，成功后还须显式启用
+才能启动；Profile分别明确选择，Project/Brief/Runtime/Profile修订保持原字符串。
+未知回执保留原内容和幂等键，后台失败或配置刷新不能改写原意图；首次明确409要求
+重载，未知请求后再收到409仍不能声称之前未执行。排队只显示Cycle/准备Run事实。
+
+浏览器回归定位到共用QueryPanel的真实卸载问题：AntD Space会展开Fragment并以位置
+给无key子项编号，插入两条读取警告使既有表单重新挂载。现在共用内容容器有稳定key，
+原表单/待确认请求跨警告插入和移除保留；三尺寸丢ACK与后台失败回归覆盖这条路径。
+局部TypeScript/Vite及33项浏览器回归通过（58945）；合成响应只证明页面合同，不是
+真实数据冻结、模型研究、资格或完整Issue62证据。全量生成与浏览器验证另行记录。
+
+最终`.ai-bridge/web-verify-eDjimU` exit0：Rust原生合同双次导出、TypeScript/Ajv双次生成
+逐字节一致，Runtime合同不变；TypeScript、504项Vitest、5项PWA文件测试、三组数值
+wire检查、生产构建、Codex设置专项及全部168项三尺寸浏览器测试、CLI帮助均通过。
+手写源码前后不变，生成文件无差异。这是ca22a9f4基础上的本地增量验证，不是GitHub
+当前Head CI；未运行真实账户付费研究，也不表示全量W0–W8/T01–T42或交付链路完成。

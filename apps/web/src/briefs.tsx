@@ -9,30 +9,33 @@ import { BudgetFields, counterRules } from './budget-fields';
 import { bindingAccessOptions } from './authoring-options';
 import { bindingListError } from './authoring-constraints';
 import { validateBaseCurrency } from './generated/responses.cjs';
+import { BriefExecution } from './cycles';
 import { ErrorNotice, NoData, Pager, QueryPanel, ResourceFacts, StateTag, useGuard, useOnline } from './ui';
 
 type Brief = Schema['BriefView'];
 type Content = Schema['BriefContentV1'];
 type Fields = { content: Content; bindings: Schema['BriefBindingV1'][] };
 const uuidRules = [{ required: true, pattern: uuidPattern, message: '需要现有记录的完整 UUIDv7 编号。' }];
-export function Briefs({ projectId }: { projectId: string }) {
+export function Briefs({ projectId, projectState }: { projectId: string; projectState?: Schema['ProjectState'] }) {
   const [history, setHistory] = useState<(string | undefined)[]>([undefined]);
   const [editing, setEditing] = useState<Brief | 'new'>();
+  const [executing, setExecuting] = useState<Brief>();
   const cursor = history.at(-1); const online = useOnline();
   const query = useQuery({ queryKey: ['briefs', projectId, cursor], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/projects/{id}/briefs', { params: { path: { id: projectId }, query: { cursor, limit: 25 } }, signal })) });
   return <Space orientation="vertical" className="full-width" size="middle">
     <Alert showIcon type="info" title="Brief 是研究假设、数据边界和预算的版本化记录。"
-      description="当前可保存和修改草稿；冻结与启动不在本版 HTTP 合同中。不会把保存成功显示为研究开始、资格通过或可交付。" />
+      description="先保存草稿，再绑定执行上下文并冻结；在项目状态中明确启用项目后，选择两角色的 Codex 配置启动。保存和排队均不代表研究完成、资格通过或可交付。" />
     <Button type="primary" disabled={!online} onClick={() => setEditing('new')}>新建 Brief 草稿</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       <Table<Brief> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 600 }} locale={{ emptyText: <NoData text="尚无 Brief。请先填写可检验假设和真实数据引用。" /> }} columns={[
         { title: '版本', dataIndex: 'version' }, { title: '假设', key: 'hypothesis', render: (_, item) => <Typography.Paragraph ellipsis={{ rows: 2, expandable: true }}>{item.content.hypothesis}</Typography.Paragraph> },
         { title: '状态', key: 'state', render: (_, item) => <StateTag value={item.state} /> },
-        { title: '操作', key: 'open', render: (_, item) => <Button disabled={query.isError} onClick={() => setEditing(item)}>{item.state === 'DRAFT' ? '查看 / 编辑' : '查看冻结版本'}</Button> },
+        { title: '操作', key: 'open', render: (_, item) => <Space wrap><Button disabled={query.isError} onClick={() => setEditing(item)}>{item.state === 'DRAFT' ? '查看 / 编辑' : '查看冻结版本'}</Button><Button disabled={!online || query.isError || !projectState || (item.state === 'DRAFT' ? projectState === 'ARCHIVED' : projectState !== 'ACTIVE')} onClick={() => setExecuting(item)}>{item.state === 'DRAFT' ? '冻结执行上下文' : '启动新 Cycle'}</Button></Space> },
       ]} />
       <Pager history={history} next={query.data?.next_cursor} loading={query.isFetching} move={setHistory} />
     </QueryPanel>
     {editing && <BriefEditor projectId={projectId} brief={editing === 'new' ? undefined : editing} close={() => setEditing(undefined)} />}
+    {executing && <BriefExecution brief={executing} close={() => setExecuting(undefined)} />}
   </Space>;
 }
 function BriefEditor({ projectId, brief, close }: { projectId: string; brief?: Brief; close: () => void }) {

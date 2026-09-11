@@ -7,6 +7,7 @@ import type { Schema } from './api';
 import { ErrorNotice, NoData, Pager, QueryPanel, ResourceFacts, StateTag, useGuard, useOnline } from './ui';
 import { Briefs } from './briefs';
 import { Runs } from './runs';
+import { Cycles } from './cycles';
 import { projectStateOptions } from './authoring-options';
 
 type Project = Schema['ProjectView'];
@@ -45,15 +46,19 @@ export function Projects() {
   </Space>;
 }
 function ProjectDetail({ id }: { id: string }) {
+  const [editing, setEditing] = useState<Project>(); const online = useOnline();
   const query = useQuery({ queryKey: ['project', id], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/projects/{id}', { params: { path: { id } }, signal })) });
   return <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
     {query.data && <><Typography.Title level={1}>{query.data.name}</Typography.Title>
       <Space wrap><StateTag value={query.data.state} /><Typography.Text type="secondary">{query.data.description || '尚无研究说明'}</Typography.Text></Space>
       <ResourceFacts id={id} revision={query.data.revision} updated={query.data.updated_at} />
+      <Button disabled={!online || query.isError || query.isFetching} onClick={() => setEditing(query.data)}>修改项目状态</Button>
       <Tabs destroyOnHidden items={[
-        { key: 'briefs', label: '研究 Brief', children: <Briefs projectId={id} /> },
+        { key: 'briefs', label: '研究 Brief', children: <Briefs projectId={id} projectState={query.isError || query.isFetching ? undefined : query.data.state} /> },
+        { key: 'cycles', label: '研究周期', children: <Cycles projectId={id} /> },
         { key: 'runs', label: '运行记录', children: <Runs projectId={id} /> },
       ]} />
+      {editing && <ProjectEditor project={editing} close={() => setEditing(undefined)} />}
     </>}
   </QueryPanel>;
 }
@@ -85,7 +90,8 @@ function ProjectEditor({ project, close }: { project?: Project; close: () => voi
     },
     onSuccess: async result => {
       intent.current.clear(); setDirty(false);
-      await client.invalidateQueries({ queryKey: ['projects'] });
+      await Promise.all([client.invalidateQueries({ queryKey: ['projects'] }),
+        client.invalidateQueries({ queryKey: ['project', project?.id] })]);
       await message.success(result.replayed ? '已读取上次操作的结果，没有重复创建。' : '研究项目已保存。');
       close();
     },
@@ -102,7 +108,7 @@ function ProjectEditor({ project, close }: { project?: Project; close: () => voi
       <Alert showIcon type="info" title="保存项目仅修改研究组织信息，不会启动 Cycle 或冻结 Brief。" />
       {project && <ResourceFacts id={project.id} revision={project.revision} updated={project.updated_at} />}
       <ErrorNotice error={mutation.error} />
-      {conflict && <Button onClick={() => { void client.invalidateQueries({ queryKey: ['projects'] }); dismiss(); }}>关闭编辑并重新载入当前版本</Button>}
+      {conflict && <Button onClick={() => { void Promise.all([client.invalidateQueries({ queryKey: ['projects'] }), client.invalidateQueries({ queryKey: ['project', project?.id] })]); dismiss(); }}>关闭编辑并重新载入当前版本</Button>}
       <Form form={form} layout="vertical" initialValues={project ?? { name: '', description: '', state: 'DRAFT' }} onValuesChange={() => setDirty(true)}
         onFinish={value => { if (!mutation.isPending && online && !conflict) mutation.mutate(value); }} disabled={mutation.isPending || !online || conflict}>
         <Form.Item name="name" label="研究名称" rules={[{ required: true, whitespace: true, max: 120 }]}><Input maxLength={120} /></Form.Item>

@@ -1996,6 +1996,8 @@ SQLite 中的输入/结果 BLOB 配额不能漏掉执行目录中的副本。增
 
 ### B5.0 正式研究冻结与周期启动
 
+冻结允许非归档项目，成功时同事务将本 Brief 设为项目当前 Brief，但不自动启用项目。浏览器流程为草稿保存→冻结执行上下文→明确启用项目→明确选择两个角色的配置→启动；不能要求项目先 ACTIVE 才允许冻结，从而与激活的冻结 Brief 前置条件相互阻塞。页面复用项目编辑器，不另建隐式激活命令。
+
 Brief freeze 使用严格 schema_version/expected_revision/execution_context；execution_context 包含 runtime_id/runtime_revision 和同项目的 discovery_input_set_id/validation_input_set_id/sealed_input_set_id。三个输入必须已冻结、角色及 Dataset 集合与 Brief bindings 完全一致；validation 输入必须就是冻结 SelectionRule 的 comparison_input_set_id，三者 decision_cutoff 一致。冻结事务锁定当前 Operator/项目/Brief，复用现有数据授权重检、验证 Family/Policy/Universe/ExecutionAssumptions、预算与 horizon，读取精确版本的尚有效原生 Runtime capability。需要 REAL/PIT 的政策不能冻结未知来源或未核验数据；原生 label interval 不支持时明确拒绝，不靠自报指标补齐。成功将 execution_context 与 Brief 同事务封口，冻结后更新内容或上下文均禁止，只能新版本。
 
 Cycle start 使用 schema_version/brief_id/expected_revision（Project revision），以及必填 researcher_profile/reviewer_profile（各为 profile_id/expected_revision），只接受 ACTIVE Project 与属于它的 FROZEN Brief。启动事务锁定并核对两个 Codex Profile 的精确当前版本、已登记原生绑定和无进行中的账号操作，冻结在不可变启动关联及原始回执中，不选“第一个账号”或静默采用新版本。两角色可以显式选同一个 Profile，但必须使用不同的持久 Thread，Reviewer 不继承 Researcher 的聊天上下文。Profile 选择属于本次 Cycle，不污染可复用 Brief；历史启动记录保留空绑定，不补造账号或启动新 Mission。启动不以60秒探测缓存替代实际 Mission 的原生连接检查；后续发现 Profile 已修改则停止新模型调用，明确要求新 Cycle，不把旧选择指向新配置。

@@ -1,24 +1,9 @@
 // SYNTHETIC presentation tests: no frozen/qualified production records are created.
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { fixture, id, project, reply } from './fixtures';
-import { initialBudget, initialStop } from '../src/brief-fields';
+import { brief, fixture, id, project, reply } from './fixtures';
 import type { Schema } from '../src/api';
 
-function brief(state: 'DRAFT' | 'FROZEN' = 'FROZEN'): Schema['BriefView'] {
-  return {
-    id: id(10), project_id: project.id, version: 1, revision: '1', state,
-    content: {
-      hypothesis: 'Synthetic UI field validation', economic_rationale: 'Not native research evidence',
-      universe_version_id: id(11), target_kind: 'SCORE', horizon_kind: 'FIXED_BARS', horizon_value: '1',
-      base_currency: 'USD', benchmark_ref: null, evaluation_policy_id: id(12), execution_assumptions_id: id(13),
-      budget: { ...initialBudget }, stop_rule: { ...initialStop },
-    },
-    bindings: [{ dataset_revision_id: id(14), role: 'DISCOVERY', access_policy: 'METADATA_ONLY' }],
-    supersedes_id: null, frozen_at: state === 'FROZEN' ? '2026-09-08T00:00:00Z' : null,
-    created_at: '2026-09-08T00:00:00Z', updated_at: '2026-09-08T00:00:00Z',
-  };
-}
 async function menu(page: Page, label: string) {
   await page.getByLabel(label).click();
   return page.locator('.ant-select-dropdown:visible .ant-select-item-option-content');

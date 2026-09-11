@@ -3,6 +3,7 @@
 import { expect } from '@playwright/test';
 import type { Page, Route } from '@playwright/test';
 import type { Schema } from '../src/api';
+import { initialBudget, initialStop } from '../src/brief-fields';
 
 export const id = (tail: number) => `01990000-0000-7000-8000-${tail.toString().padStart(12, '0')}`;
 export const project: Schema['ProjectView'] = {
@@ -16,6 +17,20 @@ export const run: Schema['RunSnapshotV1'] = {
   deadline_at: '2030-09-08T01:00:00Z', cancellation_requested_at: null, terminal_reason_code: null,
   queued_at: '2026-09-08T00:00:00Z', started_at: null, finished_at: null, revision: '9007199254740993',
 };
+export function brief(state: 'DRAFT' | 'FROZEN' = 'FROZEN'): Schema['BriefView'] {
+  return {
+    id: id(10), project_id: project.id, version: 1, revision: '1', state,
+    content: {
+      hypothesis: 'Synthetic UI field validation', economic_rationale: 'Not native research evidence',
+      universe_version_id: id(11), target_kind: 'SCORE', horizon_kind: 'FIXED_BARS', horizon_value: '1',
+      base_currency: 'USD', benchmark_ref: null, evaluation_policy_id: id(12), execution_assumptions_id: id(13),
+      budget: { ...initialBudget }, stop_rule: { ...initialStop },
+    },
+    bindings: [{ dataset_revision_id: id(14), role: 'DISCOVERY', access_policy: 'METADATA_ONLY' }],
+    supersedes_id: null, frozen_at: state === 'FROZEN' ? '2026-09-08T00:00:00Z' : null,
+    created_at: '2026-09-08T00:00:00Z', updated_at: '2026-09-08T00:00:00Z',
+  };
+}
 export const session: Schema['BrowserSession'] = {
   schema_version: 1, authenticated_at: '2026-09-08T00:00:00Z', expires_at: '2030-09-09T00:00:00Z',
   trusted_device_id: null, recent_authentication_required: false,
