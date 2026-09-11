@@ -34,6 +34,22 @@ fn selection(value: &NativeBarSelectionV1) -> Result<(), DomainError> {
     Ok(())
 }
 
+pub fn forecast_request(
+    request: &contracts::science::NativeForecastRequestV1,
+) -> Result<(), DomainError> {
+    selection(&request.selection)?;
+    let parameters = &request.parameters;
+    if parameters.fast_period == 0
+        || parameters.slow_period <= parameters.fast_period
+        || parameters.slow_period > 10_000
+        || !(1..=100_000).contains(&parameters.label_horizon_observations)
+        || !(1..=1_000_000_000).contains(&parameters.total_fuel.get())
+    {
+        return Err(bad("forecast_parameters"));
+    }
+    Ok(())
+}
+
 fn dataset(spec: &JobSpecV1, id: Id) -> bool {
     spec.inputs.iter().any(
         |input| matches!(input, RuntimeInputV1::Dataset { revision_id, .. } if *revision_id == id),
@@ -111,20 +127,11 @@ pub fn task(spec: &JobSpecV1, parameters: &NativeTaskParametersV1) -> Result<(),
             request,
             ..
         } => {
-            selection(&request.selection)?;
+            forecast_request(request)?;
             if !dataset(spec, *dataset_revision_id)
                 || !artifact(spec, *model_artifact_id, ArtifactInputRole::Model)
             {
                 return Err(bad("forecast_inputs"));
-            }
-            let parameters = &request.parameters;
-            if parameters.fast_period == 0
-                || parameters.slow_period <= parameters.fast_period
-                || parameters.slow_period > 10_000
-                || !(1..=100_000).contains(&parameters.label_horizon_observations)
-                || !(1..=1_000_000_000).contains(&parameters.total_fuel.get())
-            {
-                return Err(bad("forecast_parameters"));
             }
             if spec.inputs.iter().any(|input| match input {
                 RuntimeInputV1::Dataset { revision_id, .. } => *revision_id != *dataset_revision_id,

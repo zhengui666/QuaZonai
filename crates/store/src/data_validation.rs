@@ -40,32 +40,28 @@ fn combine_origin(current: DataOrigin, next: DataOrigin) -> DataOrigin {
     }
 }
 
-/// The caller owns Operator authority and the project lock. Only local immutable
-/// object I/O occurs while this existing publication transaction is held; native
-/// catalog network observations have already been registered by their own service.
-/// No Run is created here and this helper cannot commit the caller's transaction.
-pub(crate) async fn prepare_validation<R, Read, P, Published>(
+pub(crate) struct DatasetBinding {
+    pub selection: NativeDatasetSelectionV1,
+    pub input: RuntimeInputV1,
+    pub origin: DataOrigin,
+}
+
+/// Revalidate metadata only, never read market rows or grant Sealed access. The
+/// caller already owns its domain authority and parent project/Cycle locks.
+pub(crate) async fn dataset_bindings<R, Read>(
     tx: &mut Transaction<'_, Postgres>,
-    request: &DataValidateRequest,
+    input_set: Id,
+    project: Id,
+    runtime: Id,
     read: &mut R,
-    publish: P,
-) -> Result<NativeTaskDefinition, StoreError>
+) -> Result<Vec<DatasetBinding>, StoreError>
 where
     R: FnMut(Id, DbCounter) -> Read,
     Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
-    P: FnOnce(NativeObjectPublication) -> Published,
-    Published: std::future::Future<Output = Result<(), StoreError>>,
 {
-    domain::data::validate_request(request)?;
-    crate::research::revalidate_frozen_inputs(
-        tx,
-        request.input_set_id,
-        request.project_id,
-        request.runtime_id,
-    )
-    .await?;
+    crate::research::revalidate_frozen_inputs(tx, input_set, project, runtime).await?;
     let header = sqlx::query("SELECT purpose,decision_cutoff FROM app.input_sets WHERE id=$1 AND project_id=$2 AND frozen_at IS NOT NULL")
-        .bind(request.input_set_id.as_uuid()).bind(request.project_id.as_uuid())
+        .bind(input_set.as_uuid()).bind(project.as_uuid())
         .fetch_optional(&mut **tx).await?.ok_or_else(|| input("input_set_id"))?;
     if !matches!(
         header.try_get::<String, _>("purpose")?.as_str(),
@@ -81,16 +77,14 @@ where
     )
     .map_err(|_| input("decision_cutoff"))?;
     let rows = sqlx::query("SELECT i.ordinal,i.role,i.artifact_id,d.*,s.runtime_id,s.native_catalog_ref,e.native_metadata_artifact_id,a.byte_count AS metadata_bytes FROM app.input_set_items i LEFT JOIN app.dataset_revisions d ON d.id=i.dataset_revision_id LEFT JOIN app.data_sources s ON s.id=d.source_id LEFT JOIN app.dataset_registration_evidence e ON e.dataset_revision_id=d.id LEFT JOIN app.artifacts a ON a.id=e.native_metadata_artifact_id WHERE i.input_set_id=$1 AND i.dataset_revision_id IS NOT NULL ORDER BY i.ordinal LIMIT 256")
-        .bind(request.input_set_id.as_uuid()).fetch_all(&mut **tx).await?;
+        .bind(input_set.as_uuid()).fetch_all(&mut **tx).await?;
     if rows.is_empty() || rows.len() > 255 {
         return Err(input("input_set_id"));
     }
-    let mut selections = Vec::with_capacity(rows.len());
-    let mut inputs = Vec::with_capacity(rows.len() + 1);
-    let mut origin = DataOrigin::Real;
+    let mut bindings = Vec::with_capacity(rows.len());
     for row in rows {
         if db::optional_id(&row, "artifact_id")?.is_some()
-            || db::optional_id(&row, "runtime_id")? != Some(request.runtime_id)
+            || db::optional_id(&row, "runtime_id")? != Some(runtime)
         {
             return Err(input("input_set_id"));
         }
@@ -142,17 +136,53 @@ where
         if selection.event_end_ns > selection.decision_cutoff_ns {
             return Err(input("decision_cutoff"));
         }
-        selections.push(NativeDatasetSelectionV1 {
-            dataset_revision_id: id,
-            selection,
+        bindings.push(DatasetBinding {
+            selection: NativeDatasetSelectionV1 {
+                dataset_revision_id: id,
+                selection,
+            },
+            input: RuntimeInputV1::Dataset {
+                revision_id: id,
+                registered_ref,
+                storage_version: version,
+                role,
+            },
+            origin: row_origin,
         });
-        inputs.push(RuntimeInputV1::Dataset {
-            revision_id: id,
-            registered_ref,
-            storage_version: version,
-            role,
-        });
-        origin = combine_origin(origin, row_origin);
+    }
+    Ok(bindings)
+}
+
+/// The caller owns Operator authority and the project lock. Native observations
+/// are already registered; local publication and admission keep one transaction.
+pub(crate) async fn prepare_validation<R, Read, P, Published>(
+    tx: &mut Transaction<'_, Postgres>,
+    request: &DataValidateRequest,
+    read: &mut R,
+    publish: P,
+) -> Result<NativeTaskDefinition, StoreError>
+where
+    R: FnMut(Id, DbCounter) -> Read,
+    Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
+    P: FnOnce(NativeObjectPublication) -> Published,
+    Published: std::future::Future<Output = Result<(), StoreError>>,
+{
+    domain::data::validate_request(request)?;
+    let bindings = dataset_bindings(
+        tx,
+        request.input_set_id,
+        request.project_id,
+        request.runtime_id,
+        read,
+    )
+    .await?;
+    let mut selections = Vec::with_capacity(bindings.len());
+    let mut inputs = Vec::with_capacity(bindings.len() + 1);
+    let mut origin = DataOrigin::Real;
+    for binding in bindings {
+        selections.push(binding.selection);
+        inputs.push(binding.input);
+        origin = combine_origin(origin, binding.origin);
     }
     let parameters = NativeTaskParametersV1::ValidateData {
         schema_version: SchemaV1,

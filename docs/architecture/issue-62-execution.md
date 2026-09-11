@@ -854,3 +854,26 @@ run_lifecycle30、turn_recovery8、turns20），0失败/0忽略。两次源码�
 输入；反例检查陈旧fence、发表失败、非零试验计数、执行后改代码及删关联均拒绝。
 这是79bb243c基础上的任务准备证据，不代表真实编译/预测执行、同Thread结果回送、
 Alpha资格或完整交付；Worker后续阶段尚须接通。
+
+## 2026-09-12：编译生产者到Discovery预测的原子关联
+
+031迁移保存不可变experiment_forecasts，原提案的科学run_id与关联同事务提交且
+不能换Run。可信准备入口要求原编译真实SUCCEEDED及其原生采纳的MODEL，明确
+选择冻结Discovery版本，并以同一元数据适配生成有限选择。固定bars horizon与
+Brief一致，预测参数复用原生任务校验；只挂载一个Dataset、原MODEL和服务参数，
+不挂载代码或Sealed。existing Run准入一次预约experiments=1，并发重放返回原Run。
+
+`.ai-bridge/verify-JzgA0E` exit0：check/fmt/严格Clippy及106项PG回归。随后只加强
+参数负例并同步CLI/用户文档/薄Skill：保持文件字节长度，使Sealed数据选择、错误
+horizon、超额fuel、错误EMA周期和自报MODEL分别触发真正语义校验，不只靠大小
+不符失败。`cargo test --locked -p domain` exit0，96项通过/0失败/0忽略。
+最终`.ai-bridge/verify-P9fRv6` exit0再次通过check/fmt/严格Clippy和106项PG检查
+（constraints7、data_validation7、experiment_compilations4、experiments11、missions19、
+run_lifecycle30、turn_recovery8、turns20）。两轮源码前后不变，独立PG均确认停止。
+新正例验证未完成编译拒绝、原MODEL绑定、并发一个Run/一份试验与CPU预约、原生
+Job输入及冻结run_id；负例验证错误参数/陈旧fence、最后关系插入故障回滚全部
+Run/产物记录/PGMQ/预算，正常重试可继续。
+
+这里的编译输出为明确标注的受控协议fixture，证明真实数据库/文件/队列事务，
+不冒充执行rustc、Wasmi或真实市场预测；本地b1da5b7b上的此增量尚未接入Worker
+自动科学推进/同Thread反馈，更不代表分折、Reviewer、资格或完整PR验收。

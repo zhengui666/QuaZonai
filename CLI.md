@@ -294,6 +294,14 @@ Idempotency-Key，kind 只接受 CODE、PARAMETERS、REPORT。content 是原始 
 CODE 不在 API 进程编译或执行。所有此类用户/Agent提交均标记 SYNTHETIC/RESEARCH，
 不能提交 origin、路径、producer、Run/Attempt、状态或 REAL/PACKAGE/METRICS 权限。
 
+Wasm提案的PARAMETERS内容采用
+`{schema_version:1,dataset_revision_id:UUID,parameters:{schema_version:1,fast_period,slow_period,label_horizon_observations,total_fuel}}`。
+dataset_revision_id明确选自该Brief冻结Discovery；label_horizon_observations必须等于
+FIXED_BARS Brief的horizon_value，其他horizon当前不支持。fast_period>=1，
+fast_period<slow_period<=10000，horizon为1..100000，total_fuel为1..1000000000的
+十进制字符串。不得带MODEL ID、宿主路径或额外字段；模型由原编译Run确定。
+这只说明可信预测准备入口接受的文档，不表示artifact上传或experiment.propose会自动执行。
+
 浏览器须近期 Operator；CLI/AUTOMATION/MISSION 使用精确项目的 ARTIFACT_SUBMIT。
 这里不需要也不授予 Operator grant。Mission 凭据必须由受信任任务服务签发并绑定当前
 Attempt；同一 Run 的所有历史上传累计占用冻结 output_bytes，不因换 Attempt 清零。

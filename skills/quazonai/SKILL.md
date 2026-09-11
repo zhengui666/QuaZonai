@@ -40,6 +40,8 @@ schema_version、CODE/PARAMETERS/REPORT、workspace_relative_path、idempotency_
 不能指定根目录或自行带入秘密。文件最多2MiB、普通单链接UTF-8，隐藏路径与软链拒绝。
 `experiment.propose` 需要 EXPERIMENT_SUBMIT，参数为 idempotency_key 与完整
 ExperimentProposalV1，Cycle 必须等于本 Mission；返回 PENDING 不是科学运行或资格。
+Wasm提案的参数格式和范围见CLI「研究产物」：必须明确冻结Discovery版本、固定bars
+horizon及原生预测参数，不填MODEL ID或路径；模型只能由可信服务绑定原编译生产者。
 提交响应未知时保留同一 key 和原始文件/请求重放；不同内容409不能改键绕过预算。
 未知工具不是可由任意 HTTP/Shell/SQL 替代的能力。保留 UUIDv7 和十进制版本字符串。
 每次调用会重新检查到期、撤销及 Attempt 接管，失败不能靠更换 ID、扩大权限或

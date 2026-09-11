@@ -5,10 +5,258 @@ use contracts::{
     execution::NativeTaskParametersV1,
     research::{ArtifactInputRole, DataOrigin},
     runtime_jobs::RuntimeInputV1,
+    science::{NativeForecastParametersV1, NativeForecastRequestV1},
 };
 use native::{bind_task, NativeObjectPublication, NativeTaskDefinition};
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ForecastProposal {
+    #[serde(rename = "schema_version")]
+    _schema_version: SchemaV1,
+    dataset_revision_id: Id,
+    parameters: NativeForecastParametersV1,
+}
+
 impl Store {
+    /// Trusted Mission worker: select no model or path from Agent-authored JSON.
+    pub async fn start_experiment_forecast<R, Read, P, Published>(
+        &self,
+        mission: Id,
+        owner: &WorkerFence,
+        experiment: Id,
+        limits: &JobLimitsV1,
+        mut read: R,
+        publish: P,
+    ) -> Result<CommandResult<RunSnapshotV1>, StoreError>
+    where
+        R: FnMut(Id, DbCounter) -> Read,
+        Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
+        P: FnOnce(NativeObjectPublication) -> Published,
+        Published: std::future::Future<Output = Result<(), StoreError>>,
+    {
+        let mut tx = self.pool.begin().await?;
+        let locked = lock_run(&mut tx, mission).await?;
+        fence(&mut tx, &locked.run, owner).await?;
+        let cycle = locked.run.cycle_id.ok_or(StoreError::Forbidden)?;
+        let e = sqlx::query("SELECT e.*,c.compile_run_id FROM app.experiments e JOIN app.experiment_compilations c ON c.experiment_id=e.id JOIN app.run_missions m ON m.run_id=c.mission_run_id AND m.role='RESEARCHER' WHERE e.id=$1 AND e.project_id=$2 AND e.cycle_id=$3 AND c.mission_run_id=$4 FOR UPDATE OF e")
+            .bind(experiment.as_uuid()).bind(locked.run.project_id.as_uuid()).bind(cycle.as_uuid()).bind(mission.as_uuid())
+            .fetch_optional(&mut *tx).await?.ok_or(StoreError::NotFound)?;
+        if let Some(existing) = sqlx::query_scalar::<_, uuid::Uuid>(
+            "SELECT run_id FROM app.experiment_forecasts WHERE experiment_id=$1",
+        )
+        .bind(experiment.as_uuid())
+        .fetch_optional(&mut *tx)
+        .await?
+        {
+            let resource = snapshot(&run_row(&mut tx, db::id(existing)?, false).await?)?;
+            tx.commit().await?;
+            return Ok(CommandResult {
+                schema_version: SchemaV1,
+                replayed: true,
+                resource,
+            });
+        }
+        if !matches!(
+            locked.run.state,
+            RunState::Dispatching | RunState::Running | RunState::Reconciling
+        ) || now(&mut tx).await? >= locked.run.deadline_at
+            || e.try_get::<String, _>("outcome")? != "PENDING"
+            || db::optional_id(&e, "run_id")?.is_some()
+        {
+            return Err(DomainError::AdmissionClosed.into());
+        }
+        if limits.experiments != 1
+            || limits.wall_seconds == 0
+            || limits.cpu_seconds == DbCounter::ZERO
+        {
+            return Err(StoreError::Invalid("forecast_limits"));
+        }
+        let compilation = db::id(e.try_get("compile_run_id")?)?;
+        let models = sqlx::query("SELECT model.id,model.byte_count,model.storage_version FROM app.runs r JOIN app.run_attempts a ON a.id=r.active_attempt_id AND a.run_id=r.id JOIN app.run_terminal_receipts receipt ON receipt.run_id=r.id AND receipt.attempt_id=a.id JOIN app.run_native_outputs o ON o.attempt_id=a.id JOIN app.artifacts model ON model.id=o.artifact_id WHERE r.id=$1 AND r.state='SUCCEEDED' AND a.dispatch_state='TERMINAL' AND a.accepted_at IS NOT NULL AND receipt.terminal_state='SUCCEEDED' AND model.producer_run_id=r.id AND model.producer_attempt_id=a.id AND model.project_id=r.project_id AND model.kind='MODEL' AND model.schema_name='qz.wasm_model' AND model.schema_version='1' AND model.access_class='RESEARCH' AND model.media_type='application/wasm' AND model.storage_backend='LOCAL' AND model.storage_object_ref=model.id::text")
+            .bind(compilation.as_uuid()).fetch_all(&mut *tx).await?;
+        let [model] = models.as_slice() else {
+            return Err(StoreError::Invalid("accepted_compilation_required"));
+        };
+        let model_id = db::id(model.try_get("id")?)?;
+        let model_bytes = counter(model.try_get("byte_count")?)?;
+        if model_bytes == DbCounter::ZERO || model_bytes.get() > 2 * 1024 * 1024 {
+            return Err(StoreError::Integrity);
+        }
+        let parameters_id =
+            db::optional_id(&e, "parameter_artifact_id")?.ok_or(StoreError::Integrity)?;
+        let size: i64 = sqlx::query_scalar("SELECT byte_count FROM app.artifacts WHERE id=$1 AND project_id=$2 AND kind='PARAMETERS' AND schema_name='qz.research_parameters' AND schema_version='1' AND media_type='application/json' AND access_class='RESEARCH' AND storage_backend='LOCAL' AND storage_object_ref=id::text")
+            .bind(parameters_id.as_uuid()).bind(locked.run.project_id.as_uuid()).fetch_optional(&mut *tx).await?.ok_or(StoreError::Integrity)?;
+        let size = counter(size)?;
+        if size == DbCounter::ZERO || size.get() > 2 * 1024 * 1024 {
+            return Err(StoreError::Integrity);
+        }
+        let raw = read(parameters_id, size).await?;
+        if raw.len() as u64 != size.get() {
+            return Err(StoreError::Integrity);
+        }
+        let proposal: ForecastProposal =
+            serde_json::from_slice(&raw).map_err(|_| StoreError::Invalid("forecast_parameters"))?;
+        let brief = sqlx::query("SELECT b.id,b.horizon_kind,b.horizon_value FROM app.research_cycles c JOIN app.research_briefs b ON b.id=c.brief_id WHERE c.id=$1")
+            .bind(cycle.as_uuid()).fetch_one(&mut *tx).await?;
+        if brief.try_get::<String, _>("horizon_kind")? != "FIXED_BARS" {
+            return Err(DomainError::CapabilityUnavailable("native_fixed_bar_horizon").into());
+        }
+        if brief.try_get::<Option<i64>, _>("horizon_value")?
+            != Some(i64::from(proposal.parameters.label_horizon_observations))
+        {
+            return Err(StoreError::Invalid("forecast_label_horizon"));
+        }
+        let context =
+            crate::cycles::execution_context(&mut tx, db::id(brief.try_get("id")?)?).await?;
+        if context.runtime_id != db::id(locked.admission.try_get("runtime_id")?)?
+            || context.runtime_revision
+                != db::revision(locked.admission.try_get("runtime_revision")?)?
+        {
+            return Err(StoreError::Integrity);
+        }
+        let binding = crate::data_validation::dataset_bindings(
+            &mut tx,
+            context.discovery_input_set_id,
+            locked.run.project_id,
+            context.runtime_id,
+            &mut read,
+        )
+        .await?
+        .into_iter()
+        .find(|binding| binding.selection.dataset_revision_id == proposal.dataset_revision_id)
+        .ok_or(StoreError::Invalid("forecast_discovery_dataset"))?;
+        let request = NativeForecastRequestV1 {
+            schema_version: SchemaV1,
+            selection: binding.selection.selection,
+            parameters: proposal.parameters,
+        };
+        domain::execution::forecast_request(&request)?;
+        let task = NativeTaskParametersV1::EvaluateAlpha {
+            schema_version: SchemaV1,
+            dataset_revision_id: proposal.dataset_revision_id,
+            model_artifact_id: model_id,
+            request,
+        };
+        let capabilities = crate::runtime::require_capabilities(
+            &mut tx,
+            context.runtime_id,
+            context.runtime_revision,
+            RunKind::AlphaEvaluate,
+        )
+        .await?;
+        domain::runtime::job_limits(&capabilities, limits)?;
+        let cpu = u16::try_from(
+            limits
+                .cpu_seconds
+                .get()
+                .div_ceil(u64::from(limits.wall_seconds)),
+        )
+        .map_err(|_| DomainError::CapabilityUnavailable("native_cpu_capacity"))?;
+        if cpu == 0 || cpu > capabilities.max_cpu {
+            return Err(DomainError::CapabilityUnavailable("native_cpu_capacity").into());
+        }
+        let schemas = task.output_schemas();
+        if !schemas.iter().all(|schema| {
+            capabilities.artifact_schemas.iter().any(|supported| {
+                supported.name == schema.name && supported.version == schema.version
+            })
+        }) {
+            return Err(DomainError::CapabilityUnavailable("native_forecast_outputs").into());
+        }
+        let image_ref = capabilities
+            .image_refs
+            .iter()
+            .find(|image| image.job_kind == RunKind::AlphaEvaluate)
+            .ok_or(DomainError::CapabilityUnavailable("native_forecast_image"))?
+            .image_ref
+            .clone();
+        let capability: uuid::Uuid = sqlx::query_scalar(
+            "SELECT last_capability_snapshot_artifact_id FROM app.runtime_integrations WHERE id=$1",
+        )
+        .bind(context.runtime_id.as_uuid())
+        .fetch_one(&mut *tx)
+        .await?;
+        let parameter_id = Id::new();
+        let bytes = serde_json::to_vec(&task).map_err(|_| StoreError::Integrity)?;
+        let size = counter(bytes.len() as i64)?;
+        publish(NativeObjectPublication {
+            id: parameter_id,
+            bytes,
+        })
+        .await?;
+        sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,'PARAMETERS','application/json','qz.native_task','1','LOCAL',$3,'1',$4,'RESEARCH','SYNTHETIC','OPERATOR','REFERENCED')")
+            .bind(parameter_id.as_uuid()).bind(locked.run.project_id.as_uuid()).bind(parameter_id.to_string()).bind(size.get() as i64).execute(&mut *tx).await?;
+        fence(&mut tx, &locked.run, owner).await?;
+        let remaining = (locked.run.deadline_at - now(&mut tx).await?).num_seconds();
+        let mut bounded = limits.clone();
+        bounded.wall_seconds = bounded.wall_seconds.min(
+            u32::try_from(remaining).map_err(|_| DomainError::BudgetExhausted("wall_seconds"))?,
+        );
+        if bounded.wall_seconds == 0 {
+            return Err(DomainError::BudgetExhausted("wall_seconds").into());
+        }
+        let submission = RunSubmission {
+            cycle_id: cycle,
+            input_set_id: context.discovery_input_set_id,
+            runtime_id: context.runtime_id,
+            runtime_revision: context.runtime_revision,
+            kind: RunKind::AlphaEvaluate,
+            limits: bounded,
+        };
+        let (mut tx, admitted) = Self::enqueue_run_in_transaction(
+            tx,
+            &format!("experiment/{experiment}/forecast"),
+            &submission,
+        )
+        .await?;
+        if admitted.replayed {
+            return Err(StoreError::Integrity);
+        }
+        if admitted.resource.deadline_at > locked.run.deadline_at {
+            return Err(DomainError::BudgetExhausted("wall_seconds").into());
+        }
+        bind_task(
+            &mut tx,
+            &admitted.resource,
+            NativeTaskDefinition {
+                parameters_artifact_id: parameter_id,
+                inputs: vec![
+                    binding.input,
+                    RuntimeInputV1::Artifact {
+                        artifact_id: model_id,
+                        storage_version: model.try_get("storage_version")?,
+                        byte_count: model_bytes,
+                        role: ArtifactInputRole::Model,
+                    },
+                    RuntimeInputV1::Artifact {
+                        artifact_id: parameter_id,
+                        storage_version: "1".into(),
+                        byte_count: size,
+                        role: ArtifactInputRole::Parameters,
+                    },
+                ],
+                image_ref,
+                cpu,
+                capability_snapshot_artifact_id: db::id(capability)?,
+                output_schemas: schemas,
+                origin: binding.origin,
+                access: ArtifactAccess::Research,
+            },
+        )
+        .await?;
+        sqlx::query("INSERT INTO app.experiment_forecasts(experiment_id,run_id,model_artifact_id,dataset_revision_id) VALUES($1,$2,$3,$4)")
+            .bind(experiment.as_uuid()).bind(admitted.resource.id.as_uuid()).bind(model_id.as_uuid()).bind(proposal.dataset_revision_id.as_uuid()).execute(&mut *tx).await?;
+        sqlx::query("UPDATE app.experiments SET run_id=$2 WHERE id=$1")
+            .bind(experiment.as_uuid())
+            .bind(admitted.resource.id.as_uuid())
+            .execute(&mut *tx)
+            .await?;
+        fence(&mut tx, &locked.run, owner).await?;
+        tx.commit().await?;
+        Ok(admitted)
+    }
+
     /// Trusted Mission worker only. Limits are a proposed allocation, not authority
     /// to exceed the frozen budget; an existing compilation always retains its Run.
     pub async fn start_experiment_compilation<P, Published>(

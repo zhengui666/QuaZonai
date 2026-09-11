@@ -824,6 +824,23 @@ experiment_authorship的历史提案不推断作者或自动执行。首次关�
 关联及消息同事务提交；相同提案重放返回原Run，不换模型或身份。编译产生的MODEL
 仅是后续预测输入，SYNTHETIC编译来源不冒充市场数据或Alpha资格。
 
+### A3.6 编译后的原生 Discovery 预测
+
+Wasm预测提案的PARAMETERS文档采用严格字段`schema_version=1`、
+`dataset_revision_id`和`parameters:NativeForecastParametersV1`；后者为schema_version、
+fast_period、slow_period、label_horizon_observations、total_fuel。数据版本必须明确选自
+本Brief冻结Discovery输入，不默认第一个版本；当前原生适配要求FIXED_BARS且label
+horizon等于Brief，其他horizon明确返回能力不支持，不能偷换为固定观察数。
+选择的bar types、事件区间、可得时间上限和行数来自既有原生登记元数据适配，不由
+Agent提供路径、任意查询或扩大时间范围。参数文件不接受MODEL ID；模型只取该
+提案编译Run真实SUCCEEDED终态所采纳的唯一qz.wasm_model及原生产者映射。
+
+预测使用既有EvaluateAlpha任务，只有明确选中的Discovery Dataset、原MODEL和
+服务生成参数作为输入。experiments=1在既有Run准入事务预约，代码/参数/模型/
+Dataset/科学Run的不可变关联与消息同事务提交；同提案重放不重复试验或换生产者。
+该科学Run才写入experiments.run_id，编译Run不占用此指针。预测结果仍是Discovery
+研究反馈，不等于验证分折、独立Reviewer、Sealed评估或Alpha资格。
+
 ## A4. 输入、政策、评估、资格与暴露
 
 ```text
