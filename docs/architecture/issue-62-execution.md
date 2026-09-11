@@ -759,3 +759,36 @@ HTTP Profile4、MCP5、Mission8共17项通过/0失败/0忽略，源码未变、�
 故障回归还核实第二次原生请求包含实际shell结果，不把仅生成工具调用当执行成功。
 这是88990e23基础上的局部增量证据，未证明Provider真实计费、运行中预算中断、
 生产Worker自动Mission、完整科学/Reviewer链路或GitHub最新Head完成。
+
+## 2026-09-12：原生超额停止与终态来源核验
+
+沿用现有Run事件和Turn账本：首次达到预约的原生部分用量形成`mission.token_limit`
+及同事务取消意图，随后才原生中断；未结算期间同Cycle的新预约/首次派发被拒绝。
+最终回执不能低于已记录观察，足额真实回执和旧请求对账仍可进入，观察历史不改写。
+没有新增计费器、队列、表、依赖或业务hash；原生rollout budget的跟踪/提醒没有当成
+硬性额度保证（[官方配置说明](https://learn.chatgpt.com/docs/config-file/config-reference)）。
+
+真实原生测试发现两条边界，而非只放宽断言：一是工具续轮请求可能早于用量通知，
+因此中断不能承诺撤回已经在途的第二次模型请求；二是0.144.4的真实断流通知为
+FAILED，而`thread/turns/list(itemsView=notLoaded)`重建列表显示COMPLETED。
+`.ai-bridge/verify-VKCPI9`的单例诊断实际观察2次请求及InProgress/Completed，
+60秒内没有列表Failed。此前`zgJQv9`遇到只读列表-32603，`gjlqCg`只读重试仍超时；
+均真实失败、源码未变且各自独立PG已停止，未把这些结果记为通过。
+
+修复后只以真实`turn/completed`通知或其既有持久记录确认终态，通知立即入账。
+ACK/列表只恢复身份；丢失真实终态时保留UNKNOWN，-32600也不能补造取消。
+迟到部分用量不能把已失败Turn变为成功/取消，仍记录超额且保留全部未结算预约。
+
+验证边界：首轮完整`.ai-bridge/verify-HnefIj`的check/fmt/严格Clippy、domain149、
+managed6、native28通过，Store/Server482通过/1失败（错误地要求续轮请求必为1次）；
+这不是最终全绿证据。最终Store代码在`.ai-bridge/verify-kuNCRF`通过82项真实PG回归，
+含并发停止幂等、旧fence拒绝、跨Mission未结算门禁和39不能结算已观察40的反例。
+最终原生状态修复在`.ai-bridge/verify-PQwg2g`通过精确反例，再以相同源码在
+`.ai-bridge/verify-i4VkRN`通过check/fmt/严格Clippy及Profile4/MCP5/Mission10，
+共19项通过/0失败/0忽略。两种原生顺序分别断言真实Cancelled和真实Failed、
+120/100用量事件、原预约未结算；缺通知的列表完成不能生成终态，已有真实终态则
+保持首次数据库观察时间。全部验证器确认源码未变和各自独立PG停止。
+
+这是6d5a4ae6基础上的本地增量；合成模型响应/市场准备不冒充真实付费账户或科学
+结果，未证明严格token/美元上限、生产Mission自动领取、科学/Reviewer完整链路、
+GitHub最新Head CI或全量W0–W8/T01–T42完成。

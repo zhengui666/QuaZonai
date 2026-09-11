@@ -152,6 +152,61 @@ async fn waiting(tx: &mut Tx<'_>, cycle: Id, reason: &str) -> Result<(), StoreEr
 }
 
 impl Store {
+    /// A native partial usage observation can stop spending, never settle it.
+    /// This trusted driver operation is not exposed to an Agent or HTTP caller.
+    pub async fn observe_mission_token_limit(
+        &self,
+        run: Id,
+        owner: &WorkerFence,
+        reservation: Id,
+        observed_tokens: DbCounter,
+    ) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await?;
+        let locked = lock_run(&mut tx, run).await?;
+        fence(&mut tx, &locked.run, owner).await?;
+        if locked.run.kind != RunKind::AgentResearch || locked.run.state.is_terminal() {
+            return Err(StoreError::Conflict);
+        }
+        let reserved: i64 = sqlx::query_scalar("SELECT r.reserved_tokens FROM app.model_turn_reservations r JOIN app.model_turn_bindings b ON b.reservation_id=r.id WHERE r.id=$1 AND r.run_id=$2 AND r.attempt_id=$3")
+            .bind(reservation.as_uuid()).bind(run.as_uuid()).bind(owner.attempt_id.as_uuid())
+            .fetch_optional(&mut *tx).await?.ok_or(StoreError::Conflict)?;
+        let reserved_tokens = counter(reserved)?;
+        if observed_tokens < reserved_tokens {
+            return Err(StoreError::Invalid("native_token_limit_not_reached"));
+        }
+        let (already_recorded, settled): (bool, Option<i64>) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM app.run_events WHERE run_id=$1 AND event_type='mission.token_limit' AND payload->>'reservation_id'=$2),(SELECT actual_tokens FROM app.model_turn_receipts WHERE reservation_id=$3)")
+            .bind(run.as_uuid()).bind(reservation.to_string()).bind(reservation.as_uuid())
+            .fetch_one(&mut *tx).await?;
+        if settled.is_some_and(|tokens| tokens < observed_tokens.get() as i64) {
+            return Err(StoreError::Conflict);
+        }
+        if !already_recorded && settled.is_none() {
+            let next = locked
+                .run
+                .last_event_seq
+                .checked_add(1)
+                .ok_or(StoreError::Integrity)?;
+            sqlx::query("INSERT INTO app.run_events(run_id,seq,attempt_id,event_type,schema_version,payload,occurred_at) VALUES($1,$2,$3,'mission.token_limit',1,$4,clock_timestamp())")
+                .bind(run.as_uuid()).bind(next.get() as i64).bind(owner.attempt_id.as_uuid())
+                .bind(json!({"schema_version":1,"reservation_id":reservation,"observed_tokens":observed_tokens,"reserved_tokens":reserved_tokens}))
+                .execute(&mut *tx).await?;
+            if locked.run.state != RunState::CancelRequested {
+                let state = runs::request_cancel(locked.run.state)?;
+                sqlx::query("UPDATE app.runs SET state=$2,cancellation_requested_at=clock_timestamp() WHERE id=$1")
+                    .bind(run.as_uuid()).bind(db::code(&state)?).execute(&mut *tx).await?;
+                append(
+                    &mut tx,
+                    run,
+                    RunEventKind::StateChanged,
+                    RunReason::CancelRequested,
+                )
+                .await?;
+            }
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
     pub async fn mission_job(
         &self,
         run: Id,

@@ -33,6 +33,7 @@ struct Seen {
     invalid: AtomicBool,
     slow: AtomicBool,
     fail_continuation: AtomicBool,
+    stop_continuation: AtomicBool,
 }
 
 pub struct Provider {
@@ -90,6 +91,11 @@ impl Provider {
     pub fn fail_after_tool(&self) {
         self.seen.fail_continuation.store(true, Ordering::SeqCst);
     }
+
+    #[allow(dead_code)] // Only Mission tests exercise the real token-limit interrupt.
+    pub fn exceed_tokens_before_tool(&self) {
+        self.seen.stop_continuation.store(true, Ordering::SeqCst);
+    }
 }
 
 async fn respond(
@@ -99,6 +105,8 @@ async fn respond(
 ) -> (StatusCode, [(header::HeaderName, &'static str); 1], String) {
     let ordinal = seen.count.fetch_add(1, Ordering::SeqCst);
     let fail_continuation = seen.fail_continuation.load(Ordering::SeqCst);
+    let stop_continuation = seen.stop_continuation.load(Ordering::SeqCst);
+    let tool_continuation = fail_continuation || stop_continuation;
     // Observe only controlled fixture sentinels; don't retain or print requests.
     let input = request.get("input").and_then(Value::as_array);
     let input_text = input
@@ -112,8 +120,8 @@ async fn respond(
         && request["stream"] == true
         && ordinal < 2
         && input.is_some()
-        && (!fail_continuation || ordinal == 0 || input_text.contains("QZ_NATIVE_TOOL_DONE"))
-        && input_text.contains(if ordinal == 0 || fail_continuation {
+        && (!tool_continuation || ordinal == 0 || input_text.contains("QZ_NATIVE_TOOL_DONE"))
+        && input_text.contains(if ordinal == 0 || tool_continuation {
             FIRST_PROMPT
         } else {
             SECOND_PROMPT
@@ -126,19 +134,20 @@ async fn respond(
             "{}".into(),
         );
     }
-    if ordinal == 1 && !fail_continuation {
+    if ordinal == 1 && !tool_continuation {
         seen.prior_context.store(
             input_text.contains(FIRST_PROMPT) && input_text.contains(FIRST_REPLY),
             Ordering::SeqCst,
         );
     }
-    if seen.slow.load(Ordering::SeqCst) {
+    if seen.slow.load(Ordering::SeqCst) || (stop_continuation && !fail_continuation && ordinal == 1)
+    {
         // A delayed upstream response must remain pending across real native
         // CPU throttling; a fast five-second reply races the interrupt itself.
         tokio::time::sleep(Duration::from_secs(60)).await;
     }
     let id = format!("qz-local-response-{ordinal}");
-    if fail_continuation && ordinal == 1 {
+    if tool_continuation && ordinal == 1 {
         // A real second native model request receives a broken stream with no
         // usage receipt. The first response's 12 tokens cannot price this request.
         return (
@@ -150,7 +159,7 @@ async fn respond(
             ),
         );
     }
-    let item = if fail_continuation {
+    let item = if tool_continuation {
         let tool = request["tools"]
             .as_array()
             .unwrap()
@@ -171,8 +180,8 @@ async fn respond(
         json!({"type":"response.created","response":{"id":id}}),
         json!({"type":"response.output_item.done","item":item}),
         json!({"type":"response.completed","response":{"id":id,"usage":{
-            "input_tokens":10,"input_tokens_details":{"cached_tokens":0},
-            "output_tokens":2,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":12
+            "input_tokens":if stop_continuation {118} else {10},"input_tokens_details":{"cached_tokens":0},
+            "output_tokens":2,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":if stop_continuation {120} else {12}
         }}}),
     ];
     // Event shapes follow the pinned upstream core/tests/common/responses.rs.

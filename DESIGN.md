@@ -1376,6 +1376,19 @@ owner epoch、数据库时钟 lease 与 deadline，然后先提交唯一 dispatc
 一旦存在 intent 即保守拒绝。真实消耗超过预约/预算仍如实入账，后续准入阻断；
 若总量无法表示为A0范围，整事务失败并保持预约，绝不 wrap/截断或称成功。
 
+受信任 Mission 驱动观察到仍在运行的 Turn 的原生累计差额达到本轮 token 预约时，
+先在当前 Run/Attempt fence 内追加 `mission.token_limit` 事件并提交取消意图，再调用
+原生 `turn/interrupt`。事件 v1 仅含 `schema_version`、`reservation_id`、
+`observed_tokens`、`reserved_tokens`（后两者为 A0 bigint 字符串）；每个预约只保留
+首次达到阈值的观察，不是完整用量回执。该事件与取消状态同事务；未对账期间同 Cycle
+不得再预约或首次发送模型请求，既有请求仍可查询、中断、如实结算。最终回执不得低于
+已记录的原生用量，迟到观察也不得与已有完整回执矛盾。完整回执最终不超额
+时可解除这项待对账门禁，真实超额则继续由账本阻止新支出。不把提醒配置、事后用量通知
+或异步中断宣称为逐 token 硬限额：通知前及中断竞态内可能已产生额外消耗。
+若先确认原生失败/中断、后收到其部分用量，仍记录达到阈值的事实并关闭新支出；
+已确认的原生失败不能改写成中断。原生成功且完整用量可结算时直接如实结算，
+不因迟到通知把已成功的 Turn 伪装成取消。
+
 这是一段正式持久化合同；其实现与原生模型发送/同Thread结果消费、账号隔离的
 验收分别记证据，不能以数据库测试冒充已接通模型。
 
@@ -2389,7 +2402,16 @@ Linux Mission进程资源边界复用systemd原生user scope与util-linux prlimi
 
 连接成功初始化后，以自己的原生子进程PID及内核cgroup成员关系确认所有权，持有原cgroup.kill文件描述符。关闭/异常Drop只向这个原生句柄请求整组终止，正常关闭等待原组消失；不能仅杀App Server主PID留下bwrap/MCP，也不按可复用的scope名称杀后来的进程组。无法确认所有权时不授予清理能力。原生文件描述符及inode只用于OS资源所有权，不是领域身份/资格或应用hash。受低CPU配额约束的Mission RPC最多等待60秒、MCP启动最多45秒，仍受原有110秒bootstrap总界限和Run剩余墙钟约束；普通账户/目录探测保持原20秒RPC限制。不得把等待放大为新任务预算。
 
-原生turn/start返回的是提交入队确认，不能据其InProgress字段假造已开始计算；只有实际TurnStarted事件或原生started_at才能标记RUNNING并发送普通turn/interrupt。取消与完成仍可能竞态：原生-32600拒绝不等于已取消，只能按精确原Turn ID读取真实终态；无终态时保持未知，不换Thread、不重发或补造用量。
+原生turn/start返回的是提交入队确认，不能据其InProgress字段假造已开始计算；只有实际TurnStarted事件或原生started_at才能标记RUNNING并发送普通turn/interrupt。取消与完成仍可能竞态：原生-32600拒绝不等于已取消；必须等待精确原Turn的真实终态通知或保留已有持久化通知，缺失则保持未知，不换Thread、不重发或补造用量。
+
+锁定0.144.4已复现：真实工具续轮断流时，`turn/completed`为FAILED，但
+`thread/turns/list(itemsView=notLoaded)`重建视图可为COMPLETED。因此列表和start ACK
+仅用于恢复精确身份、读取可观察开始状态，不能单独形成终态/成功回执。驱动只采纳
+精确Turn的真实`turn/completed`通知或此前已持久化的同一通知；原生失败不会被列表
+“成功”覆盖。收到通知即在当前fence下记录，不因后续断连而丢掉已知终态。只有真实
+成功终态和完整用量同时已知才自动结算；丢失终态通知且没有持久化记录时保持UNKNOWN
+和预约，即使列表显示完成也不猜测退款/成功。-32600中断拒绝后只在有界窗口内等待
+该Turn的真实通知，不用列表投影补造终态。
 
 ## C. 已落实到 A4/A6/A7 的精确数值与关联补充
 

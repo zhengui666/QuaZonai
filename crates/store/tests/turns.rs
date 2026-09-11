@@ -426,6 +426,76 @@ async fn per_turn_overrun_below_cycle_cap_blocks_new_reservations_and_prepared_s
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn pending_native_limit_observation_blocks_other_missions_until_authoritative_settlement(
+    pool: PgPool,
+) {
+    let f = fixture(&pool, budget()).await;
+    let s = Store::from_pool(pool.clone());
+    let first = s
+        .reserve_turn(f.run, &f.fence, &f.request("original"))
+        .await
+        .unwrap();
+    s.claim_turn_dispatch(first.id, &f.fence).await.unwrap();
+    s.bind_native_turn(first.id, &f.fence, "limited-native")
+        .await
+        .unwrap();
+    let (other, _, fence, deadline) =
+        mission(&pool, f.project, f.cycle, f.input_set, f.profile).await;
+    let mut pending = f.request("already-reserved");
+    pending.deadline_at = deadline;
+    let pending = s.reserve_turn(other, &fence, &pending).await.unwrap();
+    // Controlled protocol observation; the separate formal Mission test covers
+    // fenced producer insertion and cancellation in the same transaction.
+    sqlx::query("INSERT INTO app.run_events(run_id,seq,attempt_id,event_type,schema_version,payload,occurred_at) SELECT id,last_event_seq+1,active_attempt_id,'mission.token_limit',1,$2,clock_timestamp() FROM app.runs WHERE id=$1")
+        .bind(f.run.as_uuid()).bind(serde_json::json!({"schema_version":1,"reservation_id":first.id,"observed_tokens":"40","reserved_tokens":"40"})).execute(&pool).await.unwrap();
+    let mut next = f.request("next");
+    next.tokens = DbCounter::new(1).unwrap();
+    assert!(matches!(
+        s.reserve_turn(f.run, &f.fence, &next).await,
+        Err(StoreError::Domain(DomainError::BudgetExhausted("tokens")))
+    ));
+    assert!(matches!(
+        s.claim_turn_dispatch(pending.id, &fence).await,
+        Err(StoreError::Domain(DomainError::BudgetExhausted("tokens")))
+    ));
+    assert!(matches!(
+        s.claim_turn_dispatch(first.id, &f.fence).await.unwrap(),
+        DispatchDecision::Reconcile { .. }
+    ));
+    assert!(matches!(
+        s.settle_turn(
+            first.id,
+            &f.fence,
+            &used(TurnOutcome::Cancelled, 39, "1.25")
+        )
+        .await,
+        Err(StoreError::Conflict)
+    ));
+    s.settle_turn(
+        first.id,
+        &f.fence,
+        &used(TurnOutcome::Cancelled, 40, "1.25"),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        s.claim_turn_dispatch(pending.id, &fence).await.unwrap(),
+        DispatchDecision::Send { .. }
+    ));
+    let observations: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM app.run_events WHERE run_id=$1 AND event_type='mission.token_limit'",
+    )
+    .bind(f.run.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        observations, 1,
+        "final receipt never edits earlier observation"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn missing_queue_rolls_back_the_budget_and_reservation_together(pool: PgPool) {
     let f = fixture(&pool, budget()).await;
     let s = Store::from_pool(pool.clone());

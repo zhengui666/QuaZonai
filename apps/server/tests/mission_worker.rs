@@ -372,6 +372,41 @@ async fn native_terminal_without_usage_preserves_first_observation_and_budget(po
     .await;
     assert_eq!(usage.total, 12);
     let (_alive, shutdown) = tokio::sync::watch::channel(false);
+    assert_eq!(
+        connection
+            .drive_turn(
+                &f.store,
+                f.data.objects.clone(),
+                f.lease.run.id,
+                &f.lease.fence,
+                &shutdown
+            )
+            .await
+            .unwrap(),
+        TurnProgress::Unresolved
+    );
+    assert!(
+        f.store
+            .mission_turn_checkpoint(f.lease.run.id, &f.lease.fence)
+            .await
+            .unwrap()
+            .latest
+            .unwrap()
+            .terminal
+            .is_none(),
+        "a reconstructed list status alone cannot prove a terminal"
+    );
+    // The helper above did observe the real completed notification. Persist that
+    // exact fact, but deliberately withhold its usage to exercise later recovery.
+    f.store
+        .observe_mission_turn_terminal(
+            reserved.id,
+            &f.lease.fence,
+            TurnOutcome::Succeeded,
+            "NATIVE_TURN_COMPLETED",
+        )
+        .await
+        .unwrap();
     let mut first = None;
     for _ in 0..2 {
         assert_eq!(
@@ -493,6 +528,149 @@ async fn partial_usage_before_failed_tool_continuation_is_not_a_final_receipt(po
     let latest = checkpoint.latest.unwrap();
     assert!(latest.sent && latest.receipt.is_none());
     assert_eq!(latest.terminal.unwrap().outcome, TurnOutcome::Failed);
+}
+
+async fn token_limit(pool: PgPool, failed_before_driver: bool) {
+    let f = fixture(&pool).await;
+    f.provider.exceed_tokens_before_tool();
+    if failed_before_driver {
+        f.provider.fail_after_tool();
+    }
+    let mut connection = f
+        .launcher
+        .open(&f.store, f.vault.clone(), f.lease.run.id, &f.lease.fence)
+        .await
+        .unwrap();
+    let reserved = prepare(
+        &f,
+        &f.lease,
+        "token-limit",
+        responses::FIRST_PROMPT,
+        f.lease.run.deadline_at,
+    )
+    .await;
+    if failed_before_driver {
+        let DispatchDecision::Send { rpc_request_id } = f
+            .store
+            .claim_turn_dispatch(reserved.id, &f.lease.fence)
+            .await
+            .unwrap()
+        else {
+            panic!("unique send permit required");
+        };
+        let thread = connection.session.native.thread_id.clone();
+        let turn = connection
+            .client
+            .start_turn(&rpc_request_id, &thread, responses::FIRST_PROMPT)
+            .await
+            .unwrap();
+        f.store
+            .bind_native_turn(reserved.id, &f.lease.fence, &turn.id)
+            .await
+            .unwrap();
+        // Query only native identities/status (itemsView=notLoaded). The wire
+        // buffers its public usage notification while these RPCs are pending;
+        // no driver is running yet, no hidden history or messages are read.
+        let mut read_states = std::collections::BTreeSet::new();
+        let ready = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            loop {
+                if f.provider.request_count() < 2 {
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    continue;
+                }
+                // A native list RPC may still be unavailable just after start.
+                // Retry only this bounded read; never infer absence or resend.
+                let turns = match connection.client.turns(&thread).await {
+                    Ok(turns) => turns,
+                    Err(server::codex_native::NativeFailure::Rejected(-32603)) => {
+                        read_states.insert("REJECTED_-32603".to_owned());
+                        Vec::new()
+                    }
+                    Err(error) => panic!("native status query failed: {error:?}"),
+                };
+                for actual in turns.iter().filter(|actual| actual.id == turn.id) {
+                    read_states.insert(format!("{:?}", actual.status));
+                }
+                if let Some(actual) = turns
+                    .iter()
+                    .find(|actual| actual.id == turn.id && actual.status.terminal())
+                {
+                    // Real pinned behavior: reconstructed history says completed,
+                    // while its buffered real turn/completed says failed. QZ must
+                    // never promote this list projection into a success receipt.
+                    assert_eq!(actual.status, server::codex_native::TurnStatus::Completed);
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+        })
+        .await;
+        assert!(
+            ready.is_ok(),
+            "native status timeout: requests={}, read_states={read_states:?}",
+            f.provider.request_count()
+        );
+        assert_eq!(f.provider.request_count(), 2);
+    }
+    let (_alive, shutdown) = tokio::sync::watch::channel(false);
+    let result = connection
+        .drive_turn(
+            &f.store,
+            f.data.objects.clone(),
+            f.lease.run.id,
+            &f.lease.fence,
+            &shutdown,
+        )
+        .await;
+    connection.client.close().await.unwrap();
+    assert_eq!(result.unwrap(), TurnProgress::Unresolved);
+    // Native usage notification and tool continuation are asynchronous. The
+    // second request can already be in flight; interruption cannot undo it.
+    assert!((1..=2).contains(&f.provider.request_count()));
+    let run = f.store.get_run(&f.actor, f.lease.run.id).await.unwrap();
+    assert_eq!(run.state, RunState::CancelRequested);
+    let events = f
+        .store
+        .run_events(&f.actor, run.id, DbCounter::ZERO, 100)
+        .await
+        .unwrap();
+    let event = events
+        .events
+        .iter()
+        .find(|event| event.event_type == "mission.token_limit")
+        .unwrap();
+    assert_eq!(
+        event.payload,
+        serde_json::json!({"schema_version":1,"reservation_id":reserved.id,"observed_tokens":"120","reserved_tokens":"100"})
+    );
+    let checkpoint = f
+        .store
+        .mission_turn_checkpoint(run.id, &f.lease.fence)
+        .await
+        .unwrap();
+    assert_eq!(checkpoint.accounted_tokens, DbCounter::ZERO);
+    let latest = checkpoint.latest.unwrap();
+    assert!(latest.receipt.is_none());
+    let terminal = latest.terminal.unwrap();
+    if failed_before_driver {
+        assert_eq!(terminal.outcome, TurnOutcome::Failed);
+        assert!(terminal.observed_at <= event.occurred_at);
+    } else {
+        assert_eq!(terminal.outcome, TurnOutcome::Cancelled);
+        assert!(terminal.observed_at >= run.cancellation_requested_at.unwrap());
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn native_token_limit_commits_stop_before_interrupt_and_keeps_partial_usage_unsettled(
+    pool: PgPool,
+) {
+    token_limit(pool, false).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn failed_native_turns_late_partial_usage_still_closes_spending(pool: PgPool) {
+    token_limit(pool, true).await;
 }
 
 #[sqlx::test(migrations = "../../migrations")]

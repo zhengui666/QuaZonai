@@ -54,6 +54,13 @@ impl MissionConnection {
         if let Some(receipt) = latest.receipt {
             return Ok(TurnProgress::Settled(receipt));
         }
+        if latest
+            .terminal
+            .as_ref()
+            .is_some_and(|terminal| terminal.outcome == TurnOutcome::NotSent)
+        {
+            return Ok(TurnProgress::Unresolved);
+        }
         // Native model/catalog metadata has no authoritative price. Never send
         // against a made-up rate or settle using the originally reserved amount.
         if !latest.sent && item.reserved_cost.is_some() {
@@ -125,6 +132,21 @@ impl MissionConnection {
                 .observe_run_running(run, fence, &job.lease.external_job_id)
                 .await?;
         }
+        // Pinned turns/list can reconstruct a failed streaming Turn as completed.
+        // Only its actual completed notification (or that persisted observation)
+        // establishes an outcome. ACK/list projections still recover identity.
+        let mut confirmed_terminal = latest.terminal.is_some();
+        if let Some(terminal) = &latest.terminal {
+            if terminal.native_turn_id.as_deref() != Some(actual.id.as_str()) {
+                return Err(WorkerFailure::Contract);
+            }
+            actual.status = match terminal.outcome {
+                TurnOutcome::Succeeded => TurnStatus::Completed,
+                TurnOutcome::Failed => TurnStatus::Failed,
+                TurnOutcome::Cancelled => TurnStatus::Interrupted,
+                TurnOutcome::NotSent => return Err(WorkerFailure::Contract),
+            };
+        }
         let mut tokens = None;
         let mut terminal_at = None;
         let mut interrupted_at = None;
@@ -132,17 +154,30 @@ impl MissionConnection {
             if *shutdown.borrow() || shutdown.has_changed().is_err() {
                 return Err(WorkerFailure::LostAuthority);
             }
+            // Successful unpriced completion settles immediately below. Every
+            // other threshold observation is still partial, including a failed
+            // Turn discovered before its queued native usage notification.
+            if let Some(used) = tokens.filter(|used| {
+                *used >= item.tokens
+                    && !(confirmed_terminal
+                        && actual.status == TurnStatus::Completed
+                        && item.reserved_cost.is_none())
+            }) {
+                store
+                    .observe_mission_token_limit(run, fence, item.id, used)
+                    .await?;
+            }
             // Re-read the current fence and the committed DB-clock cancel intent.
             job = store.mission_job(run, fence).await?;
             if let Some((outcome, reason)) = outcome(&actual) {
-                store
-                    .observe_mission_turn_terminal(item.id, fence, outcome, reason)
-                    .await?;
                 if let Some(actual_tokens) = tokens {
                     // Usage is updated after each native model response, not an
                     // authoritative final receipt for a failed/interrupted Turn.
                     // A later tool continuation may have spent unreported tokens.
-                    if outcome == TurnOutcome::Succeeded && item.reserved_cost.is_none() {
+                    if confirmed_terminal
+                        && outcome == TurnOutcome::Succeeded
+                        && item.reserved_cost.is_none()
+                    {
                         let receipt = UsageReceipt {
                             outcome,
                             actual_tokens,
@@ -165,19 +200,9 @@ impl MissionConnection {
                 match self.client.interrupt_turn(thread, &actual.id).await {
                     Ok(()) => {}
                     Err(NativeFailure::Rejected(-32600)) => {
-                        // Completion can win after our last observation. The
-                        // rejection is not a terminal: reconcile only this ID.
-                        let Some(terminal) = self
-                            .client
-                            .turns(thread)
-                            .await
-                            .map_err(native)?
-                            .into_iter()
-                            .find(|turn| turn.id == actual.id && turn.status.terminal())
-                        else {
-                            return Ok(TurnProgress::Unresolved);
-                        };
-                        actual = terminal;
+                        // Completion can win. Await its real notification in the
+                        // same bounded window; rejection/list status proves no
+                        // outcome and cannot manufacture a cancellation receipt.
                     }
                     Err(reason) => return Err(WorkerFailure::Codex("INTERRUPT_TURN", reason)),
                 }
@@ -198,7 +223,7 @@ impl MissionConnection {
                         if thread_id != *thread || turn.id != actual.id {
                             return Err(native(NativeFailure::Correlation));
                         }
-                        if actual.status.terminal() && turn.status != actual.status {
+                        if confirmed_terminal && turn.status != actual.status {
                             // start_turn can already return a terminal while its
                             // earlier started notification remains in the queue.
                             if turn.status == TurnStatus::InProgress {
@@ -213,6 +238,14 @@ impl MissionConnection {
                                 .observe_run_running(run, fence, &job.lease.external_job_id)
                                 .await?;
                             started = true;
+                        }
+                        if let Some((outcome, reason)) = outcome(&turn) {
+                            store
+                                .observe_mission_turn_terminal(item.id, fence, outcome, reason)
+                                .await?;
+                            confirmed_terminal = true;
+                        } else {
+                            terminal_at = None;
                         }
                         actual = turn;
                     }

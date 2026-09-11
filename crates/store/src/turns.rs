@@ -250,7 +250,9 @@ impl Mission {
     async fn reject_known_overrun(&self, tx: &mut Tx<'_>) -> Result<(), StoreError> {
         // A per-turn overrun closes new spending even below the Cycle cap.
         // Never call this on reconciliation/settlement: retain the real usage.
-        let (tokens, cost): (bool, bool) = sqlx::query_as("SELECT coalesce(bool_or(t.actual_tokens > r.reserved_tokens),false),coalesce(bool_or(t.actual_cost > r.reserved_cost),false) FROM app.model_turn_reservations r JOIN app.model_turn_receipts t ON t.reservation_id=r.id WHERE r.cycle_id=$1")
+        // A threshold stop with unknown final usage also closes admission; a
+        // later authoritative receipt replaces that uncertainty, not the event.
+        let (tokens, cost): (bool, bool) = sqlx::query_as("SELECT coalesce(bool_or(t.actual_tokens > r.reserved_tokens OR (t.reservation_id IS NULL AND EXISTS(SELECT 1 FROM app.run_events e WHERE e.run_id=r.run_id AND e.event_type='mission.token_limit' AND e.payload->>'reservation_id'=r.id::text))),false),coalesce(bool_or(t.actual_cost > r.reserved_cost),false) FROM app.model_turn_reservations r LEFT JOIN app.model_turn_receipts t ON t.reservation_id=r.id WHERE r.cycle_id=$1")
             .bind(self.cycle_id).fetch_one(&mut **tx).await?;
         if tokens {
             return Err(DomainError::BudgetExhausted("tokens").into());
@@ -609,6 +611,11 @@ impl Store {
                 || usage.actual_cost.as_ref().is_some_and(|c| c.is_positive()))
         {
             return Err(StoreError::Invalid("not_sent_usage"));
+        }
+        let observed: Option<i64> = sqlx::query_scalar("SELECT max((payload->>'observed_tokens')::bigint) FROM app.run_events WHERE run_id=$1 AND event_type='mission.token_limit' AND payload->>'reservation_id'=$2")
+            .bind(item.run_id.as_uuid()).bind(reservation_id.to_string()).fetch_one(&mut *tx).await?;
+        if observed.is_some_and(|tokens| tokens > usage.actual_tokens.get() as i64) {
+            return Err(StoreError::Conflict);
         }
         if let Some(old) = load_terminal(&mut tx, reservation_id).await? {
             if old.outcome != usage.outcome || old.reason_code != usage.reason_code {

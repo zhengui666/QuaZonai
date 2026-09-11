@@ -90,6 +90,95 @@ fn prompt_request(
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn native_token_stop_is_fenced_idempotent_and_does_not_settle_usage(pool: PgPool) {
+    let (store, actor, f, _, preparation) = setup(&pool).await;
+    complete(&pool, &store, &f, preparation, false).await;
+    store.advance_initial_cycle(preparation).await.unwrap();
+    let lease = mission_lease(&store).await;
+    store
+        .begin_run_dispatch(lease.run.id, &lease.fence)
+        .await
+        .unwrap();
+    store
+        .bind_mission_session(lease.run.id, &lease.fence, &native_thread())
+        .await
+        .unwrap();
+    let request = prompt_request(&f, &lease);
+    let reserved = prepare_prompt(&store, &lease, &f, &request, "Bounded request fixture")
+        .await
+        .unwrap();
+    // An unsent or unrelated reservation is not a native observation.
+    assert!(matches!(
+        store
+            .observe_mission_token_limit(lease.run.id, &lease.fence, reserved.id, reserved.tokens)
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    store
+        .claim_turn_dispatch(reserved.id, &lease.fence)
+        .await
+        .unwrap();
+    store
+        .bind_native_turn(reserved.id, &lease.fence, "token-limit-native")
+        .await
+        .unwrap();
+    assert!(matches!(
+        store
+            .observe_mission_token_limit(lease.run.id, &lease.fence, Id::new(), reserved.tokens)
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    assert!(matches!(
+        store
+            .observe_mission_token_limit(
+                lease.run.id,
+                &lease.fence,
+                reserved.id,
+                DbCounter::new(99).unwrap()
+            )
+            .await,
+        Err(StoreError::Invalid("native_token_limit_not_reached"))
+    ));
+    let (a, b) = tokio::join!(
+        store.observe_mission_token_limit(lease.run.id, &lease.fence, reserved.id, reserved.tokens),
+        store.observe_mission_token_limit(lease.run.id, &lease.fence, reserved.id, reserved.tokens)
+    );
+    a.unwrap();
+    b.unwrap();
+    let run = store.get_run(&actor, lease.run.id).await.unwrap();
+    assert_eq!(run.state, RunState::CancelRequested);
+    let events = store
+        .run_events(&actor, run.id, DbCounter::ZERO, 100)
+        .await
+        .unwrap();
+    let limits: Vec<_> = events
+        .events
+        .iter()
+        .filter(|event| event.event_type == "mission.token_limit")
+        .collect();
+    assert_eq!(limits.len(), 1);
+    assert_eq!(
+        limits[0].payload,
+        serde_json::json!({"schema_version":1,"reservation_id":reserved.id,"observed_tokens":"100","reserved_tokens":"100"})
+    );
+    let checkpoint = store
+        .mission_turn_checkpoint(run.id, &lease.fence)
+        .await
+        .unwrap();
+    assert_eq!(checkpoint.accounted_tokens, DbCounter::ZERO);
+    assert!(checkpoint.latest.unwrap().receipt.is_none());
+    sqlx::query("UPDATE app.run_attempts SET worker_owner_id='takeover',owner_epoch=owner_epoch+1 WHERE id=$1")
+        .bind(lease.fence.attempt_id.as_uuid()).execute(&pool).await.unwrap();
+    assert!(matches!(
+        store
+            .observe_mission_token_limit(run.id, &lease.fence, reserved.id, reserved.tokens)
+            .await,
+        Err(StoreError::Domain(domain::DomainError::StaleAttempt))
+    ));
+    assert_eq!(store.get_run(&actor, run.id).await.unwrap(), run);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn public_turn_request_and_reservation_commit_once_and_unknown_send_keeps_the_original(
     pool: PgPool,
 ) {
