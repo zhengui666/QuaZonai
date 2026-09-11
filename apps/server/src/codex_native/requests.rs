@@ -108,6 +108,7 @@ pub struct ThreadOptions {
     pub service_tier: Option<String>,
     pub expected_provider: Option<String>,
     pub ephemeral: bool,
+    pub mission: Option<super::mission::MissionOptions>,
 }
 impl ThreadOptions {
     pub fn read_only(working_directory: PathBuf) -> Self {
@@ -118,6 +119,7 @@ impl ThreadOptions {
             service_tier: None,
             expected_provider: None,
             ephemeral: false,
+            mission: None,
         }
     }
 
@@ -151,6 +153,9 @@ impl ThreadOptions {
         }
         // expected_provider only verifies the native observed binding. SYSTEM
         // doesn't override it, and CUSTOM_PROVIDER is configured on its process.
+        if let Some(mission) = &self.mission {
+            mission.configure(&mut request, self)?;
+        }
         Ok(request)
     }
 
@@ -174,7 +179,14 @@ impl ThreadOptions {
 
     pub(super) fn validate_response(&self, response: &Thread) -> Result<()> {
         response.validate()?;
-        if response.cwd != self.working_directory || response.sandbox != Sandbox::ReadOnly {
+        let expected = if self.mission.is_some() {
+            Sandbox::WorkspaceWrite {
+                network_access: false,
+            }
+        } else {
+            Sandbox::ReadOnly
+        };
+        if response.cwd != self.working_directory || response.sandbox != expected {
             return Err(NativeFailure::Contract);
         }
         if self

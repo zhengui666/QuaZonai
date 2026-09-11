@@ -568,3 +568,23 @@ position fallback不能当组合资本收益，适配改为唯一账户原生equ
 这些计算入口仍不拥有HTTP/MCP调用方的任意路径、REAL来源、PIT、资格或交付授权。
 正式数据登记、Brief冻结/Cycle启动、Worker/Codex、独立评估发布、两Alpha组合和
 交付/Forward/Wake以及完整UI验收仍按DESIGN完成；本增量不得被当作整个Issue62关闭依据。
+
+## 2026-09-11：原生账号及 Mission 接线
+
+本机接管后的账号/配置增量 `d849dc35eb056393600d1f13ecdcb37701c39810` 已通过
+原生账户策略/注销、PostgreSQL/HTTP、10项CLI传输、503项Web单元、5项PWA文件与
+150项三视口浏览器检查。原生发行版不支持debug-only登录issuer覆盖；没有将模拟
+OAuth成功当成真实账号验收，没有读取生产profile或完成受保护账号推理。
+
+后续Mission适配使用同一官方0.144.4：native tool_search → 原生MCP namespace调用
+→ 实际stdio服务 → HTTP/认证/PostgreSQL → 原生shell工作区写入 → 进程退出/重启
+→ 原Thread恢复。一个Turn中4次受控模型请求累计48个原生报告token，下一Turn
+再增加12；不是只取最后一次请求。随机工作区外文件与服务环境canary未进入模型请求。
+个人全局提示文件/配置覆盖在Thread发送前拒绝，原生数据和用户文件不被复制或修改。
+锁定版本的default_permissions、精确二进制只读范围和原生工具发现差异见reuse记录。
+
+本地focused验证目录 `.ai-bridge/verify-DwWYyZ` 的编译、fmt、严格Clippy、领域、
+managed、native Codex、Store及HTTP/MCP检查均exit0；源码快照未变，独立测试PG已停止。
+模型上游和父研究数据仍是明确fixture；尚不是Cycle自动Mission启动、真实科学Job/
+Evaluation返回同Thread、完整T07/T42或可合并证据。CI已登记上述native测试，远端实际
+结果必须绑定推送后的Head；本记录不代替GitHub review或完整Issue62交付。

@@ -177,6 +177,8 @@ SYSTEM 不注入 provider/base URL/API key，不写空值覆盖原生环境，�
 
 Mission 默认独占临时 Git worktree、独立 App Server child、workspace-write、network disabled、approvalPolicy=never，仅允许 worktree root。Agent 不访问 QZ 源仓库/其他项目/Sealed/Secret/DB/Docker socket，不通过 Git 操作绕过工作区管理。所需数据与实验经 mission-scoped stdio MCP。受信任 App Server 可访问模型服务/Provider 凭据，不等于 Agent shell 可获得该文件系统/环境权限。随机名 sentinel、auth.json、DB、master key、sealed、socket 等真实越界测试是硬要求；过滤 KEY/TOKEN 变量名不是隔离。
 
+Mission复用锁定版本的原生named permissions及stdio MCP，不依赖dynamicTools。沿用已选模型/认证来源，Mission工具边界由受信任启动器覆盖：只允许专用工作区读写、原生最小系统文件及已锁定Codex二进制的只读访问；shell不继承服务环境，MCP能力只传入已绑定Run/Attempt的专属子进程。原生config/read只投影MCP名称并禁用其他服务器，不持久化或展示原始配置/环境值；启动与恢复重新应用同一边界。不加载个人插件、记忆、浏览器、跨Agent、无限Goal或登录shell能力。0.144.4的全局AGENTS由host独立加载，不受project_doc_max_bytes控制且无stdio关闭开关；Mission因此要求专用profile：若CODEX_HOME存在AGENTS.md/AGENTS.override.md或配置含个人instructions/developer_instructions/model_instructions_file，在发送Thread请求前明确拒绝，不读取文件内容、修改/删除用户文件、复制认证或暗换profile。Managed volume和显式Operator mount均可用，但后者也须满足这个已验证边界。项目文档自动注入关闭，任务材料由冻结Brief和受限MCP提供。原生发行版的权限/stdio运行必须实际验证，不用新版文档中而锁定协议没有的字段冒充已生效。
+
 初始默认预算：并行 2、Cycle 实验 20、修复 Turn 2、Mission Turn 16、墙钟 3600 秒、容器 2 CPU/4096 MiB、输出 64 MiB、每日自动 Cycle 3；均配置化、冻结并在入队事务预约。Optuna 内部 trial 计入预算。无法精确计费则只显示估算/不可用，不宣称严格美元限额。Agent 不能扩大政策/预算、自评、自批、发包、读 secret、改正式指标或写 SQL。
 
 只保存可观察调用、文件变更、命令/测试、公开总结和 Domain Event，不索取、存储或展示隐藏 chain-of-thought。

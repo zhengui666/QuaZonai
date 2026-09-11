@@ -124,6 +124,35 @@ substring in platform/suffix text. Real native stdio execution is still required
 
 - https://github.com/openai/codex/blob/rust-v0.144.4/codex-rs/login/src/auth/default_client.rs
 - https://github.com/openai/codex/blob/rust-v0.144.4/codex-rs/app-server/src/request_processors/initialize_processor.rs
+
+The Mission adapter reuses native named permissions, stdio MCP, tool discovery
+and tool dispatch. In this release, named permission catalogs need an explicit
+`default_permissions` for configuration refresh, not only the typed Thread
+permission selector. The Linux sandbox re-execs the pinned Codex executable;
+its exact canonical file is read-allowed when installed outside `:minimal`,
+without exposing its parent directory or native credential HOME. Model tools
+may be deferred behind native `tool_search` according to the advertised model
+and provider capabilities; obsolete `features.tool_search` flags are not used
+to invent a direct-only tool surface. QZ does not implement a second tool loop.
+
+The pinned host loads CODEX_HOME/AGENTS.override.md or AGENTS.md independently
+of project_doc_max_bytes, with no stdio opt-out. Mission preflight rejects their
+presence and personal instruction overrides without reading their contents or
+changing the profile. Use a dedicated native profile; authentication remains
+owned by Codex. This is an explicit native limitation, not a claim that the
+thread's project-document setting suppresses global instructions.
+
+- https://github.com/openai/codex/blob/rust-v0.144.4/codex-rs/codex-home/src/instructions/mod.rs
+
+Reproducible check: `cargo test --locked -p server --features native-codex --test
+mcp_authoring`, using the pinned `CODEX_NATIVE_BIN` and a disposable PG18/PGMQ1.10
+database. Model responses are controlled fixtures; native process, discovery,
+stdio MCP, HTTP, Store, sandbox and persistent Thread are real. This is not the
+protected real-account T07 or complete fresh-user T42 acceptance.
+
+- https://github.com/openai/codex/blob/rust-v0.144.4/codex-rs/core/src/config/mod.rs
+- https://github.com/openai/codex/blob/rust-v0.144.4/codex-rs/core/src/tools/spec_plan.rs
+- https://github.com/openai/codex/blob/rust-v0.144.4/codex-rs/core/tests/common/responses.rs
 - https://www.postgresql.org/docs/18/sql-createtrigger.html (native deferred aggregate publication)
 - https://www.postgresql.org/docs/18/explicit-locking.html (native row locks and post-wait rechecks)
 

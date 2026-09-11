@@ -40,6 +40,8 @@
 ```
 
 已有目录的显式挂载使用`OPERATOR_MOUNT`。每个CODEX_HOME只绑定一个标签；API不会创建、复制或删除认证目录。
+
+研究Mission要求专用profile，不带个人`AGENTS.md`/`AGENTS.override.md`或`instructions`/`developer_instructions`/`model_instructions_file`覆盖。锁定原生版本没有关闭全局个人提示注入的stdio开关；遇到这些配置会在模型请求前拒绝，不能把“已登录/模型可用”当作Mission已经就绪。请使用独立命名卷或显式的专用挂载，按原生流程登录；系统不读取或删除个人提示、不复制auth.json，也不暗换账号/profile。
 只有`environment_names`明确列出的服务环境变量会传给该原生进程，JSON不写凭据值；不要传数据库、钱包、Broker或无关秘密。
 该账号操作所有者使用单个API进程；不能让多个API或外部登录进程同时管理同一CODEX_HOME。
 

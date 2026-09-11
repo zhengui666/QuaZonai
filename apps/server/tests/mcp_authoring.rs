@@ -19,6 +19,10 @@ use serde_json::json;
 use sqlx::PgPool;
 use std::{fs, os::unix::fs::symlink};
 
+#[cfg(feature = "native-codex")]
+#[path = "support/codex_mission.rs"]
+mod codex_mission;
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn sdk_publishes_original_artifacts_and_proposal(pool: PgPool) {
     let f = fixture(

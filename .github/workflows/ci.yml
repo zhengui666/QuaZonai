@@ -176,7 +176,12 @@ jobs:
           set -euo pipefail
           rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
           rustup run "$RUSTUP_TOOLCHAIN" rustc -Vv > /tmp/store-evidence/rustc.txt
-          rustup run "$RUSTUP_TOOLCHAIN" cargo test --locked -p store -p server -- --test-threads=4 2>&1 | tee /tmp/store-evidence/tests.log
+          npm ci --prefix runtimes/codex --ignore-scripts --no-audit --no-fund
+          export CODEX_NATIVE_BIN="$PWD/runtimes/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex"
+          test "$("$CODEX_NATIVE_BIN" --version)" = 'codex-cli 0.144.4'
+          # Isolated native homes and synthetic Responses only, never real credentials.
+          # Includes native account/HTTP and App Server -> stdio MCP -> HTTP -> PG.
+          rustup run "$RUSTUP_TOOLCHAIN" cargo test --locked -p store -p server --features server/native-codex -- --test-threads=4 2>&1 | tee /tmp/store-evidence/tests.log
           git diff --exit-code
       - name: Preserve exact migrations and qualification of the evidence
         if: always()
@@ -185,7 +190,7 @@ jobs:
           mkdir -p /tmp/store-evidence
           cp Cargo.lock /tmp/store-evidence/Cargo.lock
           cp migrations/*.sql /tmp/store-evidence/
-          printf 'Relational and per-turn Store tests only. Not complete API, model, security, or product acceptance.\n' > /tmp/store-evidence/SCOPE.txt
+          printf 'Native Store/HTTP/Codex fixture tests. Not full real-account, research-to-delivery, or production acceptance.\n' > /tmp/store-evidence/SCOPE.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

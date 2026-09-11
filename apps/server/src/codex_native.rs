@@ -1,11 +1,13 @@
 //! Thin client for the pinned official Codex App Server. Codex owns its tool loop,
 //! authentication and canonical history; QZ owns only bounded transport and bindings.
+mod mission;
 mod projection;
 #[cfg(test)]
 mod projection_tests;
 mod requests;
 mod wire;
 
+pub use mission::MissionOptions;
 pub use projection::{
     Account, AccountState, DeviceLogin, LoginCancellation, LoginCancellationStatus, NativeEffort,
     NativeModel, NativeServiceTier, Observation, Sandbox, Thread, ThreadIdentity, TokenCounts,
@@ -36,6 +38,7 @@ pub enum NativeFailure {
     ObservationLimit,
     Rejected(i64),
     ModelUnavailable,
+    ProfileInstructions,
 }
 impl fmt::Display for NativeFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -52,6 +55,7 @@ impl fmt::Display for NativeFailure {
             Self::ObservationLimit => "native Codex observation capacity is exhausted",
             Self::Rejected(_) => "native Codex rejected the request",
             Self::ModelUnavailable => "native Codex did not honor the selected model settings",
+            Self::ProfileInstructions => "Mission requires a dedicated native profile without personal instruction files or overrides",
         })
     }
 }
@@ -62,16 +66,23 @@ impl std::error::Error for NativeFailure {}
 pub struct Client {
     child: Child,
     wire: Wire<ChildStdout, ChildStdin>,
+    binary: std::path::PathBuf,
+    codex_home: std::path::PathBuf,
 }
 
 impl Client {
     pub async fn start(launch: Launch) -> Result<Self> {
+        let binary =
+            std::fs::canonicalize(&launch.binary).map_err(|_| NativeFailure::Configuration)?;
+        let codex_home = launch.codex_home.clone();
         let mut child = launch.spawn()?;
         let input = child.stdin.take().ok_or(NativeFailure::Unavailable)?;
         let output = child.stdout.take().ok_or(NativeFailure::Unavailable)?;
         let mut client = Self {
             child,
             wire: Wire::new(output, input),
+            binary,
+            codex_home,
         };
         let initialized: projection::Initialized =
             client.call("initialize", requests::initialize()).await?;
@@ -187,7 +198,10 @@ impl Client {
     }
 
     pub async fn start_thread(&mut self, options: &ThreadOptions) -> Result<Thread> {
-        let response: Thread = self.call("thread/start", options.start_params()?).await?;
+        let params = self
+            .mission_params(options, options.start_params()?)
+            .await?;
+        let response: Thread = self.call("thread/start", params).await?;
         options.validate_response(&response)?;
         Ok(response)
     }
@@ -198,9 +212,10 @@ impl Client {
         options: &ThreadOptions,
     ) -> Result<Thread> {
         projection::text(thread_id, 200)?;
-        let response: Thread = self
-            .call("thread/resume", options.resume_params(thread_id)?)
+        let params = self
+            .mission_params(options, options.resume_params(thread_id)?)
             .await?;
+        let response: Thread = self.call("thread/resume", params).await?;
         options.validate_response(&response)?;
         if response.thread.id != thread_id {
             self.wire.invalidate();

@@ -41,6 +41,21 @@ impl Drop for Fixture {
         self.http.abort();
     }
 }
+#[cfg(feature = "native-codex")]
+impl Fixture {
+    pub fn mission_options(&self) -> server::codex_native::ThreadOptions {
+        let mut options = server::codex_native::ThreadOptions::read_only(self.work.clone());
+        options.mission = Some(server::codex_native::MissionOptions {
+            server_binary: PathBuf::from(env!("CARGO_BIN_EXE_server")),
+            api_origin: self.origin.clone(),
+            development_http: true,
+            binding: self.binding,
+            token: self.token.clone(),
+            executable_path: std::env::var("PATH").unwrap(),
+        });
+        options
+    }
+}
 pub async fn fixture(pool: &PgPool, scopes: &[&str]) -> Fixture {
     let (store, operator) = research_support::operator(pool).await;
     let research = experiment_support::setup(pool, &store, &operator, 3).await;
