@@ -711,3 +711,197 @@ async fn a_changed_science_connection_is_not_mislabelled_as_the_frozen_runtime(p
         .unwrap()
         .is_empty());
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn native_mission_issuance_is_once_per_owner_and_old_tokens_do_not_borrow_takeover(
+    pool: PgPool,
+) {
+    use integrations::{
+        authentication::{capability_verifier, random_capability, verify_capability},
+        secrets::SecretVault,
+    };
+    use std::os::unix::fs::DirBuilderExt;
+    let (store, actor, f, _, preparation) = setup(&pool).await;
+    complete(&pool, &store, &f, preparation, false).await;
+    assert!(store.advance_initial_cycle(preparation).await.unwrap());
+    let lease = mission_lease(&store).await;
+    let directory = tempfile::tempdir().unwrap();
+    let key = directory.path().join("master.key");
+    SecretVault::initialize_key(&key).unwrap();
+    let secrets = directory.path().join("secrets");
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&secrets)
+        .unwrap();
+    let vault = SecretVault::open(&secrets, &key).unwrap();
+    let secret = random_capability();
+    let verifier = capability_verifier(&secret).unwrap();
+    let reference = vault.put("MACHINE_VERIFIER", verifier.as_bytes()).unwrap();
+    let token = Id::new();
+    let (one, two) = tokio::join!(
+        store.issue_mission_credential(lease.run.id, &lease.fence, token, reference),
+        store.issue_mission_credential(lease.run.id, &lease.fence, token, reference)
+    );
+    let credential = one.unwrap();
+    assert_eq!(credential, two.unwrap());
+    let challenge = store.machine_challenge(token).await.unwrap();
+    assert_eq!(challenge.credential_id, credential);
+    let bytes = vault
+        .read(challenge.verifier_ref, "MACHINE_VERIFIER")
+        .unwrap();
+    assert!(verify_capability(
+        &secret,
+        std::str::from_utf8(&bytes).unwrap()
+    ));
+    let machine = challenge.verified_actor(None);
+    let view = store.machine_session(&machine).await.unwrap();
+    assert_eq!(view.kind, contracts::control::PrincipalKind::Mission);
+    assert_eq!(view.run_id, Some(lease.run.id));
+    assert_eq!(view.project_id, Some(lease.run.project_id));
+    assert_eq!(view.expires_at, lease.run.deadline_at);
+    assert_eq!(view.downstream_id, None);
+    let scopes: std::collections::BTreeSet<_> =
+        view.scope_codes.into_iter().map(|s| s.code()).collect();
+    assert_eq!(
+        scopes,
+        [
+            "RESEARCH_READ",
+            "EXPERIMENT_SUBMIT",
+            "ARTIFACT_SUBMIT",
+            "EVIDENCE_READ",
+            "RUN_READ"
+        ]
+        .into_iter()
+        .collect()
+    );
+    assert!(matches!(
+        store
+            .issue_mission_credential(lease.run.id, &lease.fence, token, Id::new())
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    assert!(matches!(
+        store
+            .issue_mission_credential(lease.run.id, &lease.fence, Id::new(), reference)
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    assert!(store
+        .begin_run_dispatch(lease.run.id, &lease.fence)
+        .await
+        .unwrap());
+    sqlx::query("UPDATE app.run_attempts SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1")
+        .bind(lease.fence.attempt_id.as_uuid()).execute(&pool).await.unwrap();
+    assert!(store.machine_session(&machine).await.is_err());
+    let (message_id, read_count): (i64, i32) =
+        sqlx::query_as("SELECT msg_id,read_ct FROM pgmq.q_runs WHERE message->>'run_id'=$1")
+            .bind(lease.run.id.to_string())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let message = store::lifecycle::RunMessage {
+        message_id,
+        read_count,
+        run_id: lease.run.id,
+    };
+    let Some(ClaimResult::Leased(next)) = store
+        .claim_mission(&message, "replacement-native-owner", 60)
+        .await
+        .unwrap()
+    else {
+        panic!("takeover required");
+    };
+    assert!(store.machine_session(&machine).await.is_err());
+    let next_secret = random_capability();
+    let next_verifier = capability_verifier(&next_secret).unwrap();
+    let next_ref = vault
+        .put("MACHINE_VERIFIER", next_verifier.as_bytes())
+        .unwrap();
+    let next_token = Id::new();
+    store
+        .issue_mission_credential(lease.run.id, &next.fence, next_token, next_ref)
+        .await
+        .unwrap();
+    assert!(store.machine_challenge(token).await.is_err());
+    assert!(
+        vault.read(reference, "MACHINE_VERIFIER").is_ok(),
+        "historical verifier is not deleted during rotation"
+    );
+    let next_challenge = store.machine_challenge(next_token).await.unwrap();
+    let bytes = vault
+        .read(next_challenge.verifier_ref, "MACHINE_VERIFIER")
+        .unwrap();
+    assert!(verify_capability(
+        &next_secret,
+        std::str::from_utf8(&bytes).unwrap()
+    ));
+    let next_actor = next_challenge.verified_actor(None);
+    assert!(store.machine_session(&next_actor).await.is_ok());
+    let facts:(i64,i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM app.machine_principals),(SELECT count(*) FROM app.machine_credentials),(SELECT max(credential_epoch)::bigint FROM app.machine_principals)")
+        .fetch_one(&pool).await.unwrap();
+    assert_eq!(facts, (1, 2, 2));
+    sqlx::query("INSERT INTO app.machine_credential_revocations(credential_id,effective_at,reason) VALUES($1,clock_timestamp(),'controlled native issuance revocation')")
+        .bind(next_challenge.credential_id.as_uuid()).execute(&pool).await.unwrap();
+    assert!(matches!(
+        store
+            .issue_mission_credential(lease.run.id, &next.fence, next_token, next_ref)
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    sqlx::query("UPDATE app.machine_principals SET enabled=false,credential_epoch=credential_epoch+1 WHERE run_id=$1")
+        .bind(lease.run.id.as_uuid()).execute(&pool).await.unwrap();
+    assert!(matches!(
+        store
+            .issue_mission_credential(lease.run.id, &next.fence, Id::new(), Id::new())
+            .await,
+        Err(StoreError::Forbidden)
+    ));
+    let current = store.get_run(&actor, lease.run.id).await.unwrap();
+    store
+        .cancel_run(
+            &actor,
+            "stop-mission",
+            lease.run.id,
+            &contracts::lifecycle::RunCancelV1 {
+                schema_version: SchemaV1,
+                expected_revision: current.revision,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(store.machine_session(&next_actor).await.is_err());
+    assert!(matches!(
+        store
+            .issue_mission_credential(lease.run.id, &next.fence, Id::new(), Id::new())
+            .await,
+        Err(StoreError::Domain(domain::DomainError::AdmissionClosed))
+    ));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_science_attempt_cannot_obtain_mission_credentials(pool: PgPool) {
+    let (store, _, _f, _, run) = setup(&pool).await;
+    let message = store
+        .read_native_run_messages(30, 100)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|m| m.run_id == run)
+        .unwrap();
+    let Some(ClaimResult::Leased(lease)) = store
+        .claim_native_run(&message, "science-only", 60)
+        .await
+        .unwrap()
+    else {
+        panic!("science lease required");
+    };
+    assert!(matches!(
+        store
+            .issue_mission_credential(run, &lease.fence, Id::new(), Id::new())
+            .await,
+        Err(StoreError::Invalid("mission_not_defined"))
+    ));
+    let facts:(i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM app.machine_principals),(SELECT count(*) FROM app.machine_credentials)")
+        .fetch_one(&pool).await.unwrap();
+    assert_eq!(facts, (0, 0));
+}

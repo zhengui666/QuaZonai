@@ -627,3 +627,10 @@ schema_version封套；`.ai-bridge/verify-Sr5WGg`仅剩首轮不能在DISPATCHIN
 及真实PostgreSQL的Mission12、turns18、恢复8、Run生命周期30、约束7，共75通过，
 0失败/0忽略；源码快照未变，独立PG已停止。数据库测试中的原生返回仍是明确fixture，
 不是实际自动Codex Worker、独立Reviewer、T07/T42或最新GitHub Head的全绿验收。
+
+可信Mission签发沿用现有随机能力、Argon2与SecretVault；固定角色范围、当前Attempt/
+owner、每owner一次签发与接管失效已通过真实PostgreSQL及原生验证器测试，包含撤销、
+禁用、取消、重复请求和错误科学Run。测试秘密只存在独立临时目录。
+后续全量 `.ai-bridge/verify-4YvHCB` exit0：check/fmt/严格Clippy，领域149、managed6、
+native Codex25、Store+Server465通过，0失败/0忽略；源码未变，独立PG停止。
+这些是本地增量回归，仍不代表Mission Worker已接通或完整Issue62可合并。

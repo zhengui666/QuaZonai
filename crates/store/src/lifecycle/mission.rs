@@ -6,6 +6,8 @@ use contracts::codex::{
 };
 use sqlx::Acquire;
 
+mod credential;
+
 /// Observable native metadata only. No message text, hidden items, token or path.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NativeSessionReceipt {

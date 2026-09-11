@@ -2046,6 +2046,8 @@ Mission与科学消费者共用PGMQ的条件读取实现，各自只选不可变
 
 首轮可以在DISPATCHING且Thread已绑定、Attempt为SENT_UNKNOWN/ACKNOWLEDGED时预约；恢复轮也可在RECONCILING预约，但前一轮必须已有真实结算，不能绕过未知发送。不能先假造RUNNING以满足账本前置条件；Run仅在实际模型运行观测后变化。所有新预约/发送仍验证冻结Profile、当前lease、期限与项目/Cycle状态。科学Runtime无需Agent能力，但首次Mission准入/派发仍要求其配置版本与冻结执行上下文一致且enabled，避免将新连接配置冒记为旧版本。
 
+可信Mission服务复用现有machine_principals/credentials、原生随机能力、Argon2验证和SecretVault签发MCP凭据，不新增认证算法。签发只接受精确run_missions与当前Attempt/owner_epoch；当前项目/Cycle、Profile/账号和期限全部重验。每个Mission只有该服务创建的主体，每个Attempt/owner至多一次签发，同一public_token_id/verifier_ref回执可以核对，不能重新显示原明文。接管使用新owner的签发并推进主体epoch，旧token永久失效；禁用主体不得自动启用。研究者仅获RESEARCH_READ/EXPERIMENT_SUBMIT/ARTIFACT_SUBMIT/EVIDENCE_READ/RUN_READ，独立Reviewer不获EXPERIMENT_SUBMIT；没有Operator/Downstream、数据库、取消或任意URL权限。期限不晚于Run deadline，数据库只存原生验证器的私有引用；明文只交给受信任的MCP进程配置，不进模型消息或日志。
+
 ### B5.1 入队
 
 ```text
