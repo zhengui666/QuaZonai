@@ -841,6 +841,25 @@ Dataset/科学Run的不可变关联与消息同事务提交；同提案重放不
 该科学Run才写入experiments.run_id，编译Run不占用此指针。预测结果仍是Discovery
 研究反馈，不等于验证分折、独立Reviewer、Sealed评估或Alpha资格。
 
+### A3.7 Mission驱动科学任务
+
+常驻Worker在本Mission最新原生Turn已确认结算后，按原提案ordinal选择一个已就绪
+的编译或预测步骤：尚未编译的正式PENDING且有CODE提案进入编译；原编译SUCCEEDED
+且未有预测关联的提案进入预测。已排队/运行/未知的任务不重复创建，失败编译不
+替换模型或自动进入预测。每次消费最多准备一个步骤；已有PGMQ消息继续负责恢复，
+科学Worker独立执行任务，不让原生Codex会话等待科学进程或接管它的执行循环。
+首轮公开请求包含准确Mission、冻结Brief、Cycle和冻结政策的family ID及当前原生
+ABI/参数合同，不让Agent猜测必填提案身份；这不授予修改family或政策的权限。
+
+每步以原Mission冻结的JobLimits为资源分配请求，只按编译0/预测1设置experiments；
+现有Cycle累计预算、Runtime能力与Mission剩余墙钟仍可拒绝准入。消息重投保留
+原Thread、原Turn结算和全部原生Run身份。没有就绪步骤不等于Mission完成；任务
+终态、失败说明和后续研究反馈必须由后续结论/同Thread接续处理，不能提前ack。
+模型Turn可能超过60秒的Runtime探测有效期。准备科学步骤前复用现有有fence的
+Runtime原生探测：当前活跃Researcher Mission亦可刷新其冻结Runtime，不要求
+Mission处于NOT_SENT；准备与发表均重验原租约、Runtime版本、状态和期限。实际
+HTTP在事务外执行，仍保留原60秒有效期，探测不可用不得假造可执行能力。
+
 ## A4. 输入、政策、评估、资格与暴露
 
 ```text

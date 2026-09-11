@@ -877,3 +877,32 @@ Run/产物记录/PGMQ/预算，正常重试可继续。
 这里的编译输出为明确标注的受控协议fixture，证明真实数据库/文件/队列事务，
 不冒充执行rustc、Wasmi或真实市场预测；本地b1da5b7b上的此增量尚未接入Worker
 自动科学推进/同Thread反馈，更不代表分折、Reviewer、资格或完整PR验收。
+
+## 2026-09-12：常驻Mission自动准备科学步骤与过期探测恢复
+
+Worker在最新原生Turn已确认结算后，按ordinal从现有正式提案中选取一个就绪的
+编译或预测步骤，复用原Mission资源分配和原有Run准入；排队/运行中的身份不重建。
+原生Client先关闭，科学Worker独立执行；准备不是Mission完成，消息不提前ack。
+首轮公开请求新增确切Cycle及冻结政策family ID、现有Wasm ABI/参数合同，避免
+Agent在仅有Brief/Mission工具的情况下猜测必填提案身份。复用共享fixture，API与
+Worker使用同一真实ArtifactStore目录，不重复构造另一套原生编译回执。
+
+完整`.ai-bridge/verify-AydzuH` exit1：前置check/fmt/domain/managed/native通过，
+Clippy发现共享测试的一条多余import；Store/Server为493通过、1失败、0忽略，失败
+是新增自动编译用例。删除import后，单例`.ai-bridge/verify-l1WeIe`仍exit1，安全
+诊断明确是runtime_probe_stale：模型首轮约77秒，原Runtime探测有效期只有60秒。
+没有通过忽略错误、改变预期、延长探测TTL或删除断言获得通过。
+
+修复复用原有fenced Runtime探测：当前活跃Researcher Mission可刷新其冻结Runtime，
+准备/发表重验状态、租约、版本及期限，真实HTTP仍在事务外；不要求已派发的模型
+Mission回到NOT_SENT。临时诊断已移除。新增用例等待真实60秒探测过期，官方App
+Server完成真实Turn后通过带原Vault凭据的原生HTTP刷新，随后关联原编译/受控采纳
+MODEL/预测Run，多次接管仍只有一个模型请求和一份科学身份。未结算慢Turn即使
+已有提案也不准备编译、不探测、不伪造用量或Mission终态。
+
+`.ai-bridge/verify-osf4B5` exit0通过check/fmt/严格Clippy及该原生单例（126.55秒）。
+最终完整`.ai-bridge/verify-QL1AOB` exit0：check/fmt/严格Clippy、149项领域/合同/
+Runtime测试、6项真实原生Job子进程、28项原生Codex检查和494项Store/Server回归，
+全部0失败/0忽略。检查期间源码未变，独立PG确认停止。上述成功仍只是5c7d78c2上
+的本地增量证据；编译输出fixture不冒充真实rustc/Wasmi科学执行，完整同Thread
+结果反馈/结论、独立Reviewer、评估/资格和剩余产品链路尚未完成，不是PR合并证据。

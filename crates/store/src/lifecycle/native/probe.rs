@@ -1,4 +1,4 @@
-//! Owner-fenced native readiness refresh for an already authorized unsent job.
+//! Owner-fenced readiness refresh for an unsent job or active Researcher Mission.
 //! Reuses the Operator probe's immutable native publication contract, not an
 //! Operator grant, fake configuration success, or a second observations table.
 use super::*;
@@ -12,6 +12,37 @@ pub struct RunProbeTicket {
     started_at: DateTime<Utc>,
 }
 
+async fn may_probe(
+    tx: &mut Tx<'_>,
+    locked: &LockedRun,
+    attempt: &PgRow,
+) -> Result<bool, StoreError> {
+    if locked.run.state.is_terminal() || locked.run.state == RunState::CancelRequested {
+        return Ok(false);
+    }
+    if locked.run.kind == RunKind::AgentResearch {
+        let researcher: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM app.run_missions WHERE run_id=$1 AND role='RESEARCHER')",
+        )
+        .bind(locked.run.id.as_uuid())
+        .fetch_one(&mut **tx)
+        .await?;
+        return Ok(researcher && locked.admission_open());
+    }
+    if attempt.try_get::<String, _>("dispatch_state")? != "NOT_SENT" {
+        return Ok(false);
+    }
+    let registered: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.run_native_tasks WHERE run_id=$1)")
+            .bind(locked.run.id.as_uuid())
+            .fetch_one(&mut **tx)
+            .await?;
+    if !registered {
+        return Err(StoreError::Invalid("native_task_not_defined"));
+    }
+    Ok(true)
+}
+
 impl Store {
     pub async fn prepare_run_runtime_probe(
         &self,
@@ -21,20 +52,9 @@ impl Store {
         let mut tx = self.pool.begin().await?;
         let locked = lock_run(&mut tx, id).await?;
         let attempt = fence(&mut tx, &locked.run, owner).await?;
-        if locked.run.state.is_terminal()
-            || locked.run.state == RunState::CancelRequested
-            || attempt.try_get::<String, _>("dispatch_state")? != "NOT_SENT"
-        {
+        if !may_probe(&mut tx, &locked, &attempt).await? {
             tx.commit().await?;
             return Ok(None);
-        }
-        let registered: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.run_native_tasks WHERE run_id=$1)")
-                .bind(id.as_uuid())
-                .fetch_one(&mut *tx)
-                .await?;
-        if !registered {
-            return Err(StoreError::Invalid("native_task_not_defined"));
         }
         let runtime_id = db::id(locked.admission.try_get("runtime_id")?)?;
         let revision = db::revision(locked.admission.try_get("runtime_revision")?)?;
@@ -89,10 +109,7 @@ impl Store {
         let mut tx = self.pool.begin().await?;
         let locked = lock_run(&mut tx, ticket.run_id).await?;
         let attempt = fence(&mut tx, &locked.run, &ticket.owner).await?;
-        if locked.run.state.is_terminal()
-            || locked.run.state == RunState::CancelRequested
-            || attempt.try_get::<String, _>("dispatch_state")? != "NOT_SENT"
-        {
+        if !may_probe(&mut tx, &locked, &attempt).await? {
             return Err(DomainError::AdmissionClosed.into());
         }
         let runtime = sqlx::query(

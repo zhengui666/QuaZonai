@@ -3,6 +3,8 @@
 #![cfg(feature = "native-codex")]
 #[path = "../../../tests/support/cycles.rs"]
 mod cycle_support;
+#[path = "../../../tests/support/experiment_tasks.rs"]
+mod experiment_support;
 #[path = "../../../tests/support/missions.rs"]
 mod mission_support;
 #[path = "../../../tests/support/research.rs"]
@@ -44,10 +46,14 @@ struct Fixture {
     provider: responses::Provider,
     root: tempfile::TempDir,
     http: JoinHandle<()>,
+    runtime_http: JoinHandle<()>,
+    runtime_targets: server::runtime_transport::RuntimeTargets,
+    runtime_probes: Arc<std::sync::atomic::AtomicUsize>,
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
         self.http.abort();
+        self.runtime_http.abort();
     }
 }
 
@@ -56,7 +62,86 @@ async fn fixture(pool: &PgPool) -> Fixture {
 }
 
 async fn fixture_with_cost(pool: &PgPool, priced: bool) -> Fixture {
-    let (store, actor, data, _, preparation) = mission_support::setup_with_cost(pool, priced).await;
+    let root = tempfile::tempdir().unwrap();
+    for name in ["native", "workspaces", "secrets"] {
+        fs::DirBuilder::new()
+            .mode(0o700)
+            .create(root.path().join(name))
+            .unwrap();
+    }
+    let key = root.path().join("master.key");
+    SecretVault::initialize_key(&key).unwrap();
+    let secrets = root.path().join("secrets");
+    let vault = Arc::new(SecretVault::open(&secrets, &key).unwrap());
+    let secret = integrations::authentication::random_capability();
+    let reference = vault.put("RUNTIME", secret.as_bytes()).unwrap();
+    let bearer = format!("Bearer {secret}");
+    let runtime_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let runtime_address = runtime_listener.local_addr().unwrap();
+    let runtime_origin = format!("http://{runtime_address}");
+    let runtime_probes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = runtime_probes.clone();
+    let runtime_app = axum::Router::new().route(
+        "/runtime/v1/capabilities",
+        axum::routing::get(move |headers: axum::http::HeaderMap| {
+            let count = count.clone();
+            let bearer = bearer.clone();
+            async move {
+                if headers
+                    .get(axum::http::header::AUTHORIZATION)
+                    .and_then(|h| h.to_str().ok())
+                    != Some(bearer.as_str())
+                {
+                    return Err(axum::http::StatusCode::UNAUTHORIZED);
+                }
+                count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(axum::Json(experiment_support::capabilities(
+                    chrono::Utc::now(),
+                )))
+            }
+        }),
+    );
+    let runtime_http = tokio::spawn(async move {
+        axum::serve(runtime_listener, runtime_app).await.unwrap();
+    });
+    let runtime_targets = server::runtime_transport::RuntimeTargets::new(
+        vec![server::runtime_transport::RuntimeTarget {
+            origin: runtime_origin.clone(),
+            addresses: vec![runtime_address],
+        }],
+        true,
+    )
+    .unwrap();
+    let objects = Arc::new(
+        integrations::artifacts::ArtifactStore::open(&root.path().join("objects")).unwrap(),
+    );
+    let (store, actor) = research_support::operator(pool).await;
+    let mut data = cycle_support::setup_with_objects(pool, &store, &actor, objects).await;
+    let current = store.runtime(&actor, data.data.runtime).await.unwrap();
+    let mut configuration = current.configuration;
+    configuration.endpoint = runtime_origin;
+    configuration.development_http = true;
+    let updated = store
+        .update_runtime(
+            &actor,
+            "native-mission-runtime",
+            data.data.runtime,
+            &contracts::settings::RuntimeUpdate {
+                schema_version: SchemaV1,
+                expected_revision: current.revision,
+                configuration,
+                credential_ref: Some(reference),
+                ca_certificate_ref: None,
+            },
+            |_| async { Ok(()) },
+        )
+        .await
+        .unwrap()
+        .resource;
+    data.freeze.execution_context.runtime_revision = updated.revision;
+    experiment_support::probe(&store, &actor, &data).await;
+    let (store, actor, data, _, preparation) =
+        mission_support::start(store, actor, data, priced).await;
     mission_support::complete(pool, &store, &data, preparation, false).await;
     assert!(store.advance_initial_cycle(preparation).await.unwrap());
     let message = store.read_mission_messages(60, 10).await.unwrap().remove(0);
@@ -67,19 +152,8 @@ async fn fixture_with_cost(pool: &PgPool, priced: bool) -> Fixture {
     else {
         panic!("native Mission lease required");
     };
-    let root = tempfile::tempdir().unwrap();
-    for name in ["native", "workspaces", "secrets"] {
-        fs::DirBuilder::new()
-            .mode(0o700)
-            .create(root.path().join(name))
-            .unwrap();
-    }
     let home = root.path().join("native");
     let provider = responses::Provider::start(&home).await;
-    let key = root.path().join("master.key");
-    SecretVault::initialize_key(&key).unwrap();
-    let secrets = root.path().join("secrets");
-    let vault = Arc::new(SecretVault::open(&secrets, &key).unwrap());
     let profile = store
         .codex_profile(&actor, data.researcher_profile.profile_id)
         .await
@@ -111,6 +185,9 @@ async fn fixture_with_cost(pool: &PgPool, priced: bool) -> Fixture {
             store.clone(),
             SecretVault::open(&secrets, &key).unwrap(),
             WebPolicy::new(&origin, address, true).unwrap(),
+        )
+        .with_artifact_store(
+            integrations::artifacts::ArtifactStore::open(&root.path().join("objects")).unwrap(),
         ),
         Key::generate(),
     );
@@ -136,6 +213,9 @@ async fn fixture_with_cost(pool: &PgPool, priced: bool) -> Fixture {
         provider,
         root,
         http,
+        runtime_http,
+        runtime_targets,
+        runtime_probes,
     }
 }
 
@@ -159,9 +239,8 @@ fn daemon(f: &Fixture) -> Worker {
             &f.root.path().join("master.key"),
         )
         .unwrap(),
-        integrations::artifacts::ArtifactStore::open(&f.root.path().join("worker-objects"))
-            .unwrap(),
-        server::runtime_transport::RuntimeTargets::default(),
+        integrations::artifacts::ArtifactStore::open(&f.root.path().join("objects")).unwrap(),
+        f.runtime_targets.clone(),
         1,
     )
     .unwrap()
@@ -175,6 +254,96 @@ async fn visible(f: &Fixture, pool: &PgPool) {
         .execute(pool)
         .await
         .unwrap();
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn settled_native_mission_queues_original_compilation_then_forecast_without_another_turn(
+    pool: PgPool,
+) {
+    let f = fixture(&pool).await;
+    let experiment = experiment_support::propose(
+        &pool,
+        &f.store,
+        &f.actor,
+        &f.data,
+        f.lease.run.cycle_id.unwrap(),
+    )
+    .await;
+    // Actual expiry, never an edited observation or an increased production TTL.
+    tokio::time::timeout(std::time::Duration::from_secs(65), async {
+        loop {
+            let expired: bool = sqlx::query_scalar("SELECT valid_until<=clock_timestamp() FROM app.runtime_probe_observations WHERE runtime_id=$1 ORDER BY observed_at DESC,id DESC LIMIT 1")
+                .bind(f.data.data.runtime.as_uuid()).fetch_one(&pool).await.unwrap();
+            if expired { break; }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+    }).await.expect("native probe did not expire");
+    f.provider.initial_request();
+    visible(&f, &pool).await;
+    let worker = daemon(&f).with_missions(f.launcher.clone());
+    let (_stop, receiver) = tokio::sync::watch::channel(false);
+    let first = tokio::time::timeout(
+        std::time::Duration::from_secs(150),
+        worker.process_mission_message(f.message.clone(), "automatic-compile", receiver.clone()),
+    )
+    .await
+    .unwrap();
+    first.unwrap();
+    assert!(f.runtime_probes.load(std::sync::atomic::Ordering::SeqCst) >= 1);
+    assert_eq!(f.provider.request_count(), 1);
+    let compiler: uuid::Uuid = sqlx::query_scalar(
+        "SELECT compile_run_id FROM app.experiment_compilations WHERE experiment_id=$1",
+    )
+    .bind(experiment.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let compiler: Id = compiler.to_string().try_into().unwrap();
+    let compiled = f.store.get_run(&f.actor, compiler).await.unwrap();
+    assert_eq!(compiled.state, RunState::Queued);
+    visible(&f, &pool).await;
+    worker
+        .process_mission_message(
+            f.message.clone(),
+            "await-original-compiler",
+            receiver.clone(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(f.provider.request_count(), 1);
+    let model = experiment_support::complete_compilation(&pool, &f.store, &f.data, compiler).await;
+    visible(&f, &pool).await;
+    worker
+        .process_mission_message(f.message.clone(), "automatic-forecast", receiver.clone())
+        .await
+        .unwrap();
+    let (forecast, bound_model): (uuid::Uuid, uuid::Uuid) = sqlx::query_as(
+        "SELECT run_id,model_artifact_id FROM app.experiment_forecasts WHERE experiment_id=$1",
+    )
+    .bind(experiment.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(bound_model, model.as_uuid());
+    assert_eq!(
+        f.store
+            .experiment(&f.actor, experiment)
+            .await
+            .unwrap()
+            .run_id
+            .unwrap()
+            .as_uuid(),
+        forecast
+    );
+    visible(&f, &pool).await;
+    worker
+        .process_mission_message(f.message.clone(), "await-original-forecast", receiver)
+        .await
+        .unwrap();
+    assert_eq!(f.provider.request_count(), 1);
+    let counts: (i64,i64,i64,i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.experiment_compilations WHERE experiment_id=$1),(SELECT count(*) FROM app.experiment_forecasts WHERE experiment_id=$1),(SELECT count(*) FROM app.model_turn_reservations WHERE run_id=$2),(SELECT count(*) FROM app.model_turn_receipts t JOIN app.model_turn_reservations r ON r.id=t.reservation_id WHERE r.run_id=$2),(SELECT count(*) FROM app.run_terminal_receipts WHERE run_id=$2),(SELECT count(*) FROM pgmq.q_runs WHERE msg_id=$3)")
+        .bind(experiment.as_uuid()).bind(f.lease.run.id.as_uuid()).bind(f.message.message_id).fetch_one(&pool).await.unwrap();
+    assert_eq!(counts, (1, 1, 1, 1, 0, 1));
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -249,6 +418,14 @@ async fn daemon_renews_pending_mission_without_starving_science_and_shutdown_kee
     pool: PgPool,
 ) {
     let f = fixture(&pool).await;
+    let experiment = experiment_support::propose(
+        &pool,
+        &f.store,
+        &f.actor,
+        &f.data,
+        f.lease.run.cycle_id.unwrap(),
+    )
+    .await;
     visible(&f, &pool).await;
     f.provider.initial_request();
     f.provider.slow_response();
@@ -289,6 +466,21 @@ async fn daemon_renews_pending_mission_without_starving_science_and_shutdown_kee
     let counts: (i64, i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.model_turn_reservations WHERE run_id=$1),(SELECT count(*) FROM app.model_turn_receipts t JOIN app.model_turn_reservations r ON r.id=t.reservation_id WHERE r.run_id=$1),(SELECT count(*) FROM pgmq.q_runs WHERE msg_id=$2)")
         .bind(f.lease.run.id.as_uuid()).bind(f.message.message_id).fetch_one(&pool).await.unwrap();
     assert_eq!(counts, (1, 0, 1));
+    let compiled: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM app.experiment_compilations WHERE experiment_id=$1)",
+    )
+    .bind(experiment.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        !compiled,
+        "unsettled native Turn cannot start scientific work"
+    );
+    assert_eq!(
+        f.runtime_probes.load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
     let run = f.store.get_run(&f.actor, f.lease.run.id).await.unwrap();
     assert!(!run.state.is_terminal() && run.cancellation_requested_at.is_none());
 }

@@ -18,7 +18,55 @@ struct ForecastProposal {
     parameters: NativeForecastParametersV1,
 }
 
+pub enum ExperimentWork {
+    Compile(Id),
+    Forecast(Id),
+}
+
 impl Store {
+    /// A ready step, not a second queue or a verdict on settled scientific work.
+    pub async fn next_mission_experiment(
+        &self,
+        mission: Id,
+        owner: &WorkerFence,
+    ) -> Result<Option<ExperimentWork>, StoreError> {
+        let mut tx = self.pool.begin().await?;
+        let locked = lock_run(&mut tx, mission).await?;
+        fence(&mut tx, &locked.run, owner).await?;
+        let role: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM app.run_missions WHERE run_id=$1 AND role='RESEARCHER')",
+        )
+        .bind(mission.as_uuid())
+        .fetch_one(&mut *tx)
+        .await?;
+        if locked.run.kind != RunKind::AgentResearch || !role {
+            return Err(StoreError::Forbidden);
+        }
+        if !locked.admission_open()
+            || !matches!(
+                locked.run.state,
+                RunState::Dispatching | RunState::Running | RunState::Reconciling
+            )
+            || now(&mut tx).await? >= locked.run.deadline_at
+        {
+            return Ok(None);
+        }
+        let row = sqlx::query("SELECT e.id,c.compile_run_id FROM app.experiments e JOIN app.experiment_authorship a ON a.experiment_id=e.id LEFT JOIN app.experiment_compilations c ON c.experiment_id=e.id LEFT JOIN app.runs compiled ON compiled.id=c.compile_run_id WHERE e.project_id=$1 AND e.cycle_id=$2 AND e.outcome='PENDING' AND e.run_id IS NULL AND e.code_artifact_id IS NOT NULL AND e.parameter_artifact_id IS NOT NULL AND (c.experiment_id IS NULL OR (c.mission_run_id=$3 AND compiled.state='SUCCEEDED' AND NOT EXISTS(SELECT 1 FROM app.experiment_forecasts WHERE experiment_id=e.id))) ORDER BY e.ordinal LIMIT 1")
+            .bind(locked.run.project_id.as_uuid()).bind(locked.run.cycle_id.map(Id::as_uuid)).bind(mission.as_uuid()).fetch_optional(&mut *tx).await?;
+        let ready = row
+            .map(|row| {
+                let id = db::id(row.try_get("id")?)?;
+                Ok::<_, StoreError>(if db::optional_id(&row, "compile_run_id")?.is_none() {
+                    ExperimentWork::Compile(id)
+                } else {
+                    ExperimentWork::Forecast(id)
+                })
+            })
+            .transpose()?;
+        tx.commit().await?;
+        Ok(ready)
+    }
+
     /// Trusted Mission worker: select no model or path from Agent-authored JSON.
     pub async fn start_experiment_forecast<R, Read, P, Published>(
         &self,

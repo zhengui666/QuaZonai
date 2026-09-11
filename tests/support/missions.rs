@@ -21,7 +21,16 @@ pub async fn setup_with_cost(
     priced: bool,
 ) -> (Store, Actor, cycle_support::Fixture, Id, Id) {
     let (store, actor) = research_support::operator(pool).await;
-    let mut f = cycle_support::setup(pool, &store, &actor).await;
+    let f = cycle_support::setup(pool, &store, &actor).await;
+    start(store, actor, f, priced).await
+}
+
+pub async fn start(
+    store: Store,
+    actor: Actor,
+    mut f: cycle_support::Fixture,
+    priced: bool,
+) -> (Store, Actor, cycle_support::Fixture, Id, Id) {
     if priced {
         let mut content = f.brief.content.clone();
         content.budget.max_cost_decimal = Some("10".parse().unwrap());

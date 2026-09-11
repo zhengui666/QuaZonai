@@ -19,7 +19,7 @@ use std::{
 use store::{
     lifecycle::{
         mission::{MissionSession, NativeSessionReceipt},
-        ClaimResult, NextRuntimeAction, RunLease, RunMessage,
+        ClaimResult, ExperimentWork, NextRuntimeAction, RunLease, RunMessage,
     },
     turns::WorkerFence,
     Store, StoreError,
@@ -101,8 +101,7 @@ impl Worker {
                 .latest
                 .is_some_and(|latest| latest.receipt.is_some())
         {
-            // Scientific/result stages own continuation and final acknowledgement.
-            return Ok(());
+            return self.advance_mission_experiment(lease).await;
         }
         let mut connection = launcher
             .open(&self.store, self.vault.clone(), run, fence)
@@ -138,7 +137,75 @@ impl Worker {
         .await;
         let closed = connection.client.close().await;
         result?;
-        closed.map_err(|reason| WorkerFailure::Codex("CLOSE_MISSION", reason))
+        closed.map_err(|reason| WorkerFailure::Codex("CLOSE_MISSION", reason))?;
+        self.advance_mission_experiment(lease).await
+    }
+
+    async fn advance_mission_experiment(&self, lease: &RunLease) -> Result<(), WorkerFailure> {
+        if !self
+            .store
+            .mission_turn_checkpoint(lease.run.id, &lease.fence)
+            .await?
+            .latest
+            .is_some_and(|latest| latest.receipt.is_some())
+        {
+            return Ok(());
+        }
+        let Some(work) = self
+            .store
+            .next_mission_experiment(lease.run.id, &lease.fence)
+            .await?
+        else {
+            return Ok(());
+        };
+        let native = self.transport(lease).await?;
+        self.refresh(&native, lease.run.id, &lease.fence).await?;
+        let mut limits = lease.limits.clone();
+        let publishing = self.objects.clone();
+        let publish = move |object: store::lifecycle::native::NativeObjectPublication| async move {
+            tokio::task::spawn_blocking(move || publishing.put(object.id, &object.bytes))
+                .await
+                .map_err(|_| StoreError::Integrity)?
+                .map_err(|_| StoreError::Integrity)
+        };
+        match work {
+            ExperimentWork::Compile(experiment) => {
+                limits.experiments = 0;
+                self.store
+                    .start_experiment_compilation(
+                        lease.run.id,
+                        &lease.fence,
+                        experiment,
+                        &limits,
+                        publish,
+                    )
+                    .await?;
+            }
+            ExperimentWork::Forecast(experiment) => {
+                limits.experiments = 1;
+                let reading = self.objects.clone();
+                self.store
+                    .start_experiment_forecast(
+                        lease.run.id,
+                        &lease.fence,
+                        experiment,
+                        &limits,
+                        move |id, size| {
+                            let objects = reading.clone();
+                            async move {
+                                tokio::task::spawn_blocking(move || objects.read(id, size))
+                                    .await
+                                    .map_err(|_| StoreError::Integrity)?
+                                    .map_err(|_| StoreError::Integrity)
+                            }
+                        },
+                        publish,
+                    )
+                    .await?;
+            }
+        }
+        // Preparation never acknowledges a Mission or sends a new model request.
+        Ok(())
     }
 }
 

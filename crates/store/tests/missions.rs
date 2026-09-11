@@ -154,6 +154,15 @@ async fn initial_request_uses_remaining_budget_once_and_never_replaces_unknown_s
         move |id, size| async move {reading.read(id, size).map_err(|_| StoreError::Integrity)}).await.unwrap();
     assert!(prompt.starts_with("QZ_MISSION_INITIAL_V1\n"));
     assert!(prompt.contains(&f.brief.id.to_string()) && prompt.contains(&lease.run.id.to_string()));
+    let family: uuid::Uuid =
+        sqlx::query_scalar("SELECT family_id FROM app.evaluation_policies WHERE id=$1")
+            .bind(f.brief.content.evaluation_policy_id.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(prompt.contains(&format!("Cycle: {}", lease.run.cycle_id.unwrap())));
+    assert!(prompt.contains(&format!("experiment family: {family}")));
+    assert!(prompt.contains("wasm32-unknown-unknown") && prompt.contains("dataset_revision_id"));
     store
         .claim_turn_dispatch(original.reservation.id, &lease.fence)
         .await
