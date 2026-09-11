@@ -89,6 +89,117 @@ fn prompt_request(
     }
 }
 
+async fn prepare_initial(
+    store: &Store,
+    lease: &store::lifecycle::RunLease,
+    f: &cycle_support::Fixture,
+) -> Result<(), StoreError> {
+    let reading = f.objects.clone();
+    let publishing = f.objects.clone();
+    store.prepare_initial_mission_turn(lease.run.id, &lease.fence,
+        move |id, size| async move { reading.read(id, size).map_err(|_| StoreError::Integrity) },
+        move |object| async move { publishing.put(object.id, &object.bytes).map_err(|_| StoreError::Integrity) }).await
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn initial_request_uses_remaining_budget_once_and_never_replaces_unknown_sent_work(
+    pool: PgPool,
+) {
+    let (store, _, f, _, preparation) = setup(&pool).await;
+    complete(&pool, &store, &f, preparation, false).await;
+    store.advance_initial_cycle(preparation).await.unwrap();
+    let lease = mission_lease(&store).await;
+    store
+        .begin_run_dispatch(lease.run.id, &lease.fence)
+        .await
+        .unwrap();
+    store
+        .bind_mission_session(lease.run.id, &lease.fence, &native_thread())
+        .await
+        .unwrap();
+    assert!(matches!(
+        store
+            .prepare_initial_mission_turn(
+                lease.run.id,
+                &lease.fence,
+                |_, _| async { Err(StoreError::Integrity) },
+                |_| async { Err(StoreError::Integrity) }
+            )
+            .await,
+        Err(StoreError::Integrity)
+    ));
+    let before: i64 = sqlx::query_scalar("SELECT count(*) FROM app.model_turn_reservations")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        before, 0,
+        "failed publication cannot reserve model spending"
+    );
+    prepare_initial(&store, &lease, &f).await.unwrap();
+    let original = store
+        .mission_turn_checkpoint(lease.run.id, &lease.fence)
+        .await
+        .unwrap()
+        .latest
+        .unwrap();
+    assert_eq!(
+        original.reservation.tokens,
+        f.brief.content.budget.max_tokens.unwrap()
+    );
+    assert_eq!(original.reservation.ordinal, 1);
+    assert!(!original.sent && original.receipt.is_none());
+    let reading = f.objects.clone();
+    let prompt = store.mission_turn_prompt(lease.run.id, &lease.fence, original.reservation.id,
+        move |id, size| async move {reading.read(id, size).map_err(|_| StoreError::Integrity)}).await.unwrap();
+    assert!(prompt.starts_with("QZ_MISSION_INITIAL_V1\n"));
+    assert!(prompt.contains(&f.brief.id.to_string()) && prompt.contains(&lease.run.id.to_string()));
+    store
+        .claim_turn_dispatch(original.reservation.id, &lease.fence)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE app.codex_profiles SET name='changed after first intent' WHERE id=$1")
+        .bind(f.researcher_profile.profile_id.as_uuid())
+        .execute(&pool)
+        .await
+        .unwrap();
+    prepare_initial(&store, &lease, &f).await.unwrap();
+    let checkpoint = store
+        .mission_turn_checkpoint(lease.run.id, &lease.fence)
+        .await
+        .unwrap();
+    assert_eq!(checkpoint.accounted_tokens, DbCounter::ZERO);
+    let latest = checkpoint.latest.unwrap();
+    assert_eq!(latest.reservation, original.reservation);
+    assert!(latest.sent && latest.native_turn_id.is_none() && latest.receipt.is_none());
+    let counts: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.model_turn_reservations),(SELECT count(*) FROM pgmq.q_model_turns),(SELECT count(*) FROM app.artifacts WHERE schema_name='qz.mission_turn')").fetch_one(&pool).await.unwrap();
+    assert_eq!(counts, (1, 1, 1));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn initial_request_refuses_unavailable_native_pricing_without_a_reservation(pool: PgPool) {
+    let (store, _, f, _, preparation) = mission_support::setup_with_cost(&pool, true).await;
+    complete(&pool, &store, &f, preparation, false).await;
+    store.advance_initial_cycle(preparation).await.unwrap();
+    let lease = mission_lease(&store).await;
+    store
+        .begin_run_dispatch(lease.run.id, &lease.fence)
+        .await
+        .unwrap();
+    store
+        .bind_mission_session(lease.run.id, &lease.fence, &native_thread())
+        .await
+        .unwrap();
+    assert!(matches!(
+        prepare_initial(&store, &lease, &f).await,
+        Err(StoreError::Domain(
+            domain::DomainError::CapabilityUnavailable("native_cost_usage")
+        ))
+    ));
+    let counts: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.model_turn_reservations),(SELECT count(*) FROM pgmq.q_model_turns),(SELECT count(*) FROM app.artifacts WHERE schema_name='qz.mission_turn')").fetch_one(&pool).await.unwrap();
+    assert_eq!(counts, (0, 0, 0));
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn native_token_stop_is_fenced_idempotent_and_does_not_settle_usage(pool: PgPool) {
     let (store, actor, f, _, preparation) = setup(&pool).await;
@@ -202,6 +313,7 @@ async fn public_turn_request_and_reservation_commit_once_and_unknown_send_keeps_
     );
     let reserved = first.unwrap();
     assert_eq!(second.unwrap(), reserved);
+    prepare_initial(&store, &lease, &f).await.unwrap();
     let facts:(i64,i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM app.artifacts WHERE schema_name='qz.mission_turn'),(SELECT count(*) FROM app.model_turn_reservations),(SELECT count(*) FROM pgmq.q_model_turns)")
         .fetch_one(&pool).await.unwrap();
     assert_eq!(facts, (1, 1, 1));

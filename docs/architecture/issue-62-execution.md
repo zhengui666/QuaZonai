@@ -792,3 +792,17 @@ managed6、native28通过，Store/Server482通过/1失败（错误地要求续�
 这是6d5a4ae6基础上的本地增量；合成模型响应/市场准备不冒充真实付费账户或科学
 结果，未证明严格token/美元上限、生产Mission自动领取、科学/Reviewer完整链路、
 GitHub最新Head CI或全量W0–W8/T01–T42完成。
+
+## 2026-09-12：幂等首轮准备
+
+首轮准备复用既有公开请求产物、逐轮预约和PGMQ事务；冻结Brief与剩余token账本
+决定请求，已有任意预约则保留原请求，包括人工接续、未知发送与Profile后续变化。
+费用受限但缺原生计费时拒绝准备，不插入产物、预约或队列消息。余额读取提交后
+才进入原事务再次检查，避免嵌套持锁或把旧余额当发送许可。
+
+`.ai-bridge/verify-phLsaW` exit0：全工作区check/fmt/严格Clippy与84项真实PG回归
+通过（constraints7、missions19、run_lifecycle30、turn_recovery8、turns20），
+0失败/0忽略；源码前后不变且独立PG确认停止。新增检查验证产物发表失败不留下
+预约、首次额度10000、未知发送不换请求、已有人工请求不被首轮覆盖，以及无价格
+不产生可发送工作。此为587803bd基础上的本地准备增量；尚未接入常驻Worker，
+不代表实际模型发送、科学结果、Mission/Cycle完成或GitHub当前Head验收。
