@@ -274,6 +274,16 @@ BudgetV1 继续保留既有 Rust/serde 字段，原生 OpenAPI 用公共字段�
 
 真实浏览器验收在发出 CREATE ROLE/CREATE DATABASE 前登记本次随机名字的创建意图，终止或 ACK 丢失后在子进程退出后仍对这些精确名字执行 DROP IF EXISTS；不凭收到创建 ACK 的布尔值决定是否清理。随机名字冲突必须预检拒绝，不能清理已有对象；不扩展到名字前缀匹配或其他实例。清理失败保留失败回执，不声称资源已删除。真实原生 PostgreSQL 的丢 ACK 与 SIGTERM 回归必须确认无遗留本次资源。
 
+### 9.3 数据与原生集成管理界面
+
+设置页分为浏览器安全、原生集成、数据管理三个任务区，保留默认安全页；仅挂载当前任务区，未访问的页面不主动请求数据。Runtime/Downstream 使用已有严格配置接口：保存不意味着可用，Runtime 探测必须显式发送新的命令并显示真实版本、时限、能力交集与资源上限。数据管理按 Source→许可授权→原生版本登记的流程组织，不让用户在表单自报来源、PIT、样本数或原始质量数据。登记时固定打开表单时的 Source/Runtime revision；409展示真实冲突，不自动提高版本重试。
+
+关联选择器复用官方 Select 与 React Query 的原生分页；显示已载入条数、显式载入更多和刷新，搜索只匹配已经载入的记录，不把前50项当完整数据。Runtime、许可证明、Grant、Universe均选择已有对象；不可用选项只按已知真实条件禁用，最终授权仍在服务器事务复核。缺接口/响应不兼容/权限失败与真实空列表分别显示。数据版本展示真实 origin/PIT/许可核对时间和原生证据引用；非REAL/未验证/缺登记历史不得伪装有效数据。
+
+集成凭据只在独立瞬态表单字段和 write-only 请求中存在，不进入 Query/Mutation缓存、URL、日志、localStorage或持久表单。成功后清空明文，仅保存原生对象引用供配置提交；更新可保持既有引用但绝不回读秘密。Runtime、Downstream和TLS_CA使用共享Rust生成的目的相关范围；原生PEM仍由服务器校验。凭据请求未结束时阻止关闭或提交父配置，结果未知保留同一意图键重放；放弃配置不擅自删除已发表原生凭据。
+
+所有管理操作保持离线禁写、真实错误、原生幂等、CAS、不乐观批准、键盘/触摸/窄屏可达和PWA未保存保护；测试分别覆盖真实后端和受控三视口展示，后者不替代生产数据或完整T42证据。
+
 ## 10. 身份、安全与运维
 
 ### 10.1 浏览器认证的具体实现合同
@@ -582,7 +592,7 @@ execution_assumptions [immutable]
 
 ### A2.1 不可变数据授权与原生身份
 
-将可变 `data_sources.license_reference/allowed_uses` 移除；仅 name/enabled 可变。runtime_id/native_catalog_ref/provider_kind 一经引用不可变。`dataset_revisions` 增加 `data_use_grant_id:Id FK data_use_grants`，授权属于同 source（复合FK）。
+将可变 `data_sources.license_reference/allowed_uses` 移除；仅 name/enabled 可变。runtime_id/native_catalog_ref/provider_kind 创建后不可变，原生数据库守卫与正式管理入口共同阻止改写；需要不同来源时新建来源而不重绑历史许可/数据。`dataset_revisions` 增加 `data_use_grant_id:Id FK data_use_grants`，授权属于同 source（复合FK）。
 
 ```text
 data_use_grants [immutable]
@@ -1764,6 +1774,18 @@ HTTP 400/422 输入、401认证、403权限、404不存在/需隐藏、409版本
 
 表中 `/{id}` 等简写沿同一行资源前缀，不是根路由。列表 opaque cursor、服务端 limit 上限、稳定排序和项目/权限过滤。CLI 用生成客户端和同一服务器命令，不直写 SQL；唯一本地特权入口为受限 bootstrap/备份恢复等运维。
 
+### B2.1 原生 HTTP CLI 与共同错误合同
+
+实际发行入口为同一 `server` 二进制的 `client` 子命令，不另外创建兼容别名目录或数据库CLI。CLI以固定命令映射复用Rust请求与响应DTO；`--origin`只接受显式HTTPS origin，`--credential-file`读取Unix私有文件中的现有qz2机器凭据，`--ca-certificate`可选择原生CA。仅同时明确 `--development-http` 与字面量loopback才允许HTTP；禁止关闭TLS校验、代理、重定向、隐式重试、任意URL、SQL或SecretVault读取。CLI操作数据库与读取生产Provider凭据不在此入口的能力中。
+
+写入从stdin读取最多16MiB严格JSON，未知字段、错误UUID/十进制版本与不匹配父资源绑定拒绝。每次写入要求用户给定 `--idempotency-key`；受保护管理命令另需 `--operator-grant`，其值仅进入既有 `X-Operator-Grant` Header。`operator-grant`命令以完整OperatorGrantRequest、近期TOTP向正式接口申请单次grant，不取得持久Operator权限，不自动续期。结果未知时只允许用户以原命令/key/正文显式重放，CLI不自动换key、重复发送或把失败写为成功。
+
+API与CLI的Problem/FieldError移动到同一 `contracts::http`；API仍只生成既有封闭错误码/安全字段，CLI严格核对HTTP status、application/problem+json、UUID/Revision与同一RustDTO。输入、原生传输错误和不合合同的远端响应只打印封闭本地错误，不回显凭据、stdin、宿主路径或native错误。成功JSON写stdout；已验证Problem写stderr并退出1。产物导出先读取同一ID不可变元数据，随后核对正式content接口的media和精确byte_count，输出原始字节，不把Rust源码错误当成octet-stream。
+
+Run watch复用 `eventsource-stream=0.2.3` 的原生SSE分帧，来源：https://docs.rs/eventsource-stream/0.2.3/eventsource_stream/ 。每次最多3600秒/10000事件/16MiB线缆字节，单事件不超过已有公开合同，原生cursor、run_id、seq和event_type必须一致且单调。兼容未知event_type保留公开envelope及cursor，不猜业务状态；reset-required要求重读。客户端结束、Ctrl-C或断线只输出最后cursor和 `cancellation_requested=false`，不调用取消接口。SSE不是第二套事件数据库或重连调度器。
+
+原生子进程+TCP回归必须覆盖请求/响应DTO、精确header、未知结果显式重放、拒绝重定向/重复JSON/反射凭据、原生SSE及bigint；另以实际Axum+TOTP+PostgreSQL演练CLI获得单次grant、登记Source、回执重放、冲突和权限拒绝。HTTP fixture的成功不代替真实数据库/完整研究闭环，尚未实现的B2命令仍是同一Issue62的后续必交模块，不允许隐藏为已交付。
+
 ## B3. MCP 白名单与真实闭环
 
 官方 rmcp；服务端绑定 project_id/cycle_id/run_id/role/capabilities/budget/deadline，模型不能自报 authority。
@@ -1897,13 +1919,13 @@ Rust预处理本身可读取文件，因此COMPILE_MODEL必须是无数据目录
 
 ### B4.7 原生 Runtime 审查修订：物化配额、终态与认证合同
 
-SQLite 中的输入/结果 BLOB 配额不能漏掉执行目录中的副本。增量迁移增加仅用于原生磁盘占用的 `materialization_reservations(external_id PRIMARY KEY REFERENCES runtime_jobs, byte_count>0, reserved_us)`；它不持有研究预算或工作流。物化前，在原生 SQLite 写事务内为精确 JobSpec 的全部复制输入、spec、输出上限与1MiB索引预约磁盘额度；同任务重试复用同一预约。该额度与已存输入、输出 BLOB 及未完成输出预约共同计入 storage_quota_bytes。只有已确认唯一终态、结果与实际输出已在 SQLite 原子封口，才可回收该任务自己的物化副本；原始输入BLOB、正式输出BLOB、manifest、Run身份、取消屏障和tombstone全部保留。先完成原生文件删除/fsync，再删除预约，失败/提交不明保留占用并在恢复时重试，不能先释放额度后猜测删除。新物化采用确定性的原生run/attempt暂存名，失败或重启不能积累无限随机暂存副本。升级恢复在独占状态目录下识别现有任务的副本与原始spec；未知或不可验证目录保留并明确阻塞自动回收，不把用户文件当垃圾。
+SQLite 中的输入/结果 BLOB 配额不能漏掉执行目录中的副本。增量迁移增加仅用于原生磁盘占用的 `materialization_reservations(external_id PRIMARY KEY REFERENCES runtime_jobs, byte_count>0, reserved_us)`；它不持有研究预算或工作流。首次任务提交在同一原生 SQLite 写事务内，同时为最终输出BLOB和精确 JobSpec 的全部复制输入、spec、输出上限与1MiB索引预约磁盘额度，再返回ACCEPTED；不足时整个准入回滚，不留下永远无法物化的QUEUED任务。物化、重放及升级恢复复用同一个计量函数和原有预约；不能等返回接受后才首次发现可预计算的配额不足。该额度与已存输入、输出 BLOB 及未完成输出预约共同计入 storage_quota_bytes。只有已确认唯一终态、结果与实际输出已在 SQLite 原子封口，才可回收该任务自己的物化副本；原始输入BLOB、正式输出BLOB、manifest、Run身份、取消屏障和tombstone全部保留。先完成原生文件删除/fsync，再删除预约，失败/提交不明保留占用并在恢复时重试，不能先释放额度后猜测删除。新物化采用确定性的原生run/attempt暂存名，失败或重启不能积累无限随机暂存副本。升级恢复在独占状态目录下识别现有任务的副本与原始spec；未知或不可验证目录保留并明确阻塞自动回收，不把用户文件当垃圾。
 
 取消请求不改写已经发生的原生失败。处理已退出容器时，在删除容器前保存真实退出/OOM/超时原因及原生完成时间；若该失败发生于 cancel_requested_us 之前，则屏障建立后的终态仍为 FAILED，而不是 CANCELLED。故障事实、开始/结束时间与失败原因使用同一原生journal不可变记录恢复，不能因网关在删除容器后崩溃丢失证据。成功/失败/取消仍只发布一个终态；对运行中任务发出取消后的信号退出不能倒推成先前失败。
 
 所有 `/runtime/v1` 操作的原生 OpenAPI 明确声明 `RuntimeBearer` HTTP bearer security scheme、必需的单一认证头和401 RuntimeProblem/application-json响应；不声明匿名或Cookie认证。缺失/重复/混合Cookie凭据均由同一真实中间件拒绝，生成合同与逐路由原生HTTP回归一致。
 
-原生目录请求不仅绑定registered_ref/version/partition，还必须逐项绑定质量报告中已经登记的完整BarType及Instrument集合。VALIDATE_DATA、EVALUATE_ALPHA、SIMULATE_PORTFOLIO都在挂载前校验；目录后来出现的其他品种不能因目录路径相同而获得授权。原生查询同时限定事件区间与当时可见截止，先由上游查询引擎过滤，再执行maximum_rows解码上限，不能把区间外较新记录计入请求行数，也不能丢掉区间内迟到但在cutoff前已可得的记录。预测预热行没有成功predict调用，future label和label_available都必须为null，label_reason为INDICATOR_WARMUP；仅成功预测后才形成未来标签，样本末尾真正未完成的标签另用LABEL_NOT_COMPLETE。
+原生目录请求不仅绑定registered_ref/version/partition，还必须逐项绑定质量报告中已经登记的完整BarType及Instrument集合。VALIDATE_DATA、EVALUATE_ALPHA、SIMULATE_PORTFOLIO都在挂载前校验；请求decision_cutoff_ns不得晚于该登记质量快照的decision_cutoff_ns，事件区间及cutoff可收窄但不可扩张。目录后来出现的其他品种或超出登记可见截止的迟到记录不能因目录路径相同而获得授权。原生查询同时限定事件区间与当时可见截止，先由上游查询引擎过滤，再执行maximum_rows解码上限，不能把区间外较新记录计入请求行数，也不能丢掉区间内迟到但在cutoff前已可得的记录。预测预热行没有成功predict调用，future label和label_available都必须为null，label_reason为INDICATOR_WARMUP；仅成功预测后才形成未来标签，样本末尾真正未完成的标签另用LABEL_NOT_COMPLETE。
 
 原生镜像组装使用已打开文件描述符校验/复制依赖，目标create-exclusive，不以先exists/stat再按路径读取作身份依据；遇同名已存在对象只按已打开描述符逐字节核对。工具链内动态库解析使用该固定工具链的真实库目录，不忽略ldd的not-found；生成准备目录与实际Docker build/run分别记录，准备完成不能冒充OCI运行通过。失败回执保留对应原生ldd输出和命令，不上传整份工具链、镜像根或秘密。
 

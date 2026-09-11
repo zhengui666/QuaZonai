@@ -19,4 +19,6 @@ bigdecimal = { version = "=0.4.8", features = ["serde"] }
 thiserror = "=2.0.20"
 
 [dev-dependencies]
+integrations = { path = "../integrations" }
+tempfile = "=3.27.0"
 tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread", "time", "sync"] }

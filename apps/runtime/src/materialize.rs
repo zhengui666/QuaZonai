@@ -118,6 +118,9 @@ fn selection_scope(
     {
         return Err(Failure::Invalid("catalog_event_scope"));
     }
+    if selection.decision_cutoff_ns > attested.selection.decision_cutoff_ns {
+        return Err(Failure::Invalid("catalog_cutoff_scope"));
+    }
     for name in &selection.bar_types {
         // Use the upstream identity parser, not a second grammar based on string splitting.
         let native: BarType = name

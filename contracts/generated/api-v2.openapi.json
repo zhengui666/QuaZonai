@@ -4852,6 +4852,336 @@
         ],
         "type": "object"
       },
+      "CommandResult_DataGrantRevocationView": {
+        "additionalProperties": false,
+        "properties": {
+          "replayed": {
+            "type": "boolean"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "created_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "effective_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "grant_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "reason_code": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "grant_id",
+              "effective_at",
+              "reason_code",
+              "reason",
+              "created_at"
+            ],
+            "type": "object"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "replayed",
+          "resource"
+        ],
+        "type": "object"
+      },
+      "CommandResult_DataGrantView": {
+        "additionalProperties": false,
+        "properties": {
+          "replayed": {
+            "type": "boolean"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "allowed_uses": {
+                "$ref": "#/components/schemas/DataUse"
+              },
+              "checked_at": {
+                "description": "This read-time observation is not a durable readiness or license extension.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "created_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "evidence_artifact_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "license_reference": {
+                "type": "string"
+              },
+              "license_state": {
+                "$ref": "#/components/schemas/DataLicenseState"
+              },
+              "source_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "valid_from": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "valid_until": {
+                "format": "date-time",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "version": {
+                "$ref": "#/components/schemas/Revision"
+              }
+            },
+            "required": [
+              "id",
+              "source_id",
+              "version",
+              "license_reference",
+              "evidence_artifact_id",
+              "allowed_uses",
+              "valid_from",
+              "created_at",
+              "license_state",
+              "checked_at"
+            ],
+            "type": "object"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "replayed",
+          "resource"
+        ],
+        "type": "object"
+      },
+      "CommandResult_DataSourceView": {
+        "additionalProperties": false,
+        "properties": {
+          "replayed": {
+            "type": "boolean"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "created_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "name": {
+                "type": "string"
+              },
+              "native_catalog_ref": {
+                "type": "string"
+              },
+              "provider_kind": {
+                "description": "Historical native provider names remain visible, not silently reclassified.",
+                "type": "string"
+              },
+              "revision": {
+                "$ref": "#/components/schemas/Revision"
+              },
+              "runtime_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "updated_at": {
+                "format": "date-time",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "runtime_id",
+              "native_catalog_ref",
+              "provider_kind",
+              "enabled",
+              "revision",
+              "created_at",
+              "updated_at"
+            ],
+            "type": "object"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "replayed",
+          "resource"
+        ],
+        "type": "object"
+      },
+      "CommandResult_DatasetView": {
+        "additionalProperties": false,
+        "properties": {
+          "replayed": {
+            "type": "boolean"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "available_through": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "checked_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "created_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "data_kind": {
+                "$ref": "#/components/schemas/RuntimeDataKind"
+              },
+              "data_use_grant_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "event_end": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "event_start": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "license_state": {
+                "$ref": "#/components/schemas/DataLicenseState"
+              },
+              "native_metadata_artifact_id": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Id"
+                  }
+                ]
+              },
+              "native_snapshot_ref": {
+                "type": "string"
+              },
+              "origin": {
+                "$ref": "#/components/schemas/DataOrigin"
+              },
+              "partition": {
+                "$ref": "#/components/schemas/DataPartition"
+              },
+              "pit_status": {
+                "$ref": "#/components/schemas/PitStatus"
+              },
+              "quality_artifact_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "registration_observed_at": {
+                "format": "date-time",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "revision_policy": {
+                "$ref": "#/components/schemas/DataRevisionPolicy"
+              },
+              "row_count": {
+                "$ref": "#/components/schemas/DbCounter"
+              },
+              "runtime_enabled": {
+                "type": "boolean"
+              },
+              "schema_version": {
+                "type": "string"
+              },
+              "source_enabled": {
+                "type": "boolean"
+              },
+              "source_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "storage_version": {
+                "type": "string"
+              },
+              "timezone": {
+                "type": "string"
+              },
+              "universe_version_id": {
+                "$ref": "#/components/schemas/Id"
+              }
+            },
+            "required": [
+              "id",
+              "source_id",
+              "data_use_grant_id",
+              "native_snapshot_ref",
+              "storage_version",
+              "universe_version_id",
+              "schema_version",
+              "data_kind",
+              "partition",
+              "event_start",
+              "event_end",
+              "available_through",
+              "row_count",
+              "timezone",
+              "quality_artifact_id",
+              "pit_status",
+              "revision_policy",
+              "origin",
+              "created_at",
+              "source_enabled",
+              "runtime_enabled",
+              "license_state",
+              "checked_at"
+            ],
+            "type": "object"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "replayed",
+          "resource"
+        ],
+        "type": "object"
+      },
       "CommandResult_DownstreamView": {
         "additionalProperties": false,
         "properties": {
@@ -6177,6 +6507,183 @@
         ],
         "type": "string"
       },
+      "DataGrantCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed_uses": {
+            "$ref": "#/components/schemas/DataUse"
+          },
+          "evidence_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "license_reference": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "source_id": {
+            "$ref": "#/components/schemas/Id",
+            "description": "Also bound in the normalized command so a one-time CLI grant cannot be\nreplayed against a different source merely by changing the route."
+          },
+          "valid_from": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "schema_version",
+          "source_id",
+          "license_reference",
+          "evidence_artifact_id",
+          "allowed_uses",
+          "valid_from"
+        ],
+        "type": "object"
+      },
+      "DataGrantRevocationView": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "effective_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "grant_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "reason_code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "grant_id",
+          "effective_at",
+          "reason_code",
+          "reason",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "DataGrantRevoke": {
+        "additionalProperties": false,
+        "properties": {
+          "effective_at": {
+            "description": "None takes effect at the authoritative database clock. Explicit times may\nonly be future-effective; the caller cannot rewrite historical access.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "reason_code": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "reason_code",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "DataGrantView": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed_uses": {
+            "$ref": "#/components/schemas/DataUse"
+          },
+          "checked_at": {
+            "description": "This read-time observation is not a durable readiness or license extension.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "evidence_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "license_reference": {
+            "type": "string"
+          },
+          "license_state": {
+            "$ref": "#/components/schemas/DataLicenseState"
+          },
+          "source_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "valid_from": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version": {
+            "$ref": "#/components/schemas/Revision"
+          }
+        },
+        "required": [
+          "id",
+          "source_id",
+          "version",
+          "license_reference",
+          "evidence_artifact_id",
+          "allowed_uses",
+          "valid_from",
+          "created_at",
+          "license_state",
+          "checked_at"
+        ],
+        "type": "object"
+      },
+      "DataLicenseState": {
+        "enum": [
+          "ACTIVE",
+          "NOT_YET_VALID",
+          "EXPIRED",
+          "REVOKED"
+        ],
+        "type": "string"
+      },
       "DataOrigin": {
         "enum": [
           "REAL",
@@ -6194,6 +6701,305 @@
           "FORWARD"
         ],
         "type": "string"
+      },
+      "DataProviderKind": {
+        "enum": [
+          "NAUTILUS_CATALOG"
+        ],
+        "type": "string"
+      },
+      "DataRevisionPolicy": {
+        "enum": [
+          "AS_KNOWN_THEN",
+          "RESTATED",
+          "UNKNOWN"
+        ],
+        "type": "string"
+      },
+      "DataSourceCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "native_catalog_ref": {
+            "description": "Exact Runtime registry key, not an HTTP URL or local filesystem path.",
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "provider_kind": {
+            "$ref": "#/components/schemas/DataProviderKind"
+          },
+          "runtime_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "name",
+          "runtime_id",
+          "native_catalog_ref",
+          "provider_kind",
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "DataSourceUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "expected_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "expected_revision",
+          "name",
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "DataSourceView": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "name": {
+            "type": "string"
+          },
+          "native_catalog_ref": {
+            "type": "string"
+          },
+          "provider_kind": {
+            "description": "Historical native provider names remain visible, not silently reclassified.",
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "runtime_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "runtime_id",
+          "native_catalog_ref",
+          "provider_kind",
+          "enabled",
+          "revision",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "DataUse": {
+        "enum": [
+          "RESEARCH",
+          "RESEARCH_AND_PAPER",
+          "RESEARCH_PAPER_LIVE"
+        ],
+        "type": "string"
+      },
+      "DatasetRegister": {
+        "additionalProperties": false,
+        "properties": {
+          "existing_universe_version_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id",
+                "description": "Reuse an immutable Universe only when its full native definition matches.\nThis permits Discovery/Validation/Sealed revisions to share one frozen universe."
+              }
+            ]
+          },
+          "expected_runtime_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "expected_source_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "grant_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "native_storage_version": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "source_id": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "schema_version",
+          "source_id",
+          "grant_id",
+          "expected_source_revision",
+          "expected_runtime_revision",
+          "native_storage_version"
+        ],
+        "type": "object"
+      },
+      "DatasetView": {
+        "additionalProperties": false,
+        "properties": {
+          "available_through": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "checked_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "data_kind": {
+            "$ref": "#/components/schemas/RuntimeDataKind"
+          },
+          "data_use_grant_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "event_end": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "event_start": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "license_state": {
+            "$ref": "#/components/schemas/DataLicenseState"
+          },
+          "native_metadata_artifact_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "native_snapshot_ref": {
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/DataOrigin"
+          },
+          "partition": {
+            "$ref": "#/components/schemas/DataPartition"
+          },
+          "pit_status": {
+            "$ref": "#/components/schemas/PitStatus"
+          },
+          "quality_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "registration_observed_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "revision_policy": {
+            "$ref": "#/components/schemas/DataRevisionPolicy"
+          },
+          "row_count": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "runtime_enabled": {
+            "type": "boolean"
+          },
+          "schema_version": {
+            "type": "string"
+          },
+          "source_enabled": {
+            "type": "boolean"
+          },
+          "source_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "storage_version": {
+            "type": "string"
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "universe_version_id": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "id",
+          "source_id",
+          "data_use_grant_id",
+          "native_snapshot_ref",
+          "storage_version",
+          "universe_version_id",
+          "schema_version",
+          "data_kind",
+          "partition",
+          "event_start",
+          "event_end",
+          "available_through",
+          "row_count",
+          "timezone",
+          "quality_artifact_id",
+          "pit_status",
+          "revision_policy",
+          "origin",
+          "created_at",
+          "source_enabled",
+          "runtime_enabled",
+          "license_state",
+          "checked_at"
+        ],
+        "type": "object"
       },
       "DbCounter": {
         "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
@@ -6828,6 +7634,7 @@
         "type": "object"
       },
       "FieldError": {
+        "additionalProperties": false,
         "properties": {
           "code": {
             "type": "string"
@@ -7589,6 +8396,96 @@
             "properties": {
               "operation": {
                 "enum": [
+                  "DATA_SOURCE_CREATE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/DataSourceCreate"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "DATA_SOURCE_UPDATE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/DataSourceUpdate"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "DATA_GRANT_CREATE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/DataGrantCreate"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "DATA_GRANT_REVOKE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/DataGrantRevoke"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "DATASET_REGISTER"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/DatasetRegister"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
                   "CYCLE_START"
                 ],
                 "type": "string"
@@ -7966,6 +8863,11 @@
       },
       "OperatorOperation": {
         "enum": [
+          "DATA_SOURCE_CREATE",
+          "DATA_SOURCE_UPDATE",
+          "DATA_GRANT_CREATE",
+          "DATA_GRANT_REVOKE",
+          "DATASET_REGISTER",
           "BRIEF_FREEZE",
           "CYCLE_START",
           "INTEGRATION_SECRET_REGISTER",
@@ -8381,6 +9283,372 @@
                 "reserved_cpu_seconds",
                 "created_at",
                 "available_actions"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "items"
+        ],
+        "type": "object"
+      },
+      "Page_DataGrantRevocationView": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "effective_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "grant_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "reason_code": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "grant_id",
+                "effective_at",
+                "reason_code",
+                "reason",
+                "created_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "items"
+        ],
+        "type": "object"
+      },
+      "Page_DataGrantView": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "allowed_uses": {
+                  "$ref": "#/components/schemas/DataUse"
+                },
+                "checked_at": {
+                  "description": "This read-time observation is not a durable readiness or license extension.",
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "evidence_artifact_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "license_reference": {
+                  "type": "string"
+                },
+                "license_state": {
+                  "$ref": "#/components/schemas/DataLicenseState"
+                },
+                "source_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "valid_from": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "valid_until": {
+                  "format": "date-time",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "version": {
+                  "$ref": "#/components/schemas/Revision"
+                }
+              },
+              "required": [
+                "id",
+                "source_id",
+                "version",
+                "license_reference",
+                "evidence_artifact_id",
+                "allowed_uses",
+                "valid_from",
+                "created_at",
+                "license_state",
+                "checked_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "items"
+        ],
+        "type": "object"
+      },
+      "Page_DataSourceView": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "native_catalog_ref": {
+                  "type": "string"
+                },
+                "provider_kind": {
+                  "description": "Historical native provider names remain visible, not silently reclassified.",
+                  "type": "string"
+                },
+                "revision": {
+                  "$ref": "#/components/schemas/Revision"
+                },
+                "runtime_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "updated_at": {
+                  "format": "date-time",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "runtime_id",
+                "native_catalog_ref",
+                "provider_kind",
+                "enabled",
+                "revision",
+                "created_at",
+                "updated_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "items"
+        ],
+        "type": "object"
+      },
+      "Page_DatasetView": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "available_through": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "checked_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "data_kind": {
+                  "$ref": "#/components/schemas/RuntimeDataKind"
+                },
+                "data_use_grant_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "event_end": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "event_start": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "license_state": {
+                  "$ref": "#/components/schemas/DataLicenseState"
+                },
+                "native_metadata_artifact_id": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  ]
+                },
+                "native_snapshot_ref": {
+                  "type": "string"
+                },
+                "origin": {
+                  "$ref": "#/components/schemas/DataOrigin"
+                },
+                "partition": {
+                  "$ref": "#/components/schemas/DataPartition"
+                },
+                "pit_status": {
+                  "$ref": "#/components/schemas/PitStatus"
+                },
+                "quality_artifact_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "registration_observed_at": {
+                  "format": "date-time",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "revision_policy": {
+                  "$ref": "#/components/schemas/DataRevisionPolicy"
+                },
+                "row_count": {
+                  "$ref": "#/components/schemas/DbCounter"
+                },
+                "runtime_enabled": {
+                  "type": "boolean"
+                },
+                "schema_version": {
+                  "type": "string"
+                },
+                "source_enabled": {
+                  "type": "boolean"
+                },
+                "source_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "storage_version": {
+                  "type": "string"
+                },
+                "timezone": {
+                  "type": "string"
+                },
+                "universe_version_id": {
+                  "$ref": "#/components/schemas/Id"
+                }
+              },
+              "required": [
+                "id",
+                "source_id",
+                "data_use_grant_id",
+                "native_snapshot_ref",
+                "storage_version",
+                "universe_version_id",
+                "schema_version",
+                "data_kind",
+                "partition",
+                "event_start",
+                "event_end",
+                "available_through",
+                "row_count",
+                "timezone",
+                "quality_artifact_id",
+                "pit_status",
+                "revision_policy",
+                "origin",
+                "created_at",
+                "source_enabled",
+                "runtime_enabled",
+                "license_state",
+                "checked_at"
               ],
               "type": "object"
             },
@@ -9242,6 +10510,88 @@
         ],
         "type": "object"
       },
+      "Page_UniverseView": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "calendar_ref": {
+                  "type": "string"
+                },
+                "calendar_version": {
+                  "type": "string"
+                },
+                "coverage_end": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "coverage_start": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "has_historical_membership": {
+                  "type": "boolean"
+                },
+                "id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "instrument_definitions_artifact_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "membership_artifact_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "selection_asof": {
+                  "format": "date-time",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "membership_artifact_id",
+                "instrument_definitions_artifact_id",
+                "calendar_ref",
+                "calendar_version",
+                "selection_asof",
+                "has_historical_membership",
+                "coverage_start",
+                "coverage_end",
+                "created_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "items"
+        ],
+        "type": "object"
+      },
       "PitStatus": {
         "enum": [
           "VERIFIED",
@@ -9404,6 +10754,7 @@
         "type": "object"
       },
       "Problem": {
+        "additionalProperties": false,
         "properties": {
           "code": {
             "type": "string"
@@ -10938,6 +12289,62 @@
           "id",
           "label",
           "expires_at"
+        ],
+        "type": "object"
+      },
+      "UniverseView": {
+        "additionalProperties": false,
+        "properties": {
+          "calendar_ref": {
+            "type": "string"
+          },
+          "calendar_version": {
+            "type": "string"
+          },
+          "coverage_end": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "coverage_start": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "has_historical_membership": {
+            "type": "boolean"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "instrument_definitions_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "membership_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "name": {
+            "type": "string"
+          },
+          "selection_asof": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "membership_artifact_id",
+          "instrument_definitions_artifact_id",
+          "calendar_ref",
+          "calendar_version",
+          "selection_asof",
+          "has_historical_membership",
+          "coverage_start",
+          "coverage_end",
+          "created_at"
         ],
         "type": "object"
       },
@@ -12596,6 +14003,1564 @@
         ],
         "tags": [
           "Research startup"
+        ]
+      }
+    },
+    "/api/v2/data/grants/{id}/revocations": {
+      "get": {
+        "operationId": "revocations",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_DataGrantRevocationView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Data administration"
+        ]
+      }
+    },
+    "/api/v2/data/grants/{id}/revoke": {
+      "post": {
+        "operationId": "revoke_grant",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DataGrantRevoke"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult_DataGrantRevocationView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": [],
+            "OperatorCommandGrant": []
+          }
+        ],
+        "tags": [
+          "Data administration"
+        ]
+      }
+    },
+    "/api/v2/data/revisions": {
+      "get": {
+        "operationId": "revisions",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "source_id",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "partition",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/DataPartition"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_DatasetView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Data administration"
+        ]
+      },
+      "post": {
+        "operationId": "register",
+        "parameters": [
+          {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DatasetRegister"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult_DatasetView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": [],
+            "OperatorCommandGrant": []
+          }
+        ],
+        "tags": [
+          "Data administration"
+        ]
+      }
+    },
+    "/api/v2/data/revisions/{id}": {
+      "get": {
+        "operationId": "revision",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Data administration"
+        ]
+      }
+    },
+    "/api/v2/data/sources": {
+      "get": {
+        "operationId": "sources",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_DataSourceView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Data administration"
+        ]
+      },
+      "post": {
+        "operationId": "create_source",
+        "parameters": [
+          {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DataSourceCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult_DataSourceView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": [],
+            "OperatorCommandGrant": []
+          }
+        ],
+        "tags": [
+          "Data administration"
+        ]
+      }
+    },
+    "/api/v2/data/sources/{id}": {
+      "get": {
+        "operationId": "source",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataSourceView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Data administration"
+        ]
+      },
+      "patch": {
+        "operationId": "update_source",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DataSourceUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult_DataSourceView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": [],
+            "OperatorCommandGrant": []
+          }
+        ],
+        "tags": [
+          "Data administration"
+        ]
+      }
+    },
+    "/api/v2/data/sources/{id}/grants": {
+      "get": {
+        "operationId": "grants",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_DataGrantView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Data administration"
+        ]
+      },
+      "post": {
+        "operationId": "create_grant",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DataGrantCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult_DataGrantView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": [],
+            "OperatorCommandGrant": []
+          }
+        ],
+        "tags": [
+          "Data administration"
+        ]
+      }
+    },
+    "/api/v2/data/universes": {
+      "get": {
+        "operationId": "universes",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_UniverseView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Data administration"
+        ]
+      }
+    },
+    "/api/v2/data/universes/{id}": {
+      "get": {
+        "operationId": "universe",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UniverseView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Data administration"
         ]
       }
     },

@@ -10,6 +10,8 @@ pub mod brief;
 mod commands;
 pub mod control;
 pub mod cycles;
+pub mod data;
+pub mod data_registration;
 mod db;
 pub mod experiments;
 pub mod lifecycle;
@@ -49,6 +51,10 @@ pub enum StoreError {
     RevisionConflict { current: contracts::Revision },
     #[error("idempotency key was already used with different command content")]
     IdempotencyConflict,
+    #[error("native identity was already registered with different immutable content")]
+    NativeIdentityConflict,
+    #[error("registered integration is temporarily unavailable")]
+    IntegrationUnavailable,
     #[error("stored contract integrity check failed")]
     Integrity,
     #[error("secret reconciliation could not be completed")]

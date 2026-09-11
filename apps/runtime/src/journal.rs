@@ -265,39 +265,20 @@ impl Journal {
         if pending >= self.max_pending {
             return Err(Failure::Busy);
         }
-        for input in &spec.inputs {
-            if let RuntimeInputV1::Artifact {
-                artifact_id,
-                storage_version,
-                byte_count,
-                ..
-            } = input
-            {
-                let actual: Option<(String, i64)> = sqlx::query_as(
-                    "SELECT storage_version,byte_count FROM input_objects WHERE id=?",
-                )
-                .bind(artifact_id.to_string())
-                .fetch_optional(&mut *tx)
-                .await?;
-                if actual != Some((storage_version.clone(), byte_count.get() as i64)) {
-                    return Err(Failure::Invalid("input_object"));
-                }
-            }
-        }
-        let parameters: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM input_objects WHERE id=?)")
-                .bind(spec.parameters_artifact_id.to_string())
-                .fetch_one(&mut *tx)
-                .await?;
-        if !parameters {
-            return Err(Failure::Invalid("parameters_artifact_id"));
-        }
-        self.capacity(&mut tx, spec.limits.output_bytes.get() as i64)
-            .await?;
+        let materialization =
+            materialization::required_bytes(&mut tx, spec, document.len()).await?;
+        let total = materialization
+            .checked_add(spec.limits.output_bytes.get())
+            .and_then(|bytes| i64::try_from(bytes).ok())
+            .ok_or(Failure::Capacity)?;
+        // Admission owns both the final SQLite output and its predictable native
+        // filesystem copies. No ACCEPTED receipt may precede this reservation.
+        self.capacity(&mut tx, total).await?;
         sqlx::query("INSERT INTO runtime_jobs(external_id,run_id,attempt_no,owner_epoch,spec_json,submitted_us,deadline_us,phase,output_reservation) VALUES(?,?,?,?,?,?,?,'QUEUED',?)")
             .bind(identity).bind(spec.run_id.to_string()).bind(i64::from(spec.attempt_no))
             .bind(spec.owner_epoch.get() as i64).bind(document).bind(submitted.timestamp_micros())
             .bind(spec.deadline_at.timestamp_micros()).bind(spec.limits.output_bytes.get() as i64).execute(&mut *tx).await?;
+        materialization::insert(&mut tx, identity, materialization).await?;
         let result = Self::find(&mut tx, identity)
             .await?
             .ok_or(Failure::Integrity)?

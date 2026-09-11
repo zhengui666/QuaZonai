@@ -12,9 +12,11 @@ pub mod catalogs;
 pub mod codex;
 pub mod control;
 pub mod cycles;
+pub mod data;
 pub mod evidence;
 pub mod execution;
 pub mod experiments;
+pub mod http;
 pub mod lifecycle;
 pub mod portfolio;
 pub mod research;
@@ -31,11 +33,24 @@ use utoipa::OpenApi;
 
 #[derive(OpenApi)]
 #[openapi(components(schemas(
+    http::Problem,
     cycles::BriefFreezeV1,
     cycles::FrozenBriefV1,
     cycles::CycleStartIntent,
     cycles::CycleViewV1,
     cycles::CycleStartedV1,
+    data::DataSourceCreate,
+    data::DataSourceUpdate,
+    data::DataSourceView,
+    data::DataGrantCreate,
+    data::DataGrantRevoke,
+    data::DataGrantView,
+    data::DataGrantRevocationView,
+    data::DatasetRegister,
+    data::DatasetView,
+    data::UniverseView,
+    data::DataListQuery,
+    data::DataLicenseState,
     catalogs::RuntimeCatalogMetadataV1,
     catalogs::CatalogVersionQuery,
     runtime::RuntimeCapabilitiesV1,

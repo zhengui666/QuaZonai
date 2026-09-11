@@ -42,6 +42,20 @@ Operator 可创建独立 CLI/AUTOMATION/DOWNSTREAM 主体，系统任务的 MISS
 
 机器 capability 的原生 Argon2 校验前，PostgreSQL 原子预约60秒窗口：每凭据最多5个、全局最多32个失败或在途尝试。成功仅归还所属原窗口的占用，失败、取消和计算槽繁忙保留至窗口重置；429响应含 Retry-After。机器计算使用独立2个槽，不占用浏览器 TOTP 的2个槽；多个实例共享数据库窗口。不要以增加实例绕过限流。
 
+## 正式数据登记与集成管理
+
+浏览器“数据”页提供数据源、许可、原生版本、Universe 的管理；“设置”的计算端和下游页登记集成、原生凭据引用及计算端探测。所有页面使用同一 Rust 生成接口合同，移动端不更换权限或执行规则；离线不发送写入，连接中断后保持原请求的幂等键，不能因为失败提示就认为服务器没有提交。凭据只进入当次 write-only 请求，登记成功立即清空输入，不进入地址、浏览器持久存储或配置正文。
+
+先在真实 Runtime 的配置中登记已拥有许可的不可变 Nautilus 目录及其原生 metadata 文件，再在控制面创建 Source，填写该 Runtime 与精确 registry key。registry key 不是宿主目录或 URL，控制面不自动抓取任意来源。原生 metadata 保留 native_snapshot_ref、storage_version、分区、实际 provenance、PIT 说明、质量及 Universe；正确的时间排序或字段格式并不是历史 PIT 的证明。测试/合成来源不会升级为 REAL。
+
+许可需明确原始授权说明、有效期和用途，并引用由 Operator 提交的非空 REPORT 证据。撤销追加记录，不删除或修改过去的许可；省略生效时间表示数据库当前时间，显式时间只允许未来生效。读到 ACTIVE 是该次查询时的状态，不是永久权限或免于下一次检查。全局数据管理只读机器入口仅接受独立 DOCTOR_READ 的 CLI；Mission/Downstream 不因拥有项目读权限取得该管理入口。
+
+登记 Dataset 时只提交 Source、精确许可、Source/Runtime 当前 revision、原生存储版本及可选已有 Universe。服务经已配置的真实 TLS Runtime 读取 metadata，不接受客户端自报的 origin、PIT、计数、质量或原生报告。同一 Source/native_snapshot_ref/storage_version 只能保留一个身份；改变许可、分区或原始内容会冲突，不能换 UUID 重置 Sealed 暴露。已有 Universe 只有完整原生定义一致才可复用。登记成功只表示来源引用和授权证据已原子保存，不等于已执行 DATA_VALIDATE、独立评估或产生合格 Alpha。
+
+`024_data_registration` 增量迁移新增不可变 dataset_registration_evidence，不为旧 Dataset 推断或补造原生证据。升级仍使用停写、备份及正式 `server migrate` 入口；旧表、历史来源和授权保留。网络、文件发表或事务失败时精确回收未被引用的本次对象，不扫描其他产物；数据库结果未知时保留对象并给出错误，不误删可能已提交的证据。
+
+用户命令已接入原生 `server client`，具体命令、单次 TOTP grant、stdin JSON、私有凭据文件、SSE cursor 与导出退出码见 CLI.md。它只经 HTTP 使用现有权限，不能通过直接 SQL、应用 Master Key 或读 Vault 绕过同一 API。机器管理授权请求正文一旦改变，即使使用原 key，也可能先被单次 grant 的完整意图约束拒绝为403；只有当前授权通过后才进入回执冲突检查。正确重放必须保留原命令、正文、目标和幂等键。
+
 ## 不可变研究准备与数据撤销
 
 研究准备入口为 `/api/v2/input-sets` 和 `/api/v2/evaluation-policies`，详情和

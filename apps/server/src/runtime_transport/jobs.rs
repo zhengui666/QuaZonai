@@ -122,7 +122,7 @@ async fn body(mut response: Response, maximum: usize) -> Result<Vec<u8>, Runtime
 }
 
 impl RuntimeTransport {
-    fn resource(&self, segments: &[&str]) -> Result<Url, RuntimeRequestError> {
+    pub(super) fn resource(&self, segments: &[&str]) -> Result<Url, RuntimeRequestError> {
         let mut url = self.origin.clone();
         url.path_segments_mut()
             .map_err(|_| RuntimeRequestError::Contract)?

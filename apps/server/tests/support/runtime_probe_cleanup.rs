@@ -72,7 +72,7 @@ async fn failed_postpublication_probe_is_reclaimed_and_the_same_key_can_retry(po
         .unwrap();
     assert!(!f
         .store
-        .discard_unpublished_runtime_probe(artifact, |_| async {
+        .discard_unpublished_operator_artifact(artifact, |_| async {
             panic!("a committed probe artifact must never reach the discard callback")
         })
         .await
@@ -107,7 +107,7 @@ async fn reclamation_waits_for_the_original_publication_transaction_and_retains_
     let mut cleanup = tokio::spawn(async move {
         entered.send(()).unwrap();
         store
-            .discard_unpublished_runtime_probe(artifact, |_| async {
+            .discard_unpublished_operator_artifact(artifact, |_| async {
                 panic!("an uncertain-but-committed publication must be retained")
             })
             .await

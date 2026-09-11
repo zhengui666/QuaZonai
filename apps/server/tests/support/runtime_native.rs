@@ -114,14 +114,39 @@ fn openssl(root: &std::path::Path, args: &[&str]) {
     );
 }
 pub async fn native_tls() -> NativeTls {
-    native_tls_with_barrier(None).await
+    native_tls_with_barrier(None, None).await
 }
 
 pub async fn native_tls_concurrent() -> NativeTls {
-    native_tls_with_barrier(Some(Arc::new(tokio::sync::Barrier::new(2)))).await
+    native_tls_with_barrier(Some(Arc::new(tokio::sync::Barrier::new(2))), None).await
 }
 
-async fn native_tls_with_barrier(barrier: Option<Arc<tokio::sync::Barrier>>) -> NativeTls {
+struct CatalogReply {
+    target: String,
+    payload: Vec<u8>,
+    pause: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
+}
+
+pub async fn native_tls_catalog(
+    target: String,
+    payload: Vec<u8>,
+    pause: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
+) -> NativeTls {
+    native_tls_with_barrier(
+        None,
+        Some(Arc::new(CatalogReply {
+            target,
+            payload,
+            pause,
+        })),
+    )
+    .await
+}
+
+async fn native_tls_with_barrier(
+    barrier: Option<Arc<tokio::sync::Barrier>>,
+    catalog: Option<Arc<CatalogReply>>,
+) -> NativeTls {
     let files = tempfile::tempdir().unwrap();
     let root = files.path();
     openssl(
@@ -242,6 +267,7 @@ async fn native_tls_with_barrier(barrier: Option<Arc<tokio::sync::Barrier>>) -> 
                     let acceptor = acceptor.clone();
                     let count = count.clone();
                     let barrier = barrier.clone();
+                    let catalog = catalog.clone();
                     connections.spawn(async move {
                         tokio::time::timeout(std::time::Duration::from_secs(10), async move {
                             let Ok(mut socket) = acceptor.accept(socket).await else {
@@ -255,12 +281,21 @@ async fn native_tls_with_barrier(barrier: Option<Arc<tokio::sync::Barrier>>) -> 
                                 if request.ends_with(b"\r\n\r\n") { break; }
                             }
                             let request = String::from_utf8(request).unwrap();
-                            assert!(request.starts_with("GET /runtime/v1/capabilities HTTP/1.1\r\n"));
+                            let expected_target = catalog.as_ref().map_or("/runtime/v1/capabilities", |reply| reply.target.as_str());
+                            assert!(request.starts_with(&format!("GET {expected_target} HTTP/1.1\r\n")));
                             assert!(request.to_ascii_lowercase().contains("host: runtime-native.invalid:"));
                             assert!(request.contains(&format!("authorization: Bearer {SECRET}")));
                             count.fetch_add(1, Ordering::SeqCst);
                             if let Some(barrier) = barrier { barrier.wait().await; }
-                            let payload = serde_json::to_vec(&capabilities(chrono::Utc::now())).unwrap();
+                            let payload = if let Some(reply) = catalog {
+                                if let Some((entered, release)) = &reply.pause {
+                                    entered.notify_one();
+                                    release.notified().await;
+                                }
+                                reply.payload.clone()
+                            } else {
+                                serde_json::to_vec(&capabilities(chrono::Utc::now())).unwrap()
+                            };
                             socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", payload.len()).as_bytes()).await.unwrap();
                             socket.write_all(&payload).await.unwrap();
                             socket.shutdown().await.unwrap();

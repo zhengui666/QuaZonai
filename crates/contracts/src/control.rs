@@ -211,6 +211,11 @@ pub struct CredentialCreated {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum OperatorOperation {
+    DataSourceCreate,
+    DataSourceUpdate,
+    DataGrantCreate,
+    DataGrantRevoke,
+    DatasetRegister,
     BriefFreeze,
     CycleStart,
     IntegrationSecretRegister,
@@ -234,6 +239,11 @@ impl OperatorOperation {
     pub fn code(self) -> &'static str {
         match self {
             Self::BriefFreeze => "BRIEF_FREEZE",
+            Self::DataSourceCreate => "DATA_SOURCE_CREATE",
+            Self::DataSourceUpdate => "DATA_SOURCE_UPDATE",
+            Self::DataGrantCreate => "DATA_GRANT_CREATE",
+            Self::DataGrantRevoke => "DATA_GRANT_REVOKE",
+            Self::DatasetRegister => "DATASET_REGISTER",
             Self::CycleStart => "CYCLE_START",
             Self::IntegrationSecretRegister => "INTEGRATION_SECRET_REGISTER",
             Self::RuntimeProbe => "RUNTIME_PROBE",
@@ -257,6 +267,8 @@ impl OperatorOperation {
         matches!(
             self,
             Self::IntegrationSecretRegister
+                | Self::DataSourceCreate
+                | Self::DataGrantCreate
                 | Self::CycleStart
                 | Self::RuntimeCreate
                 | Self::DownstreamCreate
@@ -278,6 +290,11 @@ impl OperatorOperation {
 )]
 pub enum OperatorCommand {
     BriefFreeze(crate::cycles::BriefFreezeV1),
+    DataSourceCreate(crate::data::DataSourceCreate),
+    DataSourceUpdate(crate::data::DataSourceUpdate),
+    DataGrantCreate(crate::data::DataGrantCreate),
+    DataGrantRevoke(crate::data::DataGrantRevoke),
+    DatasetRegister(crate::data::DatasetRegister),
     CycleStart(crate::cycles::CycleStartIntent),
     IntegrationSecretRegister(crate::settings::IntegrationSecretIntent),
     RuntimeProbe(crate::runtime::RuntimeProbeRequestV1),
@@ -300,6 +317,11 @@ impl OperatorCommand {
     pub fn operation(&self) -> OperatorOperation {
         match self {
             Self::BriefFreeze(_) => OperatorOperation::BriefFreeze,
+            Self::DataSourceCreate(_) => OperatorOperation::DataSourceCreate,
+            Self::DataSourceUpdate(_) => OperatorOperation::DataSourceUpdate,
+            Self::DataGrantCreate(_) => OperatorOperation::DataGrantCreate,
+            Self::DataGrantRevoke(_) => OperatorOperation::DataGrantRevoke,
+            Self::DatasetRegister(_) => OperatorOperation::DatasetRegister,
             Self::CycleStart(_) => OperatorOperation::CycleStart,
             Self::IntegrationSecretRegister(_) => OperatorOperation::IntegrationSecretRegister,
             Self::RuntimeProbe(_) => OperatorOperation::RuntimeProbe,
@@ -322,6 +344,11 @@ impl OperatorCommand {
     pub fn normalized_request(&self) -> Result<serde_json::Value, serde_json::Error> {
         match self {
             Self::BriefFreeze(v) => serde_json::to_value(v),
+            Self::DataSourceCreate(v) => serde_json::to_value(v),
+            Self::DataSourceUpdate(v) => serde_json::to_value(v),
+            Self::DataGrantCreate(v) => serde_json::to_value(v),
+            Self::DataGrantRevoke(v) => serde_json::to_value(v),
+            Self::DatasetRegister(v) => serde_json::to_value(v),
             Self::CycleStart(v) => serde_json::to_value(v),
             Self::IntegrationSecretRegister(v) => serde_json::to_value(v),
             Self::RuntimeProbe(v) => serde_json::to_value(v),

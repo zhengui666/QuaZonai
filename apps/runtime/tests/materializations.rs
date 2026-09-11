@@ -185,11 +185,15 @@ async fn disk_quota_includes_native_copy_and_eventual_sqlite_output_without_crea
 {
     let mut f = fixture().await;
     f.spec.limits.output_bytes = DbCounter::new(40 * 1024 * 1024).unwrap();
-    f.journal.submit(&f.spec, &f.capability).await.unwrap();
     assert!(matches!(
-        materialize::inputs(f.root.clone(), &f.journal, &f.spec, &[]).await,
+        f.journal.submit(&f.spec, &f.capability).await,
         Err(Failure::Capacity)
     ));
+    assert!(matches!(
+        f.journal.get(&f.spec.external_job_id).await,
+        Err(Failure::Missing)
+    ));
+    assert!(f.journal.scheduling().await.unwrap().is_empty());
     assert_eq!(
         f.journal
             .materialization_bytes(&f.spec.external_job_id)
@@ -211,6 +215,128 @@ async fn disk_quota_includes_native_copy_and_eventual_sqlite_output_without_crea
         f.parameters
     );
     f.journal.close().await;
+}
+
+#[tokio::test]
+async fn concurrent_admission_reserves_disk_once_and_replays_do_not_charge_again() {
+    let mut f = fixture().await;
+    f.spec.limits.output_bytes = DbCounter::new(22 * 1024 * 1024).unwrap();
+    let mut other = f.spec.clone();
+    other.run_id = Id::new();
+    other.external_job_id = domain::runtime_jobs::external_id(other.run_id, 1).unwrap();
+    let (a, b) = tokio::join!(
+        f.journal.submit(&f.spec, &f.capability),
+        f.journal.submit(&other, &f.capability)
+    );
+    let (accepted, rejected) = match (a, b) {
+        (Ok((_, false)), Err(Failure::Capacity)) => (&f.spec, &other),
+        (Err(Failure::Capacity), Ok((_, false))) => (&other, &f.spec),
+        _ => panic!("native disk reservations must have one admission winner"),
+    };
+    let reserved = f
+        .journal
+        .materialization_bytes(&accepted.external_job_id)
+        .await
+        .unwrap()
+        .expect("accepted jobs already reserve their filesystem copies");
+    assert_eq!(f.journal.scheduling().await.unwrap().len(), 1);
+    assert!(matches!(
+        f.journal.get(&rejected.external_job_id).await,
+        Err(Failure::Missing)
+    ));
+    assert_eq!(
+        f.journal
+            .materialization_bytes(&rejected.external_job_id)
+            .await
+            .unwrap(),
+        None
+    );
+    assert!(f.journal.submit(accepted, &f.capability).await.unwrap().1);
+    assert_eq!(
+        f.journal.reserve_materialization(accepted).await.unwrap(),
+        reserved
+    );
+    assert_eq!(
+        f.journal
+            .materialization_bytes(&accepted.external_job_id)
+            .await
+            .unwrap(),
+        Some(reserved)
+    );
+    assert_eq!(fs::read_dir(f.root.path.join("jobs")).unwrap().count(), 0);
+    f.journal.close().await;
+    let reopened = Journal::open(&f.root.path.join("journal.sqlite"), 64 * 1024 * 1024, 16)
+        .await
+        .unwrap();
+    assert!(reopened.submit(accepted, &f.capability).await.unwrap().1);
+    assert_eq!(
+        reopened
+            .materialization_bytes(&accepted.external_job_id)
+            .await
+            .unwrap(),
+        Some(reserved)
+    );
+    materialize::inputs(f.root.clone(), &reopened, accepted, &[])
+        .await
+        .unwrap();
+    assert_eq!(
+        reopened
+            .materialization_bytes(&accepted.external_job_id)
+            .await
+            .unwrap(),
+        Some(reserved)
+    );
+    reopened.close().await;
+}
+
+#[tokio::test]
+async fn admission_at_exact_disk_quota_succeeds_and_one_extra_byte_rolls_back() {
+    let mut f = fixture().await;
+    // The actual serialized request participates in the quota; do not estimate
+    // its size or discard a requested input to make the job appear admissible.
+    f.spec.limits.output_bytes = DbCounter::new(32 * 1024 * 1024).unwrap();
+    let materialized = f.parameters.len() as u64
+        + serde_json::to_vec(&f.spec).unwrap().len() as u64
+        + f.spec.limits.output_bytes.get()
+        + domain::runtime_jobs::MAX_RESULT_MANIFEST_BYTES as u64;
+    let exact = f.parameters.len() as u64 + f.spec.limits.output_bytes.get() + materialized;
+    f.journal.close().await;
+    let too_small = Journal::open(&f.root.path.join("journal.sqlite"), exact - 1, 16)
+        .await
+        .unwrap();
+    assert!(matches!(
+        too_small.submit(&f.spec, &f.capability).await,
+        Err(Failure::Capacity)
+    ));
+    assert!(too_small.scheduling().await.unwrap().is_empty());
+    assert_eq!(
+        too_small
+            .materialization_bytes(&f.spec.external_job_id)
+            .await
+            .unwrap(),
+        None
+    );
+    too_small.close().await;
+    let sufficient = Journal::open(&f.root.path.join("journal.sqlite"), exact, 16)
+        .await
+        .unwrap();
+    assert!(!sufficient.submit(&f.spec, &f.capability).await.unwrap().1);
+    assert_eq!(
+        sufficient
+            .materialization_bytes(&f.spec.external_job_id)
+            .await
+            .unwrap(),
+        Some(materialized)
+    );
+    materialize::inputs(f.root.clone(), &sufficient, &f.spec, &[])
+        .await
+        .unwrap();
+    assert!(matches!(
+        sufficient.put_object(Id::new(), "1", b"x").await,
+        Err(Failure::Capacity)
+    ));
+    assert!(sufficient.submit(&f.spec, &f.capability).await.unwrap().1);
+    sufficient.close().await;
 }
 
 #[tokio::test]

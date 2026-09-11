@@ -85,7 +85,7 @@ impl<'de> Visitor<'de> for Guard<'_> {
     }
 }
 
-pub(super) fn verify(bytes: &[u8], credential: &str) -> Result<(), RuntimeProbeFailure> {
+pub(crate) fn verify(bytes: &[u8], credential: &str) -> Result<(), RuntimeProbeFailure> {
     if credential.is_empty() {
         return Err(RuntimeProbeFailure::Authentication);
     }

@@ -24,10 +24,15 @@ test('native image copy preserves full multi-chunk bytes and executable permissi
   fs.chmodSync(f.source, 0o751);
   copyNativeFile(f.root, f.source, '/opt/rust/bin/native');
   const output = nativeDestination(f.root, '/opt/rust/bin/native');
-  assert.deepEqual(fs.readFileSync(output), bytes);
-  assert.equal(fs.statSync(output).mode & 0o777, 0o751);
+  const observe = () => {
+    const descriptor = fs.openSync(output, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    try {
+      return { bytes: fs.readFileSync(descriptor), mode: fs.fstatSync(descriptor).mode & 0o777 };
+    } finally { fs.closeSync(descriptor); }
+  };
+  assert.deepEqual(observe(), { bytes, mode: 0o751 });
   copyNativeFile(f.root, f.source, '/opt/rust/bin/native');
-  assert.deepEqual(fs.readFileSync(output), bytes);
+  assert.deepEqual(observe(), { bytes, mode: 0o751 });
 });
 
 test('same-size conflicting destination remains byte-for-byte unchanged', (t) => {

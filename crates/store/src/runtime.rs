@@ -209,11 +209,11 @@ impl Store {
         Ok(result)
     }
 
-    /// Only the trusted probe publisher supplies an ID allocated by its failed
+    /// Only a trusted Operator publisher supplies an ID allocated by its failed
     /// publication attempt. No HTTP/CLI caller can use this as an artifact delete.
     /// Reacquiring the exact original command lock waits out an uncertain commit;
     /// a committed metadata row or native object reference always wins retention.
-    pub async fn discard_unpublished_runtime_probe<F, Fut>(
+    pub async fn discard_unpublished_operator_artifact<F, Fut>(
         &self,
         artifact: Id,
         discard: F,

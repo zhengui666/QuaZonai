@@ -3,34 +3,9 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+pub use contracts::http::{FieldError, Problem};
 use contracts::{Id, Revision};
-use serde::Serialize;
 use store::StoreError;
-use utoipa::ToSchema;
-
-#[derive(Debug, Serialize, ToSchema)]
-pub struct FieldError {
-    pub field: String,
-    pub code: String,
-    pub message: String,
-}
-
-#[derive(Debug, Serialize, ToSchema)]
-pub struct Problem {
-    #[serde(rename = "type")]
-    pub kind: String,
-    pub title: &'static str,
-    #[schema(minimum = 100, maximum = 599)]
-    pub status: u16,
-    pub code: &'static str,
-    pub detail: &'static str,
-    pub request_id: Id,
-    pub retryable: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub current_revision: Option<Revision>,
-    pub field_errors: Vec<FieldError>,
-    pub safe_next_actions: Vec<&'static str>,
-}
 #[derive(Debug)]
 pub struct ApiError {
     status: StatusCode,
@@ -84,17 +59,17 @@ impl IntoResponse for ApiError {
                 "urn:quazonai:problem:{}",
                 self.code.to_ascii_lowercase().replace('_', "-")
             ),
-            title: self.code,
+            title: self.code.to_owned(),
             status: self.status.as_u16(),
-            code: self.code,
-            detail: self.detail,
+            code: self.code.to_owned(),
+            detail: self.detail.to_owned(),
             request_id,
             current_revision: self.current_revision,
             field_errors: self.field_errors,
             safe_next_actions: match self.code {
-                "AUTH_REQUIRED" | "RECENT_AUTH_REQUIRED" => vec!["AUTHENTICATE"],
-                "AUTH_RATE_LIMITED" => vec!["RETRY_AFTER"],
-                "REVISION_CONFLICT" => vec!["RELOAD"],
+                "AUTH_REQUIRED" | "RECENT_AUTH_REQUIRED" => vec!["AUTHENTICATE".into()],
+                "AUTH_RATE_LIMITED" => vec!["RETRY_AFTER".into()],
+                "REVISION_CONFLICT" => vec!["RELOAD".into()],
                 _ => Vec::new(),
             },
             retryable: self.code != "BUDGET_EXHAUSTED"
@@ -172,6 +147,16 @@ impl From<StoreError> for ApiError {
                 StatusCode::CONFLICT,
                 "IDEMPOTENCY_CONFLICT",
                 "此幂等键已用于不同请求，不能重用。",
+            ),
+            StoreError::NativeIdentityConflict => Self::new(
+                StatusCode::CONFLICT,
+                "NATIVE_IDENTITY_CONFLICT",
+                "这个原生身份已绑定其他不可变内容，不能通过更换标识覆盖来源或授权。",
+            ),
+            StoreError::IntegrationUnavailable => Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "INTEGRATION_UNAVAILABLE",
+                "已登记的外部集成暂不可用，请检查其连接、凭据和运行状态后使用原请求重试。",
             ),
             StoreError::EventCursorExpired => Self::new(
                 StatusCode::GONE,

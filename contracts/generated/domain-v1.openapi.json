@@ -5829,6 +5829,226 @@
         ],
         "type": "string"
       },
+      "DataGrantCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed_uses": {
+            "$ref": "#/components/schemas/DataUse"
+          },
+          "evidence_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "license_reference": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "source_id": {
+            "$ref": "#/components/schemas/Id",
+            "description": "Also bound in the normalized command so a one-time CLI grant cannot be\nreplayed against a different source merely by changing the route."
+          },
+          "valid_from": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "schema_version",
+          "source_id",
+          "license_reference",
+          "evidence_artifact_id",
+          "allowed_uses",
+          "valid_from"
+        ],
+        "type": "object"
+      },
+      "DataGrantRevocationView": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "effective_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "grant_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "reason_code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "grant_id",
+          "effective_at",
+          "reason_code",
+          "reason",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "DataGrantRevoke": {
+        "additionalProperties": false,
+        "properties": {
+          "effective_at": {
+            "description": "None takes effect at the authoritative database clock. Explicit times may\nonly be future-effective; the caller cannot rewrite historical access.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "reason_code": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "reason_code",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "DataGrantView": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed_uses": {
+            "$ref": "#/components/schemas/DataUse"
+          },
+          "checked_at": {
+            "description": "This read-time observation is not a durable readiness or license extension.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "evidence_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "license_reference": {
+            "type": "string"
+          },
+          "license_state": {
+            "$ref": "#/components/schemas/DataLicenseState"
+          },
+          "source_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "valid_from": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version": {
+            "$ref": "#/components/schemas/Revision"
+          }
+        },
+        "required": [
+          "id",
+          "source_id",
+          "version",
+          "license_reference",
+          "evidence_artifact_id",
+          "allowed_uses",
+          "valid_from",
+          "created_at",
+          "license_state",
+          "checked_at"
+        ],
+        "type": "object"
+      },
+      "DataLicenseState": {
+        "enum": [
+          "ACTIVE",
+          "NOT_YET_VALID",
+          "EXPIRED",
+          "REVOKED"
+        ],
+        "type": "string"
+      },
+      "DataListQuery": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "limit": {
+            "default": 50,
+            "format": "int32",
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "partition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DataPartition"
+              }
+            ]
+          },
+          "source_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
       "DataOrigin": {
         "enum": [
           "REAL",
@@ -5847,6 +6067,12 @@
         ],
         "type": "string"
       },
+      "DataProviderKind": {
+        "enum": [
+          "NAUTILUS_CATALOG"
+        ],
+        "type": "string"
+      },
       "DataRevisionPolicy": {
         "enum": [
           "AS_KNOWN_THEN",
@@ -5854,6 +6080,291 @@
           "UNKNOWN"
         ],
         "type": "string"
+      },
+      "DataSourceCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "native_catalog_ref": {
+            "description": "Exact Runtime registry key, not an HTTP URL or local filesystem path.",
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "provider_kind": {
+            "$ref": "#/components/schemas/DataProviderKind"
+          },
+          "runtime_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "name",
+          "runtime_id",
+          "native_catalog_ref",
+          "provider_kind",
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "DataSourceUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "expected_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "expected_revision",
+          "name",
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "DataSourceView": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "name": {
+            "type": "string"
+          },
+          "native_catalog_ref": {
+            "type": "string"
+          },
+          "provider_kind": {
+            "description": "Historical native provider names remain visible, not silently reclassified.",
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "runtime_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "runtime_id",
+          "native_catalog_ref",
+          "provider_kind",
+          "enabled",
+          "revision",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "DataUse": {
+        "enum": [
+          "RESEARCH",
+          "RESEARCH_AND_PAPER",
+          "RESEARCH_PAPER_LIVE"
+        ],
+        "type": "string"
+      },
+      "DatasetRegister": {
+        "additionalProperties": false,
+        "properties": {
+          "existing_universe_version_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id",
+                "description": "Reuse an immutable Universe only when its full native definition matches.\nThis permits Discovery/Validation/Sealed revisions to share one frozen universe."
+              }
+            ]
+          },
+          "expected_runtime_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "expected_source_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "grant_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "native_storage_version": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "source_id": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "schema_version",
+          "source_id",
+          "grant_id",
+          "expected_source_revision",
+          "expected_runtime_revision",
+          "native_storage_version"
+        ],
+        "type": "object"
+      },
+      "DatasetView": {
+        "additionalProperties": false,
+        "properties": {
+          "available_through": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "checked_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "data_kind": {
+            "$ref": "#/components/schemas/RuntimeDataKind"
+          },
+          "data_use_grant_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "event_end": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "event_start": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "license_state": {
+            "$ref": "#/components/schemas/DataLicenseState"
+          },
+          "native_metadata_artifact_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "native_snapshot_ref": {
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/DataOrigin"
+          },
+          "partition": {
+            "$ref": "#/components/schemas/DataPartition"
+          },
+          "pit_status": {
+            "$ref": "#/components/schemas/PitStatus"
+          },
+          "quality_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "registration_observed_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "revision_policy": {
+            "$ref": "#/components/schemas/DataRevisionPolicy"
+          },
+          "row_count": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "runtime_enabled": {
+            "type": "boolean"
+          },
+          "schema_version": {
+            "type": "string"
+          },
+          "source_enabled": {
+            "type": "boolean"
+          },
+          "source_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "storage_version": {
+            "type": "string"
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "universe_version_id": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "id",
+          "source_id",
+          "data_use_grant_id",
+          "native_snapshot_ref",
+          "storage_version",
+          "universe_version_id",
+          "schema_version",
+          "data_kind",
+          "partition",
+          "event_start",
+          "event_end",
+          "available_through",
+          "row_count",
+          "timezone",
+          "quality_artifact_id",
+          "pit_status",
+          "revision_policy",
+          "origin",
+          "created_at",
+          "source_enabled",
+          "runtime_enabled",
+          "license_state",
+          "checked_at"
+        ],
+        "type": "object"
       },
       "DbCounter": {
         "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
@@ -6501,6 +7012,26 @@
           "revision",
           "created_at",
           "updated_at"
+        ],
+        "type": "object"
+      },
+      "FieldError": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "field": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "code",
+          "message"
         ],
         "type": "object"
       },
@@ -8656,6 +9187,96 @@
             "properties": {
               "operation": {
                 "enum": [
+                  "DATA_SOURCE_CREATE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/DataSourceCreate"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "DATA_SOURCE_UPDATE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/DataSourceUpdate"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "DATA_GRANT_CREATE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/DataGrantCreate"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "DATA_GRANT_REVOKE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/DataGrantRevoke"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "DATASET_REGISTER"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/DatasetRegister"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
                   "CYCLE_START"
                 ],
                 "type": "string"
@@ -9033,6 +9654,11 @@
       },
       "OperatorOperation": {
         "enum": [
+          "DATA_SOURCE_CREATE",
+          "DATA_SOURCE_UPDATE",
+          "DATA_GRANT_CREATE",
+          "DATA_GRANT_REVOKE",
+          "DATASET_REGISTER",
           "BRIEF_FREEZE",
           "CYCLE_START",
           "INTEGRATION_SECRET_REGISTER",
@@ -9317,6 +9943,69 @@
           "created_at",
           "updated_at",
           "revision"
+        ],
+        "type": "object"
+      },
+      "Problem": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "current_revision": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Revision"
+              }
+            ]
+          },
+          "detail": {
+            "type": "string"
+          },
+          "field_errors": {
+            "items": {
+              "$ref": "#/components/schemas/FieldError"
+            },
+            "type": "array"
+          },
+          "request_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "safe_next_actions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "status": {
+            "format": "int32",
+            "maximum": 599,
+            "minimum": 100,
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "title",
+          "status",
+          "code",
+          "detail",
+          "request_id",
+          "retryable",
+          "field_errors",
+          "safe_next_actions"
         ],
         "type": "object"
       },
@@ -11926,6 +12615,62 @@
           "id",
           "label",
           "expires_at"
+        ],
+        "type": "object"
+      },
+      "UniverseView": {
+        "additionalProperties": false,
+        "properties": {
+          "calendar_ref": {
+            "type": "string"
+          },
+          "calendar_version": {
+            "type": "string"
+          },
+          "coverage_end": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "coverage_start": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "has_historical_membership": {
+            "type": "boolean"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "instrument_definitions_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "membership_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "name": {
+            "type": "string"
+          },
+          "selection_asof": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "membership_artifact_id",
+          "instrument_definitions_artifact_id",
+          "calendar_ref",
+          "calendar_version",
+          "selection_asof",
+          "has_historical_membership",
+          "coverage_start",
+          "coverage_end",
+          "created_at"
         ],
         "type": "object"
       },

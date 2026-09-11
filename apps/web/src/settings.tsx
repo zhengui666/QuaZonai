@@ -1,11 +1,29 @@
-import { Alert, Button, Card, Descriptions, Modal, Space, Table, Typography } from 'antd';
+import { Alert, Button, Card, Descriptions, Modal, Space, Table, Tabs, Typography } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, dataOf, displayTime } from './api';
 import type { Schema } from './api';
 import { ErrorNotice, NoData, Pager, QueryPanel, useGuard, useOnline } from './ui';
 
-export function Settings({ session, verify }: { session: Schema['BrowserSession']; verify: () => void }) {
+import { DataManagement } from './data';
+import { IntegrationManagement } from './integrations';
+
+type SettingsProps = { session: Schema['BrowserSession']; verify: () => void };
+
+export function Settings(props: SettingsProps) {
+  const [tab, setTab] = useState('security');
+  return <Space orientation="vertical" className="full-width" size="large">
+    <Typography.Title level={1}>设置</Typography.Title>
+    <Tabs activeKey={tab} onChange={setTab} items={[
+      { key: 'security', label: '浏览器安全' },
+      { key: 'integrations', label: '原生集成' },
+      { key: 'data', label: '数据与许可' },
+    ]} />
+    {tab === 'security' ? <SecuritySettings {...props} /> : tab === 'integrations' ? <IntegrationManagement /> : <DataManagement />}
+  </Space>;
+}
+
+function SecuritySettings({ session, verify }: SettingsProps) {
   const [history, setHistory] = useState<(string | undefined)[]>([undefined]);
   const [target, setTarget] = useState<Schema['TrustedDevice']>();
   const client = useQueryClient(); const online = useOnline(); const cursor = history.at(-1);
@@ -15,7 +33,6 @@ export function Settings({ session, verify }: { session: Schema['BrowserSession'
   });
   useGuard(target !== undefined || revoke.isPending);
   return <Space orientation="vertical" className="full-width" size="large">
-    <Typography.Title level={1}>设置</Typography.Title>
     <Card title="登录安全" extra={<Button disabled={!online} onClick={verify}>重新验证</Button>}>
       <Descriptions column={1} items={[
         { key: 'time', label: '最近验证', children: displayTime(session.authenticated_at) },

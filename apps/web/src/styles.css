@@ -19,6 +19,7 @@ body { margin: 0; min-width: 320px; }
 .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 20px; }
 /* Ant Design's popup anchor stays inside the long, independently scrolling form. */
 .authoring-form .ant-form-item-control-input-content { position: relative; }
+.resource-select > .ant-space-item { position: relative; width: 100%; min-width: 0; }
 .global-notice { margin-bottom: 24px; }
 .update-bar:empty { display: none; }
 .update-bar { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 12px; padding-inline: 16px; background: #fff; }

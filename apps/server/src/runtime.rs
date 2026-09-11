@@ -17,6 +17,37 @@ use axum::{
 use contracts::{control::CommandResult, runtime::*, Id};
 use store::{runtime::ProbePreparation, StoreError};
 
+/// Shared trusted credential resolution for native probes, catalog registration
+/// and task transport. Call from a bounded blocking task, never expose these bytes.
+pub(crate) fn native_transport(
+    vault: &integrations::secrets::SecretVault,
+    targets: &crate::runtime_transport::RuntimeTargets,
+    snapshot: &store::lifecycle::RuntimeSnapshot,
+) -> Result<RuntimeTransport, RuntimeProbeFailure> {
+    let credential_id: Id = snapshot
+        .credential_ref
+        .clone()
+        .try_into()
+        .map_err(|_| RuntimeProbeFailure::NotConfigured)?;
+    let credential = vault
+        .read(credential_id, "RUNTIME")
+        .map_err(|_| RuntimeProbeFailure::Authentication)?;
+    let ca = snapshot
+        .ca_certificate_ref
+        .as_ref()
+        .map(|reference| {
+            let id: Id = reference
+                .clone()
+                .try_into()
+                .map_err(|_| RuntimeProbeFailure::TlsConfiguration)?;
+            vault
+                .read(id, "TLS_CA")
+                .map_err(|_| RuntimeProbeFailure::TlsConfiguration)
+        })
+        .transpose()?;
+    RuntimeTransport::new(targets, snapshot, &credential, ca.as_deref())
+}
+
 #[utoipa::path(post,path="/api/v2/integrations/runtimes/{id}/probe",tag="Runtime readiness",request_body=RuntimeProbeRequestV1,params(("id"=Id,Path),("Idempotency-Key"=String,Header)),responses((status=200,body=CommandResult<RuntimeProbeViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
 pub async fn probe(
     State(state): State<AppState>,
@@ -44,32 +75,10 @@ pub async fn probe(
             ProbePreparation::Pending(ticket) => *ticket,
         };
         let snapshot = ticket.snapshot.clone();
-        let native = tokio::task::spawn_blocking(move || {
-            let credential_id: Id = snapshot
-                .credential_ref
-                .clone()
-                .try_into()
-                .map_err(|_| RuntimeProbeFailure::NotConfigured)?;
-            let credential = vault
-                .read(credential_id, "RUNTIME")
-                .map_err(|_| RuntimeProbeFailure::Authentication)?;
-            let ca = snapshot
-                .ca_certificate_ref
-                .as_ref()
-                .map(|reference| {
-                    let id: Id = reference
-                        .clone()
-                        .try_into()
-                        .map_err(|_| RuntimeProbeFailure::TlsConfiguration)?;
-                    vault
-                        .read(id, "TLS_CA")
-                        .map_err(|_| RuntimeProbeFailure::TlsConfiguration)
-                })
-                .transpose()?;
-            RuntimeTransport::new(&targets, &snapshot, &credential, ca.as_deref())
-        })
-        .await
-        .map_err(|_| StoreError::SecretCleanup)?;
+        let native =
+            tokio::task::spawn_blocking(move || native_transport(&vault, &targets, &snapshot))
+                .await
+                .map_err(|_| StoreError::SecretCleanup)?;
         let observed = match native {
             Ok(native) => native.capabilities().await,
             Err(reason) => Err(reason),
@@ -95,7 +104,7 @@ pub async fn probe(
             .await;
         if let Some(artifact) = publication.filter(|_| result.is_err()) {
             let cleanup = store
-                .discard_unpublished_runtime_probe(artifact, move |artifact| async move {
+                .discard_unpublished_operator_artifact(artifact, move |artifact| async move {
                     tokio::task::spawn_blocking(move || objects.discard_unpublished(artifact))
                         .await
                         .map_err(|_| StoreError::Integrity)?

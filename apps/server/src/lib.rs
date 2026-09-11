@@ -5,8 +5,10 @@ mod access;
 pub mod artifacts;
 pub mod auth;
 pub mod brief;
+pub mod client;
 pub mod control;
 pub mod cycles;
+pub mod data;
 pub mod error;
 pub mod experiments;
 #[cfg(test)]
@@ -240,6 +242,30 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
                 .post(research::create_input_set)
                 .layer(DefaultBodyLimit::max(64 * 1024)),
         )
+        .route(
+            "/api/v2/data/sources",
+            get(data::sources).post(data::create_source),
+        )
+        .route(
+            "/api/v2/data/sources/{id}",
+            get(data::source).patch(data::update_source),
+        )
+        .route(
+            "/api/v2/data/sources/{id}/grants",
+            get(data::grants).post(data::create_grant),
+        )
+        .route("/api/v2/data/grants/{id}/revoke", post(data::revoke_grant))
+        .route(
+            "/api/v2/data/grants/{id}/revocations",
+            get(data::revocations),
+        )
+        .route(
+            "/api/v2/data/revisions",
+            get(data::revisions).post(data::register),
+        )
+        .route("/api/v2/data/revisions/{id}", get(data::revision))
+        .route("/api/v2/data/universes", get(data::universes))
+        .route("/api/v2/data/universes/{id}", get(data::universe))
         .route("/api/v2/input-sets/{id}", get(research::input_set))
         .route("/api/v2/briefs/{id}/freeze", post(cycles::freeze))
         .route("/api/v2/briefs/{id}/execution-context", get(cycles::frozen))
@@ -374,6 +400,9 @@ experiments::propose,experiments::list,experiments::get,
 settings::register_secret,settings::runtimes,settings::runtime,settings::create_runtime,settings::update_runtime,
 settings::downstreams,settings::downstream,settings::create_downstream,settings::update_downstream,
 runtime::probe,runtime::readiness,
+data::sources,data::source,data::create_source,data::update_source,
+data::grants,data::create_grant,data::revoke_grant,data::revocations,
+data::revisions,data::revision,data::register,data::universes,data::universe,
 artifacts::list,artifacts::get,artifacts::create,artifacts::content),components(schemas(error::Problem)),tags((name="Authentication",description="Native TOTP and revocable browser sessions")))]
 struct HttpContracts;
 pub fn openapi_json() -> Result<String, serde_json::Error> {

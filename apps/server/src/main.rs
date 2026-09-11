@@ -28,6 +28,8 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Use the authenticated HTTP API with shared native contracts; never opens a database.
+    Client(server::client::Arguments),
     /// Serve native stdio MCP for one existing Mission; no DB or Operator authority.
     Mcp {
         #[arg(long)]
@@ -168,13 +170,18 @@ async fn main() {
         .json()
         .init();
     if let Err(error) = execute(cli.command).await {
-        eprintln!("{error}");
+        if let Some(error) = error.downcast_ref::<server::client::Failure>() {
+            server::client::report(error);
+        } else {
+            eprintln!("{error}");
+        }
         std::process::exit(1);
     }
 }
 
 async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
     match command {
+        Command::Client(arguments) => server::client::run(arguments).await?,
         Command::Mcp {
             api_origin,
             project_id,

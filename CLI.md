@@ -1,6 +1,70 @@
 # CLI 命令
 
-完整产品合同在 DESIGN。当前已实现原生验证、逐轮 Store、浏览器认证、Project/机器身份和不可变研究准备 HTTP 控制面；研究/组合/交付命令仍待实现，不提供绕过 API 的手工 SQL 业务路径。
+完整产品合同在 DESIGN。原生 `server client` 复用已实现 HTTP 控制面的同一 Rust 请求/响应合同；原生任务、认证、数据许可、研究准备与运行命令见下文。完整研究/组合/交付闭环仍须逐项验收，不提供绕过 API 的手工 SQL 业务路径。
+
+## 面向用户的原生 HTTP CLI
+
+发行二进制 `server` 与开发入口 `cargo run --locked -p server --` 使用相同命令。`client` 不读取数据库连接或应用 SecretVault。先通过已初始化系统的正式机器身份管理 HTTP 接口创建 CLI 主体并发行适当的受限凭据，将首次显示的凭据保存为本机仅本人可读的文件；不要把令牌、TOTP 或新的服务凭据放在命令参数、Issue、日志或 shell history 中。
+
+```sh
+cargo run --locked -p server -- client --help
+server client --origin https://research.example --credential-file /private/cli.token data source list --limit 50
+server client --origin https://research.example --credential-file /private/cli.token runtime list
+```
+
+上例 origin 和路径须替换为本人部署及凭据文件。Unix 凭据文件权限不得授予 group/other；末尾允许一个换行。私有CA部署使用 `--ca-certificate /absolute/ca-bundle.pem`，不存在忽略证书的选项。开发环境只有字面量127.0.0.1或::1且显式 `--development-http` 才可HTTP；服务器也须同意该入口。连接默认3秒、普通请求20秒，失败不自动重试、不使用环境代理、不跟随重定向。
+
+### 当前命令与严格正文
+
+所有 `create/update/register/freeze/start/propose/submit/cancel/revoke` 正文从stdin读取严格JSON。下表尖括号表示必须传入已取得的真实资源ID，不是由CLI猜测的名称。
+
+| `server client …` 后的子命令 | 正文 / 结果 |
+|---|---|
+| `project list/show <id>/create/update <id>` | ProjectCreate/ProjectUpdate；ProjectView/分页/完整回执 |
+| `brief list <project_id>/show <id>/create <project_id>/update <id>/freeze <id>` | BriefCreate/BriefUpdate/BriefFreezeV1；冻结不是默认通过科学门禁 |
+| `cycle list <project_id>/show <id>/start <project_id>` | CycleStartV1；202含真实Cycle/Run，查询不启动第二次研究 |
+| `data source list/show <id>/create/update <id>` | DataSourceCreate/DataSourceUpdate；已登记原生身份不可更改 |
+| `data grant list <source_id>/create <source_id>/revoke <id>/revocations <id>` | DataGrantCreate/DataGrantRevoke；正文source_id须与父路径相同 |
+| `data revision list/show <id>/register` | 列表可加 `--source-id/--partition`；DatasetRegister不接收自报origin/PIT或URL |
+| `data universe list/show <id>` | 原生登记的Universe元数据，不提供手工伪造版本入口 |
+| `runtime list/show <id>/create/update <id>/probe <id>/readiness <id>` | RuntimeCreate/RuntimeUpdate/RuntimeProbeRequestV1；配置与真实探测分离 |
+| `downstream list/show <id>/create/update <id>` | DownstreamCreate/DownstreamUpdate；配置不是下游订单执行授权 |
+| `input-set list --project-id <id>/show <id>/create` | InputSetCreate；同一不可变数据、许可与用途校验 |
+| `policy list --project-id <id>/show <id>/create` | EvaluationPolicyCreate；登记不证明方法或数据已经可用 |
+| `experiment list --project-id <id>/show <id>/propose` | ExperimentProposalV1；PENDING不等于运行或合格 |
+| `artifact list --project-id <id>/show <id>/submit/export <id>` | ArtifactCreate；export先核对元数据、media和字节数，再向stdout写原始字节 |
+| `run list/show <id>/cancel <id>/watch <id>` | RunCancelV1；list可选 `--project-id/--state`，watch只观察 |
+| `operator-grant` | OperatorGrantRequest含完整command、target_id与新TOTP；201为单次人工授权 |
+| `credential-register` | IntegrationSecretCreate；仅返回用途/原生引用，不显示或存储请求明文 |
+
+列表统一支持 `--limit 1..100` 和 `--cursor UUIDv7`；服务端返回的bigint/Revision保持十进制字符串。每次只读取一页，不暗中跨项目遍历。输入文件采用仓库原生导出的OpenAPI中同名DTO，不依据上表摘要猜字段。未知字段、本地错误ID/枚举/正文与未提供幂等键会在发送前拒绝；实际授权、最新revision与不变性仍由服务器裁决。
+
+### 单次人工授权、原请求重放
+
+普通机器scope不授予持久Operator身份。Source、许可、政策、配置等管理写入需近期人工grant。先准备完整 `OperatorGrantRequest`（含当前TOTP），以stdin申请；随后使用返回 `resource.id` 作为 `--operator-grant`，请求应与grant所绑定的DTO及target完全相同。创建类target使用返回 `resource.target_id`，不能自造另一个UUID。
+
+```sh
+server client --origin https://research.example --credential-file /private/cli.token \
+  --idempotency-key "my-source-grant-1" operator-grant < /private/operator-grant-request.json
+server client --origin https://research.example --credential-file /private/cli.token \
+  --idempotency-key "my-source-create-1" --operator-grant "$GRANT_ID" \
+  data source create < /private/source-create.json
+```
+
+`$GRANT_ID` 是上一条成功响应的真实引用。CLI不自动读取TOTP种子或申请新的grant。结果未知时保存同一key、原始输入和grant，先查当前记录，必要时显式重放；同key不同正文返回409，禁止自动换key规避。过期/撤销的授权须按服务端错误处理，不宣称原操作已回滚。成功JSON为stdout，失败时退出1并向stderr输出一个已验证Problem或封闭本地错误；`CLI_SERVER_UNAVAILABLE_OR_RESULT_UNKNOWN` 尤其不表示服务端操作未提交。
+
+### 有界运行观察与产物导出
+
+```sh
+server client --origin https://research.example --credential-file /private/cli.token \
+  run watch "$RUN_ID" --after "$LAST_EVENT_ID" --max-seconds 300 --max-events 1000
+server client --origin https://research.example --credential-file /private/cli.token \
+  artifact export "$ARTIFACT_ID" > /private/exported-artifact
+```
+
+watch以NDJSON输出 `schema_version/event_id/event`，最后输出 `watch_ended/last_event_id/events_received/cancellation_requested=false`。`$LAST_EVENT_ID` 格式为同一Run的 `UUIDv7:十进制seq`；首次观察可省略 `--after`。流量16MiB、最多3600秒/10000事件；Ctrl-C、断线或达到上限均不取消服务器任务。兼容未知事件只保留公开envelope；reset-required或不兼容合同返回错误，不假装连续。需继续观察时使用最后已验证cursor显式调用，不自动重连。导出失败时调用方不得把空或未完成的重定向文件视为成功产物；必须检查退出码。
+
+当前这些CLI命令与已有HTTP实现同步；Alpha资格、完整组合Release/自动化等B2后续命令仍属于Issue62必交范围，不能因入口列表增加而宣称全量生产验收完成。
 
 ## 原生科学任务入口
 

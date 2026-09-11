@@ -155,6 +155,21 @@ async fn accepts(
 }
 
 #[tokio::test]
+async fn all_three_operations_cannot_widen_the_registered_visibility_cutoff() {
+    for kind in 0..3 {
+        let metadata = catalog_fixture::metadata();
+        let selected = metadata.quality.datasets[0].selection.clone();
+        assert!(accepts(kind, metadata.clone(), selected.clone()).await);
+        let mut narrower = selected.clone();
+        narrower.decision_cutoff_ns = narrower.event_end_ns;
+        assert!(accepts(kind, metadata.clone(), narrower).await);
+        let mut later = selected;
+        later.decision_cutoff_ns = count(later.decision_cutoff_ns.get() + 1);
+        assert!(!accepts(kind, metadata, later).await);
+    }
+}
+
+#[tokio::test]
 async fn all_three_data_operations_reject_unregistered_types_instruments_and_event_ranges() {
     for kind in 0..3 {
         let metadata = catalog_fixture::metadata();

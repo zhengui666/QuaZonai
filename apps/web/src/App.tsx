@@ -46,7 +46,7 @@ function AuthenticationRoot() {
     client.clear(); setEpoch(value => value + 1);
   }
   return <>
-    <div className="update-bar" aria-label="应用版本"><PwaUpdate /></div>
+    <section className="update-bar" aria-label="应用版本"><PwaUpdate /></section>
     <AuthBoundary key={epoch}>{session => <Console session={session} signedOut={signedOut} />}</AuthBoundary>
   </>;
 }
@@ -124,7 +124,7 @@ function Console({ session, signedOut }: { session: Schema['BrowserSession']; si
 export default function App() {
   return <RenderBoundary><ConfigProvider locale={zhCN} button={{ autoInsertSpace: false }} theme={{ token: {
     colorPrimary: '#2857b4', colorLink: '#2857b4', colorLinkHover: '#1f4796', colorLinkActive: '#183b80',
-    colorTextSecondary: '#596273', colorTextTertiary: '#596273', colorTextDescription: '#596273',
+    colorTextSecondary: '#596273', colorTextTertiary: '#596273', colorTextDescription: '#596273', colorTextPlaceholder: '#596273',
     borderRadius: 8, controlHeight: 44, fontSize: 15,
   } }}>
     <AntApp><QueryClientProvider client={queries}><GuardProvider><AuthenticationRoot /></GuardProvider></QueryClientProvider></AntApp>

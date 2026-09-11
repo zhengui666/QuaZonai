@@ -181,10 +181,14 @@ async fn new_database_migrations_are_repeatable_without_legacy_side_effects(pool
     let store = store::Store::from_pool(pool.clone());
     store.migrate().await.unwrap();
     let tables:i64=sqlx::query_scalar("SELECT count(*) FROM information_schema.tables WHERE table_schema='app' AND table_type='BASE TABLE'").fetch_one(&pool).await.unwrap();
-    // Migration 019 adds immutable experiment authorship, separately from the
-    // science Run. The exact table inventory must include that new relation.
-    assert_eq!(tables, 75);
-    for table in ["app.brief_execution_contexts", "app.cycle_startups"] {
+    // Migration 024 adds native dataset-registration evidence without replacing
+    // an existing relation or importing an old implementation into the app schema.
+    assert_eq!(tables, 76);
+    for table in [
+        "app.brief_execution_contexts",
+        "app.cycle_startups",
+        "app.dataset_registration_evidence",
+    ] {
         assert!(
             sqlx::query_scalar::<_, bool>("SELECT to_regclass($1) IS NOT NULL")
                 .bind(table)
