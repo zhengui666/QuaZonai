@@ -79,7 +79,9 @@ async fn native_validation_commits_parameters_definition_run_queue_and_one_origi
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn validation_uses_all_registered_datasets_but_never_executes_context_artifacts(pool: PgPool) {
+async fn validation_uses_all_registered_datasets_but_never_executes_context_artifacts(
+    pool: PgPool,
+) {
     use contracts::research::ArtifactInputRole;
     let f = setup(&pool).await;
     for with_dataset in [false, true] {
@@ -93,25 +95,41 @@ async fn validation_uses_all_registered_datasets_but_never_executes_context_arti
                 role: DataPartition::Discovery,
             });
         }
-        let input = f.data.store.create_input_set(
-            &f.data.actor,
-            if with_dataset { "mixed-input" } else { "only-context" },
-            &InputSetCreate {
-                schema_version: SchemaV1,
-                project_id: f.data.project,
-                purpose: InputPurpose::Discovery,
-                decision_cutoff: data::catalog_fixture::instant(300),
-                items,
-            },
-        ).await.unwrap().resource;
+        let input = f
+            .data
+            .store
+            .create_input_set(
+                &f.data.actor,
+                if with_dataset {
+                    "mixed-input"
+                } else {
+                    "only-context"
+                },
+                &InputSetCreate {
+                    schema_version: SchemaV1,
+                    project_id: f.data.project,
+                    purpose: InputPurpose::Discovery,
+                    decision_cutoff: data::catalog_fixture::instant(300),
+                    items,
+                },
+            )
+            .await
+            .unwrap()
+            .resource;
         let mut request = f.request.clone();
         request.input_set_id = input.header.id;
         if !with_dataset {
-            let rejected = f.data.store.start_data_validation(
-                &f.data.actor, "reject-context-only", &request,
-                |_, _| async { panic!("context-only input cannot be read as native data") },
-                |_| async { panic!("context-only input cannot create a task") },
-            ).await;
+            let rejected = f
+                .data
+                .store
+                .start_data_validation(
+                    &f.data.actor,
+                    "reject-context-only",
+                    &request,
+                    |_, _| async { panic!("context-only input cannot be read as native data") },
+                    |_| async { panic!("context-only input cannot create a task") },
+                )
+                .await;
             assert!(rejected.is_err());
             assert_eq!(counts(&pool).await, (0, 0, 0, 0, 0));
             continue;
@@ -119,14 +137,22 @@ async fn validation_uses_all_registered_datasets_but_never_executes_context_arti
         let reading = f.data.objects.clone();
         let writing = f.data.objects.clone();
         let forbidden = f.data.proof;
-        let run = f.data.store.start_data_validation(
-            &f.data.actor, "mixed-validation", &request,
-            move |id, size| {
-                assert_ne!(id, forbidden, "unrelated report is not a native task input");
-                data::read(reading.clone(), id, size)
-            },
-            move |object| publish_one(writing, object),
-        ).await.unwrap().resource;
+        let run = f
+            .data
+            .store
+            .start_data_validation(
+                &f.data.actor,
+                "mixed-validation",
+                &request,
+                move |id, size| {
+                    assert_ne!(id, forbidden, "unrelated report is not a native task input");
+                    data::read(reading.clone(), id, size)
+                },
+                move |object| publish_one(writing, object),
+            )
+            .await
+            .unwrap()
+            .resource;
         let msg = message(&f, run.id).await;
         let lease = lease(&f, &msg, "mixed-input-owner", 30).await;
         let job = f.data.store.native_job(run.id, &lease.fence).await.unwrap();

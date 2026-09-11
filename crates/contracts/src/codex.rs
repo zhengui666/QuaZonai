@@ -5,7 +5,9 @@ use utoipa::ToSchema;
 
 use crate::{Revision, SchemaV1};
 
+mod account;
 mod settings;
+pub use account::*;
 pub use settings::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]

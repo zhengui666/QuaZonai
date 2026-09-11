@@ -208,12 +208,40 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
                 .layer(DefaultBodyLimit::max(64 * 1024)),
         )
         .route("/api/v2/experiments/{id}", get(experiments::get))
-        .route("/api/v2/settings/codex", get(codex_profiles::profiles).post(codex_profiles::create).patch(codex_profiles::update_selected))
-        .route("/api/v2/settings/codex/{id}", get(codex_profiles::profile).patch(codex_profiles::update))
+        .route(
+            "/api/v2/settings/codex",
+            get(codex_profiles::profiles)
+                .post(codex_profiles::create)
+                .patch(codex_profiles::update_selected),
+        )
+        .route(
+            "/api/v2/settings/codex/{id}",
+            get(codex_profiles::profile).patch(codex_profiles::update),
+        )
         .route("/api/v2/codex/homes", get(codex_profiles::homes))
         .route("/api/v2/codex/probe", post(codex_profiles::probe))
         .route("/api/v2/codex/models", get(codex_profiles::models))
         .route("/api/v2/codex/account", get(codex_profiles::account))
+        .route(
+            "/api/v2/codex/login/start",
+            post(codex_profiles::account::login_start),
+        )
+        .route(
+            "/api/v2/codex/logout",
+            post(codex_profiles::account::logout),
+        )
+        .route(
+            "/api/v2/codex/login/cancel",
+            post(codex_profiles::account::login_cancel),
+        )
+        .route(
+            "/api/v2/codex/login/{id}",
+            get(codex_profiles::account::login_operation),
+        )
+        .route(
+            "/api/v2/codex/login",
+            get(codex_profiles::account::latest_operation),
+        )
         .route(
             "/api/v2/settings/credentials",
             post(settings::register_secret).layer(DefaultBodyLimit::max(512 * 1024)),
@@ -418,6 +446,8 @@ settings::downstreams,settings::downstream,settings::create_downstream,settings:
 runtime::probe,runtime::readiness,
 codex_profiles::profiles,codex_profiles::profile,codex_profiles::homes,codex_profiles::create,
 codex_profiles::update,codex_profiles::update_selected,codex_profiles::probe,codex_profiles::models,codex_profiles::account,
+codex_profiles::account::login_start,codex_profiles::account::logout,codex_profiles::account::login_cancel,
+codex_profiles::account::login_operation,codex_profiles::account::latest_operation,
 data::sources,data::source,data::create_source,data::update_source,
 data::grants,data::create_grant,data::revoke_grant,data::revocations,
 data::revisions,data::revision,data::register,data::universes,data::universe,data::validate,

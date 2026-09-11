@@ -55,3 +55,7 @@ InputSet冻结不是永久许可，后续任务或首次发送可能因撤销/�
 继续对账，不擅自重发或要求清账。无Cycle管理准入是内部服务能力，不是Agent工具。
 
 Brief草稿详情和列表已接通；创建/完整替换仍是Operator命令，不能凭RESEARCH_READ修改预算、数据角色或政策。人工CLI创建授权还绑定路径project_id和schema_version，更新绑定精确Brief及expected_revision。DRAFT保存不是freeze/PASS，FROZEN只可新建版本。
+
+Codex账号操作仅供人工设置页或精确Operator grant的CLI使用，不是Mission MCP工具。
+登录、注销、取消与只读状态命令见CLI；模型不能索取设备码、Token、auth.json或账号密码。
+202只表示接受人工操作，UNKNOWN和等待截止不能宣称取消成功；操作结束后须重新探测。

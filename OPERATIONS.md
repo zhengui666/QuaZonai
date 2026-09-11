@@ -16,6 +16,47 @@
 
 ## 首次启动认证服务
 
+### Codex 原生目录、模型与账号
+
+服务启动参数 `serve --codex-deployment /absolute/path/codex-deployment.json`（或
+`CODEX_DEPLOYMENT`）指定部署所有者的JSON文件；不设置时账号目录列表为空，不使用宿主默认目录。
+文件结构如下，所有路径须由部署者替换为已经存在的绝对路径；binary必须是锁定的官方0.144.4：
+
+```json
+{
+  "schema_version": 1,
+  "binary": "/opt/codex/bin/codex",
+  "executable_path": "/usr/local/bin:/usr/bin:/bin",
+  "bindings": [{
+    "reference": "research-native",
+    "label": "研究专用原生账号目录",
+    "profile_origin": "MANAGED_VOLUME",
+    "home": "/var/lib/quazonai/codex-home",
+    "codex_home": "/var/lib/quazonai/codex-home",
+    "working_directory": "/var/lib/quazonai/codex-workspace",
+    "environment_names": []
+  }]
+}
+```
+
+已有目录的显式挂载使用`OPERATOR_MOUNT`。每个CODEX_HOME只绑定一个标签；API不会创建、复制或删除认证目录。
+只有`environment_names`明确列出的服务环境变量会传给该原生进程，JSON不写凭据值；不要传数据库、钱包、Broker或无关秘密。
+该账号操作所有者使用单个API进程；不能让多个API或外部登录进程同时管理同一CODEX_HOME。
+
+在“设置 → Codex 模型与连接”登记Profile，选择上述标签。SYSTEM沿用原生配置与认证；
+CUSTOM_PROVIDER使用独立写入的Provider凭据，不能从账号登录入口更改系统订阅。
+“登录ChatGPT账号”确认后在Codex返回的验证页输入设备码；不要把设备码、密码、Token或auth.json发给模型。
+设备码只留当前网页内存及有界原生所有者，刷新后只能读操作状态；同一发起页可用原请求重新显示。
+Codex自行完成OAuth并保存/刷新令牌，QZ不实现另一套OAuth流程。
+
+取消按钮仅请求取消，直到实际状态显示取消已确认才算取消。登录成功与取消竞争时保留原生完成结果。
+网页关闭不取消已接受的操作；服务重启、超时和UNKNOWN不能证明账号未变化。
+登录或注销开始后旧模型观测失效，操作结束后点击“探测Codex连接与模型”；探测不发起付费推理。
+模型与推理Slider只使用这次有效的原生目录，默认设置不发送覆盖，不改变已有Thread或研究预算。
+本地协议、数据库和浏览器测试不替代受保护的真实账号登录及推理验收。
+
+### 应用认证与数据库
+
 依赖固定 Rust 工具链及 PostgreSQL18 + PGMQ1.10.0，使用独立的新数据库。由原生 PostgreSQL 管理工具创建不带超级用户、创建数据库、创建角色权限的应用登录角色，密码通过交互或受保护配置输入；迁移身份与应用身份分开。
 
 CLI.md 中 `init-state → migrate → bootstrap → serve` 是实际可执行入口。`migrate --application-role NAME` 通过 SQLx 和 tower-sessions 原生迁移创建域表及会话存储，授权应用 DML；`serve` 不执行迁移，并拒绝高权限/owner 数据库连接。升级前暂停 HTTP/CLI/MCP 写命令和 Worker，并等待旧事务结束；只用 `cargo run --locked -p server -- migrate`，不要在活跃库上直接执行 SQLx CLI 或单条迁移 SQL。该命令先用原生迁移锁和应用表写冲突锁保护整个待应用批次，失败全部回滚；锁超时应排查旧事务后重试，不杀事务或放宽锁跳过验证。0006 安全升级会撤销已初始化实例的全部历史浏览器/设备和一次性 Operator 授权，须重新 TOTP 登录；旧审计记录保留。生产入口使用同源 HTTPS，监听内部地址并由受信任反向代理终止 TLS、保留 Host；不要将明文内部端口直接暴露公网。

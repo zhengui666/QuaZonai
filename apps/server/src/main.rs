@@ -142,17 +142,31 @@ fn parse_runtime_targets(
         .map_err(|_| "RUNTIME_TARGETS contains an unsafe or inconsistent endpoint")
 }
 
-fn load_codex_deployment(path: Option<&Path>) -> Result<server::codex_profiles::CodexDeployment, &'static str> {
-    let Some(path) = path else { return Ok(server::codex_profiles::CodexDeployment::default()); };
+fn load_codex_deployment(
+    path: Option<&Path>,
+) -> Result<server::codex_profiles::CodexDeployment, &'static str> {
+    let Some(path) = path else {
+        return Ok(server::codex_profiles::CodexDeployment::default());
+    };
     let file = fs::File::open(path).map_err(|_| "cannot open Codex deployment configuration")?;
-    if !file.metadata().map_err(|_| "cannot inspect Codex deployment configuration")?.is_file() {
+    if !file
+        .metadata()
+        .map_err(|_| "cannot inspect Codex deployment configuration")?
+        .is_file()
+    {
         return Err("Codex deployment configuration must be a regular file");
     }
     let mut bytes = Vec::new();
-    file.take(65537).read_to_end(&mut bytes).map_err(|_| "cannot read Codex deployment configuration")?;
-    if bytes.is_empty() || bytes.len()>65536 { return Err("Codex deployment configuration exceeds its limit"); }
-    let configuration = serde_json::from_slice(&bytes).map_err(|_| "invalid Codex deployment configuration")?;
-    server::codex_profiles::CodexDeployment::new(configuration).map_err(|_| "invalid native Codex deployment bindings")
+    file.take(65537)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "cannot read Codex deployment configuration")?;
+    if bytes.is_empty() || bytes.len() > 65536 {
+        return Err("Codex deployment configuration exceeds its limit");
+    }
+    let configuration =
+        serde_json::from_slice(&bytes).map_err(|_| "invalid Codex deployment configuration")?;
+    server::codex_profiles::CodexDeployment::new(configuration)
+        .map_err(|_| "invalid native Codex deployment bindings")
 }
 
 async fn shutdown_signal() {

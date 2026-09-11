@@ -65,7 +65,7 @@ pub async fn start(
     let objects = state
         .artifact_store
         .clone()
-        .ok_or(store::StoreError::Invalid("artifact_store_unavailable"))?;
+        .ok_or(store::StoreError::IntegrationUnavailable)?;
     let store = state.store.clone();
     let result = crate::settings::command(&state, async move {
         let reading = objects.clone();

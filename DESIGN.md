@@ -32,6 +32,12 @@
 
 历史 1.98.0 的已执行证据原样保留且仅作为历史；本补丁基线需重新执行原生合同、领域/数据库/HTTP、Clippy 与科学探针后才能记录通过。宿主可能用发行版 cargo 或覆盖变量绕过 rustup，不能只看文件内容推定实际编译器：验证入口使用明确的 `rustup run 1.98.1`，记录实际 `rustc -Vv`、Cargo/rustfmt 版本。安装工具链是本机执行器的环境操作，不是让其修改源码；失败返回真实诊断，由网页作者处理。
 
+## 0.3 所有者接管与个人项目范围修订（2026-09-11）
+
+所有者授权当前本机 Codex 直接完成 #62/#63 的全部开发、修复、验证和 Git/GitHub 操作，覆盖网页唯一作者及本机仅执行的旧分工。现有工作应核对并接续，不重复实现；GitHub Codex 仍仅做独立 review。全部开发完成、最新 Head 适用 CI 通过且 Codex 明确无问题后直接合并 main。
+
+本项目为个人项目，安全工作的范围是防止账户密码、钱包、支付/API 凭证等敏感信息进入 LLM、源码和日志。不新增除此之外的网络安全专项、渗透测试、供应链安全审查或额外安全合并门禁；本文旧的专项安全要求以此修订为准。保留现有原生保护与回归测试；该范围调整不改变预算、科学有效性、Sealed 评估独立性、审批、target-only 交付、数据保留与故障恢复等产品合同，也不允许用假结果满足验收。
+
 ## 1. 当前实现与完整目标
 
 | 部分 | 已有事实 | 必须完成的目标 |
@@ -1692,6 +1698,28 @@ SYSTEM 请求不得带 base_url/credential_ref；CUSTOM_PROVIDER 创建必须给
 `POST /codex/probe` 明确携带 profile_id/expected_revision，近期 Operator 或绑定完整意图的 CLI grant 可调用。准备事务完成后才启动实际 pinned App Server，读取 account/read 与完整 model/list，并通过无推理 ephemeral Thread 观察原生实际默认配置；显式设置再由原生目录校验及 Thread 响应确认。Fast 仅选择目录实际公告的 priority（或该锁定版本仍公告的 fast）service tier；没有公告则拒绝，不用 isDefault 或字符串相似匹配猜测。default=true 不注入 tier。探测不得发 turn/start、执行研究或触发登录，也不是账号真实推理证明。
 
 探测返回后在原命令幂等事务内再次核对 Profile revision、授权和120秒总期限，写入唯一不可变 codex_profile_observations（id/profile_id/profile_revision/observed_at/valid_until/严格非秘密outcome）与完整命令回执；无原生I/O发生在持锁事务内。Available 目录最多4096个唯一ID，各项有一致 revision/fetched_at；有效期最多60秒。Unavailable 保留明确原因，不制造默认目录；重试同键返回原响应，不再探测。`GET /codex/models?profile_id=...`、`GET /codex/account?profile_id=...` 只读取当前revision最近观测，返回 freshness 与原始 observed_at，不隐式刷新、启动模型进程或把旧成功覆盖最新失败。
+
+### A8.4 Codex 设置的浏览器与 CLI 合同
+
+设置页增加 Codex 专用标签，使用正式 Profile/部署绑定/观测接口。创建和更新在确认后才采纳服务端响应；同一失败重试保留完整意图与 Idempotency-Key。编辑器打开时冻结原配置及 expected_revision，后台刷新不得把旧表单偷偷绑定到新 revision。409 保留用户输入并要求重新载入，不能覆盖其他配置。未保存对话框、凭据登记和待确认探测期间，PWA 更新与设置标签切换均不强制卸载表单。
+
+模型与 Slider 的可选推理强度只能来自同 Profile/revision 且未过期、最近读取成功的完整原生目录。model=null 时使用原生已观察的实际模型决定 effort 能力，不用 isDefault 猜测。Slider 的零位置明确表示不覆盖原生设置，其余位置严格对应目录顺序；目录失效后不能选择新覆盖。历史未知模型/effort/Fast 保存值继续显示并可显式清除，以恢复原生默认，不把故障配置锁死；default=true 仍原样保留这些保存值而不执行。切换连接或换凭据后，旧目录不能用于确认新连接。取消保存不撤销已完成的凭据登记，也不改变历史 Thread。
+
+CLI 的 codex list/show/homes/models/account 只读正式 HTTP 非秘密视图，不隐式启动 Codex；create/update/probe 从 stdin 读取共享严格 Rust DTO，绑定显式 UUID、CAS 与单次 Operator grant。probe 的位置参数和正文 profile_id 必须一致。命令不接任意原生 RPC、HOME 路径、token 文件、shell 或认证模式回退。原生账号登录的后续交互独立于配置保存与无推理探测；未完成登录/推理验收不能因目录探测成功而被宣称完成。
+
+### A8.5 原生 Codex 账号操作
+
+`POST /codex/login/start` 与 `POST /codex/logout` 接收 schema_version/profile_id/expected_revision，均需近期 Operator 或完整命令绑定的单次 CLI grant，只允许 SYSTEM Profile。CUSTOM_PROVIDER 继续使用独立上游凭据，不借登录入口切换系统订阅。先在原有 Operator 幂等事务登记账号操作及202接受回执，再由可信进程取得唯一发送许可并调用 pinned Codex 的 account/login/start(chatgptDeviceCode) 或 account/logout。JSON-RPC ID 不是重试保证；同键重放只读原接受回执，不再次启动登录或注销。
+
+`codex_account_operations` 保存本项目人工操作的 id、profile_id/profile_revision、action=LOGIN|LOGOUT、state=REQUESTED|WAITING|CANCEL_REQUESTED|SUCCEEDED|CANCELLED|FAILED|UNKNOWN、created_at/updated_at/revision、deadline_at、dispatch_started_at?、native_login_id?、cancel_requested_at?、cancel_dispatch_started_at?、finished_at?、reason_code?、account_snapshot?。接受引用与期限不可变，唯一活动 Profile 操作约束避免同时改变一个账号目录。原生 OAuth、token、邮箱、device userCode 与 canonical history 不入库。只有实际原生结果可形成成功/取消；UNKNOWN 不表示账号未变化，也不允许自动重发。
+
+原生客户端和设备码仅在现有部署绑定的有界进程所有者中保留。登录窗口最多15分钟，是本项目等待期限，不冒称 OAuth 设备码有效期。Codex 自行等待授权并保存/刷新令牌；QZ仅消费 login/completed 和 account/read 的允许字段。初始/同键 POST 可向经过原命令授权的发起方返回仍在该进程中的设备码。GET `/codex/login/{id}` 与 `/codex/login?profile_id=...` 仅返回非秘密状态，不启动进程、不返回设备码。浏览器断开不取消已接受的操作，进程重启不伪造会话恢复或删除认证文件。
+
+`POST /codex/login/cancel` 接收 schema_version/operation_id/expected_revision，先持久化取消意图，再由原客户端调用 native cancel。原生 canceled 才标记CANCELLED；notFound、超时或进程终止均不能确认取消，保留UNKNOWN。取消与登录成功竞态保留实际已完成结果，不能抹掉新账号。等待截止也须先登记取消意图再尝试原生取消；尚未取得发送许可的取消可记录CONFIRMED_NOT_SENT。旧操作超出数据库等待期限时，新的明确人工账号命令可将旧未发送操作记为等待失败、已发送操作记为UNKNOWN，再创建新意图；这不是对旧请求自动重放。原生绑定锁未释放时不发新RPC。
+
+开始账号变更即使旧账号/模型观测失效；只有账号操作结束后产生的新探测才能重新证明配置可用。活动操作期间不修改Profile或采纳探测；既有Mission预算、Thread和远端Run不清零或取消。默认单API进程持有账号操作，每个已登记CODEX_HOME复用现有原生客户端串行锁，不另建OAuth服务或分布式认证平台。数据库中断、服务退出或所有者丢失只报告无法确认。受保护的真实账号登录/推理验收与本地协议/状态测试分开，未执行时T07不得标记完成。
+
+设置导航在窄屏使用官方Ant Design Select，桌面使用Tabs，二者共享同一四类设置与未保存操作守卫；不保留溢出菜单造成的错误tablist子角色，也不关闭可访问性检查。
 
 ## A9. 索引、保留与迁移核对
 

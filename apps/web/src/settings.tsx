@@ -1,25 +1,38 @@
-import { Alert, Button, Card, Descriptions, Modal, Space, Table, Tabs, Typography } from 'antd';
+import { Alert, App, Button, Card, Descriptions, Grid, Modal, Select, Space, Table, Tabs, Typography } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useContext, useState } from 'react';
 import { api, dataOf, displayTime } from './api';
 import type { Schema } from './api';
-import { ErrorNotice, NoData, Pager, QueryPanel, useGuard, useOnline } from './ui';
+import { ErrorNotice, GuardContext, NoData, Pager, QueryPanel, useGuard, useOnline } from './ui';
 
 import { DataManagement } from './data';
 import { IntegrationManagement } from './integrations';
+import { CodexSettings } from './codex';
 
 type SettingsProps = { session: Schema['BrowserSession']; verify: () => void };
+const categories = [
+  { key: 'security', label: '浏览器安全' },
+  { key: 'codex', label: 'Codex 模型与连接' },
+  { key: 'integrations', label: '原生集成' },
+  { key: 'data', label: '数据与许可' },
+];
 
 export function Settings(props: SettingsProps) {
   const [tab, setTab] = useState('security');
+  const screens = Grid.useBreakpoint();
+  const { blocked } = useContext(GuardContext);
+  const { message } = App.useApp();
+  function changeTab(next: string) {
+    if (next === tab) return;
+    if (blocked) { void message.info('请先完成或取消当前设置操作，再切换页面。'); return; }
+    setTab(next);
+  }
   return <Space orientation="vertical" className="full-width" size="large">
     <Typography.Title level={1}>设置</Typography.Title>
-    <Tabs activeKey={tab} onChange={setTab} items={[
-      { key: 'security', label: '浏览器安全' },
-      { key: 'integrations', label: '原生集成' },
-      { key: 'data', label: '数据与许可' },
-    ]} />
-    {tab === 'security' ? <SecuritySettings {...props} /> : tab === 'integrations' ? <IntegrationManagement /> : <DataManagement />}
+    {screens.md ? <Tabs activeKey={tab} onChange={changeTab} items={categories} />
+      : <Select aria-label="设置类别" className="full-width" virtual={false} value={tab} onChange={changeTab}
+        options={categories.map(({ key, label }) => ({ value: key, label }))} />}
+    {tab === 'security' ? <SecuritySettings {...props} /> : tab === 'codex' ? <CodexSettings /> : tab === 'integrations' ? <IntegrationManagement /> : <DataManagement />}
   </Space>;
 }
 
@@ -53,7 +66,6 @@ function SecuritySettings({ session, verify }: SettingsProps) {
         <Pager history={history} next={query.data?.next_cursor} loading={query.isFetching} move={setHistory} />
       </QueryPanel>
     </Card>
-    <Alert type="warning" showIcon title="模型、推理强度与连接设置尚未提供浏览器写入接口。" description="不会读取本机凭据、把 API Key 填到网页或显示没有运行时能力依据的模型滑块。" />
     <Modal open={!!target} title="撤销这台设备的信任？" okText="确认撤销" cancelText="返回" confirmLoading={revoke.isPending}
       okButtonProps={{ danger: true, disabled: !online }} closable={!revoke.isPending} maskClosable={!revoke.isPending}
       onCancel={() => { if (!revoke.isPending) setTarget(undefined); }} onOk={() => { if (target && online && !revoke.isPending) revoke.mutate(target.id); }}>

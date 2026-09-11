@@ -130,6 +130,7 @@ export default function App() {
   useLayoutEffect(() => { setMotionProviderReady(true); }, []);
   return <RenderBoundary><ConfigProvider locale={zhCN} button={{ autoInsertSpace: false }} theme={{ token: {
     colorPrimary: '#2857b4', colorLink: '#2857b4', colorLinkHover: '#1f4796', colorLinkActive: '#183b80',
+    colorError: '#b42318', colorErrorHover: '#8f1c13', colorErrorActive: '#72160f',
     colorTextSecondary: '#596273', colorTextTertiary: '#596273', colorTextDescription: '#596273', colorTextPlaceholder: '#596273',
     borderRadius: 8, controlHeight: 44, fontSize: 15, motion: motionProviderReady && !reducedMotion,
   } }}>

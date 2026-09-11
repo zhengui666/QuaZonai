@@ -29,6 +29,12 @@ server client --origin https://research.example --credential-file /private/cli.t
 | `data universe list/show <id>` | Universe元数据及 `NATIVE_METADATA/LEGACY_UNVERIFIED` 登记证据状态；历史记录不被冒充为原生登记 |
 | `data validate` | DataValidateRequest；202仅返回唯一排队Run，人工grant目标为已有InputSet，不是新的RunID |
 | `runtime list/show <id>/create/update <id>/probe <id>/readiness <id>` | RuntimeCreate/RuntimeUpdate/RuntimeProbeRequestV1；配置与真实探测分离 |
+| `codex list/show <id>/create/update <id>/homes` | CodexProfileCreateV1/CodexProfileUpdateV1；只选择部署登记的非秘密目录标签，不输入宿主路径 |
+| `codex probe <id>` | CodexProbeRequestV1；正文profile_id必须等于命令ID，原生探测不执行付费推理 |
+| `codex models <id>/account <id>` | CodexObservationV1；只读当前版本观测，STALE/UNPROBED不触发后台模型调用或登录刷新 |
+| `codex login/logout` | stdin CodexAccountRequestV1；SYSTEM Profile 的原生账号命令，202为接受，不是认证成功 |
+| `codex login-cancel` | stdin CodexLoginCancelV1；绑定operation_id及操作revision；取消意图不冒充原生取消结果 |
+| `codex login-status <id>` | CodexAccountOperationV1；只读指定操作，不输出设备码、不重启登录 |
 | `downstream list/show <id>/create/update <id>` | DownstreamCreate/DownstreamUpdate；配置不是下游订单执行授权 |
 | `input-set list --project-id <id>/show <id>/create` | InputSetCreate；同一不可变数据、许可与用途校验 |
 | `policy list --project-id <id>/show <id>/create` | EvaluationPolicyCreate；登记不证明方法或数据已经可用 |
@@ -41,6 +47,15 @@ server client --origin https://research.example --credential-file /private/cli.t
 列表统一支持 `--limit 1..100` 和 `--cursor UUIDv7`；服务端返回的bigint/Revision保持十进制字符串。每次只读取一页，不暗中跨项目遍历。输入文件采用仓库原生导出的OpenAPI中同名DTO，不依据上表摘要猜字段。未知字段、本地错误ID/枚举/正文与未提供幂等键会在发送前拒绝；实际授权、最新revision与不变性仍由服务器裁决。
 
 ### 单次人工授权、原请求重放
+
+Codex账号操作与保存配置、探测分开。`login/logout`正文为
+`{"schema_version":1,"profile_id":"<profile UUID>","expected_revision":"<profile revision>"}`；
+`login-cancel`正文为`{"schema_version":1,"operation_id":"<operation UUID>","expected_revision":"<operation revision>"}`。
+按下述流程为完整意图申请单次人工grant，网络结果未知时保留原正文、grant与Idempotency-Key。
+同键`login`重放只读取原接受回执，并可取回原进程仍持有的设备码，不发起第二次登录。
+CLI的登录响应可能包含一次性设备码，仅在私人终端使用，不转发到LLM、日志、CI或issue。
+`login-status`不返回设备码；原生令牌只由Codex保存，CLI不读取auth.json。
+`UNKNOWN`、本地等待截止或进程退出都不代表注销/取消成功，须核对实际账号状态并重新探测。
 
 普通机器scope不授予持久Operator身份。Source、许可、政策、配置等管理写入需近期人工grant。先准备完整 `OperatorGrantRequest`（含当前TOTP），以stdin申请；随后使用返回 `resource.id` 作为 `--operator-grant`，请求应与grant所绑定的DTO及target完全相同。创建类target使用返回 `resource.target_id`，不能自造另一个UUID。
 

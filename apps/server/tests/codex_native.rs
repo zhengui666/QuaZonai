@@ -21,6 +21,38 @@ fn launch(root: &std::path::Path) -> Launch {
 }
 
 #[tokio::test]
+async fn official_account_operations_respect_native_login_policy() {
+    use server::codex_native::{LoginCancellationStatus, NativeFailure};
+    let root = tempfile::tempdir().unwrap();
+    // The released binary ignores the debug-only login issuer override. Exercise
+    // its real policy/absence behavior offline, not a simulated OAuth success.
+    std::fs::write(
+        root.path().join("config.toml"),
+        "cli_auth_credentials_store = \"file\"\nforced_login_method = \"api\"\n",
+    )
+    .unwrap();
+    let mut client = Client::start(launch(root.path())).await.unwrap();
+    assert!(matches!(
+        client.device_login().await,
+        Err(NativeFailure::Rejected(-32600))
+    ));
+    assert_eq!(
+        client
+            .cancel_login("00000000-0000-4000-8000-000000000001")
+            .await
+            .unwrap()
+            .status,
+        LoginCancellationStatus::NotFound
+    );
+    assert!(client.account().await.unwrap().account.is_none());
+    assert!(!root.path().join("auth.json").exists());
+    client.logout().await.unwrap();
+    assert!(client.account().await.unwrap().account.is_none());
+    assert!(!root.path().join("auth.json").exists());
+    client.close().await.unwrap();
+}
+
+#[tokio::test]
 async fn official_stdio_initialization_catalog_and_default_thread_are_native_not_mocked() {
     let root = tempfile::tempdir().unwrap();
     let mut client = Client::start(launch(root.path())).await.unwrap();

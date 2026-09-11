@@ -4,6 +4,11 @@ use clap::{Args, Subcommand};
 use contracts::{
     artifacts::{ArtifactCreate, ArtifactView},
     brief::{BriefCreate, BriefUpdate, BriefView},
+    codex::{
+        CodexAccountOperationV1, CodexAccountRequestV1, CodexAccountStartV1, CodexHomeBindingV1,
+        CodexLoginCancelV1, CodexObservationV1, CodexProbeRequestV1, CodexProbeViewV1,
+        CodexProfileCreateV1, CodexProfileUpdateV1, CodexProfileViewV1,
+    },
     control::{
         CommandResult, OperatorGrantRequest, OperatorGrantView, Page, ProjectCreate, ProjectUpdate,
         ProjectView,
@@ -50,6 +55,8 @@ pub enum Command {
     Data(Data),
     #[command(subcommand)]
     Runtime(Runtime),
+    #[command(subcommand)]
+    Codex(Codex),
     #[command(subcommand)]
     Downstream(Downstream),
     #[command(subcommand)]
@@ -177,6 +184,45 @@ pub enum Runtime {
     Probe { id: String },
     Readiness { id: String },
 }
+#[derive(Subcommand)]
+pub enum Codex {
+    /// List nonsecret native profile configuration.
+    List(List),
+    Show {
+        id: String,
+    },
+    /// Read CodexProfileCreateV1 on stdin and register a deployment label.
+    Create,
+    /// Read CodexProfileUpdateV1 on stdin; requires CAS and an Operator grant.
+    Update {
+        id: String,
+    },
+    /// Explicit native inspection, no paid inference. Read CodexProbeRequestV1 on stdin.
+    Probe {
+        id: String,
+    },
+    /// Read the last observation without invoking model/list or refreshing authentication.
+    Models {
+        id: String,
+    },
+    /// Read the last nonsecret account observation, never native auth.json.
+    Account {
+        id: String,
+    },
+    /// List deployment labels, never native paths or environment values.
+    Homes,
+    /// Start native device login; read CodexAccountRequestV1 on stdin.
+    Login,
+    /// Sign out through native Codex; read CodexAccountRequestV1 on stdin.
+    Logout,
+    /// Cancel the exact native login; read CodexLoginCancelV1 on stdin.
+    LoginCancel,
+    /// Read an account operation without returning a device code.
+    LoginStatus {
+        id: String,
+    },
+}
+
 #[derive(Subcommand)]
 pub enum Downstream {
     List(List),
@@ -534,6 +580,74 @@ impl Command {
                     id,
                     "readiness",
                 )?),
+            },
+            Self::Codex(command) => match command {
+                Codex::List(page) => {
+                    Request::get::<Page<CodexProfileViewV1>>("/api/v2/settings/codex").page(page)?
+                }
+                Codex::Show { id } => {
+                    Request::get::<CodexProfileViewV1>(item("/api/v2/settings/codex", id)?)
+                }
+                Codex::Create => Request::write::<
+                    CodexProfileCreateV1,
+                    CommandResult<CodexProfileViewV1>,
+                >(POST, "/api/v2/settings/codex", 201, true)?,
+                Codex::Update { id } => Request::write::<
+                    CodexProfileUpdateV1,
+                    CommandResult<CodexProfileViewV1>,
+                >(
+                    PATCH, item("/api/v2/settings/codex", id)?, 200, true
+                )?,
+                Codex::Probe { id: selected } => {
+                    let selected = id(selected)?;
+                    let request = Request::write::<
+                        CodexProbeRequestV1,
+                        CommandResult<CodexProbeViewV1>,
+                    >(POST, "/api/v2/codex/probe", 200, true)?;
+                    let body: CodexProbeRequestV1 =
+                        serde_json::from_slice(request.body.as_ref().ok_or(Failure::Input)?)
+                            .map_err(|_| Failure::Input)?;
+                    if body.profile_id != selected {
+                        return Err(Failure::Input);
+                    }
+                    request
+                }
+                Codex::Models { id: selected } => {
+                    let mut request = Request::get::<CodexObservationV1>("/api/v2/codex/models");
+                    request
+                        .query
+                        .push(("profile_id".into(), id(selected)?.to_string()));
+                    request
+                }
+                Codex::Account { id: selected } => {
+                    let mut request = Request::get::<CodexObservationV1>("/api/v2/codex/account");
+                    request
+                        .query
+                        .push(("profile_id".into(), id(selected)?.to_string()));
+                    request
+                }
+                Codex::Homes => Request::get::<Vec<CodexHomeBindingV1>>("/api/v2/codex/homes"),
+                Codex::Login => Request::write::<CodexAccountRequestV1, CodexAccountStartV1>(
+                    POST,
+                    "/api/v2/codex/login/start",
+                    202,
+                    true,
+                )?,
+                Codex::Logout => Request::write::<CodexAccountRequestV1, CodexAccountStartV1>(
+                    POST,
+                    "/api/v2/codex/logout",
+                    202,
+                    true,
+                )?,
+                Codex::LoginCancel => Request::write::<
+                    CodexLoginCancelV1,
+                    CommandResult<CodexAccountOperationV1>,
+                >(
+                    POST, "/api/v2/codex/login/cancel", 202, true
+                )?,
+                Codex::LoginStatus { id } => {
+                    Request::get::<CodexAccountOperationV1>(item("/api/v2/codex/login", id)?)
+                }
             },
             Self::Downstream(command) => match command {
                 Downstream::List(page) => {

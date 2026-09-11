@@ -26,6 +26,16 @@ export function problem(code: string, status: number, detail = '合成合同测�
     ...(code === 'REVISION_CONFLICT' ? { current_revision: '9007199254740994' } : {}),
   };
 }
+export async function settingsCategory(page: Page, label: string) {
+  const selector = page.getByRole('combobox', { name: '设置类别', exact: true });
+  if (await selector.isVisible()) {
+    await selector.click();
+    await page.getByRole('option', { name: label, exact: true }).click();
+  } else {
+    await page.getByRole('tab', { name: label, exact: true }).click();
+  }
+}
+
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected object request body');
   return value as Record<string, unknown>;

@@ -9,7 +9,7 @@ use utoipa::ToSchema;
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "mode", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
 pub enum CodexConnectionCreateV1 {
-    System,
+    System {},
     CustomProvider {
         #[schema(min_length = 1, max_length = 2048)]
         base_url: String,
@@ -20,7 +20,7 @@ pub enum CodexConnectionCreateV1 {
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "mode", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
 pub enum CodexConnectionUpdateV1 {
-    System,
+    System {},
     CustomProvider {
         #[schema(min_length = 1, max_length = 2048)]
         base_url: String,
@@ -35,7 +35,11 @@ pub struct CodexProfileCreateV1 {
     pub schema_version: SchemaV1,
     #[schema(min_length = 1, max_length = 120)]
     pub name: String,
-    #[schema(min_length = 1, max_length = 64, pattern = "^[A-Za-z0-9][A-Za-z0-9_.-]*(?![\\s\\S])")]
+    #[schema(
+        min_length = 1,
+        max_length = 64,
+        pattern = "^[A-Za-z0-9][A-Za-z0-9_.-]*(?![\\s\\S])"
+    )]
     pub home_binding: String,
     pub profile_origin: ProfileOrigin,
     pub connection: CodexConnectionCreateV1,
@@ -160,7 +164,11 @@ pub enum CodexProbeFailureV1 {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(tag = "status", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
+#[serde(
+    tag = "status",
+    rename_all = "SCREAMING_SNAKE_CASE",
+    deny_unknown_fields
+)]
 pub enum CodexProbeOutcomeV1 {
     Available {
         native_version: String,

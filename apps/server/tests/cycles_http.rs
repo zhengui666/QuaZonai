@@ -43,7 +43,11 @@ async fn browser(
 }
 
 async fn setup(pool: &PgPool) -> (Fixture, String, cycle_support::Fixture) {
-    let f = fixture(pool.clone()).await;
+    let f = support::fixture_with_runtime_targets(
+        pool.clone(),
+        Some(server::runtime_transport::RuntimeTargets::default()),
+    )
+    .await;
     let (enrollment, anonymous, native) = start(&f).await;
     let (login, _) = confirm(&f, &enrollment, &anonymous, &native, true).await;
     assert_eq!(login.status, StatusCode::OK);
@@ -203,6 +207,32 @@ async fn startup_rejects_forged_success_stale_revision_and_unauthenticated_mutat
         .await
         .unwrap();
     assert_eq!(cycles, 0);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn missing_artifact_deployment_is_unavailable_not_a_user_validation_failure(pool: PgPool) {
+    let f = fixture(pool.clone()).await;
+    let (enrollment, anonymous, native) = start(&f).await;
+    let (login, _) = confirm(&f, &enrollment, &anonymous, &native, false).await;
+    assert_eq!(login.status, StatusCode::OK);
+    let cookie = login.cookie.unwrap();
+    let response = browser(
+        &f,
+        &cookie,
+        "POST",
+        &format!("/api/v2/projects/{}/cycles", contracts::Id::new()),
+        "missing-artifact-store",
+        json!({"schema_version":1,"brief_id":contracts::Id::new(),"expected_revision":"1"}),
+    )
+    .await;
+    assert_eq!(response.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.body["code"], "INTEGRATION_UNAVAILABLE");
+    let counts: (i64, i64) =
+        sqlx::query_as("SELECT (SELECT count(*) FROM app.runs),(SELECT count(*) FROM pgmq.q_runs)")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(counts, (0, 0));
 }
 
 #[test]

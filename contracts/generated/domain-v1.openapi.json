@@ -5433,6 +5433,803 @@
         ],
         "type": "object"
       },
+      "CodexAccountActionV1": {
+        "enum": [
+          "LOGIN",
+          "LOGOUT"
+        ],
+        "type": "string"
+      },
+      "CodexAccountOperationRefV1": {
+        "additionalProperties": false,
+        "description": "Immutable acceptance reference; a receipt is never rewritten to track progress.",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/CodexAccountActionV1"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "deadline_at": {
+            "description": "Local bounded wait deadline, not an assertion about the native device code.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "profile_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "profile_revision": {
+            "$ref": "#/components/schemas/Revision"
+          }
+        },
+        "required": [
+          "id",
+          "profile_id",
+          "profile_revision",
+          "action",
+          "created_at",
+          "deadline_at"
+        ],
+        "type": "object"
+      },
+      "CodexAccountOperationStateV1": {
+        "enum": [
+          "REQUESTED",
+          "WAITING",
+          "CANCEL_REQUESTED",
+          "SUCCEEDED",
+          "CANCELLED",
+          "FAILED",
+          "UNKNOWN"
+        ],
+        "type": "string"
+      },
+      "CodexAccountOperationV1": {
+        "additionalProperties": false,
+        "properties": {
+          "account": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CodexAccountV1",
+                "description": "Present only after a corresponding actual native account/read observation."
+              }
+            ]
+          },
+          "finished_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "operation": {
+            "$ref": "#/components/schemas/CodexAccountOperationRefV1"
+          },
+          "reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CodexAccountReasonV1"
+              }
+            ]
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "state": {
+            "$ref": "#/components/schemas/CodexAccountOperationStateV1"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "operation",
+          "state",
+          "revision",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "CodexAccountReasonV1": {
+        "enum": [
+          "NATIVE_LOGIN_COMPLETED",
+          "NATIVE_LOGIN_REJECTED",
+          "NATIVE_LOGOUT_COMPLETED",
+          "NATIVE_CANCEL_CONFIRMED",
+          "CONFIRMED_NOT_SENT",
+          "NATIVE_RESPONSE_UNKNOWN",
+          "NATIVE_CONTRACT_UNSUPPORTED",
+          "NATIVE_VERSION_UNSUPPORTED",
+          "DEPLOYMENT_UNAVAILABLE",
+          "PROFILE_CHANGED",
+          "WAIT_WINDOW_ENDED",
+          "OWNER_UNAVAILABLE"
+        ],
+        "type": "string"
+      },
+      "CodexAccountRequestV1": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "profile_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "profile_id",
+          "expected_revision"
+        ],
+        "type": "object"
+      },
+      "CodexAccountStartV1": {
+        "additionalProperties": false,
+        "properties": {
+          "acceptance": {
+            "$ref": "#/components/schemas/CommandResult_CodexAccountOperationRefV1"
+          },
+          "current": {
+            "$ref": "#/components/schemas/CodexAccountOperationV1"
+          },
+          "device_code": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CodexDeviceCodeV1"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "acceptance",
+          "current"
+        ],
+        "type": "object"
+      },
+      "CodexAccountV1": {
+        "additionalProperties": false,
+        "properties": {
+          "authentication_kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CodexAuthenticationKind"
+              }
+            ]
+          },
+          "plan_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requires_openai_auth": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "requires_openai_auth"
+        ],
+        "type": "object"
+      },
+      "CodexAdvertisedModelV1": {
+        "additionalProperties": false,
+        "properties": {
+          "capability": {
+            "$ref": "#/components/schemas/ModelCapabilityV1"
+          },
+          "default_service_tier": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "service_tiers": {
+            "items": {
+              "$ref": "#/components/schemas/CodexServiceTierV1"
+            },
+            "maxItems": 64,
+            "type": "array"
+          }
+        },
+        "required": [
+          "capability",
+          "service_tiers"
+        ],
+        "type": "object"
+      },
+      "CodexAuthenticationKind": {
+        "enum": [
+          "API_KEY",
+          "CHATGPT",
+          "AMAZON_BEDROCK"
+        ],
+        "type": "string"
+      },
+      "CodexConnectionCreateV1": {
+        "oneOf": [
+          {
+            "properties": {
+              "mode": {
+                "enum": [
+                  "SYSTEM"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "mode"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "base_url": {
+                "maxLength": 2048,
+                "minLength": 1,
+                "type": "string"
+              },
+              "credential_ref": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "mode": {
+                "enum": [
+                  "CUSTOM_PROVIDER"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "base_url",
+              "credential_ref",
+              "mode"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "CodexConnectionUpdateV1": {
+        "oneOf": [
+          {
+            "properties": {
+              "mode": {
+                "enum": [
+                  "SYSTEM"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "mode"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "base_url": {
+                "maxLength": 2048,
+                "minLength": 1,
+                "type": "string"
+              },
+              "credential_ref": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Id",
+                    "description": "Omitted/null retains an existing CUSTOM_PROVIDER reference only."
+                  }
+                ]
+              },
+              "mode": {
+                "enum": [
+                  "CUSTOM_PROVIDER"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "base_url",
+              "mode"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "CodexDeviceCodeV1": {
+        "additionalProperties": false,
+        "properties": {
+          "user_code": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "verification_url": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "verification_url",
+          "user_code"
+        ],
+        "type": "object"
+      },
+      "CodexEffectiveSettingsV1": {
+        "additionalProperties": false,
+        "properties": {
+          "model": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "provider": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "reasoning_effort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "service_tier": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "model",
+          "provider"
+        ],
+        "type": "object"
+      },
+      "CodexHomeBindingV1": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "profile_origin": {
+            "$ref": "#/components/schemas/ProfileOrigin"
+          },
+          "reference": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "reference",
+          "label",
+          "profile_origin"
+        ],
+        "type": "object"
+      },
+      "CodexLoginCancelV1": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "operation_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "operation_id",
+          "expected_revision"
+        ],
+        "type": "object"
+      },
+      "CodexObservationStateV1": {
+        "enum": [
+          "NEVER_PROBED",
+          "STALE",
+          "AVAILABLE",
+          "UNAVAILABLE"
+        ],
+        "type": "string"
+      },
+      "CodexObservationV1": {
+        "additionalProperties": false,
+        "properties": {
+          "observation": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CodexProbeViewV1"
+              }
+            ]
+          },
+          "profile_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "profile_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "state": {
+            "$ref": "#/components/schemas/CodexObservationStateV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "profile_id",
+          "profile_revision",
+          "state"
+        ],
+        "type": "object"
+      },
+      "CodexProbeFailureV1": {
+        "enum": [
+          "DEPLOYMENT_UNAVAILABLE",
+          "NATIVE_UNAVAILABLE",
+          "VERSION_UNSUPPORTED",
+          "CONTRACT_UNSUPPORTED",
+          "AUTHENTICATION_REQUIRED",
+          "MODEL_SETTINGS_UNSUPPORTED"
+        ],
+        "type": "string"
+      },
+      "CodexProbeOutcomeV1": {
+        "oneOf": [
+          {
+            "properties": {
+              "account": {
+                "$ref": "#/components/schemas/CodexAccountV1"
+              },
+              "effective": {
+                "$ref": "#/components/schemas/CodexEffectiveSettingsV1"
+              },
+              "models": {
+                "items": {
+                  "$ref": "#/components/schemas/CodexAdvertisedModelV1"
+                },
+                "maxItems": 4096,
+                "minItems": 1,
+                "type": "array"
+              },
+              "native_version": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "AVAILABLE"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "native_version",
+              "account",
+              "effective",
+              "models",
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/CodexProbeFailureV1"
+              },
+              "status": {
+                "enum": [
+                  "UNAVAILABLE"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason",
+              "status"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "CodexProbeRequestV1": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "profile_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "profile_id",
+          "expected_revision"
+        ],
+        "type": "object"
+      },
+      "CodexProbeViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/CodexProbeOutcomeV1"
+          },
+          "profile_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "profile_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "id",
+          "profile_id",
+          "profile_revision",
+          "observed_at",
+          "valid_until",
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "CodexProfileCreateV1": {
+        "additionalProperties": false,
+        "properties": {
+          "connection": {
+            "$ref": "#/components/schemas/CodexConnectionCreateV1"
+          },
+          "home_binding": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*(?![\\s\\S])",
+            "type": "string"
+          },
+          "model_settings": {
+            "$ref": "#/components/schemas/SavedModelSettingsV1"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "profile_origin": {
+            "$ref": "#/components/schemas/ProfileOrigin"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "name",
+          "home_binding",
+          "profile_origin",
+          "connection",
+          "model_settings"
+        ],
+        "type": "object"
+      },
+      "CodexProfileUpdateV1": {
+        "additionalProperties": false,
+        "properties": {
+          "connection": {
+            "$ref": "#/components/schemas/CodexConnectionUpdateV1"
+          },
+          "expected_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "model_settings": {
+            "$ref": "#/components/schemas/SavedModelSettingsV1"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "expected_revision",
+          "name",
+          "connection",
+          "model_settings"
+        ],
+        "type": "object"
+      },
+      "CodexProfileViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "connection_mode": {
+            "$ref": "#/components/schemas/ConnectionMode"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "credential_configured": {
+            "type": "boolean"
+          },
+          "custom_base_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "home_binding": {
+            "description": "An opaque deployment label, never a path. None identifies a historical\nunregistered reference, which must not be exposed or guessed into a mount.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "model_settings": {
+            "$ref": "#/components/schemas/SavedModelSettingsV1"
+          },
+          "name": {
+            "type": "string"
+          },
+          "profile_origin": {
+            "$ref": "#/components/schemas/ProfileOrigin"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "profile_origin",
+          "connection_mode",
+          "credential_configured",
+          "model_settings",
+          "revision",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "CodexServiceTierV1": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "maxLength": 8192,
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description"
+        ],
+        "type": "object"
+      },
+      "CommandResult_CodexAccountOperationRefV1": {
+        "additionalProperties": false,
+        "properties": {
+          "replayed": {
+            "type": "boolean"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "description": "Immutable acceptance reference; a receipt is never rewritten to track progress.",
+            "properties": {
+              "action": {
+                "$ref": "#/components/schemas/CodexAccountActionV1"
+              },
+              "created_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "deadline_at": {
+                "description": "Local bounded wait deadline, not an assertion about the native device code.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "profile_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "profile_revision": {
+                "$ref": "#/components/schemas/Revision"
+              }
+            },
+            "required": [
+              "id",
+              "profile_id",
+              "profile_revision",
+              "action",
+              "created_at",
+              "deadline_at"
+            ],
+            "type": "object"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "replayed",
+          "resource"
+        ],
+        "type": "object"
+      },
       "ComparableScope": {
         "enum": [
           "FAMILY_LINEAGE"
@@ -9280,6 +10077,114 @@
             "properties": {
               "operation": {
                 "enum": [
+                  "CODEX_PROFILE_CREATE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/CodexProfileCreateV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "CODEX_PROFILE_UPDATE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/CodexProfileUpdateV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "CODEX_PROBE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/CodexProbeRequestV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "CODEX_LOGIN_START"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/CodexAccountRequestV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "CODEX_LOGIN_CANCEL"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/CodexLoginCancelV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "CODEX_LOGOUT"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/CodexAccountRequestV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
                   "BRIEF_FREEZE"
                 ],
                 "type": "string"
@@ -9783,6 +10688,12 @@
       },
       "OperatorOperation": {
         "enum": [
+          "CODEX_PROFILE_CREATE",
+          "CODEX_PROFILE_UPDATE",
+          "CODEX_PROBE",
+          "CODEX_LOGIN_START",
+          "CODEX_LOGIN_CANCEL",
+          "CODEX_LOGOUT",
           "DATA_SOURCE_CREATE",
           "DATA_SOURCE_UPDATE",
           "DATA_GRANT_CREATE",

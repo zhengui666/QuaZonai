@@ -31,9 +31,9 @@ function useRefresh() {
 
 /** Secret plaintext is confined to this transient field and the write-only request.
  * The query/mutation caches and browser storage never receive the secret as state. */
-function SecretReference({ value, onChange, purpose, configured, disabled, onBusy }: {
+export function SecretReference({ value, onChange, purpose, configured, disabled, onBusy }: {
   value?: string | null; onChange?: (id: string | undefined) => void;
-  purpose: 'RUNTIME' | 'DOWNSTREAM' | 'TLS_CA'; configured: boolean;
+  purpose: 'RUNTIME' | 'DOWNSTREAM' | 'CUSTOM_PROVIDER' | 'TLS_CA'; configured: boolean;
   disabled: boolean; onBusy: (busy: boolean) => void;
 }) {
   const [secret, setSecret] = useState(''); const [pending, setPending] = useState(false); const [error, setError] = useState<unknown>();
@@ -48,7 +48,8 @@ function SecretReference({ value, onChange, purpose, configured, disabled, onBus
     const body: Schema['IntegrationSecretCreate'] = purpose === 'RUNTIME'
       ? { intent: { ...common, purpose: 'RUNTIME' }, value: secret }
       : purpose === 'DOWNSTREAM' ? { intent: { ...common, purpose: 'DOWNSTREAM' }, value: secret }
-        : { intent: { ...common, purpose: 'TLS_CA' }, value: secret };
+        : purpose === 'CUSTOM_PROVIDER' ? { intent: { ...common, purpose: 'CUSTOM_PROVIDER' }, value: secret }
+          : { intent: { ...common, purpose: 'TLS_CA' }, value: secret };
     try {
       const result = dataOf(await api.POST('/api/v2/settings/credentials', {
         body, params: { header: intent.current.headers('POST','/api/v2/settings/credentials',body) },

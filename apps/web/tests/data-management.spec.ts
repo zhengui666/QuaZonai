@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import { randomBytes } from 'node:crypto';
 import AxeBuilder from '@axe-core/playwright';
-import { fixture, id, navigate, reply, problem } from './fixtures';
+import { fixture, id, navigate, reply, problem, settingsCategory } from './fixtures';
 
 // Controlled presentation data only. Credentials below are generated, disposable test values.
 test.afterEach(async ({ page }, info) => {
@@ -94,7 +94,7 @@ async function setup(page: Page, options: { loseFirstSource?: boolean; malformed
 }
 async function openData(page: Page) {
   await page.goto('/'); await navigate(page, '设置');
-  await page.getByRole('tab', { name: '数据与许可', exact: true }).click();
+  await settingsCategory(page, '数据与许可');
 }
 
 test('native registration keeps selected references and exact bigint revisions', async ({ page }) => {
@@ -235,7 +235,7 @@ test('malformed successful data response cannot masquerade as an empty result', 
 
 test('write-only Runtime credentials leave only references in saved configuration', async ({ page }) => {
   const commands = await setup(page); await page.goto('/'); await navigate(page, '设置');
-  await page.getByRole('tab', { name: '原生集成', exact: true }).click();
+  await settingsCategory(page, '原生集成');
   await page.getByRole('button', { name: '登记 Runtime', exact: true }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByLabel('名称', { exact: true }).fill('新的原生 Runtime');
