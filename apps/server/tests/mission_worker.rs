@@ -490,7 +490,8 @@ async fn native_interrupt_follows_committed_deadline_and_does_not_invent_usage(p
     let terminal = latest.terminal.unwrap();
     assert_eq!(terminal.outcome, TurnOutcome::Cancelled);
     assert!(terminal.observed_at >= intent);
-    assert_eq!(f.provider.request_count(), 1);
+    // The deadline may interrupt native startup before its first upstream call.
+    assert!(f.provider.request_count() <= 1);
     connection.client.close().await.unwrap();
 }
 

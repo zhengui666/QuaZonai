@@ -125,7 +125,9 @@ async fn respond(
         );
     }
     if seen.slow.load(Ordering::SeqCst) {
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        // A delayed upstream response must remain pending across real native
+        // CPU throttling; a fast five-second reply races the interrupt itself.
+        tokio::time::sleep(Duration::from_secs(60)).await;
     }
     let id = format!("qz-local-response-{ordinal}");
     let events = [

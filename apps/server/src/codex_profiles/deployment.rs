@@ -148,6 +148,7 @@ impl CodexDeployment {
         snapshot: &CodexProfileSnapshot,
         vault: Arc<SecretVault>,
         workspace: &Path,
+        resources: native::MissionProcess,
     ) -> Result<(Client, ThreadOptions), CodexProbeFailureV1> {
         let profile = &snapshot.profile;
         let binding = profile
@@ -165,7 +166,9 @@ impl CodexDeployment {
         }
         let _gate = binding.gate.lock().await;
         let launch = self.launch(snapshot, binding, &workspace, vault).await?;
-        let mut client = Client::start(launch).await.map_err(native_failure)?;
+        let mut client = Client::start_mission(launch, resources)
+            .await
+            .map_err(native_failure)?;
         let (_, mut options) = inspect(&mut client, profile, &workspace).await?;
         options.ephemeral = false;
         Ok((client, options))

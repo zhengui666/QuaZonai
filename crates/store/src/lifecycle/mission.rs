@@ -91,6 +91,7 @@ pub struct MissionJob {
     pub role: String,
     pub profile: CodexProfileSnapshot,
     pub session: Option<MissionSession>,
+    pub observed_at: DateTime<Utc>,
 }
 
 fn session(row: &PgRow) -> Result<MissionSession, StoreError> {
@@ -178,6 +179,7 @@ impl Store {
             .map(session)
             .transpose()?;
         let job = MissionJob {
+            observed_at: now(&mut tx).await?,
             lease: lease_view(locked, &a)?,
             brief_id: db::id(m.try_get("brief_id")?)?,
             role: m.try_get("role")?,

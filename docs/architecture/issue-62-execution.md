@@ -689,3 +689,27 @@ native Codex25、Store+Server475，共655通过/0失败/0忽略。源码快照�
 已确认停止。这是628b18fe基础上的本地工作增量证据，不是新GitHub Head的CI结果。
 Worker队列/CLI接入、整个进程树资源限制、自动科学结果回送与Reviewer仍未完成，
 不能把单轮驱动通过当作T07/T42、Issue62完成或允许合并。
+
+## 2026-09-12：原生进程树资源与取消竞态
+
+Mission复用Linux systemd user scope与prlimit，对整个原生进程树施加冻结CPU速率、
+内存、进程数和剩余墙钟。连接持有经自身PID成员校验的原cgroup.kill描述符，关闭和
+异常Drop清理原组，不按可复用名称误杀后来的组。原生内部文件单独限64MiB，不把
+QZ较小的研究产物预算误用作Codex SQLite迁移上限；两者不是工作区总磁盘配额。
+整个bootstrap统一限110秒，低CPU下单RPC60秒/MCP启动45秒仍在此界限及Run期限内。
+
+真实故障定位包括：外部验证器缺XDG_RUNTIME_DIR、systemd只接受百分数两位小数、
+1MiB文件限制使原生SQLite WAL触发SIGXFSZ、主进程退出后遗留bwrap阻塞同Run重连。
+固定0.144.4源码及运行还证明turn/start先确认入队，不能假造RUNNING或立即中断
+未开始的Turn；驱动现在等待真实开始，完成竞态的拒绝只按精确原Turn查询终态。
+deadline测试保留DB取消意图先于真实原生终态、未知用量不补零的断言；启动阶段
+可能已被中断，因此不要求一定发生Provider请求，但禁止重复请求。
+
+`.ai-bridge/verify-wOL0cl`局部16项通过；最终全量`.ai-bridge/verify-OWRz0r` exit0：
+check/fmt/严格Clippy、领域149、managed6、独立native Codex28与Store/Server478
+均通过，0失败/0忽略；native组有重复执行的Server用例，不是另外28项独立覆盖。
+内核实测包含内存耗尽SIGKILL、剩余墙钟到期SIGTERM、实际cgroup/rlimit读回及
+主PID退出后的后代清理。源码未变，独立PG已确认停止。模型回复和市场准备仍是
+显式fixture，不含真实账户或生产数据。这是eb115840基础上的本地增量证据，不是
+GitHub CI。Worker/CLI自动Mission、科学结果闭环、Reviewer、工作区总磁盘配额及
+完整恢复/用户流程仍未完成，不能据此合并或关闭Issue62。

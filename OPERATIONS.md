@@ -115,6 +115,18 @@ Mission使用不同于科学任务的队列选择，但共用现有PGMQ、Run/At
 
 Universe的 `registration_state` 必须同时展示：`NATIVE_METADATA` 表示存在正式登记证据，`LEGACY_UNVERIFIED` 表示历史记录尚未核验。该标记不证明真实市场来源、PIT或科学有效性，不能把历史行静默显示成原生登记。原生登记同身份重放比较收到的JSON内容，合法时间字符串原样保存；源origin等身份内容变化返回409，而非生成新版本绕过历史。
 
+### Mission 原生资源前置条件
+
+可信Mission启动器需要Linux cgroup v2、`/usr/bin/systemd-run`、`/usr/bin/prlimit`和
+当前服务用户的systemd manager；服务环境须提供该用户真实的`XDG_RUNTIME_DIR`。
+建议按同用户systemd服务运行，缺失时明确不可用，不能退回无配额进程。
+每Run的原生scope限制整个进程树的CPU速率、内存、进程数和剩余墙钟；新连接不重置
+Run期限，已有scope未退出时不能创建第二份。prlimit的原生单文件上限是64MiB，
+包括Codex内部SQLite/WAL/rollout；达到上限保留文件并报告不可用，不删除原生历史。
+正式研究输出总字节仍严格使用冻结预算，不能拿原生文件上限代替或扩大研究预算，
+两者不等于工作区总磁盘配额。
+这仍是启动器前置条件；当前`server worker`的自动Mission消费接入尚未完成。
+
 ## 不可变研究准备与数据撤销
 
 研究准备入口为 `/api/v2/input-sets` 和 `/api/v2/evaluation-policies`，详情和

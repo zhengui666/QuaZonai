@@ -114,6 +114,13 @@ The local adapter publishes a UUID reference only after file and directory synch
 
 ## Exact native Codex version evidence (0.144.4)
 
+Linux Mission资源复用systemd user scope和util-linux prlimit，不增加Rust进程管理依赖。
+本机原生systemd261.2的scope已验证接受MemoryMax、MemorySwapMax、CPUQuota、TasksMax、
+RuntimeMaxSec并在退出后自动清理；正式App Server与子进程验收另行记录。
+scope继承调用者环境/stdio，避免service manager环境混入与凭据写入unit Environment。
+参考固定上游文档：https://github.com/systemd/systemd/blob/v261/man/systemd-run.xml 、
+https://github.com/systemd/systemd/blob/v261/man/systemd.resource-control.xml 。
+
 The pinned `rust-v0.144.4` implementation formats the initialization response as
 `originator/CARGO_PKG_VERSION` followed by platform and terminal details.
 `initialize_processor` sets the originator from this probe's fixed clientInfo.name;
@@ -153,6 +160,7 @@ protected real-account T07 or complete fresh-user T42 acceptance.
 - https://github.com/openai/codex/blob/rust-v0.144.4/codex-rs/core/src/config/mod.rs
 - https://github.com/openai/codex/blob/rust-v0.144.4/codex-rs/core/src/tools/spec_plan.rs
 - https://github.com/openai/codex/blob/rust-v0.144.4/codex-rs/core/tests/common/responses.rs
+- https://github.com/openai/codex/blob/rust-v0.144.4/codex-rs/app-server/src/request_processors/turn_processor.rs (queued start ACK versus actual TurnStarted; interrupt completion race)
 - https://www.postgresql.org/docs/18/sql-createtrigger.html (native deferred aggregate publication)
 - https://www.postgresql.org/docs/18/explicit-locking.html (native row locks and post-wait rechecks)
 

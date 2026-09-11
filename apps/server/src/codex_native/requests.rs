@@ -39,7 +39,7 @@ fn directory(path: &Path) -> Result<()> {
 }
 
 impl Launch {
-    pub(super) fn spawn(self) -> Result<Child> {
+    pub(super) fn spawn(self, resources: Option<&super::MissionProcess>) -> Result<Child> {
         if !self.binary.is_absolute() || !self.binary.is_file() {
             return Err(NativeFailure::Configuration);
         }
@@ -94,6 +94,14 @@ impl Launch {
                 command.arg("--config").arg(option);
             }
             command.env("QUAZONAI_CUSTOM_PROVIDER_KEY", provider.api_key);
+        }
+        if let Some(resources) = resources {
+            command = resources.wrap(command)?;
+            command
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .kill_on_drop(true);
         }
         command.spawn().map_err(|_| NativeFailure::Unavailable)
     }

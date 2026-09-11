@@ -94,7 +94,7 @@ impl MissionConnection {
                         prompt.as_deref().ok_or(WorkerFailure::Contract)?,
                     )
                     .await
-                    .map_err(native)?;
+                    .map_err(|reason| WorkerFailure::Codex("START_TURN", reason))?;
                 store.bind_native_turn(item.id, fence, &turn.id).await?;
                 turn
             }
@@ -117,7 +117,10 @@ impl MissionConnection {
                 native_turn_id: None,
             } => return Ok(TurnProgress::Unresolved),
         };
-        if actual.status == TurnStatus::InProgress || actual.started_at.is_some() {
+        // turn/start acknowledges queued input before the native Turn is active.
+        // Only its started event/timestamp permits a normal turn/interrupt.
+        let mut started = actual.started_at.is_some();
+        if started {
             store
                 .observe_run_running(run, fence, &job.lease.external_job_id)
                 .await?;
@@ -152,11 +155,29 @@ impl MissionConnection {
                 if since.elapsed() >= Duration::from_secs(2) {
                     return Ok(TurnProgress::Unresolved);
                 }
-            } else if job.lease.action == NextRuntimeAction::Cancel && interrupted_at.is_none() {
-                self.client
-                    .interrupt_turn(thread, &actual.id)
-                    .await
-                    .map_err(native)?;
+            } else if started
+                && job.lease.action == NextRuntimeAction::Cancel
+                && interrupted_at.is_none()
+            {
+                match self.client.interrupt_turn(thread, &actual.id).await {
+                    Ok(()) => {}
+                    Err(NativeFailure::Rejected(-32600)) => {
+                        // Completion can win after our last observation. The
+                        // rejection is not a terminal: reconcile only this ID.
+                        let Some(terminal) = self
+                            .client
+                            .turns(thread)
+                            .await
+                            .map_err(native)?
+                            .into_iter()
+                            .find(|turn| turn.id == actual.id && turn.status.terminal())
+                        else {
+                            return Ok(TurnProgress::Unresolved);
+                        };
+                        actual = terminal;
+                    }
+                    Err(reason) => return Err(WorkerFailure::Codex("INTERRUPT_TURN", reason)),
+                }
                 interrupted_at = Some(Instant::now());
             }
             if interrupted_at.is_some_and(|time| time.elapsed() >= Duration::from_secs(30)) {
@@ -181,6 +202,14 @@ impl MissionConnection {
                                 continue;
                             }
                             return Err(native(NativeFailure::Contract));
+                        }
+                        if !started
+                            && (turn.status == TurnStatus::InProgress || turn.started_at.is_some())
+                        {
+                            store
+                                .observe_run_running(run, fence, &job.lease.external_job_id)
+                                .await?;
+                            started = true;
                         }
                         actual = turn;
                     }

@@ -127,6 +127,23 @@ impl MissionLauncher {
         run: Id,
         fence: &WorkerFence,
     ) -> Result<MissionConnection, WorkerFailure> {
+        tokio::time::timeout(
+            Duration::from_secs(110),
+            self.open_inner(store, vault, run, fence),
+        )
+        .await
+        .map_err(|_| {
+            WorkerFailure::Codex("BOOTSTRAP_TIMEOUT", native::NativeFailure::Unavailable)
+        })?
+    }
+
+    async fn open_inner(
+        &self,
+        store: &Store,
+        vault: Arc<SecretVault>,
+        run: Id,
+        fence: &WorkerFence,
+    ) -> Result<MissionConnection, WorkerFailure> {
         let job = store.mission_job(run, fence).await?;
         if job.lease.action == NextRuntimeAction::Cancel
             || (job.session.is_none() && job.lease.action != NextRuntimeAction::PrepareDispatch)
@@ -137,17 +154,22 @@ impl MissionLauncher {
                 native::NativeFailure::Correlation,
             ));
         }
-        let workspace = self.workspace(run).await?;
-        let (mut client, mut options) = tokio::time::timeout(
-            Duration::from_secs(110),
-            self.deployment
-                .mission_connection(&job.profile, vault.clone(), &workspace),
+        let resources = native::MissionProcess::new(
+            run,
+            job.lease.limits.clone(),
+            u32::try_from((job.lease.run.deadline_at - job.observed_at).num_seconds())
+                .map_err(|_| WorkerFailure::Contract)?
+                .min(job.lease.limits.wall_seconds),
         )
-        .await
-        .map_err(|_| WorkerFailure::Codex("PROFILE_TIMEOUT", native::NativeFailure::Unavailable))?
-        .map_err(|_| {
-            WorkerFailure::Codex("PROFILE_CONNECTION", native::NativeFailure::Unavailable)
-        })?;
+        .map_err(|reason| WorkerFailure::Codex("RESOURCE_BOUNDS", reason))?;
+        let workspace = self.workspace(run).await?;
+        let (mut client, mut options) = self
+            .deployment
+            .mission_connection(&job.profile, vault.clone(), &workspace, resources)
+            .await
+            .map_err(|_| {
+                WorkerFailure::Codex("PROFILE_CONNECTION", native::NativeFailure::Unavailable)
+            })?;
         if let Some(session) = &job.session {
             let requested = &session.requested_settings;
             if session.native.codex_version != native::VERSION

@@ -86,7 +86,7 @@ impl MissionOptions {
             "goals":false,"shell_snapshot":false,"code_mode":false,"code_mode_only":false});
         config["mcp_servers"] = json!({ MCP_NAME: {"command":self.server_binary,"args":args,
             "env":{"QUAZONAI_MCP_TOKEN":self.token},"required":true,"enabled":true,
-            "startup_timeout_sec":15,"tool_timeout_sec":20}});
+            "startup_timeout_sec":45,"tool_timeout_sec":20}});
         Ok(())
     }
 }

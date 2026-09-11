@@ -171,6 +171,16 @@ jobs:
           docker exec store-database pg_isready -h 127.0.0.1 -U postgres
           docker exec --env "PGPASSWORD=$database_password" store-database psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -c 'SELECT version()' > /tmp/store-evidence/database-version.txt
           docker image inspect --format '{{json .RepoDigests}}' "$PGMQ_IMAGE" > /tmp/store-evidence/image.json
+      - name: Prepare the native user resource manager for Mission tests
+        run: |
+          set -euo pipefail
+          mission_uid=$(id -u)
+          sudo loginctl enable-linger "$mission_uid"
+          sudo systemctl start "user@$mission_uid.service"
+          export XDG_RUNTIME_DIR="/run/user/$mission_uid"
+          systemctl --user show --property=Version > /tmp/store-evidence/systemd-version.txt
+          prlimit --version > /tmp/store-evidence/prlimit-version.txt
+          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
       - name: Run every Store test against real independently migrated databases
         run: |
           set -euo pipefail

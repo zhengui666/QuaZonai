@@ -5,6 +5,7 @@ mod projection;
 #[cfg(test)]
 mod projection_tests;
 mod requests;
+mod resources;
 mod wire;
 
 pub use mission::MissionOptions;
@@ -14,6 +15,7 @@ pub use projection::{
     Turn, TurnStatus,
 };
 pub use requests::{CustomProvider, Launch, ThreadOptions};
+pub use resources::MissionProcess;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use std::{collections::BTreeSet, fmt, time::Duration};
@@ -64,30 +66,50 @@ impl std::error::Error for NativeFailure {}
 /// One native child and one serial RPC stream. There is deliberately no Clone:
 /// profile/session owners serialize access, and never spawn a second tool driver.
 pub struct Client {
+    group: Option<resources::ProcessGroup>,
     child: Child,
     wire: Wire<ChildStdout, ChildStdin>,
     binary: std::path::PathBuf,
     codex_home: std::path::PathBuf,
+    rpc_timeout: Duration,
 }
 
 impl Client {
     pub async fn start(launch: Launch) -> Result<Self> {
+        Self::start_process(launch, None).await
+    }
+
+    pub async fn start_mission(launch: Launch, limits: MissionProcess) -> Result<Self> {
+        Self::start_process(launch, Some(limits)).await
+    }
+
+    async fn start_process(launch: Launch, limits: Option<MissionProcess>) -> Result<Self> {
         let binary =
             std::fs::canonicalize(&launch.binary).map_err(|_| NativeFailure::Configuration)?;
         let codex_home = launch.codex_home.clone();
-        let mut child = launch.spawn()?;
+        let mut child = launch.spawn(limits.as_ref())?;
         let input = child.stdin.take().ok_or(NativeFailure::Unavailable)?;
         let output = child.stdout.take().ok_or(NativeFailure::Unavailable)?;
         let mut client = Self {
+            group: None,
             child,
             wire: Wire::new(output, input),
             binary,
             codex_home,
+            rpc_timeout: if limits.is_some() {
+                Duration::from_secs(60)
+            } else {
+                RPC_TIMEOUT
+            },
         };
         let initialized: projection::Initialized =
             client.call("initialize", requests::initialize()).await?;
         domain::codex::verified_codex_version(&initialized.user_agent, CLIENT, VERSION)
             .map_err(|_| NativeFailure::Version)?;
+        if let Some(limits) = limits {
+            client.group =
+                Some(limits.capture(client.child.id().ok_or(NativeFailure::Unavailable)?)?);
+        }
         client.wire.notify("initialized").await?;
         Ok(client)
     }
@@ -114,7 +136,7 @@ impl Client {
         projection::text(&id, 200)?;
         let response = self
             .wire
-            .request(RequestId::Text(id), method, params, RPC_TIMEOUT)
+            .request(RequestId::Text(id), method, params, self.rpc_timeout)
             .await?;
         match serde_json::from_str(response.get()) {
             Ok(value) => Ok(value),
@@ -303,7 +325,7 @@ impl Client {
     /// claims that an upstream model turn or a scientific Runtime job did not run.
     pub async fn close(mut self) -> Result<()> {
         self.wire.shutdown().await;
-        match tokio::time::timeout(Duration::from_secs(2), self.child.wait()).await {
+        let result = match tokio::time::timeout(Duration::from_secs(2), self.child.wait()).await {
             Ok(Ok(_)) => Ok(()),
             Ok(Err(_)) => Err(NativeFailure::Unavailable),
             Err(_) => self
@@ -311,6 +333,10 @@ impl Client {
                 .kill()
                 .await
                 .map_err(|_| NativeFailure::Unavailable),
+        };
+        if let Some(group) = &mut self.group {
+            group.close().await?;
         }
+        result
     }
 }
