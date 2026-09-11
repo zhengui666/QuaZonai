@@ -713,3 +713,14 @@ check/fmt/严格Clippy、领域149、managed6、独立native Codex28与Store/Ser
 显式fixture，不含真实账户或生产数据。这是eb115840基础上的本地增量证据，不是
 GitHub CI。Worker/CLI自动Mission、科学结果闭环、Reviewer、工作区总磁盘配额及
 完整恢复/用户流程仍未完成，不能据此合并或关闭Issue62。
+
+## 2026-09-12：逐轮超预约后的新发送阻断
+
+新预约和首次派发现在共用同Cycle不可变reservation/receipt的原生SQL比较；token或
+精确小数费用超过原预约，即使Cycle总额未超限也阻断新发送。原真实结算、原回执重放
+和确认未发送的退款不受此新准入检查影响，不增加另一套可重置计数或标记。
+`.ai-bridge/verify-Vtz2Vq`在ed8f9632基础上运行check/fmt/严格Clippy及真实PGMQ/PG
+Mission、turn、recovery、Run生命周期、约束回归，80项通过/0失败/0忽略，源码未变、
+独立PG确认停止。新反例保持used+reserved+requested低于Cycle总额，分别验证token
+超预约和仅小数尾部费用超预约，并验证其他Mission事先预约的首次发送也被阻断。
+这是局部业务账本证据，不是Provider实际计费、全量CI或Issue62完成证明。

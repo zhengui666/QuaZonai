@@ -522,6 +522,8 @@ StopRuleV1:
 
 新轮预约及首次发送均在锁定 Session 对应的当前 Profile 后重新检查精确版本、无进行中账号操作以及数据库时间下的 Attempt lease/deadline；等待配置锁不能复活过期执行者。Profile 修改只阻断新发送，不阻断旧预约/发送意图的准确读取、原生 Turn 绑定、对账与真实用量结算。已经发送但回执未知的调用不能因版本改变就退款或改用新账号重发。
 
+原生实际token或估算费用超过本轮原预约时，即使Cycle总额尚未超限，也阻断该Cycle的新模型预约及尚未发送预约的首次派发；不是仅检查Cycle总和。使用同Cycle锁下的不可变reservation/receipt直接比较，不保存可重置的overrun标记。既有回执重放、已发送对账和确认未发送的结算继续可用，真实用量不能因超预约而回滚、裁剪或补零。
+
 Optuna 内部 trial 使用预分配预算，不能藏在一次 job 无限搜索。资源/turn/并行上限必须有效正值且符合 runtime capability；修复 turn 不超过总 turn。停止规则由用户冻结，Agent 不能扩大。
 
 ### A1.1 Brief 草稿作者事务

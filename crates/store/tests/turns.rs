@@ -362,6 +362,70 @@ async fn actual_overbudget_usage_is_retained_and_blocks_new_work(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn per_turn_overrun_below_cycle_cap_blocks_new_reservations_and_prepared_sends(pool: PgPool) {
+    for (tokens, cost, reason) in [
+        (41, "1.25", "tokens"),
+        (40, "1.250000000001", "estimated_cost"),
+    ] {
+        let f = fixture(&pool, budget()).await;
+        let s = Store::from_pool(pool.clone());
+        let request = f.request("original");
+        let first = s.reserve_turn(f.run, &f.fence, &request).await.unwrap();
+        let (other, _, fence, deadline) =
+            mission(&pool, f.project, f.cycle, f.input_set, f.profile).await;
+        let mut pending = f.request("already-reserved");
+        pending.deadline_at = deadline;
+        let pending = s.reserve_turn(other, &fence, &pending).await.unwrap();
+        complete(&s, &f, first.id, TurnOutcome::Succeeded, tokens, cost).await;
+
+        let mut next = f.request("next");
+        next.tokens = DbCounter::new(1).unwrap();
+        // Used+reserved+requested tokens (<=82) and cost (<4) are under 100/USD10.
+        // The immutable original per-turn promise, not the Cycle cap, is exceeded.
+        assert!(matches!(s.reserve_turn(f.run, &f.fence, &next).await,
+            Err(StoreError::Domain(DomainError::BudgetExhausted(actual))) if actual == reason));
+        assert!(matches!(s.claim_turn_dispatch(pending.id, &fence).await,
+            Err(StoreError::Domain(DomainError::BudgetExhausted(actual))) if actual == reason));
+        assert_eq!(
+            s.reserve_turn(f.run, &f.fence, &request).await.unwrap(),
+            first
+        );
+        assert_eq!(
+            s.claim_turn_dispatch(first.id, &f.fence).await.unwrap(),
+            DispatchDecision::Settled
+        );
+        s.settle_turn(
+            first.id,
+            &f.fence,
+            &used(TurnOutcome::Succeeded, tokens, cost),
+        )
+        .await
+        .unwrap();
+        // No dispatch exists for the blocked reservation; only this confirmed
+        // non-send can refund it. The original real overrun remains unchanged.
+        s.settle_turn(pending.id, &fence, &used(TurnOutcome::NotSent, 0, "0"))
+            .await
+            .unwrap();
+        let observed: i64 = sqlx::query_scalar(
+            "SELECT actual_tokens::bigint FROM app.model_turn_receipts WHERE reservation_id=$1",
+        )
+        .bind(first.id.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(observed, tokens as i64);
+        let sent: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM app.model_turn_dispatches WHERE reservation_id=$1)",
+        )
+        .bind(pending.id.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(!sent);
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn missing_queue_rolls_back_the_budget_and_reservation_together(pool: PgPool) {
     let f = fixture(&pool, budget()).await;
     let s = Store::from_pool(pool.clone());

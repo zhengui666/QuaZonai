@@ -247,6 +247,20 @@ async fn lock_mission(
 }
 
 impl Mission {
+    async fn reject_known_overrun(&self, tx: &mut Tx<'_>) -> Result<(), StoreError> {
+        // A per-turn overrun closes new spending even below the Cycle cap.
+        // Never call this on reconciliation/settlement: retain the real usage.
+        let (tokens, cost): (bool, bool) = sqlx::query_as("SELECT coalesce(bool_or(t.actual_tokens > r.reserved_tokens),false),coalesce(bool_or(t.actual_cost > r.reserved_cost),false) FROM app.model_turn_reservations r JOIN app.model_turn_receipts t ON t.reservation_id=r.id WHERE r.cycle_id=$1")
+            .bind(self.cycle_id).fetch_one(&mut **tx).await?;
+        if tokens {
+            return Err(DomainError::BudgetExhausted("tokens").into());
+        }
+        if cost {
+            return Err(DomainError::BudgetExhausted("estimated_cost").into());
+        }
+        Ok(())
+    }
+
     async fn current_profile(&self, tx: &mut Tx<'_>) -> Result<(), StoreError> {
         crate::codex_profiles::snapshot(
             tx,
@@ -460,9 +474,9 @@ impl Store {
         // remain reconcilable/chargeable after a settings or account change.
         mission.current_profile(&mut tx).await?;
         // The profile lock may have waited past the Attempt lease/deadline.
-        lock_mission(&mut tx, item.run_id, fence)
-            .await?
-            .admit(item.deadline_at)?;
+        let mission = lock_mission(&mut tx, item.run_id, fence).await?;
+        mission.admit(item.deadline_at)?;
+        mission.reject_known_overrun(&mut tx).await?;
         // A different Attempt cannot dispatch a reservation owned by an earlier
         // attempt. An owner-epoch takeover within the same attempt is supported.
         if item.attempt_id != fence.attempt_id {
@@ -678,6 +692,7 @@ async fn reserve_in_transaction(
     mission.current_profile(tx).await?;
     let mission = lock_mission(tx, run_id, fence).await?;
     mission.admit(request.deadline_at)?;
+    mission.reject_known_overrun(tx).await?;
     let pending:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.model_turn_reservations r WHERE r.session_id=$1 AND NOT EXISTS(SELECT 1 FROM app.model_turn_receipts t WHERE t.reservation_id=r.id))")
         .bind(mission.session_id).fetch_one(&mut **tx).await?;
     if pending {
