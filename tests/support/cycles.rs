@@ -52,7 +52,7 @@ pub async fn setup_with_objects(
         .bind(assumptions.as_uuid()).bind(image).bind(data.assumptions.as_uuid())
         .execute(pool).await.unwrap();
     data.assumptions = assumptions;
-    let revision: i64 = sqlx::query_scalar("UPDATE app.runtime_integrations SET allowed_capabilities=ARRAY['DATA_VALIDATE','ALPHA_EVALUATE','AGENT_RESEARCH'] WHERE id=$1 RETURNING revision")
+    let revision: i64 = sqlx::query_scalar("UPDATE app.runtime_integrations SET allowed_capabilities=ARRAY['DATA_VALIDATE','ALPHA_EVALUATE'] WHERE id=$1 RETURNING revision")
         .bind(data.runtime.as_uuid()).fetch_one(pool).await.unwrap();
     let revision = revision.to_string().try_into().unwrap();
     cycle_data::register(pool, store, actor, &mut data, revision, objects.clone()).await;
@@ -72,15 +72,6 @@ pub async fn setup_with_objects(
         panic!("native fixture ticket expected")
     };
     let mut observed = runtime_support::capabilities(Utc::now());
-    observed
-        .job_kinds
-        .push(contracts::runs::RunKind::AgentResearch);
-    observed
-        .image_refs
-        .push(contracts::runtime::RuntimeImageV1 {
-            job_kind: contracts::runs::RunKind::AgentResearch,
-            image_ref: observed.image_refs[0].image_ref.clone(),
-        });
     observed
         .artifact_schemas
         .push(contracts::runtime::RuntimeArtifactSchemaV1 {

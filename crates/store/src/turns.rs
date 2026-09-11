@@ -118,6 +118,7 @@ struct Mission {
     cycle_state: String,
     brief_state: String,
     run_state: String,
+    dispatch_state: String,
     run_deadline: DateTime<Utc>,
     now: DateTime<Utc>,
 }
@@ -204,7 +205,7 @@ async fn lock_mission(
     if run.try_get::<Option<Uuid>, _>("active_attempt_id")? != Some(fence.attempt_id.as_uuid()) {
         return Err(DomainError::StaleAttempt.into());
     }
-    let attempt=sqlx::query("SELECT worker_owner_id,owner_epoch::bigint,lease_expires_at::timestamptz FROM app.run_attempts WHERE id=$1 AND run_id=$2 FOR UPDATE")
+    let attempt=sqlx::query("SELECT worker_owner_id,owner_epoch::bigint,lease_expires_at::timestamptz,dispatch_state FROM app.run_attempts WHERE id=$1 AND run_id=$2 FOR UPDATE")
         .bind(fence.attempt_id.as_uuid()).bind(run_id.as_uuid()).fetch_one(&mut **tx).await?;
     let session =
         sqlx::query("SELECT id::uuid,profile_id::uuid,profile_revision::bigint FROM app.codex_sessions WHERE run_id=$1 FOR UPDATE")
@@ -236,6 +237,7 @@ async fn lock_mission(
         cycle_state: cycle.try_get("state")?,
         brief_state: brief.try_get("state")?,
         run_state: run.try_get("state")?,
+        dispatch_state: attempt.try_get("dispatch_state")?,
         run_deadline: run.try_get("deadline_at")?,
         now,
     })
@@ -256,7 +258,14 @@ impl Mission {
         if self.project_state != ProjectState::Active
             || self.cycle_state != "RUNNING"
             || self.brief_state != "FROZEN"
-            || self.run_state != "RUNNING"
+            || !matches!(
+                self.run_state.as_str(),
+                "DISPATCHING" | "RUNNING" | "RECONCILING"
+            )
+            || !matches!(
+                self.dispatch_state.as_str(),
+                "SENT_UNKNOWN" | "ACKNOWLEDGED"
+            )
         {
             return Err(DomainError::AdmissionClosed.into());
         }

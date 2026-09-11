@@ -12,7 +12,6 @@ use contracts::{
 use std::collections::{BTreeMap, BTreeSet};
 
 mod probe;
-mod queue;
 pub use probe::RunProbeTicket;
 
 /// Constructed only by an authorized domain service. Not a public request DTO.
@@ -137,25 +136,8 @@ impl Store {
         .fetch_optional(&mut *tx)
         .await?;
         let unsent = attempt.try_get::<String, _>("dispatch_state")? == "NOT_SENT";
-        if !unsent
-            && locked.run.state != RunState::CancelRequested
-            && locked.run.deadline_at <= now(&mut tx).await?
-        {
-            // Expiry requests remote termination; it does not prove termination.
-            // Persist the intent before a cancel RPC, so a native tombstone can
-            // resolve it without inventing success or retrying the original job.
-            let state = runs::request_cancel(locked.run.state)?;
-            sqlx::query("UPDATE app.runs SET state=$2,cancellation_requested_at=clock_timestamp() WHERE id=$1")
-                .bind(run.as_uuid()).bind(db::code(&state)?)
-                .execute(&mut *tx).await?;
-            locked.run = append(
-                &mut tx,
-                run,
-                RunEventKind::StateChanged,
-                RunReason::DeadlineExceeded,
-            )
-            .await?;
-        }
+        // A database-clock intent precedes either driver's remote cancel call.
+        expire_sent_run(&mut tx, &mut locked, &attempt).await?;
         let new_spec = existing.is_none();
         let spec: JobSpecV1 = if let Some(document) = existing {
             serde_json::from_value(document).map_err(|_| StoreError::Integrity)?

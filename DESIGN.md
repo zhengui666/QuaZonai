@@ -2034,6 +2034,18 @@ Cycle start 与独立 `data/validate` 复用同一个受信任的 metadata→PAR
 
 已有历史Cycle若缺少原生定义，不推断参数、不回填成功；读取仍显示其原始状态。新的正式Cycle必须能被当前native Worker选中并按同一Run/Attempt实际验证其登记数据。测试中的合成metadata明确保持FIXTURE/UNVERIFIED，不能借这段启动链路赋予REAL或Alpha资格。
 
+### B5.0.4 从原生准备结果进入 Mission
+
+`run_missions` 是 Run 的不可变驱动归属与角色关联，不是另一套任务状态机：run_id唯一并引用run_admissions，project_id/cycle_id、role=RESEARCHER|INDEPENDENT_REVIEWER、精确profile_id/profile_revision，同Cycle同角色至多一个；角色配置必须等于cycle_startups冻结选择。Mission沿用Run/Attempt、PGMQ、租约与逐轮账本，不要求科学Runtime声称支持AGENT_RESEARCH。
+
+科学Worker在首次完成和终态重投两个ack入口前统一处理正式Cycle的initial_run_id。只有精确终态SUCCEEDED、当前accepted Attempt及其原生DATA_QUALITY产物才可推进；fixture来源不因此变REAL。准备失败/取消如实结束Cycle。项目暂停时保留待处理消息，不丢失恢复入口。研究者Mission准入、预算、Run/事件/PGMQ与run_missions同事务提交；重复通知只读取已存在关联。配置/输入需人工处理时进入WAITING_INPUT，预算耗尽如实收束，基础设施结果未知仍保留重试消息。创建Mission不代表已有Thread或产生模型结果。
+
+Mission与科学消费者共用PGMQ的条件读取实现，各自只选不可变驱动关联；直接claim也复核归属。Mission首次dispatch核对冻结Profile与当前账号状态，不要求科学Runtime的Agent能力。run_missions同时保存非秘密Profile快照及私有credential_ref，作为原生恢复的原始配置，永不含密钥内容。Profile改变会阻止新Thread/付费turn，但不能改写已收到的原生身份或妨碍账本对账。
+
+原生thread/start只能在已有Run首次发送许可后调用；返回的thread_id、版本和公开有效设置先写codex_sessions，随后才能预留并发送付费turn。写入只接受当前Attempt/fence和精确run_missions绑定，唯一Run及Profile/Thread约束禁止换会话；重复回执必须逐项相同。发送期间Profile修改或取消不抹掉已观测Thread，保存旧版本回执不授予新turn权。未知start且没有已持久Session时不得盲目重建Thread；尚无Session便不可能合法发送付费turn，但也不能把可能存在的空Thread描述为远端成功/已取消。不复制原生聊天或工作区绝对路径到公开响应；native_history_ref只保存原生Thread引用。
+
+首轮可以在DISPATCHING且Thread已绑定、Attempt为SENT_UNKNOWN/ACKNOWLEDGED时预约；恢复轮也可在RECONCILING预约，但前一轮必须已有真实结算，不能绕过未知发送。不能先假造RUNNING以满足账本前置条件；Run仅在实际模型运行观测后变化。所有新预约/发送仍验证冻结Profile、当前lease、期限与项目/Cycle状态。科学Runtime无需Agent能力，但首次Mission准入/派发仍要求其配置版本与冻结执行上下文一致且enabled，避免将新连接配置冒记为旧版本。
+
 ### B5.1 入队
 
 ```text

@@ -78,16 +78,7 @@ async fn mission_admission_preserves_the_only_science_slot_and_charges_both_cpu_
 ) {
     let mut budget = support::budget();
     budget.max_parallel_runs = 1;
-    let (store, fixture, mut science, _) = setup_with_budget(&pool, budget).await;
-    let revision: i64 = sqlx::query_scalar(
-        "UPDATE app.runtime_integrations SET allowed_capabilities=ARRAY['AGENT_RESEARCH','ALPHA_EVALUATE'] WHERE id=$1 RETURNING revision",
-    )
-    .bind(science.runtime_id.as_uuid())
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    science.runtime_revision = revision.to_string().try_into().unwrap();
-    runtime_observation::ready(&pool, science.runtime_id).await;
+    let (store, fixture, science, _) = setup_with_budget(&pool, budget).await;
     let mut mission = science.clone();
     mission.kind = RunKind::AgentResearch;
     mission.limits.experiments = 0;
@@ -118,12 +109,7 @@ async fn mission_admission_preserves_the_only_science_slot_and_charges_both_cpu_
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn native_queue_selection_does_not_hide_or_claim_a_codex_mission(pool: PgPool) {
-    let (store, _, mut science, actor) = setup(&pool).await;
-    let revision: i64 = sqlx::query_scalar(
-        "UPDATE app.runtime_integrations SET allowed_capabilities=ARRAY['AGENT_RESEARCH','ALPHA_EVALUATE'] WHERE id=$1 RETURNING revision",
-    ).bind(science.runtime_id.as_uuid()).fetch_one(&pool).await.unwrap();
-    science.runtime_revision = revision.to_string().try_into().unwrap();
-    runtime_observation::ready(&pool, science.runtime_id).await;
+    let (store, _, science, actor) = setup(&pool).await;
     let mut mission = science.clone();
     mission.kind = RunKind::AgentResearch;
     mission.limits.experiments = 0;
@@ -148,6 +134,14 @@ async fn native_queue_selection_does_not_hide_or_claim_a_codex_mission(pool: PgP
         .await
         .unwrap()
         .is_empty());
+    assert!(
+        store
+            .read_mission_messages(60, 100)
+            .await
+            .unwrap()
+            .is_empty(),
+        "no driver claims a Run without its immutable definition"
+    );
     let after: Vec<(i64, i32, chrono::DateTime<Utc>)> =
         sqlx::query_as("SELECT msg_id,read_ct,vt FROM pgmq.q_runs ORDER BY msg_id")
             .fetch_all(&pool)
@@ -164,6 +158,11 @@ async fn native_queue_selection_does_not_hide_or_claim_a_codex_mission(pool: PgP
         "the native PGMQ consumer can still receive both messages"
     );
     for message in &visible {
+        assert!(store
+            .claim_mission(message, "undefined-mission", 30)
+            .await
+            .unwrap()
+            .is_none());
         assert!(store
             .claim_native_run(message, "wrong-science-driver", 30)
             .await

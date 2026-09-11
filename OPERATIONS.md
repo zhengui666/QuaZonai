@@ -109,6 +109,10 @@ Operator 可创建独立 CLI/AUTOMATION/DOWNSTREAM 主体，系统任务的 MISS
 
 Worker可使用当前Run租约刷新到期探测。一次提交应答丢失后，只查询原任务ID；租约接管保持原Attempt和JobSpec，拒绝旧owner。404、网络断开、退出Worker均不允许发布取消成功或提前释放任务；只有匹配身份的原生持久终态可完成对账。终态原始manifest、全部允许的原生产物、生产者关系、事件与唯一回执一起提交后才archive。取消先提交时，迟到的成功payload不发布；格式错误的已完成输出保留失败审计，不能升格为Alpha资格。
 
+029迁移增加不可变Mission归属和非秘密Profile快照。正式Cycle的首个原生DATA_VALIDATE完成后，Worker在确认消息前原子创建研究Mission；重复通知不会创建第二份。暂停保留恢复通知，进行中的原生账号操作显示WAITING_FOR_CODEX_ACCOUNT并等待；Profile或数据许可需人工处理时Cycle显示WAITING_INPUT，不会暗换账号。CPU预算耗尽如实结束周期，没有Mission半状态或额外试验额度。
+
+Mission使用不同于科学任务的队列选择，但共用现有PGMQ、Run/Attempt和租约。原生Thread回执一旦绑定不能替换，原生创建应答未知时不盲目新建；首轮预约不等于模型已经RUNNING。当前本增量验证了事务准入、Thread绑定及账本接线；Worker的原生Codex驱动和完整科学结果回到同Thread仍须完成后才能作为整条产品流程使用，不应手工改库补成功状态。
+
 Universe的 `registration_state` 必须同时展示：`NATIVE_METADATA` 表示存在正式登记证据，`LEGACY_UNVERIFIED` 表示历史记录尚未核验。该标记不证明真实市场来源、PIT或科学有效性，不能把历史行静默显示成原生登记。原生登记同身份重放比较收到的JSON内容，合法时间字符串原样保存；源origin等身份内容变化返回409，而非生成新版本绕过历史。
 
 ## 不可变研究准备与数据撤销

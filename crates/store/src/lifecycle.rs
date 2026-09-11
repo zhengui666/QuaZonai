@@ -24,7 +24,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{postgres::PgRow, Postgres, Row, Transaction};
 
+pub mod mission;
 pub mod native;
+mod queue;
 
 type Tx<'a> = Transaction<'a, Postgres>;
 const FIELDS: &str = "r.id::uuid,r.project_id::uuid,r.cycle_id::uuid,r.kind,r.input_set_id::uuid,r.state,r.current_attempt_no::bigint,r.active_attempt_id::uuid,r.last_event_seq::bigint,r.deadline_at::timestamptz,r.cancellation_requested_at::timestamptz,r.terminal_reason_code,r.queued_at::timestamptz,r.started_at::timestamptz,r.finished_at::timestamptz,r.revision::bigint";
@@ -203,6 +205,34 @@ struct LockedRun {
     admission: PgRow,
     project_state: ProjectState,
     cycle_state: Option<String>,
+}
+
+async fn expire_sent_run(
+    tx: &mut Tx<'_>,
+    locked: &mut LockedRun,
+    attempt: &PgRow,
+) -> Result<(), StoreError> {
+    if attempt.try_get::<String, _>("dispatch_state")? != "NOT_SENT"
+        && locked.run.state != RunState::CancelRequested
+        && locked.run.deadline_at <= now(tx).await?
+    {
+        let state = runs::request_cancel(locked.run.state)?;
+        sqlx::query(
+            "UPDATE app.runs SET state=$2,cancellation_requested_at=clock_timestamp() WHERE id=$1",
+        )
+        .bind(locked.run.id.as_uuid())
+        .bind(db::code(&state)?)
+        .execute(&mut **tx)
+        .await?;
+        locked.run = append(
+            tx,
+            locked.run.id,
+            RunEventKind::StateChanged,
+            RunReason::DeadlineExceeded,
+        )
+        .await?;
+    }
+    Ok(())
 }
 impl LockedRun {
     fn admission_open(&self) -> bool {
@@ -476,14 +506,22 @@ impl Store {
             .await?
             .ok_or(StoreError::NotFound)?;
         let caps: Vec<String> = r.try_get("allowed_capabilities")?;
-        crate::runtime::require_job(
-            &mut tx,
-            request.runtime_id,
-            request.runtime_revision,
-            request.kind,
-            &request.limits,
-        )
-        .await?;
+        if request.kind == RunKind::AgentResearch {
+            if !r.try_get::<bool, _>("enabled")?
+                || db::revision(r.try_get("revision")?)? != request.runtime_revision
+            {
+                return Err(DomainError::CapabilityUnavailable("mission_runtime_binding").into());
+            }
+        } else {
+            crate::runtime::require_job(
+                &mut tx,
+                request.runtime_id,
+                request.runtime_revision,
+                request.kind,
+                &request.limits,
+            )
+            .await?;
+        }
         let runtime = RuntimeSnapshot {
             schema_version: SchemaV1,
             endpoint: r.try_get("endpoint")?,
@@ -851,14 +889,18 @@ impl Store {
         .await?;
         let limits: JobLimitsV1 = serde_json::from_value(locked.admission.try_get("limits")?)
             .map_err(|_| StoreError::Integrity)?;
-        crate::runtime::require_job(
-            &mut tx,
-            db::id(locked.admission.try_get("runtime_id")?)?,
-            db::revision(locked.admission.try_get("runtime_revision")?)?,
-            locked.run.kind,
-            &limits,
-        )
-        .await?;
+        if locked.run.kind == RunKind::AgentResearch {
+            mission::current_profile(&mut tx, id).await?;
+        } else {
+            crate::runtime::require_job(
+                &mut tx,
+                db::id(locked.admission.try_get("runtime_id")?)?,
+                db::revision(locked.admission.try_get("runtime_revision")?)?,
+                locked.run.kind,
+                &limits,
+            )
+            .await?;
+        }
         // Runtime configuration can be locked by an Operator update. A lease
         // valid before that wait is not authority after it; query DB time only
         // after the last potentially conflicting authority lock.

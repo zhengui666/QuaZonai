@@ -607,3 +607,23 @@ OpenAPI/TypeScript/Ajv 在 `.ai-bridge/web-verify-zO8r57` 两次生成逐字节�
 随后修正，原生命令复核 typecheck、504 Vitest 与5个PWA文件测试全部通过。
 这些是本增量实际代码/原生事务和受控协议证据，不是完整Cycle→Mission→科学Job→
 Evaluation、真实账号T07、完整T42或远端最新Head的CI/review/可合并结论。
+
+## 2026-09-12：原生准备到 Mission 准入与 Thread 绑定
+
+029迁移增加run_missions的不可变驱动/角色/Profile快照；科学Worker在两条终态
+ack路径前统一推进正式Cycle。成功必须具有精确的原生DATA_QUALITY生产者证据；
+暂停和账号操作保留通知，配置/输入错误与预算耗尽如实收束。同Cycle同角色只入队一次。
+Mission与科学消费者共用PGMQ原生条件读取，各自不隐藏或claim另一类任务。
+
+Thread回执仅保存原生身份、版本、公开有效设置和实际非秘密覆盖项，默认设置保持省略，
+不复制原生聊天。当前fence绑定唯一Session，重复回执逐项一致；配置修改、取消或接管
+不会替换Thread。新turn可在已绑定的DISPATCHING/RECONCILING Mission中预约，
+但要求已提交的首次发送意图、当前Profile/lease、有效预算和前轮已真实结算；不假造RUNNING。
+
+历史失败：`.ai-bridge/verify-NkKl06`暴露外键误指admission主键而不是run_id；
+`.ai-bridge/verify-nxpReW`全量456通过/5失败/0忽略，失败均是新Profile快照缺少
+schema_version封套；`.ai-bridge/verify-Sr5WGg`仅剩首轮不能在DISPATCHING预约。
+以上均已修正。当前`.ai-bridge/verify-CYPMGw`定向检查exit0：check/fmt/严格Clippy
+及真实PostgreSQL的Mission12、turns18、恢复8、Run生命周期30、约束7，共75通过，
+0失败/0忽略；源码快照未变，独立PG已停止。数据库测试中的原生返回仍是明确fixture，
+不是实际自动Codex Worker、独立Reviewer、T07/T42或最新GitHub Head的全绿验收。

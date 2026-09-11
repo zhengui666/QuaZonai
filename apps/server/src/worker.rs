@@ -132,7 +132,9 @@ impl Worker {
             None => return Err(WorkerFailure::TaskKind),
             Some(ClaimResult::Busy) => return Ok(()),
             Some(ClaimResult::Terminal(_)) => {
-                self.store.acknowledge_run(&message).await?;
+                if self.store.advance_initial_cycle(message.run_id).await? {
+                    self.store.acknowledge_run(&message).await?;
+                }
                 return Ok(());
             }
             Some(ClaimResult::Leased(lease)) => *lease,
@@ -162,7 +164,9 @@ impl Worker {
             () = &mut heartbeat => drive.await,
         };
         result?;
-        self.store.acknowledge_run(&message).await?;
+        if self.store.advance_initial_cycle(message.run_id).await? {
+            self.store.acknowledge_run(&message).await?;
+        }
         Ok(())
     }
 

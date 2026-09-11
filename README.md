@@ -128,3 +128,5 @@ Run 查询、取消和持久 SSE HTTP；完整路径和权限见 [CLI](CLI.md)�
 ### Brief 草稿作者流程
 
 现有控制面还支持研究Brief草稿的真实创建、读取、版本化和完整替换，包含当前机器权限、近期人工认证、原始响应幂等和数据库CAS。接口与授权形状见[CLI.md](CLI.md)。冻结后的内容和数据绑定不可改写；本条不表示完整Brief冻结、原生研究、组合交付或Web产品已验收。
+
+后续增量已接通正式Brief冻结、显式Profile选择、Cycle原生数据准备，以及准备完成后的Mission事务准入和唯一Thread回执存储。Mission与科学计算复用现有队列而分别选择任务；真实Codex驱动、科学结果续轮和完整产品验收仍在开发，详见[执行证据](docs/architecture/issue-62-execution.md)。
