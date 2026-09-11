@@ -14,6 +14,8 @@ use store::{
 };
 use tokio::{sync::watch, task::JoinSet};
 
+pub mod mission;
+
 #[derive(Clone)]
 pub struct Worker {
     store: Store,
@@ -30,6 +32,7 @@ pub enum WorkerFailure {
     Runtime,
     TaskKind,
     Contract,
+    Codex(&'static str, crate::codex_native::NativeFailure),
 }
 impl std::fmt::Display for WorkerFailure {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -39,6 +42,9 @@ impl std::fmt::Display for WorkerFailure {
             Self::Runtime => "native Runtime is unavailable or the remote outcome is unknown",
             Self::TaskKind => "this Run requires a different registered task driver",
             Self::Contract => "native task input or output violates its fixed contract",
+            Self::Codex(_, _) => {
+                "native Mission connection is unavailable; original Thread identity is preserved"
+            }
         })
     }
 }

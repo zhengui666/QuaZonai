@@ -634,3 +634,23 @@ owner、每owner一次签发与接管失效已通过真实PostgreSQL及原生验
 后续全量 `.ai-bridge/verify-4YvHCB` exit0：check/fmt/严格Clippy，领域149、managed6、
 native Codex25、Store+Server465通过，0失败/0忽略；源码未变，独立PG停止。
 这些是本地增量回归，仍不代表Mission Worker已接通或完整Issue62可合并。
+
+## 2026-09-12：可信 Mission bootstrap 与原生接管
+
+`MissionLauncher`复用原生Deployment配置/账号/catalog解析，创建独立空Git工作树，
+签发固定MCP范围，凭Run首次发送许可创建持久Thread并保存Session。探测不付费，
+默认模型覆盖仍省略。恢复使用原Thread/工作树并核对原始公开设置；未知start和未产生
+原生rollout的空Thread不创建替代Session。Git原生执行版本2.55.0；不克隆产品仓库、
+复制认证或读取原生聊天文件。
+
+`.ai-bridge/verify-WRDho0`暴露测试辅助函数参数数目及原生恢复失败；静态原因投影
+随后在`.ai-bridge/verify-KepXdL`确认RESUME_THREAD/-32603。根因是底层机器授权
+允许RECONCILING而MCP身份入口和实验提案仍拒绝，已统一两入口，未伪造RUNNING。
+当前`.ai-bridge/verify-7FUpAq` exit0：check/fmt/严格Clippy，Profile HTTP4、MCP5、
+Mission bootstrap3，共12通过/0失败/0忽略；源码未变，独立PG停止。实际官方进程
+重启、同Thread上下文、同账本两轮累计24个原生报告token及旧owner不能重发均通过。
+上游模型回答和市场准备仍是fixture；测试手动调用可信逐轮Store，生产Worker消费/
+资源约束/请求产物/科学结果回送尚未完成，不能当作完整T07/T42或GitHub当前Head验收。
+
+后续全量`.ai-bridge/verify-DHzFHw` exit0：check/fmt/严格Clippy、领域149、managed6、
+native Codex25、Store+Server469通过，0失败/0忽略；源码快照未变，独立PG确认停止。

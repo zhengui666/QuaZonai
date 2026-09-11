@@ -205,7 +205,10 @@ impl ControlClient {
             || run.cycle_id != Some(self.binding.cycle_id)
             || run.active_attempt_id != Some(self.binding.attempt_id)
             || run.kind != RunKind::AgentResearch
-            || !matches!(run.state, RunState::Dispatching | RunState::Running)
+            || !matches!(
+                run.state,
+                RunState::Dispatching | RunState::Running | RunState::Reconciling
+            )
             || run.deadline_at <= Utc::now()
             || session.expires_at <= Utc::now()
         {

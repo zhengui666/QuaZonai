@@ -2048,6 +2048,10 @@ Mission与科学消费者共用PGMQ的条件读取实现，各自只选不可变
 
 可信Mission服务复用现有machine_principals/credentials、原生随机能力、Argon2验证和SecretVault签发MCP凭据，不新增认证算法。签发只接受精确run_missions与当前Attempt/owner_epoch；当前项目/Cycle、Profile/账号和期限全部重验。每个Mission只有该服务创建的主体，每个Attempt/owner至多一次签发，同一public_token_id/verifier_ref回执可以核对，不能重新显示原明文。接管使用新owner的签发并推进主体epoch，旧token永久失效；禁用主体不得自动启用。研究者仅获RESEARCH_READ/EXPERIMENT_SUBMIT/ARTIFACT_SUBMIT/EVIDENCE_READ/RUN_READ，独立Reviewer不获EXPERIMENT_SUBMIT；没有Operator/Downstream、数据库、取消或任意URL权限。期限不晚于Run deadline，数据库只存原生验证器的私有引用；明文只交给受信任的MCP进程配置，不进模型消息或日志。
 
+Mission bootstrap复用CodexDeployment的原生账户、完整catalog与设置解析；有限的只读ephemeral探测不发模型轮，也不作为Mission身份。实际Mission的持久Thread仍只在Run首次发送许可后创建。受信任启动器用指定私有根下的run_id创建独立空Git工作树，禁用系统/个人Git配置与模板，不克隆QZ源码或认证文件；重启复用同目录，缺失/损坏的Git目录明确失败，不覆盖残留文件。工作区不能包含原生HOME/CODEX_HOME秘密范围。冻结Profile的默认覆盖继续省略；恢复必须重用原Thread且其实际model/provider/effort/service tier与原始回执一致，否则停止，不换身份或暗改默认设置。MCP启动后检查原生工具清单；本步骤只确认连接和Session，不标RUNNING、不发送付费轮，也不代替后续资源约束/逐轮Worker/科学结果回送。
+
+MCP身份校验与实验提案入口使用同一有效Mission状态集合：DISPATCHING/RUNNING/RECONCILING，并继续要求当前Attempt/owner、项目、Cycle、scope与deadline。RECONCILING不表示新轮已运行，但允许当前owner重新连接MCP与续作；不能先假造RUNNING来绕开恢复前置条件，也不能让旧token借新租约继续读写。
+
 ### B5.1 入队
 
 ```text

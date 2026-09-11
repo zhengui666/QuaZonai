@@ -25,8 +25,17 @@ mod codex_mission;
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn sdk_publishes_original_artifacts_and_proposal(pool: PgPool) {
+    publish(&pool, false).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn reconciling_mission_keeps_current_fenced_mcp_reads_and_proposals(pool: PgPool) {
+    publish(&pool, true).await;
+}
+
+async fn publish(pool: &PgPool, reconciling: bool) {
     let f = fixture(
-        &pool,
+        pool,
         &[
             "RUN_READ",
             "RESEARCH_READ",
@@ -35,6 +44,15 @@ async fn sdk_publishes_original_artifacts_and_proposal(pool: PgPool) {
         ],
     )
     .await;
+    if reconciling {
+        // Relational state fixture here; mission_worker separately exercises
+        // actual lease takeover and native resume through this same MCP gate.
+        sqlx::query("UPDATE app.runs SET state='RECONCILING' WHERE id=$1")
+            .bind(f.binding.run_id.as_uuid())
+            .execute(pool)
+            .await
+            .unwrap();
+    }
     let (client, task) = client(&f).await;
     let mut proposal = f.research.request.clone();
     for (kind, path) in [
@@ -84,7 +102,7 @@ async fn sdk_publishes_original_artifacts_and_proposal(pool: PgPool) {
     assert_eq!(retry["replayed"], true);
     assert_eq!(retry["resource"], body(&response)["resource"]);
     let counts: (i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.artifacts WHERE producer_run_id=$1),(SELECT count(*) FROM app.experiment_authorship WHERE author_run_id=$1)")
-        .bind(f.binding.run_id.as_uuid()).fetch_one(&pool).await.unwrap();
+        .bind(f.binding.run_id.as_uuid()).fetch_one(pool).await.unwrap();
     assert_eq!(counts, (3, 1));
     let mut changed = intent;
     changed["proposal"]["hypothesis"] = json!("different premise");

@@ -137,6 +137,40 @@ impl CodexDeployment {
             .collect()
     }
 
+    pub(crate) fn executable_path(&self) -> &std::ffi::OsStr {
+        &self.executable_path
+    }
+
+    /// No paid request. Reuse the actual account/catalog/settings observation;
+    /// the caller still needs a durable Run send permit and scoped MCP binding.
+    pub(crate) async fn mission_connection(
+        &self,
+        snapshot: &CodexProfileSnapshot,
+        vault: Arc<SecretVault>,
+        workspace: &Path,
+    ) -> Result<(Client, ThreadOptions), CodexProbeFailureV1> {
+        let profile = &snapshot.profile;
+        let binding = profile
+            .home_binding
+            .as_deref()
+            .and_then(|label| self.binding(label, profile.profile_origin).ok())
+            .ok_or(CodexProbeFailureV1::DeploymentUnavailable)?;
+        let workspace =
+            directory(workspace).map_err(|_| CodexProbeFailureV1::DeploymentUnavailable)?;
+        if binding.home.starts_with(&workspace)
+            || binding.codex_home.starts_with(&workspace)
+            || workspace.starts_with(&binding.codex_home)
+        {
+            return Err(CodexProbeFailureV1::DeploymentUnavailable);
+        }
+        let _gate = binding.gate.lock().await;
+        let launch = self.launch(snapshot, binding, &workspace, vault).await?;
+        let mut client = Client::start(launch).await.map_err(native_failure)?;
+        let (_, mut options) = inspect(&mut client, profile, &workspace).await?;
+        options.ephemeral = false;
+        Ok((client, options))
+    }
+
     pub async fn verify(
         &self,
         request: CodexBindingCheck,
@@ -194,6 +228,29 @@ impl CodexDeployment {
             .and_then(|label| self.binding(label, profile.profile_origin).ok())
             .ok_or(CodexProbeFailureV1::DeploymentUnavailable)?;
         let _gate = binding.gate.lock().await;
+        let launch = self
+            .launch(snapshot, binding, &binding.working_directory, vault)
+            .await?;
+        let mut client = Client::start(launch).await.map_err(native_failure)?;
+        let observed = inspect(&mut client, profile, &binding.working_directory).await;
+        let closed = client.close().await.map_err(native_failure);
+        match observed {
+            Err(error) => Err(error),
+            Ok((result, _)) => {
+                closed?;
+                Ok(result)
+            }
+        }
+    }
+
+    async fn launch(
+        &self,
+        snapshot: &CodexProfileSnapshot,
+        binding: &Binding,
+        working_directory: &Path,
+        vault: Arc<SecretVault>,
+    ) -> Result<Launch, CodexProbeFailureV1> {
+        let profile = &snapshot.profile;
         let custom_provider = if profile.connection_mode == ConnectionMode::CustomProvider {
             let id = snapshot
                 .credential_ref
@@ -213,25 +270,15 @@ impl CodexDeployment {
         } else {
             None
         };
-        let launch = Launch {
+        Ok(Launch {
             binary: self.binary.clone(),
             home: binding.home.clone(),
             codex_home: binding.codex_home.clone(),
-            working_directory: binding.working_directory.clone(),
+            working_directory: working_directory.to_owned(),
             executable_path: self.executable_path.clone(),
             native_environment: binding.environment.clone(),
             custom_provider,
-        };
-        let mut client = Client::start(launch).await.map_err(native_failure)?;
-        let observed = inspect(&mut client, profile, &binding.working_directory).await;
-        let closed = client.close().await.map_err(native_failure);
-        match observed {
-            Err(error) => Err(error),
-            Ok(result) => {
-                closed?;
-                Ok(result)
-            }
-        }
+        })
     }
 }
 
@@ -253,7 +300,7 @@ async fn inspect(
     client: &mut Client,
     profile: &CodexProfileViewV1,
     working_directory: &Path,
-) -> Result<CodexProbeOutcomeV1, CodexProbeFailureV1> {
+) -> Result<(CodexProbeOutcomeV1, ThreadOptions), CodexProbeFailureV1> {
     let account = account_view(client.account().await.map_err(native_failure)?);
     if account.requires_openai_auth && account.authentication_kind.is_none() {
         return Err(CodexProbeFailureV1::AuthenticationRequired);
@@ -342,17 +389,20 @@ async fn inspect(
     } else {
         default
     };
-    Ok(CodexProbeOutcomeV1::Available {
-        native_version: native::VERSION.into(),
-        account,
-        effective: CodexEffectiveSettingsV1 {
-            model: effective.model,
-            provider: effective.model_provider,
-            reasoning_effort: effective.reasoning_effort,
-            service_tier: effective.service_tier,
+    Ok((
+        CodexProbeOutcomeV1::Available {
+            native_version: native::VERSION.into(),
+            account,
+            effective: CodexEffectiveSettingsV1 {
+                model: effective.model,
+                provider: effective.model_provider,
+                reasoning_effort: effective.reasoning_effort,
+                service_tier: effective.service_tier,
+            },
+            models,
         },
-        models,
-    })
+        options,
+    ))
 }
 
 fn account_view(account: native::AccountState) -> CodexAccountV1 {

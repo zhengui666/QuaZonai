@@ -137,7 +137,7 @@ async fn authorize(
                 PrincipalKind::Cli if machine.run_id.is_none() => ("CLI", "OPERATOR", None, None),
                 PrincipalKind::Mission => {
                     let run = machine.run_id.ok_or(StoreError::InvalidCredentials)?;
-                    let row = sqlx::query("SELECT r.active_attempt_id FROM app.runs r JOIN app.run_attempts a ON a.id=r.active_attempt_id AND a.run_id=r.id WHERE r.id=$1 AND r.project_id=$2 AND r.cycle_id=$3 AND r.kind='AGENT_RESEARCH' AND r.state IN ('DISPATCHING','RUNNING') AND r.deadline_at>clock_timestamp() AND a.lease_expires_at>clock_timestamp()")
+                    let row = sqlx::query("SELECT r.active_attempt_id FROM app.runs r JOIN app.run_attempts a ON a.id=r.active_attempt_id AND a.run_id=r.id WHERE r.id=$1 AND r.project_id=$2 AND r.cycle_id=$3 AND r.kind='AGENT_RESEARCH' AND r.state IN ('DISPATCHING','RUNNING','RECONCILING') AND r.deadline_at>clock_timestamp() AND a.lease_expires_at>clock_timestamp()")
                         .bind(run.as_uuid()).bind(project.as_uuid()).bind(cycle.as_uuid())
                         .fetch_optional(&mut **tx).await?.ok_or(StoreError::Forbidden)?;
                     let attempt = db::optional_id(&row, "active_attempt_id")?
