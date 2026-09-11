@@ -1,68 +1,26 @@
-SHELL := /usr/bin/env bash
-.DEFAULT_GOAL := help
+.PHONY: check check-unit check-store check-http require-test-database native
 
-.PHONY: help install-dev format lint typecheck test test-unit test-integration compile migrate preflight up down logs ps build verify-compose ci
+# Full check fails closed when a disposable test database was not provided.
+check: require-test-database
+	cargo fmt --all -- --check
+	cargo clippy --locked --workspace --all-targets -- -D warnings
+	cargo test --locked --workspace
 
-help:
-	@printf '%s\n' \
-	  'install-dev      Install backend development and Codex runtime dependencies' \
-	  'format           Format Python sources' \
-	  'lint             Run Python lint checks' \
-	  'typecheck        Run Python type checks' \
-	  'test             Run Python tests' \
-	  'compile          Compile Python sources' \
-	  'migrate          Run database preflight and Alembic upgrade' \
-	  'up/down/logs/ps  Operate the Core Compose stack' \
-	  'build            Build the backend image' \
-	  'ci               Run the local CI-equivalent checks'
+# Explicitly narrower entrypoint; it is not full Store/product acceptance.
+check-unit:
+	cargo fmt --all -- --check
+	cargo clippy --locked --workspace --all-targets -- -D warnings
+	cargo test --locked --workspace --exclude store --exclude server
 
-install-dev:
-	python -m pip install -e 'backend[dev,research,agent]'
+check-store: require-test-database
+	cargo test --locked -p store
 
-format:
-	ruff format backend/src backend/tests
+check-http: require-test-database
+	cargo test --locked -p server
 
-lint:
-	ruff check backend/src backend/tests
+require-test-database:
+	@test -n "$$DATABASE_URL" || { printf '%s\n' 'DATABASE_URL is required: use only a disposable PostgreSQL18 + PGMQ1.10.0 test instance.' >&2; exit 1; }
 
-typecheck:
-	mypy --config-file backend/pyproject.toml backend/src
-
-test:
-	pytest -q backend/tests
-
-test-unit:
-	pytest -q backend/tests/unit
-
-test-integration:
-	pytest -q backend/tests/integration
-
-compile:
-	python -m compileall -q backend/src
-
-preflight:
-	python -m quazonai.db.preflight
-
-migrate:
-	python -m quazonai.db.preflight
-	alembic -c backend/alembic.ini upgrade head
-
-up:
-	docker compose --env-file .env up --build --remove-orphans
-
-down:
-	docker compose --env-file .env down --remove-orphans
-
-logs:
-	docker compose --env-file .env logs --follow --tail=200
-
-ps:
-	docker compose --env-file .env ps
-
-build:
-	docker build -f deploy/Dockerfile.backend -t quazonai-backend:local .
-
-verify-compose:
-	docker compose --env-file .env.example config --quiet
-
-ci: compile lint typecheck test verify-compose
+native:
+	@test -n "$(OUTPUT)" || { printf '%s\n' 'OUTPUT must name a new directory.' >&2; exit 1; }
+	cargo run --locked -p job -- verify-native --output "$(OUTPUT)"

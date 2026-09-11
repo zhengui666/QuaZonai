@@ -1,0 +1,78 @@
+// Loopback-only SYNTHETIC browser lifecycle fixture. Not a product API server.
+// It serves the real build and varies a comment in the actual generated worker
+// to exercise browser update/activation without modifying any product file.
+import { createServer } from 'node:http';
+import fs from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { resolve, extname, relative, isAbsolute } from 'node:path';
+import { fileURLToPath } from 'node:url';
+const root = fileURLToPath(new URL('../dist/', import.meta.url));
+
+// Linux test-host adapter, not a product file API. A held directory descriptor
+// anchors each single-component open even if its old pathname is replaced.
+export async function readStaticAsset(directory, pathname) {
+  if (process.platform !== 'linux') throw new Error('The PWA fixture requires Linux directory descriptors');
+  const decoded = decodeURIComponent(pathname === '/' ? '/index.html' : pathname);
+  if (!decoded.startsWith('/') || decoded.includes('\0')) throw new Error('Invalid static asset');
+  const target = resolve(directory, '.' + decoded);
+  const location = relative(directory, target);
+  const parts = location.split('/');
+  if (isAbsolute(location) || parts.length > 32 || parts.some(part => !part || part === '.' || part === '..')) {
+    throw new Error('Static asset outside build directory or depth limit');
+  }
+  const flags = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
+  const handles = [];
+  try {
+    let parent = await fs.open(resolve(directory), flags | constants.O_DIRECTORY);
+    handles.push(parent);
+    for (let index = 0; index < parts.length; index++) {
+      const final = index === parts.length - 1;
+      const file = await fs.open(`/proc/self/fd/${parent.fd}/${parts[index]}`,
+        final ? flags : flags | constants.O_DIRECTORY);
+      handles.push(file);
+      if (final) {
+        if (!(await file.stat()).isFile()) throw new Error('Static asset must be a regular file');
+        return { bytes: await file.readFile(), extension: extname(target) };
+      }
+      parent = file;
+    }
+    throw new Error('Static asset missing');
+  } finally {
+    // Attempt every close even if one native close fails; never leak its parents.
+    const closed = await Promise.allSettled(handles.reverse().map(handle => handle.close()));
+    const failure = closed.find(item => item.status === 'rejected');
+    if (failure) throw failure.reason;
+  }
+}
+
+let release = 1;
+const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
+const policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self' data:; worker-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
+const session = { schema_version: 1, authenticated_at: '2026-09-08T00:00:00Z', expires_at: '2030-09-09T00:00:00Z', trusted_device_id: null, recent_authentication_required: false };
+const server = createServer(async (request, response) => {
+  const json = (value, status = 200) => { response.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); response.end(JSON.stringify(value)); };
+  try {
+    const path = new URL(request.url, 'http://127.0.0.1:4180').pathname;
+    if (path === '/__fixture__/health') return json({ fixture: 'SYNTHETIC', ready: true });
+    if (path === '/__fixture__/release' && request.method === 'POST') return json({ release: ++release });
+    if (path === '/api/v2/bootstrap/status') return json({ schema_version: 1, initialized: true, setup_allowed: false });
+    if (path === '/api/v2/auth/session') return json(session);
+    if (path === '/api/v2/projects') return json({ schema_version: 1, items: [], next_cursor: null });
+    if (path === '/api/fixture-private') return json({ fixture: 'SYNTHETIC-PRIVATE-CACHE-MARKER' });
+    if (path.startsWith('/api/') || !['GET', 'HEAD'].includes(request.method)) return json({ fixture: 'NOT_IMPLEMENTED' }, 404);
+    const asset = await readStaticAsset(root, path);
+    let contents = asset.bytes;
+    if (path === '/sw.js') contents = Buffer.concat([contents, Buffer.from(`\n// Synthetic lifecycle release ${release}\n`)]);
+    response.writeHead(200, {
+      'Content-Type': mime[asset.extension] ?? 'application/octet-stream',
+      'Cache-Control': path.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache',
+      'Content-Security-Policy': policy, 'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY',
+    });
+    response.end(request.method === 'HEAD' ? undefined : contents);
+  } catch { if (!response.headersSent) json({ fixture: 'NOT_FOUND' }, 404); else response.end(); }
+});
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  server.listen(4180, '127.0.0.1', () => console.log('Synthetic PWA lifecycle fixture listening on loopback:4180'));
+  for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { server.closeAllConnections(); server.close(() => process.exit(0)); });
+}

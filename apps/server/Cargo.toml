@@ -1,0 +1,41 @@
+[package]
+name = "server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+futures-util = "=0.3.34"
+contracts = { path = "../../crates/contracts" }
+domain = { path = "../../crates/domain" }
+store = { path = "../../crates/store" }
+integrations = { path = "../../crates/integrations" }
+serde.workspace = true
+serde_json.workspace = true
+axum = { version = "=0.8.9", features = ["macros"] }
+tokio = { version = "=1.53.1", features = ["full"] }
+tower-sessions = { version = "=0.14.0", default-features = false, features = ["axum-core", "private"] }
+tower-sessions-sqlx-store = { version = "=0.15.0", features = ["postgres"] }
+clap = { version = "=4.5.46", features = ["derive", "env"] }
+chrono = { version = "=0.4.45", features = ["serde"] }
+time = "=0.3.41"
+url = "=2.5.8"
+utoipa = { version = "=5.4.0", features = ["chrono", "uuid"] }
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.19", features = ["env-filter", "json"] }
+rmcp = { version = "=3.2.0", default-features = false, features = ["server", "macros", "transport-io"] }
+reqwest = { version = "=0.12.23", default-features = false, features = ["json", "rustls-tls", "stream"] }
+eventsource-stream = "=0.2.3"
+
+[dev-dependencies]
+rustls = { version = "=0.23.43", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "=0.26.5", default-features = false, features = ["ring", "tls12"] }
+uuid = "=1.26.0"
+sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-tokio", "postgres", "macros", "migrate", "uuid", "chrono"] }
+tower = { version = "=0.5.2", features = ["util"] }
+tempfile = "=3.27.0"
+totp-rs = { version = "=5.7.0", features = ["gen_secret", "otpauth"] }
+rmcp = { version = "=3.2.0", default-features = false, features = ["client"] }

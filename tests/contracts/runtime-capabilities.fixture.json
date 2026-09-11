@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "protocol_versions": [1],
+  "runtime_version": "protocol-fixture-not-a-production-runtime",
+  "engine_versions": {"fixture-engine": "1"},
+  "image_refs": [
+    {"job_kind": "DATA_VALIDATE", "image_ref": "example.invalid/fixture@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    {"job_kind": "ALPHA_EVALUATE", "image_ref": "example.invalid/fixture@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+  ],
+  "job_kinds": ["DATA_VALIDATE", "ALPHA_EVALUATE"],
+  "artifact_schemas": [{"name": "qz.job_result", "version": "1"}],
+  "data_kinds": ["BAR"],
+  "venues": [{"venue": "FIXTURE", "instrument_classes": ["EQUITY"], "data_kinds": ["BAR"], "expiry_and_settlement": false}],
+  "label_interval_support": {"fixed_bars": true, "fixed_duration": false, "variable_interval": false},
+  "solver_capabilities": [],
+  "max_cpu": 2,
+  "max_memory_mib": 4096,
+  "max_output_bytes": "67108864",
+  "max_wall_seconds": 3600,
+  "isolation_profile": "OCI_RESEARCH_V1",
+  "checked_at": "2026-09-09T00:00:00Z"
+}

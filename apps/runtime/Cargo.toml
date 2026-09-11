@@ -1,0 +1,44 @@
+[package]
+name = "runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+# Selected by a mandatory native-Docker CI job. Missing Docker/image prerequisites
+# fail that explicit target; ordinary unit tests never masquerade as OCI evidence.
+native-oci = []
+
+[[test]]
+name = "native_oci"
+path = "tests/native_oci.rs"
+required-features = ["native-oci"]
+
+[dependencies]
+contracts = { path = "../../crates/contracts" }
+domain = { path = "../../crates/domain" }
+integrations = { path = "../../crates/integrations" }
+serde.workspace = true
+serde_json.workspace = true
+axum = { version = "=0.8.9", features = ["macros"] }
+tokio = { version = "=1.53.1", features = ["full"] }
+futures-util = "=0.3.34"
+sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros", "chrono"] }
+bollard = { version = "=0.21.1", default-features = false, features = ["pipe"] }
+# Parse native instrument identities only; the gateway does not run a research engine.
+nautilus-model = { version = "=0.63.0", default-features = false }
+chrono = { version = "=0.4.45", features = ["serde"] }
+clap = { version = "=4.5.46", features = ["derive"] }
+utoipa = { version = "=5.4.0", features = ["chrono", "uuid"] }
+thiserror = "=2.0.20"
+rustix = { version = "=1.1.4", features = ["fs"] }
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.19", features = ["env-filter", "json"] }
+
+[dev-dependencies]
+tempfile = "=3.27.0"
+tower = { version = "=0.5.2", features = ["util"] }
+reqwest = { version = "=0.12.23", default-features = false, features = ["json", "rustls-tls"] }

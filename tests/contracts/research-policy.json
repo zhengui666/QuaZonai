@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "project_id": "01980000-0000-7000-8000-000000000001",
+  "question": "Does the proposed effect survive the registered validation?",
+  "comparison_input_set_id": "01980000-0000-7000-8000-000000000002",
+  "execution_assumptions_id": "01980000-0000-7000-8000-000000000003",
+  "selection": {
+    "evaluation_kind": "WALK_FORWARD",
+    "metric_code": "RETURN",
+    "metric_scope": "total",
+    "method_id": "native_method_intent_not_qualified",
+    "method_version": "1",
+    "unit": "fraction",
+    "frequency": "daily",
+    "direction": "MAXIMIZE",
+    "candidate_count": 2
+  },
+  "split_policy": {
+    "schema_version": 1,
+    "kind": "WALK_FORWARD",
+    "train_size": "100",
+    "test_size": "20",
+    "step_size": "20",
+    "group_count": null,
+    "test_group_count": null,
+    "purge_observations": "1",
+    "embargo_observations": "1",
+    "label_horizon_observations": "1",
+    "interval_validation_required": true,
+    "sealed_revision_id": "01980000-0000-7000-8000-000000000004"
+  },
+  "metric_requirements": [{
+    "schema_version": 1,
+    "metric_code": "RETURN",
+    "scope": "total",
+    "comparator": "GE",
+    "threshold_low": "0.10000000000000001",
+    "threshold_high": null,
+    "required": true,
+    "minimum_observations": "20",
+    "method_allowlist": ["native_method_intent_not_qualified"]
+  }],
+  "minimum_observations": 20,
+  "maximum_missing_fraction": "0.05",
+  "require_real_data": true,
+  "required_capabilities": ["NATIVE_CAPABILITY_INTENT"],
+  "maximum_sealed_uses_per_lineage": 1,
+  "validity_seconds": "3600"
+}

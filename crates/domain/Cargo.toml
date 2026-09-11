@@ -1,0 +1,21 @@
+[package]
+name = "domain"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+contracts = { path = "../contracts" }
+chrono = { version = "=0.4.45", features = ["serde"] }
+thiserror = "=2.0.20"
+iso_currency = "=0.7.0"
+bigdecimal = "=0.4.8"
+serde_json.workspace = true
+url = "=2.5.8"
+oci-spec = { version = "=0.10.0", default-features = false, features = ["distribution"] }
+
+[dev-dependencies]
+proptest = "=1.7.0"

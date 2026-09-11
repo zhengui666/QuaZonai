@@ -1,0 +1,46 @@
+[package]
+name = "job"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+chrono = { version = "=0.4.45", features = ["serde"] }
+arrow-array = "=56.2.0"
+arrow-schema = "=56.2.0"
+arrow-ipc = "=56.2.0"
+clarabel = "=0.11.1"
+nautilus-backtest = { version = "=0.63.0", default-features = false }
+nautilus-analysis = { version = "=0.63.0", default-features = false }
+nautilus-common = { version = "=0.63.0", default-features = false }
+nautilus-core = { version = "=0.63.0", default-features = false }
+nautilus-execution = { version = "=0.63.0", default-features = false }
+nautilus-portfolio = { version = "=0.63.0", default-features = false }
+nautilus-persistence = { version = "=0.63.0", default-features = false }
+nautilus-indicators = { version = "=0.63.0", default-features = false }
+rust_decimal = "=1.42.1"
+nautilus-model = { version = "=0.63.0", default-features = false, features = ["test-support"] }
+nautilus-trading = { version = "=0.63.0", default-features = false, features = ["examples"] }
+anyhow = "=1.0.104"
+clap = { version = "=4.5.46", features = ["derive"] }
+contracts = { path = "../../crates/contracts" }
+domain = { path = "../../crates/domain" }
+bigdecimal = "=0.4.8"
+iso_currency = "=0.7.0"
+rustix = { version = "=1.1.4", features = ["fs"] }
+nalgebra = { version = "=0.35.0", default-features = false, features = ["std"] }
+solow-cv = "=0.7.3"
+ndarray = "=0.17.1"
+ndarray-stats = "=0.7.0"
+linregress = "=0.5.4"
+# Explicit portable dispatch avoids relying on tail-call optimization in debug builds.
+wasmi = { version = "=2.0.0", default-features = false, features = ["stable", "std", "validate", "deterministic", "extra-checks", "portable-dispatch"] }
+
+[dev-dependencies]
+tempfile = "=3.27.0"
+wat = "=1.258.0"
