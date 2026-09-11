@@ -807,6 +807,23 @@ NativeSimulationRequestV1用同一账户、NETTING、固定Nautilus0.63.0和明�
 
 `GET /api/v2/experiments` 与 `/{id}` 使用项目RESEARCH_READ或Operator身份、原生游标和1–100分页。返回提案及原生作者Run/Attempt元数据，不返回机器秘密/存储路径。结果投影显式 `result_visibility=PENDING|RESEARCH|RESTRICTED`：未产生结果的PENDING可显示；已知DISCOVERY/VALIDATION运行且输入不含Sealed、结论为同项目RESEARCH报告时才显示实际outcome/公开reason/conclusion_ref。未知来源、Sealed或EVALUATOR_ONLY结果全部字段置null并标RESTRICTED，不伪装PENDING，不因Operator/RESEARCH_READ就自动披露摘要。专门证据披露仍须冻结政策和暴露预约，不能由此GET绕过。此提案入口不启动科学任务、不制造Alpha/资格，也不替代正式冻结/Cycle/Worker服务。
 
+### A3.5 提案到原生编译的事务关联
+
+可信研究Mission可为同项目/同Cycle的正式PENDING提案准备一次原生CompileModel。
+`experiment_compilations`仅保存不可变关联：experiment_id主键、project_id/cycle_id、
+mission_run_id、compile_run_id唯一、code_artifact_id、parameter_artifact_id、created_at。
+它不拥有新的任务状态；执行、重投、预算、取消和结果仍由原Run/Attempt/PGMQ驱动。
+关系引用必须指向原提案、同Cycle研究者Mission及DATA_VALIDATE原生任务；没有
+experiment_authorship的历史提案不推断作者或自动执行。首次关联冻结提案代码/参数
+指针，后续修正使用有父血缘的新提案，不替换已执行输入或抹去失败记录。
+
+编译只带原CODE和可信服务生成的CompileModel参数，不挂载Dataset或Sealed；输入
+集合仍引用冻结Discovery上下文供准入重验。该准备任务experiments=0，CPU/内存/
+输出/墙钟仍在既有预算事务预约，并且期限不能超过所属Mission。调用者只能是持
+有效fence的可信Worker，不增加Agent通用执行接口。产物发表、Run/原生定义、编译
+关联及消息同事务提交；相同提案重放返回原Run，不换模型或身份。编译产生的MODEL
+仅是后续预测输入，SYNTHETIC编译来源不冒充市场数据或Alpha资格。
+
 ## A4. 输入、政策、评估、资格与暴露
 
 ```text

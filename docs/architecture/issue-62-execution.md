@@ -832,3 +832,25 @@ MCP5、Mission13共22项通过/0失败/0忽略。两次源码前后不变，各�
 续请求共享本Turn预约并累计用量，新turn/start单独预约；不宣称限制Provider HTTP
 请求次数，不新增模型代理或接管原生工具循环。这是50c0d024基础上的本地增量，
 不是GitHub当前Head CI或全量W0–W8/T01–T42完成证据。
+
+## 2026-09-12：提案与编译任务的原子关联
+
+新增030的不可变experiment_compilations边，复用已有Run/Attempt/原生定义/PGMQ。
+可信当前Researcher Mission可为同Cycle的正式提案准备一次CompileModel；原代码、
+参数指针在关联建立后冻结，旧来源不回填。任务只携CODE和服务生成的参数，无任何
+Dataset挂载；准备的experiments=0，其他资源仍由原准入事务预约，期限不越过Mission。
+重放取原Run，不重新发表或收费；没有新引擎、队列、公共执行DTO或应用hash。
+
+`.ai-bridge/verify-6zRwrd` exit0通过check/fmt/严格Clippy及104项真实PG回归。
+之后只补最终关联写入失败的故障断言：原生文件已发表，Run/任务定义/PGMQ已在
+同一事务准备，再由独立测试数据库触发器拒绝最后插入；五项计数确认Run、产物
+记录、队列、原生定义、CPU预算全部回滚，已发表对象保留，移除测试触发器后可
+正常重试。没有通过删除文件或修改正式迁移来让检查通过。
+
+最终`.ai-bridge/verify-2LK0GF` exit0再次通过check/fmt/严格Clippy与104项PG回归
+（constraints7、data_validation7、experiment_compilations2、experiments11、missions19、
+run_lifecycle30、turn_recovery8、turns20），0失败/0忽略。两次源码前后不变、独立PG
+确认停止。正例检查并发只建一个Run/一份预算、原生参数精确引用原CODE且无市场
+输入；反例检查陈旧fence、发表失败、非零试验计数、执行后改代码及删关联均拒绝。
+这是79bb243c基础上的任务准备证据，不代表真实编译/预测执行、同Thread结果回送、
+Alpha资格或完整交付；Worker后续阶段尚须接通。

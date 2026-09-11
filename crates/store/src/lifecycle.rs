@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{postgres::PgRow, Postgres, Row, Transaction};
 
+mod experiment;
 pub mod mission;
 pub mod native;
 mod queue;
