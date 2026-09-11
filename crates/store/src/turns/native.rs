@@ -77,6 +77,88 @@ async fn request_size(
     Ok(Some(bytes))
 }
 
+pub(super) async fn prepare_in_transaction<R, Read, P, Published>(
+    tx: &mut Tx<'_>,
+    run: Id,
+    fence: &WorkerFence,
+    request: &TurnRequest,
+    text: &str,
+    read: R,
+    publish: P,
+) -> Result<Reservation, StoreError>
+where
+    R: FnOnce(Id, DbCounter) -> Read,
+    Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
+    P: FnOnce(NativeObjectPublication) -> Published,
+    Published: std::future::Future<Output = Result<(), StoreError>>,
+{
+    prompt(text)?;
+    let mission = lock_mission(tx, run, fence).await?;
+    let defined: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.run_missions WHERE run_id=$1)")
+            .bind(run.as_uuid())
+            .fetch_one(&mut **tx)
+            .await?;
+    if !defined {
+        return Err(StoreError::Invalid("mission_not_defined"));
+    }
+    let document = RequestDocument {
+        schema_version: SchemaV1,
+        run_id: run,
+        session_id: id(mission.session_id)?,
+        attempt_id: fence.attempt_id,
+        command_key: request.command_key.clone(),
+        turn_kind: kind_name(request.turn_kind).into(),
+        prompt: text.into(),
+    };
+    let bytes = serde_json::to_vec(&document).map_err(|_| StoreError::Integrity)?;
+    if bytes.len() as u64 > MAX_DOCUMENT {
+        return Err(StoreError::Invalid("native_turn_document"));
+    }
+    let artifact = request.request_artifact_id;
+    let existing = request_size(tx, &mission, artifact, fence.attempt_id).await?;
+    if let Some(size) = existing {
+        if size.get() != bytes.len() as u64 || read(artifact, size).await? != bytes {
+            return Err(StoreError::Conflict);
+        }
+    } else {
+        let limits: serde_json::Value =
+            sqlx::query_scalar("SELECT limits FROM app.run_admissions WHERE run_id=$1")
+                .bind(run.as_uuid())
+                .fetch_one(&mut **tx)
+                .await?;
+        let limits: JobLimitsV1 =
+            serde_json::from_value(limits).map_err(|_| StoreError::Integrity)?;
+        let used:i64=sqlx::query_scalar("SELECT coalesce(sum(byte_count),0)::bigint FROM app.artifacts WHERE producer_run_id=$1")
+            .bind(run.as_uuid()).fetch_one(&mut **tx).await?;
+        if count(used)?
+            .get()
+            .checked_add(bytes.len() as u64)
+            .is_none_or(|total| total > limits.output_bytes.get())
+        {
+            return Err(DomainError::BudgetExhausted("output_bytes").into());
+        }
+        sqlx::query("INSERT INTO app.artifacts(id,project_id,producer_run_id,producer_attempt_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,$3,$4,'PARAMETERS','application/json','qz.mission_turn','1','LOCAL',$5,'1',$6,'RESEARCH','SYNTHETIC','RUNTIME','REFERENCED')")
+            .bind(artifact.as_uuid()).bind(mission.project_id).bind(run.as_uuid()).bind(fence.attempt_id.as_uuid())
+            .bind(artifact.to_string()).bind(bytes.len() as i64).execute(&mut **tx).await?;
+    }
+    // One shared admission implementation; failed admission publishes no file.
+    let result = reserve_in_transaction(tx, run, fence, request).await?;
+    if existing.is_none() {
+        publish(NativeObjectPublication {
+            id: artifact,
+            bytes,
+        })
+        .await?;
+        // Local publication can outlast the lease/deadline. Preserve bytes on
+        // uncertainty; the existing Run-locked orphan reconciler handles them.
+        lock_mission(tx, run, fence)
+            .await?
+            .admit(request.deadline_at)?;
+    }
+    Ok(result)
+}
+
 impl Store {
     /// Prepare only the first research request. Existing work always wins; the
     /// shared publication/reservation transaction remains the spending authority.
@@ -206,71 +288,9 @@ impl Store {
         P: FnOnce(NativeObjectPublication) -> Published,
         Published: std::future::Future<Output = Result<(), StoreError>>,
     {
-        prompt(text)?;
         let mut tx = self.pool.begin().await?;
-        let mission = lock_mission(&mut tx, run, fence).await?;
-        let defined: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.run_missions WHERE run_id=$1)")
-                .bind(run.as_uuid())
-                .fetch_one(&mut *tx)
-                .await?;
-        if !defined {
-            return Err(StoreError::Invalid("mission_not_defined"));
-        }
-        let document = RequestDocument {
-            schema_version: SchemaV1,
-            run_id: run,
-            session_id: id(mission.session_id)?,
-            attempt_id: fence.attempt_id,
-            command_key: request.command_key.clone(),
-            turn_kind: kind_name(request.turn_kind).into(),
-            prompt: text.into(),
-        };
-        let bytes = serde_json::to_vec(&document).map_err(|_| StoreError::Integrity)?;
-        if bytes.len() as u64 > MAX_DOCUMENT {
-            return Err(StoreError::Invalid("native_turn_document"));
-        }
-        let artifact = request.request_artifact_id;
-        let existing = request_size(&mut tx, &mission, artifact, fence.attempt_id).await?;
-        if let Some(size) = existing {
-            if size.get() != bytes.len() as u64 || read(artifact, size).await? != bytes {
-                return Err(StoreError::Conflict);
-            }
-        } else {
-            let limits: serde_json::Value =
-                sqlx::query_scalar("SELECT limits FROM app.run_admissions WHERE run_id=$1")
-                    .bind(run.as_uuid())
-                    .fetch_one(&mut *tx)
-                    .await?;
-            let limits: JobLimitsV1 =
-                serde_json::from_value(limits).map_err(|_| StoreError::Integrity)?;
-            let used:i64=sqlx::query_scalar("SELECT coalesce(sum(byte_count),0)::bigint FROM app.artifacts WHERE producer_run_id=$1")
-                .bind(run.as_uuid()).fetch_one(&mut *tx).await?;
-            if count(used)?
-                .get()
-                .checked_add(bytes.len() as u64)
-                .is_none_or(|total| total > limits.output_bytes.get())
-            {
-                return Err(DomainError::BudgetExhausted("output_bytes").into());
-            }
-            sqlx::query("INSERT INTO app.artifacts(id,project_id,producer_run_id,producer_attempt_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,$3,$4,'PARAMETERS','application/json','qz.mission_turn','1','LOCAL',$5,'1',$6,'RESEARCH','SYNTHETIC','RUNTIME','REFERENCED')")
-                .bind(artifact.as_uuid()).bind(mission.project_id).bind(run.as_uuid()).bind(fence.attempt_id.as_uuid())
-                .bind(artifact.to_string()).bind(bytes.len() as i64).execute(&mut *tx).await?;
-        }
-        // One shared admission implementation; failed admission publishes no file.
-        let result = reserve_in_transaction(&mut tx, run, fence, request).await?;
-        if existing.is_none() {
-            publish(NativeObjectPublication {
-                id: artifact,
-                bytes,
-            })
-            .await?;
-            // Local publication can outlast the lease/deadline. Preserve bytes on
-            // uncertainty; the existing Run-locked orphan reconciler handles them.
-            lock_mission(&mut tx, run, fence)
-                .await?
-                .admit(request.deadline_at)?;
-        }
+        let result =
+            prepare_in_transaction(&mut tx, run, fence, request, text, read, publish).await?;
         tx.commit().await?;
         Ok(result)
     }

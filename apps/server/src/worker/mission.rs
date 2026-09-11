@@ -156,6 +156,31 @@ impl Worker {
             .next_mission_experiment(lease.run.id, &lease.fence)
             .await?
         else {
+            let reading = self.objects.clone();
+            let publishing = self.objects.clone();
+            self.store
+                .prepare_mission_result_turn(
+                    lease.run.id,
+                    &lease.fence,
+                    move |id, size| {
+                        let objects = reading.clone();
+                        async move {
+                            tokio::task::spawn_blocking(move || objects.read(id, size))
+                                .await
+                                .map_err(|_| StoreError::Integrity)?
+                                .map_err(|_| StoreError::Integrity)
+                        }
+                    },
+                    move |object| async move {
+                        tokio::task::spawn_blocking(move || {
+                            publishing.put(object.id, &object.bytes)
+                        })
+                        .await
+                        .map_err(|_| StoreError::Integrity)?
+                        .map_err(|_| StoreError::Integrity)
+                    },
+                )
+                .await?;
             return Ok(());
         };
         let native = self.transport(lease).await?;

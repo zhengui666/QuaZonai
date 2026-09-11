@@ -107,6 +107,9 @@ Worker在首次提交之前刷新必要的原生探测；提交结果未知时�
 0700，不得指向源仓库、个人HOME或Codex认证目录。缺配置不消费Mission消息。
 科学任务与Mission各自最多parallelism个在途驱动；不新增Agent工具循环。
 当前自动入口已接首轮准备和原生轮账本，结算轮不等于研究流程收束，不ack Mission。
+已采纳的原编译失败或Discovery预测终态通过同一Thread的预算Turn回送；每个原生
+任务最多一次，重复消费不重复扣费。预测摘要保留原产物与origin，首尾观察抽样
+不是正式指标/PASS。修复新提案必须引用原parent_experiment_id，不覆盖已执行输入。
 
 ## 原生科学任务入口
 

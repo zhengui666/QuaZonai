@@ -148,6 +148,25 @@ pub async fn complete_compilation(
     f: &cycle_support::Fixture,
     run: Id,
 ) -> Id {
+    complete_native(pool, store, f, run, true).await
+}
+
+pub async fn complete_forecast(
+    pool: &PgPool,
+    store: &Store,
+    f: &cycle_support::Fixture,
+    run: Id,
+) -> Id {
+    complete_native(pool, store, f, run, false).await
+}
+
+async fn complete_native(
+    pool: &PgPool,
+    store: &Store,
+    f: &cycle_support::Fixture,
+    run: Id,
+    compilation: bool,
+) -> Id {
     use contracts::{execution::NativeModelCompilationV1, runtime_jobs::*, Revision};
     let message = store
         .read_native_run_messages(1, 100)
@@ -165,42 +184,116 @@ pub async fn complete_compilation(
     };
     let job = store.native_job(run, &lease.fence).await.unwrap();
     assert!(store.begin_run_dispatch(run, &lease.fence).await.unwrap());
-    let code = job
-        .spec
-        .inputs
-        .iter()
-        .find_map(|input| match input {
-            RuntimeInputV1::Artifact {
-                artifact_id,
-                role: contracts::research::ArtifactInputRole::Code,
-                ..
-            } => Some(*artifact_id),
-            _ => None,
+    let model_ref = Id::new();
+    let payloads = if compilation {
+        let code = job
+            .spec
+            .inputs
+            .iter()
+            .find_map(|input| match input {
+                RuntimeInputV1::Artifact {
+                    artifact_id,
+                    role: contracts::research::ArtifactInputRole::Code,
+                    ..
+                } => Some(*artifact_id),
+                _ => None,
+            })
+            .unwrap();
+        let wasm = b"\0asm\x01\0\0\0".to_vec();
+        let report = serde_json::to_vec(&NativeModelCompilationV1 {
+            schema_version: SchemaV1,
+            code_artifact_id: code,
+            model_storage_ref: model_ref,
+            rustc_version: "rustc 1.98.1 (controlled observation)".into(),
+            target: "wasm32-unknown-unknown".into(),
+            abi: "predict(f64,f64,f64,f64,f64,f64,f64,f64)->f64".into(),
+            module_bytes: DbCounter::new(wasm.len() as u64).unwrap(),
         })
         .unwrap();
-    let model_ref = Id::new();
-    let wasm = b"\0asm\x01\0\0\0".to_vec();
-    let report = serde_json::to_vec(&NativeModelCompilationV1 {
-        schema_version: SchemaV1,
-        code_artifact_id: code,
-        model_storage_ref: model_ref,
-        rustc_version: "rustc 1.98.1 (controlled observation)".into(),
-        target: "wasm32-unknown-unknown".into(),
-        abi: "predict(f64,f64,f64,f64,f64,f64,f64,f64)->f64".into(),
-        module_bytes: DbCounter::new(wasm.len() as u64).unwrap(),
-    })
-    .unwrap();
+        vec![wasm, report]
+    } else {
+        use contracts::{execution::NativeTaskParametersV1, science::*};
+        let size = job
+            .spec
+            .inputs
+            .iter()
+            .find_map(|input| match input {
+                RuntimeInputV1::Artifact {
+                    artifact_id,
+                    byte_count,
+                    ..
+                } if *artifact_id == job.spec.parameters_artifact_id => Some(*byte_count),
+                _ => None,
+            })
+            .unwrap();
+        let NativeTaskParametersV1::EvaluateAlpha { request, .. } = serde_json::from_slice(
+            &f.objects
+                .read(job.spec.parameters_artifact_id, size)
+                .unwrap(),
+        )
+        .unwrap() else {
+            panic!("forecast task required");
+        };
+        let mut points = Vec::new();
+        for kind in &request.selection.bar_types {
+            let instrument_id = kind.rsplitn(5, '-').nth(4).unwrap();
+            for ordinal in 0..40_u32 {
+                let predicted = ordinal + 1 >= request.parameters.slow_period;
+                let labelled =
+                    predicted && ordinal + request.parameters.label_horizon_observations < 40;
+                let time =
+                    request.selection.event_start_ns.get() + u64::from(ordinal) * 60_000_000_000;
+                points.push(NativeForecastPointV1 {
+                    instrument_id: instrument_id.into(),
+                    ordinal,
+                    event_ns: DbCounter::new(time).unwrap(),
+                    available_ns: DbCounter::new(time + 1).unwrap(),
+                    forecast: predicted.then_some(f64::from(ordinal) / 1000.0),
+                    forecast_reason: (!predicted).then_some(ForecastMissingReason::IndicatorWarmup),
+                    label_return: labelled.then_some(0.001),
+                    label_available_ns: labelled.then(|| {
+                        DbCounter::new(
+                            time + u64::from(request.parameters.label_horizon_observations)
+                                * 60_000_000_000
+                                + 1,
+                        )
+                        .unwrap()
+                    }),
+                    label_reason: if labelled {
+                        None
+                    } else {
+                        Some(if predicted {
+                            ForecastMissingReason::LabelNotComplete
+                        } else {
+                            ForecastMissingReason::IndicatorWarmup
+                        })
+                    },
+                });
+            }
+        }
+        vec![serde_json::to_vec(&NativeForecastResultV1 {
+            schema_version: SchemaV1,
+            native_versions: std::collections::BTreeMap::from([
+                ("nautilus-indicators".into(), "0.63.0".into()),
+                ("nautilus-persistence".into(), "0.63.0".into()),
+                ("wasmi".into(), "2.0.0".into()),
+            ]),
+            consumed_fuel: DbCounter::new(40).unwrap(),
+            points,
+        })
+        .unwrap()]
+    };
     let outputs = job
         .spec
         .requested_output_schemas
         .iter()
-        .zip([wasm, report])
+        .zip(payloads)
         .map(|(schema, bytes)| {
             let contract = native_output_contract(&schema.name, &schema.version).unwrap();
             let output = RuntimeOutputV1 {
                 kind: contract.kind,
                 schema: schema.clone(),
-                storage_ref: if contract.kind == RuntimeOutputKind::Model {
+                storage_ref: if !compilation || contract.kind == RuntimeOutputKind::Model {
                     model_ref
                 } else {
                     Id::new()

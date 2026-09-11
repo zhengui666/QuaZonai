@@ -337,13 +337,98 @@ async fn settled_native_mission_queues_original_compilation_then_forecast_withou
     );
     visible(&f, &pool).await;
     worker
-        .process_mission_message(f.message.clone(), "await-original-forecast", receiver)
+        .process_mission_message(
+            f.message.clone(),
+            "await-original-forecast",
+            receiver.clone(),
+        )
         .await
         .unwrap();
     assert_eq!(f.provider.request_count(), 1);
     let counts: (i64,i64,i64,i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.experiment_compilations WHERE experiment_id=$1),(SELECT count(*) FROM app.experiment_forecasts WHERE experiment_id=$1),(SELECT count(*) FROM app.model_turn_reservations WHERE run_id=$2),(SELECT count(*) FROM app.model_turn_receipts t JOIN app.model_turn_reservations r ON r.id=t.reservation_id WHERE r.run_id=$2),(SELECT count(*) FROM app.run_terminal_receipts WHERE run_id=$2),(SELECT count(*) FROM pgmq.q_runs WHERE msg_id=$3)")
         .bind(experiment.as_uuid()).bind(f.lease.run.id.as_uuid()).bind(f.message.message_id).fetch_one(&pool).await.unwrap();
     assert_eq!(counts, (1, 1, 1, 1, 0, 1));
+    let scientific_run: Id = forecast.to_string().try_into().unwrap();
+    let report =
+        experiment_support::complete_forecast(&pool, &f.store, &f.data, scientific_run).await;
+    let original_thread: String =
+        sqlx::query_scalar("SELECT thread_id FROM app.codex_sessions WHERE run_id=$1")
+            .bind(f.lease.run.id.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    visible(&f, &pool).await;
+    worker
+        .process_mission_message(f.message.clone(), "prepare-real-result", receiver.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        f.provider.request_count(),
+        1,
+        "preparation is not a model call"
+    );
+    let feedback_lease = takeover(&f, &pool, "inspect-result-request").await;
+    let latest = f
+        .store
+        .mission_turn_checkpoint(f.lease.run.id, &feedback_lease.fence)
+        .await
+        .unwrap()
+        .latest
+        .unwrap();
+    assert_eq!(latest.reservation.ordinal, 2);
+    assert_eq!(
+        latest.reservation.turn_kind,
+        domain::admission::TurnKind::Research
+    );
+    let objects = f.data.objects.clone();
+    let prompt = f
+        .store
+        .mission_turn_prompt(
+            f.lease.run.id,
+            &feedback_lease.fence,
+            latest.reservation.id,
+            move |id, size| async move {
+                objects
+                    .read(id, size)
+                    .map_err(|_| store::StoreError::Integrity)
+            },
+        )
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_str(prompt.lines().nth(1).unwrap()).unwrap();
+    assert_eq!(body["run_id"], scientific_run.to_string());
+    assert_eq!(body["forecast"]["artifact_id"], report.to_string());
+    assert_eq!(body["origin"], "FIXTURE");
+    assert_eq!(body["formal_evaluation"], "NOT_PERFORMED");
+    assert_eq!(body["forecast"]["observations"], 40);
+    assert_eq!(body["forecast"]["predictions"], 36);
+    assert_eq!(body["forecast"]["completed_labels"], 31);
+    assert_eq!(body["forecast"]["sampled"], true);
+    assert_eq!(body["forecast"]["points"].as_array().unwrap().len(), 32);
+    assert_eq!(body["forecast"]["points"][16]["ordinal"], 24);
+    visible(&f, &pool).await;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(150),
+        worker.process_mission_message(
+            f.message.clone(),
+            "resume-with-real-result",
+            receiver.clone(),
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(f.provider.request_count(), 2);
+    assert!(f.provider.saw_previous_context());
+    visible(&f, &pool).await;
+    worker
+        .process_mission_message(f.message.clone(), "no-duplicate-result-turn", receiver)
+        .await
+        .unwrap();
+    assert_eq!(f.provider.request_count(), 2);
+    let facts:(i64,i64,i64,String)=sqlx::query_as("SELECT (SELECT count(*) FROM app.model_turn_reservations WHERE run_id=$1),(SELECT count(*) FROM app.model_turn_receipts t JOIN app.model_turn_reservations r ON r.id=t.reservation_id WHERE r.run_id=$1),(SELECT count(*) FROM app.run_terminal_receipts WHERE run_id=$1),(SELECT thread_id FROM app.codex_sessions WHERE run_id=$1)")
+        .bind(f.lease.run.id.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(facts, (2, 2, 0, original_thread));
 }
 
 #[sqlx::test(migrations = "../../migrations")]

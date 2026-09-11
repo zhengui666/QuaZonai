@@ -19,6 +19,7 @@ use domain::{
 use sqlx::{postgres::PgRow, Postgres, Row, Transaction};
 use uuid::Uuid;
 
+mod feedback;
 mod native;
 pub use native::{MissionTurnCheckpoint, NativeTurnCheckpoint};
 

@@ -860,6 +860,23 @@ Runtime原生探测：当前活跃Researcher Mission亦可刷新其冻结Runtime
 Mission处于NOT_SENT；准备与发表均重验原租约、Runtime版本、状态和期限。实际
 HTTP在事务外执行，仍保留原60秒有效期，探测不可用不得假造可执行能力。
 
+### A3.8 同Thread科学反馈
+
+可信Worker只在最新模型Turn有完整结算后，为原Mission关联的已采纳科学终态准备
+一次公开反馈。编译失败/取消进入REPAIR；Discovery预测终态按成功RESEARCH、失败
+REPAIR接续。使用现有model_turn_reservations的原Session及唯一command_key
+`mission/result/{scientific_run_id}`，不新增反馈队列或状态表。未知科学任务、未结算
+模型Turn不触发接续；并发重投不重复预约。反馈文件、预约、PGMQ同事务，仍检查
+原fence/Profile/预算/截止时间；下一次消费恢复原Thread，绝不新建Thread洗账。
+
+反馈只含精确实验/任务/Attempt/终态/公开原因和已采纳RESEARCH产物。成功预测读取
+原qz.native_forecast，保留origin、原生版本/fuel、完整观察/预测/已完成标签计数及
+最多前16与后16条原始观察（明确sampled，不按好坏挑选）。只允许原冻结Discovery
+数据关联；不读取Sealed、EVALUATOR_ONLY、原生私有历史、凭据或任意诊断正文。
+该摘要不是统计指标、分折验证、校准、Reviewer结论或资格。失败明确当前无详细
+编译器诊断，不能凭空解释错误；修复需新建parent_experiment_id指向原试验的提案。
+反馈送达仍不等于Mission完成，结论与终态另行确认。
+
 ## A4. 输入、政策、评估、资格与暴露
 
 ```text

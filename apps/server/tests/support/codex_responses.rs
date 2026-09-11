@@ -128,7 +128,11 @@ async fn respond(
         && input.is_some()
         && (!tool_continuation || ordinal == 0 || input_text.contains("QZ_NATIVE_TOOL_DONE"))
         && input_text.contains(if seen.initial.load(Ordering::SeqCst) {
-            "QZ_MISSION_INITIAL_V1"
+            if ordinal == 0 {
+                "QZ_MISSION_INITIAL_V1"
+            } else {
+                "QZ_MISSION_RESULT_V1"
+            }
         } else if ordinal == 0 || tool_continuation {
             FIRST_PROMPT
         } else {
@@ -144,7 +148,11 @@ async fn respond(
     }
     if ordinal == 1 && !tool_continuation {
         seen.prior_context.store(
-            input_text.contains(FIRST_PROMPT) && input_text.contains(FIRST_REPLY),
+            input_text.contains(if seen.initial.load(Ordering::SeqCst) {
+                "QZ_MISSION_INITIAL_V1"
+            } else {
+                FIRST_PROMPT
+            }) && input_text.contains(FIRST_REPLY),
             Ordering::SeqCst,
         );
     }

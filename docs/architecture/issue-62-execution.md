@@ -906,3 +906,27 @@ Runtime测试、6项真实原生Job子进程、28项原生Codex检查和494项St
 全部0失败/0忽略。检查期间源码未变，独立PG确认停止。上述成功仍只是5c7d78c2上
 的本地增量证据；编译输出fixture不冒充真实rustc/Wasmi科学执行，完整同Thread
 结果反馈/结论、独立Reviewer、评估/资格和剩余产品链路尚未完成，不是PR合并证据。
+
+## 2026-09-12：原Thread科学反馈与一次性修复预约
+
+在8c57d16d上增加已采纳编译失败/Discovery预测终态的公开反馈。复用已有原Session
+Turn命令唯一键和同事务请求产物/预算/PGMQ发表，未增加反馈队列或状态表。最新
+模型Turn没有完整usage结算时不继续；失败回送计REPAIR，预测成功计RESEARCH。
+预测只读取原生产者的RESEARCH报告，保留origin/原生版本/fuel及全体观察计数，
+明确标注首尾各16条抽样，形式评估为NOT_PERFORMED；不制造指标或资格。
+失败只陈述公开Run原因，不捏造尚未接入的详细编译器诊断。修复保留原实验父血缘。
+
+`.ai-bridge/verify-WJqhOH` exit0：check/fmt/严格Clippy及107项真实PG回归，0失败/
+0忽略。新例证明失败编译不读取预测或诊断正文、未知模型用量不接续、产物发表
+失败回滚预算/消息、并发结果选择只有一份修复预约、结算后重放不重复扣费及旧
+owner拒绝。抽取的原请求事务仍由原有Turn/恢复用例覆盖。
+
+`.ai-bridge/verify-SLsSW3` exit0：check/fmt/严格Clippy及真实原生科学/Mission单例
+通过（212.20秒）。它等待原探测真实过期，首轮完成后准备原编译/预测，采纳受控
+40条预测输出，验证反馈中的36条预测/31条完整标签/32条首尾抽样及原产物身份。
+然后启动新App Server进程恢复同一Thread，实际收到首轮上下文和科学反馈；总共
+两次受控Provider请求、两份真实原生Turn结算，重投无第三次调用且Mission未提前
+终结。原生进程/Thread恢复是真实执行；编译/预测/Provider内容是明确fixture，
+不是付费模型推理、rustc/Wasmi数值执行或市场/Alpha资格证据。
+两次验证均源码不变、独立PG确认停止；之后只追加本证据。研究结论、完整科学
+评估、Reviewer、资格及其余产品流程仍未完成，尚未push/review/merge或关闭Issue。
