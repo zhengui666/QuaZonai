@@ -34,6 +34,7 @@ struct Seen {
     slow: AtomicBool,
     fail_continuation: AtomicBool,
     stop_continuation: AtomicBool,
+    initial: AtomicBool,
 }
 
 pub struct Provider {
@@ -96,6 +97,11 @@ impl Provider {
     pub fn exceed_tokens_before_tool(&self) {
         self.seen.stop_continuation.store(true, Ordering::SeqCst);
     }
+
+    #[allow(dead_code)] // Only the daemon tests prepare a real initial request.
+    pub fn initial_request(&self) {
+        self.seen.initial.store(true, Ordering::SeqCst);
+    }
 }
 
 async fn respond(
@@ -121,7 +127,9 @@ async fn respond(
         && ordinal < 2
         && input.is_some()
         && (!tool_continuation || ordinal == 0 || input_text.contains("QZ_NATIVE_TOOL_DONE"))
-        && input_text.contains(if ordinal == 0 || tool_continuation {
+        && input_text.contains(if seen.initial.load(Ordering::SeqCst) {
+            "QZ_MISSION_INITIAL_V1"
+        } else if ordinal == 0 || tool_continuation {
             FIRST_PROMPT
         } else {
             SECOND_PROMPT

@@ -108,6 +108,16 @@ enum Command {
         development_http: bool,
         #[arg(long, env = "WORKER_PARALLELISM", default_value_t = 2)]
         parallelism: usize,
+        /// Enable native Missions using the same deployment bindings as the API.
+        #[arg(long, env = "CODEX_DEPLOYMENT", hide_env_values = true,
+            requires_all = ["mission_api_origin", "mission_workspaces"])]
+        codex_deployment: Option<PathBuf>,
+        /// API address reachable by the trusted per-Mission MCP subprocess.
+        #[arg(long, env = "MISSION_API_ORIGIN", requires = "codex_deployment")]
+        mission_api_origin: Option<String>,
+        /// Existing absolute private directory for dedicated Mission workspaces.
+        #[arg(long, env = "MISSION_WORKSPACES", requires = "codex_deployment")]
+        mission_workspaces: Option<PathBuf>,
     },
     /// Reconcile only unreferenced machine verifiers; never removes credential history.
     PruneUnpublishedVerifiers {
@@ -333,8 +343,22 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             runtime_targets,
             development_http,
             parallelism,
+            codex_deployment,
+            mission_api_origin,
+            mission_workspaces,
         } => {
             let targets = parse_runtime_targets(&runtime_targets, development_http)?;
+            let missions = if let Some(path) = codex_deployment {
+                Some(server::worker::mission::MissionLauncher::new(
+                    load_codex_deployment(Some(&path))?,
+                    mission_workspaces.ok_or("Mission workspace root is required")?,
+                    std::env::current_exe()?,
+                    mission_api_origin.ok_or("Mission API origin is required")?,
+                    development_http,
+                )?)
+            } else {
+                None
+            };
             let store = Store::connect(&database.database_url).await?;
             store.verify_runtime_role().await?;
             store.authentication_snapshot().await?;
@@ -342,6 +366,11 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
                 SecretVault::open(&state_dir.join("secrets"), &state_dir.join("master.key"))?;
             let objects = ArtifactStore::open(&state_dir.join("artifacts"))?;
             let worker = server::worker::Worker::new(store, vault, objects, targets, parallelism)?;
+            let worker = if let Some(launcher) = missions {
+                worker.with_missions(std::sync::Arc::new(launcher))
+            } else {
+                worker
+            };
             let (shutdown, observed) = tokio::sync::watch::channel(false);
             let run = worker.run(observed);
             tokio::pin!(run);

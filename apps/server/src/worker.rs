@@ -23,6 +23,7 @@ pub struct Worker {
     objects: Arc<ArtifactStore>,
     targets: Arc<RuntimeTargets>,
     parallelism: usize,
+    missions: Option<Arc<mission::MissionLauncher>>,
 }
 
 #[derive(Debug)]
@@ -76,16 +77,28 @@ impl Worker {
             objects: Arc::new(objects),
             targets: Arc::new(targets),
             parallelism,
+            missions: None,
         })
+    }
+
+    pub fn with_missions(mut self, launcher: Arc<mission::MissionLauncher>) -> Self {
+        self.missions = Some(launcher);
+        self
     }
 
     pub async fn run(self, mut shutdown: watch::Receiver<bool>) -> Result<(), WorkerFailure> {
         let owner = format!("worker/{}", Id::new());
         let mut jobs = JoinSet::new();
+        let mut missions = JoinSet::new();
         while !*shutdown.borrow() {
             while let Some(result) = jobs.try_join_next() {
                 if !matches!(result, Ok(Ok(()))) {
                     tracing::warn!("worker task deferred for native reconciliation");
+                }
+            }
+            while let Some(result) = missions.try_join_next() {
+                if !matches!(result, Ok(Ok(()))) {
+                    tracing::warn!("Mission deferred with its original identity and reservation");
                 }
             }
             if jobs.len() < self.parallelism {
@@ -108,11 +121,34 @@ impl Worker {
                     ),
                 }
             }
+            if self.missions.is_some() && missions.len() < self.parallelism {
+                let remaining = (self.parallelism - missions.len()) as i32;
+                match self.store.read_mission_messages(60, remaining).await {
+                    Ok(messages) => {
+                        for message in messages {
+                            let worker = self.clone();
+                            let owner = format!("{owner}/{}", Id::new());
+                            let shutdown = shutdown.clone();
+                            missions.spawn(async move {
+                                worker
+                                    .process_mission_message(message, &owner, shutdown)
+                                    .await
+                            });
+                        }
+                    }
+                    Err(_) => {
+                        tracing::warn!("Mission PGMQ read unavailable; preserving pending work")
+                    }
+                }
+            }
             tokio::select! {
                 changed = shutdown.changed() => { if changed.is_err() { break; } }
                 _ = tokio::time::sleep(Duration::from_millis(500)) => {}
                 result = jobs.join_next(), if !jobs.is_empty() => {
                     if !matches!(result, Some(Ok(Ok(())))) { tracing::warn!("worker task deferred for native reconciliation"); }
+                }
+                result = missions.join_next(), if !missions.is_empty() => {
+                    if !matches!(result, Some(Ok(Ok(())))) { tracing::warn!("Mission deferred with its original identity and reservation"); }
                 }
             }
         }
@@ -121,6 +157,11 @@ impl Worker {
         while let Some(result) = jobs.join_next().await {
             if !matches!(result, Ok(Ok(()))) {
                 tracing::warn!("worker shutdown left a durable task for reconciliation");
+            }
+        }
+        while let Some(result) = missions.join_next().await {
+            if !matches!(result, Ok(Ok(()))) {
+                tracing::warn!("worker shutdown preserved an unfinished Mission");
             }
         }
         Ok(())

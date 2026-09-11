@@ -806,3 +806,29 @@ GitHub最新Head CI或全量W0–W8/T01–T42完成。
 预约、首次额度10000、未知发送不换请求、已有人工请求不被首轮覆盖，以及无价格
 不产生可发送工作。此为587803bd基础上的本地准备增量；尚未接入常驻Worker，
 不代表实际模型发送、科学结果、Mission/Cycle完成或GitHub当前Head验收。
+
+## 2026-09-12：常驻 Mission 首轮消费
+
+复用Worker、原PGMQ、Run租约、MissionLauncher和逐轮账本，科学/Mission分别有界。
+显式部署三项配置才领取Mission；未配置不隐藏其消息。整个驱动维护10秒续约60秒，
+关闭/失去续约回收本机原生子进程，不造取消或退款。已结算轮接管不再开连接/重发，
+Mission消息保留给尚需实现的科学、结论及完整收束阶段。
+
+真实守护进程回归通过：未配置队列read_count不变；自动准备、发送并以12token结算
+唯一原生Turn，重启不重复发送/预约/ack；等待实际模型响应时，单Mission槽不妨碍
+科学终态消息被处理并archive，数据库租约真实延长；关闭后原预约、消息和未知用量
+保留，Run不假称终态。CLI三种不完整配置均在访问数据库之前以exit2拒绝。
+市场准备和模型响应仍是受控fixture，不是付费模型研究或真实科学结果。
+
+首轮完整`.ai-bridge/verify-Fw5gJ0` exit1：check/fmt/严格Clippy、domain149、managed6、
+native28通过，Store/Server488通过/1失败/0忽略。唯一失败是旧迟到用量回归将列表
+Completed当成必然；本次实际返回Failed。实时快照与历史重建允许这两种投影，
+测试现在仍拒绝其他状态，且驱动前必须没有持久终态；最终真实Failed、120/100事件、
+不结算部分用量和时间先后断言全部保留，不修改业务驱动或放宽最终结果。
+
+相同业务代码在`.ai-bridge/verify-aVDYqb` exit0：check/fmt/严格Clippy、Profile4、
+MCP5、Mission13共22项通过/0失败/0忽略。两次源码前后不变，各自独立PG确认停止。
+前一完整结果仍不是全绿。同步明确Issue62第6.3–6.4节的原生Turn语义：内部工具
+续请求共享本Turn预约并累计用量，新turn/start单独预约；不宣称限制Provider HTTP
+请求次数，不新增模型代理或接管原生工具循环。这是50c0d024基础上的本地增量，
+不是GitHub当前Head CI或全量W0–W8/T01–T42完成证据。

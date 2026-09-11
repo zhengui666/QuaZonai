@@ -1,6 +1,6 @@
 //! Trusted Mission bootstrap, not an Agent loop. Only the native App Server owns
 //! messages/tools/history. This module never returns the ephemeral MCP secret.
-use super::WorkerFailure;
+use super::{Worker, WorkerFailure};
 use crate::{
     codex_native::{self as native, Client, MissionOptions},
     codex_profiles::CodexDeployment,
@@ -19,11 +19,12 @@ use std::{
 use store::{
     lifecycle::{
         mission::{MissionSession, NativeSessionReceipt},
-        NextRuntimeAction,
+        ClaimResult, NextRuntimeAction, RunLease, RunMessage,
     },
     turns::WorkerFence,
-    Store,
+    Store, StoreError,
 };
+use tokio::sync::watch;
 
 mod turn;
 pub use turn::TurnProgress;
@@ -40,6 +41,105 @@ pub struct MissionLauncher {
 pub struct MissionConnection {
     pub client: Client,
     pub session: MissionSession,
+}
+
+impl Worker {
+    /// Trusted queue entry point, shared by the daemon and actual native tests.
+    pub async fn process_mission_message(
+        &self,
+        message: RunMessage,
+        owner: &str,
+        mut shutdown: watch::Receiver<bool>,
+    ) -> Result<(), WorkerFailure> {
+        let launcher = self.missions.as_ref().ok_or(WorkerFailure::TaskKind)?;
+        if *shutdown.borrow() || shutdown.has_changed().is_err() {
+            return Err(WorkerFailure::LostAuthority);
+        }
+        let lease = match self.store.claim_mission(&message, owner, 60).await? {
+            None => return Err(WorkerFailure::TaskKind),
+            Some(ClaimResult::Busy | ClaimResult::Terminal(_)) => return Ok(()),
+            Some(ClaimResult::Leased(lease)) => *lease,
+        };
+        let heartbeat = async {
+            loop {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                if self
+                    .store
+                    .renew_run_lease(lease.run.id, &lease.fence, 60)
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        };
+        let observed = shutdown.clone();
+        // Dropping this finite driver also drops/kills its owned native process.
+        // Neither shutdown nor a lost renewal fabricates a Turn/Run receipt.
+        tokio::select! {
+            biased;
+            _ = shutdown.changed() => Err(WorkerFailure::LostAuthority),
+            _ = heartbeat => Err(WorkerFailure::LostAuthority),
+            result = self.drive_mission(launcher, &lease, &observed) => result,
+        }
+    }
+
+    async fn drive_mission(
+        &self,
+        launcher: &MissionLauncher,
+        lease: &RunLease,
+        shutdown: &watch::Receiver<bool>,
+    ) -> Result<(), WorkerFailure> {
+        let run = lease.run.id;
+        let fence = &lease.fence;
+        let job = self.store.mission_job(run, fence).await?;
+        if job.session.is_some()
+            && self
+                .store
+                .mission_turn_checkpoint(run, fence)
+                .await?
+                .latest
+                .is_some_and(|latest| latest.receipt.is_some())
+        {
+            // Scientific/result stages own continuation and final acknowledgement.
+            return Ok(());
+        }
+        let mut connection = launcher
+            .open(&self.store, self.vault.clone(), run, fence)
+            .await?;
+        let result: Result<(), WorkerFailure> = async {
+            let reading = self.objects.clone();
+            let publishing = self.objects.clone();
+            self.store
+                .prepare_initial_mission_turn(
+                    run,
+                    fence,
+                    move |id, size| async move {
+                        tokio::task::spawn_blocking(move || reading.read(id, size))
+                            .await
+                            .map_err(|_| StoreError::Integrity)?
+                            .map_err(|_| StoreError::Integrity)
+                    },
+                    move |object| async move {
+                        tokio::task::spawn_blocking(move || {
+                            publishing.put(object.id, &object.bytes)
+                        })
+                        .await
+                        .map_err(|_| StoreError::Integrity)?
+                        .map_err(|_| StoreError::Integrity)
+                    },
+                )
+                .await?;
+            connection
+                .drive_turn(&self.store, self.objects.clone(), run, fence, shutdown)
+                .await?;
+            Ok(())
+        }
+        .await;
+        let closed = connection.client.close().await;
+        result?;
+        closed.map_err(|reason| WorkerFailure::Codex("CLOSE_MISSION", reason))
+    }
 }
 
 fn private_directory(path: &Path) -> Result<(), WorkerFailure> {

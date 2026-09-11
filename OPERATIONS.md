@@ -101,7 +101,7 @@ Operator 可创建独立 CLI/AUTOMATION/DOWNSTREAM 主体，系统任务的 MISS
 
 ## Worker、正式数据验证与025升级
 
-`server worker` 使用与API相同的非owner应用账号、私有状态卷和受信任的Runtime目标配置，作为独立常驻进程启动。它读取现有PGMQ任务，不在控制面运行Nautilus、编译研究模型或维护另一份队列；默认同时驱动2个任务，`WORKER_PARALLELISM` 可设1–32。SIGINT/SIGTERM停止领取新任务并排空已开始的有界I/O，不把停止Worker等同于停止远端计算。
+`server worker` 使用与API相同的非owner应用账号、私有状态卷和受信任的Runtime目标配置，作为独立常驻进程启动。它读取现有PGMQ任务，不在控制面运行Nautilus、编译研究模型或维护另一份队列；默认科学任务和已启用的Mission各最多2个在途驱动，`WORKER_PARALLELISM` 可设1–32并分别应用于两类容量。SIGINT/SIGTERM停止领取新任务并排空已开始的有界I/O，不把停止Worker等同于停止远端计算。
 
 迁移 `202609110025_native_tasks.sql` 新增三个不可变原生关联表：`run_native_tasks` 保存和准入同事务冻结的任务定义，`run_native_attempts` 保存唯一首次派发的JobSpec，`run_native_outputs` 记录远端原生对象与本地生产者产物的精确映射。旧Run不回填或假造这些定义；部署停写并使用正式 `server migrate`，保留旧历史，不直接修改迁移记录或队列表。
 
@@ -115,11 +115,13 @@ Worker可使用当前Run租约刷新到期探测。一次提交应答丢失后�
 
 锁定Codex的Turn列表可能把断流失败重建为Completed，不能据此认定成功。QZ只以真实终态通知或已经保存的同一通知确认结果；丢失通知且没有记录时保留UNKNOWN/预约，列表“已完成”不触发自动结算、退款或重发。
 
-研究Mission首轮请求使用冻结Brief与同Cycle剩余token额度，不自动选择另一Profile或扩大预算。完整原生用量结算后可使用剩余额度；结果未知时仍占用原预约，重试不会换请求或再插一轮。设置了费用上限但原生计费不可用时停止首轮准备，不假造价格。首轮准备/模型回复都不等于科学任务、Mission或Cycle完成；常驻Worker完整自动衔接仍在开发。
+研究Mission首轮请求使用冻结Brief与同Cycle剩余token额度，不自动选择另一Profile或扩大预算。完整原生用量结算后可使用剩余额度；结果未知时仍占用原预约，重试不会换请求或再插一轮。设置了费用上限但原生计费不可用时停止首轮准备，不假造价格。常驻Worker可显式启用Mission消费（完整参数见CLI）；它以独立容量领取、续约、准备首轮并驱动原生账本。首轮准备/模型回复都不等于科学任务、Mission或Cycle完成；结算后消息仍保留，科学及结论阶段完整自动衔接仍在开发。
 
 运行中的Turn用量达到本轮预约后，Worker先记录`mission.token_limit`和取消意图，再请求原生中断；事件里的用量只是首次达到阈值的观察，不是最终账单。缺最终回执时保留预约并阻止同Cycle的新模型支出。用量通知及中断是异步的，仍可能超额，不能视作逐token硬限额或严格美元限额。Codex的实验rollout budget跟踪/提醒不替代这条停止路径。
 
-Mission使用不同于科学任务的队列选择，但共用现有PGMQ、Run/Attempt和租约。原生Thread回执一旦绑定不能替换，原生创建应答未知时不盲目新建；首轮预约不等于模型已经RUNNING。当前本增量验证了事务准入、Thread绑定及账本接线；Worker的原生Codex驱动和完整科学结果回到同Thread仍须完成后才能作为整条产品流程使用，不应手工改库补成功状态。
+Mission使用不同于科学任务的队列选择，但共用现有PGMQ、Run/Attempt和租约。原生Thread回执一旦绑定不能替换，原生创建应答未知时不盲目新建；首轮预约不等于模型已经RUNNING。常驻Worker已接原生Codex首轮消费，但完整科学结果回到同Thread及研究阶段收束仍须完成后才能作为整条产品流程使用，不应手工改库补成功状态。
+
+Mission总Turn和修复Turn计数沿用原生App Server Turn，不是Provider HTTP请求计数。同一Turn的内部工具续请求仍占原预约、累计全部已观察token；QZ回送科学结果或要求修复的新Turn才单独预约。该计数不承诺限制内部HTTP请求数量，未知用量和超额仍按上述规则保留和停止。
 
 Universe的 `registration_state` 必须同时展示：`NATIVE_METADATA` 表示存在正式登记证据，`LEGACY_UNVERIFIED` 表示历史记录尚未核验。该标记不证明真实市场来源、PIT或科学有效性，不能把历史行静默显示成原生登记。原生登记同身份重放比较收到的JSON内容，合法时间字符串原样保存；源origin等身份内容变化返回409，而非生成新版本绕过历史。
 

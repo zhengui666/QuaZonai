@@ -15,7 +15,10 @@ use contracts::{runs::RunState, DbCounter, Id, SchemaV1};
 use integrations::secrets::SecretVault;
 use server::{
     codex_profiles::{CodexDeployment, CodexDeploymentBinding, CodexDeploymentConfig},
-    worker::mission::{MissionLauncher, TurnProgress},
+    worker::{
+        mission::{MissionLauncher, TurnProgress},
+        Worker,
+    },
     AppState, WebPolicy,
 };
 use sqlx::PgPool;
@@ -36,7 +39,7 @@ struct Fixture {
     data: cycle_support::Fixture,
     lease: RunLease,
     message: RunMessage,
-    launcher: MissionLauncher,
+    launcher: Arc<MissionLauncher>,
     vault: Arc<SecretVault>,
     provider: responses::Provider,
     root: tempfile::TempDir,
@@ -128,7 +131,7 @@ async fn fixture_with_cost(pool: &PgPool, priced: bool) -> Fixture {
         data,
         lease: *lease,
         message,
-        launcher,
+        launcher: Arc::new(launcher),
         vault,
         provider,
         root,
@@ -146,6 +149,172 @@ async fn takeover(f: &Fixture, pool: &PgPool, owner: &str) -> RunLease {
     };
     assert_eq!(lease.fence.attempt_id, f.lease.fence.attempt_id);
     lease.as_ref().clone()
+}
+
+fn daemon(f: &Fixture) -> Worker {
+    Worker::new(
+        f.store.clone(),
+        SecretVault::open(
+            &f.root.path().join("secrets"),
+            &f.root.path().join("master.key"),
+        )
+        .unwrap(),
+        integrations::artifacts::ArtifactStore::open(&f.root.path().join("worker-objects"))
+            .unwrap(),
+        server::runtime_transport::RuntimeTargets::default(),
+        1,
+    )
+    .unwrap()
+}
+
+async fn visible(f: &Fixture, pool: &PgPool) {
+    sqlx::query("UPDATE app.run_attempts SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1")
+        .bind(f.lease.fence.attempt_id.as_uuid()).execute(pool).await.unwrap();
+    sqlx::query("SELECT pgmq.set_vt('runs',$1,0)")
+        .bind(f.message.message_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn daemon_prepares_first_turn_and_replays_without_spending_or_acknowledging_mission(
+    pool: PgPool,
+) {
+    let f = fixture(&pool).await;
+    visible(&f, &pool).await;
+    f.provider.initial_request();
+    let (stop, receiver) = tokio::sync::watch::channel(false);
+    let disabled = daemon(&f);
+    assert!(matches!(
+        disabled
+            .process_mission_message(f.message.clone(), "disabled", receiver.clone())
+            .await,
+        Err(server::worker::WorkerFailure::TaskKind)
+    ));
+    let (result, ()) = tokio::join!(disabled.run(receiver), async {
+        tokio::time::sleep(std::time::Duration::from_millis(750)).await;
+        stop.send(true).unwrap();
+    });
+    result.unwrap();
+    let reads: i32 = sqlx::query_scalar("SELECT read_ct FROM pgmq.q_runs WHERE msg_id=$1")
+        .bind(f.message.message_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(reads, f.message.read_count);
+    assert_eq!(f.provider.request_count(), 0);
+
+    let worker = daemon(&f).with_missions(f.launcher.clone());
+    let (stop, receiver) = tokio::sync::watch::channel(false);
+    tokio::time::timeout(std::time::Duration::from_secs(150), async {
+        let (result, ()) = tokio::join!(worker.clone().run(receiver), async {
+            loop {
+                let used: Option<i64> = sqlx::query_scalar("SELECT t.actual_tokens FROM app.model_turn_receipts t JOIN app.model_turn_reservations r ON r.id=t.reservation_id WHERE r.run_id=$1")
+                    .bind(f.lease.run.id.as_uuid()).fetch_optional(&pool).await.unwrap();
+                if let Some(used) = used {
+                    assert_eq!(used, 12);
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            stop.send(true).unwrap();
+        });
+        result.unwrap();
+    }).await.expect("daemon did not settle the actual native initial Turn");
+    assert_eq!(f.provider.request_count(), 1);
+    let before: (i64, i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.model_turn_reservations WHERE run_id=$1),(SELECT count(*) FROM app.model_turn_receipts t JOIN app.model_turn_reservations r ON r.id=t.reservation_id WHERE r.run_id=$1),(SELECT count(*) FROM pgmq.q_runs WHERE msg_id=$2)")
+        .bind(f.lease.run.id.as_uuid()).bind(f.message.message_id).fetch_one(&pool).await.unwrap();
+    assert_eq!(before, (1, 1, 1));
+    visible(&f, &pool).await;
+    let (_stop, receiver) = tokio::sync::watch::channel(false);
+    worker
+        .process_mission_message(f.message.clone(), "daemon-restarted", receiver)
+        .await
+        .unwrap();
+    assert_eq!(f.provider.request_count(), 1);
+    let run = f.store.get_run(&f.actor, f.lease.run.id).await.unwrap();
+    assert!(!run.state.is_terminal());
+    let terminals: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM app.run_terminal_receipts WHERE run_id=$1")
+            .bind(run.id.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(terminals, 0);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn daemon_renews_pending_mission_without_starving_science_and_shutdown_keeps_unknown_usage(
+    pool: PgPool,
+) {
+    let f = fixture(&pool).await;
+    visible(&f, &pool).await;
+    f.provider.initial_request();
+    f.provider.slow_response();
+    let worker = daemon(&f).with_missions(f.launcher.clone());
+    let (stop, receiver) = tokio::sync::watch::channel(false);
+    tokio::time::timeout(std::time::Duration::from_secs(150), async {
+        let (result, ()) = tokio::join!(worker.run(receiver), async {
+            while f.provider.request_count() == 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            let first: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT lease_expires_at FROM app.run_attempts WHERE id=$1")
+                .bind(f.lease.fence.attempt_id.as_uuid()).fetch_one(&pool).await.unwrap();
+            // A real terminal scientific message is replayed while the single
+            // Mission slot is occupied. It must still be selected and archived.
+            let replay: i64 = sqlx::query_scalar("SELECT pgmq.send('runs',jsonb_build_object('schema_version',1,'run_id',s.initial_run_id)) FROM app.cycle_startups s WHERE s.cycle_id=$1")
+                .bind(f.lease.run.cycle_id.unwrap().as_uuid()).fetch_one(&pool).await.unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    let archived: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pgmq.a_runs WHERE msg_id=$1)")
+                        .bind(replay).fetch_one(&pool).await.unwrap();
+                    if archived { break; }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+            }).await.expect("waiting Mission starved the scientific queue");
+            tokio::time::timeout(std::time::Duration::from_secs(12), async {
+                loop {
+                    let renewed: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT lease_expires_at FROM app.run_attempts WHERE id=$1")
+                        .bind(f.lease.fence.attempt_id.as_uuid()).fetch_one(&pool).await.unwrap();
+                    if renewed > first { break; }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+            }).await.expect("Mission driver did not renew its own lease");
+            stop.send(true).unwrap();
+        });
+        result.unwrap();
+    }).await.expect("daemon did not stop its bounded Mission driver");
+    assert_eq!(f.provider.request_count(), 1);
+    let counts: (i64, i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.model_turn_reservations WHERE run_id=$1),(SELECT count(*) FROM app.model_turn_receipts t JOIN app.model_turn_reservations r ON r.id=t.reservation_id WHERE r.run_id=$1),(SELECT count(*) FROM pgmq.q_runs WHERE msg_id=$2)")
+        .bind(f.lease.run.id.as_uuid()).bind(f.message.message_id).fetch_one(&pool).await.unwrap();
+    assert_eq!(counts, (1, 0, 1));
+    let run = f.store.get_run(&f.actor, f.lease.run.id).await.unwrap();
+    assert!(!run.state.is_terminal() && run.cancellation_requested_at.is_none());
+}
+
+#[test]
+fn worker_cli_requires_complete_mission_configuration_before_connecting() {
+    for arguments in [
+        vec!["--codex-deployment", "/missing/deployment.json"],
+        vec!["--mission-api-origin", "https://localhost"],
+        vec!["--mission-workspaces", "/missing/workspaces"],
+    ] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_server"))
+            .env_clear()
+            .args([
+                "worker",
+                "--database-url",
+                "postgresql://localhost/not-used",
+            ])
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert!(String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("required arguments"));
+    }
 }
 
 async fn prepare(
@@ -595,10 +764,14 @@ async fn token_limit(pool: PgPool, failed_before_driver: bool) {
                     .iter()
                     .find(|actual| actual.id == turn.id && actual.status.terminal())
                 {
-                    // Real pinned behavior: reconstructed history says completed,
-                    // while its buffered real turn/completed says failed. QZ must
-                    // never promote this list projection into a success receipt.
-                    assert_eq!(actual.status, server::codex_native::TurnStatus::Completed);
+                    // The live snapshot can report Failed, while reconstructed
+                    // history can report Completed for this same failed Turn.
+                    // Neither projection replaces its canonical notification.
+                    assert!(matches!(
+                        actual.status,
+                        server::codex_native::TurnStatus::Completed
+                            | server::codex_native::TurnStatus::Failed
+                    ));
                     break;
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -611,6 +784,12 @@ async fn token_limit(pool: PgPool, failed_before_driver: bool) {
             f.provider.request_count()
         );
         assert_eq!(f.provider.request_count(), 2);
+        let checkpoint = f
+            .store
+            .mission_turn_checkpoint(f.lease.run.id, &f.lease.fence)
+            .await
+            .unwrap();
+        assert!(checkpoint.latest.unwrap().terminal.is_none());
     }
     let (_alive, shutdown) = tokio::sync::watch::channel(false);
     let result = connection

@@ -514,9 +514,9 @@ StopRuleV1:
 
 无准确计费能力不得接受 EXACT；费用值/币种配对。 模型预算准入必须在同一Cycle锁下读取已经消耗和仍在预约中的Token/费用，比较 `used + reserved + requested <= frozen_limit` 后才提交预约和入队。费用使用BigDecimal精确运算，所有加法检查PostgreSQL bigint及NUMERIC边界；不同币种不能相加或自动兑换。配置成本上限时，三个成本字段必须完整已知且币种与政策一致；缺用量或缺新请求估算报不可用，不将null当0。新模型请求必须预约正Token上限，估算成本允许有可信依据的显式0；只有受信任分派器认定的非模型任务才可不带模型预约。此区分和预算不能由Agent自报。
 
-每次原生模型请求、工具后的后续Turn、修复和重试均纳入预约，不因沿用Thread、失败或新Attempt清零。消耗结算必须绑定精确的原生请求/Attempt并幂等转移预约到已用计数；结果未知保留预约，不能因断线/取消请求提前退款。实际用量超过预约也要如实记录并阻断后续准入，不能将账本裁到上限。ESTIMATED只对估算预算作准入，不承诺Provider最终账单严格不超过金额，缺准确计费继续拒绝EXACT。纯领域函数的这部分检查不等于正式Worker与数据库结算链路已经交付。
+沿用Issue62第6.3–6.4节的原生Thread/Turn：预算的一轮是一次App Server `turn/start`及其完整原生工具循环，不是Provider HTTP请求数。以下“模型请求”指QZ发起的原生Turn；其内部工具后续模型请求全部占用该Turn的原预约，按原生累计用量结算，不另建代理或接管工具循环。max_turns_per_mission不声称限制内部HTTP请求次数。QZ发起的每个新Turn、修复和重试均需新预约，不因沿用Thread、失败或新Attempt清零。消耗结算绑定精确原生Turn/Attempt并幂等转移预约到已用；结果未知保留预约，不因断线/取消请求退款。实际超额如实记录并阻断后续准入，不将账本裁到上限。ESTIMATED只对估算预算作准入，不承诺Provider最终账单严格不超金额，缺准确计费继续拒绝EXACT。
 
-模型轮数与 token/费用在相同准入事务内预约，但轮数属于精确 Mission（run_id），不能把整个 Cycle 的多个 Mission 合并计数。每个模型请求必须给出可信调度器绑定的 mission_id 和 turn_kind=RESEARCH|REPAIR；每次恰好预约一轮，REPAIR 同时占总轮数和修复轮数。Mission 从不可变逐轮账本投影 used_turns/reserved_turns/used_repair_turns/reserved_repair_turns（u16，JSON整数，数据库非负约束），不另存可被重置的权威计数，repair 分别不超过相应 total；准入使用 used+reserved+1 与冻结 max_turns_per_mission/max_repair_turns 比较，checked_add 溢出必须拒绝。研究者不能自行创建新 Mission 或更改 turn kind 来重置/扩大预算。续轮/工具后续轮使用同一 Mission 的单独 model-turn 准入，不重复占用实验数、运行并发槽或 job CPU；真正新任务仍要完整预约。不同 Mission 的轮数隔离，Cycle 的 token/费用仍全局累计。缺失或身份不一致的 Mission 账目报错，不默认为零。
+模型轮数与token/费用在相同准入事务内预约，但轮数属于精确Mission（run_id），不能把整个Cycle的多个Mission合并计数。每个新原生Turn必须给出可信调度器绑定的mission_id和turn_kind=RESEARCH|REPAIR；每次恰好预约一轮，REPAIR同时占总轮数和修复轮数。Mission从不可变逐轮账本投影used_turns/reserved_turns/used_repair_turns/reserved_repair_turns（u16，JSON整数，数据库非负约束），不另存可被重置的权威计数，repair分别不超过相应total；准入使用used+reserved+1与冻结max_turns_per_mission/max_repair_turns比较，checked_add溢出拒绝。研究者不能自行创建新Mission或更改turn kind来重置/扩大预算。同Thread的新Turn（包括科学结果回送和修复）单独准入，不重复占用实验数、运行并发槽或job CPU；同一Turn内部原生工具续请求保持原预约，真正新任务仍完整预约。不同Mission的轮数隔离，Cycle的token/费用仍全局累计。缺失或身份不一致的Mission账目报错，不默认为零。
 
 模型发送前先在同一事务持久化轮数/token/费用预约与 pgmq.send；原生分派器在独立短事务持久化唯一发送意图，再做外部 I/O。命令幂等绑定与最终实际用量 receipt 分开，准确阶段见 A6.1。ACK 丢失不释放预约/重新开轮，必须先按原生 Thread/Turn 对账；已发送轮即使失败/取消也计已用，重试和修复同样占额。只有确认从未发送才释放未用预约。首次 Mission 的零账目只能由可信服务和新的 run 在同事务创建；独立 Reviewer 是独立受控 Mission，不用重置研究者计数冒充隔离。
 
@@ -2422,6 +2422,13 @@ PostgreSQL bigint可表示余量作账本预约，不把它宣称为业务token�
 计费能力时不准备可发送的首轮，不编造估算。余额读取不是准入许可，实际公开产物、
 预约及PGMQ仍由现有prepare_mission_turn事务再次重验并原子提交，竞争失败不重发模型。
 首轮准备本身不启动模型、不结束Mission，也不代表科学任务或资格已经完成。
+
+常驻Worker仅在显式配置CodexDeployment、内部Mission API origin和私有工作区根时
+消费Mission消息；缺配置不领取或隐藏这些消息，科学任务仍可独立消费。科学与Mission
+各自最多parallelism个在途驱动，共用原PGMQ和Run租约，不新增队列或Agent工具循环。
+Mission领取后全程每10秒续约60秒，失去租约或服务关闭即停止本机驱动并回收原生
+子进程；这不是远端取消/预算退款证据。只准备缺失的首轮并驱动既有精确预约，已结算
+的轮不再开连接/重发；轮结算本身不ack Mission消息，必须另经完整研究阶段收束。
 
 ## C. 已落实到 A4/A6/A7 的精确数值与关联补充
 

@@ -100,6 +100,14 @@ server client --origin https://research.example --credential-file /private/cli.t
 
 Worker在首次提交之前刷新必要的原生探测；提交结果未知时只查询同一远端任务，不能重发新任务。退出Worker只停止新驱动，不等于远端任务已停止，也不会提前archive未知结果。固定任务成功会把原始结果清单和生产者绑定产物原子登记后再确认队列；质量报告不是PIT或Alpha资格。当前该入口及故障回归不替代尚需完成的完整Mission/研究/评估/组合/交付验收。
 
+启用原生Mission还须同时提供`--codex-deployment` / `CODEX_DEPLOYMENT`、
+`--mission-api-origin` / `MISSION_API_ORIGIN`、`--mission-workspaces` /
+`MISSION_WORKSPACES`。前者复用API的部署绑定文件；API origin须可由可信MCP进程
+访问，本地HTTP仍须明确`--development-http`。工作区根必须已存在、绝对路径且权限
+0700，不得指向源仓库、个人HOME或Codex认证目录。缺配置不消费Mission消息。
+科学任务与Mission各自最多parallelism个在途驱动；不新增Agent工具循环。
+当前自动入口已接首轮准备和原生轮账本，结算轮不等于研究流程收束，不ack Mission。
+
 ## 原生科学任务入口
 
 `job` 是受信任运行时启动的一次性计算进程，不是浏览器/Agent 的任意命令执行代理。每次调用只运行一个任务，API/Worker 不在本进程内嵌入 Nautilus。Clap 原生帮助：
