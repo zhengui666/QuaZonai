@@ -520,6 +520,8 @@ StopRuleV1:
 
 模型发送前先在同一事务持久化轮数/token/费用预约与 pgmq.send；原生分派器在独立短事务持久化唯一发送意图，再做外部 I/O。命令幂等绑定与最终实际用量 receipt 分开，准确阶段见 A6.1。ACK 丢失不释放预约/重新开轮，必须先按原生 Thread/Turn 对账；已发送轮即使失败/取消也计已用，重试和修复同样占额。只有确认从未发送才释放未用预约。首次 Mission 的零账目只能由可信服务和新的 run 在同事务创建；独立 Reviewer 是独立受控 Mission，不用重置研究者计数冒充隔离。
 
+新轮预约及首次发送均在锁定 Session 对应的当前 Profile 后重新检查精确版本、无进行中账号操作以及数据库时间下的 Attempt lease/deadline；等待配置锁不能复活过期执行者。Profile 修改只阻断新发送，不阻断旧预约/发送意图的准确读取、原生 Turn 绑定、对账与真实用量结算。已经发送但回执未知的调用不能因版本改变就退款或改用新账号重发。
+
 Optuna 内部 trial 使用预分配预算，不能藏在一次 job 无限搜索。资源/turn/并行上限必须有效正值且符合 runtime capability；修复 turn 不超过总 turn。停止规则由用户冻结，Agent 不能扩大。
 
 ### A1.1 Brief 草稿作者事务
@@ -1994,7 +1996,9 @@ SQLite 中的输入/结果 BLOB 配额不能漏掉执行目录中的副本。增
 
 Brief freeze 使用严格 schema_version/expected_revision/execution_context；execution_context 包含 runtime_id/runtime_revision 和同项目的 discovery_input_set_id/validation_input_set_id/sealed_input_set_id。三个输入必须已冻结、角色及 Dataset 集合与 Brief bindings 完全一致；validation 输入必须就是冻结 SelectionRule 的 comparison_input_set_id，三者 decision_cutoff 一致。冻结事务锁定当前 Operator/项目/Brief，复用现有数据授权重检、验证 Family/Policy/Universe/ExecutionAssumptions、预算与 horizon，读取精确版本的尚有效原生 Runtime capability。需要 REAL/PIT 的政策不能冻结未知来源或未核验数据；原生 label interval 不支持时明确拒绝，不靠自报指标补齐。成功将 execution_context 与 Brief 同事务封口，冻结后更新内容或上下文均禁止，只能新版本。
 
-Cycle start 使用 schema_version/brief_id/expected_revision（Project revision），只接受 ACTIVE Project 与属于它的 FROZEN Brief。重新检查被冻结输入的当前许可及原生 Runtime 当前 readiness，不把 freeze 当永久许可。首个 Run 为 DATA_VALIDATE：通过真实受限 Runtime 再确认登记数据可执行后，由 Worker 进入 Codex Mission；这一步不是另一条研究路径，也不产生 Alpha/PASS。Cycle、budget snapshot、Run、Event、PGMQ消息、启动关联与原始HTTP回执在一个 SQLx/PGMQ 事务中提交，任何后半步失败均回滚；HTTP202返回准确Cycle/Run身份，不允许业务手工SQL补父对象。人工开始和自动唤醒统一受每日周期额度约束，自动入口另受政策cooldown/去重，不能通过换UUID重置历史。
+Cycle start 使用 schema_version/brief_id/expected_revision（Project revision），以及必填 researcher_profile/reviewer_profile（各为 profile_id/expected_revision），只接受 ACTIVE Project 与属于它的 FROZEN Brief。启动事务锁定并核对两个 Codex Profile 的精确当前版本、已登记原生绑定和无进行中的账号操作，冻结在不可变启动关联及原始回执中，不选“第一个账号”或静默采用新版本。两角色可以显式选同一个 Profile，但必须使用不同的持久 Thread，Reviewer 不继承 Researcher 的聊天上下文。Profile 选择属于本次 Cycle，不污染可复用 Brief；历史启动记录保留空绑定，不补造账号或启动新 Mission。启动不以60秒探测缓存替代实际 Mission 的原生连接检查；后续发现 Profile 已修改则停止新模型调用，明确要求新 Cycle，不把旧选择指向新配置。
+
+重新检查被冻结输入的当前许可及原生 Runtime 当前 readiness，不把 freeze 当永久许可。首个 Run 为 DATA_VALIDATE：通过真实受限 Runtime 再确认登记数据可执行后，由 Worker 进入 Codex Mission；这一步不是另一条研究路径，也不产生 Alpha/PASS。Cycle、budget snapshot、Run、Event、PGMQ消息、启动关联与原始HTTP回执在一个 SQLx/PGMQ 事务中提交，任何后半步失败均回滚；HTTP202返回准确Cycle/Run身份和两个 Profile 选择，不允许业务手工SQL补父对象。人工开始和自动唤醒统一受每日周期额度约束，自动入口另受政策cooldown/去重，不能通过换UUID重置历史。
 
 Mission 控制会话与科学任务的并发分别有界：每个 Cycle 同时最多一个活动 Mission，科学任务继续受 max_parallel_runs 约束；等待科学结果的 Mission 不占掉唯一科学槽。只由可信服务确定试验计数，非试验准备/组合/模拟任务和 Mission 使用0，不得把 Alpha试验伪装为管理任务。CPU/内存/输出/墙钟和模型token/turn预算仍适用于非试验任务；0仅表示不新增试验，绝非无限资源。历史已记账的Run不原地改写或退还。
 

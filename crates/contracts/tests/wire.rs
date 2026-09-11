@@ -4,6 +4,32 @@ use contracts::{
 use serde_json::{from_value, json, to_value};
 
 #[test]
+fn cycle_start_requires_both_explicit_profile_choices_with_exact_revision_strings() {
+    use contracts::cycles::CycleStartV1;
+    let choice = json!({"profile_id":Id::new(),"expected_revision":"9007199254740993"});
+    let request = json!({"schema_version":1,"brief_id":Id::new(),"expected_revision":"1",
+        "researcher_profile":choice,"reviewer_profile":choice});
+    assert_eq!(
+        to_value(from_value::<CycleStartV1>(request.clone()).unwrap()).unwrap(),
+        request
+    );
+    for field in ["researcher_profile", "reviewer_profile"] {
+        let mut missing = request.clone();
+        missing.as_object_mut().unwrap().remove(field);
+        assert!(from_value::<CycleStartV1>(missing).is_err());
+        for value in [
+            json!(null),
+            json!({"profile_id":Id::new(),"expected_revision":1}),
+            json!({"profile_id":Id::new(),"expected_revision":"1","token":"fixture-forbidden-field"}),
+        ] {
+            let mut invalid = request.clone();
+            invalid[field] = value;
+            assert!(from_value::<CycleStartV1>(invalid).is_err());
+        }
+    }
+}
+
+#[test]
 fn precise_database_values_never_cross_json_as_numbers() {
     let boundary = "9007199254740993";
     let counter: DbCounter = from_value(json!(boundary)).unwrap();

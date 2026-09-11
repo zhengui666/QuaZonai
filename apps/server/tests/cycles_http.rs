@@ -130,13 +130,23 @@ async fn authenticated_freeze_and_cycle_start_publish_one_real_run_and_original_
     let body = json!({
         "schema_version": 1,
         "brief_id": data.brief.id,
-        "expected_revision": project["revision"]
+        "expected_revision": project["revision"],
+        "researcher_profile": data.researcher_profile,
+        "reviewer_profile": data.reviewer_profile
     });
     let started = browser(&f, &cookie, "POST", &path, "start", body.clone()).await;
     assert_eq!(started.status, StatusCode::ACCEPTED, "{}", started.body);
     assert_eq!(started.headers[header::CACHE_CONTROL], "no-store");
     assert_eq!(started.body["resource"]["run"]["kind"], "DATA_VALIDATE");
     assert_eq!(started.body["resource"]["run"]["state"], "QUEUED");
+    assert_eq!(
+        started.body["resource"]["cycle"]["researcher_profile"],
+        body["researcher_profile"]
+    );
+    assert_eq!(
+        started.body["resource"]["cycle"]["reviewer_profile"],
+        body["reviewer_profile"]
+    );
     let run_id = started.body["resource"]["run"]["id"].as_str().unwrap();
     let cycle_id = started.body["resource"]["cycle"]["id"].as_str().unwrap();
     let run = browser(
@@ -222,7 +232,9 @@ async fn missing_artifact_deployment_is_unavailable_not_a_user_validation_failur
         "POST",
         &format!("/api/v2/projects/{}/cycles", contracts::Id::new()),
         "missing-artifact-store",
-        json!({"schema_version":1,"brief_id":contracts::Id::new(),"expected_revision":"1"}),
+        json!({"schema_version":1,"brief_id":contracts::Id::new(),"expected_revision":"1",
+            "researcher_profile":{"profile_id":contracts::Id::new(),"expected_revision":"1"},
+            "reviewer_profile":{"profile_id":contracts::Id::new(),"expected_revision":"1"}}),
     )
     .await;
     assert_eq!(response.status, StatusCode::SERVICE_UNAVAILABLE);

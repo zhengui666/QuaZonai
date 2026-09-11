@@ -1543,6 +1543,10 @@ export interface components {
             /** Format: date-time */
             valid_until: string;
         };
+        CodexProfileChoiceV1: {
+            expected_revision: components["schemas"]["Revision"];
+            profile_id: components["schemas"]["Id"];
+        };
         CodexProfileCreateV1: {
             connection: components["schemas"]["CodexConnectionCreateV1"];
             home_binding: string;
@@ -2089,6 +2093,8 @@ export interface components {
             brief_id: components["schemas"]["Id"];
             /** @description The Project revision; the Brief and execution context are immutable. */
             expected_revision: components["schemas"]["Revision"];
+            researcher_profile: components["schemas"]["CodexProfileChoiceV1"];
+            reviewer_profile: components["schemas"]["CodexProfileChoiceV1"];
             schema_version: components["schemas"]["SchemaV1"];
         };
         CycleStartedV1: {
@@ -2115,9 +2121,11 @@ export interface components {
             ordinal: number;
             outcome?: null | components["schemas"]["CycleOutcome"];
             project_id: components["schemas"]["Id"];
+            researcher_profile?: null | components["schemas"]["CodexProfileChoiceV1"];
             reserved_cpu_seconds: components["schemas"]["DbCounter"];
             /** Format: int64 */
             reserved_experiments: number;
+            reviewer_profile?: null | components["schemas"]["CodexProfileChoiceV1"];
             revision: components["schemas"]["Revision"];
             schema_version: components["schemas"]["SchemaV1"];
             /** Format: date-time */
@@ -2841,9 +2849,11 @@ export interface components {
                 ordinal: number;
                 outcome?: null | components["schemas"]["CycleOutcome"];
                 project_id: components["schemas"]["Id"];
+                researcher_profile?: null | components["schemas"]["CodexProfileChoiceV1"];
                 reserved_cpu_seconds: components["schemas"]["DbCounter"];
                 /** Format: int64 */
                 reserved_experiments: number;
+                reviewer_profile?: null | components["schemas"]["CodexProfileChoiceV1"];
                 revision: components["schemas"]["Revision"];
                 schema_version: components["schemas"]["SchemaV1"];
                 /** Format: date-time */

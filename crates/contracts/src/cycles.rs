@@ -41,6 +41,15 @@ pub struct CycleStartV1 {
     pub brief_id: Id,
     /// The Project revision; the Brief and execution context are immutable.
     pub expected_revision: Revision,
+    pub researcher_profile: CodexProfileChoiceV1,
+    pub reviewer_profile: CodexProfileChoiceV1,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CodexProfileChoiceV1 {
+    pub profile_id: Id,
+    pub expected_revision: Revision,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
@@ -110,6 +119,9 @@ pub struct CycleViewV1 {
     pub used_experiments: u32,
     pub reserved_cpu_seconds: DbCounter,
     pub initial_run_id: Option<Id>,
+    /// Historical Cycles without an explicit choice cannot launch a Mission.
+    pub researcher_profile: Option<CodexProfileChoiceV1>,
+    pub reviewer_profile: Option<CodexProfileChoiceV1>,
     pub next_action: Option<String>,
     pub started_at: Option<DateTime<Utc>>,
     pub ended_at: Option<DateTime<Utc>>,

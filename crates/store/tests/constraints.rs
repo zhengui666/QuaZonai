@@ -179,11 +179,20 @@ async fn paper_approval_cannot_authorize_live_or_another_downstream(pool: PgPool
 #[sqlx::test(migrations = "../../migrations")]
 async fn new_database_migrations_are_repeatable_without_legacy_side_effects(pool: PgPool) {
     let store = store::Store::from_pool(pool.clone());
+    let inventory = "SELECT table_schema||'.'||table_name FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema') AND table_type='BASE TABLE' ORDER BY table_schema,table_name";
+    let before: Vec<String> = sqlx::query_scalar(inventory)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
     store.migrate().await.unwrap();
-    let tables:i64=sqlx::query_scalar("SELECT count(*) FROM information_schema.tables WHERE table_schema='app' AND table_type='BASE TABLE'").fetch_one(&pool).await.unwrap();
-    // Migration 025 binds fixed native tasks, first-dispatch specifications and
-    // output identities without importing an old implementation or another queue.
-    assert_eq!(tables, 79);
+    let after: Vec<String> = sqlx::query_scalar(inventory)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        after, before,
+        "repeated native migrations must preserve every application, queue and user table"
+    );
     for table in [
         "app.brief_execution_contexts",
         "app.cycle_startups",
@@ -191,6 +200,8 @@ async fn new_database_migrations_are_repeatable_without_legacy_side_effects(pool
         "app.run_native_tasks",
         "app.run_native_attempts",
         "app.run_native_outputs",
+        "app.codex_profile_observations",
+        "app.codex_account_operations",
     ] {
         assert!(
             sqlx::query_scalar::<_, bool>("SELECT to_regclass($1) IS NOT NULL")

@@ -7,7 +7,7 @@ use chrono::{DateTime, Duration, Utc};
 use contracts::{
     codex::*,
     control::{CommandResult, ListQuery, OperatorOperation, Page},
-    Id, SchemaV1,
+    Id, Revision, SchemaV1,
 };
 use domain::codex::settings as rules;
 use serde_json::{json, Value};
@@ -101,6 +101,45 @@ async fn row(tx: &mut Tx<'_>, id: Id, write: bool) -> Result<PgRow, StoreError> 
         .fetch_optional(&mut **tx)
         .await?
         .ok_or(StoreError::NotFound)
+}
+
+/// Lock the selected version; probes and Cycle admission share the same checks.
+pub(crate) async fn snapshot(
+    tx: &mut Tx<'_>,
+    id: Id,
+    expected_revision: Revision,
+) -> Result<CodexProfileSnapshot, StoreError> {
+    let row = row(tx, id, false).await?;
+    account::no_active_account_operation(tx, id).await?;
+    let profile = view(&row)?;
+    if profile.revision != expected_revision {
+        return Err(StoreError::RevisionConflict {
+            current: profile.revision,
+        });
+    }
+    if row
+        .try_get::<Option<Value>, _>("custom_provider_options")?
+        .is_some()
+    {
+        return Err(domain::DomainError::CapabilityUnavailable(
+            "unsupported_native_provider_options",
+        )
+        .into());
+    }
+    let credential_ref = if profile.connection_mode == ConnectionMode::CustomProvider {
+        Some(
+            row.try_get::<Option<String>, _>("custom_api_key_ref")?
+                .ok_or(StoreError::Integrity)?
+                .try_into()
+                .map_err(|_| StoreError::Integrity)?,
+        )
+    } else {
+        None
+    };
+    Ok(CodexProfileSnapshot {
+        profile,
+        credential_ref,
+    })
 }
 
 impl Store {
@@ -311,41 +350,12 @@ impl Store {
             tx.commit().await?;
             return Ok(CodexProbePreparation::Replay(Box::new(result)));
         }
-        let row = row(&mut tx, request.profile_id, false).await?;
-        account::no_active_account_operation(&mut tx, request.profile_id).await?;
-        let profile = view(&row)?;
-        if profile.revision != request.expected_revision {
-            return Err(StoreError::RevisionConflict {
-                current: profile.revision,
-            });
-        }
-        if row
-            .try_get::<Option<Value>, _>("custom_provider_options")?
-            .is_some()
-        {
-            return Err(domain::DomainError::CapabilityUnavailable(
-                "unsupported_native_provider_options",
-            )
-            .into());
-        }
-        let credential_ref = if profile.connection_mode == ConnectionMode::CustomProvider {
-            Some(
-                row.try_get::<Option<String>, _>("custom_api_key_ref")?
-                    .ok_or(StoreError::Integrity)?
-                    .try_into()
-                    .map_err(|_| StoreError::Integrity)?,
-            )
-        } else {
-            None
-        };
+        let snapshot = snapshot(&mut tx, request.profile_id, request.expected_revision).await?;
         let started_at = sqlx::query_scalar("SELECT clock_timestamp()")
             .fetch_one(&mut *tx)
             .await?;
         let ticket = CodexProbeTicket {
-            snapshot: CodexProfileSnapshot {
-                profile,
-                credential_ref,
-            },
+            snapshot,
             started_at,
             actor: actor.clone(),
             key: key.to_owned(),

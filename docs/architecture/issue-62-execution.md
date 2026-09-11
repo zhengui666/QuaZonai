@@ -588,3 +588,22 @@ managed、native Codex、Store及HTTP/MCP检查均exit0；源码快照未变，�
 模型上游和父研究数据仍是明确fixture；尚不是Cycle自动Mission启动、真实科学Job/
 Evaluation返回同Thread、完整T07/T42或可合并证据。CI已登记上述native测试，远端实际
 结果必须绑定推送后的Head；本记录不代替GitHub review或完整Issue62交付。
+
+## 2026-09-11：Cycle 原生配置选择与续轮版本
+
+CycleStart 必须明确 researcher_profile/reviewer_profile 的 profile_id 与十进制
+expected_revision；migration028 将两个选择随 cycle_startups 封口，历史空选择保持未知。
+启动复用原生配置快照锁和现有事务，配置过期、缺失或账号操作进行中不产生 Run/PGMQ
+半状态。修改 Profile 不改写旧 Cycle 或原始响应，准确重放仍读取原回执。
+新模型轮预约和首次发送重新检查 Session 的 Profile 与锁等待后的 Attempt lease；
+已发送调用仍可绑定原生 Turn、对账和结算，不因配置变化退款或重发。
+
+本地 `.ai-bridge/verify-VBYni7` 全量验证 exit0：编译/fmt/严格Clippy、领域及
+managed/native Codex 检查通过，Store+Server 共451测试通过、0失败、0忽略；
+源码快照未变，独立测试 PostgreSQL 已确认停止。之前 `.ai-bridge/verify-vUFFS9`
+只有固定79张表的旧测试断言失败，已改为重复迁移前后的完整表清单一致及必需表检查。
+OpenAPI/TypeScript/Ajv 在 `.ai-bridge/web-verify-zO8r57` 两次生成逐字节一致，
+手写源未变，构建、wire、150浏览器用例通过；新增合同测试的TypeScript缺值检查
+随后修正，原生命令复核 typecheck、504 Vitest 与5个PWA文件测试全部通过。
+这些是本增量实际代码/原生事务和受控协议证据，不是完整Cycle→Mission→科学Job→
+Evaluation、真实账号T07、完整T42或远端最新Head的CI/review/可合并结论。

@@ -7,6 +7,7 @@ mod cycle_data;
 use chrono::{DateTime, Utc};
 use contracts::{
     brief::*,
+    codex::{CodexConnectionCreateV1, CodexProfileCreateV1, ProfileOrigin, SavedModelSettingsV1},
     control::ProjectUpdate,
     cycles::*,
     research::*,
@@ -24,6 +25,8 @@ pub struct Fixture {
     pub brief: BriefView,
     pub freeze: BriefFreezeV1,
     pub objects: Arc<ArtifactStore>,
+    pub researcher_profile: CodexProfileChoiceV1,
+    pub reviewer_profile: CodexProfileChoiceV1,
     _directory: Option<tempfile::TempDir>,
 }
 
@@ -177,11 +180,47 @@ pub async fn setup_with_objects(
         },
     };
     Fixture {
+        researcher_profile: profile_choice(store, actor, "researcher").await,
+        reviewer_profile: profile_choice(store, actor, "reviewer").await,
         data,
         brief,
         freeze,
         objects,
         _directory: None,
+    }
+}
+
+async fn profile_choice(store: &Store, actor: &Actor, role: &str) -> CodexProfileChoiceV1 {
+    let profile = store
+        .create_codex_profile(
+            actor,
+            &Id::new().to_string(),
+            &CodexProfileCreateV1 {
+                schema_version: SchemaV1,
+                name: format!("{role} fixture"),
+                home_binding: format!("native-{}", Id::new()),
+                profile_origin: ProfileOrigin::ManagedVolume,
+                connection: CodexConnectionCreateV1::System {},
+                model_settings: SavedModelSettingsV1 {
+                    schema_version: SchemaV1,
+                    use_default_model_settings: true,
+                    saved_model: None,
+                    saved_reasoning_effort: None,
+                    saved_fast_mode: false,
+                },
+            },
+            |binding| async move {
+                // Explicit binding fixture only; native dedicated-home proof is separate.
+                domain::codex::settings::home_binding(&binding.home_binding)?;
+                Ok(())
+            },
+        )
+        .await
+        .unwrap()
+        .resource;
+    CodexProfileChoiceV1 {
+        profile_id: profile.id,
+        expected_revision: profile.revision,
     }
 }
 
@@ -245,6 +284,8 @@ pub async fn start_request(store: &Store, actor: &Actor, fixture: &Fixture) -> C
             schema_version: SchemaV1,
             brief_id: fixture.brief.id,
             expected_revision: active.revision,
+            researcher_profile: fixture.researcher_profile,
+            reviewer_profile: fixture.reviewer_profile,
         },
     }
 }

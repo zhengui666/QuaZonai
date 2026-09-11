@@ -80,6 +80,89 @@ async fn concurrent_retries_reserve_once_and_publish_one_native_queue_message(po
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn changed_profile_blocks_new_sends_without_blocking_reconciliation_or_settlement(
+    pool: PgPool,
+) {
+    let f = fixture(&pool, budget()).await;
+    let s = Store::from_pool(pool.clone());
+    let first = s
+        .reserve_turn(f.run, &f.fence, &f.request("sent"))
+        .await
+        .unwrap();
+    assert!(matches!(
+        s.claim_turn_dispatch(first.id, &f.fence).await.unwrap(),
+        DispatchDecision::Send { .. }
+    ));
+    sqlx::query("UPDATE app.codex_profiles SET name='changed after send' WHERE id=$1")
+        .bind(f.profile.as_uuid())
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(matches!(
+        s.claim_turn_dispatch(first.id, &f.fence).await.unwrap(),
+        DispatchDecision::Reconcile {
+            native_turn_id: None
+        }
+    ));
+    s.bind_native_turn(first.id, &f.fence, "native/already-sent")
+        .await
+        .unwrap();
+    s.settle_turn(
+        first.id,
+        &f.fence,
+        &used(TurnOutcome::Succeeded, 12, "0.25"),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        s.claim_turn_dispatch(first.id, &f.fence).await.unwrap(),
+        DispatchDecision::Settled
+    ));
+    assert!(matches!(
+        s.reserve_turn(f.run, &f.fence, &f.request("new")).await,
+        Err(StoreError::RevisionConflict { .. })
+    ));
+    let original = s
+        .reserve_turn(f.run, &f.fence, &f.request("sent"))
+        .await
+        .unwrap();
+    assert_eq!(
+        original.id, first.id,
+        "an exact reservation replay is still a read"
+    );
+    let counts: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.model_turn_reservations),(SELECT count(*) FROM app.model_turn_dispatches),(SELECT sum(actual_tokens)::bigint FROM app.model_turn_receipts)")
+        .fetch_one(&pool).await.unwrap();
+    assert_eq!(counts, (1, 1, 12));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn profile_change_between_reservation_and_dispatch_never_gets_a_send_permit(pool: PgPool) {
+    let f = fixture(&pool, budget()).await;
+    let s = Store::from_pool(pool.clone());
+    let first = s
+        .reserve_turn(f.run, &f.fence, &f.request("reserved"))
+        .await
+        .unwrap();
+    sqlx::query("UPDATE app.codex_profiles SET name='changed before send' WHERE id=$1")
+        .bind(f.profile.as_uuid())
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(matches!(
+        s.claim_turn_dispatch(first.id, &f.fence).await,
+        Err(StoreError::RevisionConflict { .. })
+    ));
+    let sends: i64 = sqlx::query_scalar("SELECT count(*) FROM app.model_turn_dispatches")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(sends, 0);
+    s.settle_turn(first.id, &f.fence, &used(TurnOutcome::NotSent, 0, "0"))
+        .await
+        .unwrap();
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn a_mission_cannot_open_a_second_unresolved_turn(pool: PgPool) {
     let f = fixture(&pool, budget()).await;
     let s = Store::from_pool(pool.clone());

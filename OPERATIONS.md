@@ -243,6 +243,8 @@ qz.forward_report v1。先接收合法反馈后下游再拒绝时，保留转移
 
 Runtime 的 `enabled` 和配置能力列表不代表可用。Cycle / standalone Run 准入和首次派发都要求当前配置 revision 的成功原生探测仍在有效期内，并核对实际 job kind、内存、墙钟时限与输出上限；拒绝不得扣减预算、入队或生成成功回执。探测有效期最多60秒，应通过正式探测入口刷新，不得手工修改观测表。CPU秒是累计预算，不是CPU核数。
 
+Cycle 启动须明确提供 `researcher_profile` 和 `reviewer_profile`，各包含 Codex Profile 的 `profile_id` 与当前 `expected_revision`。两个选择随本周期冻结，不属于可重复使用的 Brief；可以明确选择同一 Profile，但研究和独立审阅使用不同 Thread。缺失、过期版本或正在登录/注销的配置不能启动。随后修改 Profile 不会修改旧周期或旧回执，也不能让旧周期自动采用新模型/账号配置；应以新选择启动新周期。历史没有选择的记录只保留原事实，不补造账号。
+
 Runtime bearer 必须为32–8192字节、无空白的可打印ASCII；这只是最小线缆形状，不是随机性或熵保证。升级前登记的短Runtime凭据在原生传输构造时返回认证不可用，不会发送给远端。Operator应在真实Runtime端设置合适的新凭据，通过正式write-only Secret接口登记后更新Runtime引用并重新探测；不得用补字符、截断、降低验证或直接改数据库方式绕过。Downstream / Custom Provider保留各自上游支持的1–8192字节边界；TLS CA仍须通过原生PEM解析。
 
 `PINNED_CA`新建必须提供非空CA引用且`development_http=false`；更新可省略或使用null保留已存CA。切换`SYSTEM_CA`时请求必须省略/null CA，由Store清除绑定，不能携带未使用的CA。不存在静默明文回退。

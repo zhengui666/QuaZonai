@@ -277,6 +277,19 @@ pub(crate) async fn validate_execution_context(
 }
 
 fn cycle_view(row: &PgRow) -> Result<CycleViewV1, StoreError> {
+    let profile = |id, revision| -> Result<Option<CodexProfileChoiceV1>, StoreError> {
+        match (
+            db::optional_id(row, id)?,
+            row.try_get::<Option<i64>, _>(revision)?,
+        ) {
+            (Some(profile_id), Some(revision)) => Ok(Some(CodexProfileChoiceV1 {
+                profile_id,
+                expected_revision: db::revision(revision)?,
+            })),
+            (None, None) => Ok(None),
+            _ => Err(StoreError::Integrity),
+        }
+    };
     let outcome = row
         .try_get::<Option<String>, _>("outcome")?
         .map(|value| {
@@ -309,6 +322,8 @@ fn cycle_view(row: &PgRow) -> Result<CycleViewV1, StoreError> {
             .map_err(|_| StoreError::Integrity)?,
         reserved_cpu_seconds: counter("reserved_cpu_seconds")?,
         initial_run_id: db::optional_id(row, "initial_run_id")?,
+        researcher_profile: profile("researcher_profile_id", "researcher_profile_revision")?,
+        reviewer_profile: profile("reviewer_profile_id", "reviewer_profile_revision")?,
         next_action: row.try_get("next_action")?,
         started_at: row.try_get("started_at")?,
         ended_at: row.try_get("ended_at")?,
@@ -320,7 +335,7 @@ fn cycle_view(row: &PgRow) -> Result<CycleViewV1, StoreError> {
         ],
     })
 }
-const CYCLE: &str = "SELECT c.*,s.initial_run_id FROM app.research_cycles c LEFT JOIN app.cycle_startups s ON s.cycle_id=c.id";
+const CYCLE: &str = "SELECT c.*,s.initial_run_id,s.researcher_profile_id,s.researcher_profile_revision,s.reviewer_profile_id,s.reviewer_profile_revision FROM app.research_cycles c LEFT JOIN app.cycle_startups s ON s.cycle_id=c.id";
 
 impl Store {
     pub async fn freeze_brief(
@@ -456,6 +471,22 @@ impl Store {
         if p.try_get::<String, _>("state")? != "ACTIVE" {
             return Err(DomainError::AdmissionClosed.into());
         }
+        let mut choices = [
+            request.request.researcher_profile,
+            request.request.reviewer_profile,
+        ];
+        choices.sort_by_key(|choice| choice.profile_id.as_uuid());
+        for choice in choices {
+            let selected = crate::codex_profiles::snapshot(
+                &mut tx,
+                choice.profile_id,
+                choice.expected_revision,
+            )
+            .await?;
+            if selected.profile.home_binding.is_none() {
+                return Err(DomainError::CapabilityUnavailable("unregistered_codex_home").into());
+            }
+        }
         let row = crate::brief::row(&mut tx, request.request.brief_id, false).await?;
         let brief = crate::brief::view(&mut tx, &row).await?;
         if brief.project_id != request.project_id || brief.state != BriefState::Frozen {
@@ -537,11 +568,15 @@ impl Store {
         .await?;
         crate::lifecycle::native::bind_task(&mut tx, &admitted.resource, definition).await?;
         sqlx::query(
-            "INSERT INTO app.cycle_startups(cycle_id,project_id,initial_run_id) VALUES($1,$2,$3)",
+            "INSERT INTO app.cycle_startups(cycle_id,project_id,initial_run_id, researcher_profile_id,researcher_profile_revision,reviewer_profile_id,reviewer_profile_revision) VALUES($1,$2,$3,$4,$5,$6,$7)",
         )
         .bind(cycle.as_uuid())
         .bind(request.project_id.as_uuid())
         .bind(admitted.resource.id.as_uuid())
+        .bind(request.request.researcher_profile.profile_id.as_uuid())
+        .bind(request.request.researcher_profile.expected_revision.get() as i64)
+        .bind(request.request.reviewer_profile.profile_id.as_uuid())
+        .bind(request.request.reviewer_profile.expected_revision.get() as i64)
         .execute(&mut *tx)
         .await?;
         let row = sqlx::query(&format!("{CYCLE} WHERE c.id=$1"))

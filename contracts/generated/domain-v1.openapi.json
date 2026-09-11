@@ -6026,6 +6026,22 @@
         ],
         "type": "object"
       },
+      "CodexProfileChoiceV1": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "profile_id": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "profile_id",
+          "expected_revision"
+        ],
+        "type": "object"
+      },
       "CodexProfileCreateV1": {
         "additionalProperties": false,
         "properties": {
@@ -6448,6 +6464,12 @@
             "$ref": "#/components/schemas/Revision",
             "description": "The Project revision; the Brief and execution context are immutable."
           },
+          "researcher_profile": {
+            "$ref": "#/components/schemas/CodexProfileChoiceV1"
+          },
+          "reviewer_profile": {
+            "$ref": "#/components/schemas/CodexProfileChoiceV1"
+          },
           "schema_version": {
             "$ref": "#/components/schemas/SchemaV1"
           }
@@ -6455,7 +6477,9 @@
         "required": [
           "schema_version",
           "brief_id",
-          "expected_revision"
+          "expected_revision",
+          "researcher_profile",
+          "reviewer_profile"
         ],
         "type": "object"
       },
@@ -6565,6 +6589,17 @@
           "project_id": {
             "$ref": "#/components/schemas/Id"
           },
+          "researcher_profile": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CodexProfileChoiceV1",
+                "description": "Historical Cycles without an explicit choice cannot launch a Mission."
+              }
+            ]
+          },
           "reserved_cpu_seconds": {
             "$ref": "#/components/schemas/DbCounter"
           },
@@ -6573,6 +6608,16 @@
             "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
+          },
+          "reviewer_profile": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CodexProfileChoiceV1"
+              }
+            ]
           },
           "revision": {
             "$ref": "#/components/schemas/Revision"

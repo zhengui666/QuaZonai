@@ -136,6 +136,11 @@ async fn cycle_run_event_admission_queue_and_receipt_are_created_once(pool: PgPo
     );
     assert_eq!(counts(&pool).await, (1, 1, 1, 1, 1, 1));
     assert_eq!(a.resource.cycle.initial_run_id, Some(a.resource.run.id));
+    assert_eq!(
+        a.resource.cycle.researcher_profile,
+        Some(f.researcher_profile)
+    );
+    assert_eq!(a.resource.cycle.reviewer_profile, Some(f.reviewer_profile));
     assert_eq!(a.resource.run.cycle_id, Some(a.resource.cycle.id));
     assert_eq!(a.resource.cycle.reserved_experiments, 0);
     assert!(a.resource.cycle.reserved_cpu_seconds.get() > 0);
@@ -161,6 +166,138 @@ async fn cycle_run_event_admission_queue_and_receipt_are_created_once(pool: PgPo
             .initial_run_id,
         Some(a.resource.run.id)
     );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn cycle_choices_are_explicit_revision_locked_and_never_rewritten_by_profile_updates(
+    pool: PgPool,
+) {
+    use contracts::codex::{CodexConnectionUpdateV1, CodexProfileUpdateV1};
+    let (store, actor) = research_support::operator(&pool).await;
+    let f = cycle_support::setup(&pool, &store, &actor).await;
+    store
+        .freeze_brief(&actor, "freeze", f.brief.id, &f.freeze)
+        .await
+        .unwrap();
+    let request = cycle_support::start_request(&store, &actor, &f).await;
+    let mut invalid = request.clone();
+    invalid.request.reviewer_profile.profile_id = Id::new();
+    assert!(matches!(
+        f.start(&store, &actor, "missing-profile", &invalid).await,
+        Err(StoreError::NotFound)
+    ));
+    invalid = request.clone();
+    invalid.request.reviewer_profile.expected_revision = "99".to_owned().try_into().unwrap();
+    assert!(matches!(
+        f.start(&store, &actor, "stale-profile", &invalid).await,
+        Err(StoreError::RevisionConflict { .. })
+    ));
+    assert_eq!(counts(&pool).await, (0, 0, 0, 0, 0, 0));
+
+    let first = f
+        .start(&store, &actor, "start", &request)
+        .await
+        .unwrap()
+        .resource;
+    let old = store
+        .codex_profile(&actor, f.researcher_profile.profile_id)
+        .await
+        .unwrap();
+    let updated = store
+        .update_codex_profile(
+            &actor,
+            "change-profile",
+            old.id,
+            &CodexProfileUpdateV1 {
+                schema_version: SchemaV1,
+                expected_revision: old.revision,
+                name: "changed native profile".into(),
+                connection: CodexConnectionUpdateV1::System {},
+                model_settings: old.model_settings,
+            },
+            |_| async { Ok(()) },
+        )
+        .await
+        .unwrap()
+        .resource;
+    assert_ne!(updated.revision, f.researcher_profile.expected_revision);
+    let replay = f.start(&store, &actor, "start", &request).await.unwrap();
+    assert!(replay.replayed);
+    assert_eq!(
+        serde_json::to_value(&replay.resource).unwrap(),
+        serde_json::to_value(&first).unwrap()
+    );
+    let visible = store.cycle(&actor, first.cycle.id).await.unwrap();
+    assert_eq!(visible.researcher_profile, Some(f.researcher_profile));
+    assert_eq!(visible.reviewer_profile, Some(f.reviewer_profile));
+    for (statement, code) in [
+        ("INSERT INTO app.cycle_startups(cycle_id,project_id,initial_run_id) SELECT cycle_id,project_id,initial_run_id FROM app.cycle_startups WHERE cycle_id=$1", "23514"),
+        ("INSERT INTO app.cycle_startups SELECT cycle_id,project_id,initial_run_id,created_at,researcher_profile_id,researcher_profile_revision,reviewer_profile_id,reviewer_profile_revision FROM app.cycle_startups WHERE cycle_id=$1", "23514"),
+    ] {
+        // BEFORE INSERT must reject missing/stale choices before uniqueness is
+        // checked; updating the source profile above makes its old revision stale.
+        let error = sqlx::query(statement).bind(first.cycle.id.as_uuid()).execute(&pool).await.unwrap_err();
+        assert_eq!(error.as_database_error().unwrap().code().as_deref(), Some(code));
+    }
+    let mut current = request.clone();
+    current.request.expected_revision = store
+        .project(&actor, f.data.project)
+        .await
+        .unwrap()
+        .revision;
+    assert!(matches!(
+        f.start(&store, &actor, "stale-after-edit", &current).await,
+        Err(StoreError::RevisionConflict { .. })
+    ));
+    assert_eq!(counts(&pool).await, (1, 1, 1, 1, 1, 1));
+    let mutation = sqlx::query(
+        "UPDATE app.cycle_startups SET researcher_profile_revision=$2 WHERE cycle_id=$1",
+    )
+    .bind(first.cycle.id.as_uuid())
+    .bind(updated.revision.get() as i64)
+    .execute(&pool)
+    .await
+    .unwrap_err();
+    assert_eq!(
+        mutation.as_database_error().unwrap().code().as_deref(),
+        Some("23000")
+    );
+    let mut changed = request.clone();
+    changed.request.researcher_profile.expected_revision = updated.revision;
+    assert!(
+        f.start(&store, &actor, "start", &changed).await.is_err(),
+        "same command key cannot select a different profile revision"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn cycle_cannot_start_while_native_account_change_is_in_flight(pool: PgPool) {
+    use contracts::codex::{CodexAccountActionV1, CodexAccountRequestV1};
+    let (store, actor) = research_support::operator(&pool).await;
+    let f = cycle_support::setup(&pool, &store, &actor).await;
+    store
+        .freeze_brief(&actor, "freeze", f.brief.id, &f.freeze)
+        .await
+        .unwrap();
+    let request = cycle_support::start_request(&store, &actor, &f).await;
+    store
+        .prepare_codex_account(
+            &actor,
+            "login",
+            &CodexAccountRequestV1 {
+                schema_version: SchemaV1,
+                profile_id: f.reviewer_profile.profile_id,
+                expected_revision: f.reviewer_profile.expected_revision,
+            },
+            CodexAccountActionV1::Login,
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        f.start(&store, &actor, "during-login", &request).await,
+        Err(StoreError::Conflict)
+    ));
+    assert_eq!(counts(&pool).await, (0, 0, 0, 0, 0, 0));
 }
 
 #[sqlx::test(migrations = "../../migrations")]

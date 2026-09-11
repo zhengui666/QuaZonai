@@ -109,6 +109,7 @@ struct Mission {
     cycle_id: Uuid,
     run_id: Id,
     session_id: Uuid,
+    profile_id: Id,
     profile_revision: i64,
     budget: BudgetV1,
     budget_matches_brief: bool,
@@ -206,7 +207,7 @@ async fn lock_mission(
     let attempt=sqlx::query("SELECT worker_owner_id,owner_epoch::bigint,lease_expires_at::timestamptz FROM app.run_attempts WHERE id=$1 AND run_id=$2 FOR UPDATE")
         .bind(fence.attempt_id.as_uuid()).bind(run_id.as_uuid()).fetch_one(&mut **tx).await?;
     let session =
-        sqlx::query("SELECT id::uuid, profile_revision::bigint FROM app.codex_sessions WHERE run_id=$1 FOR UPDATE")
+        sqlx::query("SELECT id::uuid,profile_id::uuid,profile_revision::bigint FROM app.codex_sessions WHERE run_id=$1 FOR UPDATE")
             .bind(run_id.as_uuid())
             .fetch_optional(&mut **tx)
             .await?
@@ -226,6 +227,7 @@ async fn lock_mission(
         cycle_id,
         run_id,
         session_id: session.try_get("id")?,
+        profile_id: id(session.try_get("profile_id")?)?,
         profile_revision: session.try_get("profile_revision")?,
         budget,
         budget_matches_brief,
@@ -240,6 +242,16 @@ async fn lock_mission(
 }
 
 impl Mission {
+    async fn current_profile(&self, tx: &mut Tx<'_>) -> Result<(), StoreError> {
+        crate::codex_profiles::snapshot(
+            tx,
+            self.profile_id,
+            crate::db::revision(self.profile_revision)?,
+        )
+        .await?;
+        Ok(())
+    }
+
     fn admit(&self, deadline: DateTime<Utc>) -> Result<(), StoreError> {
         if self.project_state != ProjectState::Active
             || self.cycle_state != "RUNNING"
@@ -382,6 +394,9 @@ impl Store {
             return Ok(original);
         }
         mission.admit(request.deadline_at)?;
+        mission.current_profile(&mut tx).await?;
+        let mission = lock_mission(&mut tx, run_id, fence).await?;
+        mission.admit(request.deadline_at)?;
         let pending:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.model_turn_reservations r WHERE r.session_id=$1 AND NOT EXISTS(SELECT 1 FROM app.model_turn_receipts t WHERE t.reservation_id=r.id))")
             .bind(mission.session_id).fetch_one(&mut *tx).await?;
         if pending {
@@ -512,6 +527,13 @@ impl Store {
             return Ok(DispatchDecision::Reconcile { native_turn_id });
         }
         mission.admit(item.deadline_at)?;
+        // Only a new send needs the current profile. Already-sent work must
+        // remain reconcilable/chargeable after a settings or account change.
+        mission.current_profile(&mut tx).await?;
+        // The profile lock may have waited past the Attempt lease/deadline.
+        lock_mission(&mut tx, item.run_id, fence)
+            .await?
+            .admit(item.deadline_at)?;
         // A different Attempt cannot dispatch a reservation owned by an earlier
         // attempt. An owner-epoch takeover within the same attempt is supported.
         if item.attempt_id != fence.attempt_id {

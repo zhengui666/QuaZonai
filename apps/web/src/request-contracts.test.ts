@@ -15,6 +15,21 @@ function compile(schema: object) {
 }
 
 describe('native-generated request constraints execute in the JavaScript validator', () => {
+  it('requires explicit exact native profile choices for a Cycle, preserving bigint versions', () => {
+    const schema = document.components.schemas.CycleStartV1;
+    if (!schema) throw new Error('Native CycleStartV1 component missing');
+    const valid = compile(schema);
+    const choice = { profile_id: '01990000-0000-7000-8000-000000000002', expected_revision: '9007199254740993' };
+    const request = { schema_version: 1, brief_id: '01990000-0000-7000-8000-000000000001', expected_revision: '1',
+      researcher_profile: choice, reviewer_profile: choice };
+    expect(valid(request)).toBe(true);
+    for (const role of ['researcher_profile', 'reviewer_profile'] as const) {
+      const missing: Partial<typeof request> = { ...request }; delete missing[role];
+      expect(valid(missing)).toBe(false);
+      for (const value of [null, { ...choice, expected_revision: 1 }, { ...choice, expected_revision: '0' },
+        { ...choice, token: 'fixture-forbidden-field' }]) expect(valid({ ...request, [role]: value })).toBe(false);
+    }
+  });
   it('validates every idempotency header including terminal newline and exact byte boundaries', () => {
     const headers = Object.values(document.paths).flatMap(item => Object.values(item)
       .flatMap(operation => operation.parameters ?? [])).filter(parameter => parameter.in === 'header' && parameter.name === 'Idempotency-Key');
