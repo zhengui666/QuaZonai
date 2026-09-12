@@ -1570,6 +1570,41 @@ async fn native_terminal_without_usage_preserves_first_observation_and_budget(po
     }
     assert_eq!(f.provider.request_count(), 1);
     connection.client.close().await.unwrap();
+    let credentials: i64 = sqlx::query_scalar("SELECT count(*) FROM app.machine_credentials")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let run = f.store.get_run(&f.actor, f.lease.run.id).await.unwrap();
+    f.store
+        .cancel_run(
+            &f.actor,
+            "cancel-before-native-recovery",
+            run.id,
+            &contracts::lifecycle::RunCancelV1 {
+                schema_version: SchemaV1,
+                expected_revision: run.revision,
+            },
+        )
+        .await
+        .unwrap();
+    visible(&f, &pool).await;
+    daemon(&f)
+        .with_missions(f.launcher.clone())
+        .process_mission_message(f.message.clone(), "cancelled-original-thread", shutdown)
+        .await
+        .unwrap();
+    assert_eq!(
+        f.provider.request_count(),
+        1,
+        "recovery cannot send another model turn"
+    );
+    let recovered: (i64, i64, i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.machine_credentials),(SELECT count(*) FROM app.codex_sessions),(SELECT count(*) FROM app.model_turn_receipts WHERE reservation_id=$1),(SELECT count(*) FROM pgmq.a_runs WHERE msg_id=$2)")
+        .bind(reserved.id.as_uuid()).bind(f.message.message_id).fetch_one(&pool).await.unwrap();
+    assert_eq!(recovered, (credentials, 1, 0, 0));
+    assert_eq!(
+        f.store.get_run(&f.actor, run.id).await.unwrap().state,
+        RunState::CancelRequested
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]

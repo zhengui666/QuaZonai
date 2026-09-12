@@ -106,6 +106,24 @@ impl Worker {
             return Ok(true);
         }
         let job = self.store.mission_job(run, fence).await?;
+        if job.lease.action == NextRuntimeAction::Cancel {
+            let mut connection = launcher
+                .open(&self.store, self.vault.clone(), run, fence)
+                .await?;
+            let result = tokio::time::timeout(Duration::from_secs(110), async {
+                connection
+                    .drive_turn(&self.store, self.objects.clone(), run, fence, shutdown)
+                    .await?;
+                self.capture_mission_summary(&mut connection, lease).await
+            })
+            .await;
+            let closed = connection.client.close().await;
+            result.map_err(|_| {
+                WorkerFailure::Codex("RECONCILE_TIMEOUT", native::NativeFailure::Unavailable)
+            })??;
+            closed.map_err(|reason| WorkerFailure::Codex("CLOSE_MISSION", reason))?;
+            return Ok(self.store.complete_mission(run, fence).await?);
+        }
         if job.role == "INDEPENDENT_REVIEWER" {
             return self.drive_review(launcher, lease, shutdown).await;
         }
@@ -448,9 +466,8 @@ impl MissionLauncher {
         fence: &WorkerFence,
     ) -> Result<MissionConnection, WorkerFailure> {
         let job = store.mission_job(run, fence).await?;
-        if job.lease.action == NextRuntimeAction::Cancel
-            || (job.session.is_none() && job.lease.action != NextRuntimeAction::PrepareDispatch)
-        {
+        let reconciling = job.lease.action == NextRuntimeAction::Cancel;
+        if job.session.is_none() && job.lease.action != NextRuntimeAction::PrepareDispatch {
             // An unknown Thread start is never a license to create a second one.
             return Err(WorkerFailure::Codex(
                 "THREAD_IDENTITY",
@@ -460,9 +477,13 @@ impl MissionLauncher {
         let resources = native::MissionProcess::new(
             run,
             job.lease.limits.clone(),
-            u32::try_from((job.lease.run.deadline_at - job.observed_at).num_seconds())
-                .map_err(|_| WorkerFailure::Contract)?
-                .min(job.lease.limits.wall_seconds),
+            if reconciling {
+                110
+            } else {
+                u32::try_from((job.lease.run.deadline_at - job.observed_at).num_seconds())
+                    .map_err(|_| WorkerFailure::Contract)?
+            }
+            .min(job.lease.limits.wall_seconds),
         )
         .map_err(|reason| WorkerFailure::Codex("RESOURCE_BOUNDS", reason))?;
         let workspace = self.workspace(run).await?;
@@ -487,7 +508,11 @@ impl MissionLauncher {
                 ));
             }
         }
-        let token = issue(store, vault, run, fence).await?;
+        let token = if reconciling {
+            None
+        } else {
+            Some(issue(store, vault, run, fence).await?)
+        };
         options.mission = Some(MissionOptions {
             server_binary: self.server_binary.clone(),
             api_origin: self.api_origin.clone(),
@@ -536,6 +561,9 @@ impl MissionLauncher {
         // The same transaction validates native metadata on resume. Neither new
         // defaults nor a lost/empty native Thread can replace the original.
         let session = store.bind_mission_session(run, fence, &receipt).await?;
+        if reconciling {
+            return Ok(MissionConnection { client, session });
+        }
         let tools = client
             .mission_tool_names(&session.native.thread_id)
             .await

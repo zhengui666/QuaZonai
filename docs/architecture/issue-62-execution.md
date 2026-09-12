@@ -3,6 +3,31 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Cancelled original native Thread recovery, 2026-09-13
+
+Working source over `4e979a25fc47aefb5e7d2ce4ff52a78b388bd7b2` fixes the shared
+Mission launcher rejecting every cancellation before considering its persisted
+session. Both roles now enter cancellation reconciliation before normal stage
+preparation. Only an existing Thread can resume; no Mission credential is minted,
+MCP is disabled without a token, and no new Turn is prepared. Original resource
+limits remain, with a bounded cleanup window rather than renewed research time.
+
+`verify-YOTtwB` passed 24 tests but the new recovery case failed at native
+thread/resume. The disabled MCP entry initially omitted transport fields;
+retaining command/arguments while disabling it and omitting credentials corrected
+the request. `verify-d0K0Yi` then passed the exact recovery case (118.97s).
+Final `verify-uomhbK` passed check/format/strict Clippy and all 25 actual native
+profile/MCP/Mission tests (4 + 5 + 16; Mission group 478.97s), zero failed/ignored,
+source unchanged and owned PostgreSQL confirmed stopped.
+
+The extended case closes the original process after a real completed notification,
+withholds final usage, cancels the Run and redelivers its original queue message.
+Native resume succeeds, provider calls and credential counts do not increase,
+one original session remains, no receipt/archive is fabricated, and the Run stays
+CANCEL_REQUESTED. Controlled upstream responses are not real account/market T42;
+this does not prove recovery of every lost streaming notification or final usage.
+No push, review request, merge or Issue closure occurred.
+
 ## Original Sealed qualification transaction, 2026-09-13
 
 Working source over `da4ed4da349f6dadff53b193cc1efff7c87c6888` connects

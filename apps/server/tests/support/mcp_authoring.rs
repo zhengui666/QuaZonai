@@ -50,7 +50,7 @@ impl Fixture {
             api_origin: self.origin.clone(),
             development_http: true,
             binding: self.binding,
-            token: self.token.clone(),
+            token: Some(self.token.clone()),
             executable_path: std::env::var("PATH").unwrap(),
         });
         options

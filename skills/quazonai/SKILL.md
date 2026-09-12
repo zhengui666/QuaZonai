@@ -114,6 +114,8 @@ FIXTURE科学PASS冒充REAL资格。当前真实正向授予与完整资格操�
 上述是成功收束条件。人工取消/真实到期后由可信Worker停止新阶段，保留已启动
 任务和完整用量对账；只有账本证明未发送才记NOT_SENT。Agent不能自行退款、补零、
 提交取消成功或删除未发表的评估消息。
+取消恢复只由可信Worker重连原Thread对账，不启用MCP、签发凭据或准备新Turn；
+清理窗口不是额外研究预算，未知用量仍保持未知。
 原Mission确认前由可信事务冻结A4.9全Family试验选择，保留失败/未完成及原指标；
 快照失败保留原队列重试，不新建Run或模型轮次。Operator/精确项目CLI使用cycle
 selection/trials只读命令；Mission不能调用完整快照接口、刷新旧排名或把COMPLETE

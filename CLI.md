@@ -140,6 +140,8 @@ Operator审批、Sealed通过或资格。全部目标审阅完成后，可信Wor
 取消/到期收束不会新开验证或反馈Turn；已有科学任务须有真实终态，缺最终模型
 用量仍保持未知。只有原账本证明无发送意图才记NOT_SENT，不能手填零费用清账；
 取消无公开回答时保存null，不创建假总结。原Validation发布队列继续独立恢复。
+取消恢复仅重连已登记Thread，不签发Mission凭据或启用MCP，不准备新Turn；
+清理窗口至多110秒且保留原资源上限。未知最终用量仍保留原队列和预约。
 成功Discovery预测还会由可信Worker登记一次RESEARCH Alpha首版本，固定原CODE/
 MODEL、预测镜像、根血缘和Brief的单位/horizon；没有校准则保留null。该元数据步骤
 不调用模型、不请求Runtime、不把PENDING改为SUPPORTED，也不是新增Agent审批工具。

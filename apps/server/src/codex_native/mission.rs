@@ -14,7 +14,8 @@ pub struct MissionOptions {
     pub api_origin: String,
     pub development_http: bool,
     pub binding: MissionBinding,
-    pub token: String,
+    /// None reconnects for cancellation reconciliation without an MCP capability.
+    pub token: Option<String>,
     pub executable_path: String,
 }
 
@@ -30,8 +31,10 @@ impl MissionOptions {
         }
         domain::settings::endpoint(&self.api_origin, self.development_http)
             .map_err(|_| NativeFailure::Configuration)?;
-        integrations::authentication::machine_token(&self.token)
-            .map_err(|_| NativeFailure::Configuration)?;
+        if let Some(token) = &self.token {
+            integrations::authentication::machine_token(token)
+                .map_err(|_| NativeFailure::Configuration)?;
+        }
         let mut args = vec![
             "mcp".to_owned(),
             "--api-origin".into(),
@@ -84,9 +87,14 @@ impl MissionOptions {
             "plugin_hooks":false,"memories":false,"memory_tool":false,"multi_agent":false,
             "browser_use":false,"computer_use":false,"in_app_browser":false,"image_generation":false,
             "goals":false,"shell_snapshot":false,"code_mode":false,"code_mode_only":false});
-        config["mcp_servers"] = json!({ MCP_NAME: {"command":self.server_binary,"args":args,
-            "env":{"QUAZONAI_MCP_TOKEN":self.token},"required":true,"enabled":true,
-            "startup_timeout_sec":45,"tool_timeout_sec":20}});
+        config["mcp_servers"] = if let Some(token) = &self.token {
+            json!({ MCP_NAME: {"command":self.server_binary,"args":args,
+                "env":{"QUAZONAI_MCP_TOKEN":token},"required":true,"enabled":true,
+                "startup_timeout_sec":45,"tool_timeout_sec":20}})
+        } else {
+            json!({MCP_NAME:{"command":self.server_binary,"args":args,
+                "enabled":false,"required":false}})
+        };
         Ok(())
     }
 }

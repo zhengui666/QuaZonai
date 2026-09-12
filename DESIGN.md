@@ -179,6 +179,10 @@ Mission 默认独占临时 Git worktree、独立 App Server child、workspace-wr
 
 Mission复用锁定版本的原生named permissions及stdio MCP，不依赖dynamicTools。沿用已选模型/认证来源，Mission工具边界由受信任启动器覆盖：只允许专用工作区读写、原生最小系统文件及已锁定Codex二进制的只读访问；shell不继承服务环境，MCP能力只传入已绑定Run/Attempt的专属子进程。原生config/read只投影MCP名称并禁用其他服务器，不持久化或展示原始配置/环境值；启动与恢复重新应用同一边界。不加载个人插件、记忆、浏览器、跨Agent、无限Goal或登录shell能力。0.144.4的全局AGENTS由host独立加载，不受project_doc_max_bytes控制且无stdio关闭开关；Mission因此要求专用profile：若CODEX_HOME存在AGENTS.md/AGENTS.override.md或配置含个人instructions/developer_instructions/model_instructions_file，在发送Thread请求前明确拒绝，不读取文件内容、修改/删除用户文件、复制认证或暗换profile。Managed volume和显式Operator mount均可用，但后者也须满足这个已验证边界。项目文档自动注入关闭，任务材料由冻结Brief和受限MCP提供。原生发行版的权限/stdio运行必须实际验证，不用新版文档中而锁定协议没有的字段冒充已生效。
 
+取消或到期后的Mission恢复只允许重连已登记Thread，对账原已发送Turn；不创建Thread、
+签发Mission凭据、启用MCP或准备新Turn。使用原资源上限及至多110秒的独立清理窗口，
+不是延长研究预算；用量/终态证据缺失仍保留原预约和CANCEL_REQUESTED，不假造取消成功。
+
 初始默认预算：并行 2、Cycle 实验 20、修复 Turn 2、Mission Turn 16、墙钟 3600 秒、容器 2 CPU/4096 MiB、输出 64 MiB、每日自动 Cycle 3；均配置化、冻结并在入队事务预约。Optuna 内部 trial 计入预算。无法精确计费则只显示估算/不可用，不宣称严格美元限额。Agent 不能扩大政策/预算、自评、自批、发包、读 secret、改正式指标或写 SQL。
 
 只保存可观察调用、文件变更、命令/测试、公开总结和 Domain Event，不索取、存储或展示隐藏 chain-of-thought。
