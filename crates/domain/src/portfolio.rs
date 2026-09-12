@@ -20,10 +20,89 @@ fn under(value: &BigDecimal, limit: &BigDecimal, tolerance: &BigDecimal) -> bool
     value <= &(limit + tolerance)
 }
 
+/// Structural mandate checks shared with actual allocation and publication.
+/// Asset/group membership and feasibility still require the frozen native input.
+pub fn portfolio_constraints(constraints: &PortfolioConstraintsV1) -> Result<(), DomainError> {
+    if constraints.group_bounds.len() > MAX_ALLOCATION_GROUPS
+        || constraints.asset_overrides.len() > MAX_ALLOCATION_ASSETS
+        || !constraints.max_gross_exposure.is_nonnegative()
+        || !constraints.max_turnover_per_rebalance.is_nonnegative()
+        || constraints
+            .max_participation
+            .as_ref()
+            .is_some_and(|v| !v.is_positive() || !v.is_fraction())
+        || constraints
+            .max_ex_ante_risk
+            .as_ref()
+            .is_some_and(|v| !v.is_positive())
+        || (constraints.max_participation.is_some() && constraints.liquidity_ref.is_none())
+    {
+        return Err(invalid());
+    }
+    ordered(&constraints.min_cash_weight, &constraints.max_cash_weight)?;
+    ordered(&constraints.min_asset_weight, &constraints.max_asset_weight)?;
+    ordered(&constraints.min_net_exposure, &constraints.max_net_exposure)?;
+    if constraints.long_only && !constraints.min_asset_weight.is_nonnegative() {
+        return Err(invalid());
+    }
+    let mut overrides = BTreeSet::new();
+    for value in &constraints.asset_overrides {
+        control::text(&value.instrument_id, 1, 200, false)?;
+        if !overrides.insert(value.instrument_id.as_str())
+            || (constraints.long_only && !value.min.is_nonnegative())
+        {
+            return Err(invalid());
+        }
+        ordered(&value.min, &value.max)?;
+    }
+    let mut groups = BTreeSet::new();
+    for value in &constraints.group_bounds {
+        control::text(&value.group_id, 1, 120, false)?;
+        if !groups.insert(value.group_id.as_str()) {
+            return Err(invalid());
+        }
+        ordered(&value.min, &value.max)?;
+    }
+    Ok(())
+}
+
+pub fn rebalance_schedule(schedule: &RebalanceScheduleV1) -> Result<(), DomainError> {
+    let valid = match schedule.kind {
+        RebalanceKind::Manual => {
+            schedule.interval_seconds.is_none()
+                && schedule.calendar_ref.is_none()
+                && schedule.session_offset_seconds.is_none()
+        }
+        RebalanceKind::FixedInterval => {
+            schedule.interval_seconds.is_some_and(|v| v > 0)
+                && schedule.calendar_ref.is_none()
+                && schedule.session_offset_seconds.is_none()
+        }
+        RebalanceKind::CalendarSession => {
+            schedule.interval_seconds.is_none()
+                && schedule.calendar_ref.is_some()
+                && schedule.session_offset_seconds.is_some()
+        }
+    };
+    control::text(&schedule.timezone, 1, 200, false)?;
+    if !valid
+        || schedule.max_input_age_seconds == 0
+        || schedule.target_ttl_seconds == 0
+        || schedule.timezone.parse::<chrono_tz::Tz>().is_err()
+    {
+        return Err(DomainError::Invalid("rebalance_schedule"));
+    }
+    if let Some(calendar) = &schedule.calendar_ref {
+        control::text(calendar, 1, 200, false)?;
+    }
+    Ok(())
+}
+
 /// Does not authorize an Alpha, infer a quote, or fit an estimator.
 pub fn allocation_input(input: &AllocationInputV1) -> Result<(), DomainError> {
     let count = input.assets.len();
     let constraints = &input.constraints;
+    portfolio_constraints(constraints)?;
     if !(1..=MAX_ALLOCATION_ASSETS).contains(&count)
         || input.covariance.len() != count
         || input
@@ -37,27 +116,9 @@ pub fn allocation_input(input: &AllocationInputV1) -> Result<(), DomainError> {
         || !input.settings.solver_tolerance.is_positive()
         || input.settings.solver_tolerance.as_decimal() > &BigDecimal::new(1.into(), 3)
         || !(1..=100_000).contains(&input.settings.max_iterations)
-        || constraints.group_bounds.len() > MAX_ALLOCATION_GROUPS
         || constraints.asset_overrides.len() > count
-        || !constraints.max_gross_exposure.is_nonnegative()
-        || !constraints.max_turnover_per_rebalance.is_nonnegative()
-        || constraints
-            .max_participation
-            .as_ref()
-            .is_some_and(|v| !v.is_positive() || !v.is_fraction())
-        || constraints
-            .max_ex_ante_risk
-            .as_ref()
-            .is_some_and(|v| !v.is_positive())
-        || (constraints.max_participation.is_some() && constraints.liquidity_ref.is_none())
         || iso_currency::Currency::from_code(&input.base_currency).is_none()
     {
-        return Err(invalid());
-    }
-    ordered(&constraints.min_cash_weight, &constraints.max_cash_weight)?;
-    ordered(&constraints.min_asset_weight, &constraints.max_asset_weight)?;
-    ordered(&constraints.min_net_exposure, &constraints.max_net_exposure)?;
-    if constraints.long_only && !constraints.min_asset_weight.is_nonnegative() {
         return Err(invalid());
     }
     let mut identities = BTreeSet::new();
@@ -92,24 +153,15 @@ pub fn allocation_input(input: &AllocationInputV1) -> Result<(), DomainError> {
     if (current_total - BigDecimal::from(1)).abs() > *tolerance {
         return Err(DomainError::Invalid("current_weights_snapshot"));
     }
-    let mut overrides = BTreeSet::new();
     for value in &constraints.asset_overrides {
-        if !identities.contains(value.instrument_id.as_str())
-            || !overrides.insert(value.instrument_id.as_str())
-            || (constraints.long_only && !value.min.is_nonnegative())
-        {
+        if !identities.contains(value.instrument_id.as_str()) {
             return Err(invalid());
         }
-        ordered(&value.min, &value.max)?;
     }
-    let mut bounded_groups = BTreeSet::new();
     for value in &constraints.group_bounds {
-        if !groups.contains(value.group_id.as_str())
-            || !bounded_groups.insert(value.group_id.as_str())
-        {
+        if !groups.contains(value.group_id.as_str()) {
             return Err(invalid());
         }
-        ordered(&value.min, &value.max)?;
     }
     Ok(())
 }

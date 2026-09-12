@@ -1766,6 +1766,12 @@ RebalanceScheduleV1:
 
 不用的约束明确 null/empty，不能默认放宽；min<=max，与 long_only/现金/净敞口一致；原生 solver 实际不支持就报 capability 错误。日历/定时复用库不另造 Cron 平台。新 cutoff 必须新 Candidate/Release；ACCEPTABLE_INACCURATE 不能冒充 OPTIMAL。
 
+调仓计划的MANUAL不带interval/calendar/offset；FIXED_INTERVAL仅带正interval；
+CALENDAR_SESSION仅带非空calendar_ref与显式offset（可为零或负）。输入最大年龄与
+目标TTL均为正秒数，timezone须由原生IANA库识别，不默默替换UTC。日历引用的语法
+有效不表示真实日历版本已可用，准入仍须核对冻结原生能力。组合约束的结构检查由
+Mandate与实际求解共用；具体资产/组成员和数值可行性仍由冻结输入及原生求解核验。
+
 ### A5.1 候选子对象唯一性
 
 `unique(candidate_alphas.candidate_id,alpha_version_id)`、`unique(candidate_targets.candidate_id,instrument_id)` 是数据库约束，不是普通索引。重复相同请求幂等，冲突409；至少两个不同alpha_id的合格版本才满足多Alpha，不以同Alpha多个版本或重复条目凑数。发布验证每资产唯一权重，再校验sum/gross/net/cash/约束。

@@ -2198,6 +2198,7 @@ dependencies = [
  "anyhow",
  "bigdecimal",
  "chrono",
+ "chrono-tz",
  "contracts",
  "iso_currency",
  "oci-spec",

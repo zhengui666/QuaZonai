@@ -8,6 +8,34 @@ pub const MAX_ALLOCATION_GROUPS: usize = 64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum RebalanceKind {
+    Manual,
+    FixedInterval,
+    CalendarSession,
+}
+
+/// Frozen scheduling intent, not a timer or permission to create a Release.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RebalanceScheduleV1 {
+    pub schema_version: SchemaV1,
+    pub kind: RebalanceKind,
+    #[schema(required = true, minimum = 1)]
+    pub interval_seconds: Option<u32>,
+    #[schema(required = true, min_length = 1, max_length = 200)]
+    pub calendar_ref: Option<String>,
+    #[schema(min_length = 1, max_length = 200)]
+    pub timezone: String,
+    #[schema(required = true)]
+    pub session_offset_seconds: Option<i32>,
+    #[schema(minimum = 1)]
+    pub max_input_age_seconds: u32,
+    #[schema(minimum = 1)]
+    pub target_ttl_seconds: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum AllocationObjective {
     MinRisk,
     MaxUtility,

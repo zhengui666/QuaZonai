@@ -10,6 +10,12 @@
 
 ## 已核查并实际运行的 Rust 能力
 
+2026-09-13补充：调仓计划时区复用已在Cargo.lock中的`chrono-tz 0.10.4`，
+由domain显式依赖，不新增时区解析器。核查本机锁定上游源码的`Tz: FromStr`示例、
+Cargo声明的Rust1.65最低版本及MIT/Apache-2.0许可；实际Rust1.98.1下验证
+America/New_York、Asia/Shanghai及未知时区拒绝。锁文件仅为domain增加已有组件
+依赖边，不升级组件。这是IANA名称检查，不是交易日历版本或DST调度执行验收。
+
 | 能力 | 选择及来源 | 实际证据 | 边界与风险 |
 |---|---|---|---|
 | 回测与原生策略生命周期 | [Nautilus 官方 Rust 概念文档](https://nautilustrader.io/docs/latest/concepts/rust/)；[发布族 v2.0.0rc4](https://github.com/nautechsystems/nautilus_trader/releases/tag/v2.0.0rc4)；Rust backtest/model/trading 0.63.0 | [源码中的原生 EMA 示例](https://github.com/nautechsystems/nautilus_trader/blob/v2.0.0rc4/crates/backtest/examples/engine_ema_cross.rs)；[实际运行 33952841460](https://github.com/zhengui666/QuaZonai/actions/runs/33952841460) | 明确启用 examples/test-support，关闭默认及 Python 特性；native Cargo tree 无 PyO3。运行得到745 iterations、12 orders、24 events。只是synthetic兼容性，不是正式目标权重/共享资金/隔离验收。上游2.0发布族为RC，不能声称稳定版。 |

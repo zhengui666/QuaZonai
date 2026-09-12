@@ -3,6 +3,26 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Shared Mandate constraints and rebalance intent, 2026-09-13
+
+Working source over `f73a6265463993b6bb1acc88ee4b4d99e6fb1f55` extracts existing
+structural portfolio checks into the function reused by actual allocation and
+publication. Asset/group membership, covariance and feasibility remain tied to
+the actual frozen native input; no dummy allocation is invented to validate a
+Mandate. RebalanceScheduleV1 declares all three required kinds with strict
+kind-dependent fields, positive input age/TTL and native IANA timezone validation.
+chrono-tz 0.10.4 was already locked; no new calendar/scheduler engine is built.
+
+`verify-ekWa6V` passed workspace check/format/strict Clippy, 152 domain/Runtime,
+8 managed Job, 31 native Codex and 83 scientific Job test executions, zero failed/
+ignored, source unchanged. Test groups overlap and are not a unique test total.
+New counterexamples cover duplicate bounds, reversed bounds, mixed schedule
+fields, zero interval/TTL/age, unknown timezone and unknown wire fields.
+This stage does not implement Mandate model references/capability binding,
+Store/API/CLI/UI, calendar execution, multi-Alpha allocation or delivery.
+RebalanceScheduleV1 is not yet exposed as a public HTTP request; existing HTTP
+and generated wire artifacts are unchanged. No PR/CI/merge completion is claimed.
+
 ## Cancelled original native Thread recovery, 2026-09-13
 
 Working source over `4e979a25fc47aefb5e7d2ce4ff52a78b388bd7b2` fixes the shared
