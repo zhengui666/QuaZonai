@@ -10,6 +10,12 @@
 
 ## 已核查并实际运行的 Rust 能力
 
+2026-09-13补充：固定混合预测直接复用已锁定`ndarray 0.17.1`的`ArrayView1::dot`
+（上游`src/linalg/impl_linalg.rs`行向量/矩阵乘法实现），不新增依赖或自建ensemble
+引擎。权重由既有BigDecimal精确检查，进入原生数值边界才转换f64。实际两组预测
+聚合后进入同一Clarabel求解，与独立手算0.82/0.18一致；这是合成数值验收，不能
+代替Alpha身份、资格、覆盖率、单位/期限对齐或共享资金回测证据。
+
 2026-09-13补充：调仓计划时区复用已在Cargo.lock中的`chrono-tz 0.10.4`，
 由domain显式依赖，不新增时区解析器。核查本机锁定上游源码的`Tz: FromStr`示例、
 Cargo声明的Rust1.65最低版本及MIT/Apache-2.0许可；实际Rust1.98.1下验证

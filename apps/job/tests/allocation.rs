@@ -56,6 +56,58 @@ fn native_utility_and_transaction_costs_change_the_optimum() {
 }
 
 #[test]
+fn actual_fixed_mixture_predictions_feed_one_native_utility_problem() {
+    let forecasts = [vec![0.1, 0.2], vec![0.3, 0.0]];
+    let mixture = [decimal("0.25"), decimal("0.75")];
+    let forecast = job::validation::fixed_weighted_forecast(&forecasts, &mixture).unwrap();
+    near(forecast[0], 0.25);
+    near(forecast[1], 0.05);
+    let mut request = input();
+    request.objective = AllocationObjective::MaxUtility;
+    for (asset, forecast) in request.assets.iter_mut().zip(forecast) {
+        asset.expected_return = forecast;
+    }
+    // x²+4(1-x)²-0.25x-0.05(1-x) has derivative 10x-8.2.
+    let target = weights(&request);
+    near(target[0], 0.82);
+    near(target[1], 0.18);
+    assert_eq!(mixture, [decimal("0.25"), decimal("0.75")]);
+}
+
+#[test]
+fn native_mixture_rejects_missing_predictions_and_never_repairs_weights() {
+    use job::validation::fixed_weighted_forecast as mix;
+    let forecasts = [vec![0.1, 0.2], vec![0.3, 0.0]];
+    for weights in [
+        vec!["1"],
+        vec!["1", "1"],
+        vec!["1", "0"],
+        vec!["-1", "2"],
+        vec!["0.5", "0.500000000000000001"],
+    ] {
+        assert!(mix(
+            &forecasts,
+            &weights.into_iter().map(decimal).collect::<Vec<_>>()
+        )
+        .is_err());
+    }
+    let weights = [decimal("0.5"), decimal("0.5")];
+    for forecasts in [
+        vec![],
+        vec![vec![1.0]],
+        vec![vec![], vec![]],
+        vec![vec![1.0], vec![1.0, 2.0]],
+        vec![vec![f64::NAN], vec![0.0]],
+        vec![vec![1.0], vec![f64::INFINITY]],
+        vec![vec![1.0; MAX_ALLOCATION_ASSETS + 1]; 2],
+    ] {
+        assert!(mix(&forecasts, &weights).is_err());
+    }
+    let rows = vec![vec![0.1]; MAX_ALLOCATION_ASSETS + 1];
+    assert!(mix(&rows, &vec![decimal("0.5"); rows.len()]).is_err());
+}
+
+#[test]
 fn asset_overrides_and_group_bounds_enter_the_native_problem() {
     let mut request = input();
     request.constraints.asset_overrides.push(AssetBoundV1 {

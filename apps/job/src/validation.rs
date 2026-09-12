@@ -46,6 +46,59 @@ pub use domain::execution::validation::{
     validation_folds, MAX_VALIDATION_FOLDS, MAX_VALIDATION_INDICES, MAX_VALIDATION_ROWS,
 };
 
+/// Pure numerical adapter: callers must bind distinct qualified Alpha versions,
+/// common units/horizon/cutoff and this exact asset order before invoking it.
+/// Fixed mixture weights are configuration, not fitted calibration or targets.
+pub fn fixed_weighted_forecast(
+    forecasts: &[Vec<f64>],
+    weights: &[contracts::DecimalValue],
+) -> Result<Vec<f64>> {
+    use bigdecimal::{BigDecimal, ToPrimitive};
+    let maximum = contracts::portfolio::MAX_ALLOCATION_ASSETS;
+    ensure!(
+        (2..=maximum).contains(&forecasts.len()) && forecasts.len() == weights.len(),
+        "ENSEMBLE_MEMBER_LIMIT"
+    );
+    let assets = forecasts[0].len();
+    ensure!(
+        (1..=maximum).contains(&assets)
+            && forecasts
+                .iter()
+                .all(|row| row.len() == assets && row.iter().all(|v| v.is_finite())),
+        "ENSEMBLE_FORECAST_INVALID"
+    );
+    ensure!(
+        weights.iter().all(|w| w.is_nonnegative())
+            && weights.iter().filter(|w| w.is_positive()).count() >= 2
+            && weights.iter().map(|w| w.as_decimal()).sum::<BigDecimal>() == BigDecimal::from(1),
+        "ENSEMBLE_WEIGHT_INVALID"
+    );
+    let weights = weights
+        .iter()
+        .map(|w| {
+            let native = w
+                .as_decimal()
+                .to_f64()
+                .ok_or_else(|| anyhow::anyhow!("ENSEMBLE_WEIGHT_RANGE"))?;
+            ensure!(
+                native.is_finite() && (!w.is_positive() || native > 0.0),
+                "ENSEMBLE_WEIGHT_RANGE"
+            );
+            Ok(native)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let matrix = Array2::from_shape_vec(
+        (forecasts.len(), assets),
+        forecasts.iter().flatten().copied().collect(),
+    )?;
+    let forecast = ndarray::ArrayView1::from(&weights).dot(&matrix);
+    ensure!(
+        forecast.iter().all(|v| v.is_finite()),
+        "ENSEMBLE_RESULT_NONFINITE"
+    );
+    Ok(forecast.to_vec())
+}
+
 /// Columns are synchronized observation times; rows are a frozen asset ordering.
 /// No annualization, missing-value imputation or unregistered shrinkage is performed.
 pub fn sample_covariance(asset_returns: &[Vec<f64>]) -> Result<Vec<Vec<f64>>> {

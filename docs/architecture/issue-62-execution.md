@@ -3,6 +3,30 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Native fixed-weight forecasts into one allocation, 2026-09-13
+
+Working source over `edcbae8d6db7858d549333015f0cb5f106e5e0fd` adds the fixed
+numerical ensemble adapter alongside existing native covariance/calibration.
+It delegates row-vector/matrix multiplication to locked ndarray 0.17.1 and
+checks bounded dimensions, finite forecasts/results, nonnegative exact Decimal
+weights summing to one and at least two positive members. No normalization,
+missing-value fill, fitted calibration or alternative optimizer is invented.
+
+`verify-Hm6uHp` passed workspace check/format/strict Clippy, 152 domain/Runtime,
+8 managed Job, 31 native Codex and 85 scientific Job test executions; zero failed/
+ignored and source unchanged. Groups overlap, so these are not a unique total.
+The new real ndarray-to-Clarabel test mixes two explicitly synthetic forecast
+vectors with 0.25/0.75 weights, obtaining 0.25/0.05 expected returns and the
+independently derived 0.82/0.18 asset optimum. Mixture weights remain separate
+from asset weights. Invalid dimensions, non-finite/missing values, negative,
+single-effective-member and inexact Decimal weight sums are rejected.
+
+This is a numerical adapter, not proof that rows belong to distinct qualified
+Alpha versions or share permitted data/units/horizon/cutoff. Trusted assembly,
+model capability binding, Mandate APIs and independent shared-capital simulation
+remain required; no Runtime capability or public endpoint is newly advertised.
+No current market/account T42 or GitHub CI/review/merge completion is claimed.
+
 ## Shared Mandate constraints and rebalance intent, 2026-09-13
 
 Working source over `f73a6265463993b6bb1acc88ee4b4d99e6fb1f55` extracts existing
