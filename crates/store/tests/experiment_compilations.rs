@@ -810,11 +810,10 @@ async fn research_alpha_uses_the_original_forecast_once_without_qualification(po
     assert_eq!(facts.get::<String, _>("runtime_image_ref"), image);
     assert_eq!(facts.get::<String, _>("outcome"), "PENDING");
     assert_eq!(facts.get::<i64, _>("qualifications"), 0);
-    assert!(store
-        .next_mission_experiment(lease.run.id, &lease.fence)
-        .await
-        .unwrap()
-        .is_none());
+    assert!(matches!(
+        store.next_mission_experiment(lease.run.id, &lease.fence).await.unwrap(),
+        Some(store::lifecycle::ExperimentWork::Validate(id)) if id == experiment
+    ));
     assert!(
         sqlx::query("UPDATE app.alpha_versions SET signal_kind='EXPECTED_RETURN' WHERE id=$1")
             .bind(a.resource.as_uuid())

@@ -850,14 +850,15 @@ Dataset/科学Run的不可变关联与消息同事务提交；同提案重放不
 ### A3.7 Mission驱动科学任务
 
 常驻Worker在本Mission最新原生Turn已确认结算后，按原提案ordinal选择一个已就绪
-的编译或预测步骤：尚未编译的正式PENDING且有CODE提案进入编译；原编译SUCCEEDED
-且未有预测关联的提案进入预测。已排队/运行/未知的任务不重复创建，失败编译不
+的编译、预测或正式验证步骤：尚未编译的正式PENDING且有CODE提案进入编译；原编译
+SUCCEEDED且未有预测关联的提案进入预测；预测成功后登记原RESEARCH Alpha，再按
+A4.7准备正式Validation。已排队/运行/未知的任务不重复创建，失败编译不
 替换模型或自动进入预测。每次消费最多准备一个步骤；已有PGMQ消息继续负责恢复，
 科学Worker独立执行任务，不让原生Codex会话等待科学进程或接管它的执行循环。
 首轮公开请求包含准确Mission、冻结Brief、Cycle和冻结政策的family ID及当前原生
 ABI/参数合同，不让Agent猜测必填提案身份；这不授予修改family或政策的权限。
 
-每步以原Mission冻结的JobLimits为资源分配请求，只按编译1/预测0设置experiments；
+每步以原Mission冻结的JobLimits为资源分配请求，按编译1/预测0/验证0设置experiments；
 现有Cycle累计预算、Runtime能力与Mission剩余墙钟仍可拒绝准入。消息重投保留
 原Thread、原Turn结算和全部原生Run身份。没有就绪步骤不等于Mission完成；任务
 终态、失败说明和后续研究反馈必须由后续结论/同Thread接续处理，不能提前ack。
@@ -869,17 +870,22 @@ HTTP在事务外执行，仍保留原60秒有效期，探测不可用不得假�
 ### A3.8 同Thread科学反馈
 
 可信Worker只在最新模型Turn有完整结算后，为原Mission关联的已采纳科学终态准备
-一次公开反馈。编译失败/取消进入REPAIR；Discovery预测终态按成功RESEARCH、失败
-REPAIR接续。使用现有model_turn_reservations的原Session及唯一command_key
+一次公开反馈。编译或Discovery预测失败/取消进入REPAIR；预测成功直接进入正式
+验证，不为中间观察抽样额外消耗模型Turn。Validation须先按A4.8发表完整Evaluation，
+再按执行成功RESEARCH、失败/取消REPAIR接续；指标拒绝不伪装成进程失败。
+使用现有model_turn_reservations的原Session及唯一command_key
 `mission/result/{scientific_run_id}`，不新增反馈队列或状态表。未知科学任务、未结算
 模型Turn不触发接续；并发重投不重复预约。反馈文件、预约、PGMQ同事务，仍检查
 原fence/Profile/预算/截止时间；下一次消费恢复原Thread，绝不新建Thread洗账。
 
-反馈只含精确实验/任务/Attempt/终态/公开原因和已采纳RESEARCH产物。成功预测读取
-原qz.native_forecast，保留origin、原生版本/fuel、完整观察/预测/已完成标签计数及
-最多前16与后16条原始观察（明确sampled，不按好坏挑选）。只允许原冻结Discovery
-数据关联；不读取Sealed、EVALUATOR_ONLY、原生私有历史、凭据或任意诊断正文。
-该摘要不是统计指标、分折验证、校准、Reviewer结论或资格。失败明确当前无详细
+反馈只含精确实验/任务/可空Attempt/终态/公开原因。正式验证仅从已封口Evaluation
+和MetricValue投影：Alpha/Policy/InputSet、执行/证据/decision、原完成报告引用、来源、
+concluded_at/valid_until及数据库观测时是否过期；唯一选择指标按冻结政策的code/
+scope/method/version/unit/frequency精确选择，保留原值/null、状态、样本数、区间和
+生产者引用，缺失明确null。不存在跨试验排名或资格结论。实验元数据可披露这条
+精确Validation关联的首次裁决及报告ID，但不授予原报告读取权限；Sealed与未知
+评估来源仍受限。反馈不读取任何EVALUATOR_ONLY报告字节、市场行、预测、标签、
+校准系数、原生私有历史、凭据或任意诊断正文。失败明确当前无详细
 编译器诊断，不能凭空解释错误；修复需新建parent_experiment_id指向原试验的提案。
 反馈送达仍不等于Mission完成，结论与终态另行确认。
 
@@ -910,7 +916,9 @@ Researcher Mission的执行收束复用原Run/Attempt、run_terminal_receipts及
 不建立另一套完成状态。最新Turn须有原成功终态、完整usage及已发表公开回答；
 所有此前Turn也须结算，成功回答不得缺失。尚待编译的可执行提案、本Mission的
 未完整提案、未终结科学任务或未在原Thread消费并回答的科学反馈均阻止收束。
-所有编译/预测须有精确原Attempt的真实终态；编译成功还须完成对应预测。
+所有编译/预测须有精确原Attempt的真实终态；未派发取消保留null Attempt，不能伪造。
+编译成功还须完成对应预测；预测成功必须有原Alpha的正式Validation、已封口评估
+及原Thread反馈回答。科学任务成功但评估发布失败仍阻止收束与Mission ACK。
 没有提出实验的会话可凭公开限制说明结束，但不制造实验或“无有效Alpha”的科学裁决。
 
 在同一project/Cycle/Run锁定事务中，当前fence重验后将原Attempt的结果引用指向
@@ -919,7 +927,7 @@ qz.job_result，也不重复复制回答。沿用原终态CAS和预算结转：�
 不能再被成功覆盖；未知模型/科学任务不因本地连接关闭而变成CANCELLED。
 提交后才归档Mission消息，终态后丢失ACK可重放归档。暂停或Profile变更不抹去
 已完成的真实执行证据，不为收束重新准入/发送模型。Mission的SUCCEEDED仅表示
-有界会话已执行并报告，不改Cycle、Experiment outcome、Evaluation或Qualification；
+有界会话已执行并报告；收束本身不改Cycle、Experiment outcome、Evaluation或Qualification；
 正式评估/独立Reviewer及Cycle结论仍由对应可信服务完成。
 
 ### A3.11 未授资格的研究版本与实验初次裁决

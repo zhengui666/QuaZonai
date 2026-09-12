@@ -109,9 +109,10 @@ Worker在首次提交之前刷新必要的原生探测；提交结果未知时�
 当前自动入口已接首轮准备和原生轮账本，单独结算一轮不等于研究流程收束。
 实验在编译首阶段预约一次trial，编译失败/取消仍留账，原预测不再重复计数；
 这不改变每个阶段的CPU/输出/墙钟预算，也不改变既有历史账目。
-已采纳的原编译失败或Discovery预测终态通过同一Thread的预算Turn回送；每个原生
-任务最多一次，重复消费不重复扣费。预测摘要保留原产物与origin，首尾观察抽样
-不是正式指标/PASS。修复新提案必须引用原parent_experiment_id，不覆盖已执行输入。
+已采纳的原编译/Discovery失败通过同一Thread的预算Turn回送。预测成功后自动登记
+RESEARCH Alpha并进入正式Validation，不为中间抽样另开Turn；评估发表后回送精确
+元数据和冻结选择指标，不读取受限报告字节。每个结果最多一次，保留origin及有效期，
+不构成资格或排名。修复新提案必须引用原parent_experiment_id，不覆盖已执行输入。
 成功结算的原生Turn另保留最多64KiB公开回答REPORT（qz.mission_summary），原生
 summary视图来源、原Turn/item/phase如实记录；失败重投只补摘要，不重新调用模型。
 它不是新Agent工具，也不从回答文字推断研究通过或Mission已完成。
@@ -190,7 +191,8 @@ total或错版本/单位/周期的Selection。当前单Validation目录版本可
 正式验证的内部准入绑定原Alpha/Policy/Validation目录，不增加可由Agent指定Run或
 免费试验的CLI/MCP接口。原生Worker通过A4.8收尾入口在终态采纳后、ACK前原子发表
 评估/逐折指标/试验结论；不是手填PASS命令。qz.alpha_evaluation和原始分折报告均
-EVALUATOR_ONLY。现阶段准入不代表Mission已自动发起此阶段或授予Alpha资格。
+EVALUATOR_ONLY。Mission自动发起该阶段，并等待评估和原Thread回答后才能收束；
+这仍不授予Alpha资格、独立Reviewer批准或Cycle交付结论。
 
 普通 Runtime 单元/SQLite/HTTP 测试不证明 OCI 隔离；`.github/workflows/native-runtime.yml` 对精确源码启用独立必跑的 `native-oci` 测试。缺 Docker、固定镜像或 cgroup 前提会失败，不能按跳过处理成通过。取消时只有原生进程已停止且晚到 CREATE/START 已被持久身份屏障阻断才报告 CANCELLED，404 或超时不等于取消确认。
 

@@ -1153,3 +1153,24 @@ check/fmt/严格Clippy通过，源码冻结，独立PG确认停止。新增五�
 此前完整回归的149领域/合同/Runtime、7managed、30原生Codex均通过，但该完整
 回执整体仍为失败；局部复测不改称全绿。没有DTO/依赖/生成物变更。
 自动Mission验证、正式反馈与全部后续合同继续开发；未push/review/merge或关闭Issue。
+
+## 2026-09-12：自动正式验证及原Thread评估反馈
+
+Mission在原Discovery成功后依次登记RESEARCH Alpha、准备正式Validation；复用原
+阶段准入与PGMQ，不为中间观察抽样额外创建模型Turn。完整评估发表后，仅从数据库
+投影原Evaluation和按冻结口径选定的MetricValue；不读取EVALUATOR_ONLY报告字节。
+反馈保留来源、期限、原生产者及缺值，不是跨试验排名、校准、资格或Reviewer批准。
+Mission正常收束新增正式验证/评估/反馈回答屏障；公开实验元数据只披露精确原验证
+关联的首次裁决，原报告GET仍受限。没有新队列、依赖或公开DTO/生成物变化。
+
+基于5525ec72及冻结补丁，`verify-QEYJux`相关137项真实PG回归通过、零忽略。
+`verify-TdMh6y`原生扩展用例在发布故障恢复与ACK之后失败：测试错误地重新领取已
+归档消息；原生PGMQ不再返回它，幂等入口是acknowledge_run。仅修正测试，未添加
+消费兼容路径。最终`verify-F4Oqew`原生用例通过（218.27秒），check/fmt/严格Clippy
+通过，源码冻结，独立PG确认停止。实际App Server验证过期探测刷新、原编译/预测/
+验证准入、Worker发布故障/终态恢复/ACK、无报告字节读取的反馈、原Thread保留先前
+上下文的第二轮、两个完整用量/公开回答及最终Mission归档；一项试验、一个正式
+评估、零资格。Responses Provider与科学报告仍为受控fixture，不是实际Job/OCI
+全链路或真实账号T42；不能与独立数值测试拼称端到端完成。
+取消/期限/未知用量恢复、独立Reviewer、完整试验选择、Sealed/校准/资格、Alpha与
+组合交付操作面、部署/迁移/恢复及其余验收仍待完成；未push/review/merge或关闭Issue。

@@ -257,9 +257,7 @@ async fn visible(f: &Fixture, pool: &PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn settled_native_mission_queues_original_compilation_then_forecast_without_another_turn(
-    pool: PgPool,
-) {
+async fn settled_native_mission_publishes_validation_then_returns_to_original_thread(pool: PgPool) {
     let f = fixture(&pool).await;
     let experiment = experiment_support::propose(
         &pool,
@@ -349,8 +347,7 @@ async fn settled_native_mission_queues_original_compilation_then_forecast_withou
         .bind(experiment.as_uuid()).bind(f.lease.run.id.as_uuid()).bind(f.message.message_id).fetch_one(&pool).await.unwrap();
     assert_eq!(counts, (1, 1, 1, 1, 0, 1));
     let scientific_run: Id = forecast.to_string().try_into().unwrap();
-    let report =
-        experiment_support::complete_forecast(&pool, &f.store, &f.data, scientific_run).await;
+    experiment_support::complete_forecast(&pool, &f.store, &f.data, scientific_run).await;
     let original_thread: String =
         sqlx::query_scalar("SELECT thread_id FROM app.codex_sessions WHERE run_id=$1")
             .bind(f.lease.run.id.as_uuid())
@@ -368,7 +365,115 @@ async fn settled_native_mission_queues_original_compilation_then_forecast_withou
     assert_eq!(f.provider.request_count(), 1);
     visible(&f, &pool).await;
     worker
-        .process_mission_message(f.message.clone(), "prepare-real-result", receiver.clone())
+        .process_mission_message(f.message.clone(), "automatic-validation", receiver.clone())
+        .await
+        .unwrap();
+    let validation: uuid::Uuid =
+        sqlx::query_scalar("SELECT run_id FROM app.experiment_validations WHERE experiment_id=$1")
+            .bind(experiment.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let validation: Id = validation.to_string().try_into().unwrap();
+    assert_eq!(
+        f.store.get_run(&f.actor, validation).await.unwrap().state,
+        RunState::Queued
+    );
+    visible(&f, &pool).await;
+    worker
+        .process_mission_message(f.message.clone(), "await-validation", receiver.clone())
+        .await
+        .unwrap();
+    assert_eq!(f.provider.request_count(), 1);
+    assert!(f.store.acknowledge_run(&f.message).await.is_err());
+    let raw =
+        experiment_support::complete_validation(&pool, &f.store, &f.data, validation, 1000, 0.8)
+            .await;
+    visible(&f, &pool).await;
+    worker
+        .process_mission_message(
+            f.message.clone(),
+            "await-evaluation-publication",
+            receiver.clone(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(f.provider.request_count(), 1);
+    assert!(f.store.acknowledge_run(&f.message).await.is_err());
+    let message_id: i64 = sqlx::query_scalar(
+        "SELECT initial_queue_message_id FROM app.run_admissions WHERE run_id=$1",
+    )
+    .bind(validation.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let native_message = RunMessage {
+        message_id,
+        run_id: validation,
+        read_count: 1,
+    };
+    sqlx::raw_sql("CREATE FUNCTION public.reject_validation_publication() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected evaluation publication failure'; END $$; CREATE TRIGGER reject_validation BEFORE INSERT ON app.evaluations FOR EACH ROW EXECUTE FUNCTION public.reject_validation_publication();").execute(&pool).await.unwrap();
+    assert!(worker
+        .process_message(
+            native_message.clone(),
+            "publication-fault",
+            receiver.clone()
+        )
+        .await
+        .is_err());
+    assert_eq!(
+        f.store.get_run(&f.actor, validation).await.unwrap().state,
+        RunState::Succeeded
+    );
+    assert!(f.store.acknowledge_run(&native_message).await.is_err());
+    sqlx::raw_sql("DROP TRIGGER reject_validation ON app.evaluations; DROP FUNCTION public.reject_validation_publication();").execute(&pool).await.unwrap();
+    worker
+        .process_message(
+            native_message.clone(),
+            "publication-recovery",
+            receiver.clone(),
+        )
+        .await
+        .unwrap();
+    // PGMQ cannot redeliver an archived message. The ACK entry point, not a
+    // fresh claim of that removed queue row, owns acknowledgement replay.
+    f.store.acknowledge_run(&native_message).await.unwrap();
+    let (evaluation, report): (uuid::Uuid, uuid::Uuid) =
+        sqlx::query_as("SELECT id,report_artifact_id FROM app.evaluations WHERE run_id=$1")
+            .bind(validation.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let public = f.store.experiment(&f.actor, experiment).await.unwrap();
+    assert_eq!(
+        public.outcome,
+        Some(contracts::experiments::ExperimentOutcome::Supported)
+    );
+    assert!(f
+        .store
+        .artifact(&f.actor, report.to_string().try_into().unwrap())
+        .await
+        .is_err());
+    let before_feedback = takeover(&f, &pool, "feedback-publication-fault").await;
+    assert!(matches!(
+        f.store
+            .prepare_mission_result_turn(
+                f.lease.run.id,
+                &before_feedback.fence,
+                |_, _| async { panic!("formal feedback must not read any report bytes") },
+                |_| async { Err(store::StoreError::Integrity) },
+            )
+            .await,
+        Err(store::StoreError::Integrity)
+    ));
+    assert!(!f
+        .store
+        .complete_research_mission(f.lease.run.id, &before_feedback.fence)
+        .await
+        .unwrap());
+    visible(&f, &pool).await;
+    worker
+        .process_mission_message(f.message.clone(), "prepare-formal-result", receiver.clone())
         .await
         .unwrap();
     assert_eq!(
@@ -405,16 +510,27 @@ async fn settled_native_mission_queues_original_compilation_then_forecast_withou
         .await
         .unwrap();
     let body: serde_json::Value = serde_json::from_str(prompt.lines().nth(1).unwrap()).unwrap();
-    assert_eq!(body["run_id"], scientific_run.to_string());
-    assert_eq!(body["forecast"]["artifact_id"], report.to_string());
+    assert_eq!(body["run_id"], validation.to_string());
+    assert_eq!(body["stage"], "VALIDATION");
     assert_eq!(body["origin"], "FIXTURE");
-    assert_eq!(body["formal_evaluation"], "NOT_PERFORMED");
-    assert_eq!(body["forecast"]["observations"], 40);
-    assert_eq!(body["forecast"]["predictions"], 36);
-    assert_eq!(body["forecast"]["completed_labels"], 31);
-    assert_eq!(body["forecast"]["sampled"], true);
-    assert_eq!(body["forecast"]["points"].as_array().unwrap().len(), 32);
-    assert_eq!(body["forecast"]["points"][16]["ordinal"], 24);
+    assert_eq!(body["formal_evaluation"], "PUBLISHED");
+    assert_eq!(body["evaluation"]["id"], evaluation.to_string());
+    assert_eq!(body["evaluation"]["report_artifact_id"], report.to_string());
+    assert_eq!(body["evaluation"]["decision"], "PASS");
+    assert_eq!(body["evaluation"]["unexpired_at_feedback"], true);
+    assert_eq!(
+        body["evaluation"]["selection_metric"]["metric_code"],
+        "PEARSON_IC"
+    );
+    assert_eq!(body["evaluation"]["selection_metric"]["value"], 0.8);
+    assert_eq!(
+        body["evaluation"]["selection_metric"]["source_artifact_id"],
+        raw.to_string()
+    );
+    for excluded in ["forecast", "folds", "points", "calibration"] {
+        assert!(body.get(excluded).is_none());
+        assert!(body["evaluation"].get(excluded).is_none());
+    }
     visible(&f, &pool).await;
     tokio::time::timeout(
         std::time::Duration::from_secs(150),
@@ -440,6 +556,11 @@ async fn settled_native_mission_queues_original_compilation_then_forecast_withou
     let facts:(i64,i64,i64,String)=sqlx::query_as("SELECT (SELECT count(*) FROM app.model_turn_reservations WHERE run_id=$1),(SELECT count(*) FROM app.model_turn_receipts t JOIN app.model_turn_reservations r ON r.id=t.reservation_id WHERE r.run_id=$1),(SELECT count(*) FROM app.run_terminal_receipts WHERE run_id=$1),(SELECT thread_id FROM app.codex_sessions WHERE run_id=$1)")
         .bind(f.lease.run.id.as_uuid()).fetch_one(&pool).await.unwrap();
     assert_eq!(facts, (2, 2, 1, original_thread));
+    let evidence: (i64,i64,i64,serde_json::Value) = sqlx::query_as("SELECT (SELECT count(*) FROM app.evaluations WHERE run_id=$1),(SELECT count(*) FROM app.qualifications),(SELECT used_experiments FROM app.research_cycles WHERE id=$2),observation FROM app.run_terminal_receipts WHERE run_id=$3")
+        .bind(validation.as_uuid()).bind(f.lease.run.cycle_id.unwrap().as_uuid()).bind(f.lease.run.id.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!((evidence.0, evidence.1, evidence.2), (1, 0, 1));
+    assert_eq!(evidence.3["formal_evaluation"], "PUBLISHED");
+    assert_eq!(evidence.3["formal_evaluation_count"], "1");
     let summaries:i64=sqlx::query_scalar("SELECT count(*) FROM app.model_turn_summaries s JOIN app.model_turn_reservations r ON r.id=s.reservation_id WHERE r.run_id=$1")
         .bind(f.lease.run.id.as_uuid()).fetch_one(&pool).await.unwrap();
     assert_eq!(

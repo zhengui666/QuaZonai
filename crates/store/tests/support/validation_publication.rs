@@ -189,6 +189,16 @@ async fn complete_validation_publication_is_atomic_unique_producer_bound_and_pre
     assert_eq!(raw_report["native_versions"]["solow-cv"], "0.7.3");
     assert!(raw_report.get("folds").is_none());
     assert!(store.artifact(&actor, report).await.is_err());
+    let public = store.experiment(&actor, experiment).await.unwrap();
+    assert_eq!(
+        public.result_visibility,
+        contracts::experiments::ExperimentResultVisibility::Research
+    );
+    assert_eq!(
+        public.outcome,
+        Some(contracts::experiments::ExperimentOutcome::Supported)
+    );
+    assert_eq!(public.conclusion_artifact_id, Some(report));
     let counts:(i64,i64,i64)=sqlx::query_as("SELECT count(*),count(*) FILTER(WHERE source_artifact_id=$2),count(DISTINCT scope) FROM app.metric_values WHERE evaluation_id=$1")
         .bind(a.resource.as_uuid()).bind(raw.as_uuid()).fetch_one(&pool).await.unwrap();
     assert!(counts.0 > 2);

@@ -49,6 +49,7 @@ pub enum ExperimentWork {
     Compile(Id),
     Forecast(Id),
     RecordAlpha(Id),
+    Validate(Id),
 }
 
 #[test]
@@ -154,12 +155,14 @@ impl Store {
         {
             return Ok(None);
         }
-        let row = sqlx::query("SELECT e.id,c.compile_run_id,e.run_id FROM app.experiments e JOIN app.experiment_authorship a ON a.experiment_id=e.id LEFT JOIN app.experiment_compilations c ON c.experiment_id=e.id LEFT JOIN app.runs compiled ON compiled.id=c.compile_run_id WHERE e.project_id=$1 AND e.cycle_id=$2 AND e.outcome='PENDING' AND e.code_artifact_id IS NOT NULL AND e.parameter_artifact_id IS NOT NULL AND ((e.run_id IS NULL AND (c.experiment_id IS NULL OR (c.mission_run_id=$3 AND compiled.state='SUCCEEDED' AND NOT EXISTS(SELECT 1 FROM app.experiment_forecasts WHERE experiment_id=e.id)))) OR (c.mission_run_id=$3 AND EXISTS(SELECT 1 FROM app.experiment_forecasts f JOIN app.runs r ON r.id=f.run_id AND r.state='SUCCEEDED' WHERE f.experiment_id=e.id) AND NOT EXISTS(SELECT 1 FROM app.command_receipts receipt WHERE receipt.principal_scope='MISSION:'||$3::uuid::text AND receipt.operation='RESEARCH_ALPHA_CREATE' AND receipt.idempotency_key=e.id::text))) ORDER BY e.ordinal LIMIT 1")
+        let row = sqlx::query("SELECT e.id,c.compile_run_id,f.run_id,receipt.resource_id AS alpha_version_id FROM app.experiments e JOIN app.experiment_authorship a ON a.experiment_id=e.id LEFT JOIN app.experiment_compilations c ON c.experiment_id=e.id LEFT JOIN app.runs compiled ON compiled.id=c.compile_run_id LEFT JOIN app.experiment_forecasts f ON f.experiment_id=e.id LEFT JOIN app.runs predicted ON predicted.id=f.run_id LEFT JOIN app.command_receipts receipt ON receipt.principal_scope='MISSION:'||$3::uuid::text AND receipt.operation='RESEARCH_ALPHA_CREATE' AND receipt.idempotency_key=e.id::text WHERE e.project_id=$1 AND e.cycle_id=$2 AND e.outcome='PENDING' AND e.code_artifact_id IS NOT NULL AND e.parameter_artifact_id IS NOT NULL AND ((e.run_id IS NULL AND (c.experiment_id IS NULL OR (c.mission_run_id=$3 AND compiled.state='SUCCEEDED' AND f.run_id IS NULL))) OR (c.mission_run_id=$3 AND predicted.state='SUCCEEDED' AND NOT EXISTS(SELECT 1 FROM app.experiment_validations WHERE experiment_id=e.id))) ORDER BY e.ordinal LIMIT 1")
             .bind(locked.run.project_id.as_uuid()).bind(locked.run.cycle_id.map(Id::as_uuid)).bind(mission.as_uuid()).fetch_optional(&mut *tx).await?;
         let ready = row
             .map(|row| {
                 let id = db::id(row.try_get("id")?)?;
-                Ok::<_, StoreError>(if db::optional_id(&row, "run_id")?.is_some() {
+                Ok::<_, StoreError>(if db::optional_id(&row, "alpha_version_id")?.is_some() {
+                    ExperimentWork::Validate(id)
+                } else if db::optional_id(&row, "run_id")?.is_some() {
                     ExperimentWork::RecordAlpha(id)
                 } else if db::optional_id(&row, "compile_run_id")?.is_none() {
                     ExperimentWork::Compile(id)

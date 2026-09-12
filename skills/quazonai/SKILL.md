@@ -44,8 +44,10 @@ Wasm提案的参数格式和范围见CLI「研究产物」：必须明确冻结D
 horizon及原生预测参数，不填MODEL ID或路径；模型只能由可信服务绑定原编译生产者。
 首阶段编译已占一次实验，失败/取消也不退款；同一实验的后续预测不重复占次，
 但仍占原生资源预算。不得绕过原编译账目或修改历史计数来继续。
-可信Worker可在原Thread回送已采纳任务的终态、原预测产物和明确标注的观察抽样；
-它不是正式评估或资格。失败不猜测详细编译诊断；修复提案引用原parent_experiment_id，
+可信Worker在原Thread回送编译/Discovery失败或已发表的正式Validation结果；预测
+成功直接继续验证，不为中间抽样另开Turn。正式反馈只含已封口元数据及冻结选择
+指标，保留来源/口径/有效期，不读取受限报告，也不是资格或排名。失败不猜测详细
+编译诊断；修复提案引用原parent_experiment_id，
 不覆盖旧输入、不抹去失败。回送独立计入原Mission Turn/修复预算，不自行轮询或重开Thread。
 原生公开回答可由可信Worker保存为qz.mission_summary；只含公开text及精确Turn/item/
 phase，不收集隐藏推理。它不赋予报告中的PASS或审批文字任何科学/操作权限。
@@ -81,6 +83,7 @@ A4.6处理准确scope/版本/单位/周期或不支持的输入组合；不得�
 不以普通研究产物读取方式暴露EVALUATOR_ONLY报告。
 原生Worker按A4.8在ACK前发表正式评估，失败/取消和缺证据不授PASS；Agent不能
 调用内部发布器、手填指标或把qz.alpha_evaluation报告存在当作资格/Reviewer批准。
+Mission须等待正式验证、评估发表和原Thread反馈回答；不能自行宣布跳过这些步骤。
 
 人工Cycle启动除冻结Brief和Project版本外，还须明确researcher_profile/reviewer_profile的profile_id及expected_revision；不得默认第一个账号。选择随Cycle封口，旧Cycle不跟随后来Profile修改。该命令不授予Mission选择账号、修改模型设置或发起账号操作的权限。
 

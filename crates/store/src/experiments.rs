@@ -23,7 +23,17 @@ type Tx<'a> = Transaction<'a, Postgres>;
 // while this projection is read. No raw report, verifier or storage locator is selected.
 const SELECT_VIEW: &str = "SELECT e.*, a.author_run_id, a.author_attempt_id,
   (e.outcome='PENDING' AND e.outcome_reason IS NULL AND e.conclusion_artifact_id IS NULL) AS pending,
-  (a.experiment_id IS NOT NULL AND EXISTS (
+  (a.experiment_id IS NOT NULL AND (EXISTS (
+    SELECT 1 FROM app.experiment_validations v
+    JOIN app.evaluations ev ON ev.run_id=v.run_id AND ev.subject_alpha_version_id=v.alpha_version_id
+      AND ev.policy_id=v.policy_id AND ev.evaluation_kind='WALK_FORWARD'
+    JOIN app.evaluation_publications published ON published.evaluation_id=ev.id
+    JOIN app.artifacts report ON report.id=ev.report_artifact_id
+    WHERE v.experiment_id=e.id AND ev.project_id=e.project_id
+      AND e.conclusion_artifact_id=report.id AND report.producer_run_id=v.run_id
+      AND report.access_class='EVALUATOR_ONLY' AND report.schema_name='qz.alpha_evaluation'
+      AND report.schema_version='1'
+  ) OR (EXISTS (
     SELECT 1 FROM app.runs r JOIN app.input_sets i ON i.id=r.input_set_id
     WHERE r.id=e.run_id AND r.project_id=e.project_id AND r.cycle_id=e.cycle_id
       AND r.kind='ALPHA_EVALUATE' AND r.state IN ('SUCCEEDED','FAILED','CANCELLED')
@@ -39,7 +49,7 @@ const SELECT_VIEW: &str = "SELECT e.*, a.author_run_id, a.author_attempt_id,
     SELECT 1 FROM app.artifacts report WHERE report.id=e.conclusion_artifact_id
       AND report.project_id=e.project_id AND report.producer_run_id=e.run_id
       AND report.access_class='RESEARCH' AND report.kind='REPORT'
-  ))) AS research_visible
+  ))))) AS research_visible
   FROM app.experiments e LEFT JOIN app.experiment_authorship a ON a.experiment_id=e.id";
 
 fn view(row: &PgRow) -> Result<ExperimentView, StoreError> {

@@ -41,11 +41,36 @@ impl Store {
             .bind(run.as_uuid()).fetch_one(&mut *tx).await?;
         let proposed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.experiments e JOIN app.experiment_authorship a ON a.experiment_id=e.id WHERE e.project_id=$1 AND e.cycle_id=$2 AND e.outcome='PENDING' AND e.run_id IS NULL AND NOT EXISTS(SELECT 1 FROM app.experiment_compilations c WHERE c.experiment_id=e.id) AND ((e.code_artifact_id IS NOT NULL AND e.parameter_artifact_id IS NOT NULL) OR a.author_run_id=$3))")
             .bind(locked.run.project_id.as_uuid()).bind(locked.run.cycle_id.map(Id::as_uuid)).bind(run.as_uuid()).fetch_one(&mut *tx).await?;
-        let scientific_pending: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.experiment_compilations c JOIN app.runs compiled ON compiled.id=c.compile_run_id LEFT JOIN app.experiment_forecasts f ON f.experiment_id=c.experiment_id WHERE c.mission_run_id=$1 AND (NOT EXISTS(SELECT 1 FROM app.run_terminal_receipts t JOIN app.run_attempts a ON a.id=t.attempt_id AND a.run_id=t.run_id WHERE t.run_id=c.compile_run_id AND t.terminal_state=compiled.state AND a.id=compiled.active_attempt_id AND a.dispatch_state='TERMINAL') OR (compiled.state='SUCCEEDED' AND f.run_id IS NULL) OR (f.run_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM app.runs r JOIN app.run_terminal_receipts t ON t.run_id=r.id AND t.attempt_id=r.active_attempt_id AND t.terminal_state=r.state JOIN app.run_attempts a ON a.id=t.attempt_id AND a.dispatch_state='TERMINAL' WHERE r.id=f.run_id)) OR NOT EXISTS(SELECT 1 FROM app.model_turn_reservations r JOIN app.model_turn_receipts t ON t.reservation_id=r.id AND t.outcome='SUCCEEDED' JOIN app.model_turn_summaries s ON s.reservation_id=r.id WHERE r.session_id=$2 AND r.command_key='mission/result/'||coalesce(f.run_id,c.compile_run_id)::text)))")
+        let scientific_pending: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM app.experiment_compilations c
+             JOIN app.runs compiled ON compiled.id=c.compile_run_id
+             LEFT JOIN app.experiment_forecasts f ON f.experiment_id=c.experiment_id
+             LEFT JOIN app.runs predicted ON predicted.id=f.run_id
+             LEFT JOIN app.experiment_validations v ON v.experiment_id=c.experiment_id
+             LEFT JOIN app.evaluations ev ON ev.run_id=v.run_id
+               AND ev.subject_alpha_version_id=v.alpha_version_id AND ev.policy_id=v.policy_id
+               AND ev.evaluation_kind='WALK_FORWARD'
+             LEFT JOIN app.evaluation_publications published ON published.evaluation_id=ev.id
+             WHERE c.mission_run_id=$1 AND (
+               NOT EXISTS(SELECT 1 FROM app.run_terminal_receipts t
+                 LEFT JOIN app.run_attempts a ON a.id=t.attempt_id
+                 WHERE t.run_id=compiled.id AND t.terminal_state=compiled.state
+                   AND t.attempt_id IS NOT DISTINCT FROM compiled.active_attempt_id
+                   AND (a.id IS NULL OR a.dispatch_state='TERMINAL'))
+               OR (compiled.state='SUCCEEDED' AND f.run_id IS NULL)
+               OR (f.run_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM app.run_terminal_receipts t
+                 LEFT JOIN app.run_attempts a ON a.id=t.attempt_id
+                 WHERE t.run_id=predicted.id AND t.terminal_state=predicted.state
+                   AND t.attempt_id IS NOT DISTINCT FROM predicted.active_attempt_id
+                   AND (a.id IS NULL OR a.dispatch_state='TERMINAL')))
+               OR (predicted.state='SUCCEEDED' AND v.run_id IS NULL)
+               OR (v.run_id IS NOT NULL AND published.evaluation_id IS NULL)
+               OR NOT EXISTS(SELECT 1 FROM app.model_turn_reservations r
+                 JOIN app.model_turn_receipts t ON t.reservation_id=r.id AND t.outcome='SUCCEEDED'
+                 JOIN app.model_turn_summaries s ON s.reservation_id=r.id
+                 WHERE r.session_id=$2 AND r.command_key='mission/result/'||coalesce(v.run_id,f.run_id,c.compile_run_id)::text)))")
             .bind(run.as_uuid()).bind(latest.try_get::<uuid::Uuid,_>("session_id")?).fetch_one(&mut *tx).await?;
-        let alpha_pending: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.experiment_compilations c JOIN app.experiment_forecasts f ON f.experiment_id=c.experiment_id JOIN app.runs r ON r.id=f.run_id AND r.state='SUCCEEDED' WHERE c.mission_run_id=$1 AND NOT EXISTS(SELECT 1 FROM app.command_receipts receipt JOIN app.alpha_versions v ON v.id=receipt.resource_id AND v.experiment_id=c.experiment_id AND v.model_artifact_id=f.model_artifact_id WHERE receipt.principal_scope='MISSION:'||$1::uuid::text AND receipt.operation='RESEARCH_ALPHA_CREATE' AND receipt.idempotency_key=c.experiment_id::text))")
-            .bind(run.as_uuid()).fetch_one(&mut *tx).await?;
-        if unaccounted || proposed || scientific_pending || alpha_pending {
+        if unaccounted || proposed || scientific_pending {
             tx.commit().await?;
             return Ok(false);
         }
@@ -67,7 +92,9 @@ impl Store {
         } else {
             RunReason::RuntimeSucceeded
         };
-        finish(&mut tx,&mut locked,state,reason,json!({"schema_version":1,"source":"NATIVE_MISSION","session_id":db::id(latest.try_get("session_id")?)?,"concluding_reservation_id":db::id(latest.try_get("id")?)?,"summary_artifact_id":summary,"formal_evaluation":"NOT_PERFORMED"})).await?;
+        let evaluations: i64 = sqlx::query_scalar("SELECT count(*) FROM app.experiment_compilations c JOIN app.experiment_validations v ON v.experiment_id=c.experiment_id WHERE c.mission_run_id=$1")
+            .bind(run.as_uuid()).fetch_one(&mut *tx).await?;
+        finish(&mut tx,&mut locked,state,reason,json!({"schema_version":1,"source":"NATIVE_MISSION","session_id":db::id(latest.try_get("session_id")?)?,"concluding_reservation_id":db::id(latest.try_get("id")?)?,"summary_artifact_id":summary,"formal_evaluation":if evaluations>0 {"PUBLISHED"} else {"NOT_PERFORMED"},"formal_evaluation_count":counter(evaluations)?})).await?;
         tx.commit().await?;
         Ok(true)
     }

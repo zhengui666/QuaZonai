@@ -276,6 +276,7 @@ impl Worker {
                 .map_err(|_| StoreError::Integrity)?
                 .map_err(|_| StoreError::Integrity)
         };
+        let validation = matches!(work, ExperimentWork::Validate(_));
         match work {
             ExperimentWork::RecordAlpha(experiment) => {
                 self.store
@@ -294,27 +295,41 @@ impl Worker {
                     )
                     .await?;
             }
-            ExperimentWork::Forecast(experiment) => {
+            ExperimentWork::Forecast(experiment) | ExperimentWork::Validate(experiment) => {
                 limits.experiments = 0;
                 let reading = self.objects.clone();
-                self.store
-                    .start_experiment_forecast(
-                        lease.run.id,
-                        &lease.fence,
-                        experiment,
-                        &limits,
-                        move |id, size| {
-                            let objects = reading.clone();
-                            async move {
-                                tokio::task::spawn_blocking(move || objects.read(id, size))
-                                    .await
-                                    .map_err(|_| StoreError::Integrity)?
-                                    .map_err(|_| StoreError::Integrity)
-                            }
-                        },
-                        publish,
-                    )
-                    .await?;
+                let read = move |id, size| {
+                    let objects = reading.clone();
+                    async move {
+                        tokio::task::spawn_blocking(move || objects.read(id, size))
+                            .await
+                            .map_err(|_| StoreError::Integrity)?
+                            .map_err(|_| StoreError::Integrity)
+                    }
+                };
+                if validation {
+                    self.store
+                        .start_experiment_validation(
+                            lease.run.id,
+                            &lease.fence,
+                            experiment,
+                            &limits,
+                            read,
+                            publish,
+                        )
+                        .await?;
+                } else {
+                    self.store
+                        .start_experiment_forecast(
+                            lease.run.id,
+                            &lease.fence,
+                            experiment,
+                            &limits,
+                            read,
+                            publish,
+                        )
+                        .await?;
+                }
             }
         }
         // Preparation never acknowledges a Mission or sends a new model request.
