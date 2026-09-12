@@ -1541,6 +1541,37 @@ Downstream不能用这两个接口扩大证据读取；Reviewer的受控输入�
 CLI为`cycle selection <id>`与`cycle trials <id>`；界面从原Cycle查看，不提供客户端
 选择赢家、替换成员、刷新旧排名或手填评估的写入口。
 
+### A4.10 Sealed读取机会的精确预约
+
+`sealed_evaluation_tasks`只记录既有Run的不可变alpha_version_id、policy_id、
+validation_evaluation_id和dataset_revision_id，不是新队列或用户可写评估。
+源Validation必须是原试验真实受管验证的SUCCEEDED/VALID/PASS且预约时未过期；
+SCORE目标必须是引用该原验证校准的精确附加版本，EXPECTED_RETURN不附加校准。
+原Alpha、源验证、政策、Run与输入同项目/根血缘，镜像、Wasm和校准MODEL精确匹配。
+任务origin继承Discovery、Validation训练和Sealed输入中最受限的来源：
+LEGACY_UNKNOWN、FIXTURE、SYNTHETIC、REAL依次优先；真实封存数据不能洗白旧测试训练。
+新政策仍可引用既有模型，但必须显式冻结自己的Sealed要求和精确Sealed版本。
+
+`sealed_opportunities(attempt_id PRIMARY KEY, exposure_id UNIQUE)`连接原
+run_native_attempts与append-only evidence_exposures。首次native_job事务在冻结
+JobSpec后、返回任何读取/上传/执行能力前预约；失败时整个首次spec事务回滚。
+同一Attempt重放只使用原预约，取消、崩溃、未知发送或未实际读到行均不退款；
+新的Attempt需要新的机会。已存在的Sealed spec没有预约不能补造历史机会。
+普通DATA_VALIDATE、未知Sealed操作或仅自报EVALUATOR_ONLY均不能取得这种能力。
+
+持既有project→cycle→Run锁后锁根research_lineages行，所有封存预约/披露写入
+遵循同一顺序。maximum_sealed_uses_per_lineage对该根下所有Sealed EVALUATOR/RAW
+机会累计，不按当前项目、政策、Alpha或Dataset UUID清零。已有IMPORT/Operator/
+Research Agent的raw/sample/metric/plot/summary暴露使相同原生目录快照不再独立；
+按登记runtime/native_catalog_ref/native_storage_version/native_snapshot_ref关联，
+不是只比较Dataset UUID。根下LEGACY_UNKNOWN暴露无法证明独立，明确拒绝新机会。
+Reviewer的独立受控输入属于EVALUATOR，不自动转成后续研究者可见反馈。
+
+预约记录RAW表示已授予读取机会，不声称已成功观察市场行；purpose明确为
+NATIVE_SEALED_CAPABILITY_RESERVED，actor_session_ref保留原Attempt引用。
+独立性按原预约时已知暴露判断，不能事后改写该机会或把后续披露洗成全新证据。
+此记录本身不产生Evaluation、资格或Reviewer批准。
+
 ## A5. Mandate、Candidate、目标与 Release
 
 ```text

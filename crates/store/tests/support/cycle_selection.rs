@@ -15,7 +15,7 @@ async fn proposal(pool: &PgPool, experiment: Id) -> ExperimentProposalV1 {
     serde_json::from_value(body).unwrap()
 }
 
-async fn cancelled_parent(
+pub(super) async fn cancelled_parent(
     pool: &PgPool,
     store: &Store,
     actor: &Actor,

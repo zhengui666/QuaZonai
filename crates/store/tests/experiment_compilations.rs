@@ -31,6 +31,9 @@ mod validation_publication;
 #[path = "support/cycle_selection.rs"]
 mod cycle_selection;
 
+#[path = "support/sealed_opportunities.rs"]
+mod sealed_opportunities;
+
 fn limits() -> JobLimitsV1 {
     JobLimitsV1 {
         schema_version: SchemaV1,

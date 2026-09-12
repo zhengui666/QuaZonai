@@ -25,4 +25,10 @@ pub fn capabilities(now: DateTime<Utc>) -> RuntimeCapabilitiesV1 {
             version: "1".into(),
         });
     value
+        .artifact_schemas
+        .push(contracts::runtime::RuntimeArtifactSchemaV1 {
+            name: "qz.alpha_sealed".into(),
+            version: "1".into(),
+        });
+    value
 }

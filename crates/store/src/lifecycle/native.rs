@@ -12,6 +12,7 @@ use contracts::{
 use std::collections::{BTreeMap, BTreeSet};
 
 mod probe;
+mod sealed;
 pub use probe::RunProbeTicket;
 
 /// Constructed only by an authorized domain service. Not a public request DTO.
@@ -201,13 +202,17 @@ impl Store {
                 locked.run.kind,
             )
             .await?;
-            domain::runtime_jobs::admit_spec(&spec, &capabilities, now(&mut tx).await?)?;
             fence(&mut tx, &locked.run, owner).await?;
             if new_spec {
                 sqlx::query("INSERT INTO app.run_native_attempts(attempt_id,run_id,spec_json) VALUES($1,$2,$3)")
                     .bind(owner.attempt_id.as_uuid()).bind(run.as_uuid()).bind(db::json(&spec)?)
                     .execute(&mut *tx).await?;
             }
+            sealed::reserve(&mut tx, &spec, owner.attempt_id, new_spec).await?;
+            // A shared lineage lock may wait. Recheck time-sensitive capability
+            // and lease after it, before returning any transfer/dispatch permit.
+            domain::runtime_jobs::admit_spec(&spec, &capabilities, now(&mut tx).await?)?;
+            fence(&mut tx, &locked.run, owner).await?;
         }
         let view = NativeJob {
             run: locked.run.clone(),

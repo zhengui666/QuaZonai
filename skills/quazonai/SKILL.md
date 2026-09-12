@@ -15,6 +15,7 @@ FIXTURE、PIT_UNVERIFIED、未核验方法和政策登记成功均不是 PASS，
 冒充封存阈值；历史null不补写，需人工新建完整政策和研究周期。
 冻结/启动检查Sealed的`asset:N`与登记资产/bar顺序；不允许折scope或借元数据检查读取封存市场行。
 EVALUATE_SEALED_ALPHA是内部受管操作，不是Agent工具；不得自行提交任务、读取校准或封存报告来冒充独立评估。
+Sealed机会绑定原Attempt并按根血缘累计，失败和取消不退款；不得换UUID或请求补写历史预约。
 不要为尚未接通的可信数据登记/Brief冻结/Worker 路径编造成功结果或使用 SQL 后门。
 
 

@@ -219,6 +219,8 @@ Sealed要求明确报SEALED_POLICY_NOT_DEFINED，不补阈值或开始封存任�
 MODEL，输出qz.alpha_sealed.v1。PARAMETERS只引用校准产物ID，不复制拟合配置；
 Job与可信采纳分别读取原对象。该操作不是新的Agent工具或公开手工评估入口，
 不替代Sealed机会预约、独立Review和资格判定。Runtime镜像须含alpha-sealed/1。
+首次受管Sealed能力需同事务登记原Attempt的读取机会；原验证已过期、不独立、
+累计机会耗尽或缺少精确Alpha/政策绑定均不能取得能力。重放不重复消费，取消不退款。
 
 正式验证的内部准入绑定原Alpha/Policy/Validation目录，不增加可由Agent指定Run或
 免费试验的CLI/MCP接口。原生Worker通过A4.8收尾入口在终态采纳后、ACK前原子发表

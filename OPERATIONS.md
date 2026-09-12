@@ -234,6 +234,8 @@ Brief冻结和Cycle启动要求Sealed使用真实资产的`asset:N`，不接受V
 同时核对登记的Sealed与Validation资产/bar顺序，不读取封存市场行或启动任务。
 内部受管Sealed操作仅运行原目录/Wasm/冻结校准；镜像需含alpha-sealed/1能力。
 它不提供研究者自助准入，也不代表暴露预约、正式评估和资格完整链路已交付。
+原生能力发放前按根血缘预约Sealed读取机会；失败/取消保留机会记录，
+不能换项目、政策或Dataset UUID重置已使用的额度或既有暴露。
 研究准备入口为 `/api/v2/input-sets` 和 `/api/v2/evaluation-policies`，详情和
 权限见 CLI 与 native-generated OpenAPI。InputSet 头、全部成员、冻结时间及
 幂等回执一次提交；policy 与精确 experiment_family 同事务登记。登记不是

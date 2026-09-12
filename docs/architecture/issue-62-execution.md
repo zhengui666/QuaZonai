@@ -3,6 +3,32 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Original Sealed opportunity reservation, 2026-09-12
+
+Working source over `814409168b19563d5653217a43b8f481d07435dc` adds immutable
+Sealed task associations and original Attempt-to-exposure records (migration 041).
+The existing first native JobSpec transaction locks the root lineage and reserves
+an opportunity before returning any capability. It requires the canonical formal
+Validation projection, original model/calibration, exact policy/dataset and
+inherited data origin. Prior disclosure blocks independent access. Root-wide
+usage is not refunded after cancellation; replay uses the original reservation.
+After a root-lock wait, capability/deadline and Worker lease are checked again;
+failure rolls back both the new JobSpec and opportunity.
+
+`verify-sx1Gdc` passed check/format/strict Clippy, 29 native validation tests,
+126 Store tests and 20 HTTP/CLI tests, zero ignored, source unchanged and owned
+PostgreSQL/PGMQ stopped. Three new real PostgreSQL tests cover concurrent
+same-project max-one reservations, original Attempt replay/cancel-no-refund,
+prior Operator summary disclosure and actual lease expiry while a root lock is
+held. The tests use controlled scientific outputs and trusted test administration
+that pays an ordinary trial; they do not prove production non-trial Sealed
+admission, cross-project concurrency or scientific qualification. The first
+passing run `verify-5JImI0` preceded reuse of the canonical source projection;
+the final run above verifies that change. No protocol or native image changed.
+
+Trusted Sealed task creation, formal publication and independent Reviewer flow
+remain unfinished. This is not full Issue #62 acceptance or GitHub CI evidence.
+
 ## Managed held-out operation and real OCI, 2026-09-12
 
 Working source over `941269e50ab448ed7ea86d52e79369ca1da89e1c` adds the internal
