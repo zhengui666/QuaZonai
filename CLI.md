@@ -106,13 +106,16 @@ Worker在首次提交之前刷新必要的原生探测；提交结果未知时�
 访问，本地HTTP仍须明确`--development-http`。工作区根必须已存在、绝对路径且权限
 0700，不得指向源仓库、个人HOME或Codex认证目录。缺配置不消费Mission消息。
 科学任务与Mission各自最多parallelism个在途驱动；不新增Agent工具循环。
-当前自动入口已接首轮准备和原生轮账本，结算轮不等于研究流程收束，不ack Mission。
+当前自动入口已接首轮准备和原生轮账本，单独结算一轮不等于研究流程收束。
 已采纳的原编译失败或Discovery预测终态通过同一Thread的预算Turn回送；每个原生
 任务最多一次，重复消费不重复扣费。预测摘要保留原产物与origin，首尾观察抽样
 不是正式指标/PASS。修复新提案必须引用原parent_experiment_id，不覆盖已执行输入。
 成功结算的原生Turn另保留最多64KiB公开回答REPORT（qz.mission_summary），原生
 summary视图来源、原Turn/item/phase如实记录；失败重投只补摘要，不重新调用模型。
 它不是新Agent工具，也不从回答文字推断研究通过或Mission已完成。
+全部Turn/科学任务结算、反馈回答及提案处理齐全后，可信Worker才提交Mission执行
+终态并归档PGMQ；ACK失败只重放归档，不重开模型。SUCCEEDED不改变Cycle、实验
+裁决或资格；只有公开限制说明且无实验的会话也不构成“无有效Alpha”的科学证据。
 
 ## 原生科学任务入口
 

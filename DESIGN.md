@@ -898,6 +898,24 @@ Worker停止会同步发送原cgroup.kill，但systemd回收scope是异步的。
 启动前用原生systemctl仅查询精确Run scope的LoadState，最多等3秒且不超过剩余
 墙钟；未回收则拒绝启动，不停止/替换仍活跃的旧owner，不换scope名绕过资源边界。
 
+### A3.10 有界研究会话收束
+
+Researcher Mission的执行收束复用原Run/Attempt、run_terminal_receipts及PGMQ归档，
+不建立另一套完成状态。最新Turn须有原成功终态、完整usage及已发表公开回答；
+所有此前Turn也须结算，成功回答不得缺失。尚待编译的可执行提案、本Mission的
+未完整提案、未终结科学任务或未在原Thread消费并回答的科学反馈均阻止收束。
+所有编译/预测须有精确原Attempt的真实终态；编译成功还须完成对应预测。
+没有提出实验的会话可凭公开限制说明结束，但不制造实验或“无有效Alpha”的科学裁决。
+
+在同一project/Cycle/Run锁定事务中，当前fence重验后将原Attempt的结果引用指向
+最终qz.mission_summary，终态回执关联原Session/预约/摘要；这不是Runtime的
+qz.job_result，也不重复复制回答。沿用原终态CAS和预算结转：先提交的取消意图
+不能再被成功覆盖；未知模型/科学任务不因本地连接关闭而变成CANCELLED。
+提交后才归档Mission消息，终态后丢失ACK可重放归档。暂停或Profile变更不抹去
+已完成的真实执行证据，不为收束重新准入/发送模型。Mission的SUCCEEDED仅表示
+有界会话已执行并报告，不改Cycle、Experiment outcome、Evaluation或Qualification；
+正式评估/独立Reviewer及Cycle结论仍由对应可信服务完成。
+
 ## A4. 输入、政策、评估、资格与暴露
 
 ```text

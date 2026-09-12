@@ -951,3 +951,28 @@ Runtime、6项真实Job子进程、30项原生Codex和498项Store/Server检查�
 0忽略。验证期间源码未变，独立PG确认停止；随后仅追加本证据。受控Provider/
 科学fixture不是付费账号、科学数值或完整T08/T42证明；Mission收束、正式评估、
 独立Reviewer及后续产品仍未完成，不能据此push review、合并或关闭#62。
+
+## 2026-09-12：有界Mission执行收束与终态后ACK恢复
+
+在23ae6736上复用原Run终态事务/Attempt结果引用/PGMQ完成会话收束。只有最新
+成功公开回答、全部Turn终态和完整用量，以及已完成并回送原Thread的全部关联
+科学任务齐全时才提交；未处理提案、未知任务、缺用量/回答均不能凭空结束。
+最后的原摘要是结果引用，不另建完成表/包装报告。原取消CAS保持优先；会话
+SUCCEEDED不修改Cycle、Experiment outcome、Evaluation或Qualification。
+
+`.ai-bridge/verify-ZBGCKi` exit0：check/fmt/严格Clippy及109项真实PG回归，0失败/
+0忽略。新增/扩展用例覆盖缺失终态/用量/摘要、旧owner、终态写入失败整事务
+回滚、并发一次采纳、原摘要关联、先终态后归档、重复ACK，以及先取消、缺用量
+仍未决、完整成功回答到达后保留CANCELLED且不生成资格。
+
+`.ai-bridge/verify-Kt3j7G` exit0：check/fmt/严格Clippy、真实scope复用检查及实际
+App Server/Worker恢复用例。注入摘要发布失败后重启，再注入PGMQ归档失败；
+终态已经提交、消息仍待ACK，后续Worker只归档，总Provider请求仍为1。
+`.ai-bridge/verify-Wlzimi` exit0：check/fmt/严格Clippy及实际两轮研究用例。原
+编译/预测在途时不收束，原预测报告回到同Thread且保存第二个回答后，唯一
+Mission终态与PGMQ归档成立，2次Provider调用不变。
+
+三次验证期间源码不变、独立PG均确认停止。它们是本地定向增量证据，不是新Head
+全量CI或完整T08/T42。受控科学输出/Provider不冒充真实数值或付费账号；没有
+完整用量的失败/取消、预检/详细编译诊断、正式评估、Reviewer、Cycle结论及
+其余产品工作仍须继续。尚未push/review/merge或关闭Issue。

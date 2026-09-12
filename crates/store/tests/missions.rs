@@ -132,6 +132,10 @@ async fn native_public_summary_requires_original_success_and_is_immutable_budget
         .bind_mission_session(lease.run.id, &lease.fence, &native_thread())
         .await
         .unwrap();
+    assert!(!store
+        .complete_research_mission(lease.run.id, &lease.fence)
+        .await
+        .unwrap());
     prepare_initial(&store, &lease, &f).await.unwrap();
     let reserved = store
         .mission_turn_checkpoint(lease.run.id, &lease.fence)
@@ -187,6 +191,10 @@ async fn native_public_summary_requires_original_success_and_is_immutable_budget
         .await
         .unwrap();
     message.native_turn_id = "different-turn".into();
+    assert!(!store
+        .complete_research_mission(lease.run.id, &lease.fence)
+        .await
+        .unwrap());
     assert!(matches!(
         summary(&store, &lease, &f, reserved.id, &message).await,
         Err(StoreError::Conflict)
@@ -259,6 +267,155 @@ async fn native_public_summary_requires_original_success_and_is_immutable_budget
         summary(&store, &stale, &f, reserved.id, &message).await,
         Err(StoreError::Domain(domain::DomainError::StaleAttempt))
     ));
+    assert!(matches!(
+        store
+            .complete_research_mission(lease.run.id, &stale.fence)
+            .await,
+        Err(StoreError::Domain(domain::DomainError::StaleAttempt))
+    ));
+    sqlx::raw_sql("CREATE FUNCTION public.reject_mission_finish() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.observation->>'source'='NATIVE_MISSION' THEN RAISE EXCEPTION 'injected terminal publication failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_finish BEFORE INSERT ON app.run_terminal_receipts FOR EACH ROW EXECUTE FUNCTION public.reject_mission_finish();").execute(&pool).await.unwrap();
+    assert!(store
+        .complete_research_mission(lease.run.id, &lease.fence)
+        .await
+        .is_err());
+    let rolled_back:(String,Option<uuid::Uuid>,i64)=sqlx::query_as("SELECT a.dispatch_state,a.result_manifest_artifact_id,(SELECT count(*) FROM app.run_terminal_receipts WHERE run_id=a.run_id) FROM app.run_attempts a WHERE a.id=$1")
+        .bind(lease.fence.attempt_id.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_ne!(rolled_back.0, "TERMINAL");
+    assert_eq!((rolled_back.1, rolled_back.2), (None, 0));
+    sqlx::raw_sql("DROP TRIGGER reject_finish ON app.run_terminal_receipts; DROP FUNCTION public.reject_mission_finish();").execute(&pool).await.unwrap();
+    let (one, two) = tokio::join!(
+        store.complete_research_mission(lease.run.id, &lease.fence),
+        store.complete_research_mission(lease.run.id, &lease.fence)
+    );
+    assert!(one.unwrap() && two.unwrap());
+    let completed:(String,uuid::Uuid,serde_json::Value,String,i64)=sqlx::query_as("SELECT r.state,a.result_manifest_artifact_id,t.observation,c.state,(SELECT count(*) FROM app.qualifications) FROM app.runs r JOIN app.run_attempts a ON a.id=r.active_attempt_id JOIN app.run_terminal_receipts t ON t.run_id=r.id JOIN app.research_cycles c ON c.id=r.cycle_id WHERE r.id=$1")
+        .bind(lease.run.id.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(completed.0, "SUCCEEDED");
+    assert_eq!(completed.1, artifact.as_uuid());
+    assert_eq!(completed.2["summary_artifact_id"], artifact.to_string());
+    assert_eq!(completed.2["formal_evaluation"], "NOT_PERFORMED");
+    assert_eq!((completed.3.as_str(), completed.4), ("RUNNING", 0));
+    let message_id:i64=sqlx::query_scalar("SELECT q.msg_id FROM pgmq.q_runs q JOIN app.run_admissions a ON a.initial_queue_message_id=q.msg_id WHERE a.run_id=$1")
+        .bind(lease.run.id.as_uuid()).fetch_one(&pool).await.expect("terminal commit precedes native PGMQ archive");
+    let message = store::lifecycle::RunMessage {
+        message_id,
+        run_id: lease.run.id,
+        read_count: 1,
+    };
+    store.acknowledge_run(&message).await.unwrap();
+    store.acknowledge_run(&message).await.unwrap();
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn mission_cancel_requires_full_native_receipts_and_wins_before_report_adoption(
+    pool: PgPool,
+) {
+    use store::turns::{NativePublicSummary, TurnOutcome, UsageReceipt};
+    let (store, actor, f, _, preparation) = setup(&pool).await;
+    complete(&pool, &store, &f, preparation, false).await;
+    store.advance_initial_cycle(preparation).await.unwrap();
+    let lease = mission_lease(&store).await;
+    store
+        .begin_run_dispatch(lease.run.id, &lease.fence)
+        .await
+        .unwrap();
+    store
+        .bind_mission_session(lease.run.id, &lease.fence, &native_thread())
+        .await
+        .unwrap();
+    prepare_initial(&store, &lease, &f).await.unwrap();
+    let reserved = store
+        .mission_turn_checkpoint(lease.run.id, &lease.fence)
+        .await
+        .unwrap()
+        .latest
+        .unwrap()
+        .reservation;
+    store
+        .claim_turn_dispatch(reserved.id, &lease.fence)
+        .await
+        .unwrap();
+    store
+        .bind_native_turn(reserved.id, &lease.fence, "cancel-race-turn")
+        .await
+        .unwrap();
+    let run = store.get_run(&actor, lease.run.id).await.unwrap();
+    let cancelled = store
+        .cancel_run(
+            &actor,
+            "cancel-before-report",
+            run.id,
+            &contracts::lifecycle::RunCancelV1 {
+                schema_version: SchemaV1,
+                expected_revision: run.revision,
+            },
+        )
+        .await
+        .unwrap()
+        .resource;
+    assert_eq!(cancelled.state, RunState::CancelRequested);
+    assert!(!store
+        .complete_research_mission(run.id, &lease.fence)
+        .await
+        .unwrap());
+    store
+        .observe_mission_turn_terminal(
+            reserved.id,
+            &lease.fence,
+            TurnOutcome::Succeeded,
+            "NATIVE_TURN_COMPLETED",
+        )
+        .await
+        .unwrap();
+    assert!(!store
+        .complete_research_mission(run.id, &lease.fence)
+        .await
+        .unwrap());
+    store
+        .settle_turn(
+            reserved.id,
+            &lease.fence,
+            &UsageReceipt {
+                outcome: TurnOutcome::Succeeded,
+                actual_tokens: DbCounter::new(12).unwrap(),
+                actual_cost: None,
+                currency: None,
+                reason_code: "NATIVE_TURN_COMPLETED".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(!store
+        .complete_research_mission(run.id, &lease.fence)
+        .await
+        .unwrap());
+    summary(
+        &store,
+        &lease,
+        &f,
+        reserved.id,
+        &NativePublicSummary {
+            schema_version: SchemaV1,
+            native_turn_id: "cancel-race-turn".into(),
+            native_item_id: "cancel-race-item".into(),
+            phase: None,
+            text: "Public answer arrived after cancellation; not a qualification.".into(),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(store
+        .complete_research_mission(run.id, &lease.fence)
+        .await
+        .unwrap());
+    let finished = store.get_run(&actor, run.id).await.unwrap();
+    assert_eq!(finished.state, RunState::Cancelled);
+    assert_eq!(
+        finished.terminal_reason_code.as_deref(),
+        Some("RESULT_DISCARDED_AFTER_CANCEL")
+    );
+    let facts:(i64,i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM app.run_terminal_receipts WHERE run_id=$1),(SELECT count(*) FROM app.model_turn_receipts WHERE reservation_id=$2),(SELECT count(*) FROM app.qualifications)").bind(run.id.as_uuid()).bind(reserved.id.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(facts, (1, 1, 0));
 }
 
 #[sqlx::test(migrations = "../../migrations")]

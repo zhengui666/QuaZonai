@@ -57,7 +57,11 @@ impl Worker {
         }
         let lease = match self.store.claim_mission(&message, owner, 60).await? {
             None => return Err(WorkerFailure::TaskKind),
-            Some(ClaimResult::Busy | ClaimResult::Terminal(_)) => return Ok(()),
+            Some(ClaimResult::Busy) => return Ok(()),
+            Some(ClaimResult::Terminal(_)) => {
+                self.store.acknowledge_run(&message).await?;
+                return Ok(());
+            }
             Some(ClaimResult::Leased(lease)) => *lease,
         };
         let heartbeat = async {
@@ -80,7 +84,12 @@ impl Worker {
             biased;
             _ = shutdown.changed() => Err(WorkerFailure::LostAuthority),
             _ = heartbeat => Err(WorkerFailure::LostAuthority),
-            result = self.drive_mission(launcher, &lease, &observed) => result,
+            result = self.drive_mission(launcher, &lease, &observed) => {
+                if result? {
+                    self.store.acknowledge_run(&message).await?;
+                }
+                Ok(())
+            },
         }
     }
 
@@ -89,7 +98,7 @@ impl Worker {
         launcher: &MissionLauncher,
         lease: &RunLease,
         shutdown: &watch::Receiver<bool>,
-    ) -> Result<(), WorkerFailure> {
+    ) -> Result<bool, WorkerFailure> {
         let run = lease.run.id;
         let fence = &lease.fence;
         let job = self.store.mission_job(run, fence).await?;
@@ -205,7 +214,7 @@ impl Worker {
         Ok(())
     }
 
-    async fn advance_mission_experiment(&self, lease: &RunLease) -> Result<(), WorkerFailure> {
+    async fn advance_mission_experiment(&self, lease: &RunLease) -> Result<bool, WorkerFailure> {
         if !self
             .store
             .mission_turn_checkpoint(lease.run.id, &lease.fence)
@@ -213,7 +222,7 @@ impl Worker {
             .latest
             .is_some_and(|latest| latest.receipt.is_some())
         {
-            return Ok(());
+            return Ok(false);
         }
         let Some(work) = self
             .store
@@ -222,7 +231,8 @@ impl Worker {
         else {
             let reading = self.objects.clone();
             let publishing = self.objects.clone();
-            self.store
+            let prepared = self
+                .store
                 .prepare_mission_result_turn(
                     lease.run.id,
                     &lease.fence,
@@ -245,7 +255,14 @@ impl Worker {
                     },
                 )
                 .await?;
-            return Ok(());
+            return if prepared {
+                Ok(false)
+            } else {
+                Ok(self
+                    .store
+                    .complete_research_mission(lease.run.id, &lease.fence)
+                    .await?)
+            };
         };
         let native = self.transport(lease).await?;
         self.refresh(&native, lease.run.id, &lease.fence).await?;
@@ -294,7 +311,7 @@ impl Worker {
             }
         }
         // Preparation never acknowledges a Mission or sends a new model request.
-        Ok(())
+        Ok(false)
     }
 }
 

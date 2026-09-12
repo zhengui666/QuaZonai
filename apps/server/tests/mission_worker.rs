@@ -420,15 +420,17 @@ async fn settled_native_mission_queues_original_compilation_then_forecast_withou
     .unwrap();
     assert_eq!(f.provider.request_count(), 2);
     assert!(f.provider.saw_previous_context());
-    visible(&f, &pool).await;
-    worker
-        .process_mission_message(f.message.clone(), "no-duplicate-result-turn", receiver)
+    f.store.acknowledge_run(&f.message).await.unwrap();
+    let archived: i64 = sqlx::query_scalar("SELECT count(*) FROM pgmq.a_runs WHERE msg_id=$1")
+        .bind(f.message.message_id)
+        .fetch_one(&pool)
         .await
         .unwrap();
+    assert_eq!(archived, 1);
     assert_eq!(f.provider.request_count(), 2);
     let facts:(i64,i64,i64,String)=sqlx::query_as("SELECT (SELECT count(*) FROM app.model_turn_reservations WHERE run_id=$1),(SELECT count(*) FROM app.model_turn_receipts t JOIN app.model_turn_reservations r ON r.id=t.reservation_id WHERE r.run_id=$1),(SELECT count(*) FROM app.run_terminal_receipts WHERE run_id=$1),(SELECT thread_id FROM app.codex_sessions WHERE run_id=$1)")
         .bind(f.lease.run.id.as_uuid()).fetch_one(&pool).await.unwrap();
-    assert_eq!(facts, (2, 2, 0, original_thread));
+    assert_eq!(facts, (2, 2, 1, original_thread));
     let summaries:i64=sqlx::query_scalar("SELECT count(*) FROM app.model_turn_summaries s JOIN app.model_turn_reservations r ON r.id=s.reservation_id WHERE r.run_id=$1")
         .bind(f.lease.run.id.as_uuid()).fetch_one(&pool).await.unwrap();
     assert_eq!(
@@ -438,9 +440,7 @@ async fn settled_native_mission_queues_original_compilation_then_forecast_withou
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn daemon_prepares_first_turn_and_replays_without_spending_or_acknowledging_mission(
-    pool: PgPool,
-) {
+async fn daemon_recovers_summary_then_terminal_ack_without_another_model_request(pool: PgPool) {
     let f = fixture(&pool).await;
     visible(&f, &pool).await;
     f.provider.initial_request();
@@ -496,12 +496,15 @@ async fn daemon_prepares_first_turn_and_replays_without_spending_or_acknowledgin
         .unwrap();
     assert_eq!(absent, 0);
     sqlx::raw_sql("DROP TRIGGER reject_summary ON app.model_turn_summaries; DROP FUNCTION public.reject_summary_publication();").execute(&pool).await.unwrap();
+    sqlx::raw_sql(&format!("CREATE FUNCTION public.reject_mission_archive() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.message->>'run_id'='{}' THEN RAISE EXCEPTION 'injected Mission ACK failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_archive BEFORE INSERT ON pgmq.a_runs FOR EACH ROW EXECUTE FUNCTION public.reject_mission_archive();",f.lease.run.id)).execute(&pool).await.unwrap();
     visible(&f, &pool).await;
     let (_stop, receiver) = tokio::sync::watch::channel(false);
-    worker
-        .process_mission_message(f.message.clone(), "daemon-restarted", receiver)
-        .await
-        .unwrap();
+    assert!(matches!(
+        worker
+            .process_mission_message(f.message.clone(), "daemon-restarted", receiver.clone())
+            .await,
+        Err(server::worker::WorkerFailure::Store)
+    ));
     assert_eq!(f.provider.request_count(), 1);
     let recovered:i64=sqlx::query_scalar("SELECT count(*) FROM app.model_turn_summaries s JOIN app.model_turn_reservations r ON r.id=s.reservation_id WHERE r.run_id=$1")
         .bind(f.lease.run.id.as_uuid()).fetch_one(&pool).await.unwrap();
@@ -510,14 +513,27 @@ async fn daemon_prepares_first_turn_and_replays_without_spending_or_acknowledgin
         "restart recovers only the original public answer, with no paid Turn"
     );
     let run = f.store.get_run(&f.actor, f.lease.run.id).await.unwrap();
-    assert!(!run.state.is_terminal());
+    assert_eq!(run.state, contracts::runs::RunState::Succeeded);
     let terminals: i64 =
         sqlx::query_scalar("SELECT count(*) FROM app.run_terminal_receipts WHERE run_id=$1")
             .bind(run.id.as_uuid())
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(terminals, 0);
+    assert_eq!(terminals, 1);
+    sqlx::raw_sql("DROP TRIGGER reject_archive ON pgmq.a_runs; DROP FUNCTION public.reject_mission_archive();").execute(&pool).await.unwrap();
+    worker
+        .process_mission_message(f.message.clone(), "terminal-ack-restarted", receiver)
+        .await
+        .unwrap();
+    f.store.acknowledge_run(&f.message).await.unwrap();
+    assert_eq!(f.provider.request_count(), 1);
+    let queued: i64 = sqlx::query_scalar("SELECT count(*) FROM pgmq.q_runs WHERE msg_id=$1")
+        .bind(f.message.message_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(queued, 0);
 }
 
 #[sqlx::test(migrations = "../../migrations")]

@@ -47,6 +47,8 @@ horizon及原生预测参数，不填MODEL ID或路径；模型只能由可信�
 不覆盖旧输入、不抹去失败。回送独立计入原Mission Turn/修复预算，不自行轮询或重开Thread。
 原生公开回答可由可信Worker保存为qz.mission_summary；只含公开text及精确Turn/item/
 phase，不收集隐藏推理。它不赋予报告中的PASS或审批文字任何科学/操作权限。
+可信Worker在全部用量/科学终态/反馈回答对账后可收束Mission并归档消息；这只是
+会话执行结果，不是Cycle完成、实验SUPPORTED、评估PASS或Alpha资格，Agent不能自批。
 提交响应未知时保留同一 key 和原始文件/请求重放；不同内容409不能改键绕过预算。
 未知工具不是可由任意 HTTP/Shell/SQL 替代的能力。保留 UUIDv7 和十进制版本字符串。
 每次调用会重新检查到期、撤销及 Attempt 接管，失败不能靠更换 ID、扩大权限或
