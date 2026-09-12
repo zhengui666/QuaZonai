@@ -615,6 +615,11 @@ parameters为AllocatorSettingsV1）与FIXED_WEIGHTED_FORECAST（ndarray::ArrayBa
 适配角色、类名、版本、参数均匹配才执行。更多模型须按实际能力单独接通，不能
 用这两个模型冒充协方差估计、完整Mandate或其他目标已支持。
 
+协方差原生引用为SAMPLE_COVARIANCE / ndarray_stats::CorrelationExt::cov / 0.7.0，
+parameters仅含ddof=1。显式模型引用进入现有样本协方差入口，错误角色、类名、
+版本或ddof拒绝，不切换总体估计、年化、正则化或补缺值。它不证明传入收益序列
+已由可信目录/许可/决策时点绑定；这仍是完整Mandate和Candidate编排的前提。
+
 ### A2.1 不可变数据授权与原生身份
 
 将可变 `data_sources.license_reference/allowed_uses` 移除；仅 name/enabled 可变。runtime_id/native_catalog_ref/provider_kind 创建后不可变，原生数据库守卫与正式管理入口共同阻止改写；需要不同来源时新建来源而不重绑历史许可/数据。`dataset_revisions` 增加 `data_use_grant_id:Id FK data_use_grants`，授权属于同 source（复合FK）。

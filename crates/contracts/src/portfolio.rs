@@ -9,6 +9,8 @@ pub const CLARABEL_CLASS: &str = "clarabel::solver::DefaultSolver";
 pub const CLARABEL_VERSION: &str = "0.11.1";
 pub const FIXED_ENSEMBLE_CLASS: &str = "ndarray::ArrayBase::dot";
 pub const FIXED_ENSEMBLE_VERSION: &str = "0.17.1";
+pub const SAMPLE_COVARIANCE_CLASS: &str = "ndarray_stats::CorrelationExt::cov";
+pub const SAMPLE_COVARIANCE_VERSION: &str = "0.7.0";
 
 /// Original forecast metadata; these identifiers alone never prove qualification.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -156,6 +158,13 @@ pub struct AllocatorSettingsV1 {
 #[serde(deny_unknown_fields)]
 pub struct FixedEnsembleParametersV1 {}
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SampleCovarianceParametersV1 {
+    #[schema(minimum = 1, maximum = 1)]
+    pub ddof: u32,
+}
+
 /// Only implemented native adapters. Role and linked upstream identity are
 /// checked before execution; this reference does not authorize a model import.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -165,6 +174,12 @@ pub struct FixedEnsembleParametersV1 {}
     deny_unknown_fields
 )]
 pub enum NativeModelRefV1 {
+    SampleCovariance {
+        schema_version: SchemaV1,
+        upstream_class: String,
+        upstream_version: String,
+        parameters: SampleCovarianceParametersV1,
+    },
     ClarabelQp {
         schema_version: SchemaV1,
         upstream_class: String,
@@ -200,6 +215,12 @@ impl utoipa::PartialSchema for NativeModelRefV1 {
                 FIXED_ENSEMBLE_CLASS,
                 FIXED_ENSEMBLE_VERSION,
                 FixedEnsembleParametersV1::schema(),
+            ),
+            (
+                "SAMPLE_COVARIANCE",
+                SAMPLE_COVARIANCE_CLASS,
+                SAMPLE_COVARIANCE_VERSION,
+                SampleCovarianceParametersV1::schema(),
             ),
         ] {
             schema = schema.item(

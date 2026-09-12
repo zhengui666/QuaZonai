@@ -126,7 +126,11 @@ pub fn aligned_portfolio_forecast(
 
 /// Columns are synchronized observation times; rows are a frozen asset ordering.
 /// No annualization, missing-value imputation or unregistered shrinkage is performed.
-pub fn sample_covariance(asset_returns: &[Vec<f64>]) -> Result<Vec<Vec<f64>>> {
+pub fn sample_covariance(
+    model: &contracts::portfolio::NativeModelRefV1,
+    asset_returns: &[Vec<f64>],
+) -> Result<Vec<Vec<f64>>> {
+    let parameters = domain::portfolio::sample_covariance_parameters(model)?;
     ensure!(
         (1..=contracts::portfolio::MAX_ALLOCATION_ASSETS).contains(&asset_returns.len()),
         "COVARIANCE_ASSET_LIMIT"
@@ -151,7 +155,7 @@ pub fn sample_covariance(asset_returns: &[Vec<f64>]) -> Result<Vec<Vec<f64>>> {
     );
     let values = asset_returns.iter().flatten().copied().collect();
     let matrix = Array2::from_shape_vec((asset_returns.len(), observations), values)?;
-    let covariance = matrix.cov(1.0)?;
+    let covariance = matrix.cov(f64::from(parameters.ddof))?;
     ensure!(
         covariance.iter().all(|value| value.is_finite()),
         "COVARIANCE_RESULT_NONFINITE"

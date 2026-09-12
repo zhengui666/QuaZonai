@@ -300,6 +300,33 @@ pub fn optimizer_settings(model: &NativeModelRefV1) -> Result<&AllocatorSettings
     Ok(parameters)
 }
 
+pub fn sample_covariance_parameters(
+    model: &NativeModelRefV1,
+) -> Result<&SampleCovarianceParametersV1, DomainError> {
+    let NativeModelRefV1::SampleCovariance {
+        upstream_class,
+        upstream_version,
+        parameters,
+        ..
+    } = model
+    else {
+        return Err(DomainError::CapabilityUnavailable(
+            "portfolio_covariance_model",
+        ));
+    };
+    if upstream_class != SAMPLE_COVARIANCE_CLASS || upstream_version != SAMPLE_COVARIANCE_VERSION {
+        return Err(DomainError::CapabilityUnavailable(
+            "portfolio_covariance_model",
+        ));
+    }
+    if parameters.ddof != 1 {
+        return Err(DomainError::CapabilityUnavailable(
+            "portfolio_covariance_ddof",
+        ));
+    }
+    Ok(parameters)
+}
+
 /// Validate the *stored decimal targets*, not just the solver's in-memory floats.
 /// An inaccurate status is accepted only when the frozen numerical policy allows it.
 pub fn allocation_result(

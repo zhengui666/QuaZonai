@@ -3,6 +3,30 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Explicit native covariance estimator reference, 2026-09-13
+
+Working source over `7e7304eecd96d151fa139431818063ef6c95265b` adds the strict
+SAMPLE_COVARIANCE model reference to the existing ndarray-stats 0.7.0 adapter.
+Its exact class is ndarray_stats::CorrelationExt::cov; closed parameters require
+ddof=1. The original sample_covariance function now consumes that reference and
+passes the validated ddof into the native API. No default wrapper, estimator,
+annualization, missing-value filling, regularization or dependency is added.
+
+`verify-SxzHOs` passed workspace check/format/strict Clippy, 153 domain/Runtime,
+8 managed Job, 31 native Codex and 88 scientific Job executions, zero failed/
+ignored and source unchanged. Groups overlap. Actual covariance remains the
+independent centered diag(1,3) reference and is translation invariant; invalid
+role/class/version/ddof/extra parameters and incomplete/nonfinite rows fail.
+Locked upstream correlation.rs confirms rows are variables, columns observations
+and native cov divides by n-ddof; the existing minimum-two-observations check
+prevents the upstream invalid-ddof panic. The generated model-schema test includes
+this third closed variant with exact class/version and typed ddof bounds.
+
+`web-verify-U34Fsk` domain-only generation passed, reproducible and handwritten
+source unchanged. No new HTTP/CLI/MCP operation, Runtime capability or OCI evidence
+is claimed. Trusted return-artifact assembly, allocation covariance provenance,
+Mandate operations and full Candidate/Release delivery remain required.
+
 ## Strict native optimizer and ensemble references, 2026-09-13
 
 Working source over `936f607d79ab9a91676cd4c113080b25e99cf00b` replaces allocation's

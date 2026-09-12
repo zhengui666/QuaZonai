@@ -10564,6 +10564,60 @@
               "parameters"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "adapter_kind": {
+                "enum": [
+                  "SAMPLE_COVARIANCE"
+                ],
+                "type": "string"
+              },
+              "parameters": {
+                "additionalProperties": false,
+                "properties": {
+                  "ddof": {
+                    "format": "int32",
+                    "maximum": 1,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "ddof"
+                ],
+                "type": "object"
+              },
+              "schema_version": {
+                "enum": [
+                  1
+                ],
+                "maximum": 1,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "upstream_class": {
+                "enum": [
+                  "ndarray_stats::CorrelationExt::cov"
+                ],
+                "type": "string"
+              },
+              "upstream_version": {
+                "enum": [
+                  "0.7.0"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "schema_version",
+              "adapter_kind",
+              "upstream_class",
+              "upstream_version",
+              "parameters"
+            ],
+            "type": "object"
           }
         ]
       },

@@ -170,6 +170,11 @@ AllocatorSettingsV1）及FIXED_WEIGHTED_FORECAST / ndarray::ArrayBase::dot / 0.1
 （参数为空对象，混合权重在原forecasts中）。顶层settings已删除；未知类/版本、
 错误角色、额外参数均拒绝，不默认选择模型。新镜像还需portfolio-models/1能力。
 
+协方差数值适配的引用为SAMPLE_COVARIANCE / ndarray_stats::CorrelationExt::cov /
+0.7.0，parameters仅为`{"ddof":1}`，不能传年化、补值或另一估计器参数。
+该引用已进入本地Rust数值函数，尚非新的CLI子命令、受管操作或Mandate API；
+AllocationInputV1中的协方差矩阵仍须由后续可信原收益序列编排绑定。
+
 已有受授权只读 Nautilus Parquet 快照、实际 Wasm 模型和相应冻结请求文件时，运行时使用以下入口；路径不是 HTTP/MCP 请求字段：
 
 ```sh

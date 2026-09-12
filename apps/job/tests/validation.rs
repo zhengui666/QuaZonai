@@ -1,5 +1,6 @@
 //! Native splitter/estimator regression with independent, explicit small references.
 use contracts::{
+    portfolio::*,
     research::{SplitKind, SplitPolicyV1},
     DbCounter, Id, SchemaV1,
 };
@@ -113,10 +114,47 @@ fn invalid_horizons_budgets_and_combinatorial_bombs_are_rejected() {
 
 #[test]
 fn native_sample_covariance_matches_hand_centered_reference_without_annualization() {
-    let actual = sample_covariance(&[vec![-1.0, 0.0, 1.0], vec![1.0, -2.0, 1.0]]).unwrap();
+    let model = covariance_model();
+    let actual = sample_covariance(&model, &[vec![-1.0, 0.0, 1.0], vec![1.0, -2.0, 1.0]]).unwrap();
     assert_eq!(actual, vec![vec![1.0, 0.0], vec![0.0, 3.0]]);
-    let shifted = sample_covariance(&[vec![9.0, 10.0, 11.0], vec![-4.0, -7.0, -4.0]]).unwrap();
+    let shifted =
+        sample_covariance(&model, &[vec![9.0, 10.0, 11.0], vec![-4.0, -7.0, -4.0]]).unwrap();
     assert_eq!(actual, shifted);
+}
+
+fn covariance_model() -> NativeModelRefV1 {
+    NativeModelRefV1::SampleCovariance {
+        schema_version: SchemaV1,
+        upstream_class: SAMPLE_COVARIANCE_CLASS.into(),
+        upstream_version: SAMPLE_COVARIANCE_VERSION.into(),
+        parameters: SampleCovarianceParametersV1 { ddof: 1 },
+    }
+}
+
+#[test]
+fn covariance_model_never_defaults_unknown_identity_or_parameters() {
+    let rows = [vec![-1.0, 0.0, 1.0]];
+    for (pointer, value) in [
+        ("/upstream_class", serde_json::json!("unknown::cov")),
+        ("/upstream_version", serde_json::json!("0.0.0")),
+        ("/parameters/ddof", serde_json::json!(0)),
+        ("/parameters/ddof", serde_json::json!(2)),
+    ] {
+        let mut wire = serde_json::to_value(covariance_model()).unwrap();
+        *wire.pointer_mut(pointer).unwrap() = value;
+        let bad = serde_json::from_value(wire).unwrap();
+        assert!(sample_covariance(&bad, &rows).is_err(), "{pointer}");
+    }
+    let mut extra = serde_json::to_value(covariance_model()).unwrap();
+    extra["parameters"]["annualize"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<NativeModelRefV1>(extra).is_err());
+    let wrong = NativeModelRefV1::FixedWeightedForecast {
+        schema_version: SchemaV1,
+        upstream_class: FIXED_ENSEMBLE_CLASS.into(),
+        upstream_version: FIXED_ENSEMBLE_VERSION.into(),
+        parameters: FixedEnsembleParametersV1 {},
+    };
+    assert!(sample_covariance(&wrong, &rows).is_err());
 }
 
 #[test]
@@ -129,7 +167,7 @@ fn covariance_does_not_hide_missing_or_nonfinite_observations() {
         vec![vec![1.0, f64::NAN]],
         vec![vec![1.0, f64::INFINITY]],
     ] {
-        assert!(sample_covariance(&rows).is_err());
+        assert!(sample_covariance(&covariance_model(), &rows).is_err());
     }
 }
 
