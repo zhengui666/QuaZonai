@@ -14,7 +14,7 @@ use contracts::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-fn method(kind: NativeAlphaMetricKind) -> (&'static str, &'static str, &'static str) {
+pub(super) fn method(kind: NativeAlphaMetricKind) -> (&'static str, &'static str, &'static str) {
     match kind {
         NativeAlphaMetricKind::PearsonIc => (
             "PEARSON_IC",

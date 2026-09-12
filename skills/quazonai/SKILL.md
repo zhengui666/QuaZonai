@@ -13,6 +13,7 @@ Read ../../DESIGN.md and ../../AGENTS.md before changes. Actual commands are in 
 FIXTURE、PIT_UNVERIFIED、未核验方法和政策登记成功均不是 PASS，不触发交付。
 新政策分别冻结metric_requirements与sealed_metric_requirements，不能复制分折要求
 冒充封存阈值；历史null不补写，需人工新建完整政策和研究周期。
+冻结/启动检查Sealed的`asset:N`与登记资产/bar顺序；不允许折scope或借元数据检查读取封存市场行。
 不要为尚未接通的可信数据登记/Brief冻结/Worker 路径编造成功结果或使用 SQL 后门。
 
 

@@ -3,7 +3,7 @@ use super::*;
 use contracts::{
     artifacts::{ArtifactAccess, ResearchArtifactKind},
     execution::NativeTaskParametersV1,
-    research::{ArtifactInputRole, DataOrigin},
+    research::{ArtifactInputRole, DataOrigin, DataPartition},
     runtime_jobs::RuntimeInputV1,
     science::{NativeForecastParametersV1, NativeForecastRequestV1},
 };
@@ -352,6 +352,11 @@ impl Store {
             input_set,
             locked.run.project_id,
             context.runtime_id,
+            &[if validation {
+                DataPartition::Validation
+            } else {
+                DataPartition::Discovery
+            }],
             &mut read,
         )
         .await?;

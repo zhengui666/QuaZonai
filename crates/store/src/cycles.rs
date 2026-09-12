@@ -60,7 +60,7 @@ where
 {
     domain::brief::content(&brief.content, &brief.bindings)?;
     crate::brief::validate_refs(tx, brief.project_id, &brief.content, &brief.bindings).await?;
-    let policy = sqlx::query("SELECT selection_rule,split_policy,metric_requirements,require_real_data,required_capabilities,minimum_observations FROM app.evaluation_policies WHERE id=$1 AND project_id=$2")
+    let policy = sqlx::query("SELECT selection_rule,split_policy,metric_requirements,sealed_metric_requirements,require_real_data,required_capabilities,minimum_observations FROM app.evaluation_policies WHERE id=$1 AND project_id=$2")
         .bind(brief.content.evaluation_policy_id.as_uuid()).bind(brief.project_id.as_uuid())
         .fetch_one(&mut **tx).await?;
     let selection: SelectionRuleV1 = serde_json::from_value(policy.try_get("selection_rule")?)
@@ -241,6 +241,7 @@ where
         context.validation_input_set_id,
         brief.project_id,
         context.runtime_id,
+        &[DataPartition::Validation],
         read,
     )
     .await?;
@@ -257,6 +258,43 @@ where
         &requirements,
         &dataset.selection.selection,
         &split,
+    )?;
+    let sealed_requirements: Vec<contracts::evidence::MetricRequirementV1> =
+        serde_json::from_value(
+            policy
+                .try_get::<Option<serde_json::Value>, _>("sealed_metric_requirements")?
+                .ok_or_else(|| {
+                    invalid("content.evaluation_policy_id", "SEALED_POLICY_NOT_DEFINED")
+                })?,
+        )
+        .map_err(|_| StoreError::Integrity)?;
+    let sealed = crate::data_validation::dataset_bindings(
+        tx,
+        context.sealed_input_set_id,
+        brief.project_id,
+        context.runtime_id,
+        &[DataPartition::Sealed],
+        read,
+    )
+    .await?;
+    let [sealed] = sealed.as_slice() else {
+        return Err(
+            DomainError::CapabilityUnavailable("native_alpha_single_sealed_revision").into(),
+        );
+    };
+    if sealed.selection.selection.bar_types != dataset.selection.selection.bar_types {
+        return Err(DomainError::CapabilityUnavailable("native_alpha_sealed_asset_binding").into());
+    }
+    domain::execution::alpha_sealed_policy(
+        &sealed_requirements,
+        &sealed.selection.selection,
+        u32::try_from(
+            split
+                .label_horizon_observations
+                .ok_or(StoreError::Integrity)?
+                .get(),
+        )
+        .map_err(|_| DomainError::CapabilityUnavailable("native_alpha_sealed_horizon"))?,
     )?;
     let required: Vec<String> = policy.try_get("required_capabilities")?;
     let mut available = caps

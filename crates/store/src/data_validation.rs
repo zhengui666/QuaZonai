@@ -53,6 +53,7 @@ pub(crate) async fn dataset_bindings<R, Read>(
     input_set: Id,
     project: Id,
     runtime: Id,
+    partitions: &[DataPartition],
     read: &mut R,
 ) -> Result<Vec<DatasetBinding>, StoreError>
 where
@@ -63,10 +64,8 @@ where
     let header = sqlx::query("SELECT purpose,decision_cutoff FROM app.input_sets WHERE id=$1 AND project_id=$2 AND frozen_at IS NOT NULL")
         .bind(input_set.as_uuid()).bind(project.as_uuid())
         .fetch_optional(&mut **tx).await?.ok_or_else(|| input("input_set_id"))?;
-    if !matches!(
-        header.try_get::<String, _>("purpose")?.as_str(),
-        "DISCOVERY" | "VALIDATION"
-    ) {
+    let purpose: DataPartition = db::enum_value(&header, "purpose")?;
+    if !partitions.contains(&purpose) {
         return Err(input("input_set_id"));
     }
     let cutoff: DateTime<Utc> = header.try_get("decision_cutoff")?;
@@ -121,7 +120,7 @@ where
             || native.event_end != row.try_get::<DateTime<Utc>, _>("event_end")?
             || native.available_through != row.try_get::<DateTime<Utc>, _>("available_through")?
             || native.row_count != counter(row.try_get("row_count")?)?
-            || !matches!(role, DataPartition::Discovery | DataPartition::Validation)
+            || role != purpose
         {
             return Err(StoreError::Integrity);
         }
@@ -173,6 +172,7 @@ where
         request.input_set_id,
         request.project_id,
         request.runtime_id,
+        &[DataPartition::Discovery, DataPartition::Validation],
         read,
     )
     .await?;

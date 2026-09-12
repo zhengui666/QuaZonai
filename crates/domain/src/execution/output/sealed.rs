@@ -1,8 +1,140 @@
 //! Exact held-out associations. No refitting or recalculation of native metrics.
 use super::{bad, forecast, validation};
 use crate::DomainError;
-use contracts::{brief::TargetKind, evidence::MetricStatus, science::*};
+use contracts::{
+    brief::TargetKind,
+    evidence::{MetricRequirementV1, MetricStatus, MetricValueV1},
+    science::*,
+    Id, SchemaV1,
+};
 use std::collections::BTreeMap;
+
+pub fn policy(
+    requirements: &[MetricRequirementV1],
+    bars: &NativeBarSelectionV1,
+    horizon: u32,
+) -> Result<(), DomainError> {
+    let invalid = || {
+        crate::research::invalid(
+            "sealed_metric_requirements",
+            "NATIVE_ALPHA_POLICY_UNSUPPORTED",
+        )
+    };
+    let instruments = super::instruments(bars)?;
+    if !(1..=64).contains(&requirements.len())
+        || !(1..=100_000).contains(&horizon)
+        || !requirements.iter().any(|r| r.required)
+    {
+        return Err(invalid());
+    }
+    for r in requirements.iter().filter(|r| r.required) {
+        let index = r
+            .scope
+            .strip_prefix("asset:")
+            .and_then(|s| s.parse::<usize>().ok())
+            .ok_or_else(invalid)?;
+        let instrument = instruments.get(index).ok_or_else(invalid)?;
+        let (_, method, _) = [
+            NativeAlphaMetricKind::PearsonIc,
+            NativeAlphaMetricKind::ReturnRmse,
+        ]
+        .into_iter()
+        .map(validation::method)
+        .find(|(code, _, _)| *code == r.metric_code)
+        .ok_or_else(invalid)?;
+        if r.scope != format!("asset:{index}") || !r.method_allowlist.iter().any(|m| m == method) {
+            return Err(invalid());
+        }
+        let frequency = format!(
+            "{};horizon={horizon}",
+            &bars.bar_types[index][instrument.len() + 1..]
+        );
+        crate::control::text(&frequency, 1, 120, false).map_err(|_| invalid())?;
+    }
+    Ok(())
+}
+
+/// Convert native values without recalculating them or inventing a validation fold.
+pub fn metrics(
+    evaluation: Id,
+    artifact: Id,
+    input: &NativeAlphaSealedRequestV1,
+    calibration: Option<&NativeFrozenCalibrationV1>,
+    value: &NativeAlphaSealedResultV1,
+) -> Result<(Vec<MetricValueV1>, Vec<crate::evidence::MetricCapability>), DomainError> {
+    binding(input, calibration, value)?;
+    let mut records = Vec::with_capacity(value.assets.len() * 2);
+    let mut capabilities = BTreeMap::new();
+    for (index, (asset, points)) in value
+        .assets
+        .iter()
+        .zip(
+            value
+                .forecast
+                .points
+                .chunk_by(|a, b| a.instrument_id == b.instrument_id),
+        )
+        .enumerate()
+    {
+        let first = points
+            .iter()
+            .find(|p| p.label_return.is_some())
+            .unwrap_or(&points[0]);
+        let last = points
+            .iter()
+            .rfind(|p| p.label_return.is_some())
+            .unwrap_or(points.last().unwrap());
+        let period_start =
+            chrono::DateTime::from_timestamp_micros((first.event_ns.get() / 1000) as i64)
+                .ok_or_else(|| bad("sealed.metric_period"))?;
+        let period_end = chrono::DateTime::from_timestamp_micros(
+            last.label_available_ns
+                .unwrap_or(last.available_ns)
+                .get()
+                .div_ceil(1000) as i64,
+        )
+        .ok_or_else(|| bad("sealed.metric_period"))?;
+        let frequency = format!(
+            "{};horizon={}",
+            &asset.bar_type[asset.instrument_id.len() + 1..],
+            input.forecast.parameters.label_horizon_observations
+        );
+        crate::control::text(&frequency, 1, 120, false)?;
+        for native in &asset.metrics {
+            let (code, method, unit) = validation::method(native.kind);
+            let capability = crate::evidence::MetricCapability {
+                metric_code: code.into(),
+                method_id: method.into(),
+                method_version: "0.7.0".into(),
+                unit: unit.into(),
+                frequency: frequency.clone(),
+            };
+            capabilities.insert((code, frequency.clone()), capability);
+            let record = MetricValueV1 {
+                schema_version: SchemaV1,
+                evaluation_id: evaluation,
+                metric_code: code.into(),
+                scope: format!("asset:{index}"),
+                value: native.value,
+                status: native.status,
+                reason_code: native.reason_code.clone(),
+                unit: unit.into(),
+                period_start,
+                period_end,
+                observation_count: asset.observation_count,
+                frequency: frequency.clone(),
+                annualization_factor: None,
+                method_id: method.into(),
+                method_version: "0.7.0".into(),
+                source_artifact_id: artifact,
+                higher_is_better: Some(native.kind == NativeAlphaMetricKind::PearsonIc),
+            };
+            crate::evidence::validate_metric(&record)?;
+            records.push(record);
+        }
+    }
+    Ok((records, capabilities.into_values().collect()))
+}
 
 pub fn request(
     request: &NativeAlphaSealedRequestV1,

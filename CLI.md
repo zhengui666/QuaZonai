@@ -210,6 +210,10 @@ Sealed训练数据或借用Discovery预测。原生结果为qz.alpha_validation.
 total或错版本/单位/周期的Selection。当前单Validation目录版本可含多资产；多版本
 或非固定bars明确拒绝，不选择子集继续。政策登记成功不表示能够冻结执行。
 
+Sealed要求还须使用真实资产的`asset:N`，不能引用Validation的fold；原Sealed目录
+资产/bar顺序须与Validation一致，仅核对登记元数据，不读取市场行。旧政策缺少
+Sealed要求明确报SEALED_POLICY_NOT_DEFINED，不补阈值或开始封存任务。
+
 正式验证的内部准入绑定原Alpha/Policy/Validation目录，不增加可由Agent指定Run或
 免费试验的CLI/MCP接口。原生Worker通过A4.8收尾入口在终态采纳后、ACK前原子发表
 评估/逐折指标/试验结论；不是手填PASS命令。qz.alpha_evaluation和原始分折报告均

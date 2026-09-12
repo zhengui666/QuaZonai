@@ -22,6 +22,53 @@ async fn counts(pool: &PgPool) -> (i64, i64, i64, i64, i64, i64) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn freeze_rejects_validation_fold_in_sealed_policy_without_admission(pool: PgPool) {
+    let (store, actor) = research_support::operator(&pool).await;
+    let directory = tempfile::tempdir().unwrap();
+    let objects = std::sync::Arc::new(
+        integrations::artifacts::ArtifactStore::open(&directory.path().join("objects")).unwrap(),
+    );
+    let f = cycle_support::setup_with_policy(&pool, &store, &actor, objects, |policy| {
+        policy.sealed_metric_requirements[0].scope = "asset:0/fold:0".into();
+    })
+    .await;
+    let before = counts(&pool).await;
+    let error = store
+        .freeze_brief(
+            &actor,
+            "invalid-sealed",
+            f.brief.id,
+            &f.freeze,
+            |id, size| f.read(id, size),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{error:?}").contains("NATIVE_ALPHA_POLICY_UNSUPPORTED"),
+        "{error:?}"
+    );
+    assert_eq!(
+        store.brief(&actor, f.brief.id).await.unwrap().state,
+        BriefState::Draft
+    );
+    assert_eq!(counts(&pool).await, before);
+    let contexts: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM app.brief_execution_contexts WHERE brief_id=$1")
+            .bind(f.brief.id.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(contexts, 0);
+    let receipts: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM app.command_receipts WHERE idempotency_key='invalid-sealed'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(receipts, 0);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn formal_freeze_closes_brief_and_context_with_the_original_command_receipt(pool: PgPool) {
     let (store, actor) = research_support::operator(&pool).await;
     let f = cycle_support::setup(&pool, &store, &actor).await;

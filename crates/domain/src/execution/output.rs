@@ -14,7 +14,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod forecast;
 mod sealed;
-pub use sealed::{binding as check_alpha_sealed, request as alpha_sealed_request};
+pub use sealed::{
+    binding as check_alpha_sealed, metrics as alpha_sealed_metrics, policy as alpha_sealed_policy,
+    request as alpha_sealed_request,
+};
 mod simulation;
 mod validation;
 pub use validation::metrics as alpha_validation_metrics;

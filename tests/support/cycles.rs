@@ -146,6 +146,12 @@ pub async fn setup_with_policy(
         minimum_observations: DbCounter::new(2).unwrap(),
         method_allowlist: vec!["ndarray-stats.pearson_correlation".into()],
     }];
+    // Explicit test-authored held-out criterion, not a production policy fallback.
+    policy_request.sealed_metric_requirements = vec![contracts::evidence::MetricRequirementV1 {
+        scope: "asset:0".into(),
+        threshold_low: Some("0.2".parse().unwrap()),
+        ..policy_request.metric_requirements[0].clone()
+    }];
     customize(&mut policy_request);
     let policy = store
         .create_evaluation_policy(actor, &Id::new().to_string(), &policy_request)

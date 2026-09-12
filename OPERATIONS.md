@@ -230,6 +230,8 @@ Run期限，已有scope未退出时不能创建第二份。prlimit的原生单�
 
 新评估政策必须分别声明Validation与Sealed指标要求；封存评估不借用分折阈值。
 历史政策未定义Sealed要求时显示null，不能直接用于Sealed，也不会自动改写旧政策。
+Brief冻结和Cycle启动要求Sealed使用真实资产的`asset:N`，不接受Validation折scope；
+同时核对登记的Sealed与Validation资产/bar顺序，不读取封存市场行或启动任务。
 研究准备入口为 `/api/v2/input-sets` 和 `/api/v2/evaluation-policies`，详情和
 权限见 CLI 与 native-generated OpenAPI。InputSet 头、全部成员、冻结时间及
 幂等回执一次提交；policy 与精确 experiment_family 同事务登记。登记不是

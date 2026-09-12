@@ -3,6 +3,26 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Held-out metric projection and freeze compatibility, 2026-09-12
+
+Working source over `e309821299ed7f33c9b2ce1f5ac6dd539cb6aca0` projects the original
+Sealed report into existing MetricValue records and native capabilities. Asset
+scopes remain `asset:N`; native values, missing reasons, paired counts, methods,
+original artifact references and covered time intervals are retained, without
+averaging Validation folds. Freeze/start checks require explicit supported Sealed
+requirements and matching registered asset/bar order. Metadata reads declare
+their allowed partition; ordinary DATA_VALIDATE still rejects Sealed before I/O.
+
+`verify-X51wgQ` passed check/format/strict Clippy, 150 contracts/domain/runtime,
+7 managed, 30 native Codex, 91 Store and 41 HTTP/Worker tests, zero ignored.
+Source remained unchanged and the owned PostgreSQL/PGMQ cluster stopped.
+The final direct Sealed suite passed all 5 actual Parquet/Wasm/CLI tests, including
+numeric gate projection and absent-label INCONCLUSIVE. Earlier runs caught a
+missing selected SQL column and a test Clippy violation; both were fixed before
+this successful rerun. No protocol DTO changed, and no web/OCI rerun is claimed
+for this slice. Managed Sealed admission, exposure, publication and qualification
+remain unfinished; this is not full Issue #62 or current-head GitHub CI evidence.
+
 ## Native held-out computation primitive, 2026-09-12
 
 Working source over `de5a23140146b1268a159d5f5cec073b080f3004` adds the restricted

@@ -1397,6 +1397,15 @@ selection同序且完整，源行数累计不超过原上限；逐折原生指�
 
 ### A4.6 原生分折到评估指标记录
 
+Sealed结果先与原请求和原冻结校准完整核对，再转换为同一MetricValueV1；scope为
+原资产顺序的`asset:N`，方法/单位/频率沿用下述原生映射，不附加假fold或平均。
+完整标签数量同时作为原始信号IC与校准收益RMSE的配对数；缺标签的尾部不计数。
+有配对时期间为首个完整配对预测event至末个label_available；没有完整标签时
+期间仅表示实际检查的源行首event至末available，observation_count=0且指标
+INSUFFICIENT_DATA，不能声称该期间已观测收益。时间仍分别向下/向上取整到微秒。
+Sealed原生政策检查仅接受实际资产的规范asset:N、已实现方法和原bar/horizon，
+required缺失或方法不支持明确拒绝；不把Validation分折要求挪用为Sealed要求。
+
 可信发布适配先以原请求验证完整qz.alpha_validation报告，再逐项转换为既有
 MetricValueV1；不重新计算指标或自行授予PASS。scope固定为`asset:{a}/fold:{f}`，
 a是原selection中的0起资产序号，f为该资产原生0起fold_index。报告完整保留序号与
@@ -1425,6 +1434,10 @@ warmup后样本及缺值仍在Job与原请求采纳时核验，不将登记行�
 分折参数使用同一原生适配边界检查；旧意图政策仍可登记和审计，但不因此获得冻结/
 执行资格。当前受管Validation只支持固定bars与WALK_FORWARD选择类别（包括原生
 CPCV分折），不把Sealed选择意图悄悄降为普通验证。
+同一冻结检查还要求政策显式包含Sealed要求，并以登记Sealed元数据核对单目录版本、
+资产/bar原顺序与Validation一致及规范asset:N方法。缺少要求报SEALED_POLICY_NOT_DEFINED，
+不补历史阈值、不读取市场行、不预约或启动封存任务。元数据适配由调用方明确指定分区；
+普通DATA_VALIDATE仍只接受Discovery/Validation，不能借此增加Sealed访问。
 
 ### A4.7 原试验的正式Validation任务
 

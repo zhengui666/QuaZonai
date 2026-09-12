@@ -25,7 +25,7 @@
 | Alpha 与正式评估查看 | API／CLI／Ant Design 按项目查看原 Alpha 版本、已发表的正式 Validation 和分页原始指标；保留缺值、方法、来源、精确计数与原有效期，不下载受限报告或把科学 PASS 当作资格 |
 | 冻结试验选择 | 原研究 Mission 确认前冻结同 Family 全部登记试验，保留失败、取消、未完成、原指标和确定性排名；API／CLI／Ant Design 只读原快照。当前原生口径为 WALK_FORWARD，COMPLETE 不是科学 PASS 或资格 |
 | 冻结 SCORE 校准 | 原正式 Validation 同事务冻结最后原生折并创建同 Alpha 的附加校准新版本；原版本、试验、原评估不变，新版本不继承资格。API／CLI／Ant Design 只读原校准来源，不下载系数、不重新拟合或恢复已停用 Alpha |
-| 原生封存计算 | 本机 `job evaluate-sealed-alpha` 复用目录、Wasm、冻结校准和原生指标；保留原始分数、校准收益及缺失原因。尚未接通受管Sealed预约、正式评估、独立Reviewer或资格 |
+| 原生封存计算 | 本机 `job evaluate-sealed-alpha` 复用目录、Wasm、冻结校准和原生指标；保留原始分数、校准收益及缺失原因，转换为原资产scope指标。冻结检查显式Sealed政策与登记元数据；尚未接通受管Sealed预约、正式评估、独立Reviewer或资格 |
 | 交付与完整研究 | Sealed／Reviewer／Alpha资格、组合/审批/反馈/晋级/唤醒、旧数据导入及完整恢复仍在实施；未接通的页面明确标示，不填充假结果 |
 
 ## 开发验证
