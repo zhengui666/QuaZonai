@@ -6,6 +6,8 @@ use ndarray_stats::CorrelationExt;
 
 mod alpha;
 pub use alpha::validate_alpha;
+mod sealed;
+pub use sealed::evaluate_sealed_alpha;
 
 /// Apply saved native OLS coefficients; linregress 0.5.4 has no model decoder.
 /// No labels or fitting inputs are accepted by this fixed ndarray operation.

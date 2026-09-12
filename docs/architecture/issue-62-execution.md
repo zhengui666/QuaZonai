@@ -3,6 +3,42 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Native held-out computation primitive, 2026-09-12
+
+Working source over `de5a23140146b1268a159d5f5cec073b080f3004` adds the restricted
+`job evaluate-sealed-alpha` computation, not a managed Runtime operation or an
+access grant. It calls the existing native catalog/causal EMA/Wasm forecast,
+applies persisted OLS coefficients without fitting, and reuses the existing
+ndarray-stats metrics. Original scores and per-row normalized returns coexist;
+warmup and incomplete-label tails remain explicit. Research availability, exact
+calibration asset order/bar/horizon, original calibration report/time, finite
+values and complete result associations are checked. No-label metrics have
+`INSUFFICIENT_DATA/NO_COMPLETE_LABELS`, not zero. No new dependency was added.
+
+`verify-n1FyGw` passed check, format and strict Clippy; 150 contracts/domain/runtime,
+7 managed, 30 native Codex and all 81 Job scientific tests, with zero ignored.
+The four new Sealed tests use actual Parquet/Wasm, persisted native fits and the
+real CLI. They check original-score preservation, independent RMSE reference,
+stable past predictions when future data extends, time/asset/horizon and missing
+fit rejection, result tampering, absent-label states and safe CLI failure.
+All data are synthetic; no qualification or full Mission-to-market proof follows.
+
+`web-verify-9EqbPA` passed all six native double generations with byte equality
+and handwritten files unchanged, typecheck, 504 Vitest + 5 Node tests, decimal/
+bigint/fraction wire checks, build/CLI help, 36 Codex browser tests (34.1s) and
+186 full browser tests (2.6m). Only Domain schema bytes changed; API/Runtime and
+generated frontend bytes are unchanged. Chromium viewports are not Safari/device
+acceptance. The external OCI verifier now inventories untracked source contents
+as well as tracked files, so new source is covered by the frozen-source check.
+
+`owner-oci-WopDT1` built native image
+`sha256:2a4745de5908e81086702739623af959d08e56aab9fd155fc5ce1673ae83b0f8`
+and passed all 7 real OCI regression tests (11.26s), zero ignored, source unchanged.
+These cover existing compile/identity/cancellation/restart/kernel boundaries, not
+Sealed market execution. Exposure reservation, managed Sealed producer adoption,
+formal evaluation, independent Reviewer and qualification remain unfinished.
+No GitHub push, review request, merge or Issue closure is claimed.
+
 ## Separate frozen Sealed policy intent, 2026-09-12
 
 New policy creation requires explicit `sealed_metric_requirements`, independently

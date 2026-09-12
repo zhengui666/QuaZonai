@@ -6,6 +6,8 @@ use utoipa::ToSchema;
 
 mod validation;
 pub use validation::*;
+mod sealed;
+pub use sealed::*;
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]

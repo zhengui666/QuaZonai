@@ -1338,6 +1338,23 @@ fit_end_available_at 明示为向上取整的微秒时间，原纳秒保留在�
 
 ### A4.5 独立原生Alpha分折执行
 
+#### 原生封存计算
+
+`NativeAlphaSealedRequestV1`含原生forecast请求、target_kind和
+`research_available_through_ns`。后者由可信准入绑定此前研究可见数据的实际可用时间
+上界，不使用执行墙钟或只用较早的校准训练截止冒充全部研究信息截止。每个实际
+预测必须严格晚于此上界。SCORE必须使用原冻结校准，相同完整资产顺序/bar规格/
+horizon，且校准训练截止不晚于该研究上界；EXPECTED_RETURN不接受额外校准。
+
+计算复用原forecast目录/因果EMA/每资产新Wasm及整任务fuel，再应用已冻结OLS，
+不调用fit、不创建假训练折。结果保留原NativeForecastResultV1和逐行对齐的
+expected_returns（预热为null、尾部无标签的预测仍保留），不能覆盖原始SCORE。
+每资产以完整标签配对分别计算原始信号Pearson IC和校准收益RMSE，复用原
+ndarray-stats0.7.0方法；无完整标签为INSUFFICIENT_DATA/NO_COMPLETE_LABELS，
+常数相关性沿用CORRELATION_VARIATION_REQUIRED，不补0。方法/校准来源和真实
+训练截止保留；不存在校准时相应来源字段为null。该原生数值入口不授予Sealed
+读取能力，不替代先提交的暴露预约、实际来源绑定、正式Evaluation或资格。
+
 NativeAlphaValidationRequestV1绑定原NativeForecastRequestV1、冻结SplitPolicyV1和
 TargetKind，不接受手填预测、标签、系数或折索引。仅固定bars，预测label horizon
 须精确等于split horizon。本入口仅用于验证分区CV；SEALED评估须另用已冻结训练/

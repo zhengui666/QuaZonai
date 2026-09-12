@@ -51,6 +51,15 @@ enum Operation {
         #[arg(long)]
         model: PathBuf,
     },
+    /// Apply a frozen model without fitting; stdout is restricted held-out evidence.
+    EvaluateSealedAlpha {
+        #[arg(long)]
+        catalog: PathBuf,
+        #[arg(long)]
+        model: PathBuf,
+        #[arg(long)]
+        calibration: Option<PathBuf>,
+    },
     /// Replay frozen target weights in one native simulated account.
     Simulate {
         #[arg(long)]
@@ -81,9 +90,9 @@ fn output<T: Serialize>(value: &T) -> Result<()> {
     Ok(())
 }
 
-fn model_bytes(path: &Path) -> Result<Vec<u8>> {
+fn model_bytes(path: &Path, maximum_bytes: usize) -> Result<Vec<u8>> {
     let metadata = fs::symlink_metadata(path)?;
-    if !metadata.is_file() || metadata.len() > job::signals::MAX_SIGNAL_MODULE_BYTES as u64 {
+    if !metadata.is_file() || metadata.len() > maximum_bytes as u64 {
         return Err("native model file limit".into());
     }
     // Only the runtime's registered read-only model mount is passed here. These
@@ -102,9 +111,9 @@ fn model_bytes(path: &Path) -> Result<Vec<u8>> {
         return Err("native model is not a file".into());
     }
     let mut bytes = Vec::new();
-    file.take(job::signals::MAX_SIGNAL_MODULE_BYTES as u64 + 1)
+    file.take(maximum_bytes as u64 + 1)
         .read_to_end(&mut bytes)?;
-    if bytes.len() > job::signals::MAX_SIGNAL_MODULE_BYTES {
+    if bytes.len() > maximum_bytes {
         return Err("native model file limit".into());
     }
     Ok(bytes)
@@ -127,13 +136,32 @@ fn run(operation: Operation) -> Result<()> {
         Operation::Forecast { catalog, model } => output(&job::forecast::forecast(
             &catalog,
             &input()?,
-            &model_bytes(&model)?,
+            &model_bytes(&model, job::signals::MAX_SIGNAL_MODULE_BYTES)?,
         )?),
         Operation::ValidateAlpha { catalog, model } => output(&job::validation::validate_alpha(
             &catalog,
             &input()?,
-            &model_bytes(&model)?,
+            &model_bytes(&model, job::signals::MAX_SIGNAL_MODULE_BYTES)?,
         )?),
+        Operation::EvaluateSealedAlpha {
+            catalog,
+            model,
+            calibration,
+        } => {
+            let calibration = calibration
+                .map(
+                    |p| -> Result<contracts::science::NativeFrozenCalibrationV1> {
+                        Ok(serde_json::from_slice(&model_bytes(&p, 8 * 1024 * 1024)?)?)
+                    },
+                )
+                .transpose()?;
+            output(&job::validation::evaluate_sealed_alpha(
+                &catalog,
+                &input()?,
+                &model_bytes(&model, job::signals::MAX_SIGNAL_MODULE_BYTES)?,
+                calibration.as_ref(),
+            )?)
+        }
         Operation::Simulate { catalog } => output(&job::simulation::simulate(&catalog, &input()?)?),
         Operation::VerifyNative { output: directory } => {
             let mut builder = fs::DirBuilder::new();

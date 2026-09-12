@@ -9623,6 +9623,99 @@
         ],
         "type": "string"
       },
+      "NativeAlphaSealedRequestV1": {
+        "additionalProperties": false,
+        "properties": {
+          "forecast": {
+            "$ref": "#/components/schemas/NativeForecastRequestV1"
+          },
+          "research_available_through_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "target_kind": {
+            "$ref": "#/components/schemas/TargetKind"
+          }
+        },
+        "required": [
+          "schema_version",
+          "forecast",
+          "target_kind",
+          "research_available_through_ns"
+        ],
+        "type": "object"
+      },
+      "NativeAlphaSealedResultV1": {
+        "additionalProperties": false,
+        "properties": {
+          "assets": {
+            "items": {
+              "$ref": "#/components/schemas/NativeSealedAssetMetricsV1"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "calibration_fit_end_available_ns": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DbCounter"
+              }
+            ]
+          },
+          "calibration_source_report_artifact_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "expected_returns": {
+            "description": "Exactly one entry per original point, including warmup and unlabelled tails.",
+            "items": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "maxItems": 1000000,
+            "minItems": 1,
+            "type": "array"
+          },
+          "forecast": {
+            "$ref": "#/components/schemas/NativeForecastResultV1"
+          },
+          "native_versions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "forecast",
+          "expected_returns",
+          "native_versions",
+          "assets"
+        ],
+        "type": "object"
+      },
       "NativeAlphaValidationRequestV1": {
         "additionalProperties": false,
         "properties": {
@@ -10218,6 +10311,35 @@
           "PORTFOLIO_DAILY"
         ],
         "type": "string"
+      },
+      "NativeSealedAssetMetricsV1": {
+        "additionalProperties": false,
+        "properties": {
+          "bar_type": {
+            "type": "string"
+          },
+          "instrument_id": {
+            "type": "string"
+          },
+          "metrics": {
+            "items": {
+              "$ref": "#/components/schemas/NativeValidationMetricV1"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array"
+          },
+          "observation_count": {
+            "$ref": "#/components/schemas/DbCounter"
+          }
+        },
+        "required": [
+          "instrument_id",
+          "bar_type",
+          "observation_count",
+          "metrics"
+        ],
+        "type": "object"
       },
       "NativeSimulationRequestV1": {
         "additionalProperties": false,

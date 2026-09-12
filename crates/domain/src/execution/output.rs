@@ -13,6 +13,8 @@ use serde::de::DeserializeOwned;
 use std::collections::{BTreeMap, BTreeSet};
 
 mod forecast;
+mod sealed;
+pub use sealed::{binding as check_alpha_sealed, request as alpha_sealed_request};
 mod simulation;
 mod validation;
 pub use validation::metrics as alpha_validation_metrics;

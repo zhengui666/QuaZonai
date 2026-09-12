@@ -140,6 +140,10 @@ horizon。启用Mission的Worker在最新Turn结算后，每次消费按ordinal�
 缺失指标，不产生数据库Evaluation/Qualification。其标签和训练索引仍属受限数值
 证据；不能将stdout直接发给研究Agent或把手工运行当作完整自动链路。
 
+可信本机`job evaluate-sealed-alpha`应用已冻结校准，不在封存数据上训练；保留
+原始分数和校准收益。它只是受限数值入口，尚不代表已接通Runtime受管Sealed、
+暴露预约或资格；不能将原始报告交给研究Agent。请求和限额见CLI。
+
 Runtime受管`VALIDATE_ALPHA`沿用同一计算入口，仅消费登记的VALIDATION目录和
 原MODEL/PARAMETERS，成功封口为`qz.alpha_validation.v1`。采纳会按原冻结请求
 重建并逐一比较所有原生分折；少折、改索引或不一致的重复标签均拒绝，不产生资格。

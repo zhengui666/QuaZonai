@@ -145,6 +145,7 @@ cargo run --locked -p job -- allocate < tests/contracts/allocation-input.json
 ```sh
 job forecast --catalog /input/catalog --model /input/model.wasm < forecast-request.json
 job validate-alpha --catalog /input/catalog --model /input/model.wasm < alpha-validation-request.json
+job evaluate-sealed-alpha --catalog /input/catalog --model /input/model.wasm --calibration /input/calibration.json < alpha-sealed-request.json
 job simulate --catalog /input/catalog < simulation-request.json
 ```
 
@@ -166,6 +167,13 @@ training_end_available_ns、IC/RMSE及缺失原因，
 校准元数据与源版本Validation；未附加返回404，不下载系数/训练行。见DESIGN A4.4。
 
 `forecast` 保留未完成标签与指标预热的 null+reason，Wasm没有宿主导入且受fuel/内存/栈限制。`simulate` 在一个原生账户执行全部资产的冻结目标，先确认减仓成交再提交增仓，保留原生费用、数量步长及独立结果。公开 `returns_kind=PORTFOLIO_DAILY` 仅含原生权益快照的UTC日收益，绝不使用单仓收益回退；日内数据不足时 `returns_status=INSUFFICIENT_DATA`、`returns_reason=PORTFOLIO_DAILY_RETURNS_UNAVAILABLE`，不是0收益。跨日全现金的真实0收益可以为OK，但仍须符合评估最小样本要求。
+
+`evaluate-sealed-alpha`仅为可信本机数值入口，输入NativeAlphaSealedRequestV1，
+显式绑定forecast、target_kind和research_available_through_ns；SCORE必需原冻结
+校准JSON（最多8MiB），EXPECTED_RETURN省略--calibration。Wasm仍最多2MiB，
+标准输入最多8MiB。复用原预测/校准/指标，不训练Sealed；输出保留原预测与逐行
+expected_returns、真实完整标签数量及缺失原因。此命令不预约读取机会、不授予
+目录权限或资格，也尚未作为受管Runtime操作开放；不要交给Mission执行。
 
 验证这些入口及native协方差、OLS校准、Walk-forward/CPCV使用：
 

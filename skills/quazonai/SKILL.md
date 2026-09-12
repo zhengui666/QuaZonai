@@ -62,6 +62,8 @@ Mission不借用它读取额外指标。原Thread反馈仍只披露冻结选择�
 不读取报告字节或把未过期/科学PASS解释成资格。
 `job validate-alpha`是可信本地数值入口，不是Mission可执行工具；其全部折/标签/
 训练索引按输入数据权限保留，不直接作为LLM工具输出或手工冒充Evaluation/资格。
+`job evaluate-sealed-alpha`同样只属可信本机数值入口，不授Sealed读取或预约权限，
+不得由Mission运行或把保留原始分数/标签的报告转交LLM。
 受管`VALIDATE_ALPHA`仅接受VALIDATION目录、原MODEL/PARAMETERS；同一原生切分器
 在执行与结果采纳侧核对全部折，不允许手工改索引/漏折或借旧镜像声明新能力。
 该受管操作仍非Agent自授Evaluation/Qualification入口。

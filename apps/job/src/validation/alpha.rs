@@ -59,7 +59,7 @@ fn labels(series: &NativeBarSeries, indices: &[usize], horizon: usize) -> Result
         .collect()
 }
 
-fn metric(
+pub(super) fn metric(
     kind: NativeAlphaMetricKind,
     prediction: &[f64],
     labels: &[f64],
@@ -74,7 +74,11 @@ fn metric(
     if prediction.is_empty() {
         return Ok(absent(
             MetricStatus::InsufficientData,
-            "CALIBRATION_UNAVAILABLE",
+            if labels.is_empty() {
+                "NO_COMPLETE_LABELS"
+            } else {
+                "CALIBRATION_UNAVAILABLE"
+            },
         ));
     }
     ensure!(
