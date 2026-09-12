@@ -268,6 +268,16 @@ https://docs.rs/nautilus-backtest/0.63.0/nautilus_backtest/result/struct.Backtes
 
 没有新增Python例外，没有自写CV、协方差估计器、回归拟合器、解释器或优化算法。每个结果仍需同Run/Attempt、输入、政策、权限、独立评估与生产门禁验证。数值功能存在不能代替完整Issue62交付。
 
+## 独立Alpha分折指标复用（2026-09-12）
+
+继续使用已锁定且已安装的ndarray-stats0.7.0（MIT OR Apache-2.0），不引入新依赖：
+核对精确源码correlation.rs/deviation.rs后复用pearson_correlation与root_mean_sq_err。
+相关矩阵每行变量、每列观测；常数/不足样本预检，原生非有限结果保留FAILED/null。
+RMSE只比较相同horizon的收益，不能把未校准SCORE代入。接口与边界来源：
+https://docs.rs/ndarray-stats/0.7.0/ndarray_stats/trait.CorrelationExt.html
+https://docs.rs/ndarray-stats/0.7.0/ndarray_stats/trait.DeviationExt.html
+实际执行/参考值的验证结果另记execution文档；复用登记本身不是数值验收。
+
 ## 原生目录能力的回退路径（2026-09-08）
 
 上游 GHSA-hp8f-xmx4-4qrg 指出：含尾斜杠的多层软链可突破旧版手工路径解析；Linux openat2 不可用/被阻止时也会触发该后端。官方3.x修复版本为3.4.6，4.x为4.0.3。本工作区检查时 cap-std facade=3.4.5，但已锁定的 cap-primitives=3.4.6，不能据 facade 名字宣称正在运行的解析器仍有漏洞。本次将 facade 同步固定3.4.6，令最小依赖要求亦覆盖补丁，不转向4.x或重写路径解析。

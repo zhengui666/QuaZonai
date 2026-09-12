@@ -131,6 +131,11 @@ horizon。启用Mission的Worker在最新Turn结算后，每次消费按ordinal�
 失败反馈只陈述公开原因，当前没有详细编译器诊断；修复应保留原实验父血缘。
 重复消息不重复回送结果，未结算用量不继续调用模型；正式科学结论仍待接通。
 
+本地原生`job validate-alpha`执行已授权目录/模型的独立分折计算，命令与严格请求见CLI。
+它重用原生切分/OLS/IC/RMSE，不携带Discovery或训练模型状态进入测试；保留所有折和
+缺失指标，不产生数据库Evaluation/Qualification。其标签和训练索引仍属受限数值
+证据；不能将stdout直接发给研究Agent或把手工运行当作完整自动链路。
+
 032迁移为每个已成功结算的原生Turn保留唯一公开回答报告（qz.mission_summary）。
 Worker读取锁定App Server原生summary视图，只有公开agentMessage、原Turn/item和
 实际phase；phase缺失保留null。它不读取完整items/rollout或推理，报告不当作科学

@@ -153,6 +153,8 @@ use utoipa::OpenApi;
     portfolio::AllocationResultV1,
     science::NativeForecastRequestV1,
     science::NativeForecastResultV1,
+    science::NativeAlphaValidationRequestV1,
+    science::NativeAlphaValidationResultV1,
     science::NativeSimulationRequestV1,
     science::NativeSimulationResultV1
 )))]

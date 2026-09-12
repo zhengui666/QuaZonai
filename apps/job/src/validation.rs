@@ -6,6 +6,9 @@ use ndarray::Array2;
 use ndarray_stats::CorrelationExt;
 use solow_cv::{CombinatorialPurgedKFold, Split, Splitter, TimeSeriesSplit};
 
+mod alpha;
+pub use alpha::validate_alpha;
+
 pub const MAX_VALIDATION_ROWS: usize = 1_000_000;
 pub const MAX_VALIDATION_FOLDS: usize = 256;
 pub const MAX_VALIDATION_INDICES: usize = 8_000_000;

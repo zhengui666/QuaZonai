@@ -44,6 +44,13 @@ enum Operation {
         #[arg(long)]
         model: PathBuf,
     },
+    /// Execute every independent native fold; stdout remains restricted evidence.
+    ValidateAlpha {
+        #[arg(long)]
+        catalog: PathBuf,
+        #[arg(long)]
+        model: PathBuf,
+    },
     /// Replay frozen target weights in one native simulated account.
     Simulate {
         #[arg(long)]
@@ -118,6 +125,11 @@ fn run(operation: Operation) -> Result<()> {
         }
         Operation::Allocate => output(&job::allocate(&input()?)?),
         Operation::Forecast { catalog, model } => output(&job::forecast::forecast(
+            &catalog,
+            &input()?,
+            &model_bytes(&model)?,
+        )?),
+        Operation::ValidateAlpha { catalog, model } => output(&job::validation::validate_alpha(
             &catalog,
             &input()?,
             &model_bytes(&model)?,

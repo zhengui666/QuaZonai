@@ -135,10 +135,18 @@ cargo run --locked -p job -- allocate < tests/contracts/allocation-input.json
 
 ```sh
 job forecast --catalog /input/catalog --model /input/model.wasm < forecast-request.json
+job validate-alpha --catalog /input/catalog --model /input/model.wasm < alpha-validation-request.json
 job simulate --catalog /input/catalog < simulation-request.json
 ```
 
-请求分别是 `NativeForecastRequestV1`、`NativeSimulationRequestV1`，由同一 Rust 合同生成。stdin 上限8MiB；stdout为完整JSON，计算失败为非零退出码及安全的 `QZ_NATIVE_JOB_FAILED`，不回显原生异常、路径或输入。`--catalog` 只允许运行时的已登记只读挂载，`--model` 不接受软链/FIFO/超限文件；外层仍须配置真实进程、文件系统、网络和资源隔离，不能直接用这些本地参数授予Agent宿主访问权。
+请求分别是 `NativeForecastRequestV1`、`NativeAlphaValidationRequestV1`、`NativeSimulationRequestV1`，统一定义在Rust合同。stdin 上限8MiB；stdout为完整JSON，计算失败为非零退出码及安全的 `QZ_NATIVE_JOB_FAILED`，不回显原生异常、路径或输入。`--catalog` 只允许运行时的已登记只读挂载，`--model` 不接受软链/FIFO/超限文件；外层仍须配置真实进程、文件系统、网络和资源隔离，不能直接用这些本地参数授予Agent宿主访问权。
+
+`validate-alpha`请求含schema_version=1、forecast（完整原生预测请求）、split_policy
+及target_kind=SCORE/EXPECTED_RETURN。固定horizon必须一致；每折训练/测试重建模型，
+训练标签专用于原生OLS校准。输出所有折的预测/标签/训练索引、IC/RMSE及缺失原因，
+不平均不同折或授予资格。unique_test_observations只去重，不证明样本独立。
+仅用于验证分区CV，不允许将SEALED数据作为训练标签。此本地数值入口不是Agent工具
+或已发布Evaluation；不能手工上传stdout替代可信采纳。
 
 `forecast` 保留未完成标签与指标预热的 null+reason，Wasm没有宿主导入且受fuel/内存/栈限制。`simulate` 在一个原生账户执行全部资产的冻结目标，先确认减仓成交再提交增仓，保留原生费用、数量步长及独立结果。公开 `returns_kind=PORTFOLIO_DAILY` 仅含原生权益快照的UTC日收益，绝不使用单仓收益回退；日内数据不足时 `returns_status=INSUFFICIENT_DATA`、`returns_reason=PORTFOLIO_DAILY_RETURNS_UNAVAILABLE`，不是0收益。跨日全现金的真实0收益可以为OK，但仍须符合评估最小样本要求。
 

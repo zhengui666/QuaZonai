@@ -1222,7 +1222,34 @@ HTTP请求体上限64KiB用于这两个研究准备POST及承载相同完整请�
 
 独立结果检查要求每折训练/测试索引有序、无重复、在范围内且不相交。WALK_FORWARD训练标签严格早于测试；CPCV允许非相邻训练块但剔除每个测试块两边purge以及后侧embargo，并不等于PIT已经成立。训练/校准只能使用各折训练索引；重叠测试窗口的样本不能重复计为独立观测。公开元数据只能披露政策允许的折统计；sealed索引、预测与标签同样属于受限证据。
 
-样本协方差复用ndarray-stats0.7.0(ddof=1)，不隐式年化、不丢失/补零；SCORE校准复用linregress0.5.4的固定一元含截距OLS。拟合输入由可信调用方按折及数据许可提供，不能把验证/封存标签混入。模型与数据来源单独冻结，预测应用同一原生模型；缺失、常数、非有限、秩不足或样本不足不产生伪校准。原生返回的系数/协方差再做有限性与维度检查，参数不是手工给定的scale冒充拟合。上述适配不产生Qualification，也不替代完整独立评估发布、许可、血缘和新鲜度检查。
+样本协方差复用ndarray-stats0.7.0(ddof=1)，不隐式年化、不丢失/补零；SCORE校准复用linregress0.5.4的固定一元含截距OLS。拟合输入由可信调用方按折及数据许可提供，不能把该折测试标签或封存标签混入。模型与数据来源单独冻结，预测应用同一原生模型；缺失、常数、非有限、秩不足或样本不足不产生伪校准。原生返回的系数/协方差再做有限性与维度检查，参数不是手工给定的scale冒充拟合。上述适配不产生Qualification，也不替代完整独立评估发布、许可、血缘和新鲜度检查。
+
+### A4.5 独立原生Alpha分折执行
+
+NativeAlphaValidationRequestV1绑定原NativeForecastRequestV1、冻结SplitPolicyV1和
+TargetKind，不接受手填预测、标签、系数或折索引。仅固定bars，预测label horizon
+须精确等于split horizon。本入口仅用于验证分区CV；SEALED评估须另用已冻结训练/
+校准模型，不能在封存分区内拟合。每资产从同一已授权目录按原event/available cutoff加载；
+原EMA特征代码复用，始终只计算当前及过去价格。分折只覆盖预热完成且label已完成
+的连续原观测，索引保留目录内ordinal，不把不同资产或缺失行拼成一个时间轴。
+
+每资产、每折、训练和测试各自使用新Wasmi实例；CPCV不连续块也重新实例化，
+不会携带其他块、训练或Discovery的模型状态。所有实例共享整项任务的剩余fuel。
+训练和测试的原预测分别产生后才读取相应labels；WalkForward再核对最后训练
+label的实际available时间严格早于首次测试预测。SCORE只用该折训练分数/标签
+运行原linregress含截距OLS，然后应用于测试分数；EXPECTED_RETURN保留模型原值，
+不伪造校准。常数训练分数或拟合失败保留明确状态及null系数/收益预测。
+
+每折保留训练ordinal、测试原预测/独立label/校准收益及全部指标。Pearson IC直接
+调用ndarray-stats0.7.0 pearson_correlation，单位CORRELATION；收益RMSE调用
+root_mean_sq_err，单位RETURN_PER_HORIZON；方法ID分别为
+ndarray-stats.pearson_correlation和ndarray-stats.root_mean_sq_err。不年化，周期由
+原bar_type及horizon确定。常数、不足两项的相关性、不可用校准或非有限原生结果
+保留status/reason/null，不作为0或PASS。折指标不平均成全局指标；重叠测试行的
+unique_test_observations按资产/ordinal去重，它不是独立同分布样本数或PBO。
+全部折必须执行，整任务至多256折、累计800万训练/测试索引，不能预算不足时仅
+保留赢家折。结果含真实方法版本，仍是受限数值输入；上层正式Evaluation发布、
+政策判定、暴露/资格与Reviewer不能由本地计算入口自行授予。
 
 ## A5. Mandate、Candidate、目标与 Release
 

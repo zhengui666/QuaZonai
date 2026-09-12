@@ -51,6 +51,8 @@ phase，不收集隐藏推理。它不赋予报告中的PASS或审批文字任�
 会话执行结果，不是Cycle完成、实验SUPPORTED、评估PASS或Alpha资格，Agent不能自批。
 可信Worker登记的RESEARCH Alpha版本仍未授资格；signal单位/horizon沿用冻结Brief，
 不得把SCORE直接作为预期收益或补造calibration。不能用版本存在代替正式评估。
+`job validate-alpha`是可信本地数值入口，不是Mission可执行工具；其全部折/标签/
+训练索引按输入数据权限保留，不直接作为LLM工具输出或手工冒充Evaluation/资格。
 提交响应未知时保留同一 key 和原始文件/请求重放；不同内容409不能改键绕过预算。
 未知工具不是可由任意 HTTP/Shell/SQL 替代的能力。保留 UUIDv7 和十进制版本字符串。
 每次调用会重新检查到期、撤销及 Attempt 接管，失败不能靠更换 ID、扩大权限或

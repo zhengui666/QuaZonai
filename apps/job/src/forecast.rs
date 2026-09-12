@@ -1,6 +1,9 @@
 //! Native catalog -> causal features -> bounded Wasm predictions, with separate labels.
 //! Labels in this result are restricted evaluation evidence, not a public Agent response.
-use crate::{catalog::load_catalog, signals::WasmSignal};
+use crate::{
+    catalog::{load_catalog, NativeBarSeries},
+    signals::WasmSignal,
+};
 use anyhow::{ensure, Result};
 use contracts::{science::*, DbCounter, SchemaV1};
 use nautilus_indicators::{
@@ -14,6 +17,32 @@ fn counter(value: u64) -> Result<DbCounter> {
     DbCounter::new(value).map_err(anyhow::Error::msg)
 }
 
+/// Identical causal features for discovery and independently instantiated folds.
+/// Advancing this iterator reads no future row or label and never calls the model.
+pub(crate) fn features<'a>(
+    series: &'a NativeBarSeries,
+    parameters: &NativeForecastParametersV1,
+) -> impl Iterator<Item = Option<[f64; 8]>> + 'a {
+    let mut fast = ExponentialMovingAverage::new(parameters.fast_period as usize, None);
+    let mut slow = ExponentialMovingAverage::new(parameters.slow_period as usize, None);
+    series.bars.iter().enumerate().map(move |(index, bar)| {
+        fast.handle_bar(bar);
+        slow.handle_bar(bar);
+        (index > 0 && fast.initialized() && slow.initialized()).then(|| {
+            [
+                bar.close.as_f64(),
+                series.bars[index - 1].close.as_f64(),
+                fast.value(),
+                slow.value(),
+                bar.volume.as_f64(),
+                bar.open.as_f64(),
+                bar.high.as_f64(),
+                bar.low.as_f64(),
+            ]
+        })
+    })
+}
+
 /// Invoke afresh for each independently authorized fold; never carry an instance
 /// from training into an independent evaluation or between instruments.
 pub fn forecast(
@@ -22,14 +51,7 @@ pub fn forecast(
     module: &[u8],
 ) -> Result<NativeForecastResultV1> {
     let parameters = &request.parameters;
-    ensure!(
-        (1..=10_000).contains(&parameters.fast_period)
-            && (2..=10_000).contains(&parameters.slow_period)
-            && parameters.fast_period < parameters.slow_period
-            && (1..=100_000).contains(&parameters.label_horizon_observations)
-            && (1..=crate::signals::MAX_SIGNAL_FUEL).contains(&parameters.total_fuel.get()),
-        "FORECAST_PARAMETERS_INVALID"
-    );
+    domain::execution::forecast_request(request)?;
     let market = load_catalog(catalog_root, &request.selection)?;
     let mut remaining = parameters.total_fuel.get();
     let mut points = Vec::with_capacity(market.rows);
@@ -40,24 +62,15 @@ pub fn forecast(
             "FORECAST_INSUFFICIENT_WARMUP"
         );
         let mut model = WasmSignal::new(module, u32::try_from(series.bars.len())?, remaining)?;
-        let mut fast = ExponentialMovingAverage::new(parameters.fast_period as usize, None);
-        let mut slow = ExponentialMovingAverage::new(parameters.slow_period as usize, None);
-        for (index, bar) in series.bars.iter().enumerate() {
-            fast.handle_bar(bar);
-            slow.handle_bar(bar);
+        for (index, (bar, features)) in series
+            .bars
+            .iter()
+            .zip(features(&series, parameters))
+            .enumerate()
+        {
             let close = bar.close.as_f64();
-            let prediction = if index > 0 && fast.initialized() && slow.initialized() {
-                let previous = series.bars[index - 1].close.as_f64();
-                let value = model.predict([
-                    close,
-                    previous,
-                    fast.value(),
-                    slow.value(),
-                    bar.volume.as_f64(),
-                    bar.open.as_f64(),
-                    bar.high.as_f64(),
-                    bar.low.as_f64(),
-                ])?;
+            let prediction = if let Some(features) = features {
+                let value = model.predict(features)?;
                 prediction_count += 1;
                 Some(value)
             } else {

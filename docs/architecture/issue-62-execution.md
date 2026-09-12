@@ -997,3 +997,26 @@ Mission终态与PGMQ归档成立，2次Provider调用不变。
 两轮验证期间源码未变、独立PG均确认停止；新初次裁决关系用例包含于前一轮全量。
 以上不是远端最新Head CI，也不代替正式评估、独立Reviewer、全部W0–W8/T01–T42。
 未push、请求review、合并或关闭Issue，继续完成剩余开发。
+
+## 2026-09-12：独立原生Alpha分折、训练校准及逐折指标
+
+在8281f731上实现本地`job validate-alpha`，不接管PG或资格权限。复用原目录读取
+与同一EMA特征迭代器、solow-cv0.7.3、Wasmi2.0.0、linregress0.5.4及已安装的
+ndarray-stats0.7.0；没有新增依赖或自写统计估计器。逐资产/折/训练/测试/不连续
+块重建模型，累计fuel不重置；只将训练标签给OLS，全部测试标签在模型执行后
+独立形成。保留全部折、原ordinal、预测、校准状态、原生IC/RMSE及缺失原因。
+跨折重复观察仅去重计数，不冒充统计独立样本；无全局平均、PBO或自动PASS。
+
+真实合成Parquet+Wasmi+原生统计回归覆盖原训练范围/OLS系数、测试收益、逐折
+IC及独立RMSE参考、CPCV全部组合与不连续块的状态重置、全任务fuel耗尽、不一致
+horizon、样本不足、常数校准、原生溢出及实际子进程严格JSON/安全失败输出。
+原forecast特征重构的因果预测/未来扩展不变及跨资产状态回归保持通过。
+
+原生Rust合同以相同命令两次独立导出：`.ai-bridge/web-verify-4lk6qB` domain-only
+exit0，输出逐字节一致，手写源码不变；仅更新domain-v1.openapi.json，不宣称
+已接通HTTP/Gateway合同。最终`.ai-bridge/verify-jgaEza` science exit0：全工作区
+check/fmt/严格Clippy、149领域/合同/Runtime、30原生Codex及72项Job测试全通过，
+0失败/0忽略（72包含另行通过的6项managed测试）。验证期间源码未变。
+这是本地原生计算与合同证据，不是新的远端CI、真实市场有效性或完整T08。
+受管ValidateAlpha协议、原Run/政策采纳、正式Evaluation、sealed独立评估、Reviewer
+及其余全部开发仍须继续；没有push、请求review、合并或关闭Issue。

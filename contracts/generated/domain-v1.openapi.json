@@ -9060,6 +9060,77 @@
         ],
         "type": "string"
       },
+      "NativeAlphaMetricKind": {
+        "enum": [
+          "PEARSON_IC",
+          "RETURN_RMSE"
+        ],
+        "type": "string"
+      },
+      "NativeAlphaValidationRequestV1": {
+        "additionalProperties": false,
+        "properties": {
+          "forecast": {
+            "$ref": "#/components/schemas/NativeForecastRequestV1"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "split_policy": {
+            "$ref": "#/components/schemas/SplitPolicyV1"
+          },
+          "target_kind": {
+            "$ref": "#/components/schemas/TargetKind"
+          }
+        },
+        "required": [
+          "schema_version",
+          "forecast",
+          "split_policy",
+          "target_kind"
+        ],
+        "type": "object"
+      },
+      "NativeAlphaValidationResultV1": {
+        "additionalProperties": false,
+        "properties": {
+          "consumed_fuel": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "folds": {
+            "items": {
+              "$ref": "#/components/schemas/NativeValidationFoldV1"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "native_versions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "unique_test_observations": {
+            "$ref": "#/components/schemas/DbCounter",
+            "description": "Distinct asset/ordinal pairs, NOT a claim of statistical independence."
+          }
+        },
+        "required": [
+          "schema_version",
+          "native_versions",
+          "consumed_fuel",
+          "unique_test_observations",
+          "folds"
+        ],
+        "type": "object"
+      },
       "NativeBarSelectionV1": {
         "additionalProperties": false,
         "properties": {
@@ -9099,6 +9170,44 @@
           "event_end_ns",
           "decision_cutoff_ns",
           "maximum_rows"
+        ],
+        "type": "object"
+      },
+      "NativeCalibrationV1": {
+        "additionalProperties": false,
+        "properties": {
+          "intercept": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "slope": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/MetricStatus"
+          },
+          "training_observations": {
+            "$ref": "#/components/schemas/DbCounter"
+          }
+        },
+        "required": [
+          "status",
+          "intercept",
+          "slope",
+          "training_observations"
         ],
         "type": "object"
       },
@@ -10113,6 +10222,119 @@
           "coverage_end",
           "membership",
           "instrument_definitions"
+        ],
+        "type": "object"
+      },
+      "NativeValidationFoldV1": {
+        "additionalProperties": false,
+        "properties": {
+          "bar_type": {
+            "type": "string"
+          },
+          "calibration": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NativeCalibrationV1",
+                "description": "No calibration is fitted for a model already declaring expected returns."
+              }
+            ]
+          },
+          "fold_index": {
+            "format": "int32",
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "instrument_id": {
+            "type": "string"
+          },
+          "metrics": {
+            "items": {
+              "$ref": "#/components/schemas/NativeValidationMetricV1"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array"
+          },
+          "test_points": {
+            "items": {
+              "$ref": "#/components/schemas/NativeValidationPointV1"
+            },
+            "maxItems": 1000000,
+            "minItems": 1,
+            "type": "array"
+          },
+          "training_ordinals": {
+            "items": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxItems": 1000000,
+            "minItems": 3,
+            "type": "array"
+          }
+        },
+        "required": [
+          "instrument_id",
+          "bar_type",
+          "fold_index",
+          "training_ordinals",
+          "test_points",
+          "metrics"
+        ],
+        "type": "object"
+      },
+      "NativeValidationMetricV1": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/NativeAlphaMetricKind"
+          },
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/MetricStatus"
+          },
+          "value": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "value",
+          "status"
+        ],
+        "type": "object"
+      },
+      "NativeValidationPointV1": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_return": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "observation": {
+            "$ref": "#/components/schemas/NativeForecastPointV1"
+          }
+        },
+        "required": [
+          "observation",
+          "expected_return"
         ],
         "type": "object"
       },
@@ -13661,6 +13883,13 @@
           "stop_on_invalid_data"
         ],
         "type": "object"
+      },
+      "TargetKind": {
+        "enum": [
+          "SCORE",
+          "EXPECTED_RETURN"
+        ],
+        "type": "string"
       },
       "TlsPolicy": {
         "enum": [
