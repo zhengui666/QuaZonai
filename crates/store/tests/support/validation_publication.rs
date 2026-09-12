@@ -37,7 +37,7 @@ pub(super) async fn publish(
     run: Id,
 ) -> Result<CommandResult<Id>, StoreError> {
     store
-        .publish_alpha_validation(
+        .publish_alpha_evaluation(
             run,
             |id, size| f.read(id, size),
             |object| {
@@ -219,7 +219,7 @@ async fn complete_validation_publication_is_atomic_unique_producer_bound_and_pre
     ));
     empty(&pool, experiment).await;
     assert!(store
-        .publish_alpha_validation(
+        .publish_alpha_evaluation(
             run,
             |id, size| f.read(id, size),
             |_| async { Err(StoreError::Integrity) }
@@ -228,7 +228,7 @@ async fn complete_validation_publication_is_atomic_unique_producer_bound_and_pre
         .is_err());
     empty(&pool, experiment).await;
     assert!(store
-        .publish_alpha_validation(
+        .publish_alpha_evaluation(
             run,
             |id, size| async move {
                 if id == raw {
@@ -245,7 +245,7 @@ async fn complete_validation_publication_is_atomic_unique_producer_bound_and_pre
     sqlx::raw_sql("CREATE FUNCTION public.reject_evaluation_metric() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected metric publication failure'; END $$; CREATE TRIGGER reject_metric BEFORE INSERT ON app.metric_values FOR EACH ROW EXECUTE FUNCTION public.reject_evaluation_metric();").execute(&pool).await.unwrap();
     let mut written = None;
     assert!(store
-        .publish_alpha_validation(
+        .publish_alpha_evaluation(
             run,
             |id, size| f.read(id, size),
             |object| {
@@ -285,7 +285,7 @@ async fn complete_validation_publication_is_atomic_unique_producer_bound_and_pre
         }
         let mut allocated = Vec::new();
         assert!(store
-            .publish_alpha_validation(
+            .publish_alpha_evaluation(
                 run,
                 |id, size| f.read(id, size),
                 |object| {
@@ -664,7 +664,7 @@ async fn complete_validation_publication_is_atomic_unique_producer_bound_and_pre
         0
     );
     let replay = store
-        .publish_alpha_validation(
+        .publish_alpha_evaluation(
             run,
             |_, _| async { panic!("replay cannot reread") },
             |_| async { panic!("replay cannot publish") },
@@ -849,7 +849,7 @@ async fn cancelled_unsubmitted_validation_publishes_without_inventing_a_native_r
         .unwrap();
     assert_eq!(cancelled.resource.state, RunState::Cancelled);
     let result = store
-        .publish_alpha_validation(
+        .publish_alpha_evaluation(
             run,
             |_, _| async { panic!("no native report exists") },
             |object| {
@@ -948,7 +948,7 @@ async fn rejected_native_manifest_still_has_one_inconclusive_evaluation(pool: Pg
         .await
         .unwrap();
     let result = store
-        .publish_alpha_validation(
+        .publish_alpha_evaluation(
             run,
             |_, _| async { panic!("unusable manifest is not evidence") },
             |object| {

@@ -156,7 +156,7 @@ pub async fn complete_compilation(
     f: &cycle_support::Fixture,
     run: Id,
 ) -> Id {
-    complete_native(pool, store, f, run, Observation::Compilation).await
+    complete_native(pool, store, f, run, Observation::Compilation, None).await
 }
 
 pub async fn complete_forecast(
@@ -165,7 +165,7 @@ pub async fn complete_forecast(
     f: &cycle_support::Fixture,
     run: Id,
 ) -> Id {
-    complete_native(pool, store, f, run, Observation::Forecast).await
+    complete_native(pool, store, f, run, Observation::Forecast, None).await
 }
 
 pub async fn complete_validation(
@@ -176,13 +176,39 @@ pub async fn complete_validation(
     rows: usize,
     ic: f64,
 ) -> Id {
-    complete_native(pool, store, f, run, Observation::Validation { rows, ic }).await
+    complete_native(
+        pool,
+        store,
+        f,
+        run,
+        Observation::Validation { rows, ic },
+        None,
+    )
+    .await
+}
+
+pub async fn complete_sealed(
+    pool: &PgPool,
+    store: &Store,
+    f: &cycle_support::Fixture,
+    lease: RunLease,
+) -> Id {
+    complete_native(
+        pool,
+        store,
+        f,
+        lease.run.id,
+        Observation::Sealed,
+        Some(lease),
+    )
+    .await
 }
 
 enum Observation {
     Compilation,
     Forecast,
     Validation { rows: usize, ic: f64 },
+    Sealed,
 }
 
 async fn complete_native(
@@ -191,21 +217,27 @@ async fn complete_native(
     f: &cycle_support::Fixture,
     run: Id,
     observation: Observation,
+    claimed: Option<RunLease>,
 ) -> Id {
     use contracts::{execution::NativeModelCompilationV1, runtime_jobs::*, Revision};
-    let message = store
-        .read_native_run_messages(1, 100)
-        .await
-        .unwrap()
-        .into_iter()
-        .find(|m| m.run_id == run)
-        .unwrap();
-    let Some(ClaimResult::Leased(lease)) = store
-        .claim_native_run(&message, "compile-result", 60)
-        .await
-        .unwrap()
-    else {
-        panic!("compiler lease required");
+    let lease = if let Some(lease) = claimed {
+        lease
+    } else {
+        let message = store
+            .read_native_run_messages(1, 100)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|m| m.run_id == run)
+            .unwrap();
+        let Some(ClaimResult::Leased(lease)) = store
+            .claim_native_run(&message, "compile-result", 60)
+            .await
+            .unwrap()
+        else {
+            panic!("compiler lease required");
+        };
+        *lease
     };
     let job = store.native_job(run, &lease.fence).await.unwrap();
     assert!(store.begin_run_dispatch(run, &lease.fence).await.unwrap());
@@ -277,21 +309,51 @@ async fn complete_native(
                 _ => None,
             })
             .unwrap();
-        let NativeTaskParametersV1::EvaluateAlpha { request, .. } = serde_json::from_slice(
+        let task: NativeTaskParametersV1 = serde_json::from_slice(
             &f.objects
                 .read(job.spec.parameters_artifact_id, size)
                 .unwrap(),
         )
-        .unwrap() else {
-            panic!("forecast task required");
+        .unwrap();
+        let (request, calibration) = match task {
+            NativeTaskParametersV1::EvaluateAlpha { request, .. } => (request, None),
+            NativeTaskParametersV1::EvaluateSealedAlpha {
+                request,
+                calibration_artifact_id,
+                ..
+            } => {
+                let id = calibration_artifact_id.unwrap();
+                let size = job
+                    .spec
+                    .inputs
+                    .iter()
+                    .find_map(|i| match i {
+                        RuntimeInputV1::Artifact {
+                            artifact_id,
+                            byte_count,
+                            ..
+                        } if *artifact_id == id => Some(*byte_count),
+                        _ => None,
+                    })
+                    .unwrap();
+                let model: NativeFrozenCalibrationV1 =
+                    serde_json::from_slice(&f.objects.read(id, size).unwrap()).unwrap();
+                (request.forecast, Some(model))
+            }
+            _ => panic!("forecast task required"),
+        };
+        let rows = if matches!(observation, Observation::Sealed) {
+            1000
+        } else {
+            40
         };
         let mut points = Vec::new();
         for kind in &request.selection.bar_types {
             let instrument_id = kind.rsplitn(5, '-').nth(4).unwrap();
-            for ordinal in 0..40_u32 {
+            for ordinal in 0..rows {
                 let predicted = ordinal + 1 >= request.parameters.slow_period;
                 let labelled =
-                    predicted && ordinal + request.parameters.label_horizon_observations < 40;
+                    predicted && ordinal + request.parameters.label_horizon_observations < rows;
                 let time =
                     request.selection.event_start_ns.get() + u64::from(ordinal) * 60_000_000_000;
                 points.push(NativeForecastPointV1 {
@@ -301,7 +363,11 @@ async fn complete_native(
                     available_ns: DbCounter::new(time + 1).unwrap(),
                     forecast: predicted.then_some(f64::from(ordinal) / 1000.0),
                     forecast_reason: (!predicted).then_some(ForecastMissingReason::IndicatorWarmup),
-                    label_return: labelled.then_some(0.001),
+                    label_return: labelled.then_some(if calibration.is_some() {
+                        f64::from(ordinal) / 2000.0
+                    } else {
+                        0.001
+                    }),
                     label_available_ns: labelled.then(|| {
                         DbCounter::new(
                             time + u64::from(request.parameters.label_horizon_observations)
@@ -322,17 +388,71 @@ async fn complete_native(
                 });
             }
         }
-        vec![serde_json::to_vec(&NativeForecastResultV1 {
+        let forecast = NativeForecastResultV1 {
             schema_version: SchemaV1,
             native_versions: std::collections::BTreeMap::from([
                 ("nautilus-indicators".into(), "0.63.0".into()),
                 ("nautilus-persistence".into(), "0.63.0".into()),
                 ("wasmi".into(), "2.0.0".into()),
             ]),
-            consumed_fuel: DbCounter::new(40).unwrap(),
+            consumed_fuel: DbCounter::new(u64::from(rows)).unwrap(),
             points,
-        })
-        .unwrap()]
+        };
+        let bytes = if let Some(model) = calibration {
+            use contracts::evidence::MetricStatus;
+            // Controlled protocol values, not execution of the scientific engine.
+            let report = NativeAlphaSealedResultV1 {
+                schema_version: SchemaV1,
+                expected_returns: forecast.points.iter().map(|p| p.forecast).collect(),
+                calibration_source_report_artifact_id: Some(model.source_report_artifact_id),
+                calibration_fit_end_available_ns: Some(model.fit_end_available_ns),
+                native_versions: std::collections::BTreeMap::from([
+                    ("ndarray".into(), "0.17.1".into()),
+                    ("ndarray-stats".into(), "0.7.0".into()),
+                ]),
+                assets: request
+                    .selection
+                    .bar_types
+                    .iter()
+                    .map(|bar_type| {
+                        let instrument_id = bar_type.rsplitn(5, '-').nth(4).unwrap().to_string();
+                        NativeSealedAssetMetricsV1 {
+                            observation_count: DbCounter::new(
+                                forecast
+                                    .points
+                                    .iter()
+                                    .filter(|p| {
+                                        p.instrument_id == instrument_id && p.label_return.is_some()
+                                    })
+                                    .count() as u64,
+                            )
+                            .unwrap(),
+                            instrument_id,
+                            bar_type: bar_type.clone(),
+                            metrics: vec![
+                                NativeValidationMetricV1 {
+                                    kind: NativeAlphaMetricKind::PearsonIc,
+                                    value: Some(0.15),
+                                    status: MetricStatus::Ok,
+                                    reason_code: None,
+                                },
+                                NativeValidationMetricV1 {
+                                    kind: NativeAlphaMetricKind::ReturnRmse,
+                                    value: Some(0.02),
+                                    status: MetricStatus::Ok,
+                                    reason_code: None,
+                                },
+                            ],
+                        }
+                    })
+                    .collect(),
+                forecast,
+            };
+            serde_json::to_vec(&report).unwrap()
+        } else {
+            serde_json::to_vec(&forecast).unwrap()
+        };
+        vec![bytes]
     };
     let outputs = job
         .spec

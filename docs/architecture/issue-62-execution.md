@@ -3,6 +3,36 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Formal Sealed publication before ACK, 2026-09-12
+
+Working source over `672a7d30a8afa008b21a91ee677295e8f6d9629f` extends the existing
+Worker publication entry to original SEALED evaluations. It reuses the immutable
+object reader, native result associations, metric projection and MetricGate.
+Original accepted Attempt/manifest/PARAMETERS/calibration and reserved exposure
+are required for successful execution. Metrics use the independently frozen
+Sealed requirements, with origin/PIT, registered rows, missing data, observation
+minimum and completion-based validity checks. Cancellation/failure is explicitly
+INCOMPLETE/INCONCLUSIVE. No experiment verdict, Alpha or calibration is rewritten.
+The complete Evaluation and metrics commit before ACK; replay performs no file
+I/O. Worker object recovery remains shared with the existing Validation path.
+
+`verify-XPBVCz` passed check/format/strict Clippy, 29 native validation tests,
+128 Store tests and 20 HTTP/CLI tests, zero ignored/source unchanged; owned PG/PGMQ
+stopped. Two new real PostgreSQL tests verify cancellation, publication rollback,
+original opportunity references, ACK blocking/replay, and a controlled native
+value 0.15 rejected by Sealed's 0.2 threshold rather than borrowing Validation's
+0.1 threshold. Later disclosure does not rewrite the original reservation.
+These explicitly controlled reports are not native scientific computation or
+qualification proof; actual Job/OCI computation is recorded separately below.
+
+After documentation alignment, `verify-aPAgQG` passed check/format/strict Clippy,
+the actual native Codex same-Thread scientific continuation test (207.67s) and
+both cancellation recovery tests, zero ignored/source unchanged; owned PG/PGMQ
+stopped. Model responses and scientific bytes in these Worker tests remain
+controlled. This is not a real-account complete market research acceptance.
+No protocol DTO, dependency or native image changed. Trusted Sealed admission,
+independent Reviewer and qualification remain unfinished; no GitHub gate is claimed.
+
 ## Original Sealed opportunity reservation, 2026-09-12
 
 Working source over `814409168b19563d5653217a43b8f481d07435dc` adds immutable

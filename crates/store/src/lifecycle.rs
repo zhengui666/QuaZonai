@@ -29,6 +29,7 @@ pub use experiment::ExperimentWork;
 pub mod mission;
 pub mod native;
 mod queue;
+mod sealed;
 mod validation;
 
 type Tx<'a> = Transaction<'a, Postgres>;
@@ -1152,7 +1153,9 @@ impl Store {
         }
         let evaluation_pending: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.experiment_validations v WHERE v.run_id=$1 AND NOT EXISTS(SELECT 1 FROM app.evaluations e JOIN app.evaluation_publications p ON p.evaluation_id=e.id WHERE e.run_id=v.run_id AND e.subject_alpha_version_id=v.alpha_version_id AND e.policy_id=v.policy_id AND e.evaluation_kind='WALK_FORWARD'))")
             .bind(message.run_id.as_uuid()).fetch_one(&mut *tx).await?;
-        if evaluation_pending {
+        let sealed_pending: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.sealed_evaluation_tasks s WHERE s.run_id=$1 AND NOT EXISTS(SELECT 1 FROM app.evaluations e JOIN app.evaluation_publications p ON p.evaluation_id=e.id WHERE e.run_id=s.run_id AND e.subject_alpha_version_id=s.alpha_version_id AND e.policy_id=s.policy_id AND e.evaluation_kind='SEALED'))")
+            .bind(message.run_id.as_uuid()).fetch_one(&mut *tx).await?;
+        if evaluation_pending || sealed_pending {
             return Err(StoreError::Conflict);
         }
         crate::selection::freeze(&mut tx, &locked.run).await?;

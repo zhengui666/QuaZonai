@@ -1572,6 +1572,25 @@ NATIVE_SEALED_CAPABILITY_RESERVED，actor_session_ref保留原Attempt引用。
 独立性按原预约时已知暴露判断，不能事后改写该机会或把后续披露洗成全新证据。
 此记录本身不产生Evaluation、资格或Reviewer批准。
 
+### A4.11 原封存结果的正式发表
+
+可信科学Worker在原消息ACK前发表SEALED评估；与WALK_FORWARD共用原终态回执、
+原生对象读取和不可变Evaluation/Metric封口机制，不新建队列或重新执行模型。
+成功只接受当前原Attempt已采纳的manifest、qz.alpha_sealed报告、原PARAMETERS和
+精确校准MODEL，并要求该Attempt已有A4.10机会。独立性使用该原预约，不按后来的
+披露重写历史；不能补造机会或借源Validation的PASS代替本次封存指标。
+
+指标由A4.5原生输出按asset:N转换，与本次policy.sealed_metric_requirements裁决。
+原始行数、最少完整标签数、缺失比例、来源/PIT/AS_KNOWN_THEN和完成时间有效期
+共同限制证据状态；缺失或过期为INCONCLUSIVE，不填0、不改原生值、不授资格。
+失败/取消保留真实执行状态和INCOMPLETE；尚未授能力便取消时机会可以为空，
+已有机会永不退款。正式报告保留原任务、源验证、校准、机会和原生报告引用，
+只属EVALUATOR_ONLY，不进入研究者普通读接口。
+
+评估和全部指标在同一事务发表，文件/事务失败保留原消息重试；精确重放不再读取
+或发表对象。封存评估不修改原实验结论、Alpha版本或active指针，不再拟合校准。
+ACK须等待该Run的精确SEALED评估和发布标记；发表不代表独立Reviewer或资格完成。
+
 ## A5. Mandate、Candidate、目标与 Release
 
 ```text

@@ -1,4 +1,4 @@
-//! Finish the original native validation before acknowledging its existing queue message.
+//! Publish the original native Alpha evaluation before acknowledging its queue message.
 //! The immutable terminal receipt owns execution; this transaction owns the evaluation.
 use super::*;
 use contracts::{
@@ -13,7 +13,7 @@ use native::NativeObjectPublication;
 impl Store {
     /// Trusted Worker continuation, also used after a crash between terminal
     /// adoption and ACK. No caller supplies metrics, a policy or a verdict.
-    pub async fn publish_alpha_validation<R, Read, P, Published>(
+    pub async fn publish_alpha_evaluation<R, Read, P, Published>(
         &self,
         run: Id,
         mut read: R,
@@ -27,6 +27,15 @@ impl Store {
     {
         let mut tx = self.pool.begin().await?;
         let locked = lock_run(&mut tx, run).await?;
+        let held_out: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM app.sealed_evaluation_tasks WHERE run_id=$1)",
+        )
+        .bind(run.as_uuid())
+        .fetch_one(&mut *tx)
+        .await?;
+        if held_out {
+            return super::sealed::publish(tx, locked, read, publish).await;
+        }
         let Some(binding) = sqlx::query("SELECT v.*,e.outcome,d.row_count,d.origin,d.pit_status,d.revision_policy FROM app.experiment_validations v JOIN app.experiments e ON e.id=v.experiment_id JOIN app.dataset_revisions d ON d.id=v.dataset_revision_id WHERE v.run_id=$1 FOR UPDATE OF e")
             .bind(run.as_uuid()).fetch_optional(&mut *tx).await? else {
                 tx.commit().await?;
@@ -298,7 +307,7 @@ impl Store {
     }
 }
 
-async fn read_document<R, Read>(
+pub(super) async fn read_document<R, Read>(
     tx: &mut Tx<'_>,
     id: Id,
     producer: Option<(Id, Id)>,

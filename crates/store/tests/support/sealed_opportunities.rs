@@ -143,11 +143,183 @@ async fn task(
     *lease
 }
 
+#[sqlx::test(migrations = "../../migrations")]
+async fn sealed_metrics_use_own_policy_and_original_opportunity_not_source_pass(pool: PgPool) {
+    let (store, actor, f, parent, experiment, validation) =
+        validation_publication::prepared(&pool).await;
+    experiment_support::complete_validation(&pool, &store, &f, validation, 1000, 0.8).await;
+    let source = validation_publication::publish(&store, &f, validation)
+        .await
+        .unwrap()
+        .resource;
+    cycle_selection::cancelled_parent(&pool, &store, &actor, &parent).await;
+    let lease = task(
+        &pool,
+        &store,
+        &f,
+        validation,
+        source,
+        "sealed-scientific",
+        60,
+    )
+    .await;
+    let run = lease.run.id;
+    let native = experiment_support::complete_sealed(&pool, &store, &f, lease).await;
+    // A later disclosure cannot rewrite the already reserved opportunity.
+    sqlx::query("INSERT INTO app.evidence_exposures(root_lineage_id,dataset_revision_id,actor_kind,exposure_kind,exposed_at,purpose) SELECT root_lineage_id,$2,'OPERATOR','SUMMARY',clock_timestamp(),'Controlled disclosure after original reservation' FROM app.projects WHERE id=$1")
+        .bind(f.data.project.as_uuid()).bind(f.data.sealed.as_uuid()).execute(&pool).await.unwrap();
+    let message = validation_publication::message(&pool, run).await;
+    assert!(matches!(
+        store.acknowledge_run(&message).await,
+        Err(StoreError::Conflict)
+    ));
+    let evaluation = validation_publication::publish(&store, &f, run)
+        .await
+        .unwrap()
+        .resource;
+    let row = sqlx::query("SELECT e.execution_status,e.evidence_status,e.decision,v.calibration_id FROM app.evaluations e JOIN app.alpha_versions v ON v.id=e.subject_alpha_version_id WHERE e.id=$1")
+        .bind(evaluation.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(row.get::<String, _>("execution_status"), "SUCCEEDED");
+    assert_eq!(row.get::<String, _>("evidence_status"), "VALID");
+    assert_eq!(
+        row.get::<String, _>("decision"),
+        "REJECT",
+        "0.15 passes Validation's 0.1 but fails the separately frozen Sealed 0.2"
+    );
+    assert!(row.get::<Option<uuid::Uuid>, _>("calibration_id").is_some());
+    let metrics = sqlx::query("SELECT scope,value,source_artifact_id FROM app.metric_values WHERE evaluation_id=$1 ORDER BY metric_code")
+        .bind(evaluation.as_uuid()).fetch_all(&pool).await.unwrap();
+    assert_eq!(metrics.len(), 2);
+    assert_eq!(metrics[0].get::<Option<f64>, _>("value"), Some(0.15));
+    for m in metrics {
+        assert_eq!(m.get::<String, _>("scope"), "asset:0");
+        assert_eq!(
+            m.get::<uuid::Uuid, _>("source_artifact_id"),
+            native.as_uuid()
+        );
+    }
+    let outcome: String = sqlx::query_scalar("SELECT outcome FROM app.experiments WHERE id=$1")
+        .bind(experiment.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        outcome, "SUPPORTED",
+        "the source experiment verdict is immutable"
+    );
+    assert_eq!(reservations(&pool).await, 1);
+    let qualified: i64 = sqlx::query_scalar("SELECT count(*) FROM app.qualifications")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(qualified, 0);
+    store.acknowledge_run(&message).await.unwrap();
+    let replay = validation_publication::publish(&store, &f, run)
+        .await
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.resource, evaluation);
+}
+
 async fn reservations(pool: &PgPool) -> i64 {
     sqlx::query_scalar("SELECT count(*) FROM app.sealed_opportunities")
         .fetch_one(pool)
         .await
         .unwrap()
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn cancelled_sealed_publication_is_atomic_replayable_and_required_before_ack(pool: PgPool) {
+    let (store, actor, f, parent, _, validation) = validation_publication::prepared(&pool).await;
+    experiment_support::complete_validation(&pool, &store, &f, validation, 1000, 0.8).await;
+    let source = validation_publication::publish(&store, &f, validation)
+        .await
+        .unwrap()
+        .resource;
+    cycle_selection::cancelled_parent(&pool, &store, &actor, &parent).await;
+    let lease = task(
+        &pool,
+        &store,
+        &f,
+        validation,
+        source,
+        "sealed-publication",
+        60,
+    )
+    .await;
+    store.native_job(lease.run.id, &lease.fence).await.unwrap();
+    let current = store.get_run(&actor, lease.run.id).await.unwrap();
+    store
+        .cancel_run(
+            &actor,
+            "cancel-sealed-publication",
+            current.id,
+            &contracts::lifecycle::RunCancelV1 {
+                schema_version: SchemaV1,
+                expected_revision: current.revision,
+            },
+        )
+        .await
+        .unwrap();
+    store
+        .settle_unsubmitted_native_run(lease.run.id, &lease.fence)
+        .await
+        .unwrap()
+        .unwrap();
+    let message = validation_publication::message(&pool, lease.run.id).await;
+    assert!(matches!(
+        store.acknowledge_run(&message).await,
+        Err(StoreError::Conflict)
+    ));
+    let failed = store
+        .publish_alpha_evaluation(
+            lease.run.id,
+            |_, _| async { panic!("cancelled task has no native report to read") },
+            |_| async { Err(StoreError::Integrity) },
+        )
+        .await;
+    assert!(matches!(failed, Err(StoreError::Integrity)));
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM app.evaluations WHERE run_id=$1")
+        .bind(lease.run.id.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+    let published = validation_publication::publish(&store, &f, lease.run.id)
+        .await
+        .unwrap();
+    assert!(!published.replayed);
+    let row = sqlx::query("SELECT e.*,a.byte_count FROM app.evaluations e JOIN app.artifacts a ON a.id=e.report_artifact_id WHERE e.id=$1").bind(published.resource.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(row.get::<String, _>("evaluation_kind"), "SEALED");
+    assert_eq!(row.get::<String, _>("execution_status"), "CANCELLED");
+    assert_eq!(row.get::<String, _>("evidence_status"), "INCOMPLETE");
+    assert_eq!(row.get::<String, _>("decision"), "INCONCLUSIVE");
+    let report: serde_json::Value = serde_json::from_slice(
+        &f.read(
+            Id::try_from(row.get::<uuid::Uuid, _>("report_artifact_id").to_string()).unwrap(),
+            DbCounter::new(row.get::<i64, _>("byte_count") as u64).unwrap(),
+        )
+        .await
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(report["validation_evaluation_id"], source.to_string());
+    assert!(report["exposure_id"].is_string());
+    assert!(report["native_report_artifact_id"].is_null());
+    let replay = store
+        .publish_alpha_evaluation(
+            lease.run.id,
+            |_, _| async { panic!("replay must not read") },
+            |_| async { panic!("replay must not publish") },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.resource, published.resource);
+    assert_eq!(reservations(&pool).await, 1);
+    store.acknowledge_run(&message).await.unwrap();
+    store.acknowledge_run(&message).await.unwrap();
 }
 
 #[sqlx::test(migrations = "../../migrations")]

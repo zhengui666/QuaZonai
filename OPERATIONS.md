@@ -236,6 +236,7 @@ Brief冻结和Cycle启动要求Sealed使用真实资产的`asset:N`，不接受V
 它不提供研究者自助准入，也不代表暴露预约、正式评估和资格完整链路已交付。
 原生能力发放前按根血缘预约Sealed读取机会；失败/取消保留机会记录，
 不能换项目、政策或Dataset UUID重置已使用的额度或既有暴露。
+封存Run的原结果及全部指标正式入账后才能ACK；失败/取消也保留INCONCLUSIVE。
 研究准备入口为 `/api/v2/input-sets` 和 `/api/v2/evaluation-policies`，详情和
 权限见 CLI 与 native-generated OpenAPI。InputSet 头、全部成员、冻结时间及
 幂等回执一次提交；policy 与精确 experiment_family 同事务登记。登记不是

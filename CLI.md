@@ -221,6 +221,8 @@ Job与可信采纳分别读取原对象。该操作不是新的Agent工具或公
 不替代Sealed机会预约、独立Review和资格判定。Runtime镜像须含alpha-sealed/1。
 首次受管Sealed能力需同事务登记原Attempt的读取机会；原验证已过期、不独立、
 累计机会耗尽或缺少精确Alpha/政策绑定均不能取得能力。重放不重复消费，取消不退款。
+可信Worker在ACK前发表原SEALED评估及asset:N指标；使用独立封存阈值，不借源验证PASS。
+失败/取消仍正式记录INCONCLUSIVE，报告限EVALUATOR_ONLY；发表不授Reviewer或资格。
 
 正式验证的内部准入绑定原Alpha/Policy/Validation目录，不增加可由Agent指定Run或
 免费试验的CLI/MCP接口。原生Worker通过A4.8收尾入口在终态采纳后、ACK前原子发表
