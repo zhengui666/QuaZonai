@@ -528,6 +528,224 @@ async fn forecast(
 // Controlled result bytes prove the real publication/producer transaction, not
 // execution of rustc or Wasmi. Their actual execution has separate native tests.
 
+async fn validation(
+    store: &Store,
+    f: &cycle_support::Fixture,
+    lease: &RunLease,
+    experiment: Id,
+) -> Result<contracts::control::CommandResult<contracts::runs::RunSnapshotV1>, StoreError> {
+    let mut allocation = limits();
+    allocation.experiments = 0;
+    store
+        .start_experiment_validation(
+            lease.run.id,
+            &lease.fence,
+            experiment,
+            &allocation,
+            |id, size| f.read(id, size),
+            |object| async move {
+                f.objects
+                    .put(object.id, &object.bytes)
+                    .map_err(|_| StoreError::Integrity)
+            },
+        )
+        .await
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn formal_validation_keeps_the_original_trial_model_policy_and_complete_input(pool: PgPool) {
+    let (store, actor, f, lease, experiment) = setup(&pool).await;
+    let compilation = start(&store, &f, &lease, experiment)
+        .await
+        .unwrap()
+        .resource
+        .id;
+    let model = complete_compilation(&pool, &store, &f, compilation).await;
+    assert!(matches!(
+        validation(&store, &f, &lease, experiment).await,
+        Err(StoreError::Invalid("original_research_alpha_required"))
+    ));
+    let mut changed = experiment_support::capabilities(chrono::Utc::now());
+    changed
+        .image_refs
+        .iter_mut()
+        .find(|i| i.job_kind == contracts::runs::RunKind::AlphaEvaluate)
+        .unwrap()
+        .image_ref = format!("sha256:{}", "b".repeat(64));
+    experiment_support::probe_capabilities(&store, &actor, &f, changed).await;
+    assert!(matches!(
+        forecast(&store, &f, &lease, experiment).await,
+        Err(StoreError::Domain(
+            domain::DomainError::CapabilityUnavailable("frozen_alpha_image_changed")
+        ))
+    ));
+    experiment_support::probe(&store, &actor, &f).await;
+    let predicted = forecast(&store, &f, &lease, experiment)
+        .await
+        .unwrap()
+        .resource
+        .id;
+    experiment_support::complete_forecast(&pool, &store, &f, predicted).await;
+    let alpha = store
+        .prepare_research_alpha(lease.run.id, &lease.fence, experiment)
+        .await
+        .unwrap()
+        .resource;
+    let mut changed = experiment_support::capabilities(chrono::Utc::now());
+    changed
+        .engine_versions
+        .insert("solow-cv".into(), "unrecognized".into());
+    experiment_support::probe_capabilities(&store, &actor, &f, changed).await;
+    assert!(matches!(
+        validation(&store, &f, &lease, experiment).await,
+        Err(StoreError::Domain(
+            domain::DomainError::CapabilityUnavailable("native_alpha_validation")
+        ))
+    ));
+    experiment_support::probe(&store, &actor, &f).await;
+    let before: (i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.runs),reserved_cpu_seconds FROM app.research_cycles WHERE id=$1")
+        .bind(lease.run.cycle_id.unwrap().as_uuid()).fetch_one(&pool).await.unwrap();
+    let mut allocation = limits();
+    allocation.experiments = 0;
+    assert!(store
+        .start_experiment_validation(
+            lease.run.id,
+            &lease.fence,
+            experiment,
+            &allocation,
+            |id, size| f.read(id, size),
+            |_| async { Err(StoreError::Integrity) }
+        )
+        .await
+        .is_err());
+    let after: (i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.runs),reserved_cpu_seconds FROM app.research_cycles WHERE id=$1")
+        .bind(lease.run.cycle_id.unwrap().as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        before, after,
+        "failed publication must not admit a partial stage"
+    );
+    let (a, b) = tokio::join!(
+        validation(&store, &f, &lease, experiment),
+        validation(&store, &f, &lease, experiment)
+    );
+    let (a, b) = (a.unwrap(), b.unwrap());
+    assert_eq!(a.resource.id, b.resource.id);
+    assert_ne!(a.replayed, b.replayed);
+    assert_eq!(
+        a.resource.input_set_id,
+        f.freeze.execution_context.validation_input_set_id
+    );
+    assert_eq!(trial_usage(&pool, &lease).await, (0, 1));
+    let reserved_cpu: i64 =
+        sqlx::query_scalar("SELECT reserved_cpu_seconds FROM app.research_cycles WHERE id=$1")
+            .bind(lease.run.cycle_id.unwrap().as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        reserved_cpu,
+        before.1 + 10,
+        "concurrent validation reserves CPU exactly once"
+    );
+    let row = sqlx::query("SELECT v.alpha_version_id,v.policy_id,v.dataset_revision_id,t.access_class,a.access_class AS parameters_access,(SELECT count(*) FROM pgmq.q_runs WHERE message->>'run_id'=v.run_id::text) AS queued FROM app.experiment_validations v JOIN app.run_native_tasks t ON t.run_id=v.run_id JOIN app.artifacts a ON a.id=t.parameters_artifact_id WHERE v.experiment_id=$1")
+        .bind(experiment.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        row.get::<uuid::Uuid, _>("alpha_version_id"),
+        alpha.as_uuid()
+    );
+    assert_eq!(
+        row.get::<uuid::Uuid, _>("policy_id"),
+        f.brief.content.evaluation_policy_id.as_uuid()
+    );
+    assert_eq!(
+        row.get::<uuid::Uuid, _>("dataset_revision_id"),
+        f.data.validation.as_uuid()
+    );
+    assert_eq!(row.get::<String, _>("access_class"), "EVALUATOR_ONLY");
+    assert_eq!(row.get::<String, _>("parameters_access"), "EVALUATOR_ONLY");
+    assert_eq!(row.get::<i64, _>("queued"), 1);
+    assert_eq!(
+        store.experiment(&actor, experiment).await.unwrap().run_id,
+        Some(predicted)
+    );
+    let message = store
+        .read_native_run_messages(1, 100)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|m| m.run_id == a.resource.id)
+        .unwrap();
+    let Some(ClaimResult::Leased(native)) = store
+        .claim_native_run(&message, "validation", 60)
+        .await
+        .unwrap()
+    else {
+        panic!("native validation lease required")
+    };
+    let job = store
+        .native_job(a.resource.id, &native.fence)
+        .await
+        .unwrap();
+    let size = job
+        .spec
+        .inputs
+        .iter()
+        .find_map(|i| match i {
+            RuntimeInputV1::Artifact {
+                artifact_id,
+                byte_count,
+                ..
+            } if *artifact_id == job.spec.parameters_artifact_id => Some(*byte_count),
+            _ => None,
+        })
+        .unwrap();
+    let task: NativeTaskParametersV1 =
+        serde_json::from_slice(&f.read(job.spec.parameters_artifact_id, size).await.unwrap())
+            .unwrap();
+    domain::execution::task(&job.spec, &task).unwrap();
+    let NativeTaskParametersV1::ValidateAlpha {
+        dataset_revision_id,
+        model_artifact_id,
+        request,
+        ..
+    } = task
+    else {
+        panic!("formal validation required")
+    };
+    assert_eq!(dataset_revision_id, f.data.validation);
+    assert_eq!(model_artifact_id, model);
+    assert_eq!(request.forecast.parameters.fast_period, 2);
+    assert_eq!(request.forecast.parameters.slow_period, 5);
+    assert_eq!(request.target_kind, f.brief.content.target_kind);
+    let split: serde_json::Value =
+        sqlx::query_scalar("SELECT split_policy FROM app.evaluation_policies WHERE id=$1")
+            .bind(f.brief.content.evaluation_policy_id.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(serde_json::to_value(request.split_policy).unwrap(), split);
+    for sql in [
+        "UPDATE app.experiment_validations SET run_id=run_id WHERE experiment_id=$1",
+        "DELETE FROM app.experiment_validations WHERE experiment_id=$1",
+    ] {
+        assert!(sqlx::query(sql)
+            .bind(experiment.as_uuid())
+            .execute(&pool)
+            .await
+            .is_err());
+    }
+    let published: i64 = sqlx::query_scalar(
+        "SELECT (SELECT count(*) FROM app.evaluations)+(SELECT count(*) FROM app.qualifications)",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        published, 0,
+        "task admission is not a published evaluation or qualification"
+    );
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn research_alpha_uses_the_original_forecast_once_without_qualification(pool: PgPool) {
     let (store, _, f, lease, experiment) = setup(&pool).await;

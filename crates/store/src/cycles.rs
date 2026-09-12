@@ -232,21 +232,10 @@ where
     if !supported {
         return Err(invalid("content.horizon_kind", "UNSUPPORTED_LABEL_INTERVALS").into());
     }
-    if brief.content.horizon_kind != HorizonKind::FixedBars
-        || !caps
-            .artifact_schemas
-            .iter()
-            .any(|s| s.name == "qz.alpha_validation" && s.version == "1")
-        || [
-            ("solow-cv", "0.7.3"),
-            ("ndarray-stats", "0.7.0"),
-            ("linregress", "0.5.4"),
-        ]
-        .into_iter()
-        .any(|(name, version)| caps.engine_versions.get(name).map(String::as_str) != Some(version))
-    {
+    if brief.content.horizon_kind != HorizonKind::FixedBars {
         return Err(DomainError::CapabilityUnavailable("native_alpha_validation").into());
     }
+    domain::execution::validation::capabilities(&caps)?;
     let datasets = crate::data_validation::dataset_bindings(
         tx,
         context.validation_input_set_id,

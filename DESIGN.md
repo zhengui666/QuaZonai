@@ -1303,6 +1303,23 @@ warmup后样本及缺值仍在Job与原请求采纳时核验，不将登记行�
 执行资格。当前受管Validation只支持固定bars与WALK_FORWARD选择类别（包括原生
 CPCV分折），不把Sealed选择意图悄悄降为普通验证。
 
+### A4.7 原试验的正式Validation任务
+
+可信Mission服务从同一试验已采纳的编译/Discovery预测及唯一RESEARCH Alpha版本
+准备VALIDATE_ALPHA；Agent不能提交Evaluation、切换MODEL或选择另一政策。沿用
+原提案的特征参数/固定horizon，输入改为冻结Validation目录，split/target来自原
+Brief和Policy。experiment_validations只记录不可变experiment/alpha_version/run/
+policy/dataset关联，不另建任务队列；Run仍由原PGMQ/Attempt/Runtime执行。该阶段
+要求原编译已计一次试验，本阶段计零，但继续预约CPU、墙钟、内存和输出额度。
+并发重放只返回同一Run，失败不清除原trial，experiments.run_id仍指原Discovery。
+编译及两个Alpha阶段先以原Mission剩余墙钟约束本次分配，再推导实际所需CPU数；
+超过Runtime容量明确拒绝，不能用缩短前的墙钟生成无法执行的JobSpec。
+
+所有Alpha科学阶段选择的实际镜像须等于冻结ExecutionAssumptions；正式Validation
+还须等于原Alpha版本镜像。Runtime连接修订未变不代表原生镜像未变，不能借新探测
+把旧政策换到新引擎。Validation参数/原始分折REPORT为EVALUATOR_ONLY，不通过普通
+研究产物GET披露；后续可信Evaluation发布和受控反馈独立处理，排队不授资格。
+
 ## A5. Mandate、Candidate、目标与 Release
 
 ```text

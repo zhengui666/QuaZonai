@@ -153,6 +153,11 @@ Runtime受管`VALIDATE_ALPHA`沿用同一计算入口，仅消费登记的VALIDA
 当前受管验证只接受一个已登记Validation版本（可多资产）、固定bars和WALK_FORWARD
 选择类别；不能用total、未实现方法或多版本输入假装完成评估。旧政策不会被自动改写。
 
+可信Store的正式验证准入复用原MODEL与原试验，只改用冻结Validation输入和政策，
+不再计第二次试验；参数和原始报告保持EVALUATOR_ONLY。镜像漂移会拦截新的预测/
+验证任务；既有Run重放保持原身份。准入不是Evaluation发表；自动Worker调度、正式
+结论发布及受控反馈仍须接通，不能把排队显示成研究完成。
+
 032迁移为每个已成功结算的原生Turn保留唯一公开回答报告（qz.mission_summary）。
 Worker读取锁定App Server原生summary视图，只有公开agentMessage、原Turn/item和
 实际phase；phase缺失保留null。它不读取完整items/rollout或推理，报告不当作科学

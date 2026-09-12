@@ -18,10 +18,58 @@ struct ForecastProposal {
     parameters: NativeForecastParametersV1,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum AlphaStage {
+    Forecast,
+    Validation,
+}
+
+fn native_cpu(
+    limits: &JobLimitsV1,
+    capabilities: &contracts::runtime::RuntimeCapabilitiesV1,
+) -> Result<u16, StoreError> {
+    domain::runtime::job_limits(capabilities, limits)?;
+    if limits.wall_seconds == 0 {
+        return Err(DomainError::BudgetExhausted("wall_seconds").into());
+    }
+    let cpu = u16::try_from(
+        limits
+            .cpu_seconds
+            .get()
+            .div_ceil(u64::from(limits.wall_seconds)),
+    )
+    .map_err(|_| DomainError::CapabilityUnavailable("native_cpu_capacity"))?;
+    if cpu == 0 || cpu > capabilities.max_cpu {
+        return Err(DomainError::CapabilityUnavailable("native_cpu_capacity").into());
+    }
+    Ok(cpu)
+}
+
 pub enum ExperimentWork {
     Compile(Id),
     Forecast(Id),
     RecordAlpha(Id),
+}
+
+#[test]
+fn cpu_capacity_uses_the_actual_bounded_wall_allocation() {
+    let capabilities = serde_json::from_str(include_str!(
+        "../../../../tests/contracts/runtime-capabilities.fixture.json"
+    ))
+    .unwrap();
+    let mut limits = JobLimitsV1 {
+        schema_version: SchemaV1,
+        experiments: 0,
+        cpu_seconds: DbCounter::new(10).unwrap(),
+        wall_seconds: 5,
+        memory_mib: 1024,
+        output_bytes: DbCounter::new(1024).unwrap(),
+    };
+    assert_eq!(native_cpu(&limits, &capabilities).unwrap(), 2);
+    limits.wall_seconds = 4;
+    assert!(native_cpu(&limits, &capabilities).is_err());
+    limits.wall_seconds = 0;
+    assert!(native_cpu(&limits, &capabilities).is_err());
 }
 
 impl Store {
@@ -131,6 +179,60 @@ impl Store {
         owner: &WorkerFence,
         experiment: Id,
         limits: &JobLimitsV1,
+        read: R,
+        publish: P,
+    ) -> Result<CommandResult<RunSnapshotV1>, StoreError>
+    where
+        R: FnMut(Id, DbCounter) -> Read,
+        Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
+        P: FnOnce(NativeObjectPublication) -> Published,
+        Published: std::future::Future<Output = Result<(), StoreError>>,
+    {
+        self.start_experiment_science(
+            (mission, owner),
+            experiment,
+            AlphaStage::Forecast,
+            limits,
+            read,
+            publish,
+        )
+        .await
+    }
+
+    pub async fn start_experiment_validation<R, Read, P, Published>(
+        &self,
+        mission: Id,
+        owner: &WorkerFence,
+        experiment: Id,
+        limits: &JobLimitsV1,
+        read: R,
+        publish: P,
+    ) -> Result<CommandResult<RunSnapshotV1>, StoreError>
+    where
+        R: FnMut(Id, DbCounter) -> Read,
+        Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
+        P: FnOnce(NativeObjectPublication) -> Published,
+        Published: std::future::Future<Output = Result<(), StoreError>>,
+    {
+        self.start_experiment_science(
+            (mission, owner),
+            experiment,
+            AlphaStage::Validation,
+            limits,
+            read,
+            publish,
+        )
+        .await
+    }
+
+    // Two concrete Alpha stages share admission, model provenance and native
+    // publication. Neither call exposes a generic free-trial or task API.
+    async fn start_experiment_science<R, Read, P, Published>(
+        &self,
+        mission_owner: (Id, &WorkerFence),
+        experiment: Id,
+        stage: AlphaStage,
+        limits: &JobLimitsV1,
         mut read: R,
         publish: P,
     ) -> Result<CommandResult<RunSnapshotV1>, StoreError>
@@ -140,6 +242,9 @@ impl Store {
         P: FnOnce(NativeObjectPublication) -> Published,
         Published: std::future::Future<Output = Result<(), StoreError>>,
     {
+        let (mission, owner) = mission_owner;
+        let validation = stage == AlphaStage::Validation;
+        let stage_name = if validation { "validation" } else { "forecast" };
         let mut tx = self.pool.begin().await?;
         let locked = lock_run(&mut tx, mission).await?;
         fence(&mut tx, &locked.run, owner).await?;
@@ -147,9 +252,11 @@ impl Store {
         let e = sqlx::query("SELECT e.*,c.compile_run_id FROM app.experiments e JOIN app.experiment_compilations c ON c.experiment_id=e.id JOIN app.run_missions m ON m.run_id=c.mission_run_id AND m.role='RESEARCHER' WHERE e.id=$1 AND e.project_id=$2 AND e.cycle_id=$3 AND c.mission_run_id=$4 FOR UPDATE OF e")
             .bind(experiment.as_uuid()).bind(locked.run.project_id.as_uuid()).bind(cycle.as_uuid()).bind(mission.as_uuid())
             .fetch_optional(&mut *tx).await?.ok_or(StoreError::NotFound)?;
-        if let Some(existing) = sqlx::query_scalar::<_, uuid::Uuid>(
-            "SELECT run_id FROM app.experiment_forecasts WHERE experiment_id=$1",
-        )
+        if let Some(existing) = sqlx::query_scalar::<_, uuid::Uuid>(if validation {
+            "SELECT run_id FROM app.experiment_validations WHERE experiment_id=$1"
+        } else {
+            "SELECT run_id FROM app.experiment_forecasts WHERE experiment_id=$1"
+        })
         .bind(experiment.as_uuid())
         .fetch_optional(&mut *tx)
         .await?
@@ -167,7 +274,7 @@ impl Store {
             RunState::Dispatching | RunState::Running | RunState::Reconciling
         ) || now(&mut tx).await? >= locked.run.deadline_at
             || e.try_get::<String, _>("outcome")? != "PENDING"
-            || db::optional_id(&e, "run_id")?.is_some()
+            || (!validation && db::optional_id(&e, "run_id")?.is_some())
         {
             return Err(DomainError::AdmissionClosed.into());
         }
@@ -189,6 +296,13 @@ impl Store {
             return Err(StoreError::Invalid("accepted_compilation_required"));
         };
         let model_id = db::id(model.try_get("id")?)?;
+        let alpha = if validation {
+            let row = sqlx::query("SELECT v.id,v.runtime_image_ref,f.dataset_revision_id FROM app.command_receipts receipt JOIN app.alpha_versions v ON v.id=receipt.resource_id AND v.experiment_id=$2 JOIN app.experiment_forecasts f ON f.experiment_id=v.experiment_id AND f.model_artifact_id=v.model_artifact_id WHERE receipt.principal_scope='MISSION:'||$1::uuid::text AND receipt.operation='RESEARCH_ALPHA_CREATE' AND receipt.idempotency_key=$2::uuid::text AND v.project_id=$3 AND v.model_artifact_id=$4")
+                .bind(mission.as_uuid()).bind(experiment.as_uuid()).bind(locked.run.project_id.as_uuid()).bind(model_id.as_uuid()).fetch_optional(&mut *tx).await?.ok_or(StoreError::Invalid("original_research_alpha_required"))?;
+            Some(row)
+        } else {
+            None
+        };
         let model_bytes = counter(model.try_get("byte_count")?)?;
         if model_bytes == DbCounter::ZERO || model_bytes.get() > 2 * 1024 * 1024 {
             return Err(StoreError::Integrity);
@@ -207,7 +321,7 @@ impl Store {
         }
         let proposal: ForecastProposal =
             serde_json::from_slice(&raw).map_err(|_| StoreError::Invalid("forecast_parameters"))?;
-        let brief = sqlx::query("SELECT b.id,b.horizon_kind,b.horizon_value FROM app.research_cycles c JOIN app.research_briefs b ON b.id=c.brief_id WHERE c.id=$1")
+        let brief = sqlx::query("SELECT b.id,b.horizon_kind,b.horizon_value,b.target_kind,b.evaluation_policy_id,a.engine_image_ref FROM app.research_cycles c JOIN app.research_briefs b ON b.id=c.brief_id JOIN app.execution_assumptions a ON a.id=b.execution_assumptions_id WHERE c.id=$1")
             .bind(cycle.as_uuid()).fetch_one(&mut *tx).await?;
         if brief.try_get::<String, _>("horizon_kind")? != "FIXED_BARS" {
             return Err(DomainError::CapabilityUnavailable("native_fixed_bar_horizon").into());
@@ -225,28 +339,87 @@ impl Store {
         {
             return Err(StoreError::Integrity);
         }
-        let binding = crate::data_validation::dataset_bindings(
+        let input_set = if validation {
+            context.validation_input_set_id
+        } else {
+            context.discovery_input_set_id
+        };
+        let bindings = crate::data_validation::dataset_bindings(
             &mut tx,
-            context.discovery_input_set_id,
+            input_set,
             locked.run.project_id,
             context.runtime_id,
             &mut read,
         )
-        .await?
-        .into_iter()
-        .find(|binding| binding.selection.dataset_revision_id == proposal.dataset_revision_id)
-        .ok_or(StoreError::Invalid("forecast_discovery_dataset"))?;
+        .await?;
+        let binding = if validation {
+            if bindings.len() != 1 {
+                return Err(DomainError::CapabilityUnavailable(
+                    "native_alpha_single_validation_revision",
+                )
+                .into());
+            }
+            if alpha
+                .as_ref()
+                .ok_or(StoreError::Integrity)?
+                .try_get::<uuid::Uuid, _>("dataset_revision_id")?
+                != proposal.dataset_revision_id.as_uuid()
+            {
+                return Err(StoreError::Integrity);
+            }
+            bindings.into_iter().next().ok_or(StoreError::Integrity)?
+        } else {
+            bindings
+                .into_iter()
+                .find(|binding| {
+                    binding.selection.dataset_revision_id == proposal.dataset_revision_id
+                })
+                .ok_or(StoreError::Invalid("forecast_discovery_dataset"))?
+        };
+        let dataset = binding.selection.dataset_revision_id;
         let request = NativeForecastRequestV1 {
             schema_version: SchemaV1,
             selection: binding.selection.selection,
             parameters: proposal.parameters,
         };
         domain::execution::forecast_request(&request)?;
-        let task = NativeTaskParametersV1::EvaluateAlpha {
-            schema_version: SchemaV1,
-            dataset_revision_id: proposal.dataset_revision_id,
-            model_artifact_id: model_id,
-            request,
+        let policy_id = db::id(brief.try_get("evaluation_policy_id")?)?;
+        let task = if validation {
+            let p = sqlx::query("SELECT split_policy,selection_rule,metric_requirements FROM app.evaluation_policies WHERE id=$1 AND project_id=$2")
+                .bind(policy_id.as_uuid()).bind(locked.run.project_id.as_uuid()).fetch_one(&mut *tx).await?;
+            let split = serde_json::from_value(p.try_get("split_policy")?)
+                .map_err(|_| StoreError::Integrity)?;
+            let selection = serde_json::from_value(p.try_get("selection_rule")?)
+                .map_err(|_| StoreError::Integrity)?;
+            let requirements: Vec<contracts::evidence::MetricRequirementV1> =
+                serde_json::from_value(p.try_get("metric_requirements")?)
+                    .map_err(|_| StoreError::Integrity)?;
+            domain::execution::alpha_validation_policy(
+                &selection,
+                &requirements,
+                &request.selection,
+                &split,
+            )?;
+            let request = contracts::science::NativeAlphaValidationRequestV1 {
+                schema_version: SchemaV1,
+                forecast: request,
+                split_policy: split,
+                target_kind: db::enum_value(&brief, "target_kind")?,
+            };
+            domain::execution::alpha_validation_request(&request)?;
+            NativeTaskParametersV1::ValidateAlpha {
+                schema_version: SchemaV1,
+                dataset_revision_id: dataset,
+                model_artifact_id: model_id,
+                request: Box::new(request),
+            }
+        } else {
+            NativeTaskParametersV1::EvaluateAlpha {
+                schema_version: SchemaV1,
+                dataset_revision_id: dataset,
+                model_artifact_id: model_id,
+                request,
+            }
         };
         let capabilities = crate::runtime::require_capabilities(
             &mut tx,
@@ -256,15 +429,8 @@ impl Store {
         )
         .await?;
         domain::runtime::job_limits(&capabilities, limits)?;
-        let cpu = u16::try_from(
-            limits
-                .cpu_seconds
-                .get()
-                .div_ceil(u64::from(limits.wall_seconds)),
-        )
-        .map_err(|_| DomainError::CapabilityUnavailable("native_cpu_capacity"))?;
-        if cpu == 0 || cpu > capabilities.max_cpu {
-            return Err(DomainError::CapabilityUnavailable("native_cpu_capacity").into());
+        if validation {
+            domain::execution::validation::capabilities(&capabilities)?;
         }
         let schemas = task.output_schemas();
         if !schemas.iter().all(|schema| {
@@ -281,6 +447,13 @@ impl Store {
             .ok_or(DomainError::CapabilityUnavailable("native_forecast_image"))?
             .image_ref
             .clone();
+        if image_ref != brief.try_get::<String, _>("engine_image_ref")?
+            || alpha.as_ref().is_some_and(|a| {
+                a.try_get::<String, _>("runtime_image_ref").ok().as_ref() != Some(&image_ref)
+            })
+        {
+            return Err(DomainError::CapabilityUnavailable("frozen_alpha_image_changed").into());
+        }
         let capability: uuid::Uuid = sqlx::query_scalar(
             "SELECT last_capability_snapshot_artifact_id FROM app.runtime_integrations WHERE id=$1",
         )
@@ -295,8 +468,13 @@ impl Store {
             bytes,
         })
         .await?;
-        sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,'PARAMETERS','application/json','qz.native_task','1','LOCAL',$3,'1',$4,'RESEARCH','SYNTHETIC','OPERATOR','REFERENCED')")
-            .bind(parameter_id.as_uuid()).bind(locked.run.project_id.as_uuid()).bind(parameter_id.to_string()).bind(size.get() as i64).execute(&mut *tx).await?;
+        let access = if validation {
+            ArtifactAccess::EvaluatorOnly
+        } else {
+            ArtifactAccess::Research
+        };
+        sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,'PARAMETERS','application/json','qz.native_task','1','LOCAL',$3,'1',$4,$5,'SYNTHETIC','OPERATOR','REFERENCED')")
+            .bind(parameter_id.as_uuid()).bind(locked.run.project_id.as_uuid()).bind(parameter_id.to_string()).bind(size.get() as i64).bind(db::code(&access)?).execute(&mut *tx).await?;
         fence(&mut tx, &locked.run, owner).await?;
         let remaining = (locked.run.deadline_at - now(&mut tx).await?).num_seconds();
         let mut bounded = limits.clone();
@@ -306,9 +484,10 @@ impl Store {
         if bounded.wall_seconds == 0 {
             return Err(DomainError::BudgetExhausted("wall_seconds").into());
         }
+        let cpu = native_cpu(&bounded, &capabilities)?;
         let submission = RunSubmission {
             cycle_id: cycle,
-            input_set_id: context.discovery_input_set_id,
+            input_set_id: input_set,
             runtime_id: context.runtime_id,
             runtime_revision: context.runtime_revision,
             kind: RunKind::AlphaEvaluate,
@@ -316,7 +495,7 @@ impl Store {
         };
         let (mut tx, admitted) = Self::enqueue_with_trial_charge(
             tx,
-            &format!("experiment/{experiment}/forecast"),
+            &format!("experiment/{experiment}/{stage_name}"),
             &submission,
             false,
         )
@@ -352,17 +531,22 @@ impl Store {
                 capability_snapshot_artifact_id: db::id(capability)?,
                 output_schemas: schemas,
                 origin: binding.origin,
-                access: ArtifactAccess::Research,
+                access,
             },
         )
         .await?;
-        sqlx::query("INSERT INTO app.experiment_forecasts(experiment_id,run_id,model_artifact_id,dataset_revision_id) VALUES($1,$2,$3,$4)")
-            .bind(experiment.as_uuid()).bind(admitted.resource.id.as_uuid()).bind(model_id.as_uuid()).bind(proposal.dataset_revision_id.as_uuid()).execute(&mut *tx).await?;
-        sqlx::query("UPDATE app.experiments SET run_id=$2 WHERE id=$1")
-            .bind(experiment.as_uuid())
-            .bind(admitted.resource.id.as_uuid())
-            .execute(&mut *tx)
-            .await?;
+        if let Some(alpha) = alpha {
+            sqlx::query("INSERT INTO app.experiment_validations(experiment_id,run_id,alpha_version_id,policy_id,dataset_revision_id) VALUES($1,$2,$3,$4,$5)")
+                .bind(experiment.as_uuid()).bind(admitted.resource.id.as_uuid()).bind(alpha.try_get::<uuid::Uuid,_>("id")?).bind(policy_id.as_uuid()).bind(dataset.as_uuid()).execute(&mut *tx).await?;
+        } else {
+            sqlx::query("INSERT INTO app.experiment_forecasts(experiment_id,run_id,model_artifact_id,dataset_revision_id) VALUES($1,$2,$3,$4)")
+                .bind(experiment.as_uuid()).bind(admitted.resource.id.as_uuid()).bind(model_id.as_uuid()).bind(dataset.as_uuid()).execute(&mut *tx).await?;
+            sqlx::query("UPDATE app.experiments SET run_id=$2 WHERE id=$1")
+                .bind(experiment.as_uuid())
+                .bind(admitted.resource.id.as_uuid())
+                .execute(&mut *tx)
+                .await?;
+        }
         fence(&mut tx, &locked.run, owner).await?;
         tx.commit().await?;
         Ok(admitted)
@@ -469,16 +653,6 @@ impl Store {
         )
         .await?;
         domain::runtime::job_limits(&capabilities, limits)?;
-        let cpu = u16::try_from(
-            limits
-                .cpu_seconds
-                .get()
-                .div_ceil(u64::from(limits.wall_seconds)),
-        )
-        .map_err(|_| DomainError::CapabilityUnavailable("native_cpu_capacity"))?;
-        if cpu == 0 || cpu > capabilities.max_cpu {
-            return Err(DomainError::CapabilityUnavailable("native_cpu_capacity").into());
-        }
         let task = NativeTaskParametersV1::CompileModel {
             schema_version: SchemaV1,
             code_artifact_id: code,
@@ -531,6 +705,7 @@ impl Store {
         if bounded.wall_seconds == 0 {
             return Err(DomainError::BudgetExhausted("wall_seconds").into());
         }
+        let cpu = native_cpu(&bounded, &capabilities)?;
         let request = RunSubmission {
             cycle_id: cycle,
             input_set_id: context.discovery_input_set_id,

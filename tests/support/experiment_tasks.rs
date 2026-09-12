@@ -120,6 +120,15 @@ pub async fn propose(
 }
 
 pub async fn probe(store: &Store, actor: &Actor, f: &cycle_support::Fixture) {
+    probe_capabilities(store, actor, f, capabilities(chrono::Utc::now())).await;
+}
+
+pub async fn probe_capabilities(
+    store: &Store,
+    actor: &Actor,
+    f: &cycle_support::Fixture,
+    capabilities: contracts::runtime::RuntimeCapabilitiesV1,
+) {
     let revision = f.freeze.execution_context.runtime_revision;
     let ProbePreparation::Pending(ticket) = store
         .prepare_runtime_probe(
@@ -136,7 +145,6 @@ pub async fn probe(store: &Store, actor: &Actor, f: &cycle_support::Fixture) {
     else {
         panic!("probe required")
     };
-    let capabilities = capabilities(chrono::Utc::now());
     let objects = f.objects.clone();
     store.complete_runtime_probe(*ticket, RuntimeProbeOutcomeV1::Available { capabilities: Box::new(capabilities) },
         move |id, bytes| async move { objects.put(id, &bytes).map_err(|_| StoreError::Integrity) }).await.unwrap();

@@ -1096,3 +1096,23 @@ Validation元数据，检查Selection的准确方法/版本/单位/周期及资�
 和75Job（含另行通过的7managed）。两轮check/fmt/严格Clippy均通过，源码冻结。
 无新依赖、DTO或生成物变化；没有构建/运行新OCI镜像，正式Evaluation与后续交付仍
 须继续实现，以上不是最新远端Head CI或完整T08/T42。未push/review/merge或关闭Issue。
+
+## 2026-09-12：原试验的正式Validation准入
+
+内部Store新增正式验证准入，与Discovery预测共享原MODEL/提案参数、预算和原生
+发表事务；只换为冻结Validation输入、split/target/政策。迁移035原子绑定原试验/
+Alpha/政策/目录/Run，参数与报告为EVALUATOR_ONLY；不改变原Discovery Run、不计
+第二次试验，不授予Evaluation或资格。两种Alpha阶段均拒绝冻结执行镜像漂移，验证
+同时重查真实方法能力。编译及Alpha阶段按缩短后的剩余墙钟重算CPU，容量不足拒绝。
+
+真实PG回归验证缺原Alpha、镜像/方法变化、发表失败回滚、并发唯一Run/CPU预留、
+原试验计数、准确政策/模型/目录/参数、原生JobSpec及不可变关联。CPU最窄单元测试
+通过。`.ai-bridge/verify-ssV6Mq` mission-store exit0：119项相关PG回归零失败/忽略；
+`.ai-bridge/verify-NY1BQ2` mission-science exit0：原生App Server会话与原提案/科学
+阶段准入及反馈回归通过。两轮check/fmt/严格Clippy通过，源码冻结，独立PG确认停止。
+
+证据范围澄清：此处及前述mission-science用例真实运行Codex App Server，但其
+Responses Provider与编译/预测终态是受控fixture；它不实际执行科学Job。真实Job/
+分折计算证据来自独立75项Job及managed测试，不能拼称为完整端到端链路。新原生
+镜像/OCI链路尚未执行。本次也未将Validation接入自动Mission调度、Evaluation发布
+或受控正式反馈；这些与其余全部合同继续实现，无新增公开DTO或依赖，未push/review/merge。
