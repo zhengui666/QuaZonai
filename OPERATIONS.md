@@ -155,8 +155,11 @@ Runtime受管`VALIDATE_ALPHA`沿用同一计算入口，仅消费登记的VALIDA
 
 可信Store的正式验证准入复用原MODEL与原试验，只改用冻结Validation输入和政策，
 不再计第二次试验；参数和原始报告保持EVALUATOR_ONLY。镜像漂移会拦截新的预测/
-验证任务；既有Run重放保持原身份。准入不是Evaluation发表；自动Worker调度、正式
-结论发布及受控反馈仍须接通，不能把排队显示成研究完成。
+验证任务；既有Run重放保持原身份。原生Worker在正式Validation终态采纳后、ACK前
+原子发表Evaluation、全部逐折指标和试验首次结论。文件/事务失败保持队列可重试，
+不重跑试验；失败/取消亦为INCONCLUSIVE。原报告、实际方法和来源保留，指标缺失、
+登记行缺失超限、样本不足或过期不能PASS。详细合同见DESIGN A4.8；自动Mission
+发起此阶段、受控反馈和后续资格仍须接通，不能把排队显示成研究完成。
 
 032迁移为每个已成功结算的原生Turn保留唯一公开回答报告（qz.mission_summary）。
 Worker读取锁定App Server原生summary视图，只有公开agentMessage、原Turn/item和

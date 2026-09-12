@@ -179,10 +179,7 @@ impl Worker {
             None => return Err(WorkerFailure::TaskKind),
             Some(ClaimResult::Busy) => return Ok(()),
             Some(ClaimResult::Terminal(_)) => {
-                if self.store.advance_initial_cycle(message.run_id).await? {
-                    self.store.acknowledge_run(&message).await?;
-                }
-                return Ok(());
+                return self.finish_native_message(&message).await;
             }
             Some(ClaimResult::Leased(lease)) => *lease,
         };
@@ -211,8 +208,58 @@ impl Worker {
             () = &mut heartbeat => drive.await,
         };
         result?;
+        self.finish_native_message(&message).await
+    }
+
+    async fn finish_native_message(&self, message: &RunMessage) -> Result<(), WorkerFailure> {
+        let reading = self.objects.clone();
+        let publishing = self.objects.clone();
+        let mut allocated = None;
+        let result = self
+            .store
+            .publish_alpha_validation(
+                message.run_id,
+                move |id, size| {
+                    let objects = reading.clone();
+                    async move {
+                        tokio::task::spawn_blocking(move || objects.read(id, size))
+                            .await
+                            .map_err(|_| StoreError::Integrity)?
+                            .map_err(|_| StoreError::Integrity)
+                    }
+                },
+                |object| {
+                    allocated = Some(object.id);
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            publishing.put(object.id, &object.bytes)
+                        })
+                        .await
+                        .map_err(|_| StoreError::Integrity)?
+                        .map_err(|_| StoreError::Integrity)
+                    }
+                },
+            )
+            .await;
+        if let Some(id) = allocated.filter(|_| result.is_err()) {
+            let objects = self.objects.clone();
+            if self
+                .store
+                .discard_unpublished_native_object(message.run_id, id, move |id| async move {
+                    tokio::task::spawn_blocking(move || objects.discard_unpublished(id))
+                        .await
+                        .map_err(|_| StoreError::Integrity)?
+                        .map_err(|_| StoreError::Integrity)
+                })
+                .await
+                .is_err()
+            {
+                tracing::warn!(artifact_id=%id, "native evaluation publication cleanup deferred");
+            }
+        }
+        result?;
         if self.store.advance_initial_cycle(message.run_id).await? {
-            self.store.acknowledge_run(&message).await?;
+            self.store.acknowledge_run(message).await?;
         }
         Ok(())
     }

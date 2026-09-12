@@ -29,6 +29,7 @@ pub use experiment::ExperimentWork;
 pub mod mission;
 pub mod native;
 mod queue;
+mod validation;
 
 type Tx<'a> = Transaction<'a, Postgres>;
 const FIELDS: &str = "r.id::uuid,r.project_id::uuid,r.cycle_id::uuid,r.kind,r.input_set_id::uuid,r.state,r.current_attempt_no::bigint,r.active_attempt_id::uuid,r.last_event_seq::bigint,r.deadline_at::timestamptz,r.cancellation_requested_at::timestamptz,r.terminal_reason_code,r.queued_at::timestamptz,r.started_at::timestamptz,r.finished_at::timestamptz,r.revision::bigint";
@@ -1147,6 +1148,11 @@ impl Store {
         .fetch_one(&mut *tx)
         .await?;
         if !locked.run.state.is_terminal() || !receipt {
+            return Err(StoreError::Conflict);
+        }
+        let evaluation_pending: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.experiment_validations v WHERE v.run_id=$1 AND NOT EXISTS(SELECT 1 FROM app.evaluations e JOIN app.evaluation_publications p ON p.evaluation_id=e.id WHERE e.run_id=v.run_id AND e.subject_alpha_version_id=v.alpha_version_id AND e.policy_id=v.policy_id AND e.evaluation_kind='WALK_FORWARD'))")
+            .bind(message.run_id.as_uuid()).fetch_one(&mut *tx).await?;
+        if evaluation_pending {
             return Err(StoreError::Conflict);
         }
         match queue_matches(&mut tx, message).await {

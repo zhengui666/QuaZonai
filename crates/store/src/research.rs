@@ -79,6 +79,19 @@ fn policy(r: &PgRow) -> Result<EvaluationPolicyView, StoreError> {
             .map_err(|_| StoreError::Integrity)?,
     })
 }
+pub(crate) async fn frozen_policy(
+    tx: &mut Transaction<'_, Postgres>,
+    id: Id,
+) -> Result<EvaluationPolicyView, StoreError> {
+    let row = sqlx::query(&format!(
+        "SELECT {POLICY} FROM app.evaluation_policies p {FAMILY} WHERE p.id=$1"
+    ))
+    .bind(id.as_uuid())
+    .fetch_one(&mut **tx)
+    .await?;
+    policy(&row)
+}
+
 async fn input(tx: &mut Transaction<'_, Postgres>, id: Id) -> Result<InputSetView, StoreError> {
     let r = sqlx::query(&format!(
         "SELECT {INPUT} FROM app.input_sets WHERE id=$1 AND frozen_at IS NOT NULL"
@@ -445,13 +458,7 @@ impl Store {
                 .ok_or(StoreError::NotFound)?;
         authority::read_project(&mut tx, actor, db::id(project)?, MachineScope::ResearchRead)
             .await?;
-        let row = sqlx::query(&format!(
-            "SELECT {POLICY} FROM app.evaluation_policies p {FAMILY} WHERE p.id=$1"
-        ))
-        .bind(id.as_uuid())
-        .fetch_one(&mut *tx)
-        .await?;
-        let result = policy(&row)?;
+        let result = frozen_policy(&mut tx, id).await?;
         tx.commit().await?;
         Ok(result)
     }

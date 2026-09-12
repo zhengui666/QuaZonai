@@ -1320,6 +1320,35 @@ policy/dataset关联，不另建任务队列；Run仍由原PGMQ/Attempt/Runtime�
 把旧政策换到新引擎。Validation参数/原始分折REPORT为EVALUATOR_ONLY，不通过普通
 研究产物GET披露；后续可信Evaluation发布和受控反馈独立处理，排队不授资格。
 
+### A4.8 正式Validation评估的原子发布
+
+原生Worker在原Run终态采纳后、PGMQ ACK前完成正式Validation评估。终态重放走同一
+收尾入口：读取原experiment_validations、冻结Policy/InputSet、原Attempt的已采纳
+报告及参数，不重跑模型、不依赖Mission仍在线，不建立第二队列。Evaluation头、
+全部原生逐折MetricValue、评估报告及实验首次结论在一个事务封口；文件或事务失败
+保留原消息供重试，同一正式Run只可发表一次。无对应正式Validation关联的Run不
+进入此发布器。资格、Sealed和Reviewer仍是独立后续步骤。
+
+成功进程先按A4.5–A4.6复核原完整报告，再使用原政策required指标和精确Decimal
+阈值。minimum_observations检查实际去重测试观测数，不使用源行数代替；按资产
+首折去重的source_row_count核对同一登记目录的row_count。maximum_missing_fraction
+约束登记行在实际载入中缺失的比例，以整数/Decimal交叉比较，不能用浮点四舍五入
+放宽阈值；它不声称重建交易日历中从未被源登记的行。超出登记数量为INVALID，
+缺失超限或有效样本不足为INCOMPLETE。require_real_data同时要求原登记REAL、
+VERIFIED、AS_KNOWN_THEN；不满足不授PASS，不改写数据来源。缺方法/指标、取消、
+失败、无可用原生报告均INCONCLUSIVE，不生成零指标。有效期从原生完成时间起算，
+发布时已到期亦INCONCLUSIVE；重放不刷新期限。
+
+可信qz.alpha_evaluation.v1 REPORT记录精确evaluation/experiment/alpha/run/input/
+policy、执行/证据/决策、静态原因、原生报告/manifest引用、实际已核验方法版本及
+观测计数；失败没有实际方法记录时明确null。该报告不含市场行、预测、标签、校准
+系数、宿主路径或任意上游诊断，与原始Validation报告一样为EVALUATOR_ONLY。
+它同时作为本Evaluation的report和method_versions引用；MetricValue仍指向原始
+逐折REPORT。原试验结论依既有规则映射SUPPORTED/REJECTED/INVALID/INCONCLUSIVE，
+不可改原输入、Discovery Run、试验计数或旧结论。普通研究反馈仅可另行投影明确
+允许的元数据，不因本次内部发布自动披露受限报告。该控制面完成报告独立限64KiB，
+不占用或扩张原生科学payload的output_bytes；与固定manifest封口开销一样单独有界。
+
 ## A5. Mandate、Candidate、目标与 Release
 
 ```text

@@ -188,8 +188,9 @@ total或错版本/单位/周期的Selection。当前单Validation目录版本可
 或非固定bars明确拒绝，不选择子集继续。政策登记成功不表示能够冻结执行。
 
 正式验证的内部准入绑定原Alpha/Policy/Validation目录，不增加可由Agent指定Run或
-免费试验的CLI/MCP接口。公开原生报告前仍须走受控证据流程；现阶段准入不代表
-Worker已自动运行此阶段或Evaluation已经发表。
+免费试验的CLI/MCP接口。原生Worker通过A4.8收尾入口在终态采纳后、ACK前原子发表
+评估/逐折指标/试验结论；不是手填PASS命令。qz.alpha_evaluation和原始分折报告均
+EVALUATOR_ONLY。现阶段准入不代表Mission已自动发起此阶段或授予Alpha资格。
 
 普通 Runtime 单元/SQLite/HTTP 测试不证明 OCI 隔离；`.github/workflows/native-runtime.yml` 对精确源码启用独立必跑的 `native-oci` 测试。缺 Docker、固定镜像或 cgroup 前提会失败，不能按跳过处理成通过。取消时只有原生进程已停止且晚到 CREATE/START 已被持久身份屏障阻断才报告 CANCELLED，404 或超时不等于取消确认。
 

@@ -79,6 +79,8 @@ A4.6处理准确scope/版本/单位/周期或不支持的输入组合；不得�
 
 正式验证准入遵循A4.7：保留原试验/MODEL和冻结镜像，不把内部入队当已发表评估，
 不以普通研究产物读取方式暴露EVALUATOR_ONLY报告。
+原生Worker按A4.8在ACK前发表正式评估，失败/取消和缺证据不授PASS；Agent不能
+调用内部发布器、手填指标或把qz.alpha_evaluation报告存在当作资格/Reviewer批准。
 
 人工Cycle启动除冻结Brief和Project版本外，还须明确researcher_profile/reviewer_profile的profile_id及expected_revision；不得默认第一个账号。选择随Cycle封口，旧Cycle不跟随后来Profile修改。该命令不授予Mission选择账号、修改模型设置或发起账号操作的权限。
 

@@ -21,6 +21,9 @@ use store::{
 mod experiment_support;
 use experiment_support::{complete_compilation, setup};
 
+#[path = "support/validation_publication.rs"]
+mod validation_publication;
+
 fn limits() -> JobLimitsV1 {
     JobLimitsV1 {
         schema_version: SchemaV1,

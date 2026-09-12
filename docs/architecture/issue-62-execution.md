@@ -1134,3 +1134,22 @@ Responses Provider与编译/预测终态是受控fixture；它不实际执行科
 此前两轮失败均保留外部回执，不能归为成功。没有以root运行Cargo、挂载生产数据
 或扩大用户Docker权限。此项仍非正式Validation目录OCI链路、完整Mission科学链路
 或T01–T42/远端CI通过；所有剩余开发继续，未push/review/merge。
+
+## 2026-09-12：正式Validation评估与原队列收尾
+
+原生Worker统一在首次终态和终态重投的ACK前发表评估；复用原Run锁、冻结政策和
+已采纳参数/manifest/全部分折报告。Evaluation、所有逐折指标、受限完成报告和实验
+首次裁决同事务封口，不重跑模型、不依赖Mission在线、不新增队列。有效期来自原生
+完成时间；来源/PIT、实际测试样本、登记行缺失和精确阈值仍独立判定。失败/取消
+保留INCONCLUSIVE及空指标，不制造原生方法记录；无资格或Reviewer批准。
+
+基于92861a及冻结补丁，`verify-mVUVWY`完整回归508 Store/Server通过、1失败：
+新唯一索引错误限制了非正式验证的既有评估场景。修正为只锁定原
+experiment_validations关联的数据库防重复检查，保留原失败测试预期；增加正式Run
+直接SQL重复发表拒绝。随后`verify-R6K6Y6`相关137项PG回归全部通过、零忽略，
+check/fmt/严格Clippy通过，源码冻结，独立PG确认停止。新增五项PG用例覆盖原子回滚、
+文件/指标失败、并发一次发布、生产者/全部指标、ACK、重放、精确5%缺失边界、
+失败阈值、未派发取消和拒绝manifest。科学字节是显式受控fixture，不是实际Job执行。
+此前完整回归的149领域/合同/Runtime、7managed、30原生Codex均通过，但该完整
+回执整体仍为失败；局部复测不改称全绿。没有DTO/依赖/生成物变更。
+自动Mission验证、正式反馈与全部后续合同继续开发；未push/review/merge或关闭Issue。

@@ -156,7 +156,7 @@ pub async fn complete_compilation(
     f: &cycle_support::Fixture,
     run: Id,
 ) -> Id {
-    complete_native(pool, store, f, run, true).await
+    complete_native(pool, store, f, run, Observation::Compilation).await
 }
 
 pub async fn complete_forecast(
@@ -165,7 +165,24 @@ pub async fn complete_forecast(
     f: &cycle_support::Fixture,
     run: Id,
 ) -> Id {
-    complete_native(pool, store, f, run, false).await
+    complete_native(pool, store, f, run, Observation::Forecast).await
+}
+
+pub async fn complete_validation(
+    pool: &PgPool,
+    store: &Store,
+    f: &cycle_support::Fixture,
+    run: Id,
+    rows: usize,
+    ic: f64,
+) -> Id {
+    complete_native(pool, store, f, run, Observation::Validation { rows, ic }).await
+}
+
+enum Observation {
+    Compilation,
+    Forecast,
+    Validation { rows: usize, ic: f64 },
 }
 
 async fn complete_native(
@@ -173,7 +190,7 @@ async fn complete_native(
     store: &Store,
     f: &cycle_support::Fixture,
     run: Id,
-    compilation: bool,
+    observation: Observation,
 ) -> Id {
     use contracts::{execution::NativeModelCompilationV1, runtime_jobs::*, Revision};
     let message = store
@@ -192,6 +209,7 @@ async fn complete_native(
     };
     let job = store.native_job(run, &lease.fence).await.unwrap();
     assert!(store.begin_run_dispatch(run, &lease.fence).await.unwrap());
+    let compilation = matches!(observation, Observation::Compilation);
     let model_ref = Id::new();
     let payloads = if compilation {
         let code = job
@@ -219,6 +237,31 @@ async fn complete_native(
         })
         .unwrap();
         vec![wasm, report]
+    } else if let Observation::Validation { rows, ic } = observation {
+        let size = job
+            .spec
+            .inputs
+            .iter()
+            .find_map(|input| match input {
+                RuntimeInputV1::Artifact {
+                    artifact_id,
+                    byte_count,
+                    ..
+                } if *artifact_id == job.spec.parameters_artifact_id => Some(*byte_count),
+                _ => None,
+            })
+            .unwrap();
+        let contracts::execution::NativeTaskParametersV1::ValidateAlpha { request, .. } =
+            serde_json::from_slice(
+                &f.objects
+                    .read(job.spec.parameters_artifact_id, size)
+                    .unwrap(),
+            )
+            .unwrap()
+        else {
+            panic!("validation task required")
+        };
+        vec![serde_json::to_vec(&validation_report(&request, rows, ic)).unwrap()]
     } else {
         use contracts::{execution::NativeTaskParametersV1, science::*};
         let size = job
@@ -348,4 +391,93 @@ async fn complete_native(
     assert_eq!(result.resource.state, contracts::runs::RunState::Succeeded);
     let id:uuid::Uuid=sqlx::query_scalar("SELECT artifact_id FROM app.run_native_outputs WHERE attempt_id=$1 AND remote_storage_ref=$2").bind(lease.fence.attempt_id.as_uuid()).bind(model_ref.as_uuid()).fetch_one(pool).await.unwrap();
     Id::try_from(id.to_string()).unwrap()
+}
+
+/// Controlled producer observations for real PG publication tests. Only split
+/// membership uses the native adapter; scores, calibration and metrics are NOT executed science.
+fn validation_report(
+    request: &contracts::science::NativeAlphaValidationRequestV1,
+    rows: usize,
+    ic: f64,
+) -> contracts::science::NativeAlphaValidationResultV1 {
+    use contracts::{evidence::MetricStatus, science::*};
+    let count = |n| DbCounter::new(n).unwrap();
+    let warmup = request.forecast.parameters.slow_period as usize - 1;
+    let horizon = request.forecast.parameters.label_horizon_observations as usize;
+    let native = domain::execution::validation::validation_folds(
+        &request.split_policy,
+        rows - warmup - horizon,
+    )
+    .unwrap();
+    let mut folds = Vec::new();
+    let mut unique = std::collections::BTreeSet::new();
+    for (asset, bar_type) in request.forecast.selection.bar_types.iter().enumerate() {
+        let instrument = bar_type.rsplitn(5, '-').nth(4).unwrap();
+        for (index, fold) in native.iter().enumerate() {
+            let mut points = Vec::new();
+            for ordinal in fold.test.iter().map(|n| n + warmup) {
+                unique.insert((asset, ordinal));
+                let time = request.forecast.selection.event_start_ns.get()
+                    + ordinal as u64 * 60_000_000_000;
+                let prediction = ordinal as f64 / 1000.0;
+                points.push(NativeValidationPointV1 {
+                    observation: NativeForecastPointV1 {
+                        instrument_id: instrument.into(),
+                        ordinal: ordinal as u32,
+                        event_ns: count(time),
+                        available_ns: count(time + 1),
+                        forecast: Some(prediction),
+                        forecast_reason: None,
+                        label_return: Some(prediction),
+                        label_available_ns: Some(count(time + horizon as u64 * 60_000_000_000 + 1)),
+                        label_reason: None,
+                    },
+                    expected_return: Some(prediction),
+                });
+            }
+            folds.push(NativeValidationFoldV1 {
+                instrument_id: instrument.into(),
+                bar_type: bar_type.clone(),
+                source_row_count: count(rows as u64),
+                fold_index: index as u16,
+                training_ordinals: fold.train.iter().map(|n| (n + warmup) as u32).collect(),
+                test_points: points,
+                calibration: Some(NativeCalibrationV1 {
+                    status: MetricStatus::Ok,
+                    reason_code: None,
+                    intercept: Some(0.0),
+                    slope: Some(1.0),
+                    training_observations: count(fold.train.len() as u64),
+                }),
+                metrics: vec![
+                    NativeValidationMetricV1 {
+                        kind: NativeAlphaMetricKind::PearsonIc,
+                        value: Some(ic),
+                        status: MetricStatus::Ok,
+                        reason_code: None,
+                    },
+                    NativeValidationMetricV1 {
+                        kind: NativeAlphaMetricKind::ReturnRmse,
+                        value: Some(0.0),
+                        status: MetricStatus::Ok,
+                        reason_code: None,
+                    },
+                ],
+            });
+        }
+    }
+    NativeAlphaValidationResultV1 {
+        schema_version: SchemaV1,
+        native_versions: std::collections::BTreeMap::from([
+            ("nautilus-indicators".into(), "0.63.0".into()),
+            ("nautilus-persistence".into(), "0.63.0".into()),
+            ("wasmi".into(), "2.0.0".into()),
+            ("solow-cv".into(), "0.7.3".into()),
+            ("linregress".into(), "0.5.4".into()),
+            ("ndarray-stats".into(), "0.7.0".into()),
+        ]),
+        consumed_fuel: count(1000),
+        unique_test_observations: count(unique.len() as u64),
+        folds,
+    }
 }
