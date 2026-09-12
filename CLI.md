@@ -305,6 +305,9 @@ HTTP；PINNED_CA必须绑定原生CA证书，缺失时不回退到SYSTEM_CA。me
 撤销、跨项目产物和分区不匹配会拒绝新登记；不要手工写 SQL 创建引用来绕过。
 目前数据源/数据版本和执行假设的可信登记入口仍须在后续工作包接通。
 
+评估政策创建须显式提供 `sealed_metric_requirements`（1..64项，至少一项required），
+与Validation的`metric_requirements`分别冻结；selection按evaluation_kind绑定对应组。
+历史政策该字段为null，不得自动复制阈值用于Sealed；需要新建完整政策和研究周期。
 评估政策创建需要同项目已冻结 comparison 输入、执行假设和完整 selection、
 split、required 指标等意图。policy 版本和 experiment_family/root_lineage
 由服务端同事务分配，客户端不能挑选新谱系来清除暴露。WALK_FORWARD 使用

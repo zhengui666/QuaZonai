@@ -181,13 +181,36 @@ pub fn evaluation_policy(request: &EvaluationPolicyCreate) -> Result<(), DomainE
             return Err(invalid("required_capabilities", "DUPLICATE_CAPABILITY"));
         }
     }
-    if !(1..=64).contains(&request.metric_requirements.len()) {
-        return Err(invalid("metric_requirements", "METRIC_COUNT"));
+    metric_requirements(&request.metric_requirements, "metric_requirements")?;
+    metric_requirements(
+        &request.sealed_metric_requirements,
+        "sealed_metric_requirements",
+    )?;
+    let requirements = match s.evaluation_kind {
+        SelectionEvaluationKind::WalkForward => &request.metric_requirements,
+        SelectionEvaluationKind::Sealed => &request.sealed_metric_requirements,
+    };
+    if !requirements.iter().any(|m| {
+        m.metric_code == s.metric_code
+            && m.scope == s.metric_scope
+            && m.required
+            && m.method_allowlist.contains(&s.method_id)
+    }) {
+        return Err(invalid("selection", "REQUIRED_ALLOWED_METRIC"));
+    }
+    Ok(())
+}
+
+fn metric_requirements(
+    requirements: &[MetricRequirementV1],
+    prefix: &str,
+) -> Result<(), DomainError> {
+    if !(1..=64).contains(&requirements.len()) {
+        return Err(invalid(prefix, "METRIC_COUNT"));
     }
     let mut metrics = BTreeSet::new();
-    let mut selected = false;
-    for (index, m) in request.metric_requirements.iter().enumerate() {
-        let field = format!("metric_requirements.{index}");
+    for (index, m) in requirements.iter().enumerate() {
+        let field = format!("{prefix}.{index}");
         bounded_text(format!("{field}.metric_code"), &m.metric_code, 120, false)?;
         bounded_text(format!("{field}.scope"), &m.scope, 120, false)?;
         if !metrics.insert((&m.metric_code, &m.scope)) {
@@ -207,15 +230,9 @@ pub fn evaluation_policy(request: &EvaluationPolicyCreate) -> Result<(), DomainE
                 ));
             }
         }
-        if m.metric_code == s.metric_code && m.scope == s.metric_scope {
-            if !m.required || !m.method_allowlist.contains(&s.method_id) {
-                return Err(invalid("selection", "REQUIRED_ALLOWED_METRIC"));
-            }
-            selected = true;
-        }
     }
-    if !selected {
-        return Err(invalid("selection", "REQUIRED_ALLOWED_METRIC"));
+    if !requirements.iter().any(|m| m.required) {
+        return Err(invalid(prefix, "REQUIRED_ALLOWED_METRIC"));
     }
     Ok(())
 }

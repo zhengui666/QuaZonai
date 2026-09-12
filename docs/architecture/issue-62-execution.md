@@ -3,6 +3,36 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Separate frozen Sealed policy intent, 2026-09-12
+
+New policy creation requires explicit `sealed_metric_requirements`, independently
+validated and persisted alongside Validation requirements. Selection binds its
+own evaluation kind. Migration040 leaves historical policies unchanged with a
+NULL new column; no threshold copying, retrospective authorship or Sealed
+qualification is inferred. This increment does not implement Sealed execution,
+exposure reservation, independent Reviewer admission or qualification.
+
+On working source over `2c47c7ede4a507b950ad918ad21e300216ad2904`, full native run
+`verify-yMEX97` passed compilation, formatting, strict Clippy, 150 contracts/domain/
+runtime tests, 7 managed tests and 30 native Codex tests. Store/Server completed
+526 passed and 2 failed, none ignored: the old migration comparison omitted the
+new NULL column, and a publication test manufactured a calibration without its
+now-required native producer. This full run is **not** a green full-suite claim.
+Only those test assumptions were corrected: explicitly assert historical NULL,
+and use a valid DEMO Release consumer for the generic same-transaction seal test.
+No production constraint was weakened. Targeted `verify-0tmoOd` then passed the
+same compile/format/Clippy and 150/7/30 checks, plus 35 Store policy/publication/
+upgrade tests and 6 policy HTTP tests. Both runs confirmed unchanged source and
+stopped their own temporary PostgreSQL/PGMQ clusters.
+
+`web-verify-phIEnJ` passed byte-identical double native generation of all six
+outputs with handwritten files unchanged, typecheck, 504 Vitest and 5 Node tests,
+decimal/bigint/fraction wire checks, production build and CLI help. Browser checks
+passed 36 Codex settings tests (37.7s) and 186 full-site tests (2.8m), covering three
+Chromium viewports, not Safari or physical devices. Semantic changes are confined
+to policy DTOs and their response wrappers; routes and Runtime contract are
+unchanged. No GitHub publication/review/merge or full Issue62 acceptance is claimed.
+
 ## Runtime admission and Mission owner-fence checkpoint, 2026-09-10
 
 The current increment adds typed integration settings, write-only encrypted

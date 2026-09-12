@@ -1020,6 +1020,7 @@ evaluation_policies [immutable]
   selection_rule: SelectionRuleV1
   split_policy: SplitPolicyV1
   metric_requirements: MetricRequirementV1[]
+  sealed_metric_requirements: MetricRequirementV1[]? # null only for historical policies without frozen Sealed criteria
   minimum_observations: int > 0
   maximum_missing_fraction: Decimal in [0,1]
   require_real_data: bool default true
@@ -1228,6 +1229,16 @@ id/ordinal/item/origin/pit_status（artifact 时null）。没有 storage_object_
 `required_capabilities:text[1..120][0..64]`（非空字符串、不重复）、
 `maximum_sealed_uses_per_lineage:u32[1..2147483647]`、`validity_seconds:DbCounter>0`。
 validity_seconds 必须可由原生时间库从数据库当前时间表示为有限未来时刻。
+
+新政策同时明确 `sealed_metric_requirements:MetricRequirementV1[1..64]`，至少一项
+required，复用相同精确阈值、方法白名单和重复检查。`metric_requirements` 用于
+Validation；`sealed_metric_requirements` 用于实际 Sealed，不能将分折阈值隐式改名、
+丢弃或套用到整段封存样本。selection 按 evaluation_kind 在对应数组中绑定 required
+指标。原生 Sealed 每资产的完整可评估区间使用 `asset:N` scope，Validation 保持
+`asset:N/fold:F`；Sealed 不构造训练折、不重新拟合。两组要求均须在开始实验之前
+冻结，后续资格只使用实际 Sealed 评估的精确版本和该组要求。历史政策保留原值，
+读取时未定义的 Sealed 要求为 null；不得自动复制 Validation 要求、补写历史政策或
+允许其进入 Sealed，须另行创建完整政策及新的研究周期。
 
 SelectionParameters 只包含 A4.1 的 evaluation_kind、metric_code、metric_scope、method_id、
 method_version、unit、frequency、direction、candidate_count；各文本1..120且无控制字符，

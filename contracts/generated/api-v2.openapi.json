@@ -6572,6 +6572,17 @@
                 "type": "array",
                 "uniqueItems": true
               },
+              "sealed_metric_requirements": {
+                "items": {
+                  "$ref": "#/components/schemas/MetricRequirementV1"
+                },
+                "maxItems": 64,
+                "minItems": 1,
+                "type": [
+                  "array",
+                  "null"
+                ]
+              },
               "selection_rule": {
                 "$ref": "#/components/schemas/SelectionRuleV1"
               },
@@ -8864,6 +8875,14 @@
           "schema_version": {
             "$ref": "#/components/schemas/SchemaV1"
           },
+          "sealed_metric_requirements": {
+            "items": {
+              "$ref": "#/components/schemas/MetricRequirementV1"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "type": "array"
+          },
           "selection": {
             "$ref": "#/components/schemas/SelectionParametersV1"
           },
@@ -8883,6 +8902,7 @@
           "selection",
           "split_policy",
           "metric_requirements",
+          "sealed_metric_requirements",
           "minimum_observations",
           "maximum_missing_fraction",
           "require_real_data",
@@ -8958,6 +8978,17 @@
             "minItems": 0,
             "type": "array",
             "uniqueItems": true
+          },
+          "sealed_metric_requirements": {
+            "items": {
+              "$ref": "#/components/schemas/MetricRequirementV1"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "type": [
+              "array",
+              "null"
+            ]
           },
           "selection_rule": {
             "$ref": "#/components/schemas/SelectionRuleV1"
@@ -12296,6 +12327,17 @@
                   "minItems": 0,
                   "type": "array",
                   "uniqueItems": true
+                },
+                "sealed_metric_requirements": {
+                  "items": {
+                    "$ref": "#/components/schemas/MetricRequirementV1"
+                  },
+                  "maxItems": 64,
+                  "minItems": 1,
+                  "type": [
+                    "array",
+                    "null"
+                  ]
                 },
                 "selection_rule": {
                   "$ref": "#/components/schemas/SelectionRuleV1"

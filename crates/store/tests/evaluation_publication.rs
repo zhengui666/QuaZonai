@@ -120,14 +120,16 @@ async fn all_completed_statuses_are_sealed_including_empty_or_failed_evaluations
 #[sqlx::test(migrations = "../../migrations")]
 async fn consuming_an_evaluation_seals_its_metrics_before_transaction_commit(pool: PgPool) {
     let f = fixture(&pool, budget()).await;
-    let (_, _, base) = portfolio(&pool, &f).await;
+    let (mandate, candidate, base) = portfolio(&pool, &f).await;
+    let original_release = release(&pool, &f, mandate, candidate, base).await.unwrap();
     let mut tx = pool.begin().await.unwrap();
     let evaluation = copy_evaluation(&mut tx, base, "SUCCEEDED", "VALID", "PASS").await;
     metric(&mut tx, evaluation, f.report, "before")
         .await
         .unwrap();
-    sqlx::query("INSERT INTO app.calibrations(estimator_kind,estimator_version,model_artifact_id,train_input_set_id,fit_end_available_at,output_unit,horizon_kind,validation_evaluation_id) VALUES('fixture','1',$1,$2,clock_timestamp(),'ratio','FIXED_BARS',$3)")
-        .bind(f.artifact.as_uuid()).bind(f.input_set.as_uuid()).bind(evaluation.as_uuid()).execute(&mut *tx).await.unwrap();
+    // Use a valid DEMO consumer, not a fake calibration without native training.
+    sqlx::query("INSERT INTO app.releases(candidate_id,package_artifact_id,package_schema_version,mandate_id,evaluation_id,market_capability_version,asof,valid_from,valid_until,environment) SELECT candidate_id,package_artifact_id,package_schema_version,mandate_id,$2,market_capability_version,asof,valid_from,valid_until,environment FROM app.releases WHERE id=$1")
+        .bind(original_release.as_uuid()).bind(evaluation.as_uuid()).execute(&mut *tx).await.unwrap();
     sqlstate(
         metric(&mut tx, evaluation, f.report, "after-consumption")
             .await

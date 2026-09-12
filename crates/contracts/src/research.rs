@@ -288,6 +288,8 @@ pub struct EvaluationPolicyCreate {
     pub split_policy: SplitPolicyV1,
     #[schema(min_items = 1, max_items = 64)]
     pub metric_requirements: Vec<MetricRequirementV1>,
+    #[schema(min_items = 1, max_items = 64)]
+    pub sealed_metric_requirements: Vec<MetricRequirementV1>,
     #[schema(minimum = 1, maximum = 2147483647)]
     pub minimum_observations: u32,
     #[schema(schema_with = crate::scalars::fraction_schema)]
@@ -313,6 +315,8 @@ pub struct EvaluationPolicyView {
     pub split_policy: SplitPolicyV1,
     #[schema(min_items = 1, max_items = 64)]
     pub metric_requirements: Vec<MetricRequirementV1>,
+    #[schema(min_items = 1, max_items = 64)]
+    pub sealed_metric_requirements: Option<Vec<MetricRequirementV1>>,
     #[schema(minimum = 1, maximum = 2147483647)]
     pub minimum_observations: u32,
     #[schema(schema_with = crate::scalars::fraction_schema)]

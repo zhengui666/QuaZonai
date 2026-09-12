@@ -166,3 +166,38 @@ fn comparator_diagnostics_identify_only_the_invalid_endpoints() {
         );
     }
 }
+
+#[test]
+fn sealed_requirements_are_explicit_and_selection_uses_its_own_evaluation_kind() {
+    let mut r = base();
+    r.as_object_mut()
+        .unwrap()
+        .remove("sealed_metric_requirements");
+    assert!(serde_json::from_value::<EvaluationPolicyCreate>(r).is_err());
+    for (value, code) in [(json!([]), "METRIC_COUNT"), (Value::Null, "")] {
+        let mut r = base();
+        r["sealed_metric_requirements"] = value;
+        if code.is_empty() {
+            assert!(serde_json::from_value::<EvaluationPolicyCreate>(r).is_err());
+        } else {
+            invalid(r, code);
+        }
+    }
+    let mut r = base();
+    r["sealed_metric_requirements"][0]["scope"] = json!("asset:0");
+    assert!(evaluation_policy(&serde_json::from_value(r.clone()).unwrap()).is_ok());
+    r["selection"]["evaluation_kind"] = json!("SEALED");
+    invalid(r.clone(), "REQUIRED_ALLOWED_METRIC");
+    r["selection"]["metric_scope"] = json!("asset:0");
+    assert!(evaluation_policy(&serde_json::from_value(r.clone()).unwrap()).is_ok());
+    r["sealed_metric_requirements"][0]["threshold_low"] = Value::Null;
+    let Err(DomainError::Fields(fields)) = evaluation_policy(&serde_json::from_value(r).unwrap())
+    else {
+        panic!("missing Sealed threshold diagnostic")
+    };
+    assert_eq!(
+        fields[0].field,
+        "sealed_metric_requirements.0.threshold_low"
+    );
+    assert_eq!(fields[0].code, "EXACT_THRESHOLD_BOUNDS");
+}

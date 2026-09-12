@@ -258,6 +258,14 @@ async fn policies_allocate_one_immutable_family_and_keep_exact_intent_on_replay(
     assert_ne!(a.replayed, b.replayed);
     assert_eq!(a.resource.version, 1);
     assert_eq!(
+        serde_json::to_value(&a.resource.sealed_metric_requirements).unwrap(),
+        serde_json::to_value(&request.sealed_metric_requirements).unwrap()
+    );
+    assert_eq!(
+        serde_json::to_value(&a.resource.sealed_metric_requirements).unwrap(),
+        serde_json::to_value(&b.resource.sealed_metric_requirements).unwrap()
+    );
+    assert_eq!(
         a.resource.selection_rule.family_id,
         b.resource.selection_rule.family_id
     );

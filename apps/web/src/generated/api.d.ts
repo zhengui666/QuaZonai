@@ -2052,6 +2052,7 @@ export interface components {
                 question: string;
                 require_real_data: boolean;
                 required_capabilities: string[];
+                sealed_metric_requirements?: components["schemas"]["MetricRequirementV1"][] | null;
                 selection_rule: components["schemas"]["SelectionRuleV1"];
                 split_policy: components["schemas"]["SplitPolicyV1"];
                 validity_seconds: components["schemas"]["DbCounter"];
@@ -2600,6 +2601,7 @@ export interface components {
             require_real_data: boolean;
             required_capabilities: string[];
             schema_version: components["schemas"]["SchemaV1"];
+            sealed_metric_requirements: components["schemas"]["MetricRequirementV1"][];
             selection: components["schemas"]["SelectionParametersV1"];
             split_policy: components["schemas"]["SplitPolicyV1"];
             validity_seconds: components["schemas"]["DbCounter"];
@@ -2618,6 +2620,7 @@ export interface components {
             question: string;
             require_real_data: boolean;
             required_capabilities: string[];
+            sealed_metric_requirements?: components["schemas"]["MetricRequirementV1"][] | null;
             selection_rule: components["schemas"]["SelectionRuleV1"];
             split_policy: components["schemas"]["SplitPolicyV1"];
             validity_seconds: components["schemas"]["DbCounter"];
@@ -3342,6 +3345,7 @@ export interface components {
                 question: string;
                 require_real_data: boolean;
                 required_capabilities: string[];
+                sealed_metric_requirements?: components["schemas"]["MetricRequirementV1"][] | null;
                 selection_rule: components["schemas"]["SelectionRuleV1"];
                 split_policy: components["schemas"]["SplitPolicyV1"];
                 validity_seconds: components["schemas"]["DbCounter"];
