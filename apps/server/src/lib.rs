@@ -12,6 +12,7 @@ pub mod control;
 pub mod cycles;
 pub mod data;
 pub mod error;
+pub mod evidence;
 pub mod experiments;
 #[cfg(test)]
 mod header_tests;
@@ -208,6 +209,18 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
                 .layer(DefaultBodyLimit::max(64 * 1024)),
         )
         .route("/api/v2/experiments/{id}", get(experiments::get))
+        .route("/api/v2/alphas", get(evidence::alphas))
+        .route("/api/v2/alphas/{id}/versions", get(evidence::versions))
+        .route(
+            "/api/v2/alphas/{id}/versions/{version}",
+            get(evidence::version),
+        )
+        .route(
+            "/api/v2/alpha-versions/{id}/evaluations",
+            get(evidence::evaluations),
+        )
+        .route("/api/v2/evaluations/{id}", get(evidence::evaluation))
+        .route("/api/v2/evaluations/{id}/metrics", get(evidence::metrics))
         .route(
             "/api/v2/settings/codex",
             get(codex_profiles::profiles)
@@ -441,6 +454,7 @@ research::evaluation_policies,research::evaluation_policy,research::create_evalu
 brief::list,brief::get,brief::create,brief::update,
 cycles::freeze,cycles::frozen,cycles::start,cycles::list,cycles::get,
 experiments::propose,experiments::list,experiments::get,
+evidence::alphas,evidence::versions,evidence::version,evidence::evaluations,evidence::evaluation,evidence::metrics,
 settings::register_secret,settings::runtimes,settings::runtime,settings::create_runtime,settings::update_runtime,
 settings::downstreams,settings::downstream,settings::create_downstream,settings::update_downstream,
 runtime::probe,runtime::readiness,

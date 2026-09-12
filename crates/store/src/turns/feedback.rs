@@ -1,7 +1,6 @@
 //! Public scientific observations on the original Thread, never a qualification.
 use super::*;
 use crate::{db, lifecycle::native::NativeObjectPublication};
-use contracts::evidence::MetricValueV1;
 use serde_json::json;
 
 impl Store {
@@ -76,25 +75,7 @@ impl Store {
                 .bind(evaluation.as_uuid()).bind(&selection.metric_code).bind(&selection.metric_scope)
                 .bind(&selection.method_id).bind(&selection.method_version).bind(&selection.unit).bind(&selection.frequency)
                 .fetch_optional(&mut *tx).await?
-                .map(|m| Ok::<_, StoreError>(MetricValueV1 {
-                    schema_version: contracts::SchemaV1,
-                    evaluation_id: evaluation,
-                    metric_code: m.try_get("metric_code")?,
-                    scope: m.try_get("scope")?,
-                    value: m.try_get("value")?,
-                    status: db::enum_value(&m, "status")?,
-                    reason_code: m.try_get("reason_code")?,
-                    unit: m.try_get("unit")?,
-                    period_start: m.try_get("period_start")?,
-                    period_end: m.try_get("period_end")?,
-                    observation_count: count(m.try_get("observation_count")?)?,
-                    frequency: m.try_get("frequency")?,
-                    annualization_factor: m.try_get("annualization_factor")?,
-                    method_id: m.try_get("method_id")?,
-                    method_version: m.try_get("method_version")?,
-                    source_artifact_id: id(m.try_get("source_artifact_id")?)?,
-                    higher_is_better: m.try_get("higher_is_better")?,
-                })).transpose()?;
+                .as_ref().map(crate::evidence::metric).transpose()?;
             let valid_until: Option<DateTime<Utc>> = ev.try_get("valid_until")?;
             observation["evaluation"] = json!({
                 "id":evaluation,"alpha_version_id":id(ev.try_get("subject_alpha_version_id")?)?,

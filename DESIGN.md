@@ -963,6 +963,38 @@ RETURN_PER_HORIZON；未独立校准时calibration_id保持null，不填常数�
 这修正了“先建评估主体便把PENDING永久冻结”的顺序冲突，不放宽输入或既有证据
 不可变性；数据库关联不代替可信服务的数值、政策、暴露及完整试验账本验证。
 
+### A3.12 Alpha 版本与正式 Validation 的只读操作面
+
+Alpha与完整Validation指标供Operator浏览器，或具有精确项目RESEARCH_READ的CLI
+读取；不向Mission/Automation/Downstream开放这组操作面。Mission继续使用B3的
+受限工具及冻结政策允许的反馈，不能借此扩大证据披露。全部查询复用现有授权、
+原生UUID cursor及limit1..100，不创建第二套业务记录，不触发计算/探测/模型请求。
+
+`GET /alphas?project_id=...`返回Page<AlphaView>，含原id/project/name/lifecycle、
+active_version_id及其准确十进制版本、revision/创建和更新时间。登记的lifecycle不是
+当前可交付资格。`GET /alphas/{id}/versions`分页列出不可变AlphaVersionView；
+`GET /alphas/{id}/versions/{version}`按原Alpha和十进制正版本定位，不以当前版本替代。
+版本返回A3的原实验/血缘/CODE/MODEL/信号合同/单位/horizon/calibration/镜像和创建
+时间；origin只从原已绑定Discovery任务来源读取，无证据保留null，不从生成CODE的
+SYNTHETIC推断市场数据来源，也不将null calibration变成已校准。
+
+`GET /alpha-versions/{id}/evaluations`只列出该版本已正式发表的原WALK_FORWARD
+Validation；`GET /evaluations/{id}`返回相同EvaluationView。必须精确匹配原
+experiment_validations的Run/Alpha/Policy/输入、原qz.alpha_evaluation生产者和
+evaluation_publications；未发表、Sealed或不属于此正式路径的证据不经该入口披露。
+返回A4的三层状态、政策/输入/Run/版本及报告引用、真实来源和原concluded_at/
+valid_until，附DB检查时间及unexpired_at_read；未过期不等于资格或允许交付。
+`GET /evaluations/{id}/metrics`对同一授权和正式生产者检查后返回Page<MetricValueV1>，
+使用数据库原metric行UUID分页，完整保留value/null/status/reason/方法版本/单位/
+频率/样本数/期间/来源；不计算新分数、不补零、不重新评估。两类报告字节、原生
+目录、参数、标签及逐折索引均不读取。原EVALUATOR_ONLY产物GET继续拒绝。
+
+CLI alpha list/versions/show/evaluations及evidence show/metrics使用相同HTTP/DTO；
+React/Ant Design页面明确区分请求失败、无可披露Validation、研究登记、科学PASS、
+过期和资格。版本/指标翻页不得跨Alpha或评估，切换项目清空旧选择；缺值显示原因，
+不用0或“通过”占位。该只读操作面不替代后续独立Reviewer/Sealed/校准/资格与
+主动评估准入合同。
+
 ## A4. 输入、政策、评估、资格与暴露
 
 ```text

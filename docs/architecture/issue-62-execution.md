@@ -1196,3 +1196,34 @@ accepted_at；正常成功仍要求公开回答与全部科学/反馈证据。�
 科学任务内容为有明确标识的fixture，不声称实际Job/OCI完整链路、真实账号T42或
 GitHub当前Head CI。未知原生用量仍可能保持待对账；完整选择/Sealed/校准/Reviewer/
 资格、Alpha与组合交付操作面、部署/迁移/恢复及其余验收仍须继续，未请求review或合并。
+
+## 2026-09-12：原 Alpha 与正式 Validation 只读操作面
+
+按 DESIGN A3.12 复用原表、授权、UUID游标和MetricValue合同，实现6个HTTP GET、
+对应原生CLI命令与Ant Design Alpha页面。仅Operator或精确项目RESEARCH_READ的
+CLI可读取完整操作视图；Mission保留原冻结选择口径反馈，不扩大权限。版本按原
+Alpha和正十进制版本号读取，不替换活动版本；来源取原Discovery数据任务，不把
+生成CODE的SYNTHETIC当市场来源。只有原正式Validation/政策/输入/终态Attempt/
+生产者/发布标记全部匹配的评估可见；Sealed和非正式旧记录不可见。指标分页不补
+零、不重算，保留方法/单位/期间/计数/来源；原有效期与数据库读取时间分开显示。
+这些读取不产生计算、暴露预约、资格或交付，不读取受限报告字节。
+
+基于b85e06d9与冻结补丁，前三次编译检查发现新增CLI名称冲突和测试的原生String/
+UTC类型构造错误，修正调用而未加兼容层。最终`verify-oLlzjL`check/fmt/严格Clippy
+均为0；40项Store及15项HTTP/CLI回归全通过，0忽略，独立PG确认停止，源码不变。
+其中实际原生CLI经过TCP/Axum/Bearer/PG，HTTP核对原版本/分页与大计数；科学结果
+仍是明确的受控fixture，不能替代完整Job/OCI或真实研究链路。
+
+`web-verify-QI0NUw`的171项浏览器检查通过、3项因测试使用不存在的Drawer CSS类
+失败；改用实际dialog语义。`web-verify-rWkyH6`的3项失败随后定位到指标横向表格
+没有键盘焦点；核查所有Table，同类撤销历史表也修复。复用原生onHeaderRow和
+tabIndex，使空表也可聚焦，不加滚动脚本、不关闭axe规则、不强制点击。
+最终`web-verify-eSjgEy`通过：三份Rust导出与TypeScript/Ajv生成重复字节一致，
+手写源不变；typecheck、504项Vitest、5项Node检查、decimal/bigint/fraction线协议、
+build和CLI help通过；36项Codex设置浏览器检查及全站177项三视口检查通过。
+新回归实际验证Tab/方向键滚动、空指标、0与null区别、精确计数、原来源、分页、
+切换项目清理旧详情及读取故障不当空结果。旧HTTP路径和已有schema语义未改变。
+
+此阶段没有新依赖、迁移或资格入口。完整选择/校准/Sealed/独立Reviewer/资格、
+双Alpha组合交付、部署/迁移/恢复及T01–T42剩余证据仍须继续；未push、请求review、
+合并或关闭Issue。GitHub只读复核PR63仍为Draft、远端37e5713e，Issue62仍开放。

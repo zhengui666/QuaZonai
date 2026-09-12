@@ -55,6 +55,9 @@ phase，不收集隐藏推理。它不赋予报告中的PASS或审批文字任�
 会话执行结果，不是Cycle完成、实验SUPPORTED、评估PASS或Alpha资格，Agent不能自批。
 可信Worker登记的RESEARCH Alpha版本仍未授资格；signal单位/horizon沿用冻结Brief，
 不得把SCORE直接作为预期收益或补造calibration。不能用版本存在代替正式评估。
+Alpha/正式Validation的完整只读HTTP/CLI操作面仅供Operator及精确项目CLI身份；
+Mission不借用它读取额外指标。原Thread反馈仍只披露冻结选择指标与允许元数据，
+不读取报告字节或把未过期/科学PASS解释成资格。
 `job validate-alpha`是可信本地数值入口，不是Mission可执行工具；其全部折/标签/
 训练索引按输入数据权限保留，不直接作为LLM工具输出或手工冒充Evaluation/资格。
 受管`VALIDATE_ALPHA`仅接受VALIDATION目录、原MODEL/PARAMETERS；同一原生切分器

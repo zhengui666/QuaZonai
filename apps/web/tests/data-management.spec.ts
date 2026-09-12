@@ -97,6 +97,22 @@ async function openData(page: Page) {
   await settingsCategory(page, '数据与许可');
 }
 
+test('read-only revocation history has keyboard access to its horizontal table', async ({ page }) => {
+  const commands = await setup(page);
+  await page.route(`**/api/v2/data/grants/${grant.id}/revocations*`, route => reply(route, {
+    schema_version: 1, items: [{ id: id(90), grant_id: grant.id, effective_at: at,
+      reason_code: 'OPERATOR_REVOKED', reason: 'Synthetic immutable revocation', created_at: at }], next_cursor: null,
+  }));
+  await openData(page);
+  await page.getByRole('button', { name: '查看许可与版本登记', exact: true }).click();
+  await page.getByRole('button', { name: '撤销历史', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByRole('cell', { name: 'Synthetic immutable revocation', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('row').filter({ has: page.getByRole('columnheader', { name: '原因代码', exact: true }) })).toHaveAttribute('tabindex', '0');
+  expect((await new AxeBuilder({ page }).include('[role="dialog"]').analyze()).violations).toEqual([]);
+  expect(commands).toEqual([]);
+});
+
 test('native registration keeps selected references and exact bigint revisions', async ({ page }) => {
   const commands = await setup(page); await openData(page);
   await page.getByRole('button', { name: '查看许可与版本登记' }).click();

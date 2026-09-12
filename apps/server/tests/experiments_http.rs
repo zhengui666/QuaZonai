@@ -143,6 +143,120 @@ async fn setup(pool: &PgPool) -> (Fixture, String, experiment_support::Fixture) 
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn alpha_routes_return_exact_versions_and_never_substitute_active_or_invent_origin(
+    pool: PgPool,
+) {
+    let (f, cookie, e) = setup(&pool).await;
+    let proposal = browser(
+        &f,
+        &cookie,
+        "POST",
+        "/api/v2/experiments",
+        "alpha-proposal",
+        serde_json::to_value(&e.request).unwrap(),
+    )
+    .await;
+    assert_eq!(proposal.status, StatusCode::CREATED);
+    let experiment: Id = proposal.body["resource"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+        .try_into()
+        .unwrap();
+    let alpha = Id::new();
+    sqlx::query("INSERT INTO app.alphas(id,project_id,name,lifecycle) VALUES($1,$2,'Relational version routing fixture','RESEARCH')")
+        .bind(alpha.as_uuid()).bind(e.data.project.as_uuid()).execute(&pool).await.unwrap();
+    let mut versions = Vec::new();
+    for number in [1, i32::MAX] {
+        let id = Id::new();
+        sqlx::query("INSERT INTO app.alpha_versions(id,project_id,alpha_id,version,experiment_id,root_lineage_id,code_artifact_id,signal_contract_version,signal_kind,horizon_kind,horizon_value,forecast_unit,runtime_image_ref) SELECT $1,p.id,$2,$3,$4,p.root_lineage_id,$5,'1','SCORE','FIXED_BARS',9007199254740993,'UNITLESS_SCORE','routing-fixture' FROM app.projects p WHERE p.id=$6")
+            .bind(id.as_uuid()).bind(alpha.as_uuid()).bind(number).bind(experiment.as_uuid()).bind(e.request.code_artifact_id.unwrap().as_uuid())
+            .bind(e.data.project.as_uuid()).execute(&pool).await.unwrap();
+        versions.push(id);
+    }
+    sqlx::query("UPDATE app.alphas SET active_version_id=$2,revision=revision+1 WHERE id=$1")
+        .bind(alpha.as_uuid())
+        .bind(versions[1].as_uuid())
+        .execute(&pool)
+        .await
+        .unwrap();
+    let get = |path: String| {
+        let f = &f;
+        let cookie = &cookie;
+        async move { browser(f, cookie, "GET", &path, "unused", Value::Null).await }
+    };
+    let alphas = get(format!("/api/v2/alphas?project_id={}", e.data.project)).await;
+    assert_eq!(alphas.status, StatusCode::OK);
+    assert_eq!(
+        alphas.body["items"][0]["active_version"],
+        i32::MAX.to_string()
+    );
+    assert_eq!(
+        alphas.body["items"][0]["active_version_id"],
+        versions[1].to_string()
+    );
+    let first = get(format!("/api/v2/alphas/{alpha}/versions?limit=1")).await;
+    assert_eq!(first.status, StatusCode::OK);
+    assert_eq!(first.body["items"][0]["id"], versions[1].to_string());
+    let cursor = first.body["next_cursor"].as_str().unwrap();
+    let second = get(format!(
+        "/api/v2/alphas/{alpha}/versions?limit=1&cursor={cursor}"
+    ))
+    .await;
+    assert_eq!(second.body["items"][0]["id"], versions[0].to_string());
+    assert!(second.body["next_cursor"].is_null());
+    let original = get(format!("/api/v2/alphas/{alpha}/versions/1")).await;
+    assert_eq!(original.status, StatusCode::OK);
+    assert_eq!(original.body["id"], versions[0].to_string());
+    assert_eq!(original.body["version"], "1");
+    assert_eq!(original.body["horizon_value"], "9007199254740993");
+    assert!(
+        original.body["origin"].is_null(),
+        "CODE origin cannot stand in for absent native data provenance"
+    );
+    assert!(original.body["calibration_id"].is_null());
+    assert_eq!(
+        get(format!("/api/v2/alphas/{alpha}/versions/2"))
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        get(format!("/api/v2/alphas/{alpha}/versions/0"))
+            .await
+            .status,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        get(format!("/api/v2/alphas/{alpha}/versions/9007199254740993"))
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    let absent = get(format!(
+        "/api/v2/alpha-versions/{}/evaluations",
+        versions[0]
+    ))
+    .await;
+    assert_eq!(absent.status, StatusCode::OK);
+    assert_eq!(absent.body["items"], json!([]));
+    for suffix in ["", "/metrics"] {
+        assert_eq!(
+            get(format!("/api/v2/evaluations/{}{suffix}", Id::new()))
+                .await
+                .status,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            get(format!("/api/v2/evaluations/not-an-id{suffix}"))
+                .await
+                .status,
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn browser_proposes_lists_and_replays_real_uploaded_artifact_references(pool: PgPool) {
     let (f, cookie, fixture) = setup(&pool).await;
     let body = serde_json::to_value(&fixture.request).unwrap();

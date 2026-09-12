@@ -39,6 +39,8 @@ server client --origin https://research.example --credential-file /private/cli.t
 | `input-set list --project-id <id>/show <id>/create` | InputSetCreate；同一不可变数据、许可与用途校验 |
 | `policy list --project-id <id>/show <id>/create` | EvaluationPolicyCreate；登记不证明方法或数据已经可用 |
 | `experiment list --project-id <id>/show <id>/propose` | ExperimentProposalV1；PENDING不等于运行或合格 |
+| `alpha list --project-id <id>/versions <id>/show <id> <version>/evaluations <version-id>` | 原Alpha/不可变版本及已发表Validation；登记状态不替代资格 |
+| `evidence show <id>/metrics <id>` | 三层评估状态、来源/期限及分页MetricValueV1；不下载受限报告、不披露Sealed |
 | `artifact list --project-id <id>/show <id>/submit/export <id>` | ArtifactCreate；export先核对元数据、media和字节数，再向stdout写原始字节 |
 | `run list/show <id>/cancel <id>/watch <id>` | RunCancelV1；list可选 `--project-id/--state`，watch只观察 |
 | `operator-grant` | OperatorGrantRequest含完整command、target_id与新TOTP；201为单次人工授权 |

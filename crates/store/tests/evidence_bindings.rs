@@ -1,5 +1,7 @@
 //! Real PostgreSQL publication, exact ownership and cursor-atomicity regressions.
 //! Fixture PASS rows are relationship tests, not scientific qualification.
+#[path = "../../../tests/support/research.rs"]
+mod research_support;
 mod support;
 use contracts::Id;
 use sqlx::{PgConnection, PgPool};
@@ -79,6 +81,41 @@ async fn target(
     sqlx::query("INSERT INTO app.candidate_targets(candidate_id,instrument_id,target_weight,currency,asof,valid_until) VALUES($1,$2,0.5,'USD',statement_timestamp(),statement_timestamp()+interval '1 hour')")
         .bind(candidate.as_uuid()).bind(instrument).execute(connection).await?;
     Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn operation_views_never_disclose_sealed_or_unbound_published_evaluations(pool: PgPool) {
+    let (store, operator) = research_support::operator(&pool).await;
+    let f = fixture(&pool, budget()).await;
+    let a = alpha(&pool, &f).await;
+    let sealed: uuid::Uuid =
+        sqlx::query_scalar("SELECT qualifying_evaluation_id FROM app.qualifications WHERE id=$1")
+            .bind(a.qualification.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    // The relational fixture is published but has no formal native continuation.
+    // Copying its fields and labeling it WALK_FORWARD does not make it eligible.
+    let unbound: uuid::Uuid = sqlx::query_scalar("INSERT INTO app.evaluations(project_id,subject_alpha_version_id,input_set_id,policy_id,run_id,evaluation_kind,execution_status,evidence_status,decision,report_artifact_id,method_versions_artifact_id,concluded_at,valid_until) SELECT project_id,subject_alpha_version_id,input_set_id,policy_id,run_id,'WALK_FORWARD',execution_status,evidence_status,decision,report_artifact_id,method_versions_artifact_id,concluded_at,valid_until FROM app.evaluations WHERE id=$1 RETURNING id")
+        .bind(sealed).fetch_one(&pool).await.unwrap();
+    let query = contracts::control::ListQuery::default();
+    for id in [sealed, unbound] {
+        let id = id.to_string().try_into().unwrap();
+        assert!(matches!(
+            store.evaluation(&operator, id).await,
+            Err(store::StoreError::NotFound)
+        ));
+        assert!(matches!(
+            store.evaluation_metrics(&operator, id, &query).await,
+            Err(store::StoreError::NotFound)
+        ));
+    }
+    assert!(store
+        .alpha_evaluations(&operator, a.version, &query)
+        .await
+        .unwrap()
+        .items
+        .is_empty());
 }
 
 #[sqlx::test(migrations = "../../migrations")]

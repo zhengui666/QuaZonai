@@ -289,6 +289,108 @@ async fn complete_validation_publication_is_atomic_unique_producer_bound_and_pre
     assert!(counts.0 > 2);
     assert_eq!(counts.0, counts.1);
     assert_eq!(counts.0, counts.2 * 2);
+    // Public reads project the committed original aggregate without opening a
+    // byte reader, publishing another evaluation, or consuming another trial.
+    let list = contracts::control::ListQuery {
+        limit: 1,
+        cursor: None,
+    };
+    let header = store.evaluation(&actor, a.resource).await.unwrap();
+    assert_eq!(header.run_id, run);
+    assert_eq!(header.report_artifact_id, report);
+    assert_eq!(header.origin, contracts::research::DataOrigin::Fixture);
+    assert!(header.unexpired_at_read);
+    assert_eq!(
+        header.valid_until,
+        row.get::<Option<chrono::DateTime<chrono::Utc>>, _>("valid_until")
+    );
+    assert_eq!(
+        header.concluded_at,
+        row.get::<chrono::DateTime<chrono::Utc>, _>("concluded_at")
+    );
+    let alphas = store
+        .alphas(
+            &actor,
+            &contracts::research::ResearchListQuery {
+                project_id: f.data.project,
+                limit: 1,
+                cursor: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(alphas.items.len(), 1);
+    let alpha = &alphas.items[0];
+    let versions = store.alpha_versions(&actor, alpha.id, &list).await.unwrap();
+    assert_eq!(versions.items.len(), 1);
+    let version = store
+        .alpha_version(&actor, alpha.id, versions.items[0].version)
+        .await
+        .unwrap();
+    assert_eq!(Some(version.id), header.subject_alpha_version_id);
+    assert_eq!(version.experiment_id, experiment);
+    assert_eq!(
+        version.origin,
+        Some(contracts::research::DataOrigin::Fixture)
+    );
+    assert_eq!(version.calibration_id, None);
+    assert!(matches!(
+        store
+            .alpha_version(
+                &actor,
+                alpha.id,
+                contracts::Revision::INITIAL.next().unwrap()
+            )
+            .await,
+        Err(StoreError::NotFound)
+    ));
+    let evaluations = store
+        .alpha_evaluations(&actor, version.id, &list)
+        .await
+        .unwrap();
+    assert_eq!(evaluations.items.len(), 1);
+    assert_eq!(evaluations.items[0].id, header.id);
+    assert!(evaluations.next_cursor.is_none());
+    let mut query = list.clone();
+    let mut seen = std::collections::BTreeSet::new();
+    loop {
+        let page = store
+            .evaluation_metrics(&actor, header.id, &query)
+            .await
+            .unwrap();
+        assert_eq!(page.items.len(), 1);
+        let metric = &page.items[0];
+        assert_eq!(metric.evaluation_id, header.id);
+        assert_eq!(metric.source_artifact_id, raw);
+        assert!(seen.insert((metric.metric_code.clone(), metric.scope.clone())));
+        let original = sqlx::query("SELECT * FROM app.metric_values WHERE evaluation_id=$1 AND metric_code=$2 AND scope=$3")
+            .bind(header.id.as_uuid()).bind(&metric.metric_code).bind(&metric.scope).fetch_one(&pool).await.unwrap();
+        assert_eq!(metric.value, original.get::<Option<f64>, _>("value"));
+        assert_eq!(
+            metric.observation_count.get() as i64,
+            original.get::<i64, _>("observation_count")
+        );
+        assert_eq!(
+            metric.method_version,
+            original.get::<String, _>("method_version")
+        );
+        assert_eq!(
+            metric.period_start,
+            original.get::<chrono::DateTime<chrono::Utc>, _>("period_start")
+        );
+        assert_eq!(
+            metric.period_end,
+            original.get::<chrono::DateTime<chrono::Utc>, _>("period_end")
+        );
+        assert_eq!(metric.unit, original.get::<String, _>("unit"));
+        if let Some(cursor) = page.next_cursor {
+            assert_eq!(cursor.as_uuid(), original.get::<uuid::Uuid, _>("id"));
+            query.cursor = Some(cursor);
+        } else {
+            break;
+        }
+    }
+    assert_eq!(seen.len() as i64, counts.0);
     assert_eq!(trial_usage(&pool, &lease).await, (0, 1));
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.qualifications")
@@ -397,6 +499,31 @@ async fn cancelled_unsubmitted_validation_publishes_without_inventing_a_native_r
             "INCONCLUSIVE".into()
         )
     );
+    let header = store.evaluation(&actor, result.resource).await.unwrap();
+    assert_eq!(
+        header.execution_status,
+        contracts::runtime_jobs::RuntimeResultState::Cancelled
+    );
+    assert_eq!(
+        header.evidence_status,
+        contracts::evidence::EvidenceStatus::Incomplete
+    );
+    assert_eq!(header.decision, contracts::evidence::Decision::Inconclusive);
+    assert_eq!(header.valid_until, None);
+    assert!(!header.unexpired_at_read);
+    assert!(store
+        .evaluation_metrics(
+            &actor,
+            header.id,
+            &contracts::control::ListQuery {
+                limit: 1,
+                cursor: None
+            }
+        )
+        .await
+        .unwrap()
+        .items
+        .is_empty());
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.metric_values")
             .fetch_one(&pool)

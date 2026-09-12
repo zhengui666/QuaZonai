@@ -1,6 +1,174 @@
 {
   "components": {
     "schemas": {
+      "AlphaLifecycle": {
+        "enum": [
+          "RESEARCH",
+          "QUALIFIED",
+          "SUSPENDED",
+          "RETIRED"
+        ],
+        "type": "string"
+      },
+      "AlphaVersionView": {
+        "additionalProperties": false,
+        "properties": {
+          "alpha_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "calibration_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "code_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "experiment_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "forecast_unit": {
+            "$ref": "#/components/schemas/ForecastUnit"
+          },
+          "horizon_kind": {
+            "$ref": "#/components/schemas/HorizonKind"
+          },
+          "horizon_value": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DbCounter"
+              }
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "model_artifact_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "origin": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DataOrigin"
+              }
+            ]
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "root_lineage_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "runtime_image_ref": {
+            "type": "string"
+          },
+          "signal_contract_version": {
+            "type": "string"
+          },
+          "signal_kind": {
+            "$ref": "#/components/schemas/TargetKind"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Revision"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "alpha_id",
+          "version",
+          "experiment_id",
+          "root_lineage_id",
+          "code_artifact_id",
+          "signal_contract_version",
+          "signal_kind",
+          "horizon_kind",
+          "forecast_unit",
+          "runtime_image_ref",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "AlphaView": {
+        "additionalProperties": false,
+        "properties": {
+          "active_version": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Revision"
+              }
+            ]
+          },
+          "active_version_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "lifecycle": {
+            "$ref": "#/components/schemas/AlphaLifecycle"
+          },
+          "name": {
+            "type": "string"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "name",
+          "lifecycle",
+          "revision",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "ArtifactAccess": {
         "enum": [
           "OPERATOR",
@@ -8200,6 +8368,14 @@
         "pattern": "^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])",
         "type": "string"
       },
+      "Decision": {
+        "enum": [
+          "PASS",
+          "REJECT",
+          "INCONCLUSIVE"
+        ],
+        "type": "string"
+      },
       "DeviceList": {
         "additionalProperties": false,
         "properties": {
@@ -8363,6 +8539,16 @@
           "updated_at"
         ],
         "type": "object"
+      },
+      "EvaluationKind": {
+        "enum": [
+          "DISCOVERY",
+          "WALK_FORWARD",
+          "SEALED",
+          "PORTFOLIO",
+          "FORWARD"
+        ],
+        "type": "string"
       },
       "EvaluationPolicyCreate": {
         "additionalProperties": false,
@@ -8561,6 +8747,112 @@
           "validity_seconds"
         ],
         "type": "object"
+      },
+      "EvaluationView": {
+        "additionalProperties": false,
+        "properties": {
+          "checked_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "concluded_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/Decision"
+          },
+          "evaluation_kind": {
+            "$ref": "#/components/schemas/EvaluationKind"
+          },
+          "evidence_status": {
+            "$ref": "#/components/schemas/EvidenceStatus"
+          },
+          "execution_status": {
+            "$ref": "#/components/schemas/RuntimeResultState"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "input_set_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "method_versions_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/DataOrigin"
+          },
+          "policy_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "report_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "run_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "subject_alpha_version_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "subject_candidate_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "unexpired_at_read": {
+            "type": "boolean"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "input_set_id",
+          "policy_id",
+          "run_id",
+          "evaluation_kind",
+          "execution_status",
+          "evidence_status",
+          "decision",
+          "report_artifact_id",
+          "method_versions_artifact_id",
+          "origin",
+          "concluded_at",
+          "checked_at",
+          "unexpired_at_read"
+        ],
+        "type": "object"
+      },
+      "EvidenceStatus": {
+        "enum": [
+          "VALID",
+          "INVALID",
+          "INCOMPLETE",
+          "UNSUPPORTED"
+        ],
+        "type": "string"
       },
       "ExperimentOutcome": {
         "enum": [
@@ -8838,6 +9130,14 @@
         ],
         "type": "object"
       },
+      "ForecastUnit": {
+        "enum": [
+          "RETURN_PER_HORIZON",
+          "RESIDUAL_RETURN_PER_HORIZON",
+          "UNITLESS_SCORE"
+        ],
+        "type": "string"
+      },
       "FrozenBriefV1": {
         "additionalProperties": false,
         "properties": {
@@ -8857,6 +9157,14 @@
           "execution_context"
         ],
         "type": "object"
+      },
+      "HorizonKind": {
+        "enum": [
+          "FIXED_BARS",
+          "FIXED_DURATION",
+          "VARIABLE_INTERVAL"
+        ],
+        "type": "string"
       },
       "Id": {
         "format": "uuid",
@@ -9548,6 +9856,106 @@
           "required",
           "minimum_observations",
           "method_allowlist"
+        ],
+        "type": "object"
+      },
+      "MetricStatus": {
+        "enum": [
+          "OK",
+          "INSUFFICIENT_DATA",
+          "UNSUPPORTED",
+          "INVALID_INPUT",
+          "FAILED"
+        ],
+        "type": "string"
+      },
+      "MetricValueV1": {
+        "additionalProperties": false,
+        "properties": {
+          "annualization_factor": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "evaluation_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "frequency": {
+            "type": "string"
+          },
+          "higher_is_better": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "method_id": {
+            "type": "string"
+          },
+          "method_version": {
+            "type": "string"
+          },
+          "metric_code": {
+            "type": "string"
+          },
+          "observation_count": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "period_end": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "period_start": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "source_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/MetricStatus"
+          },
+          "unit": {
+            "type": "string"
+          },
+          "value": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "schema_version",
+          "evaluation_id",
+          "metric_code",
+          "scope",
+          "value",
+          "status",
+          "unit",
+          "period_start",
+          "period_end",
+          "observation_count",
+          "frequency",
+          "annualization_factor",
+          "method_id",
+          "method_version",
+          "source_artifact_id"
         ],
         "type": "object"
       },
@@ -10264,6 +10672,217 @@
           "1"
         ],
         "type": "string"
+      },
+      "Page_AlphaVersionView": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "alpha_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "calibration_id": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  ]
+                },
+                "code_artifact_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "experiment_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "forecast_unit": {
+                  "$ref": "#/components/schemas/ForecastUnit"
+                },
+                "horizon_kind": {
+                  "$ref": "#/components/schemas/HorizonKind"
+                },
+                "horizon_value": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DbCounter"
+                    }
+                  ]
+                },
+                "id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "model_artifact_id": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  ]
+                },
+                "origin": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DataOrigin"
+                    }
+                  ]
+                },
+                "project_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "root_lineage_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "runtime_image_ref": {
+                  "type": "string"
+                },
+                "signal_contract_version": {
+                  "type": "string"
+                },
+                "signal_kind": {
+                  "$ref": "#/components/schemas/TargetKind"
+                },
+                "version": {
+                  "$ref": "#/components/schemas/Revision"
+                }
+              },
+              "required": [
+                "id",
+                "project_id",
+                "alpha_id",
+                "version",
+                "experiment_id",
+                "root_lineage_id",
+                "code_artifact_id",
+                "signal_contract_version",
+                "signal_kind",
+                "horizon_kind",
+                "forecast_unit",
+                "runtime_image_ref",
+                "created_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "items"
+        ],
+        "type": "object"
+      },
+      "Page_AlphaView": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "active_version": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Revision"
+                    }
+                  ]
+                },
+                "active_version_id": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  ]
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "lifecycle": {
+                  "$ref": "#/components/schemas/AlphaLifecycle"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "project_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "revision": {
+                  "$ref": "#/components/schemas/Revision"
+                },
+                "updated_at": {
+                  "format": "date-time",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "project_id",
+                "name",
+                "lifecycle",
+                "revision",
+                "created_at",
+                "updated_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "items"
+        ],
+        "type": "object"
       },
       "Page_ArtifactView": {
         "additionalProperties": false,
@@ -11337,6 +11956,129 @@
         ],
         "type": "object"
       },
+      "Page_EvaluationView": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "checked_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "concluded_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "decision": {
+                  "$ref": "#/components/schemas/Decision"
+                },
+                "evaluation_kind": {
+                  "$ref": "#/components/schemas/EvaluationKind"
+                },
+                "evidence_status": {
+                  "$ref": "#/components/schemas/EvidenceStatus"
+                },
+                "execution_status": {
+                  "$ref": "#/components/schemas/RuntimeResultState"
+                },
+                "id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "input_set_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "method_versions_artifact_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "origin": {
+                  "$ref": "#/components/schemas/DataOrigin"
+                },
+                "policy_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "project_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "report_artifact_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "run_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "subject_alpha_version_id": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  ]
+                },
+                "subject_candidate_id": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  ]
+                },
+                "unexpired_at_read": {
+                  "type": "boolean"
+                },
+                "valid_until": {
+                  "format": "date-time",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "project_id",
+                "input_set_id",
+                "policy_id",
+                "run_id",
+                "evaluation_kind",
+                "execution_status",
+                "evidence_status",
+                "decision",
+                "report_artifact_id",
+                "method_versions_artifact_id",
+                "origin",
+                "concluded_at",
+                "checked_at",
+                "unexpired_at_read"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "items"
+        ],
+        "type": "object"
+      },
       "Page_ExperimentView": {
         "additionalProperties": false,
         "properties": {
@@ -11556,6 +12298,122 @@
                 "frozen_at",
                 "revision",
                 "created_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "items"
+        ],
+        "type": "object"
+      },
+      "Page_MetricValueV1": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "annualization_factor": {
+                  "format": "double",
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "evaluation_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "frequency": {
+                  "type": "string"
+                },
+                "higher_is_better": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "method_id": {
+                  "type": "string"
+                },
+                "method_version": {
+                  "type": "string"
+                },
+                "metric_code": {
+                  "type": "string"
+                },
+                "observation_count": {
+                  "$ref": "#/components/schemas/DbCounter"
+                },
+                "period_end": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "period_start": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "reason_code": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "schema_version": {
+                  "$ref": "#/components/schemas/SchemaV1"
+                },
+                "scope": {
+                  "type": "string"
+                },
+                "source_artifact_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "status": {
+                  "$ref": "#/components/schemas/MetricStatus"
+                },
+                "unit": {
+                  "type": "string"
+                },
+                "value": {
+                  "format": "double",
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "schema_version",
+                "evaluation_id",
+                "metric_code",
+                "scope",
+                "value",
+                "status",
+                "unit",
+                "period_start",
+                "period_end",
+                "observation_count",
+                "frequency",
+                "annualization_factor",
+                "method_id",
+                "method_version",
+                "source_artifact_id"
               ],
               "type": "object"
             },
@@ -13221,6 +14079,14 @@
         ],
         "type": "object"
       },
+      "RuntimeResultState": {
+        "enum": [
+          "SUCCEEDED",
+          "FAILED",
+          "CANCELLED"
+        ],
+        "type": "string"
+      },
       "RuntimeUpdate": {
         "allOf": [
           {
@@ -13786,6 +14652,13 @@
         ],
         "type": "object"
       },
+      "TargetKind": {
+        "enum": [
+          "SCORE",
+          "EXPECTED_RETURN"
+        ],
+        "type": "string"
+      },
       "TlsPolicy": {
         "enum": [
           "SYSTEM_CA",
@@ -13947,6 +14820,491 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v2/alpha-versions/{id}/evaluations": {
+      "get": {
+        "operationId": "list_alpha_evaluations",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_EvaluationView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Evidence"
+        ]
+      }
+    },
+    "/api/v2/alphas": {
+      "get": {
+        "operationId": "list_alphas",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_AlphaView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Evidence"
+        ]
+      }
+    },
+    "/api/v2/alphas/{id}/versions": {
+      "get": {
+        "operationId": "list_alpha_versions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_AlphaVersionView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Evidence"
+        ]
+      }
+    },
+    "/api/v2/alphas/{id}/versions/{version}": {
+      "get": {
+        "operationId": "get_alpha_version",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Revision"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlphaVersionView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Evidence"
+        ]
+      }
+    },
     "/api/v2/artifacts": {
       "get": {
         "operationId": "list",
@@ -18541,6 +19899,235 @@
         ],
         "tags": [
           "Research preparation"
+        ]
+      }
+    },
+    "/api/v2/evaluations/{id}": {
+      "get": {
+        "operationId": "get_evaluation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvaluationView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Evidence"
+        ]
+      }
+    },
+    "/api/v2/evaluations/{id}/metrics": {
+      "get": {
+        "operationId": "list_evaluation_metrics",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_MetricValueV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Evidence"
         ]
       }
     },

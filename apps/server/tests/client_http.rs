@@ -226,4 +226,72 @@ async fn native_cli_human_grant_source_creation_replay_and_intent_binding_are_re
     assert!(private.stdout.is_empty());
     let error: Value = serde_json::from_slice(&private.stderr).unwrap();
     assert_eq!(error["status"], 403);
+
+    let project = browser(&f, &cookie, "alpha-project", "/api/v2/projects", json!({
+        "schema_version":1,"name":"Native CLI Alpha reads","description":"Relational view, not scientific acceptance","fork_from_project_id":null
+    })).await;
+    assert_eq!(project.status, StatusCode::CREATED);
+    let project = project.body["resource"]["id"].as_str().unwrap();
+    let alpha = Id::new();
+    sqlx::query("INSERT INTO app.alphas(id,project_id,name,lifecycle) VALUES($1,$2,'CLI read fixture','RESEARCH')")
+        .bind(alpha.as_uuid()).bind(project.parse::<uuid::Uuid>().unwrap()).execute(&pool).await.unwrap();
+    let arguments = ["alpha", "list", "--project-id", project, "--limit", "1"];
+    let denied = invoke(&origin, &credential_file, &arguments, Value::Null).await;
+    assert!(!denied.status.success());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&denied.stderr).unwrap()["status"],
+        403
+    );
+    let principal = browser(&f, &cookie, "alpha-reader", "/api/v2/machine-principals", json!({
+        "schema_version":1,"name":"Scoped Alpha reader","kind":"CLI","project_id":project,"downstream_id":null,"enabled":true
+    })).await;
+    assert_eq!(principal.status, StatusCode::CREATED);
+    let credential = browser(&f, &cookie, "alpha-read-token", &format!("/api/v2/machine-principals/{}/credentials", principal.body["resource"]["id"].as_str().unwrap()), json!({
+        "schema_version":1,"scope_codes":["RESEARCH_READ"],"expires_at":chrono::Utc::now()+chrono::Duration::hours(1)
+    })).await;
+    assert_eq!(credential.status, StatusCode::CREATED);
+    let reader_file = f._state.path().join("alpha-read-token");
+    fs::write(&reader_file, credential.body["token"].as_str().unwrap()).unwrap();
+    fs::set_permissions(&reader_file, fs::Permissions::from_mode(0o600)).unwrap();
+    let result = invoke(&origin, &reader_file, &arguments, Value::Null).await;
+    assert!(result.status.success(), "native Alpha list failed");
+    let list: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(list["items"][0]["id"], alpha.to_string());
+    assert!(list["items"][0]["active_version"].is_null());
+    let id = alpha.to_string();
+    let versions = invoke(
+        &origin,
+        &reader_file,
+        &["alpha", "versions", &id],
+        Value::Null,
+    )
+    .await;
+    assert!(versions.status.success());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&versions.stdout).unwrap()["items"],
+        json!([])
+    );
+    for arguments in [
+        vec!["alpha", "show", &id, "1"],
+        vec!["alpha", "evaluations", &id],
+        vec!["evidence", "show", &id],
+        vec!["evidence", "metrics", &id, "--limit", "1"],
+    ] {
+        let missing = invoke(&origin, &reader_file, &arguments, Value::Null).await;
+        assert!(!missing.status.success());
+        assert!(missing.stdout.is_empty());
+        assert_eq!(
+            serde_json::from_slice::<Value>(&missing.stderr).unwrap()["status"],
+            404
+        );
+    }
+    let invalid = invoke(
+        &origin,
+        &reader_file,
+        &["alpha", "show", &id, "0"],
+        Value::Null,
+    )
+    .await;
+    assert!(!invalid.status.success());
+    assert!(invalid.stdout.is_empty());
 }

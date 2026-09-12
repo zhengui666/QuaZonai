@@ -541,3 +541,68 @@ async fn authorship_is_immutable_and_pagination_preserves_each_trial(pool: PgPoo
         .is_err());
     assert_eq!(counts(&pool, f.cycle).await, (2, 2, 2));
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn alpha_operation_views_require_operator_or_exact_project_research_cli(pool: PgPool) {
+    let (store, operator) = research_support::operator(&pool).await;
+    let f = setup(&pool, &store, &operator, 3).await;
+    let other = setup(&pool, &store, &operator, 3).await;
+    let alpha = Id::new();
+    sqlx::query("INSERT INTO app.alphas(id,project_id,name,lifecycle) VALUES($1,$2,'No invented version','RESEARCH')")
+        .bind(alpha.as_uuid()).bind(f.data.project.as_uuid()).execute(&pool).await.unwrap();
+    let query = ResearchListQuery {
+        project_id: f.data.project,
+        limit: 1,
+        cursor: None,
+    };
+    let list = contracts::control::ListQuery::default();
+    let cli = machine(&pool, f.data.project, None, "CLI", &["RESEARCH_READ"]).await;
+    for actor in [&operator, &cli] {
+        let result = store.alphas(actor, &query).await.unwrap();
+        assert_eq!(result.items[0].id, alpha);
+        assert_eq!(result.items[0].active_version_id, None);
+        assert_eq!(result.items[0].active_version, None);
+        assert!(store
+            .alpha_versions(actor, alpha, &list)
+            .await
+            .unwrap()
+            .items
+            .is_empty());
+    }
+    let (run, _) = mission(&pool, &store, &operator, &f).await;
+    for (kind, run, scopes) in [
+        ("CLI", None, vec!["EXPERIMENT_SUBMIT"]),
+        ("MISSION", Some(run), vec!["RESEARCH_READ"]),
+        ("AUTOMATION", None, vec!["RESEARCH_READ"]),
+    ] {
+        let actor = machine(&pool, f.data.project, run, kind, &scopes).await;
+        assert!(matches!(
+            store.alphas(&actor, &query).await,
+            Err(StoreError::Forbidden)
+        ));
+        assert!(matches!(
+            store.alpha_versions(&actor, alpha, &list).await,
+            Err(StoreError::Forbidden)
+        ));
+    }
+    let foreign = machine(&pool, other.data.project, None, "CLI", &["RESEARCH_READ"]).await;
+    assert!(matches!(
+        store.alphas(&foreign, &query).await,
+        Err(StoreError::NotFound)
+    ));
+    assert!(matches!(
+        store.alpha_versions(&foreign, alpha, &list).await,
+        Err(StoreError::NotFound)
+    ));
+    assert!(store
+        .alphas(
+            &operator,
+            &ResearchListQuery {
+                limit: 101,
+                ..query
+            }
+        )
+        .await
+        .is_err());
+    assert_eq!(counts(&pool, f.cycle).await, (0, 0, 0));
+}

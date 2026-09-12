@@ -3,7 +3,93 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::{DbCounter, DecimalValue, Id, SchemaV1};
+use crate::{DbCounter, DecimalValue, Id, Revision, SchemaV1};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum AlphaLifecycle {
+    Research,
+    Qualified,
+    Suspended,
+    Retired,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ForecastUnit {
+    ReturnPerHorizon,
+    ResidualReturnPerHorizon,
+    UnitlessScore,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum EvaluationKind {
+    Discovery,
+    WalkForward,
+    Sealed,
+    Portfolio,
+    Forward,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AlphaView {
+    pub id: Id,
+    pub project_id: Id,
+    pub name: String,
+    pub lifecycle: AlphaLifecycle,
+    pub active_version_id: Option<Id>,
+    pub active_version: Option<Revision>,
+    pub revision: Revision,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AlphaVersionView {
+    pub id: Id,
+    pub project_id: Id,
+    pub alpha_id: Id,
+    pub version: Revision,
+    pub experiment_id: Id,
+    pub root_lineage_id: Id,
+    pub code_artifact_id: Id,
+    pub model_artifact_id: Option<Id>,
+    pub signal_contract_version: String,
+    pub signal_kind: crate::brief::TargetKind,
+    pub horizon_kind: crate::brief::HorizonKind,
+    pub horizon_value: Option<DbCounter>,
+    pub forecast_unit: ForecastUnit,
+    pub calibration_id: Option<Id>,
+    pub runtime_image_ref: String,
+    pub origin: Option<crate::research::DataOrigin>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EvaluationView {
+    pub id: Id,
+    pub project_id: Id,
+    pub subject_alpha_version_id: Option<Id>,
+    pub subject_candidate_id: Option<Id>,
+    pub input_set_id: Id,
+    pub policy_id: Id,
+    pub run_id: Id,
+    pub evaluation_kind: EvaluationKind,
+    pub execution_status: crate::runtime_jobs::RuntimeResultState,
+    pub evidence_status: EvidenceStatus,
+    pub decision: Decision,
+    pub report_artifact_id: Id,
+    pub method_versions_artifact_id: Id,
+    pub origin: crate::research::DataOrigin,
+    pub concluded_at: DateTime<Utc>,
+    pub valid_until: Option<DateTime<Utc>>,
+    pub checked_at: DateTime<Utc>,
+    pub unexpired_at_read: bool,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]

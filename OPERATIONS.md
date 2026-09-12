@@ -355,6 +355,17 @@ Runtime bearer 必须为32–8192字节、无空白的可打印ASCII；这只是
 
 新探测失败或过期会拦截新任务，但不能证明旧任务停止。已进入`SENT_UNKNOWN`的Attempt必须继续按原始远端身份查询、取消和对账；不能因当前readiness不足就创建新Attempt、重跑研究、提前释放预留或把404当取消确认。并发同键探测只允许命令回执所有者发布一份原生快照；提交结果未知时保留可能已被引用的对象，不得以猜测为依据删除。真实任务执行、T01–T42、部署、备份与恢复的验收仍独立成立，探测成功不能替代这些证据。
 
+## Alpha 与正式 Validation 查看
+
+在“Alpha”选择项目，查看已登记Alpha、不可变版本、来源、单位、horizon、原实验和
+校准引用；切换版本不修改活动版本。版本下只列出已正式发表、可披露的Validation。
+评估分别显示执行状态、证据状态、科学决策及原有效期，指标可分页查看方法/单位/
+频率/样本数和来源。缺值保留原因，不显示为0；无记录与请求失败分开呈现。
+登记状态、科学PASS和未过期均不是当前可交付资格。页面不读取受限报告，也不
+触发新的研究。CLI使用同名alpha/evidence只读命令和原生分页，须精确项目CLI授权；
+Mission/Automation/Downstream不能借此读取额外证据。Sealed及独立Reviewer/资格
+遵循各自合同，不能用本页的Validation结果替代。
+
 ## Brief 草稿成员权限
 
 部署迁移仅对 `app.brief_data_bindings` 追加 DELETE，以支持同事务替换DRAFT成员；其他app表仍无DELETE授权。原生触发器锁住父Brief并拒绝FROZEN成员增删改，禁止移除触发器或授予TRUNCATE/TRIGGER。已部署实例运行正式 `server migrate --application-role ...` 补齐原生DML授权，而不是以数据库owner运行API。保存草稿不会执行模型、冻结Brief或发布资格。

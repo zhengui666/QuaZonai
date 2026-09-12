@@ -228,7 +228,7 @@ function RevocationHistory({ grant, close }: { grant: Grant; close: () => void }
   const query = useQuery({ queryKey: ['data','revocations',grant.id,history.at(-1)], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/data/grants/{id}/revocations', { params: { path: { id: grant.id }, query: { cursor: history.at(-1), limit: 50 } }, signal })) });
   return <Modal open title={`授权 ${grant.version} 的撤销历史`} onCancel={close} footer={<Button onClick={close}>关闭</Button>}>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      <Table<Schema['DataGrantRevocationView']> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 500 }} locale={{ emptyText: <NoData text="没有撤销记录。许可仍可能尚未生效或已经到期。" /> }} columns={[
+      <Table<Schema['DataGrantRevocationView']> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 500 }} onHeaderRow={() => ({ tabIndex: 0 })} locale={{ emptyText: <NoData text="没有撤销记录。许可仍可能尚未生效或已经到期。" /> }} columns={[
         { title: '生效时间', key: 'time', render: (_, item) => displayTime(item.effective_at) }, { title: '原因代码', dataIndex: 'reason_code' }, { title: '说明', dataIndex: 'reason' },
       ]} />
       <Pager history={history} next={query.data?.next_cursor} loading={query.isFetching} move={setHistory} />

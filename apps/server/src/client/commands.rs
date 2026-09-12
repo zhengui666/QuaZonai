@@ -15,6 +15,7 @@ use contracts::{
     },
     cycles::{BriefFreezeV1, CycleStartV1, CycleStartedV1, CycleViewV1, FrozenBriefV1},
     data::*,
+    evidence::{AlphaVersionView, AlphaView, EvaluationView, MetricValueV1},
     experiments::{ExperimentProposalV1, ExperimentView},
     lifecycle::{RunCancelV1, RunListQuery},
     research::{
@@ -66,6 +67,10 @@ pub enum Command {
     #[command(subcommand)]
     Experiment(Experiment),
     #[command(subcommand)]
+    Alpha(Alpha),
+    #[command(subcommand)]
+    Evidence(Evidence),
+    #[command(subcommand)]
     Artifact(Artifact),
     #[command(subcommand)]
     Run(Run),
@@ -75,6 +80,36 @@ pub enum Command {
     /// Write-only IntegrationSecretCreate from stdin; prints only its native reference.
     CredentialRegister,
 }
+#[derive(Subcommand)]
+pub enum Alpha {
+    List(ProjectList),
+    Versions {
+        id: String,
+        #[command(flatten)]
+        page: List,
+    },
+    Show {
+        id: String,
+        version: String,
+    },
+    Evaluations {
+        id: String,
+        #[command(flatten)]
+        page: List,
+    },
+}
+#[derive(Subcommand)]
+pub enum Evidence {
+    Show {
+        id: String,
+    },
+    Metrics {
+        id: String,
+        #[command(flatten)]
+        page: List,
+    },
+}
+
 #[derive(Subcommand)]
 pub enum Project {
     List(List),
@@ -710,6 +745,43 @@ impl Command {
                     ExperimentProposalV1,
                     CommandResult<ExperimentView>,
                 >(POST, "/api/v2/experiments", 201, false)?,
+            },
+            Self::Alpha(command) => {
+                match command {
+                    Alpha::List(list) => {
+                        Request::get::<Page<AlphaView>>("/api/v2/alphas").project(list)?
+                    }
+                    Alpha::Versions { id, page } => Request::get::<Page<AlphaVersionView>>(action(
+                        "/api/v2/alphas",
+                        id,
+                        "versions",
+                    )?)
+                    .page(page)?,
+                    Alpha::Show { id, version } => {
+                        let version: contracts::Revision =
+                            version.try_into().map_err(|_| Failure::Input)?;
+                        Request::get::<AlphaVersionView>(format!(
+                            "{}/{}",
+                            action("/api/v2/alphas", id, "versions")?,
+                            String::from(version)
+                        ))
+                    }
+                    Alpha::Evaluations { id, page } => Request::get::<Page<EvaluationView>>(
+                        action("/api/v2/alpha-versions", id, "evaluations")?,
+                    )
+                    .page(page)?,
+                }
+            }
+            Self::Evidence(command) => match command {
+                Evidence::Show { id } => {
+                    Request::get::<EvaluationView>(item("/api/v2/evaluations", id)?)
+                }
+                Evidence::Metrics { id, page } => Request::get::<Page<MetricValueV1>>(action(
+                    "/api/v2/evaluations",
+                    id,
+                    "metrics",
+                )?)
+                .page(page)?,
             },
             Self::Artifact(command) => match command {
                 Artifact::List(list) => {

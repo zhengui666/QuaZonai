@@ -826,6 +826,174 @@
         ],
         "type": "object"
       },
+      "AlphaLifecycle": {
+        "enum": [
+          "RESEARCH",
+          "QUALIFIED",
+          "SUSPENDED",
+          "RETIRED"
+        ],
+        "type": "string"
+      },
+      "AlphaVersionView": {
+        "additionalProperties": false,
+        "properties": {
+          "alpha_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "calibration_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "code_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "experiment_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "forecast_unit": {
+            "$ref": "#/components/schemas/ForecastUnit"
+          },
+          "horizon_kind": {
+            "$ref": "#/components/schemas/HorizonKind"
+          },
+          "horizon_value": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DbCounter"
+              }
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "model_artifact_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "origin": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DataOrigin"
+              }
+            ]
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "root_lineage_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "runtime_image_ref": {
+            "type": "string"
+          },
+          "signal_contract_version": {
+            "type": "string"
+          },
+          "signal_kind": {
+            "$ref": "#/components/schemas/TargetKind"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Revision"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "alpha_id",
+          "version",
+          "experiment_id",
+          "root_lineage_id",
+          "code_artifact_id",
+          "signal_contract_version",
+          "signal_kind",
+          "horizon_kind",
+          "forecast_unit",
+          "runtime_image_ref",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "AlphaView": {
+        "additionalProperties": false,
+        "properties": {
+          "active_version": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Revision"
+              }
+            ]
+          },
+          "active_version_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "lifecycle": {
+            "$ref": "#/components/schemas/AlphaLifecycle"
+          },
+          "name": {
+            "type": "string"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "name",
+          "lifecycle",
+          "revision",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "ArtifactAccess": {
         "enum": [
           "OPERATOR",
@@ -7505,6 +7673,16 @@
         ],
         "type": "object"
       },
+      "EvaluationKind": {
+        "enum": [
+          "DISCOVERY",
+          "WALK_FORWARD",
+          "SEALED",
+          "PORTFOLIO",
+          "FORWARD"
+        ],
+        "type": "string"
+      },
       "EvaluationPolicyCreate": {
         "additionalProperties": false,
         "properties": {
@@ -7700,6 +7878,103 @@
           "required_capabilities",
           "maximum_sealed_uses_per_lineage",
           "validity_seconds"
+        ],
+        "type": "object"
+      },
+      "EvaluationView": {
+        "additionalProperties": false,
+        "properties": {
+          "checked_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "concluded_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/Decision"
+          },
+          "evaluation_kind": {
+            "$ref": "#/components/schemas/EvaluationKind"
+          },
+          "evidence_status": {
+            "$ref": "#/components/schemas/EvidenceStatus"
+          },
+          "execution_status": {
+            "$ref": "#/components/schemas/RuntimeResultState"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "input_set_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "method_versions_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/DataOrigin"
+          },
+          "policy_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "report_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "run_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "subject_alpha_version_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "subject_candidate_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "unexpired_at_read": {
+            "type": "boolean"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "input_set_id",
+          "policy_id",
+          "run_id",
+          "evaluation_kind",
+          "execution_status",
+          "evidence_status",
+          "decision",
+          "report_artifact_id",
+          "method_versions_artifact_id",
+          "origin",
+          "concluded_at",
+          "checked_at",
+          "unexpired_at_read"
         ],
         "type": "object"
       },
@@ -8015,6 +8290,14 @@
         ],
         "type": "string"
       },
+      "ForecastUnit": {
+        "enum": [
+          "RETURN_PER_HORIZON",
+          "RESIDUAL_RETURN_PER_HORIZON",
+          "UNITLESS_SCORE"
+        ],
+        "type": "string"
+      },
       "FrozenBriefV1": {
         "additionalProperties": false,
         "properties": {
@@ -8056,6 +8339,14 @@
           "max"
         ],
         "type": "object"
+      },
+      "HorizonKind": {
+        "enum": [
+          "FIXED_BARS",
+          "FIXED_DURATION",
+          "VARIABLE_INTERVAL"
+        ],
+        "type": "string"
       },
       "Id": {
         "format": "uuid",
