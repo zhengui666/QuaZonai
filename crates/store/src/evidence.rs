@@ -186,6 +186,64 @@ async fn read_evaluation(
 }
 
 impl Store {
+    pub async fn alpha_qualifications(
+        &self,
+        actor: &Actor,
+        version: Id,
+        query: &ListQuery,
+    ) -> Result<Page<QualificationView>, StoreError> {
+        domain::control::list(query)?;
+        let mut tx = self.pool.begin().await?;
+        let project: uuid::Uuid =
+            sqlx::query_scalar("SELECT project_id FROM app.alpha_versions WHERE id=$1")
+                .bind(version.as_uuid())
+                .fetch_optional(&mut *tx)
+                .await?
+                .ok_or(StoreError::NotFound)?;
+        authorize(&mut tx, actor, db::id(project)?).await?;
+        // One statement snapshot and one clock value for the whole page. No
+        // Sealed report bytes/metrics and no inferred current eligibility.
+        let rows = sqlx::query("SELECT q.*,statement_timestamp() AS checked_at,r.id AS revocation_id,r.effective_at,r.reason_code,r.evidence_evaluation_id FROM app.qualifications q LEFT JOIN LATERAL (SELECT * FROM app.qualification_revocations WHERE qualification_id=q.id ORDER BY effective_at,id LIMIT 1) r ON true WHERE q.alpha_version_id=$1 AND ($2::uuid IS NULL OR q.id<$2) ORDER BY q.id DESC LIMIT $3")
+            .bind(version.as_uuid()).bind(query.cursor.map(Id::as_uuid))
+            .bind(i64::from(query.limit)+1).fetch_all(&mut *tx).await?;
+        let items = rows
+            .iter()
+            .map(|row| {
+                let checked_at = row.try_get("checked_at")?;
+                let granted_at = row.try_get("granted_at")?;
+                let valid_until = row.try_get("valid_until")?;
+                let revocation = db::optional_id(row, "revocation_id")?
+                    .map(|id| {
+                        Ok::<_, StoreError>(QualificationRevocationView {
+                            id,
+                            effective_at: row.try_get("effective_at")?,
+                            reason_code: row.try_get("reason_code")?,
+                            evidence_evaluation_id: db::optional_id(row, "evidence_evaluation_id")?,
+                        })
+                    })
+                    .transpose()?;
+                Ok::<_, StoreError>(QualificationView {
+                    id: db::id(row.try_get("id")?)?,
+                    alpha_version_id: version,
+                    policy_id: db::id(row.try_get("policy_id")?)?,
+                    qualifying_evaluation_id: db::id(row.try_get("qualifying_evaluation_id")?)?,
+                    granted_at,
+                    valid_until,
+                    checked_at,
+                    created_at: row.try_get("created_at")?,
+                    grant_window_open: granted_at <= checked_at
+                        && checked_at < valid_until
+                        && revocation
+                            .as_ref()
+                            .is_none_or(|r| checked_at < r.effective_at),
+                    revocation,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        tx.commit().await?;
+        Ok(page(items, query.limit, |item| item.id))
+    }
+
     pub async fn alphas(
         &self,
         actor: &Actor,

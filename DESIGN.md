@@ -1676,6 +1676,15 @@ Alpha不能因新结果被恢复。输入来源和原许可在既有锁下重验
 
 ## A5. Mandate、Candidate、目标与 Release
 
+Operator及精确项目RESEARCH_READ的CLI可分页读取
+GET /api/v2/alpha-versions/{id}/qualifications，CLI为alpha qualifications。
+QualificationView仅返回原授予/政策/评估引用、授予与到期时间、checked_at，以及
+最早撤销的引用、effective_at、reason_code和证据评估引用；不读取Sealed报告或指标。
+grant_window_open只表示checked_at在[granted_at,valid_until)且最早撤销尚未生效。
+未来撤销也返回，历史过期/撤销记录不隐藏。这个字段不验证当前政策、Alpha生命周期、
+REAL/PIT或许可证，不是组合准入/Release资格；页面必须保留这一区别和观察时间。
+页面翻页使用原资格ID，不因刷新、活动版本变化或复制版本而混入其他版本的资格。
+
 MandateCreateV1包含schema_version、project_id、runtime_id、expected_runtime_revision
 和完整content。创建在原Operator命令事务内锁Project分配版本，重验精确Runtime
 最新有效探测与PORTFOLIO_BUILD能力、原模型版本和执行假设镜像，保存原完整响应。

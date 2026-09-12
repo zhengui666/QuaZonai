@@ -20,7 +20,7 @@ use contracts::{
     data::*,
     evidence::{
         AlphaEvaluateRequestV1, AlphaVersionView, AlphaView, CalibrationView, EvaluationView,
-        MetricValueV1,
+        MetricValueV1, QualificationView,
     },
     experiments::{ExperimentProposalV1, ExperimentView},
     lifecycle::{RunCancelV1, RunListQuery},
@@ -93,6 +93,11 @@ pub enum Command {
 #[derive(Subcommand)]
 pub enum Alpha {
     List(ProjectList),
+    Qualifications {
+        id: String,
+        #[command(flatten)]
+        page: List,
+    },
     Evaluate {
         id: String,
     },
@@ -832,6 +837,10 @@ impl Command {
                         id,
                         "calibration",
                     )?),
+                    Alpha::Qualifications { id, page } => Request::get::<Page<QualificationView>>(
+                        action("/api/v2/alpha-versions", id, "qualifications")?,
+                    )
+                    .page(page)?,
                     Alpha::Versions { id, page } => Request::get::<Page<AlphaVersionView>>(action(
                         "/api/v2/alphas",
                         id,

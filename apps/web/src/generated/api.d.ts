@@ -36,6 +36,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/alpha-versions/{id}/qualifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_alpha_qualifications"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/alphas": {
         parameters: {
             query?: never;
@@ -3699,6 +3715,27 @@ export interface components {
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
+        Page_QualificationView: {
+            items: {
+                alpha_version_id: components["schemas"]["Id"];
+                /** Format: date-time */
+                checked_at: string;
+                /** Format: date-time */
+                created_at: string;
+                /** @description Checks only the grant interval and revocation, not policy, data or lifecycle. */
+                grant_window_open: boolean;
+                /** Format: date-time */
+                granted_at: string;
+                id: components["schemas"]["Id"];
+                policy_id: components["schemas"]["Id"];
+                qualifying_evaluation_id: components["schemas"]["Id"];
+                revocation?: null | components["schemas"]["QualificationRevocationView"];
+                /** Format: date-time */
+                valid_until: string;
+            }[];
+            next_cursor?: null | components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         Page_RunSnapshotV1: {
             items: {
                 active_attempt_id?: null | components["schemas"]["Id"];
@@ -3871,6 +3908,31 @@ export interface components {
             state: components["schemas"]["ProjectState"];
             /** Format: date-time */
             updated_at: string;
+        };
+        QualificationRevocationView: {
+            /** Format: date-time */
+            effective_at: string;
+            evidence_evaluation_id?: null | components["schemas"]["Id"];
+            id: components["schemas"]["Id"];
+            reason_code: string;
+        };
+        /** @description Original grant history, not a current portfolio admission decision. */
+        QualificationView: {
+            alpha_version_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            checked_at: string;
+            /** Format: date-time */
+            created_at: string;
+            /** @description Checks only the grant interval and revocation, not policy, data or lifecycle. */
+            grant_window_open: boolean;
+            /** Format: date-time */
+            granted_at: string;
+            id: components["schemas"]["Id"];
+            policy_id: components["schemas"]["Id"];
+            qualifying_evaluation_id: components["schemas"]["Id"];
+            revocation?: null | components["schemas"]["QualificationRevocationView"];
+            /** Format: date-time */
+            valid_until: string;
         };
         ReasoningEffortCapability: {
             description: string;
@@ -4439,6 +4501,80 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_alpha_qualifications: {
+        parameters: {
+            query?: {
+                cursor?: components["schemas"]["Id"];
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_QualificationView"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

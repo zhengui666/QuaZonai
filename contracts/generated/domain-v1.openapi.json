@@ -13011,6 +13011,98 @@
         ],
         "type": "object"
       },
+      "QualificationRevocationView": {
+        "additionalProperties": false,
+        "properties": {
+          "effective_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "evidence_evaluation_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "reason_code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "effective_at",
+          "reason_code"
+        ],
+        "type": "object"
+      },
+      "QualificationView": {
+        "additionalProperties": false,
+        "description": "Original grant history, not a current portfolio admission decision.",
+        "properties": {
+          "alpha_version_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "checked_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "grant_window_open": {
+            "description": "Checks only the grant interval and revocation, not policy, data or lifecycle.",
+            "type": "boolean"
+          },
+          "granted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "policy_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "qualifying_evaluation_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "revocation": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/QualificationRevocationView",
+                "description": "Earliest revocation, including a scheduled future effective time."
+              }
+            ]
+          },
+          "valid_until": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "alpha_version_id",
+          "policy_id",
+          "qualifying_evaluation_id",
+          "granted_at",
+          "valid_until",
+          "created_at",
+          "checked_at",
+          "grant_window_open"
+        ],
+        "type": "object"
+      },
       "ReasoningEffortCapability": {
         "additionalProperties": false,
         "properties": {

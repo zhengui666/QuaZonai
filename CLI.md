@@ -230,6 +230,10 @@ training_end_available_ns、IC/RMSE及缺失原因，
 保留精确训练子集、原生系数、报告/Evaluation/InputSet关联；仅SUCCEEDED + VALID
 且所有资产最后折可校准时产生记录及原Alpha的下一不可变版本。它不是新的CLI/Agent
 写入口，不改变源Alpha版本、原试验或REJECT决定，不复制评估/资格；无可用校准
+`alpha qualifications <version-id> [--cursor <id>] [--limit <n>]`只读原资格历史。
+grant_window_open仅表示服务端checked_at处于授予时间窗且撤销未生效，不检查当前
+政策、生命周期和许可证，不可据此交付；最早撤销包含未来生效记录，不隐藏过期历史。
+
 不能回退赢家折或手填scale。`alpha calibration <version-id>`只读该版本已附加的
 校准元数据与源版本Validation；未附加返回404，不下载系数/训练行。见DESIGN A4.4。
 

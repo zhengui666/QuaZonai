@@ -3,6 +3,42 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Original qualification history, 2026-09-13
+
+Working source over `80428ea256e3ad9a76b7cafc2890e175bc6c3a7b` exposes original
+qualification metadata through the existing version-scoped evidence authority,
+GET qualifications, native alpha qualifications CLI and an explicit Ant Design
+history drawer. One SQL statement snapshot/clock returns exact grants, original
+policy/evaluation references, expiry and earliest revocation, including scheduled
+future revocations. Historical expiry/revocation does not remove the original row.
+grant_window_open checks only the grant/revocation interval, not current policy,
+Alpha lifecycle, REAL/PIT, licenses or portfolio admission. No Sealed report bytes,
+metrics, new grant, approval or delivery authority are returned.
+
+`verify-yYlQvS` exited 0: workspace check/format/strict Clippy, 30 native scientific,
+131 Store and 23 HTTP/native CLI tests passed, zero failed/ignored; handwritten
+source unchanged and owned PostgreSQL stopped. The new PostgreSQL test uses
+explicit relational fixture grants, not scientific qualification; it checks
+original identity/expiry, scheduled and effective revocation, expired history and
+cursor pagination. HTTP checks empty/missing versions and invalid parameters;
+native CLI checks routing/error decoding and the shared command tree.
+
+`web-verify-hZjiOx` found inaccessible horizontal scroll content on mobile/tablet
+in the new drawer. The existing table-header focus pattern fixed the actual
+keyboard issue without changing the check. Final `web-verify-fVoToY` exited 0:
+six generated artifacts reproduced byte-for-byte, handwritten source unchanged,
+typecheck/build/numeric wires/CLI help, 505 Vitest/5 Node, 36 dedicated and 198 full
+browser tests passed. The new three-viewport test covers explicit loading, exact
+version, paging, scheduled revocation, failure refresh/stale data, recovery and
+accessibility. Only domain/API OpenAPI, TypeScript and Ajv JavaScript generated
+files changed. This evidence entry is the only subsequent handwritten change.
+
+No native Job/Runtime implementation or image changed in this stage. Qualification
+history does not implement trusted portfolio admission or Candidate/Release;
+execution-assumption authoring and original cost/weight source assembly still need
+implementation alongside the remaining full acceptance scope. No push, GitHub
+review request, merge or Issue closure occurred.
+
 ## Catalog-backed native portfolio inputs, 2026-09-13
 
 Working source over `7253784e58c382848029e462dbf2ca277626587d` replaces the managed

@@ -284,6 +284,7 @@ async fn native_cli_human_grant_source_creation_replay_and_intent_binding_are_re
         vec!["alpha", "show", &id, "1"],
         vec!["alpha", "evaluations", &id],
         vec!["alpha", "calibration", &id],
+        vec!["alpha", "qualifications", &id, "--limit", "1"],
         vec!["evidence", "show", &id],
         vec!["evidence", "metrics", &id, "--limit", "1"],
         vec!["cycle", "selection", &id],

@@ -101,6 +101,33 @@ pub struct CalibrationView {
     pub created_at: DateTime<Utc>,
 }
 
+/// Original grant history, not a current portfolio admission decision.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QualificationView {
+    pub id: Id,
+    pub alpha_version_id: Id,
+    pub policy_id: Id,
+    pub qualifying_evaluation_id: Id,
+    pub granted_at: DateTime<Utc>,
+    pub valid_until: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+    pub checked_at: DateTime<Utc>,
+    /// Checks only the grant interval and revocation, not policy, data or lifecycle.
+    pub grant_window_open: bool,
+    /// Earliest revocation, including a scheduled future effective time.
+    pub revocation: Option<QualificationRevocationView>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QualificationRevocationView {
+    pub id: Id,
+    pub effective_at: DateTime<Utc>,
+    pub reason_code: String,
+    pub evidence_evaluation_id: Option<Id>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EvaluationView {

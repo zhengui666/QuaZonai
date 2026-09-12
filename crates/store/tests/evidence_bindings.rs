@@ -119,6 +119,132 @@ async fn operation_views_never_disclose_sealed_or_unbound_published_evaluations(
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn qualification_history_keeps_original_grants_and_scheduled_revocation_without_admission_claim(
+    pool: PgPool,
+) {
+    let (store, operator) = research_support::operator(&pool).await;
+    let f = fixture(&pool, budget()).await;
+    let a = alpha(&pool, &f).await;
+    let query = contracts::control::ListQuery {
+        cursor: None,
+        limit: 1,
+    };
+    let page = store
+        .alpha_qualifications(&operator, a.version, &query)
+        .await
+        .unwrap();
+    assert_eq!(page.items.len(), 1);
+    assert!(page.next_cursor.is_none());
+    let original = &page.items[0];
+    assert_eq!(original.id, a.qualification);
+    assert_eq!(original.alpha_version_id, a.version);
+    assert!(original.grant_window_open);
+    assert!(original.revocation.is_none());
+    let encoded = serde_json::to_value(original).unwrap();
+    for absent in [
+        "eligible",
+        "report",
+        "metrics",
+        "storage_object_ref",
+        "model",
+    ] {
+        assert!(encoded.get(absent).is_none());
+    }
+    let future = Id::new();
+    sqlx::query("INSERT INTO app.qualification_revocations(id,qualification_id,reason_code,effective_at) VALUES($1,$2,'SCHEDULED',clock_timestamp()+interval '30 minutes')")
+        .bind(future.as_uuid()).bind(a.qualification.as_uuid()).execute(&pool).await.unwrap();
+    let scheduled = store
+        .alpha_qualifications(&operator, a.version, &query)
+        .await
+        .unwrap()
+        .items
+        .remove(0);
+    assert!(scheduled.grant_window_open);
+    assert_eq!(scheduled.revocation.unwrap().id, future);
+    let effective = Id::new();
+    sqlx::query("INSERT INTO app.qualification_revocations(id,qualification_id,reason_code,effective_at,evidence_evaluation_id) VALUES($1,$2,'WITHDRAWN',clock_timestamp()-interval '1 second',$3)")
+        .bind(effective.as_uuid()).bind(a.qualification.as_uuid()).bind(original.qualifying_evaluation_id.as_uuid()).execute(&pool).await.unwrap();
+    let revoked = store
+        .alpha_qualifications(&operator, a.version, &query)
+        .await
+        .unwrap()
+        .items
+        .remove(0);
+    assert!(!revoked.grant_window_open);
+    assert_eq!(revoked.valid_until, original.valid_until);
+    assert_eq!(
+        revoked.qualifying_evaluation_id,
+        original.qualifying_evaluation_id
+    );
+    let r = revoked.revocation.unwrap();
+    assert_eq!(r.id, effective);
+    assert_eq!(r.reason_code, "WITHDRAWN");
+    assert_eq!(
+        r.evidence_evaluation_id,
+        Some(original.qualifying_evaluation_id)
+    );
+    assert!(r.effective_at <= revoked.checked_at);
+    let expired = Id::new();
+    let expired_evaluation = Id::new();
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query("INSERT INTO app.evaluations(id,project_id,subject_alpha_version_id,input_set_id,policy_id,run_id,evaluation_kind,execution_status,evidence_status,decision,report_artifact_id,method_versions_artifact_id,concluded_at,valid_until) SELECT $1,project_id,subject_alpha_version_id,input_set_id,policy_id,run_id,evaluation_kind,execution_status,evidence_status,decision,report_artifact_id,method_versions_artifact_id,statement_timestamp()-interval '1 hour',statement_timestamp()-interval '1 second' FROM app.evaluations WHERE id=$2")
+        .bind(expired_evaluation.as_uuid()).bind(original.qualifying_evaluation_id.as_uuid()).execute(&mut *tx).await.unwrap();
+    sqlx::query("INSERT INTO app.qualifications(id,alpha_version_id,policy_id,qualifying_evaluation_id,granted_at,valid_until) SELECT $1,subject_alpha_version_id,policy_id,id,concluded_at,valid_until FROM app.evaluations WHERE id=$2")
+        .bind(expired.as_uuid()).bind(expired_evaluation.as_uuid()).execute(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+    let first = store
+        .alpha_qualifications(&operator, a.version, &query)
+        .await
+        .unwrap();
+    assert_eq!(first.items[0].id, expired);
+    assert!(!first.items[0].grant_window_open);
+    assert!(first.items[0].revocation.is_none());
+    assert_eq!(first.next_cursor, Some(expired));
+    let second = store
+        .alpha_qualifications(
+            &operator,
+            a.version,
+            &contracts::control::ListQuery {
+                cursor: first.next_cursor,
+                limit: 1,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.items[0].id, original.id);
+    assert!(second.next_cursor.is_none());
+    let next = store
+        .alpha_qualifications(
+            &operator,
+            a.version,
+            &contracts::control::ListQuery {
+                cursor: Some(a.qualification),
+                limit: 1,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(next.items.is_empty());
+    assert!(matches!(
+        store
+            .alpha_qualifications(&operator, Id::new(), &query)
+            .await,
+        Err(store::StoreError::NotFound)
+    ));
+    assert!(store
+        .alpha_qualifications(
+            &operator,
+            a.version,
+            &contracts::control::ListQuery {
+                cursor: None,
+                limit: 0
+            }
+        )
+        .await
+        .is_err());
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn candidate_members_cannot_borrow_qualified_alphas_from_another_project(pool: PgPool) {
     let f = fixture(&pool, budget()).await;
     let other = fixture(&pool, budget()).await;

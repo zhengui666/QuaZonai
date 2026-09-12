@@ -13703,6 +13703,93 @@
         ],
         "type": "object"
       },
+      "Page_QualificationView": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "description": "Original grant history, not a current portfolio admission decision.",
+              "properties": {
+                "alpha_version_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "checked_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "grant_window_open": {
+                  "description": "Checks only the grant interval and revocation, not policy, data or lifecycle.",
+                  "type": "boolean"
+                },
+                "granted_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "policy_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "qualifying_evaluation_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "revocation": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/QualificationRevocationView",
+                      "description": "Earliest revocation, including a scheduled future effective time."
+                    }
+                  ]
+                },
+                "valid_until": {
+                  "format": "date-time",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "alpha_version_id",
+                "policy_id",
+                "qualifying_evaluation_id",
+                "granted_at",
+                "valid_until",
+                "created_at",
+                "checked_at",
+                "grant_window_open"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "items"
+        ],
+        "type": "object"
+      },
       "Page_RunSnapshotV1": {
         "additionalProperties": false,
         "properties": {
@@ -14478,6 +14565,98 @@
           "created_at",
           "updated_at",
           "revision"
+        ],
+        "type": "object"
+      },
+      "QualificationRevocationView": {
+        "additionalProperties": false,
+        "properties": {
+          "effective_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "evidence_evaluation_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "reason_code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "effective_at",
+          "reason_code"
+        ],
+        "type": "object"
+      },
+      "QualificationView": {
+        "additionalProperties": false,
+        "description": "Original grant history, not a current portfolio admission decision.",
+        "properties": {
+          "alpha_version_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "checked_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "grant_window_open": {
+            "description": "Checks only the grant interval and revocation, not policy, data or lifecycle.",
+            "type": "boolean"
+          },
+          "granted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "policy_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "qualifying_evaluation_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "revocation": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/QualificationRevocationView",
+                "description": "Earliest revocation, including a scheduled future effective time."
+              }
+            ]
+          },
+          "valid_until": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "alpha_version_id",
+          "policy_id",
+          "qualifying_evaluation_id",
+          "granted_at",
+          "valid_until",
+          "created_at",
+          "checked_at",
+          "grant_window_open"
         ],
         "type": "object"
       },
@@ -16435,6 +16614,130 @@
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
+          }
+        ],
+        "tags": [
+          "Evidence"
+        ]
+      }
+    },
+    "/api/v2/alpha-versions/{id}/qualifications": {
+      "get": {
+        "operationId": "list_alpha_qualifications",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_QualificationView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
           }
         ],
         "tags": [

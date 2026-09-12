@@ -35,6 +35,45 @@ async function chooseProject(page: Page, name = project.name) {
   await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').filter({ hasText: name }).click();
   await expect(field).toHaveAttribute('aria-expanded', 'false');
 }
+
+test('qualification history is version-scoped and preserves revocation, observation time and failed refresh', async ({ page }) => {
+  await setup(page);
+  let fail = false;
+  const seen: string[] = [];
+  const qualification: Schema['QualificationView'] = { id: id(61), alpha_version_id: version.id,
+    policy_id: id(62), qualifying_evaluation_id: id(63), granted_at: stamp,
+    valid_until: '2026-10-08T00:00:00Z', created_at: stamp, checked_at: stamp,
+    grant_window_open: true, revocation: { id: id(64), effective_at: '2026-10-01T00:00:00Z',
+      reason_code: 'SCHEDULED_WITHDRAWAL', evidence_evaluation_id: null } };
+  await page.route(`**/api/v2/alpha-versions/${version.id}/qualifications*`, async route => {
+    const url = new URL(route.request().url()); seen.push(url.search);
+    if (fail) return reply(route, problem('UNAVAILABLE', 503), 503);
+    const second = url.searchParams.has('cursor');
+    return reply(route, { schema_version: 1, items: [{ ...qualification,
+      id: second ? id(60) : qualification.id, grant_window_open: !second,
+      revocation: second ? null : qualification.revocation }], next_cursor: second ? null : qualification.id });
+  });
+  await chooseProject(page);
+  await page.getByRole('button', { name: alpha.name, exact: true }).click();
+  await page.getByRole('button', { name: `版本 ${version.version}`, exact: true }).click();
+  expect(seen).toEqual([]);
+  await page.getByRole('button', { name: '查看原资格历史', exact: true }).click();
+  const drawer = page.getByRole('dialog', { name: '原资格历史', exact: true });
+  await expect(drawer.getByText('授予时间窗开放不等于当前可用于组合。', { exact: true })).toBeVisible();
+  await expect(drawer.getByText('SCHEDULED_WITHDRAWAL', { exact: false })).toBeVisible();
+  await expect(drawer.getByRole('columnheader', { name: '服务端观察时间', exact: true })).toBeVisible();
+  await drawer.getByRole('button', { name: '下一页', exact: true }).click();
+  await expect(drawer.getByText('观察时刻未开放', { exact: false })).toBeVisible();
+  expect(seen.some(path => path.includes(`cursor=${qualification.id}`))).toBe(true);
+  fail = true;
+  await drawer.getByRole('button', { name: '刷新资格历史', exact: true }).click();
+  await expect(drawer.getByText('该版本没有资格授予记录。', { exact: true })).toHaveCount(0);
+  await expect(drawer.getByRole('alert').filter({ hasText: 'UNAVAILABLE' })).toBeVisible();
+  fail = false;
+  await drawer.getByRole('button', { name: '刷新资格历史', exact: true }).click();
+  await expect(drawer.getByText('观察时刻未开放', { exact: false })).toBeVisible();
+  expect((await new AxeBuilder({ page }).include('.ant-drawer-body').withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
+});
 async function setup(page: Page) {
   const base = await fixture(page);
   base.projects.push({ ...project, id: id(2), name: '另一个项目' });

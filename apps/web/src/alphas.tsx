@@ -86,6 +86,7 @@ function Versions({ alpha }: { alpha: Alpha }) {
 
 function VersionDetail({ alpha, number }: { alpha: string; number: string }) {
   const [calibration, setCalibration] = useState(false);
+  const [qualifications, setQualifications] = useState(false);
   const [evaluate, setEvaluate] = useState(false);
   const query = useQuery({ queryKey: ['alpha-version', alpha, number], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/alphas/{id}/versions/{version}', {
     params: { path: { id: alpha, version: number } }, signal,
@@ -108,9 +109,11 @@ function VersionDetail({ alpha, number }: { alpha: string; number: string }) {
         { key: 'runtime', label: '冻结镜像', children: version.runtime_image_ref },
       ]} />
       {version.calibration_id && <Button onClick={() => setCalibration(true)}>查看冻结校准来源</Button>}
+      <Button onClick={() => setQualifications(true)}>查看原资格历史</Button>
       <Button disabled={!version.model_artifact_id || (version.signal_kind === 'SCORE' && !version.calibration_id)} onClick={() => setEvaluate(true)}>请求封存评估</Button>
       <Evaluations key={version.id} version={version.id} />
       {calibration && <CalibrationDetail version={version.id} close={() => setCalibration(false)} />}
+      {qualifications && <Qualifications key={version.id} version={version.id} close={() => setQualifications(false)} />}
       {evaluate && <AlphaEvaluate version={version} close={() => setEvaluate(false)} />}
     </Space>}
   </QueryPanel>;
@@ -196,6 +199,33 @@ function AlphaEvaluate({ version, close }: { version: Version; close: () => void
       </>}
     </Space>
   </Modal>;
+}
+
+function Qualifications({ version, close }: { version: string; close: () => void }) {
+  const [history, setHistory] = useState<(string | undefined)[]>([undefined]);
+  const cursor = history.at(-1);
+  const query = useQuery({ queryKey: ['alpha-qualifications', version, cursor], staleTime: 0,
+    queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/alpha-versions/{id}/qualifications', {
+      params: { path: { id: version }, query: { cursor, limit: 25 } }, signal,
+    })) });
+  return <Drawer title="原资格历史" open width={900} onClose={close}>
+    <Space orientation="vertical" size="middle" className="full-width">
+      <Alert type="info" showIcon title="授予时间窗开放不等于当前可用于组合。"
+        description="只展示原授予、期限和最早撤销。当前政策、Alpha 生命周期、REAL/PIT 和许可证仍须在组合准入时检查；本页不读取 Sealed 报告或授予交付权限。状态截至服务端观察时间，之后可能变化。" />
+      <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新资格历史</Button>
+      <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
+        <Table<Schema['QualificationView']> rowKey="id" pagination={false} dataSource={query.data?.items ?? []}
+          onHeaderRow={() => ({ tabIndex: 0 })}
+          locale={{ emptyText: <NoData text="该版本没有资格授予记录。" /> }} scroll={{ x: 850 }} columns={[
+            { title: '原资格 / 政策 / 评估', key: 'identity', render: (_, item) => <div className="break-word">{item.id}<br />{item.policy_id}<br />{item.qualifying_evaluation_id}</div> },
+            { title: '授予时间窗', key: 'window', render: (_, item) => <>{item.grant_window_open ? '观察时刻开放' : '观察时刻未开放'}<br />{displayTime(item.granted_at)} 至 {displayTime(item.valid_until)}</> },
+            { title: '最早撤销（含未来生效）', key: 'revocation', render: (_, item) => item.revocation ? <div className="break-word">{item.revocation.reason_code}<br />{displayTime(item.revocation.effective_at)}<br />{item.revocation.id}<br />{item.revocation.evidence_evaluation_id ?? '无证据评估引用'}</div> : '没有撤销记录' },
+            { title: '服务端观察时间', key: 'checked', render: (_, item) => displayTime(item.checked_at) },
+          ]} />
+        <Pager history={history} next={query.data?.next_cursor} loading={query.isFetching} move={setHistory} />
+      </QueryPanel>
+    </Space>
+  </Drawer>;
 }
 
 function CalibrationDetail({ version, close }: { version: string; close: () => void }) {

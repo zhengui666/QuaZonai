@@ -17,12 +17,26 @@ use contracts::{
     control::{CommandResult, ListQuery, Page},
     evidence::{
         AlphaEvaluateRequestV1, AlphaVersionView, AlphaView, CalibrationView, EvaluationView,
-        MetricValueV1,
+        MetricValueV1, QualificationView,
     },
     research::ResearchListQuery,
     Id, Revision,
 };
 use store::StoreError;
+
+#[utoipa::path(get,path="/api/v2/alpha-versions/{id}/qualifications",operation_id="list_alpha_qualifications",tag="Evidence",params(("id"=Id,Path),("cursor"=Option<Id>,Query),("limit"=Option<u16>,Query,minimum=1,maximum=100)),responses((status=200,body=Page<QualificationView>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem),(status=503,body=Problem)))]
+pub async fn qualifications(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    id: Result<Path<Id>, PathRejection>,
+    query: Result<Query<ListQuery>, QueryRejection>,
+) -> Result<Json<Page<QualificationView>>, ApiError> {
+    let Path(id) = id.map_err(|_| ApiError::validation())?;
+    let Query(query) = query.map_err(|_| ApiError::validation())?;
+    Ok(Json(
+        state.store.alpha_qualifications(&actor, id, &query).await?,
+    ))
+}
 
 #[utoipa::path(post,path="/api/v2/alpha-versions/{id}/evaluations",operation_id="start_alpha_evaluation",tag="Evidence",request_body=AlphaEvaluateRequestV1,params(("id"=Id,Path),("Idempotency-Key"=String,Header)),responses((status=202,body=CommandResult<contracts::runs::RunSnapshotV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
 pub async fn evaluate(

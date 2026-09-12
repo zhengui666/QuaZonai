@@ -82,6 +82,7 @@ use utoipa::OpenApi;
     evidence::AlphaView,
     evidence::AlphaVersionView,
     evidence::CalibrationView,
+    evidence::QualificationView,
     evidence::EvaluationView,
     brief::BriefCreate,
     brief::BriefCreateIntent,
