@@ -203,6 +203,7 @@ function CycleSelection({ id, close }: { id: string; close: () => void }) {
               { key: 'discovery', label: '原 Discovery Run', children: item.discovery_run_id ?? '未准入' },
               { key: 'validation', label: '原 Validation Run', children: item.validation_run_id ?? '未准入' },
               { key: 'alpha', label: '原 Alpha 版本', children: item.alpha_version_id ?? '未登记' },
+              { key: 'review-alpha', label: '冻结审阅版本（非资格）', children: item.review_alpha_version_id ?? '未形成审阅目标' },
               { key: 'evaluation', label: '原正式评估', children: item.evaluation_id ?? '未发表' },
               { key: 'unfinished', label: '可比试验尚未完成', children: item.unfinished ? '是，完整集合尚不能确定' : '否' },
               ...(item.selection_metric ? [

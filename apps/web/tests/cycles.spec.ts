@@ -204,13 +204,13 @@ const selection: Schema['CycleSelectionV1'] = { schema_version: 1, cycle_id: id(
     tie_break: 'EXPERIMENT_ID_ASC', missing_required_metric: 'INCONCLUSIVE' } };
 const selectedTrial: Schema['CycleSelectionTrialV1'] = { schema_version: 1, cycle_id: id(40), experiment_id: id(64),
   source_cycle_id: id(40), execution_run_id: id(67), compile_run_id: id(65), discovery_run_id: id(66), validation_run_id: id(67),
-  alpha_version_id: id(68), evaluation_id: id(69), execution_state: 'SUCCEEDED', reason: 'ELIGIBLE', rank: '1', selected: true, unfinished: false,
+  alpha_version_id: id(68), review_alpha_version_id: id(74), evaluation_id: id(69), execution_state: 'SUCCEEDED', reason: 'ELIGIBLE', rank: '1', selected: true, unfinished: false,
   selection_metric: { schema_version: 1, evaluation_id: id(69), metric_code: selection.rule.metric_code, scope: selection.rule.metric_scope,
     value: 0, status: 'OK', reason_code: null, unit: selection.rule.unit, frequency: selection.rule.frequency,
     method_id: selection.rule.method_id, method_version: selection.rule.method_version, source_artifact_id: id(70),
     period_start: stamp, period_end: '2026-09-09T00:00:00Z', observation_count: '9007199254740993', annualization_factor: null, higher_is_better: true } };
 const pendingTrial: Schema['CycleSelectionTrialV1'] = { ...selectedTrial, experiment_id: id(71), source_cycle_id: id(72), compile_run_id: null,
-  discovery_run_id: null, validation_run_id: null, alpha_version_id: null, evaluation_id: null, execution_run_id: null, execution_state: null,
+  discovery_run_id: null, validation_run_id: null, alpha_version_id: null, review_alpha_version_id: null, evaluation_id: null, execution_run_id: null, execution_state: null,
   reason: 'UNFINISHED', rank: null, selected: false, unfinished: true, selection_metric: null };
 
 test('frozen selection preserves history, original metric zero and exact counts without a winner write', async ({ page }) => {
@@ -232,6 +232,8 @@ test('frozen selection preserves history, original metric zero and exact counts 
   await expect(dialog.getByRole('cell', { name: '0', exact: true })).toBeVisible();
   await dialog.locator('.ant-table-row-expand-icon').click();
   await expect(dialog.getByText(selectedTrial.validation_run_id!, { exact: true })).toHaveCount(2);
+  await expect(dialog.getByText('冻结审阅版本（非资格）', { exact: true })).toBeVisible();
+  await expect(dialog.getByText(selectedTrial.review_alpha_version_id!, { exact: true })).toBeVisible();
   await expect(dialog.getByText('9007199254740993', { exact: true })).toBeVisible();
   await expect(dialog.getByText(selectedTrial.selection_metric!.source_artifact_id, { exact: true })).toBeVisible();
   expect((await new AxeBuilder({ page }).include('[role="dialog"][aria-modal="true"]').withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);

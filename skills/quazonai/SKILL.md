@@ -107,6 +107,9 @@ Reviewer的Runtime刷新仍核对原冻结配置、启用状态、租约及期�
 快照失败保留原队列重试，不新建Run或模型轮次。Operator/精确项目CLI使用cycle
 selection/trials只读命令；Mission不能调用完整快照接口、刷新旧排名或把COMPLETE
 当作科学PASS、Reviewer批准或资格。未形成与空快照不同。
+review_alpha_version_id是冻结的原审阅目标，区别于原Validation的alpha_version_id；
+SCORE沿原校准确定，不读取active指针推断，REJECT/未入选/缺证据保持空。
+目标非空不免除后续Reviewer启动、当前有效期、预算和资格检查。
 
 可信Validation发布器按A4.4冻结原生最后折的SCORE校准、真实训练截止和原输入
 子集；Agent不能提交系数、选择赢家折、重写旧Alpha版本或把校准存在当作资格。

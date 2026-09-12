@@ -6860,6 +6860,16 @@
           "reason": {
             "$ref": "#/components/schemas/TrialSelectionReason"
           },
+          "review_alpha_version_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
           "schema_version": {
             "$ref": "#/components/schemas/SchemaV1"
           },

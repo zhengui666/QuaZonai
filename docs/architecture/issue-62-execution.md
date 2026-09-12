@@ -3,6 +3,37 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Frozen original review target, 2026-09-12
+
+Working source over `8fa4635ae90647dfd5b0c3c4296fcb0aa3f68e0a` adds nullable
+review_alpha_version_id to the original selection member, contract and read-only
+Web detail. Original alpha_version_id still names Validation's source version.
+Only selected, currently passed original Validation evidence supplies a target;
+SCORE resolves its actual next calibrated version through immutable relations,
+not the active Alpha pointer. Migration 044 guards that relation and leaves old
+snapshots null. No extra target table, queue, model call or qualification grant.
+
+`verify-Sn9W2W` passed workspace check/format/strict Clippy, 29 native validation,
+130 Store and 21 HTTP/CLI tests, zero failed/ignored, source unchanged and owned
+PostgreSQL stopped. The real PG selection test moves active_version_id back to
+the original before freezing and still gets the original calibrated target.
+MAXIMIZE/MINIMIZE tests retain ranked scientific REJECT rows without review
+targets, and unselected/unexecuted rows stay null. Existing rollback, concurrent
+ACK and immutable membership checks still pass.
+
+`web-verify-832Bj1` passed double native generation of all six named outputs,
+typechecking, 505 unit tests, wire checks, build, CLI help, 36 Codex browser
+tests and 189 complete browser tests; handwritten files unchanged. The selection
+browser check displays the original and review versions separately as nonqualification.
+`verify-pci9pO` passed check/format/strict Clippy, one native same-Thread science
+test (200.52s) and two cancellation recovery tests (51.22s), zero ignored,
+source unchanged and owned PostgreSQL stopped. Native binary execution uses
+controlled model/science responses; it is not real-account/market T42 acceptance.
+
+Automatic Reviewer admission, independent input delivery/assessment, automatic
+Sealed continuation and qualification remain unfinished. Frozen target metadata
+alone must not be used to claim any of them or merge Issue #62.
+
 ## Shared Mission Runtime refresh, 2026-09-12
 
 Working source over `2d5971ea362a0a2602aab74760d6e68b62433c4f` removes the

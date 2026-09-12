@@ -152,6 +152,7 @@ pub struct CycleSelectionTrialV1 {
     pub discovery_run_id: Option<Id>,
     pub validation_run_id: Option<Id>,
     pub alpha_version_id: Option<Id>,
+    pub review_alpha_version_id: Option<Id>,
     pub evaluation_id: Option<Id>,
     pub execution_state: Option<crate::runs::RunState>,
     pub reason: TrialSelectionReason,

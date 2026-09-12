@@ -52,6 +52,12 @@ async fn failed_selection_keeps_original_queue_and_replay_seals_members_not_othe
     let (store, actor, f, lease, experiment, validation) = prepared(&pool).await;
     experiment_support::complete_validation(&pool, &store, &f, validation, 1000, 0.8).await;
     let evaluation = publish(&store, &f, validation).await.unwrap().resource;
+    let reviewed: uuid::Uuid = sqlx::query_scalar("SELECT v.id FROM app.alpha_versions v JOIN app.calibrations c ON c.id=v.calibration_id WHERE c.validation_evaluation_id=$1")
+        .bind(evaluation.as_uuid()).fetch_one(&pool).await.unwrap();
+    // Deliberately move the mutable pointer away before freezing. The original
+    // native calibration still determines the review target, not this pointer.
+    sqlx::query("UPDATE app.alphas a SET active_version_id=e.subject_alpha_version_id FROM app.evaluations e JOIN app.alpha_versions v ON v.id=e.subject_alpha_version_id WHERE e.id=$1 AND a.id=v.alpha_id")
+        .bind(evaluation.as_uuid()).execute(&pool).await.unwrap();
     let request = proposal(&pool, experiment).await;
     let verifier = Id::new();
     let credential = store
@@ -210,8 +216,21 @@ async fn failed_selection_keeps_original_queue_and_replay_seals_members_not_othe
         first.items[0].alpha_version_id.map(Id::as_uuid),
         Some(source)
     );
-    assert_eq!(sqlx::query_scalar::<_, i32>("SELECT derived.version FROM app.alpha_versions original JOIN app.alphas a ON a.id=original.alpha_id JOIN app.alpha_versions derived ON derived.id=a.active_version_id WHERE original.id=$1 AND derived.calibration_id IS NOT NULL")
-        .bind(source).fetch_one(&pool).await.unwrap(), 2);
+    assert_eq!(
+        first.items[0].review_alpha_version_id.map(Id::as_uuid),
+        Some(reviewed)
+    );
+    assert_ne!(source, reviewed);
+    assert_eq!(
+        sqlx::query_scalar::<_, i32>(
+            "SELECT version FROM app.alpha_versions WHERE id=$1 AND calibration_id IS NOT NULL"
+        )
+        .bind(reviewed)
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        2
+    );
     assert_eq!(
         first.items[0].selection_metric.as_ref().unwrap().value,
         Some(0.8)
@@ -230,6 +249,7 @@ async fn failed_selection_keeps_original_queue_and_replay_seals_members_not_othe
     assert_eq!(second.items[0].experiment_id, pending);
     assert_eq!(second.items[0].reason, TrialSelectionReason::Unfinished);
     assert!(second.items[0].selection_metric.is_none());
+    assert!(second.items[0].review_alpha_version_id.is_none());
     assert!(second.next_cursor.is_none());
     // Recording the other Cycle's pending state must not consume/freeze it.
     sqlx::query("UPDATE app.experiments SET outcome='INCONCLUSIVE',outcome_reason='CONTROLLED_LATER_END' WHERE id=$1")
@@ -459,7 +479,14 @@ async fn ranked(pool: PgPool, direction: SelectionDirection) {
         .await
         .unwrap();
     assert_eq!(decision, "REJECT");
+    assert!(trials[0].review_alpha_version_id.is_none());
+    assert!(trials[1].review_alpha_version_id.is_none());
+    assert_eq!(
+        trials[2].review_alpha_version_id.is_some(),
+        trials[2].selected
+    );
     assert_eq!(trials[3].reason, TrialSelectionReason::NotExecuted);
+    assert!(trials[3].review_alpha_version_id.is_none());
     assert!(trials[3].selection_metric.is_none() && trials[3].rank.is_none());
     let qualification: i64 = sqlx::query_scalar("SELECT count(*) FROM app.qualifications")
         .fetch_one(&pool)

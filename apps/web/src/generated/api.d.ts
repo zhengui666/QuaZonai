@@ -2327,6 +2327,7 @@ export interface components {
             experiment_id: components["schemas"]["Id"];
             rank?: null | components["schemas"]["DbCounter"];
             reason: components["schemas"]["TrialSelectionReason"];
+            review_alpha_version_id?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
             selected: boolean;
             selection_metric?: null | components["schemas"]["MetricValueV1"];
@@ -3216,6 +3217,7 @@ export interface components {
                 experiment_id: components["schemas"]["Id"];
                 rank?: null | components["schemas"]["DbCounter"];
                 reason: components["schemas"]["TrialSelectionReason"];
+                review_alpha_version_id?: null | components["schemas"]["Id"];
                 schema_version: components["schemas"]["SchemaV1"];
                 selected: boolean;
                 selection_metric?: null | components["schemas"]["MetricValueV1"];

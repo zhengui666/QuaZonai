@@ -57,6 +57,10 @@ WITH rule AS (SELECT $3::jsonb AS value), formal AS ({}), observed AS (
  SELECT e.id AS experiment_id,e.cycle_id AS source_cycle_id,c.compile_run_id,
    f.run_id AS discovery_run_id,v.run_id AS validation_run_id,av.id AS alpha_version_id,
    ev.id AS evaluation_id,m.id AS selection_metric_id,r.id AS execution_run_id,r.state AS execution_state,m.value,
+   CASE WHEN ev.subject_alpha_version_id=av.id AND ev.decision='PASS' AND ev.valid_until>clock_timestamp()
+     THEN CASE WHEN av.signal_kind='EXPECTED_RETURN' AND av.calibration_id IS NULL THEN av.id
+       WHEN av.signal_kind='SCORE' AND calibration.id IS NOT NULL THEN reviewed.id END
+     END AS review_alpha_version_id,
    CASE
     WHEN x.validation_input_set_id IS DISTINCT FROM (rule.value->>'comparison_input_set_id')::uuid
       OR b.execution_assumptions_id IS DISTINCT FROM (rule.value->>'execution_assumptions_id')::uuid
@@ -99,6 +103,8 @@ WITH rule AS (SELECT $3::jsonb AS value), formal AS ({}), observed AS (
  LEFT JOIN app.alpha_versions av ON av.id=created.resource_id AND av.experiment_id=e.id AND av.project_id=e.project_id
  LEFT JOIN app.runs r ON r.id=coalesce(v.run_id,f.run_id,c.compile_run_id,e.run_id)
  LEFT JOIN formal ev ON ev.run_id=v.run_id AND ev.subject_alpha_version_id=v.alpha_version_id AND ev.policy_id=v.policy_id
+ LEFT JOIN app.alpha_versions reviewed ON reviewed.alpha_id=av.alpha_id AND reviewed.version=av.version+1
+ LEFT JOIN app.calibrations calibration ON calibration.id=reviewed.calibration_id AND calibration.validation_evaluation_id=ev.id
  CROSS JOIN rule
  LEFT JOIN app.metric_values m ON m.evaluation_id=ev.id AND m.metric_code=rule.value->>'metric_code'
    AND m.scope=rule.value->>'metric_scope' AND m.method_id=rule.value->>'method_id'
@@ -113,10 +119,11 @@ WITH rule AS (SELECT $3::jsonb AS value), formal AS ({}), observed AS (
 )
 INSERT INTO app.cycle_selection_trials(cycle_id,experiment_id,source_cycle_id,compile_run_id,
  discovery_run_id,validation_run_id,alpha_version_id,evaluation_id,selection_metric_id,
- execution_run_id,execution_state,reason,rank,selected,unfinished)
+ execution_run_id,execution_state,reason,rank,selected,unfinished,review_alpha_version_id)
 SELECT $1,o.experiment_id,o.source_cycle_id,o.compile_run_id,o.discovery_run_id,o.validation_run_id,
  o.alpha_version_id,o.evaluation_id,o.selection_metric_id,o.execution_run_id,o.execution_state,o.reason,r.rank,
- coalesce(r.rank<=($3->>'candidate_count')::integer,false),o.reason='UNFINISHED'
+ coalesce(r.rank<=($3->>'candidate_count')::integer,false),o.reason='UNFINISHED',
+ CASE WHEN r.rank<=($3->>'candidate_count')::integer THEN o.review_alpha_version_id END
 FROM observed o LEFT JOIN ranked r USING(experiment_id)
 "#,
         evidence::EVALUATION
@@ -179,6 +186,7 @@ fn trial(row: &PgRow) -> Result<CycleSelectionTrialV1, StoreError> {
         discovery_run_id: db::optional_id(row, "discovery_run_id")?,
         validation_run_id: db::optional_id(row, "validation_run_id")?,
         alpha_version_id: db::optional_id(row, "alpha_version_id")?,
+        review_alpha_version_id: db::optional_id(row, "review_alpha_version_id")?,
         evaluation_id: db::optional_id(row, "original_evaluation_id")?,
         execution_state: row
             .try_get::<Option<String>, _>("execution_state")?

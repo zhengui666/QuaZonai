@@ -23,7 +23,7 @@
 | Ant Design Web/PWA | 已实现 TOTP 初始化/登录、研究项目与 Brief 草稿/冻结、显式双角色配置启动 Cycle、周期/准备 Run 查看、Run/SSE/取消、设备管理；桌面/平板/手机与更新提示。浏览器展示回归和真实入口测试分开记录；不代表全部研究业务完成 |
 | 产物与 MCP | 同项目受限产物提交/不可变存储，按 Mission Attempt 授权和计量；官方 rmcp stdio 与固定 HTTP 工具适配。研究上传不是可信评估，不授予资格或审批 |
 | Alpha 与正式评估查看 | API／CLI／Ant Design 按项目查看原 Alpha 版本、已发表的正式 Validation 和分页原始指标；保留缺值、方法、来源、精确计数与原有效期，不下载受限报告或把科学 PASS 当作资格 |
-| 冻结试验选择 | 原研究 Mission 确认前冻结同 Family 全部登记试验，保留失败、取消、未完成、原指标和确定性排名；API／CLI／Ant Design 只读原快照。当前原生口径为 WALK_FORWARD，COMPLETE 不是科学 PASS 或资格 |
+| 冻结试验选择 | 原研究 Mission 确认前冻结同 Family 全部登记试验，保留失败、取消、未完成、原指标、确定性排名及精确校准审阅目标；API／CLI／Ant Design 只读原快照。当前原生口径为 WALK_FORWARD，COMPLETE 不是科学 PASS 或资格，审阅目标不表示 Reviewer 已执行 |
 | 冻结 SCORE 校准 | 原正式 Validation 同事务冻结最后原生折并创建同 Alpha 的附加校准新版本；原版本、试验、原评估不变，新版本不继承资格。API／CLI／Ant Design 只读原校准来源，不下载系数、不重新拟合或恢复已停用 Alpha |
 | 原生封存计算 | 本机入口及受管EVALUATE_SEALED_ALPHA复用目录、Wasm、冻结校准和原生指标；真实OCI执行已验证。Operator可经API／CLI／Ant Design明确选择运行中的Cycle，使用原模型请求评估，不重复收费原编译试验。首次能力返回前按原Attempt预约根血缘机会，取消不退款；Worker在ACK前发表原SEALED评估及全部指标。自动续接、独立Reviewer及资格尚未接通 |
 | 交付与完整研究 | Sealed／Reviewer／Alpha资格、组合/审批/反馈/晋级/唤醒、旧数据导入及完整恢复仍在实施；未接通的页面明确标示，不填充假结果 |

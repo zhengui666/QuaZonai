@@ -1510,6 +1510,14 @@ policy、执行/证据/决策、静态原因、原生报告/manifest引用、实
 原Cycle此后不得接收新提案；精确已提交命令重放仍返回原回执。快照不完成Cycle、
 不授资格、不给Sealed读取机会，也不代替后续独立Reviewer和资格裁决。
 
+成员的可空review_alpha_version_id冻结后续审阅目标，不替换alpha_version_id所指的
+原Validation版本。仅排名入选且原正式Validation为SUCCEEDED/VALID/PASS、形成时
+未到期的成员可有目标：EXPECTED_RETURN保留原版本；SCORE使用原Validation真正
+附加校准的下一版本，沿不可变校准/原生生产者关系确定，不读取active_version_id。
+验证REJECT、缺校准、未入选或历史缺证据保持null，不补造目标。此字段在取消快照中
+也仅为审计事实；启动Reviewer仍须原Researcher成功、选择COMPLETE及当前预算/证据
+准入，后续到期或撤销必须重验，不能将非空引用当资格或读取Sealed原始数据的许可。
+
 快照包含形成时同项目、同Family/根血缘的全部已登记试验，跨Cycle保留历史；每个
 experiment仅一行，保留原Cycle/编译/Discovery/Validation/Alpha/Evaluation引用、
 形成时执行状态及排除理由。未执行、失败、取消、无原正式评估、不可比、无效或缺
