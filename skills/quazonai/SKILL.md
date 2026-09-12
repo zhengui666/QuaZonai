@@ -77,7 +77,8 @@ Mission不借用它读取额外指标。原Thread反馈仍只披露冻结选择�
 portfolio-ensemble/1需真实重建登记镜像；这些命令不增加Mission工具或审批权限。
 optimizer/alpha_ensemble须保留原NativeModelRefV1，不能改类名/版本或把未知参数
 当默认配置；顶层settings/risk_aversion不再接受，后者在原optimizer.parameters，
-对应镜像还须portfolio-models/2。
+对应镜像还须portfolio-models/3，allocate/PORTFOLIO_BUILD以原return_history和
+covariance_estimator估计协方差，旧covariance矩阵字段不再接受。
 SAMPLE_COVARIANCE仅绑定ndarray-stats0.7.0的原生cov与ddof=1，不授予数据访问，
 也不新增Mission工具；不能把数值矩阵存在当作原数据资格。
 人工Mandate API/CLI创建与读取见CLI，原配置不可修改；同键重试保留原完整请求。

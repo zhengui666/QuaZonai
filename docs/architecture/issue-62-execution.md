@@ -3,6 +3,45 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Original return history enters native covariance and allocation, 2026-09-13
+
+Working source over `439f2f57214c36412f2006c5cc8141831f7f4da8` removes the
+caller-provided covariance matrix from AllocationInputV1. Strict return_history
+and covariance_estimator now enter the same local/managed allocation path.
+Asset/bar order, currency and horizon must match forecasts; completed windows
+are strictly ordered, availability is causal at decision time, dimensions and
+aggregate size are bounded, and finite simple returns cannot be below -1.
+Existing ndarray-stats 0.7.0/ddof=1 estimates the matrix before the original
+Clarabel problem. There is no imputation, annualization, jitter or matrix fallback.
+Runtime, image and Mandate admission now require portfolio-models/3.
+
+The controlled five-observation fixture has exact sample covariance diag(1,4),
+preserving independent 0.8/0.2 and original mixed-forecast 0.82/0.18 oracles.
+New checks reject future/early availability, duplicate window ends, mismatched
+identities/bars/horizons/currency, missing rows, impossible/nonfinite returns,
+wrong model roles and removed matrix/missing-history inputs. Translation invariance
+is checked through the actual estimator and solver, not a supplied matrix.
+
+Initial `verify-Xx1IEC` completed functionals but failed two strict Clippy index-loop
+warnings. The symmetric native matrix is now traversed with iterators, without
+suppression. Final `verify-fgpKLp` exited 0: workspace check/format/strict Clippy,
+126 contracts/domain, 34 scientific/managed Job, 2 Mandate Store and 15 HTTP/CLI
+tests passed, zero failed/ignored; source unchanged and owned PostgreSQL stopped.
+`web-verify-0hiWA0` exited 0: six native artifacts reproducible, source unchanged,
+TypeScript, 505 Vitest/5 Node, numeric wire checks, build, 36 dedicated Codex
+settings checks and 195 full browser tests passed (overlapping browser subsets).
+Only the generated domain OpenAPI bytes changed.
+
+`owner-oci-Juuj7f` built actual image
+`sha256:2b579faa6077202822ed911669139fa2b13a6f117fe8cc1cb39f80496bb5dafa`;
+all 9 native OCI tests passed in 14.62s, zero failed/ignored, source unchanged,
+including original allocation through portfolio-models/3. This evidence entry is
+the only handwritten change after that verification. These controlled numerical
+histories are not REAL market provenance or proof of qualified Alpha ownership.
+Trusted frozen catalog/artifact/license/qualification assembly, complete Candidate
+simulation/Release and T42 remain required. Live read-only GitHub verification
+still showed draft/open PR63 at remote 37e5713 and open Issue62; no write or merge.
+
 ## Native Mandate CLI and shared pagination fix, 2026-09-13
 
 Working source over `abde0edcf7e4afb6fb82336d750f1ecfda39b1e9` adds actual CLI

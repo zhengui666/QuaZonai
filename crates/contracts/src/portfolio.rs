@@ -5,6 +5,8 @@ use utoipa::ToSchema;
 
 pub const MAX_ALLOCATION_ASSETS: usize = 256;
 pub const MAX_ALLOCATION_GROUPS: usize = 64;
+pub const MAX_RETURN_OBSERVATIONS: usize = 100_000;
+pub const MAX_RETURN_VALUES: usize = 1_000_000;
 pub const CLARABEL_CLASS: &str = "clarabel::solver::DefaultSolver";
 pub const CLARABEL_VERSION: &str = "0.11.1";
 pub const FIXED_ENSEMBLE_CLASS: &str = "ndarray::ArrayBase::dot";
@@ -308,6 +310,28 @@ pub struct AllocationAssetV1 {
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
+pub struct PortfolioReturnHistoryV1 {
+    pub schema_version: SchemaV1,
+    pub base_currency: String,
+    pub horizon_kind: crate::brief::HorizonKind,
+    pub horizon_value: crate::DbCounter,
+    #[schema(min_items = 1, max_items = 256)]
+    pub instrument_ids: Vec<String>,
+    #[schema(min_items = 1, max_items = 256)]
+    pub bar_types: Vec<String>,
+    /// Common completed return windows, in strictly increasing end-time order.
+    #[schema(min_items = 2, max_items = 100000)]
+    pub end_ns: Vec<crate::DbCounter>,
+    /// Latest availability of all assets in each window, not just event time.
+    #[schema(min_items = 2, max_items = 100000)]
+    pub available_ns: Vec<crate::DbCounter>,
+    /// Asset-major simple returns over the same horizon as the forecasts.
+    #[serde(serialize_with = "serialize_finite_matrix")]
+    #[schema(schema_with = return_history_schema)]
+    pub asset_returns: Vec<Vec<f64>>,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct AllocationInputV1 {
     pub schema_version: SchemaV1,
     pub forecasts: PortfolioForecastInputV1,
@@ -321,12 +345,10 @@ pub struct AllocationInputV1 {
     pub constraints: PortfolioConstraintsV1,
     pub optimizer: NativeModelRefV1,
     pub alpha_ensemble: NativeModelRefV1,
+    pub covariance_estimator: NativeModelRefV1,
+    pub return_history: PortfolioReturnHistoryV1,
     #[schema(min_items = 1, max_items = 256)]
     pub assets: Vec<AllocationAssetV1>,
-    /// Same asset ordering; per-decision-period covariance from the native estimator.
-    #[serde(serialize_with = "serialize_finite_matrix")]
-    #[schema(schema_with = covariance_schema)]
-    pub covariance: Vec<Vec<f64>>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -382,19 +404,19 @@ fn serialize_finite_matrix<S: serde::Serializer>(
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
     if value.iter().flatten().any(|number| !number.is_finite()) {
-        return Err(serde::ser::Error::custom("non-finite covariance"));
+        return Err(serde::ser::Error::custom("non-finite return history"));
     }
     value.serialize(serializer)
 }
-fn covariance_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+fn return_history_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
     use utoipa::openapi::schema::{ArrayBuilder, KnownFormat, ObjectBuilder, SchemaFormat, Type};
     ArrayBuilder::new()
         .min_items(Some(1))
         .max_items(Some(MAX_ALLOCATION_ASSETS))
         .items(
             ArrayBuilder::new()
-                .min_items(Some(1))
-                .max_items(Some(MAX_ALLOCATION_ASSETS))
+                .min_items(Some(2))
+                .max_items(Some(MAX_RETURN_OBSERVATIONS))
                 .items(
                     ObjectBuilder::new()
                         .schema_type(Type::Number)

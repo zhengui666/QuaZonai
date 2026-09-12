@@ -224,6 +224,8 @@ pub fn mandate(content: &MandateContentV1) -> Result<(), DomainError> {
 pub fn allocation_input(input: &AllocationInputV1) -> Result<(), DomainError> {
     optimizer_settings(&input.optimizer)?;
     fixed_ensemble(&input.alpha_ensemble)?;
+    sample_covariance_parameters(&input.covariance_estimator)?;
+    portfolio_return_history(&input.return_history, &input.forecasts)?;
     let count = input.assets.len();
     let constraints = &input.constraints;
     portfolio_constraints(constraints)?;
@@ -245,11 +247,6 @@ pub fn allocation_input(input: &AllocationInputV1) -> Result<(), DomainError> {
         return Err(DomainError::Invalid("allocation_forecast_binding"));
     }
     if !(1..=MAX_ALLOCATION_ASSETS).contains(&count)
-        || input.covariance.len() != count
-        || input
-            .covariance
-            .iter()
-            .any(|row| row.len() != count || row.iter().any(|v| !v.is_finite()))
         || !input.capital_assumption.is_positive()
         || !input.exposure_tolerance.is_positive()
         || input.exposure_tolerance.as_decimal() > &BigDecimal::new(1.into(), 3)
@@ -298,6 +295,47 @@ pub fn allocation_input(input: &AllocationInputV1) -> Result<(), DomainError> {
         if !groups.contains(value.group_id.as_str()) {
             return Err(invalid());
         }
+    }
+    Ok(())
+}
+
+/// Causal shape/alignment only; trusted artifact assembly must prove origin.
+pub fn portfolio_return_history(
+    history: &PortfolioReturnHistoryV1,
+    forecasts: &PortfolioForecastInputV1,
+) -> Result<(), DomainError> {
+    let count = history.end_ns.len();
+    if !(2..=MAX_RETURN_OBSERVATIONS).contains(&count)
+        || history.available_ns.len() != count
+        || history.instrument_ids != forecasts.instrument_ids
+        || history.bar_types != forecasts.bar_types
+        || history.base_currency != forecasts.base_currency
+        || history.horizon_kind != forecasts.horizon_kind
+        || history.horizon_value != forecasts.horizon_value
+        || history.asset_returns.len() != history.instrument_ids.len()
+        || !history
+            .asset_returns
+            .len()
+            .checked_mul(count)
+            .is_some_and(|size| size <= MAX_RETURN_VALUES)
+        || history.asset_returns.iter().any(|row| {
+            row.len() != count || row.iter().any(|value| !value.is_finite() || *value < -1.0)
+        })
+        || history
+            .end_ns
+            .windows(2)
+            .any(|pair| pair[0].get() >= pair[1].get())
+        || history
+            .end_ns
+            .iter()
+            .zip(&history.available_ns)
+            .any(|(end, available)| {
+                end.get() == 0
+                    || available.get() < end.get()
+                    || available.get() > forecasts.decision_asof_ns.get()
+            })
+    {
+        return Err(DomainError::Invalid("portfolio_return_history"));
     }
     Ok(())
 }

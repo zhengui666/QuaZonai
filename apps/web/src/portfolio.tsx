@@ -117,7 +117,7 @@ function MandateEditor({ project, close }: { project: string; close: () => void 
         <Form.Item name={['content', 'exposure_tolerance']} label="发布敞口容差" rules={decimalRules}><Input inputMode="decimal" /></Form.Item>
       </Card>
       <Card title="原生模型与目标">
-        <Typography.Paragraph>样本协方差 ndarray-stats 0.7.0（ddof=1）；固定预测聚合 ndarray 0.17.1；优化器 Clarabel 0.11.1。需要 portfolio-models/2 镜像能力。</Typography.Paragraph>
+        <Typography.Paragraph>样本协方差 ndarray-stats 0.7.0（ddof=1）；固定预测聚合 ndarray 0.17.1；优化器 Clarabel 0.11.1。需要 portfolio-models/3 镜像能力。</Typography.Paragraph>
         <Form.Item name={['content', 'objective']} label="优化目标" rules={[required]}><Select options={[{ value: 'MIN_RISK', label: '最小风险' }, { value: 'MAX_UTILITY', label: '最大效用' }, { value: 'RISK_BUDGETING', label: '风险预算（当前原生未支持）', disabled: true }]} /></Form.Item>
         <Form.Item name={['content', 'risk_measure']} label="风险度量" rules={[required]}><Select options={[{ value: 'VARIANCE', label: '方差' }, { value: 'CVAR', label: 'CVaR（当前原生未支持）', disabled: true }]} /></Form.Item>
         <Form.Item name={['parameters', 'risk_aversion']} label="风险厌恶系数" rules={decimalRules}><Input inputMode="decimal" /></Form.Item>

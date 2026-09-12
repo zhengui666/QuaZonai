@@ -103,5 +103,22 @@
       "groups": ["sector-b"]
     }
   ],
-  "covariance": [[1.0, 0.0], [0.0, 4.0]]
+  "covariance_estimator": {
+    "schema_version": 1,
+    "adapter_kind": "SAMPLE_COVARIANCE",
+    "upstream_class": "ndarray_stats::CorrelationExt::cov",
+    "upstream_version": "0.7.0",
+    "parameters": {"ddof": 1}
+  },
+  "return_history": {
+    "schema_version": 1,
+    "base_currency": "USD",
+    "horizon_kind": "FIXED_BARS",
+    "horizon_value": "4",
+    "instrument_ids": ["ALPHA.EXAMPLE", "BETA.EXAMPLE"],
+    "bar_types": ["ALPHA.EXAMPLE-1-MINUTE-LAST-EXTERNAL", "BETA.EXAMPLE-1-MINUTE-LAST-EXTERNAL"],
+    "end_ns": ["100", "200", "300", "400", "500"],
+    "available_ns": ["100", "200", "300", "400", "500"],
+    "asset_returns": [[0.0, 2.0, 0.0, 2.0, 1.0], [0.0, 0.0, 4.0, 4.0, 2.0]]
+  }
 }

@@ -78,10 +78,53 @@ fn native_minimum_risk_uses_the_whole_covariance_not_equal_weights() {
     near(result[0], 0.8);
     near(result[1], 0.2);
     let mut changed = request;
-    changed.covariance = vec![vec![4.0, 0.0], vec![0.0, 1.0]];
+    changed.return_history.asset_returns.swap(0, 1);
     let changed = weights(&changed);
     near(changed[0], 0.2);
     near(changed[1], 0.8);
+}
+
+#[test]
+fn native_covariance_requires_original_causal_aligned_return_history() {
+    let original = input();
+    for mutation in 0..10 {
+        let mut bad = original.clone();
+        match mutation {
+            0 => {
+                bad.return_history.available_ns[0] =
+                    contracts::DbCounter::new(bad.forecasts.decision_asof_ns.get() + 1).unwrap()
+            }
+            1 => bad.return_history.available_ns[0] = contracts::DbCounter::new(99).unwrap(),
+            2 => bad.return_history.end_ns[1] = bad.return_history.end_ns[0],
+            3 => bad.return_history.instrument_ids.swap(0, 1),
+            4 => bad.return_history.bar_types.swap(0, 1),
+            5 => bad.return_history.horizon_value = contracts::DbCounter::new(3).unwrap(),
+            6 => bad.return_history.base_currency = "EUR".into(),
+            7 => {
+                bad.return_history.available_ns.pop();
+            }
+            8 => bad.return_history.asset_returns[0][0] = -1.01,
+            _ => bad.covariance_estimator = bad.alpha_ensemble.clone(),
+        }
+        assert!(job::allocate(&bad).is_err(), "history mutation {mutation}");
+    }
+    let mut wire = serde_json::to_value(&original).unwrap();
+    wire["covariance"] = serde_json::json!([[1, 0], [0, 4]]);
+    assert!(serde_json::from_value::<AllocationInputV1>(wire).is_err());
+    for missing in ["return_history", "covariance_estimator"] {
+        let mut wire = serde_json::to_value(&original).unwrap();
+        wire.as_object_mut().unwrap().remove(missing);
+        assert!(serde_json::from_value::<AllocationInputV1>(wire).is_err());
+    }
+    let mut translated = original;
+    for row in &mut translated.return_history.asset_returns {
+        for value in row {
+            *value += 10.0;
+        }
+    }
+    let result = weights(&translated);
+    near(result[0], 0.8);
+    near(result[1], 0.2);
 }
 
 #[test]
@@ -364,12 +407,13 @@ fn invalid_or_unsupported_inputs_are_not_silently_repaired() {
     missing.as_object_mut().unwrap().remove("forecasts");
     assert!(serde_json::from_value::<AllocationInputV1>(missing).is_err());
     let mut request = input();
-    request.covariance[0][1] = 0.1;
-    assert!(job::allocate(&request).is_err());
-    request.covariance = vec![vec![1.0, 2.0], vec![2.0, 1.0]];
+    request.return_history.asset_returns[0].pop();
     assert!(job::allocate(&request).is_err());
     request = input();
-    request.covariance[0][0] = f64::NAN;
+    request.return_history.asset_returns[1] = request.return_history.asset_returns[0].clone();
+    assert!(job::allocate(&request).is_err());
+    request = input();
+    request.return_history.asset_returns[0][0] = f64::NAN;
     assert!(job::allocate(&request).is_err());
     assert!(serde_json::to_value(&request).is_err());
     request = input();

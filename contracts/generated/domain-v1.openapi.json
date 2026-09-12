@@ -447,19 +447,8 @@
           "constraints": {
             "$ref": "#/components/schemas/PortfolioConstraintsV1"
           },
-          "covariance": {
-            "items": {
-              "items": {
-                "format": "double",
-                "type": "number"
-              },
-              "maxItems": 256,
-              "minItems": 1,
-              "type": "array"
-            },
-            "maxItems": 256,
-            "minItems": 1,
-            "type": "array"
+          "covariance_estimator": {
+            "$ref": "#/components/schemas/NativeModelRefV1"
           },
           "current_cash_weight": {
             "$ref": "#/components/schemas/DecimalValue"
@@ -475,6 +464,9 @@
           },
           "optimizer": {
             "$ref": "#/components/schemas/NativeModelRefV1"
+          },
+          "return_history": {
+            "$ref": "#/components/schemas/PortfolioReturnHistoryV1"
           },
           "risk": {
             "$ref": "#/components/schemas/AllocationRisk"
@@ -495,8 +487,9 @@
           "constraints",
           "optimizer",
           "alpha_ensemble",
-          "assets",
-          "covariance"
+          "covariance_estimator",
+          "return_history",
+          "assets"
         ],
         "type": "object"
       },
@@ -12474,6 +12467,83 @@
           "bar_types",
           "instrument_ids",
           "members"
+        ],
+        "type": "object"
+      },
+      "PortfolioReturnHistoryV1": {
+        "additionalProperties": false,
+        "properties": {
+          "asset_returns": {
+            "items": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 100000,
+              "minItems": 2,
+              "type": "array"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "available_ns": {
+            "description": "Latest availability of all assets in each window, not just event time.",
+            "items": {
+              "$ref": "#/components/schemas/DbCounter"
+            },
+            "maxItems": 100000,
+            "minItems": 2,
+            "type": "array"
+          },
+          "bar_types": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "base_currency": {
+            "type": "string"
+          },
+          "end_ns": {
+            "description": "Common completed return windows, in strictly increasing end-time order.",
+            "items": {
+              "$ref": "#/components/schemas/DbCounter"
+            },
+            "maxItems": 100000,
+            "minItems": 2,
+            "type": "array"
+          },
+          "horizon_kind": {
+            "$ref": "#/components/schemas/HorizonKind"
+          },
+          "horizon_value": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "instrument_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "base_currency",
+          "horizon_kind",
+          "horizon_value",
+          "instrument_ids",
+          "bar_types",
+          "end_ns",
+          "available_ns",
+          "asset_returns"
         ],
         "type": "object"
       },

@@ -93,7 +93,11 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
         "UNSUPPORTED_EX_ANTE_RISK_BOUND"
     );
     let n = input.assets.len();
-    let covariance = DMatrix::from_fn(n, n, |row, col| input.covariance[row][col]);
+    let estimated = crate::validation::sample_covariance(
+        &input.covariance_estimator,
+        &input.return_history.asset_returns,
+    )?;
+    let covariance = DMatrix::from_fn(n, n, |row, col| estimated[row][col]);
     // Exact symmetry is part of the native estimator output contract. Do not use
     // one triangle of an inconsistent matrix or hide it with averaging/jitter.
     ensure!(
@@ -112,9 +116,9 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
     let mut p_rows = Vec::new();
     let mut p_cols = Vec::new();
     let mut p_values = Vec::new();
-    for col in 0..n {
-        for row in 0..=col {
-            let value = 2.0 * aversion * input.covariance[row][col];
+    for (col, column) in estimated.iter().enumerate() {
+        for (row, covariance) in column.iter().take(col + 1).enumerate() {
+            let value = 2.0 * aversion * covariance;
             ensure!(value.is_finite(), "COVARIANCE_SCALING_OVERFLOW");
             if value != 0.0 {
                 p_rows.push(row);

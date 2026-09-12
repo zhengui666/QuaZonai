@@ -168,13 +168,15 @@ schema_version、adapter_kind、upstream_class、upstream_version、parameters�
 当前仅支持CLARABEL_QP / clarabel::solver::DefaultSolver / 0.11.1（参数沿用
 AllocatorSettingsV1）及FIXED_WEIGHTED_FORECAST / ndarray::ArrayBase::dot / 0.17.1
 （参数为空对象，混合权重在原forecasts中）。顶层settings已删除；未知类/版本、
-错误角色、额外参数均拒绝，不默认选择模型。新镜像还需portfolio-models/2能力。
+错误角色、额外参数均拒绝，不默认选择模型。新镜像还需portfolio-models/3能力。
 正Decimal的risk_aversion现在冻结在optimizer.parameters中，顶层同名字段已删除。
 
 协方差数值适配的引用为SAMPLE_COVARIANCE / ndarray_stats::CorrelationExt::cov /
 0.7.0，parameters仅为`{"ddof":1}`，不能传年化、补值或另一估计器参数。
-该引用已进入本地Rust数值函数并可存入Mandate，尚非单独的CLI计算子命令或受管操作；
-AllocationInputV1中的协方差矩阵仍须由后续可信原收益序列编排绑定。
+allocate及受管PORTFOLIO_BUILD必须带covariance_estimator和return_history，
+不再接收covariance矩阵。历史收益须保留与forecasts相同资产/bar/期限/币种、
+严格递增窗口结束和不晚于决策的可用时点；由原生样本估计直接进入Clarabel。
+格式见合成输入文件和DESIGN A5.2；历史来源的可信目录/产物/许可绑定仍待完整编排。
 
 ### 不可变 Portfolio Mandate
 

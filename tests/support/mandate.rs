@@ -17,7 +17,7 @@ pub async fn request(pool: &PgPool, store: &Store, actor: &Actor) -> MandateCrea
         ("clarabel", CLARABEL_VERSION),
         ("ndarray", FIXED_ENSEMBLE_VERSION),
         ("ndarray-stats", SAMPLE_COVARIANCE_VERSION),
-        ("portfolio-models", "2"),
+        ("portfolio-models", "3"),
     ] {
         cap.engine_versions.insert(name.into(), version.into());
     }

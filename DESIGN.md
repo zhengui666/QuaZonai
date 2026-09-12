@@ -1832,6 +1832,17 @@ Runtime必须带portfolio-ensemble/1镜像能力，旧参数或镜像不加兼�
 
 原生输出保留OPTIMAL/ACCEPTABLE_INACCURATE/INFEASIBLE/UNBOUNDED/FAILED，只有策略明确接受的成功状态且全部发布约束在冻结容差内再次通过时，才带targets与cash。无解、数值失败、迭代上限、后验约束不通过时，两者均为空，不生成100%单资产或平滑修正的备用权重。权重只在求解器数值边界转换，公开存储继续使用DecimalValue；转换后的权重必须重新验证总和及全部限额。求解成功本身不是Qualification/Release批准。
 
+AllocationInputV1不再接收手填covariance矩阵，必须提供原covariance_estimator和
+PortfolioReturnHistoryV1：schema_version、base_currency、horizon_kind/value、
+instrument_ids、bar_types、共同end_ns/available_ns以及资产行优先asset_returns。
+资产顺序、bar、币种和期限与forecasts精确一致；窗口结束严格递增且非零，每列
+available_ns为全部资产最晚可用时点，不早于窗口结束、不晚于决策时点。所有资产
+共享2..100000个完整窗口，总收益值不超过1000000；有限简单收益不得小于-1。
+不填补、重排或删列。原生ndarray-stats/0.7.0以ddof=1估计每期限协方差后直接进入
+同一Clarabel问题，不年化、不添加jitter；奇异矩阵仍明确拒绝。镜像必须提供
+portfolio-models/3，旧矩阵输入不兼容。该数值因果合同不证明来源，可信编排仍须
+将收益历史绑定冻结目录、许可与原产物，再构建具备资格和完整评估的Candidate。
+
 ## A6. Run、Attempt、事件和原生会话
 
 ```text
