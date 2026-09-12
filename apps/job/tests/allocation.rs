@@ -12,6 +12,50 @@ fn input() -> AllocationInputV1 {
 fn decimal(value: &str) -> DecimalValue {
     value.parse().unwrap()
 }
+
+fn forecast_input() -> PortfolioForecastInputV1 {
+    use contracts::{brief::HorizonKind, evidence::ForecastUnit, DbCounter, SchemaV1};
+    let instruments: Vec<_> = input()
+        .assets
+        .into_iter()
+        .map(|a| a.instrument_id)
+        .collect();
+    let asof = DbCounter::new(10_000_000_000).unwrap();
+    let decision = DbCounter::new(20_000_000_000).unwrap();
+    let horizon = DbCounter::new(4).unwrap();
+    let bars: Vec<_> = instruments
+        .iter()
+        .map(|id| format!("{id}-1-MINUTE-LAST-EXTERNAL"))
+        .collect();
+    PortfolioForecastInputV1 {
+        schema_version: SchemaV1,
+        decision_asof_ns: decision,
+        forecast_asof_ns: asof,
+        horizon_kind: HorizonKind::FixedBars,
+        horizon_value: horizon,
+        base_currency: "USD".into(),
+        max_input_age_seconds: 10,
+        bar_types: bars.clone(),
+        instrument_ids: instruments.clone(),
+        members: [(vec![0.1, 0.2], "0.25"), (vec![0.3, 0.0], "0.75")]
+            .into_iter()
+            .map(|(forecasts, weight)| AlphaForecastV1 {
+                alpha_id: Id::new(),
+                alpha_version_id: Id::new(),
+                forecast_unit: ForecastUnit::ReturnPerHorizon,
+                horizon_kind: HorizonKind::FixedBars,
+                horizon_value: horizon,
+                base_currency: "USD".into(),
+                asof_ns: asof,
+                available_ns: decision,
+                ensemble_weight: decimal(weight),
+                bar_types: bars.clone(),
+                instrument_ids: instruments.clone(),
+                forecasts,
+            })
+            .collect(),
+    }
+}
 fn weights(request: &AllocationInputV1) -> Vec<f64> {
     let result = job::allocate(request).unwrap();
     assert_eq!(result.solver_status, SolverStatus::Optimal, "{result:?}");
@@ -57,9 +101,8 @@ fn native_utility_and_transaction_costs_change_the_optimum() {
 
 #[test]
 fn actual_fixed_mixture_predictions_feed_one_native_utility_problem() {
-    let forecasts = [vec![0.1, 0.2], vec![0.3, 0.0]];
-    let mixture = [decimal("0.25"), decimal("0.75")];
-    let forecast = job::validation::fixed_weighted_forecast(&forecasts, &mixture).unwrap();
+    let forecasts = forecast_input();
+    let forecast = job::validation::aligned_portfolio_forecast(&forecasts).unwrap();
     near(forecast[0], 0.25);
     near(forecast[1], 0.05);
     let mut request = input();
@@ -71,7 +114,82 @@ fn actual_fixed_mixture_predictions_feed_one_native_utility_problem() {
     let target = weights(&request);
     near(target[0], 0.82);
     near(target[1], 0.18);
-    assert_eq!(mixture, [decimal("0.25"), decimal("0.75")]);
+    assert_eq!(
+        forecasts
+            .members
+            .iter()
+            .map(|m| m.ensemble_weight.clone())
+            .collect::<Vec<_>>(),
+        [decimal("0.25"), decimal("0.75")]
+    );
+}
+
+#[test]
+fn incompatible_original_forecasts_never_reach_native_aggregation() {
+    use contracts::{brief::HorizonKind, evidence::ForecastUnit, DbCounter};
+    let mutations: &[fn(&mut PortfolioForecastInputV1)] = &[
+        |r| r.members[1].alpha_id = r.members[0].alpha_id,
+        |r| r.members[1].alpha_version_id = r.members[0].alpha_version_id,
+        |r| r.members[1].forecast_unit = ForecastUnit::UnitlessScore,
+        |r| r.members[1].forecast_unit = ForecastUnit::ResidualReturnPerHorizon,
+        |r| r.members[1].base_currency = "EUR".into(),
+        |r| r.members[1].horizon_kind = HorizonKind::FixedDuration,
+        |r| r.members[1].horizon_value = DbCounter::new(5).unwrap(),
+        |r| r.members[1].asof_ns = DbCounter::new(9_000_000_000).unwrap(),
+        |r| r.members[1].available_ns = DbCounter::new(20_000_000_001).unwrap(),
+        |r| r.members[1].available_ns = DbCounter::new(9_999_999_999).unwrap(),
+        |r| r.members[1].instrument_ids.swap(0, 1),
+        |r| r.members[1].bar_types[0] = r.members[1].bar_types[0].replace("MINUTE", "HOUR"),
+        |r| {
+            r.members[1].forecasts.pop();
+        },
+        |r| r.members[1].forecasts[0] = f64::NAN,
+        |r| r.instrument_ids[1] = r.instrument_ids[0].clone(),
+        |r| r.max_input_age_seconds = 9,
+        |r| r.max_input_age_seconds = 0,
+        |r| r.decision_asof_ns = DbCounter::new(9_999_999_999).unwrap(),
+        |r| r.horizon_kind = HorizonKind::VariableInterval,
+    ];
+    for (index, change) in mutations.iter().enumerate() {
+        let mut request = forecast_input();
+        change(&mut request);
+        assert!(
+            job::validation::aligned_portfolio_forecast(&request).is_err(),
+            "case {index}"
+        );
+    }
+    for malformed in [true, false] {
+        let mut request = forecast_input();
+        request.bar_types[0] = if malformed {
+            "invalid-native-bar".into()
+        } else {
+            request.bar_types[0].replace("MINUTE", "HOUR")
+        };
+        for member in &mut request.members {
+            member.bar_types = request.bar_types.clone();
+        }
+        assert!(job::validation::aligned_portfolio_forecast(&request).is_err());
+    }
+    let mut request = forecast_input();
+    let mut extra = request.members[0].clone();
+    extra.alpha_version_id = Id::new();
+    extra.ensemble_weight = decimal("0.125");
+    request.members[0].ensemble_weight = decimal("0.125");
+    request.members.push(extra);
+    job::validation::aligned_portfolio_forecast(&request).unwrap();
+    request.members[1].ensemble_weight = decimal("0");
+    request.members[0].ensemble_weight = decimal("0.5");
+    request.members[2].ensemble_weight = decimal("0.5");
+    assert!(
+        job::validation::aligned_portfolio_forecast(&request).is_err(),
+        "two positive versions of one Alpha cannot count as two distinct positive Alphas"
+    );
+    let mut request = forecast_input();
+    request.members[0].forecasts[0] = f64::NAN;
+    assert!(
+        serde_json::to_value(&request).is_err(),
+        "NaN cannot turn into a missing value"
+    );
 }
 
 #[test]

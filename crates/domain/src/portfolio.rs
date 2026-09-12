@@ -20,6 +20,67 @@ fn under(value: &BigDecimal, limit: &BigDecimal, tolerance: &BigDecimal) -> bool
     value <= &(limit + tolerance)
 }
 
+/// Only validates supplied original metadata. Store must resolve these identities
+/// against immutable evidence, current qualifications and data-use permissions.
+pub fn portfolio_forecast_alignment(input: &PortfolioForecastInputV1) -> Result<(), DomainError> {
+    let invalid = || DomainError::Invalid("portfolio_forecasts");
+    let Some(age) = input
+        .decision_asof_ns
+        .get()
+        .checked_sub(input.forecast_asof_ns.get())
+    else {
+        return Err(invalid());
+    };
+    if !(2..=MAX_ALLOCATION_ASSETS).contains(&input.members.len())
+        || !(1..=MAX_ALLOCATION_ASSETS).contains(&input.instrument_ids.len())
+        || input.max_input_age_seconds == 0
+        || age > u64::from(input.max_input_age_seconds) * 1_000_000_000
+        || input.horizon_value.get() == 0
+        || input.bar_types.len() != input.instrument_ids.len()
+        || iso_currency::Currency::from_code(&input.base_currency).is_none()
+    {
+        return Err(invalid());
+    }
+    if input.horizon_kind != contracts::brief::HorizonKind::FixedBars {
+        return Err(DomainError::CapabilityUnavailable(
+            "portfolio_forecast_horizon",
+        ));
+    }
+    let mut instruments = BTreeSet::new();
+    for id in &input.instrument_ids {
+        control::text(id, 1, 200, false)?;
+        if !instruments.insert(id) {
+            return Err(invalid());
+        }
+    }
+    let mut alphas = BTreeSet::new();
+    let mut versions = BTreeSet::new();
+    for member in &input.members {
+        if member.ensemble_weight.is_positive() {
+            alphas.insert(member.alpha_id);
+        }
+        if !versions.insert(member.alpha_version_id)
+            || member.forecast_unit != contracts::evidence::ForecastUnit::ReturnPerHorizon
+            || member.horizon_kind != input.horizon_kind
+            || member.horizon_value != input.horizon_value
+            || member.base_currency != input.base_currency
+            || member.asof_ns != input.forecast_asof_ns
+            || member.available_ns < member.asof_ns
+            || member.available_ns > input.decision_asof_ns
+            || member.instrument_ids != input.instrument_ids
+            || member.bar_types != input.bar_types
+            || member.forecasts.len() != input.instrument_ids.len()
+            || member.forecasts.iter().any(|value| !value.is_finite())
+        {
+            return Err(invalid());
+        }
+    }
+    if alphas.len() < 2 {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
 /// Structural mandate checks shared with actual allocation and publication.
 /// Asset/group membership and feasibility still require the frozen native input.
 pub fn portfolio_constraints(constraints: &PortfolioConstraintsV1) -> Result<(), DomainError> {

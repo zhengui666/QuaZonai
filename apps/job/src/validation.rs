@@ -99,6 +99,36 @@ pub fn fixed_weighted_forecast(
     Ok(forecast.to_vec())
 }
 
+/// Common ordering and metadata are checked before any aggregation. This does not
+/// turn a caller-supplied UUID or unit label into authoritative evidence.
+pub fn aligned_portfolio_forecast(
+    input: &contracts::portfolio::PortfolioForecastInputV1,
+) -> Result<Vec<f64>> {
+    domain::portfolio::portfolio_forecast_alignment(input)?;
+    let bars = crate::catalog::bar_types(&input.bar_types)?;
+    ensure!(
+        bars.iter()
+            .zip(&input.instrument_ids)
+            .all(
+                |(bar, instrument)| bar.instrument_id().to_string() == *instrument
+                    && bar.spec() == bars[0].spec()
+            ),
+        "ENSEMBLE_BAR_CONTRACT_MISMATCH"
+    );
+    fixed_weighted_forecast(
+        &input
+            .members
+            .iter()
+            .map(|member| member.forecasts.clone())
+            .collect::<Vec<_>>(),
+        &input
+            .members
+            .iter()
+            .map(|member| member.ensemble_weight.clone())
+            .collect::<Vec<_>>(),
+    )
+}
+
 /// Columns are synchronized observation times; rows are a frozen asset ordering.
 /// No annualization, missing-value imputation or unregistered shrinkage is performed.
 pub fn sample_covariance(asset_returns: &[Vec<f64>]) -> Result<Vec<Vec<f64>>> {

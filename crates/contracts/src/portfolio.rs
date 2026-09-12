@@ -6,6 +6,57 @@ use utoipa::ToSchema;
 pub const MAX_ALLOCATION_ASSETS: usize = 256;
 pub const MAX_ALLOCATION_GROUPS: usize = 64;
 
+/// Original forecast metadata; these identifiers alone never prove qualification.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AlphaForecastV1 {
+    pub alpha_id: crate::Id,
+    pub alpha_version_id: crate::Id,
+    pub forecast_unit: crate::evidence::ForecastUnit,
+    pub horizon_kind: crate::brief::HorizonKind,
+    pub horizon_value: crate::DbCounter,
+    pub base_currency: String,
+    pub asof_ns: crate::DbCounter,
+    pub available_ns: crate::DbCounter,
+    pub ensemble_weight: DecimalValue,
+    #[schema(min_items = 1, max_items = 256)]
+    pub bar_types: Vec<String>,
+    #[schema(min_items = 1, max_items = 256)]
+    pub instrument_ids: Vec<String>,
+    #[serde(serialize_with = "serialize_finite_values")]
+    #[schema(min_items = 1, max_items = 256)]
+    pub forecasts: Vec<f64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PortfolioForecastInputV1 {
+    pub schema_version: SchemaV1,
+    pub decision_asof_ns: crate::DbCounter,
+    pub forecast_asof_ns: crate::DbCounter,
+    pub horizon_kind: crate::brief::HorizonKind,
+    pub horizon_value: crate::DbCounter,
+    pub base_currency: String,
+    #[schema(minimum = 1)]
+    pub max_input_age_seconds: u32,
+    #[schema(min_items = 1, max_items = 256)]
+    pub bar_types: Vec<String>,
+    #[schema(min_items = 1, max_items = 256)]
+    pub instrument_ids: Vec<String>,
+    #[schema(min_items = 2, max_items = 256)]
+    pub members: Vec<AlphaForecastV1>,
+}
+
+fn serialize_finite_values<S: serde::Serializer>(
+    values: &[f64],
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    if values.iter().any(|value| !value.is_finite()) {
+        return Err(serde::ser::Error::custom("non-finite forecast"));
+    }
+    values.serialize(serializer)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum RebalanceKind {

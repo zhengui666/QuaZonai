@@ -3,6 +3,38 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Original forecast alignment before native aggregation, 2026-09-13
+
+Working source over `c546bdc5fb20862ed902821b59e1eb748636183c` adds typed
+AlphaForecastV1/PortfolioForecastInputV1 and connects their alignment checks to
+the existing ndarray aggregation. Version IDs cannot repeat; at least two
+different Alpha IDs must have positive mixture weights. Original return units,
+currency, fixed-bar horizon, forecast time, available time, maximum age, asset
+ordering and complete finite coverage are checked before matrix multiplication.
+NaN serialization fails rather than becoming null. IDs/labels remain supplied
+metadata, not authoritative qualifications or license evidence.
+
+The existing Nautilus catalog BarType parser is shared with this entry point.
+Canonical external LAST time bars must match asset identity and a common native
+BarSpecification, preventing identical bar counts at different cadences from
+being treated as a common horizon. No parallel parser or optimizer is added.
+
+Initial `verify-RfvXxO` passed before the bar/positive-distinct-Alpha refinements.
+Final `verify-fZ8VrV` passed workspace check/format/strict Clippy, 152 domain/Runtime,
+8 managed Job, 31 native Codex and 86 scientific Job executions; zero failed/
+ignored and source unchanged. Groups overlap. The original independent 0.82/0.18
+Clarabel reference now consumes the aligned input. Counterexamples include
+duplicate versions, one effective Alpha, score/residual units, wrong currency,
+horizon/time/order, future or stale input, missing/NaN forecasts, malformed native
+bars and mixed minute/hour bars. Different versions do not count as different
+Alphas, but are not categorically forbidden when two real contributing IDs exist.
+
+These are controlled numerical/structural tests, not DB-resolved Alpha ownership,
+current REAL qualification, calendars/licenses or full shared-capital delivery.
+Trusted original-artifact assembly, Mandate model/API/CLI/UI and the complete
+Runtime/portfolio pipeline still require work. No HTTP route, generated public
+request schema or Runtime capability is newly advertised; no GitHub write occurred.
+
 ## Native fixed-weight forecasts into one allocation, 2026-09-13
 
 Working source over `edcbae8d6db7858d549333015f0cb5f106e5e0fd` adds the fixed

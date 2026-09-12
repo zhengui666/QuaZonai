@@ -30,9 +30,18 @@ fn selected_types(selection: &NativeBarSelectionV1) -> Result<Vec<BarType>> {
             && selection.event_end_ns <= selection.decision_cutoff_ns,
         "CATALOG_SELECTION_INVALID"
     );
+    bar_types(&selection.bar_types)
+}
+
+/// Shared canonical native bar parsing, independent of any catalog path.
+pub(crate) fn bar_types(values: &[String]) -> Result<Vec<BarType>> {
+    ensure!(
+        (1..=256).contains(&values.len()),
+        "CATALOG_SELECTION_INVALID"
+    );
     let mut instruments = std::collections::BTreeSet::new();
-    let mut types = Vec::with_capacity(selection.bar_types.len());
-    for text in &selection.bar_types {
+    let mut types = Vec::with_capacity(values.len());
+    for text in values {
         ensure!(
             (1..=300).contains(&text.len()) && !text.chars().any(char::is_control),
             "CATALOG_BAR_TYPE_INVALID"
