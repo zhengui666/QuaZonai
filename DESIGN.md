@@ -1809,6 +1809,11 @@ run/profile/thread/role 返回原会话，不同绑定409；role/profile/thread/
 绑定不可修改或删除，接管 Worker 不创建新会话。Reviewer 必须是不同 Run/Thread。
 `active_turn_id` 仅可作为非权威投影，不得用于重置轮数或辨认丢失的请求。
 
+可信服务产生的原生 Turn 请求与公开总结沿原 Mission 角色保存：研究者为RESEARCH，
+独立Reviewer为EVALUATOR_ONLY。角色来自不可变会话，不由请求者指定访问级别；
+Reviewer的Turn准入只接受本Run/Attempt的原qz.mission_turn请求，不因此允许读取任意
+封存参数或报告。请求重放、发送读取和总结发表共用该角色规则；普通产物读取不扩权。
+
 以下五类记录是预算和原生发送的权威只追加账本，不复制聊天正文/工具循环/隐藏推理。
 每表仍有 A0 的 id/created_at。所有关联以复合 FK 保证 session、run、cycle、project
 属于同一个 Mission；标量均采用 A0 的 bigint 字符串/精确 Decimal。

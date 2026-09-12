@@ -111,6 +111,7 @@ pub struct UsageReceipt {
 }
 
 struct Mission {
+    role: String,
     project_id: Uuid,
     cycle_id: Uuid,
     run_id: Id,
@@ -214,7 +215,7 @@ async fn lock_mission(
     let attempt=sqlx::query("SELECT worker_owner_id,owner_epoch::bigint,lease_expires_at::timestamptz,dispatch_state FROM app.run_attempts WHERE id=$1 AND run_id=$2 FOR UPDATE")
         .bind(fence.attempt_id.as_uuid()).bind(run_id.as_uuid()).fetch_one(&mut **tx).await?;
     let session =
-        sqlx::query("SELECT id::uuid,profile_id::uuid,profile_revision::bigint FROM app.codex_sessions WHERE run_id=$1 FOR UPDATE")
+        sqlx::query("SELECT id::uuid,profile_id::uuid,profile_revision::bigint,role FROM app.codex_sessions WHERE run_id=$1 FOR UPDATE")
             .bind(run_id.as_uuid())
             .fetch_optional(&mut **tx)
             .await?
@@ -230,6 +231,7 @@ async fn lock_mission(
         return Err(DomainError::StaleAttempt.into());
     }
     Ok(Mission {
+        role: session.try_get("role")?,
         project_id,
         cycle_id,
         run_id,
@@ -250,6 +252,13 @@ async fn lock_mission(
 }
 
 impl Mission {
+    fn artifact_access(&self) -> &'static str {
+        if self.role == "INDEPENDENT_REVIEWER" {
+            "EVALUATOR_ONLY"
+        } else {
+            "RESEARCH"
+        }
+    }
     async fn reject_known_overrun(&self, tx: &mut Tx<'_>) -> Result<(), StoreError> {
         // A per-turn overrun closes new spending even below the Cycle cap.
         // Never call this on reconciliation/settlement: retain the real usage.
@@ -720,10 +729,10 @@ async fn reserve_in_transaction(
     if pending {
         return Err(StoreError::TurnPending);
     }
-    // The request is an immutable, project-scoped, nonsealed artifact. Never
-    // permit an Agent to reference another project's or evaluator-only data.
-    let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.artifacts WHERE id=$1 AND project_id=$2 AND kind='PARAMETERS' AND access_class IN ('OPERATOR','RESEARCH'))")
-        .bind(request.request_artifact_id.as_uuid()).bind(mission.project_id).fetch_one(&mut **tx).await?;
+    // Reviewer requests are its own trusted envelope, not a general permission
+    // to send evaluator-only artifacts to a model.
+    let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.artifacts WHERE id=$1 AND project_id=$2 AND kind='PARAMETERS' AND (($3='RESEARCHER' AND access_class IN ('OPERATOR','RESEARCH')) OR ($3='INDEPENDENT_REVIEWER' AND access_class='EVALUATOR_ONLY' AND producer_run_id=$4 AND producer_attempt_id=$5 AND schema_name='qz.mission_turn' AND schema_version='1' AND created_by='RUNTIME')))")
+        .bind(request.request_artifact_id.as_uuid()).bind(mission.project_id).bind(&mission.role).bind(run_id.as_uuid()).bind(fence.attempt_id.as_uuid()).fetch_one(&mut **tx).await?;
     if !allowed {
         return Err(StoreError::Invalid("request_artifact"));
     }

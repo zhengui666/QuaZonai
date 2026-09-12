@@ -63,10 +63,11 @@ impl Store {
         if bytes.len() > 1024 * 1024 {
             return Err(StoreError::Invalid("native_summary_document"));
         }
-        if let Some(row)=sqlx::query("SELECT s.artifact_id,a.byte_count FROM app.model_turn_summaries s JOIN app.artifacts a ON a.id=s.artifact_id WHERE s.reservation_id=$1")
+        if let Some(row)=sqlx::query("SELECT s.artifact_id,a.byte_count,a.access_class FROM app.model_turn_summaries s JOIN app.artifacts a ON a.id=s.artifact_id WHERE s.reservation_id=$1")
             .bind(reservation.as_uuid()).fetch_optional(&mut *tx).await? {
             let artifact=id(row.try_get("artifact_id")?)?;
             let size=count(row.try_get("byte_count")?)?;
+            if row.try_get::<String,_>("access_class")? != mission.artifact_access() {return Err(StoreError::Integrity);}
             if size.get()!=bytes.len() as u64 || read(artifact,size).await?!=bytes {return Err(StoreError::Conflict);}
             tx.commit().await?;
             return Ok(artifact);
@@ -88,9 +89,9 @@ impl Store {
             return Err(DomainError::BudgetExhausted("output_bytes").into());
         }
         let artifact = Id::new();
-        sqlx::query("INSERT INTO app.artifacts(id,project_id,producer_run_id,producer_attempt_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,$3,$4,'REPORT','application/json','qz.mission_summary','1','LOCAL',$5,'1',$6,'RESEARCH','SYNTHETIC','RUNTIME','REFERENCED')")
+        sqlx::query("INSERT INTO app.artifacts(id,project_id,producer_run_id,producer_attempt_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,$3,$4,'REPORT','application/json','qz.mission_summary','1','LOCAL',$5,'1',$6,$7,'SYNTHETIC','RUNTIME','REFERENCED')")
             .bind(artifact.as_uuid()).bind(mission.project_id).bind(item.run_id.as_uuid()).bind(item.attempt_id.as_uuid())
-            .bind(artifact.to_string()).bind(bytes.len() as i64).execute(&mut *tx).await?;
+            .bind(artifact.to_string()).bind(bytes.len() as i64).bind(mission.artifact_access()).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO app.model_turn_summaries(reservation_id,artifact_id,native_item_id) VALUES($1,$2,$3)")
             .bind(reservation.as_uuid()).bind(artifact.as_uuid()).bind(&summary.native_item_id).execute(&mut *tx).await?;
         publish(NativeObjectPublication {

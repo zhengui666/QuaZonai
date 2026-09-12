@@ -181,6 +181,8 @@ Worker读取锁定App Server原生summary视图，只有公开agentMessage、原
 实际phase；phase缺失保留null。它不读取完整items/rollout或推理，报告不当作科学
 指标或资格。读取/发表失败保留已结算用量，重投恢复原Thread补同一报告，不新开
 付费Turn。报告占原Mission输出额度；原文冲突或超额不静默覆盖/截断。
+043迁移及共享发表器按原Mission角色保护请求和总结：Reviewer材料为EVALUATOR_ONLY，
+不出现在普通产物读取中。这是材料边界，不代表自动Reviewer流程已接通。
 全部Turn有完整用量、成功回答齐全、提案及科学任务均处理且反馈已在原Thread
 得到公开回答后，Worker复用原Run终态事务收束本次会话，随后归档PGMQ。终态
 已提交但ACK失败时只重放归档；取消先提交则不会再报成功。未知用量/科学终态

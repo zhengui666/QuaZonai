@@ -3,6 +3,34 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Original Mission role on request and summary artifacts, 2026-09-12
+
+Working source over `c4dc9cae5bda51e2b89fb4630fd8ca36a901bc6a` uses the immutable
+native session role in shared Turn publication, replay, send-time reading and
+summary publication. Reviewer envelopes and summaries are EVALUATOR_ONLY;
+researcher behavior is retained. Reviewer admission accepts only its own trusted
+Run/Attempt qz.mission_turn envelope, not arbitrary evaluator-only parameters.
+Migration 043 retains exact native success/producer checks with role-specific
+summary visibility. Ordinary artifact/MCP reading is not expanded.
+
+`verify-fIK1r0` passed workspace check/format/strict Clippy and 158 Mission/ledger
+Store tests, zero ignored, source unchanged and owned PG stopped. The new test
+uses controlled Reviewer association and native receipts, not an automatic
+Reviewer creator or actual model. It proves original request read/replay,
+summary settlement/publication/replay, restricted normal reads and rejection of
+an arbitrary evaluator-only task envelope. `verify-HXw44A` also passed the actual
+native same-Thread scientific continuation and both cancellation recovery tests,
+zero ignored, source unchanged and owned PG stopped. Responses/scientific bytes
+are controlled. No new protocol, dependency or native image; automatic Reviewer,
+its frozen input manifest/assessment and qualification are still unfinished.
+
+Before this change, exact committed `c4dc9cae` passed the full `verify-5Dmt0B`
+regression: workspace check/format/strict Clippy, 150 contracts/domain/Runtime,
+eight managed Job, 30 native Codex and 535 Store/Server tests, zero failed/ignored,
+source unchanged and owned PostgreSQL/PGMQ stopped. This supersedes the earlier
+full run's two subsequently corrected test failures, not missing product work
+or current-head GitHub review/CI gates.
+
 ## Cycle-funded Operator Sealed admission, 2026-09-12
 
 Working source over `f7c9df08d2d108a0f489f8bf9e1eef61e1b072ad` adds the explicit

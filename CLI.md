@@ -119,6 +119,8 @@ RESEARCH Alpha并进入正式Validation，不为中间抽样另开Turn；评估�
 成功结算的原生Turn另保留最多64KiB公开回答REPORT（qz.mission_summary），原生
 summary视图来源、原Turn/item/phase如实记录；失败重投只补摘要，不重新调用模型。
 它不是新Agent工具，也不从回答文字推断研究通过或Mission已完成。
+原请求和总结按不可变Mission角色保存：研究者RESEARCH、Reviewer EVALUATOR_ONLY；
+Reviewer只能发送本Run/Attempt的可信Turn请求，不获得任意封存产物读取权限。
 全部Turn/科学任务结算、反馈回答及提案处理齐全后，可信Worker才提交Mission执行
 终态并归档PGMQ；ACK失败只重放归档，不重开模型。SUCCEEDED不改变Cycle、实验
 裁决或资格；只有公开限制说明且无实验的会话也不构成“无有效Alpha”的科学证据。

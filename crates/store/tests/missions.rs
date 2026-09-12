@@ -134,6 +134,151 @@ async fn cancel(store: &Store, actor: &Actor, run: Id) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn reviewer_turn_and_summary_keep_original_role_without_general_sealed_access(pool: PgPool) {
+    use store::turns::{NativePublicSummary, TurnOutcome, UsageReceipt};
+    let (store, actor, f, cycle, preparation) = setup(&pool).await;
+    complete(&pool, &store, &f, preparation, false).await;
+    let context = &f.freeze.execution_context;
+    let admitted = store
+        .enqueue_run(
+            "controlled-reviewer",
+            &store::lifecycle::RunSubmission {
+                cycle_id: cycle,
+                input_set_id: context.discovery_input_set_id,
+                runtime_id: context.runtime_id,
+                runtime_revision: context.runtime_revision,
+                kind: RunKind::AgentResearch,
+                limits: contracts::lifecycle::JobLimitsV1 {
+                    schema_version: SchemaV1,
+                    experiments: 0,
+                    cpu_seconds: DbCounter::new(10).unwrap(),
+                    wall_seconds: 60,
+                    memory_mib: 1024,
+                    output_bytes: DbCounter::new(1048576).unwrap(),
+                },
+            },
+        )
+        .await
+        .unwrap()
+        .resource;
+    let profile = store
+        .codex_profile(&actor, f.reviewer_profile.profile_id)
+        .await
+        .unwrap();
+    // Controlled role association only: this test does not claim automatic
+    // Reviewer admission, native inference or a scientific qualification.
+    sqlx::query("INSERT INTO app.run_missions(run_id,project_id,cycle_id,role,profile_id,profile_revision,profile_snapshot) VALUES($1,$2,$3,'INDEPENDENT_REVIEWER',$4,$5,$6)")
+        .bind(admitted.id.as_uuid()).bind(admitted.project_id.as_uuid()).bind(cycle.as_uuid())
+        .bind(profile.id.as_uuid()).bind(profile.revision.get() as i64)
+        .bind(serde_json::json!({"schema_version":1,"profile":profile})).execute(&pool).await.unwrap();
+    let lease = mission_lease(&store).await;
+    assert_eq!(lease.run.id, admitted.id);
+    store
+        .begin_run_dispatch(lease.run.id, &lease.fence)
+        .await
+        .unwrap();
+    store
+        .bind_mission_session(lease.run.id, &lease.fence, &native_thread())
+        .await
+        .unwrap();
+    let request = prompt_request(&f, &lease);
+    let text = "Controlled independent review input; no raw Sealed rows or research conversation.";
+    let reserved = prepare_prompt(&store, &lease, &f, &request, text)
+        .await
+        .unwrap();
+    assert_eq!(
+        prepare_prompt(&store, &lease, &f, &request, text)
+            .await
+            .unwrap(),
+        reserved
+    );
+    let reading = f.objects.clone();
+    assert_eq!(store.mission_turn_prompt(lease.run.id, &lease.fence, reserved.id,
+        move |id, size| async move { reading.read(id, size).map_err(|_| StoreError::Integrity) }).await.unwrap(), text);
+    let access: String = sqlx::query_scalar("SELECT access_class FROM app.artifacts WHERE id=$1")
+        .bind(request.request_artifact_id.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(access, "EVALUATOR_ONLY");
+    assert!(matches!(
+        store
+            .artifact_content(&actor, request.request_artifact_id)
+            .await,
+        Err(StoreError::NotFound)
+    ));
+    store
+        .claim_turn_dispatch(reserved.id, &lease.fence)
+        .await
+        .unwrap();
+    store
+        .bind_native_turn(reserved.id, &lease.fence, "controlled-review-turn")
+        .await
+        .unwrap();
+    store
+        .observe_mission_turn_terminal(
+            reserved.id,
+            &lease.fence,
+            TurnOutcome::Succeeded,
+            "NATIVE_TURN_COMPLETED",
+        )
+        .await
+        .unwrap();
+    store
+        .settle_turn(
+            reserved.id,
+            &lease.fence,
+            &UsageReceipt {
+                outcome: TurnOutcome::Succeeded,
+                actual_tokens: DbCounter::new(12).unwrap(),
+                actual_cost: None,
+                currency: None,
+                reason_code: "NATIVE_TURN_COMPLETED".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let message = NativePublicSummary {
+        schema_version: SchemaV1,
+        native_turn_id: "controlled-review-turn".into(),
+        native_item_id: "controlled-review-item".into(),
+        phase: Some("final_answer".into()),
+        text: "Independent limitation; not a qualification.".into(),
+    };
+    let artifact = summary(&store, &lease, &f, reserved.id, &message)
+        .await
+        .unwrap();
+    assert_eq!(
+        summary(&store, &lease, &f, reserved.id, &message)
+            .await
+            .unwrap(),
+        artifact
+    );
+    let access: String = sqlx::query_scalar("SELECT access_class FROM app.artifacts WHERE id=$1")
+        .bind(artifact.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(access, "EVALUATOR_ONLY");
+    assert!(matches!(
+        store.artifact_content(&actor, artifact).await,
+        Err(StoreError::NotFound)
+    ));
+    let arbitrary = Id::new();
+    sqlx::query("INSERT INTO app.artifacts(id,project_id,producer_run_id,producer_attempt_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) SELECT $1,project_id,producer_run_id,producer_attempt_id,kind,media_type,'qz.native_task',schema_version,storage_backend,$2,storage_version,byte_count,access_class,origin,created_by,retention_class FROM app.artifacts WHERE id=$3")
+        .bind(arbitrary.as_uuid()).bind(arbitrary.to_string()).bind(request.request_artifact_id.as_uuid()).execute(&pool).await.unwrap();
+    let mut invalid = request;
+    invalid.command_key = "not-an-arbitrary-sealed-envelope".into();
+    invalid.request_artifact_id = arbitrary;
+    assert!(matches!(
+        store
+            .reserve_turn(lease.run.id, &lease.fence, &invalid)
+            .await,
+        Err(StoreError::Invalid("request_artifact"))
+    ));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn cancelled_zero_turn_mission_does_not_require_a_thread_or_fabricate_usage(pool: PgPool) {
     let (store, actor, f, _, preparation) = setup(&pool).await;
     complete(&pool, &store, &f, preparation, false).await;

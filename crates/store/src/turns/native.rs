@@ -64,7 +64,7 @@ async fn request_size(
         || row.try_get::<String, _>("schema_name")? != "qz.mission_turn"
         || row.try_get::<String, _>("schema_version")? != "1"
         || row.try_get::<String, _>("media_type")? != "application/json"
-        || row.try_get::<String, _>("access_class")? != "RESEARCH"
+        || row.try_get::<String, _>("access_class")? != mission.artifact_access()
         || row.try_get::<String, _>("created_by")? != "RUNTIME"
         || row.try_get::<String, _>("origin")? != "SYNTHETIC"
         || row.try_get::<String, _>("storage_backend")? != "LOCAL"
@@ -139,9 +139,9 @@ where
         {
             return Err(DomainError::BudgetExhausted("output_bytes").into());
         }
-        sqlx::query("INSERT INTO app.artifacts(id,project_id,producer_run_id,producer_attempt_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,$3,$4,'PARAMETERS','application/json','qz.mission_turn','1','LOCAL',$5,'1',$6,'RESEARCH','SYNTHETIC','RUNTIME','REFERENCED')")
+        sqlx::query("INSERT INTO app.artifacts(id,project_id,producer_run_id,producer_attempt_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,$3,$4,'PARAMETERS','application/json','qz.mission_turn','1','LOCAL',$5,'1',$6,$7,'SYNTHETIC','RUNTIME','REFERENCED')")
             .bind(artifact.as_uuid()).bind(mission.project_id).bind(run.as_uuid()).bind(fence.attempt_id.as_uuid())
-            .bind(artifact.to_string()).bind(bytes.len() as i64).execute(&mut **tx).await?;
+            .bind(artifact.to_string()).bind(bytes.len() as i64).bind(mission.artifact_access()).execute(&mut **tx).await?;
     }
     // One shared admission implementation; failed admission publishes no file.
     let result = reserve_in_transaction(tx, run, fence, request).await?;
