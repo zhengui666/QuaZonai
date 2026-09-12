@@ -1020,3 +1020,29 @@ check/fmt/严格Clippy、149领域/合同/Runtime、30原生Codex及72项Job测�
 这是本地原生计算与合同证据，不是新的远端CI、真实市场有效性或完整T08。
 受管ValidateAlpha协议、原Run/政策采纳、正式Evaluation、sealed独立评估、Reviewer
 及其余全部开发仍须继续；没有push、请求review、合并或关闭Issue。
+
+## 2026-09-12：受管Alpha分折与原请求逐折采纳
+
+在bad625f2上将同一原生计算接入`VALIDATE_ALPHA`/ALPHA_EVALUATE，输入仅原
+VALIDATION目录、MODEL和PARAMETERS，输出封口为qz.alpha_validation.v1。
+分折适配移至domain::execution::validation，Job与结果采纳复用同一锁定solow-cv；
+没有复制切分算法、新增队列或依赖包。逐资产source_row_count与原warmup/horizon
+用于重建全部原生train/test索引；漏折、替换索引、顺序/原来源/重复标签冲突、
+超fuel、越过cutoff、校准/指标状态不一致均拒绝。保持原生缺失/非有限原因，不填0。
+Runtime能力从既有输出登记表派生；镜像标签增加实际数值版本与alpha-validation/1，
+旧镜像须重建登记新OCI ID，不能借旧native-stack声明新能力。
+
+真实Parquet/Wasmi/CV/OLS回归覆盖WalkForward、全部CPCV组合、重复源标签一致性、
+常数/溢出及17种报告篡改；真实managed子进程拒绝DISCOVERY/SEALED训练，沿用原
+输出限额和封口。SQLite目录范围回归覆盖四种数据操作的注册类型、资产、事件及
+可见截止；这些不是新镜像的实际OCI执行证据。
+
+`.ai-bridge/web-verify-EzTVis` exit0：三份Rust合同各两次导出、客户端两次生成
+逐字节一致，手写源码不变；504前端单元、168浏览器回归、wire、类型及构建通过。
+`.ai-bridge/verify-3ljWRQ`全量轮的501 Store/Server、7managed、30原生Codex通过，
+但Runtime旧测试仍断言5种JSON报告，实际新增为6种，因此整体exit1。随后仅修改
+该测试为精确类型清单及镜像标签一致性检查，不改产品/生成物。
+最终`.ai-bridge/verify-gPLRYG` science exit0：check/fmt/严格Clippy、149领域/合同/
+Runtime、30原生Codex和74项Job测试通过（含另行运行的7managed），0失败/0忽略。
+两轮源码均冻结；全量轮独立PG已确认停止。未重跑新镜像OCI，未称为完整T08或
+远端CI。正式评估准入/发布、政策/资格、Reviewer及其余工作仍继续；未push/review/merge。

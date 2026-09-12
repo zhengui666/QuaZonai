@@ -83,6 +83,13 @@ pub async fn parameters(
         } => {
             vec![(*dataset_revision_id, &request.selection)]
         }
+        NativeTaskParametersV1::ValidateAlpha {
+            dataset_revision_id,
+            request,
+            ..
+        } => {
+            vec![(*dataset_revision_id, &request.forecast.selection)]
+        }
         NativeTaskParametersV1::CompileModel { .. }
         | NativeTaskParametersV1::BuildPortfolio { .. } => Vec::new(),
     };

@@ -255,6 +255,64 @@ fn actual_managed_allocation_preserves_real_solver_result_and_infeasibility_with
 }
 
 #[test]
+fn actual_managed_alpha_validation_seals_all_folds_and_never_trains_sealed_or_discovery() {
+    for role in [
+        DataPartition::Validation,
+        DataPartition::Discovery,
+        DataPartition::Sealed,
+    ] {
+        let (catalog, source) = market::market("0", 25);
+        let dataset_id = Id::new();
+        let model = Id::new();
+        let wasm = market::module("local.get 0");
+        let parameters = NativeTaskParametersV1::ValidateAlpha {
+            schema_version: SchemaV1,
+            dataset_revision_id: dataset_id,
+            model_artifact_id: model,
+            request: Box::new(market::alpha_validation_request(&source)),
+        };
+        let mut input = dataset(dataset_id);
+        if let RuntimeInputV1::Dataset {
+            role: input_role, ..
+        } = &mut input
+        {
+            *input_role = role;
+        }
+        let f = fixture(
+            parameters.clone(),
+            vec![
+                input,
+                RuntimeInputV1::Artifact {
+                    artifact_id: model,
+                    storage_version: "1".into(),
+                    byte_count: market::count(wasm.len() as u64),
+                    role: ArtifactInputRole::Model,
+                },
+            ],
+        );
+        fs::write(f.input.join("objects").join(model.to_string()), wasm).unwrap();
+        attach_catalog(&f, dataset_id, catalog.path());
+        let allowed = role == DataPartition::Validation;
+        assert_eq!(
+            domain::execution::task(&f.spec, &parameters).is_ok(),
+            allowed
+        );
+        assert_eq!(execute(&f), allowed);
+        if allowed {
+            let report: contracts::science::NativeAlphaValidationResultV1 =
+                result(&f, "qz.alpha_validation");
+            assert_eq!(report.folds.len(), 6);
+            assert!(report
+                .folds
+                .iter()
+                .all(|fold| fold.source_row_count.get() == 25));
+        } else {
+            assert!(!f.output.join("index.json").exists());
+        }
+    }
+}
+
+#[test]
 fn native_managed_simulation_is_a_separate_process_and_does_not_invent_daily_returns() {
     let (catalog, request) = market::market("0.001", 20);
     let id = Id::new();

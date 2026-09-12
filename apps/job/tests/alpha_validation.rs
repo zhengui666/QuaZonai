@@ -6,36 +6,12 @@ mod market;
 use contracts::{
     brief::TargetKind,
     evidence::MetricStatus,
-    research::{SplitKind, SplitPolicyV1},
-    science::{
-        NativeAlphaValidationRequestV1, NativeAlphaValidationResultV1, NativeSimulationRequestV1,
-    },
+    research::SplitKind,
+    science::{NativeAlphaValidationRequestV1, NativeAlphaValidationResultV1},
     Id, SchemaV1,
 };
 use job::validation::{validate_alpha, ScoreCalibration};
-use market::{count, forecast_request, market, module};
-
-fn request(source: &NativeSimulationRequestV1) -> NativeAlphaValidationRequestV1 {
-    NativeAlphaValidationRequestV1 {
-        schema_version: SchemaV1,
-        forecast: forecast_request(source),
-        split_policy: SplitPolicyV1 {
-            schema_version: SchemaV1,
-            kind: SplitKind::WalkForward,
-            train_size: count(8),
-            test_size: count(3),
-            step_size: Some(count(3)),
-            group_count: None,
-            test_group_count: None,
-            purge_observations: count(2),
-            embargo_observations: count(1),
-            label_horizon_observations: Some(count(2)),
-            interval_validation_required: true,
-            sealed_revision_id: Id::new(),
-        },
-        target_kind: TargetKind::Score,
-    }
-}
+use market::{alpha_validation_request as request, count, market, module};
 
 #[test]
 fn independent_native_folds_fit_only_original_training_labels() {
@@ -108,6 +84,19 @@ fn every_asset_fold_train_test_and_disjoint_block_has_fresh_model_state() {
     let actual = validate_alpha(directory.path(), &request, &counter_model()).unwrap();
     assert_eq!(actual.folds.len(), 12);
     assert_eq!(actual.unique_test_observations.get(), 56);
+    assert!(accepted(&request, &actual));
+    let original = &actual.folds[0].test_points[0].observation;
+    let mut changed = actual.clone();
+    let repeated = changed.folds[1..]
+        .iter_mut()
+        .flat_map(|fold| &mut fold.test_points)
+        .find(|point| {
+            point.observation.instrument_id == original.instrument_id
+                && point.observation.ordinal == original.ordinal
+        })
+        .unwrap();
+    repeated.observation.label_return = Some(original.label_return.unwrap() + 1.0);
+    assert!(!accepted(&request, &changed));
     let all_tests: usize = actual.folds.iter().map(|f| f.test_points.len()).sum();
     assert!(all_tests > actual.unique_test_observations.get() as usize);
     for fold in actual.folds {
@@ -132,6 +121,7 @@ fn missing_calibration_or_correlation_is_not_a_zero_metric() {
     let (directory, source) = market("0", 25);
     let mut request = request(&source);
     let result = validate_alpha(directory.path(), &request, &module("f64.const 7")).unwrap();
+    assert!(accepted(&request, &result));
     for fold in result.folds {
         let calibration = fold.calibration.unwrap();
         assert_eq!(calibration.status, MetricStatus::InsufficientData);
@@ -147,6 +137,7 @@ fn missing_calibration_or_correlation_is_not_a_zero_metric() {
     }
     request.target_kind = TargetKind::ExpectedReturn;
     let huge = validate_alpha(directory.path(), &request, &module("f64.const 1.7e308")).unwrap();
+    assert!(accepted(&request, &huge));
     for fold in huge.folds {
         assert_eq!(fold.metrics[1].status, MetricStatus::Failed);
         assert_eq!(fold.metrics[1].value, None);
@@ -202,4 +193,89 @@ fn real_job_process_returns_native_fold_evidence_and_rejects_unknown_fields() {
     assert!(!failed.status.success());
     assert!(failed.stdout.is_empty());
     assert_eq!(failed.stderr, b"QZ_NATIVE_JOB_FAILED\n");
+}
+
+fn accepted(
+    request: &NativeAlphaValidationRequestV1,
+    report: &NativeAlphaValidationResultV1,
+) -> bool {
+    use contracts::{
+        execution::NativeTaskParametersV1,
+        runtime::RuntimeArtifactSchemaV1,
+        runtime_jobs::{RuntimeOutputKind, RuntimeOutputV1},
+        Revision,
+    };
+    let bytes = serde_json::to_vec(report).unwrap();
+    let output = RuntimeOutputV1 {
+        kind: RuntimeOutputKind::Report,
+        schema: RuntimeArtifactSchemaV1 {
+            name: "qz.alpha_validation".into(),
+            version: "1".into(),
+        },
+        storage_ref: Id::new(),
+        storage_version: Revision::INITIAL,
+        byte_count: count(bytes.len() as u64),
+        media_type: "application/json".into(),
+    };
+    domain::execution::output_bindings(
+        &NativeTaskParametersV1::ValidateAlpha {
+            schema_version: SchemaV1,
+            dataset_revision_id: Id::new(),
+            model_artifact_id: Id::new(),
+            request: Box::new(request.clone()),
+        },
+        chrono::DateTime::from_timestamp(1, 0).unwrap(),
+        chrono::DateTime::from_timestamp(2, 0).unwrap(),
+        &[(output, bytes)],
+    )
+    .is_ok()
+}
+
+#[test]
+fn native_output_adoption_requires_every_original_fold_source_and_metric() {
+    let (directory, source) = market("0", 25);
+    let mut request = request(&source);
+    let actual = validate_alpha(directory.path(), &request, &module("local.get 0")).unwrap();
+    assert!(accepted(&request, &actual));
+    for field in 0..17 {
+        let mut bad = actual.clone();
+        match field {
+            0 => {
+                bad.folds.remove(0);
+            }
+            1 => {
+                bad.folds.pop();
+            }
+            2 => bad.folds[0].source_row_count = count(24),
+            3 => bad.folds[0].training_ordinals[0] += 1,
+            4 => bad.folds[0].test_points[0].observation.ordinal += 1,
+            5 => bad.folds[0].fold_index = 1,
+            6 => bad.folds[0].bar_type = "TEST.SIM-1-MINUTE-LAST-EXTERNAL".into(),
+            7 => bad.folds[0].calibration = None,
+            8 => {
+                bad.folds[0]
+                    .calibration
+                    .as_mut()
+                    .unwrap()
+                    .training_observations = count(9)
+            }
+            9 => bad.folds[0].test_points[0].expected_return = None,
+            10 => bad.folds[0].test_points[0].observation.label_return = None,
+            11 => bad.folds[0].test_points[0].observation.label_available_ns = Some(count(1)),
+            12 => bad.folds[0].metrics[0].status = MetricStatus::InsufficientData,
+            13 => bad.folds[0].metrics[1].value = Some(-1.0),
+            14 => {
+                bad.native_versions
+                    .insert("solow-cv".into(), "unverified".into());
+            }
+            15 => bad.unique_test_observations = count(actual.unique_test_observations.get() + 1),
+            _ => bad.consumed_fuel = count(request.forecast.parameters.total_fuel.get() + 1),
+        }
+        assert!(!accepted(&request, &bad), "changed output field {field}");
+    }
+    request.split_policy.purge_observations = count(3);
+    assert!(!accepted(&request, &actual));
+    request.split_policy.purge_observations = count(2);
+    request.forecast.selection.decision_cutoff_ns = count(10 * market::INTERVAL_NS);
+    assert!(!accepted(&request, &actual));
 }

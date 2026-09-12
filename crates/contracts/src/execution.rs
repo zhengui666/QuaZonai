@@ -41,6 +41,12 @@ pub enum NativeTaskParametersV1 {
         model_artifact_id: Id,
         request: NativeForecastRequestV1,
     },
+    ValidateAlpha {
+        schema_version: SchemaV1,
+        dataset_revision_id: Id,
+        model_artifact_id: Id,
+        request: Box<crate::science::NativeAlphaValidationRequestV1>,
+    },
     BuildPortfolio {
         schema_version: SchemaV1,
         request: Box<AllocationInputV1>,
@@ -57,7 +63,7 @@ impl NativeTaskParametersV1 {
         use crate::runs::RunKind;
         match self {
             Self::CompileModel { .. } | Self::ValidateData { .. } => RunKind::DataValidate,
-            Self::EvaluateAlpha { .. } => RunKind::AlphaEvaluate,
+            Self::EvaluateAlpha { .. } | Self::ValidateAlpha { .. } => RunKind::AlphaEvaluate,
             Self::BuildPortfolio { .. } => RunKind::PortfolioBuild,
             Self::SimulatePortfolio { .. } => RunKind::PortfolioSimulate,
         }
@@ -67,6 +73,7 @@ impl NativeTaskParametersV1 {
             Self::CompileModel { .. } => &["qz.wasm_model", "qz.model_compilation"],
             Self::ValidateData { .. } => &["qz.data_quality"],
             Self::EvaluateAlpha { .. } => &["qz.native_forecast"],
+            Self::ValidateAlpha { .. } => &["qz.alpha_validation"],
             Self::BuildPortfolio { .. } => &["qz.native_allocation"],
             Self::SimulatePortfolio { .. } => &["qz.native_simulation"],
         };
@@ -131,6 +138,7 @@ pub enum NativeJsonOutputV1 {
     ModelCompilation(Box<NativeModelCompilationV1>),
     DataQuality(Box<NativeDataQualityReportV1>),
     Forecast(Box<crate::science::NativeForecastResultV1>),
+    AlphaValidation(Box<crate::science::NativeAlphaValidationResultV1>),
     Allocation(Box<crate::portfolio::AllocationResultV1>),
     Simulation(Box<crate::science::NativeSimulationResultV1>),
 }

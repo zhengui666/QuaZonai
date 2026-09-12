@@ -144,6 +144,30 @@ pub fn forecast_request(simulation: &NativeSimulationRequestV1) -> NativeForecas
         },
     }
 }
+pub fn alpha_validation_request(
+    source: &NativeSimulationRequestV1,
+) -> NativeAlphaValidationRequestV1 {
+    NativeAlphaValidationRequestV1 {
+        schema_version: SchemaV1,
+        forecast: forecast_request(source),
+        split_policy: contracts::research::SplitPolicyV1 {
+            schema_version: SchemaV1,
+            kind: contracts::research::SplitKind::WalkForward,
+            train_size: count(8),
+            test_size: count(3),
+            step_size: Some(count(3)),
+            group_count: None,
+            test_group_count: None,
+            purge_observations: count(2),
+            embargo_observations: count(1),
+            label_horizon_observations: Some(count(2)),
+            interval_validation_required: true,
+            sealed_revision_id: contracts::Id::new(),
+        },
+        target_kind: contracts::brief::TargetKind::Score,
+    }
+}
+
 pub fn module(body: &str) -> Vec<u8> {
     wat::parse_str(format!("(module (func (export \"predict\") (param f64 f64 f64 f64 f64 f64 f64 f64) (result f64) {body}))")).unwrap()
 }

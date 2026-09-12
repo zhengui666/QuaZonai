@@ -278,6 +278,11 @@ https://docs.rs/ndarray-stats/0.7.0/ndarray_stats/trait.CorrelationExt.html
 https://docs.rs/ndarray-stats/0.7.0/ndarray_stats/trait.DeviationExt.html
 实际执行/参考值的验证结果另记execution文档；复用登记本身不是数值验收。
 
+受管分折结果采纳也复用锁定solow-cv0.7.3（BSD-3-Clause、Rust1.80、默认无feature）
+的同一个有界薄适配`domain::execution::validation`。Job原生执行直接复用该模块，
+不另写切分器、组合枚举或校准拟合；Domain只以原请求/源行数核对逐折原始索引及
+结果合同。新增Cargo边只指向已锁定anyhow/solow-cv，没有新增包或Python例外。
+
 ## 原生目录能力的回退路径（2026-09-08）
 
 上游 GHSA-hp8f-xmx4-4qrg 指出：含尾斜杠的多层软链可突破旧版手工路径解析；Linux openat2 不可用/被阻止时也会触发该后端。官方3.x修复版本为3.4.6，4.x为4.0.3。本工作区检查时 cap-std facade=3.4.5，但已锁定的 cap-primitives=3.4.6，不能据 facade 名字宣称正在运行的解析器仍有漏洞。本次将 facade 同步固定3.4.6，令最小依赖要求亦覆盖补丁，不转向4.x或重写路径解析。

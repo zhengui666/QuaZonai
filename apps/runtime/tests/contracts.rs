@@ -20,19 +20,16 @@ fn generated_download_contract_declares_the_actual_native_media_and_payloads() {
         .as_array()
         .or_else(|| schemas["NativeJsonOutputV1"]["oneOf"].as_array())
         .unwrap();
-    assert_eq!(variants.len(), 5);
-    for name in [
+    let expected = [
         "NativeModelCompilationV1",
         "NativeDataQualityReportV1",
         "NativeForecastResultV1",
+        "NativeAlphaValidationResultV1",
         "AllocationResultV1",
         "NativeSimulationResultV1",
-    ] {
-        assert!(
-            schemas.get(name).is_some(),
-            "native output definition must remain available"
-        );
-    }
+    ]
+    .map(|name| serde_json::json!({"$ref":format!("#/components/schemas/{name}")}));
+    assert_eq!(variants.as_slice(), expected.as_slice());
     fn references(value: &Value, root: &Value) {
         match value {
             Value::Object(fields) => {
@@ -57,7 +54,13 @@ fn generated_download_contract_declares_the_actual_native_media_and_payloads() {
 }
 
 #[test]
-fn only_complete_native_oci_ids_or_repository_digests_are_pinned() {
+fn native_image_identity_and_compatibility_contract_are_fixed() {
+    assert!(
+        include_str!("../../../runtimes/native/native-job.Dockerfile").contains(&format!(
+            "io.quazonai.native-stack=\"{}\"",
+            runtime::engine::NATIVE_STACK
+        ))
+    );
     let id = format!("sha256:{}", "a".repeat(64));
     assert!(domain::runtime::pinned_image(&id));
     assert!(domain::runtime::pinned_image(&format!(

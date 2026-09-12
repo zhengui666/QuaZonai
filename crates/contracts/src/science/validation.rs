@@ -74,6 +74,7 @@ pub struct NativeValidationMetricV1 {
 pub struct NativeValidationFoldV1 {
     pub instrument_id: String,
     pub bar_type: String,
+    pub source_row_count: DbCounter,
     #[schema(minimum = 0, maximum = 255)]
     pub fold_index: u16,
     #[schema(min_items = 3, max_items = 1000000)]

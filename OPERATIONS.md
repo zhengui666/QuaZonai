@@ -136,6 +136,12 @@ horizon。启用Mission的Worker在最新Turn结算后，每次消费按ordinal�
 缺失指标，不产生数据库Evaluation/Qualification。其标签和训练索引仍属受限数值
 证据；不能将stdout直接发给研究Agent或把手工运行当作完整自动链路。
 
+Runtime受管`VALIDATE_ALPHA`沿用同一计算入口，仅消费登记的VALIDATION目录和
+原MODEL/PARAMETERS，成功封口为`qz.alpha_validation.v1`。采纳会按原冻结请求
+重建并逐一比较所有原生分折；少折、改索引或不一致的重复标签均拒绝，不产生资格。
+原生Job镜像须按当前Dockerfile重建并登记其新OCI原生ID；旧native-stack标签缺少
+`alpha-validation/1`，Runtime会报告镜像合同不匹配，不虚报支持新操作。
+
 032迁移为每个已成功结算的原生Turn保留唯一公开回答报告（qz.mission_summary）。
 Worker读取锁定App Server原生summary视图，只有公开agentMessage、原Turn/item和
 实际phase；phase缺失保留null。它不读取完整items/rollout或推理，报告不当作科学

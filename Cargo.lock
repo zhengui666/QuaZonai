@@ -2195,6 +2195,7 @@ dependencies = [
 name = "domain"
 version = "2.0.0-dev.1"
 dependencies = [
+ "anyhow",
  "bigdecimal",
  "chrono",
  "contracts",
@@ -2203,6 +2204,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
+ "solow-cv",
  "thiserror 2.0.20",
  "url",
 ]
@@ -3185,7 +3187,6 @@ dependencies = [
  "rustix",
  "serde",
  "serde_json",
- "solow-cv",
  "tempfile",
  "wasmi",
  "wat",

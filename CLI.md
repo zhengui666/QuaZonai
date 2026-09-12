@@ -174,6 +174,11 @@ cargo run --locked -p runtime -- serve --config /absolute/runtime.json
 
 `GET /runtime/v1/jobs/{external_job_id}/artifacts/{storage_ref}` 返回已封口 manifest 中的精确对象：原生 Wasm 为 application/wasm，登记的原生 JSON 报告为 application/json；不返回任意路径或跨任务对象。storage_version 固定原生版本1，schema/kind/media_type 由同一 Rust 登记表绑定，未知输出不是可采纳的科学证据。
 
+`VALIDATE_ALPHA`是ALPHA_EVALUATE的独立分折操作，固定原dataset_revision_id/
+model_artifact_id/request；只接收VALIDATION分区、MODEL、PARAMETERS，不能读
+Sealed训练数据或借用Discovery预测。原生结果为qz.alpha_validation.v1 REPORT，
+含每折source_row_count和全部原始索引；严格采纳核对原请求全部分折，不等于授资格。
+
 普通 Runtime 单元/SQLite/HTTP 测试不证明 OCI 隔离；`.github/workflows/native-runtime.yml` 对精确源码启用独立必跑的 `native-oci` 测试。缺 Docker、固定镜像或 cgroup 前提会失败，不能按跳过处理成通过。取消时只有原生进程已停止且晚到 CREATE/START 已被持久身份屏障阻断才报告 CANCELLED，404 或超时不等于取消确认。
 
 ## 认证服务与本机管理

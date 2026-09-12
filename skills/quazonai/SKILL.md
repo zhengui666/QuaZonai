@@ -53,6 +53,9 @@ phase，不收集隐藏推理。它不赋予报告中的PASS或审批文字任�
 不得把SCORE直接作为预期收益或补造calibration。不能用版本存在代替正式评估。
 `job validate-alpha`是可信本地数值入口，不是Mission可执行工具；其全部折/标签/
 训练索引按输入数据权限保留，不直接作为LLM工具输出或手工冒充Evaluation/资格。
+受管`VALIDATE_ALPHA`仅接受VALIDATION目录、原MODEL/PARAMETERS；同一原生切分器
+在执行与结果采纳侧核对全部折，不允许手工改索引/漏折或借旧镜像声明新能力。
+该受管操作仍非Agent自授Evaluation/Qualification入口。
 提交响应未知时保留同一 key 和原始文件/请求重放；不同内容409不能改键绕过预算。
 未知工具不是可由任意 HTTP/Shell/SQL 替代的能力。保留 UUIDv7 和十进制版本字符串。
 每次调用会重新检查到期、撤销及 Attempt 接管，失败不能靠更换 ID、扩大权限或

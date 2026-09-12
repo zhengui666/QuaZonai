@@ -5,7 +5,7 @@ use catalog_fixture::count;
 use contracts::{
     catalogs::RuntimeCatalogMetadataV1,
     execution::{NativeDatasetSelectionV1, NativeTaskParametersV1},
-    research::ArtifactInputRole,
+    research::{ArtifactInputRole, DataPartition, SplitKind, SplitPolicyV1},
     runtime_jobs::*,
     science::*,
     Id, Revision, SchemaV1,
@@ -26,11 +26,8 @@ fn operation(
                 selection,
             }],
         },
-        1 => NativeTaskParametersV1::EvaluateAlpha {
-            schema_version: SchemaV1,
-            dataset_revision_id: dataset,
-            model_artifact_id: model,
-            request: NativeForecastRequestV1 {
+        1 | 3 => {
+            let forecast = NativeForecastRequestV1 {
                 schema_version: SchemaV1,
                 selection,
                 parameters: NativeForecastParametersV1 {
@@ -40,8 +37,41 @@ fn operation(
                     label_horizon_observations: 1,
                     total_fuel: count(1000),
                 },
-            },
-        },
+            };
+            if kind == 1 {
+                NativeTaskParametersV1::EvaluateAlpha {
+                    schema_version: SchemaV1,
+                    dataset_revision_id: dataset,
+                    model_artifact_id: model,
+                    request: forecast,
+                }
+            } else {
+                NativeTaskParametersV1::ValidateAlpha {
+                    schema_version: SchemaV1,
+                    dataset_revision_id: dataset,
+                    model_artifact_id: model,
+                    request: Box::new(NativeAlphaValidationRequestV1 {
+                        schema_version: SchemaV1,
+                        forecast,
+                        split_policy: SplitPolicyV1 {
+                            schema_version: SchemaV1,
+                            kind: SplitKind::WalkForward,
+                            train_size: count(3),
+                            test_size: count(1),
+                            step_size: Some(count(1)),
+                            group_count: None,
+                            test_group_count: None,
+                            purge_observations: count(1),
+                            embargo_observations: count(0),
+                            label_horizon_observations: Some(count(1)),
+                            interval_validation_required: true,
+                            sealed_revision_id: Id::new(),
+                        },
+                        target_kind: contracts::brief::TargetKind::Score,
+                    }),
+                }
+            }
+        }
         _ => NativeTaskParametersV1::SimulatePortfolio {
             schema_version: SchemaV1,
             dataset_revision_id: dataset,
@@ -100,7 +130,7 @@ async fn accepts(
         storage_version: metadata.storage_version.clone(),
         role: metadata.partition,
     }];
-    if kind == 1 {
+    if matches!(kind, 1 | 3) {
         journal
             .put_object(model, "1", b"controlled-model-fixture")
             .await
@@ -155,9 +185,12 @@ async fn accepts(
 }
 
 #[tokio::test]
-async fn all_three_operations_cannot_widen_the_registered_visibility_cutoff() {
-    for kind in 0..3 {
-        let metadata = catalog_fixture::metadata();
+async fn all_four_operations_cannot_widen_the_registered_visibility_cutoff() {
+    for kind in 0..4 {
+        let mut metadata = catalog_fixture::metadata();
+        if kind == 3 {
+            metadata.partition = DataPartition::Validation;
+        }
         let selected = metadata.quality.datasets[0].selection.clone();
         assert!(accepts(kind, metadata.clone(), selected.clone()).await);
         let mut narrower = selected.clone();
@@ -170,9 +203,12 @@ async fn all_three_operations_cannot_widen_the_registered_visibility_cutoff() {
 }
 
 #[tokio::test]
-async fn all_three_data_operations_reject_unregistered_types_instruments_and_event_ranges() {
-    for kind in 0..3 {
-        let metadata = catalog_fixture::metadata();
+async fn all_four_data_operations_reject_unregistered_types_instruments_and_event_ranges() {
+    for kind in 0..4 {
+        let mut metadata = catalog_fixture::metadata();
+        if kind == 3 {
+            metadata.partition = DataPartition::Validation;
+        }
         domain::catalogs::metadata(&metadata, now()).unwrap();
         let selection = metadata.quality.datasets[0].selection.clone();
         assert!(accepts(kind, metadata.clone(), selection.clone()).await);

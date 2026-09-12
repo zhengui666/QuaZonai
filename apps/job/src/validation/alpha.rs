@@ -115,14 +115,9 @@ pub fn validate_alpha(
     module: &[u8],
 ) -> Result<NativeAlphaValidationResultV1> {
     let forecast = &request.forecast;
-    domain::execution::forecast_request(forecast)?;
-    domain::research::split(&request.split_policy)?;
+    domain::execution::alpha_validation_request(request)?;
     let parameters = &forecast.parameters;
     let horizon = parameters.label_horizon_observations as usize;
-    ensure!(
-        request.split_policy.label_horizon_observations == Some(count(horizon)?),
-        "VALIDATION_HORIZON_MISMATCH"
-    );
     let market = load_catalog(root, &forecast.selection)?;
     let mut remaining = parameters.total_fuel.get();
     let mut folds = Vec::new();
@@ -250,6 +245,7 @@ pub fn validate_alpha(
             folds.push(NativeValidationFoldV1 {
                 instrument_id: instrument_id.clone(),
                 bar_type: series.bar_type.to_string(),
+                source_row_count: count(series.bars.len())?,
                 fold_index: u16::try_from(fold_index)?,
                 training_ordinals: train
                     .into_iter()

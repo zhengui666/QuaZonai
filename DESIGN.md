@@ -1251,6 +1251,21 @@ unique_test_observations按资产/ordinal去重，它不是独立同分布样本
 保留赢家折。结果含真实方法版本，仍是受限数值输入；上层正式Evaluation发布、
 政策判定、暴露/资格与Reviewer不能由本地计算入口自行授予。
 
+原生分折的有界薄适配统一位于domain::execution::validation；Job执行与受信任
+结果采纳复用相同锁定solow-cv接口及限制。控制面不另写CV/组合枚举算法；采纳时
+用原冻结政策、原报告的逐资产源行数及已完成label范围核对全部原生train/test
+索引，不能只验证数组可解析就接受漏折或被替换的训练集。这是结果合同检查，
+不在控制面执行模型、重新拟合或授予资格。
+
+受管操作VALIDATE_ALPHA使用ALPHA_EVALUATE Run，参数只有schema_version、原
+dataset_revision_id、model_artifact_id及NativeAlphaValidationRequestV1。输入仅原
+VALIDATION分区、MODEL和PARAMETERS；不能把Discovery预测结果或Sealed训练
+伪装成独立评估。成功输出唯一qz.alpha_validation.v1 REPORT，沿用原生封口索引/
+输出限额/Run与Attempt生产者，不另建队列。每折source_row_count记录该资产源
+目录行数；与原warmup/horizon一起重建原生分折并逐索引比较。所有资产必须与原
+selection同序且完整，源行数累计不超过原上限；逐折原生指标有限性与状态/单位
+关联仍需校验。这些关联不授予Evaluation/Qualification或数据来源真实性。
+
 ## A5. Mandate、Candidate、目标与 Release
 
 ```text

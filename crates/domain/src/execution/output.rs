@@ -14,6 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod forecast;
 mod simulation;
+mod validation;
 
 fn bad(field: &str) -> DomainError {
     invalid(field, "NATIVE_OUTPUT_CONTRACT_INVALID")
@@ -170,6 +171,7 @@ pub fn output_shape(output: &RuntimeOutputV1, bytes: &[u8]) -> Result<(), Domain
         "qz.model_compilation" => compilation(&decode(bytes)?),
         "qz.data_quality" => quality(&decode(bytes)?),
         "qz.native_forecast" => forecast::shape(&decode::<NativeForecastResultV1>(bytes)?),
+        "qz.alpha_validation" => validation::shape(&decode(bytes)?),
         "qz.native_allocation" => allocation(&decode(bytes)?),
         "qz.native_simulation" => simulation::shape(&decode::<NativeSimulationResultV1>(bytes)?),
         _ => Err(bad("native_output.schema")),
@@ -242,6 +244,9 @@ pub fn output_bindings(
         }
         NativeTaskParametersV1::EvaluateAlpha { request, .. } => {
             forecast::binding(request, &decode(body("qz.native_forecast")?.1)?)?;
+        }
+        NativeTaskParametersV1::ValidateAlpha { request, .. } => {
+            validation::binding(request, &decode(body("qz.alpha_validation")?.1)?)?;
         }
         NativeTaskParametersV1::BuildPortfolio { request, .. } => {
             let value: AllocationResultV1 = decode(body("qz.native_allocation")?.1)?;

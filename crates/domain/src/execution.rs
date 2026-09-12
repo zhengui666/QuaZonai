@@ -10,6 +10,7 @@ use contracts::{
 use std::collections::BTreeSet;
 
 mod output;
+pub mod validation;
 pub use output::{output_bindings, output_shape};
 
 fn bad(field: &str) -> DomainError {
@@ -54,6 +55,55 @@ fn dataset(spec: &JobSpecV1, id: Id) -> bool {
     spec.inputs.iter().any(
         |input| matches!(input, RuntimeInputV1::Dataset { revision_id, .. } if *revision_id == id),
     )
+}
+
+pub fn alpha_validation_request(
+    request: &contracts::science::NativeAlphaValidationRequestV1,
+) -> Result<(), DomainError> {
+    forecast_request(&request.forecast)?;
+    crate::research::split(&request.split_policy)?;
+    let policy = &request.split_policy;
+    let horizon = u64::from(request.forecast.parameters.label_horizon_observations);
+    if policy.label_horizon_observations.map(|n| n.get()) != Some(horizon)
+        || policy.purge_observations.get() < horizon
+        || policy.train_size.get() < 3
+        || [
+            policy.train_size,
+            policy.test_size,
+            policy.purge_observations,
+            policy.embargo_observations,
+        ]
+        .into_iter()
+        .chain(policy.step_size)
+        .any(|n| n.get() > validation::MAX_VALIDATION_ROWS as u64)
+        || policy.group_count.is_some_and(|n| n > 16)
+    {
+        return Err(bad("validation_parameters"));
+    }
+    Ok(())
+}
+
+fn forecast_inputs(
+    spec: &JobSpecV1,
+    dataset_revision_id: Id,
+    model_artifact_id: Id,
+) -> Result<(), DomainError> {
+    if !dataset(spec, dataset_revision_id)
+        || !artifact(spec, model_artifact_id, ArtifactInputRole::Model)
+        || spec.inputs.iter().any(|input| match input {
+            RuntimeInputV1::Dataset { revision_id, .. } => *revision_id != dataset_revision_id,
+            RuntimeInputV1::Artifact {
+                artifact_id, role, ..
+            } => {
+                !(*artifact_id == model_artifact_id && *role == ArtifactInputRole::Model
+                    || *artifact_id == spec.parameters_artifact_id
+                        && *role == ArtifactInputRole::Parameters)
+            }
+        })
+    {
+        return Err(bad("forecast_inputs"));
+    }
+    Ok(())
 }
 fn artifact(spec: &JobSpecV1, id: Id, expected: ArtifactInputRole) -> bool {
     spec.inputs.iter().any(|input| matches!(input, RuntimeInputV1::Artifact { artifact_id, role, .. } if *artifact_id == id && *role == expected))
@@ -128,22 +178,18 @@ pub fn task(spec: &JobSpecV1, parameters: &NativeTaskParametersV1) -> Result<(),
             ..
         } => {
             forecast_request(request)?;
-            if !dataset(spec, *dataset_revision_id)
-                || !artifact(spec, *model_artifact_id, ArtifactInputRole::Model)
-            {
-                return Err(bad("forecast_inputs"));
-            }
-            if spec.inputs.iter().any(|input| match input {
-                RuntimeInputV1::Dataset { revision_id, .. } => *revision_id != *dataset_revision_id,
-                RuntimeInputV1::Artifact {
-                    artifact_id, role, ..
-                } => {
-                    !(*artifact_id == *model_artifact_id && *role == ArtifactInputRole::Model
-                        || *artifact_id == spec.parameters_artifact_id
-                            && *role == ArtifactInputRole::Parameters)
-                }
-            }) {
-                return Err(bad("forecast_inputs"));
+            forecast_inputs(spec, *dataset_revision_id, *model_artifact_id)?;
+        }
+        NativeTaskParametersV1::ValidateAlpha {
+            dataset_revision_id,
+            model_artifact_id,
+            request,
+            ..
+        } => {
+            alpha_validation_request(request)?;
+            forecast_inputs(spec, *dataset_revision_id, *model_artifact_id)?;
+            if !spec.inputs.iter().any(|input| matches!(input, RuntimeInputV1::Dataset {revision_id, role: contracts::research::DataPartition::Validation, ..} if *revision_id == *dataset_revision_id)) {
+                return Err(bad("validation_partition"));
             }
         }
         NativeTaskParametersV1::BuildPortfolio { request, .. } => {

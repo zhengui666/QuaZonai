@@ -19,7 +19,7 @@ use std::{
     time::Duration,
 };
 
-pub const NATIVE_STACK: &str = "rust/1.98.1;nautilus/0.63.0;clarabel/0.11.1;wasmi/2.0.0";
+pub const NATIVE_STACK: &str = "rust/1.98.1;nautilus/0.63.0;clarabel/0.11.1;wasmi/2.0.0;solow-cv/0.7.3;ndarray-stats/0.7.0;linregress/0.5.4;alpha-validation/1";
 pub const JOB_ENTRYPOINT: &str = "/usr/local/bin/job";
 
 #[derive(Clone)]
@@ -207,6 +207,9 @@ impl NativeEngine {
                 ("nautilus".into(), "0.63.0".into()),
                 ("clarabel".into(), "0.11.1".into()),
                 ("wasmi".into(), "2.0.0".into()),
+                ("solow-cv".into(), "0.7.3".into()),
+                ("ndarray-stats".into(), "0.7.0".into()),
+                ("linregress".into(), "0.5.4".into()),
             ]),
         })
     }
@@ -282,20 +285,13 @@ impl NativeEngine {
                 engine_versions: versions,
                 image_refs: images,
                 job_kinds: kinds,
-                artifact_schemas: [
-                    "qz.wasm_model",
-                    "qz.model_compilation",
-                    "qz.data_quality",
-                    "qz.native_forecast",
-                    "qz.native_allocation",
-                    "qz.native_simulation",
-                ]
-                .into_iter()
-                .map(|name| RuntimeArtifactSchemaV1 {
-                    name: name.into(),
-                    version: "1".into(),
-                })
-                .collect(),
+                artifact_schemas: contracts::runtime_jobs::NATIVE_OUTPUT_CONTRACTS
+                    .iter()
+                    .map(|contract| RuntimeArtifactSchemaV1 {
+                        name: contract.name.into(),
+                        version: "1".into(),
+                    })
+                    .collect(),
                 data_kinds: vec![RuntimeDataKind::Bar],
                 venues: venue_classes
                     .into_iter()
