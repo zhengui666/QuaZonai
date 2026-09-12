@@ -1,5 +1,46 @@
 {
   "schema_version": 1,
+  "forecasts": {
+    "schema_version": 1,
+    "decision_asof_ns": "20000000000",
+    "forecast_asof_ns": "10000000000",
+    "horizon_kind": "FIXED_BARS",
+    "horizon_value": "4",
+    "base_currency": "USD",
+    "max_input_age_seconds": 10,
+    "instrument_ids": ["ALPHA.EXAMPLE", "BETA.EXAMPLE"],
+    "bar_types": ["ALPHA.EXAMPLE-1-MINUTE-LAST-EXTERNAL", "BETA.EXAMPLE-1-MINUTE-LAST-EXTERNAL"],
+    "members": [
+      {
+        "alpha_id": "01990000-0000-7000-8000-000000000011",
+        "alpha_version_id": "01990000-0000-7000-8000-000000000012",
+        "forecast_unit": "RETURN_PER_HORIZON",
+        "horizon_kind": "FIXED_BARS",
+        "horizon_value": "4",
+        "base_currency": "USD",
+        "asof_ns": "10000000000",
+        "available_ns": "20000000000",
+        "ensemble_weight": "0.5",
+        "instrument_ids": ["ALPHA.EXAMPLE", "BETA.EXAMPLE"],
+        "bar_types": ["ALPHA.EXAMPLE-1-MINUTE-LAST-EXTERNAL", "BETA.EXAMPLE-1-MINUTE-LAST-EXTERNAL"],
+        "forecasts": [0.1, 0.2]
+      },
+      {
+        "alpha_id": "01990000-0000-7000-8000-000000000021",
+        "alpha_version_id": "01990000-0000-7000-8000-000000000022",
+        "forecast_unit": "RETURN_PER_HORIZON",
+        "horizon_kind": "FIXED_BARS",
+        "horizon_value": "4",
+        "base_currency": "USD",
+        "asof_ns": "10000000000",
+        "available_ns": "20000000000",
+        "ensemble_weight": "0.5",
+        "instrument_ids": ["ALPHA.EXAMPLE", "BETA.EXAMPLE"],
+        "bar_types": ["ALPHA.EXAMPLE-1-MINUTE-LAST-EXTERNAL", "BETA.EXAMPLE-1-MINUTE-LAST-EXTERNAL"],
+        "forecasts": [0.1, 0.2]
+      }
+    ]
+  },
   "objective": "MIN_RISK",
   "risk": "VARIANCE",
   "base_currency": "USD",
@@ -35,7 +76,6 @@
     {
       "instrument_id": "ALPHA.EXAMPLE",
       "currency": "USD",
-      "expected_return": 0.1,
       "current_weight": "0.5",
       "transaction_cost_rate": "0",
       "available_notional": null,
@@ -44,7 +84,6 @@
     {
       "instrument_id": "BETA.EXAMPLE",
       "currency": "USD",
-      "expected_return": 0.2,
       "current_weight": "0.5",
       "transaction_cost_rate": "0",
       "available_notional": null,

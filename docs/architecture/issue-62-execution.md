@@ -3,6 +3,39 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Managed and actual OCI forecast aggregation, 2026-09-13
+
+Working source over `fa1dd722efbae2c7dcbae9779c62e79a60b594dc` makes the original
+forecast collection mandatory in AllocationInputV1. Per-asset expected_return is
+removed, with no compatibility path. Domain admission/output checks share exact
+mixture weights and asset/currency binding; the existing optimizer performs native
+bar alignment and ndarray aggregation before constructing the Clarabel objective.
+MIN_RISK does not bypass the original input contract. No new numerical engine or
+dependency is added. Synthetic managed execution now verifies the independently
+derived 0.82/0.18 optimum and rejects a single effective Alpha identity.
+
+`verify-NRqF6q` passed check/format/strict Clippy, 152 domain/Runtime, 8 managed,
+31 native Codex and 86 scientific Job executions, zero failed/ignored, source
+unchanged. These groups overlap. This run preceded the new OCI test only.
+`web-verify-zbgaC8` passed deterministic double generation, typecheck, 505 unit,
+wire/build/CLI checks, 36 Codex browser and 189 full-browser tests, with handwritten
+source unchanged. Only domain-v1.openapi.json changed among the generated outputs.
+
+`owner-oci-IUsTIK` built and ran native image
+`sha256:0b35a9d86352928ff237b463b6bb3b4d7bf825c1534cb792d06388e2946d4146`.
+All 9 actual OCI tests passed (14.62s), zero failed/ignored, source unchanged.
+The new test uploads original PARAMETERS, runs PORTFOLIO_BUILD, downloads and
+validates the original manifest/report, obtains 0.82/0.18, checks container exit 0
+and original submission identity on replay. Manifest versions include
+portfolio-ensemble/1 and ndarray/0.17.1; the runtime rejects the previous stack.
+Final `verify-ZYN4Fv` passed workspace check, format and strict Clippy including
+native-oci/native-codex targets after the OCI test was added; source unchanged.
+
+This proves native execution, not authoritative forecast-artifact assembly,
+current REAL qualification/license binding, Mandate operations or shared-capital
+Candidate/Release delivery. Those and full Issue acceptance remain required.
+No GitHub CI/review/merge or production T42 completion is claimed.
+
 ## Original forecast alignment before native aggregation, 2026-09-13
 
 Working source over `c546bdc5fb20862ed902821b59e1eb748636183c` adds typed

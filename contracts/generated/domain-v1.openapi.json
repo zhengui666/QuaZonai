@@ -208,10 +208,6 @@
           "current_weight": {
             "$ref": "#/components/schemas/DecimalValue"
           },
-          "expected_return": {
-            "format": "double",
-            "type": "number"
-          },
           "groups": {
             "items": {
               "maxLength": 120,
@@ -235,7 +231,6 @@
         "required": [
           "instrument_id",
           "currency",
-          "expected_return",
           "current_weight",
           "transaction_cost_rate",
           "groups"
@@ -469,6 +464,9 @@
           "exposure_tolerance": {
             "$ref": "#/components/schemas/DecimalValue"
           },
+          "forecasts": {
+            "$ref": "#/components/schemas/PortfolioForecastInputV1"
+          },
           "objective": {
             "$ref": "#/components/schemas/AllocationObjective"
           },
@@ -487,6 +485,7 @@
         },
         "required": [
           "schema_version",
+          "forecasts",
           "objective",
           "risk",
           "base_currency",
@@ -938,6 +937,79 @@
           "runtime_id",
           "expected_runtime_revision",
           "limits"
+        ],
+        "type": "object"
+      },
+      "AlphaForecastV1": {
+        "additionalProperties": false,
+        "description": "Original forecast metadata; these identifiers alone never prove qualification.",
+        "properties": {
+          "alpha_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "alpha_version_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "asof_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "available_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "bar_types": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "base_currency": {
+            "type": "string"
+          },
+          "ensemble_weight": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "forecast_unit": {
+            "$ref": "#/components/schemas/ForecastUnit"
+          },
+          "forecasts": {
+            "items": {
+              "format": "double",
+              "type": "number"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "horizon_kind": {
+            "$ref": "#/components/schemas/HorizonKind"
+          },
+          "horizon_value": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "instrument_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "alpha_id",
+          "alpha_version_id",
+          "forecast_unit",
+          "horizon_kind",
+          "horizon_value",
+          "base_currency",
+          "asof_ns",
+          "available_ns",
+          "ensemble_weight",
+          "bar_types",
+          "instrument_ids",
+          "forecasts"
         ],
         "type": "object"
       },
@@ -12086,6 +12158,71 @@
           "group_bounds",
           "asset_overrides",
           "transaction_costs_ref"
+        ],
+        "type": "object"
+      },
+      "PortfolioForecastInputV1": {
+        "additionalProperties": false,
+        "properties": {
+          "bar_types": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "base_currency": {
+            "type": "string"
+          },
+          "decision_asof_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "forecast_asof_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "horizon_kind": {
+            "$ref": "#/components/schemas/HorizonKind"
+          },
+          "horizon_value": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "instrument_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "max_input_age_seconds": {
+            "format": "int32",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/AlphaForecastV1"
+            },
+            "maxItems": 256,
+            "minItems": 2,
+            "type": "array"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "decision_asof_ns",
+          "forecast_asof_ns",
+          "horizon_kind",
+          "horizon_value",
+          "base_currency",
+          "max_input_age_seconds",
+          "bar_types",
+          "instrument_ids",
+          "members"
         ],
         "type": "object"
       },

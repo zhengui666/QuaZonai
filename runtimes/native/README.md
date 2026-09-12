@@ -4,6 +4,11 @@
 
 Runtime 是受信任的计算网关：只接受已登记镜像、不可变输入引用和固定类型任务，复用 Docker 的进程、文件系统与 cgroup 隔离。研究预算、数据许可、Alpha 资格、审批、真实交易仍不由 Runtime 拥有。任务成功不等于科学结论通过。
 
+当前PORTFOLIO_BUILD要求原forecasts集合，镜像能力为portfolio-ensemble/1，原生
+ndarray 0.17.1聚合后送入同一Clarabel问题；旧expected_return输入不兼容。
+真实OCI回归覆盖原参数上传、执行、原结果下载/绑定及幂等重放，合成0.82/0.18
+数值结果不是REAL资格或完整组合交付。更新源码后必须重建并登记新镜像。
+
 ## 构建
 
 支持 Linux x86_64、原生 Docker Engine、cgroup v2、Rust 1.98.1。构建机需有该 Rust 工具链、`wasm32-unknown-unknown` 标准目标、GNU coreutils 的 `timeout`、`ldd` 和 Node.js。Docker socket 由操作者正常授权；不要给公共 HTTP 或研究 Agent 暴露 socket，也不要以放开 socket 为匿名写入来解决权限错误。

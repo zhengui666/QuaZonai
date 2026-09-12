@@ -72,6 +72,9 @@ Mission不借用它读取额外指标。原Thread反馈仍只披露冻结选择�
 受管`VALIDATE_ALPHA`仅接受VALIDATION目录、原MODEL/PARAMETERS；同一原生切分器
 在执行与结果采纳侧核对全部折，不允许手工改索引/漏折或借旧镜像声明新能力。
 该受管操作仍非Agent自授Evaluation/Qualification入口。
+本机allocate与受管PORTFOLIO_BUILD必须保留原forecasts集合，由可信数值入口校验、
+聚合再求解；不得手填资产expected_return或将合成原Alpha标识当作资格。
+portfolio-ensemble/1需真实重建登记镜像；这些命令不增加Mission工具或审批权限。
 提交响应未知时保留同一 key 和原始文件/请求重放；不同内容409不能改键绕过预算。
 未知工具不是可由任意 HTTP/Shell/SQL 替代的能力。保留 UUIDv7 和十进制版本字符串。
 每次调用会重新检查到期、撤销及 Attempt 接管，失败不能靠更换 ID、扩大权限或

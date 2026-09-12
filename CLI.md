@@ -157,6 +157,12 @@ cargo run --locked -p job -- allocate < tests/contracts/allocation-input.json
 
 第二条是明确标记的合成两资产数值回归输入，不产生生产资格或交付权。`allocate` 使用真实 Clarabel 求解并检查存储用十进制目标；无解/失败不输出备用权重，必须检查 `solver_status` 而非只看进程退出码。
 
+`allocate`与受管`PORTFOLIO_BUILD`都要求原`forecasts`集合，不再接受资产上的
+`expected_return`。原Alpha版本、单位/期限/时点、原生bar、完整资产顺序及固定
+混合权重先检查，再用ndarray聚合进入同一Clarabel问题；MIN_RISK也不跳过。
+这些输入标识不代替数据库资格或许可。必须重建并登记带`portfolio-ensemble/1`
+能力的新镜像，不能沿用旧参数或旧镜像。原生命令不授予Agent组合审批能力。
+
 已有受授权只读 Nautilus Parquet 快照、实际 Wasm 模型和相应冻结请求文件时，运行时使用以下入口；路径不是 HTTP/MCP 请求字段：
 
 ```sh

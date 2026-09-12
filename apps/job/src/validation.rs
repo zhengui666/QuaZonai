@@ -53,7 +53,7 @@ pub fn fixed_weighted_forecast(
     forecasts: &[Vec<f64>],
     weights: &[contracts::DecimalValue],
 ) -> Result<Vec<f64>> {
-    use bigdecimal::{BigDecimal, ToPrimitive};
+    use bigdecimal::ToPrimitive;
     let maximum = contracts::portfolio::MAX_ALLOCATION_ASSETS;
     ensure!(
         (2..=maximum).contains(&forecasts.len()) && forecasts.len() == weights.len(),
@@ -67,12 +67,7 @@ pub fn fixed_weighted_forecast(
                 .all(|row| row.len() == assets && row.iter().all(|v| v.is_finite())),
         "ENSEMBLE_FORECAST_INVALID"
     );
-    ensure!(
-        weights.iter().all(|w| w.is_nonnegative())
-            && weights.iter().filter(|w| w.is_positive()).count() >= 2
-            && weights.iter().map(|w| w.as_decimal()).sum::<BigDecimal>() == BigDecimal::from(1),
-        "ENSEMBLE_WEIGHT_INVALID"
-    );
+    domain::portfolio::ensemble_weights(weights.iter())?;
     let weights = weights
         .iter()
         .map(|w| {

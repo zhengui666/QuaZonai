@@ -81,6 +81,26 @@ pub fn portfolio_forecast_alignment(input: &PortfolioForecastInputV1) -> Result<
     Ok(())
 }
 
+pub fn ensemble_weights<'a>(
+    weights: impl Iterator<Item = &'a DecimalValue>,
+) -> Result<(), DomainError> {
+    let mut sum = BigDecimal::from(0);
+    let mut count = 0;
+    let mut positive = 0;
+    for weight in weights {
+        if !weight.is_nonnegative() {
+            return Err(DomainError::Invalid("ensemble_weights"));
+        }
+        count += 1;
+        positive += usize::from(weight.is_positive());
+        sum += weight.as_decimal();
+    }
+    if !(2..=MAX_ALLOCATION_ASSETS).contains(&count) || positive < 2 || sum != BigDecimal::from(1) {
+        return Err(DomainError::Invalid("ensemble_weights"));
+    }
+    Ok(())
+}
+
 /// Structural mandate checks shared with actual allocation and publication.
 /// Asset/group membership and feasibility still require the frozen native input.
 pub fn portfolio_constraints(constraints: &PortfolioConstraintsV1) -> Result<(), DomainError> {
@@ -164,6 +184,23 @@ pub fn allocation_input(input: &AllocationInputV1) -> Result<(), DomainError> {
     let count = input.assets.len();
     let constraints = &input.constraints;
     portfolio_constraints(constraints)?;
+    portfolio_forecast_alignment(&input.forecasts)?;
+    ensemble_weights(
+        input
+            .forecasts
+            .members
+            .iter()
+            .map(|member| &member.ensemble_weight),
+    )?;
+    if input.forecasts.base_currency != input.base_currency
+        || input
+            .assets
+            .iter()
+            .map(|asset| &asset.instrument_id)
+            .ne(input.forecasts.instrument_ids.iter())
+    {
+        return Err(DomainError::Invalid("allocation_forecast_binding"));
+    }
     if !(1..=MAX_ALLOCATION_ASSETS).contains(&count)
         || input.covariance.len() != count
         || input
@@ -189,7 +226,6 @@ pub fn allocation_input(input: &AllocationInputV1) -> Result<(), DomainError> {
         control::text(&asset.instrument_id, 1, 200, false)?;
         if !identities.insert(asset.instrument_id.as_str())
             || asset.currency != input.base_currency
-            || !asset.expected_return.is_finite()
             || !asset.transaction_cost_rate.is_fraction()
             || asset.groups.len() > MAX_ALLOCATION_GROUPS
             || asset

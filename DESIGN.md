@@ -1804,6 +1804,12 @@ RETURN_PER_HORIZON，不把原score或缺少共同基准定义的residual收益�
 外部LAST时间bar及各资产相同BarSpecification，避免把分钟bar与小时bar的相同计数
 误当共同期限。字符串一致只是数值输入合同，真实目录/预测产物仍由可信编排绑定。
 
+受管PORTFOLIO_BUILD与本机allocate共用AllocationInputV1，必须包含原forecasts集合；
+资产条目不再接收独立expected_return，不能绕过原预测聚合或用手填汇总值代替。
+原优化器在构造目标函数前执行对齐/原生bar校验和固定权重聚合；MIN_RISK也不跳过
+输入证据合同。领域准入与结果约束校验使用同一预测身份/权重/资产/币种绑定，
+Runtime必须带portfolio-ensemble/1镜像能力，旧参数或镜像不加兼容路径。
+
 原生输出保留OPTIMAL/ACCEPTABLE_INACCURATE/INFEASIBLE/UNBOUNDED/FAILED，只有策略明确接受的成功状态且全部发布约束在冻结容差内再次通过时，才带targets与cash。无解、数值失败、迭代上限、后验约束不通过时，两者均为空，不生成100%单资产或平滑修正的备用权重。权重只在求解器数值边界转换，公开存储继续使用DecimalValue；转换后的权重必须重新验证总和及全部限额。求解成功本身不是Qualification/Release批准。
 
 ## A6. Run、Attempt、事件和原生会话

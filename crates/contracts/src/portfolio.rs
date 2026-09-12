@@ -154,8 +154,6 @@ pub struct AllocationAssetV1 {
     pub instrument_id: String,
     #[schema(schema_with = crate::budget::currency_schema)]
     pub currency: String,
-    #[serde(serialize_with = "serialize_finite")]
-    pub expected_return: f64,
     pub current_weight: DecimalValue,
     /// Frozen all-in cost per unit of traded notional, never an inferred zero.
     pub transaction_cost_rate: DecimalValue,
@@ -168,6 +166,7 @@ pub struct AllocationAssetV1 {
 #[serde(deny_unknown_fields)]
 pub struct AllocationInputV1 {
     pub schema_version: SchemaV1,
+    pub forecasts: PortfolioForecastInputV1,
     pub objective: AllocationObjective,
     pub risk: AllocationRisk,
     #[schema(schema_with = crate::budget::currency_schema)]
@@ -234,12 +233,6 @@ pub struct AllocationResultV1 {
     pub dual_residual: Option<f64>,
 }
 
-fn serialize_finite<S: serde::Serializer>(value: &f64, serializer: S) -> Result<S::Ok, S::Error> {
-    if !value.is_finite() {
-        return Err(serde::ser::Error::custom("non-finite allocation input"));
-    }
-    value.serialize(serializer)
-}
 fn serialize_finite_matrix<S: serde::Serializer>(
     value: &[Vec<f64>],
     serializer: S,

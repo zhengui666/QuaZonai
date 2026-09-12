@@ -81,6 +81,7 @@ fn finite(value: f64) -> Option<f64> {
 /// The caller still owns provenance, qualification, independent simulation and approval.
 pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
     domain::portfolio::allocation_input(input)?;
+    let forecasts = crate::validation::aligned_portfolio_forecast(&input.forecasts)?;
     ensure!(
         input.risk == AllocationRisk::Variance
             && input.objective != AllocationObjective::RiskBudgeting,
@@ -125,7 +126,7 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
     let mut q = vec![0.0; variables];
     for (i, asset) in input.assets.iter().enumerate() {
         if input.objective == AllocationObjective::MaxUtility {
-            q[i] = -asset.expected_return;
+            q[i] = -forecasts[i];
         }
         q[traded + i] = native_number(&asset.transaction_cost_rate)?;
     }

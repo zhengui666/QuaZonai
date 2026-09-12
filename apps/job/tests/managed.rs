@@ -297,10 +297,14 @@ fn actual_managed_sealed_uses_original_fit_and_rejects_other_partitions() {
 
 #[test]
 fn actual_managed_allocation_preserves_real_solver_result_and_infeasibility_without_fallback() {
-    let request: contracts::portfolio::AllocationInputV1 = serde_json::from_str(include_str!(
+    let mut request: contracts::portfolio::AllocationInputV1 = serde_json::from_str(include_str!(
         "../../../tests/contracts/allocation-input.json"
     ))
     .unwrap();
+    request.objective = contracts::portfolio::AllocationObjective::MaxUtility;
+    request.forecasts.members[0].ensemble_weight = "0.25".parse().unwrap();
+    request.forecasts.members[1].ensemble_weight = "0.75".parse().unwrap();
+    request.forecasts.members[1].forecasts = vec![0.3, 0.0];
     let f = fixture(
         NativeTaskParametersV1::BuildPortfolio {
             schema_version: SchemaV1,
@@ -312,6 +316,29 @@ fn actual_managed_allocation_preserves_real_solver_result_and_infeasibility_with
     let report: contracts::portfolio::AllocationResultV1 = result(&f, "qz.native_allocation");
     let value = serde_json::to_value(&report).unwrap();
     assert!(!value["targets"].as_array().unwrap().is_empty());
+    use bigdecimal::ToPrimitive;
+    let weight = report.targets.as_ref().unwrap()[0]
+        .weight
+        .as_decimal()
+        .to_f64()
+        .unwrap();
+    assert!(
+        (weight - 0.82).abs() < 1e-5,
+        "native managed ensemble optimum: {weight}"
+    );
+    let mut incompatible = request.clone();
+    incompatible.forecasts.members[1].alpha_id = incompatible.forecasts.members[0].alpha_id;
+    let incompatible = fixture(
+        NativeTaskParametersV1::BuildPortfolio {
+            schema_version: SchemaV1,
+            request: Box::new(incompatible),
+        },
+        vec![],
+    );
+    assert!(
+        !execute(&incompatible),
+        "managed entry cannot bypass forecast identity checks"
+    );
     let mut impossible = request;
     impossible.constraints.min_cash_weight = "1".parse().unwrap();
     impossible.constraints.max_cash_weight = "1".parse().unwrap();

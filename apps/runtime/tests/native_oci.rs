@@ -18,6 +18,107 @@ use std::{collections::BTreeMap, fs, os::unix::fs::PermissionsExt, time::Duratio
 use support::{count, docker, Fixture, SIGNAL, SLOW_SIGNAL};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn real_native_portfolio_aggregates_original_forecasts_before_optimizing() {
+    use contracts::{
+        execution::NativeTaskParametersV1, portfolio::*, research::ArtifactInputRole, Revision,
+    };
+    let mut f = Fixture::open().await;
+    let mut request: AllocationInputV1 = serde_json::from_str(include_str!(
+        "../../../tests/contracts/allocation-input.json"
+    ))
+    .unwrap();
+    request.objective = AllocationObjective::MaxUtility;
+    request.forecasts.members[0].ensemble_weight = "0.25".parse().unwrap();
+    request.forecasts.members[1].ensemble_weight = "0.75".parse().unwrap();
+    request.forecasts.members[1].forecasts = vec![0.3, 0.0];
+    let operation = NativeTaskParametersV1::BuildPortfolio {
+        schema_version: SchemaV1,
+        request: Box::new(request),
+    };
+    let bytes = serde_json::to_vec(&operation).unwrap();
+    let parameters = Id::new();
+    f.object(parameters, &bytes).await;
+    let run = Id::new();
+    f.runs.push(run);
+    let spec = JobSpecV1 {
+        schema_version: SchemaV1,
+        run_id: run,
+        attempt_no: 1,
+        owner_epoch: Revision::INITIAL,
+        external_job_id: domain::runtime_jobs::external_id(run, 1).unwrap(),
+        job_kind: operation.job_kind(),
+        image_ref: support::image(),
+        input_set_id: Id::new(),
+        inputs: vec![RuntimeInputV1::Artifact {
+            artifact_id: parameters,
+            storage_version: "1".into(),
+            byte_count: count(bytes.len() as u64),
+            role: ArtifactInputRole::Parameters,
+        }],
+        parameters_artifact_id: parameters,
+        limits: RuntimeJobLimitsV1 {
+            cpu: 1,
+            cpu_seconds: count(30),
+            memory_mib: 512,
+            wall_seconds: 30,
+            output_bytes: count(4 * 1024 * 1024),
+        },
+        deadline_at: runtime::now() + chrono::Duration::seconds(50),
+        requested_output_schemas: operation.output_schemas(),
+    };
+    let admitted = f.submit(&spec).await;
+    assert_eq!(f.terminal(&spec).await.state, RuntimeJobState::Succeeded);
+    let manifest = f.manifest(&spec).await;
+    domain::runtime_jobs::manifest(&manifest, &spec, admitted.submitted_at, runtime::now())
+        .unwrap();
+    assert_eq!(manifest.engine_versions["portfolio-ensemble"], "1");
+    assert_eq!(manifest.engine_versions["ndarray"], "0.17.1");
+    let [output] = manifest.artifacts.as_slice() else {
+        panic!("one original allocation report");
+    };
+    assert_eq!(output.schema.name, "qz.native_allocation");
+    let response = f
+        .client
+        .get(f.url(&[
+            "jobs",
+            &spec.external_job_id,
+            "artifacts",
+            &output.storage_ref.to_string(),
+        ]))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = response.bytes().await.unwrap().to_vec();
+    domain::execution::output_bindings(
+        &operation,
+        None,
+        manifest.started_at.unwrap(),
+        manifest.finished_at,
+        &[(output.clone(), bytes.clone())],
+    )
+    .unwrap();
+    let result: AllocationResultV1 = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(result.solver_status, SolverStatus::Optimal);
+    let weight: f64 = result.targets.unwrap()[0]
+        .weight
+        .as_decimal()
+        .to_plain_string()
+        .parse()
+        .unwrap();
+    assert!(
+        (weight - 0.82).abs() < 1e-5,
+        "synthetic analytical optimum: {weight}"
+    );
+    assert_eq!(
+        f.native_container(&spec).await.state.unwrap().exit_code,
+        Some(0)
+    );
+    assert_eq!(f.submit(&spec).await.submitted_at, admitted.submitted_at);
+    f.assert_private_logs();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn real_native_sealed_job_reads_the_frozen_model_and_registered_parquet() {
     use contracts::{
         execution::NativeTaskParametersV1,

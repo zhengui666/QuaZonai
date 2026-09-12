@@ -133,6 +133,16 @@ fn allocation_success_requires_exact_instruments_currency_weights_and_solver_con
         dual_residual: Some(0.0),
     };
     assert!(accepts(&parameters, "qz.native_allocation", &result));
+    let mut wrong_forecasts = request.clone();
+    wrong_forecasts.forecasts.instrument_ids.swap(0, 1);
+    assert!(!accepts(
+        &NativeTaskParametersV1::BuildPortfolio {
+            schema_version: SchemaV1,
+            request: Box::new(wrong_forecasts),
+        },
+        "qz.native_allocation",
+        &result
+    ));
     for dimension in 0..12 {
         let mut invalid = result.clone();
         match dimension {

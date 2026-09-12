@@ -9,7 +9,7 @@
 | 内容 | 当前事实 |
 |---|---|
 | 原生回测 | Nautilus Rust 0.63.0 的原生不可变 Catalog 读取、受限预测和共享资金目标序列模拟；另保留明确标记 FIXTURE 的原生兼容探针。模拟结果不自动成为资格或交付证据 |
-| 原生求解 | Clarabel Rust 0.11.1 接收冻结输入，检查现金、敞口、分组、换手、成本与参与率；不可行时不提供备用权重。尚非完整 Portfolio Candidate 交付流程 |
+| 原生求解 | 本机与受管 OCI 入口检查原多 Alpha 预测并由 ndarray 固定聚合后送入 Clarabel Rust 0.11.1，检查现金、敞口、分组、换手、成本与参与率；不可行时不提供备用权重。尚非数据库资格绑定或完整 Portfolio Candidate 交付流程 |
 | Arrow | Rust IPC RecordBatch写入/回读，明确FIXTURE不可交付 |
 | 领域基础 | 精确UUIDv7/bigint/Decimal、预算、租约/终态、Codex覆盖及required指标判定；不是完整数据库权限证明 |
 | 认证 API | Axum + PostgreSQL 原生会话、一次性本机初始化、六位 TOTP 登录、防重放、持久注销/设备撤销；普通服务使用非 owner 数据库角色 |

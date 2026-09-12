@@ -107,9 +107,7 @@ fn actual_fixed_mixture_predictions_feed_one_native_utility_problem() {
     near(forecast[1], 0.05);
     let mut request = input();
     request.objective = AllocationObjective::MaxUtility;
-    for (asset, forecast) in request.assets.iter_mut().zip(forecast) {
-        asset.expected_return = forecast;
-    }
+    request.forecasts = forecasts.clone();
     // x²+4(1-x)²-0.25x-0.05(1-x) has derivative 10x-8.2.
     let target = weights(&request);
     near(target[0], 0.82);
@@ -287,7 +285,9 @@ fn signed_exposures_obey_native_gross_and_net_limits() {
     request.constraints.min_asset_weight = decimal("-1");
     request.constraints.max_asset_weight = decimal("2");
     request.constraints.max_gross_exposure = decimal("1.4");
-    request.assets[0].expected_return = 5.0;
+    for member in &mut request.forecasts.members {
+        member.forecasts[0] = 5.0;
+    }
     let result = weights(&request);
     near(result[0], 1.2);
     near(result[1], -0.2);
@@ -316,6 +316,12 @@ fn no_iteration_or_accuracy_failure_becomes_a_fallback_allocation() {
 
 #[test]
 fn invalid_or_unsupported_inputs_are_not_silently_repaired() {
+    let mut legacy = serde_json::to_value(input()).unwrap();
+    legacy["assets"][0]["expected_return"] = serde_json::json!(100);
+    assert!(serde_json::from_value::<AllocationInputV1>(legacy).is_err());
+    let mut missing = serde_json::to_value(input()).unwrap();
+    missing.as_object_mut().unwrap().remove("forecasts");
+    assert!(serde_json::from_value::<AllocationInputV1>(missing).is_err());
     let mut request = input();
     request.covariance[0][1] = 0.1;
     assert!(job::allocate(&request).is_err());
