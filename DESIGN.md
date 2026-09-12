@@ -916,6 +916,24 @@ qz.job_result，也不重复复制回答。沿用原终态CAS和预算结转：�
 有界会话已执行并报告，不改Cycle、Experiment outcome、Evaluation或Qualification；
 正式评估/独立Reviewer及Cycle结论仍由对应可信服务完成。
 
+### A3.11 未授资格的研究版本与实验初次裁决
+
+正式评估先引用不可变Alpha版本，不能要求实验先自报SUPPORTED才能取得评估主体。
+可信Mission可从原成功Discovery预测建立一次RESEARCH Alpha/首版本；只采用原
+experiment_forecasts的MODEL、原提案CODE、原生预测镜像、family根血缘及冻结Brief
+的signal kind/horizon。SCORE的单位为UNITLESS_SCORE，EXPECTED_RETURN为
+RETURN_PER_HORIZON；未独立校准时calibration_id保持null，不填常数估计器。
+版本创建不改PENDING、不授资格、不把编译SYNTHETIC或预测FIXTURE重标为REAL。
+重复准备复用现有command_receipts的精确实验身份，不新增版本队列或状态表。
+
+被Alpha版本引用后，提案CODE/PARAMETERS/科学Run仍不可变；尚为PENDING的初次
+结果只能在同事务创建精确Alpha版本、冻结Brief政策的正式Evaluation及全部指标时
+发表，conclusion引用该评估的原REPORT，outcome由执行/证据/decision映射。这个
+评估尚未封口；事务提交会原生封口，因此不能事后补结果或修改已有评估/资格。
+已有非PENDING裁决不可改写，已授资格的旧实验也不因初次裁决规则获得修改许可。
+这修正了“先建评估主体便把PENDING永久冻结”的顺序冲突，不放宽输入或既有证据
+不可变性；数据库关联不代替可信服务的数值、政策、暴露及完整试验账本验证。
+
 ## A4. 输入、政策、评估、资格与暴露
 
 ```text

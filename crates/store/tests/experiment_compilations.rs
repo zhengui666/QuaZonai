@@ -11,7 +11,7 @@ use contracts::{
     execution::NativeTaskParametersV1, lifecycle::JobLimitsV1, runtime_jobs::RuntimeInputV1,
     DbCounter, Id, SchemaV1,
 };
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 use store::{
     lifecycle::{ClaimResult, RunLease},
     Store, StoreError,
@@ -497,6 +497,88 @@ async fn forecast(
 
 // Controlled result bytes prove the real publication/producer transaction, not
 // execution of rustc or Wasmi. Their actual execution has separate native tests.
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn research_alpha_uses_the_original_forecast_once_without_qualification(pool: PgPool) {
+    let (store, _, f, lease, experiment) = setup(&pool).await;
+    let compilation = start(&store, &f, &lease, experiment)
+        .await
+        .unwrap()
+        .resource
+        .id;
+    let model = complete_compilation(&pool, &store, &f, compilation).await;
+    let forecast = forecast(&store, &f, &lease, experiment)
+        .await
+        .unwrap()
+        .resource
+        .id;
+    assert!(matches!(
+        store
+            .prepare_research_alpha(lease.run.id, &lease.fence, experiment)
+            .await,
+        Err(StoreError::Invalid("accepted_forecast_required"))
+    ));
+    experiment_support::complete_forecast(&pool, &store, &f, forecast).await;
+    assert!(
+        matches!(store.next_mission_experiment(lease.run.id,&lease.fence).await.unwrap(),Some(store::lifecycle::ExperimentWork::RecordAlpha(id)) if id==experiment)
+    );
+    sqlx::raw_sql("CREATE FUNCTION public.reject_research_version() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected Alpha publication failure'; END $$; CREATE TRIGGER reject_version BEFORE INSERT ON app.alpha_versions FOR EACH ROW EXECUTE FUNCTION public.reject_research_version();").execute(&pool).await.unwrap();
+    assert!(store
+        .prepare_research_alpha(lease.run.id, &lease.fence, experiment)
+        .await
+        .is_err());
+    let counts:(i64,i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM app.alphas),(SELECT count(*) FROM app.alpha_versions),(SELECT count(*) FROM app.command_receipts WHERE operation='RESEARCH_ALPHA_CREATE')").fetch_one(&pool).await.unwrap();
+    assert_eq!(counts, (0, 0, 0));
+    sqlx::raw_sql("DROP TRIGGER reject_version ON app.alpha_versions; DROP FUNCTION public.reject_research_version();").execute(&pool).await.unwrap();
+    let (a, b) = tokio::join!(
+        store.prepare_research_alpha(lease.run.id, &lease.fence, experiment),
+        store.prepare_research_alpha(lease.run.id, &lease.fence, experiment)
+    );
+    let (a, b) = (a.unwrap(), b.unwrap());
+    assert_eq!(a.resource, b.resource);
+    assert_ne!(a.replayed, b.replayed);
+    let facts=sqlx::query("SELECT alpha.lifecycle,v.model_artifact_id,(v.code_artifact_id=e.code_artifact_id AND v.root_lineage_id=family.root_lineage_id AND alpha.active_version_id=v.id) AS exact_bindings,v.signal_kind,v.forecast_unit,v.horizon_value,v.calibration_id,v.runtime_image_ref,e.outcome,(SELECT count(*) FROM app.qualifications WHERE alpha_version_id=v.id) AS qualifications FROM app.alpha_versions v JOIN app.alphas alpha ON alpha.id=v.alpha_id JOIN app.experiments e ON e.id=v.experiment_id JOIN app.experiment_families family ON family.id=e.family_id WHERE v.id=$1")
+        .bind(a.resource.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(facts.get::<String, _>("lifecycle"), "RESEARCH");
+    assert_eq!(
+        facts.get::<uuid::Uuid, _>("model_artifact_id"),
+        model.as_uuid()
+    );
+    assert!(facts.get::<bool, _>("exact_bindings"));
+    assert_eq!(facts.get::<String, _>("signal_kind"), "SCORE");
+    assert_eq!(facts.get::<String, _>("forecast_unit"), "UNITLESS_SCORE");
+    assert_eq!(facts.get::<Option<i64>, _>("horizon_value"), Some(5));
+    assert_eq!(facts.get::<Option<uuid::Uuid>, _>("calibration_id"), None);
+    let image: String =
+        sqlx::query_scalar("SELECT image_ref FROM app.run_native_tasks WHERE run_id=$1")
+            .bind(forecast.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(facts.get::<String, _>("runtime_image_ref"), image);
+    assert_eq!(facts.get::<String, _>("outcome"), "PENDING");
+    assert_eq!(facts.get::<i64, _>("qualifications"), 0);
+    assert!(store
+        .next_mission_experiment(lease.run.id, &lease.fence)
+        .await
+        .unwrap()
+        .is_none());
+    assert!(
+        sqlx::query("UPDATE app.alpha_versions SET signal_kind='EXPECTED_RETURN' WHERE id=$1")
+            .bind(a.resource.as_uuid())
+            .execute(&pool)
+            .await
+            .is_err()
+    );
+    let mut stale = lease.fence.clone();
+    stale.worker_owner_id = "wrong-owner".into();
+    assert!(matches!(
+        store
+            .prepare_research_alpha(lease.run.id, &stale, experiment)
+            .await,
+        Err(StoreError::Domain(domain::DomainError::StaleAttempt))
+    ));
+}
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn forecast_requires_accepted_model_and_replay_retains_one_trial(pool: PgPool) {

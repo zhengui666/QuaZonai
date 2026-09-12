@@ -219,6 +219,105 @@ async fn experiment_self_and_multirow_cycles_fail_while_ordinary_ancestry_is_ret
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn pending_research_version_can_publish_one_verdict_with_its_new_evaluation(pool: PgPool) {
+    let f = fixture(&pool, budget()).await;
+    let original = alpha(&pool, &f).await;
+    let experiment = Id::new();
+    let alpha = Id::new();
+    let version = Id::new();
+    sqlx::query("INSERT INTO app.experiments(id,project_id,cycle_id,family_id,ordinal,hypothesis,expected_failure_modes,proposal_artifact_id,code_artifact_id,parameter_artifact_id,trial_source,run_id,outcome) SELECT $1,project_id,cycle_id,family_id,ordinal+1,hypothesis,expected_failure_modes,proposal_artifact_id,code_artifact_id,parameter_artifact_id,trial_source,run_id,'PENDING' FROM app.experiments WHERE id=$2")
+        .bind(experiment.as_uuid()).bind(original.experiment.as_uuid()).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO app.alphas(id,project_id,name,lifecycle) VALUES($1,$2,'pending fixture','RESEARCH')").bind(alpha.as_uuid()).bind(f.project.as_uuid()).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO app.alpha_versions(id,project_id,alpha_id,version,experiment_id,root_lineage_id,code_artifact_id,signal_contract_version,signal_kind,horizon_kind,horizon_value,forecast_unit,runtime_image_ref) SELECT $1,project_id,$2,1,$3,root_lineage_id,code_artifact_id,signal_contract_version,signal_kind,horizon_kind,horizon_value,forecast_unit,runtime_image_ref FROM app.alpha_versions WHERE id=$4")
+        .bind(version.as_uuid()).bind(alpha.as_uuid()).bind(experiment.as_uuid()).bind(original.version.as_uuid()).execute(&pool).await.unwrap();
+    let publish="UPDATE app.experiments SET outcome=$2,outcome_reason='CONTROLLED_EVALUATION',conclusion_artifact_id=$3 WHERE id=$1";
+    sqlstate(
+        sqlx::query(publish)
+            .bind(experiment.as_uuid())
+            .bind("SUPPORTED")
+            .bind(f.report.as_uuid())
+            .execute(&pool)
+            .await
+            .unwrap_err(),
+        "23000",
+    );
+    sqlstate(
+        sqlx::query("UPDATE app.experiments SET code_artifact_id=NULL WHERE id=$1")
+            .bind(experiment.as_uuid())
+            .execute(&pool)
+            .await
+            .unwrap_err(),
+        "23000",
+    );
+    let insert="INSERT INTO app.evaluations(id,project_id,subject_alpha_version_id,input_set_id,policy_id,run_id,evaluation_kind,execution_status,evidence_status,decision,report_artifact_id,method_versions_artifact_id,concluded_at,valid_until) SELECT $1,$2,$3,$4,b.evaluation_policy_id,$5,'WALK_FORWARD','SUCCEEDED','VALID','PASS',$6,$6,statement_timestamp(),statement_timestamp()+interval '1 hour' FROM app.research_briefs b WHERE b.project_id=$2";
+    // A sealed historical evaluation cannot be attached as a late first verdict.
+    let old_evaluation = Id::new();
+    sqlx::query(insert)
+        .bind(old_evaluation.as_uuid())
+        .bind(f.project.as_uuid())
+        .bind(version.as_uuid())
+        .bind(f.input_set.as_uuid())
+        .bind(f.run.as_uuid())
+        .bind(f.report.as_uuid())
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlstate(
+        sqlx::query(publish)
+            .bind(experiment.as_uuid())
+            .bind("SUPPORTED")
+            .bind(f.report.as_uuid())
+            .execute(&pool)
+            .await
+            .unwrap_err(),
+        "23000",
+    );
+    for verdict in ["REJECTED", "SUPPORTED"] {
+        let evaluation = Id::new();
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query(insert)
+            .bind(evaluation.as_uuid())
+            .bind(f.project.as_uuid())
+            .bind(version.as_uuid())
+            .bind(f.input_set.as_uuid())
+            .bind(f.run.as_uuid())
+            .bind(f.report.as_uuid())
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        let result = sqlx::query(publish)
+            .bind(experiment.as_uuid())
+            .bind(verdict)
+            .bind(f.report.as_uuid())
+            .execute(&mut *tx)
+            .await;
+        if verdict == "REJECTED" {
+            sqlstate(result.unwrap_err(), "23000");
+            tx.rollback().await.unwrap();
+        } else {
+            result.unwrap();
+            tx.commit().await.unwrap();
+        }
+    }
+    sqlstate(
+        sqlx::query(publish)
+            .bind(experiment.as_uuid())
+            .bind("REJECTED")
+            .bind(f.report.as_uuid())
+            .execute(&pool)
+            .await
+            .unwrap_err(),
+        "23000",
+    );
+    let facts:(String,i64)=sqlx::query_as("SELECT outcome,(SELECT count(*) FROM app.qualifications q JOIN app.alpha_versions a ON a.id=q.alpha_version_id WHERE a.experiment_id=e.id) FROM app.experiments e WHERE id=$1").bind(experiment.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        facts,
+        ("SUPPORTED".into(), 0),
+        "relationship fixture is not a qualification grant"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn consumed_experiment_results_cannot_change_beneath_alpha_versions(pool: PgPool) {
     let f = fixture(&pool, budget()).await;
     let a = alpha(&pool, &f).await;

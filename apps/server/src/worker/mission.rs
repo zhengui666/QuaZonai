@@ -264,8 +264,10 @@ impl Worker {
                     .await?)
             };
         };
-        let native = self.transport(lease).await?;
-        self.refresh(&native, lease.run.id, &lease.fence).await?;
+        if !matches!(work, ExperimentWork::RecordAlpha(_)) {
+            let native = self.transport(lease).await?;
+            self.refresh(&native, lease.run.id, &lease.fence).await?;
+        }
         let mut limits = lease.limits.clone();
         let publishing = self.objects.clone();
         let publish = move |object: store::lifecycle::native::NativeObjectPublication| async move {
@@ -275,6 +277,11 @@ impl Worker {
                 .map_err(|_| StoreError::Integrity)
         };
         match work {
+            ExperimentWork::RecordAlpha(experiment) => {
+                self.store
+                    .prepare_research_alpha(lease.run.id, &lease.fence, experiment)
+                    .await?;
+            }
             ExperimentWork::Compile(experiment) => {
                 limits.experiments = 0;
                 self.store

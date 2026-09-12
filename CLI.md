@@ -116,6 +116,9 @@ summary视图来源、原Turn/item/phase如实记录；失败重投只补摘要�
 全部Turn/科学任务结算、反馈回答及提案处理齐全后，可信Worker才提交Mission执行
 终态并归档PGMQ；ACK失败只重放归档，不重开模型。SUCCEEDED不改变Cycle、实验
 裁决或资格；只有公开限制说明且无实验的会话也不构成“无有效Alpha”的科学证据。
+成功Discovery预测还会由可信Worker登记一次RESEARCH Alpha首版本，固定原CODE/
+MODEL、预测镜像、根血缘和Brief的单位/horizon；没有校准则保留null。该元数据步骤
+不调用模型、不请求Runtime、不把PENDING改为SUPPORTED，也不是新增Agent审批工具。
 
 ## 原生科学任务入口
 

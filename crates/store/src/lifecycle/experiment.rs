@@ -21,9 +21,64 @@ struct ForecastProposal {
 pub enum ExperimentWork {
     Compile(Id),
     Forecast(Id),
+    RecordAlpha(Id),
 }
 
 impl Store {
+    /// The evaluation subject is an unqualified immutable version, not a claim
+    /// that the forecast supported the hypothesis or had calibrated return units.
+    pub async fn prepare_research_alpha(
+        &self,
+        mission: Id,
+        owner: &WorkerFence,
+        experiment: Id,
+    ) -> Result<CommandResult<Id>, StoreError> {
+        let mut tx = self.pool.begin().await?;
+        let locked = lock_run(&mut tx, mission).await?;
+        fence(&mut tx, &locked.run, owner).await?;
+        let row = sqlx::query("SELECT e.ordinal,e.code_artifact_id,e.outcome,f.model_artifact_id,f.run_id,family.root_lineage_id,b.target_kind,b.horizon_kind,b.horizon_value,n.image_ref,r.state,r.active_attempt_id FROM app.experiments e JOIN app.experiment_compilations c ON c.experiment_id=e.id AND c.mission_run_id=$1 JOIN app.run_missions m ON m.run_id=c.mission_run_id AND m.role='RESEARCHER' JOIN app.experiment_forecasts f ON f.experiment_id=e.id JOIN app.runs r ON r.id=f.run_id JOIN app.run_native_tasks n ON n.run_id=r.id JOIN app.experiment_families family ON family.id=e.family_id JOIN app.research_cycles cycle ON cycle.id=e.cycle_id JOIN app.research_briefs b ON b.id=cycle.brief_id AND b.state='FROZEN' WHERE e.id=$2 AND e.project_id=$3 AND e.cycle_id=$4 FOR UPDATE OF e")
+            .bind(mission.as_uuid()).bind(experiment.as_uuid()).bind(locked.run.project_id.as_uuid()).bind(locked.run.cycle_id.map(Id::as_uuid))
+            .fetch_optional(&mut *tx).await?.ok_or(StoreError::NotFound)?;
+        let prepared = commands::research_alpha(&mut tx, mission, experiment).await?;
+        if let Some(replay) = prepared.replay::<Id>()? {
+            tx.commit().await?;
+            return Ok(replay);
+        }
+        if !locked.admission_open()
+            || !matches!(
+                locked.run.state,
+                RunState::Dispatching | RunState::Running | RunState::Reconciling
+            )
+            || now(&mut tx).await? >= locked.run.deadline_at
+            || row.try_get::<String, _>("outcome")? != "PENDING"
+        {
+            return Err(DomainError::AdmissionClosed.into());
+        }
+        let forecast = db::id(row.try_get("run_id")?)?;
+        let accepted: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.run_terminal_receipts t JOIN app.run_attempts a ON a.id=t.attempt_id AND a.dispatch_state='TERMINAL' AND a.accepted_at IS NOT NULL JOIN app.run_native_outputs o ON o.attempt_id=a.id JOIN app.artifacts report ON report.id=o.artifact_id WHERE t.run_id=$1 AND t.attempt_id=$2 AND t.terminal_state='SUCCEEDED' AND report.project_id=$3 AND report.producer_run_id=t.run_id AND report.producer_attempt_id=a.id AND report.kind='REPORT' AND report.schema_name='qz.native_forecast' AND report.schema_version='1' AND report.access_class='RESEARCH')")
+            .bind(forecast.as_uuid()).bind(row.try_get::<Option<uuid::Uuid>,_>("active_attempt_id")?).bind(locked.run.project_id.as_uuid()).fetch_one(&mut *tx).await?;
+        if row.try_get::<String, _>("state")? != "SUCCEEDED" || !accepted {
+            return Err(StoreError::Invalid("accepted_forecast_required"));
+        }
+        let signal: String = row.try_get("target_kind")?;
+        let unit = match signal.as_str() {
+            "SCORE" => "UNITLESS_SCORE",
+            "EXPECTED_RETURN" => "RETURN_PER_HORIZON",
+            _ => return Err(StoreError::Integrity),
+        };
+        let alpha = Id::new();
+        let version = prepared.target;
+        sqlx::query("INSERT INTO app.alphas(id,project_id,name,lifecycle,active_version_id) VALUES($1,$2,$3,'RESEARCH',$4)")
+            .bind(alpha.as_uuid()).bind(locked.run.project_id.as_uuid()).bind(format!("Experiment {}",row.try_get::<i32,_>("ordinal")?)).bind(version.as_uuid()).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO app.alpha_versions(id,project_id,alpha_id,version,experiment_id,root_lineage_id,code_artifact_id,model_artifact_id,signal_contract_version,signal_kind,horizon_kind,horizon_value,forecast_unit,calibration_id,runtime_image_ref) VALUES($1,$2,$3,1,$4,$5,$6,$7,'1',$8,$9,$10,$11,NULL,$12)")
+            .bind(version.as_uuid()).bind(locked.run.project_id.as_uuid()).bind(alpha.as_uuid()).bind(experiment.as_uuid())
+            .bind(row.try_get::<uuid::Uuid,_>("root_lineage_id")?).bind(row.try_get::<uuid::Uuid,_>("code_artifact_id")?).bind(row.try_get::<uuid::Uuid,_>("model_artifact_id")?)
+            .bind(signal).bind(row.try_get::<String,_>("horizon_kind")?).bind(row.try_get::<Option<i64>,_>("horizon_value")?).bind(unit).bind(row.try_get::<String,_>("image_ref")?).execute(&mut *tx).await?;
+        let result = commands::finish(&mut tx, prepared, version, 201).await?;
+        tx.commit().await?;
+        Ok(result)
+    }
+
     /// A ready step, not a second queue or a verdict on settled scientific work.
     pub async fn next_mission_experiment(
         &self,
@@ -51,12 +106,14 @@ impl Store {
         {
             return Ok(None);
         }
-        let row = sqlx::query("SELECT e.id,c.compile_run_id FROM app.experiments e JOIN app.experiment_authorship a ON a.experiment_id=e.id LEFT JOIN app.experiment_compilations c ON c.experiment_id=e.id LEFT JOIN app.runs compiled ON compiled.id=c.compile_run_id WHERE e.project_id=$1 AND e.cycle_id=$2 AND e.outcome='PENDING' AND e.run_id IS NULL AND e.code_artifact_id IS NOT NULL AND e.parameter_artifact_id IS NOT NULL AND (c.experiment_id IS NULL OR (c.mission_run_id=$3 AND compiled.state='SUCCEEDED' AND NOT EXISTS(SELECT 1 FROM app.experiment_forecasts WHERE experiment_id=e.id))) ORDER BY e.ordinal LIMIT 1")
+        let row = sqlx::query("SELECT e.id,c.compile_run_id,e.run_id FROM app.experiments e JOIN app.experiment_authorship a ON a.experiment_id=e.id LEFT JOIN app.experiment_compilations c ON c.experiment_id=e.id LEFT JOIN app.runs compiled ON compiled.id=c.compile_run_id WHERE e.project_id=$1 AND e.cycle_id=$2 AND e.outcome='PENDING' AND e.code_artifact_id IS NOT NULL AND e.parameter_artifact_id IS NOT NULL AND ((e.run_id IS NULL AND (c.experiment_id IS NULL OR (c.mission_run_id=$3 AND compiled.state='SUCCEEDED' AND NOT EXISTS(SELECT 1 FROM app.experiment_forecasts WHERE experiment_id=e.id)))) OR (c.mission_run_id=$3 AND EXISTS(SELECT 1 FROM app.experiment_forecasts f JOIN app.runs r ON r.id=f.run_id AND r.state='SUCCEEDED' WHERE f.experiment_id=e.id) AND NOT EXISTS(SELECT 1 FROM app.command_receipts receipt WHERE receipt.principal_scope='MISSION:'||$3::uuid::text AND receipt.operation='RESEARCH_ALPHA_CREATE' AND receipt.idempotency_key=e.id::text))) ORDER BY e.ordinal LIMIT 1")
             .bind(locked.run.project_id.as_uuid()).bind(locked.run.cycle_id.map(Id::as_uuid)).bind(mission.as_uuid()).fetch_optional(&mut *tx).await?;
         let ready = row
             .map(|row| {
                 let id = db::id(row.try_get("id")?)?;
-                Ok::<_, StoreError>(if db::optional_id(&row, "compile_run_id")?.is_none() {
+                Ok::<_, StoreError>(if db::optional_id(&row, "run_id")?.is_some() {
+                    ExperimentWork::RecordAlpha(id)
+                } else if db::optional_id(&row, "compile_run_id")?.is_none() {
                     ExperimentWork::Compile(id)
                 } else {
                     ExperimentWork::Forecast(id)

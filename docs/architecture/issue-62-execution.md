@@ -976,3 +976,24 @@ Mission终态与PGMQ归档成立，2次Provider调用不变。
 全量CI或完整T08/T42。受控科学输出/Provider不冒充真实数值或付费账号；没有
 完整用量的失败/取消、预检/详细编译诊断、正式评估、Reviewer、Cycle结论及
 其余产品工作仍须继续。尚未push/review/merge或关闭Issue。
+
+## 2026-09-12：原预测的未授资格Alpha版本及初次实验裁决
+
+在b83fe34e上复用已有Alpha/Version表和command_receipts，从精确成功Discovery
+预测创建一次RESEARCH版本。版本保存原MODEL/CODE/根血缘/镜像及冻结Brief的
+单位和horizon；不填校准、不改变PENDING、不授资格。Worker自动登记后才能继续
+回送与收束；原生两轮回归确认此元数据步骤不增加Provider请求。
+
+迁移033修正先建立评估主体便永远冻结PENDING的顺序冲突：被消费实验的输入仍
+不可变；初次结果仅能与精确Alpha/冻结政策的新Evaluation在同事务发布。旧评估
+已封口不能补写裁决；结果必须匹配真实评估状态，已发布裁决不能再改。关系测试
+中的受控PASS只验证约束，不是数值评估或资格证明。
+
+首次`.ai-bridge/verify-02OdRu`编译因Option::map调用笔误失败，修复后全量
+`.ai-bridge/verify-DHZfNf`功能测试全部通过：149领域/合同/Runtime、6真实Job、
+30原生Codex、501 Store/Server，0失败/0忽略；但Clippy拒绝新增测试的复杂元组，
+因此该轮整体exit1。随后仅将该断言改为sqlx::Row命名列读取，不改变产品源码；
+`.ai-bridge/verify-BcfPh7` exit0通过check/fmt/严格Clippy及110项相关真实PG回归。
+两轮验证期间源码未变、独立PG均确认停止；新初次裁决关系用例包含于前一轮全量。
+以上不是远端最新Head CI，也不代替正式评估、独立Reviewer、全部W0–W8/T01–T42。
+未push、请求review、合并或关闭Issue，继续完成剩余开发。

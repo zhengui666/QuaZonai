@@ -408,3 +408,25 @@ pub(crate) async fn run_cancel(
         replay: previous.map(|p| p.response),
     })
 }
+
+/// Internal research publication under the original Mission fence, never an
+/// Operator or qualification command. One original version per experiment.
+pub(crate) async fn research_alpha(
+    tx: &mut Transaction<'_, Postgres>,
+    mission: Id,
+    experiment: Id,
+) -> Result<Prepared, StoreError> {
+    let scope = format!("MISSION:{mission}");
+    let key = experiment.to_string();
+    let request = json!({"schema_version":1,"mission_run_id":mission,"experiment_id":experiment});
+    let previous = prior(tx, &scope, "RESEARCH_ALPHA_CREATE", &key, &request).await?;
+    Ok(Prepared {
+        target: previous.as_ref().map(|p| p.target).unwrap_or_default(),
+        scope,
+        operation: "RESEARCH_ALPHA_CREATE",
+        key,
+        request,
+        grant: None,
+        replay: previous.map(|p| p.response),
+    })
+}

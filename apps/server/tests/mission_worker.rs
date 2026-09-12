@@ -359,6 +359,15 @@ async fn settled_native_mission_queues_original_compilation_then_forecast_withou
             .unwrap();
     visible(&f, &pool).await;
     worker
+        .process_mission_message(f.message.clone(), "record-research-alpha", receiver.clone())
+        .await
+        .unwrap();
+    let research:(String,i64,String)=sqlx::query_as("SELECT a.lifecycle,(SELECT count(*) FROM app.qualifications WHERE alpha_version_id=v.id),e.outcome FROM app.alpha_versions v JOIN app.alphas a ON a.id=v.alpha_id JOIN app.experiments e ON e.id=v.experiment_id WHERE e.id=$1")
+        .bind(experiment.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(research, ("RESEARCH".into(), 0, "PENDING".into()));
+    assert_eq!(f.provider.request_count(), 1);
+    visible(&f, &pool).await;
+    worker
         .process_mission_message(f.message.clone(), "prepare-real-result", receiver.clone())
         .await
         .unwrap();
