@@ -479,9 +479,6 @@
           "risk": {
             "$ref": "#/components/schemas/AllocationRisk"
           },
-          "risk_aversion": {
-            "$ref": "#/components/schemas/DecimalValue"
-          },
           "schema_version": {
             "$ref": "#/components/schemas/SchemaV1"
           }
@@ -493,7 +490,6 @@
           "risk",
           "base_currency",
           "capital_assumption",
-          "risk_aversion",
           "current_cash_weight",
           "exposure_tolerance",
           "constraints",
@@ -9556,6 +9552,94 @@
         ],
         "type": "object"
       },
+      "MandateContentV1": {
+        "additionalProperties": false,
+        "properties": {
+          "alpha_ensemble": {
+            "$ref": "#/components/schemas/NativeModelRefV1"
+          },
+          "base_currency": {
+            "type": "string"
+          },
+          "capital_assumption": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "constraints": {
+            "$ref": "#/components/schemas/PortfolioConstraintsV1"
+          },
+          "covariance_estimator": {
+            "$ref": "#/components/schemas/NativeModelRefV1"
+          },
+          "execution_assumptions_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "exposure_tolerance": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "objective": {
+            "$ref": "#/components/schemas/AllocationObjective"
+          },
+          "optimizer": {
+            "$ref": "#/components/schemas/NativeModelRefV1"
+          },
+          "rebalance_schedule": {
+            "$ref": "#/components/schemas/RebalanceScheduleV1"
+          },
+          "required_evaluation_policy_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "risk_measure": {
+            "$ref": "#/components/schemas/AllocationRisk"
+          },
+          "universe_version_id": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "objective",
+          "risk_measure",
+          "base_currency",
+          "capital_assumption",
+          "universe_version_id",
+          "covariance_estimator",
+          "alpha_ensemble",
+          "optimizer",
+          "constraints",
+          "rebalance_schedule",
+          "required_evaluation_policy_id",
+          "execution_assumptions_id",
+          "exposure_tolerance"
+        ],
+        "type": "object"
+      },
+      "MandateCreateV1": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/MandateContentV1"
+          },
+          "expected_runtime_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "runtime_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "project_id",
+          "runtime_id",
+          "expected_runtime_revision",
+          "content"
+        ],
+        "type": "object"
+      },
       "MetricRequirementV1": {
         "additionalProperties": false,
         "properties": {
@@ -10476,6 +10560,9 @@
                     "minimum": 1,
                     "type": "integer"
                   },
+                  "risk_aversion": {
+                    "$ref": "#/components/schemas/DecimalValue"
+                  },
                   "schema_version": {
                     "$ref": "#/components/schemas/SchemaV1"
                   },
@@ -10486,6 +10573,7 @@
                 },
                 "required": [
                   "schema_version",
+                  "risk_aversion",
                   "max_iterations",
                   "solver_tolerance",
                   "accept_inaccurate"
@@ -11925,6 +12013,24 @@
             "properties": {
               "operation": {
                 "enum": [
+                  "MANDATE_CREATE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/MandateCreateV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
                   "BRIEF_UPDATE"
                 ],
                 "type": "string"
@@ -12180,6 +12286,7 @@
           "DOWNSTREAM_CREATE",
           "DOWNSTREAM_UPDATE",
           "BRIEF_CREATE",
+          "MANDATE_CREATE",
           "BRIEF_UPDATE",
           "PROJECT_CREATE",
           "PROJECT_UPDATE",
@@ -12759,6 +12866,75 @@
         "required": [
           "reasoning_effort",
           "description"
+        ],
+        "type": "object"
+      },
+      "RebalanceKind": {
+        "enum": [
+          "MANUAL",
+          "FIXED_INTERVAL",
+          "CALENDAR_SESSION"
+        ],
+        "type": "string"
+      },
+      "RebalanceScheduleV1": {
+        "additionalProperties": false,
+        "description": "Frozen scheduling intent, not a timer or permission to create a Release.",
+        "properties": {
+          "calendar_ref": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "interval_seconds": {
+            "format": "int32",
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RebalanceKind"
+          },
+          "max_input_age_seconds": {
+            "format": "int32",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "session_offset_seconds": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "target_ttl_seconds": {
+            "format": "int32",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "timezone": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "kind",
+          "interval_seconds",
+          "calendar_ref",
+          "timezone",
+          "session_offset_seconds",
+          "max_input_age_seconds",
+          "target_ttl_seconds"
         ],
         "type": "object"
       },

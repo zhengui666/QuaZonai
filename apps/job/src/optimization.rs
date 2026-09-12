@@ -108,7 +108,7 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
     let cash = n;
     let gross = n + 1;
     let traded = 2 * n + 1;
-    let aversion = native_number(&input.risk_aversion)?;
+    let aversion = native_number(&parameters.risk_aversion)?;
     let mut p_rows = Vec::new();
     let mut p_cols = Vec::new();
     let mut p_values = Vec::new();

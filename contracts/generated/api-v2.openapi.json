@@ -1,6 +1,21 @@
 {
   "components": {
     "schemas": {
+      "AllocationObjective": {
+        "enum": [
+          "MIN_RISK",
+          "MAX_UTILITY",
+          "RISK_BUDGETING"
+        ],
+        "type": "string"
+      },
+      "AllocationRisk": {
+        "enum": [
+          "VARIANCE",
+          "CVAR"
+        ],
+        "type": "string"
+      },
       "AlphaEvaluateRequestV1": {
         "additionalProperties": false,
         "description": "Explicit Cycle-funded evaluation of an existing immutable Alpha, not a new trial.",
@@ -412,6 +427,28 @@
           "origin",
           "created_by",
           "created_at"
+        ],
+        "type": "object"
+      },
+      "AssetBoundV1": {
+        "additionalProperties": false,
+        "properties": {
+          "instrument_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "max": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "min": {
+            "$ref": "#/components/schemas/DecimalValue"
+          }
+        },
+        "required": [
+          "instrument_id",
+          "min",
+          "max"
         ],
         "type": "object"
       },
@@ -7031,6 +7068,54 @@
         ],
         "type": "object"
       },
+      "CommandResult_MandateViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "replayed": {
+            "type": "boolean"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "content": {
+                "$ref": "#/components/schemas/MandateContentV1"
+              },
+              "created_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "project_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "version": {
+                "format": "int32",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "project_id",
+              "version",
+              "content",
+              "created_at"
+            ],
+            "type": "object"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "replayed",
+          "resource"
+        ],
+        "type": "object"
+      },
       "CommandResult_OperatorGrantView": {
         "additionalProperties": false,
         "properties": {
@@ -9559,6 +9644,28 @@
         ],
         "type": "object"
       },
+      "GroupBoundV1": {
+        "additionalProperties": false,
+        "properties": {
+          "group_id": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "max": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "min": {
+            "$ref": "#/components/schemas/DecimalValue"
+          }
+        },
+        "required": [
+          "group_id",
+          "min",
+          "max"
+        ],
+        "type": "object"
+      },
       "HorizonKind": {
         "enum": [
           "FIXED_BARS",
@@ -10192,6 +10299,125 @@
         ],
         "type": "object"
       },
+      "MandateContentV1": {
+        "additionalProperties": false,
+        "properties": {
+          "alpha_ensemble": {
+            "$ref": "#/components/schemas/NativeModelRefV1"
+          },
+          "base_currency": {
+            "type": "string"
+          },
+          "capital_assumption": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "constraints": {
+            "$ref": "#/components/schemas/PortfolioConstraintsV1"
+          },
+          "covariance_estimator": {
+            "$ref": "#/components/schemas/NativeModelRefV1"
+          },
+          "execution_assumptions_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "exposure_tolerance": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "objective": {
+            "$ref": "#/components/schemas/AllocationObjective"
+          },
+          "optimizer": {
+            "$ref": "#/components/schemas/NativeModelRefV1"
+          },
+          "rebalance_schedule": {
+            "$ref": "#/components/schemas/RebalanceScheduleV1"
+          },
+          "required_evaluation_policy_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "risk_measure": {
+            "$ref": "#/components/schemas/AllocationRisk"
+          },
+          "universe_version_id": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "objective",
+          "risk_measure",
+          "base_currency",
+          "capital_assumption",
+          "universe_version_id",
+          "covariance_estimator",
+          "alpha_ensemble",
+          "optimizer",
+          "constraints",
+          "rebalance_schedule",
+          "required_evaluation_policy_id",
+          "execution_assumptions_id",
+          "exposure_tolerance"
+        ],
+        "type": "object"
+      },
+      "MandateCreateV1": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/MandateContentV1"
+          },
+          "expected_runtime_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "runtime_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "project_id",
+          "runtime_id",
+          "expected_runtime_revision",
+          "content"
+        ],
+        "type": "object"
+      },
+      "MandateViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/MandateContentV1"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "version": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "version",
+          "content",
+          "created_at"
+        ],
+        "type": "object"
+      },
       "MetricRequirementV1": {
         "additionalProperties": false,
         "properties": {
@@ -10417,6 +10643,178 @@
           "profile_revision"
         ],
         "type": "object"
+      },
+      "NativeModelRefV1": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "adapter_kind": {
+                "enum": [
+                  "CLARABEL_QP"
+                ],
+                "type": "string"
+              },
+              "parameters": {
+                "additionalProperties": false,
+                "properties": {
+                  "accept_inaccurate": {
+                    "type": "boolean"
+                  },
+                  "max_iterations": {
+                    "format": "int32",
+                    "maximum": 100000,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "risk_aversion": {
+                    "$ref": "#/components/schemas/DecimalValue"
+                  },
+                  "schema_version": {
+                    "$ref": "#/components/schemas/SchemaV1"
+                  },
+                  "solver_tolerance": {
+                    "$ref": "#/components/schemas/DecimalValue",
+                    "description": "Numerical stopping tolerance, not permission to violate the mandate."
+                  }
+                },
+                "required": [
+                  "schema_version",
+                  "risk_aversion",
+                  "max_iterations",
+                  "solver_tolerance",
+                  "accept_inaccurate"
+                ],
+                "type": "object"
+              },
+              "schema_version": {
+                "enum": [
+                  1
+                ],
+                "maximum": 1,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "upstream_class": {
+                "enum": [
+                  "clarabel::solver::DefaultSolver"
+                ],
+                "type": "string"
+              },
+              "upstream_version": {
+                "enum": [
+                  "0.11.1"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "schema_version",
+              "adapter_kind",
+              "upstream_class",
+              "upstream_version",
+              "parameters"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "adapter_kind": {
+                "enum": [
+                  "FIXED_WEIGHTED_FORECAST"
+                ],
+                "type": "string"
+              },
+              "parameters": {
+                "additionalProperties": false,
+                "type": "object"
+              },
+              "schema_version": {
+                "enum": [
+                  1
+                ],
+                "maximum": 1,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "upstream_class": {
+                "enum": [
+                  "ndarray::ArrayBase::dot"
+                ],
+                "type": "string"
+              },
+              "upstream_version": {
+                "enum": [
+                  "0.17.1"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "schema_version",
+              "adapter_kind",
+              "upstream_class",
+              "upstream_version",
+              "parameters"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "adapter_kind": {
+                "enum": [
+                  "SAMPLE_COVARIANCE"
+                ],
+                "type": "string"
+              },
+              "parameters": {
+                "additionalProperties": false,
+                "properties": {
+                  "ddof": {
+                    "format": "int32",
+                    "maximum": 1,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "ddof"
+                ],
+                "type": "object"
+              },
+              "schema_version": {
+                "enum": [
+                  1
+                ],
+                "maximum": 1,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "upstream_class": {
+                "enum": [
+                  "ndarray_stats::CorrelationExt::cov"
+                ],
+                "type": "string"
+              },
+              "upstream_version": {
+                "enum": [
+                  "0.7.0"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "schema_version",
+              "adapter_kind",
+              "upstream_class",
+              "upstream_version",
+              "parameters"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "OperatorCommand": {
         "oneOf": [
@@ -10820,6 +11218,24 @@
             "properties": {
               "operation": {
                 "enum": [
+                  "MANDATE_CREATE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/MandateCreateV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
                   "BRIEF_UPDATE"
                 ],
                 "type": "string"
@@ -11075,6 +11491,7 @@
           "DOWNSTREAM_CREATE",
           "DOWNSTREAM_UPDATE",
           "BRIEF_CREATE",
+          "MANDATE_CREATE",
           "BRIEF_UPDATE",
           "PROJECT_CREATE",
           "PROJECT_UPDATE",
@@ -12916,6 +13333,63 @@
         ],
         "type": "object"
       },
+      "Page_MandateViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "content": {
+                  "$ref": "#/components/schemas/MandateContentV1"
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "project_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "version": {
+                  "format": "int32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "project_id",
+                "version",
+                "content",
+                "created_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "items"
+        ],
+        "type": "object"
+      },
       "Page_MetricValueV1": {
         "additionalProperties": false,
         "properties": {
@@ -13532,6 +14006,105 @@
         ],
         "type": "string"
       },
+      "PortfolioConstraintsV1": {
+        "additionalProperties": false,
+        "properties": {
+          "asset_overrides": {
+            "items": {
+              "$ref": "#/components/schemas/AssetBoundV1"
+            },
+            "maxItems": 256,
+            "type": "array"
+          },
+          "group_bounds": {
+            "items": {
+              "$ref": "#/components/schemas/GroupBoundV1"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "liquidity_ref": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "long_only": {
+            "type": "boolean"
+          },
+          "max_asset_weight": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "max_cash_weight": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "max_ex_ante_risk": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DecimalValue"
+              }
+            ]
+          },
+          "max_gross_exposure": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "max_net_exposure": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "max_participation": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DecimalValue"
+              }
+            ]
+          },
+          "max_turnover_per_rebalance": {
+            "$ref": "#/components/schemas/DecimalValue",
+            "description": "Gross traded asset notional divided by capital; cash is not charged twice."
+          },
+          "min_asset_weight": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "min_cash_weight": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "min_net_exposure": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "transaction_costs_ref": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "schema_version",
+          "long_only",
+          "min_cash_weight",
+          "max_cash_weight",
+          "min_asset_weight",
+          "max_asset_weight",
+          "max_gross_exposure",
+          "min_net_exposure",
+          "max_net_exposure",
+          "max_turnover_per_rebalance",
+          "group_bounds",
+          "asset_overrides",
+          "transaction_costs_ref"
+        ],
+        "type": "object"
+      },
       "PrincipalCreate": {
         "additionalProperties": false,
         "properties": {
@@ -13921,6 +14494,75 @@
         "required": [
           "reasoning_effort",
           "description"
+        ],
+        "type": "object"
+      },
+      "RebalanceKind": {
+        "enum": [
+          "MANUAL",
+          "FIXED_INTERVAL",
+          "CALENDAR_SESSION"
+        ],
+        "type": "string"
+      },
+      "RebalanceScheduleV1": {
+        "additionalProperties": false,
+        "description": "Frozen scheduling intent, not a timer or permission to create a Release.",
+        "properties": {
+          "calendar_ref": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "interval_seconds": {
+            "format": "int32",
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RebalanceKind"
+          },
+          "max_input_age_seconds": {
+            "format": "int32",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "session_offset_seconds": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "target_ttl_seconds": {
+            "format": "int32",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "timezone": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "kind",
+          "interval_seconds",
+          "calendar_ref",
+          "timezone",
+          "session_offset_seconds",
+          "max_input_age_seconds",
+          "target_ttl_seconds"
         ],
         "type": "object"
       },
@@ -23716,6 +24358,221 @@
         ]
       }
     },
+    "/api/v2/portfolio-mandates": {
+      "post": {
+        "operationId": "create_mandate",
+        "parameters": [
+          {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MandateCreateV1"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult_MandateViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": [],
+            "OperatorCommandGrant": []
+          }
+        ],
+        "tags": [
+          "Portfolio mandates"
+        ]
+      }
+    },
+    "/api/v2/portfolio-mandates/{id}": {
+      "get": {
+        "operationId": "get_mandate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MandateViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Portfolio mandates"
+        ]
+      }
+    },
     "/api/v2/projects": {
       "get": {
         "operationId": "projects",
@@ -24608,6 +25465,120 @@
         ],
         "tags": [
           "Research startup"
+        ]
+      }
+    },
+    "/api/v2/projects/{id}/portfolio-mandates": {
+      "get": {
+        "operationId": "list_mandates",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_MandateViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Portfolio mandates"
         ]
       }
     },

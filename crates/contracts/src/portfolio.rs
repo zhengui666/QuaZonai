@@ -147,6 +147,7 @@ pub struct PortfolioConstraintsV1 {
 #[serde(deny_unknown_fields)]
 pub struct AllocatorSettingsV1 {
     pub schema_version: SchemaV1,
+    pub risk_aversion: DecimalValue,
     #[schema(minimum = 1, maximum = 100000)]
     pub max_iterations: u32,
     /// Numerical stopping tolerance, not permission to violate the mandate.
@@ -163,6 +164,44 @@ pub struct FixedEnsembleParametersV1 {}
 pub struct SampleCovarianceParametersV1 {
     #[schema(minimum = 1, maximum = 1)]
     pub ddof: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MandateContentV1 {
+    pub objective: AllocationObjective,
+    pub risk_measure: AllocationRisk,
+    pub base_currency: String,
+    pub capital_assumption: DecimalValue,
+    pub universe_version_id: crate::Id,
+    pub covariance_estimator: NativeModelRefV1,
+    pub alpha_ensemble: NativeModelRefV1,
+    pub optimizer: NativeModelRefV1,
+    pub constraints: PortfolioConstraintsV1,
+    pub rebalance_schedule: RebalanceScheduleV1,
+    pub required_evaluation_policy_id: crate::Id,
+    pub execution_assumptions_id: crate::Id,
+    pub exposure_tolerance: DecimalValue,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MandateCreateV1 {
+    pub schema_version: SchemaV1,
+    pub project_id: crate::Id,
+    pub runtime_id: crate::Id,
+    pub expected_runtime_revision: crate::Revision,
+    pub content: MandateContentV1,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MandateViewV1 {
+    pub id: crate::Id,
+    pub project_id: crate::Id,
+    pub version: u32,
+    pub content: MandateContentV1,
+    pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// Only implemented native adapters. Role and linked upstream identity are
@@ -277,7 +316,6 @@ pub struct AllocationInputV1 {
     #[schema(schema_with = crate::budget::currency_schema)]
     pub base_currency: String,
     pub capital_assumption: DecimalValue,
-    pub risk_aversion: DecimalValue,
     pub current_cash_weight: DecimalValue,
     pub exposure_tolerance: DecimalValue,
     pub constraints: PortfolioConstraintsV1,

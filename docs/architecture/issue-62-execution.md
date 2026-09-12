@@ -3,6 +3,55 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Immutable Mandate Store, HTTP and CLI, 2026-09-13
+
+Working source over `05db3c874be5451a5e09fbbcd29acb50bbe50832` adds actual
+MandateCreate/Content/View contracts, Operator command/grant mapping and migration
+047's original-response receipt requirement. Existing immutable Mandate rows,
+Operator transaction, project lock and Runtime observation are reused. Same-key
+replay returns the original version; new keys allocate monotonic project versions.
+No update/delete endpoint or new repository framework is added. Current probe,
+three native model versions, CONVEX_QP, execution image, project policy, currency,
+capital, fees, liquidity, participation and calendar references are checked.
+Reads reuse the Operator/scoped-CLI evidence authorization; no Mission role gains
+configuration access. HTTP creation/list/detail and typed CLI routing are wired.
+
+risk_aversion moves from allocation's top level into the frozen optimizer
+parameters consumed by the existing native solver. Runtime stack/manifest now
+require portfolio-models/2; old input/image compatibility is not retained.
+
+Initial `verify-85bfpH` failed an unnecessary CLI `.into()` inference; `verify-DwHQKs`
+failed a test Revision conversion from &str. Both were corrected. `verify-Adu1hQ`
+then completed 153 domain/Runtime, 8 managed Job, 31 native Codex and 543 Store/
+server executions, all zero failed/ignored, but its overall result failed Clippy
+for duplicate test module loading. Owned PostgreSQL stopped; source unchanged.
+The duplicate import was removed, not suppressed. Final `verify-dvsaB3` passed
+workspace check/format/strict Clippy plus 126 contracts/domain, 33 native scientific/
+managed, 2 Mandate Store and 13 HTTP/CLI executions, zero failed/ignored, source
+unchanged and owned PostgreSQL stopped. Counts overlap between runs/groups.
+
+New real PostgreSQL tests cover same-key concurrency, versions 1..3, pagination,
+immutable rows, changed-intent conflicts, unavailable-probe replay versus new
+creation, and reference/model/revision rejection rolling back both rows and
+receipts. Real browser middleware tests cover POST201, original replay, reads,
+PATCH405, conflict409, extra-parameter422 and unauthenticated rejection. Runtime
+observations in these tests remain explicitly controlled relational fixtures.
+
+`web-verify-HH8kqS` generated all six native artifacts twice identically, hand-written
+source unchanged; this generate-only run is not browser/typecheck evidence.
+The existing built server's `client portfolio mandate --help` exited 0. An earlier
+help-only Cargo invocation used the wrong debug profile; that exact build was
+interrupted (130), with no rustc left, rather than mistaken for a failed CLI.
+`owner-oci-QJVqP3` built native image
+`sha256:6367fe330a0d5748bbe2ff119783aea6e9f1af591554f85d3fd68c938f7ec217`;
+all 9 actual OCI tests passed (15.12s), zero failed/ignored, source unchanged,
+including the original 0.82/0.18 allocation with portfolio-models/2.
+
+Ant Design Mandate forms, specific CLI grant/transport coverage, stronger reference/
+permission edge cases, authoritative forecast/covariance assembly and complete
+Candidate/Release/qualification/T42 delivery remain required. No GitHub write,
+current-head CI/review completion or merge is claimed.
+
 ## Explicit native covariance estimator reference, 2026-09-13
 
 Working source over `7e7304eecd96d151fa139431818063ef6c95265b` adds the strict

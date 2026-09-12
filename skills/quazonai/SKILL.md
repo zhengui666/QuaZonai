@@ -76,9 +76,12 @@ Mission不借用它读取额外指标。原Thread反馈仍只披露冻结选择�
 聚合再求解；不得手填资产expected_return或将合成原Alpha标识当作资格。
 portfolio-ensemble/1需真实重建登记镜像；这些命令不增加Mission工具或审批权限。
 optimizer/alpha_ensemble须保留原NativeModelRefV1，不能改类名/版本或把未知参数
-当默认配置；顶层settings不再接受，对应镜像还须portfolio-models/1。
+当默认配置；顶层settings/risk_aversion不再接受，后者在原optimizer.parameters，
+对应镜像还须portfolio-models/2。
 SAMPLE_COVARIANCE仅绑定ndarray-stats0.7.0的原生cov与ddof=1，不授予数据访问，
-也不新增Mission工具或公开Mandate入口；不能把数值矩阵存在当作原数据资格。
+也不新增Mission工具；不能把数值矩阵存在当作原数据资格。
+人工Mandate API/CLI创建与读取见CLI，原配置不可修改；同键重试保留原完整请求。
+Mission没有这些配置操作权，版本存在不表示Alpha资格、组合通过或允许交付。
 提交响应未知时保留同一 key 和原始文件/请求重放；不同内容409不能改键绕过预算。
 未知工具不是可由任意 HTTP/Shell/SQL 替代的能力。保留 UUIDv7 和十进制版本字符串。
 每次调用会重新检查到期、撤销及 Attempt 接管，失败不能靠更换 ID、扩大权限或

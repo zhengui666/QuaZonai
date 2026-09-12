@@ -280,7 +280,10 @@ fn turnover_and_real_notional_participation_bound_both_legs() {
 fn signed_exposures_obey_native_gross_and_net_limits() {
     let mut request = input();
     request.objective = AllocationObjective::MaxUtility;
-    request.risk_aversion = decimal("0.1");
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        panic!("native optimizer");
+    };
+    parameters.risk_aversion = decimal("0.1");
     request.constraints.long_only = false;
     request.constraints.min_asset_weight = decimal("-1");
     request.constraints.max_asset_weight = decimal("2");

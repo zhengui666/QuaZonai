@@ -20,6 +20,7 @@ pub mod experiments;
 pub mod lifecycle;
 pub mod machine_auth;
 mod migration;
+pub mod portfolio;
 pub mod research;
 pub mod runtime;
 mod selection;

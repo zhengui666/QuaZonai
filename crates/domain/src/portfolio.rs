@@ -179,10 +179,8 @@ pub fn rebalance_schedule(schedule: &RebalanceScheduleV1) -> Result<(), DomainEr
     Ok(())
 }
 
-/// Does not authorize an Alpha, infer a quote, or fit an estimator.
-pub fn allocation_input(input: &AllocationInputV1) -> Result<(), DomainError> {
-    optimizer_settings(&input.optimizer)?;
-    match &input.alpha_ensemble {
+pub fn fixed_ensemble(model: &NativeModelRefV1) -> Result<(), DomainError> {
+    match model {
         NativeModelRefV1::FixedWeightedForecast {
             upstream_class,
             upstream_version,
@@ -195,6 +193,37 @@ pub fn allocation_input(input: &AllocationInputV1) -> Result<(), DomainError> {
             ))
         }
     }
+    Ok(())
+}
+
+pub fn mandate(content: &MandateContentV1) -> Result<(), DomainError> {
+    optimizer_settings(&content.optimizer)?;
+    fixed_ensemble(&content.alpha_ensemble)?;
+    sample_covariance_parameters(&content.covariance_estimator)?;
+    portfolio_constraints(&content.constraints)?;
+    rebalance_schedule(&content.rebalance_schedule)?;
+    if !content.capital_assumption.is_positive()
+        || !content.exposure_tolerance.is_positive()
+        || content.exposure_tolerance.as_decimal() > &BigDecimal::new(1.into(), 3)
+        || iso_currency::Currency::from_code(&content.base_currency).is_none()
+    {
+        return Err(DomainError::Invalid("portfolio_mandate"));
+    }
+    if content.objective == AllocationObjective::RiskBudgeting
+        || content.risk_measure != AllocationRisk::Variance
+        || content.constraints.max_ex_ante_risk.is_some()
+    {
+        return Err(DomainError::CapabilityUnavailable(
+            "portfolio_mandate_objective",
+        ));
+    }
+    Ok(())
+}
+
+/// Does not authorize an Alpha, infer a quote, or fit an estimator.
+pub fn allocation_input(input: &AllocationInputV1) -> Result<(), DomainError> {
+    optimizer_settings(&input.optimizer)?;
+    fixed_ensemble(&input.alpha_ensemble)?;
     let count = input.assets.len();
     let constraints = &input.constraints;
     portfolio_constraints(constraints)?;
@@ -222,7 +251,6 @@ pub fn allocation_input(input: &AllocationInputV1) -> Result<(), DomainError> {
             .iter()
             .any(|row| row.len() != count || row.iter().any(|v| !v.is_finite()))
         || !input.capital_assumption.is_positive()
-        || !input.risk_aversion.is_positive()
         || !input.exposure_tolerance.is_positive()
         || input.exposure_tolerance.as_decimal() > &BigDecimal::new(1.into(), 3)
         || constraints.asset_overrides.len() > count
@@ -291,7 +319,8 @@ pub fn optimizer_settings(model: &NativeModelRefV1) -> Result<&AllocatorSettings
             "portfolio_optimizer_model",
         ));
     }
-    if !parameters.solver_tolerance.is_positive()
+    if !parameters.risk_aversion.is_positive()
+        || !parameters.solver_tolerance.is_positive()
         || parameters.solver_tolerance.as_decimal() > &BigDecimal::new(1.into(), 3)
         || !(1..=100_000).contains(&parameters.max_iterations)
     {

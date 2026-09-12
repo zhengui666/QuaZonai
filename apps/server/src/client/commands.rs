@@ -24,6 +24,7 @@ use contracts::{
     },
     experiments::{ExperimentProposalV1, ExperimentView},
     lifecycle::{RunCancelV1, RunListQuery},
+    portfolio::{MandateCreateV1, MandateViewV1},
     research::{
         EvaluationPolicyCreate, EvaluationPolicyView, InputSetCreate, InputSetSummary, InputSetView,
     },
@@ -56,6 +57,8 @@ pub enum Command {
     Project(Project),
     #[command(subcommand)]
     Brief(Brief),
+    #[command(subcommand)]
+    Portfolio(Portfolio),
     #[command(subcommand)]
     Cycle(Cycle),
     #[command(subcommand)]
@@ -108,6 +111,24 @@ pub enum Alpha {
         id: String,
         #[command(flatten)]
         page: List,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum Portfolio {
+    #[command(subcommand)]
+    Mandate(Mandate),
+}
+#[derive(Subcommand)]
+pub enum Mandate {
+    Create,
+    List {
+        project_id: String,
+        #[command(flatten)]
+        page: List,
+    },
+    Show {
+        id: String,
     },
 }
 #[derive(Subcommand)]
@@ -450,6 +471,23 @@ impl Command {
                     PATCH, item("/api/v2/projects", id)?, 200, true
                 )?,
             },
+            Self::Portfolio(Portfolio::Mandate(command)) => {
+                match command {
+                    Mandate::Create => Request::write::<
+                        MandateCreateV1,
+                        CommandResult<MandateViewV1>,
+                    >(
+                        POST, "/api/v2/portfolio-mandates", 201, true
+                    )?,
+                    Mandate::List { project_id, page } => Request::get::<Page<MandateViewV1>>(
+                        action("/api/v2/projects", project_id, "portfolio-mandates")?,
+                    )
+                    .page(page)?,
+                    Mandate::Show { id } => {
+                        Request::get::<MandateViewV1>(item("/api/v2/portfolio-mandates", id)?)
+                    }
+                }
+            }
             Self::Brief(command) => match command {
                 Brief::List { project_id, page } => Request::get::<Page<BriefView>>(action(
                     "/api/v2/projects",

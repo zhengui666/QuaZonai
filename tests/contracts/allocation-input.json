@@ -45,7 +45,6 @@
   "risk": "VARIANCE",
   "base_currency": "USD",
   "capital_assumption": "1000000",
-  "risk_aversion": "1",
   "current_cash_weight": "0",
   "exposure_tolerance": "0.000001",
   "constraints": {
@@ -73,6 +72,7 @@
     "upstream_version": "0.11.1",
     "parameters": {
     "schema_version": 1,
+    "risk_aversion": "1",
     "max_iterations": 200,
     "solver_tolerance": "0.0000000001",
     "accept_inaccurate": false

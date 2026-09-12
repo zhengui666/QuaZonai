@@ -17,6 +17,7 @@ pub mod experiments;
 #[cfg(test)]
 mod header_tests;
 pub mod mcp;
+pub mod portfolio;
 pub mod research;
 pub mod runs;
 pub mod runtime;
@@ -328,6 +329,15 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         .route("/api/v2/data/universes", get(data::universes))
         .route("/api/v2/data/universes/{id}", get(data::universe))
         .route("/api/v2/input-sets/{id}", get(research::input_set))
+        .route(
+            "/api/v2/portfolio-mandates",
+            post(portfolio::create).layer(DefaultBodyLimit::max(64 * 1024)),
+        )
+        .route("/api/v2/portfolio-mandates/{id}", get(portfolio::get))
+        .route(
+            "/api/v2/projects/{id}/portfolio-mandates",
+            get(portfolio::list),
+        )
         .route("/api/v2/briefs/{id}/freeze", post(cycles::freeze))
         .route("/api/v2/briefs/{id}/execution-context", get(cycles::frozen))
         .route(
@@ -458,6 +468,7 @@ control::machine_session,control::issue_grant,runs::list,runs::get,runs::cancel,
 research::input_sets,research::input_set,research::create_input_set,
 research::evaluation_policies,research::evaluation_policy,research::create_evaluation_policy,
 brief::list,brief::get,brief::create,brief::update,
+portfolio::list,portfolio::get,portfolio::create,
 cycles::freeze,cycles::frozen,cycles::start,cycles::list,cycles::get,cycles::selection,cycles::trials,
 experiments::propose,experiments::list,experiments::get,
 evidence::alphas,evidence::versions,evidence::version,evidence::calibration,evidence::evaluations,evidence::evaluate,evidence::evaluation,evidence::metrics,

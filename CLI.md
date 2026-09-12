@@ -168,12 +168,36 @@ schema_version、adapter_kind、upstream_class、upstream_version、parameters�
 当前仅支持CLARABEL_QP / clarabel::solver::DefaultSolver / 0.11.1（参数沿用
 AllocatorSettingsV1）及FIXED_WEIGHTED_FORECAST / ndarray::ArrayBase::dot / 0.17.1
 （参数为空对象，混合权重在原forecasts中）。顶层settings已删除；未知类/版本、
-错误角色、额外参数均拒绝，不默认选择模型。新镜像还需portfolio-models/1能力。
+错误角色、额外参数均拒绝，不默认选择模型。新镜像还需portfolio-models/2能力。
+正Decimal的risk_aversion现在冻结在optimizer.parameters中，顶层同名字段已删除。
 
 协方差数值适配的引用为SAMPLE_COVARIANCE / ndarray_stats::CorrelationExt::cov /
 0.7.0，parameters仅为`{"ddof":1}`，不能传年化、补值或另一估计器参数。
-该引用已进入本地Rust数值函数，尚非新的CLI子命令、受管操作或Mandate API；
+该引用已进入本地Rust数值函数并可存入Mandate，尚非单独的CLI计算子命令或受管操作；
 AllocationInputV1中的协方差矩阵仍须由后续可信原收益序列编排绑定。
+
+### 不可变 Portfolio Mandate
+
+`POST /api/v2/portfolio-mandates`接受MandateCreateV1：schema_version、project_id、
+runtime_id、expected_runtime_revision与完整content（DESIGN A5）。需要近期Operator
+或该完整意图的单次CLI grant及Idempotency-Key，返回201/CommandResult_MandateViewV1。
+同键重放原版本，不因后来探测变化重新创建；不同意图409，新键分配新的项目内版本。
+没有PATCH/DELETE，配置变更必须新建版本，不覆盖已引用的Mandate。
+
+读取`GET /api/v2/projects/{id}/portfolio-mandates`（UUID cursor、默认50/上限100）
+和`GET /api/v2/portfolio-mandates/{id}`，只允许Operator或精确项目RESEARCH_READ的CLI。
+Mission、Automation、Downstream不能借这些入口取得配置权。
+
+```sh
+cargo run --locked -p server -- client portfolio mandate create < mandate-create.json
+cargo run --locked -p server -- client portfolio mandate list PROJECT_UUID
+cargo run --locked -p server -- client portfolio mandate show MANDATE_UUID
+```
+
+写入仍按CLI全局选项携带同一幂等键和精确人工grant，不把TOTP或凭据写入请求文件。
+创建校验原生模型版本、有效Runtime探测、CONVEX_QP、执行镜像、政策项目及原执行
+假设，币种/资本/费用/流动性/参与率/日历须一致。无能力或引用不一致时不落版本。
+保存配置不是科学PASS、Alpha资格或Candidate/Release交付；Ant Design操作页尚待接通。
 
 已有受授权只读 Nautilus Parquet 快照、实际 Wasm 模型和相应冻结请求文件时，运行时使用以下入口；路径不是 HTTP/MCP 请求字段：
 

@@ -1676,6 +1676,14 @@ Alpha不能因新结果被恢复。输入来源和原许可在既有锁下重验
 
 ## A5. Mandate、Candidate、目标与 Release
 
+MandateCreateV1包含schema_version、project_id、runtime_id、expected_runtime_revision
+和完整content。创建在原Operator命令事务内锁Project分配版本，重验精确Runtime
+最新有效探测与PORTFOLIO_BUILD能力、原模型版本和执行假设镜像，保存原完整响应。
+同键只重放原版本；更换配置必须新版本，不更新既有Mandate。读取只供Operator或
+精确项目RESEARCH_READ的CLI，不新增Mission权限。创建不授予Alpha资格或Release。
+风险厌恶系数risk_aversion作为正Decimal冻结在optimizer.parameters中，单次
+AllocationInputV1不再另带该字段，实际求解直接使用原优化器参数。
+
 ```text
 portfolio_mandates [immutable versions]
   project_id: Id FK projects
