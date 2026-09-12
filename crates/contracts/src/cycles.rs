@@ -97,6 +97,68 @@ pub enum CycleReadAction {
     ViewBrief,
     ViewRuns,
     ViewExperiments,
+    ViewSelection,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum SelectionStatus {
+    Complete,
+    Inconclusive,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum TrialSelectionReason {
+    Eligible,
+    IncomparableInput,
+    Unfinished,
+    NotExecuted,
+    ExecutionFailed,
+    ExecutionCancelled,
+    NoFormalEvaluation,
+    InvalidEvidence,
+    RequiredMetricMissing,
+    SelectionMetricMissing,
+}
+
+/// Historical comparison, not qualification or scientific approval.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CycleSelectionV1 {
+    pub schema_version: SchemaV1,
+    pub cycle_id: Id,
+    pub project_id: Id,
+    pub research_run_id: Id,
+    pub policy_id: Id,
+    pub rule: crate::research::SelectionRuleV1,
+    pub created_at: DateTime<Utc>,
+    pub status: SelectionStatus,
+    pub trial_count: DbCounter,
+    pub eligible_count: DbCounter,
+    pub selected_count: DbCounter,
+    pub unfinished_count: DbCounter,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CycleSelectionTrialV1 {
+    pub schema_version: SchemaV1,
+    pub cycle_id: Id,
+    pub experiment_id: Id,
+    pub source_cycle_id: Id,
+    pub execution_run_id: Option<Id>,
+    pub compile_run_id: Option<Id>,
+    pub discovery_run_id: Option<Id>,
+    pub validation_run_id: Option<Id>,
+    pub alpha_version_id: Option<Id>,
+    pub evaluation_id: Option<Id>,
+    pub execution_state: Option<crate::runs::RunState>,
+    pub reason: TrialSelectionReason,
+    pub rank: Option<DbCounter>,
+    pub selected: bool,
+    pub unfinished: bool,
+    pub selection_metric: Option<crate::evidence::MetricValueV1>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]

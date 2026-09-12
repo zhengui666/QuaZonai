@@ -6598,9 +6598,194 @@
         "enum": [
           "VIEW_BRIEF",
           "VIEW_RUNS",
-          "VIEW_EXPERIMENTS"
+          "VIEW_EXPERIMENTS",
+          "VIEW_SELECTION"
         ],
         "type": "string"
+      },
+      "CycleSelectionTrialV1": {
+        "additionalProperties": false,
+        "properties": {
+          "alpha_version_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "compile_run_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "cycle_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "discovery_run_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "evaluation_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "execution_run_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "execution_state": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RunState"
+              }
+            ]
+          },
+          "experiment_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "rank": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DbCounter"
+              }
+            ]
+          },
+          "reason": {
+            "$ref": "#/components/schemas/TrialSelectionReason"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "selected": {
+            "type": "boolean"
+          },
+          "selection_metric": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MetricValueV1"
+              }
+            ]
+          },
+          "source_cycle_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "unfinished": {
+            "type": "boolean"
+          },
+          "validation_run_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          }
+        },
+        "required": [
+          "schema_version",
+          "cycle_id",
+          "experiment_id",
+          "source_cycle_id",
+          "reason",
+          "selected",
+          "unfinished"
+        ],
+        "type": "object"
+      },
+      "CycleSelectionV1": {
+        "additionalProperties": false,
+        "description": "Historical comparison, not qualification or scientific approval.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "cycle_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "eligible_count": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "policy_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "research_run_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "rule": {
+            "$ref": "#/components/schemas/SelectionRuleV1"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "selected_count": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SelectionStatus"
+          },
+          "trial_count": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "unfinished_count": {
+            "$ref": "#/components/schemas/DbCounter"
+          }
+        },
+        "required": [
+          "schema_version",
+          "cycle_id",
+          "project_id",
+          "research_run_id",
+          "policy_id",
+          "rule",
+          "created_at",
+          "status",
+          "trial_count",
+          "eligible_count",
+          "selected_count",
+          "unfinished_count"
+        ],
+        "type": "object"
       },
       "CycleStartIntent": {
         "additionalProperties": false,
@@ -14135,6 +14320,13 @@
         ],
         "type": "object"
       },
+      "SelectionStatus": {
+        "enum": [
+          "COMPLETE",
+          "INCONCLUSIVE"
+        ],
+        "type": "string"
+      },
       "SelectionTieBreak": {
         "enum": [
           "EXPERIMENT_ID_ASC"
@@ -14286,6 +14478,21 @@
         "enum": [
           "SYSTEM_CA",
           "PINNED_CA"
+        ],
+        "type": "string"
+      },
+      "TrialSelectionReason": {
+        "enum": [
+          "ELIGIBLE",
+          "INCOMPARABLE_INPUT",
+          "UNFINISHED",
+          "NOT_EXECUTED",
+          "EXECUTION_FAILED",
+          "EXECUTION_CANCELLED",
+          "NO_FORMAL_EVALUATION",
+          "INVALID_EVIDENCE",
+          "REQUIRED_METRIC_MISSING",
+          "SELECTION_METRIC_MISSING"
         ],
         "type": "string"
       },

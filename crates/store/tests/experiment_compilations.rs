@@ -1,8 +1,12 @@
 //! Real proposal/PGMQ/native-definition transactions. No compiler or science is mocked as run.
+#[path = "../../../tests/support/brief.rs"]
+mod brief_support;
 #[path = "../../../tests/support/cycles.rs"]
 mod cycle_support;
 #[path = "../../../tests/support/missions.rs"]
 mod mission_support;
+#[path = "../../../tests/support/experiments.rs"]
+mod proposal_support;
 #[path = "../../../tests/support/research.rs"]
 mod research_support;
 #[path = "../../../tests/support/runtime.rs"]
@@ -23,6 +27,9 @@ use experiment_support::{complete_compilation, setup};
 
 #[path = "support/validation_publication.rs"]
 mod validation_publication;
+
+#[path = "support/cycle_selection.rs"]
+mod cycle_selection;
 
 fn limits() -> JobLimitsV1 {
     JobLimitsV1 {

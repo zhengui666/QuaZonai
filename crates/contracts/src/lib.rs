@@ -39,6 +39,8 @@ use utoipa::OpenApi;
     cycles::CycleStartIntent,
     cycles::CycleViewV1,
     cycles::CycleStartedV1,
+    cycles::CycleSelectionV1,
+    cycles::CycleSelectionTrialV1,
     data::DataSourceCreate,
     data::DataSourceUpdate,
     data::DataSourceView,

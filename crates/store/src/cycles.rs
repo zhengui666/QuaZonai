@@ -359,14 +359,20 @@ fn cycle_view(row: &PgRow) -> Result<CycleViewV1, StoreError> {
         started_at: row.try_get("started_at")?,
         ended_at: row.try_get("ended_at")?,
         created_at: row.try_get("created_at")?,
-        available_actions: vec![
+        available_actions: [
             CycleReadAction::ViewBrief,
             CycleReadAction::ViewRuns,
             CycleReadAction::ViewExperiments,
-        ],
+        ]
+        .into_iter()
+        .chain(
+            row.try_get::<bool, _>("has_selection")?
+                .then_some(CycleReadAction::ViewSelection),
+        )
+        .collect(),
     })
 }
-const CYCLE: &str = "SELECT c.*,s.initial_run_id,s.researcher_profile_id,s.researcher_profile_revision,s.reviewer_profile_id,s.reviewer_profile_revision FROM app.research_cycles c LEFT JOIN app.cycle_startups s ON s.cycle_id=c.id";
+const CYCLE: &str = "SELECT c.*,s.initial_run_id,s.researcher_profile_id,s.researcher_profile_revision,s.reviewer_profile_id,s.reviewer_profile_revision,EXISTS(SELECT 1 FROM app.cycle_selections selected WHERE selected.cycle_id=c.id) AS has_selection FROM app.research_cycles c LEFT JOIN app.cycle_startups s ON s.cycle_id=c.id";
 
 impl Store {
     pub async fn freeze_brief<R, Read>(

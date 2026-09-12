@@ -283,6 +283,17 @@ async fn daemon_cancellation_without_turns_does_not_open_a_native_thread(pool: P
         .bind(f.message.message_id).fetch_one(&pool).await.unwrap();
     assert_eq!(facts, (0, 0, 1));
     assert_eq!(f.provider.request_count(), 0);
+    let selection = f
+        .store
+        .cycle_selection(&f.actor, f.lease.run.cycle_id.unwrap())
+        .await
+        .unwrap();
+    assert_eq!(selection.research_run_id, run.id);
+    assert_eq!(selection.trial_count.get(), 0);
+    assert_eq!(
+        selection.status,
+        contracts::cycles::SelectionStatus::Inconclusive
+    );
     assert_eq!(
         f.store.get_run(&f.actor, run.id).await.unwrap().state,
         RunState::Cancelled
@@ -342,6 +353,17 @@ async fn daemon_cancellation_settles_unsent_turn_without_reopening_original_thre
         .bind(f.message.message_id).fetch_one(&pool).await.unwrap();
     assert_eq!(facts, (0, 0, 1));
     assert_eq!(f.provider.request_count(), 0);
+    let selection = f
+        .store
+        .cycle_selection(&f.actor, f.lease.run.cycle_id.unwrap())
+        .await
+        .unwrap();
+    assert_eq!(selection.research_run_id, run.id);
+    assert_eq!(selection.trial_count.get(), 0);
+    assert_eq!(
+        selection.status,
+        contracts::cycles::SelectionStatus::Inconclusive
+    );
     assert_eq!(
         f.store.get_run(&f.actor, run.id).await.unwrap().state,
         RunState::Cancelled
@@ -637,7 +659,46 @@ async fn settled_native_mission_publishes_validation_then_returns_to_original_th
     .unwrap();
     assert_eq!(f.provider.request_count(), 2);
     assert!(f.provider.saw_previous_context());
+    // The daemon, not this test's direct acknowledgement replay, formed the
+    // snapshot without another native Turn or duplicated scientific execution.
+    let cycle = f.lease.run.cycle_id.unwrap();
+    let selection = f.store.cycle_selection(&f.actor, cycle).await.unwrap();
+    assert_eq!(selection.research_run_id, f.lease.run.id);
+    assert_eq!(
+        (
+            selection.trial_count.get(),
+            selection.eligible_count.get(),
+            selection.selected_count.get()
+        ),
+        (1, 1, 1)
+    );
+    assert_eq!(
+        selection.status,
+        contracts::cycles::SelectionStatus::Inconclusive
+    );
+    let trials = f
+        .store
+        .cycle_selection_trials(&f.actor, cycle, &Default::default())
+        .await
+        .unwrap()
+        .items;
+    assert_eq!(trials.len(), 1);
+    assert_eq!(trials[0].experiment_id, experiment);
+    assert_eq!(trials[0].evaluation_id.map(Id::as_uuid), Some(evaluation));
+    assert_eq!(trials[0].execution_run_id, Some(validation));
+    assert_eq!(
+        trials[0]
+            .selection_metric
+            .as_ref()
+            .unwrap()
+            .source_artifact_id,
+        raw
+    );
     f.store.acknowledge_run(&f.message).await.unwrap();
+    assert_eq!(
+        serde_json::to_value(f.store.cycle_selection(&f.actor, cycle).await.unwrap()).unwrap(),
+        serde_json::to_value(selection).unwrap()
+    );
     let archived: i64 = sqlx::query_scalar("SELECT count(*) FROM pgmq.a_runs WHERE msg_id=$1")
         .bind(f.message.message_id)
         .fetch_one(&pool)

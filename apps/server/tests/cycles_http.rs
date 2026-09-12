@@ -2,6 +2,8 @@
 //! Parent data/capability records are explicit fixtures, not production T42 evidence.
 #[path = "../../../tests/support/cycles.rs"]
 mod cycle_support;
+#[path = "../../../tests/support/missions.rs"]
+mod mission_support;
 #[path = "../../../tests/support/research.rs"]
 mod research_support;
 #[path = "../../../tests/support/runtime.rs"]
@@ -183,6 +185,89 @@ async fn authenticated_freeze_and_cycle_start_publish_one_real_run_and_original_
         .await
         .unwrap();
     assert_eq!(count, 1);
+    for suffix in ["selection", "selection/trials"] {
+        let absent = browser(
+            &f,
+            &cookie,
+            "GET",
+            &format!("/api/v2/cycles/{cycle_id}/{suffix}"),
+            "unused",
+            Value::Null,
+        )
+        .await;
+        assert_eq!(absent.status, StatusCode::NOT_FOUND);
+    }
+    let preparation = contracts::Id::try_from(run_id.to_owned()).unwrap();
+    mission_support::complete(&pool, &f.store, &data, preparation, false).await;
+    assert!(f.store.advance_initial_cycle(preparation).await.unwrap());
+    let message = f
+        .store
+        .read_mission_messages(60, 1)
+        .await
+        .unwrap()
+        .remove(0);
+    let Some(store::lifecycle::ClaimResult::Leased(lease)) = f
+        .store
+        .claim_mission(&message, "selection-http", 120)
+        .await
+        .unwrap()
+    else {
+        panic!("Mission lease")
+    };
+    f.store
+        .begin_run_dispatch(lease.run.id, &lease.fence)
+        .await
+        .unwrap();
+    let path = format!("/api/v2/runs/{}", lease.run.id);
+    let current = browser(&f, &cookie, "GET", &path, "unused", Value::Null).await;
+    let cancelled = browser(
+        &f,
+        &cookie,
+        "POST",
+        &format!("{path}/cancel"),
+        "cancel-empty",
+        json!({"schema_version":1,"expected_revision":current.body["revision"]}),
+    )
+    .await;
+    assert_eq!(cancelled.status, StatusCode::ACCEPTED, "{}", cancelled.body);
+    assert!(f
+        .store
+        .complete_research_mission(lease.run.id, &lease.fence)
+        .await
+        .unwrap());
+    f.store.acknowledge_run(&message).await.unwrap();
+    let path = format!("/api/v2/cycles/{cycle_id}/selection");
+    let selection = browser(&f, &cookie, "GET", &path, "unused", Value::Null).await;
+    assert_eq!(selection.status, StatusCode::OK, "{}", selection.body);
+    assert_eq!(selection.body["research_run_id"], lease.run.id.to_string());
+    assert_eq!(selection.body["status"], "INCONCLUSIVE");
+    assert_eq!(selection.body["trial_count"], "0");
+    let page = browser(
+        &f,
+        &cookie,
+        "GET",
+        &format!("{path}/trials?limit=1"),
+        "unused",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(page.status, StatusCode::OK);
+    assert_eq!(
+        page.body,
+        json!({"schema_version":1,"items":[],"next_cursor":null})
+    );
+    for path in [
+        format!("{path}/trials?limit=0"),
+        format!("{path}/trials?unexpected=true"),
+        "/api/v2/cycles/bad/selection".into(),
+    ] {
+        assert_eq!(
+            browser(&f, &cookie, "GET", &path, "unused", Value::Null)
+                .await
+                .status,
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+    }
 }
 
 #[sqlx::test(migrations = "../../migrations")]

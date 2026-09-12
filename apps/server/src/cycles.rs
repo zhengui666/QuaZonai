@@ -23,6 +23,31 @@ fn path(value: Result<Path<Id>, PathRejection>) -> Result<Id, ApiError> {
     value.map(|Path(id)| id).map_err(|_| ApiError::validation())
 }
 
+#[utoipa::path(get,path="/api/v2/cycles/{id}/selection",operation_id="getCycleSelection",tag="Research startup",params(("id"=Id,Path)),responses((status=200,body=CycleSelectionV1),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
+pub async fn selection(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    id: Result<Path<Id>, PathRejection>,
+) -> Result<Json<CycleSelectionV1>, ApiError> {
+    Ok(Json(state.store.cycle_selection(&actor, path(id)?).await?))
+}
+
+#[utoipa::path(get,path="/api/v2/cycles/{id}/selection/trials",operation_id="listCycleSelectionTrials",tag="Research startup",params(("id"=Id,Path),("cursor"=Option<Id>,Query),("limit"=Option<u16>,Query,minimum=1,maximum=100)),responses((status=200,body=Page<CycleSelectionTrialV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
+pub async fn trials(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    id: Result<Path<Id>, PathRejection>,
+    query: Result<Query<ListQuery>, QueryRejection>,
+) -> Result<Json<Page<CycleSelectionTrialV1>>, ApiError> {
+    let Query(query) = query.map_err(|_| ApiError::validation())?;
+    Ok(Json(
+        state
+            .store
+            .cycle_selection_trials(&actor, path(id)?, &query)
+            .await?,
+    ))
+}
+
 #[utoipa::path(post,path="/api/v2/briefs/{id}/freeze",operation_id="freezeResearchBrief",tag="Research startup",request_body=BriefFreezeV1,params(("id"=Id,Path),("Idempotency-Key"=String,Header)),responses((status=200,body=CommandResult<FrozenBriefV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
 pub async fn freeze(
     State(state): State<AppState>,

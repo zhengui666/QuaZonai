@@ -23,6 +23,7 @@ server client --origin https://research.example --credential-file /private/cli.t
 | `project list/show <id>/create/update <id>` | ProjectCreate/ProjectUpdate；ProjectView/分页/完整回执 |
 | `brief list <project_id>/show <id>/create <project_id>/update <id>/freeze <id>` | BriefCreate/BriefUpdate/BriefFreezeV1；冻结不是默认通过科学门禁 |
 | `cycle list <project_id>/show <id>/start <project_id>` | CycleStartV1必填researcher_profile/reviewer_profile，各含profile_id/expected_revision；202含真实Cycle/Run及冻结选择，查询不启动第二次研究 |
+| `cycle selection <id>/trials <id>` | 原Mission收尾的冻结选择及分页原试验；404表示未形成，COMPLETE不是资格或科学PASS |
 | `data source list/show <id>/create/update <id>` | DataSourceCreate/DataSourceUpdate；已登记原生身份不可更改 |
 | `data grant list <source_id>/create <source_id>/revoke <id>/revocations <id>` | DataGrantCreate/DataGrantRevoke；正文source_id须与父路径相同 |
 | `data revision list/show <id>/register` | 列表可加 `--source-id/--partition`；DatasetRegister不接收自报origin/PIT或URL |

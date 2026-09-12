@@ -13,7 +13,10 @@ use contracts::{
         CommandResult, OperatorGrantRequest, OperatorGrantView, Page, ProjectCreate, ProjectUpdate,
         ProjectView,
     },
-    cycles::{BriefFreezeV1, CycleStartV1, CycleStartedV1, CycleViewV1, FrozenBriefV1},
+    cycles::{
+        BriefFreezeV1, CycleSelectionTrialV1, CycleSelectionV1, CycleStartV1, CycleStartedV1,
+        CycleViewV1, FrozenBriefV1,
+    },
     data::*,
     evidence::{AlphaVersionView, AlphaView, EvaluationView, MetricValueV1},
     experiments::{ExperimentProposalV1, ExperimentView},
@@ -139,6 +142,14 @@ pub enum Brief {
 }
 #[derive(Subcommand)]
 pub enum Cycle {
+    Selection {
+        id: String,
+    },
+    Trials {
+        id: String,
+        #[command(flatten)]
+        page: List,
+    },
     List {
         project_id: String,
         #[command(flatten)]
@@ -459,23 +470,32 @@ impl Command {
                     POST, action("/api/v2/briefs", id, "freeze")?, 200, true
                 )?,
             },
-            Self::Cycle(command) => match command {
-                Cycle::List { project_id, page } => Request::get::<Page<CycleViewV1>>(action(
-                    "/api/v2/projects",
-                    project_id,
-                    "cycles",
-                )?)
-                .page(page)?,
-                Cycle::Show { id } => Request::get::<CycleViewV1>(item("/api/v2/cycles", id)?),
-                Cycle::Start { project_id } => {
-                    Request::write::<CycleStartV1, CommandResult<CycleStartedV1>>(
-                        POST,
-                        action("/api/v2/projects", project_id, "cycles")?,
-                        202,
-                        true,
-                    )?
+            Self::Cycle(command) => {
+                match command {
+                    Cycle::Selection { id } => {
+                        Request::get::<CycleSelectionV1>(action("/api/v2/cycles", id, "selection")?)
+                    }
+                    Cycle::Trials { id, page } => Request::get::<Page<CycleSelectionTrialV1>>(
+                        action("/api/v2/cycles", id, "selection/trials")?,
+                    )
+                    .page(page)?,
+                    Cycle::List { project_id, page } => Request::get::<Page<CycleViewV1>>(action(
+                        "/api/v2/projects",
+                        project_id,
+                        "cycles",
+                    )?)
+                    .page(page)?,
+                    Cycle::Show { id } => Request::get::<CycleViewV1>(item("/api/v2/cycles", id)?),
+                    Cycle::Start { project_id } => {
+                        Request::write::<CycleStartV1, CommandResult<CycleStartedV1>>(
+                            POST,
+                            action("/api/v2/projects", project_id, "cycles")?,
+                            202,
+                            true,
+                        )?
+                    }
                 }
-            },
+            }
             Self::Data(Data::Validate) => Request::write::<
                 DataValidateRequest,
                 CommandResult<RunSnapshotV1>,

@@ -44,6 +44,16 @@ pub async fn setup_with_objects(
     actor: &Actor,
     objects: Arc<ArtifactStore>,
 ) -> Fixture {
+    setup_with_policy(pool, store, actor, objects, |_| {}).await
+}
+
+pub async fn setup_with_policy(
+    pool: &PgPool,
+    store: &Store,
+    actor: &Actor,
+    objects: Arc<ArtifactStore>,
+    customize: impl FnOnce(&mut EvaluationPolicyCreate),
+) -> Fixture {
     let mut data = research_support::setup(pool, store, actor).await;
     let capabilities = runtime_support::capabilities(Utc::now());
     let image = &capabilities.image_refs[0].image_ref;
@@ -136,6 +146,7 @@ pub async fn setup_with_objects(
         minimum_observations: DbCounter::new(2).unwrap(),
         method_allowlist: vec!["ndarray-stats.pearson_correlation".into()],
     }];
+    customize(&mut policy_request);
     let policy = store
         .create_evaluation_policy(actor, &Id::new().to_string(), &policy_request)
         .await

@@ -69,7 +69,7 @@ async function setup(page: Page, options: { draft?: boolean; archived?: boolean;
     return route.fallback();
   });
   await page.goto('/'); await page.getByRole('button', { name: project.name, exact: true }).click();
-  return state;
+  return Object.assign(state, { cycle });
 }
 
 async function choose(page: Page, label: string, value: string) {
@@ -191,5 +191,91 @@ test('archived projects cannot freeze or start and the startup dialog is accessi
   const result = await new AxeBuilder({ page }).include('.ant-modal').analyze();
   expect(result.violations).toEqual([]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect(state.writes).toHaveLength(0);
+});
+
+const selection: Schema['CycleSelectionV1'] = { schema_version: 1, cycle_id: id(40), project_id: project.id,
+  research_run_id: id(60), policy_id: id(61), created_at: stamp, status: 'INCONCLUSIVE',
+  trial_count: '9007199254740993', eligible_count: '1', selected_count: '1', unfinished_count: '1',
+  rule: { schema_version: 1, comparable_scope: 'FAMILY_LINEAGE', family_id: id(62), root_lineage_id: project.root_lineage_id,
+    comparison_input_set_id: id(22), execution_assumptions_id: id(63), evaluation_kind: 'WALK_FORWARD',
+    metric_code: 'PEARSON_IC', metric_scope: 'asset:0/fold:0', method_id: 'ndarray-stats.pearson_correlation', method_version: '0.7.0',
+    unit: 'CORRELATION', frequency: '1-MINUTE-LAST-EXTERNAL;horizon=5', direction: 'MAXIMIZE', candidate_count: 2,
+    tie_break: 'EXPERIMENT_ID_ASC', missing_required_metric: 'INCONCLUSIVE' } };
+const selectedTrial: Schema['CycleSelectionTrialV1'] = { schema_version: 1, cycle_id: id(40), experiment_id: id(64),
+  source_cycle_id: id(40), execution_run_id: id(67), compile_run_id: id(65), discovery_run_id: id(66), validation_run_id: id(67),
+  alpha_version_id: id(68), evaluation_id: id(69), execution_state: 'SUCCEEDED', reason: 'ELIGIBLE', rank: '1', selected: true, unfinished: false,
+  selection_metric: { schema_version: 1, evaluation_id: id(69), metric_code: selection.rule.metric_code, scope: selection.rule.metric_scope,
+    value: 0, status: 'OK', reason_code: null, unit: selection.rule.unit, frequency: selection.rule.frequency,
+    method_id: selection.rule.method_id, method_version: selection.rule.method_version, source_artifact_id: id(70),
+    period_start: stamp, period_end: '2026-09-09T00:00:00Z', observation_count: '9007199254740993', annualization_factor: null, higher_is_better: true } };
+const pendingTrial: Schema['CycleSelectionTrialV1'] = { ...selectedTrial, experiment_id: id(71), source_cycle_id: id(72), compile_run_id: null,
+  discovery_run_id: null, validation_run_id: null, alpha_version_id: null, evaluation_id: null, execution_run_id: null, execution_state: null,
+  reason: 'UNFINISHED', rank: null, selected: false, unfinished: true, selection_metric: null };
+
+test('frozen selection preserves history, original metric zero and exact counts without a winner write', async ({ page }) => {
+  const state = await setup(page);
+  state.cycles = [{ ...state.cycle, available_actions: [...state.cycle.available_actions, 'VIEW_SELECTION'] }];
+  let empty = false; const requested: string[] = [];
+  await page.route('**/api/v2/cycles/*/selection**', async route => {
+    const url = new URL(route.request().url()); requested.push(url.pathname + url.search);
+    expect(route.request().method()).toBe('GET');
+    if (url.pathname.endsWith('/selection')) return reply(route, empty ? { ...selection, cycle_id: id(73), trial_count: '0', eligible_count: '0', selected_count: '0', unfinished_count: '0' } : selection);
+    const cursor = url.searchParams.get('cursor'); if (cursor) expect(cursor).toBe(selectedTrial.experiment_id);
+    return reply(route, { schema_version: 1, items: empty ? [] : [cursor ? pendingTrial : selectedTrial], next_cursor: cursor || empty ? null : selectedTrial.experiment_id });
+  });
+  await page.getByRole('tab', { name: '研究周期', exact: true }).click();
+  await page.getByRole('button', { name: '查看试验选择', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '冻结试验选择', exact: true });
+  await expect(dialog.getByText('选择完成不是科学 PASS、Sealed 或可交付资格。', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('9007199254740993 / 1 / 1 / 1', { exact: true })).toBeVisible();
+  await expect(dialog.getByRole('cell', { name: '0', exact: true })).toBeVisible();
+  await dialog.locator('.ant-table-row-expand-icon').click();
+  await expect(dialog.getByText(selectedTrial.validation_run_id!, { exact: true })).toHaveCount(2);
+  await expect(dialog.getByText('9007199254740993', { exact: true })).toBeVisible();
+  await expect(dialog.getByText(selectedTrial.selection_metric!.source_artifact_id, { exact: true })).toBeVisible();
+  expect((await new AxeBuilder({ page }).include('[role="dialog"][aria-modal="true"]').withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
+  const header = dialog.getByRole('row').filter({ has: page.getByRole('columnheader', { name: '原指标数值', exact: true }) });
+  await dialog.getByRole('button', { name: '关闭', exact: true }).focus();
+  await page.keyboard.press('Tab'); await expect(header).toBeFocused();
+  const scroller = dialog.locator('.ant-table-content'); const before = await scroller.evaluate(element => element.scrollLeft);
+  await page.keyboard.press('ArrowRight');
+  // At the wide desktop viewport the table can fit without horizontal overflow.
+  if (await scroller.evaluate(element => element.scrollWidth > element.clientWidth)) await expect.poll(() => scroller.evaluate(element => element.scrollLeft)).toBeGreaterThan(before);
+  await dialog.getByRole('button', { name: '下一页', exact: true }).click();
+  await expect(dialog.getByRole('cell', { name: '缺值：UNFINISHED', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('cell', { name: '不参与排名', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('cell', { name: '0', exact: true })).toHaveCount(0);
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+  empty = true;
+  state.cycles = [{ ...state.cycle, id: id(73), available_actions: ['VIEW_SELECTION'] }];
+  await page.getByRole('button', { name: '刷新研究周期', exact: true }).click();
+  await expect(page.getByText(id(73), { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '查看试验选择', exact: true }).click();
+  await expect(dialog.getByText('本快照没有登记试验，不代表存在合格候选。', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('第 1 页（游标分页）', { exact: true })).toBeVisible();
+  expect((await new AxeBuilder({ page }).include('[role="dialog"][aria-modal="true"]').withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect(requested.some(path => path.includes(`cursor=${selectedTrial.experiment_id}`))).toBe(true);
+  expect(state.writes).toHaveLength(0);
+});
+
+test('unformed or failed selection is not shown as an empty completed comparison', async ({ page }) => {
+  const state = await setup(page); let formed = false;
+  state.cycles = [state.cycle];
+  await page.getByRole('tab', { name: '研究周期', exact: true }).click();
+  await expect(page.getByText('尚未形成选择快照', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '查看试验选择', exact: true })).toHaveCount(0);
+  state.cycles = [{ ...state.cycle, available_actions: ['VIEW_SELECTION'] }];
+  await page.route('**/api/v2/cycles/*/selection', route => reply(route, formed ? selection : problem('NOT_FOUND', 404), formed ? 200 : 404));
+  await page.route('**/api/v2/cycles/*/selection/trials*', route => reply(route, { schema_version: 1, items: [pendingTrial], next_cursor: null }));
+  await page.getByRole('button', { name: '刷新研究周期', exact: true }).click();
+  await page.getByRole('button', { name: '查看试验选择', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '冻结试验选择', exact: true });
+  await expect(dialog.getByText(/错误：NOT_FOUND/)).toBeVisible();
+  await expect(dialog.getByText('本快照没有登记试验，不代表存在合格候选。', { exact: true })).toHaveCount(0);
+  formed = true;
+  await dialog.getByRole('button', { name: '重新载入', exact: true }).click();
+  await expect(dialog.getByRole('cell', { name: 'UNFINISHED', exact: true })).toBeVisible();
   expect(state.writes).toHaveLength(0);
 });

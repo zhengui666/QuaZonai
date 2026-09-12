@@ -331,6 +331,8 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
             get(cycles::list).post(cycles::start),
         )
         .route("/api/v2/cycles/{id}", get(cycles::get))
+        .route("/api/v2/cycles/{id}/selection", get(cycles::selection))
+        .route("/api/v2/cycles/{id}/selection/trials", get(cycles::trials))
         .route(
             "/api/v2/projects/{id}/briefs",
             get(brief::list)
@@ -452,7 +454,7 @@ control::machine_session,control::issue_grant,runs::list,runs::get,runs::cancel,
 research::input_sets,research::input_set,research::create_input_set,
 research::evaluation_policies,research::evaluation_policy,research::create_evaluation_policy,
 brief::list,brief::get,brief::create,brief::update,
-cycles::freeze,cycles::frozen,cycles::start,cycles::list,cycles::get,
+cycles::freeze,cycles::frozen,cycles::start,cycles::list,cycles::get,cycles::selection,cycles::trials,
 experiments::propose,experiments::list,experiments::get,
 evidence::alphas,evidence::versions,evidence::version,evidence::evaluations,evidence::evaluation,evidence::metrics,
 settings::register_secret,settings::runtimes,settings::runtime,settings::create_runtime,settings::update_runtime,

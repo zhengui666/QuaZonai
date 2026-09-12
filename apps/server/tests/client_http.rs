@@ -276,6 +276,8 @@ async fn native_cli_human_grant_source_creation_replay_and_intent_binding_are_re
         vec!["alpha", "evaluations", &id],
         vec!["evidence", "show", &id],
         vec!["evidence", "metrics", &id, "--limit", "1"],
+        vec!["cycle", "selection", &id],
+        vec!["cycle", "trials", &id, "--limit", "1"],
     ] {
         let missing = invoke(&origin, &reader_file, &arguments, Value::Null).await;
         assert!(!missing.status.success());

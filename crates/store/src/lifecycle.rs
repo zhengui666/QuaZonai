@@ -1155,6 +1155,7 @@ impl Store {
         if evaluation_pending {
             return Err(StoreError::Conflict);
         }
+        crate::selection::freeze(&mut tx, &locked.run).await?;
         match queue_matches(&mut tx, message).await {
             Ok(()) => {
                 let archived: bool = sqlx::query_scalar("SELECT pgmq.archive('runs',$1)")

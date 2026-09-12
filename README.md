@@ -23,7 +23,8 @@
 | Ant Design Web/PWA | 已实现 TOTP 初始化/登录、研究项目与 Brief 草稿/冻结、显式双角色配置启动 Cycle、周期/准备 Run 查看、Run/SSE/取消、设备管理；桌面/平板/手机与更新提示。浏览器展示回归和真实入口测试分开记录；不代表全部研究业务完成 |
 | 产物与 MCP | 同项目受限产物提交/不可变存储，按 Mission Attempt 授权和计量；官方 rmcp stdio 与固定 HTTP 工具适配。研究上传不是可信评估，不授予资格或审批 |
 | Alpha 与正式评估查看 | API／CLI／Ant Design 按项目查看原 Alpha 版本、已发表的正式 Validation 和分页原始指标；保留缺值、方法、来源、精确计数与原有效期，不下载受限报告或把科学 PASS 当作资格 |
-| 交付与完整研究 | 完整试验选择、Sealed／校准／Reviewer／Alpha资格、组合/审批/反馈/晋级/唤醒、旧数据导入及完整恢复仍在实施；未接通的页面明确标示，不填充假结果 |
+| 冻结试验选择 | 原研究 Mission 确认前冻结同 Family 全部登记试验，保留失败、取消、未完成、原指标和确定性排名；API／CLI／Ant Design 只读原快照。当前原生口径为 WALK_FORWARD，COMPLETE 不是科学 PASS 或资格 |
+| 交付与完整研究 | Sealed／最终校准／Reviewer／Alpha资格、组合/审批/反馈/晋级/唤醒、旧数据导入及完整恢复仍在实施；未接通的页面明确标示，不填充假结果 |
 
 ## 开发验证
 
@@ -130,4 +131,4 @@ Run 查询、取消和持久 SSE HTTP；完整路径和权限见 [CLI](CLI.md)�
 
 现有控制面还支持研究Brief草稿的真实创建、读取、版本化和完整替换，包含当前机器权限、近期人工认证、原始响应幂等和数据库CAS。接口与授权形状见[CLI.md](CLI.md)。冻结后的内容和数据绑定不可改写；本条不表示完整Brief冻结、原生研究、组合交付或Web产品已验收。
 
-后续增量已接通正式Brief冻结、显式Profile选择、Cycle原生数据准备，以及准备完成后的Mission事务准入和唯一Thread回执存储。Mission与科学计算复用现有队列而分别选择任务；真实Codex驱动、科学结果续轮和完整产品验收仍在开发，详见[执行证据](docs/architecture/issue-62-execution.md)。
+后续增量已接通正式Brief冻结、显式Profile选择、Cycle原生数据准备、Mission事务准入和唯一Thread回执存储。Mission与科学计算复用现有队列而分别选择任务；原生Codex驱动、原Thread评估反馈和冻结选择已有受控测试，科学Job/OCI一体链路、真实账号与完整产品验收仍须继续，详见[执行证据](docs/architecture/issue-62-execution.md)。

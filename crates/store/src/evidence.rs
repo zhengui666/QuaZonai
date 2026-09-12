@@ -18,7 +18,7 @@ type Tx<'a> = Transaction<'a, Postgres>;
 const VERSION: &str = "SELECT v.*,t.origin FROM app.alpha_versions v LEFT JOIN app.experiment_forecasts f ON f.experiment_id=v.experiment_id AND f.model_artifact_id=v.model_artifact_id LEFT JOIN app.run_native_tasks t ON t.run_id=f.run_id";
 // No report bytes or storage locators. This public operation does not disclose
 // Sealed or unbound historical reports, even to an ordinary research credential.
-const EVALUATION: &str = "SELECT ev.*,report.origin,clock_timestamp() AS checked_at
+pub(crate) const EVALUATION: &str = "SELECT ev.*,report.origin,clock_timestamp() AS checked_at
  FROM app.evaluations ev
  JOIN app.evaluation_publications p ON p.evaluation_id=ev.id
  JOIN app.experiment_validations v ON v.run_id=ev.run_id AND v.alpha_version_id=ev.subject_alpha_version_id AND v.policy_id=ev.policy_id
@@ -30,7 +30,11 @@ const EVALUATION: &str = "SELECT ev.*,report.origin,clock_timestamp() AS checked
    AND report.schema_name='qz.alpha_evaluation' AND report.schema_version='1' AND report.access_class='EVALUATOR_ONLY'
  WHERE ev.evaluation_kind='WALK_FORWARD'";
 
-async fn authorize(tx: &mut Tx<'_>, actor: &Actor, project: Id) -> Result<(), StoreError> {
+pub(crate) async fn authorize(
+    tx: &mut Tx<'_>,
+    actor: &Actor,
+    project: Id,
+) -> Result<(), StoreError> {
     match actor {
         Actor::Browser { .. } => authority::browser(tx, actor, false, false).await,
         Actor::Machine { .. } => {

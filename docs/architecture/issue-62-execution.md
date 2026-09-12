@@ -1227,3 +1227,47 @@ build和CLI help通过；36项Codex设置浏览器检查及全站177项三视口
 此阶段没有新依赖、迁移或资格入口。完整选择/校准/Sealed/独立Reviewer/资格、
 双Alpha组合交付、部署/迁移/恢复及T01–T42剩余证据仍须继续；未push、请求review、
 合并或关闭Issue。GitHub只读复核PR63仍为Draft、远端37e5713e，Issue62仍开放。
+
+## 2026-09-12：原 Mission 确认前的冻结试验选择
+
+按DESIGN A4.9复用原acknowledge_run事务、project→cycle→run锁与PGMQ archive，
+只为原RESEARCHER Mission形成一次选择。取消亦等待已准入原生任务终态及正式
+Validation发表。cycle_selections以原Cycle为身份及成员封口；成员先写、deferred FK
+指向最后写入的头，头和成员不可改删，形成后不能追加试验；原已授权命令可重放。
+未新增Run、队列、模型轮次、依赖或应用级hash身份。失败保留原队列，原终态不撤销。
+
+原生SQL包含同项目/Family/根血缘全部登记历史，每个实验一次；冻结原Run/Alpha/
+Evaluation/Metric引用、当时执行状态和排除理由。历史未绑定正式流水线的Run仍保留
+原引用，不冒充未执行或正式证据；其他Cycle后来完成或追加试验不回写旧快照。
+按原冻结比较输入/执行假设和完整正式发表关联筛选，不能误用含独立MODEL的派生
+InputSet UUID。原required指标完整、VALID且精确方法/单位/频率的finite值由PG排序；
+MAX/MIN及正负零平手均按原UUID次序。科学REJECT可参与同口径比较，不变成批准。
+候选不足/未完成可比试验为INCONCLUSIVE，COMPLETE只表示比较集合数量满足。
+
+两个只读GET、原生cycle selection/trials CLI和Cycle的Ant Design Drawer展示原
+规则/计数/成员/排名/缺值/来源，分页按原实验UUID；不存在形成前的空成功快照、
+客户端选赢家或重新排名入口。复用原Operator/精确项目CLI权限，Mission不得借用
+完整操作视图。UI保留0/null、大计数和原Run，原生表头焦点/方向键支持窄屏横向查看。
+
+以0eeef659及冻结补丁验证。首轮verify-iAlLuL的Rust check/fmt/严格Clippy通过，
+新迁移的PL/pgSQL IF内CASE缺括号导致依赖迁移的测试失败，未当作业务通过；修正后
+verify-K6ilpf全部通过：119项真实Store测试、19项HTTP/原生CLI测试，0忽略，原
+PGMQ回滚/并发/重放、正负零/方向、历史原Run和原生取消评估均核验。源码不变、
+临时PG停止。HTTP验证原Mission空取消快照、形成前404、严格分页及原回执。
+
+web-verify-GRep8i完成六个原生生成物的重复字节核验，但新Drawer一处JSX闭合错误
+使typecheck/build失败，浏览器未启动；修复后web-verify-It81tU全部通过：六个
+原生生成物再次重复一致、手写源不变；typecheck、504项Vitest、5项Node、decimal/
+bigint/fraction线协议、build及CLI help通过，36项Codex设置与全站183项三视口
+浏览器检查通过（2.6分钟）。API语义只增加两个GET和五个schema，唯一已有schema
+变化为CycleReadAction新增VIEW_SELECTION；无已有HTTP路径改动或删除。
+
+随后仅增加常驻Worker断言，verify-sJFjr0捕获测试的UUID/领域Id类型混用，修正后
+verify-uM2UGy check/fmt/严格Clippy及三项原生用例通过：真实Codex 0.144.4/App
+Server原Thread反馈用例258.88秒，两个取消用例66.28秒。快照在测试手工ACK重放前
+已由Worker自动形成，精确引用原试验/评估/指标，仍只有两次原Provider模型请求；
+无Turn/未发送Turn取消保持零Provider请求，未为快照补开Thread。原消息已归档，
+临时PG确认停止，源码不变。受控Provider/科学报告仍不是完整真实数值Job/OCI或真实账号T42。
+
+此阶段未push、请求GitHub review、合并或关闭Issue。最终校准/Sealed/独立Reviewer/
+资格、双Alpha共享资金组合交付、迁移/部署/恢复及T01–T42其余证据必须继续完成。

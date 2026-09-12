@@ -252,7 +252,13 @@ impl Store {
                 .bind(project.as_uuid())
                 .fetch_one(&mut *tx)
                 .await?;
-        if !active || cycle.try_get::<String, _>("state")? != "RUNNING" {
+        let selected: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM app.cycle_selections WHERE cycle_id=$1)",
+        )
+        .bind(request.cycle_id.as_uuid())
+        .fetch_one(&mut *tx)
+        .await?;
+        if !active || selected || cycle.try_get::<String, _>("state")? != "RUNNING" {
             return Err(DomainError::AdmissionClosed.into());
         }
         let brief = sqlx::query("SELECT b.state,b.budget,b.stop_rule,p.family_id FROM app.research_briefs b JOIN app.evaluation_policies p ON p.id=b.evaluation_policy_id AND p.project_id=b.project_id WHERE b.id=$1 AND b.project_id=$2 FOR SHARE OF b")

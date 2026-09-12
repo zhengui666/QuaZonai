@@ -3,7 +3,9 @@ use super::*;
 use contracts::{control::CommandResult, runs::RunState};
 use store::{authority::Actor, lifecycle::RunMessage};
 
-async fn prepared(pool: &PgPool) -> (Store, Actor, cycle_support::Fixture, RunLease, Id, Id) {
+pub(super) async fn prepared(
+    pool: &PgPool,
+) -> (Store, Actor, cycle_support::Fixture, RunLease, Id, Id) {
     let (store, actor, f, lease, experiment) = setup(pool).await;
     let compiler = start(&store, &f, &lease, experiment)
         .await
@@ -29,7 +31,7 @@ async fn prepared(pool: &PgPool) -> (Store, Actor, cycle_support::Fixture, RunLe
     (store, actor, f, lease, experiment, run)
 }
 
-async fn publish(
+pub(super) async fn publish(
     store: &Store,
     f: &cycle_support::Fixture,
     run: Id,
@@ -47,7 +49,7 @@ async fn publish(
         .await?
         .ok_or(StoreError::Integrity)
 }
-async fn message(pool: &PgPool, run: Id) -> RunMessage {
+pub(super) async fn message(pool: &PgPool, run: Id) -> RunMessage {
     let id: i64 = sqlx::query_scalar("SELECT msg_id FROM pgmq.q_runs WHERE message->>'run_id'=$1")
         .bind(run.to_string())
         .fetch_one(pool)
@@ -140,6 +142,17 @@ async fn mission_cancellation_preserves_validation_publication_and_original_tria
     assert_eq!(observation["formal_evaluation_count"], "0");
     assert_ne!(observation["formal_evaluation"], "PUBLISHED");
     empty(&pool, experiment).await;
+    let parent_message = message(&pool, parent.id).await;
+    assert!(matches!(
+        store.acknowledge_run(&parent_message).await,
+        Err(StoreError::Conflict)
+    ));
+    assert!(matches!(
+        store
+            .cycle_selection(&actor, lease.run.cycle_id.unwrap())
+            .await,
+        Err(StoreError::NotFound)
+    ));
     let pending = message(&pool, validation).await;
     assert!(matches!(
         store.acknowledge_run(&pending).await,
@@ -155,6 +168,22 @@ async fn mission_cancellation_preserves_validation_publication_and_original_tria
         )
     );
     store.acknowledge_run(&pending).await.unwrap();
+    store.acknowledge_run(&parent_message).await.unwrap();
+    let selection = store
+        .cycle_selection(&actor, lease.run.cycle_id.unwrap())
+        .await
+        .unwrap();
+    assert_eq!(selection.trial_count.get(), 1);
+    assert_eq!(selection.eligible_count.get(), 0);
+    let rows = store
+        .cycle_selection_trials(&actor, selection.cycle_id, &Default::default())
+        .await
+        .unwrap();
+    assert_eq!(rows.items[0].evaluation_id, Some(evaluated));
+    assert_eq!(
+        rows.items[0].reason,
+        contracts::cycles::TrialSelectionReason::ExecutionCancelled
+    );
     assert_eq!(
         store.get_run(&actor, parent.id).await.unwrap().state,
         RunState::Cancelled

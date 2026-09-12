@@ -500,6 +500,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/cycles/{id}/selection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getCycleSelection"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/cycles/{id}/selection/trials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listCycleSelectionTrials"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/data/grants/{id}/revocations": {
         parameters: {
             query?: never;
@@ -2214,7 +2246,41 @@ export interface components {
         /** @enum {string} */
         CycleOutcome: "QUALIFIED_CANDIDATES" | "NO_SUPPORTED_CANDIDATE" | "BUDGET_EXHAUSTED" | "INCONCLUSIVE";
         /** @enum {string} */
-        CycleReadAction: "VIEW_BRIEF" | "VIEW_RUNS" | "VIEW_EXPERIMENTS";
+        CycleReadAction: "VIEW_BRIEF" | "VIEW_RUNS" | "VIEW_EXPERIMENTS" | "VIEW_SELECTION";
+        CycleSelectionTrialV1: {
+            alpha_version_id?: null | components["schemas"]["Id"];
+            compile_run_id?: null | components["schemas"]["Id"];
+            cycle_id: components["schemas"]["Id"];
+            discovery_run_id?: null | components["schemas"]["Id"];
+            evaluation_id?: null | components["schemas"]["Id"];
+            execution_run_id?: null | components["schemas"]["Id"];
+            execution_state?: null | components["schemas"]["RunState"];
+            experiment_id: components["schemas"]["Id"];
+            rank?: null | components["schemas"]["DbCounter"];
+            reason: components["schemas"]["TrialSelectionReason"];
+            schema_version: components["schemas"]["SchemaV1"];
+            selected: boolean;
+            selection_metric?: null | components["schemas"]["MetricValueV1"];
+            source_cycle_id: components["schemas"]["Id"];
+            unfinished: boolean;
+            validation_run_id?: null | components["schemas"]["Id"];
+        };
+        /** @description Historical comparison, not qualification or scientific approval. */
+        CycleSelectionV1: {
+            /** Format: date-time */
+            created_at: string;
+            cycle_id: components["schemas"]["Id"];
+            eligible_count: components["schemas"]["DbCounter"];
+            policy_id: components["schemas"]["Id"];
+            project_id: components["schemas"]["Id"];
+            research_run_id: components["schemas"]["Id"];
+            rule: components["schemas"]["SelectionRuleV1"];
+            schema_version: components["schemas"]["SchemaV1"];
+            selected_count: components["schemas"]["DbCounter"];
+            status: components["schemas"]["SelectionStatus"];
+            trial_count: components["schemas"]["DbCounter"];
+            unfinished_count: components["schemas"]["DbCounter"];
+        };
         CycleStartIntent: {
             project_id: components["schemas"]["Id"];
             request: components["schemas"]["CycleStartV1"];
@@ -3063,6 +3129,28 @@ export interface components {
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
+        Page_CycleSelectionTrialV1: {
+            items: {
+                alpha_version_id?: null | components["schemas"]["Id"];
+                compile_run_id?: null | components["schemas"]["Id"];
+                cycle_id: components["schemas"]["Id"];
+                discovery_run_id?: null | components["schemas"]["Id"];
+                evaluation_id?: null | components["schemas"]["Id"];
+                execution_run_id?: null | components["schemas"]["Id"];
+                execution_state?: null | components["schemas"]["RunState"];
+                experiment_id: components["schemas"]["Id"];
+                rank?: null | components["schemas"]["DbCounter"];
+                reason: components["schemas"]["TrialSelectionReason"];
+                schema_version: components["schemas"]["SchemaV1"];
+                selected: boolean;
+                selection_metric?: null | components["schemas"]["MetricValueV1"];
+                source_cycle_id: components["schemas"]["Id"];
+                unfinished: boolean;
+                validation_run_id?: null | components["schemas"]["Id"];
+            }[];
+            next_cursor?: null | components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         Page_CycleViewV1: {
             items: {
                 available_actions: components["schemas"]["CycleReadAction"][];
@@ -3792,6 +3880,8 @@ export interface components {
             unit: string;
         };
         /** @enum {string} */
+        SelectionStatus: "COMPLETE" | "INCONCLUSIVE";
+        /** @enum {string} */
         SelectionTieBreak: "EXPERIMENT_ID_ASC";
         /** @enum {string} */
         SplitKind: "WALK_FORWARD" | "CPCV_FIXED_HORIZON";
@@ -3825,6 +3915,8 @@ export interface components {
         TargetKind: "SCORE" | "EXPECTED_RETURN";
         /** @enum {string} */
         TlsPolicy: "SYSTEM_CA" | "PINNED_CA";
+        /** @enum {string} */
+        TrialSelectionReason: "ELIGIBLE" | "INCOMPARABLE_INPUT" | "UNFINISHED" | "NOT_EXECUTED" | "EXECUTION_FAILED" | "EXECUTION_CANCELLED" | "NO_FORMAL_EVALUATION" | "INVALID_EVIDENCE" | "REQUIRED_METRIC_MISSING" | "SELECTION_METRIC_MISSING";
         TrustedDevice: {
             /** Format: date-time */
             expires_at: string;
@@ -5835,6 +5927,151 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CycleViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getCycleSelection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CycleSelectionV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    listCycleSelectionTrials: {
+        parameters: {
+            query?: {
+                cursor?: components["schemas"]["Id"];
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_CycleSelectionTrialV1"];
                 };
             };
             401: {

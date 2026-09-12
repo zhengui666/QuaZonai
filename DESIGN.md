@@ -1404,6 +1404,53 @@ policy、执行/证据/决策、静态原因、原生报告/manifest引用、实
 允许的元数据，不因本次内部发布自动披露受限报告。该控制面完成报告独立限64KiB，
 不占用或扩张原生科学payload的output_bytes；与固定manifest封口开销一样单独有界。
 
+### A4.9 原 Mission 收尾的冻结试验选择
+
+可信服务在RESEARCHER Mission的原PGMQ消息确认前，按A4.1冻结本Cycle的一次选择。
+复用acknowledge_run的project→cycle→run锁、原终态回执和同一事务，不开第二队列、
+新Run或模型轮次；原Mission终态先前已经持久化，快照失败只保留待确认消息，不撤销
+真实完成状态。已准入的本Cycle科学任务须有精确原Attempt终态；正式Validation须已
+完整发表，取消也不能因缺少这一独立发表步骤而冻结成“没有评估”。无模型轮次或
+无提案的取消可产生空快照，但不补造研究或候选。原队列重放只返回原快照。
+
+`cycle_selections`以原cycle_id为身份，绑定project、原research_run、冻结policy及
+数据库形成时间；它同时封口本次成员集合。`cycle_selection_trials`在同事务先插入，
+通过deferred FK引用最后写入的快照头。头存在后禁止追加成员，头/成员均不可更新
+或删除。不复制实验、评估或Metric身份，不新增hash、发布队列或通用Workflow。
+原Cycle此后不得接收新提案；精确已提交命令重放仍返回原回执。快照不完成Cycle、
+不授资格、不给Sealed读取机会，也不代替后续独立Reviewer和资格裁决。
+
+快照包含形成时同项目、同Family/根血缘的全部已登记试验，跨Cycle保留历史；每个
+experiment仅一行，保留原Cycle/编译/Discovery/Validation/Alpha/Evaluation引用、
+形成时执行状态及排除理由。未执行、失败、取消、无原正式评估、不可比、无效或缺
+选择指标均留记录，数值不填0。其他Cycle尚未结束的可比试验明确标记未完成并使
+本快照INCONCLUSIVE；后续Cycle可形成新快照，但不得回写或补齐旧集合。
+execution_run_id绑定所显示状态的原Run；历史试验即使没有正式流水线关联，也保留
+原Run引用和真实状态，不误称未执行。未终态历史Run保持未完成，不能授排名。
+
+可排序记录必须绑定原正式WALK_FORWARD Validation和完整发布标记，来源关联沿用
+A3.12；原Brief/Policy的comparison_input_set_id与execution_assumptions_id须匹配
+本次冻结选择。每个科学Run的物化输入另含自己的MODEL/PARAMETERS，不能拿不同
+物化InputSet UUID误判市场比较集合，也不能仅比较数据角色而忽略原冻结输入。
+仅SUCCEEDED、VALID且原required指标完整的评估参与比较；选择指标必须为OK、
+finite，并匹配冻结的code/scope/method/version/unit/frequency。VALID的科学REJECT
+仍可在同口径比较中排序，但不是PASS或后续Sealed/资格准入。当前未接通的Sealed
+选择类别明确拒绝，不降为WALK_FORWARD，不读取受限报告字节来临时重算。
+
+排序使用PostgreSQL原生数值比较与UUID次序：MAXIMIZE降序/MINIMIZE升序；相等
+（包括正负零）按原experiment UUID升序，前candidate_count为selected。排名保留
+所有可比记录，未选中记录不删。头记录真实trial/eligible/selected/unfinished计数；
+候选不足或存在未完成可比试验为INCONCLUSIVE，否则为COMPLETE。这里COMPLETE
+只说明冻结比较集合完整且数量满足，不是科学PASS、当前新鲜度或可交付资格。
+
+Operator与精确项目RESEARCH_READ CLI可使用`GET /api/v2/cycles/{id}/selection`
+读取原选择头/冻结规则，以及`GET /api/v2/cycles/{id}/selection/trials`分页读取原
+成员、排名、排除理由和原选择MetricValue；未形成返回404，不伪造空完成快照。
+成员按原experiment UUID升序，原生UUID cursor，limit1..100。Mission/Automation/
+Downstream不能用这两个接口扩大证据读取；Reviewer的受控输入另行按角色准备。
+CLI为`cycle selection <id>`与`cycle trials <id>`；界面从原Cycle查看，不提供客户端
+选择赢家、替换成员、刷新旧排名或手填评估的写入口。
+
 ## A5. Mandate、Candidate、目标与 Release
 
 ```text

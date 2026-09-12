@@ -22,6 +22,7 @@ pub mod machine_auth;
 mod migration;
 pub mod research;
 pub mod runtime;
+mod selection;
 pub mod settings;
 pub mod turns;
 

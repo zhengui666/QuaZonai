@@ -90,6 +90,10 @@ Mission须等待正式验证、评估发表和原Thread反馈回答；不能自�
 上述是成功收束条件。人工取消/真实到期后由可信Worker停止新阶段，保留已启动
 任务和完整用量对账；只有账本证明未发送才记NOT_SENT。Agent不能自行退款、补零、
 提交取消成功或删除未发表的评估消息。
+原Mission确认前由可信事务冻结A4.9全Family试验选择，保留失败/未完成及原指标；
+快照失败保留原队列重试，不新建Run或模型轮次。Operator/精确项目CLI使用cycle
+selection/trials只读命令；Mission不能调用完整快照接口、刷新旧排名或把COMPLETE
+当作科学PASS、Reviewer批准或资格。未形成与空快照不同。
 
 人工Cycle启动除冻结Brief和Project版本外，还须明确researcher_profile/reviewer_profile的profile_id及expected_revision；不得默认第一个账号。选择随Cycle封口，旧Cycle不跟随后来Profile修改。该命令不授予Mission选择账号、修改模型设置或发起账号操作的权限。
 
