@@ -1,22 +1,102 @@
 //! Operator-only projections; scientific execution and evidence disclosure stay distinct.
 use crate::{
-    access::Authority,
+    access::{idempotency_key, Authority},
+    auth::json,
     error::{ApiError, Problem},
     AppState,
 };
 use axum::{
     extract::{
-        rejection::{PathRejection, QueryRejection},
+        rejection::{JsonRejection, PathRejection, QueryRejection},
         Path, Query, State,
     },
+    http::{HeaderMap, StatusCode},
     Json,
 };
 use contracts::{
-    control::{ListQuery, Page},
-    evidence::{AlphaVersionView, AlphaView, CalibrationView, EvaluationView, MetricValueV1},
+    control::{CommandResult, ListQuery, Page},
+    evidence::{
+        AlphaEvaluateRequestV1, AlphaVersionView, AlphaView, CalibrationView, EvaluationView,
+        MetricValueV1,
+    },
     research::ResearchListQuery,
     Id, Revision,
 };
+use store::StoreError;
+
+#[utoipa::path(post,path="/api/v2/alpha-versions/{id}/evaluations",operation_id="start_alpha_evaluation",tag="Evidence",request_body=AlphaEvaluateRequestV1,params(("id"=Id,Path),("Idempotency-Key"=String,Header)),responses((status=202,body=CommandResult<contracts::runs::RunSnapshotV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
+pub async fn evaluate(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    id: Result<Path<Id>, PathRejection>,
+    headers: HeaderMap,
+    body: Result<Json<AlphaEvaluateRequestV1>, JsonRejection>,
+) -> Result<
+    (
+        StatusCode,
+        Json<CommandResult<contracts::runs::RunSnapshotV1>>,
+    ),
+    ApiError,
+> {
+    let Path(id) = id.map_err(|_| ApiError::validation())?;
+    let request = json(body)?;
+    let key = idempotency_key(&headers)?.to_owned();
+    let objects = state
+        .artifact_store
+        .clone()
+        .ok_or(StoreError::Invalid("artifact_store_unavailable"))?;
+    let store = state.store.clone();
+    let result = crate::settings::command(&state, async move {
+        let reading = objects.clone();
+        let publishing = objects.clone();
+        let mut allocated = None;
+        let result = store
+            .start_alpha_evaluation(
+                &actor,
+                &key,
+                id,
+                &request,
+                move |id, size| {
+                    let objects = reading.clone();
+                    async move {
+                        tokio::task::spawn_blocking(move || objects.read(id, size))
+                            .await
+                            .map_err(|_| StoreError::Integrity)?
+                            .map_err(|_| StoreError::Integrity)
+                    }
+                },
+                |object| {
+                    allocated = Some(object.id);
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            publishing.put(object.id, &object.bytes)
+                        })
+                        .await
+                        .map_err(|_| StoreError::Integrity)?
+                        .map_err(|_| StoreError::Integrity)
+                    }
+                },
+            )
+            .await;
+        if let Some(id) = allocated.filter(|_| result.is_err()) {
+            if store
+                .discard_unpublished_operator_artifact(id, move |id| async move {
+                    tokio::task::spawn_blocking(move || objects.discard_unpublished(id))
+                        .await
+                        .map_err(|_| StoreError::Integrity)?
+                        .map_err(|_| StoreError::Integrity)
+                })
+                .await
+                .is_err()
+            {
+                tracing::warn!(artifact_id=%id, "Sealed parameter cleanup deferred");
+            }
+        }
+        result
+    })
+    .await?;
+    Ok((StatusCode::ACCEPTED, Json(result)))
+}
 
 #[utoipa::path(get,path="/api/v2/alphas",operation_id="list_alphas",tag="Evidence",params(("project_id"=Id,Query),("cursor"=Option<Id>,Query),("limit"=Option<u16>,Query,minimum=1,maximum=100)),responses((status=200,body=Page<AlphaView>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem),(status=503,body=Problem)))]
 pub async fn alphas(

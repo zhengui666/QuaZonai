@@ -60,6 +60,7 @@ pub fn command(request: &OperatorCommand) -> Result<(), DomainError> {
         OperatorCommand::DataGrantRevoke(r) => crate::data::grant_revoke(r),
         OperatorCommand::DatasetRegister(r) => crate::data::dataset_register(r),
         OperatorCommand::DataValidate(r) => crate::data::validate_request(r),
+        OperatorCommand::AlphaEvaluate(r) => crate::data::bounded_native_limits(&r.limits),
         OperatorCommand::CycleStart(_) => Ok(()),
         OperatorCommand::IntegrationSecretRegister(r) => crate::settings::secret_intent(r),
         OperatorCommand::RuntimeProbe(_) => Ok(()),

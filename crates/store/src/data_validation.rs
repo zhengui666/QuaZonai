@@ -30,7 +30,7 @@ fn counter(value: i64) -> Result<DbCounter, StoreError> {
 fn input(field: &str) -> StoreError {
     domain::research::invalid(field, "NATIVE_DATA_VALIDATION_INPUT_REQUIRED").into()
 }
-fn combine_origin(current: DataOrigin, next: DataOrigin) -> DataOrigin {
+pub(crate) fn combine_origin(current: DataOrigin, next: DataOrigin) -> DataOrigin {
     use DataOrigin::*;
     match (current, next) {
         (LegacyUnknown, _) | (_, LegacyUnknown) => LegacyUnknown,
@@ -44,6 +44,7 @@ pub(crate) struct DatasetBinding {
     pub selection: NativeDatasetSelectionV1,
     pub input: RuntimeInputV1,
     pub origin: DataOrigin,
+    pub available_through_ns: DbCounter,
 }
 
 /// Revalidate metadata only, never read market rows or grant Sealed access. The
@@ -147,6 +148,7 @@ where
                 role,
             },
             origin: row_origin,
+            available_through_ns: quality.available_through_ns,
         });
     }
     Ok(bindings)

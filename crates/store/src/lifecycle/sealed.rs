@@ -10,6 +10,8 @@ use domain::evidence::MetricGate;
 use native::NativeObjectPublication;
 use validation::read_document;
 
+mod admission;
+
 pub(super) async fn publish<R, Read, P, Published>(
     mut tx: Tx<'_>,
     locked: LockedRun,

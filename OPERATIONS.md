@@ -237,6 +237,9 @@ Brief冻结和Cycle启动要求Sealed使用真实资产的`asset:N`，不接受V
 原生能力发放前按根血缘预约Sealed读取机会；失败/取消保留机会记录，
 不能换项目、政策或Dataset UUID重置已使用的额度或既有暴露。
 封存Run的原结果及全部指标正式入账后才能ACK；失败/取消也保留INCONCLUSIVE。
+人工可用`alpha evaluate <版本ID>`在明确的运行中Cycle预算内请求封存评估；
+须指定该Cycle冻结政策、Sealed输入、Runtime版本和资源限额，不重新收费原编译试验。
+模型/校准由原验证派生，202只表示接受原Run，不是资格。完整请求与CLI授权见CLI。
 研究准备入口为 `/api/v2/input-sets` 和 `/api/v2/evaluation-policies`，详情和
 权限见 CLI 与 native-generated OpenAPI。InputSet 头、全部成员、冻结时间及
 幂等回执一次提交；policy 与精确 experiment_family 同事务登记。登记不是

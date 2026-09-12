@@ -17,6 +17,7 @@ FIXTURE、PIT_UNVERIFIED、未核验方法和政策登记成功均不是 PASS，
 EVALUATE_SEALED_ALPHA是内部受管操作，不是Agent工具；不得自行提交任务、读取校准或封存报告来冒充独立评估。
 Sealed机会绑定原Attempt并按根血缘累计，失败和取消不退款；不得换UUID或请求补写历史预约。
 可信Worker须在ACK前发表原封存评估及全部指标；Agent不得调用发布器、读取报告或把源Validation的PASS当作封存结果。
+人工alpha evaluate需精确Alpha目标的Operator授权和运行中Cycle冻结上下文/预算；Mission不能调用或借用该授权。参数不接收模型/校准/原生路径，202不授资格。
 不要为尚未接通的可信数据登记/Brief冻结/Worker 路径编造成功结果或使用 SQL 后门。
 
 

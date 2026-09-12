@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import type { Schema } from '../src/api';
-import { fixture, id, navigate, problem, project, reply } from './fixtures';
+import { brief, fixture, id, navigate, problem, project, reply, run } from './fixtures';
 
 const stamp = '2026-09-08T00:00:00Z';
 const alpha: Schema['AlphaView'] = { id: id(41), project_id: project.id, name: '合成 Alpha 历史', lifecycle: 'RESEARCH',
@@ -67,6 +67,54 @@ async function setup(page: Page) {
   await page.goto('/'); await navigate(page, 'Alpha');
   return { state, base };
 }
+
+test('Sealed admission requires an explicit Cycle and retries the identical frozen request after a lost reply', async ({ page }) => {
+  const { state } = await setup(page); state.calibrated = true;
+  const frozenBrief = brief();
+  const context: Schema['BriefExecutionContextV1'] = { schema_version: 1, runtime_id: id(20), runtime_revision: '9007199254740993',
+    discovery_input_set_id: id(21), validation_input_set_id: id(22), sealed_input_set_id: id(23) };
+  const cycle: Schema['CycleViewV1'] = { schema_version: 1, id: id(40), project_id: project.id, brief_id: frozenBrief.id,
+    ordinal: 1, revision: '1', trigger: 'OPERATOR', state: 'RUNNING', outcome: null, budget: frozenBrief.content.budget,
+    reserved_experiments: 0, used_experiments: 1, reserved_cpu_seconds: '0', initial_run_id: run.id,
+    researcher_profile: { profile_id: id(30), expected_revision: '1' }, reviewer_profile: { profile_id: id(31), expected_revision: '1' },
+    next_action: 'WAITING_FOR_DATA_VALIDATION', started_at: stamp, ended_at: null, created_at: stamp,
+    available_actions: ['VIEW_BRIEF', 'VIEW_RUNS', 'VIEW_EXPERIMENTS'] };
+  const writes: { body: unknown; key: string | null }[] = [];
+  await page.route('**/api/v2/**', async route => {
+    const request = route.request(); const path = new URL(request.url()).pathname;
+    if (path === `/api/v2/alpha-versions/${version.id}/evaluations` && request.method() === 'POST') {
+      writes.push({ body: request.postDataJSON() as unknown, key: await request.headerValue('Idempotency-Key') });
+      if (writes.length === 1) return route.abort('failed');
+      return reply(route, { schema_version: 1, replayed: true, resource: { ...run, cycle_id: cycle.id, kind: 'ALPHA_EVALUATE', input_set_id: context.sealed_input_set_id } }, 202);
+    }
+    if (path === `/api/v2/projects/${project.id}/cycles`) return reply(route, { schema_version: 1, items: [cycle], next_cursor: null });
+    if (path === `/api/v2/cycles/${cycle.id}`) return reply(route, cycle);
+    if (path === `/api/v2/briefs/${frozenBrief.id}/execution-context`) return reply(route, { schema_version: 1, brief: frozenBrief, execution_context: context });
+    return route.fallback();
+  });
+  await chooseProject(page);
+  await page.getByRole('button', { name: alpha.name, exact: true }).click();
+  await page.getByRole('button', { name: `版本 ${version.version}`, exact: true }).click();
+  await page.getByRole('button', { name: '请求封存评估', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '确认请求封存评估', exact: true });
+  await expect(dialog.getByRole('button', { name: '确认请求评估', exact: true })).toBeDisabled();
+  expect(writes).toEqual([]);
+  await dialog.getByRole('combobox', { name: '选择评估 Cycle', exact: true }).click();
+  await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').filter({ hasText: cycle.id }).click();
+  await dialog.getByLabel('CPU 秒数上限', { exact: true }).fill('9007199254740993');
+  await dialog.getByRole('button', { name: '确认请求评估', exact: true }).click();
+  await expect(dialog.getByText('请求结果尚未确认。', { exact: true })).toBeVisible();
+  await expect(dialog.getByLabel('CPU 秒数上限', { exact: true })).toBeDisabled();
+  await dialog.getByRole('button', { name: '重试同一请求', exact: true }).click();
+  await expect(dialog.getByText('封存评估 Run 已登记。', { exact: true })).toBeVisible();
+  expect(writes).toHaveLength(2);
+  const first = writes[0]; if (!first) throw new Error('Sealed request was not captured');
+  expect(first.key).toBeTruthy(); expect(writes[1]).toEqual(first);
+  expect(first.body).toEqual({ schema_version: 1, cycle_id: cycle.id, policy_id: frozenBrief.content.evaluation_policy_id,
+    input_set_id: context.sealed_input_set_id, runtime_id: context.runtime_id, expected_runtime_revision: context.runtime_revision,
+    limits: { schema_version: 1, experiments: 0, cpu_seconds: '9007199254740993', wall_seconds: 60, memory_mib: 1024, output_bytes: '1048576' } });
+  expect((await new AxeBuilder({ page }).include('.ant-modal').withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
+});
 
 test('original Alpha, formal evidence and paged metrics retain zero, null, provenance and exact counts', async ({ page }) => {
   const { state, base } = await setup(page);

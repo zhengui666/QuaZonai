@@ -217,7 +217,7 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         )
         .route(
             "/api/v2/alpha-versions/{id}/evaluations",
-            get(evidence::evaluations),
+            get(evidence::evaluations).post(evidence::evaluate),
         )
         .route(
             "/api/v2/alpha-versions/{id}/calibration",
@@ -460,7 +460,7 @@ research::evaluation_policies,research::evaluation_policy,research::create_evalu
 brief::list,brief::get,brief::create,brief::update,
 cycles::freeze,cycles::frozen,cycles::start,cycles::list,cycles::get,cycles::selection,cycles::trials,
 experiments::propose,experiments::list,experiments::get,
-evidence::alphas,evidence::versions,evidence::version,evidence::calibration,evidence::evaluations,evidence::evaluation,evidence::metrics,
+evidence::alphas,evidence::versions,evidence::version,evidence::calibration,evidence::evaluations,evidence::evaluate,evidence::evaluation,evidence::metrics,
 settings::register_secret,settings::runtimes,settings::runtime,settings::create_runtime,settings::update_runtime,
 settings::downstreams,settings::downstream,settings::create_downstream,settings::update_downstream,
 runtime::probe,runtime::readiness,

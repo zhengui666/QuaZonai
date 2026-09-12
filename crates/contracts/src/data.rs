@@ -206,11 +206,12 @@ pub struct DataValidateRequest {
     pub input_set_id: Id,
     pub runtime_id: Id,
     pub expected_runtime_revision: Revision,
-    #[schema(schema_with = data_validation_limits_schema)]
+    #[schema(schema_with = bounded_native_limits_schema)]
     pub limits: crate::lifecycle::JobLimitsV1,
 }
 
-fn data_validation_limits_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+pub(crate) fn bounded_native_limits_schema(
+) -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
     use utoipa::{
         openapi::schema::{AllOfBuilder, ObjectBuilder, Type},
         PartialSchema,

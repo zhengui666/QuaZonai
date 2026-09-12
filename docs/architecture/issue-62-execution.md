@@ -3,6 +3,37 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Cycle-funded Operator Sealed admission, 2026-09-12
+
+Working source over `f7c9df08d2d108a0f489f8bf9e1eef61e1b072ad` adds the explicit
+Operator API/CLI/Web request in DESIGN A4.12. It reuses frozen Cycle context,
+original paid compilation/Validation/calibration, bounded Run admission, native
+task bindings and the same final source checks used before the first capability.
+Migration 042 extends existing command grants and requires the original Run
+receipt. No new queue, dependency, native operation or compatibility layer.
+The original compilation trial is not charged again; CPU and other limits remain
+Cycle-funded. Request replay returns the original Run without object I/O.
+
+`verify-lNs4Da` passed workspace check/format/strict Clippy, 29 native validation,
+128 Store and 21 HTTP/CLI tests, zero ignored, source unchanged and owned PG/PGMQ
+stopped. Opportunity tests now use the production creator. The new authenticated
+HTTP test follows original compilation/Validation/calibration through admission,
+202/replay/conflict, opportunity timing, formal publication and ACK. Scientific
+reports are controlled protocol fixtures, not actual market computation or T42.
+
+The first web run `web-verify-mbKSQT` found two strict TypeScript errors in the
+new test's captured-array reads; browser tests passed but that run was not green.
+After an explicit missing-capture guard, `web-verify-vtyKYm` passed type checking,
+504 unit tests, five Node tests, wire checks, build, CLI help, 36 Codex browser
+tests and 189 full browser cases. All six native generated outputs were produced
+twice with identical bytes and handwritten sources remained unchanged. The new
+case tests explicit Cycle selection, exact bigint/frozen request and identical
+idempotency retry after a lost reply across three viewports. UI fixtures prove
+presentation only. The 202 receipt is not qualification or Reviewer approval.
+
+Automatic continuation, durable independent Reviewer, qualification and the rest
+of Issue62 remain unfinished. No current-head GitHub CI/review/merge is claimed.
+
 ## Formal Sealed publication before ACK, 2026-09-12
 
 Working source over `672a7d30a8afa008b21a91ee677295e8f6d9629f` extends the existing

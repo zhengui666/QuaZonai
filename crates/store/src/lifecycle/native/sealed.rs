@@ -34,6 +34,51 @@ pub(super) async fn reserve(
     // All preceding callers hold project -> cycle -> Run; the shared root is last.
     let root: uuid::Uuid = sqlx::query_scalar("SELECT lineage.id FROM app.research_lineages lineage JOIN app.projects project ON project.root_lineage_id=lineage.id JOIN app.runs run ON run.project_id=project.id WHERE run.id=$1 FOR UPDATE OF lineage")
         .bind(spec.run_id.as_uuid()).fetch_one(&mut **tx).await?;
+    let binding = validate_binding(tx, spec.run_id).await?;
+    if binding.try_get::<uuid::Uuid, _>("root_lineage_id")? != root {
+        return Err(StoreError::Integrity);
+    }
+    let root = db::id(root)?;
+    let dataset = db::id(binding.try_get("dataset_revision_id")?)?;
+    let exposed: bool = sqlx::query_scalar(r#"
+SELECT EXISTS(
+ SELECT 1 FROM app.evidence_exposures e
+ JOIN app.dataset_revisions previous ON previous.id=e.dataset_revision_id
+ JOIN app.data_sources prior_source ON prior_source.id=previous.source_id
+ JOIN app.dataset_revisions selected ON selected.id=$2
+ JOIN app.data_sources current_source ON current_source.id=selected.source_id
+ WHERE e.root_lineage_id=$1 AND
+  (e.exposure_kind='LEGACY_UNKNOWN' OR
+   (e.actor_kind IN ('OPERATOR','RESEARCH_AGENT','IMPORT')
+    AND previous.partition_role='SEALED'
+    AND (previous.id=selected.id OR
+      (prior_source.runtime_id=current_source.runtime_id AND prior_source.native_catalog_ref=current_source.native_catalog_ref
+       AND previous.native_storage_version=selected.native_storage_version AND previous.native_snapshot_ref=selected.native_snapshot_ref))))
+)
+"#).bind(root.as_uuid()).bind(dataset.as_uuid()).fetch_one(&mut **tx).await?;
+    if exposed {
+        return Err(StoreError::Invalid("sealed_independence_unavailable"));
+    }
+    let used: i64 = sqlx::query_scalar("SELECT count(*) FROM app.evidence_exposures e JOIN app.dataset_revisions d ON d.id=e.dataset_revision_id WHERE e.root_lineage_id=$1 AND e.actor_kind='EVALUATOR' AND e.exposure_kind='RAW' AND d.partition_role='SEALED'")
+        .bind(root.as_uuid()).fetch_one(&mut **tx).await?;
+    if used >= i64::from(binding.try_get::<i32, _>("maximum_sealed_uses_per_lineage")?) {
+        return Err(DomainError::BudgetExhausted("sealed_uses").into());
+    }
+    let exposure: uuid::Uuid = sqlx::query_scalar("INSERT INTO app.evidence_exposures(root_lineage_id,dataset_revision_id,actor_kind,actor_session_ref,exposure_kind,exposed_at,purpose) VALUES($1,$2,'EVALUATOR',$3,'RAW',clock_timestamp(),'NATIVE_SEALED_CAPABILITY_RESERVED') RETURNING id")
+        .bind(root.as_uuid()).bind(dataset.as_uuid()).bind(attempt.to_string()).fetch_one(&mut **tx).await?;
+    sqlx::query("INSERT INTO app.sealed_opportunities(attempt_id,exposure_id) VALUES($1,$2)")
+        .bind(attempt.as_uuid())
+        .bind(exposure)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+/// Shared by complete task admission and the later original capability reservation.
+pub(in crate::lifecycle) async fn validate_binding(
+    tx: &mut Tx<'_>,
+    run: Id,
+) -> Result<PgRow, StoreError> {
     let binding_sql = format!(
         r#"
 SELECT v.root_lineage_id,s.dataset_revision_id,p.maximum_sealed_uses_per_lineage,
@@ -91,48 +136,12 @@ WHERE s.run_id=$1
         crate::evidence::EVALUATION
     );
     let binding = sqlx::query(&binding_sql)
-        .bind(spec.run_id.as_uuid())
+        .bind(run.as_uuid())
         .fetch_optional(&mut **tx)
         .await?
         .ok_or(StoreError::Invalid("sealed_evaluation_binding"))?;
     if binding.try_get::<Option<bool>, _>("valid")? != Some(true) {
         return Err(StoreError::Invalid("sealed_evaluation_binding"));
     }
-    if binding.try_get::<uuid::Uuid, _>("root_lineage_id")? != root {
-        return Err(StoreError::Integrity);
-    }
-    let root = db::id(root)?;
-    let dataset = db::id(binding.try_get("dataset_revision_id")?)?;
-    let exposed: bool = sqlx::query_scalar(r#"
-SELECT EXISTS(
- SELECT 1 FROM app.evidence_exposures e
- JOIN app.dataset_revisions previous ON previous.id=e.dataset_revision_id
- JOIN app.data_sources prior_source ON prior_source.id=previous.source_id
- JOIN app.dataset_revisions selected ON selected.id=$2
- JOIN app.data_sources current_source ON current_source.id=selected.source_id
- WHERE e.root_lineage_id=$1 AND
-  (e.exposure_kind='LEGACY_UNKNOWN' OR
-   (e.actor_kind IN ('OPERATOR','RESEARCH_AGENT','IMPORT')
-    AND previous.partition_role='SEALED'
-    AND (previous.id=selected.id OR
-      (prior_source.runtime_id=current_source.runtime_id AND prior_source.native_catalog_ref=current_source.native_catalog_ref
-       AND previous.native_storage_version=selected.native_storage_version AND previous.native_snapshot_ref=selected.native_snapshot_ref))))
-)
-"#).bind(root.as_uuid()).bind(dataset.as_uuid()).fetch_one(&mut **tx).await?;
-    if exposed {
-        return Err(StoreError::Invalid("sealed_independence_unavailable"));
-    }
-    let used: i64 = sqlx::query_scalar("SELECT count(*) FROM app.evidence_exposures e JOIN app.dataset_revisions d ON d.id=e.dataset_revision_id WHERE e.root_lineage_id=$1 AND e.actor_kind='EVALUATOR' AND e.exposure_kind='RAW' AND d.partition_role='SEALED'")
-        .bind(root.as_uuid()).fetch_one(&mut **tx).await?;
-    if used >= i64::from(binding.try_get::<i32, _>("maximum_sealed_uses_per_lineage")?) {
-        return Err(DomainError::BudgetExhausted("sealed_uses").into());
-    }
-    let exposure: uuid::Uuid = sqlx::query_scalar("INSERT INTO app.evidence_exposures(root_lineage_id,dataset_revision_id,actor_kind,actor_session_ref,exposure_kind,exposed_at,purpose) VALUES($1,$2,'EVALUATOR',$3,'RAW',clock_timestamp(),'NATIVE_SEALED_CAPABILITY_RESERVED') RETURNING id")
-        .bind(root.as_uuid()).bind(dataset.as_uuid()).bind(attempt.to_string()).fetch_one(&mut **tx).await?;
-    sqlx::query("INSERT INTO app.sealed_opportunities(attempt_id,exposure_id) VALUES($1,$2)")
-        .bind(attempt.as_uuid())
-        .bind(exposure)
-        .execute(&mut **tx)
-        .await?;
-    Ok(())
+    Ok(binding)
 }

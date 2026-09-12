@@ -2,10 +2,18 @@
 //! The parent Cycle is an explicit relational fixture, not a freeze/readiness bypass.
 #[path = "../../../tests/support/brief.rs"]
 mod brief_support;
+#[path = "../../../tests/support/cycles.rs"]
+mod cycle_support;
 #[path = "../../../tests/support/experiments.rs"]
 mod experiment_support;
+#[path = "../../../tests/support/missions.rs"]
+mod mission_support;
+#[path = "../../../tests/support/experiment_tasks.rs"]
+mod native_experiment_support;
 #[path = "../../../tests/support/research.rs"]
 mod research_support;
+#[path = "../../../tests/support/runtime.rs"]
+mod runtime_support;
 mod support;
 use axum::{
     body::Body,
@@ -16,10 +24,253 @@ use contracts::{experiments::ExperimentView, Id};
 use integrations::{artifacts::ArtifactStore, secrets::SecretVault};
 use serde_json::{json, Value};
 use server::{AppState, WebPolicy};
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 use store::authority::Actor;
 use support::{confirm, exchange, fixture, start, Fixture, Reply};
 use tower_sessions::cookie::Key;
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn operator_http_admits_original_calibrated_sealed_run_without_another_trial(pool: PgPool) {
+    use contracts::{
+        control::CommandResult, evidence::AlphaEvaluateRequestV1, lifecycle::JobLimitsV1,
+        runs::RunSnapshotV1, DbCounter, SchemaV1,
+    };
+    use store::{
+        lifecycle::{native::NativeObjectPublication, ClaimResult},
+        StoreError,
+    };
+    let (f, cookie, _) = setup(&pool).await;
+    let login: String = sqlx::query_scalar(
+        "SELECT id::text FROM app.browser_logins ORDER BY created_at DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let actor = Actor::Browser {
+        login_id: login.try_into().unwrap(),
+    };
+    let objects =
+        std::sync::Arc::new(ArtifactStore::open(&f._state.path().join("artifacts")).unwrap());
+    let data = cycle_support::setup_with_objects(&pool, &f.store, &actor, objects).await;
+    f.store
+        .freeze_brief(
+            &actor,
+            "http-sealed-freeze",
+            data.brief.id,
+            &data.freeze,
+            |id, size| data.read(id, size),
+        )
+        .await
+        .unwrap();
+    let start = cycle_support::start_request(&f.store, &actor, &data).await;
+    let started = data
+        .start(&f.store, &actor, "http-sealed-cycle", &start)
+        .await
+        .unwrap()
+        .resource;
+    mission_support::complete(&pool, &f.store, &data, started.run.id, false).await;
+    assert!(f.store.advance_initial_cycle(started.run.id).await.unwrap());
+    let message = f
+        .store
+        .read_mission_messages(60, 1)
+        .await
+        .unwrap()
+        .remove(0);
+    let Some(ClaimResult::Leased(parent)) = f
+        .store
+        .claim_mission(&message, "http-sealed-source", 120)
+        .await
+        .unwrap()
+    else {
+        panic!("research lease required")
+    };
+    let experiment =
+        native_experiment_support::propose(&pool, &f.store, &actor, &data, started.cycle.id).await;
+    let mut limits = JobLimitsV1 {
+        schema_version: SchemaV1,
+        experiments: 1,
+        cpu_seconds: DbCounter::new(10).unwrap(),
+        wall_seconds: 60,
+        memory_mib: 1024,
+        output_bytes: DbCounter::new(1024 * 1024).unwrap(),
+    };
+    let publish = |object: NativeObjectPublication| {
+        let objects = data.objects.clone();
+        async move {
+            objects
+                .put(object.id, &object.bytes)
+                .map_err(|_| StoreError::Integrity)
+        }
+    };
+    let compiler = f
+        .store
+        .start_experiment_compilation(parent.run.id, &parent.fence, experiment, &limits, publish)
+        .await
+        .unwrap()
+        .resource
+        .id;
+    native_experiment_support::complete_compilation(&pool, &f.store, &data, compiler).await;
+    limits.experiments = 0;
+    let forecast = f
+        .store
+        .start_experiment_forecast(
+            parent.run.id,
+            &parent.fence,
+            experiment,
+            &limits,
+            |id, size| data.read(id, size),
+            publish,
+        )
+        .await
+        .unwrap()
+        .resource
+        .id;
+    native_experiment_support::complete_forecast(&pool, &f.store, &data, forecast).await;
+    f.store
+        .prepare_research_alpha(parent.run.id, &parent.fence, experiment)
+        .await
+        .unwrap();
+    let validation = f
+        .store
+        .start_experiment_validation(
+            parent.run.id,
+            &parent.fence,
+            experiment,
+            &limits,
+            |id, size| data.read(id, size),
+            publish,
+        )
+        .await
+        .unwrap()
+        .resource
+        .id;
+    native_experiment_support::complete_validation(&pool, &f.store, &data, validation, 1000, 0.8)
+        .await;
+    let evaluation = f
+        .store
+        .publish_alpha_evaluation(validation, |id, size| data.read(id, size), publish)
+        .await
+        .unwrap()
+        .unwrap()
+        .resource;
+    let target = sqlx::query("SELECT v.id,e.subject_alpha_version_id FROM app.alpha_versions v JOIN app.calibrations c ON c.id=v.calibration_id JOIN app.evaluations e ON e.id=c.validation_evaluation_id WHERE e.id=$1")
+        .bind(evaluation.as_uuid()).fetch_one(&pool).await.unwrap();
+    let alpha = Id::try_from(target.get::<uuid::Uuid, _>("id").to_string()).unwrap();
+    let original = Id::try_from(
+        target
+            .get::<uuid::Uuid, _>("subject_alpha_version_id")
+            .to_string(),
+    )
+    .unwrap();
+    let request = AlphaEvaluateRequestV1 {
+        schema_version: SchemaV1,
+        cycle_id: started.cycle.id,
+        policy_id: data.brief.content.evaluation_policy_id,
+        input_set_id: data.freeze.execution_context.sealed_input_set_id,
+        runtime_id: data.freeze.execution_context.runtime_id,
+        expected_runtime_revision: data.freeze.execution_context.runtime_revision,
+        limits,
+    };
+    let body = serde_json::to_value(&request).unwrap();
+    let unbound = browser(
+        &f,
+        &cookie,
+        "POST",
+        &format!("/api/v2/alpha-versions/{original}/evaluations"),
+        "unbound-score",
+        body.clone(),
+    )
+    .await;
+    assert_eq!(unbound.status, StatusCode::UNPROCESSABLE_ENTITY);
+    let path = format!("/api/v2/alpha-versions/{alpha}/evaluations");
+    let response = browser(
+        &f,
+        &cookie,
+        "POST",
+        &path,
+        "original-held-out",
+        body.clone(),
+    )
+    .await;
+    assert_eq!(response.status, StatusCode::ACCEPTED, "{:?}", response.body);
+    let accepted: CommandResult<RunSnapshotV1> = serde_json::from_value(response.body).unwrap();
+    assert_eq!(accepted.resource.cycle_id, Some(started.cycle.id));
+    assert_eq!(accepted.resource.state, contracts::runs::RunState::Queued);
+    let allocation: Value =
+        sqlx::query_scalar("SELECT limits FROM app.run_admissions WHERE run_id=$1")
+            .bind(accepted.resource.id.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(allocation["experiments"], 0);
+    let opportunities: i64 = sqlx::query_scalar("SELECT count(*) FROM app.sealed_opportunities")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        opportunities, 0,
+        "HTTP admission does not grant native data access"
+    );
+    let replay = browser(
+        &f,
+        &cookie,
+        "POST",
+        &path,
+        "original-held-out",
+        body.clone(),
+    )
+    .await;
+    assert_eq!(replay.status, StatusCode::ACCEPTED);
+    assert_eq!(replay.body["replayed"], true);
+    assert_eq!(
+        replay.body["resource"]["id"],
+        accepted.resource.id.to_string()
+    );
+    let mut changed = body;
+    changed["limits"]["wall_seconds"] = json!(59);
+    assert_eq!(
+        browser(&f, &cookie, "POST", &path, "original-held-out", changed)
+            .await
+            .status,
+        StatusCode::CONFLICT
+    );
+    // These native producer bytes are controlled. Actual scientific execution has its own OCI tests.
+    let message = f
+        .store
+        .read_native_run_messages(60, 100)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|m| m.run_id == accepted.resource.id)
+        .unwrap();
+    let Some(ClaimResult::Leased(lease)) = f
+        .store
+        .claim_native_run(&message, "http-held-out-result", 60)
+        .await
+        .unwrap()
+    else {
+        panic!("sealed lease required")
+    };
+    native_experiment_support::complete_sealed(&pool, &f.store, &data, *lease).await;
+    f.store
+        .publish_alpha_evaluation(
+            accepted.resource.id,
+            |id, size| data.read(id, size),
+            publish,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    f.store.acknowledge_run(&message).await.unwrap();
+    let decision: String = sqlx::query_scalar(
+        "SELECT decision FROM app.evaluations WHERE run_id=$1 AND evaluation_kind='SEALED'",
+    )
+    .bind(accepted.resource.id.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(decision, "REJECT");
+}
 
 async fn send(
     f: &Fixture,

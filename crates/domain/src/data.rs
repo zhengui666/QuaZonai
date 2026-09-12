@@ -114,7 +114,13 @@ pub fn license_state(
 }
 
 pub fn validate_request(value: &DataValidateRequest) -> Result<(), DomainError> {
-    let limits = &value.limits;
+    bounded_native_limits(&value.limits)
+}
+
+/// Shared zero-trial allocations; the actual Runtime and owning Cycle impose further bounds.
+pub fn bounded_native_limits(
+    limits: &contracts::lifecycle::JobLimitsV1,
+) -> Result<(), DomainError> {
     if limits.experiments != 0 {
         return Err(bad("limits.experiments"));
     }

@@ -1,137 +1,75 @@
 //! Real PostgreSQL/PGMQ access reservations. Controlled reports are not scientific qualification.
 use super::*;
-use contracts::{
-    catalogs::RuntimeCatalogMetadataV1,
-    research::{ArtifactInputRole, DataPartition},
-    science::NativeAlphaSealedRequestV1,
-};
-use store::lifecycle::{native::NativeJob, RunSubmission};
-
-async fn metadata(
-    pool: &PgPool,
-    f: &cycle_support::Fixture,
-    dataset: Id,
-) -> RuntimeCatalogMetadataV1 {
-    let row = sqlx::query("SELECT a.id,a.byte_count FROM app.dataset_registration_evidence e JOIN app.artifacts a ON a.id=e.native_metadata_artifact_id WHERE e.dataset_revision_id=$1")
-        .bind(dataset.as_uuid()).fetch_one(pool).await.unwrap();
-    serde_json::from_slice(
-        &f.read(
-            Id::try_from(row.get::<uuid::Uuid, _>("id").to_string()).unwrap(),
-            DbCounter::new(row.get::<i64, _>("byte_count") as u64).unwrap(),
-        )
-        .await
-        .unwrap(),
-    )
-    .unwrap()
-}
+use contracts::evidence::AlphaEvaluateRequestV1;
+use store::{authority::Actor, lifecycle::native::NativeJob};
 
 async fn task(
     pool: &PgPool,
     store: &Store,
     f: &cycle_support::Fixture,
-    source_run: Id,
+    actor: &Actor,
     evaluation: Id,
     key: &str,
     lease_seconds: u16,
 ) -> RunLease {
-    let source = sqlx::query("SELECT a.id,a.byte_count,t.capability_snapshot_artifact_id,t.image_ref,r.cycle_id FROM app.run_native_tasks t JOIN app.runs r ON r.id=t.run_id JOIN app.artifacts a ON a.id=t.parameters_artifact_id WHERE t.run_id=$1")
-        .bind(source_run.as_uuid()).fetch_one(pool).await.unwrap();
-    let id = Id::try_from(source.get::<uuid::Uuid, _>("id").to_string()).unwrap();
-    let bytes = f
-        .read(
-            id,
-            DbCounter::new(source.get::<i64, _>("byte_count") as u64).unwrap(),
-        )
-        .await
-        .unwrap();
-    let NativeTaskParametersV1::ValidateAlpha { request, .. } =
-        serde_json::from_slice(&bytes).unwrap()
-    else {
-        panic!("original validation required")
-    };
-    let version = sqlx::query("SELECT v.id,v.model_artifact_id,c.model_artifact_id AS fitted,w.byte_count AS wasm_bytes,m.byte_count AS fitted_bytes FROM app.alpha_versions v JOIN app.calibrations c ON c.id=v.calibration_id JOIN app.artifacts w ON w.id=v.model_artifact_id JOIN app.artifacts m ON m.id=c.model_artifact_id WHERE c.validation_evaluation_id=$1")
+    let version = sqlx::query("SELECT v.id,r.cycle_id FROM app.alpha_versions v JOIN app.calibrations c ON c.id=v.calibration_id JOIN app.evaluations e ON e.id=c.validation_evaluation_id JOIN app.runs r ON r.id=e.run_id WHERE e.id=$1")
         .bind(evaluation.as_uuid()).fetch_one(pool).await.unwrap();
     let alpha = Id::try_from(version.get::<uuid::Uuid, _>("id").to_string()).unwrap();
-    let wasm = Id::try_from(
-        version
-            .get::<uuid::Uuid, _>("model_artifact_id")
-            .to_string(),
-    )
-    .unwrap();
-    let fitted = Id::try_from(version.get::<uuid::Uuid, _>("fitted").to_string()).unwrap();
-    let held = metadata(pool, f, f.data.sealed).await;
-    let training = metadata(pool, f, f.data.validation).await;
-    let mut forecast = request.forecast;
-    forecast.selection = held.quality.datasets[0].selection.clone();
-    let operation = NativeTaskParametersV1::EvaluateSealedAlpha {
-        schema_version: SchemaV1,
-        dataset_revision_id: f.data.sealed,
-        model_artifact_id: wasm,
-        calibration_artifact_id: Some(fitted),
-        request: Box::new(NativeAlphaSealedRequestV1 {
-            schema_version: SchemaV1,
-            forecast,
-            target_kind: request.target_kind,
-            research_available_through_ns: training.quality.datasets[0].available_through_ns,
-        }),
-    };
-    let parameters = Id::new();
-    let bytes = serde_json::to_vec(&operation).unwrap();
-    f.objects.put(parameters, &bytes).unwrap();
     let context = &f.freeze.execution_context;
-    // Generic test administration pays the ordinary trial charge. This fixture
-    // tests access accounting, not the forthcoming non-trial Sealed admission.
-    let limits = super::limits();
+    let mut limits = super::limits();
+    limits.experiments = 0;
+    let request = AlphaEvaluateRequestV1 {
+        schema_version: SchemaV1,
+        cycle_id: Id::try_from(version.get::<uuid::Uuid, _>("cycle_id").to_string()).unwrap(),
+        policy_id: f.brief.content.evaluation_policy_id,
+        input_set_id: context.sealed_input_set_id,
+        runtime_id: context.runtime_id,
+        expected_runtime_revision: context.runtime_revision,
+        limits,
+    };
     let run = store
-        .enqueue_run(
+        .start_alpha_evaluation(
+            actor,
             key,
-            &RunSubmission {
-                cycle_id: Id::try_from(source.get::<uuid::Uuid, _>("cycle_id").to_string())
-                    .unwrap(),
-                input_set_id: context.sealed_input_set_id,
-                runtime_id: context.runtime_id,
-                runtime_revision: context.runtime_revision,
-                kind: contracts::runs::RunKind::AlphaEvaluate,
-                limits,
+            alpha,
+            &request,
+            |id, size| f.read(id, size),
+            |object| {
+                let objects = f.objects.clone();
+                async move {
+                    objects
+                        .put(object.id, &object.bytes)
+                        .map_err(|_| StoreError::Integrity)
+                }
             },
         )
         .await
         .unwrap()
         .resource;
-    let inputs = vec![
-        RuntimeInputV1::Dataset {
-            revision_id: f.data.sealed,
-            registered_ref: held.registered_ref,
-            storage_version: held.storage_version,
-            role: DataPartition::Sealed,
-        },
-        RuntimeInputV1::Artifact {
-            artifact_id: wasm,
-            storage_version: "1".into(),
-            byte_count: DbCounter::new(version.get::<i64, _>("wasm_bytes") as u64).unwrap(),
-            role: ArtifactInputRole::Model,
-        },
-        RuntimeInputV1::Artifact {
-            artifact_id: fitted,
-            storage_version: "1".into(),
-            byte_count: DbCounter::new(version.get::<i64, _>("fitted_bytes") as u64).unwrap(),
-            role: ArtifactInputRole::Model,
-        },
-        RuntimeInputV1::Artifact {
-            artifact_id: parameters,
-            storage_version: "1".into(),
-            byte_count: DbCounter::new(bytes.len() as u64).unwrap(),
-            role: ArtifactInputRole::Parameters,
-        },
-    ];
-    let mut tx = pool.begin().await.unwrap();
-    sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,'PARAMETERS','application/json','qz.native_task','1','LOCAL',$3,'1',$4,'EVALUATOR_ONLY','FIXTURE','RUNTIME','REFERENCED')")
-        .bind(parameters.as_uuid()).bind(f.data.project.as_uuid()).bind(parameters.to_string()).bind(bytes.len() as i64).execute(&mut *tx).await.unwrap();
-    sqlx::query("INSERT INTO app.run_native_tasks(run_id,parameters_artifact_id,input_bindings,image_ref,cpu,capability_snapshot_artifact_id,output_schemas,origin,access_class) VALUES($1,$2,$3,$4,1,$5,$6,'FIXTURE','EVALUATOR_ONLY')")
-        .bind(run.id.as_uuid()).bind(parameters.as_uuid()).bind(serde_json::to_value(&inputs).unwrap()).bind(source.get::<String,_>("image_ref")).bind(source.get::<uuid::Uuid,_>("capability_snapshot_artifact_id")).bind(serde_json::to_value(operation.output_schemas()).unwrap()).execute(&mut *tx).await.unwrap();
-    sqlx::query("INSERT INTO app.sealed_evaluation_tasks(run_id,alpha_version_id,policy_id,validation_evaluation_id,dataset_revision_id) VALUES($1,$2,$3,$4,$5)")
-        .bind(run.id.as_uuid()).bind(alpha.as_uuid()).bind(f.brief.content.evaluation_policy_id.as_uuid()).bind(evaluation.as_uuid()).bind(f.data.sealed.as_uuid()).execute(&mut *tx).await.unwrap();
-    tx.commit().await.unwrap();
+    let trials: i64 = sqlx::query_scalar(
+        "SELECT (limits->>'experiments')::bigint FROM app.run_admissions WHERE run_id=$1",
+    )
+    .bind(run.id.as_uuid())
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        trials, 0,
+        "the original compiled trial is not charged again"
+    );
+    let replay = store
+        .start_alpha_evaluation(
+            actor,
+            key,
+            alpha,
+            &request,
+            |_, _| async { panic!("replay must not read inputs") },
+            |_| async { panic!("replay must not publish") },
+        )
+        .await
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.resource.id, run.id);
     let message = validation_publication::message(pool, run.id).await;
     let Some(ClaimResult::Leased(lease)) = store
         .claim_native_run(&message, key, lease_seconds)
@@ -153,16 +91,7 @@ async fn sealed_metrics_use_own_policy_and_original_opportunity_not_source_pass(
         .unwrap()
         .resource;
     cycle_selection::cancelled_parent(&pool, &store, &actor, &parent).await;
-    let lease = task(
-        &pool,
-        &store,
-        &f,
-        validation,
-        source,
-        "sealed-scientific",
-        60,
-    )
-    .await;
+    let lease = task(&pool, &store, &f, &actor, source, "sealed-scientific", 60).await;
     let run = lease.run.id;
     let native = experiment_support::complete_sealed(&pool, &store, &f, lease).await;
     // A later disclosure cannot rewrite the already reserved opportunity.
@@ -237,16 +166,7 @@ async fn cancelled_sealed_publication_is_atomic_replayable_and_required_before_a
         .unwrap()
         .resource;
     cycle_selection::cancelled_parent(&pool, &store, &actor, &parent).await;
-    let lease = task(
-        &pool,
-        &store,
-        &f,
-        validation,
-        source,
-        "sealed-publication",
-        60,
-    )
-    .await;
+    let lease = task(&pool, &store, &f, &actor, source, "sealed-publication", 60).await;
     store.native_job(lease.run.id, &lease.fence).await.unwrap();
     let current = store.get_run(&actor, lease.run.id).await.unwrap();
     store
@@ -331,8 +251,8 @@ async fn root_opportunity_is_atomic_once_per_attempt_and_cancellation_never_refu
         .unwrap()
         .resource;
     cycle_selection::cancelled_parent(&pool, &store, &actor, &parent).await;
-    let first = task(&pool, &store, &f, validation, evaluation, "sealed-a", 60).await;
-    let second = task(&pool, &store, &f, validation, evaluation, "sealed-b", 60).await;
+    let first = task(&pool, &store, &f, &actor, evaluation, "sealed-a", 60).await;
+    let second = task(&pool, &store, &f, &actor, evaluation, "sealed-b", 60).await;
     let (a, b) = tokio::join!(
         store.native_job(first.run.id, &first.fence),
         store.native_job(second.run.id, &second.fence)
@@ -407,7 +327,7 @@ async fn prior_summary_exposure_blocks_new_capability_without_a_spec_or_refund(p
         &pool,
         &store,
         &f,
-        validation,
+        &actor,
         evaluation,
         "sealed-disclosed",
         60,
@@ -438,16 +358,7 @@ async fn expired_lease_after_lineage_lock_wait_cannot_commit_an_opportunity(pool
         .unwrap()
         .resource;
     cycle_selection::cancelled_parent(&pool, &store, &actor, &parent).await;
-    let lease = task(
-        &pool,
-        &store,
-        &f,
-        validation,
-        evaluation,
-        "sealed-expiring",
-        1,
-    )
-    .await;
+    let lease = task(&pool, &store, &f, &actor, evaluation, "sealed-expiring", 1).await;
     let mut holding = pool.begin().await.unwrap();
     sqlx::query("SELECT lineage.id FROM app.research_lineages lineage JOIN app.projects project ON project.root_lineage_id=lineage.id WHERE project.id=$1 FOR UPDATE OF lineage")
         .bind(f.data.project.as_uuid()).fetch_one(&mut *holding).await.unwrap();

@@ -12,7 +12,7 @@ use contracts::{
 use std::collections::{BTreeMap, BTreeSet};
 
 mod probe;
-mod sealed;
+pub(super) mod sealed;
 pub use probe::RunProbeTicket;
 
 /// Constructed only by an authorized domain service. Not a public request DTO.

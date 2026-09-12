@@ -24,7 +24,7 @@ enum AlphaStage {
     Validation,
 }
 
-fn native_cpu(
+pub(super) fn native_cpu(
     limits: &JobLimitsV1,
     capabilities: &contracts::runtime::RuntimeCapabilitiesV1,
 ) -> Result<u16, StoreError> {

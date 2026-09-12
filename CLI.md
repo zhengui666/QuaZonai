@@ -217,12 +217,21 @@ Sealed要求明确报SEALED_POLICY_NOT_DEFINED，不补阈值或开始封存任�
 
 内部EVALUATE_SEALED_ALPHA操作绑定原SEALED目录、Wasm MODEL及SCORE的原校准
 MODEL，输出qz.alpha_sealed.v1。PARAMETERS只引用校准产物ID，不复制拟合配置；
-Job与可信采纳分别读取原对象。该操作不是新的Agent工具或公开手工评估入口，
+Job与可信采纳分别读取原对象。该操作不是新的Agent工具或手工上传评估入口，
 不替代Sealed机会预约、独立Review和资格判定。Runtime镜像须含alpha-sealed/1。
 首次受管Sealed能力需同事务登记原Attempt的读取机会；原验证已过期、不独立、
 累计机会耗尽或缺少精确Alpha/政策绑定均不能取得能力。重放不重复消费，取消不退款。
 可信Worker在ACK前发表原SEALED评估及asset:N指标；使用独立封存阈值，不借源验证PASS。
 失败/取消仍正式记录INCONCLUSIVE，报告限EVALUATOR_ONLY；发表不授Reviewer或资格。
+
+人工`alpha evaluate <alpha_version_id>`调用`POST /api/v2/alpha-versions/{id}/evaluations`。
+输入为`schema_version=1, cycle_id, policy_id, input_set_id, runtime_id,
+expected_runtime_revision, limits`；limits.experiments必须为0，其余原生资源限额必填。
+必须使用同项目RUNNING Cycle冻结的政策、Sealed输入和Runtime，仍占该Cycle累计预算；
+新政策使用新Cycle，不修改源模型。CLI使用ALPHA_EVALUATE原请求及精确Alpha目标的
+Operator grant，HTTP返回202和原Run。重放不重新读写参数，不重复计原编译试验。
+模型、原Validation校准及研究可见截止由服务确定；不能填写镜像/路径/模型或PASS。
+本入口只接受评估，不授Sealed读取能力、Reviewer结论或资格；首次读取仍按原Attempt预约。
 
 正式验证的内部准入绑定原Alpha/Policy/Validation目录，不增加可由Agent指定Run或
 免费试验的CLI/MCP接口。原生Worker通过A4.8收尾入口在终态采纳后、ACK前原子发表

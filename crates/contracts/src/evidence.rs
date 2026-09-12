@@ -5,6 +5,20 @@ use utoipa::ToSchema;
 
 use crate::{DbCounter, DecimalValue, Id, Revision, SchemaV1};
 
+/// Explicit Cycle-funded evaluation of an existing immutable Alpha, not a new trial.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AlphaEvaluateRequestV1 {
+    pub schema_version: SchemaV1,
+    pub cycle_id: Id,
+    pub policy_id: Id,
+    pub input_set_id: Id,
+    pub runtime_id: Id,
+    pub expected_runtime_revision: Revision,
+    #[schema(schema_with = crate::data::bounded_native_limits_schema)]
+    pub limits: crate::lifecycle::JobLimitsV1,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum AlphaLifecycle {

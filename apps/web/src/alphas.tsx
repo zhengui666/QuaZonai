@@ -1,10 +1,12 @@
-import { Alert, Button, Descriptions, Drawer, Space, Table, Typography } from 'antd';
-import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
-import { api, dataOf, displayTime } from './api';
+import { App, Alert, Button, Descriptions, Drawer, Form, Input, InputNumber, Modal, Space, Table, Typography } from 'antd';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useRef, useState } from 'react';
+import { api, ApiFailure, dataOf, displayTime, Intent, isCounter } from './api';
 import type { Schema } from './api';
 import { ResourceSelect } from './resource-select';
-import { NoData, Pager, QueryPanel, StateTag } from './ui';
+import { ErrorNotice, NoData, Pager, QueryPanel, StateTag, useGuard, useOnline } from './ui';
+import { counterRules } from './budget-fields';
+import { RunDetail } from './runs';
 
 type Alpha = Schema['AlphaView'];
 type Version = Schema['AlphaVersionView'];
@@ -16,7 +18,7 @@ export function Alphas() {
   return <Space orientation="vertical" size="large" className="full-width">
     <Typography.Title level={1}>Alpha</Typography.Title>
     <Alert type="info" showIcon title="研究登记、科学 PASS 和未过期都不等于可交付资格。"
-      description="只查看原版本和正式 Validation 记录；不会启动研究、校准、Sealed 读取、审批或交付。" />
+      description="查看版本和正式 Validation 不启动任务。封存评估需另行明确提交，并使用运行中 Cycle 的冻结政策和预算；不授审批或交付。" />
     <ResourceSelect label="选择 Alpha 所属项目" value={project} onChange={setProject} queryKey={['alpha-projects']}
       load={async (cursor, signal) => {
         const page = dataOf(await api.GET('/api/v2/projects', { params: { query: { cursor, limit: 50 } }, signal }));
@@ -84,6 +86,7 @@ function Versions({ alpha }: { alpha: Alpha }) {
 
 function VersionDetail({ alpha, number }: { alpha: string; number: string }) {
   const [calibration, setCalibration] = useState(false);
+  const [evaluate, setEvaluate] = useState(false);
   const query = useQuery({ queryKey: ['alpha-version', alpha, number], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/alphas/{id}/versions/{version}', {
     params: { path: { id: alpha, version: number } }, signal,
   })) });
@@ -105,10 +108,94 @@ function VersionDetail({ alpha, number }: { alpha: string; number: string }) {
         { key: 'runtime', label: '冻结镜像', children: version.runtime_image_ref },
       ]} />
       {version.calibration_id && <Button onClick={() => setCalibration(true)}>查看冻结校准来源</Button>}
+      <Button disabled={!version.model_artifact_id || (version.signal_kind === 'SCORE' && !version.calibration_id)} onClick={() => setEvaluate(true)}>请求封存评估</Button>
       <Evaluations key={version.id} version={version.id} />
       {calibration && <CalibrationDetail version={version.id} close={() => setCalibration(false)} />}
+      {evaluate && <AlphaEvaluate version={version} close={() => setEvaluate(false)} />}
     </Space>}
   </QueryPanel>;
+}
+
+function AlphaEvaluate({ version, close }: { version: Version; close: () => void }) {
+  type Request = Schema['AlphaEvaluateRequestV1'];
+  type Fields = Omit<Request['limits'], 'schema_version' | 'experiments'> & { cycle_id: string };
+  const [form] = Form.useForm<Fields>();
+  const online = useOnline(); const client = useQueryClient(); const { modal } = App.useApp();
+  const intent = useRef(new Intent()); const hadUnknown = useRef(false);
+  const [submitted, setSubmitted] = useState<Request>();
+  const [receipt, setReceipt] = useState<Schema['RunSnapshotV1']>();
+  const [showRun, setShowRun] = useState(false);
+  const cycleId: string | undefined = Form.useWatch('cycle_id', form);
+  const cycle = useQuery({ queryKey: ['cycle', cycleId], enabled: !!cycleId, staleTime: 0,
+    queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/cycles/{id}', { params: { path: { id: cycleId! } }, signal })) });
+  const frozen = useQuery({ queryKey: ['frozen-brief', cycle.data?.brief_id], enabled: !!cycle.data && !cycle.isError,
+    queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/briefs/{id}/execution-context', { params: { path: { id: cycle.data!.brief_id } }, signal })) });
+  const mutation = useMutation({ mutationFn: async (body: Request) => dataOf(await api.POST('/api/v2/alpha-versions/{id}/evaluations', {
+    params: { path: { id: version.id }, header: intent.current.headers('POST', `/api/v2/alpha-versions/${version.id}/evaluations`, body) }, body,
+  })), onSuccess: async result => {
+    setReceipt(result.resource); intent.current.clear();
+    await Promise.all([client.invalidateQueries({ queryKey: ['runs'] }), client.invalidateQueries({ queryKey: ['cycles', version.project_id] })]);
+  }, onError: error => {
+    const rejected = error instanceof ApiFailure && ((!!error.problem && error.status >= 400 && error.status < 500) || error.code === 'OFFLINE');
+    if (!rejected) hadUnknown.current = true;
+    if (rejected && !hadUnknown.current) setSubmitted(undefined);
+  } });
+  useGuard(!receipt);
+  const ready = cycle.data?.project_id === version.project_id && cycle.data.state === 'RUNNING' && !cycle.isError && !cycle.isFetching
+    && frozen.data?.brief.project_id === version.project_id && !frozen.isError && !frozen.isFetching;
+  const retry = submitted !== undefined && mutation.isError;
+  function submit(value: Fields) {
+    if (!online || mutation.isPending || submitted || !ready || !frozen.data) return;
+    const context = frozen.data.execution_context;
+    const request: Request = { schema_version: 1, cycle_id: value.cycle_id, policy_id: frozen.data.brief.content.evaluation_policy_id,
+      input_set_id: context.sealed_input_set_id, runtime_id: context.runtime_id, expected_runtime_revision: context.runtime_revision,
+      limits: { schema_version: 1, experiments: 0, cpu_seconds: value.cpu_seconds, wall_seconds: value.wall_seconds, memory_mib: value.memory_mib, output_bytes: value.output_bytes } };
+    setSubmitted(request); mutation.mutate(request);
+  }
+  function dismiss() {
+    if (mutation.isPending) return;
+    if (retry) modal.confirm({ title: '关闭未确认的封存请求？', content: '关闭不撤销可能已登记的 Run。请先核对运行记录，不要创建另一次封存请求。', okText: '关闭并核对', cancelText: '保留原请求', onOk: close });
+    else close();
+  }
+  if (showRun && receipt) return <RunDetail id={receipt.id} close={() => setShowRun(false)} />;
+  return <Modal open title="确认请求封存评估" width={760} maskClosable={false} onCancel={dismiss} closable={!mutation.isPending}
+    footer={receipt ? <Button onClick={close}>返回版本</Button> : undefined} cancelText="返回" okText={retry ? '重试同一请求' : '确认请求评估'}
+    confirmLoading={mutation.isPending} okButtonProps={{ disabled: !online || (!retry && !ready) }}
+    onOk={() => { if (!online || mutation.isPending || receipt) return; if (retry && submitted) mutation.mutate(submitted); else form.submit(); }}>
+    <Space orientation="vertical" className="full-width" size="middle">
+      <Typography.Paragraph className="break-word">原 Alpha 版本：{version.id}</Typography.Paragraph>
+      <ErrorNotice error={mutation.error} />
+      {retry && <Alert type="warning" showIcon title="请求结果尚未确认。" description="保留原内容与幂等键；重试不会重新选择 Cycle、政策或资源限额。" />}
+      {receipt ? <>
+        <Alert type="success" showIcon title="封存评估 Run 已登记。" description="202 不是科学通过、Reviewer 结论或资格；首次读取仍需原 Attempt 的机会预约。" />
+        <Typography.Text className="break-word">Run {receipt.id} · {receipt.state}</Typography.Text>
+        <Button onClick={() => setShowRun(true)}>查看评估运行</Button>
+      </> : <>
+        <Alert type="info" showIcon title="复用原模型和校准，不重收原编译试验。" description="新的 Run 仍占 Cycle 资源和封存机会，失败或取消不退已授机会。默认限额只是可修改草稿，不是实测用量。" />
+        <Form form={form} layout="vertical" onFinish={submit} disabled={!online || mutation.isPending || submitted !== undefined}
+          initialValues={{ cpu_seconds: '10', wall_seconds: 60, memory_mib: 1024, output_bytes: '1048576' }}>
+          <Form.Item name="cycle_id" label="承担评估预算的 Cycle" rules={[{ required: true, message: '请选择本项目运行中的 Cycle。' }]}>
+            <ResourceSelect label="选择评估 Cycle" queryKey={['alpha-evaluate-cycles', version.project_id]} load={async (cursor, signal) => {
+              const page = dataOf(await api.GET('/api/v2/projects/{id}/cycles', { params: { path: { id: version.project_id }, query: { cursor, limit: 50 } }, signal }));
+              return { next_cursor: page.next_cursor, items: page.items.filter(item => item.project_id === version.project_id).map(item => ({ value: item.id, label: `Cycle ${item.ordinal} · ${item.state} · ${item.id}`, disabled: item.state !== 'RUNNING' })) };
+            }} />
+          </Form.Item>
+          <ErrorNotice error={cycle.error} /><ErrorNotice error={frozen.error} />
+          {frozen.data && <Descriptions column={1} size="small" className="break-word" items={[
+            { key: 'policy', label: '冻结政策', children: frozen.data.brief.content.evaluation_policy_id },
+            { key: 'input', label: '冻结 Sealed 输入', children: frozen.data.execution_context.sealed_input_set_id },
+            { key: 'runtime', label: '冻结 Runtime / 修订', children: `${frozen.data.execution_context.runtime_id} / ${frozen.data.execution_context.runtime_revision}` },
+          ]} />}
+          <div className="field-grid">
+            <Form.Item name="cpu_seconds" label="CPU 秒数上限" rules={counterRules}><Input inputMode="numeric" maxLength={19} /></Form.Item>
+            <Form.Item name="wall_seconds" label="墙钟秒数上限" rules={[{ required: true, type: 'integer', min: 1, max: 86400 }]}><InputNumber min={1} max={86400} precision={0} /></Form.Item>
+            <Form.Item name="memory_mib" label="内存上限（MiB）" rules={[{ required: true, type: 'integer', min: 1, max: 1048576 }]}><InputNumber min={1} max={1048576} precision={0} /></Form.Item>
+            <Form.Item name="output_bytes" label="输出字节上限" rules={[{ required: true }, { validator: (_: unknown, value: unknown) => typeof value === 'string' && isCounter(value, true) && BigInt(value) <= 67108864n ? Promise.resolve() : Promise.reject(new Error('请输入 1 至 67108864 的整数字符串。')) }]}><Input inputMode="numeric" maxLength={19} /></Form.Item>
+          </div>
+        </Form>
+      </>}
+    </Space>
+  </Modal>;
 }
 
 function CalibrationDetail({ version, close }: { version: string; close: () => void }) {

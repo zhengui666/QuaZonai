@@ -1591,6 +1591,28 @@ NATIVE_SEALED_CAPABILITY_RESERVED，actor_session_ref保留原Attempt引用。
 或发表对象。封存评估不修改原实验结论、Alpha版本或active指针，不再拟合校准。
 ACK须等待该Run的精确SEALED评估和发布标记；发表不代表独立Reviewer或资格完成。
 
+### A4.12 有预算的人工封存评估准入
+
+`POST /alpha-versions/{id}/evaluations`与`alpha evaluate <id>`接受schema_version、
+cycle_id、policy_id、input_set_id、runtime_id、expected_runtime_revision和limits。
+它是Operator命令；CLI须有精确Alpha目标和原请求的一次授权，Mission不得调用。
+使用同项目RUNNING Cycle的预算及冻结政策/Sealed InputSet/Runtime，不创建无预算
+后台工作；另一政策应进入显式的新Cycle，而不是改写旧政策或原模型。
+
+目标为原EXPECTED_RETURN版本或真实附加校准的SCORE版本。服务沿原正式Validation
+找到已付费的原编译、Wasm、预测参数及实际训练元数据；调用者不能提供模型、校准、
+镜像、原生路径或研究可见时间。研究可见截止取原训练/Discovery登记质量的实际
+available-through上界，不用宽松目录decision_cutoff或当前墙钟代替。
+Sealed只读取登记元数据作准入检查，原始市场行仍须等A4.10首次能力预约。
+
+limits.experiments必须为0；原编译确已计入的试验不重复收费，但新的Run仍预约
+CPU/墙钟/内存/输出并受Cycle累计预算约束。原生当前能力、冻结镜像、全部输入
+及精确政策关联在创建前核对，参数发表、Run/PGMQ、NativeTask和Sealed关联同事务
+提交；未知提交重放原命令，不另建任务。拒绝或发表失败不留下半状态。
+普通通用ALPHA_EVALUATE仍需试验收费，standalone管理入口不扩展成免费研究接口。
+此人工操作只请求评估，不授予资格、Reviewer身份或交付；自动Reviewer使用同样
+的模型/数据准备规则与原Cycle预算，不能复用人工授权冒充Operator。
+
 ## A5. Mandate、Candidate、目标与 Release
 
 ```text
