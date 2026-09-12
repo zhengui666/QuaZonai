@@ -40,6 +40,29 @@ pub(super) async fn reserve(
     }
     let root = db::id(root)?;
     let dataset = db::id(binding.try_get("dataset_revision_id")?)?;
+    check_opportunity(
+        tx,
+        root,
+        dataset,
+        binding.try_get("maximum_sealed_uses_per_lineage")?,
+    )
+    .await?;
+    let exposure: uuid::Uuid = sqlx::query_scalar("INSERT INTO app.evidence_exposures(root_lineage_id,dataset_revision_id,actor_kind,actor_session_ref,exposure_kind,exposed_at,purpose) VALUES($1,$2,'EVALUATOR',$3,'RAW',clock_timestamp(),'NATIVE_SEALED_CAPABILITY_RESERVED') RETURNING id")
+        .bind(root.as_uuid()).bind(dataset.as_uuid()).bind(attempt.to_string()).fetch_one(&mut **tx).await?;
+    sqlx::query("INSERT INTO app.sealed_opportunities(attempt_id,exposure_id) VALUES($1,$2)")
+        .bind(attempt.as_uuid())
+        .bind(exposure)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+async fn check_opportunity(
+    tx: &mut Tx<'_>,
+    root: Id,
+    dataset: Id,
+    maximum: i32,
+) -> Result<(), StoreError> {
     let exposed: bool = sqlx::query_scalar(r#"
 SELECT EXISTS(
  SELECT 1 FROM app.evidence_exposures e
@@ -61,17 +84,35 @@ SELECT EXISTS(
     }
     let used: i64 = sqlx::query_scalar("SELECT count(*) FROM app.evidence_exposures e JOIN app.dataset_revisions d ON d.id=e.dataset_revision_id WHERE e.root_lineage_id=$1 AND e.actor_kind='EVALUATOR' AND e.exposure_kind='RAW' AND d.partition_role='SEALED'")
         .bind(root.as_uuid()).fetch_one(&mut **tx).await?;
-    if used >= i64::from(binding.try_get::<i32, _>("maximum_sealed_uses_per_lineage")?) {
+    if used >= i64::from(maximum) {
         return Err(DomainError::BudgetExhausted("sealed_uses").into());
     }
-    let exposure: uuid::Uuid = sqlx::query_scalar("INSERT INTO app.evidence_exposures(root_lineage_id,dataset_revision_id,actor_kind,actor_session_ref,exposure_kind,exposed_at,purpose) VALUES($1,$2,'EVALUATOR',$3,'RAW',clock_timestamp(),'NATIVE_SEALED_CAPABILITY_RESERVED') RETURNING id")
-        .bind(root.as_uuid()).bind(dataset.as_uuid()).bind(attempt.to_string()).fetch_one(&mut **tx).await?;
-    sqlx::query("INSERT INTO app.sealed_opportunities(attempt_id,exposure_id) VALUES($1,$2)")
-        .bind(attempt.as_uuid())
-        .bind(exposure)
-        .execute(&mut **tx)
-        .await?;
     Ok(())
+}
+
+/// A persisted native capability retains its original opportunity. Only an
+/// ungranted task can be rejected here, under the same root lock as reservation.
+pub(super) async fn unavailable(tx: &mut Tx<'_>, run: Id, attempt: Id) -> Result<bool, StoreError> {
+    let row = sqlx::query("SELECT lineage.id AS root_lineage_id,s.dataset_revision_id,p.maximum_sealed_uses_per_lineage FROM app.sealed_evaluation_tasks s JOIN app.alpha_versions v ON v.id=s.alpha_version_id JOIN app.research_lineages lineage ON lineage.id=v.root_lineage_id JOIN app.evaluation_policies p ON p.id=s.policy_id WHERE s.run_id=$1 AND NOT EXISTS(SELECT 1 FROM app.run_native_attempts WHERE attempt_id=$2) FOR UPDATE OF lineage")
+        .bind(run.as_uuid()).bind(attempt.as_uuid()).fetch_optional(&mut **tx).await?;
+    let Some(row) = row else {
+        return Ok(false);
+    };
+    match check_opportunity(
+        tx,
+        db::id(row.try_get("root_lineage_id")?)?,
+        db::id(row.try_get("dataset_revision_id")?)?,
+        row.try_get("maximum_sealed_uses_per_lineage")?,
+    )
+    .await
+    {
+        Ok(()) => Ok(false),
+        Err(
+            StoreError::Domain(DomainError::BudgetExhausted("sealed_uses"))
+            | StoreError::Invalid("sealed_independence_unavailable"),
+        ) => Ok(true),
+        Err(error) => Err(error),
+    }
 }
 
 /// Shared by complete task admission and the later original capability reservation.

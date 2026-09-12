@@ -12785,7 +12785,8 @@
           "RUNTIME_FAILED",
           "RUNTIME_CANCELLED",
           "RESULT_DISCARDED_AFTER_CANCEL",
-          "DEADLINE_EXCEEDED"
+          "DEADLINE_EXCEEDED",
+          "SEALED_OPPORTUNITY_UNAVAILABLE"
         ],
         "type": "string"
       },

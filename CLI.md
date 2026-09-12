@@ -234,6 +234,8 @@ expected_runtime_revision, limits`；limits.experiments必须为0，其余原生
 Operator grant，HTTP返回202和原Run。重放不重新读写参数，不重复计原编译试验。
 模型、原Validation校准及研究可见截止由服务确定；不能填写镜像/路径/模型或PASS。
 本入口只接受评估，不授Sealed读取能力、Reviewer结论或资格；首次读取仍按原Attempt预约。
+机会已耗尽或已有不相容披露时，尚未授能力且未发送的Run会记录
+FAILED/SEALED_OPPORTUNITY_UNAVAILABLE，并在失败评估发表后确认队列；不假称远端执行失败。
 
 正式验证的内部准入绑定原Alpha/Policy/Validation目录，不增加可由Agent指定Run或
 免费试验的CLI/MCP接口。原生Worker通过A4.8收尾入口在终态采纳后、ACK前原子发表

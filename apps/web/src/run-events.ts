@@ -3,7 +3,7 @@ import type { Schema } from './api';
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const states = new Set(['QUEUED', 'DISPATCHING', 'RUNNING', 'RECONCILING', 'CANCEL_REQUESTED', 'SUCCEEDED', 'FAILED', 'CANCELLED']);
-const reasons = new Set(['ADMITTED', 'DISPATCH_RESERVED', 'RUNTIME_RUNNING', 'LEASE_TAKEN_OVER', 'CANCEL_REQUESTED', 'CANCELLED_BEFORE_DISPATCH', 'RUNTIME_SUCCEEDED', 'RUNTIME_FAILED', 'RUNTIME_CANCELLED', 'RESULT_DISCARDED_AFTER_CANCEL', 'DEADLINE_EXCEEDED']);
+const reasons = new Set(['ADMITTED', 'DISPATCH_RESERVED', 'RUNTIME_RUNNING', 'LEASE_TAKEN_OVER', 'CANCEL_REQUESTED', 'CANCELLED_BEFORE_DISPATCH', 'RUNTIME_SUCCEEDED', 'RUNTIME_FAILED', 'RUNTIME_CANCELLED', 'RESULT_DISCARDED_AFTER_CANCEL', 'DEADLINE_EXCEEDED', 'SEALED_OPPORTUNITY_UNAVAILABLE']);
 function object(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }

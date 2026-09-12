@@ -3,6 +3,30 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Honest unsent Sealed opportunity rejection, 2026-09-12
+
+Working source over `bb46dcc3aad9840ad290970e7739f35fc0623cc3` fixes permanently
+unavailable Sealed tasks waiting until their deadline. The existing unsent Run
+settler uses the same root-locked disclosure/quota check as first capability
+reservation. Only NOT_SENT tasks without an existing native capability can end
+early as FAILED/SEALED_OPPORTUNITY_UNAVAILABLE. An existing opportunity is retained;
+already-sent work still requires reconciliation. The lease and deadline are checked
+again after the root lock wait. No caller-supplied failure authority or new queue.
+
+`verify-raD4uv` passed check/format/strict Clippy, 29 native validation, 130 Store
+and 21 HTTP/CLI tests, zero ignored/source unchanged and owned PG stopped. Real
+PostgreSQL checks cover a competing quota loser, a granted winner not rejected
+by its own use, prior disclosure, original failure publication before ACK and
+expired lease after a root-lock wait leaving no terminal receipt or opportunity.
+Failed evidence is INCOMPLETE/INCONCLUSIVE, not a fabricated remote observation.
+
+`web-verify-3O0UoY` passed all six reproducible native generated outputs, type
+checking, 505 unit tests, five Node tests, wire checks, build, CLI help, 36 Codex
+browser cases and 189 full browser cases, handwritten sources unchanged. A new
+SSE decoder test retains the explicit unsent reason instead of a runtime failure.
+No native image/dependency changes. This is not automatic Reviewer or complete
+Issue62 acceptance; no GitHub review/merge gate is claimed.
+
 ## Original Mission role on request and summary artifacts, 2026-09-12
 
 Working source over `c4dc9cae5bda51e2b89fb4630fd8ca36a901bc6a` uses the immutable

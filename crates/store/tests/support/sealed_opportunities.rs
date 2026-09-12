@@ -287,6 +287,14 @@ async fn root_opportunity_is_atomic_once_per_attempt_and_cancellation_never_refu
             .await
             .unwrap();
     assert_eq!(ungranted, 0);
+    assert!(
+        store
+            .settle_unsubmitted_native_run(winner.run.id, &winner.fence)
+            .await
+            .unwrap()
+            .is_none(),
+        "the already granted opportunity is retained even when its quota is now full"
+    );
     let current = store.get_run(&actor, winner.run.id).await.unwrap();
     store
         .cancel_run(
@@ -312,6 +320,38 @@ async fn root_opportunity_is_atomic_once_per_attempt_and_cancellation_never_refu
             "sealed_uses"
         )))
     ));
+    let rejected = store
+        .settle_unsubmitted_native_run(loser.run.id, &loser.fence)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(rejected.state, contracts::runs::RunState::Failed);
+    assert_eq!(
+        rejected.terminal_reason_code.as_deref(),
+        Some("SEALED_OPPORTUNITY_UNAVAILABLE")
+    );
+    let message = validation_publication::message(&pool, loser.run.id).await;
+    assert!(matches!(
+        store.acknowledge_run(&message).await,
+        Err(StoreError::Conflict)
+    ));
+    let published = validation_publication::publish(&store, &f, loser.run.id)
+        .await
+        .unwrap()
+        .resource;
+    let status: (String, String, String) = sqlx::query_as(
+        "SELECT execution_status,evidence_status,decision FROM app.evaluations WHERE id=$1",
+    )
+    .bind(published.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        status,
+        ("FAILED".into(), "INCOMPLETE".into(), "INCONCLUSIVE".into())
+    );
+    store.acknowledge_run(&message).await.unwrap();
+    assert_eq!(reservations(&pool).await, 1);
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -347,6 +387,52 @@ async fn prior_summary_exposure_blocks_new_capability_without_a_spec_or_refund(p
             .await
             .unwrap();
     assert_eq!(count, 0);
+    let rejected = store
+        .settle_unsubmitted_native_run(lease.run.id, &lease.fence)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        rejected.terminal_reason_code.as_deref(),
+        Some("SEALED_OPPORTUNITY_UNAVAILABLE")
+    );
+    assert_eq!(reservations(&pool).await, 0);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn expired_lease_after_opportunity_check_cannot_commit_unsent_rejection(pool: PgPool) {
+    let (store, actor, f, parent, _, validation) = validation_publication::prepared(&pool).await;
+    experiment_support::complete_validation(&pool, &store, &f, validation, 1000, 0.8).await;
+    let evaluation = validation_publication::publish(&store, &f, validation)
+        .await
+        .unwrap()
+        .resource;
+    cycle_selection::cancelled_parent(&pool, &store, &actor, &parent).await;
+    let lease = task(&pool, &store, &f, &actor, evaluation, "unsent-expiring", 1).await;
+    sqlx::query("INSERT INTO app.evidence_exposures(root_lineage_id,dataset_revision_id,actor_kind,exposure_kind,exposed_at,purpose) SELECT root_lineage_id,$2,'OPERATOR','SUMMARY',clock_timestamp(),'Controlled prior disclosure' FROM app.projects WHERE id=$1")
+        .bind(f.data.project.as_uuid()).bind(f.data.sealed.as_uuid()).execute(&pool).await.unwrap();
+    let mut holding = pool.begin().await.unwrap();
+    sqlx::query("SELECT lineage.id FROM app.research_lineages lineage JOIN app.projects project ON project.root_lineage_id=lineage.id WHERE project.id=$1 FOR UPDATE OF lineage")
+        .bind(f.data.project.as_uuid()).fetch_one(&mut *holding).await.unwrap();
+    let pending = store.settle_unsubmitted_native_run(lease.run.id, &lease.fence);
+    tokio::pin!(pending);
+    tokio::select! {
+        _ = &mut pending => panic!("another transaction owns the lineage lock"),
+        _ = tokio::time::sleep(std::time::Duration::from_millis(1200)) => {},
+    }
+    holding.rollback().await.unwrap();
+    assert!(matches!(
+        pending.await,
+        Err(StoreError::Domain(domain::DomainError::StaleAttempt))
+    ));
+    let receipts: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM app.run_terminal_receipts WHERE run_id=$1")
+            .bind(lease.run.id.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(receipts, 0);
+    assert_eq!(reservations(&pool).await, 0);
 }
 
 #[sqlx::test(migrations = "../../migrations")]

@@ -1572,6 +1572,11 @@ NATIVE_SEALED_CAPABILITY_RESERVED，actor_session_ref保留原Attempt引用。
 独立性按原预约时已知暴露判断，不能事后改写该机会或把后续披露洗成全新证据。
 此记录本身不产生Evaluation、资格或Reviewer批准。
 
+已耗尽根血缘封存机会或已有不相容披露时，尚未授予能力且NOT_SENT的Run由既有
+未发送结算器结束为FAILED/SEALED_OPPORTUNITY_UNAVAILABLE，不重试到超时。
+同一根锁和机会检查用于预约及拒绝；等待锁后重验租约和期限。已有能力保留原机会，
+已发送任务仍须远端对账，不据此假称停止或退款；失败评估仍须发表后才ACK。
+
 ### A4.11 原封存结果的正式发表
 
 可信科学Worker在原消息ACK前发表SEALED评估；与WALK_FORWARD共用原终态回执、

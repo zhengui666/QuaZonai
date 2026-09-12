@@ -283,10 +283,21 @@ impl Store {
             tx.commit().await?;
             return Ok(None);
         }
+        let unavailable = if locked.run.state != RunState::CancelRequested
+            && locked.run.deadline_at > now(&mut tx).await?
+        {
+            sealed::unavailable(&mut tx, run, owner.attempt_id).await?
+        } else {
+            false
+        };
+        // Opportunity checks can wait on another Cycle's root-lineage lock.
+        fence(&mut tx, &locked.run, owner).await?;
         let (state, reason) = if locked.run.state == RunState::CancelRequested {
             (RunState::Cancelled, RunReason::CancelledBeforeDispatch)
         } else if locked.run.deadline_at <= now(&mut tx).await? {
             (RunState::Failed, RunReason::DeadlineExceeded)
+        } else if unavailable {
+            (RunState::Failed, RunReason::SealedOpportunityUnavailable)
         } else {
             tx.commit().await?;
             return Ok(None);

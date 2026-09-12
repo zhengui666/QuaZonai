@@ -8,6 +8,10 @@ function frame(seq = '1', event = 'run.state_changed', patch: Record<string, unk
   }) };
 }
 describe('durable event cursor boundary', () => {
+  it('preserves unsent Sealed rejection rather than claiming a runtime failure', () => {
+    const payload = { schema_version: 1, state: 'FAILED', reason: 'SEALED_OPPORTUNITY_UNAVAILABLE' };
+    expect(decodeRunEvent(frame('1', 'run.state_changed', { payload }), run, '0')?.payload).toEqual(payload);
+  });
   it('accepts the actual seven-field Rust event', () => {
     expect(decodeRunEvent(frame(), run, '0')?.seq).toBe('1');
   });

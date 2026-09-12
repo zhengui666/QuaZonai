@@ -63,6 +63,7 @@ pub enum RunReason {
     RuntimeCancelled,
     ResultDiscardedAfterCancel,
     DeadlineExceeded,
+    SealedOpportunityUnavailable,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub enum RunEventKind {

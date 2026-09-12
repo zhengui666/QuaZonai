@@ -242,6 +242,8 @@ Brief冻结和Cycle启动要求Sealed使用真实资产的`asset:N`，不接受V
 人工可用`alpha evaluate <版本ID>`在明确的运行中Cycle预算内请求封存评估；
 须指定该Cycle冻结政策、Sealed输入、Runtime版本和资源限额，不重新收费原编译试验。
 模型/校准由原验证派生，202只表示接受原Run，不是资格。完整请求与CLI授权见CLI。
+封存机会耗尽或已有不相容披露时，尚未授能力且未发送的封存Run记录
+SEALED_OPPORTUNITY_UNAVAILABLE，不等待墙钟耗尽；已有机会不退款，已发送任务仍需对账。
 研究准备入口为 `/api/v2/input-sets` 和 `/api/v2/evaluation-policies`，详情和
 权限见 CLI 与 native-generated OpenAPI。InputSet 头、全部成员、冻结时间及
 幂等回执一次提交；policy 与精确 experiment_family 同事务登记。登记不是
