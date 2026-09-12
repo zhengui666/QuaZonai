@@ -1642,6 +1642,22 @@ Reviewer成功终态及ACK须等待这些关联齐全；实际科学完成/发�
 不开始新阶段，项目暂停保留消息。预算不足如实结束Cycle为BUDGET_EXHAUSTED，
 过期源证据或需修订输入进入WAITING_INPUT；不假造Sealed评估、退还机会或授予资格。
 
+### A4.14 原独立封存评估的资格裁决
+
+可信Sealed ACK事务在正式评估已封口后，为原独立Reviewer PASS关联的精确目标
+裁决资格；不提供Agent/Operator手填PASS或发证接口。必须是本次原Attempt机会、
+SUCCEEDED/VALID/PASS的原SEALED评估，且原Discovery、Validation和Sealed数据均为
+REAL、VERIFIED、AS_KNOWN_THEN。即使评估政策允许fixture，也不能给fixture发证。
+原版本/校准/模型/镜像/源Validation和本次政策关联继续沿用共享检查；暂停/退役的
+Alpha不能因新结果被恢复。输入来源和原许可在既有锁下重验有效期及撤销。
+
+资格引用本次Sealed评估及精确Alpha版本/政策；期限不超过本次评估、源Validation
+或任何所用原许可的有效期。数据库当前时间形成granted_at，重放不刷新期限、复制
+新资格或重新授予已撤销的原资格。缺审阅、科学否定、fixture、过期或失效许可只保留
+原评估而不授资格，不把已完成科学任务重试成PASS。原科学ACK、资格和生命周期
+更新同事务，失败保留原消息。只在活动版本仍是该目标时将RESEARCH标为QUALIFIED，
+不切换活动指针；后续使用仍须检查该精确资格的新鲜度、撤销和交付用途许可。
+
 ## A5. Mandate、Candidate、目标与 Release
 
 ```text

@@ -1164,6 +1164,7 @@ impl Store {
         {
             return Err(StoreError::Conflict);
         }
+        sealed::grant(&mut tx, &locked).await?;
         crate::selection::freeze(&mut tx, &locked.run).await?;
         if locked.run.state == RunState::Succeeded
             && locked.cycle_state.as_deref() == Some("RUNNING")

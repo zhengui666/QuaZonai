@@ -122,6 +122,11 @@ async fn fixture_with_selection(pool: &PgPool, priced: bool, candidates: u16) ->
     let (store, actor) = research_support::operator(pool).await;
     let mut data = cycle_support::setup_with_policy(pool, &store, &actor, objects, |policy| {
         policy.selection.candidate_count = candidates;
+        if candidates == 1 {
+            // A scientific PASS on explicitly FIXTURE data must still never
+            // become a qualification. Other tests retain the rejecting policy.
+            policy.sealed_metric_requirements[0].threshold_low = Some("0.1".parse().unwrap());
+        }
     })
     .await;
     if candidates == 1 {
@@ -1024,6 +1029,58 @@ async fn settled_native_mission_publishes_validation_then_returns_to_original_th
         .process_mission_message(review.clone(), "review-ack-replay", receiver)
         .await
         .is_err());
+    assert_eq!(f.provider.request_count(), reviewed_requests);
+    let (sealed_run, sealed_message): (uuid::Uuid, i64) = sqlx::query_as("SELECT held.run_id,admission.initial_queue_message_id FROM app.mission_sealed_evaluations held JOIN app.mission_review_turns turn ON turn.reservation_id=held.review_reservation_id JOIN app.run_admissions admission ON admission.run_id=held.run_id WHERE turn.run_id=$1")
+        .bind(review.run_id.as_uuid()).fetch_one(&pool).await.unwrap();
+    let sealed_run: Id = sealed_run.to_string().try_into().unwrap();
+    let message = RunMessage {
+        run_id: sealed_run,
+        message_id: sealed_message,
+        read_count: 0,
+    };
+    let Some(ClaimResult::Leased(lease)) = f
+        .store
+        .claim_native_run(&message, "controlled-sealed-result", 60)
+        .await
+        .unwrap()
+    else {
+        panic!("original automatic Sealed task");
+    };
+    // Native protocol/result associations are real; these scientific bytes are
+    // explicitly controlled, not a real market or OCI acceptance claim.
+    experiment_support::complete_sealed(&pool, &f.store, &f.data, *lease).await;
+    let objects = f.data.objects.clone();
+    let sealed_evaluation = f
+        .store
+        .publish_alpha_evaluation(
+            sealed_run,
+            |id, size| f.data.read(id, size),
+            move |object| {
+                let objects = objects.clone();
+                async move {
+                    objects
+                        .put(object.id, &object.bytes)
+                        .map_err(|_| store::StoreError::Integrity)
+                }
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .resource;
+    let result: (String, String) = sqlx::query_as("SELECT e.decision,a.origin FROM app.evaluations e JOIN app.artifacts a ON a.id=e.report_artifact_id WHERE e.id=$1")
+        .bind(sealed_evaluation.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!((result.0.as_str(), result.1.as_str()), ("PASS", "FIXTURE"));
+    f.store.acknowledge_run(&message).await.unwrap();
+    f.store.acknowledge_run(&message).await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.qualifications")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0,
+        "independent Reviewer PASS and fixture Sealed PASS never confer REAL qualification"
+    );
     assert_eq!(f.provider.request_count(), reviewed_requests);
 }
 

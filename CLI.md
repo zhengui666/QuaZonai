@@ -130,7 +130,9 @@ Profile准入独立Mission；账号暂不可用保留原消息。Reviewer使用�
 Operator审批、Sealed通过或资格。全部目标审阅完成后，可信Worker每次消费为一个
 原PASS目标准入Sealed任务，不调用额外模型、不借用人工alpha evaluate授权。
 成功收束/ACK等待原审阅到Sealed Run的关联齐全；取消不补做，预算不足或输入
-需处理如实记录Cycle状态。真正Sealed计算/发表由科学Worker完成，仍不授资格。
+需处理如实记录Cycle状态。真正Sealed计算/发表由科学Worker完成；原独立审阅关联
+的封存ACK按DESIGN A4.14裁决精确版本资格，单独科学PASS或人工202均不授资格。
+资格没有手填/强制发证命令；当前真实数据正向授予与完整资格操作面尚未验收。
 当前没有新增人工命令或审阅结果公开接口。
 全部Turn/科学任务结算、反馈回答及提案处理齐全后，可信Worker才提交Mission执行
 终态并归档PGMQ；ACK失败重放原事务，不重开模型。SUCCEEDED不是Cycle完成、实验

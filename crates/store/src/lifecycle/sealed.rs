@@ -11,7 +11,9 @@ use native::NativeObjectPublication;
 use validation::read_document;
 
 mod admission;
+mod qualification;
 mod review;
+pub(super) use qualification::grant;
 pub(super) use review::pending;
 
 pub(super) async fn publish<R, Read, P, Published>(

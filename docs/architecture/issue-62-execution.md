@@ -3,6 +3,26 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Original Sealed qualification transaction, 2026-09-13
+
+Working source over `da4ed4da349f6dadff53b193cc1efff7c87c6888` connects
+qualification to the original scientific ACK transaction under DESIGN A4.14.
+It reuses frozen input/license and Sealed binding checks, requires original
+independent review and REAL/PIT evidence, caps expiry to original evidence and
+licenses, and preserves revocations, active pointers and suspended lifecycle.
+No new manual qualification endpoint, numerical engine or dependency is added.
+
+`verify-SOfTZf` completed workspace check/format/strict Clippy and 150
+domain/Runtime, 8 managed Job, 31 native Codex and 540 Store/server tests;
+zero failures/ignored, source unchanged, owned PostgreSQL stopped. The extended
+App Server/PGMQ test publishes an explicitly FIXTURE scientific PASS, ACKs it
+twice and confirms no qualification or extra model call. PostgreSQL prepares
+the exact production INSERT against actual migrations without fabricating REAL
+evidence. This proves negative eligibility and SQL validity, not positive REAL
+qualification, all expiry/revocation/rollback behavior, or market/account T42.
+Public qualification/disclosure, portfolio/delivery and remaining contracts
+still require implementation and acceptance. No GitHub CI/review/merge is claimed.
+
 ## Automatic original Reviewer-to-Sealed admission, 2026-09-13
 
 Working source over `88e099a842a9f2f0ef2e87369dd258476b2ea916` extracts the
