@@ -3,6 +3,41 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Automatic original Reviewer-to-Sealed admission, 2026-09-13
+
+Working source over `88e099a842a9f2f0ef2e87369dd258476b2ea916` extracts the
+existing Sealed preparation transaction for both trusted callers. The Operator
+wrapper retains authorization, exact replay and final authority recheck; the
+internal Reviewer caller takes no Operator grant. Each queue consumption admits
+at most one original PASS target after all independent answers are recorded.
+Migration 046 binds the original review reservation to its exact Alpha, source
+Validation, Cycle/policy and one Sealed Run. Parameters, association, Run/PGMQ
+and budget commit together. Mission success/ACK wait for required associations;
+scientific execution/publication remain independent and no qualification is granted.
+
+`verify-IdcgcG` passed workspace check/format/strict Clippy, extended actual
+App Server/PGMQ test (305.28s) and two cancellation tests (57.61s), zero failed/
+ignored, source unchanged and owned PostgreSQL stopped. The test proves injected
+association failure leaves Run count/resource reservations/tasks unchanged,
+then retries the original target without an extra model call or trial charge.
+It also executes a delayed publication failure beyond a one-second lease:
+the expired worker cannot change Cycle state, and real takeover subsequently
+admits the task. No Operator evaluation command or Sealed capability is fabricated.
+The lease test explicitly checks the delayed callback ran after real Runtime
+refresh; the earlier preflight-failure test run was not reported as success.
+
+`verify-2ZmSNk` passed check/format/strict Clippy, 29 native validation,
+130 Store and 21 HTTP/CLI tests, zero failed/ignored, source unchanged and owned
+PostgreSQL stopped. Existing manual Sealed authorization, original calibrated
+target, replay, publication and root-opportunity tests remain green.
+
+The previous exact `88e099a8` full regression (`verify-bpEiG9`) passed 150
+domain/Runtime, 8 managed Job, 31 native Codex and 539 Store/server tests. That
+full result belongs to the prior commit, not this new source or GitHub CI.
+Controlled upstream/science responses do not establish real market/account T42.
+Qualification, complete Reviewer error/multitarget/workspace limits, portfolio,
+delivery, migration/recovery and all remaining Issue contracts still require work.
+
 ## Independent native Reviewer stage, 2026-09-13
 
 Working source over `c63e126ccce86394c8f3563fbc9ba4b37c5eb8e1` admits an

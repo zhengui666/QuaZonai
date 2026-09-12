@@ -104,6 +104,10 @@ Reviewer的Runtime刷新仍核对原冻结配置、启用状态、租约及期�
 对话、账号材料、Sealed原始行或校准系数。不获ARTIFACT_SUBMIT/EXPERIMENT_SUBMIT。
 按DESIGN B5.0.5返回精确目标JSON；缺证据应INCONCLUSIVE，不自授审批或资格。
 无效回答由可信服务保留原总结并记INCONCLUSIVE，不请求额外修复轮或改旧回答。
+全部审阅完成后的原PASS目标由可信Worker自动准入Sealed，复用原Cycle预算与
+科学准备器，不借用人工alpha evaluate授权、不增加模型轮。原审阅/任务关联齐全
+才可成功确认会话；排队不等于科学通过或资格。Agent不得直接调用该内部入口、
+补写关联、重置机会或自行处理WAITING_INPUT/预算耗尽状态。
 封存机会拒绝由可信未发送结算器处理，不能冒充Runtime失败、退款或已停止远端任务。
 上述是成功收束条件。人工取消/真实到期后由可信Worker停止新阶段，保留已启动
 任务和完整用量对账；只有账本证明未发送才记NOT_SENT。Agent不能自行退款、补零、

@@ -1158,6 +1158,12 @@ impl Store {
         if evaluation_pending || sealed_pending {
             return Err(StoreError::Conflict);
         }
+        if locked.run.state == RunState::Succeeded
+            && locked.cycle_state.as_deref() == Some("RUNNING")
+            && sealed::pending(&mut tx, locked.run.id).await?
+        {
+            return Err(StoreError::Conflict);
+        }
         crate::selection::freeze(&mut tx, &locked.run).await?;
         if locked.run.state == RunState::Succeeded
             && locked.cycle_state.as_deref() == Some("RUNNING")

@@ -118,7 +118,17 @@ impl Store {
         } else {
             false
         };
-        if unaccounted || (!stopping && proposed) || scientific_pending || review_pending {
+        let sealed_pending = !researcher
+            && !stopping
+            && !failed
+            && locked.cycle_state.as_deref() == Some("RUNNING")
+            && super::super::sealed::pending(&mut tx, run).await?;
+        if unaccounted
+            || (!stopping && proposed)
+            || scientific_pending
+            || review_pending
+            || sealed_pending
+        {
             tx.commit().await?;
             return Ok(false);
         }

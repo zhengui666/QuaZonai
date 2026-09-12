@@ -127,7 +127,11 @@ Profile准入独立Mission；账号暂不可用保留原消息。Reviewer使用�
 仅接原CODE、原PARAMETERS及有界Validation上下文，不接研究对话或Sealed原始数据。
 每目标一条原生Turn，公开JSON回答绑定原版本/预约/总结；无效回答记INCONCLUSIVE，
 不另开付费修复轮。Reviewer无ARTIFACT_SUBMIT/EXPERIMENT_SUBMIT；其PASS不是
-Operator审批、Sealed通过或资格。当前没有新增人工命令或审阅结果公开接口。
+Operator审批、Sealed通过或资格。全部目标审阅完成后，可信Worker每次消费为一个
+原PASS目标准入Sealed任务，不调用额外模型、不借用人工alpha evaluate授权。
+成功收束/ACK等待原审阅到Sealed Run的关联齐全；取消不补做，预算不足或输入
+需处理如实记录Cycle状态。真正Sealed计算/发表由科学Worker完成，仍不授资格。
+当前没有新增人工命令或审阅结果公开接口。
 全部Turn/科学任务结算、反馈回答及提案处理齐全后，可信Worker才提交Mission执行
 终态并归档PGMQ；ACK失败重放原事务，不重开模型。SUCCEEDED不是Cycle完成、实验
 裁决或资格；只有公开限制说明且无实验的会话也不构成“无有效Alpha”的科学证据。

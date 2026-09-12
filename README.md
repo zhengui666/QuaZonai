@@ -26,7 +26,7 @@
 | 冻结试验选择 | 原研究 Mission 确认前冻结同 Family 全部登记试验，保留失败、取消、未完成、原指标、确定性排名及精确校准审阅目标；API／CLI／Ant Design 只读原快照。当前原生口径为 WALK_FORWARD，COMPLETE 不是科学 PASS 或资格，审阅目标不表示 Reviewer 已执行 |
 | 冻结 SCORE 校准 | 原正式 Validation 同事务冻结最后原生折并创建同 Alpha 的附加校准新版本；原版本、试验、原评估不变，新版本不继承资格。API／CLI／Ant Design 只读原校准来源，不下载系数、不重新拟合或恢复已停用 Alpha |
 | 独立 Reviewer | 研究成功ACK事务准入冻结配置的独立Run/Thread；原代码、参数和Validation上下文按目标审阅，原生公开回答绑定原Turn，预算不重置。真实App Server与文件工具、PGMQ原子回滚和重放已验证；上游回答受控，不是真实模型推理验收。审阅PASS不授资格 |
-| 原生封存计算 | 本机入口及受管EVALUATE_SEALED_ALPHA复用目录、Wasm、冻结校准和原生指标；真实OCI执行已验证。Operator可经API／CLI／Ant Design明确选择运行中的Cycle，使用原模型请求评估，不重复收费原编译试验。首次能力返回前按原Attempt预约根血缘机会，取消不退款；Worker在ACK前发表原SEALED评估及全部指标。自动续接及资格尚未接通 |
+| 原生封存计算 | 本机入口及受管EVALUATE_SEALED_ALPHA复用目录、Wasm、冻结校准和原生指标；真实OCI执行已验证。Operator可经API／CLI／Ant Design使用原模型请求评估；独立Reviewer的原PASS目标也由可信Worker使用同一准备器自动入队，不借人工授权、不重复收费原编译试验。首次能力返回前按原Attempt预约根血缘机会，取消不退款；Worker在ACK前发表原SEALED评估及全部指标。资格尚未接通 |
 | 交付与完整研究 | Sealed／Reviewer／Alpha资格、组合/审批/反馈/晋级/唤醒、旧数据导入及完整恢复仍在实施；未接通的页面明确标示，不填充假结果 |
 
 ## 开发验证

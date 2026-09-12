@@ -58,11 +58,37 @@ impl Worker {
     ) -> Result<bool, WorkerFailure> {
         let run = lease.run.id;
         let fence = &lease.fence;
-        let work = self
-            .store
-            .mission_review_work(run, fence)
-            .await?
-            .ok_or(WorkerFailure::Contract)?;
+        let work = self.store.mission_review_work(run, fence).await?;
+        let Some(work) = work else {
+            let native = self.transport(lease).await?;
+            self.refresh(&native, run, fence).await?;
+            let reading = self.objects.clone();
+            let publishing = self.objects.clone();
+            self.store
+                .prepare_review_sealed(
+                    run,
+                    fence,
+                    move |id, size| {
+                        let objects = reading.clone();
+                        async move {
+                            tokio::task::spawn_blocking(move || objects.read(id, size))
+                                .await
+                                .map_err(|_| StoreError::Integrity)?
+                                .map_err(|_| StoreError::Integrity)
+                        }
+                    },
+                    move |object| async move {
+                        tokio::task::spawn_blocking(move || {
+                            publishing.put(object.id, &object.bytes)
+                        })
+                        .await
+                        .map_err(|_| StoreError::Integrity)?
+                        .map_err(|_| StoreError::Integrity)
+                    },
+                )
+                .await?;
+            return Ok(self.store.complete_mission(run, fence).await?);
+        };
         let experiment = work.experiment_id;
         let workspace = launcher.workspace(run).await?;
         let objects = self.objects.clone();

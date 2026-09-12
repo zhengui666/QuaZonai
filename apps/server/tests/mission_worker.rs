@@ -850,6 +850,110 @@ async fn settled_native_mission_publishes_validation_then_returns_to_original_th
         (4..=8).contains(&reviewed_requests),
         "one independent Turn uses native input-file tools before its answer"
     );
+    assert!(!f
+        .store
+        .get_run(&f.actor, review.run_id)
+        .await
+        .unwrap()
+        .state
+        .is_terminal());
+    assert!(f.store.acknowledge_run(review).await.is_err());
+    let before_sealed: (i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.runs),reserved_cpu_seconds FROM app.research_cycles WHERE id=$1")
+        .bind(cycle.as_uuid()).fetch_one(&pool).await.unwrap();
+    sqlx::raw_sql("CREATE FUNCTION public.reject_review_sealed() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'controlled Sealed continuation failure'; END $$; CREATE TRIGGER reject_review_sealed BEFORE INSERT ON app.mission_sealed_evaluations FOR EACH ROW EXECUTE FUNCTION public.reject_review_sealed();")
+        .execute(&pool).await.unwrap();
+    assert!(worker
+        .process_mission_message(
+            review.clone(),
+            "independent-native-review",
+            receiver.clone()
+        )
+        .await
+        .is_err());
+    assert_eq!(sqlx::query_as::<_, (i64, i64)>("SELECT (SELECT count(*) FROM app.runs),reserved_cpu_seconds FROM app.research_cycles WHERE id=$1")
+        .bind(cycle.as_uuid()).fetch_one(&pool).await.unwrap(), before_sealed);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.sealed_evaluation_tasks")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0
+    );
+    sqlx::raw_sql("DROP TRIGGER reject_review_sealed ON app.mission_sealed_evaluations; DROP FUNCTION public.reject_review_sealed();")
+        .execute(&pool).await.unwrap();
+    // The real Worker above has refreshed Runtime capabilities. Now isolate
+    // a late publication failure, not an unrelated pre-publication rejection.
+    let Some(ClaimResult::Leased(review_lease)) = f
+        .store
+        .claim_mission(review, "independent-native-review", 60)
+        .await
+        .unwrap()
+    else {
+        panic!("original Reviewer lease");
+    };
+    sqlx::query("UPDATE app.run_attempts SET lease_expires_at=clock_timestamp()+interval '1 second' WHERE id=$1")
+        .bind(review_lease.fence.attempt_id.as_uuid()).execute(&pool).await.unwrap();
+    let delayed = std::sync::atomic::AtomicBool::new(false);
+    let stale_rejection = f
+        .store
+        .prepare_review_sealed(
+            review.run_id,
+            &review_lease.fence,
+            |id, size| f.data.read(id, size),
+            |_| async {
+                delayed.store(true, std::sync::atomic::Ordering::SeqCst);
+                tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+                Err(store::StoreError::Domain(
+                    domain::DomainError::CapabilityUnavailable("controlled_delayed_publication"),
+                ))
+            },
+        )
+        .await;
+    assert!(delayed.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(stale_rejection.is_err());
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT state FROM app.research_cycles WHERE id=$1")
+            .bind(cycle.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        "RUNNING",
+        "expired ownership cannot turn a late preparation failure into WAITING_INPUT"
+    );
+    worker
+        .process_mission_message(
+            review.clone(),
+            "independent-native-review",
+            receiver.clone(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(f.provider.request_count(), reviewed_requests);
+    let held: (uuid::Uuid, uuid::Uuid, uuid::Uuid, String, i64, String) = sqlx::query_as("SELECT task.alpha_version_id,task.validation_evaluation_id,r.cycle_id,r.state,(admission.limits->>'experiments')::bigint,parameters.created_by FROM app.mission_sealed_evaluations held JOIN app.mission_review_turns review ON review.reservation_id=held.review_reservation_id JOIN app.sealed_evaluation_tasks task ON task.run_id=held.run_id JOIN app.runs r ON r.id=task.run_id JOIN app.run_admissions admission ON admission.run_id=r.id JOIN app.run_native_tasks native ON native.run_id=r.id JOIN app.artifacts parameters ON parameters.id=native.parameters_artifact_id WHERE review.run_id=$1")
+        .bind(review.run_id.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(held.0, trials[0].review_alpha_version_id.unwrap().as_uuid());
+    assert_eq!(held.1, evaluation);
+    assert_eq!(held.2, cycle.as_uuid());
+    assert_eq!(
+        (held.3.as_str(), held.4, held.5.as_str()),
+        ("QUEUED", 0, "RUNTIME")
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM app.command_receipts WHERE operation='ALPHA_EVALUATE'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.sealed_opportunities")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0
+    );
     assert_eq!(
         f.store
             .get_run(&f.actor, review.run_id)

@@ -1625,6 +1625,22 @@ CPU/墙钟/内存/输出并受Cycle累计预算约束。原生当前能力、冻
 普通通用ALPHA_EVALUATE仍需试验收费，standalone管理入口不扩展成免费研究接口。
 此人工操作只请求评估，不授予资格、Reviewer身份或交付；自动Reviewer使用同样
 的模型/数据准备规则与原Cycle预算，不能复用人工授权冒充Operator。
+两条可信入口共用同一个事务内准备器：原模型/参数/数据、当前政策及能力检查、
+参数发表和Run/PGMQ/Sealed关联不复制。人工入口独立核验授权并保存原命令回执；
+准备器本身不是HTTP/MCP权限入口，外层事务提交前仍须重验各自的调用资格。
+
+### A4.13 独立审阅后的可信封存续接
+
+独立Reviewer的全部目标回答已封口后，可信Worker按原排名为PASS目标逐个准入
+Sealed任务；不为REJECT/INCONCLUSIVE、失败或取消的会话补做任务。每次消费最多
+准入一个目标，复用原PGMQ消息和共享准备器，不增加模型轮次或Operator授权。
+`mission_sealed_evaluations`将原审阅reservation与一个原Sealed Run不可变关联，
+目标、源Validation、Cycle/政策必须与原选择相同。关联、参数、Run和队列同事务。
+Reviewer成功终态及ACK须等待这些关联齐全；实际科学完成/发表仍由科学Worker负责。
+重复消费不重复准入或重开Thread，原编译试验不重复计数、所有资源仍占Cycle预算。
+准备使用原Reviewer冻结限额及剩余墙钟，当前Runtime能力在事务外刷新；取消/到期
+不开始新阶段，项目暂停保留消息。预算不足如实结束Cycle为BUDGET_EXHAUSTED，
+过期源证据或需修订输入进入WAITING_INPUT；不假造Sealed评估、退还机会或授予资格。
 
 ## A5. Mandate、Candidate、目标与 Release
 
