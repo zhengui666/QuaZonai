@@ -110,6 +110,9 @@ Worker在首次提交之前刷新必要的原生探测；提交结果未知时�
 已采纳的原编译失败或Discovery预测终态通过同一Thread的预算Turn回送；每个原生
 任务最多一次，重复消费不重复扣费。预测摘要保留原产物与origin，首尾观察抽样
 不是正式指标/PASS。修复新提案必须引用原parent_experiment_id，不覆盖已执行输入。
+成功结算的原生Turn另保留最多64KiB公开回答REPORT（qz.mission_summary），原生
+summary视图来源、原Turn/item/phase如实记录；失败重投只补摘要，不重新调用模型。
+它不是新Agent工具，也不从回答文字推断研究通过或Mission已完成。
 
 ## 原生科学任务入口
 

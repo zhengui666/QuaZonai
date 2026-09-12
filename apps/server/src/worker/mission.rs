@@ -21,7 +21,7 @@ use store::{
         mission::{MissionSession, NativeSessionReceipt},
         ClaimResult, ExperimentWork, NextRuntimeAction, RunLease, RunMessage,
     },
-    turns::WorkerFence,
+    turns::{NativePublicSummary, TurnOutcome, WorkerFence},
     Store, StoreError,
 };
 use tokio::sync::watch;
@@ -99,7 +99,12 @@ impl Worker {
                 .mission_turn_checkpoint(run, fence)
                 .await?
                 .latest
-                .is_some_and(|latest| latest.receipt.is_some())
+                .is_some_and(|latest| {
+                    latest.receipt.is_some_and(|receipt| {
+                        receipt.outcome != TurnOutcome::Succeeded
+                            || latest.summary_artifact_id.is_some()
+                    })
+                })
         {
             return self.advance_mission_experiment(lease).await;
         }
@@ -132,6 +137,7 @@ impl Worker {
             connection
                 .drive_turn(&self.store, self.objects.clone(), run, fence, shutdown)
                 .await?;
+            self.capture_mission_summary(&mut connection, lease).await?;
             Ok(())
         }
         .await;
@@ -139,6 +145,64 @@ impl Worker {
         result?;
         closed.map_err(|reason| WorkerFailure::Codex("CLOSE_MISSION", reason))?;
         self.advance_mission_experiment(lease).await
+    }
+
+    async fn capture_mission_summary(
+        &self,
+        connection: &mut MissionConnection,
+        lease: &RunLease,
+    ) -> Result<(), WorkerFailure> {
+        let Some(latest) = self
+            .store
+            .mission_turn_checkpoint(lease.run.id, &lease.fence)
+            .await?
+            .latest
+        else {
+            return Ok(());
+        };
+        if latest.summary_artifact_id.is_some()
+            || !latest
+                .receipt
+                .is_some_and(|receipt| receipt.outcome == TurnOutcome::Succeeded)
+        {
+            return Ok(());
+        }
+        let turn = latest.native_turn_id.ok_or(WorkerFailure::Contract)?;
+        let message = connection
+            .client
+            .public_summary(&connection.session.native.thread_id, &turn)
+            .await
+            .map_err(|reason| WorkerFailure::Codex("PUBLIC_SUMMARY", reason))?
+            .ok_or(WorkerFailure::Contract)?;
+        let summary = NativePublicSummary {
+            schema_version: contracts::SchemaV1,
+            native_turn_id: turn,
+            native_item_id: message.id,
+            phase: message.phase,
+            text: message.text,
+        };
+        let reading = self.objects.clone();
+        let publishing = self.objects.clone();
+        self.store
+            .record_mission_summary(
+                latest.reservation.id,
+                &lease.fence,
+                &summary,
+                move |id, size| async move {
+                    tokio::task::spawn_blocking(move || reading.read(id, size))
+                        .await
+                        .map_err(|_| StoreError::Integrity)?
+                        .map_err(|_| StoreError::Integrity)
+                },
+                move |object| async move {
+                    tokio::task::spawn_blocking(move || publishing.put(object.id, &object.bytes))
+                        .await
+                        .map_err(|_| StoreError::Integrity)?
+                        .map_err(|_| StoreError::Integrity)
+                },
+            )
+            .await?;
+        Ok(())
     }
 
     async fn advance_mission_experiment(&self, lease: &RunLease) -> Result<(), WorkerFailure> {

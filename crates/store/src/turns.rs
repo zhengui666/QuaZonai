@@ -21,7 +21,9 @@ use uuid::Uuid;
 
 mod feedback;
 mod native;
+mod summary;
 pub use native::{MissionTurnCheckpoint, NativeTurnCheckpoint};
+pub use summary::NativePublicSummary;
 
 type Tx<'a> = Transaction<'a, Postgres>;
 

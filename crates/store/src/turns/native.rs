@@ -26,6 +26,7 @@ pub struct NativeTurnCheckpoint {
     pub native_turn_id: Option<String>,
     pub terminal: Option<TurnTerminal>,
     pub receipt: Option<UsageReceipt>,
+    pub summary_artifact_id: Option<Id>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -377,6 +378,14 @@ impl Store {
                 native_turn_id,
                 terminal: load_terminal(&mut tx, item.id).await?,
                 receipt: receipt(&mut tx, item.id).await?,
+                summary_artifact_id: sqlx::query_scalar::<_, Uuid>(
+                    "SELECT artifact_id FROM app.model_turn_summaries WHERE reservation_id=$1",
+                )
+                .bind(item.id.as_uuid())
+                .fetch_optional(&mut *tx)
+                .await?
+                .map(id)
+                .transpose()?,
                 reservation: item,
             })
         } else {

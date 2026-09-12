@@ -877,6 +877,27 @@ REPAIR接续。使用现有model_turn_reservations的原Session及唯一command_
 编译器诊断，不能凭空解释错误；修复需新建parent_experiment_id指向原试验的提案。
 反馈送达仍不等于Mission完成，结论与终态另行确认。
 
+### A3.9 原生公开回答记录
+
+研究者公开回答只通过锁定Codex的`thread/turns/list {itemsView:"summary"}`读取。
+0.144.4原生实现只保留首条userMessage及最后一条agentMessage；QZ忽略userMessage，
+不请求full/items列表、不启用推理通知、不读取rollout文件。每页一轮，仍有限页数/
+帧大小和原Mission墙钟；只选择原Session中精确native_turn_id。原生列表状态不能
+代替先前真实turn/completed终态观察，公开回答也不替代完整usage回执或领域结论。
+依据为锁定版本thread_processor.rs的apply_thread_turns_items_view及官方
+https://learn.chatgpt.com/docs/app-server 的agentMessage/item生命周期合同。
+
+`model_turn_summaries`按reservation_id保存唯一不可变的REPORT引用及原生item ID；
+REPORT为`qz.mission_summary`v1、RESEARCH/SYNTHETIC，内容只有原Turn/item ID、
+原生phase（缺失保留null）和最多64KiB公开text。它是可观察回答摘要，不是另一套
+聊天数据库或可信科学报告。当前fence、精确成功终态及完整usage结算检查后，在既有输出预算内
+发表；相同原文重放返回原产物，不同原文冲突。文件/元数据/关联同事务，失败不能
+伪造摘要或阻止已观察真实用量保留。收束仍须最新Turn完整结算与所有科学任务对账，
+不能只因存在公开回答就宣布Mission/Cycle成功或授予资格。
+Worker停止会同步发送原cgroup.kill，但systemd回收scope是异步的。下次原Mission
+启动前用原生systemctl仅查询精确Run scope的LoadState，最多等3秒且不超过剩余
+墙钟；未回收则拒绝启动，不停止/替换仍活跃的旧owner，不换scope名绕过资源边界。
+
 ## A4. 输入、政策、评估、资格与暴露
 
 ```text

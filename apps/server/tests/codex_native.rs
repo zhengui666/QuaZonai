@@ -136,6 +136,17 @@ async fn native_completed_turn_survives_process_restart_and_results_return_to_th
         .await
         .unwrap();
     assert_eq!(resumed.thread.id, thread.thread.id);
+    let public = second
+        .public_summary(&thread.thread.id, &initial.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(public.text.starts_with("QZ_NATIVE_FIRST_REPLY:"));
+    assert_eq!(
+        provider.request_count(),
+        1,
+        "summary read must not start a model turn"
+    );
     let recovered = second.turns(&thread.thread.id).await.unwrap();
     assert_eq!(recovered.len(), 1);
     assert_eq!(recovered[0].id, initial.id);
@@ -160,6 +171,23 @@ async fn native_completed_turn_survives_process_restart_and_results_return_to_th
         .all(|turn| turn.status == server::codex_native::TurnStatus::Completed));
     assert_eq!(provider.request_count(), 2);
     assert!(provider.saw_previous_context());
+    // Explicit one-turn pages must locate the original public answer, not return
+    // the newest answer or request full native item/history bodies.
+    assert_eq!(
+        second
+            .public_summary(&thread.thread.id, &initial.id)
+            .await
+            .unwrap(),
+        Some(public)
+    );
+    assert!(second
+        .public_summary(&thread.thread.id, &next.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .text
+        .starts_with("QZ_NATIVE_SECOND_REPLY:"));
+    assert_eq!(provider.request_count(), 2);
     second.close().await.unwrap();
     assert!(!root.path().join("auth.json").exists());
 }

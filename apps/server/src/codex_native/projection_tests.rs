@@ -5,6 +5,56 @@ use super::{
 use serde_json::json;
 
 #[test]
+fn native_summary_selects_only_the_public_answer_and_preserves_missing_phase() {
+    let value = json!({"id":"turn","status":"completed","itemsView":"summary","items":[
+        {"type":"userMessage","content":[{"text":"[REDACTED_SECRET]"}]},
+        {"type":"agentMessage","id":"public-item","text":"Public conclusion\nwith limitations.","phase":null,"private":"[REDACTED_SECRET]"}
+    ]});
+    let summary: projection::SummaryTurn = serde_json::from_value(value.clone()).unwrap();
+    let message = summary.message().unwrap().unwrap();
+    assert_eq!(message.id, "public-item");
+    assert_eq!(message.text, "Public conclusion\nwith limitations.");
+    assert!(message.phase.is_none());
+    assert!(!format!("{message:?}").contains("Public conclusion"));
+    for field in ["full", "notLoaded"] {
+        let mut invalid = value.clone();
+        invalid["itemsView"] = json!(field);
+        assert!(serde_json::from_value::<projection::SummaryTurn>(invalid)
+            .unwrap()
+            .message()
+            .is_err());
+    }
+    for replacement in [json!("unsupported"), json!("reasoning")] {
+        let mut invalid = value.clone();
+        invalid["items"][1]["phase"] = replacement;
+        assert!(serde_json::from_value::<projection::SummaryTurn>(invalid)
+            .unwrap()
+            .message()
+            .is_err());
+    }
+    let mut hidden = value.clone();
+    hidden["items"] =
+        json!([{ "type":"reasoning","content":"[REDACTED_SECRET]","summary":"[REDACTED_SECRET]" }]);
+    assert!(serde_json::from_value::<projection::SummaryTurn>(hidden)
+        .unwrap()
+        .message()
+        .unwrap()
+        .is_none());
+    let mut duplicate = value.clone();
+    duplicate["items"][0] = value["items"][1].clone();
+    assert!(serde_json::from_value::<projection::SummaryTurn>(duplicate)
+        .unwrap()
+        .message()
+        .is_err());
+    let mut large = value;
+    large["items"][1]["text"] = json!("x".repeat(64 * 1024 + 1));
+    assert!(serde_json::from_value::<projection::SummaryTurn>(large)
+        .unwrap()
+        .message()
+        .is_err());
+}
+
+#[test]
 fn native_account_and_turn_error_projections_do_not_retain_private_fields() {
     let account: AccountState = serde_json::from_value(json!({
         "requiresOpenaiAuth":true,

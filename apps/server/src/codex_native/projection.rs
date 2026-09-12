@@ -414,6 +414,75 @@ pub(super) struct TurnPage {
     pub next_cursor: Option<String>,
 }
 
+/// The native display summary, not a canonical-history export or a verdict.
+#[derive(Clone, PartialEq, Eq, Deserialize)]
+pub struct PublicMessage {
+    pub id: String,
+    pub text: String,
+    pub phase: Option<String>,
+}
+impl std::fmt::Debug for PublicMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PublicMessage")
+            .field("id", &self.id)
+            .field("phase", &self.phase)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type")]
+enum SummaryItem {
+    #[serde(rename = "agentMessage")]
+    Message(PublicMessage),
+    #[serde(other)]
+    Omitted,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct SummaryTurn {
+    #[serde(flatten)]
+    pub turn: Turn,
+    items_view: String,
+    items: Vec<SummaryItem>,
+}
+impl SummaryTurn {
+    pub fn message(self) -> Result<Option<PublicMessage>> {
+        self.turn.validate()?;
+        if self.items_view != "summary" || self.items.len() > 2 {
+            return Err(NativeFailure::Contract);
+        }
+        let mut messages = self.items.into_iter().filter_map(|item| match item {
+            SummaryItem::Message(message) => Some(message),
+            SummaryItem::Omitted => None,
+        });
+        let message = messages.next();
+        if messages.next().is_some() {
+            return Err(NativeFailure::Contract);
+        }
+        if let Some(message) = &message {
+            text(&message.id, 200)?;
+            if message.text.trim().is_empty()
+                || message.text.len() > 64 * 1024
+                || message.text.contains('\0')
+                || message
+                    .phase
+                    .as_deref()
+                    .is_some_and(|p| !matches!(p, "commentary" | "final_answer"))
+            {
+                return Err(NativeFailure::Contract);
+            }
+        }
+        Ok(message)
+    }
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct SummaryPage {
+    pub data: Vec<SummaryTurn>,
+    pub next_cursor: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum TurnStatus {

@@ -11,8 +11,8 @@ mod wire;
 pub use mission::MissionOptions;
 pub use projection::{
     Account, AccountState, DeviceLogin, LoginCancellation, LoginCancellationStatus, NativeEffort,
-    NativeModel, NativeServiceTier, Observation, Sandbox, Thread, ThreadIdentity, TokenCounts,
-    Turn, TurnStatus,
+    NativeModel, NativeServiceTier, Observation, PublicMessage, Sandbox, Thread, ThreadIdentity,
+    TokenCounts, Turn, TurnStatus,
 };
 pub use requests::{CustomProvider, Launch, ThreadOptions};
 pub use resources::MissionProcess;
@@ -87,6 +87,9 @@ impl Client {
         let binary =
             std::fs::canonicalize(&launch.binary).map_err(|_| NativeFailure::Configuration)?;
         let codex_home = launch.codex_home.clone();
+        if let Some(limits) = &limits {
+            limits.wait_released().await?;
+        }
         let mut child = launch.spawn(limits.as_ref())?;
         let input = child.stdin.take().ok_or(NativeFailure::Unavailable)?;
         let output = child.stdout.take().ok_or(NativeFailure::Unavailable)?;
@@ -319,6 +322,46 @@ impl Client {
             return Err(NativeFailure::Configuration);
         }
         self.wire.poll(wait).await
+    }
+
+    /// Native summary view omits hidden/tool items upstream. Its status is not a
+    /// terminal proof: the Mission requires its separately recorded notification.
+    pub async fn public_summary(
+        &mut self,
+        thread_id: &str,
+        turn_id: &str,
+    ) -> Result<Option<PublicMessage>> {
+        projection::text(thread_id, 200)?;
+        projection::text(turn_id, 200)?;
+        let mut cursor = None::<String>;
+        let mut cursors = BTreeSet::new();
+        for _ in 0..128 {
+            // One turn per page keeps large public user requests within MAX_FRAME.
+            let page:projection::SummaryPage=self.call("thread/turns/list",json!({
+                "threadId":thread_id,"itemsView":"summary","limit":1,"sortDirection":"desc","cursor":cursor
+            })).await?;
+            if page.data.len() > 1 {
+                return Err(NativeFailure::Contract);
+            }
+            for item in page.data {
+                let matched = item.turn.id == turn_id;
+                let message = item.message()?;
+                if matched {
+                    return Ok(message);
+                }
+            }
+            match page.next_cursor {
+                None => return Ok(None),
+                Some(next) => {
+                    projection::text(&next, 4096)?;
+                    if !cursors.insert(next.clone()) {
+                        return Err(NativeFailure::Correlation);
+                    }
+                    cursor = Some(next);
+                }
+            }
+        }
+        Err(NativeFailure::ObservationLimit)
     }
 
     /// Kill-on-drop remains the failure fallback. Closing this transport never

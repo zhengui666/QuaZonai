@@ -101,6 +101,166 @@ async fn prepare_initial(
         move |object| async move { publishing.put(object.id, &object.bytes).map_err(|_| StoreError::Integrity) }).await
 }
 
+async fn summary(
+    store: &Store,
+    lease: &store::lifecycle::RunLease,
+    f: &cycle_support::Fixture,
+    reservation: Id,
+    text: &store::turns::NativePublicSummary,
+) -> Result<Id, StoreError> {
+    let reading = f.objects.clone();
+    let writing = f.objects.clone();
+    store.record_mission_summary(reservation,&lease.fence,text,
+        move |id,size|async move {reading.read(id,size).map_err(|_|StoreError::Integrity)},
+        move |object|async move {writing.put(object.id,&object.bytes).map_err(|_|StoreError::Integrity)}).await
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn native_public_summary_requires_original_success_and_is_immutable_budgeted_and_replayable(
+    pool: PgPool,
+) {
+    use store::turns::{NativePublicSummary, TurnOutcome, UsageReceipt};
+    let (store, _, f, _, preparation) = setup(&pool).await;
+    complete(&pool, &store, &f, preparation, false).await;
+    store.advance_initial_cycle(preparation).await.unwrap();
+    let lease = mission_lease(&store).await;
+    store
+        .begin_run_dispatch(lease.run.id, &lease.fence)
+        .await
+        .unwrap();
+    store
+        .bind_mission_session(lease.run.id, &lease.fence, &native_thread())
+        .await
+        .unwrap();
+    prepare_initial(&store, &lease, &f).await.unwrap();
+    let reserved = store
+        .mission_turn_checkpoint(lease.run.id, &lease.fence)
+        .await
+        .unwrap()
+        .latest
+        .unwrap()
+        .reservation;
+    store
+        .claim_turn_dispatch(reserved.id, &lease.fence)
+        .await
+        .unwrap();
+    store
+        .bind_native_turn(reserved.id, &lease.fence, "observed-public-turn")
+        .await
+        .unwrap();
+    let mut message = NativePublicSummary {
+        schema_version: SchemaV1,
+        native_turn_id: "observed-public-turn".into(),
+        native_item_id: "observed-public-item".into(),
+        phase: None,
+        text: "A public limitation, not qualified evidence.\nOriginal exact text.".into(),
+    };
+    assert!(matches!(
+        summary(&store, &lease, &f, reserved.id, &message).await,
+        Err(StoreError::Integrity)
+    ));
+    store
+        .observe_mission_turn_terminal(
+            reserved.id,
+            &lease.fence,
+            TurnOutcome::Succeeded,
+            "NATIVE_TURN_COMPLETED",
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        summary(&store, &lease, &f, reserved.id, &message).await,
+        Err(StoreError::TurnPending)
+    ));
+    store
+        .settle_turn(
+            reserved.id,
+            &lease.fence,
+            &UsageReceipt {
+                outcome: TurnOutcome::Succeeded,
+                actual_tokens: DbCounter::new(12).unwrap(),
+                actual_cost: None,
+                currency: None,
+                reason_code: "NATIVE_TURN_COMPLETED".into(),
+            },
+        )
+        .await
+        .unwrap();
+    message.native_turn_id = "different-turn".into();
+    assert!(matches!(
+        summary(&store, &lease, &f, reserved.id, &message).await,
+        Err(StoreError::Conflict)
+    ));
+    message.native_turn_id = "observed-public-turn".into();
+    assert!(matches!(
+        store
+            .record_mission_summary(
+                reserved.id,
+                &lease.fence,
+                &message,
+                |_, _| async { panic!("new summary has no prior bytes") },
+                |_| async { Err(StoreError::Integrity) }
+            )
+            .await,
+        Err(StoreError::Integrity)
+    ));
+    let facts:(i64,i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM app.model_turn_summaries),(SELECT count(*) FROM app.artifacts WHERE schema_name='qz.mission_summary'),(SELECT count(*) FROM app.model_turn_receipts)")
+        .fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        facts,
+        (0, 0, 1),
+        "summary failure never erases already observed usage"
+    );
+    let (a, b) = tokio::join!(
+        summary(&store, &lease, &f, reserved.id, &message),
+        summary(&store, &lease, &f, reserved.id, &message)
+    );
+    let artifact = a.unwrap();
+    assert_eq!(b.unwrap(), artifact);
+    let checkpoint = store
+        .mission_turn_checkpoint(lease.run.id, &lease.fence)
+        .await
+        .unwrap();
+    assert_eq!(
+        checkpoint.latest.unwrap().summary_artifact_id,
+        Some(artifact)
+    );
+    let size:i64=sqlx::query_scalar("SELECT byte_count FROM app.artifacts WHERE id=$1 AND origin='SYNTHETIC' AND access_class='RESEARCH' AND producer_run_id=$2 AND producer_attempt_id=$3")
+        .bind(artifact.as_uuid()).bind(lease.run.id.as_uuid()).bind(lease.fence.attempt_id.as_uuid()).fetch_one(&pool).await.unwrap();
+    let value: serde_json::Value = serde_json::from_slice(
+        &f.objects
+            .read(artifact, DbCounter::new(size as u64).unwrap())
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(value["text"], message.text);
+    assert!(value["phase"].is_null());
+    message.text.push_str(" changed");
+    assert!(matches!(
+        summary(&store, &lease, &f, reserved.id, &message).await,
+        Err(StoreError::Conflict)
+    ));
+    assert!(
+        sqlx::query("DELETE FROM app.model_turn_summaries WHERE reservation_id=$1")
+            .bind(reserved.id.as_uuid())
+            .execute(&pool)
+            .await
+            .is_err()
+    );
+    message.text = "x".repeat(64 * 1024 + 1);
+    assert!(matches!(
+        summary(&store, &lease, &f, reserved.id, &message).await,
+        Err(StoreError::Invalid("native_public_summary"))
+    ));
+    message.text = "within bounds".into();
+    let mut stale = lease.clone();
+    stale.fence.worker_owner_id = "expired-owner".into();
+    assert!(matches!(
+        summary(&store, &stale, &f, reserved.id, &message).await,
+        Err(StoreError::Domain(domain::DomainError::StaleAttempt))
+    ));
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn initial_request_uses_remaining_budget_once_and_never_replaces_unknown_sent_work(
     pool: PgPool,

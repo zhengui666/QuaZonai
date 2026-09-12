@@ -429,6 +429,12 @@ async fn settled_native_mission_queues_original_compilation_then_forecast_withou
     let facts:(i64,i64,i64,String)=sqlx::query_as("SELECT (SELECT count(*) FROM app.model_turn_reservations WHERE run_id=$1),(SELECT count(*) FROM app.model_turn_receipts t JOIN app.model_turn_reservations r ON r.id=t.reservation_id WHERE r.run_id=$1),(SELECT count(*) FROM app.run_terminal_receipts WHERE run_id=$1),(SELECT thread_id FROM app.codex_sessions WHERE run_id=$1)")
         .bind(f.lease.run.id.as_uuid()).fetch_one(&pool).await.unwrap();
     assert_eq!(facts, (2, 2, 0, original_thread));
+    let summaries:i64=sqlx::query_scalar("SELECT count(*) FROM app.model_turn_summaries s JOIN app.model_turn_reservations r ON r.id=s.reservation_id WHERE r.run_id=$1")
+        .bind(f.lease.run.id.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        summaries, 2,
+        "each settled native reply has one original producer-bound public report"
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -459,6 +465,10 @@ async fn daemon_prepares_first_turn_and_replays_without_spending_or_acknowledgin
     assert_eq!(reads, f.message.read_count);
     assert_eq!(f.provider.request_count(), 0);
 
+    // Force the crash-after-usage/before-summary boundary, independently of
+    // whether shutdown wins the in-flight public-summary read or publication.
+    sqlx::raw_sql("CREATE FUNCTION public.reject_summary_publication() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected summary publication failure'; END $$; CREATE TRIGGER reject_summary BEFORE INSERT ON app.model_turn_summaries FOR EACH ROW EXECUTE FUNCTION public.reject_summary_publication();")
+        .execute(&pool).await.unwrap();
     let worker = daemon(&f).with_missions(f.launcher.clone());
     let (stop, receiver) = tokio::sync::watch::channel(false);
     tokio::time::timeout(std::time::Duration::from_secs(150), async {
@@ -480,6 +490,12 @@ async fn daemon_prepares_first_turn_and_replays_without_spending_or_acknowledgin
     let before: (i64, i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.model_turn_reservations WHERE run_id=$1),(SELECT count(*) FROM app.model_turn_receipts t JOIN app.model_turn_reservations r ON r.id=t.reservation_id WHERE r.run_id=$1),(SELECT count(*) FROM pgmq.q_runs WHERE msg_id=$2)")
         .bind(f.lease.run.id.as_uuid()).bind(f.message.message_id).fetch_one(&pool).await.unwrap();
     assert_eq!(before, (1, 1, 1));
+    let absent: i64 = sqlx::query_scalar("SELECT count(*) FROM app.model_turn_summaries")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(absent, 0);
+    sqlx::raw_sql("DROP TRIGGER reject_summary ON app.model_turn_summaries; DROP FUNCTION public.reject_summary_publication();").execute(&pool).await.unwrap();
     visible(&f, &pool).await;
     let (_stop, receiver) = tokio::sync::watch::channel(false);
     worker
@@ -487,6 +503,12 @@ async fn daemon_prepares_first_turn_and_replays_without_spending_or_acknowledgin
         .await
         .unwrap();
     assert_eq!(f.provider.request_count(), 1);
+    let recovered:i64=sqlx::query_scalar("SELECT count(*) FROM app.model_turn_summaries s JOIN app.model_turn_reservations r ON r.id=s.reservation_id WHERE r.run_id=$1")
+        .bind(f.lease.run.id.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        recovered, 1,
+        "restart recovers only the original public answer, with no paid Turn"
+    );
     let run = f.store.get_run(&f.actor, f.lease.run.id).await.unwrap();
     assert!(!run.state.is_terminal());
     let terminals: i64 =

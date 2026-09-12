@@ -131,6 +131,12 @@ horizon。启用Mission的Worker在最新Turn结算后，每次消费按ordinal�
 失败反馈只陈述公开原因，当前没有详细编译器诊断；修复应保留原实验父血缘。
 重复消息不重复回送结果，未结算用量不继续调用模型；完整结论仍待接通。
 
+032迁移为每个已成功结算的原生Turn保留唯一公开回答报告（qz.mission_summary）。
+Worker读取锁定App Server原生summary视图，只有公开agentMessage、原Turn/item和
+实际phase；phase缺失保留null。它不读取完整items/rollout或推理，报告不当作科学
+指标或资格。读取/发表失败保留已结算用量，重投恢复原Thread补同一报告，不新开
+付费Turn。报告占原Mission输出额度；原文冲突或超额不静默覆盖/截断。
+
 原生Turn失败或中断时，即使先前已显示部分token用量，也不能据此确认整轮用量；工具续轮的后续请求可能已经发出却没有用量回执。驱动保留真实失败/中断终态和未结算预约，不补零、不按早先部分数字退款或自动重发。原生COMPLETED且同轮用量完整可见时才进入当前驱动的自动结算路径。
 
 锁定Codex的Turn列表可能把断流失败重建为Completed，不能据此认定成功。QZ只以真实终态通知或已经保存的同一通知确认结果；丢失通知且没有记录时保留UNKNOWN/预约，列表“已完成”不触发自动结算、退款或重发。
@@ -148,6 +154,7 @@ Universe的 `registration_state` 必须同时展示：`NATIVE_METADATA` 表示�
 ### Mission 原生资源前置条件
 
 可信Mission启动器需要Linux cgroup v2、`/usr/bin/systemd-run`、`/usr/bin/prlimit`和
+`/usr/bin/systemctl`，以及
 当前服务用户的systemd manager；服务环境须提供该用户真实的`XDG_RUNTIME_DIR`。
 建议按同用户systemd服务运行，缺失时明确不可用，不能退回无配额进程。
 每Run的原生scope限制整个进程树的CPU速率、内存、进程数和剩余墙钟；新连接不重置
@@ -155,6 +162,8 @@ Run期限，已有scope未退出时不能创建第二份。prlimit的原生单�
 包括Codex内部SQLite/WAL/rollout；达到上限保留文件并报告不可用，不删除原生历史。
 正式研究输出总字节仍严格使用冻结预算，不能拿原生文件上限代替或扩大研究预算，
 两者不等于工作区总磁盘配额。
+停止后的原scope由systemd异步回收；重开同一Mission前最多等3秒实际回收状态，
+仍活跃就拒绝，不靠新scope名并行启动另一份，也不按名字杀掉旧owner。
 这些也是`server worker`自动Mission消费的前置条件；缺失不能绕过资源限制启动。
 
 ## 不可变研究准备与数据撤销

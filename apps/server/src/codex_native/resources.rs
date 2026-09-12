@@ -70,6 +70,40 @@ pub struct MissionProcess {
 }
 
 impl MissionProcess {
+    /// Drop sends cgroup.kill synchronously, but systemd collects the scope
+    /// asynchronously. Never race a new launch against that original unit name.
+    /// An actually live scope stays untouched and causes a bounded refusal.
+    pub(super) async fn wait_released(&self) -> Result<()> {
+        let runtime = std::env::var_os("XDG_RUNTIME_DIR").ok_or(NativeFailure::Unavailable)?;
+        let wait =
+            Duration::from_secs(3).min(self.deadline.saturating_duration_since(Instant::now()));
+        tokio::time::timeout(wait, async {
+            loop {
+                let output = Command::new("/usr/bin/systemctl")
+                    .args(["--user", "show", "--property=LoadState", "--value"])
+                    .arg(format!("quazonai-mission-{}.scope", self.run_id))
+                    .env_clear()
+                    .env("XDG_RUNTIME_DIR", &runtime)
+                    .stdin(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .kill_on_drop(true)
+                    .output()
+                    .await
+                    .map_err(|_| NativeFailure::Unavailable)?;
+                if !output.status.success() || output.stdout.len() > 64 {
+                    return Err(NativeFailure::Unavailable);
+                }
+                match output.stdout.as_slice() {
+                    b"not-found\n" => return Ok(()),
+                    b"loaded\n" => tokio::time::sleep(Duration::from_millis(20)).await,
+                    _ => return Err(NativeFailure::Unavailable),
+                }
+            }
+        })
+        .await
+        .map_err(|_| NativeFailure::Unavailable)?
+    }
+
     pub(super) fn capture(&self, pid: u32) -> Result<ProcessGroup> {
         let memberships = std::fs::read_to_string(format!("/proc/{pid}/cgroup"))
             .map_err(|_| NativeFailure::Unavailable)?;
@@ -217,6 +251,57 @@ mod tests {
             bounded.wrap(Command::new("/usr/bin/true")),
             Err(NativeFailure::Configuration)
         ));
+    }
+
+    #[tokio::test]
+    async fn native_scope_drop_is_awaited_before_reuse_and_a_live_owner_is_not_killed() {
+        let root = tempfile::tempdir().unwrap();
+        let mut allocation = limits();
+        allocation.wall_seconds = 30;
+        allocation.cpu_seconds = DbCounter::new(30).unwrap();
+        let bound = MissionProcess::new(Id::new(), allocation, 30).unwrap();
+        bound.wait_released().await.unwrap();
+        let mut native = Command::new("/usr/bin/sh");
+        native
+            .args(["-c", "printf 'READY\\n'; read -r line"])
+            .env_clear()
+            .current_dir(root.path());
+        let mut child = bound
+            .wrap(native)
+            .unwrap()
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let mut output = BufReader::new(child.stdout.take().unwrap());
+        let mut ready = String::new();
+        tokio::time::timeout(Duration::from_secs(2), output.read_line(&mut ready))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(ready, "READY\n");
+        let owned = bound.capture(child.id().unwrap()).unwrap();
+        assert!(
+            bound.wait_released().await.is_err(),
+            "a live owner must not be replaced"
+        );
+        assert!(child.try_wait().unwrap().is_none());
+        drop(owned);
+        bound.wait_released().await.unwrap();
+        child.wait().await.unwrap();
+        let mut replacement = Command::new("/usr/bin/true");
+        replacement.env_clear().current_dir(root.path());
+        assert!(bound
+            .wrap(replacement)
+            .unwrap()
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .status()
+            .await
+            .unwrap()
+            .success());
     }
 
     #[tokio::test]

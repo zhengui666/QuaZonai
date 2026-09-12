@@ -930,3 +930,24 @@ owner拒绝。抽取的原请求事务仍由原有Turn/恢复用例覆盖。
 不是付费模型推理、rustc/Wasmi数值执行或市场/Alpha资格证据。
 两次验证均源码不变、独立PG确认停止；之后只追加本证据。研究结论、完整科学
 评估、Reviewer、资格及其余产品流程仍未完成，尚未push/review/merge或关闭Issue。
+
+## 2026-09-12：原生公开回答与中断后的摘要恢复
+
+在b3f07d81上接入锁定原生协议的summary视图，只读取精确Turn最后的公开回答，
+不读取full/items、rollout或隐藏推理。公开text/phase/原生item身份在完整成功终态
+及usage结算后作为不可变qz.mission_summary保存，沿用原Mission输出预算；重放
+比较原字节，发布失败保留已结算用量。真实原生测试验证重启及第二轮后的分页
+仍返回原回答，且没有额外模型请求；PG用例验证来源、并发重放、回滚和旧owner。
+
+首轮完整验证`.ai-bridge/verify-RLFnHY` exit1：Store/Server496通过、1失败。
+失败发生在daemon立即重启原Mission时，PROFILE_CONNECTION/Unavailable；原
+cgroup.kill已发送，但systemd尚未回收同名scope。修复位于共享Mission启动入口：
+只查询精确scope的原生LoadState，最多等3秒且不超过剩余墙钟，不杀活跃owner、
+不换名字重开任务。`.ai-bridge/verify-Ny0zbH` exit0验证实际scope活跃时拒绝、
+退出后复用，以及强制摘要发布失败后的真实Worker恢复：仍只有1次Provider请求。
+
+最终`.ai-bridge/verify-187ozo` exit0：check/fmt/严格Clippy，149项领域/合同/
+Runtime、6项真实Job子进程、30项原生Codex和498项Store/Server检查，全部0失败/
+0忽略。验证期间源码未变，独立PG确认停止；随后仅追加本证据。受控Provider/
+科学fixture不是付费账号、科学数值或完整T08/T42证明；Mission收束、正式评估、
+独立Reviewer及后续产品仍未完成，不能据此push review、合并或关闭#62。
