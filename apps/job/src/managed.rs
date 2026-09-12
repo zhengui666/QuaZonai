@@ -391,12 +391,25 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             )?;
             outputs.json("qz.alpha_sealed", RuntimeOutputKind::Report, &result)?;
         }
-        NativeTaskParametersV1::BuildPortfolio { request, .. } => {
+        NativeTaskParametersV1::BuildPortfolio {
+            dataset_revision_id,
+            request,
+            ..
+        } => {
             // An infeasible solve is a real diagnostic report, not fabricated fallback targets.
             outputs.json(
-                "qz.native_allocation",
+                "qz.native_portfolio",
                 RuntimeOutputKind::Report,
-                &crate::allocate(&request)?,
+                &crate::portfolio::build(
+                    &input.join("catalogs").join(dataset_revision_id.to_string()),
+                    &request,
+                    |id| {
+                        read(
+                            &input.join("objects").join(id.to_string()),
+                            PARAMETERS_LIMIT,
+                        )
+                    },
+                )?,
             )?;
         }
         NativeTaskParametersV1::SimulatePortfolio {

@@ -72,13 +72,13 @@ Mission不借用它读取额外指标。原Thread反馈仍只披露冻结选择�
 受管`VALIDATE_ALPHA`仅接受VALIDATION目录、原MODEL/PARAMETERS；同一原生切分器
 在执行与结果采纳侧核对全部折，不允许手工改索引/漏折或借旧镜像声明新能力。
 该受管操作仍非Agent自授Evaluation/Qualification入口。
-本机allocate与受管PORTFOLIO_BUILD必须保留原forecasts集合，由可信数值入口校验、
-聚合再求解；不得手填资产expected_return或将合成原Alpha标识当作资格。
+本机allocate保留原forecasts集合；受管PORTFOLIO_BUILD必须从冻结FORWARD目录
+和原MODEL产物生成预测/收益，不接受手填数组或将合成Alpha标识当作资格。
 portfolio-ensemble/1需真实重建登记镜像；这些命令不增加Mission工具或审批权限。
 optimizer/alpha_ensemble须保留原NativeModelRefV1，不能改类名/版本或把未知参数
 当默认配置；顶层settings/risk_aversion不再接受，后者在原optimizer.parameters，
-对应镜像还须portfolio-models/3，allocate/PORTFOLIO_BUILD以原return_history和
-covariance_estimator估计协方差，旧covariance矩阵字段不再接受。
+对应镜像还须portfolio-models/4；本机allocate以return_history与covariance_estimator
+估计协方差，受管任务则绑定selection/mandate/members并输出qz.native_portfolio/1。
 SAMPLE_COVARIANCE仅绑定ndarray-stats0.7.0的原生cov与ddof=1，不授予数据访问，
 也不新增Mission工具；不能把数值矩阵存在当作原数据资格。
 人工Mandate API/CLI创建与读取见CLI，原配置不可修改；同键重试保留原完整请求。

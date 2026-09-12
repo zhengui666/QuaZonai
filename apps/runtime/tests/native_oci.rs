@@ -20,19 +20,96 @@ use support::{count, docker, Fixture, SIGNAL, SLOW_SIGNAL};
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn real_native_portfolio_aggregates_original_forecasts_before_optimizing() {
     use contracts::{
-        execution::NativeTaskParametersV1, portfolio::*, research::ArtifactInputRole, Revision,
+        execution::NativeTaskParametersV1,
+        portfolio::*,
+        research::{ArtifactInputRole, DataPartition},
+        science::NativePortfolioBuildResultV1,
+        Revision,
     };
+    let (catalog, mut request, wasm) = market::portfolio();
+    let second = market::module("f64.const 0.03");
+    request.mandate.objective = AllocationObjective::MaxUtility;
+    request.members[0].ensemble_weight = "0.25".parse().unwrap();
+    request.members[1].ensemble_weight = "0.75".parse().unwrap();
+    let model_ids = request
+        .members
+        .iter()
+        .map(|m| m.model_artifact_id)
+        .collect::<Vec<_>>();
+    let dataset = Id::new();
+    let observed = job::catalog::load_catalog(catalog.path(), &request.selection).unwrap();
+    let mut metadata = catalog_fixture::metadata();
+    metadata.partition = DataPartition::Forward;
+    metadata.event_start =
+        chrono::DateTime::from_timestamp_nanos(request.selection.event_start_ns.get() as i64);
+    metadata.event_end =
+        chrono::DateTime::from_timestamp_nanos(request.selection.event_end_ns.get() as i64);
+    metadata.available_through = metadata.event_end;
+    metadata.row_count = count(observed.rows as u64);
+    metadata.universe.coverage_end = metadata.event_end;
+    metadata.universe.membership = request
+        .assets
+        .iter()
+        .map(|asset| {
+            let mut member = metadata.universe.membership[0].clone();
+            member.instrument_id = asset.instrument_id.clone();
+            member
+        })
+        .collect();
+    metadata.universe.instrument_definitions = request.assets.iter().map(|asset| serde_json::json!({"type":"CurrencyPair","id":asset.instrument_id,"fixture_only":true})).collect();
+    metadata.quality.checked_at = runtime::now();
+    let quality = &mut metadata.quality.datasets[0];
+    quality.dataset_revision_id = dataset;
+    quality.selection = request.selection.clone();
+    quality.row_count = metadata.row_count;
+    quality.instrument_ids = request
+        .assets
+        .iter()
+        .map(|a| a.instrument_id.clone())
+        .collect();
+    quality.first_event_ns = count(
+        observed
+            .series
+            .iter()
+            .flat_map(|s| &s.bars)
+            .map(|b| b.ts_event.as_u64())
+            .min()
+            .unwrap(),
+    );
+    quality.last_event_ns = count(
+        observed
+            .series
+            .iter()
+            .flat_map(|s| &s.bars)
+            .map(|b| b.ts_event.as_u64())
+            .max()
+            .unwrap(),
+    );
+    quality.available_through_ns = count(
+        observed
+            .series
+            .iter()
+            .flat_map(|s| &s.bars)
+            .map(|b| b.ts_init.as_u64())
+            .max()
+            .unwrap(),
+    );
+    domain::catalogs::metadata(&metadata, runtime::now()).unwrap();
+    fs::set_permissions(catalog.path(), fs::Permissions::from_mode(0o755)).unwrap();
     let mut f = Fixture::open().await;
-    let mut request: AllocationInputV1 = serde_json::from_str(include_str!(
-        "../../../tests/contracts/allocation-input.json"
-    ))
-    .unwrap();
-    request.objective = AllocationObjective::MaxUtility;
-    request.forecasts.members[0].ensemble_weight = "0.25".parse().unwrap();
-    request.forecasts.members[1].ensemble_weight = "0.75".parse().unwrap();
-    request.forecasts.members[1].forecasts = vec![0.3, 0.0];
+    f.crash();
+    let metadata_path = f.directory.path().join("portfolio-metadata.json");
+    fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+    let mut config: serde_json::Value =
+        serde_json::from_slice(&fs::read(&f.config_path).unwrap()).unwrap();
+    config["catalogs"] = serde_json::json!([{"root":catalog.path(),"metadata_file":metadata_path}]);
+    fs::write(&f.config_path, serde_json::to_vec(&config).unwrap()).unwrap();
+    f.restart().await;
+    f.object(model_ids[0], &wasm).await;
+    f.object(model_ids[1], &second).await;
     let operation = NativeTaskParametersV1::BuildPortfolio {
         schema_version: SchemaV1,
+        dataset_revision_id: dataset,
         request: Box::new(request),
     };
     let bytes = serde_json::to_vec(&operation).unwrap();
@@ -49,12 +126,32 @@ async fn real_native_portfolio_aggregates_original_forecasts_before_optimizing()
         job_kind: operation.job_kind(),
         image_ref: support::image(),
         input_set_id: Id::new(),
-        inputs: vec![RuntimeInputV1::Artifact {
-            artifact_id: parameters,
-            storage_version: "1".into(),
-            byte_count: count(bytes.len() as u64),
-            role: ArtifactInputRole::Parameters,
-        }],
+        inputs: vec![
+            RuntimeInputV1::Dataset {
+                revision_id: dataset,
+                registered_ref: metadata.registered_ref,
+                storage_version: metadata.storage_version,
+                role: DataPartition::Forward,
+            },
+            RuntimeInputV1::Artifact {
+                artifact_id: model_ids[0],
+                storage_version: "1".into(),
+                byte_count: count(wasm.len() as u64),
+                role: ArtifactInputRole::Model,
+            },
+            RuntimeInputV1::Artifact {
+                artifact_id: model_ids[1],
+                storage_version: "1".into(),
+                byte_count: count(second.len() as u64),
+                role: ArtifactInputRole::Model,
+            },
+            RuntimeInputV1::Artifact {
+                artifact_id: parameters,
+                storage_version: "1".into(),
+                byte_count: count(bytes.len() as u64),
+                role: ArtifactInputRole::Parameters,
+            },
+        ],
         parameters_artifact_id: parameters,
         limits: RuntimeJobLimitsV1 {
             cpu: 1,
@@ -72,12 +169,12 @@ async fn real_native_portfolio_aggregates_original_forecasts_before_optimizing()
     domain::runtime_jobs::manifest(&manifest, &spec, admitted.submitted_at, runtime::now())
         .unwrap();
     assert_eq!(manifest.engine_versions["portfolio-ensemble"], "1");
-    assert_eq!(manifest.engine_versions["portfolio-models"], "3");
+    assert_eq!(manifest.engine_versions["portfolio-models"], "4");
     assert_eq!(manifest.engine_versions["ndarray"], "0.17.1");
     let [output] = manifest.artifacts.as_slice() else {
         panic!("one original allocation report");
     };
-    assert_eq!(output.schema.name, "qz.native_allocation");
+    assert_eq!(output.schema.name, "qz.native_portfolio");
     let response = f
         .client
         .get(f.url(&[
@@ -99,18 +196,28 @@ async fn real_native_portfolio_aggregates_original_forecasts_before_optimizing()
         &[(output.clone(), bytes.clone())],
     )
     .unwrap();
-    let result: AllocationResultV1 = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(result.solver_status, SolverStatus::Optimal);
-    let weight: f64 = result.targets.unwrap()[0]
-        .weight
-        .as_decimal()
-        .to_plain_string()
-        .parse()
-        .unwrap();
-    assert!(
-        (weight - 0.82).abs() < 1e-5,
-        "synthetic analytical optimum: {weight}"
+    let result: NativePortfolioBuildResultV1 = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(result.allocation.solver_status, SolverStatus::Optimal);
+    assert!(result
+        .allocation
+        .targets
+        .as_ref()
+        .is_some_and(|v| v.len() == 2));
+    assert_eq!(
+        result.input.forecasts.members[0].forecasts,
+        vec![0.01, 0.01]
     );
+    assert_eq!(
+        result.input.forecasts.members[1].forecasts,
+        vec![0.03, 0.03]
+    );
+    let aggregate = job::validation::aligned_portfolio_forecast(&result.input.forecasts).unwrap();
+    assert!(aggregate.iter().all(|v| (*v - 0.025).abs() < 1e-14));
+    assert_eq!(result.input.return_history.end_ns.len(), 18);
+    assert!(
+        (result.input.return_history.asset_returns[0][0] - (1.003 / 1.001 - 1.0)).abs() < 1e-14
+    );
+    assert!(result.consumed_fuel.get() > 0);
     assert_eq!(
         f.native_container(&spec).await.state.unwrap().exit_code,
         Some(0)

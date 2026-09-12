@@ -9,6 +9,7 @@ pub mod catalog;
 pub mod forecast;
 pub mod managed;
 mod optimization;
+pub mod portfolio;
 pub use domain::codex::verified_codex_version;
 pub use optimization::allocate;
 mod report;

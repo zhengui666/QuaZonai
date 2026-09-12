@@ -183,7 +183,11 @@ pub fn output_shape(output: &RuntimeOutputV1, bytes: &[u8]) -> Result<(), Domain
         "qz.native_forecast" => forecast::shape(&decode::<NativeForecastResultV1>(bytes)?),
         "qz.alpha_validation" => validation::shape(&decode(bytes)?),
         "qz.alpha_sealed" => sealed::shape(&decode(bytes)?),
-        "qz.native_allocation" => allocation(&decode(bytes)?),
+        "qz.native_portfolio" => {
+            let result: contracts::science::NativePortfolioBuildResultV1 = decode(bytes)?;
+            allocation(&result.allocation)?;
+            crate::portfolio::allocation_result(&result.input, &result.allocation)
+        }
         "qz.native_simulation" => simulation::shape(&decode::<NativeSimulationResultV1>(bytes)?),
         _ => Err(bad("native_output.schema")),
     }
@@ -271,13 +275,7 @@ pub fn output_bindings(
             sealed::binding(request, calibration, &decode(body("qz.alpha_sealed")?.1)?)?;
         }
         NativeTaskParametersV1::BuildPortfolio { request, .. } => {
-            let value: AllocationResultV1 = decode(body("qz.native_allocation")?.1)?;
-            if value.iterations
-                > crate::portfolio::optimizer_settings(&request.optimizer)?.max_iterations
-            {
-                return Err(bad("native_output.solver_iterations"));
-            }
-            crate::portfolio::allocation_result(request, &value)?;
+            super::portfolio_build_result(request, &decode(body("qz.native_portfolio")?.1)?)?;
         }
         NativeTaskParametersV1::SimulatePortfolio { request, .. } => {
             simulation::binding(request, &decode(body("qz.native_simulation")?.1)?)?;

@@ -97,8 +97,12 @@ pub async fn parameters(
         } => {
             vec![(*dataset_revision_id, &request.forecast.selection)]
         }
-        NativeTaskParametersV1::CompileModel { .. }
-        | NativeTaskParametersV1::BuildPortfolio { .. } => Vec::new(),
+        NativeTaskParametersV1::BuildPortfolio {
+            dataset_revision_id,
+            request,
+            ..
+        } => vec![(*dataset_revision_id, &request.selection)],
+        NativeTaskParametersV1::CompileModel { .. } => Vec::new(),
     };
     for (revision, selection) in selections {
         let catalog = spec

@@ -1,5 +1,7 @@
 //! Synthetic structural counterexamples, not native numerical or market evidence.
 //! Genuine solver/account output is independently exercised by job/tests/managed.
+#[path = "../../../tests/support/portfolio.rs"]
+mod portfolio_config;
 use chrono::{DateTime, Utc};
 use contracts::{
     evidence::MetricStatus,
@@ -108,7 +110,21 @@ fn allocation_success_requires_exact_instruments_currency_weights_and_solver_con
     .unwrap();
     let parameters = NativeTaskParametersV1::BuildPortfolio {
         schema_version: SchemaV1,
-        request: Box::new(request.clone()),
+        dataset_revision_id: Id::new(),
+        request: Box::new(portfolio_config::request(&request)),
+    };
+    let accepts_allocation = |parameters: &NativeTaskParametersV1,
+                              allocation: &AllocationResultV1| {
+        accepts(
+            parameters,
+            "qz.native_portfolio",
+            &NativePortfolioBuildResultV1 {
+                schema_version: SchemaV1,
+                input: request.clone(),
+                allocation: allocation.clone(),
+                consumed_fuel: DbCounter::new(1).unwrap(),
+            },
+        )
     };
     let result = AllocationResultV1 {
         schema_version: SchemaV1,
@@ -132,15 +148,15 @@ fn allocation_success_requires_exact_instruments_currency_weights_and_solver_con
         primal_residual: Some(0.0),
         dual_residual: Some(0.0),
     };
-    assert!(accepts(&parameters, "qz.native_allocation", &result));
+    assert!(accepts_allocation(&parameters, &result));
     let mut wrong_forecasts = request.clone();
-    wrong_forecasts.forecasts.instrument_ids.swap(0, 1);
-    assert!(!accepts(
+    wrong_forecasts.assets.swap(0, 1);
+    assert!(!accepts_allocation(
         &NativeTaskParametersV1::BuildPortfolio {
             schema_version: SchemaV1,
-            request: Box::new(wrong_forecasts),
+            dataset_revision_id: Id::new(),
+            request: Box::new(portfolio_config::request(&wrong_forecasts)),
         },
-        "qz.native_allocation",
         &result
     ));
     for dimension in 0..12 {
@@ -165,7 +181,7 @@ fn allocation_success_requires_exact_instruments_currency_weights_and_solver_con
             _ => invalid.cash_weight = None,
         }
         assert!(
-            !accepts(&parameters, "qz.native_allocation", &invalid),
+            !accepts_allocation(&parameters, &invalid),
             "allocation dimension {dimension}"
         );
     }
@@ -179,14 +195,10 @@ fn allocation_success_requires_exact_instruments_currency_weights_and_solver_con
         dual_residual: None,
         ..result
     };
-    assert!(accepts(&parameters, "qz.native_allocation", &unavailable));
+    assert!(accepts_allocation(&parameters, &unavailable));
     let mut fabricated_fallback = unavailable;
     fabricated_fallback.cash_weight = Some("1".parse().unwrap());
-    assert!(!accepts(
-        &parameters,
-        "qz.native_allocation",
-        &fabricated_fallback
-    ));
+    assert!(!accepts_allocation(&parameters, &fabricated_fallback));
 }
 
 fn simulation() -> (NativeTaskParametersV1, NativeSimulationResultV1) {

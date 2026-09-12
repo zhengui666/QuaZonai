@@ -4,13 +4,13 @@
 
 Runtime 是受信任的计算网关：只接受已登记镜像、不可变输入引用和固定类型任务，复用 Docker 的进程、文件系统与 cgroup 隔离。研究预算、数据许可、Alpha 资格、审批、真实交易仍不由 Runtime 拥有。任务成功不等于科学结论通过。
 
-当前PORTFOLIO_BUILD要求原forecasts集合，镜像能力为portfolio-ensemble/1，原生
-ndarray 0.17.1聚合后送入同一Clarabel问题；旧expected_return输入不兼容。
-真实OCI回归覆盖原参数上传、执行、原结果下载/绑定及幂等重放，合成0.82/0.18
-数值结果不是REAL资格或完整组合交付。更新源码后必须重建并登记新镜像。
-当前还要求portfolio-models/3，绑定原optimizer/alpha_ensemble的类名、版本及严格
+当前PORTFOLIO_BUILD要求原FORWARD目录和MODEL/校准产物，经原生预测与收益
+生成、ndarray聚合/样本估计后进入同一Clarabel问题；不再接受手填预测数组。
+真实OCI回归须覆盖原参数/模型上传、目录挂载、原结果下载/绑定及幂等重放。
+合成数值不是REAL资格或完整交付。更新源码后必须重建并登记新镜像。
+当前要求portfolio-models/4，绑定原optimizer/alpha_ensemble的类名、版本及严格
 参数；risk_aversion冻结在optimizer.parameters，不接收顶层settings/risk_aversion
-或默认模型。必须从原return_history经covariance_estimator原生估计协方差，
+或默认模型。必须从目录生成的return_history经covariance_estimator原生估计协方差，
 不接受旧covariance矩阵。具体原生请求格式以CLI及生成合同为准。
 
 ## 构建

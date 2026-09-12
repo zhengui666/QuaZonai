@@ -1,5 +1,7 @@
 //! Native synthetic catalog fixture. Never REAL data or a production initialization path.
 #![allow(dead_code)]
+#[path = "../../../../tests/support/portfolio.rs"]
+mod portfolio_config;
 use contracts::{portfolio::AllocationTargetV1, science::*, DbCounter, SchemaV1};
 use nautilus_model::{
     data::{Bar, BarType},
@@ -170,6 +172,24 @@ pub fn alpha_validation_request(
 
 pub fn module(body: &str) -> Vec<u8> {
     wat::parse_str(format!("(module (func (export \"predict\") (param f64 f64 f64 f64 f64 f64 f64 f64) (result f64) {body}))")).unwrap()
+}
+
+pub fn portfolio() -> (tempfile::TempDir, NativePortfolioBuildRequestV1, Vec<u8>) {
+    let (directory, simulation) = market("0", 20);
+    let input = serde_json::from_str(include_str!(
+        "../../../../tests/contracts/allocation-input.json"
+    ))
+    .unwrap();
+    let mut request = portfolio_config::request(&input);
+    request.selection = simulation.selection;
+    request.mandate.rebalance_schedule.max_input_age_seconds = 60;
+    for (asset, fee) in request.assets.iter_mut().zip(simulation.settings.fee_rates) {
+        asset.instrument_id = fee.instrument_id;
+    }
+    for member in &mut request.members {
+        member.parameters.label_horizon_observations = 2;
+    }
+    (directory, request, module("f64.const 0.01"))
 }
 
 pub fn sealed() -> (

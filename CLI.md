@@ -157,7 +157,7 @@ cargo run --locked -p job -- allocate < tests/contracts/allocation-input.json
 
 第二条是明确标记的合成两资产数值回归输入，不产生生产资格或交付权。`allocate` 使用真实 Clarabel 求解并检查存储用十进制目标；无解/失败不输出备用权重，必须检查 `solver_status` 而非只看进程退出码。
 
-`allocate`与受管`PORTFOLIO_BUILD`都要求原`forecasts`集合，不再接受资产上的
+`allocate`要求原`forecasts`集合，不再接受资产上的
 `expected_return`。原Alpha版本、单位/期限/时点、原生bar、完整资产顺序及固定
 混合权重先检查，再用ndarray聚合进入同一Clarabel问题；MIN_RISK也不跳过。
 这些输入标识不代替数据库资格或许可。必须重建并登记带`portfolio-ensemble/1`
@@ -168,15 +168,21 @@ schema_version、adapter_kind、upstream_class、upstream_version、parameters�
 当前仅支持CLARABEL_QP / clarabel::solver::DefaultSolver / 0.11.1（参数沿用
 AllocatorSettingsV1）及FIXED_WEIGHTED_FORECAST / ndarray::ArrayBase::dot / 0.17.1
 （参数为空对象，混合权重在原forecasts中）。顶层settings已删除；未知类/版本、
-错误角色、额外参数均拒绝，不默认选择模型。新镜像还需portfolio-models/3能力。
+错误角色、额外参数均拒绝，不默认选择模型。新镜像还需portfolio-models/4能力。
 正Decimal的risk_aversion现在冻结在optimizer.parameters中，顶层同名字段已删除。
 
 协方差数值适配的引用为SAMPLE_COVARIANCE / ndarray_stats::CorrelationExt::cov /
 0.7.0，parameters仅为`{"ddof":1}`，不能传年化、补值或另一估计器参数。
-allocate及受管PORTFOLIO_BUILD必须带covariance_estimator和return_history，
+本机allocate必须带covariance_estimator和return_history，
 不再接收covariance矩阵。历史收益须保留与forecasts相同资产/bar/期限/币种、
 严格递增窗口结束和不晚于决策的可用时点；由原生样本估计直接进入Clarabel。
 格式见合成输入文件和DESIGN A5.2；历史来源的可信目录/产物/许可绑定仍待完整编排。
+
+受管PORTFOLIO_BUILD不接受上述手填数值输入；必须使用dataset_revision_id与
+NativePortfolioBuildRequestV1，包含selection、mandate、current_cash_weight、
+assets与原Alpha/model/calibration成员。仅挂载明确FORWARD目录和MODEL产物，
+原生运行生成预测与历史收益，输出qz.native_portfolio/1。模型数值执行不代替
+Store的当前资格、许可、政策与资金来源检查，完整Candidate编排仍待完成。
 
 ### 不可变 Portfolio Mandate
 

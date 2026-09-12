@@ -10,12 +10,14 @@ use contracts::{
 use std::collections::BTreeSet;
 
 mod output;
+mod portfolio;
 pub mod validation;
 pub use output::{
     alpha_sealed_metrics, alpha_sealed_policy, alpha_sealed_request, alpha_validation_metrics,
     alpha_validation_policy, check_alpha_calibration, check_alpha_sealed, freeze_alpha_calibration,
     output_bindings, output_shape,
 };
+pub use portfolio::{portfolio_build_request, portfolio_build_result};
 
 fn bad(field: &str) -> DomainError {
     invalid(field, "NATIVE_TASK_BINDING_INVALID")
@@ -206,13 +208,23 @@ pub fn task(spec: &JobSpecV1, parameters: &NativeTaskParametersV1) -> Result<(),
                 return Err(bad("sealed_inputs"));
             }
         }
-        NativeTaskParametersV1::BuildPortfolio { request, .. } => {
-            crate::portfolio::allocation_input(request)?;
-            if spec
-                .inputs
+        NativeTaskParametersV1::BuildPortfolio {
+            dataset_revision_id,
+            request,
+            ..
+        } => {
+            portfolio_build_request(request)?;
+            let objects = request
+                .members
                 .iter()
-                .any(|input| matches!(input, RuntimeInputV1::Dataset { .. }))
-            {
+                .flat_map(|m| std::iter::once(m.model_artifact_id).chain(m.calibration_artifact_id))
+                .collect::<BTreeSet<_>>();
+            if !spec.inputs.iter().any(|input| matches!(input, RuntimeInputV1::Dataset { revision_id, role: contracts::research::DataPartition::Forward, .. } if revision_id == dataset_revision_id))
+                || objects.iter().any(|id| !artifact(spec, *id, ArtifactInputRole::Model))
+                || spec.inputs.iter().any(|input| match input {
+                    RuntimeInputV1::Dataset { revision_id, role, .. } => revision_id != dataset_revision_id || *role != contracts::research::DataPartition::Forward,
+                    RuntimeInputV1::Artifact { artifact_id, role, .. } => !(*role == ArtifactInputRole::Model && objects.contains(artifact_id) || *artifact_id == spec.parameters_artifact_id && *role == ArtifactInputRole::Parameters),
+                }) {
                 return Err(bad("allocation_inputs"));
             }
         }

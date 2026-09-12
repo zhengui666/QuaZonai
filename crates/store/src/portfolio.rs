@@ -119,7 +119,7 @@ impl Store {
             ("clarabel", CLARABEL_VERSION),
             ("ndarray", FIXED_ENSEMBLE_VERSION),
             ("ndarray-stats", SAMPLE_COVARIANCE_VERSION),
-            ("portfolio-models", "3"),
+            ("portfolio-models", "4"),
         ] {
             if cap.engine_versions.get(library).map(String::as_str) != Some(version) {
                 return Err(

@@ -328,13 +328,13 @@ cargo run --locked -p server -- prune-unpublished-verifiers --state-dir ./var
 
 ## 尚待完成的产品部署验收
 
-本机及真实OCI的PORTFOLIO_BUILD已验证原预测集合→固定权重聚合→Clarabel资产
-目标；输入不再接收手填expected_return。更新必须重建并登记含portfolio-ensemble/1
-能力的原生镜像。合成数值回归不代表Alpha拥有当前REAL资格、许可或可发布Candidate。
+受管PORTFOLIO_BUILD已改为原FORWARD目录和MODEL产物生成预测/收益，再聚合及
+Clarabel求解，不接受手填预测或历史收益。更新必须重建并验证登记的新镜像；
+合成目录回归不代表Alpha拥有当前REAL资格、许可或可发布Candidate。
 当前输入还须绑定原optimizer/alpha_ensemble的严格类名、版本和参数，替代顶层
 settings；风险厌恶系数也冻结在optimizer.parameters，不再接收顶层risk_aversion。
-对应镜像为portfolio-models/3，具体格式见CLI原生科学任务入口。协方差现从带
-资产/期限/时点的return_history原生估计，不接收手填矩阵；仍不代表来源已获资格。
+对应镜像为portfolio-models/4，具体格式见CLI原生科学任务入口。独立allocate
+仍可接受合成return_history作数值检查，但这不是受管任务或资格准入入口。
 Mandate的真实API/CLI已支持新建不可变版本和读取，创建前须有当前有效Runtime探测
 及一致的执行/政策引用。失败不落半条配置。在“组合”选择已有项目后，可新建配置
 并查看服务器保存的不可变版本；当前须填写已有 Runtime、投资域、政策、执行假设

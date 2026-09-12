@@ -1824,11 +1824,18 @@ RETURN_PER_HORIZON，不把原score或缺少共同基准定义的residual收益�
 外部LAST时间bar及各资产相同BarSpecification，避免把分钟bar与小时bar的相同计数
 误当共同期限。字符串一致只是数值输入合同，真实目录/预测产物仍由可信编排绑定。
 
-受管PORTFOLIO_BUILD与本机allocate共用AllocationInputV1，必须包含原forecasts集合；
-资产条目不再接收独立expected_return，不能绕过原预测聚合或用手填汇总值代替。
-原优化器在构造目标函数前执行对齐/原生bar校验和固定权重聚合；MIN_RISK也不跳过
-输入证据合同。领域准入与结果约束校验使用同一预测身份/权重/资产/币种绑定，
-Runtime必须带portfolio-ensemble/1镜像能力，旧参数或镜像不加兼容路径。
+本机allocate使用AllocationInputV1作为数值入口，不授予来源或交付资格。受管
+PORTFOLIO_BUILD则接收dataset_revision_id与NativePortfolioBuildRequestV1：冻结
+selection、完整mandate、current_cash_weight、assets及原members。每个成员保留
+alpha_id/version_id、model_artifact_id、可选calibration_artifact_id、target_kind、
+ensemble_weight与原NativeForecastParametersV1；不接受调用方填写的预测或收益。
+目录只来自原FORWARD挂载，模型/校准只来自显式MODEL产物；原生job按同序资产与
+共同完整窗口产生历史收益，分别执行原Wasm并对SCORE应用冻结校准，不重新拟合。
+各资产最后预测时点必须相同且新鲜；缺失/预热/时间错位不补值。结果以
+qz.native_portfolio/1保存原数值input、allocation及真实consumed_fuel，采纳侧核对
+原Mandate、成员、selection、预算和目标合同。Store仍须在准入/发布事务核验原
+Alpha资格、政策、REAL/PIT、许可、资金/费用来源；运行成功本身不授予这些权利。
+旧受管矩阵/手填预测输入不保留兼容路径，原有单次allocate数值检查仍保留。
 
 原生输出保留OPTIMAL/ACCEPTABLE_INACCURATE/INFEASIBLE/UNBOUNDED/FAILED，只有策略明确接受的成功状态且全部发布约束在冻结容差内再次通过时，才带targets与cash。无解、数值失败、迭代上限、后验约束不通过时，两者均为空，不生成100%单资产或平滑修正的备用权重。权重只在求解器数值边界转换，公开存储继续使用DecimalValue；转换后的权重必须重新验证总和及全部限额。求解成功本身不是Qualification/Release批准。
 
@@ -1840,7 +1847,7 @@ available_ns为全部资产最晚可用时点，不早于窗口结束、不晚�
 共享2..100000个完整窗口，总收益值不超过1000000；有限简单收益不得小于-1。
 不填补、重排或删列。原生ndarray-stats/0.7.0以ddof=1估计每期限协方差后直接进入
 同一Clarabel问题，不年化、不添加jitter；奇异矩阵仍明确拒绝。镜像必须提供
-portfolio-models/3，旧矩阵输入不兼容。该数值因果合同不证明来源，可信编排仍须
+portfolio-models/4，旧矩阵输入不兼容。该数值因果合同不证明来源，可信编排仍须
 将收益历史绑定冻结目录、许可与原产物，再构建具备资格和完整评估的Candidate。
 
 ## A6. Run、Attempt、事件和原生会话

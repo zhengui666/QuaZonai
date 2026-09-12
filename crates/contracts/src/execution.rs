@@ -1,6 +1,5 @@
 //! Fixed native job operations. No caller-selected process, environment, mount or host path.
 use crate::{
-    portfolio::AllocationInputV1,
     runtime::RuntimeArtifactSchemaV1,
     runtime_jobs::RuntimeOutputV1,
     science::{NativeBarSelectionV1, NativeForecastRequestV1, NativeSimulationRequestV1},
@@ -56,7 +55,8 @@ pub enum NativeTaskParametersV1 {
     },
     BuildPortfolio {
         schema_version: SchemaV1,
-        request: Box<AllocationInputV1>,
+        dataset_revision_id: Id,
+        request: Box<crate::science::NativePortfolioBuildRequestV1>,
     },
     SimulatePortfolio {
         schema_version: SchemaV1,
@@ -84,7 +84,7 @@ impl NativeTaskParametersV1 {
             Self::EvaluateAlpha { .. } => &["qz.native_forecast"],
             Self::ValidateAlpha { .. } => &["qz.alpha_validation"],
             Self::EvaluateSealedAlpha { .. } => &["qz.alpha_sealed"],
-            Self::BuildPortfolio { .. } => &["qz.native_allocation"],
+            Self::BuildPortfolio { .. } => &["qz.native_portfolio"],
             Self::SimulatePortfolio { .. } => &["qz.native_simulation"],
         };
         names
@@ -150,6 +150,6 @@ pub enum NativeJsonOutputV1 {
     Forecast(Box<crate::science::NativeForecastResultV1>),
     AlphaValidation(Box<crate::science::NativeAlphaValidationResultV1>),
     AlphaSealed(Box<crate::science::NativeAlphaSealedResultV1>),
-    Allocation(Box<crate::portfolio::AllocationResultV1>),
+    Portfolio(Box<crate::science::NativePortfolioBuildResultV1>),
     Simulation(Box<crate::science::NativeSimulationResultV1>),
 }

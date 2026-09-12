@@ -8,6 +8,8 @@ use contracts::{
 use runtime::{files::RuntimeRoot, journal::Journal, materialize, now, Failure};
 use std::{fs, os::unix::fs::PermissionsExt, sync::Arc};
 
+const CODE: &[u8] = b"pub fn fixture() {}";
+
 struct Fixture {
     _directory: tempfile::TempDir,
     root: Arc<RuntimeRoot>,
@@ -22,23 +24,20 @@ async fn fixture() -> Fixture {
     let journal = Journal::open(&root.path.join("journal.sqlite"), 64 * 1024 * 1024, 16)
         .await
         .unwrap();
-    let parameters = NativeTaskParametersV1::BuildPortfolio {
+    let code_id = Id::new();
+    journal.put_object(code_id, "1", CODE).await.unwrap();
+    let parameters = NativeTaskParametersV1::CompileModel {
         schema_version: SchemaV1,
-        request: Box::new(
-            serde_json::from_str(include_str!(
-                "../../../tests/contracts/allocation-input.json"
-            ))
-            .unwrap(),
-        ),
+        code_artifact_id: code_id,
     };
     let schemas = parameters.output_schemas();
     let bytes = serde_json::to_vec(&parameters).unwrap();
     let parameter_id = Id::new();
     journal.put_object(parameter_id, "1", &bytes).await.unwrap();
     let mut capability = protocol::capabilities(now());
-    capability.job_kinds = vec![RunKind::PortfolioBuild];
+    capability.job_kinds = vec![RunKind::DataValidate];
     capability.image_refs.truncate(1);
-    capability.image_refs[0].job_kind = RunKind::PortfolioBuild;
+    capability.image_refs[0].job_kind = RunKind::DataValidate;
     capability.artifact_schemas = schemas.clone();
     let run_id = Id::new();
     let spec = JobSpecV1 {
@@ -47,15 +46,23 @@ async fn fixture() -> Fixture {
         attempt_no: 1,
         owner_epoch: Revision::INITIAL,
         external_job_id: domain::runtime_jobs::external_id(run_id, 1).unwrap(),
-        job_kind: RunKind::PortfolioBuild,
+        job_kind: RunKind::DataValidate,
         image_ref: capability.image_refs[0].image_ref.clone(),
         input_set_id: Id::new(),
-        inputs: vec![RuntimeInputV1::Artifact {
-            artifact_id: parameter_id,
-            storage_version: "1".into(),
-            byte_count: DbCounter::new(bytes.len() as u64).unwrap(),
-            role: ArtifactInputRole::Parameters,
-        }],
+        inputs: vec![
+            RuntimeInputV1::Artifact {
+                artifact_id: code_id,
+                storage_version: "1".into(),
+                byte_count: DbCounter::new(CODE.len() as u64).unwrap(),
+                role: ArtifactInputRole::Code,
+            },
+            RuntimeInputV1::Artifact {
+                artifact_id: parameter_id,
+                storage_version: "1".into(),
+                byte_count: DbCounter::new(bytes.len() as u64).unwrap(),
+                role: ArtifactInputRole::Parameters,
+            },
+        ],
         parameters_artifact_id: parameter_id,
         limits: RuntimeJobLimitsV1 {
             cpu: 1,
@@ -113,6 +120,7 @@ async fn repeated_materialization_reuses_one_quota_reservation_and_one_immutable
         .await
         .unwrap();
     let expected = f.parameters.len() as u64
+        + CODE.len() as u64
         + serde_json::to_vec(&f.spec).unwrap().len() as u64
         + f.spec.limits.output_bytes.get()
         + domain::runtime_jobs::MAX_RESULT_MANIFEST_BYTES as u64;
@@ -296,10 +304,14 @@ async fn admission_at_exact_disk_quota_succeeds_and_one_extra_byte_rolls_back() 
     // its size or discard a requested input to make the job appear admissible.
     f.spec.limits.output_bytes = DbCounter::new(32 * 1024 * 1024).unwrap();
     let materialized = f.parameters.len() as u64
+        + CODE.len() as u64
         + serde_json::to_vec(&f.spec).unwrap().len() as u64
         + f.spec.limits.output_bytes.get()
         + domain::runtime_jobs::MAX_RESULT_MANIFEST_BYTES as u64;
-    let exact = f.parameters.len() as u64 + f.spec.limits.output_bytes.get() + materialized;
+    let exact = f.parameters.len() as u64
+        + CODE.len() as u64
+        + f.spec.limits.output_bytes.get()
+        + materialized;
     f.journal.close().await;
     let too_small = Journal::open(&f.root.path.join("journal.sqlite"), exact - 1, 16)
         .await

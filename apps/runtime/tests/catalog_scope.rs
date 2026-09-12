@@ -1,6 +1,8 @@
 //! Real SQLite parameters with explicit synthetic source metadata. No network/OCI claim.
 #[path = "../../../tests/support/catalog_metadata.rs"]
 mod catalog_fixture;
+#[path = "../../../tests/support/portfolio.rs"]
+mod portfolio_config;
 use catalog_fixture::count;
 use contracts::{
     catalogs::RuntimeCatalogMetadataV1,
@@ -19,6 +21,23 @@ fn operation(
     selection: NativeBarSelectionV1,
 ) -> NativeTaskParametersV1 {
     match kind {
+        5 => {
+            let input = serde_json::from_str(include_str!(
+                "../../../tests/contracts/allocation-input.json"
+            ))
+            .unwrap();
+            let mut request = portfolio_config::request(&input);
+            request.assets.truncate(selection.bar_types.len());
+            request.selection = selection;
+            for member in &mut request.members {
+                member.model_artifact_id = model;
+            }
+            NativeTaskParametersV1::BuildPortfolio {
+                schema_version: SchemaV1,
+                dataset_revision_id: dataset,
+                request: Box::new(request),
+            }
+        }
         0 => NativeTaskParametersV1::ValidateData {
             schema_version: SchemaV1,
             selections: vec![NativeDatasetSelectionV1 {
@@ -143,7 +162,7 @@ async fn accepts(
         storage_version: metadata.storage_version.clone(),
         role: metadata.partition,
     }];
-    if matches!(kind, 1 | 3 | 4) {
+    if matches!(kind, 1 | 3 | 4 | 5) {
         journal
             .put_object(model, "1", b"controlled-model-fixture")
             .await
@@ -198,14 +217,17 @@ async fn accepts(
 }
 
 #[tokio::test]
-async fn all_five_data_operations_cannot_widen_the_registered_visibility_cutoff() {
-    for kind in 0..5 {
+async fn all_six_data_operations_cannot_widen_the_registered_visibility_cutoff() {
+    for kind in 0..6 {
         let mut metadata = catalog_fixture::metadata();
         if kind == 3 {
             metadata.partition = DataPartition::Validation;
         }
         if kind == 4 {
             metadata.partition = DataPartition::Sealed;
+        }
+        if kind == 5 {
+            metadata.partition = DataPartition::Forward;
         }
         let selected = metadata.quality.datasets[0].selection.clone();
         assert!(accepts(kind, metadata.clone(), selected.clone()).await);
@@ -219,14 +241,17 @@ async fn all_five_data_operations_cannot_widen_the_registered_visibility_cutoff(
 }
 
 #[tokio::test]
-async fn all_five_data_operations_reject_unregistered_types_instruments_and_event_ranges() {
-    for kind in 0..5 {
+async fn all_six_data_operations_reject_unregistered_types_instruments_and_event_ranges() {
+    for kind in 0..6 {
         let mut metadata = catalog_fixture::metadata();
         if kind == 3 {
             metadata.partition = DataPartition::Validation;
         }
         if kind == 4 {
             metadata.partition = DataPartition::Sealed;
+        }
+        if kind == 5 {
+            metadata.partition = DataPartition::Forward;
         }
         domain::catalogs::metadata(&metadata, now()).unwrap();
         let selection = metadata.quality.datasets[0].selection.clone();

@@ -10702,6 +10702,90 @@
           }
         ]
       },
+      "NativePortfolioAlphaV1": {
+        "additionalProperties": false,
+        "properties": {
+          "alpha_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "alpha_version_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "calibration_artifact_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "ensemble_weight": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "model_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "parameters": {
+            "$ref": "#/components/schemas/NativeForecastParametersV1"
+          },
+          "target_kind": {
+            "$ref": "#/components/schemas/TargetKind"
+          }
+        },
+        "required": [
+          "alpha_id",
+          "alpha_version_id",
+          "model_artifact_id",
+          "target_kind",
+          "ensemble_weight",
+          "parameters"
+        ],
+        "type": "object"
+      },
+      "NativePortfolioBuildRequestV1": {
+        "additionalProperties": false,
+        "properties": {
+          "assets": {
+            "items": {
+              "$ref": "#/components/schemas/AllocationAssetV1"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "current_cash_weight": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "mandate": {
+            "$ref": "#/components/schemas/MandateContentV1"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/NativePortfolioAlphaV1"
+            },
+            "maxItems": 256,
+            "minItems": 2,
+            "type": "array"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/NativeBarSelectionV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "selection",
+          "mandate",
+          "current_cash_weight",
+          "assets",
+          "members"
+        ],
+        "type": "object"
+      },
       "NativeReturnV1": {
         "additionalProperties": false,
         "properties": {
@@ -11341,6 +11425,9 @@
           },
           {
             "properties": {
+              "dataset_revision_id": {
+                "$ref": "#/components/schemas/Id"
+              },
               "operation": {
                 "enum": [
                   "BUILD_PORTFOLIO"
@@ -11348,7 +11435,7 @@
                 "type": "string"
               },
               "request": {
-                "$ref": "#/components/schemas/AllocationInputV1"
+                "$ref": "#/components/schemas/NativePortfolioBuildRequestV1"
               },
               "schema_version": {
                 "$ref": "#/components/schemas/SchemaV1"
@@ -11356,6 +11443,7 @@
             },
             "required": [
               "schema_version",
+              "dataset_revision_id",
               "request",
               "operation"
             ],
@@ -14647,7 +14735,7 @@
                 "properties": {
                   "name": {
                     "enum": [
-                      "qz.native_allocation"
+                      "qz.native_portfolio"
                     ],
                     "type": "string"
                   },

@@ -3,6 +3,45 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Catalog-backed native portfolio inputs, 2026-09-13
+
+Working source over `7253784e58c382848029e462dbf2ca277626587d` replaces the managed
+caller-filled AllocationInput with a fixed Forward catalog selection, original
+Wasm/calibration artifacts, frozen Mandate, member weights and current-weight/fee
+inputs. Existing catalog/forecast/frozen-calibration/ndarray/Clarabel functions
+produce and validate the numerical input inside the native job. Common windows
+must match exactly; no filling, intersection, recalibration or fallback targets.
+The output is qz.native_portfolio/1 with generated input, allocation and observable
+fuel. Runtime catalog scope, model roles and original-request output bindings are
+checked; capability is portfolio-models/4. Local allocate remains a numerical CLI,
+not an authoritative Candidate route. Old managed input/output is not retained.
+
+Initial `verify-MqSeon` exposed an obsolete NativeJsonOutput assertion; the assertion
+now names the new report. Final `verify-QYiKAD` exited 0: workspace check/format/
+strict Clippy, 153 contracts/domain/runtime, 8 managed subprocess, 31 native Codex
+and 89 Job tests passed, zero failed/ignored (overlapping subsets). Runtime catalog
+scope tests include all six operations. `web-verify-SaT9p2` exited 0: six generated
+outputs reproduced byte-for-byte, handwritten source unchanged, typecheck/build/
+numeric wires/CLI help, 505 Vitest, 5 Node, 36 dedicated and 195 full browser tests
+passed. Only domain/runtime generated OpenAPI changed.
+
+`owner-oci-lbWQ4X` built image
+`sha256:a5fc24e19fd5d27ab2947d9584015fd605423eea4e7f78cda4900a16f0a5f75c`;
+all 9 actual OCI tests passed in 15.21s, zero failed/ignored, source unchanged.
+The portfolio test mounts actual synthetic Parquet, uploads two original Wasm
+modules, observes 0.01/0.03 forecasts and their 0.025 weighted ensemble, checks
+original return history and optimization, downloads the bound result and replays
+the same job. `verify-QvvS4T` exited 0: check/format/strict Clippy, 126 domain,
+34 scientific/managed, 2 Mandate Store and 15 HTTP/native CLI tests passed, zero
+failed/ignored; source unchanged and owned PostgreSQL stopped. This evidence entry
+is the only subsequent handwritten change.
+
+These synthetic inputs do not prove REAL provenance or Alpha qualification.
+Trusted Store admission/publication must still bind current qualifications,
+policies, licenses, original artifacts and current-weight/fee sources; independent
+Candidate simulation, Release and the rest of T42 remain required. No push,
+GitHub review request, merge or Issue closure occurred in this stage.
+
 ## Original return history enters native covariance and allocation, 2026-09-13
 
 Working source over `439f2f57214c36412f2006c5cc8141831f7f4da8` removes the

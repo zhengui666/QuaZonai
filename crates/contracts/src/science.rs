@@ -8,6 +8,8 @@ mod validation;
 pub use validation::*;
 mod sealed;
 pub use sealed::*;
+mod portfolio;
+pub use portfolio::*;
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]

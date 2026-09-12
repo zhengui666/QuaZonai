@@ -205,7 +205,7 @@ pub const NATIVE_OUTPUT_CONTRACTS: &[NativeOutputContract] = &[
         media_type: "application/json",
     },
     NativeOutputContract {
-        name: "qz.native_allocation",
+        name: "qz.native_portfolio",
         kind: RuntimeOutputKind::Report,
         media_type: "application/json",
     },

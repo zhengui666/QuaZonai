@@ -295,68 +295,80 @@ fn actual_managed_sealed_uses_original_fit_and_rejects_other_partitions() {
     }
 }
 
-#[test]
-fn actual_managed_allocation_preserves_real_solver_result_and_infeasibility_without_fallback() {
-    let mut request: contracts::portfolio::AllocationInputV1 = serde_json::from_str(include_str!(
-        "../../../tests/contracts/allocation-input.json"
-    ))
-    .unwrap();
-    request.objective = contracts::portfolio::AllocationObjective::MaxUtility;
-    request.forecasts.members[0].ensemble_weight = "0.25".parse().unwrap();
-    request.forecasts.members[1].ensemble_weight = "0.75".parse().unwrap();
-    request.forecasts.members[1].forecasts = vec![0.3, 0.0];
+fn portfolio_fixture(
+    change: impl FnOnce(&mut contracts::science::NativePortfolioBuildRequestV1),
+) -> Fixture {
+    let (catalog, mut request, wasm) = market::portfolio();
+    change(&mut request);
+    let id = Id::new();
+    let mut inputs = vec![RuntimeInputV1::Dataset {
+        revision_id: id,
+        registered_ref: "synthetic-native-regression".into(),
+        storage_version: "1".into(),
+        role: DataPartition::Forward,
+    }];
+    for member in &request.members {
+        inputs.push(RuntimeInputV1::Artifact {
+            artifact_id: member.model_artifact_id,
+            storage_version: "1".into(),
+            byte_count: market::count(wasm.len() as u64),
+            role: ArtifactInputRole::Model,
+        });
+    }
     let f = fixture(
         NativeTaskParametersV1::BuildPortfolio {
             schema_version: SchemaV1,
+            dataset_revision_id: id,
             request: Box::new(request.clone()),
         },
-        vec![],
+        inputs,
     );
-    assert!(execute(&f));
-    let report: contracts::portfolio::AllocationResultV1 = result(&f, "qz.native_allocation");
-    let value = serde_json::to_value(&report).unwrap();
-    assert!(!value["targets"].as_array().unwrap().is_empty());
-    use bigdecimal::ToPrimitive;
-    let weight = report.targets.as_ref().unwrap()[0]
-        .weight
-        .as_decimal()
-        .to_f64()
+    for member in &request.members {
+        fs::write(
+            f.input
+                .join("objects")
+                .join(member.model_artifact_id.to_string()),
+            &wasm,
+        )
         .unwrap();
-    assert!(
-        (weight - 0.82).abs() < 1e-5,
-        "native managed ensemble optimum: {weight}"
-    );
-    let mut incompatible = request.clone();
-    incompatible.forecasts.members[1].alpha_id = incompatible.forecasts.members[0].alpha_id;
-    let incompatible = fixture(
-        NativeTaskParametersV1::BuildPortfolio {
-            schema_version: SchemaV1,
-            request: Box::new(incompatible),
-        },
-        vec![],
-    );
-    assert!(
-        !execute(&incompatible),
-        "managed entry cannot bypass forecast identity checks"
-    );
-    let mut impossible = request;
-    impossible.constraints.min_cash_weight = "1".parse().unwrap();
-    impossible.constraints.max_cash_weight = "1".parse().unwrap();
-    impossible.constraints.min_net_exposure = "1".parse().unwrap();
-    impossible.constraints.max_net_exposure = "1".parse().unwrap();
-    let bad = fixture(
-        NativeTaskParametersV1::BuildPortfolio {
-            schema_version: SchemaV1,
-            request: Box::new(impossible),
-        },
-        vec![],
-    );
+    }
+    attach_catalog(&f, id, catalog.path());
+    f
+}
+
+#[test]
+fn actual_managed_allocation_reads_original_catalog_models_and_preserves_infeasibility() {
+    let f = portfolio_fixture(|_| {});
+    assert!(execute(&f));
+    let report: contracts::science::NativePortfolioBuildResultV1 =
+        result(&f, "qz.native_portfolio");
+    assert!(report
+        .allocation
+        .targets
+        .as_ref()
+        .is_some_and(|v| v.len() == 2));
+    assert!(report.consumed_fuel.get() > 0);
+    for member in &report.input.forecasts.members {
+        assert_eq!(member.forecasts, vec![0.01, 0.01]);
+    }
+    assert_eq!(report.input.return_history.end_ns.len(), 18);
+    let expected = 1.003_f64 / 1.001_f64 - 1.0;
+    assert!((report.input.return_history.asset_returns[0][0] - expected).abs() < 1e-14);
+    let incompatible = portfolio_fixture(|r| r.members[1].alpha_id = r.members[0].alpha_id);
+    assert!(!execute(&incompatible));
+    let bad = portfolio_fixture(|r| {
+        r.mandate.constraints.min_cash_weight = "1".parse().unwrap();
+        r.mandate.constraints.max_cash_weight = "1".parse().unwrap();
+    });
     assert!(execute(&bad));
-    let report: contracts::portfolio::AllocationResultV1 = result(&bad, "qz.native_allocation");
-    let value = serde_json::to_value(report).unwrap();
-    assert_eq!(value["solver_status"], "INFEASIBLE");
-    assert!(value["targets"].is_null());
-    assert!(value["cash_weight"].is_null());
+    let report: contracts::science::NativePortfolioBuildResultV1 =
+        result(&bad, "qz.native_portfolio");
+    assert_eq!(
+        report.allocation.solver_status,
+        contracts::portfolio::SolverStatus::Infeasible
+    );
+    assert!(report.allocation.targets.is_none());
+    assert!(report.allocation.cash_weight.is_none());
 }
 
 #[test]
@@ -440,17 +452,7 @@ fn native_managed_simulation_is_a_separate_process_and_does_not_invent_daily_ret
 
 #[test]
 fn native_managed_output_limit_fails_without_a_published_index() {
-    let request = serde_json::from_str(include_str!(
-        "../../../tests/contracts/allocation-input.json"
-    ))
-    .unwrap();
-    let mut f = fixture(
-        NativeTaskParametersV1::BuildPortfolio {
-            schema_version: SchemaV1,
-            request: Box::new(request),
-        },
-        vec![],
-    );
+    let mut f = portfolio_fixture(|_| {});
     f.spec.limits.output_bytes = DbCounter::new(1).unwrap();
     fs::write(
         f.input.join("spec.json"),
