@@ -335,7 +335,11 @@ cargo run --locked -p server -- prune-unpublished-verifiers --state-dir ./var
 settings；风险厌恶系数也冻结在optimizer.parameters，不再接收顶层risk_aversion。
 对应镜像为portfolio-models/2，具体格式见CLI原生科学任务入口。
 Mandate的真实API/CLI已支持新建不可变版本和读取，创建前须有当前有效Runtime探测
-及一致的执行/政策引用。失败不落半条配置；前端操作页和完整Candidate交付尚未验收。
+及一致的执行/政策引用。失败不落半条配置。在“组合”选择已有项目后，可新建配置
+并查看服务器保存的不可变版本；当前须填写已有 Runtime、投资域、政策、执行假设
+与费用产物的准确编号。金额和版本按字符串原样保存，不从真实账户读取。
+离线不可提交；响应丢失时保留原输入重试，使用原幂等回执，不能将关闭窗口当作撤销。
+当前仅支持方差下的最小风险/最大效用；完整Candidate交付尚未验收。
 
 研究/组合/交付 UI、Worker/MCP/Codex 真闭环、受信任 runtime 与 job 隔离、多 Alpha/共享资金、Paper/Live/Forward/Wake，以及完整恢复/迁移仍未完成。普通 PR CI 不携带生产秘密，真实受保护验收只运行经过审查的固定 Head。QZ 不持有 Broker 凭据或真实执行控制权。
 

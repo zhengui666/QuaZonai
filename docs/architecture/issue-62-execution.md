@@ -3,6 +3,38 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Mandate Ant Design authoring and immutable reads, 2026-09-13
+
+Working source over `0b7e9f74bfc51308a01814b8bfb252b614b19d4e` replaces the
+portfolio placeholder with actual project-scoped API listing, full configuration
+creation and immutable server-content detail. Existing ResourceSelect, Form,
+Intent, dirty guard and offline protection are reused, without a new dependency.
+Decimal amounts and Runtime revisions remain strings; unused rebalance fields
+are explicitly null. Unsupported native objectives/risk constraints are identified,
+not substituted. Saving configuration does not start a build or grant qualification.
+References currently require existing exact IDs, not inferred first versions.
+
+Initial TypeScript failure referenced a nonexistent named generated parameter
+schema; the existing NativeModelRef union now supplies that type. Initial browser
+failures were required-label/virtual-option/drawer selectors in the new test;
+these were corrected using existing visible-option and semantic-dialog patterns.
+Targeted three-viewport creation/replay/detail checks passed before full regression.
+
+Final `web-verify-jUWY6t` exited 0: six native generated artifacts reproducible,
+handwritten source unchanged, TypeScript, 505 Vitest and 5 Node tests, three numeric
+wire checks, production build, 36 dedicated Codex settings browser checks and
+195 full browser checks passed. The dedicated subset overlaps the full suite.
+New checks cover exact large decimals/revisions, original lost-response retry,
+unused schedule fields, immutable detail accessibility, missing references,
+dirty-input confirmation and offline prohibition on desktop/tablet/mobile.
+These controlled browser fixtures are presentation evidence, not real portfolio
+qualification, PostgreSQL authority or complete Issue #62 acceptance. This entry
+was the only handwritten change after that verification.
+
+Specific native CLI grant/transport and reference/permission edge cases,
+authoritative forecast/covariance assembly, full supported objectives and complete
+Candidate/Release/T42 delivery remain required. No push/review/merge is claimed.
+
 ## Immutable Mandate Store, HTTP and CLI, 2026-09-13
 
 Working source over `05db3c874be5451a5e09fbbcd29acb50bbe50832` adds actual

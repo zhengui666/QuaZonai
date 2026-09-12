@@ -9,6 +9,7 @@ import type { Schema } from './api';
 import { AuthBoundary, VerifyDialog } from './auth';
 import { Projects } from './projects';
 import { Alphas } from './alphas';
+import { Portfolios } from './portfolio';
 import { Runs } from './runs';
 import { Settings } from './settings';
 import { PwaUpdate } from './pwa';
@@ -97,7 +98,7 @@ function Console({ session, signedOut }: { session: Schema['BrowserSession']; si
   let content: ReactNode;
   switch (active) {
     case 'alpha': content = <Alphas />; break;
-    case 'portfolio': content = <PendingDomain title="组合" description="组合构建、约束取舍和真实回测结果尚未接通。不会用零值代替缺失的风险或成本指标。" />; break;
+    case 'portfolio': content = <Portfolios />; break;
     case 'delivery': content = <PendingDomain title="交付" description="准确版本的审批、Paper / Live 分离和下游确认尚未形成可用界面。当前没有批准或执行订单按钮。" />; break;
     case 'runs': content = <Runs />; break;
     case 'settings': content = <Settings session={session} verify={() => setVerify(true)} />; break;

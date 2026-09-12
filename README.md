@@ -11,7 +11,7 @@
 | 原生回测 | Nautilus Rust 0.63.0 的原生不可变 Catalog 读取、受限预测和共享资金目标序列模拟；另保留明确标记 FIXTURE 的原生兼容探针。模拟结果不自动成为资格或交付证据 |
 | 原生求解 | 本机与受管 OCI 入口绑定原优化器/聚合器类名、版本及严格参数，检查原多 Alpha 预测并由 ndarray 固定聚合后送入 Clarabel Rust 0.11.1，检查现金、敞口、分组、换手、成本与参与率；不可行时不提供备用权重。尚非数据库资格绑定或完整 Portfolio Candidate 交付流程 |
 | Arrow | Rust IPC RecordBatch写入/回读，明确FIXTURE不可交付 |
-| Portfolio Mandate | 真实 API/CLI 创建与读取不可变版本，原 Operator 事务/项目版本锁及 Runtime 模型、镜像、政策和执行引用检查；不是完整 Candidate/Release 交付，前端操作页尚待完成 |
+| Portfolio Mandate | 真实 API/CLI 与 Ant Design 配置创建、列表及不可变详情；原 Operator 事务/项目版本锁及 Runtime 模型、镜像、政策和执行引用检查；不是完整 Candidate/Release 交付 |
 | 领域基础 | 精确UUIDv7/bigint/Decimal、预算、租约/终态、Codex覆盖及required指标判定；不是完整数据库权限证明 |
 | 认证 API | Axum + PostgreSQL 原生会话、一次性本机初始化、六位 TOTP 登录、防重放、持久注销/设备撤销；普通服务使用非 owner 数据库角色 |
 | Project 与机器身份 | 真正的项目分页/创建/更新、乐观并发、不可变命令回执、机器 token 一次性签发与撤销；机器只读授权项目，人工 CLI 管理操作另需原生 TOTP 单次授权 |
