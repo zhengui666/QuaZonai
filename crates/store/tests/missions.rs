@@ -960,7 +960,9 @@ async fn exhausted_cpu_admission_keeps_no_half_mission_and_finishes_the_cycle_ho
         .resource;
     f.freeze.expected_revision = f.brief.revision;
     store
-        .freeze_brief(&actor, "freeze", f.brief.id, &f.freeze)
+        .freeze_brief(&actor, "freeze", f.brief.id, &f.freeze, |id, size| {
+            f.read(id, size)
+        })
         .await
         .unwrap();
     let request = cycle_support::start_request(&store, &actor, &f).await;

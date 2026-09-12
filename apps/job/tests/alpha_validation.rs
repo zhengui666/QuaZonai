@@ -341,6 +341,55 @@ fn projected_native_metrics_preserve_every_fold_and_feed_the_existing_threshold_
         minimum_observations: count(3),
         method_allowlist: vec!["ndarray-stats.root_mean_sq_err".into()],
     };
+    let selection = serde_json::json!({
+        "schema_version":1,"comparable_scope":"FAMILY_LINEAGE","root_lineage_id":Id::new(),
+        "family_id":Id::new(),"comparison_input_set_id":Id::new(),"execution_assumptions_id":Id::new(),
+        "evaluation_kind":"WALK_FORWARD","metric_code":"RETURN_RMSE","metric_scope":"asset:0/fold:0",
+        "method_id":"ndarray-stats.root_mean_sq_err","method_version":"0.7.0","unit":"RETURN_PER_HORIZON",
+        "frequency":"1-MINUTE-LAST-EXTERNAL;horizon=2","direction":"MINIMIZE","candidate_count":1,
+        "tie_break":"EXPERIMENT_ID_ASC","missing_required_metric":"INCONCLUSIVE"
+    });
+    let policy = |selection: serde_json::Value, requirements: &[MetricRequirementV1]| {
+        domain::execution::alpha_validation_policy(
+            &serde_json::from_value(selection).unwrap(),
+            requirements,
+            &request.forecast.selection,
+            &request.split_policy,
+        )
+    };
+    policy(selection.clone(), std::slice::from_ref(&requirement)).unwrap();
+    for (field, value) in [
+        ("method_id", "unimplemented"),
+        ("method_version", "0.6.0"),
+        ("unit", "CORRELATION"),
+        ("frequency", "1-MINUTE-LAST-EXTERNAL;horizon=3"),
+        ("frequency", "1-HOUR-LAST-EXTERNAL;horizon=2"),
+        ("metric_scope", "total"),
+        ("metric_scope", "asset:2/fold:0"),
+        ("metric_scope", "asset:0/fold:256"),
+        ("metric_scope", "asset:00/fold:0"),
+        ("metric_scope", "asset:0/fold:0/extra"),
+        ("evaluation_kind", "SEALED"),
+        ("metric_code", "PBO"),
+    ] {
+        let mut changed = selection.clone();
+        changed[field] = value.into();
+        assert!(
+            policy(changed, std::slice::from_ref(&requirement)).is_err(),
+            "{field}"
+        );
+    }
+    let mut unknown = requirement.clone();
+    unknown.metric_code = "PBO".into();
+    assert!(policy(selection.clone(), &[requirement.clone(), unknown.clone()]).is_err());
+    unknown.required = false;
+    policy(selection, &[requirement.clone(), unknown]).unwrap();
+    let mut oversized = request.split_policy.clone();
+    oversized.kind = contracts::research::SplitKind::CpcvFixedHorizon;
+    oversized.step_size = None;
+    oversized.group_count = Some(16);
+    oversized.test_group_count = Some(8);
+    assert!(domain::execution::validation::policy_parameters(&oversized, 2).is_err());
     // Only a numeric threshold check. Fixture provenance still forbids qualification.
     let gate = evaluate_metrics(
         evaluation,

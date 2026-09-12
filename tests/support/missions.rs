@@ -54,7 +54,9 @@ pub async fn start(
         f.freeze.expected_revision = f.brief.revision;
     }
     store
-        .freeze_brief(&actor, "freeze", f.brief.id, &f.freeze)
+        .freeze_brief(&actor, "freeze", f.brief.id, &f.freeze, |id, size| {
+            f.read(id, size)
+        })
         .await
         .unwrap();
     let request = cycle_support::start_request(&store, &actor, &f).await;

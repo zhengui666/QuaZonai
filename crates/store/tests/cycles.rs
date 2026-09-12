@@ -27,7 +27,9 @@ async fn formal_freeze_closes_brief_and_context_with_the_original_command_receip
     let f = cycle_support::setup(&pool, &store, &actor).await;
     let before = store.project(&actor, f.data.project).await.unwrap();
     let frozen = store
-        .freeze_brief(&actor, "freeze", f.brief.id, &f.freeze)
+        .freeze_brief(&actor, "freeze", f.brief.id, &f.freeze, |id, size| {
+            f.read(id, size)
+        })
         .await
         .unwrap();
     assert_eq!(frozen.resource.brief.state, BriefState::Frozen);
@@ -41,7 +43,9 @@ async fn formal_freeze_closes_brief_and_context_with_the_original_command_receip
     assert_eq!(project.current_brief_id, Some(f.brief.id));
     assert_ne!(project.revision, before.revision);
     let replay = store
-        .freeze_brief(&actor, "freeze", f.brief.id, &f.freeze)
+        .freeze_brief(&actor, "freeze", f.brief.id, &f.freeze, |id, size| {
+            f.read(id, size)
+        })
         .await
         .unwrap();
     assert!(replay.replayed);
@@ -93,7 +97,8 @@ async fn freeze_rejects_revision_or_input_mismatch_without_a_half_frozen_context
     invalid.expected_revision = "99".to_owned().try_into().unwrap();
     assert!(matches!(
         store
-            .freeze_brief(&actor, "stale", f.brief.id, &invalid)
+            .freeze_brief(&actor, "stale", f.brief.id, &invalid, |id, size| f
+                .read(id, size))
             .await,
         Err(StoreError::RevisionConflict { .. })
     ));
@@ -101,7 +106,8 @@ async fn freeze_rejects_revision_or_input_mismatch_without_a_half_frozen_context
     invalid.execution_context.validation_input_set_id =
         invalid.execution_context.discovery_input_set_id;
     assert!(store
-        .freeze_brief(&actor, "wrong-input", f.brief.id, &invalid)
+        .freeze_brief(&actor, "wrong-input", f.brief.id, &invalid, |id, size| f
+            .read(id, size))
         .await
         .is_err());
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM app.brief_execution_contexts")
@@ -116,11 +122,62 @@ async fn freeze_rejects_revision_or_input_mismatch_without_a_half_frozen_context
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn freeze_rechecks_only_registered_validation_metadata_and_keeps_failure_atomic(
+    pool: PgPool,
+) {
+    let (store, actor) = research_support::operator(&pool).await;
+    let f = cycle_support::setup(&pool, &store, &actor).await;
+    let metadata: uuid::Uuid = sqlx::query_scalar("SELECT native_metadata_artifact_id FROM app.dataset_registration_evidence WHERE dataset_revision_id=$1")
+        .bind(f.data.validation.as_uuid()).fetch_one(&pool).await.unwrap();
+    for missing in [true, false] {
+        let result = store
+            .freeze_brief(&actor, "metadata", f.brief.id, &f.freeze, |id, size| {
+                let fixture = &f;
+                async move {
+                    assert_eq!(id.as_uuid(), metadata, "no raw market or Sealed reads");
+                    if missing {
+                        return Err(StoreError::Integrity);
+                    }
+                    let mut bytes = fixture.read(id, size).await?;
+                    bytes.fill(b'x');
+                    Ok(bytes)
+                }
+            })
+            .await;
+        assert!(result.is_err());
+        assert_eq!(
+            store.brief(&actor, f.brief.id).await.unwrap().state,
+            BriefState::Draft
+        );
+        let published: i64 = sqlx::query_scalar("SELECT (SELECT count(*) FROM app.brief_execution_contexts)+(SELECT count(*) FROM app.command_receipts WHERE operation='BRIEF_FREEZE')")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(published, 0);
+    }
+    store
+        .freeze_brief(&actor, "metadata", f.brief.id, &f.freeze, |id, size| {
+            f.read(id, size)
+        })
+        .await
+        .unwrap();
+    assert!(
+        store
+            .freeze_brief(&actor, "metadata", f.brief.id, &f.freeze, |_, _| async {
+                panic!("exact receipt replay must not reread or gain new authority")
+            })
+            .await
+            .unwrap()
+            .replayed
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn cycle_run_event_admission_queue_and_receipt_are_created_once(pool: PgPool) {
     let (store, actor) = research_support::operator(&pool).await;
     let f = cycle_support::setup(&pool, &store, &actor).await;
     store
-        .freeze_brief(&actor, "freeze", f.brief.id, &f.freeze)
+        .freeze_brief(&actor, "freeze", f.brief.id, &f.freeze, |id, size| {
+            f.read(id, size)
+        })
         .await
         .unwrap();
     let request = cycle_support::start_request(&store, &actor, &f).await;
@@ -176,7 +233,9 @@ async fn cycle_choices_are_explicit_revision_locked_and_never_rewritten_by_profi
     let (store, actor) = research_support::operator(&pool).await;
     let f = cycle_support::setup(&pool, &store, &actor).await;
     store
-        .freeze_brief(&actor, "freeze", f.brief.id, &f.freeze)
+        .freeze_brief(&actor, "freeze", f.brief.id, &f.freeze, |id, size| {
+            f.read(id, size)
+        })
         .await
         .unwrap();
     let request = cycle_support::start_request(&store, &actor, &f).await;
@@ -276,7 +335,9 @@ async fn cycle_cannot_start_while_native_account_change_is_in_flight(pool: PgPoo
     let (store, actor) = research_support::operator(&pool).await;
     let f = cycle_support::setup(&pool, &store, &actor).await;
     store
-        .freeze_brief(&actor, "freeze", f.brief.id, &f.freeze)
+        .freeze_brief(&actor, "freeze", f.brief.id, &f.freeze, |id, size| {
+            f.read(id, size)
+        })
         .await
         .unwrap();
     let request = cycle_support::start_request(&store, &actor, &f).await;
@@ -311,7 +372,13 @@ async fn initial_cycle_run_has_one_native_definition_with_exact_discovery_parame
     let (store, actor) = research_support::operator(&pool).await;
     let f = cycle_support::setup(&pool, &store, &actor).await;
     store
-        .freeze_brief(&actor, "freeze-native", f.brief.id, &f.freeze)
+        .freeze_brief(
+            &actor,
+            "freeze-native",
+            f.brief.id,
+            &f.freeze,
+            |id, size| f.read(id, size),
+        )
         .await
         .unwrap();
     let request = cycle_support::start_request(&store, &actor, &f).await;
@@ -412,7 +479,9 @@ async fn native_cycle_parameter_io_failure_cannot_leave_budget_run_or_queue_half
     let (store, actor) = research_support::operator(&pool).await;
     let f = cycle_support::setup(&pool, &store, &actor).await;
     store
-        .freeze_brief(&actor, "freeze-io", f.brief.id, &f.freeze)
+        .freeze_brief(&actor, "freeze-io", f.brief.id, &f.freeze, |id, size| {
+            f.read(id, size)
+        })
         .await
         .unwrap();
     let request = cycle_support::start_request(&store, &actor, &f).await;
@@ -460,7 +529,9 @@ async fn failure_after_queue_enqueue_rolls_back_the_entire_official_start_comman
     let (store, actor) = research_support::operator(&pool).await;
     let f = cycle_support::setup(&pool, &store, &actor).await;
     store
-        .freeze_brief(&actor, "freeze", f.brief.id, &f.freeze)
+        .freeze_brief(&actor, "freeze", f.brief.id, &f.freeze, |id, size| {
+            f.read(id, size)
+        })
         .await
         .unwrap();
     let request = cycle_support::start_request(&store, &actor, &f).await;
@@ -491,7 +562,9 @@ async fn frozen_inputs_do_not_retain_permission_after_revocation(pool: PgPool) {
     let (store, actor) = research_support::operator(&pool).await;
     let f = cycle_support::setup(&pool, &store, &actor).await;
     store
-        .freeze_brief(&actor, "freeze", f.brief.id, &f.freeze)
+        .freeze_brief(&actor, "freeze", f.brief.id, &f.freeze, |id, size| {
+            f.read(id, size)
+        })
         .await
         .unwrap();
     let request = cycle_support::start_request(&store, &actor, &f).await;
@@ -510,7 +583,9 @@ async fn daily_cycle_quota_and_paused_project_are_checked_in_the_start_transacti
     let (store, actor) = research_support::operator(&pool).await;
     let f = cycle_support::setup(&pool, &store, &actor).await;
     store
-        .freeze_brief(&actor, "freeze", f.brief.id, &f.freeze)
+        .freeze_brief(&actor, "freeze", f.brief.id, &f.freeze, |id, size| {
+            f.read(id, size)
+        })
         .await
         .unwrap();
     let mut request = cycle_support::start_request(&store, &actor, &f).await;

@@ -1078,3 +1078,21 @@ exit0：118项相关PG回归、check/fmt/严格Clippy通过；`.ai-bridge/verify
 mission-science exit0：真实原生Mission两轮会话及编译/预测/Alpha登记链路通过，同样
 通过check/fmt/严格Clippy。两轮源码冻结、独立PG均确认停止；未重跑全量501后台
 测试，未宣称远端CI或完整T08。正式验证与发布等全部剩余开发继续，未push/review/merge。
+
+## 2026-09-12：冻结与启动核验原生验证方法
+
+复用原生指标方法登记和分折参数边界，在Brief冻结、Cycle启动时读取原已登记
+Validation元数据，检查Selection的准确方法/版本/单位/周期及资产/折scope，逐项
+核对required指标。原生CPCV组合数超过256时直接拒绝，不生成部分折。当前受管
+合同仅一个Validation目录版本（可多资产），不默选多个版本中的首项、不将Sealed
+选择意图改为普通验证。登记政策不是可执行证明；历史意图和证据不被重写。
+
+真实PG测试核对只读原Validation元数据、缺对象或损坏字节不留下冻结上下文/回执，
+原成功回执重放不再读对象。真实原生Alpha用例覆盖12种错方法/版本/单位/周期/scope/
+选择类别、required未实现指标与CPCV组合上限；optional缺失不冒充required通过。
+`.ai-bridge/verify-IGh6He` full exit0：502 Store/Server、149领域/合同/Runtime、
+30原生Codex、7managed通过，零失败/零忽略，独立PG确认停止；随后
+`.ai-bridge/verify-BNLrpn` science exit0再次通过149领域/合同/Runtime、30原生Codex
+和75Job（含另行通过的7managed）。两轮check/fmt/严格Clippy均通过，源码冻结。
+无新依赖、DTO或生成物变化；没有构建/运行新OCI镜像，正式Evaluation与后续交付仍
+须继续实现，以上不是最新远端Head CI或完整T08/T42。未push/review/merge或关闭Issue。

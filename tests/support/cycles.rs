@@ -118,6 +118,24 @@ pub async fn setup_with_objects(
     policy_request.require_real_data = false;
     policy_request.required_capabilities.clear();
     policy_request.split_policy.label_horizon_observations = Some(DbCounter::new(5).unwrap());
+    policy_request.split_policy.purge_observations = DbCounter::new(5).unwrap();
+    policy_request.selection.metric_code = "PEARSON_IC".into();
+    policy_request.selection.metric_scope = "asset:0/fold:0".into();
+    policy_request.selection.method_id = "ndarray-stats.pearson_correlation".into();
+    policy_request.selection.method_version = "0.7.0".into();
+    policy_request.selection.unit = "CORRELATION".into();
+    policy_request.selection.frequency = "1-MINUTE-LAST-EXTERNAL;horizon=5".into();
+    policy_request.metric_requirements = vec![contracts::evidence::MetricRequirementV1 {
+        schema_version: SchemaV1,
+        metric_code: "PEARSON_IC".into(),
+        scope: "asset:0/fold:0".into(),
+        comparator: contracts::evidence::Comparator::Ge,
+        threshold_low: Some("0.1".parse().unwrap()),
+        threshold_high: None,
+        required: true,
+        minimum_observations: DbCounter::new(2).unwrap(),
+        method_allowlist: vec!["ndarray-stats.pearson_correlation".into()],
+    }];
     let policy = store
         .create_evaluation_policy(actor, &Id::new().to_string(), &policy_request)
         .await
@@ -216,6 +234,13 @@ async fn profile_choice(store: &Store, actor: &Actor, role: &str) -> CodexProfil
 }
 
 impl Fixture {
+    pub async fn read(&self, id: Id, size: DbCounter) -> Result<Vec<u8>, store::StoreError> {
+        let objects = self.objects.clone();
+        tokio::task::spawn_blocking(move || objects.read(id, size))
+            .await
+            .map_err(|_| store::StoreError::Integrity)?
+            .map_err(|_| store::StoreError::Integrity)
+    }
     pub async fn start(
         &self,
         store: &Store,

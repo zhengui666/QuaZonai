@@ -7,6 +7,55 @@ pub const MAX_VALIDATION_ROWS: usize = 1_000_000;
 pub const MAX_VALIDATION_FOLDS: usize = 256;
 pub const MAX_VALIDATION_INDICES: usize = 8_000_000;
 
+/// Executable parameter bounds shared by Brief admission and the native task.
+/// This does not assert that unseen market rows contain enough eligible samples.
+pub fn policy_parameters(policy: &SplitPolicyV1, horizon: u64) -> Result<(), crate::DomainError> {
+    crate::research::split(policy)?;
+    if !(1..=100_000).contains(&horizon)
+        || policy.label_horizon_observations.map(|n| n.get()) != Some(horizon)
+        || policy.purge_observations.get() < horizon
+        || policy.train_size.get() < 3
+        || [
+            policy.train_size,
+            policy.test_size,
+            policy.purge_observations,
+            policy.embargo_observations,
+        ]
+        .into_iter()
+        .chain(policy.step_size)
+        .any(|n| n.get() > MAX_VALIDATION_ROWS as u64)
+        || policy.group_count.is_some_and(|n| n > 16)
+        || (policy.kind == SplitKind::WalkForward
+            && policy.train_size.get()
+                <= policy.test_size.get()
+                    + policy.purge_observations.get()
+                    + policy.embargo_observations.get())
+    {
+        return Err(super::bad("validation_parameters"));
+    }
+    if policy.kind == SplitKind::CpcvFixedHorizon {
+        let native = CombinatorialPurgedKFold::new(
+            usize::from(
+                policy
+                    .group_count
+                    .ok_or_else(|| super::bad("validation_parameters"))?,
+            ),
+            usize::from(
+                policy
+                    .test_group_count
+                    .ok_or_else(|| super::bad("validation_parameters"))?,
+            ),
+            policy.purge_observations.get() as usize,
+            policy.embargo_observations.get() as usize,
+        )
+        .map_err(|_| super::bad("validation_parameters"))?;
+        if native.n_folds() > MAX_VALIDATION_FOLDS {
+            return Err(super::bad("validation_parameters"));
+        }
+    }
+    Ok(())
+}
+
 fn bounded_count(value: contracts::DbCounter) -> Result<usize> {
     let count = usize::try_from(value.get())?;
     ensure!(count <= MAX_VALIDATION_ROWS, "VALIDATION_COUNT_LIMIT");

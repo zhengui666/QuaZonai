@@ -14,6 +14,87 @@ use contracts::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
+fn method(kind: NativeAlphaMetricKind) -> (&'static str, &'static str, &'static str) {
+    match kind {
+        NativeAlphaMetricKind::PearsonIc => (
+            "PEARSON_IC",
+            "ndarray-stats.pearson_correlation",
+            "CORRELATION",
+        ),
+        NativeAlphaMetricKind::ReturnRmse => (
+            "RETURN_RMSE",
+            "ndarray-stats.root_mean_sq_err",
+            "RETURN_PER_HORIZON",
+        ),
+    }
+}
+
+/// Match frozen policy intent to the registered native catalog and implemented
+/// methods. No raw market rows, fitting, sample sufficiency or qualification.
+pub fn policy(
+    selection: &contracts::research::SelectionRuleV1,
+    requirements: &[contracts::evidence::MetricRequirementV1],
+    bars: &NativeBarSelectionV1,
+    split: &contracts::research::SplitPolicyV1,
+) -> Result<(), DomainError> {
+    let invalid = || {
+        crate::research::invalid(
+            "content.evaluation_policy_id",
+            "NATIVE_ALPHA_POLICY_UNSUPPORTED",
+        )
+    };
+    let horizon = split.label_horizon_observations.ok_or_else(invalid)?.get();
+    crate::execution::validation::policy_parameters(split, horizon)?;
+    let assets = instruments(bars)?;
+    let capability = |code: &str, scope: &str| {
+        let (asset, fold) = scope.strip_prefix("asset:")?.split_once("/fold:")?;
+        let index = asset.parse::<usize>().ok()?;
+        let fold = fold.parse::<usize>().ok()?;
+        if scope != format!("asset:{index}/fold:{fold}") || fold >= MAX_VALIDATION_FOLDS {
+            return None;
+        }
+        let instrument = assets.get(index)?;
+        let spec = &bars.bar_types[index][instrument.len() + 1..];
+        [
+            NativeAlphaMetricKind::PearsonIc,
+            NativeAlphaMetricKind::ReturnRmse,
+        ]
+        .into_iter()
+        .map(method)
+        .find(|(name, _, _)| *name == code)
+        .map(|(name, method, unit)| crate::evidence::MetricCapability {
+            metric_code: name.into(),
+            method_id: method.into(),
+            method_version: "0.7.0".into(),
+            unit: unit.into(),
+            frequency: format!("{spec};horizon={horizon}"),
+        })
+    };
+    let selected =
+        capability(&selection.metric_code, &selection.metric_scope).ok_or_else(invalid)?;
+    if selection.evaluation_kind != contracts::research::SelectionEvaluationKind::WalkForward
+        || selection.method_id != selected.method_id
+        || selection.method_version != selected.method_version
+        || selection.unit != selected.unit
+        || selection.frequency != selected.frequency
+        || !requirements.iter().any(|r| {
+            r.required
+                && r.metric_code == selection.metric_code
+                && r.scope == selection.metric_scope
+        })
+    {
+        return Err(invalid());
+    }
+    for requirement in requirements.iter().filter(|r| r.required) {
+        let actual =
+            capability(&requirement.metric_code, &requirement.scope).ok_or_else(invalid)?;
+        if !requirement.method_allowlist.contains(&actual.method_id) {
+            return Err(invalid());
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn shape(value: &NativeAlphaValidationResultV1) -> Result<(), DomainError> {
     let versions = BTreeMap::from([
         ("nautilus-indicators".into(), "0.63.0".into()),
@@ -230,24 +311,15 @@ pub fn metrics(
             let period_end = chrono::DateTime::from_timestamp_micros(end as i64)
                 .ok_or_else(|| bad("native_output.validation_period"))?;
             for native in &fold.metrics {
-                let (code, method, unit, higher, observations) = match native.kind {
-                    NativeAlphaMetricKind::PearsonIc => (
-                        "PEARSON_IC",
-                        "ndarray-stats.pearson_correlation",
-                        "CORRELATION",
-                        true,
-                        fold.test_points.len(),
-                    ),
-                    NativeAlphaMetricKind::ReturnRmse => (
-                        "RETURN_RMSE",
-                        "ndarray-stats.root_mean_sq_err",
-                        "RETURN_PER_HORIZON",
-                        false,
-                        fold.test_points
-                            .iter()
-                            .filter(|p| p.expected_return.is_some())
-                            .count(),
-                    ),
+                let (code, method, unit) = method(native.kind);
+                let higher = native.kind == NativeAlphaMetricKind::PearsonIc;
+                let observations = if higher {
+                    fold.test_points.len()
+                } else {
+                    fold.test_points
+                        .iter()
+                        .filter(|p| p.expected_return.is_some())
+                        .count()
                 };
                 let capability = crate::evidence::MetricCapability {
                     metric_code: code.into(),

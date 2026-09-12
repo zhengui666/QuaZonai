@@ -31,10 +31,28 @@ pub async fn freeze(
     id: Result<Path<Id>, PathRejection>,
     body: Result<Json<BriefFreezeV1>, JsonRejection>,
 ) -> Result<Json<CommandResult<FrozenBriefV1>>, ApiError> {
+    let objects = state
+        .artifact_store
+        .clone()
+        .ok_or(store::StoreError::IntegrationUnavailable)?;
     Ok(Json(
         state
             .store
-            .freeze_brief(&actor, idempotency_key(&headers)?, path(id)?, &json(body)?)
+            .freeze_brief(
+                &actor,
+                idempotency_key(&headers)?,
+                path(id)?,
+                &json(body)?,
+                move |id, size| {
+                    let objects = objects.clone();
+                    async move {
+                        tokio::task::spawn_blocking(move || objects.read(id, size))
+                            .await
+                            .map_err(|_| store::StoreError::Integrity)?
+                            .map_err(|_| store::StoreError::Integrity)
+                    }
+                },
+            )
             .await?,
     ))
 }

@@ -11,7 +11,9 @@ use std::collections::BTreeSet;
 
 mod output;
 pub mod validation;
-pub use output::{alpha_validation_metrics, output_bindings, output_shape};
+pub use output::{
+    alpha_validation_metrics, alpha_validation_policy, output_bindings, output_shape,
+};
 
 fn bad(field: &str) -> DomainError {
     invalid(field, "NATIVE_TASK_BINDING_INVALID")
@@ -61,26 +63,8 @@ pub fn alpha_validation_request(
     request: &contracts::science::NativeAlphaValidationRequestV1,
 ) -> Result<(), DomainError> {
     forecast_request(&request.forecast)?;
-    crate::research::split(&request.split_policy)?;
-    let policy = &request.split_policy;
     let horizon = u64::from(request.forecast.parameters.label_horizon_observations);
-    if policy.label_horizon_observations.map(|n| n.get()) != Some(horizon)
-        || policy.purge_observations.get() < horizon
-        || policy.train_size.get() < 3
-        || [
-            policy.train_size,
-            policy.test_size,
-            policy.purge_observations,
-            policy.embargo_observations,
-        ]
-        .into_iter()
-        .chain(policy.step_size)
-        .any(|n| n.get() > validation::MAX_VALIDATION_ROWS as u64)
-        || policy.group_count.is_some_and(|n| n > 16)
-    {
-        return Err(bad("validation_parameters"));
-    }
-    Ok(())
+    validation::policy_parameters(&request.split_policy, horizon)
 }
 
 fn forecast_inputs(

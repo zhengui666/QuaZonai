@@ -148,6 +148,11 @@ Runtime受管`VALIDATE_ALPHA`沿用同一计算入口，仅消费登记的VALIDA
 可信指标转换保留每个资产/折，并给出原生方法、单位、bar规格/horizon和真实配对
 样本数供冻结阈值检查；没有全局平均或隐式年化，也不等于数据库评估已发表。
 
+冻结Brief和启动Cycle会核对原生方法版本及Validation目录元数据：Selection必须
+使用实际支持的PEARSON_IC或RETURN_RMSE、`asset:{a}/fold:{f}`及准确bar规格/horizon。
+当前受管验证只接受一个已登记Validation版本（可多资产）、固定bars和WALK_FORWARD
+选择类别；不能用total、未实现方法或多版本输入假装完成评估。旧政策不会被自动改写。
+
 032迁移为每个已成功结算的原生Turn保留唯一公开回答报告（qz.mission_summary）。
 Worker读取锁定App Server原生summary视图，只有公开agentMessage、原Turn/item和
 实际phase；phase缺失保留null。它不读取完整items/rollout或推理，报告不当作科学

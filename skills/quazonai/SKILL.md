@@ -74,6 +74,9 @@ InputSet冻结不是永久许可，后续任务或首次发送可能因撤销/�
 
 Brief草稿详情和列表已接通；创建/完整替换仍是Operator命令，不能凭RESEARCH_READ修改预算、数据角色或政策。人工CLI创建授权还绑定路径project_id和schema_version，更新绑定精确Brief及expected_revision。DRAFT保存不是freeze/PASS，FROZEN只可新建版本。
 
+冻结/启动还核对原生Validation方法与登记元数据。能力拒绝时保留原政策，按DESIGN
+A4.6处理准确scope/版本/单位/周期或不支持的输入组合；不得替用户改指标以求通过。
+
 人工Cycle启动除冻结Brief和Project版本外，还须明确researcher_profile/reviewer_profile的profile_id及expected_revision；不得默认第一个账号。选择随Cycle封口，旧Cycle不跟随后来Profile修改。该命令不授予Mission选择账号、修改模型设置或发起账号操作的权限。
 
 Codex账号操作仅供人工设置页或精确Operator grant的CLI使用，不是Mission MCP工具。

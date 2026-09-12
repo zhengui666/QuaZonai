@@ -16,6 +16,7 @@ mod forecast;
 mod simulation;
 mod validation;
 pub use validation::metrics as alpha_validation_metrics;
+pub use validation::policy as alpha_validation_policy;
 
 fn bad(field: &str) -> DomainError {
     invalid(field, "NATIVE_OUTPUT_CONTRACT_INVALID")

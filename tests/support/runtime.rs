@@ -10,5 +10,19 @@ pub fn capabilities(now: DateTime<Utc>) -> RuntimeCapabilitiesV1 {
     ))
     .unwrap();
     value.checked_at = now;
+    // Controlled protocol capabilities, not an actual image verification.
+    for (name, version) in [
+        ("solow-cv", "0.7.3"),
+        ("ndarray-stats", "0.7.0"),
+        ("linregress", "0.5.4"),
+    ] {
+        value.engine_versions.insert(name.into(), version.into());
+    }
+    value
+        .artifact_schemas
+        .push(contracts::runtime::RuntimeArtifactSchemaV1 {
+            name: "qz.alpha_validation".into(),
+            version: "1".into(),
+        });
     value
 }

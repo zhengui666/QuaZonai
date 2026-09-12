@@ -1293,6 +1293,16 @@ period_start取首次测试event，period_end取最后测试label_available；�
 核对冻结allowlist和精确Decimal阈值；请求方不能上传能力记录来批准自身指标。
 该适配不代表数据库Evaluation、试验选择、sealed消费或Qualification已发表。
 
+Brief冻结与Cycle准入使用同一原生能力检查：读取已登记且获授权的Validation目录
+元数据，不读取市场行或Sealed内容。当前VALIDATE_ALPHA合同精确绑定一个目录版本
+（可含多资产）；多版本输入明确报能力不支持，不能只选首个版本或拼接不同时钟。
+Selection的资产/折scope、方法/版本/单位及bar规格+horizon必须匹配该原目录，全部
+required指标也须有可执行方法和合法scope。scope不代表样本已足够；实际全部分折、
+warmup后样本及缺值仍在Job与原请求采纳时核验，不将登记行数冒充实际执行证据。
+分折参数使用同一原生适配边界检查；旧意图政策仍可登记和审计，但不因此获得冻结/
+执行资格。当前受管Validation只支持固定bars与WALK_FORWARD选择类别（包括原生
+CPCV分折），不把Sealed选择意图悄悄降为普通验证。
+
 ## A5. Mandate、Candidate、目标与 Release
 
 ```text

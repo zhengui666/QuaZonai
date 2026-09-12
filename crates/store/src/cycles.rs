@@ -48,14 +48,19 @@ pub(crate) async fn execution_context(
 
 /// Called with the project and exact Brief locked. No native network call, raw
 /// sealed-data access, or immutable data-origin mutation occurs here.
-pub(crate) async fn validate_execution_context(
+pub(crate) async fn validate_execution_context<R, Read>(
     tx: &mut Tx<'_>,
     brief: &BriefView,
     context: &BriefExecutionContextV1,
-) -> Result<RuntimeCapabilitiesV1, StoreError> {
+    read: &mut R,
+) -> Result<RuntimeCapabilitiesV1, StoreError>
+where
+    R: FnMut(Id, DbCounter) -> Read,
+    Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
+{
     domain::brief::content(&brief.content, &brief.bindings)?;
     crate::brief::validate_refs(tx, brief.project_id, &brief.content, &brief.bindings).await?;
-    let policy = sqlx::query("SELECT selection_rule,split_policy,require_real_data,required_capabilities,minimum_observations FROM app.evaluation_policies WHERE id=$1 AND project_id=$2")
+    let policy = sqlx::query("SELECT selection_rule,split_policy,metric_requirements,require_real_data,required_capabilities,minimum_observations FROM app.evaluation_policies WHERE id=$1 AND project_id=$2")
         .bind(brief.content.evaluation_policy_id.as_uuid()).bind(brief.project_id.as_uuid())
         .fetch_one(&mut **tx).await?;
     let selection: SelectionRuleV1 = serde_json::from_value(policy.try_get("selection_rule")?)
@@ -227,6 +232,43 @@ pub(crate) async fn validate_execution_context(
     if !supported {
         return Err(invalid("content.horizon_kind", "UNSUPPORTED_LABEL_INTERVALS").into());
     }
+    if brief.content.horizon_kind != HorizonKind::FixedBars
+        || !caps
+            .artifact_schemas
+            .iter()
+            .any(|s| s.name == "qz.alpha_validation" && s.version == "1")
+        || [
+            ("solow-cv", "0.7.3"),
+            ("ndarray-stats", "0.7.0"),
+            ("linregress", "0.5.4"),
+        ]
+        .into_iter()
+        .any(|(name, version)| caps.engine_versions.get(name).map(String::as_str) != Some(version))
+    {
+        return Err(DomainError::CapabilityUnavailable("native_alpha_validation").into());
+    }
+    let datasets = crate::data_validation::dataset_bindings(
+        tx,
+        context.validation_input_set_id,
+        brief.project_id,
+        context.runtime_id,
+        read,
+    )
+    .await?;
+    let [dataset] = datasets.as_slice() else {
+        return Err(
+            DomainError::CapabilityUnavailable("native_alpha_single_validation_revision").into(),
+        );
+    };
+    let requirements: Vec<contracts::evidence::MetricRequirementV1> =
+        serde_json::from_value(policy.try_get("metric_requirements")?)
+            .map_err(|_| StoreError::Integrity)?;
+    domain::execution::alpha_validation_policy(
+        &selection,
+        &requirements,
+        &dataset.selection.selection,
+        &split,
+    )?;
     let required: Vec<String> = policy.try_get("required_capabilities")?;
     let mut available = caps
         .job_kinds
@@ -338,13 +380,18 @@ fn cycle_view(row: &PgRow) -> Result<CycleViewV1, StoreError> {
 const CYCLE: &str = "SELECT c.*,s.initial_run_id,s.researcher_profile_id,s.researcher_profile_revision,s.reviewer_profile_id,s.reviewer_profile_revision FROM app.research_cycles c LEFT JOIN app.cycle_startups s ON s.cycle_id=c.id";
 
 impl Store {
-    pub async fn freeze_brief(
+    pub async fn freeze_brief<R, Read>(
         &self,
         actor: &Actor,
         key: &str,
         id: Id,
         request: &BriefFreezeV1,
-    ) -> Result<CommandResult<FrozenBriefV1>, StoreError> {
+        mut read: R,
+    ) -> Result<CommandResult<FrozenBriefV1>, StoreError>
+    where
+        R: FnMut(Id, DbCounter) -> Read,
+        Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
+    {
         let mut tx = self.pool.begin().await?;
         let prepared = commands::operator(
             &mut tx,
@@ -378,7 +425,7 @@ impl Store {
             return Err(invalid("state", "BRIEF_ALREADY_FROZEN").into());
         }
         let context = &request.execution_context;
-        validate_execution_context(&mut tx, &brief, context).await?;
+        validate_execution_context(&mut tx, &brief, context, &mut read).await?;
         sqlx::query("INSERT INTO app.brief_execution_contexts(brief_id,project_id,runtime_id,runtime_revision,discovery_input_set_id,validation_input_set_id,sealed_input_set_id) VALUES($1,$2,$3,$4,$5,$6,$7)")
             .bind(id.as_uuid()).bind(project.as_uuid()).bind(context.runtime_id.as_uuid())
             .bind(context.runtime_revision.get() as i64).bind(context.discovery_input_set_id.as_uuid())
@@ -493,7 +540,7 @@ impl Store {
             return Err(invalid("brief_id", "OWNED_FROZEN_BRIEF_REQUIRED").into());
         }
         let context = execution_context(&mut tx, brief.id).await?;
-        let caps = validate_execution_context(&mut tx, &brief, &context).await?;
+        let caps = validate_execution_context(&mut tx, &brief, &context, &mut read).await?;
         crate::runtime::require_capabilities(
             &mut tx,
             context.runtime_id,
