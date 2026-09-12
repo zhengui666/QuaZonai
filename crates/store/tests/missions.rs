@@ -276,6 +276,19 @@ async fn reviewer_turn_and_summary_keep_original_role_without_general_sealed_acc
             .await,
         Err(StoreError::Invalid("request_artifact"))
     ));
+    // Reviewer refresh uses the same frozen Runtime revision as Researcher.
+    // A changed Runtime must be rejected, not silently skipped by role.
+    sqlx::query("UPDATE app.runtime_integrations SET enabled=false WHERE id=$1")
+        .bind(context.runtime_id.as_uuid())
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(matches!(
+        store
+            .prepare_run_runtime_probe(lease.run.id, &lease.fence)
+            .await,
+        Err(StoreError::RevisionConflict { .. })
+    ));
 }
 
 #[sqlx::test(migrations = "../../migrations")]

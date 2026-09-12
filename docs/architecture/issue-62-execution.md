@@ -3,6 +3,21 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Shared Mission Runtime refresh, 2026-09-12
+
+Working source over `2d5971ea362a0a2602aab74760d6e68b62433c4f` removes the
+Researcher-only filter from the existing owner-fenced Runtime probe. Both original
+Mission roles use the same frozen Runtime revision, enabled-state, lease and
+deadline checks. No new endpoint, grant, queue or artifact access is introduced.
+The controlled Reviewer PostgreSQL test now verifies that changing its Runtime
+configuration raises RevisionConflict instead of silently skipping the refresh.
+
+`verify-2iSUVs` passed workspace check, format, strict Clippy and 159 Store tests,
+zero failed/ignored, source unchanged, owned PostgreSQL stopped. This is not
+automatic Reviewer admission, native Reviewer inference, qualification or full
+Issue acceptance. Automatic role driving and its original input/assessment
+publication remain unfinished.
+
 ## Honest unsent Sealed opportunity rejection, 2026-09-12
 
 Working source over `bb46dcc3aad9840ad290970e7739f35fc0623cc3` fixes permanently
