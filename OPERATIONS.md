@@ -141,6 +141,8 @@ Runtime受管`VALIDATE_ALPHA`沿用同一计算入口，仅消费登记的VALIDA
 重建并逐一比较所有原生分折；少折、改索引或不一致的重复标签均拒绝，不产生资格。
 原生Job镜像须按当前Dockerfile重建并登记其新OCI原生ID；旧native-stack标签缺少
 `alpha-validation/1`，Runtime会报告镜像合同不匹配，不虚报支持新操作。
+可信指标转换保留每个资产/折，并给出原生方法、单位、bar规格/horizon和真实配对
+样本数供冻结阈值检查；没有全局平均或隐式年化，也不等于数据库评估已发表。
 
 032迁移为每个已成功结算的原生Turn保留唯一公开回答报告（qz.mission_summary）。
 Worker读取锁定App Server原生summary视图，只有公开agentMessage、原Turn/item和

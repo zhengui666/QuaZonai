@@ -279,3 +279,110 @@ fn native_output_adoption_requires_every_original_fold_source_and_metric() {
     request.forecast.selection.decision_cutoff_ns = count(10 * market::INTERVAL_NS);
     assert!(!accepted(&request, &actual));
 }
+
+#[test]
+fn projected_native_metrics_preserve_every_fold_and_feed_the_existing_threshold_gate() {
+    use contracts::evidence::{Comparator, Decision, EvidenceStatus, MetricRequirementV1};
+    use domain::{evidence::evaluate_metrics, execution::alpha_validation_metrics};
+    let (directory, source) = market("0", 25);
+    let request = request(&source);
+    let actual = validate_alpha(directory.path(), &request, &module("local.get 0")).unwrap();
+    let evaluation = Id::new();
+    let artifact = Id::new();
+    let (metrics, capabilities) =
+        alpha_validation_metrics(evaluation, artifact, &request, &actual).unwrap();
+    assert_eq!(metrics.len(), actual.folds.len() * 2);
+    assert_eq!(capabilities.len(), 2);
+    assert_eq!(metrics[0].scope, "asset:0/fold:0");
+    assert_eq!(metrics[11].scope, "asset:1/fold:2");
+    for (fold, records) in actual.folds.iter().zip(metrics.as_chunks::<2>().0) {
+        for (original, record) in fold.metrics.iter().zip(records) {
+            assert_eq!(record.evaluation_id, evaluation);
+            assert_eq!(record.source_artifact_id, artifact);
+            assert_eq!(record.value, original.value);
+            assert_eq!(record.status, original.status);
+            assert_eq!(record.reason_code, original.reason_code);
+            assert_eq!(record.method_version, "0.7.0");
+            assert_eq!(record.frequency, "1-MINUTE-LAST-EXTERNAL;horizon=2");
+            assert_eq!(
+                record.observation_count.get(),
+                fold.test_points.len() as u64
+            );
+            assert!(record.annualization_factor.is_none());
+            let first = fold.test_points[0].observation.event_ns.get();
+            let last = fold
+                .test_points
+                .last()
+                .unwrap()
+                .observation
+                .label_available_ns
+                .unwrap()
+                .get();
+            let lower = record.period_start.timestamp_nanos_opt().unwrap() as u64;
+            let upper = record.period_end.timestamp_nanos_opt().unwrap() as u64;
+            assert!(lower <= first && first - lower < 1000);
+            assert!(upper >= last && upper - last < 1000);
+        }
+        assert_eq!(records[0].unit, "CORRELATION");
+        assert_eq!(records[0].method_id, "ndarray-stats.pearson_correlation");
+        assert_eq!(records[0].higher_is_better, Some(true));
+        assert_eq!(records[1].unit, "RETURN_PER_HORIZON");
+        assert_eq!(records[1].method_id, "ndarray-stats.root_mean_sq_err");
+        assert_eq!(records[1].higher_is_better, Some(false));
+    }
+    let requirement = MetricRequirementV1 {
+        schema_version: SchemaV1,
+        metric_code: "RETURN_RMSE".into(),
+        scope: "asset:0/fold:0".into(),
+        comparator: Comparator::Le,
+        threshold_low: None,
+        threshold_high: Some("1".parse().unwrap()),
+        required: true,
+        minimum_observations: count(3),
+        method_allowlist: vec!["ndarray-stats.root_mean_sq_err".into()],
+    };
+    // Only a numeric threshold check. Fixture provenance still forbids qualification.
+    let gate = evaluate_metrics(
+        evaluation,
+        std::slice::from_ref(&requirement),
+        &metrics,
+        &capabilities,
+    )
+    .unwrap();
+    assert_eq!(gate.decision, Decision::Pass);
+    assert_eq!(gate.evidence_status, EvidenceStatus::Valid);
+    let mut wrong_unit = metrics.clone();
+    wrong_unit[1].unit = "UNITLESS_SCORE".into();
+    let gate = evaluate_metrics(
+        evaluation,
+        std::slice::from_ref(&requirement),
+        &wrong_unit,
+        &capabilities,
+    )
+    .unwrap();
+    assert_eq!(gate.decision, Decision::Inconclusive);
+    assert_eq!(gate.evidence_status, EvidenceStatus::Unsupported);
+    let constant = validate_alpha(directory.path(), &request, &module("f64.const 7")).unwrap();
+    let (missing, capabilities) =
+        alpha_validation_metrics(evaluation, artifact, &request, &constant).unwrap();
+    assert_eq!(missing.len(), constant.folds.len() * 2);
+    for records in missing.as_chunks::<2>().0 {
+        assert_eq!(records[0].observation_count.get(), 3);
+        assert_eq!(records[1].observation_count.get(), 0);
+        assert_eq!(records[1].value, None);
+        assert_eq!(records[1].status, MetricStatus::InsufficientData);
+        assert_eq!(
+            records[1].reason_code.as_deref(),
+            Some("CALIBRATION_UNAVAILABLE")
+        );
+    }
+    assert_eq!(
+        evaluate_metrics(evaluation, &[requirement], &missing, &capabilities)
+            .unwrap()
+            .decision,
+        Decision::Inconclusive
+    );
+    let mut partial = actual;
+    partial.folds.pop();
+    assert!(alpha_validation_metrics(evaluation, artifact, &request, &partial).is_err());
+}

@@ -6,7 +6,12 @@ use crate::{
     },
     DomainError,
 };
-use contracts::{brief::TargetKind, evidence::MetricStatus, science::*};
+use contracts::{
+    brief::TargetKind,
+    evidence::{MetricStatus, MetricValueV1},
+    science::*,
+    DbCounter, Id, SchemaV1,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) fn shape(value: &NativeAlphaValidationResultV1) -> Result<(), DomainError> {
@@ -183,6 +188,101 @@ pub(super) fn shape(value: &NativeAlphaValidationResultV1) -> Result<(), DomainE
         return Err(bad("native_output.validation_unique_count"));
     }
     Ok(())
+}
+
+/// Convert only the original validated native outputs. Returned capabilities are
+/// assigned here, not accepted from a caller or inferred from an arbitrary metric.
+pub fn metrics(
+    evaluation: Id,
+    artifact: Id,
+    request: &NativeAlphaValidationRequestV1,
+    value: &NativeAlphaValidationResultV1,
+) -> Result<(Vec<MetricValueV1>, Vec<crate::evidence::MetricCapability>), DomainError> {
+    binding(request, value)?;
+    let mut records = Vec::with_capacity(value.folds.len() * 2);
+    let mut capabilities = BTreeMap::new();
+    for (asset, folds) in value
+        .folds
+        .chunk_by(|a, b| a.instrument_id == b.instrument_id)
+        .enumerate()
+    {
+        let first = &folds[0];
+        // binding already checked the complete canonical instrument/BarType pair.
+        let spec = &first.bar_type[first.instrument_id.len() + 1..];
+        let frequency = format!(
+            "{spec};horizon={}",
+            request.forecast.parameters.label_horizon_observations
+        );
+        crate::control::text(&frequency, 1, 120, false)?;
+        for fold in folds {
+            let start = fold.test_points[0].observation.event_ns.get() / 1000;
+            let end = fold
+                .test_points
+                .last()
+                .unwrap()
+                .observation
+                .label_available_ns
+                .ok_or_else(|| bad("native_output.validation_period"))?
+                .get()
+                .div_ceil(1000);
+            let period_start = chrono::DateTime::from_timestamp_micros(start as i64)
+                .ok_or_else(|| bad("native_output.validation_period"))?;
+            let period_end = chrono::DateTime::from_timestamp_micros(end as i64)
+                .ok_or_else(|| bad("native_output.validation_period"))?;
+            for native in &fold.metrics {
+                let (code, method, unit, higher, observations) = match native.kind {
+                    NativeAlphaMetricKind::PearsonIc => (
+                        "PEARSON_IC",
+                        "ndarray-stats.pearson_correlation",
+                        "CORRELATION",
+                        true,
+                        fold.test_points.len(),
+                    ),
+                    NativeAlphaMetricKind::ReturnRmse => (
+                        "RETURN_RMSE",
+                        "ndarray-stats.root_mean_sq_err",
+                        "RETURN_PER_HORIZON",
+                        false,
+                        fold.test_points
+                            .iter()
+                            .filter(|p| p.expected_return.is_some())
+                            .count(),
+                    ),
+                };
+                let capability = crate::evidence::MetricCapability {
+                    metric_code: code.into(),
+                    method_id: method.into(),
+                    method_version: "0.7.0".into(),
+                    unit: unit.into(),
+                    frequency: frequency.clone(),
+                };
+                capabilities.insert((code, frequency.clone()), capability);
+                let record = MetricValueV1 {
+                    schema_version: SchemaV1,
+                    evaluation_id: evaluation,
+                    metric_code: code.into(),
+                    scope: format!("asset:{asset}/fold:{}", fold.fold_index),
+                    value: native.value,
+                    status: native.status,
+                    reason_code: native.reason_code.clone(),
+                    unit: unit.into(),
+                    period_start,
+                    period_end,
+                    observation_count: DbCounter::new(observations as u64)
+                        .map_err(|_| bad("native_output.validation_counts"))?,
+                    frequency: frequency.clone(),
+                    annualization_factor: None,
+                    method_id: method.into(),
+                    method_version: "0.7.0".into(),
+                    source_artifact_id: artifact,
+                    higher_is_better: Some(higher),
+                };
+                crate::evidence::validate_metric(&record)?;
+                records.push(record);
+            }
+        }
+    }
+    Ok((records, capabilities.into_values().collect()))
 }
 
 pub(super) fn binding(

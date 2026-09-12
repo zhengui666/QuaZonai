@@ -178,6 +178,8 @@ cargo run --locked -p runtime -- serve --config /absolute/runtime.json
 model_artifact_id/request；只接收VALIDATION分区、MODEL、PARAMETERS，不能读
 Sealed训练数据或借用Discovery预测。原生结果为qz.alpha_validation.v1 REPORT，
 含每折source_row_count和全部原始索引；严格采纳核对原请求全部分折，不等于授资格。
+受信任指标转换的scope/单位/频率/时间精度见DESIGN A4.6；这不是新的Agent工具或
+手工上传MetricValue的入口，原始REPORT仍完整保留，不用转换值覆盖原纳秒证据。
 
 普通 Runtime 单元/SQLite/HTTP 测试不证明 OCI 隔离；`.github/workflows/native-runtime.yml` 对精确源码启用独立必跑的 `native-oci` 测试。缺 Docker、固定镜像或 cgroup 前提会失败，不能按跳过处理成通过。取消时只有原生进程已停止且晚到 CREATE/START 已被持久身份屏障阻断才报告 CANCELLED，404 或超时不等于取消确认。
 

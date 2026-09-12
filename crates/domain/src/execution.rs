@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 
 mod output;
 pub mod validation;
-pub use output::{output_bindings, output_shape};
+pub use output::{alpha_validation_metrics, output_bindings, output_shape};
 
 fn bad(field: &str) -> DomainError {
     invalid(field, "NATIVE_TASK_BINDING_INVALID")

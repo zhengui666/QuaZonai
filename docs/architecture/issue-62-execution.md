@@ -1046,3 +1046,21 @@ Runtime能力从既有输出登记表派生；镜像标签增加实际数值版�
 Runtime、30原生Codex和74项Job测试通过（含另行运行的7managed），0失败/0忽略。
 两轮源码均冻结；全量轮独立PG已确认停止。未重跑新镜像OCI，未称为完整T08或
 远端CI。正式评估准入/发布、政策/资格、Reviewer及其余工作仍继续；未push/review/merge。
+
+## 2026-09-12：原生逐折指标到既有政策检查
+
+在af6acfbc上新增可信`alpha_validation_metrics`转换：先重验原请求全部分折，
+再原样保留每个原生值/状态/原因，关联原evaluation/report身份、资产/折scope、
+原生方法/版本、单位、完整bar规格与固定horizon。纳秒原报告不变，MetricValue的
+微秒时间边界只向外取整；IC和RMSE分别计实际配对数，缺校准不是零收益或有效
+预测。相同可信适配提供能力记录给既有精确Decimal阈值函数，没有另写估计器、
+全局平均或资格机制；尚未写入数据库Evaluation。
+
+真实Parquet/Wasmi/CV/OLS用例逐项核对全部转换记录、原数值、上下时间边界、
+方法/单位/周期、样本数及引用；错误单位为UNSUPPORTED，缺校准为INCONCLUSIVE，
+部分报告拒绝。纯数值阈值的PASS断言不是FIXTURE市场资格或完整评估。
+`.ai-bridge/verify-XRwigA`的149领域/合同/Runtime、30原生Codex和75Job全部通过
+（75含单独通过的7managed），但Clippy拒绝测试的两处chunks_exact(2)，整体exit1。
+仅改为原生as_chunks::<2>()后，`.ai-bridge/verify-HTTaGY` compile exit0通过全工作区
+check/fmt/严格Clippy；最终原生Alpha验证7项再次通过，0失败/0忽略。验证期间源码
+均冻结，无DTO/生成器变更。继续修正首阶段试验计数并接正式评估，未push/review/merge。

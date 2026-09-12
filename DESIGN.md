@@ -1266,6 +1266,27 @@ VALIDATION分区、MODEL和PARAMETERS；不能把Discovery预测结果或Sealed�
 selection同序且完整，源行数累计不超过原上限；逐折原生指标有限性与状态/单位
 关联仍需校验。这些关联不授予Evaluation/Qualification或数据来源真实性。
 
+### A4.6 原生分折到评估指标记录
+
+可信发布适配先以原请求验证完整qz.alpha_validation报告，再逐项转换为既有
+MetricValueV1；不重新计算指标或自行授予PASS。scope固定为`asset:{a}/fold:{f}`，
+a是原selection中的0起资产序号，f为该资产原生0起fold_index。报告完整保留序号与
+instrument_id/bar_type的关联；不能按指标值重排、丢折或生成total平均值。
+
+metric_code为PEARSON_IC/RETURN_RMSE，方法ID与单位沿用A4.5，method_version
+为锁定ndarray-stats的0.7.0。frequency为原生bar_type去掉instrument前缀后的完整
+四段规格加`;horizon={固定bars数}`，例如`1-MINUTE-LAST-EXTERNAL;horizon=5`。
+不同bar规格或horizon不是相同口径，annualization_factor保持null。value/status/
+reason沿用原生结果；IC的observation_count是该折完整预测/标签配对数，RMSE为
+该折非空校准收益/标签配对数，不能把缺校准计为有效收益预测。
+
+period_start取首次测试event，period_end取最后测试label_available；为适配既有
+微秒Time边界，前者向下、后者向上取整到微秒，形成覆盖所有原始观测的区间，原
+纳秒值仍完整保留在REPORT。这只转换记录精度，不改cutoff/数据可见性或数值。
+同一可信转换同时提供这些方法/版本/单位/频率的能力记录供既有evaluate_metrics
+核对冻结allowlist和精确Decimal阈值；请求方不能上传能力记录来批准自身指标。
+该适配不代表数据库Evaluation、试验选择、sealed消费或Qualification已发表。
+
 ## A5. Mandate、Candidate、目标与 Release
 
 ```text
