@@ -99,6 +99,10 @@ try {
       // rustc/LLVM use their native relative RPATH under the relocated complete sysroot.
       if (source.startsWith(sysroot + path.sep)) continue;
       copyNative(source, source);
+      // usr-merged hosts resolve /lib64's ELF interpreter into /usr/lib64.
+      // scratch still needs the absolute path requested by the executable.
+      const requested = line.match(/^\s*(\/.*?)\s+=>/);
+      if (requested && requested[1] !== source) copyNative(source, requested[1]);
     }
   }
   for (const name of ['tmp', 'input', 'output']) fs.mkdirSync(destination('/' + name), { mode: name === 'tmp' ? 0o1777 : 0o755 });
@@ -115,15 +119,17 @@ try {
     if (fs.existsSync(copyright)) copyNative(copyright, copyright);
   }
   fs.copyFileSync(path.join(repository, 'Cargo.lock'), destination('/usr/share/doc/quazonai/Cargo.lock'));
-  // Image directory permissions must not inherit a restrictive caller umask: the
-  // selected files contain no secrets and must be readable by the fixed OCI uid.
-  const normalizeDirectories = (directory) => {
+  // Only selected public native files enter this image. A private host toolchain
+  // or caller umask must not prevent the fixed OCI uid from reading/executing them.
+  const normalizePermissions = (directory) => {
     fs.chmodSync(directory, 0o755);
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      if (entry.isDirectory()) normalizeDirectories(path.join(directory, entry.name));
+      const file = path.join(directory, entry.name);
+      if (entry.isDirectory()) normalizePermissions(file);
+      else if (entry.isFile()) fs.chmodSync(file, fs.statSync(file).mode & 0o111 ? 0o755 : 0o644);
     }
   };
-  normalizeDirectories(root);
+  normalizePermissions(root);
   fs.chmodSync(destination('/tmp'), 0o1777);
   const report = { stage: 'PREPARED_NOT_BUILT', native_image_id: null, source_commit: sourceCommit, profile: values.profile, compiler: '1.98.1', target: 'wasm32-unknown-unknown', test_probe_included: Boolean(values['isolation-probe']), base: 'scratch', commands };
   if (!values['prepare-only']) {
@@ -134,6 +140,7 @@ try {
     const info = JSON.parse(run('native-image-inspect', 'docker', ['image', 'inspect', image]).stdout)[0];
     if (info.Id !== image || info.Os !== 'linux' || info.Architecture !== 'amd64') throw new Error('Native image identity mismatch');
     run('native-image-job-version', 'docker', ['run', '--rm', '--network=none', '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges', image, '--version']);
+    run('native-image-compiler-version', 'docker', ['run', '--rm', '--network=none', '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges', '--entrypoint', '/opt/rust/bin/rustc', image, '--version']);
     report.native_image_id = image;
     report.stage = 'BUILT_AND_EXECUTED';
   }

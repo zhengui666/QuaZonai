@@ -21,6 +21,8 @@ node runtimes/native/build-native-image.mjs --profile release --output-dir "$ass
 
 镜像使用 `FROM scratch`，只复制已构建的 `job`、选定 rustup 的 rustc/标准库/原生 linker、实际 ELF 所需共享库和 GNU timeout；装配记录保留原生命令、版本、Cargo.lock 与可取得的发行许可说明。构建上下文与诊断日志目录分开，不发送工作区、模型 profile、密钥或数据库。镜像 ID 是这次选定原生文件的身份，**不是跨发行版主机逐字节可重复构建的声明**。
 
+装配同时保留 `ldd` 报告的依赖实际路径与绝对请求路径，包括 usr-merged 主机的 `/lib64` 动态加载器；镜像不依赖宿主目录软链。仅在新镜像根内将选定的公开原生文件设为可读、可执行文件设为可执行，不改变宿主工具链权限。构建后的真实 `job --version` 或 `rustc --version` 失败即构建失败。
+
 `--isolation-probe` 只用于明确的 CI 测试镜像，正式部署不传该参数。镜像中的 `job --version` 和 Runtime 的可用性检查仍不能替代真正执行、取消及崩溃恢复验收。
 
 ## Runtime 配置

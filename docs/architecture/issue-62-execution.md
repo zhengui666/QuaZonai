@@ -1116,3 +1116,21 @@ Responses Provider与编译/预测终态是受控fixture；它不实际执行科
 分折计算证据来自独立75项Job及managed测试，不能拼称为完整端到端链路。新原生
 镜像/OCI链路尚未执行。本次也未将Validation接入自动Mission调度、Evaluation发布
 或受控正式反馈；这些与其余全部合同继续实现，无新增公开DTO或依赖，未push/review/merge。
+
+## 2026-09-12：真实OCI镜像装配与编译验收
+
+首次真实构建在`job --version`失败：usr-merged宿主的ldd把ELF所需`/lib64`
+加载器解析到`/usr/lib64`，旧装配漏掉绝对请求路径。复用原文件复制逻辑保留两者。
+第二轮镜像可启动，但7项OCI仅4通过；原宿主私有工具链的700/600权限被原样带入，
+固定容器用户不能执行rustc或读取库。仅在新镜像根中规范选定公开文件的读/执行
+权限，不改变宿主文件、Docker权限或生产状态；构建新增真实rustc版本启动检查。
+
+最终外部回执`owner-oci-40q4sS`（会话25182）exit0：基于989401ea及上述冻结补丁，
+真实构建job/runtime、装配、Docker构建、job/rustc启动和全部7项native-oci通过，
+零失败/零忽略，验证前后源码快照一致。Docker原生测试镜像ID为
+`sha256:43c8a3369210baaf74006b6eee03caab9e6feedec2fdbb4791d4df051d739b7e`。
+检查覆盖实际Rust→Wasm、并发重放唯一容器、完成任务崩溃恢复、Gateway退出后的
+原生墙钟截止、取消晚到屏障及现有内核边界回归；5项原生文件复制测试也通过。
+此前两轮失败均保留外部回执，不能归为成功。没有以root运行Cargo、挂载生产数据
+或扩大用户Docker权限。此项仍非正式Validation目录OCI链路、完整Mission科学链路
+或T01–T42/远端CI通过；所有剩余开发继续，未push/review/merge。
