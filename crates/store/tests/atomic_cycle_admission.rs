@@ -206,6 +206,17 @@ async fn queue_error_drops_the_whole_caller_transaction_and_can_retry(pool: PgPo
 async fn budget_rejection_and_invalid_key_discard_the_staged_cycle(pool: PgPool) {
     let (fixture, request) = setup(&pool).await;
     let tx = stage_cycle(&pool, &fixture, request.cycle_id).await;
+    let mut free = request.clone();
+    free.limits.experiments = 0;
+    assert!(matches!(
+        Store::enqueue_run_in_transaction(tx, "free-trial", &free).await,
+        Err(StoreError::Domain(DomainError::Invalid("reservation")))
+    ));
+    assert_eq!(
+        visible_counts(&pool, request.cycle_id).await,
+        (0, 0, 0, 0, 0)
+    );
+    let tx = stage_cycle(&pool, &fixture, request.cycle_id).await;
     let mut invalid = request.clone();
     invalid.limits.experiments = fixture.budget.max_experiments + 1;
     assert!(matches!(

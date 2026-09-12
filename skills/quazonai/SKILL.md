@@ -42,6 +42,8 @@ schema_version、CODE/PARAMETERS/REPORT、workspace_relative_path、idempotency_
 ExperimentProposalV1，Cycle 必须等于本 Mission；返回 PENDING 不是科学运行或资格。
 Wasm提案的参数格式和范围见CLI「研究产物」：必须明确冻结Discovery版本、固定bars
 horizon及原生预测参数，不填MODEL ID或路径；模型只能由可信服务绑定原编译生产者。
+首阶段编译已占一次实验，失败/取消也不退款；同一实验的后续预测不重复占次，
+但仍占原生资源预算。不得绕过原编译账目或修改历史计数来继续。
 可信Worker可在原Thread回送已采纳任务的终态、原预测产物和明确标注的观察抽样；
 它不是正式评估或资格。失败不猜测详细编译诊断；修复提案引用原parent_experiment_id，
 不覆盖旧输入、不抹去失败。回送独立计入原Mission Turn/修复预算，不自行轮询或重开Thread。

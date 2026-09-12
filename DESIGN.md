@@ -818,7 +818,7 @@ experiment_authorship的历史提案不推断作者或自动执行。首次关�
 指针，后续修正使用有父血缘的新提案，不替换已执行输入或抹去失败记录。
 
 编译只带原CODE和可信服务生成的CompileModel参数，不挂载Dataset或Sealed；输入
-集合仍引用冻结Discovery上下文供准入重验。该准备任务experiments=0，CPU/内存/
+集合仍引用冻结Discovery上下文供准入重验。编译是原实验首阶段，experiments=1，CPU/内存/
 输出/墙钟仍在既有预算事务预约，并且期限不能超过所属Mission。调用者只能是持
 有效fence的可信Worker，不增加Agent通用执行接口。产物发表、Run/原生定义、编译
 关联及消息同事务提交；相同提案重放返回原Run，不换模型或身份。编译产生的MODEL
@@ -836,10 +836,16 @@ Agent提供路径、任意查询或扩大时间范围。参数文件不接受MOD
 提案编译Run真实SUCCEEDED终态所采纳的唯一qz.wasm_model及原生产者映射。
 
 预测使用既有EvaluateAlpha任务，只有明确选中的Discovery Dataset、原MODEL和
-服务生成参数作为输入。experiments=1在既有Run准入事务预约，代码/参数/模型/
+服务生成参数作为输入。原编译已预约并结算同一试验，预测experiments=0，代码/参数/模型/
 Dataset/科学Run的不可变关联与消息同事务提交；同提案重放不重复试验或换生产者。
 该科学Run才写入experiments.run_id，编译Run不占用此指针。预测结果仍是Discovery
 研究反馈，不等于验证分折、独立Reviewer、Sealed评估或Alpha资格。
+
+此处统一首阶段记账与B1原生编译合同：编译失败/取消仍保留该次试验，后续预测/
+独立验证不能再次收费。只有已核对原编译及其一次试验账目的可信阶段准入可使用0；
+普通ALPHA_EVALUATE准入仍必须预约正试验数，DATA_VALIDATE管理任务仍为0。
+新关联以数据库约束同时核对编译1/预测0；历史账目和已有成功回执不修改、不退款。
+未按首阶段记账的历史编译不能新增未收费的预测，须明确报告而不是猜测或补写历史。
 
 ### A3.7 Mission驱动科学任务
 
@@ -851,7 +857,7 @@ Dataset/科学Run的不可变关联与消息同事务提交；同提案重放不
 首轮公开请求包含准确Mission、冻结Brief、Cycle和冻结政策的family ID及当前原生
 ABI/参数合同，不让Agent猜测必填提案身份；这不授予修改family或政策的权限。
 
-每步以原Mission冻结的JobLimits为资源分配请求，只按编译0/预测1设置experiments；
+每步以原Mission冻结的JobLimits为资源分配请求，只按编译1/预测0设置experiments；
 现有Cycle累计预算、Runtime能力与Mission剩余墙钟仍可拒绝准入。消息重投保留
 原Thread、原Turn结算和全部原生Run身份。没有就绪步骤不等于Mission完成；任务
 终态、失败说明和后续研究反馈必须由后续结论/同Thread接续处理，不能提前ack。

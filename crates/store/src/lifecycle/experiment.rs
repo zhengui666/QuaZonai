@@ -171,13 +171,18 @@ impl Store {
         {
             return Err(DomainError::AdmissionClosed.into());
         }
-        if limits.experiments != 1
+        if limits.experiments != 0
             || limits.wall_seconds == 0
             || limits.cpu_seconds == DbCounter::ZERO
         {
             return Err(StoreError::Invalid("forecast_limits"));
         }
         let compilation = db::id(e.try_get("compile_run_id")?)?;
+        let charged: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.run_admissions WHERE run_id=$1 AND limits->>'experiments'='1')")
+            .bind(compilation.as_uuid()).fetch_one(&mut *tx).await?;
+        if !charged {
+            return Err(StoreError::Invalid("original_trial_charge_required"));
+        }
         let models = sqlx::query("SELECT model.id,model.byte_count,model.storage_version FROM app.runs r JOIN app.run_attempts a ON a.id=r.active_attempt_id AND a.run_id=r.id JOIN app.run_terminal_receipts receipt ON receipt.run_id=r.id AND receipt.attempt_id=a.id JOIN app.run_native_outputs o ON o.attempt_id=a.id JOIN app.artifacts model ON model.id=o.artifact_id WHERE r.id=$1 AND r.state='SUCCEEDED' AND a.dispatch_state='TERMINAL' AND a.accepted_at IS NOT NULL AND receipt.terminal_state='SUCCEEDED' AND model.producer_run_id=r.id AND model.producer_attempt_id=a.id AND model.project_id=r.project_id AND model.kind='MODEL' AND model.schema_name='qz.wasm_model' AND model.schema_version='1' AND model.access_class='RESEARCH' AND model.media_type='application/wasm' AND model.storage_backend='LOCAL' AND model.storage_object_ref=model.id::text")
             .bind(compilation.as_uuid()).fetch_all(&mut *tx).await?;
         let [model] = models.as_slice() else {
@@ -309,10 +314,11 @@ impl Store {
             kind: RunKind::AlphaEvaluate,
             limits: bounded,
         };
-        let (mut tx, admitted) = Self::enqueue_run_in_transaction(
+        let (mut tx, admitted) = Self::enqueue_with_trial_charge(
             tx,
             &format!("experiment/{experiment}/forecast"),
             &submission,
+            false,
         )
         .await?;
         if admitted.replayed {
@@ -412,7 +418,7 @@ impl Store {
         {
             return Err(DomainError::AdmissionClosed.into());
         }
-        if limits.experiments != 0
+        if limits.experiments != 1
             || limits.wall_seconds == 0
             || limits.cpu_seconds == DbCounter::ZERO
         {
@@ -533,10 +539,11 @@ impl Store {
             kind: RunKind::DataValidate,
             limits: bounded,
         };
-        let (mut tx, admitted) = Self::enqueue_run_in_transaction(
+        let (mut tx, admitted) = Self::enqueue_with_trial_charge(
             tx,
             &format!("experiment/{experiment}/compile"),
             &request,
+            true,
         )
         .await?;
         if admitted.replayed {

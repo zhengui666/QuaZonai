@@ -283,7 +283,7 @@ impl Worker {
                     .await?;
             }
             ExperimentWork::Compile(experiment) => {
-                limits.experiments = 0;
+                limits.experiments = 1;
                 self.store
                     .start_experiment_compilation(
                         lease.run.id,
@@ -295,7 +295,7 @@ impl Worker {
                     .await?;
             }
             ExperimentWork::Forecast(experiment) => {
-                limits.experiments = 1;
+                limits.experiments = 0;
                 let reading = self.objects.clone();
                 self.store
                     .start_experiment_forecast(

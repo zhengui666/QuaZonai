@@ -1064,3 +1064,17 @@ Runtime、30原生Codex和74项Job测试通过（含另行运行的7managed）�
 仅改为原生as_chunks::<2>()后，`.ai-bridge/verify-HTTaGY` compile exit0通过全工作区
 check/fmt/严格Clippy；最终原生Alpha验证7项再次通过，0失败/0忽略。验证期间源码
 均冻结，无DTO/生成器变更。继续修正首阶段试验计数并接正式评估，未push/review/merge。
+
+## 2026-09-12：首阶段只计一次试验
+
+按B1将原编译阶段改为预留/结算一次试验，预测延续阶段为零；同步纠正A3.5–A3.7
+之前相反的描述。复用同一事务准入与结算，不增加公共免计费参数；普通AlphaEvaluate
+零试验仍拒绝。预测必须关联原已计一次的编译准入。迁移034只约束新增阶段关联，
+不重写、退款或清零历史试验；原命令重放只读回同一Run。
+
+真实PG回归确认并发编译只预留一次、失败编译仍计一次、重放不重复计费、发布回滚
+不漏预留，后续预测不再计试验但继续计CPU。`.ai-bridge/verify-hKBrqV` mission-store
+exit0：118项相关PG回归、check/fmt/严格Clippy通过；`.ai-bridge/verify-Avh8yE`
+mission-science exit0：真实原生Mission两轮会话及编译/预测/Alpha登记链路通过，同样
+通过check/fmt/严格Clippy。两轮源码冻结、独立PG均确认停止；未重跑全量501后台
+测试，未宣称远端CI或完整T08。正式验证与发布等全部剩余开发继续，未push/review/merge。

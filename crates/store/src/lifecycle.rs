@@ -449,9 +449,21 @@ impl Store {
     /// authority -> project -> cycle -> run lock order. No HTTP/MCP endpoint or
     /// native readiness/qualification authority is granted by this Rust API.
     pub async fn enqueue_run_in_transaction<'a>(
+        tx: Transaction<'a, Postgres>,
+        key: &str,
+        request: &RunSubmission,
+    ) -> Result<(Transaction<'a, Postgres>, CommandResult<RunSnapshotV1>), StoreError> {
+        Self::enqueue_with_trial_charge(tx, key, request, request.kind == RunKind::AlphaEvaluate)
+            .await
+    }
+
+    // Only domain-owned experiment stages may differ from the generic Run kind.
+    // The public entry above cannot turn an unbound Alpha trial into free work.
+    async fn enqueue_with_trial_charge<'a>(
         mut tx: Transaction<'a, Postgres>,
         key: &str,
         request: &RunSubmission,
+        charge_trial: bool,
     ) -> Result<(Transaction<'a, Postgres>, CommandResult<RunSnapshotV1>), StoreError> {
         commands::key(key)?;
         let normalized = json!({"schema_version":1,"cycle_id":request.cycle_id,"input_set_id":request.input_set_id,"runtime_id":request.runtime_id,"runtime_revision":request.runtime_revision,"kind":request.kind,"limits":request.limits});
@@ -585,9 +597,10 @@ impl Store {
             mission: None,
         };
         let l = &request.limits;
-        let reserve = match request.kind {
-            RunKind::AgentResearch => admission::reserve_mission,
-            RunKind::AlphaEvaluate => admission::reserve,
+        let reserve = match (request.kind, charge_trial) {
+            (RunKind::AgentResearch, false) => admission::reserve_mission,
+            (RunKind::AgentResearch, true) => return Err(StoreError::Integrity),
+            (_, true) => admission::reserve,
             _ => admission::reserve_non_trial,
         };
         let reserved = reserve(

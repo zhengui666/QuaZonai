@@ -24,12 +24,22 @@ use experiment_support::{complete_compilation, setup};
 fn limits() -> JobLimitsV1 {
     JobLimitsV1 {
         schema_version: SchemaV1,
-        experiments: 0,
+        experiments: 1,
         cpu_seconds: DbCounter::new(10).unwrap(),
         wall_seconds: 60,
         memory_mib: 1024,
         output_bytes: DbCounter::new(1024 * 1024).unwrap(),
     }
+}
+
+async fn trial_usage(pool: &PgPool, lease: &RunLease) -> (i64, i64) {
+    sqlx::query_as(
+        "SELECT reserved_experiments,used_experiments FROM app.research_cycles WHERE id=$1",
+    )
+    .bind(lease.run.cycle_id.unwrap().as_uuid())
+    .fetch_one(pool)
+    .await
+    .unwrap()
 }
 
 async fn result_turn(
@@ -153,6 +163,24 @@ async fn failed_compiler_feedback_is_one_budgeted_repair_and_unknown_turns_do_no
         )
         .await
         .unwrap();
+    assert_eq!(
+        trial_usage(&pool, &lease).await,
+        (0, 1),
+        "failed compilation retains its trial"
+    );
+    assert_eq!(
+        start(&store, &f, &lease, experiment)
+            .await
+            .unwrap()
+            .resource
+            .id,
+        compiler
+    );
+    assert_eq!(
+        trial_usage(&pool, &lease).await,
+        (0, 1),
+        "replay cannot charge or refund"
+    );
     assert!(
         !result_turn(&store, &f, &lease).await.unwrap(),
         "no receipt means no continuation"
@@ -297,6 +325,7 @@ async fn compilation_replay_retains_one_code_producer_and_never_mounts_market_da
         .bind(experiment.as_uuid()).bind(a.resource.id.as_uuid()).bind(a.resource.id.to_string())
         .bind(lease.run.cycle_id.unwrap().as_uuid()).fetch_one(&pool).await.unwrap();
     assert_eq!(counts, (1, 1, 1, before + 10));
+    assert_eq!(trial_usage(&pool, &lease).await, (1, 0));
     let message = store
         .read_native_run_messages(60, 10)
         .await
@@ -404,7 +433,7 @@ async fn publication_and_fence_failures_leave_no_compilation_or_resource_charge(
         Err(StoreError::Domain(domain::DomainError::StaleAttempt))
     ));
     let mut invalid = limits();
-    invalid.experiments = 1;
+    invalid.experiments = 0;
     assert!(matches!(
         store
             .start_experiment_compilation(
@@ -453,6 +482,7 @@ async fn publication_and_fence_failures_leave_no_compilation_or_resource_charge(
     let after: (i64,i64,i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.runs),(SELECT count(*) FROM app.artifacts),(SELECT count(*) FROM pgmq.q_runs),(SELECT count(*) FROM app.run_native_tasks),(SELECT reserved_cpu_seconds FROM app.research_cycles WHERE id=$1)")
         .bind(lease.run.cycle_id.unwrap().as_uuid()).fetch_one(&pool).await.unwrap();
     assert_eq!(before, after);
+    assert_eq!(trial_usage(&pool, &lease).await, (0, 0));
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM app.experiment_compilations")
         .fetch_one(&pool)
         .await
@@ -475,7 +505,7 @@ async fn forecast(
     let reading = f.objects.clone();
     let writing = f.objects.clone();
     let mut allocation = limits();
-    allocation.experiments = 1;
+    allocation.experiments = 0;
     store
         .start_experiment_forecast(
             lease.run.id,
@@ -507,6 +537,7 @@ async fn research_alpha_uses_the_original_forecast_once_without_qualification(po
         .resource
         .id;
     let model = complete_compilation(&pool, &store, &f, compilation).await;
+    assert_eq!(trial_usage(&pool, &lease).await, (0, 1));
     let forecast = forecast(&store, &f, &lease, experiment)
         .await
         .unwrap()
@@ -631,7 +662,12 @@ async fn forecast_requires_accepted_model_and_replay_retains_one_trial(pool: PgP
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(after, (before.0 + 1, before.1 + 10));
+    assert_eq!(after, (before.0, before.1 + 10));
+    assert_eq!(
+        trial_usage(&pool, &lease).await,
+        (0, 1),
+        "forecast spends resources, not a second trial"
+    );
     let proposal = store.experiment(&actor, experiment).await.unwrap();
     assert_eq!(proposal.run_id, Some(a.resource.id));
     assert_ne!(proposal.run_id, Some(compilation));
@@ -731,7 +767,7 @@ async fn forecast_parameter_and_late_publication_failures_do_not_charge_a_trial(
     for invalid in ["dataset", "horizon", "fuel", "periods", "model", "length"] {
         let reading = f.objects.clone();
         let mut allocation = limits();
-        allocation.experiments = 1;
+        allocation.experiments = 0;
         let result = store
             .start_experiment_forecast(
                 lease.run.id,
