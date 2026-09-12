@@ -1,5 +1,7 @@
 //! Actual CLI -> TCP -> native Axum/Bearer/TOTP/PostgreSQL data administration.
 //! Every credential and service here is disposable; no authority is injected into a route.
+#[path = "../../../tests/support/mandate.rs"]
+mod mandate_support;
 mod support;
 use axum::{
     body::Body,
@@ -17,6 +19,28 @@ impl Drop for Listener {
     fn drop(&mut self) {
         self.0.abort();
     }
+}
+
+async fn listen(f: &support::Fixture) -> (String, Listener) {
+    let socket = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = socket.local_addr().unwrap();
+    let origin = format!("http://{address}");
+    let state = server::AppState::new(
+        f.store.clone(),
+        SecretVault::open(
+            &f._state.path().join("secrets"),
+            &f._state.path().join("master.key"),
+        )
+        .unwrap(),
+        server::WebPolicy::new(&origin, address, true).unwrap(),
+    );
+    let app = server::router(state, tower_sessions::cookie::Key::generate());
+    (
+        origin,
+        Listener(tokio::spawn(async move {
+            axum::serve(socket, app).await.unwrap();
+        })),
+    )
 }
 
 async fn browser(
@@ -117,22 +141,7 @@ async fn native_cli_human_grant_source_creation_replay_and_intent_binding_are_re
 
     // The same native Store and vault, with an explicitly allowed test-loopback
     // ingress. Browser enrollment above is real; this second listener uses only Bearer.
-    let socket = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = socket.local_addr().unwrap();
-    let origin = format!("http://{address}");
-    let state = server::AppState::new(
-        f.store.clone(),
-        SecretVault::open(
-            &f._state.path().join("secrets"),
-            &f._state.path().join("master.key"),
-        )
-        .unwrap(),
-        server::WebPolicy::new(&origin, address, true).unwrap(),
-    );
-    let app = server::router(state, tower_sessions::cookie::Key::generate());
-    let _listener = Listener(tokio::spawn(async move {
-        axum::serve(socket, app).await.unwrap();
-    }));
+    let (origin, _listener) = listen(&f).await;
     let body = json!({"schema_version":1,"name":"Native CLI source","runtime_id":runtime.body["resource"]["id"],"native_catalog_ref":"registered/cli-fixture","provider_kind":"NAUTILUS_CATALOG","enabled":true});
     let denied = invoke(
         &origin,
@@ -297,4 +306,157 @@ async fn native_cli_human_grant_source_creation_replay_and_intent_binding_are_re
     .await;
     assert!(!invalid.status.success());
     assert!(invalid.stdout.is_empty());
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn native_mandate_cli_uses_original_human_grant_and_scoped_immutable_reads(pool: PgPool) {
+    let f = support::fixture(pool.clone()).await;
+    let (enrollment, initial, totp) = support::start(&f).await;
+    let (confirmed, _) = support::confirm(&f, &enrollment, &initial, &totp, false).await;
+    assert_eq!(confirmed.status, StatusCode::OK);
+    let cookie = confirmed.cookie.unwrap_or(initial);
+    let login: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM app.browser_logins ORDER BY created_at DESC LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let actor = store::authority::Actor::Browser {
+        login_id: login.to_string().try_into().unwrap(),
+    };
+    let request = mandate_support::request(&pool, &f.store, &actor).await;
+    let body = serde_json::to_value(&request).unwrap();
+    let principal = browser(&f, &cookie, "mandate-cli", "/api/v2/machine-principals", json!({
+        "schema_version":1,"name":"Scoped Mandate CLI","kind":"CLI","project_id":request.project_id,"downstream_id":null,"enabled":true
+    })).await;
+    assert_eq!(principal.status, StatusCode::CREATED);
+    let credential = browser(&f, &cookie, "mandate-token", &format!("/api/v2/machine-principals/{}/credentials", principal.body["resource"]["id"].as_str().unwrap()), json!({
+        "schema_version":1,"scope_codes":["RESEARCH_READ"],"expires_at":chrono::Utc::now()+chrono::Duration::hours(1)
+    })).await;
+    assert_eq!(credential.status, StatusCode::CREATED);
+    let token = credential.body["token"].as_str().unwrap();
+    let file = f._state.path().join("mandate-cli-token");
+    fs::write(&file, token).unwrap();
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+    let (origin, _listener) = listen(&f).await;
+    let denied = invoke(
+        &origin,
+        &file,
+        &[
+            "--idempotency-key",
+            "mandate-create",
+            "portfolio",
+            "mandate",
+            "create",
+        ],
+        body.clone(),
+    )
+    .await;
+    assert!(!denied.status.success());
+    assert!(denied.stdout.is_empty());
+    let now = f
+        .store
+        .authentication_snapshot()
+        .await
+        .unwrap()
+        .database_now
+        .timestamp() as u64;
+    let human = invoke(&origin, &file, &["--idempotency-key","mandate-human","operator-grant"], json!({
+        "schema_version":1,"command":{"operation":"MANDATE_CREATE","request":body},"target_id":null,"code":totp.generate((now/30+1)*30)
+    })).await;
+    assert!(human.status.success(), "native Mandate grant failed");
+    let grant: Value = serde_json::from_slice(&human.stdout).unwrap();
+    let grant_id = grant["resource"]["id"].as_str().unwrap();
+    let target = grant["resource"]["target_id"].as_str().unwrap();
+    let arguments = [
+        "--idempotency-key",
+        "mandate-create",
+        "--operator-grant",
+        grant_id,
+        "portfolio",
+        "mandate",
+        "create",
+    ];
+    let mut original = Value::Null;
+    for replay in [false, true] {
+        let output = invoke(&origin, &file, &arguments, body.clone()).await;
+        assert!(output.status.success(), "native Mandate command failed");
+        assert!(output.stderr.is_empty());
+        assert!(!String::from_utf8_lossy(&output.stdout).contains(token));
+        let receipt: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(receipt["replayed"], replay);
+        assert_eq!(receipt["resource"]["id"], target);
+        assert_eq!(receipt["resource"]["content"], body["content"]);
+        if replay {
+            assert_eq!(receipt["resource"], original);
+        } else {
+            original = receipt["resource"].clone();
+        }
+    }
+    let mut changed = body;
+    changed["content"]["exposure_tolerance"] = json!("0.00001");
+    let denied = invoke(&origin, &file, &arguments, changed).await;
+    assert!(!denied.status.success());
+    assert!(denied.stdout.is_empty());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&denied.stderr).unwrap()["status"],
+        403
+    );
+    let project = request.project_id.to_string();
+    let listed = invoke(
+        &origin,
+        &file,
+        &["portfolio", "mandate", "list", &project, "--limit", "1"],
+        Value::Null,
+    )
+    .await;
+    assert!(!String::from_utf8_lossy(&listed.stderr).contains(token));
+    assert!(
+        listed.status.success(),
+        "Mandate list: {}",
+        String::from_utf8_lossy(&listed.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&listed.stdout).unwrap()["items"],
+        json!([original])
+    );
+    let read = invoke(
+        &origin,
+        &file,
+        &["portfolio", "mandate", "show", target],
+        Value::Null,
+    )
+    .await;
+    assert!(read.status.success());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&read.stdout).unwrap(),
+        original
+    );
+    let other = mandate_support::request(&pool, &f.store, &actor).await;
+    let other = f
+        .store
+        .create_mandate(&actor, "other-project", &other)
+        .await
+        .unwrap()
+        .resource;
+    let other_project = other.project_id.to_string();
+    let other_id = other.id.to_string();
+    for arguments in [
+        vec!["portfolio", "mandate", "list", &other_project],
+        vec!["portfolio", "mandate", "show", &other_id],
+    ] {
+        let denied = invoke(&origin, &file, &arguments, Value::Null).await;
+        assert!(!denied.status.success());
+        assert!(denied.stdout.is_empty());
+        assert_eq!(
+            serde_json::from_slice::<Value>(&denied.stderr).unwrap()["status"],
+            404
+        );
+    }
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM app.portfolio_mandates WHERE project_id=$1")
+            .bind(request.project_id.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 1);
 }

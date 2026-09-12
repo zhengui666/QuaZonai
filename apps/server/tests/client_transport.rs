@@ -17,6 +17,12 @@ use std::{
 };
 use tokio::{io::AsyncWriteExt, net::TcpListener, process::Command, task::JoinHandle};
 
+#[test]
+fn native_cli_command_tree_has_no_conflicting_argument_groups() {
+    <server::client::Arguments as clap::Args>::augment_args(clap::Command::new("client"))
+        .debug_assert();
+}
+
 struct Reply {
     status: StatusCode,
     media: &'static str,

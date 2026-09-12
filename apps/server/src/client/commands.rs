@@ -38,6 +38,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use std::io::Read;
 
 #[derive(Args)]
+#[group(id = "Pagination")]
 pub struct List {
     #[arg(long)]
     pub cursor: Option<String>,

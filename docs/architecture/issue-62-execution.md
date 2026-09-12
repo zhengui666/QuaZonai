@@ -3,6 +3,32 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Native Mandate CLI and shared pagination fix, 2026-09-13
+
+Working source over `abde0edcf7e4afb6fb82336d750f1ecfda39b1e9` adds actual CLI
+subprocess/TCP/native browser enrollment/TOTP/Bearer/PostgreSQL coverage for Mandate.
+Existing listener, invocation and controlled relational Mandate setup are reused.
+The test proves the original one-time human grant, exact creation/replay content
+and target, changed-intent rejection, scoped list/detail, cross-project denial and
+one persisted version. Runtime observations remain fixtures, not OCI qualification.
+
+`verify-II5c4B` and diagnostic `verify-DHVcQi` exposed a real CLI parser crash:
+the derived `List` argument group collided with named `List` subcommands before
+network dispatch. One explicit `Pagination` group identity in the shared args fixes
+all callers, without renaming public commands or adding compatibility wrappers.
+A native Clap check now builds and validates the entire CLI command tree.
+`verify-VSD8PZ` confirmed original reads worked, but the new cross-project test
+expected 403; existing scoped authority deliberately returns 404. Only the test
+expectation was corrected; that existing behavior was not changed.
+
+Final `verify-57PPWa` exited 0 with workspace check/format/strict Clippy,
+126 contracts/domain, 33 scientific/managed Job, 2 Mandate Store and 15 HTTP/CLI
+tests passing, zero failed/ignored. Source unchanged; owned PostgreSQL stopped
+and confirmed stopped. Only this evidence entry changed afterward. No HTTP schema,
+generated artifact, browser source or OCI runtime change occurred in this stage.
+Full authoritative portfolio assembly, qualification, Candidate/Release and T42
+remain required; these checks do not establish current-head GitHub gates or merge.
+
 ## Mandate Ant Design authoring and immutable reads, 2026-09-13
 
 Working source over `0b7e9f74bfc51308a01814b8bfb252b614b19d4e` replaces the
