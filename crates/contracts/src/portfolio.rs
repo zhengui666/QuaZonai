@@ -5,6 +5,10 @@ use utoipa::ToSchema;
 
 pub const MAX_ALLOCATION_ASSETS: usize = 256;
 pub const MAX_ALLOCATION_GROUPS: usize = 64;
+pub const CLARABEL_CLASS: &str = "clarabel::solver::DefaultSolver";
+pub const CLARABEL_VERSION: &str = "0.11.1";
+pub const FIXED_ENSEMBLE_CLASS: &str = "ndarray::ArrayBase::dot";
+pub const FIXED_ENSEMBLE_VERSION: &str = "0.17.1";
 
 /// Original forecast metadata; these identifiers alone never prove qualification.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -147,6 +151,86 @@ pub struct AllocatorSettingsV1 {
     pub solver_tolerance: DecimalValue,
     pub accept_inaccurate: bool,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FixedEnsembleParametersV1 {}
+
+/// Only implemented native adapters. Role and linked upstream identity are
+/// checked before execution; this reference does not authorize a model import.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "adapter_kind",
+    rename_all = "SCREAMING_SNAKE_CASE",
+    deny_unknown_fields
+)]
+pub enum NativeModelRefV1 {
+    ClarabelQp {
+        schema_version: SchemaV1,
+        upstream_class: String,
+        upstream_version: String,
+        parameters: AllocatorSettingsV1,
+    },
+    FixedWeightedForecast {
+        schema_version: SchemaV1,
+        upstream_class: String,
+        upstream_version: String,
+        parameters: FixedEnsembleParametersV1,
+    },
+}
+
+impl utoipa::PartialSchema for NativeModelRefV1 {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        use utoipa::openapi::schema::{AdditionalProperties, ObjectBuilder, OneOfBuilder, Type};
+        let literal = |value| {
+            ObjectBuilder::new()
+                .schema_type(Type::String)
+                .enum_values(Some([value]))
+        };
+        let mut schema = OneOfBuilder::new();
+        for (kind, class, version, parameters) in [
+            (
+                "CLARABEL_QP",
+                CLARABEL_CLASS,
+                CLARABEL_VERSION,
+                AllocatorSettingsV1::schema(),
+            ),
+            (
+                "FIXED_WEIGHTED_FORECAST",
+                FIXED_ENSEMBLE_CLASS,
+                FIXED_ENSEMBLE_VERSION,
+                FixedEnsembleParametersV1::schema(),
+            ),
+        ] {
+            schema = schema.item(
+                ObjectBuilder::new()
+                    .schema_type(Type::Object)
+                    .additional_properties(Some(AdditionalProperties::FreeForm(false)))
+                    .property("schema_version", SchemaV1::schema())
+                    .required("schema_version")
+                    .property("adapter_kind", literal(kind))
+                    .required("adapter_kind")
+                    .property("upstream_class", literal(class))
+                    .required("upstream_class")
+                    .property("upstream_version", literal(version))
+                    .required("upstream_version")
+                    .property("parameters", parameters)
+                    .required("parameters"),
+            );
+        }
+        schema.into()
+    }
+}
+impl ToSchema for NativeModelRefV1 {
+    fn schemas(
+        schemas: &mut Vec<(
+            String,
+            utoipa::openapi::RefOr<utoipa::openapi::schema::Schema>,
+        )>,
+    ) {
+        AllocatorSettingsV1::schemas(schemas);
+    }
+}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AllocationAssetV1 {
@@ -176,7 +260,8 @@ pub struct AllocationInputV1 {
     pub current_cash_weight: DecimalValue,
     pub exposure_tolerance: DecimalValue,
     pub constraints: PortfolioConstraintsV1,
-    pub settings: AllocatorSettingsV1,
+    pub optimizer: NativeModelRefV1,
+    pub alpha_ensemble: NativeModelRefV1,
     #[schema(min_items = 1, max_items = 256)]
     pub assets: Vec<AllocationAssetV1>,
     /// Same asset ordering; per-decision-period covariance from the native estimator.

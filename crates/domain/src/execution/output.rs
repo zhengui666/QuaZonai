@@ -272,7 +272,9 @@ pub fn output_bindings(
         }
         NativeTaskParametersV1::BuildPortfolio { request, .. } => {
             let value: AllocationResultV1 = decode(body("qz.native_allocation")?.1)?;
-            if value.iterations > request.settings.max_iterations {
+            if value.iterations
+                > crate::portfolio::optimizer_settings(&request.optimizer)?.max_iterations
+            {
                 return Err(bad("native_output.solver_iterations"));
             }
             crate::portfolio::allocation_result(request, &value)?;

@@ -240,6 +240,9 @@
       "AllocationInputV1": {
         "additionalProperties": false,
         "properties": {
+          "alpha_ensemble": {
+            "$ref": "#/components/schemas/NativeModelRefV1"
+          },
           "assets": {
             "items": {
               "$ref": "#/components/schemas/AllocationAssetV1"
@@ -470,6 +473,9 @@
           "objective": {
             "$ref": "#/components/schemas/AllocationObjective"
           },
+          "optimizer": {
+            "$ref": "#/components/schemas/NativeModelRefV1"
+          },
           "risk": {
             "$ref": "#/components/schemas/AllocationRisk"
           },
@@ -478,9 +484,6 @@
           },
           "schema_version": {
             "$ref": "#/components/schemas/SchemaV1"
-          },
-          "settings": {
-            "$ref": "#/components/schemas/AllocatorSettingsV1"
           }
         },
         "required": [
@@ -494,7 +497,8 @@
           "current_cash_weight",
           "exposure_tolerance",
           "constraints",
-          "settings",
+          "optimizer",
+          "alpha_ensemble",
           "assets",
           "covariance"
         ],
@@ -794,34 +798,6 @@
           "instrument_id",
           "currency",
           "weight"
-        ],
-        "type": "object"
-      },
-      "AllocatorSettingsV1": {
-        "additionalProperties": false,
-        "properties": {
-          "accept_inaccurate": {
-            "type": "boolean"
-          },
-          "max_iterations": {
-            "format": "int32",
-            "maximum": 100000,
-            "minimum": 1,
-            "type": "integer"
-          },
-          "schema_version": {
-            "$ref": "#/components/schemas/SchemaV1"
-          },
-          "solver_tolerance": {
-            "$ref": "#/components/schemas/DecimalValue",
-            "description": "Numerical stopping tolerance, not permission to violate the mandate."
-          }
-        },
-        "required": [
-          "schema_version",
-          "max_iterations",
-          "solver_tolerance",
-          "accept_inaccurate"
         ],
         "type": "object"
       },
@@ -10476,6 +10452,120 @@
           "module_bytes"
         ],
         "type": "object"
+      },
+      "NativeModelRefV1": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "adapter_kind": {
+                "enum": [
+                  "CLARABEL_QP"
+                ],
+                "type": "string"
+              },
+              "parameters": {
+                "additionalProperties": false,
+                "properties": {
+                  "accept_inaccurate": {
+                    "type": "boolean"
+                  },
+                  "max_iterations": {
+                    "format": "int32",
+                    "maximum": 100000,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "schema_version": {
+                    "$ref": "#/components/schemas/SchemaV1"
+                  },
+                  "solver_tolerance": {
+                    "$ref": "#/components/schemas/DecimalValue",
+                    "description": "Numerical stopping tolerance, not permission to violate the mandate."
+                  }
+                },
+                "required": [
+                  "schema_version",
+                  "max_iterations",
+                  "solver_tolerance",
+                  "accept_inaccurate"
+                ],
+                "type": "object"
+              },
+              "schema_version": {
+                "enum": [
+                  1
+                ],
+                "maximum": 1,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "upstream_class": {
+                "enum": [
+                  "clarabel::solver::DefaultSolver"
+                ],
+                "type": "string"
+              },
+              "upstream_version": {
+                "enum": [
+                  "0.11.1"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "schema_version",
+              "adapter_kind",
+              "upstream_class",
+              "upstream_version",
+              "parameters"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "adapter_kind": {
+                "enum": [
+                  "FIXED_WEIGHTED_FORECAST"
+                ],
+                "type": "string"
+              },
+              "parameters": {
+                "additionalProperties": false,
+                "type": "object"
+              },
+              "schema_version": {
+                "enum": [
+                  1
+                ],
+                "maximum": 1,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "upstream_class": {
+                "enum": [
+                  "ndarray::ArrayBase::dot"
+                ],
+                "type": "string"
+              },
+              "upstream_version": {
+                "enum": [
+                  "0.17.1"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "schema_version",
+              "adapter_kind",
+              "upstream_class",
+              "upstream_version",
+              "parameters"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "NativeReturnV1": {
         "additionalProperties": false,

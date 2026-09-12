@@ -308,10 +308,48 @@ fn native_infeasibility_never_publishes_a_certificate_as_targets() {
 #[test]
 fn no_iteration_or_accuracy_failure_becomes_a_fallback_allocation() {
     let mut request = input();
-    request.settings.max_iterations = 1;
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        panic!("native optimizer");
+    };
+    parameters.max_iterations = 1;
     let result = job::allocate(&request).unwrap();
     assert_eq!(result.solver_status, SolverStatus::Failed);
     assert!(result.targets.is_none() && result.cash_weight.is_none());
+}
+
+#[test]
+fn native_model_references_bind_roles_versions_and_strict_parameters() {
+    let original = input();
+    let result = job::allocate(&original).unwrap();
+    for role in ["optimizer", "alpha_ensemble"] {
+        for (field, value) in [
+            ("adapter_kind", serde_json::json!("DEFAULT")),
+            ("upstream_class", serde_json::json!("unknown::Model")),
+            ("upstream_version", serde_json::json!("0.0.0")),
+            ("schema_version", serde_json::json!(2)),
+            ("extra", serde_json::json!(true)),
+        ] {
+            let mut bad = serde_json::to_value(&original).unwrap();
+            bad[role][field] = value;
+            if let Ok(bad) = serde_json::from_value::<AllocationInputV1>(bad) {
+                assert!(job::allocate(&bad).is_err(), "{role}.{field}");
+                assert!(domain::portfolio::allocation_result(&bad, &result).is_err());
+            }
+        }
+        let mut bad = serde_json::to_value(&original).unwrap();
+        bad[role]["parameters"]["unknown"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<AllocationInputV1>(bad).is_err());
+        let mut missing = serde_json::to_value(&original).unwrap();
+        missing.as_object_mut().unwrap().remove(role);
+        assert!(serde_json::from_value::<AllocationInputV1>(missing).is_err());
+    }
+    let mut reversed = original.clone();
+    std::mem::swap(&mut reversed.optimizer, &mut reversed.alpha_ensemble);
+    assert!(job::allocate(&reversed).is_err());
+    assert!(domain::portfolio::allocation_result(&reversed, &result).is_err());
+    let mut legacy = serde_json::to_value(&original).unwrap();
+    legacy["settings"] = legacy["optimizer"]["parameters"].clone();
+    assert!(serde_json::from_value::<AllocationInputV1>(legacy).is_err());
 }
 
 #[test]

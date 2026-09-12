@@ -608,6 +608,13 @@ execution_assumptions [immutable]
 
 `NativeModelRefV1={schema_version,adapter_kind,upstream_class,upstream_version,parameters}`。class/adapter 来自服务端 allowlist 和实际 capability；parameters 为对应锁定适配器的严格 schema。未知项拒绝，不映成 GENERIC/DEFAULT；禁止任意 Python import/path/exec 越界。
 
+已接通的组合适配使用CLARABEL_QP（clarabel::solver::DefaultSolver，0.11.1，
+parameters为AllocatorSettingsV1）与FIXED_WEIGHTED_FORECAST（ndarray::ArrayBase::dot，
+0.17.1，parameters为空对象，原混合权重仅在forecasts中）。原生AllocationInputV1
+必须显式带optimizer和alpha_ensemble，不再另带settings或按缺省版本选择实现；
+适配角色、类名、版本、参数均匹配才执行。更多模型须按实际能力单独接通，不能
+用这两个模型冒充协方差估计、完整Mandate或其他目标已支持。
+
 ### A2.1 不可变数据授权与原生身份
 
 将可变 `data_sources.license_reference/allowed_uses` 移除；仅 name/enabled 可变。runtime_id/native_catalog_ref/provider_kind 创建后不可变，原生数据库守卫与正式管理入口共同阻止改写；需要不同来源时新建来源而不重绑历史许可/数据。`dataset_revisions` 增加 `data_use_grant_id:Id FK data_use_grants`，授权属于同 source（复合FK）。

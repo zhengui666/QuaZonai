@@ -163,6 +163,13 @@ cargo run --locked -p job -- allocate < tests/contracts/allocation-input.json
 这些输入标识不代替数据库资格或许可。必须重建并登记带`portfolio-ensemble/1`
 能力的新镜像，不能沿用旧参数或旧镜像。原生命令不授予Agent组合审批能力。
 
+同一输入还必须显式提供`optimizer`和`alpha_ensemble`，形状为NativeModelRefV1：
+schema_version、adapter_kind、upstream_class、upstream_version、parameters。
+当前仅支持CLARABEL_QP / clarabel::solver::DefaultSolver / 0.11.1（参数沿用
+AllocatorSettingsV1）及FIXED_WEIGHTED_FORECAST / ndarray::ArrayBase::dot / 0.17.1
+（参数为空对象，混合权重在原forecasts中）。顶层settings已删除；未知类/版本、
+错误角色、额外参数均拒绝，不默认选择模型。新镜像还需portfolio-models/1能力。
+
 已有受授权只读 Nautilus Parquet 快照、实际 Wasm 模型和相应冻结请求文件时，运行时使用以下入口；路径不是 HTTP/MCP 请求字段：
 
 ```sh

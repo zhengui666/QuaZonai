@@ -19,7 +19,7 @@ use std::{
     time::Duration,
 };
 
-pub const NATIVE_STACK: &str = "rust/1.98.1;nautilus/0.63.0;clarabel/0.11.1;wasmi/2.0.0;solow-cv/0.7.3;ndarray-stats/0.7.0;linregress/0.5.4;alpha-validation/1;alpha-sealed/1;portfolio-ensemble/1";
+pub const NATIVE_STACK: &str = "rust/1.98.1;nautilus/0.63.0;clarabel/0.11.1;wasmi/2.0.0;solow-cv/0.7.3;ndarray-stats/0.7.0;linregress/0.5.4;alpha-validation/1;alpha-sealed/1;portfolio-ensemble/1;portfolio-models/1";
 pub const JOB_ENTRYPOINT: &str = "/usr/local/bin/job";
 
 #[derive(Clone)]
@@ -211,6 +211,7 @@ impl NativeEngine {
                 ("ndarray-stats".into(), "0.7.0".into()),
                 ("ndarray".into(), "0.17.1".into()),
                 ("portfolio-ensemble".into(), "1".into()),
+                ("portfolio-models".into(), "1".into()),
                 ("linregress".into(), "0.5.4".into()),
             ]),
         })

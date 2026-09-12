@@ -156,7 +156,12 @@ fn allocation_success_requires_exact_instruments_currency_weights_and_solver_con
             7 => invalid.reason_code = Some("NO_SOLUTION".into()),
             8 => invalid.objective_value = None,
             9 => invalid.primal_residual = Some(-0.1),
-            10 => invalid.iterations = request.settings.max_iterations + 1,
+            10 => {
+                invalid.iterations = domain::portfolio::optimizer_settings(&request.optimizer)
+                    .unwrap()
+                    .max_iterations
+                    + 1
+            }
             _ => invalid.cash_weight = None,
         }
         assert!(

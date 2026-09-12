@@ -331,6 +331,8 @@ cargo run --locked -p server -- prune-unpublished-verifiers --state-dir ./var
 本机及真实OCI的PORTFOLIO_BUILD已验证原预测集合→固定权重聚合→Clarabel资产
 目标；输入不再接收手填expected_return。更新必须重建并登记含portfolio-ensemble/1
 能力的原生镜像。合成数值回归不代表Alpha拥有当前REAL资格、许可或可发布Candidate。
+当前输入还须绑定原optimizer/alpha_ensemble的严格类名、版本和参数，替代顶层
+settings；对应镜像增加portfolio-models/1，具体格式见CLI原生科学任务入口。
 
 研究/组合/交付 UI、Worker/MCP/Codex 真闭环、受信任 runtime 与 job 隔离、多 Alpha/共享资金、Paper/Live/Forward/Wake，以及完整恢复/迁移仍未完成。普通 PR CI 不携带生产秘密，真实受保护验收只运行经过审查的固定 Head。QZ 不持有 Broker 凭据或真实执行控制权。
 

@@ -181,6 +181,20 @@ pub fn rebalance_schedule(schedule: &RebalanceScheduleV1) -> Result<(), DomainEr
 
 /// Does not authorize an Alpha, infer a quote, or fit an estimator.
 pub fn allocation_input(input: &AllocationInputV1) -> Result<(), DomainError> {
+    optimizer_settings(&input.optimizer)?;
+    match &input.alpha_ensemble {
+        NativeModelRefV1::FixedWeightedForecast {
+            upstream_class,
+            upstream_version,
+            ..
+        } if upstream_class == FIXED_ENSEMBLE_CLASS
+            && upstream_version == FIXED_ENSEMBLE_VERSION => {}
+        _ => {
+            return Err(DomainError::CapabilityUnavailable(
+                "portfolio_ensemble_model",
+            ))
+        }
+    }
     let count = input.assets.len();
     let constraints = &input.constraints;
     portfolio_constraints(constraints)?;
@@ -211,9 +225,6 @@ pub fn allocation_input(input: &AllocationInputV1) -> Result<(), DomainError> {
         || !input.risk_aversion.is_positive()
         || !input.exposure_tolerance.is_positive()
         || input.exposure_tolerance.as_decimal() > &BigDecimal::new(1.into(), 3)
-        || !input.settings.solver_tolerance.is_positive()
-        || input.settings.solver_tolerance.as_decimal() > &BigDecimal::new(1.into(), 3)
-        || !(1..=100_000).contains(&input.settings.max_iterations)
         || constraints.asset_overrides.len() > count
         || iso_currency::Currency::from_code(&input.base_currency).is_none()
     {
@@ -263,6 +274,32 @@ pub fn allocation_input(input: &AllocationInputV1) -> Result<(), DomainError> {
     Ok(())
 }
 
+pub fn optimizer_settings(model: &NativeModelRefV1) -> Result<&AllocatorSettingsV1, DomainError> {
+    let NativeModelRefV1::ClarabelQp {
+        upstream_class,
+        upstream_version,
+        parameters,
+        ..
+    } = model
+    else {
+        return Err(DomainError::CapabilityUnavailable(
+            "portfolio_optimizer_model",
+        ));
+    };
+    if upstream_class != CLARABEL_CLASS || upstream_version != CLARABEL_VERSION {
+        return Err(DomainError::CapabilityUnavailable(
+            "portfolio_optimizer_model",
+        ));
+    }
+    if !parameters.solver_tolerance.is_positive()
+        || parameters.solver_tolerance.as_decimal() > &BigDecimal::new(1.into(), 3)
+        || !(1..=100_000).contains(&parameters.max_iterations)
+    {
+        return Err(DomainError::Invalid("portfolio_optimizer_parameters"));
+    }
+    Ok(parameters)
+}
+
 /// Validate the *stored decimal targets*, not just the solver's in-memory floats.
 /// An inaccurate status is accepted only when the frozen numerical policy allows it.
 pub fn allocation_result(
@@ -300,7 +337,7 @@ pub fn allocation_result(
     }
     if result.reason_code.is_some()
         || (result.solver_status == SolverStatus::AcceptableInaccurate
-            && !input.settings.accept_inaccurate)
+            && !optimizer_settings(&input.optimizer)?.accept_inaccurate)
         || result.objective_value.is_none()
         || result.primal_residual.is_none()
         || result.dual_residual.is_none()

@@ -66,11 +66,24 @@
     "transaction_costs_ref": "01990000-0000-7000-8000-000000000001",
     "liquidity_ref": null
   },
-  "settings": {
+  "optimizer": {
+    "schema_version": 1,
+    "adapter_kind": "CLARABEL_QP",
+    "upstream_class": "clarabel::solver::DefaultSolver",
+    "upstream_version": "0.11.1",
+    "parameters": {
     "schema_version": 1,
     "max_iterations": 200,
     "solver_tolerance": "0.0000000001",
     "accept_inaccurate": false
+    }
+  },
+  "alpha_ensemble": {
+    "schema_version": 1,
+    "adapter_kind": "FIXED_WEIGHTED_FORECAST",
+    "upstream_class": "ndarray::ArrayBase::dot",
+    "upstream_version": "0.17.1",
+    "parameters": {}
   },
   "assets": [
     {

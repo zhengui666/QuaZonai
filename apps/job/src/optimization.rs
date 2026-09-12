@@ -81,6 +81,7 @@ fn finite(value: f64) -> Option<f64> {
 /// The caller still owns provenance, qualification, independent simulation and approval.
 pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
     domain::portfolio::allocation_input(input)?;
+    let parameters = domain::portfolio::optimizer_settings(&input.optimizer)?;
     let forecasts = crate::validation::aligned_portfolio_forecast(&input.forecasts)?;
     ensure!(
         input.risk == AllocationRisk::Variance
@@ -224,10 +225,10 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
     );
     let a = CscMatrix::new_from_triplets(b.len(), variables, a_rows, a_cols, a_values);
     let cones = [ZeroConeT(1), NonnegativeConeT(b.len() - 1)];
-    let tolerance = native_number(&input.settings.solver_tolerance)?;
+    let tolerance = native_number(&parameters.solver_tolerance)?;
     let settings = DefaultSettingsBuilder::default()
         .verbose(false)
-        .max_iter(input.settings.max_iterations)
+        .max_iter(parameters.max_iterations)
         .tol_gap_abs(tolerance)
         .tol_gap_rel(tolerance)
         .tol_feas(tolerance)
@@ -237,7 +238,7 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
     let native = &solver.solution;
     let (status, reason) = match native.status {
         SolverStatus::Solved => (AllocationStatus::Optimal, None),
-        SolverStatus::AlmostSolved if input.settings.accept_inaccurate => {
+        SolverStatus::AlmostSolved if parameters.accept_inaccurate => {
             (AllocationStatus::AcceptableInaccurate, None)
         }
         SolverStatus::PrimalInfeasible | SolverStatus::AlmostPrimalInfeasible => (

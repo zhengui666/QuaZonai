@@ -3,6 +3,38 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Strict native optimizer and ensemble references, 2026-09-13
+
+Working source over `936f607d79ab9a91676cd4c113080b25e99cf00b` replaces allocation's
+top-level settings with mandatory optimizer and alpha_ensemble NativeModelRefV1.
+Only actual Clarabel QP 0.11.1 and ndarray fixed-weight dot 0.17.1 adapters are
+accepted, with exact upstream classes and typed closed parameters. Original
+solver settings feed execution, iteration limits and result acceptance; swapping
+roles, unknown classes/versions, missing references and legacy settings fail.
+No new numerical engine, import facility or dependency is added.
+
+Initial `verify-O69lqS` and `web-verify-QjWEzu` passed, but inspection found the
+derived tagged-enum OpenAPI omitted closed-object constraints. Native schema
+generation was corrected using existing Utoipa builders and shared identity
+constants, with a runnable schema test. Generated files were not hand-edited.
+Final `verify-D9yaUn` passed check/format/strict Clippy, 153 domain/Runtime,
+8 managed Job, 31 native Codex and 87 scientific Job executions, zero failed/
+ignored, source unchanged. Groups overlap. Final `web-verify-5byHB0` passed
+double deterministic generation, typecheck, 505 unit, wire/build/help, 36 Codex
+browser and 189 full-browser tests, handwritten source unchanged. Inspection
+confirmed both generated alternatives reject extra fields and pin class/version.
+
+`owner-oci-jKC2wV` built and verified native image
+`sha256:97a343a005ff13ae92a404a431a57e3ba1dc2e66a825994233802850f95bd1c7`;
+all 9 actual OCI tests passed, zero failed/ignored, source unchanged. The original
+portfolio request executes with explicit model references, returns the independent
+0.82/0.18 reference, and manifests portfolio-models/1; old images are not accepted.
+
+This does not yet implement covariance model references, Mandate Store/API/CLI/UI,
+trusted qualified forecast assembly or complete Candidate/Release delivery.
+PR #63 remained OPEN/Draft at remote head 37e5713ed6252e5935787201914d42f241582a4f
+and Issue #62 OPEN on live readback. No GitHub write or full T42 claim occurred.
+
 ## Managed and actual OCI forecast aggregation, 2026-09-13
 
 Working source over `fa1dd722efbae2c7dcbae9779c62e79a60b594dc` makes the original
