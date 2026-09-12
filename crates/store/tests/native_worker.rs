@@ -203,7 +203,7 @@ async fn different_terminal_bytes_and_old_owner_cannot_publish_or_replace_a_resu
             &current.fence,
             serde_json::to_vec_pretty(&manifest).unwrap(),
             NativePayloads::Verified(outputs),
-            move |id, size| data::read(reading, id, size),
+            move |id, size| data::read(reading.clone(), id, size),
             |_| async { panic!("a conflicting terminal must not write native files") },
         )
         .await;
@@ -550,7 +550,7 @@ async fn unsubmitted_cancellation_and_publication_failure_do_not_create_remote_s
                 &other_lease.fence,
                 serde_json::to_vec(&manifest).unwrap(),
                 NativePayloads::Verified(outputs.clone()),
-                move |id, size| data::read(reading, id, size),
+                move |id, size| data::read(reading.clone(), id, size),
                 |_| async { Err(StoreError::Integrity) }
             )
             .await,

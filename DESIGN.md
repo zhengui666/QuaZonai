@@ -1355,6 +1355,15 @@ ndarray-stats0.7.0方法；无完整标签为INSUFFICIENT_DATA/NO_COMPLETE_LABEL
 训练截止保留；不存在校准时相应来源字段为null。该原生数值入口不授予Sealed
 读取能力，不替代先提交的暴露预约、实际来源绑定、正式Evaluation或资格。
 
+受管操作EVALUATE_SEALED_ALPHA使用ALPHA_EVALUATE，固定原dataset_revision_id、
+Wasm model_artifact_id、可空calibration_artifact_id与上述请求；只接受一个SEALED
+目录、原Wasm MODEL、原冻结校准MODEL和PARAMETERS。SCORE必须引用校准且不同于
+Wasm/参数身份；EXPECTED_RETURN不得附加校准。PARAMETERS不复制系数配置。
+Job从原挂载对象读取校准，可信Store采纳从原JobSpec绑定的同一MODEL重新读取、
+解析并核对结果；通用输出结构检查不能代替该原始输入关联。校准JSON最多8MiB。
+输出qz.alpha_sealed.v1为受限REPORT；Runtime原生镜像能力必须实际包含alpha-sealed/1。
+该操作本身不提供公开研究者准入，Sealed读取机会仍须由可信准入在授予能力前预约。
+
 NativeAlphaValidationRequestV1绑定原NativeForecastRequestV1、冻结SplitPolicyV1和
 TargetKind，不接受手填预测、标签、系数或折索引。仅固定bars，预测label horizon
 须精确等于split horizon。本入口仅用于验证分区CV；SEALED评估须另用已冻结训练/

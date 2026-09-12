@@ -367,6 +367,7 @@ fn accepted(
             model_artifact_id: Id::new(),
             request: Box::new(request.clone()),
         },
+        None,
         chrono::DateTime::from_timestamp(1, 0).unwrap(),
         chrono::DateTime::from_timestamp(2, 0).unwrap(),
         &[(output, bytes)],

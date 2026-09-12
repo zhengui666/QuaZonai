@@ -140,8 +140,21 @@ fn result<T: serde::de::DeserializeOwned>(f: &Fixture, schema: &str) -> T {
         .collect::<Vec<_>>();
     // This validator is also used at the independent Store adoption boundary.
     // Exercise it against genuine compiler/engine output, not JSON-shaped mocks.
+    let calibration = match &parameters {
+        NativeTaskParametersV1::EvaluateSealedAlpha {
+            calibration_artifact_id: Some(id),
+            ..
+        } => Some(
+            serde_json::from_slice(
+                &fs::read(f.input.join("objects").join(id.to_string())).unwrap(),
+            )
+            .unwrap(),
+        ),
+        _ => None,
+    };
     domain::execution::output_bindings(
         &parameters,
+        calibration.as_ref(),
         f.spec.deadline_at - chrono::Duration::seconds(60),
         chrono::Utc::now(),
         &outputs,
@@ -215,6 +228,71 @@ fn actual_managed_forecast_reads_only_the_bound_model_and_retains_null_warmup() 
     let value = serde_json::to_value(report).unwrap();
     assert!(value.to_string().contains("INDICATOR_WARMUP"));
     assert!(value.to_string().contains("LABEL_NOT_COMPLETE"));
+}
+
+#[test]
+fn actual_managed_sealed_uses_original_fit_and_rejects_other_partitions() {
+    use contracts::science::NativeAlphaSealedResultV1;
+    for role in [
+        DataPartition::Sealed,
+        DataPartition::Discovery,
+        DataPartition::Validation,
+    ] {
+        let (catalog, request, calibration, wasm) = market::sealed();
+        let dataset_id = Id::new();
+        let model = Id::new();
+        let fitted = Id::new();
+        let bytes = serde_json::to_vec(&calibration).unwrap();
+        let f = fixture(
+            NativeTaskParametersV1::EvaluateSealedAlpha {
+                schema_version: SchemaV1,
+                dataset_revision_id: dataset_id,
+                model_artifact_id: model,
+                calibration_artifact_id: Some(fitted),
+                request: Box::new(request.clone()),
+            },
+            vec![
+                RuntimeInputV1::Dataset {
+                    revision_id: dataset_id,
+                    registered_ref: "synthetic-held-out".into(),
+                    storage_version: "1".into(),
+                    role,
+                },
+                RuntimeInputV1::Artifact {
+                    artifact_id: model,
+                    storage_version: "1".into(),
+                    byte_count: market::count(wasm.len() as u64),
+                    role: ArtifactInputRole::Model,
+                },
+                RuntimeInputV1::Artifact {
+                    artifact_id: fitted,
+                    storage_version: "1".into(),
+                    byte_count: market::count(bytes.len() as u64),
+                    role: ArtifactInputRole::Model,
+                },
+            ],
+        );
+        fs::write(f.input.join("objects").join(model.to_string()), wasm).unwrap();
+        fs::write(f.input.join("objects").join(fitted.to_string()), bytes).unwrap();
+        attach_catalog(&f, dataset_id, catalog.path());
+        if role != DataPartition::Sealed {
+            assert!(!execute(&f));
+            assert!(!f.output.join("index.json").exists());
+            continue;
+        }
+        assert!(execute(&f));
+        let report: NativeAlphaSealedResultV1 = result(&f, "qz.alpha_sealed");
+        domain::execution::check_alpha_sealed(&request, Some(&calibration), &report).unwrap();
+        assert_eq!(report.assets.len(), 2);
+        assert!(report
+            .assets
+            .iter()
+            .all(|asset| asset.observation_count.get() == 21));
+        assert_eq!(
+            report.calibration_source_report_artifact_id,
+            Some(calibration.source_report_artifact_id)
+        );
+    }
 }
 
 #[test]

@@ -172,12 +172,27 @@ pub async fn complete(
     };
     let reading = f.objects.clone();
     let publishing = f.objects.clone();
-    let result = store.publish_native_result(run,&lease.fence,serde_json::to_vec(&manifest).unwrap(),NativePayloads::Verified(vec![(output,bytes)]),
-        move |id,size| async move { reading.read(id,size).map_err(|_|StoreError::Integrity) },
-        move |batch| async move {
-            for object in batch { publishing.put(object.id,&object.bytes).map_err(|_|StoreError::Integrity)?; }
-            Ok(())
-        }).await.unwrap();
+    let result = store
+        .publish_native_result(
+            run,
+            &lease.fence,
+            serde_json::to_vec(&manifest).unwrap(),
+            NativePayloads::Verified(vec![(output, bytes)]),
+            move |id, size| {
+                let reading = reading.clone();
+                async move { reading.read(id, size).map_err(|_| StoreError::Integrity) }
+            },
+            move |batch| async move {
+                for object in batch {
+                    publishing
+                        .put(object.id, &object.bytes)
+                        .map_err(|_| StoreError::Integrity)?;
+                }
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
     assert_eq!(
         result.resource.state,
         if invalid {

@@ -39,6 +39,11 @@ tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.19", features = ["env-filter", "json"] }
 
 [dev-dependencies]
+job = { path = "../job" }
+# Reuse the existing native scientific fixture for actual OCI acceptance.
+nautilus-persistence = { version = "=0.63.0", default-features = false }
+rust_decimal = "=1.42.1"
+wat = "=1.258.0"
 tempfile = "=3.27.0"
 tower = { version = "=0.5.2", features = ["util"] }
 reqwest = { version = "=0.12.23", default-features = false, features = ["json", "rustls-tls"] }

@@ -165,12 +165,52 @@ pub fn request(
     }
 }
 
+pub(super) fn shape(value: &NativeAlphaSealedResultV1) -> Result<(), DomainError> {
+    forecast::shape(&value.forecast)?;
+    if value.expected_returns.len() != value.forecast.points.len()
+        || value.assets.len()
+            != value
+                .forecast
+                .points
+                .chunk_by(|a, b| a.instrument_id == b.instrument_id)
+                .count()
+        || value.calibration_source_report_artifact_id.is_some()
+            != value.calibration_fit_end_available_ns.is_some()
+    {
+        return Err(bad("sealed.output_shape"));
+    }
+    for (point, expected) in value.forecast.points.iter().zip(&value.expected_returns) {
+        if expected.is_some() != point.forecast.is_some()
+            || expected.is_some_and(|v| !v.is_finite())
+        {
+            return Err(bad("sealed.return_shape"));
+        }
+    }
+    for asset in &value.assets {
+        crate::control::text(&asset.bar_type, 1, 300, false)?;
+        crate::control::text(&asset.instrument_id, 1, 200, false)?;
+        if asset.metrics.len() != 2 {
+            return Err(bad("sealed.metric_shape"));
+        }
+        for metric in &asset.metrics {
+            if metric.value.is_some_and(|v| !v.is_finite())
+                || (metric.status == MetricStatus::Ok) != metric.value.is_some()
+                || (metric.status == MetricStatus::Ok) == metric.reason_code.is_some()
+            {
+                return Err(bad("sealed.metric_shape"));
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn binding(
     input: &NativeAlphaSealedRequestV1,
     calibration: Option<&NativeFrozenCalibrationV1>,
     value: &NativeAlphaSealedResultV1,
 ) -> Result<(), DomainError> {
     request(input, calibration)?;
+    shape(value)?;
     forecast::binding(&input.forecast, &value.forecast)?;
     if value.expected_returns.len() != value.forecast.points.len()
         || value.assets.len() != input.forecast.selection.bar_types.len()

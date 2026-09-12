@@ -385,9 +385,27 @@ async fn complete_native(
     };
     let reading = f.objects.clone();
     let writing = f.objects.clone();
-    let result=store.publish_native_result(run,&lease.fence,serde_json::to_vec(&manifest).unwrap(),store::lifecycle::native::NativePayloads::Verified(outputs),
-        move |id,size| async move {reading.read(id,size).map_err(|_|StoreError::Integrity)},
-        move |batch| async move {for object in batch {writing.put(object.id,&object.bytes).map_err(|_|StoreError::Integrity)?;} Ok(())}).await.unwrap();
+    let result = store
+        .publish_native_result(
+            run,
+            &lease.fence,
+            serde_json::to_vec(&manifest).unwrap(),
+            store::lifecycle::native::NativePayloads::Verified(outputs),
+            move |id, size| {
+                let reading = reading.clone();
+                async move { reading.read(id, size).map_err(|_| StoreError::Integrity) }
+            },
+            move |batch| async move {
+                for object in batch {
+                    writing
+                        .put(object.id, &object.bytes)
+                        .map_err(|_| StoreError::Integrity)?;
+                }
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
     assert_eq!(result.resource.state, contracts::runs::RunState::Succeeded);
     let id:uuid::Uuid=sqlx::query_scalar("SELECT artifact_id FROM app.run_native_outputs WHERE attempt_id=$1 AND remote_storage_ref=$2").bind(lease.fence.attempt_id.as_uuid()).bind(model_ref.as_uuid()).fetch_one(pool).await.unwrap();
     Id::try_from(id.to_string()).unwrap()

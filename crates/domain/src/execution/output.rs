@@ -182,6 +182,7 @@ pub fn output_shape(output: &RuntimeOutputV1, bytes: &[u8]) -> Result<(), Domain
         "qz.data_quality" => quality(&decode(bytes)?),
         "qz.native_forecast" => forecast::shape(&decode::<NativeForecastResultV1>(bytes)?),
         "qz.alpha_validation" => validation::shape(&decode(bytes)?),
+        "qz.alpha_sealed" => sealed::shape(&decode(bytes)?),
         "qz.native_allocation" => allocation(&decode(bytes)?),
         "qz.native_simulation" => simulation::shape(&decode::<NativeSimulationResultV1>(bytes)?),
         _ => Err(bad("native_output.schema")),
@@ -192,6 +193,7 @@ pub fn output_shape(output: &RuntimeOutputV1, bytes: &[u8]) -> Result<(), Domain
 /// PARAMETERS bytes, not a remote report's description of what it claims to have run.
 pub fn output_bindings(
     parameters: &NativeTaskParametersV1,
+    calibration: Option<&contracts::science::NativeFrozenCalibrationV1>,
     started_at: DateTime<Utc>,
     finished_at: DateTime<Utc>,
     outputs: &[(RuntimeOutputV1, Vec<u8>)],
@@ -257,6 +259,16 @@ pub fn output_bindings(
         }
         NativeTaskParametersV1::ValidateAlpha { request, .. } => {
             validation::binding(request, &decode(body("qz.alpha_validation")?.1)?)?;
+        }
+        NativeTaskParametersV1::EvaluateSealedAlpha {
+            request,
+            calibration_artifact_id,
+            ..
+        } => {
+            if calibration_artifact_id.is_some() != calibration.is_some() {
+                return Err(bad("sealed.calibration_input"));
+            }
+            sealed::binding(request, calibration, &decode(body("qz.alpha_sealed")?.1)?)?;
         }
         NativeTaskParametersV1::BuildPortfolio { request, .. } => {
             let value: AllocationResultV1 = decode(body("qz.native_allocation")?.1)?;

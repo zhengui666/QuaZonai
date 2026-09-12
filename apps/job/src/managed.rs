@@ -363,6 +363,34 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             )?;
             outputs.json("qz.alpha_validation", RuntimeOutputKind::Report, &result)?;
         }
+        NativeTaskParametersV1::EvaluateSealedAlpha {
+            dataset_revision_id,
+            model_artifact_id,
+            calibration_artifact_id,
+            request,
+            ..
+        } => {
+            let bytes = read(
+                &input.join("objects").join(model_artifact_id.to_string()),
+                crate::signals::MAX_SIGNAL_MODULE_BYTES,
+            )?;
+            let calibration: Option<contracts::science::NativeFrozenCalibrationV1> =
+                calibration_artifact_id
+                    .map(|id| {
+                        document(
+                            &input.join("objects").join(id.to_string()),
+                            PARAMETERS_LIMIT,
+                        )
+                    })
+                    .transpose()?;
+            let result = crate::validation::evaluate_sealed_alpha(
+                &input.join("catalogs").join(dataset_revision_id.to_string()),
+                &request,
+                &bytes,
+                calibration.as_ref(),
+            )?;
+            outputs.json("qz.alpha_sealed", RuntimeOutputKind::Report, &result)?;
+        }
         NativeTaskParametersV1::BuildPortfolio { request, .. } => {
             // An infeasible solve is a real diagnostic report, not fabricated fallback targets.
             outputs.json(

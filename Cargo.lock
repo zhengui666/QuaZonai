@@ -4960,8 +4960,11 @@ dependencies = [
  "domain",
  "futures-util",
  "integrations",
+ "job",
  "nautilus-model",
+ "nautilus-persistence",
  "reqwest",
+ "rust_decimal",
  "rustix",
  "serde",
  "serde_json",
@@ -4973,6 +4976,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "utoipa",
+ "wat",
 ]
 
 [[package]]

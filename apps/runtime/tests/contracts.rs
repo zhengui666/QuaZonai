@@ -25,6 +25,7 @@ fn generated_download_contract_declares_the_actual_native_media_and_payloads() {
         "NativeDataQualityReportV1",
         "NativeForecastResultV1",
         "NativeAlphaValidationResultV1",
+        "NativeAlphaSealedResultV1",
         "AllocationResultV1",
         "NativeSimulationResultV1",
     ]

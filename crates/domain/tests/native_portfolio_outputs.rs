@@ -35,7 +35,7 @@ fn accepts<T: serde::Serialize>(
         media_type: contract.media_type.into(),
     };
     let now = DateTime::<Utc>::from_timestamp(100, 0).unwrap();
-    output_bindings(parameters, now, now, &[(descriptor, bytes)]).is_ok()
+    output_bindings(parameters, None, now, now, &[(descriptor, bytes)]).is_ok()
 }
 
 #[test]

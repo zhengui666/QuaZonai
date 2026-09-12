@@ -4,39 +4,8 @@ mod market;
 #[path = "support/command.rs"]
 mod native;
 use contracts::{brief::TargetKind, evidence::MetricStatus, science::*, Id, SchemaV1};
-use job::validation::{evaluate_sealed_alpha, validate_alpha};
-use market::{count, instant, market, module, INTERVAL_NS};
-
-fn prepared() -> (
-    tempfile::TempDir,
-    NativeAlphaSealedRequestV1,
-    NativeFrozenCalibrationV1,
-    Vec<u8>,
-) {
-    let (directory, source) = market("0", 50);
-    let wasm = module("local.get 0");
-    let mut train = market::alpha_validation_request(&source);
-    train.forecast.selection.event_end_ns = count(26 * INTERVAL_NS);
-    train.forecast.selection.decision_cutoff_ns = train.forecast.selection.event_end_ns;
-    let report = validate_alpha(directory.path(), &train, &wasm).unwrap();
-    let frozen = domain::execution::freeze_alpha_calibration(&train, &report, Id::new())
-        .unwrap()
-        .unwrap();
-    let frozen = serde_json::from_slice(&serde_json::to_vec(&frozen).unwrap()).unwrap();
-    let mut forecast = market::forecast_request(&source);
-    forecast.selection.event_start_ns = count(26 * INTERVAL_NS);
-    (
-        directory,
-        NativeAlphaSealedRequestV1 {
-            schema_version: SchemaV1,
-            forecast,
-            target_kind: TargetKind::Score,
-            research_available_through_ns: instant(25),
-        },
-        frozen,
-        wasm,
-    )
-}
+use job::validation::evaluate_sealed_alpha;
+use market::{count, instant, module, sealed as prepared, INTERVAL_NS};
 
 #[test]
 fn held_out_native_predictions_apply_persisted_fit_without_refitting_or_losing_raw_scores() {

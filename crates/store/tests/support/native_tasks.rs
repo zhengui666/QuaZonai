@@ -319,7 +319,7 @@ pub async fn adopt(
             &lease.fence,
             serde_json::to_vec(manifest).unwrap(),
             NativePayloads::Verified(outputs),
-            move |id, size| data::read(reading, id, size),
+            move |id, size| data::read(reading.clone(), id, size),
             move |objects| publish(writing, objects),
         )
         .await

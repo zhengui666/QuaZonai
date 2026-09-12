@@ -1,5 +1,9 @@
 //! Mandatory native Docker acceptance. This target is selected explicitly by the
 //! native-runtime CI; no test is ignored and missing native prerequisites are failures.
+#[path = "../../../tests/support/catalog_metadata.rs"]
+mod catalog_fixture;
+#[path = "../../job/tests/support/market.rs"]
+mod market;
 #[path = "support/oci.rs"]
 mod support;
 use bollard::{
@@ -12,6 +16,192 @@ use reqwest::{Method, StatusCode};
 use runtime::engine::{NativeEngine, NativeImage};
 use std::{collections::BTreeMap, fs, os::unix::fs::PermissionsExt, time::Duration};
 use support::{count, docker, Fixture, SIGNAL, SLOW_SIGNAL};
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn real_native_sealed_job_reads_the_frozen_model_and_registered_parquet() {
+    use contracts::{
+        execution::NativeTaskParametersV1,
+        research::{ArtifactInputRole, DataPartition},
+        science::NativeAlphaSealedResultV1,
+        Revision,
+    };
+    let (catalog, request, calibration, wasm) = market::sealed();
+    let expected =
+        job::validation::evaluate_sealed_alpha(catalog.path(), &request, &wasm, Some(&calibration))
+            .unwrap();
+    // Synthetic data with actual native observations; never a REAL/PIT attestation.
+    let mut metadata = catalog_fixture::metadata();
+    metadata.partition = DataPartition::Sealed;
+    metadata.event_start = chrono::DateTime::from_timestamp_nanos(
+        request.forecast.selection.event_start_ns.get() as i64,
+    );
+    metadata.event_end = chrono::DateTime::from_timestamp_nanos(
+        request.forecast.selection.event_end_ns.get() as i64,
+    );
+    metadata.available_through = metadata.event_end;
+    metadata.row_count = count(expected.forecast.points.len() as u64);
+    metadata.universe.coverage_end = metadata.event_end;
+    metadata.universe.membership = expected
+        .assets
+        .iter()
+        .map(|asset| {
+            let mut member = metadata.universe.membership[0].clone();
+            member.instrument_id = asset.instrument_id.clone();
+            member
+        })
+        .collect();
+    metadata.universe.instrument_definitions = expected
+        .assets
+        .iter()
+        .map(|asset| {
+            serde_json::json!({
+                "type":"CurrencyPair","id":asset.instrument_id,"fixture_only":true,
+            })
+        })
+        .collect();
+    metadata.quality.checked_at = runtime::now();
+    let dataset = Id::new();
+    let observed = &mut metadata.quality.datasets[0];
+    observed.dataset_revision_id = dataset;
+    observed.selection = request.forecast.selection.clone();
+    observed.row_count = metadata.row_count;
+    observed.instrument_ids = expected
+        .assets
+        .iter()
+        .map(|asset| asset.instrument_id.clone())
+        .collect();
+    observed.first_event_ns = expected
+        .forecast
+        .points
+        .iter()
+        .map(|p| p.event_ns)
+        .min()
+        .unwrap();
+    observed.last_event_ns = expected
+        .forecast
+        .points
+        .iter()
+        .map(|p| p.event_ns)
+        .max()
+        .unwrap();
+    observed.available_through_ns = expected
+        .forecast
+        .points
+        .iter()
+        .map(|p| p.available_ns)
+        .max()
+        .unwrap();
+    domain::catalogs::metadata(&metadata, runtime::now()).unwrap();
+    fs::set_permissions(catalog.path(), fs::Permissions::from_mode(0o755)).unwrap();
+    let mut f = Fixture::open().await;
+    f.crash();
+    let metadata_path = f.directory.path().join("sealed-metadata.json");
+    fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+    let mut config: serde_json::Value =
+        serde_json::from_slice(&fs::read(&f.config_path).unwrap()).unwrap();
+    config["catalogs"] = serde_json::json!([{"root":catalog.path(),"metadata_file":metadata_path}]);
+    fs::write(&f.config_path, serde_json::to_vec(&config).unwrap()).unwrap();
+    f.restart().await;
+    let model = Id::new();
+    let fitted = Id::new();
+    let parameters = Id::new();
+    let operation = NativeTaskParametersV1::EvaluateSealedAlpha {
+        schema_version: SchemaV1,
+        dataset_revision_id: dataset,
+        model_artifact_id: model,
+        calibration_artifact_id: Some(fitted),
+        request: Box::new(request),
+    };
+    let encoded = serde_json::to_vec(&operation).unwrap();
+    let fitted_bytes = serde_json::to_vec(&calibration).unwrap();
+    f.object(model, &wasm).await;
+    f.object(fitted, &fitted_bytes).await;
+    f.object(parameters, &encoded).await;
+    let run = Id::new();
+    f.runs.push(run);
+    let spec = JobSpecV1 {
+        schema_version: SchemaV1,
+        run_id: run,
+        attempt_no: 1,
+        owner_epoch: Revision::INITIAL,
+        external_job_id: domain::runtime_jobs::external_id(run, 1).unwrap(),
+        job_kind: operation.job_kind(),
+        image_ref: support::image(),
+        input_set_id: Id::new(),
+        inputs: vec![
+            RuntimeInputV1::Dataset {
+                revision_id: dataset,
+                registered_ref: metadata.registered_ref,
+                storage_version: metadata.storage_version,
+                role: DataPartition::Sealed,
+            },
+            RuntimeInputV1::Artifact {
+                artifact_id: model,
+                storage_version: "1".into(),
+                byte_count: count(wasm.len() as u64),
+                role: ArtifactInputRole::Model,
+            },
+            RuntimeInputV1::Artifact {
+                artifact_id: fitted,
+                storage_version: "1".into(),
+                byte_count: count(fitted_bytes.len() as u64),
+                role: ArtifactInputRole::Model,
+            },
+            RuntimeInputV1::Artifact {
+                artifact_id: parameters,
+                storage_version: "1".into(),
+                byte_count: count(encoded.len() as u64),
+                role: ArtifactInputRole::Parameters,
+            },
+        ],
+        parameters_artifact_id: parameters,
+        limits: RuntimeJobLimitsV1 {
+            cpu: 1,
+            cpu_seconds: count(30),
+            memory_mib: 512,
+            wall_seconds: 30,
+            output_bytes: count(4 * 1024 * 1024),
+        },
+        deadline_at: runtime::now() + chrono::Duration::seconds(50),
+        requested_output_schemas: operation.output_schemas(),
+    };
+    let admitted = f.submit(&spec).await;
+    assert_eq!(f.terminal(&spec).await.state, RuntimeJobState::Succeeded);
+    let manifest = f.manifest(&spec).await;
+    domain::runtime_jobs::manifest(&manifest, &spec, admitted.submitted_at, runtime::now())
+        .unwrap();
+    let [output] = manifest.artifacts.as_slice() else {
+        panic!("one original sealed report required")
+    };
+    assert_eq!(output.schema.name, "qz.alpha_sealed");
+    let response = f
+        .client
+        .get(f.url(&[
+            "jobs",
+            &spec.external_job_id,
+            "artifacts",
+            &output.storage_ref.to_string(),
+        ]))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = response.bytes().await.unwrap().to_vec();
+    domain::execution::output_bindings(
+        &operation,
+        Some(&calibration),
+        manifest.started_at.unwrap(),
+        manifest.finished_at,
+        &[(output.clone(), bytes.clone())],
+    )
+    .unwrap();
+    let result: NativeAlphaSealedResultV1 = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        serde_json::to_value(result).unwrap(),
+        serde_json::to_value(expected).unwrap()
+    );
+    f.assert_private_logs();
+}
 
 #[tokio::test]
 async fn real_native_compile_publishes_exact_model_and_concurrent_retry_has_one_container() {

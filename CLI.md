@@ -173,7 +173,8 @@ training_end_available_ns、IC/RMSE及缺失原因，
 校准JSON（最多8MiB），EXPECTED_RETURN省略--calibration。Wasm仍最多2MiB，
 标准输入最多8MiB。复用原预测/校准/指标，不训练Sealed；输出保留原预测与逐行
 expected_returns、真实完整标签数量及缺失原因。此命令不预约读取机会、不授予
-目录权限或资格，也尚未作为受管Runtime操作开放；不要交给Mission执行。
+目录权限或资格；受管Runtime已有独立内部操作，但尚未开放完整封存准入。
+不要把本机命令交给Mission执行。
 
 验证这些入口及native协方差、OLS校准、Walk-forward/CPCV使用：
 
@@ -213,6 +214,11 @@ total或错版本/单位/周期的Selection。当前单Validation目录版本可
 Sealed要求还须使用真实资产的`asset:N`，不能引用Validation的fold；原Sealed目录
 资产/bar顺序须与Validation一致，仅核对登记元数据，不读取市场行。旧政策缺少
 Sealed要求明确报SEALED_POLICY_NOT_DEFINED，不补阈值或开始封存任务。
+
+内部EVALUATE_SEALED_ALPHA操作绑定原SEALED目录、Wasm MODEL及SCORE的原校准
+MODEL，输出qz.alpha_sealed.v1。PARAMETERS只引用校准产物ID，不复制拟合配置；
+Job与可信采纳分别读取原对象。该操作不是新的Agent工具或公开手工评估入口，
+不替代Sealed机会预约、独立Review和资格判定。Runtime镜像须含alpha-sealed/1。
 
 正式验证的内部准入绑定原Alpha/Policy/Validation目录，不增加可由Agent指定Run或
 免费试验的CLI/MCP接口。原生Worker通过A4.8收尾入口在终态采纳后、ACK前原子发表

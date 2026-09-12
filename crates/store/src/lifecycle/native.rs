@@ -417,11 +417,11 @@ impl Store {
         owner: &WorkerFence,
         raw_manifest: Vec<u8>,
         payloads: NativePayloads,
-        read: R,
+        mut read: R,
         publish: F,
     ) -> Result<CommandResult<RunSnapshotV1>, StoreError>
     where
-        R: FnOnce(Id, DbCounter) -> Read,
+        R: FnMut(Id, DbCounter) -> Read,
         Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
         F: FnOnce(Vec<NativeObjectPublication>) -> Fut,
         Fut: std::future::Future<Output = Result<(), StoreError>>,
@@ -559,8 +559,43 @@ impl Store {
             // A damaged local frozen input is a storage problem, not an excuse to
             // declare that a correct remote result failed scientific validation.
             domain::execution::task(&spec, &parameters).map_err(|_| StoreError::Integrity)?;
+            let calibration = match &parameters {
+                contracts::execution::NativeTaskParametersV1::EvaluateSealedAlpha {
+                    calibration_artifact_id: Some(id),
+                    request,
+                    ..
+                } => {
+                    let size = spec
+                        .inputs
+                        .iter()
+                        .find_map(|input| match input {
+                            RuntimeInputV1::Artifact {
+                                artifact_id,
+                                byte_count,
+                                role: ArtifactInputRole::Model,
+                                ..
+                            } if artifact_id == id => Some(*byte_count),
+                            _ => None,
+                        })
+                        .ok_or(StoreError::Integrity)?;
+                    if !(1..=8 * 1024 * 1024).contains(&size.get()) {
+                        return Err(StoreError::Integrity);
+                    }
+                    let bytes = read(*id, size).await?;
+                    if bytes.len() as u64 != size.get() {
+                        return Err(StoreError::Integrity);
+                    }
+                    let model =
+                        serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?;
+                    domain::execution::alpha_sealed_request(request, Some(&model))
+                        .map_err(|_| StoreError::Integrity)?;
+                    Some(model)
+                }
+                _ => None,
+            };
             invalid = domain::execution::output_bindings(
                 &parameters,
+                calibration.as_ref(),
                 manifest.started_at.ok_or(StoreError::Integrity)?,
                 manifest.finished_at,
                 &outputs,

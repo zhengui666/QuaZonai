@@ -73,15 +73,23 @@ fn forecast_inputs(
     spec: &JobSpecV1,
     dataset_revision_id: Id,
     model_artifact_id: Id,
+    calibration_artifact_id: Option<Id>,
 ) -> Result<(), DomainError> {
     if !dataset(spec, dataset_revision_id)
         || !artifact(spec, model_artifact_id, ArtifactInputRole::Model)
+        || calibration_artifact_id.is_some_and(|id| {
+            id == model_artifact_id
+                || id == spec.parameters_artifact_id
+                || !artifact(spec, id, ArtifactInputRole::Model)
+        })
         || spec.inputs.iter().any(|input| match input {
             RuntimeInputV1::Dataset { revision_id, .. } => *revision_id != dataset_revision_id,
             RuntimeInputV1::Artifact {
                 artifact_id, role, ..
             } => {
                 !(*artifact_id == model_artifact_id && *role == ArtifactInputRole::Model
+                    || Some(*artifact_id) == calibration_artifact_id
+                        && *role == ArtifactInputRole::Model
                     || *artifact_id == spec.parameters_artifact_id
                         && *role == ArtifactInputRole::Parameters)
             }
@@ -164,7 +172,7 @@ pub fn task(spec: &JobSpecV1, parameters: &NativeTaskParametersV1) -> Result<(),
             ..
         } => {
             forecast_request(request)?;
-            forecast_inputs(spec, *dataset_revision_id, *model_artifact_id)?;
+            forecast_inputs(spec, *dataset_revision_id, *model_artifact_id, None)?;
         }
         NativeTaskParametersV1::ValidateAlpha {
             dataset_revision_id,
@@ -173,9 +181,29 @@ pub fn task(spec: &JobSpecV1, parameters: &NativeTaskParametersV1) -> Result<(),
             ..
         } => {
             alpha_validation_request(request)?;
-            forecast_inputs(spec, *dataset_revision_id, *model_artifact_id)?;
+            forecast_inputs(spec, *dataset_revision_id, *model_artifact_id, None)?;
             if !spec.inputs.iter().any(|input| matches!(input, RuntimeInputV1::Dataset {revision_id, role: contracts::research::DataPartition::Validation, ..} if *revision_id == *dataset_revision_id)) {
                 return Err(bad("validation_partition"));
+            }
+        }
+        NativeTaskParametersV1::EvaluateSealedAlpha {
+            dataset_revision_id,
+            model_artifact_id,
+            calibration_artifact_id,
+            request,
+            ..
+        } => {
+            forecast_request(&request.forecast)?;
+            forecast_inputs(
+                spec,
+                *dataset_revision_id,
+                *model_artifact_id,
+                *calibration_artifact_id,
+            )?;
+            if (request.target_kind == contracts::brief::TargetKind::Score) != calibration_artifact_id.is_some()
+                || request.research_available_through_ns >= request.forecast.selection.decision_cutoff_ns
+                || !spec.inputs.iter().any(|input| matches!(input, RuntimeInputV1::Dataset { revision_id, role: contracts::research::DataPartition::Sealed, .. } if *revision_id == *dataset_revision_id)) {
+                return Err(bad("sealed_inputs"));
             }
         }
         NativeTaskParametersV1::BuildPortfolio { request, .. } => {

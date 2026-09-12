@@ -3,6 +3,42 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Managed held-out operation and real OCI, 2026-09-12
+
+Working source over `941269e50ab448ed7ea86d52e79369ca1da89e1c` adds the internal
+EVALUATE_SEALED_ALPHA operation and qz.alpha_sealed output. Its original JobSpec
+binds a Sealed dataset, Wasm MODEL, optional original calibration MODEL and
+PARAMETERS. SCORE requires that calibration; EXPECTED_RETURN forbids it.
+The Job and Store adoption read the original model, not a second copy of fit
+configuration inside PARAMETERS. Existing readers now allow the second immutable
+object read. Generic output shape and exact input association remain distinct.
+Runtime selection checks include this fifth data operation; the image marker
+now requires alpha-sealed/1. No public researcher admission was added.
+
+`verify-WCmzXU` passed check/format/strict Clippy, 150 contracts/domain/runtime,
+8 managed, 30 native Codex and all 83 Job tests, zero ignored/source unchanged.
+The earlier response-contract expected list omitted the new variant; it was
+corrected and this suite rerun. `web-verify-mDEjVM` passed all six native double
+generations with byte equality and handwriting unchanged, typecheck,
+504 Vitest + 5 Node, wire/build/CLI checks, 36 Codex browser tests (33.4s) and
+186 full browser tests (2.5m). Only Domain/Runtime schema bytes changed.
+
+`owner-oci-LSjLSA` passed all 8 actual Docker tests (13.51s), zero ignored, using
+image `sha256:409d22803b5eae314d9e8cda0657dfa58814a9090ebac5963329fb624057ec57`.
+The new test uses actual Parquet/Wasm/frozen native OLS and registered FIXTURE
+metadata, uploads exact objects through Runtime HTTP, executes the image,
+downloads and binds its report, and compares it with the original native result.
+Its first attempt failed before container execution because native catalog
+loading requires multi-thread Tokio; only the test runtime flavor was fixed.
+The final source was also checked by `verify-lX8JmJ`: check/format/strict Clippy,
+29 native validation, 123 Store and 20 HTTP/CLI tests, zero ignored, source
+unchanged and owned PostgreSQL/PGMQ stopped.
+
+The Runtime test reuses existing Job fixture code and already pinned scientific
+packages as dev-dependencies; Cargo.lock adds only those dependency edges.
+This is synthetic OCI computation evidence, not trusted Sealed admission,
+opportunity reservation, formal evaluation/qualification or full T42 delivery.
+
 ## Held-out metric projection and freeze compatibility, 2026-09-12
 
 Working source over `e309821299ed7f33c9b2ce1f5ac6dd539cb6aca0` projects the original

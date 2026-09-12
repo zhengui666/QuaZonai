@@ -578,11 +578,14 @@ impl Worker {
                 fence,
                 result.raw_document,
                 payloads,
-                move |id, count| async move {
-                    tokio::task::spawn_blocking(move || reading.read(id, count))
-                        .await
-                        .map_err(|_| StoreError::Integrity)?
-                        .map_err(|_| StoreError::Integrity)
+                move |id, count| {
+                    let reading = reading.clone();
+                    async move {
+                        tokio::task::spawn_blocking(move || reading.read(id, count))
+                            .await
+                            .map_err(|_| StoreError::Integrity)?
+                            .map_err(|_| StoreError::Integrity)
+                    }
                 },
                 |objects| {
                     allocated.extend(objects.iter().map(|object| object.id));

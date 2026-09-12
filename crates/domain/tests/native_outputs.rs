@@ -40,6 +40,7 @@ fn descriptor(name: &str, bytes: Vec<u8>) -> (RuntimeOutputV1, Vec<u8>) {
 fn accepts(parameters: &NativeTaskParametersV1, outputs: &[(RuntimeOutputV1, Vec<u8>)]) -> bool {
     output_bindings(
         parameters,
+        None,
         clock() - chrono::Duration::seconds(1),
         clock(),
         outputs,

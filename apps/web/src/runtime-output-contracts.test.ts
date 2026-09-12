@@ -34,6 +34,7 @@ describe('native immutable Runtime output contract', () => {
       ['qz.data_quality', 'DATA_QUALITY', 'application/json'],
       ['qz.native_forecast', 'REPORT', 'application/json'],
       ['qz.alpha_validation', 'REPORT', 'application/json'],
+      ['qz.alpha_sealed', 'REPORT', 'application/json'],
       ['qz.native_allocation', 'REPORT', 'application/json'],
       ['qz.native_simulation', 'REPORT', 'application/json'],
     ];

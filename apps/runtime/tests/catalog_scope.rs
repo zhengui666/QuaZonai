@@ -26,7 +26,7 @@ fn operation(
                 selection,
             }],
         },
-        1 | 3 => {
+        1 | 3 | 4 => {
             let forecast = NativeForecastRequestV1 {
                 schema_version: SchemaV1,
                 selection,
@@ -44,6 +44,19 @@ fn operation(
                     dataset_revision_id: dataset,
                     model_artifact_id: model,
                     request: forecast,
+                }
+            } else if kind == 4 {
+                NativeTaskParametersV1::EvaluateSealedAlpha {
+                    schema_version: SchemaV1,
+                    dataset_revision_id: dataset,
+                    model_artifact_id: model,
+                    calibration_artifact_id: None,
+                    request: Box::new(NativeAlphaSealedRequestV1 {
+                        schema_version: SchemaV1,
+                        forecast,
+                        target_kind: contracts::brief::TargetKind::ExpectedReturn,
+                        research_available_through_ns: count(0),
+                    }),
                 }
             } else {
                 NativeTaskParametersV1::ValidateAlpha {
@@ -130,7 +143,7 @@ async fn accepts(
         storage_version: metadata.storage_version.clone(),
         role: metadata.partition,
     }];
-    if matches!(kind, 1 | 3) {
+    if matches!(kind, 1 | 3 | 4) {
         journal
             .put_object(model, "1", b"controlled-model-fixture")
             .await
@@ -185,11 +198,14 @@ async fn accepts(
 }
 
 #[tokio::test]
-async fn all_four_operations_cannot_widen_the_registered_visibility_cutoff() {
-    for kind in 0..4 {
+async fn all_five_data_operations_cannot_widen_the_registered_visibility_cutoff() {
+    for kind in 0..5 {
         let mut metadata = catalog_fixture::metadata();
         if kind == 3 {
             metadata.partition = DataPartition::Validation;
+        }
+        if kind == 4 {
+            metadata.partition = DataPartition::Sealed;
         }
         let selected = metadata.quality.datasets[0].selection.clone();
         assert!(accepts(kind, metadata.clone(), selected.clone()).await);
@@ -203,11 +219,14 @@ async fn all_four_operations_cannot_widen_the_registered_visibility_cutoff() {
 }
 
 #[tokio::test]
-async fn all_four_data_operations_reject_unregistered_types_instruments_and_event_ranges() {
-    for kind in 0..4 {
+async fn all_five_data_operations_reject_unregistered_types_instruments_and_event_ranges() {
+    for kind in 0..5 {
         let mut metadata = catalog_fixture::metadata();
         if kind == 3 {
             metadata.partition = DataPartition::Validation;
+        }
+        if kind == 4 {
+            metadata.partition = DataPartition::Sealed;
         }
         domain::catalogs::metadata(&metadata, now()).unwrap();
         let selection = metadata.quality.datasets[0].selection.clone();
