@@ -214,7 +214,7 @@ impl Worker {
     async fn finish_native_message(&self, message: &RunMessage) -> Result<(), WorkerFailure> {
         let reading = self.objects.clone();
         let publishing = self.objects.clone();
-        let mut allocated = None;
+        let mut allocated = Vec::new();
         let result = self
             .store
             .publish_alpha_validation(
@@ -229,7 +229,8 @@ impl Worker {
                     }
                 },
                 |object| {
-                    allocated = Some(object.id);
+                    allocated.push(object.id);
+                    let publishing = publishing.clone();
                     async move {
                         tokio::task::spawn_blocking(move || {
                             publishing.put(object.id, &object.bytes)
@@ -241,7 +242,7 @@ impl Worker {
                 },
             )
             .await;
-        if let Some(id) = allocated.filter(|_| result.is_err()) {
+        for id in allocated.into_iter().filter(|_| result.is_err()) {
             let objects = self.objects.clone();
             if self
                 .store

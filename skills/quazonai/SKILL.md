@@ -95,6 +95,10 @@ Mission须等待正式验证、评估发表和原Thread反馈回答；不能自�
 selection/trials只读命令；Mission不能调用完整快照接口、刷新旧排名或把COMPLETE
 当作科学PASS、Reviewer批准或资格。未形成与空快照不同。
 
+可信Validation发布器按A4.4冻结原生最后折的SCORE校准、真实训练截止和原输入
+子集；Agent不能提交系数、选择赢家折、重写旧Alpha版本或把校准存在当作资格。
+无可用拟合不回退，文件/事务失败保留原Run重试，不重新运行模型或读取Sealed。
+
 人工Cycle启动除冻结Brief和Project版本外，还须明确researcher_profile/reviewer_profile的profile_id及expected_revision；不得默认第一个账号。选择随Cycle封口，旧Cycle不跟随后来Profile修改。该命令不授予Mission选择账号、修改模型设置或发起账号操作的权限。
 
 Codex账号操作仅供人工设置页或精确Operator grant的CLI使用，不是Mission MCP工具。

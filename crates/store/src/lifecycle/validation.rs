@@ -17,12 +17,12 @@ impl Store {
         &self,
         run: Id,
         mut read: R,
-        publish: P,
+        mut publish: P,
     ) -> Result<Option<CommandResult<Id>>, StoreError>
     where
         R: FnMut(Id, DbCounter) -> Read,
         Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
-        P: FnOnce(NativeObjectPublication) -> Published,
+        P: FnMut(NativeObjectPublication) -> Published,
         Published: std::future::Future<Output = Result<(), StoreError>>,
     {
         let mut tx = self.pool.begin().await?;
@@ -74,6 +74,7 @@ impl Store {
         let mut versions = None;
         let mut source_rows = None;
         let mut observations = None;
+        let mut calibration = None;
         let manifest_id = db::optional_id(&receipt, "result_manifest_artifact_id")?;
         let concluded_at = now(&mut tx).await?;
         let mut completed_at = locked.run.finished_at.ok_or(StoreError::Integrity)?;
@@ -199,6 +200,8 @@ impl Store {
                 gate.reasons
                     .push("REGISTERED_DATA_ROW_COUNT_EXCEEDED".into());
             }
+            calibration = domain::execution::freeze_alpha_calibration(&request, &report, output)
+                .map_err(|_| StoreError::Integrity)?;
             native_report = Some(output);
             versions = Some(report.native_versions);
             source_rows = Some(counter(actual as i64)?);
@@ -243,6 +246,8 @@ impl Store {
             sqlx::query("INSERT INTO app.metric_values(evaluation_id,metric_code,scope,value,status,reason_code,unit,period_start,period_end,observation_count,frequency,annualization_factor,method_id,method_version,source_artifact_id,higher_is_better) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)")
                 .bind(evaluation.as_uuid()).bind(metric.metric_code).bind(metric.scope).bind(metric.value).bind(db::code(&metric.status)?).bind(metric.reason_code).bind(metric.unit).bind(metric.period_start).bind(metric.period_end).bind(metric.observation_count.get() as i64).bind(metric.frequency).bind(metric.annualization_factor).bind(metric.method_id).bind(metric.method_version).bind(metric.source_artifact_id.as_uuid()).bind(metric.higher_is_better).execute(&mut *tx).await?;
         }
+        // The first experiment verdict belongs to this still-open aggregate.
+        // A calibration reference seals it through the existing native trigger.
         let (outcome, reason) = match (gate.evidence_status, gate.decision) {
             (EvidenceStatus::Valid, Decision::Pass) => ("SUPPORTED", "VALIDATION_METRICS_PASSED"),
             (EvidenceStatus::Valid, Decision::Reject) => {
@@ -253,6 +258,33 @@ impl Store {
         };
         sqlx::query("UPDATE app.experiments SET outcome=$2,outcome_reason=$3,conclusion_artifact_id=$4,revision=revision+1 WHERE id=$1")
             .bind(experiment.as_uuid()).bind(outcome).bind(reason).bind(report_id.as_uuid()).execute(&mut *tx).await?;
+        if let Some(model) = calibration.filter(|_| gate.evidence_status == EvidenceStatus::Valid) {
+            let id = Id::new();
+            let artifact = Id::new();
+            let bytes = serde_json::to_vec(&model).map_err(|_| StoreError::Integrity)?;
+            if bytes.len() > contracts::runtime_jobs::MAX_JOB_OUTPUT_BYTES as usize {
+                return Err(StoreError::Integrity);
+            }
+            let size = bytes.len() as i64;
+            // PostgreSQL stores microseconds. Never round a future training
+            // label backwards; the native model retains its original nanoseconds.
+            let ns = model.fit_end_available_ns.get() as i64;
+            let end = DateTime::<Utc>::from_timestamp_micros(ns / 1000 + i64::from(ns % 1000 != 0))
+                .ok_or(StoreError::Integrity)?;
+            publish(NativeObjectPublication {
+                id: artifact,
+                bytes,
+            })
+            .await?;
+            let published_at = now(&mut tx).await?;
+            if valid_until.is_none_or(|until| until <= published_at) {
+                return Err(StoreError::Conflict);
+            }
+            sqlx::query("INSERT INTO app.artifacts(id,project_id,producer_run_id,producer_attempt_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,$3,$4,'MODEL','application/json','qz.alpha_calibration','1','LOCAL',$5,'1',$6,'EVALUATOR_ONLY',$7,'RUNTIME','REFERENCED')")
+                .bind(artifact.as_uuid()).bind(locked.run.project_id.as_uuid()).bind(run.as_uuid()).bind(locked.run.active_attempt_id.map(Id::as_uuid)).bind(artifact.to_string()).bind(size).bind(binding.try_get::<String,_>("origin")?).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO app.calibrations(id,estimator_kind,estimator_version,model_artifact_id,train_input_set_id,fit_end_available_at,output_unit,horizon_kind,horizon_value,validation_evaluation_id) VALUES($1,$2,$3,$4,$5,$6,'RETURN_PER_HORIZON','FIXED_BARS',$7,$8)")
+                .bind(id.as_uuid()).bind(&model.estimator_kind).bind(&model.estimator_version).bind(artifact.as_uuid()).bind(locked.run.input_set_id.as_uuid()).bind(end).bind(model.horizon_observations.get() as i64).bind(evaluation.as_uuid()).execute(&mut *tx).await?;
+        }
         tx.commit().await?;
         Ok(Some(CommandResult {
             schema_version: SchemaV1,

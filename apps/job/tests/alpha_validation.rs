@@ -22,6 +22,7 @@ fn independent_native_folds_fit_only_original_training_labels() {
     assert_eq!(actual.unique_test_observations.get(), 18);
     let first = &actual.folds[0];
     assert_eq!(first.training_ordinals, (2..10).collect::<Vec<_>>());
+    assert_eq!(first.training_end_available_ns, market::instant(12));
     assert_eq!(
         first
             .test_points
@@ -68,6 +69,148 @@ fn independent_native_folds_fit_only_original_training_labels() {
 
 fn counter_model() -> Vec<u8> {
     wat::parse_str("(module (global $n (mut f64) (f64.const 0)) (func (export \"predict\") (param f64 f64 f64 f64 f64 f64 f64 f64) (result f64) global.get $n f64.const 1 f64.add global.set $n global.get $n))").unwrap()
+}
+
+#[test]
+fn frozen_last_fold_reuses_real_native_fit_after_persistence_without_test_labels() {
+    use domain::execution::freeze_alpha_calibration;
+    use job::validation::predict_frozen_calibration;
+    let (directory, source) = market("0", 25);
+    let request = request(&source);
+    let report = validate_alpha(directory.path(), &request, &module("local.get 0")).unwrap();
+    let source_id = Id::new();
+    let frozen = freeze_alpha_calibration(&request, &report, source_id)
+        .unwrap()
+        .unwrap();
+    let bytes = serde_json::to_vec(&frozen).unwrap();
+    let frozen: contracts::science::NativeFrozenCalibrationV1 =
+        serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(frozen.source_report_artifact_id, source_id);
+    assert_eq!(frozen.assets.len(), 2);
+    assert!(!String::from_utf8(bytes).unwrap().contains("label_return"));
+    for (asset, model) in frozen.assets.iter().enumerate() {
+        let last = report
+            .folds
+            .iter()
+            .rfind(|f| f.instrument_id == model.instrument_id)
+            .unwrap();
+        assert_eq!(model.fold_index, last.fold_index);
+        assert_eq!(model.training_ordinals, last.training_ordinals);
+        assert_eq!(
+            model.training_end_available_ns,
+            market::instant(u64::from(*model.training_ordinals.last().unwrap()) + 3)
+        );
+        let scores = model
+            .training_ordinals
+            .iter()
+            .map(|n| (asset + 1) as f64 + f64::from(n + 1) * 0.001)
+            .collect::<Vec<_>>();
+        let labels = scores
+            .iter()
+            .map(|p| (p + 0.002) / p - 1.0)
+            .collect::<Vec<_>>();
+        let original = ScoreCalibration::fit(&scores, &labels).unwrap();
+        assert!((model.calibration.intercept.unwrap() - original.coefficients()[0]).abs() < 1e-12);
+        assert!((model.calibration.slope.unwrap() - original.coefficients()[1]).abs() < 1e-12);
+        let future = [-3.0, 0.0, 1.03, 2.0, 4.0];
+        let native = original.predict(&future).unwrap();
+        let cutoff = count(frozen.fit_end_available_ns.get() + 1);
+        let actual =
+            predict_frozen_calibration(&frozen, &model.bar_type, count(2), cutoff, &future)
+                .unwrap();
+        for (a, b) in actual.iter().zip(native) {
+            assert!((a - b).abs() < 1e-12);
+        }
+        for (bars, horizon, time, scores) in [
+            (
+                "UNKNOWN.SIM-1-MINUTE-LAST-EXTERNAL",
+                count(2),
+                cutoff,
+                future.as_slice(),
+            ),
+            (model.bar_type.as_str(), count(3), cutoff, future.as_slice()),
+            (
+                model.bar_type.as_str(),
+                count(2),
+                frozen.fit_end_available_ns,
+                future.as_slice(),
+            ),
+            (model.bar_type.as_str(), count(2), cutoff, &[]),
+            (model.bar_type.as_str(), count(2), cutoff, &[f64::INFINITY]),
+        ] {
+            assert!(predict_frozen_calibration(&frozen, bars, horizon, time, scores).is_err());
+        }
+    }
+    let mut altered = report.clone();
+    altered.folds[0].metrics[0].value = Some(1.0); // A better metric cannot pick a different fit.
+    assert_eq!(
+        serde_json::to_value(freeze_alpha_calibration(&request, &altered, source_id).unwrap())
+            .unwrap(),
+        serde_json::to_value(&frozen).unwrap()
+    );
+    let last = altered.folds.last_mut().unwrap();
+    last.calibration.as_mut().unwrap().status = MetricStatus::Failed;
+    last.calibration.as_mut().unwrap().reason_code = Some("CALIBRATION_FIT_UNAVAILABLE".into());
+    last.calibration.as_mut().unwrap().intercept = None;
+    last.calibration.as_mut().unwrap().slope = None;
+    for point in &mut last.test_points {
+        point.expected_return = None;
+    }
+    last.metrics[1].status = MetricStatus::InsufficientData;
+    last.metrics[1].value = None;
+    last.metrics[1].reason_code = Some("CALIBRATION_UNAVAILABLE".into());
+    assert!(freeze_alpha_calibration(&request, &altered, source_id)
+        .unwrap()
+        .is_none());
+    let mut invalid = frozen.clone();
+    invalid.assets[0].calibration.slope = Some(f64::NAN);
+    assert!(serde_json::to_vec(&invalid).is_err());
+    let mut invalid = frozen.clone();
+    invalid.assets[0].calibration.slope = Some(f64::MAX);
+    assert!(predict_frozen_calibration(
+        &invalid,
+        &invalid.assets[0].bar_type,
+        count(2),
+        count(invalid.fit_end_available_ns.get() + 1),
+        &[2.0]
+    )
+    .is_err());
+    let mut expected = request.clone();
+    expected.target_kind = TargetKind::ExpectedReturn;
+    let report = validate_alpha(directory.path(), &expected, &module("local.get 0")).unwrap();
+    assert!(freeze_alpha_calibration(&expected, &report, source_id)
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn training_cutoffs_are_original_available_times_including_cpcv() {
+    let (directory, source) = market("0", 32);
+    let mut request = request(&source);
+    request.split_policy.kind = SplitKind::CpcvFixedHorizon;
+    request.split_policy.train_size = count(3);
+    request.split_policy.test_size = count(2);
+    request.split_policy.step_size = None;
+    request.split_policy.group_count = Some(4);
+    request.split_policy.test_group_count = Some(2);
+    let report = validate_alpha(directory.path(), &request, &module("local.get 0")).unwrap();
+    assert!(accepted(&request, &report));
+    for fold in &report.folds {
+        assert_eq!(
+            fold.training_end_available_ns,
+            market::instant(u64::from(*fold.training_ordinals.last().unwrap()) + 3)
+        );
+    }
+    // The last training sample of this fold also occurs as another fold's test
+    // point. Its original label availability cannot be rewritten by one ns.
+    let mut invalid = report.clone();
+    invalid.folds[0].training_end_available_ns =
+        count(invalid.folds[0].training_end_available_ns.get() - 1);
+    assert!(!accepted(&request, &invalid));
+    let frozen = domain::execution::freeze_alpha_calibration(&request, &report, Id::new())
+        .unwrap()
+        .unwrap();
+    assert!(frozen.assets.iter().all(|a| a.fold_index == 5));
 }
 
 #[test]
@@ -237,7 +380,7 @@ fn native_output_adoption_requires_every_original_fold_source_and_metric() {
     let mut request = request(&source);
     let actual = validate_alpha(directory.path(), &request, &module("local.get 0")).unwrap();
     assert!(accepted(&request, &actual));
-    for field in 0..17 {
+    for field in 0..20 {
         let mut bad = actual.clone();
         match field {
             0 => {
@@ -269,7 +412,16 @@ fn native_output_adoption_requires_every_original_fold_source_and_metric() {
                     .insert("solow-cv".into(), "unverified".into());
             }
             15 => bad.unique_test_observations = count(actual.unique_test_observations.get() + 1),
-            _ => bad.consumed_fuel = count(request.forecast.parameters.total_fuel.get() + 1),
+            16 => bad.consumed_fuel = count(request.forecast.parameters.total_fuel.get() + 1),
+            17 => bad.folds[0].training_end_available_ns = count(0),
+            18 => {
+                bad.folds[0].training_end_available_ns =
+                    count(request.forecast.selection.decision_cutoff_ns.get() + 1)
+            }
+            _ => {
+                bad.folds[0].training_end_available_ns =
+                    bad.folds[0].test_points[0].observation.available_ns
+            }
         }
         assert!(!accepted(&request, &bad), "changed output field {field}");
     }

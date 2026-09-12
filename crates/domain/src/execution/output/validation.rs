@@ -268,6 +268,21 @@ pub(super) fn shape(value: &NativeAlphaValidationResultV1) -> Result<(), DomainE
     if value.unique_test_observations.get() != observations.len() as u64 {
         return Err(bad("native_output.validation_unique_count"));
     }
+    for (asset, group) in value
+        .folds
+        .chunk_by(|a, b| a.instrument_id == b.instrument_id)
+        .enumerate()
+    {
+        for fold in group {
+            if fold.training_end_available_ns == DbCounter::ZERO
+                || observations
+                    .get(&(asset + 1, *fold.training_ordinals.last().unwrap()))
+                    .is_some_and(|(_, _, label, _)| *label != Some(fold.training_end_available_ns))
+            {
+                return Err(bad("native_output.validation_training_time"));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -409,6 +424,14 @@ pub(super) fn binding(
             {
                 return Err(bad("native_output.validation_split_changed"));
             }
+            if fold.training_end_available_ns < selection.event_start_ns
+                || fold.training_end_available_ns > selection.decision_cutoff_ns
+                || (request.split_policy.kind == contracts::research::SplitKind::WalkForward
+                    && fold.training_end_available_ns
+                        >= fold.test_points[0].observation.available_ns)
+            {
+                return Err(bad("native_output.validation_training_cutoff"));
+            }
             for point in &fold.test_points {
                 let p = &point.observation;
                 if p.event_ns < selection.event_start_ns
@@ -422,6 +445,104 @@ pub(super) fn binding(
                     return Err(bad("native_output.validation_cutoff_or_unit"));
                 }
             }
+        }
+    }
+    Ok(())
+}
+
+/// The fixed last native fold, never the best metric or a refit using test labels.
+pub fn freeze_calibration(
+    request: &NativeAlphaValidationRequestV1,
+    report: &NativeAlphaValidationResultV1,
+    source_report_artifact_id: Id,
+) -> Result<Option<NativeFrozenCalibrationV1>, DomainError> {
+    binding(request, report)?;
+    if request.target_kind != TargetKind::Score {
+        return Ok(None);
+    }
+    let mut assets = Vec::new();
+    for group in report
+        .folds
+        .chunk_by(|a, b| a.instrument_id == b.instrument_id)
+    {
+        let fold = group.last().ok_or_else(|| bad("calibration.fold"))?;
+        let calibration = fold
+            .calibration
+            .as_ref()
+            .ok_or_else(|| bad("calibration.missing"))?;
+        if calibration.status != MetricStatus::Ok {
+            return Ok(None);
+        }
+        assets.push(NativeAssetCalibrationV1 {
+            instrument_id: fold.instrument_id.clone(),
+            bar_type: fold.bar_type.clone(),
+            fold_index: fold.fold_index,
+            training_ordinals: fold.training_ordinals.clone(),
+            training_end_available_ns: fold.training_end_available_ns,
+            calibration: calibration.clone(),
+        });
+    }
+    let model = NativeFrozenCalibrationV1 {
+        schema_version: SchemaV1,
+        source_report_artifact_id,
+        estimator_kind: "linregress.affine_ols".into(),
+        estimator_version: "0.5.4".into(),
+        selection_rule: "LAST_NATIVE_FOLD".into(),
+        horizon_observations: DbCounter::new(u64::from(
+            request.forecast.parameters.label_horizon_observations,
+        ))
+        .map_err(|_| bad("calibration.horizon"))?,
+        fit_end_available_ns: assets
+            .iter()
+            .map(|a| a.training_end_available_ns)
+            .max()
+            .ok_or_else(|| bad("calibration.assets"))?,
+        assets,
+    };
+    frozen_calibration(&model)?;
+    Ok(Some(model))
+}
+
+pub fn frozen_calibration(model: &NativeFrozenCalibrationV1) -> Result<(), DomainError> {
+    if model.estimator_kind != "linregress.affine_ols"
+        || model.estimator_version != "0.5.4"
+        || model.selection_rule != "LAST_NATIVE_FOLD"
+        || !(1..=100_000).contains(&model.horizon_observations.get())
+        || !(1..=256).contains(&model.assets.len())
+        || model
+            .assets
+            .iter()
+            .map(|a| a.training_end_available_ns)
+            .max()
+            != Some(model.fit_end_available_ns)
+    {
+        return Err(bad("calibration.model"));
+    }
+    let mut instruments = BTreeSet::new();
+    let mut indices = 0;
+    for asset in &model.assets {
+        crate::control::text(&asset.instrument_id, 1, 200, false)?;
+        crate::control::text(&asset.bar_type, 1, 300, false)?;
+        indices += asset.training_ordinals.len();
+        let fit = &asset.calibration;
+        if !instruments.insert(&asset.instrument_id)
+            || asset.bar_type.rsplitn(5, '-').nth(4) != Some(asset.instrument_id.as_str())
+            || asset.fold_index as usize >= MAX_VALIDATION_FOLDS
+            || !(3..=MAX_VALIDATION_ROWS).contains(&asset.training_ordinals.len())
+            || indices > MAX_VALIDATION_INDICES
+            || asset
+                .training_ordinals
+                .iter()
+                .any(|n| *n as usize >= MAX_VALIDATION_ROWS)
+            || asset.training_ordinals.windows(2).any(|w| w[0] >= w[1])
+            || asset.training_end_available_ns == DbCounter::ZERO
+            || fit.training_observations.get() != asset.training_ordinals.len() as u64
+            || fit.status != MetricStatus::Ok
+            || fit.reason_code.is_some()
+            || fit.intercept.is_none_or(|v| !v.is_finite())
+            || fit.slope.is_none_or(|v| !v.is_finite())
+        {
+            return Err(bad("calibration.asset"));
         }
     }
     Ok(())

@@ -268,6 +268,14 @@ https://docs.rs/nautilus-backtest/0.63.0/nautilus_backtest/result/struct.Backtes
 
 没有新增Python例外，没有自写CV、协方差估计器、回归拟合器、解释器或优化算法。每个结果仍需同Run/Attempt、输入、政策、权限、独立评估与生产门禁验证。数值功能存在不能代替完整Issue62交付。
 
+最终校准继续复用同一原生拟合结果，不另跑估计。已核对锁定linregress0.5.4的
+lib.rs：RegressionModel只有Debug/Clone，无serde/from-parameters构造；predict使用
+原始斜率矩阵乘法再加截距。持久模型保存原系数，用已锁定ndarray0.17.1的原生
+数组乘加应用相同单变量仿射函数，并以真实RegressionModel.predict对照；不为
+序列化重新拟合伪样本、不新增依赖。最后折按原生顺序固定选择，不按指标挑选。
+来源：https://docs.rs/linregress/0.5.4/linregress/struct.RegressionModel.html 。
+本次网页工具不能读取该页面，API依据实际已下载的精确版本源码核查，运行证据另记。
+
 ## 独立Alpha分折指标复用（2026-09-12）
 
 继续使用已锁定且已安装的ndarray-stats0.7.0（MIT OR Apache-2.0），不引入新依赖：

@@ -152,10 +152,16 @@ job simulate --catalog /input/catalog < simulation-request.json
 
 `validate-alpha`请求含schema_version=1、forecast（完整原生预测请求）、split_policy
 及target_kind=SCORE/EXPECTED_RETURN。固定horizon必须一致；每折训练/测试重建模型，
-训练标签专用于原生OLS校准。输出所有折的预测/标签/训练索引、IC/RMSE及缺失原因，
+训练标签专用于原生OLS校准。输出所有折的预测/标签/训练索引、真实训练标签截止
+training_end_available_ns、IC/RMSE及缺失原因，
 不平均不同折或授予资格。unique_test_observations只去重，不证明样本独立。
 仅用于验证分区CV，不允许将SEALED数据作为训练标签。此本地数值入口不是Agent工具
 或已发布Evaluation；不能手工上传stdout替代可信采纳。
+
+可信Worker在原正式Validation发布事务内冻结每资产最后一个原生折的SCORE模型，
+保留精确训练子集、原生系数、报告/Evaluation/InputSet关联；仅SUCCEEDED + VALID
+且所有资产最后折可校准时产生记录。它不是新的CLI/Agent写入口，不改变原Alpha
+版本、原试验或REJECT决定；无可用校准不能回退赢家折或手填scale。见DESIGN A4.4。
 
 `forecast` 保留未完成标签与指标预热的 null+reason，Wasm没有宿主导入且受fuel/内存/栈限制。`simulate` 在一个原生账户执行全部资产的冻结目标，先确认减仓成交再提交增仓，保留原生费用、数量步长及独立结果。公开 `returns_kind=PORTFOLIO_DAILY` 仅含原生权益快照的UTC日收益，绝不使用单仓收益回退；日内数据不足时 `returns_status=INSUFFICIENT_DATA`、`returns_reason=PORTFOLIO_DAILY_RETURNS_UNAVAILABLE`，不是0收益。跨日全现金的真实0收益可以为OK，但仍须符合评估最小样本要求。
 

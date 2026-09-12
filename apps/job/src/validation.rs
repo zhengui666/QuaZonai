@@ -7,6 +7,39 @@ use ndarray_stats::CorrelationExt;
 mod alpha;
 pub use alpha::validate_alpha;
 
+/// Apply saved native OLS coefficients; linregress 0.5.4 has no model decoder.
+/// No labels or fitting inputs are accepted by this fixed ndarray operation.
+pub fn predict_frozen_calibration(
+    model: &contracts::science::NativeFrozenCalibrationV1,
+    bar_type: &str,
+    horizon: contracts::DbCounter,
+    first_prediction_available_ns: contracts::DbCounter,
+    scores: &[f64],
+) -> Result<Vec<f64>> {
+    domain::execution::check_alpha_calibration(model)?;
+    ensure!(
+        horizon == model.horizon_observations
+            && first_prediction_available_ns > model.fit_end_available_ns,
+        "CALIBRATION_INPUT_TIME_OR_HORIZON"
+    );
+    ensure!(
+        (1..=MAX_VALIDATION_ROWS).contains(&scores.len()) && scores.iter().all(|v| v.is_finite()),
+        "CALIBRATION_INPUT_INVALID"
+    );
+    let fit = &model
+        .assets
+        .iter()
+        .find(|a| a.bar_type == bar_type)
+        .ok_or_else(|| anyhow::anyhow!("CALIBRATION_ASSET_MISSING"))?
+        .calibration;
+    let values = &ndarray::ArrayView1::from(scores) * fit.slope.unwrap() + fit.intercept.unwrap();
+    ensure!(
+        values.iter().all(|v| v.is_finite()),
+        "CALIBRATION_PREDICTION_INVALID"
+    );
+    Ok(values.to_vec())
+}
+
 pub use domain::execution::validation::{
     validation_folds, MAX_VALIDATION_FOLDS, MAX_VALIDATION_INDICES, MAX_VALIDATION_ROWS,
 };

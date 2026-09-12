@@ -793,7 +793,7 @@ NativeSimulationRequestV1用同一账户、NETTING、固定Nautilus0.63.0和明�
 
 模块必须是合法Wasm二进制，大小不超过2MiB，无任何导入、无start函数，无WASI、宿主文件/环境/时钟/网络函数。Wasmi显式启用stable与portable-dispatch，避免关闭default-features后在未优化构建中依赖宿主尾调用消除；同一生产/测试配置保留原生校验、deterministic、extra-checks、严格编译结构限制和fuel。2026-09-09原生无限循环回归暴露了旧配置的宿主栈溢出，不能通过增加线程栈、降低测试fuel或只测release绕过。采用上游已有portable loop dispatch，不修改解释器；其行为见 https://docs.rs/wasmi/2.0.0/wasmi/#crate-features 。每实例最多一个16MiB线性内存、一个4096项表、有限栈和调用深度；每次预测与整次任务有分开的原生fuel上限。trap、非有限输入/输出、超额或ABI不符直接失败，实例失效，不返回零信号或重新置零预算继续调用。每个instrument/fold/受隔离评估使用独立实例，不能复用一个带历史状态的实例跨验证边界。
 
-编译用户Rust同样是执行不可信输入：由原生运行时的既有进程/文件系统隔离执行固定rustc参数，只读标准工具链、当前代码目录及本次独立输出目录；不挂载Codex home、DB、SecretVault、Docker socket、其他任务或Sealed数据。Wasmi的内存/fuel只保护预测执行，不替代编译、解析和整个job的原生cgroup/CPU/墙钟/输出限制。MODEL制品只能由绑定Run/Attempt的原生编译结果产生，不能以用户上传的标记自行声称可信执行或REAL数据来源。此ABI适配不拥有资格/审批/交付权限。
+编译用户Rust同样是执行不可信输入：由原生运行时的既有进程/文件系统隔离执行固定rustc参数，只读标准工具链、当前代码目录及本次独立输出目录；不挂载Codex home、DB、SecretVault、Docker socket、其他任务或Sealed数据。Wasmi的内存/fuel只保护预测执行，不替代编译、解析和整个job的原生cgroup/CPU/墙钟/输出限制。Wasm MODEL制品只能由绑定Run/Attempt的原生编译结果产生，不能以用户上传的标记自行声称可信执行或REAL数据来源；独立JSON校准MODEL沿用A4.4的原生拟合及正式Validation发布关联。此ABI适配不拥有资格/审批/交付权限。
 
 ### A3.4 实验提案、作者绑定与受限结果投影
 
@@ -1284,6 +1284,30 @@ HTTP请求体上限64KiB用于这两个研究准备POST及承载相同完整请�
 独立结果检查要求每折训练/测试索引有序、无重复、在范围内且不相交。WALK_FORWARD训练标签严格早于测试；CPCV允许非相邻训练块但剔除每个测试块两边purge以及后侧embargo，并不等于PIT已经成立。训练/校准只能使用各折训练索引；重叠测试窗口的样本不能重复计为独立观测。公开元数据只能披露政策允许的折统计；sealed索引、预测与标签同样属于受限证据。
 
 样本协方差复用ndarray-stats0.7.0(ddof=1)，不隐式年化、不丢失/补零；SCORE校准复用linregress0.5.4的固定一元含截距OLS。拟合输入由可信调用方按折及数据许可提供，不能把该折测试标签或封存标签混入。模型与数据来源单独冻结，预测应用同一原生模型；缺失、常数、非有限、秩不足或样本不足不产生伪校准。原生返回的系数/协方差再做有限性与维度检查，参数不是手工给定的scale冒充拟合。上述适配不产生Qualification，也不替代完整独立评估发布、许可、血缘和新鲜度检查。
+
+#### 冻结最终 SCORE 校准
+
+每折原生报告记录训练样本最后一个完整标签的实际 `training_end_available_ns`；
+它来自原目录的 available 时间，不从 event、测试起点或执行完成时间猜测。
+WALK_FORWARD 严格早于首次测试预测；全部折不超过原请求 cutoff，并核对报告中
+同一原观测的时间。当前固定最终规则为每资产最后一个原生折（LAST_NATIVE_FOLD），
+不是按指标挑最好折，也不额外用测试/Sealed标签拟合。所有资产的最后折都须有
+OK 的原生 linregress 0.5.4 含截距 OLS；失败不回退较早折，EXPECTED_RETURN 不伪造校准。
+
+可信 Store 在原 Validation 的 SUCCEEDED + VALID Evaluation 发布事务内同步保存
+`qz.alpha_calibration/1` MODEL 及不可变 calibration，关联原报告、Evaluation 和原
+Validation InputSet；模型明确保存原资产/bar_type、折、训练 ordinal 子集、真实训练
+截止时间和原生系数。train_input_set_id 标识原授权输入全集，精确训练子集以模型中
+的 ordinal 为准，不能声称使用了整个 Validation 区间。DB 时间向上取整到微秒，模型
+保留精确纳秒；整个模型的可用时间为各资产训练标签截止时间最大值。
+文件或事务失败不 ACK、不重做拟合；精确重放返回原模型，历史无模型不补写/升级。
+这是冻结可复用的拟合结果，不是候选选择、Qualification 或 Reviewer 批准；科学 REJECT
+仍为 REJECT。原 AlphaVersion 和试验身份不改变，后续附加校准必须创建不可变新版本。
+
+锁定 linregress 没有模型反序列化/从系数重建 API；持久模型仅保存原生拟合系数，
+使用已锁定 ndarray 的逐元素乘加应用同一固定仿射模型，须与原 RegressionModel.predict
+实际比对，不重新估计或另写回归器。仅接受相同资产/bar规格和晚于整个模型训练截止
+时间的预测；此薄应用器不授予数据读取能力，也不替代 Sealed 预约、许可或实际执行。
 
 ### A4.5 独立原生Alpha分折执行
 

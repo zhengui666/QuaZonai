@@ -40,10 +40,13 @@ pub(super) async fn publish(
         .publish_alpha_validation(
             run,
             |id, size| f.read(id, size),
-            |object| async move {
-                f.objects
-                    .put(object.id, &object.bytes)
-                    .map_err(|_| StoreError::Integrity)
+            |object| {
+                let objects = f.objects.clone();
+                async move {
+                    objects
+                        .put(object.id, &object.bytes)
+                        .map_err(|_| StoreError::Integrity)
+                }
             },
         )
         .await?
@@ -62,10 +65,10 @@ pub(super) async fn message(pool: &PgPool, run: Id) -> RunMessage {
     }
 }
 async fn empty(pool: &PgPool, experiment: Id) {
-    let row=sqlx::query("SELECT outcome,(SELECT count(*) FROM app.evaluations) AS evaluations,(SELECT count(*) FROM app.metric_values) AS metrics,(SELECT count(*) FROM app.artifacts WHERE schema_name='qz.alpha_evaluation') AS reports FROM app.experiments WHERE id=$1")
+    let row=sqlx::query("SELECT outcome,(SELECT count(*) FROM app.evaluations) AS evaluations,(SELECT count(*) FROM app.metric_values) AS metrics,(SELECT count(*) FROM app.artifacts WHERE schema_name IN ('qz.alpha_evaluation','qz.alpha_calibration')) AS reports,(SELECT count(*) FROM app.calibrations) AS calibrations FROM app.experiments WHERE id=$1")
         .bind(experiment.as_uuid()).fetch_one(pool).await.unwrap();
     assert_eq!(row.get::<String, _>("outcome"), "PENDING");
-    for name in ["evaluations", "metrics", "reports"] {
+    for name in ["evaluations", "metrics", "reports", "calibrations"] {
         assert_eq!(row.get::<i64, _>(name), 0);
     }
 }
@@ -258,6 +261,57 @@ async fn complete_validation_publication_is_atomic_unique_producer_bound_and_pre
         .await
         .unwrap();
     sqlx::raw_sql("DROP TRIGGER reject_metric ON app.metric_values; DROP FUNCTION public.reject_evaluation_metric();").execute(&pool).await.unwrap();
+    // The second native object and the calibration row are part of this same
+    // original publication. Neither failure can leave a successful evaluation.
+    for failure in 0..3 {
+        if failure == 1 {
+            sqlx::raw_sql("CREATE FUNCTION public.reject_calibration() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected calibration publication failure'; END $$; CREATE TRIGGER reject_calibration BEFORE INSERT ON app.calibrations FOR EACH ROW EXECUTE FUNCTION public.reject_calibration();").execute(&pool).await.unwrap();
+        }
+        if failure == 2 {
+            sqlx::raw_sql("CREATE FUNCTION public.change_training_time() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.fit_end_available_at := (SELECT decision_cutoff FROM app.input_sets WHERE id=NEW.train_input_set_id) + interval '1 microsecond'; RETURN NEW; END $$; CREATE TRIGGER altered_training_time BEFORE INSERT ON app.calibrations FOR EACH ROW EXECUTE FUNCTION public.change_training_time();").execute(&pool).await.unwrap();
+        }
+        let mut allocated = Vec::new();
+        assert!(store
+            .publish_alpha_validation(
+                run,
+                |id, size| f.read(id, size),
+                |object| {
+                    allocated.push(object.id);
+                    let fail = failure == 0 && allocated.len() == 2;
+                    async move {
+                        if fail {
+                            return Err(StoreError::Integrity);
+                        }
+                        fixture
+                            .objects
+                            .put(object.id, &object.bytes)
+                            .map_err(|_| StoreError::Integrity)
+                    }
+                }
+            )
+            .await
+            .is_err());
+        assert_eq!(allocated.len(), 2);
+        empty(&pool, experiment).await;
+        for id in allocated {
+            store
+                .discard_unpublished_native_object(run, id, |id| async move {
+                    fixture
+                        .objects
+                        .discard_unpublished(id)
+                        .map_err(|_| StoreError::Integrity)
+                })
+                .await
+                .unwrap();
+        }
+        assert!(store.acknowledge_run(&message).await.is_err());
+        if failure == 1 {
+            sqlx::raw_sql("DROP TRIGGER reject_calibration ON app.calibrations; DROP FUNCTION public.reject_calibration();").execute(&pool).await.unwrap();
+        }
+        if failure == 2 {
+            sqlx::raw_sql("DROP TRIGGER altered_training_time ON app.calibrations; DROP FUNCTION public.change_training_time();").execute(&pool).await.unwrap();
+        }
+    }
     let (a, b) = tokio::join!(publish(&store, &f, run), publish(&store, &f, run));
     let (a, b) = (a.unwrap(), b.unwrap());
     assert_eq!(a.resource, b.resource);
@@ -301,6 +355,99 @@ async fn complete_validation_publication_is_atomic_unique_producer_bound_and_pre
     assert_eq!(raw_report["native_report_artifact_id"], raw.to_string());
     assert_eq!(raw_report["source_observations"], "1000");
     assert_eq!(raw_report["native_versions"]["solow-cv"], "0.7.3");
+    let fitted = sqlx::query("SELECT c.*,a.byte_count,a.producer_run_id,a.producer_attempt_id,a.kind,a.access_class,a.origin FROM app.calibrations c JOIN app.artifacts a ON a.id=c.model_artifact_id WHERE c.validation_evaluation_id=$1")
+        .bind(a.resource.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        fitted.get::<String, _>("estimator_kind"),
+        "linregress.affine_ols"
+    );
+    assert_eq!(fitted.get::<String, _>("estimator_version"), "0.5.4");
+    assert_eq!(fitted.get::<String, _>("output_unit"), "RETURN_PER_HORIZON");
+    assert_eq!(fitted.get::<String, _>("kind"), "MODEL");
+    assert_eq!(fitted.get::<String, _>("access_class"), "EVALUATOR_ONLY");
+    assert_eq!(fitted.get::<String, _>("origin"), "FIXTURE");
+    assert_eq!(
+        fitted.get::<uuid::Uuid, _>("producer_run_id"),
+        run.as_uuid()
+    );
+    assert_eq!(
+        fitted.get::<uuid::Uuid, _>("producer_attempt_id"),
+        row.get::<uuid::Uuid, _>("active_attempt_id")
+    );
+    assert_eq!(
+        fitted.get::<uuid::Uuid, _>("train_input_set_id"),
+        row.get::<uuid::Uuid, _>("input_set_id")
+    );
+    let model_artifact: Id = fitted
+        .get::<uuid::Uuid, _>("model_artifact_id")
+        .to_string()
+        .try_into()
+        .unwrap();
+    let model: contracts::science::NativeFrozenCalibrationV1 = serde_json::from_slice(
+        &f.read(
+            model_artifact,
+            DbCounter::new(fitted.get::<i64, _>("byte_count") as u64).unwrap(),
+        )
+        .await
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(model.source_report_artifact_id, raw);
+    domain::execution::check_alpha_calibration(&model).unwrap();
+    let fit_time = fitted.get::<chrono::DateTime<chrono::Utc>, _>("fit_end_available_at");
+    assert_eq!(
+        fit_time.timestamp_micros() as u64 * 1000,
+        model.fit_end_available_ns.get() + 999
+    );
+    let native: contracts::science::NativeAlphaValidationResultV1 = serde_json::from_slice(
+        &f.read(
+            raw,
+            DbCounter::new(
+                sqlx::query_scalar::<_, i64>("SELECT byte_count FROM app.artifacts WHERE id=$1")
+                    .bind(raw.as_uuid())
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap() as u64,
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap(),
+    )
+    .unwrap();
+    for asset in &model.assets {
+        let last = native
+            .folds
+            .iter()
+            .rfind(|fold| fold.instrument_id == asset.instrument_id)
+            .unwrap();
+        assert_eq!(asset.fold_index, last.fold_index);
+        assert_eq!(asset.training_ordinals, last.training_ordinals);
+        assert_eq!(
+            asset.training_end_available_ns,
+            last.training_end_available_ns
+        );
+        assert_eq!(
+            asset.calibration.intercept,
+            last.calibration.as_ref().unwrap().intercept
+        );
+        assert_eq!(
+            asset.calibration.slope,
+            last.calibration.as_ref().unwrap().slope
+        );
+    }
+    assert!(store.artifact(&actor, model_artifact).await.is_err());
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.calibrations")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        1
+    );
+    for query in ["UPDATE app.calibrations SET estimator_version='changed'", "DELETE FROM app.calibrations",
+        "INSERT INTO app.calibrations(estimator_kind,estimator_version,model_artifact_id,train_input_set_id,fit_end_available_at,output_unit,horizon_kind,horizon_value,validation_evaluation_id) SELECT estimator_kind,estimator_version,model_artifact_id,train_input_set_id,fit_end_available_at,output_unit,horizon_kind,horizon_value,validation_evaluation_id FROM app.calibrations"] {
+        assert!(sqlx::query(query).execute(&pool).await.is_err());
+    }
     assert!(raw_report.get("folds").is_none());
     assert!(store.artifact(&actor, report).await.is_err());
     let public = store.experiment(&actor, experiment).await.unwrap();
@@ -469,6 +616,13 @@ async fn successful_validation_with_missing_registered_rows_is_not_a_pass(pool: 
     experiment_support::complete_validation(&pool, &store, &f, run, 900, 0.8).await;
     let result = publish(&store, &f, run).await.unwrap();
     assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.calibrations")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
         decision(&pool, result.resource).await,
         (
             "SUCCEEDED".into(),
@@ -483,6 +637,16 @@ async fn registered_missing_fraction_boundary_is_exact_and_a_failed_metric_rejec
     let (store, _, f, _, _, run) = prepared(&pool).await;
     experiment_support::complete_validation(&pool, &store, &f, run, 950, 0.05).await;
     let result = publish(&store, &f, run).await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM app.calibrations WHERE validation_evaluation_id=$1"
+        )
+        .bind(result.resource.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        1
+    );
     assert_eq!(
         decision(&pool, result.resource).await,
         ("SUCCEEDED".into(), "VALID".into(), "REJECT".into())
@@ -511,10 +675,13 @@ async fn cancelled_unsubmitted_validation_publishes_without_inventing_a_native_r
         .publish_alpha_validation(
             run,
             |_, _| async { panic!("no native report exists") },
-            |object| async move {
-                f.objects
-                    .put(object.id, &object.bytes)
-                    .map_err(|_| StoreError::Integrity)
+            |object| {
+                let objects = f.objects.clone();
+                async move {
+                    objects
+                        .put(object.id, &object.bytes)
+                        .map_err(|_| StoreError::Integrity)
+                }
             },
         )
         .await
@@ -607,10 +774,13 @@ async fn rejected_native_manifest_still_has_one_inconclusive_evaluation(pool: Pg
         .publish_alpha_validation(
             run,
             |_, _| async { panic!("unusable manifest is not evidence") },
-            |object| async move {
-                f.objects
-                    .put(object.id, &object.bytes)
-                    .map_err(|_| StoreError::Integrity)
+            |object| {
+                let objects = f.objects.clone();
+                async move {
+                    objects
+                        .put(object.id, &object.bytes)
+                        .map_err(|_| StoreError::Integrity)
+                }
             },
         )
         .await

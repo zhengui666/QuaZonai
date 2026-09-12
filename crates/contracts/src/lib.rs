@@ -160,6 +160,7 @@ use utoipa::OpenApi;
     science::NativeForecastResultV1,
     science::NativeAlphaValidationRequestV1,
     science::NativeAlphaValidationResultV1,
+    science::NativeFrozenCalibrationV1,
     science::NativeSimulationRequestV1,
     science::NativeSimulationResultV1
 )))]

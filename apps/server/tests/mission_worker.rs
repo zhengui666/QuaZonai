@@ -526,7 +526,14 @@ async fn settled_native_mission_publishes_validation_then_returns_to_original_th
         run_id: validation,
         read_count: 1,
     };
-    sqlx::raw_sql("CREATE FUNCTION public.reject_validation_publication() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected evaluation publication failure'; END $$; CREATE TRIGGER reject_validation BEFORE INSERT ON app.evaluations FOR EACH ROW EXECUTE FUNCTION public.reject_validation_publication();").execute(&pool).await.unwrap();
+    let object_names = || {
+        fs::read_dir(f.root.path().join("objects"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    let before_publication = object_names();
+    sqlx::raw_sql("CREATE FUNCTION public.reject_validation_publication() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected calibration publication failure'; END $$; CREATE TRIGGER reject_validation BEFORE INSERT ON app.calibrations FOR EACH ROW EXECUTE FUNCTION public.reject_validation_publication();").execute(&pool).await.unwrap();
     assert!(worker
         .process_message(
             native_message.clone(),
@@ -540,7 +547,13 @@ async fn settled_native_mission_publishes_validation_then_returns_to_original_th
         RunState::Succeeded
     );
     assert!(f.store.acknowledge_run(&native_message).await.is_err());
-    sqlx::raw_sql("DROP TRIGGER reject_validation ON app.evaluations; DROP FUNCTION public.reject_validation_publication();").execute(&pool).await.unwrap();
+    assert_eq!(
+        object_names(),
+        before_publication,
+        "both unpublished objects were reclaimed without changing original evidence"
+    );
+    assert_eq!(f.provider.request_count(), 1);
+    sqlx::raw_sql("DROP TRIGGER reject_validation ON app.calibrations; DROP FUNCTION public.reject_validation_publication();").execute(&pool).await.unwrap();
     worker
         .process_message(
             native_message.clone(),
@@ -551,6 +564,8 @@ async fn settled_native_mission_publishes_validation_then_returns_to_original_th
         .unwrap();
     // PGMQ cannot redeliver an archived message. The ACK entry point, not a
     // fresh claim of that removed queue row, owns acknowledgement replay.
+    assert_eq!(sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.calibrations c JOIN app.evaluations e ON e.id=c.validation_evaluation_id JOIN app.artifacts a ON a.id=c.model_artifact_id WHERE e.run_id=$1 AND a.producer_run_id=e.run_id AND a.access_class='EVALUATOR_ONLY' AND a.origin='FIXTURE'")
+        .bind(validation.as_uuid()).fetch_one(&pool).await.unwrap(), 1);
     f.store.acknowledge_run(&native_message).await.unwrap();
     let (evaluation, report): (uuid::Uuid, uuid::Uuid) =
         sqlx::query_as("SELECT id,report_artifact_id FROM app.evaluations WHERE run_id=$1")

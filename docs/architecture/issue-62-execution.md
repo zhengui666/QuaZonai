@@ -1271,3 +1271,50 @@ Server原Thread反馈用例258.88秒，两个取消用例66.28秒。快照在测
 
 此阶段未push、请求GitHub review、合并或关闭Issue。最终校准/Sealed/独立Reviewer/
 资格、双Alpha共享资金组合交付、迁移/部署/恢复及T01–T42其余证据必须继续完成。
+
+## 2026-09-12：冻结原生 SCORE 校准与原 Evaluation 原子发布
+
+按DESIGN A4.4复用已经实际拟合的linregress0.5.4模型，不增加科学Run、队列、
+模型轮次或依赖。原生每折输出训练标签的真实available纳秒；固定选择各资产最后
+原生折，不以指标选赢家、不混入测试/Sealed标签再拟合。全部最后折均有可用SCORE
+拟合才冻结；一项失败不回退早折，EXPECTED_RETURN不伪造校准。JSON模型只保留
+原生系数、精确训练子集、资产/bar规格/horizon和原报告引用，不复制训练标签。
+持久模型使用已锁定ndarray乘加应用原生仿射参数，并与真实RegressionModel.predict
+实际比对；新预测须晚于整个模型训练截止。DB微秒向上取整，JSON保留原纳秒。
+
+原Validation的SUCCEEDED + VALID发布事务先写全部指标及实验首次结论，再创建
+EVALUATOR_ONLY校准MODEL和calibrations引用，由已有引用触发器封口Evaluation。
+038迁移检查原Run/Attempt、数据来源、训练InputSet/cutoff、horizon及原生估计版本，
+不回填历史已封口评估。失败回滚两份新产物的元数据和实验结论；Worker复用原Run锁
+确认无引用后分别回收对象。重放不读取或再写模型，不加trial。科学REJECT保持REJECT，
+原AlphaVersion仍不可变且未附加校准，本阶段不生成资格或Sealed读取能力。
+
+验证使用e7699eca及冻结补丁，编辑/验证串行：
+
+- verify-iWmise编译失败：ndarray0.17只读视图需要借用后做乘法；未启动PG。
+- verify-tjWS5l原生28项通过，但Store六项捕获校准引用过早封口Evaluation，
+  违反原实验首次结论守卫。只调整同事务写入顺序，不放宽不可变约束。
+- verify-Wx6Ch2全通过；复核后将训练时间的DB边界由执行墙钟改为原冻结输入的
+  decision_cutoff，并增加超界一微秒的触发器注入/完整回滚检查。
+- 最终verify-LO0XsC：check、fmt、严格Clippy通过；原生28项
+  （alpha_validation 9、validation 9、managed 7、science_cli 3）、Store119项、
+  HTTP/CLI19项通过，0失败/忽略。包括第二文件失败、校准行失败、输入超界、并发
+  唯一发布/重放、真实纳秒保留、不可改删及缺证据不产生模型。源码不变，PG确认停止。
+- web-verify-WTmW94：六个允许的原生生成输出两次逐字节一致，手写源不变；
+  typecheck、504项Vitest、5项Node、decimal/bigint/fraction、build及CLI help通过；
+  Codex设置36项和全站183项三视口浏览器测试通过（2.7分钟）。语义差异仅domain
+  新增两个冻结校准schema，domain/runtime的NativeValidationFoldV1新增训练截止；
+  所有HTTP路径和server API schema不变，六个输出中仅两份JSON实际改变。
+- 随后只改原Worker恢复测试，verify-cmw5AQ check/fmt/严格Clippy通过；真实Codex
+  0.144.4/App Server原Thread用例221.34秒通过，两个取消用例66.92秒通过。校准行
+  失败后对象目录精确恢复原集合，成功恢复在手工ACK前已有唯一校准，仍只有两次
+  Provider请求；受限模型未进入反馈正文。源码不变，PG确认停止。
+- owner-oci-QnSnJk重建原生Job/Runtime和镜像
+  `sha256:60489424d37c17de87ddbaf2720037331cff2f099e53dc325c589f7e2d04277e`，
+  实际job2.0.0-dev.1/rustc1.98.1，七项真实OCI编译/原任务恢复/取消/既有边界测试
+  全通过（11.92秒），源码不变。没有替换生产服务或修改Docker socket权限。
+
+原生OLS/Parquet/Wasmi数值测试使用明确合成行情；Store与App Server用例使用受控
+科学报告/Provider，OCI用例不是完整市场Validation或Sealed测试，不能拼成真实账号
+T42已过的声明。本阶段未push、请求review、合并或关闭Issue；须继续不可变校准
+版本附加、Sealed预约/执行/披露、独立Reviewer/资格、组合交付及全部剩余合同。

@@ -9607,6 +9607,47 @@
         ],
         "type": "object"
       },
+      "NativeAssetCalibrationV1": {
+        "additionalProperties": false,
+        "properties": {
+          "bar_type": {
+            "type": "string"
+          },
+          "calibration": {
+            "$ref": "#/components/schemas/NativeCalibrationV1"
+          },
+          "fold_index": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "instrument_id": {
+            "type": "string"
+          },
+          "training_end_available_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "training_ordinals": {
+            "items": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxItems": 1000000,
+            "minItems": 3,
+            "type": "array"
+          }
+        },
+        "required": [
+          "instrument_id",
+          "bar_type",
+          "fold_index",
+          "training_ordinals",
+          "training_end_available_ns",
+          "calibration"
+        ],
+        "type": "object"
+      },
       "NativeBarSelectionV1": {
         "additionalProperties": false,
         "properties": {
@@ -9960,6 +10001,52 @@
           "native_versions",
           "consumed_fuel",
           "points"
+        ],
+        "type": "object"
+      },
+      "NativeFrozenCalibrationV1": {
+        "additionalProperties": false,
+        "description": "Restricted persisted native coefficients. No labels, refitting or verdict.",
+        "properties": {
+          "assets": {
+            "items": {
+              "$ref": "#/components/schemas/NativeAssetCalibrationV1"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "estimator_kind": {
+            "type": "string"
+          },
+          "estimator_version": {
+            "type": "string"
+          },
+          "fit_end_available_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "horizon_observations": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "selection_rule": {
+            "type": "string"
+          },
+          "source_report_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "schema_version",
+          "source_report_artifact_id",
+          "estimator_kind",
+          "estimator_version",
+          "selection_rule",
+          "horizon_observations",
+          "fit_end_available_ns",
+          "assets"
         ],
         "type": "object"
       },
@@ -10776,6 +10863,10 @@
             "minItems": 1,
             "type": "array"
           },
+          "training_end_available_ns": {
+            "$ref": "#/components/schemas/DbCounter",
+            "description": "Actual availability of the last complete training label, not event time."
+          },
           "training_ordinals": {
             "items": {
               "format": "int32",
@@ -10793,6 +10884,7 @@
           "source_row_count",
           "fold_index",
           "training_ordinals",
+          "training_end_available_ns",
           "test_points",
           "metrics"
         ],

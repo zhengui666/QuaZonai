@@ -79,6 +79,8 @@ pub struct NativeValidationFoldV1 {
     pub fold_index: u16,
     #[schema(min_items = 3, max_items = 1000000)]
     pub training_ordinals: Vec<u32>,
+    /// Actual availability of the last complete training label, not event time.
+    pub training_end_available_ns: DbCounter,
     #[schema(min_items = 1, max_items = 1000000)]
     pub test_points: Vec<NativeValidationPointV1>,
     /// No calibration is fitted for a model already declaring expected returns.
@@ -97,4 +99,31 @@ pub struct NativeAlphaValidationResultV1 {
     pub unique_test_observations: DbCounter,
     #[schema(min_items = 1, max_items = 256)]
     pub folds: Vec<NativeValidationFoldV1>,
+}
+
+/// Restricted persisted native coefficients. No labels, refitting or verdict.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeFrozenCalibrationV1 {
+    pub schema_version: SchemaV1,
+    pub source_report_artifact_id: crate::Id,
+    pub estimator_kind: String,
+    pub estimator_version: String,
+    pub selection_rule: String,
+    pub horizon_observations: DbCounter,
+    pub fit_end_available_ns: DbCounter,
+    #[schema(min_items = 1, max_items = 256)]
+    pub assets: Vec<NativeAssetCalibrationV1>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeAssetCalibrationV1 {
+    pub instrument_id: String,
+    pub bar_type: String,
+    pub fold_index: u16,
+    #[schema(min_items = 3, max_items = 1000000)]
+    pub training_ordinals: Vec<u32>,
+    pub training_end_available_ns: DbCounter,
+    pub calibration: NativeCalibrationV1,
 }

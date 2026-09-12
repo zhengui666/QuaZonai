@@ -441,6 +441,12 @@ fn validation_report(
                 source_row_count: count(rows as u64),
                 fold_index: index as u16,
                 training_ordinals: fold.train.iter().map(|n| (n + warmup) as u32).collect(),
+                training_end_available_ns: count(
+                    request.forecast.selection.event_start_ns.get()
+                        + (fold.train[fold.train.len() - 1] + warmup + horizon) as u64
+                            * 60_000_000_000
+                        + 1,
+                ),
                 test_points: points,
                 calibration: Some(NativeCalibrationV1 {
                     status: MetricStatus::Ok,

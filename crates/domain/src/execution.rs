@@ -12,7 +12,8 @@ use std::collections::BTreeSet;
 mod output;
 pub mod validation;
 pub use output::{
-    alpha_validation_metrics, alpha_validation_policy, output_bindings, output_shape,
+    alpha_validation_metrics, alpha_validation_policy, check_alpha_calibration,
+    freeze_alpha_calibration, output_bindings, output_shape,
 };
 
 fn bad(field: &str) -> DomainError {

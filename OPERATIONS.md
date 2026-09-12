@@ -163,6 +163,12 @@ Runtime受管`VALIDATE_ALPHA`沿用同一计算入口，仅消费登记的VALIDA
 不读取EVALUATOR_ONLY报告内容。原Thread未回答、验证未终结或评估未发表时不能
 收束Mission；后续资格/Reviewer和完整产品链路仍未完成，不能把排队显示成研究完成。
 
+正式Validation发布还冻结每资产最后原生折的可用SCORE校准（DESIGN A4.4）。
+校准MODEL/记录与原Evaluation同事务提交，失败保留原队列；训练截止保留原始
+纳秒，DB时间向上取整到微秒。不会重拟合测试或Sealed标签、挑较好折、回填旧
+报告、改变原AlphaVersion或把原REJECT改成PASS。后续版本附加/Sealed/资格仍须
+单独完成；模型存在本身不是研究完成。
+
 032迁移为每个已成功结算的原生Turn保留唯一公开回答报告（qz.mission_summary）。
 Worker读取锁定App Server原生summary视图，只有公开agentMessage、原Turn/item和
 实际phase；phase缺失保留null。它不读取完整items/rollout或推理，报告不当作科学

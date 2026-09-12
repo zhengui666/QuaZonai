@@ -247,6 +247,12 @@ pub fn validate_alpha(
                 bar_type: series.bar_type.to_string(),
                 source_row_count: count(series.bars.len())?,
                 fold_index: u16::try_from(fold_index)?,
+                training_end_available_ns: DbCounter::new(
+                    series.bars[train[train.len() - 1] + horizon]
+                        .ts_init
+                        .as_u64(),
+                )
+                .map_err(anyhow::Error::msg)?,
                 training_ordinals: train
                     .into_iter()
                     .map(u32::try_from)
