@@ -115,6 +115,256 @@ async fn summary(
         move |object|async move {writing.put(object.id,&object.bytes).map_err(|_|StoreError::Integrity)}).await
 }
 
+async fn cancel(store: &Store, actor: &Actor, run: Id) {
+    let run = store.get_run(actor, run).await.unwrap();
+    let result = store
+        .cancel_run(
+            actor,
+            "cancel-mission",
+            run.id,
+            &contracts::lifecycle::RunCancelV1 {
+                schema_version: SchemaV1,
+                expected_revision: run.revision,
+            },
+        )
+        .await
+        .unwrap()
+        .resource;
+    assert_eq!(result.state, RunState::CancelRequested);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn cancelled_zero_turn_mission_does_not_require_a_thread_or_fabricate_usage(pool: PgPool) {
+    let (store, actor, f, _, preparation) = setup(&pool).await;
+    complete(&pool, &store, &f, preparation, false).await;
+    store.advance_initial_cycle(preparation).await.unwrap();
+    let lease = mission_lease(&store).await;
+    store
+        .begin_run_dispatch(lease.run.id, &lease.fence)
+        .await
+        .unwrap();
+    cancel(&store, &actor, lease.run.id).await;
+    assert!(store
+        .complete_research_mission(lease.run.id, &lease.fence)
+        .await
+        .unwrap());
+    let observation: serde_json::Value =
+        sqlx::query_scalar("SELECT observation FROM app.run_terminal_receipts WHERE run_id=$1")
+            .bind(lease.run.id.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(observation["session_id"].is_null());
+    assert!(observation["summary_artifact_id"].is_null());
+    assert!(observation["concluding_reservation_id"].is_null());
+    let facts: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.codex_sessions),(SELECT count(*) FROM app.model_turn_reservations),(SELECT count(*) FROM app.model_turn_receipts)")
+        .fetch_one(&pool).await.unwrap();
+    assert_eq!(facts, (0, 0, 0));
+    assert_eq!(
+        store.get_run(&actor, lease.run.id).await.unwrap().state,
+        RunState::Cancelled
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn cancelled_unsent_turn_settlement_and_run_finish_share_one_transaction(pool: PgPool) {
+    let (store, actor, f, _, preparation) = mission_support::setup_with_cost(&pool, true).await;
+    complete(&pool, &store, &f, preparation, false).await;
+    store.advance_initial_cycle(preparation).await.unwrap();
+    let lease = mission_lease(&store).await;
+    store
+        .begin_run_dispatch(lease.run.id, &lease.fence)
+        .await
+        .unwrap();
+    store
+        .bind_mission_session(lease.run.id, &lease.fence, &native_thread())
+        .await
+        .unwrap();
+    let reserved = prepare_prompt(
+        &store,
+        &lease,
+        &f,
+        &prompt_request(&f, &lease),
+        "Original unsent request",
+    )
+    .await
+    .unwrap();
+    cancel(&store, &actor, lease.run.id).await;
+    sqlx::raw_sql("CREATE FUNCTION public.reject_mission_finish() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.observation->>'source'='NATIVE_MISSION' THEN RAISE EXCEPTION 'injected terminal publication failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_finish BEFORE INSERT ON app.run_terminal_receipts FOR EACH ROW EXECUTE FUNCTION public.reject_mission_finish();").execute(&pool).await.unwrap();
+    assert!(store
+        .complete_research_mission(lease.run.id, &lease.fence)
+        .await
+        .is_err());
+    let rolled_back: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.model_turn_terminals),(SELECT count(*) FROM app.model_turn_receipts),(SELECT reserved_tokens FROM app.model_turn_accounting WHERE run_id=$1)")
+        .bind(lease.run.id.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(rolled_back, (0, 0, 100));
+    assert_eq!(
+        store.get_run(&actor, lease.run.id).await.unwrap().state,
+        RunState::CancelRequested
+    );
+    sqlx::raw_sql("DROP TRIGGER reject_finish ON app.run_terminal_receipts; DROP FUNCTION public.reject_mission_finish();").execute(&pool).await.unwrap();
+    let (one, two) = tokio::join!(
+        store.complete_research_mission(lease.run.id, &lease.fence),
+        store.complete_research_mission(lease.run.id, &lease.fence)
+    );
+    assert!(one.unwrap() && two.unwrap());
+    let receipt: (String,i64,String,String,String) = sqlx::query_as("SELECT outcome,actual_tokens,actual_cost::text,cost_currency,usage_source FROM app.model_turn_receipts WHERE reservation_id=$1")
+        .bind(reserved.id.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        receipt,
+        (
+            "NOT_SENT".into(),
+            0,
+            "0".into(),
+            "USD".into(),
+            "CONFIRMED_NOT_SENT".into()
+        )
+    );
+    let usage: (i64,i64,bool,bool) = sqlx::query_as("SELECT reserved_tokens,used_tokens,reserved_cost=0,used_cost=0 FROM app.model_turn_accounting WHERE run_id=$1")
+        .bind(lease.run.id.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(usage, (0, 0, true, true));
+    let native: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.model_turn_dispatches),(SELECT count(*) FROM app.model_turn_bindings),(SELECT count(*) FROM app.model_turn_summaries)")
+        .fetch_one(&pool).await.unwrap();
+    assert_eq!(native, (0, 0, 0));
+    let message_id: i64 = sqlx::query_scalar(
+        "SELECT initial_queue_message_id FROM app.run_admissions WHERE run_id=$1",
+    )
+    .bind(lease.run.id.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let message = store::lifecycle::RunMessage {
+        message_id,
+        run_id: lease.run.id,
+        read_count: 1,
+    };
+    store.acknowledge_run(&message).await.unwrap();
+    store.acknowledge_run(&message).await.unwrap();
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn cancelled_unknown_send_keeps_its_reservation_until_real_failed_usage_arrives(
+    pool: PgPool,
+) {
+    use store::turns::{TurnOutcome, UsageReceipt};
+    let (store, actor, f, _, preparation) = setup(&pool).await;
+    complete(&pool, &store, &f, preparation, false).await;
+    store.advance_initial_cycle(preparation).await.unwrap();
+    let lease = mission_lease(&store).await;
+    store
+        .begin_run_dispatch(lease.run.id, &lease.fence)
+        .await
+        .unwrap();
+    store
+        .bind_mission_session(lease.run.id, &lease.fence, &native_thread())
+        .await
+        .unwrap();
+    let reserved = prepare_prompt(
+        &store,
+        &lease,
+        &f,
+        &prompt_request(&f, &lease),
+        "Unknown send acknowledgement",
+    )
+    .await
+    .unwrap();
+    store
+        .claim_turn_dispatch(reserved.id, &lease.fence)
+        .await
+        .unwrap();
+    cancel(&store, &actor, lease.run.id).await;
+    assert!(!store
+        .complete_research_mission(lease.run.id, &lease.fence)
+        .await
+        .unwrap());
+    let unknown: (i64,i64) = sqlx::query_as("SELECT reserved_tokens,(SELECT count(*) FROM app.model_turn_receipts) FROM app.model_turn_accounting WHERE run_id=$1")
+        .bind(lease.run.id.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(unknown, (100, 0));
+    store
+        .bind_native_turn(reserved.id, &lease.fence, "original-failed-turn")
+        .await
+        .unwrap();
+    store
+        .observe_mission_turn_terminal(
+            reserved.id,
+            &lease.fence,
+            TurnOutcome::Failed,
+            "NATIVE_TURN_FAILED",
+        )
+        .await
+        .unwrap();
+    assert!(!store
+        .complete_research_mission(lease.run.id, &lease.fence)
+        .await
+        .unwrap());
+    store
+        .settle_turn(
+            reserved.id,
+            &lease.fence,
+            &UsageReceipt {
+                outcome: TurnOutcome::Failed,
+                actual_tokens: DbCounter::new(7).unwrap(),
+                actual_cost: None,
+                currency: None,
+                reason_code: "NATIVE_TURN_FAILED".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(store
+        .complete_research_mission(lease.run.id, &lease.fence)
+        .await
+        .unwrap());
+    let known: (i64,i64,i64) = sqlx::query_as("SELECT reserved_tokens,used_tokens,(SELECT count(*) FROM app.model_turn_summaries) FROM app.model_turn_accounting WHERE run_id=$1")
+        .bind(lease.run.id.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(known, (0, 7, 0));
+    let run = store.get_run(&actor, lease.run.id).await.unwrap();
+    assert_eq!(run.state, RunState::Cancelled);
+    assert_eq!(
+        run.terminal_reason_code.as_deref(),
+        Some("RUNTIME_CANCELLED")
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn real_turn_deadline_closes_proven_unsent_work_without_fabricated_native_stop(pool: PgPool) {
+    let (store, actor, f, _, preparation) = setup(&pool).await;
+    complete(&pool, &store, &f, preparation, false).await;
+    store.advance_initial_cycle(preparation).await.unwrap();
+    let lease = mission_lease(&store).await;
+    store
+        .begin_run_dispatch(lease.run.id, &lease.fence)
+        .await
+        .unwrap();
+    store
+        .bind_mission_session(lease.run.id, &lease.fence, &native_thread())
+        .await
+        .unwrap();
+    let mut request = prompt_request(&f, &lease);
+    request.deadline_at = sqlx::query_scalar("SELECT clock_timestamp()+interval '2 seconds'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    prepare_prompt(&store, &lease, &f, &request, "Expire before any wire write")
+        .await
+        .unwrap();
+    assert!(!store
+        .complete_research_mission(lease.run.id, &lease.fence)
+        .await
+        .unwrap());
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    assert!(store
+        .complete_research_mission(lease.run.id, &lease.fence)
+        .await
+        .unwrap());
+    let run = store.get_run(&actor, lease.run.id).await.unwrap();
+    assert_eq!(run.state, RunState::Cancelled);
+    assert!(run.cancellation_requested_at.unwrap() >= request.deadline_at);
+    let facts: (i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.model_turn_receipts WHERE outcome='NOT_SENT' AND actual_tokens=0),(SELECT count(*) FROM app.model_turn_bindings)")
+        .fetch_one(&pool).await.unwrap();
+    assert_eq!(facts, (1, 0));
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn native_public_summary_requires_original_success_and_is_immutable_budgeted_and_replayable(
     pool: PgPool,
@@ -385,10 +635,6 @@ async fn mission_cancel_requires_full_native_receipts_and_wins_before_report_ado
         )
         .await
         .unwrap();
-    assert!(!store
-        .complete_research_mission(run.id, &lease.fence)
-        .await
-        .unwrap());
     summary(
         &store,
         &lease,

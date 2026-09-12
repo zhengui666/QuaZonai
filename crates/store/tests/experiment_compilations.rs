@@ -308,6 +308,59 @@ async fn start(
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn mission_cancellation_waits_for_admitted_compilation_but_not_future_forecast(pool: PgPool) {
+    let (store, actor, f, lease, experiment) = setup(&pool).await;
+    store
+        .begin_run_dispatch(lease.run.id, &lease.fence)
+        .await
+        .unwrap();
+    let compiler = start(&store, &f, &lease, experiment)
+        .await
+        .unwrap()
+        .resource
+        .id;
+    let run = store.get_run(&actor, lease.run.id).await.unwrap();
+    store
+        .cancel_run(
+            &actor,
+            "cancel-parent",
+            run.id,
+            &contracts::lifecycle::RunCancelV1 {
+                schema_version: SchemaV1,
+                expected_revision: run.revision,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(!store
+        .complete_research_mission(run.id, &lease.fence)
+        .await
+        .unwrap());
+    assert_eq!(
+        store.get_run(&actor, compiler).await.unwrap().state,
+        contracts::runs::RunState::Queued
+    );
+    assert!(store
+        .next_mission_experiment(run.id, &lease.fence)
+        .await
+        .unwrap()
+        .is_none());
+    complete_compilation(&pool, &store, &f, compiler).await;
+    assert!(store
+        .complete_research_mission(run.id, &lease.fence)
+        .await
+        .unwrap());
+    assert_eq!(
+        store.get_run(&actor, run.id).await.unwrap().state,
+        contracts::runs::RunState::Cancelled
+    );
+    assert_eq!(trial_usage(&pool, &lease).await, (0, 1));
+    let untouched: (String,i64,i64) = sqlx::query_as("SELECT outcome,(SELECT count(*) FROM app.experiment_forecasts),(SELECT count(*) FROM app.model_turn_reservations) FROM app.experiments WHERE id=$1")
+        .bind(experiment.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(untouched, ("PENDING".into(), 0, 0));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn compilation_replay_retains_one_code_producer_and_never_mounts_market_data(pool: PgPool) {
     let (store, actor, f, lease, experiment) = setup(&pool).await;
     let before: i64 =

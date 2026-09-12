@@ -78,6 +78,91 @@ async fn decision(pool: &PgPool, evaluation: Id) -> (String, String, String) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn mission_cancellation_preserves_validation_publication_and_original_trial(pool: PgPool) {
+    let (store, actor, f, lease, experiment, validation) = prepared(&pool).await;
+    store
+        .begin_run_dispatch(lease.run.id, &lease.fence)
+        .await
+        .unwrap();
+    let parent = store.get_run(&actor, lease.run.id).await.unwrap();
+    store
+        .cancel_run(
+            &actor,
+            "cancel-parent",
+            parent.id,
+            &contracts::lifecycle::RunCancelV1 {
+                schema_version: SchemaV1,
+                expected_revision: parent.revision,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(!store
+        .complete_research_mission(parent.id, &lease.fence)
+        .await
+        .unwrap());
+    let child = store.get_run(&actor, validation).await.unwrap();
+    assert_eq!(
+        child.state,
+        RunState::Queued,
+        "parent cancellation never cancels another Run"
+    );
+    store
+        .cancel_run(
+            &actor,
+            "explicitly-cancel-validation",
+            child.id,
+            &contracts::lifecycle::RunCancelV1 {
+                schema_version: SchemaV1,
+                expected_revision: child.revision,
+            },
+        )
+        .await
+        .unwrap();
+    let receipt: (String, Option<uuid::Uuid>) = sqlx::query_as(
+        "SELECT terminal_state,attempt_id FROM app.run_terminal_receipts WHERE run_id=$1",
+    )
+    .bind(validation.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(receipt, ("CANCELLED".into(), None));
+    assert!(store
+        .complete_research_mission(parent.id, &lease.fence)
+        .await
+        .unwrap());
+    let observation: serde_json::Value =
+        sqlx::query_scalar("SELECT observation FROM app.run_terminal_receipts WHERE run_id=$1")
+            .bind(parent.id.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(observation["formal_evaluation_count"], "0");
+    assert_ne!(observation["formal_evaluation"], "PUBLISHED");
+    empty(&pool, experiment).await;
+    let pending = message(&pool, validation).await;
+    assert!(matches!(
+        store.acknowledge_run(&pending).await,
+        Err(StoreError::Conflict)
+    ));
+    let evaluated = publish(&store, &f, validation).await.unwrap().resource;
+    assert_eq!(
+        decision(&pool, evaluated).await,
+        (
+            "CANCELLED".into(),
+            "INCOMPLETE".into(),
+            "INCONCLUSIVE".into()
+        )
+    );
+    store.acknowledge_run(&pending).await.unwrap();
+    assert_eq!(
+        store.get_run(&actor, parent.id).await.unwrap().state,
+        RunState::Cancelled
+    );
+    assert_eq!(trial_usage(&pool, &lease).await, (0, 1));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn complete_validation_publication_is_atomic_unique_producer_bound_and_precedes_ack(
     pool: PgPool,
 ) {

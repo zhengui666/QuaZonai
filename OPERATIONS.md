@@ -173,6 +173,11 @@ Worker读取锁定App Server原生summary视图，只有公开agentMessage、原
 已提交但ACK失败时只重放归档；取消先提交则不会再报成功。未知用量/科学终态
 仍保留消息。这个SUCCEEDED仅是会话执行结果，不改Cycle/实验裁决、不创建资格；
 原Attempt结果引用指向已有公开摘要，不是OCI任务的qz.job_result。
+取消或期限到达后，不再等待尚未创建的科学阶段/模型反馈，也不补造公开回答。
+无发送意图的原Turn通过现有账本记NOT_SENT；已发送且缺最终用量的仍保持未知和
+预算占用。已经准入的科学Run要等原生真实终态，不自动取消其他Run或下游；原
+Validation发布消息独立保留。零模型预约可直接确认取消，不为此启动新Thread。
+这仅结束本Mission的授权工作，不表示删除原生历史、放宽预算或取消未知远端任务。
 成功Discovery预测可自动登记原生产者绑定的RESEARCH Alpha首版本，复用现有
 命令回执防重复；MODEL/CODE、镜像、血缘及signal单位来自原任务和冻结Brief。
 没有原生校准就保留null，不授资格或变更实验PENDING。033迁移允许已引用的

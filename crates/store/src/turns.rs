@@ -573,6 +573,22 @@ impl Store {
         fence: &WorkerFence,
         usage: &UsageReceipt,
     ) -> Result<(), StoreError> {
+        let tx = self.pool.begin().await?;
+        Self::settle_turn_in_transaction(tx, reservation_id, fence, usage)
+            .await?
+            .commit()
+            .await?;
+        Ok(())
+    }
+
+    /// Compose a proven unsent cancellation with the original Run transaction.
+    /// All ordinary and replayed receipts use exactly the same ledger guards.
+    pub(crate) async fn settle_turn_in_transaction<'a>(
+        mut tx: Tx<'a>,
+        reservation_id: Id,
+        fence: &WorkerFence,
+        usage: &UsageReceipt,
+    ) -> Result<Tx<'a>, StoreError> {
         if !bounded(&usage.reason_code, 120)
             || usage
                 .actual_cost
@@ -581,7 +597,6 @@ impl Store {
         {
             return Err(StoreError::Invalid("usage_receipt"));
         }
-        let mut tx = self.pool.begin().await?;
         let item = load_reservation(&mut tx, reservation_id).await?;
         if item.attempt_id != fence.attempt_id {
             return Err(DomainError::StaleAttempt.into());
@@ -589,8 +604,7 @@ impl Store {
         // An exact immutable receipt is a read, not another settlement. A lost
         // response must remain recoverable after this worker loses its lease.
         if exact_receipt(&mut tx, reservation_id, usage).await? {
-            tx.commit().await?;
-            return Ok(());
+            return Ok(tx);
         }
         let mission = match lock_mission(&mut tx, item.run_id, fence).await {
             Ok(mission) => Some(mission),
@@ -600,8 +614,7 @@ impl Store {
         // Another owner may have committed while we waited for the Mission
         // locks. Re-read before treating even a now-stale fence as a failure.
         if exact_receipt(&mut tx, reservation_id, usage).await? {
-            tx.commit().await?;
-            return Ok(());
+            return Ok(tx);
         }
         let mission = mission.ok_or(DomainError::StaleAttempt)?;
         if usage.currency != item.cost_currency
@@ -655,8 +668,7 @@ impl Store {
         // Native usage above a policy cap is retained, not clamped. An aggregate
         // outside the wire/storage range fails the transaction without wrapping.
         mission.usage(&mut tx).await?;
-        tx.commit().await?;
-        Ok(())
+        Ok(tx)
     }
 }
 

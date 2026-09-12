@@ -257,6 +257,98 @@ async fn visible(f: &Fixture, pool: &PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn daemon_cancellation_without_turns_does_not_open_a_native_thread(pool: PgPool) {
+    let f = fixture(&pool).await;
+    let run = f.store.get_run(&f.actor, f.lease.run.id).await.unwrap();
+    f.store
+        .cancel_run(
+            &f.actor,
+            "cancel-before-thread",
+            run.id,
+            &contracts::lifecycle::RunCancelV1 {
+                schema_version: SchemaV1,
+                expected_revision: run.revision,
+            },
+        )
+        .await
+        .unwrap();
+    visible(&f, &pool).await;
+    let (_stop, receiver) = tokio::sync::watch::channel(false);
+    daemon(&f)
+        .with_missions(f.launcher.clone())
+        .process_mission_message(f.message.clone(), "cancel-without-native", receiver)
+        .await
+        .unwrap();
+    let facts: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.codex_sessions),(SELECT count(*) FROM app.model_turn_reservations),(SELECT count(*) FROM pgmq.a_runs WHERE msg_id=$1)")
+        .bind(f.message.message_id).fetch_one(&pool).await.unwrap();
+    assert_eq!(facts, (0, 0, 1));
+    assert_eq!(f.provider.request_count(), 0);
+    assert_eq!(
+        f.store.get_run(&f.actor, run.id).await.unwrap().state,
+        RunState::Cancelled
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn daemon_cancellation_settles_unsent_turn_without_reopening_original_thread(pool: PgPool) {
+    let f = fixture(&pool).await;
+    let connection = f
+        .launcher
+        .open(&f.store, f.vault.clone(), f.lease.run.id, &f.lease.fence)
+        .await
+        .unwrap();
+    let session = connection.session.id;
+    let reserved = prepare(
+        &f,
+        &f.lease,
+        "never-sent",
+        responses::FIRST_PROMPT,
+        f.lease.run.deadline_at,
+    )
+    .await;
+    connection.client.close().await.unwrap();
+    let run = f.store.get_run(&f.actor, f.lease.run.id).await.unwrap();
+    f.store
+        .cancel_run(
+            &f.actor,
+            "cancel-unsent-original",
+            run.id,
+            &contracts::lifecycle::RunCancelV1 {
+                schema_version: SchemaV1,
+                expected_revision: run.revision,
+            },
+        )
+        .await
+        .unwrap();
+    visible(&f, &pool).await;
+    let (_stop, receiver) = tokio::sync::watch::channel(false);
+    daemon(&f)
+        .with_missions(f.launcher.clone())
+        .process_mission_message(f.message.clone(), "settle-without-reopening", receiver)
+        .await
+        .unwrap();
+    let receipt: (uuid::Uuid,String,i64,String) = sqlx::query_as("SELECT r.session_id,t.outcome,t.actual_tokens,t.usage_source FROM app.model_turn_reservations r JOIN app.model_turn_receipts t ON t.reservation_id=r.id WHERE r.id=$1")
+        .bind(reserved.id.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        receipt,
+        (
+            session.as_uuid(),
+            "NOT_SENT".into(),
+            0,
+            "CONFIRMED_NOT_SENT".into()
+        )
+    );
+    let facts: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.model_turn_bindings),(SELECT count(*) FROM app.model_turn_summaries),(SELECT count(*) FROM pgmq.a_runs WHERE msg_id=$1)")
+        .bind(f.message.message_id).fetch_one(&pool).await.unwrap();
+    assert_eq!(facts, (0, 0, 1));
+    assert_eq!(f.provider.request_count(), 0);
+    assert_eq!(
+        f.store.get_run(&f.actor, run.id).await.unwrap().state,
+        RunState::Cancelled
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn settled_native_mission_publishes_validation_then_returns_to_original_thread(pool: PgPool) {
     let f = fixture(&pool).await;
     let experiment = experiment_support::propose(

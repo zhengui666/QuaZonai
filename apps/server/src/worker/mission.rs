@@ -101,6 +101,9 @@ impl Worker {
     ) -> Result<bool, WorkerFailure> {
         let run = lease.run.id;
         let fence = &lease.fence;
+        if self.store.complete_research_mission(run, fence).await? {
+            return Ok(true);
+        }
         let job = self.store.mission_job(run, fence).await?;
         if job.session.is_some()
             && self
@@ -215,6 +218,13 @@ impl Worker {
     }
 
     async fn advance_mission_experiment(&self, lease: &RunLease) -> Result<bool, WorkerFailure> {
+        if self
+            .store
+            .complete_research_mission(lease.run.id, &lease.fence)
+            .await?
+        {
+            return Ok(true);
+        }
         if !self
             .store
             .mission_turn_checkpoint(lease.run.id, &lease.fence)
@@ -231,8 +241,7 @@ impl Worker {
         else {
             let reading = self.objects.clone();
             let publishing = self.objects.clone();
-            let prepared = self
-                .store
+            self.store
                 .prepare_mission_result_turn(
                     lease.run.id,
                     &lease.fence,
@@ -255,14 +264,9 @@ impl Worker {
                     },
                 )
                 .await?;
-            return if prepared {
-                Ok(false)
-            } else {
-                Ok(self
-                    .store
-                    .complete_research_mission(lease.run.id, &lease.fence)
-                    .await?)
-            };
+            // Completion was checked before preparing anything; a newly
+            // reserved feedback Turn cannot complete in this same call.
+            return Ok(false);
         };
         if !matches!(work, ExperimentWork::RecordAlpha(_)) {
             let native = self.transport(lease).await?;
