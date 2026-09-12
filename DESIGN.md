@@ -990,6 +990,7 @@ valid_until，附DB检查时间及unexpired_at_read；未过期不等于资格�
 目录、参数、标签及逐折索引均不读取。原EVALUATOR_ONLY产物GET继续拒绝。
 
 CLI alpha list/versions/show/evaluations及evidence show/metrics使用相同HTTP/DTO；
+附加校准的alpha calibration及只读来源详情见A4.4，不挪用源版本的评估或资格。
 React/Ant Design页面明确区分请求失败、无可披露Validation、研究登记、科学PASS、
 过期和资格。版本/指标翻页不得跨Alpha或评估，切换项目清空旧选择；缺值显示原因，
 不用0或“通过”占位。该只读操作面不替代后续独立Reviewer/Sealed/校准/资格与
@@ -1302,7 +1303,22 @@ Validation InputSet；模型明确保存原资产/bar_type、折、训练 ordina
 保留精确纳秒；整个模型的可用时间为各资产训练标签截止时间最大值。
 文件或事务失败不 ACK、不重做拟合；精确重放返回原模型，历史无模型不补写/升级。
 这是冻结可复用的拟合结果，不是候选选择、Qualification 或 Reviewer 批准；科学 REJECT
-仍为 REJECT。原 AlphaVersion 和试验身份不改变，后续附加校准必须创建不可变新版本。
+仍为 REJECT。原 AlphaVersion 和试验身份不改变；附加校准在同一发布事务创建原
+Alpha 的下一不可变版本，分配新 id/version/calibration_id 并记录本次真实创建时间，保留原实验、血缘、CODE、
+Wasm MODEL、horizon、信号合同、单位及镜像。原信号仍为 SCORE/UNITLESS_SCORE，
+使用时必须实际应用校准，不能只改名为收益。一个校准只关联一个原 Alpha 的派生
+版本；相同发布重放返回原记录。只有 Alpha 仍是 RESEARCH 且活动指针仍指向该源
+版本时才推进指针，不覆盖人工改动、恢复 SUSPENDED/RETIRED 或产生资格。
+ExpectedReturn、不可用拟合或未达 VALID 不创建伪派生版本。历史已封口记录不自动
+补写；原试验选择仍绑定源版本及其原 Validation，不能借新版本 UUID 重置试验账本。
+
+`GET /api/v2/alpha-versions/{id}/calibration`、人工 `alpha calibration <version-id>`
+及 Alpha 版本详情只读附加校准的元数据、原输入和源版本的正式 Validation。
+沿用 Operator/精确项目 RESEARCH_READ CLI 权限，不对 Mission/Automation/Downstream
+开放。未附加或无法证实原生来源返回404；不下载模型字节、系数、训练索引或标签。
+fit_end_available_at 明示为向上取整的微秒时间，原纳秒保留在受限模型中。
+源 Validation 的 subject/version、决定和有效期保持原值；新版本的评估列表不借用
+源版本评估，后续 Sealed/Qualification 必须实际评估并绑定该新版本。
 
 锁定 linregress 没有模型反序列化/从系数重建 API；持久模型仅保存原生拟合系数，
 使用已锁定 ndarray 的逐元素乘加应用同一固定仿射模型，须与原 RegressionModel.predict
@@ -2181,6 +2197,7 @@ HTTP 400/422 输入、401认证、403权限、404不存在/需隐藏、409版本
 | GET /data/sources、/data/revisions/{id} | 可用性/许可/PIT/coverage，无任意读路径 | Operator；qz data list/describe |
 | POST /data/validate | 已登记 ref → 202 validation run | Operator；qz data validate |
 | GET /alphas、/alphas/{id}/versions/{version} | 资格/版本/单位/血缘/证据/限制 | Operator；qz alpha list/show |
+| GET /alpha-versions/{id}/calibration | 附加校准元数据及源版本原Validation，不读取模型 | Operator/精确项目CLI；qz alpha calibration |
 | POST /alpha-versions/{id}/evaluations | policy/input refs；sealed专门 evaluator | Operator/限权服务；qz alpha evaluate |
 | GET /evaluations/{id} | 三层状态/方法/指标/证据 | Operator；qz evidence show |
 | POST /portfolio-mandates | immutable版本，验证原生solver能力 | Operator；qz portfolio mandate |

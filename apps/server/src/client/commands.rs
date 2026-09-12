@@ -18,7 +18,7 @@ use contracts::{
         CycleViewV1, FrozenBriefV1,
     },
     data::*,
-    evidence::{AlphaVersionView, AlphaView, EvaluationView, MetricValueV1},
+    evidence::{AlphaVersionView, AlphaView, CalibrationView, EvaluationView, MetricValueV1},
     experiments::{ExperimentProposalV1, ExperimentView},
     lifecycle::{RunCancelV1, RunListQuery},
     research::{
@@ -86,6 +86,9 @@ pub enum Command {
 #[derive(Subcommand)]
 pub enum Alpha {
     List(ProjectList),
+    Calibration {
+        id: String,
+    },
     Versions {
         id: String,
         #[command(flatten)]
@@ -771,6 +774,11 @@ impl Command {
                     Alpha::List(list) => {
                         Request::get::<Page<AlphaView>>("/api/v2/alphas").project(list)?
                     }
+                    Alpha::Calibration { id } => Request::get::<CalibrationView>(action(
+                        "/api/v2/alpha-versions",
+                        id,
+                        "calibration",
+                    )?),
                     Alpha::Versions { id, page } => Request::get::<Page<AlphaVersionView>>(action(
                         "/api/v2/alphas",
                         id,

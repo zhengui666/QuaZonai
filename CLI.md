@@ -160,8 +160,10 @@ training_end_available_ns、IC/RMSE及缺失原因，
 
 可信Worker在原正式Validation发布事务内冻结每资产最后一个原生折的SCORE模型，
 保留精确训练子集、原生系数、报告/Evaluation/InputSet关联；仅SUCCEEDED + VALID
-且所有资产最后折可校准时产生记录。它不是新的CLI/Agent写入口，不改变原Alpha
-版本、原试验或REJECT决定；无可用校准不能回退赢家折或手填scale。见DESIGN A4.4。
+且所有资产最后折可校准时产生记录及原Alpha的下一不可变版本。它不是新的CLI/Agent
+写入口，不改变源Alpha版本、原试验或REJECT决定，不复制评估/资格；无可用校准
+不能回退赢家折或手填scale。`alpha calibration <version-id>`只读该版本已附加的
+校准元数据与源版本Validation；未附加返回404，不下载系数/训练行。见DESIGN A4.4。
 
 `forecast` 保留未完成标签与指标预热的 null+reason，Wasm没有宿主导入且受fuel/内存/栈限制。`simulate` 在一个原生账户执行全部资产的冻结目标，先确认减仓成交再提交增仓，保留原生费用、数量步长及独立结果。公开 `returns_kind=PORTFOLIO_DAILY` 仅含原生权益快照的UTC日收益，绝不使用单仓收益回退；日内数据不足时 `returns_status=INSUFFICIENT_DATA`、`returns_reason=PORTFOLIO_DAILY_RETURNS_UNAVAILABLE`，不是0收益。跨日全现金的真实0收益可以为OK，但仍须符合评估最小样本要求。
 

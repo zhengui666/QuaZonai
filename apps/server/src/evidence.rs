@@ -13,7 +13,7 @@ use axum::{
 };
 use contracts::{
     control::{ListQuery, Page},
-    evidence::{AlphaVersionView, AlphaView, EvaluationView, MetricValueV1},
+    evidence::{AlphaVersionView, AlphaView, CalibrationView, EvaluationView, MetricValueV1},
     research::ResearchListQuery,
     Id, Revision,
 };
@@ -48,6 +48,16 @@ pub async fn version(
 ) -> Result<Json<AlphaVersionView>, ApiError> {
     let Path((id, version)) = path.map_err(|_| ApiError::validation())?;
     Ok(Json(state.store.alpha_version(&actor, id, version).await?))
+}
+
+#[utoipa::path(get,path="/api/v2/alpha-versions/{id}/calibration",operation_id="get_alpha_calibration",tag="Evidence",params(("id"=Id,Path)),responses((status=200,body=CalibrationView),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem),(status=503,body=Problem)))]
+pub async fn calibration(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    id: Result<Path<Id>, PathRejection>,
+) -> Result<Json<CalibrationView>, ApiError> {
+    let Path(id) = id.map_err(|_| ApiError::validation())?;
+    Ok(Json(state.store.alpha_calibration(&actor, id).await?))
 }
 
 #[utoipa::path(get,path="/api/v2/alpha-versions/{id}/evaluations",operation_id="list_alpha_evaluations",tag="Evidence",params(("id"=Id,Path),("cursor"=Option<Id>,Query),("limit"=Option<u16>,Query,minimum=1,maximum=100)),responses((status=200,body=Page<EvaluationView>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem),(status=503,body=Problem)))]

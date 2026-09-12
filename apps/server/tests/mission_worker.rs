@@ -533,7 +533,7 @@ async fn settled_native_mission_publishes_validation_then_returns_to_original_th
             .collect::<std::collections::BTreeSet<_>>()
     };
     let before_publication = object_names();
-    sqlx::raw_sql("CREATE FUNCTION public.reject_validation_publication() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected calibration publication failure'; END $$; CREATE TRIGGER reject_validation BEFORE INSERT ON app.calibrations FOR EACH ROW EXECUTE FUNCTION public.reject_validation_publication();").execute(&pool).await.unwrap();
+    sqlx::raw_sql("CREATE FUNCTION public.reject_validation_publication() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected calibrated version publication failure'; END $$; CREATE TRIGGER reject_validation BEFORE INSERT ON app.alpha_versions FOR EACH ROW EXECUTE FUNCTION public.reject_validation_publication();").execute(&pool).await.unwrap();
     assert!(worker
         .process_message(
             native_message.clone(),
@@ -553,7 +553,7 @@ async fn settled_native_mission_publishes_validation_then_returns_to_original_th
         "both unpublished objects were reclaimed without changing original evidence"
     );
     assert_eq!(f.provider.request_count(), 1);
-    sqlx::raw_sql("DROP TRIGGER reject_validation ON app.calibrations; DROP FUNCTION public.reject_validation_publication();").execute(&pool).await.unwrap();
+    sqlx::raw_sql("DROP TRIGGER reject_validation ON app.alpha_versions; DROP FUNCTION public.reject_validation_publication();").execute(&pool).await.unwrap();
     worker
         .process_message(
             native_message.clone(),
@@ -573,6 +573,31 @@ async fn settled_native_mission_publishes_validation_then_returns_to_original_th
             .fetch_one(&pool)
             .await
             .unwrap();
+    let derived: uuid::Uuid = sqlx::query_scalar("SELECT v.id FROM app.alpha_versions v JOIN app.calibrations c ON c.id=v.calibration_id WHERE c.validation_evaluation_id=$1")
+        .bind(evaluation).fetch_one(&pool).await.unwrap();
+    let calibrated = f
+        .store
+        .alpha_calibration(&f.actor, derived.to_string().try_into().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(calibrated.validation.id.as_uuid(), evaluation);
+    assert_ne!(
+        calibrated
+            .validation
+            .subject_alpha_version_id
+            .map(Id::as_uuid),
+        Some(derived)
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM app.alpha_versions WHERE experiment_id=$1"
+        )
+        .bind(experiment.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        2
+    );
     let public = f.store.experiment(&f.actor, experiment).await.unwrap();
     assert_eq!(
         public.outcome,

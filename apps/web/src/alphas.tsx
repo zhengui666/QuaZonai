@@ -83,6 +83,7 @@ function Versions({ alpha }: { alpha: Alpha }) {
 }
 
 function VersionDetail({ alpha, number }: { alpha: string; number: string }) {
+  const [calibration, setCalibration] = useState(false);
   const query = useQuery({ queryKey: ['alpha-version', alpha, number], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/alphas/{id}/versions/{version}', {
     params: { path: { id: alpha, version: number } }, signal,
   })) });
@@ -103,9 +104,42 @@ function VersionDetail({ alpha, number }: { alpha: string; number: string }) {
         { key: 'calibration', label: '校准引用', children: version.calibration_id ?? '未登记校准，不能据此认为已校准' },
         { key: 'runtime', label: '冻结镜像', children: version.runtime_image_ref },
       ]} />
+      {version.calibration_id && <Button onClick={() => setCalibration(true)}>查看冻结校准来源</Button>}
       <Evaluations key={version.id} version={version.id} />
+      {calibration && <CalibrationDetail version={version.id} close={() => setCalibration(false)} />}
     </Space>}
   </QueryPanel>;
+}
+
+function CalibrationDetail({ version, close }: { version: string; close: () => void }) {
+  const [source, setSource] = useState(false);
+  const query = useQuery({ queryKey: ['alpha-calibration', version], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/alpha-versions/{id}/calibration', {
+    params: { path: { id: version } }, signal,
+  })) });
+  const value = query.data;
+  if (source && value) return <EvaluationDetail id={value.validation.id} close={() => setSource(false)} />;
+  return <Drawer title="冻结校准来源" open width={800} onClose={close}>
+    <QueryPanel pending={query.isPending} error={query.error} stale={!!value} reload={() => { void query.refetch(); }}>
+      {value && <Space orientation="vertical" size="middle" className="full-width break-word">
+        <Alert showIcon type="info" title="新版本附加校准，不继承源版本评估或资格。"
+          description="原信号仍是 SCORE；只有应用冻结模型才得到预期收益。本页不读取模型字节、系数、标签或训练索引，也不重新拟合或延长原有效期。" />
+        <Descriptions column={1} items={[
+          { key: 'id', label: '校准编号', children: value.id },
+          { key: 'target', label: '附加到版本', children: value.alpha_version_id },
+          { key: 'source', label: '源版本（原 Validation 对象）', children: value.validation.subject_alpha_version_id },
+          { key: 'method', label: '冻结方法 / 版本', children: `${value.estimator_kind} / ${value.estimator_version}` },
+          { key: 'model', label: '冻结 MODEL 引用（不下载）', children: value.model_artifact_id },
+          { key: 'input', label: '原 Validation 输入集', children: value.train_input_set_id },
+          { key: 'fit', label: '最后训练标签可用时间（向上取整至微秒）', children: value.fit_end_available_at },
+          { key: 'horizon', label: '预测 Horizon / 输出单位', children: `${value.horizon_kind} · ${value.horizon_value} · ${value.output_unit}` },
+          { key: 'decision', label: '源评估执行 / 证据 / 科学决策', children: `${value.validation.execution_status} / ${value.validation.evidence_status} / ${value.validation.decision}` },
+          { key: 'origin', label: '原数据来源', children: value.validation.origin },
+          { key: 'valid', label: '源评估原有效期', children: value.validation.valid_until ? `${value.validation.valid_until} · ${value.validation.unexpired_at_read ? '读取时未过期' : '读取时已过期'}` : '未授予有效期' },
+        ]} />
+        <Button onClick={() => setSource(true)}>查看源版本原评估</Button>
+      </Space>}
+    </QueryPanel>
+  </Drawer>;
 }
 
 function Evaluations({ version }: { version: string }) {

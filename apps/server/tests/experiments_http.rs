@@ -215,6 +215,17 @@ async fn alpha_routes_return_exact_versions_and_never_substitute_active_or_inven
         "CODE origin cannot stand in for absent native data provenance"
     );
     assert!(original.body["calibration_id"].is_null());
+    for (value, expected) in [
+        (versions[0].to_string(), StatusCode::NOT_FOUND),
+        ("not-an-id".into(), StatusCode::UNPROCESSABLE_ENTITY),
+    ] {
+        assert_eq!(
+            get(format!("/api/v2/alpha-versions/{value}/calibration"))
+                .await
+                .status,
+            expected
+        );
+    }
     assert_eq!(
         get(format!("/api/v2/alphas/{alpha}/versions/2"))
             .await

@@ -5587,6 +5587,66 @@
           }
         ]
       },
+      "CalibrationView": {
+        "additionalProperties": false,
+        "description": "Metadata only. The source Validation still evaluates its original version.",
+        "properties": {
+          "alpha_version_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "estimator_kind": {
+            "type": "string"
+          },
+          "estimator_version": {
+            "type": "string"
+          },
+          "fit_end_available_at": {
+            "description": "Conservative microsecond ceiling; exact nanoseconds stay in the model.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "horizon_kind": {
+            "$ref": "#/components/schemas/HorizonKind"
+          },
+          "horizon_value": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "model_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "output_unit": {
+            "$ref": "#/components/schemas/ForecastUnit"
+          },
+          "train_input_set_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "validation": {
+            "$ref": "#/components/schemas/EvaluationView"
+          }
+        },
+        "required": [
+          "id",
+          "alpha_version_id",
+          "estimator_kind",
+          "estimator_version",
+          "model_artifact_id",
+          "train_input_set_id",
+          "fit_end_available_at",
+          "output_unit",
+          "horizon_kind",
+          "horizon_value",
+          "validation",
+          "created_at"
+        ],
+        "type": "object"
+      },
       "CatalogVersionQuery": {
         "additionalProperties": false,
         "properties": {

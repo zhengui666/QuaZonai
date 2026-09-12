@@ -71,6 +71,16 @@ async fn empty(pool: &PgPool, experiment: Id) {
     for name in ["evaluations", "metrics", "reports", "calibrations"] {
         assert_eq!(row.get::<i64, _>(name), 0);
     }
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM app.alpha_versions WHERE experiment_id=$1"
+        )
+        .bind(experiment.as_uuid())
+        .fetch_one(pool)
+        .await
+        .unwrap(),
+        1
+    );
 }
 async fn decision(pool: &PgPool, evaluation: Id) -> (String, String, String) {
     sqlx::query_as(
@@ -263,12 +273,15 @@ async fn complete_validation_publication_is_atomic_unique_producer_bound_and_pre
     sqlx::raw_sql("DROP TRIGGER reject_metric ON app.metric_values; DROP FUNCTION public.reject_evaluation_metric();").execute(&pool).await.unwrap();
     // The second native object and the calibration row are part of this same
     // original publication. Neither failure can leave a successful evaluation.
-    for failure in 0..3 {
+    for failure in 0..4 {
         if failure == 1 {
             sqlx::raw_sql("CREATE FUNCTION public.reject_calibration() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected calibration publication failure'; END $$; CREATE TRIGGER reject_calibration BEFORE INSERT ON app.calibrations FOR EACH ROW EXECUTE FUNCTION public.reject_calibration();").execute(&pool).await.unwrap();
         }
         if failure == 2 {
             sqlx::raw_sql("CREATE FUNCTION public.change_training_time() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.fit_end_available_at := (SELECT decision_cutoff FROM app.input_sets WHERE id=NEW.train_input_set_id) + interval '1 microsecond'; RETURN NEW; END $$; CREATE TRIGGER altered_training_time BEFORE INSERT ON app.calibrations FOR EACH ROW EXECUTE FUNCTION public.change_training_time();").execute(&pool).await.unwrap();
+        }
+        if failure == 3 {
+            sqlx::raw_sql("CREATE FUNCTION public.change_calibrated_version() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.runtime_image_ref := 'changed-after-validation'; RETURN NEW; END $$; CREATE TRIGGER altered_calibrated_version BEFORE INSERT ON app.alpha_versions FOR EACH ROW EXECUTE FUNCTION public.change_calibrated_version();").execute(&pool).await.unwrap();
         }
         let mut allocated = Vec::new();
         assert!(store
@@ -310,6 +323,9 @@ async fn complete_validation_publication_is_atomic_unique_producer_bound_and_pre
         }
         if failure == 2 {
             sqlx::raw_sql("DROP TRIGGER altered_training_time ON app.calibrations; DROP FUNCTION public.change_training_time();").execute(&pool).await.unwrap();
+        }
+        if failure == 3 {
+            sqlx::raw_sql("DROP TRIGGER altered_calibrated_version ON app.alpha_versions; DROP FUNCTION public.change_calibrated_version();").execute(&pool).await.unwrap();
         }
     }
     let (a, b) = tokio::join!(publish(&store, &f, run), publish(&store, &f, run));
@@ -499,8 +515,15 @@ async fn complete_validation_publication_is_atomic_unique_producer_bound_and_pre
     let alpha = &alphas.items[0];
     let versions = store.alpha_versions(&actor, alpha.id, &list).await.unwrap();
     assert_eq!(versions.items.len(), 1);
+    assert!(versions.next_cursor.is_some());
+    let derived = &versions.items[0];
+    assert_eq!(
+        derived.version,
+        contracts::Revision::INITIAL.next().unwrap()
+    );
+    assert_eq!(alpha.active_version_id, Some(derived.id));
     let version = store
-        .alpha_version(&actor, alpha.id, versions.items[0].version)
+        .alpha_version(&actor, alpha.id, contracts::Revision::INITIAL)
         .await
         .unwrap();
     assert_eq!(Some(version.id), header.subject_alpha_version_id);
@@ -510,16 +533,81 @@ async fn complete_validation_publication_is_atomic_unique_producer_bound_and_pre
         Some(contracts::research::DataOrigin::Fixture)
     );
     assert_eq!(version.calibration_id, None);
+    let mut original_fields = serde_json::to_value(&version).unwrap();
+    let mut derived_fields = serde_json::to_value(derived).unwrap();
+    for field in ["id", "version", "calibration_id", "created_at"] {
+        original_fields.as_object_mut().unwrap().remove(field);
+        derived_fields.as_object_mut().unwrap().remove(field);
+    }
+    assert_eq!(original_fields, derived_fields);
     assert!(matches!(
-        store
-            .alpha_version(
-                &actor,
-                alpha.id,
-                contracts::Revision::INITIAL.next().unwrap()
-            )
-            .await,
+        store.alpha_calibration(&actor, version.id).await,
         Err(StoreError::NotFound)
     ));
+    let calibration = store.alpha_calibration(&actor, derived.id).await.unwrap();
+    assert_eq!(Some(calibration.id), derived.calibration_id);
+    assert_eq!(calibration.alpha_version_id, derived.id);
+    assert_eq!(calibration.model_artifact_id, model_artifact);
+    assert_eq!(calibration.train_input_set_id, header.input_set_id);
+    assert_eq!(calibration.fit_end_available_at, fit_time);
+    assert_eq!(calibration.horizon_value, derived.horizon_value.unwrap());
+    assert_eq!(calibration.validation.id, header.id);
+    assert_eq!(
+        calibration.validation.subject_alpha_version_id,
+        Some(version.id)
+    );
+    assert_eq!(calibration.validation.valid_until, header.valid_until);
+    assert_eq!(calibration.validation.concluded_at, header.concluded_at);
+    assert!(store
+        .alpha_evaluations(&actor, derived.id, &list)
+        .await
+        .unwrap()
+        .items
+        .is_empty());
+    let cli =
+        proposal_support::machine(&pool, f.data.project, None, "CLI", &["RESEARCH_READ"]).await;
+    assert_eq!(
+        store.alpha_calibration(&cli, derived.id).await.unwrap().id,
+        calibration.id
+    );
+    let verifier = Id::new();
+    let credential = store
+        .issue_mission_credential(lease.run.id, &lease.fence, Id::new(), verifier)
+        .await
+        .unwrap();
+    let mission = Actor::Machine {
+        credential_id: credential,
+        verifier_ref: verifier,
+        operator_grant: None,
+    };
+    assert!(matches!(
+        store.alpha_calibration(&mission, derived.id).await,
+        Err(StoreError::Forbidden)
+    ));
+    for (kind, scopes) in [
+        ("CLI", vec!["EXPERIMENT_SUBMIT"]),
+        ("AUTOMATION", vec!["RESEARCH_READ"]),
+    ] {
+        let reader = proposal_support::machine(&pool, f.data.project, None, kind, &scopes).await;
+        assert!(matches!(
+            store.alpha_calibration(&reader, derived.id).await,
+            Err(StoreError::Forbidden)
+        ));
+    }
+    let other = research_support::setup(&pool, &store, &actor).await;
+    let foreign =
+        proposal_support::machine(&pool, other.project, None, "CLI", &["RESEARCH_READ"]).await;
+    assert!(matches!(
+        store.alpha_calibration(&foreign, derived.id).await,
+        Err(StoreError::NotFound)
+    ));
+    for query in [
+        "UPDATE app.alpha_versions SET calibration_id=NULL WHERE calibration_id IS NOT NULL",
+        "DELETE FROM app.alpha_versions WHERE calibration_id IS NOT NULL",
+        "INSERT INTO app.alpha_versions(project_id,alpha_id,version,experiment_id,root_lineage_id,code_artifact_id,model_artifact_id,signal_contract_version,signal_kind,horizon_kind,horizon_value,forecast_unit,calibration_id,runtime_image_ref) SELECT project_id,alpha_id,version+1,experiment_id,root_lineage_id,code_artifact_id,model_artifact_id,signal_contract_version,signal_kind,horizon_kind,horizon_value,forecast_unit,calibration_id,runtime_image_ref FROM app.alpha_versions WHERE calibration_id IS NOT NULL",
+    ] {
+        assert!(sqlx::query(query).execute(&pool).await.is_err());
+    }
     let evaluations = store
         .alpha_evaluations(&actor, version.id, &list)
         .await
@@ -586,6 +674,16 @@ async fn complete_validation_publication_is_atomic_unique_producer_bound_and_pre
         .unwrap();
     assert!(replay.replayed);
     assert_eq!(replay.resource, a.resource);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM app.alpha_versions WHERE experiment_id=$1"
+        )
+        .bind(experiment.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        2
+    );
     let duplicate = sqlx::query("INSERT INTO app.evaluations(project_id,subject_alpha_version_id,input_set_id,policy_id,run_id,evaluation_kind,execution_status,evidence_status,decision,report_artifact_id,method_versions_artifact_id,concluded_at,valid_until) SELECT project_id,subject_alpha_version_id,input_set_id,policy_id,run_id,evaluation_kind,execution_status,evidence_status,decision,report_artifact_id,method_versions_artifact_id,concluded_at,valid_until FROM app.evaluations WHERE id=$1")
         .bind(a.resource.as_uuid()).execute(&pool).await.unwrap_err();
     assert_eq!(
@@ -632,9 +730,66 @@ async fn successful_validation_with_missing_registered_rows_is_not_a_pass(pool: 
     );
 }
 
+async fn keeps_alpha_state(pool: &PgPool, lifecycle: &str, clear_active: bool) {
+    let (store, actor, f, _, experiment, run) = prepared(pool).await;
+    let (alpha, source): (uuid::Uuid, uuid::Uuid) =
+        sqlx::query_as("SELECT alpha_id,id FROM app.alpha_versions WHERE experiment_id=$1")
+            .bind(experiment.as_uuid())
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    sqlx::query("UPDATE app.alphas SET lifecycle=$2,active_version_id=CASE WHEN $3 THEN NULL ELSE active_version_id END,revision=revision+1 WHERE id=$1")
+        .bind(alpha).bind(lifecycle).bind(clear_active).execute(pool).await.unwrap();
+    let before: (String, Option<uuid::Uuid>, i64) =
+        sqlx::query_as("SELECT lifecycle,active_version_id,revision FROM app.alphas WHERE id=$1")
+            .bind(alpha)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    experiment_support::complete_validation(pool, &store, &f, run, 1000, 0.8).await;
+    publish(&store, &f, run).await.unwrap();
+    let after: (String, Option<uuid::Uuid>, i64) =
+        sqlx::query_as("SELECT lifecycle,active_version_id,revision FROM app.alphas WHERE id=$1")
+            .bind(alpha)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        before, after,
+        "publication cannot undo a later Operator choice"
+    );
+    let derived: uuid::Uuid = sqlx::query_scalar("SELECT id FROM app.alpha_versions WHERE alpha_id=$1 AND version=2 AND calibration_id IS NOT NULL")
+        .bind(alpha).fetch_one(pool).await.unwrap();
+    assert_eq!(
+        store
+            .alpha_calibration(&actor, derived.to_string().try_into().unwrap())
+            .await
+            .unwrap()
+            .validation
+            .subject_alpha_version_id
+            .map(Id::as_uuid),
+        Some(source)
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn calibrated_version_preserves_a_cleared_active_pointer(pool: PgPool) {
+    keeps_alpha_state(&pool, "RESEARCH", true).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn calibrated_version_does_not_unsuspend_alpha(pool: PgPool) {
+    keeps_alpha_state(&pool, "SUSPENDED", false).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn calibrated_version_does_not_unretire_alpha(pool: PgPool) {
+    keeps_alpha_state(&pool, "RETIRED", false).await;
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn registered_missing_fraction_boundary_is_exact_and_a_failed_metric_rejects(pool: PgPool) {
-    let (store, _, f, _, _, run) = prepared(&pool).await;
+    let (store, actor, f, _, experiment, run) = prepared(&pool).await;
     experiment_support::complete_validation(&pool, &store, &f, run, 950, 0.05).await;
     let result = publish(&store, &f, run).await.unwrap();
     assert_eq!(
@@ -650,6 +805,28 @@ async fn registered_missing_fraction_boundary_is_exact_and_a_failed_metric_rejec
     assert_eq!(
         decision(&pool, result.resource).await,
         ("SUCCEEDED".into(), "VALID".into(), "REJECT".into())
+    );
+    let derived: uuid::Uuid = sqlx::query_scalar(
+        "SELECT id FROM app.alpha_versions WHERE experiment_id=$1 AND version=2",
+    )
+    .bind(experiment.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let calibrated = store
+        .alpha_calibration(&actor, derived.to_string().try_into().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        calibrated.validation.decision,
+        contracts::evidence::Decision::Reject
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.qualifications")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0
     );
 }
 

@@ -68,6 +68,25 @@ pub struct AlphaVersionView {
     pub created_at: DateTime<Utc>,
 }
 
+/// Metadata only. The source Validation still evaluates its original version.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CalibrationView {
+    pub id: Id,
+    pub alpha_version_id: Id,
+    pub estimator_kind: String,
+    pub estimator_version: String,
+    pub model_artifact_id: Id,
+    pub train_input_set_id: Id,
+    /// Conservative microsecond ceiling; exact nanoseconds stay in the model.
+    pub fit_end_available_at: DateTime<Utc>,
+    pub output_unit: ForecastUnit,
+    pub horizon_kind: crate::brief::HorizonKind,
+    pub horizon_value: DbCounter,
+    pub validation: EvaluationView,
+    pub created_at: DateTime<Utc>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EvaluationView {

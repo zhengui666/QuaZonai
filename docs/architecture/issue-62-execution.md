@@ -1318,3 +1318,39 @@ EVALUATOR_ONLY校准MODEL和calibrations引用，由已有引用触发器封口E
 科学报告/Provider，OCI用例不是完整市场Validation或Sealed测试，不能拼成真实账号
 T42已过的声明。本阶段未push、请求review、合并或关闭Issue；须继续不可变校准
 版本附加、Sealed预约/执行/披露、独立Reviewer/资格、组合交付及全部剩余合同。
+
+## 2026-09-12：不可变校准版本与只读来源
+
+按DESIGN A4.4在原Validation发布事务创建同Alpha的下一版本，附加原冻结校准；
+039迁移约束精确源版本/原实验/血缘/CODE/Wasm MODEL/单位/horizon/镜像，并阻止
+重复附加。原版本与评估不改写；新版本没有借来的Validation或Qualification。
+活动指针只在RESEARCH且仍指原版本时推进，保留清空指针、SUSPENDED和RETIRED。
+未产生可用校准不创建派生版本，科学REJECT仍为REJECT；原候选快照继续引用源版本。
+复用原事务和队列，不增加拟合、Run、依赖或候选映射表。
+
+一个只读GET及alpha calibration CLI、Ant Design来源Drawer返回校准元数据和源
+版本原Validation，不读取模型/标签/索引字节。沿用Operator/精确项目CLI权限；
+Mission不能借用。保留原决定/有效期、精确大整数和向上取整微秒时间；读取失败
+不是空成功，源评估不是新版本评估。原生生成仅增加CalibrationView和一个GET，
+已有API/schema和Runtime合同语义均不变。
+
+以c69a085e及冻结补丁验证，编辑/验证串行：
+
+- 首轮verify-vNqpB6有一项新测试失败：通用fixture签发一小时Mission凭据，超过
+  真实Run期限。改用现有正式Mission签发入口，未放宽生产约束。
+- 最终verify-4mGTyJ的check/fmt/严格Clippy及28项原生科学、122项真实Store、
+  20项HTTP/原生CLI测试全部通过，0忽略，源码不变，临时PG确认停止。覆盖版本
+  写入故障与两对象/评估/结论回滚、并发唯一发布、重放、原版本归属、选择不随
+  活动指针变化，以及生命周期/人工指针保留。
+- web-verify-QTvol7：六个允许原生输出重复字节一致，手写源不变；typecheck、
+  504项Vitest、5项Node、204个decimal/1694个bigint/214个fraction用例、build与
+  CLI help通过；36项Codex设置和全站186项三视口浏览器测试通过（2.7分钟）。
+  实际变化为domain/API JSON、TypeScript及Ajv JavaScript四个生成文件。
+- verify-0m2jrz的check/fmt/严格Clippy与真实Codex0.144.4/App Server原Thread
+  用例通过（218.81秒）；两个取消用例通过（70.64秒）。故障改注入alpha_versions
+  写入，原两对象精确回收；Worker恢复后已产生附加校准版本，反馈仍引用原评估，
+  不披露校准模型，仍只有两次Provider请求。源码不变，临时PG确认停止。
+
+原生科学数据与Provider仍为显式受控输入；这些测试不是完整真实账号、市场Job/OCI
+或Sealed/T42证据。本阶段未push、请求review、合并或关闭Issue；继续Sealed预约/
+实际执行/披露、独立Reviewer/资格、组合交付、迁移/恢复与全部剩余合同。

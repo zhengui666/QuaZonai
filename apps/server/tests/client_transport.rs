@@ -193,6 +193,40 @@ fn problem(status: u16) -> Value {
 }
 
 #[tokio::test]
+async fn native_cli_reads_calibration_metadata_without_rewriting_source_or_exact_values() {
+    let version = Id::new();
+    let source = Id::new();
+    let response = json!({"id":Id::new(),"alpha_version_id":version,"estimator_kind":"linregress.affine_ols",
+        "estimator_version":"0.5.4","model_artifact_id":Id::new(),"train_input_set_id":Id::new(),
+        "fit_end_available_at":"2026-09-08T00:00:00.000001Z","output_unit":"RETURN_PER_HORIZON",
+        "horizon_kind":"FIXED_BARS","horizon_value":"9007199254740993","created_at":"2026-09-08T00:00:00Z",
+        "validation":{"id":Id::new(),"project_id":Id::new(),"subject_alpha_version_id":source,"subject_candidate_id":null,
+          "input_set_id":Id::new(),"policy_id":Id::new(),"run_id":Id::new(),"evaluation_kind":"WALK_FORWARD",
+          "execution_status":"SUCCEEDED","evidence_status":"VALID","decision":"REJECT","report_artifact_id":Id::new(),
+          "method_versions_artifact_id":Id::new(),"origin":"FIXTURE","concluded_at":"2026-09-08T00:00:00Z",
+          "valid_until":"2026-09-09T00:00:00Z","checked_at":"2026-09-12T00:00:00Z","unexpired_at_read":false}});
+    let f = Fixture::new(|_| vec![Reply::json(response.clone())]).await;
+    let result = f
+        .execute(&args(&["alpha", "calibration", &version.to_string()]), b"")
+        .await;
+    assert!(result.status.success());
+    assert!(result.stderr.is_empty());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&result.stdout).unwrap(),
+        response
+    );
+    let seen = f.seen.lock().unwrap();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(
+        seen[0].uri,
+        format!("/api/v2/alpha-versions/{version}/calibration")
+    );
+    assert_eq!(seen[0].method, "GET");
+    assert!(seen[0].body.is_empty());
+    assert!(seen[0].key.is_none());
+}
+
+#[tokio::test]
 async fn native_cli_account_commands_use_typed_intent_and_read_only_status() {
     let profile = Id::new();
     let operation = Id::new();

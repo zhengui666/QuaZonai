@@ -98,6 +98,8 @@ selection/trials只读命令；Mission不能调用完整快照接口、刷新旧
 可信Validation发布器按A4.4冻结原生最后折的SCORE校准、真实训练截止和原输入
 子集；Agent不能提交系数、选择赢家折、重写旧Alpha版本或把校准存在当作资格。
 无可用拟合不回退，文件/事务失败保留原Run重试，不重新运行模型或读取Sealed。
+附加校准创建同Alpha的新不可变版本，原实验/账本/源评估不变；不能把源版本PASS
+当作新版本资格。人工alpha calibration只读元数据/源Validation，不向Mission开放。
 
 人工Cycle启动除冻结Brief和Project版本外，还须明确researcher_profile/reviewer_profile的profile_id及expected_revision；不得默认第一个账号。选择随Cycle封口，旧Cycle不跟随后来Profile修改。该命令不授予Mission选择账号、修改模型设置或发起账号操作的权限。
 

@@ -166,8 +166,11 @@ Runtime受管`VALIDATE_ALPHA`沿用同一计算入口，仅消费登记的VALIDA
 正式Validation发布还冻结每资产最后原生折的可用SCORE校准（DESIGN A4.4）。
 校准MODEL/记录与原Evaluation同事务提交，失败保留原队列；训练截止保留原始
 纳秒，DB时间向上取整到微秒。不会重拟合测试或Sealed标签、挑较好折、回填旧
-报告、改变原AlphaVersion或把原REJECT改成PASS。后续版本附加/Sealed/资格仍须
-单独完成；模型存在本身不是研究完成。
+报告、改变原AlphaVersion或把原REJECT改成PASS。同事务为原Alpha创建附加校准的
+下一不可变版本，仅在仍为RESEARCH且活动指针未被改动时推进指针。原信号仍为
+SCORE，不能忽略校准直接当收益；新版本不继承源版本的评估或资格。版本详情可
+只读查看校准元数据及源版本Validation，训练截止明确为向上取整微秒，不下载模型。
+Sealed/资格仍须单独完成；模型存在本身不是研究完成。
 
 032迁移为每个已成功结算的原生Turn保留唯一公开回答报告（qz.mission_summary）。
 Worker读取锁定App Server原生summary视图，只有公开agentMessage、原Turn/item和

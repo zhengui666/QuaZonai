@@ -18,6 +18,10 @@ const evaluation: Schema['EvaluationView'] = { id: id(46), project_id: project.i
   origin: 'FIXTURE', concluded_at: stamp, valid_until: '2026-09-09T00:00:00Z', checked_at: '2026-09-12T00:00:00Z', unexpired_at_read: false };
 const cancelled: Schema['EvaluationView'] = { ...evaluation, id: id(51), execution_status: 'CANCELLED', evidence_status: 'INCOMPLETE',
   decision: 'INCONCLUSIVE', valid_until: null };
+const calibration: Schema['CalibrationView'] = { id: id(55), alpha_version_id: version.id,
+  estimator_kind: 'linregress.affine_ols', estimator_version: '0.5.4', model_artifact_id: id(56), train_input_set_id: evaluation.input_set_id,
+  fit_end_available_at: '2026-09-08T00:00:00.000001Z', output_unit: 'RETURN_PER_HORIZON', horizon_kind: version.horizon_kind,
+  horizon_value: '9007199254740993', validation: { ...evaluation, subject_alpha_version_id: id(54), decision: 'REJECT' }, created_at: stamp };
 const metric: Schema['MetricValueV1'] = { schema_version: 1, evaluation_id: evaluation.id, metric_code: 'correlation', scope: 'original-scope',
   value: 0, status: 'OK', reason_code: null, unit: 'UNITLESS_SCORE', period_start: stamp, period_end: '2026-09-09T00:00:00Z',
   observation_count: '9007199254740993', frequency: 'original-frequency', annualization_factor: null,
@@ -34,7 +38,7 @@ async function chooseProject(page: Page, name = project.name) {
 async function setup(page: Page) {
   const base = await fixture(page);
   base.projects.push({ ...project, id: id(2), name: '另一个项目' });
-  const state = { paths: [] as string[], fail: false };
+  const state = { paths: [] as string[], fail: false, calibrated: false, calibrationFailed: false };
   await page.route('**/api/v2/**', async route => {
     const url = new URL(route.request().url()); const path = url.pathname;
     state.paths.push(`${path}${url.search}`);
@@ -42,10 +46,12 @@ async function setup(page: Page) {
       if (state.fail) return reply(route, problem('UNAVAILABLE', 503), 503);
       return reply(route, { schema_version: 1, items: url.searchParams.get('project_id') === project.id ? [alpha] : [], next_cursor: null });
     }
-    if (path === `/api/v2/alphas/${alpha.id}/versions`) return reply(route, { schema_version: 1, items: [version], next_cursor: null });
-    if (path === `/api/v2/alphas/${alpha.id}/versions/${version.version}`) return reply(route, version);
-    if (path === `/api/v2/alpha-versions/${version.id}/evaluations`) return reply(route, { schema_version: 1, items: [evaluation, cancelled], next_cursor: null });
-    const item = [evaluation, cancelled].find(item => path === `/api/v2/evaluations/${item.id}`);
+    const current = state.calibrated ? { ...version, calibration_id: calibration.id } : version;
+    if (path === `/api/v2/alphas/${alpha.id}/versions`) return reply(route, { schema_version: 1, items: [current], next_cursor: null });
+    if (path === `/api/v2/alphas/${alpha.id}/versions/${version.version}`) return reply(route, current);
+    if (path === `/api/v2/alpha-versions/${version.id}/calibration`) return state.calibrationFailed ? reply(route, problem('UNAVAILABLE', 503), 503) : reply(route, calibration);
+    if (path === `/api/v2/alpha-versions/${version.id}/evaluations`) return reply(route, { schema_version: 1, items: state.calibrated ? [] : [evaluation, cancelled], next_cursor: null });
+    const item = [state.calibrated ? calibration.validation : evaluation, cancelled].find(item => path === `/api/v2/evaluations/${item.id}`);
     if (item) return reply(route, item);
     if (path === `/api/v2/evaluations/${evaluation.id}/metrics`) {
       const cursor = url.searchParams.get('cursor');
@@ -116,5 +122,38 @@ test('failed read is not an empty Alpha result and recovery does not create a re
   state.fail = false;
   await page.getByRole('button', { name: '刷新 Alpha', exact: true }).click();
   await expect(page.getByRole('button', { name: alpha.name, exact: true })).toBeVisible();
+  expect(base.commands).toEqual([]);
+});
+
+test('calibrated version exposes only its original metadata and does not inherit a source verdict', async ({ page }) => {
+  const { state, base } = await setup(page); state.calibrated = true; state.calibrationFailed = true;
+  await chooseProject(page);
+  await page.getByRole('button', { name: alpha.name, exact: true }).click();
+  await page.getByRole('button', { name: `版本 ${version.version}`, exact: true }).click();
+  await expect(page.getByText('还没有可披露的正式 Validation 评估；不包含 Sealed，也不代表验证通过。', { exact: true })).toBeVisible();
+  expect(state.paths.some(path => path.endsWith('/calibration'))).toBe(false);
+  await page.getByRole('button', { name: '查看冻结校准来源', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '冻结校准来源', exact: true });
+  await expect(dialog.getByText(/错误：UNAVAILABLE/)).toBeVisible();
+  await expect(dialog.getByText('新版本附加校准，不继承源版本评估或资格。', { exact: true })).toHaveCount(0);
+  state.calibrationFailed = false;
+  await dialog.getByRole('button', { name: '重新载入', exact: true }).click();
+  await expect(dialog.getByText('新版本附加校准，不继承源版本评估或资格。', { exact: true })).toBeVisible();
+  await expect(dialog.getByText(calibration.fit_end_available_at, { exact: true })).toBeVisible();
+  await expect(dialog.getByText('FIXED_BARS · 9007199254740993 · RETURN_PER_HORIZON', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('SUCCEEDED / VALID / REJECT', { exact: true })).toBeVisible();
+  await expect(dialog.getByText(/读取时已过期/)).toBeVisible();
+  await expect(dialog.getByText(id(54), { exact: true })).toBeVisible();
+  expect((await new AxeBuilder({ page }).include('[role="dialog"]').withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await dialog.getByRole('button', { name: '查看源版本原评估', exact: true }).click();
+  const source = page.getByRole('dialog', { name: '正式 Validation 评估', exact: true });
+  await expect(source.getByText(id(54), { exact: true })).toBeVisible();
+  await expect(source.getByText('SUCCEEDED / VALID / REJECT', { exact: true })).toBeVisible();
+  await source.getByRole('button', { name: '关闭', exact: true }).click();
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+  await expect(page.getByRole('button', { name: `评估 ${evaluation.id.slice(-8)}`, exact: true })).toHaveCount(0);
+  expect(state.paths.some(path => path.startsWith('/api/v2/artifacts/'))).toBe(false);
   expect(base.commands).toEqual([]);
 });

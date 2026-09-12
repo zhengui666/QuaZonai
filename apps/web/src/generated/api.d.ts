@@ -4,6 +4,22 @@
  */
 
 export interface paths {
+    "/api/v2/alpha-versions/{id}/calibration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_alpha_calibration"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/alpha-versions/{id}/evaluations": {
         parameters: {
             query?: never;
@@ -1574,6 +1590,26 @@ export interface components {
             cost_enforcement: "EXACT";
             max_cost_decimal: string;
         });
+        /** @description Metadata only. The source Validation still evaluates its original version. */
+        CalibrationView: {
+            alpha_version_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            created_at: string;
+            estimator_kind: string;
+            estimator_version: string;
+            /**
+             * Format: date-time
+             * @description Conservative microsecond ceiling; exact nanoseconds stay in the model.
+             */
+            fit_end_available_at: string;
+            horizon_kind: components["schemas"]["HorizonKind"];
+            horizon_value: components["schemas"]["DbCounter"];
+            id: components["schemas"]["Id"];
+            model_artifact_id: components["schemas"]["Id"];
+            output_unit: components["schemas"]["ForecastUnit"];
+            train_input_set_id: components["schemas"]["Id"];
+            validation: components["schemas"]["EvaluationView"];
+        };
         /** @enum {string} */
         CodexAccountActionV1: "LOGIN" | "LOGOUT";
         /** @description Immutable acceptance reference; a receipt is never rewritten to track progress. */
@@ -3964,6 +4000,77 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    get_alpha_calibration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CalibrationView"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     list_alpha_evaluations: {
         parameters: {
             query?: {

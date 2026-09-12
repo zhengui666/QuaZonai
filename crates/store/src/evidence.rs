@@ -277,6 +277,55 @@ impl Store {
         Ok(result)
     }
 
+    pub async fn alpha_calibration(
+        &self,
+        actor: &Actor,
+        version: Id,
+    ) -> Result<CalibrationView, StoreError> {
+        let mut tx = self.pool.begin().await?;
+        let project: uuid::Uuid =
+            sqlx::query_scalar("SELECT project_id FROM app.alpha_versions WHERE id=$1")
+                .bind(version.as_uuid())
+                .fetch_optional(&mut *tx)
+                .await?
+                .ok_or(StoreError::NotFound)?;
+        authorize(&mut tx, actor, db::id(project)?).await?;
+        let row = sqlx::query(&format!("SELECT ev.*,c.id AS calibration_id,c.estimator_kind,c.estimator_version,c.model_artifact_id,c.train_input_set_id,c.fit_end_available_at,c.output_unit,c.horizon_kind,c.horizon_value,c.created_at AS calibration_created_at
+            FROM app.alpha_versions target JOIN app.calibrations c ON c.id=target.calibration_id
+            JOIN ({EVALUATION}) ev ON ev.id=c.validation_evaluation_id
+            JOIN app.alpha_versions original ON original.id=ev.subject_alpha_version_id AND original.alpha_id=target.alpha_id
+              AND original.project_id=target.project_id AND original.experiment_id=target.experiment_id
+              AND original.root_lineage_id=target.root_lineage_id AND original.code_artifact_id=target.code_artifact_id
+              AND original.model_artifact_id IS NOT DISTINCT FROM target.model_artifact_id
+              AND original.signal_contract_version=target.signal_contract_version AND original.signal_kind=target.signal_kind
+              AND original.horizon_kind=target.horizon_kind AND original.horizon_value=target.horizon_value
+              AND original.forecast_unit=target.forecast_unit AND original.runtime_image_ref=target.runtime_image_ref
+            JOIN app.artifacts model ON model.id=c.model_artifact_id AND model.project_id=ev.project_id
+              AND model.producer_run_id=ev.run_id AND model.access_class='EVALUATOR_ONLY' AND model.origin=ev.origin
+              AND model.kind='MODEL' AND model.schema_name='qz.alpha_calibration' AND model.schema_version='1'
+            WHERE target.id=$1 AND target.version=original.version+1 AND original.calibration_id IS NULL
+              AND original.signal_kind='SCORE' AND c.estimator_kind='linregress.affine_ols' AND c.estimator_version='0.5.4'
+              AND c.train_input_set_id=ev.input_set_id AND c.horizon_kind=target.horizon_kind AND c.horizon_value=target.horizon_value
+              AND c.output_unit='RETURN_PER_HORIZON' AND ev.execution_status='SUCCEEDED' AND ev.evidence_status='VALID'"))
+            .bind(version.as_uuid()).fetch_optional(&mut *tx).await?.ok_or(StoreError::NotFound)?;
+        let result = CalibrationView {
+            id: db::id(row.try_get("calibration_id")?)?,
+            alpha_version_id: version,
+            estimator_kind: row.try_get("estimator_kind")?,
+            estimator_version: row.try_get("estimator_version")?,
+            model_artifact_id: db::id(row.try_get("model_artifact_id")?)?,
+            train_input_set_id: db::id(row.try_get("train_input_set_id")?)?,
+            fit_end_available_at: row.try_get("fit_end_available_at")?,
+            output_unit: db::enum_value(&row, "output_unit")?,
+            horizon_kind: db::enum_value(&row, "horizon_kind")?,
+            horizon_value: count(row.try_get("horizon_value")?)?,
+            validation: evaluation(&row)?,
+            created_at: row.try_get("calibration_created_at")?,
+        };
+        tx.commit().await?;
+        Ok(result)
+    }
+
     pub async fn evaluation(&self, actor: &Actor, id: Id) -> Result<EvaluationView, StoreError> {
         let mut tx = self.pool.begin().await?;
         let result = read_evaluation(&mut tx, actor, id).await?;

@@ -284,6 +284,10 @@ impl Store {
                 .bind(artifact.as_uuid()).bind(locked.run.project_id.as_uuid()).bind(run.as_uuid()).bind(locked.run.active_attempt_id.map(Id::as_uuid)).bind(artifact.to_string()).bind(size).bind(binding.try_get::<String,_>("origin")?).execute(&mut *tx).await?;
             sqlx::query("INSERT INTO app.calibrations(id,estimator_kind,estimator_version,model_artifact_id,train_input_set_id,fit_end_available_at,output_unit,horizon_kind,horizon_value,validation_evaluation_id) VALUES($1,$2,$3,$4,$5,$6,'RETURN_PER_HORIZON','FIXED_BARS',$7,$8)")
                 .bind(id.as_uuid()).bind(&model.estimator_kind).bind(&model.estimator_version).bind(artifact.as_uuid()).bind(locked.run.input_set_id.as_uuid()).bind(end).bind(model.horizon_observations.get() as i64).bind(evaluation.as_uuid()).execute(&mut *tx).await?;
+            let version: uuid::Uuid = sqlx::query_scalar("INSERT INTO app.alpha_versions(project_id,alpha_id,version,experiment_id,root_lineage_id,code_artifact_id,model_artifact_id,signal_contract_version,signal_kind,horizon_kind,horizon_value,forecast_unit,calibration_id,runtime_image_ref) SELECT project_id,alpha_id,version+1,experiment_id,root_lineage_id,code_artifact_id,model_artifact_id,signal_contract_version,signal_kind,horizon_kind,horizon_value,forecast_unit,$2,runtime_image_ref FROM app.alpha_versions WHERE id=$1 RETURNING id")
+                .bind(alpha.as_uuid()).bind(id.as_uuid()).fetch_one(&mut *tx).await?;
+            sqlx::query("UPDATE app.alphas a SET active_version_id=$2,revision=revision+1 WHERE a.active_version_id=$1 AND a.lifecycle='RESEARCH'")
+                .bind(alpha.as_uuid()).bind(version).execute(&mut *tx).await?;
         }
         tx.commit().await?;
         Ok(Some(CommandResult {

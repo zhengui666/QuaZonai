@@ -4740,6 +4740,66 @@
           }
         ]
       },
+      "CalibrationView": {
+        "additionalProperties": false,
+        "description": "Metadata only. The source Validation still evaluates its original version.",
+        "properties": {
+          "alpha_version_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "estimator_kind": {
+            "type": "string"
+          },
+          "estimator_version": {
+            "type": "string"
+          },
+          "fit_end_available_at": {
+            "description": "Conservative microsecond ceiling; exact nanoseconds stay in the model.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "horizon_kind": {
+            "$ref": "#/components/schemas/HorizonKind"
+          },
+          "horizon_value": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "model_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "output_unit": {
+            "$ref": "#/components/schemas/ForecastUnit"
+          },
+          "train_input_set_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "validation": {
+            "$ref": "#/components/schemas/EvaluationView"
+          }
+        },
+        "required": [
+          "id",
+          "alpha_version_id",
+          "estimator_kind",
+          "estimator_version",
+          "model_artifact_id",
+          "train_input_set_id",
+          "fit_end_available_at",
+          "output_unit",
+          "horizon_kind",
+          "horizon_value",
+          "validation",
+          "created_at"
+        ],
+        "type": "object"
+      },
       "CodexAccountActionV1": {
         "enum": [
           "LOGIN",
@@ -15179,6 +15239,111 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v2/alpha-versions/{id}/calibration": {
+      "get": {
+        "operationId": "get_alpha_calibration",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalibrationView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Evidence"
+        ]
+      }
+    },
     "/api/v2/alpha-versions/{id}/evaluations": {
       "get": {
         "operationId": "list_alpha_evaluations",

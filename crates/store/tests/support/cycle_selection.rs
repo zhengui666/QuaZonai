@@ -200,6 +200,18 @@ async fn failed_selection_keeps_original_queue_and_replay_seals_members_not_othe
         .unwrap();
     assert_eq!(first.items[0].experiment_id, experiment);
     assert_eq!(first.items[0].evaluation_id, Some(evaluation));
+    let source: uuid::Uuid =
+        sqlx::query_scalar("SELECT subject_alpha_version_id FROM app.evaluations WHERE id=$1")
+            .bind(evaluation.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        first.items[0].alpha_version_id.map(Id::as_uuid),
+        Some(source)
+    );
+    assert_eq!(sqlx::query_scalar::<_, i32>("SELECT derived.version FROM app.alpha_versions original JOIN app.alphas a ON a.id=original.alpha_id JOIN app.alpha_versions derived ON derived.id=a.active_version_id WHERE original.id=$1 AND derived.calibration_id IS NOT NULL")
+        .bind(source).fetch_one(&pool).await.unwrap(), 2);
     assert_eq!(
         first.items[0].selection_metric.as_ref().unwrap().value,
         Some(0.8)
