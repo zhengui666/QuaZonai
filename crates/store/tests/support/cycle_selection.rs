@@ -39,7 +39,7 @@ pub(super) async fn cancelled_parent(
         .await
         .unwrap();
     assert!(store
-        .complete_research_mission(current.id, &lease.fence)
+        .complete_mission(current.id, &lease.fence)
         .await
         .unwrap());
     message(pool, current.id).await

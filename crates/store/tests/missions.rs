@@ -303,7 +303,7 @@ async fn cancelled_zero_turn_mission_does_not_require_a_thread_or_fabricate_usag
         .unwrap();
     cancel(&store, &actor, lease.run.id).await;
     assert!(store
-        .complete_research_mission(lease.run.id, &lease.fence)
+        .complete_mission(lease.run.id, &lease.fence)
         .await
         .unwrap());
     let observation: serde_json::Value =
@@ -350,7 +350,7 @@ async fn cancelled_unsent_turn_settlement_and_run_finish_share_one_transaction(p
     cancel(&store, &actor, lease.run.id).await;
     sqlx::raw_sql("CREATE FUNCTION public.reject_mission_finish() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.observation->>'source'='NATIVE_MISSION' THEN RAISE EXCEPTION 'injected terminal publication failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_finish BEFORE INSERT ON app.run_terminal_receipts FOR EACH ROW EXECUTE FUNCTION public.reject_mission_finish();").execute(&pool).await.unwrap();
     assert!(store
-        .complete_research_mission(lease.run.id, &lease.fence)
+        .complete_mission(lease.run.id, &lease.fence)
         .await
         .is_err());
     let rolled_back: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.model_turn_terminals),(SELECT count(*) FROM app.model_turn_receipts),(SELECT reserved_tokens FROM app.model_turn_accounting WHERE run_id=$1)")
@@ -362,8 +362,8 @@ async fn cancelled_unsent_turn_settlement_and_run_finish_share_one_transaction(p
     );
     sqlx::raw_sql("DROP TRIGGER reject_finish ON app.run_terminal_receipts; DROP FUNCTION public.reject_mission_finish();").execute(&pool).await.unwrap();
     let (one, two) = tokio::join!(
-        store.complete_research_mission(lease.run.id, &lease.fence),
-        store.complete_research_mission(lease.run.id, &lease.fence)
+        store.complete_mission(lease.run.id, &lease.fence),
+        store.complete_mission(lease.run.id, &lease.fence)
     );
     assert!(one.unwrap() && two.unwrap());
     let receipt: (String,i64,String,String,String) = sqlx::query_as("SELECT outcome,actual_tokens,actual_cost::text,cost_currency,usage_source FROM app.model_turn_receipts WHERE reservation_id=$1")
@@ -432,7 +432,7 @@ async fn cancelled_unknown_send_keeps_its_reservation_until_real_failed_usage_ar
         .unwrap();
     cancel(&store, &actor, lease.run.id).await;
     assert!(!store
-        .complete_research_mission(lease.run.id, &lease.fence)
+        .complete_mission(lease.run.id, &lease.fence)
         .await
         .unwrap());
     let unknown: (i64,i64) = sqlx::query_as("SELECT reserved_tokens,(SELECT count(*) FROM app.model_turn_receipts) FROM app.model_turn_accounting WHERE run_id=$1")
@@ -452,7 +452,7 @@ async fn cancelled_unknown_send_keeps_its_reservation_until_real_failed_usage_ar
         .await
         .unwrap();
     assert!(!store
-        .complete_research_mission(lease.run.id, &lease.fence)
+        .complete_mission(lease.run.id, &lease.fence)
         .await
         .unwrap());
     store
@@ -470,7 +470,7 @@ async fn cancelled_unknown_send_keeps_its_reservation_until_real_failed_usage_ar
         .await
         .unwrap();
     assert!(store
-        .complete_research_mission(lease.run.id, &lease.fence)
+        .complete_mission(lease.run.id, &lease.fence)
         .await
         .unwrap());
     let known: (i64,i64,i64) = sqlx::query_as("SELECT reserved_tokens,used_tokens,(SELECT count(*) FROM app.model_turn_summaries) FROM app.model_turn_accounting WHERE run_id=$1")
@@ -507,12 +507,12 @@ async fn real_turn_deadline_closes_proven_unsent_work_without_fabricated_native_
         .await
         .unwrap();
     assert!(!store
-        .complete_research_mission(lease.run.id, &lease.fence)
+        .complete_mission(lease.run.id, &lease.fence)
         .await
         .unwrap());
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     assert!(store
-        .complete_research_mission(lease.run.id, &lease.fence)
+        .complete_mission(lease.run.id, &lease.fence)
         .await
         .unwrap());
     let run = store.get_run(&actor, lease.run.id).await.unwrap();
@@ -541,7 +541,7 @@ async fn native_public_summary_requires_original_success_and_is_immutable_budget
         .await
         .unwrap();
     assert!(!store
-        .complete_research_mission(lease.run.id, &lease.fence)
+        .complete_mission(lease.run.id, &lease.fence)
         .await
         .unwrap());
     prepare_initial(&store, &lease, &f).await.unwrap();
@@ -600,7 +600,7 @@ async fn native_public_summary_requires_original_success_and_is_immutable_budget
         .unwrap();
     message.native_turn_id = "different-turn".into();
     assert!(!store
-        .complete_research_mission(lease.run.id, &lease.fence)
+        .complete_mission(lease.run.id, &lease.fence)
         .await
         .unwrap());
     assert!(matches!(
@@ -676,14 +676,12 @@ async fn native_public_summary_requires_original_success_and_is_immutable_budget
         Err(StoreError::Domain(domain::DomainError::StaleAttempt))
     ));
     assert!(matches!(
-        store
-            .complete_research_mission(lease.run.id, &stale.fence)
-            .await,
+        store.complete_mission(lease.run.id, &stale.fence).await,
         Err(StoreError::Domain(domain::DomainError::StaleAttempt))
     ));
     sqlx::raw_sql("CREATE FUNCTION public.reject_mission_finish() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.observation->>'source'='NATIVE_MISSION' THEN RAISE EXCEPTION 'injected terminal publication failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_finish BEFORE INSERT ON app.run_terminal_receipts FOR EACH ROW EXECUTE FUNCTION public.reject_mission_finish();").execute(&pool).await.unwrap();
     assert!(store
-        .complete_research_mission(lease.run.id, &lease.fence)
+        .complete_mission(lease.run.id, &lease.fence)
         .await
         .is_err());
     let rolled_back:(String,Option<uuid::Uuid>,i64)=sqlx::query_as("SELECT a.dispatch_state,a.result_manifest_artifact_id,(SELECT count(*) FROM app.run_terminal_receipts WHERE run_id=a.run_id) FROM app.run_attempts a WHERE a.id=$1")
@@ -692,8 +690,8 @@ async fn native_public_summary_requires_original_success_and_is_immutable_budget
     assert_eq!((rolled_back.1, rolled_back.2), (None, 0));
     sqlx::raw_sql("DROP TRIGGER reject_finish ON app.run_terminal_receipts; DROP FUNCTION public.reject_mission_finish();").execute(&pool).await.unwrap();
     let (one, two) = tokio::join!(
-        store.complete_research_mission(lease.run.id, &lease.fence),
-        store.complete_research_mission(lease.run.id, &lease.fence)
+        store.complete_mission(lease.run.id, &lease.fence),
+        store.complete_mission(lease.run.id, &lease.fence)
     );
     assert!(one.unwrap() && two.unwrap());
     let completed:(String,uuid::Uuid,serde_json::Value,String,i64)=sqlx::query_as("SELECT r.state,a.result_manifest_artifact_id,t.observation,c.state,(SELECT count(*) FROM app.qualifications) FROM app.runs r JOIN app.run_attempts a ON a.id=r.active_attempt_id JOIN app.run_terminal_receipts t ON t.run_id=r.id JOIN app.research_cycles c ON c.id=r.cycle_id WHERE r.id=$1")
@@ -762,10 +760,7 @@ async fn mission_cancel_requires_full_native_receipts_and_wins_before_report_ado
         .unwrap()
         .resource;
     assert_eq!(cancelled.state, RunState::CancelRequested);
-    assert!(!store
-        .complete_research_mission(run.id, &lease.fence)
-        .await
-        .unwrap());
+    assert!(!store.complete_mission(run.id, &lease.fence).await.unwrap());
     store
         .observe_mission_turn_terminal(
             reserved.id,
@@ -775,10 +770,7 @@ async fn mission_cancel_requires_full_native_receipts_and_wins_before_report_ado
         )
         .await
         .unwrap();
-    assert!(!store
-        .complete_research_mission(run.id, &lease.fence)
-        .await
-        .unwrap());
+    assert!(!store.complete_mission(run.id, &lease.fence).await.unwrap());
     store
         .settle_turn(
             reserved.id,
@@ -808,10 +800,7 @@ async fn mission_cancel_requires_full_native_receipts_and_wins_before_report_ado
     )
     .await
     .unwrap();
-    assert!(store
-        .complete_research_mission(run.id, &lease.fence)
-        .await
-        .unwrap());
+    assert!(store.complete_mission(run.id, &lease.fence).await.unwrap());
     let finished = store.get_run(&actor, run.id).await.unwrap();
     assert_eq!(finished.state, RunState::Cancelled);
     assert_eq!(

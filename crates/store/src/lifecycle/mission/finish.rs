@@ -5,22 +5,18 @@ use crate::turns::{TurnOutcome, UsageReceipt};
 impl Store {
     /// A committed native/public-answer chain is the completion proof. No caller
     /// supplies a verdict, arbitrary report, model identity or fabricated stop.
-    pub async fn complete_research_mission(
-        &self,
-        run: Id,
-        owner: &WorkerFence,
-    ) -> Result<bool, StoreError> {
+    pub async fn complete_mission(&self, run: Id, owner: &WorkerFence) -> Result<bool, StoreError> {
         let mut tx = self.pool.begin().await?;
         let mut locked = lock_run(&mut tx, run).await?;
-        let role: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM app.run_missions WHERE run_id=$1 AND role='RESEARCHER')",
-        )
-        .bind(run.as_uuid())
-        .fetch_one(&mut *tx)
-        .await?;
-        if locked.run.kind != RunKind::AgentResearch || !role {
+        let role: Option<String> =
+            sqlx::query_scalar("SELECT role FROM app.run_missions WHERE run_id=$1")
+                .bind(run.as_uuid())
+                .fetch_optional(&mut *tx)
+                .await?;
+        if locked.run.kind != RunKind::AgentResearch || role.is_none() {
             return Err(StoreError::Forbidden);
         }
+        let researcher = role.as_deref() == Some("RESEARCHER");
         if locked.run.state.is_terminal() {
             let committed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.run_terminal_receipts WHERE run_id=$1 AND attempt_id=$2)")
                 .bind(run.as_uuid()).bind(owner.attempt_id.as_uuid()).fetch_one(&mut *tx).await?;
@@ -56,8 +52,8 @@ impl Store {
                 .await?;
             }
         }
-        let latest = sqlx::query("SELECT r.id,s.artifact_id FROM app.model_turn_reservations r JOIN app.model_turn_receipts receipt ON receipt.reservation_id=r.id LEFT JOIN app.model_turn_summaries s ON s.reservation_id=r.id WHERE r.run_id=$1 AND r.attempt_id=$2 AND r.ordinal=(SELECT max(ordinal) FROM app.model_turn_reservations WHERE run_id=$1) AND ($3 OR (receipt.outcome='SUCCEEDED' AND s.artifact_id IS NOT NULL))")
-            .bind(run.as_uuid()).bind(owner.attempt_id.as_uuid()).bind(stopping).fetch_optional(&mut *tx).await?;
+        let latest = sqlx::query("SELECT r.id,s.artifact_id,receipt.outcome FROM app.model_turn_reservations r JOIN app.model_turn_receipts receipt ON receipt.reservation_id=r.id LEFT JOIN app.model_turn_summaries s ON s.reservation_id=r.id WHERE r.run_id=$1 AND r.attempt_id=$2 AND r.ordinal=(SELECT max(ordinal) FROM app.model_turn_reservations WHERE run_id=$1) AND ($3 OR (receipt.outcome='SUCCEEDED' AND s.artifact_id IS NOT NULL) OR ($4 AND receipt.outcome IN ('FAILED','CANCELLED')))")
+            .bind(run.as_uuid()).bind(owner.attempt_id.as_uuid()).bind(stopping).bind(!researcher).fetch_optional(&mut *tx).await?;
         if !stopping && latest.is_none() {
             tx.commit().await?;
             return Ok(false);
@@ -69,9 +65,10 @@ impl Store {
                 .await?;
         let unaccounted: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.model_turn_reservations r LEFT JOIN app.model_turn_receipts receipt ON receipt.reservation_id=r.id LEFT JOIN app.model_turn_terminals terminal ON terminal.reservation_id=r.id LEFT JOIN app.model_turn_summaries summary ON summary.reservation_id=r.id WHERE r.run_id=$1 AND (receipt.reservation_id IS NULL OR terminal.reservation_id IS NULL OR terminal.outcome IS DISTINCT FROM receipt.outcome OR (NOT $2 AND receipt.outcome='SUCCEEDED' AND summary.reservation_id IS NULL)))")
             .bind(run.as_uuid()).bind(stopping).fetch_one(&mut *tx).await?;
-        let proposed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.experiments e JOIN app.experiment_authorship a ON a.experiment_id=e.id WHERE e.project_id=$1 AND e.cycle_id=$2 AND e.outcome='PENDING' AND e.run_id IS NULL AND NOT EXISTS(SELECT 1 FROM app.experiment_compilations c WHERE c.experiment_id=e.id) AND ((e.code_artifact_id IS NOT NULL AND e.parameter_artifact_id IS NOT NULL) OR a.author_run_id=$3))")
+        let (proposed, scientific_pending) = if researcher {
+            let proposed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.experiments e JOIN app.experiment_authorship a ON a.experiment_id=e.id WHERE e.project_id=$1 AND e.cycle_id=$2 AND e.outcome='PENDING' AND e.run_id IS NULL AND NOT EXISTS(SELECT 1 FROM app.experiment_compilations c WHERE c.experiment_id=e.id) AND ((e.code_artifact_id IS NOT NULL AND e.parameter_artifact_id IS NOT NULL) OR a.author_run_id=$3))")
             .bind(locked.run.project_id.as_uuid()).bind(locked.run.cycle_id.map(Id::as_uuid)).bind(run.as_uuid()).fetch_one(&mut *tx).await?;
-        let scientific_pending: bool = sqlx::query_scalar(
+            let scientific_pending: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM app.experiment_compilations c
              JOIN app.runs compiled ON compiled.id=c.compile_run_id
              LEFT JOIN app.experiment_forecasts f ON f.experiment_id=c.experiment_id
@@ -106,7 +103,22 @@ impl Store {
                  JOIN app.model_turn_summaries s ON s.reservation_id=r.id
                  WHERE r.session_id=$2 AND r.command_key='mission/result/'||coalesce(v.run_id,f.run_id,c.compile_run_id)::text))))")
             .bind(run.as_uuid()).bind(session).bind(stopping).fetch_one(&mut *tx).await?;
-        if unaccounted || (!stopping && proposed) || scientific_pending {
+            (proposed, scientific_pending)
+        } else {
+            (false, false)
+        };
+        let failed = !researcher
+            && !stopping
+            && latest
+                .as_ref()
+                .is_some_and(|row| row.get::<String, _>("outcome") != "SUCCEEDED");
+        let review_pending: bool = if !researcher && !stopping && !failed {
+            sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM app.cycle_selections WHERE cycle_id=$2 AND status='COMPLETE') OR EXISTS(SELECT 1 FROM app.cycle_selection_trials target WHERE target.cycle_id=$2 AND target.review_alpha_version_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM app.mission_review_turns turn JOIN app.mission_reviews answer ON answer.reservation_id=turn.reservation_id WHERE turn.run_id=$1 AND turn.experiment_id=target.experiment_id))")
+                .bind(run.as_uuid()).bind(locked.run.cycle_id.map(Id::as_uuid)).fetch_one(&mut *tx).await?
+        } else {
+            false
+        };
+        if unaccounted || (!stopping && proposed) || scientific_pending || review_pending {
             tx.commit().await?;
             return Ok(false);
         }
@@ -115,6 +127,8 @@ impl Store {
             locked.run.state,
             Some(if stopping {
                 RemoteTerminal::Cancelled
+            } else if failed {
+                RemoteTerminal::Failed
             } else {
                 RemoteTerminal::Succeeded
             }),
@@ -139,6 +153,8 @@ impl Store {
             RunReason::RuntimeCancelled
         } else if state == RunState::Cancelled {
             RunReason::ResultDiscardedAfterCancel
+        } else if state == RunState::Failed {
+            RunReason::RuntimeFailed
         } else {
             RunReason::RuntimeSucceeded
         };

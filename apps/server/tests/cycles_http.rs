@@ -232,7 +232,7 @@ async fn authenticated_freeze_and_cycle_start_publish_one_real_run_and_original_
     assert_eq!(cancelled.status, StatusCode::ACCEPTED, "{}", cancelled.body);
     assert!(f
         .store
-        .complete_research_mission(lease.run.id, &lease.fence)
+        .complete_mission(lease.run.id, &lease.fence)
         .await
         .unwrap());
     f.store.acknowledge_run(&message).await.unwrap();

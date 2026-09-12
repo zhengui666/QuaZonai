@@ -113,7 +113,7 @@ async fn mission_cancellation_preserves_validation_publication_and_original_tria
         .await
         .unwrap();
     assert!(!store
-        .complete_research_mission(parent.id, &lease.fence)
+        .complete_mission(parent.id, &lease.fence)
         .await
         .unwrap());
     let child = store.get_run(&actor, validation).await.unwrap();
@@ -143,7 +143,7 @@ async fn mission_cancellation_preserves_validation_publication_and_original_tria
     .unwrap();
     assert_eq!(receipt, ("CANCELLED".into(), None));
     assert!(store
-        .complete_research_mission(parent.id, &lease.fence)
+        .complete_mission(parent.id, &lease.fence)
         .await
         .unwrap());
     let observation: serde_json::Value =

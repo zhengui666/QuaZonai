@@ -122,8 +122,14 @@ summary视图来源、原Turn/item/phase如实记录；失败重投只补摘要�
 原请求和总结按不可变Mission角色保存：研究者RESEARCH、Reviewer EVALUATOR_ONLY；
 Reviewer只能发送本Run/Attempt的可信Turn请求，不获得任意封存产物读取权限。
 两种Mission角色共用Runtime能力刷新检查；配置版本变化不能因Reviewer角色被跳过。
+研究者成功收束且冻结选择COMPLETE、有原审阅目标时，ACK事务使用冻结Reviewer
+Profile准入独立Mission；账号暂不可用保留原消息。Reviewer使用不同Thread和工作区，
+仅接原CODE、原PARAMETERS及有界Validation上下文，不接研究对话或Sealed原始数据。
+每目标一条原生Turn，公开JSON回答绑定原版本/预约/总结；无效回答记INCONCLUSIVE，
+不另开付费修复轮。Reviewer无ARTIFACT_SUBMIT/EXPERIMENT_SUBMIT；其PASS不是
+Operator审批、Sealed通过或资格。当前没有新增人工命令或审阅结果公开接口。
 全部Turn/科学任务结算、反馈回答及提案处理齐全后，可信Worker才提交Mission执行
-终态并归档PGMQ；ACK失败只重放归档，不重开模型。SUCCEEDED不改变Cycle、实验
+终态并归档PGMQ；ACK失败重放原事务，不重开模型。SUCCEEDED不是Cycle完成、实验
 裁决或资格；只有公开限制说明且无实验的会话也不构成“无有效Alpha”的科学证据。
 取消/到期收束不会新开验证或反馈Turn；已有科学任务须有真实终态，缺最终模型
 用量仍保持未知。只有原账本证明无发送意图才记NOT_SENT，不能手填零费用清账；

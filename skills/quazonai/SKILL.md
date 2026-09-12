@@ -99,6 +99,11 @@ Mission须等待正式验证、评估发表和原Thread反馈回答；不能自�
 Reviewer的原生请求/总结由可信服务按原角色保存为EVALUATOR_ONLY；不得借普通
 研究上传或读取接口转交审阅材料，也不能把任意封存参数作为模型Turn请求。
 Reviewer的Runtime刷新仍核对原冻结配置、启用状态、租约及期限，不因角色跳过。
+独立Reviewer由可信研究ACK事务准入，使用冻结Profile、不同Thread/工作区及原累计预算。
+仅审阅可信复制的原CODE/PARAMETERS/Validation上下文，每目标一条原生Turn；不接研究
+对话、账号材料、Sealed原始行或校准系数。不获ARTIFACT_SUBMIT/EXPERIMENT_SUBMIT。
+按DESIGN B5.0.5返回精确目标JSON；缺证据应INCONCLUSIVE，不自授审批或资格。
+无效回答由可信服务保留原总结并记INCONCLUSIVE，不请求额外修复轮或改旧回答。
 封存机会拒绝由可信未发送结算器处理，不能冒充Runtime失败、退款或已停止远端任务。
 上述是成功收束条件。人工取消/真实到期后由可信Worker停止新阶段，保留已启动
 任务和完整用量对账；只有账本证明未发送才记NOT_SENT。Agent不能自行退款、补零、

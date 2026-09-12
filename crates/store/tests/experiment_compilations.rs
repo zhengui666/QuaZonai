@@ -342,10 +342,7 @@ async fn mission_cancellation_waits_for_admitted_compilation_but_not_future_fore
         )
         .await
         .unwrap();
-    assert!(!store
-        .complete_research_mission(run.id, &lease.fence)
-        .await
-        .unwrap());
+    assert!(!store.complete_mission(run.id, &lease.fence).await.unwrap());
     assert_eq!(
         store.get_run(&actor, compiler).await.unwrap().state,
         contracts::runs::RunState::Queued
@@ -356,10 +353,7 @@ async fn mission_cancellation_waits_for_admitted_compilation_but_not_future_fore
         .unwrap()
         .is_none());
     complete_compilation(&pool, &store, &f, compiler).await;
-    assert!(store
-        .complete_research_mission(run.id, &lease.fence)
-        .await
-        .unwrap());
+    assert!(store.complete_mission(run.id, &lease.fence).await.unwrap());
     assert_eq!(
         store.get_run(&actor, run.id).await.unwrap().state,
         contracts::runs::RunState::Cancelled

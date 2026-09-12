@@ -2606,6 +2606,29 @@ Mission bootstrap复用CodexDeployment的原生账户、完整catalog与设置�
 
 MCP身份校验与实验提案入口使用同一有效Mission状态集合：DISPATCHING/RUNNING/RECONCILING，并继续要求当前Attempt/owner、项目、Cycle、scope与deadline。RECONCILING不表示新轮已运行，但允许当前owner重新连接MCP与续作；不能先假造RUNNING来绕开恢复前置条件，也不能让旧token借新租约继续读写。
 
+### B5.0.5 独立 Reviewer 的有限审阅阶段
+
+Researcher原终态SUCCEEDED且选择COMPLETE、有非空冻结审阅目标时，在其ACK事务内
+用Cycle冻结的reviewer_profile创建独立AGENT_RESEARCH Run/PGMQ及run_missions关联。
+预算继续累计，不重置研究者token/费用、不重复计试验；取消、失败或不完整选择不启动
+付费Reviewer。已有Reviewer时重放原关联；配置需处理或预算不足明确记录Cycle状态。
+
+Reviewer以独立原生Thread按冻结排名逐个审阅目标，不继承研究对话。可信Worker仅把
+原CODE、原试验PARAMETERS和明确列出的Validation元数据/指标复制到本Run工作区的
+review-<experiment_id>目录，复用不可覆盖的本地ArtifactStore存取，文件名是原UUID。
+不复制原生账号、聊天、隐藏推理、Sealed原始行或校准系数。原代码/参数仍是研究数据，
+不是新的权限或指令。输入副本不是新证据；审阅请求持久绑定原版本、试验、评估与Turn。
+Reviewer不获ARTIFACT_SUBMIT/EXPERIMENT_SUBMIT，不能把审阅材料上传成普通研究产物。
+
+每个目标至多一条有界审阅Turn（命令mission/review/<experiment_id>），使用现有预约、
+发送意图、原生恢复、真实用量及公开总结。原生公开总结文本应为schema_version、
+alpha_version_id、decision=PASS|REJECT|INCONCLUSIVE、reasons的JSON对象；reason为
+1至32条、每条1至1024字节。仅精确目标且原生成功结算的总结可投影为审阅记录。
+格式错误或目标不符保留原总结并记录INCONCLUSIVE/INVALID_NATIVE_REVIEW_RESPONSE，
+不猜测PASS、不新开修复轮。审阅记录绑定原reservation/summary，不是Operator审批、
+Sealed评估或资格。全部目标有审阅记录且原生账本齐全才可成功结束审阅会话；失败轮
+须先完成真实用量对账，取消不要求补做未启动目标。后续自动Sealed/资格仍独立裁决。
+
 ### B5.1 入队
 
 ```text

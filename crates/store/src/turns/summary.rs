@@ -94,6 +94,7 @@ impl Store {
             .bind(artifact.to_string()).bind(bytes.len() as i64).bind(mission.artifact_access()).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO app.model_turn_summaries(reservation_id,artifact_id,native_item_id) VALUES($1,$2,$3)")
             .bind(reservation.as_uuid()).bind(artifact.as_uuid()).bind(&summary.native_item_id).execute(&mut *tx).await?;
+        review::record_summary(&mut tx, reservation, artifact, &summary.text).await?;
         publish(NativeObjectPublication {
             id: artifact,
             bytes,

@@ -3,6 +3,38 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Independent native Reviewer stage, 2026-09-13
+
+Working source over `c63e126ccce86394c8f3563fbc9ba4b37c5eb8e1` admits an
+independent Reviewer in the original successful Researcher ACK transaction,
+using frozen selection/profile and cumulative budget. It reuses Run/PGMQ,
+native Turn reservation/usage/summary and immutable ArtifactStore inputs.
+Migration 045 binds each selected original target to one Reviewer Turn and its
+settled public JSON assessment. Invalid answers become INCONCLUSIVE without a
+new paid repair. No research chat, credential, Sealed rows or calibration
+coefficients are supplied; Reviewer cannot upload artifacts or propose trials.
+
+`verify-gk3jA4` passed check/format/strict Clippy and 159 Store tests before the
+final native-test/context additions. Two new Store/server review unit checks
+passed separately. `verify-CVwsFe` passed final-source workspace check/format/
+strict Clippy, the extended real App Server/HTTP/PGMQ Mission test (306.15s)
+and both cancellation regressions (57.33s), zero failed/ignored, source unchanged,
+owned PostgreSQL stopped. The native test executes actual file tools (including
+native asynchronous process continuation), verifies separate Thread identity,
+original target/summary, scopes, cumulative token usage and no qualification.
+An injected Reviewer association failure rolls back selection/admission/ACK;
+concurrent original ACKs create one Reviewer. Repeated ACK is idempotent;
+claiming an already archived message is rejected without another model request.
+
+Earlier native runs failed because the controlled response fixture assumed
+immediate shell output and then incorrectly expected archived messages to be
+claimable. Those failures were retained and corrected, not reported as green.
+Only provider/science responses are controlled: this is not real account/model
+inference, actual market Mission-to-OCI acceptance or complete T42 evidence.
+Automatic Sealed continuation, qualification, whole-workspace quota and the
+remaining W0–W8 contracts are not completed by this stage. No GitHub review,
+CI, merge or Issue closure is claimed.
+
 ## Frozen original review target, 2026-09-12
 
 Working source over `8fa4635ae90647dfd5b0c3c4296fcb0aa3f68e0a` adds nullable

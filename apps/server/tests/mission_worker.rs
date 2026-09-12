@@ -62,6 +62,10 @@ async fn fixture(pool: &PgPool) -> Fixture {
 }
 
 async fn fixture_with_cost(pool: &PgPool, priced: bool) -> Fixture {
+    fixture_with_selection(pool, priced, 2).await
+}
+
+async fn fixture_with_selection(pool: &PgPool, priced: bool, candidates: u16) -> Fixture {
     let root = tempfile::tempdir().unwrap();
     for name in ["native", "workspaces", "secrets"] {
         fs::DirBuilder::new()
@@ -116,7 +120,15 @@ async fn fixture_with_cost(pool: &PgPool, priced: bool) -> Fixture {
         integrations::artifacts::ArtifactStore::open(&root.path().join("objects")).unwrap(),
     );
     let (store, actor) = research_support::operator(pool).await;
-    let mut data = cycle_support::setup_with_objects(pool, &store, &actor, objects).await;
+    let mut data = cycle_support::setup_with_policy(pool, &store, &actor, objects, |policy| {
+        policy.selection.candidate_count = candidates;
+    })
+    .await;
+    if candidates == 1 {
+        // Explicit same Profile is allowed; independent native Thread is still
+        // mandatory and checked below. No second HOME or account is invented.
+        data.reviewer_profile = data.researcher_profile;
+    }
     let current = store.runtime(&actor, data.data.runtime).await.unwrap();
     let mut configuration = current.configuration;
     configuration.endpoint = runtime_origin;
@@ -372,7 +384,7 @@ async fn daemon_cancellation_settles_unsent_turn_without_reopening_original_thre
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn settled_native_mission_publishes_validation_then_returns_to_original_thread(pool: PgPool) {
-    let f = fixture(&pool).await;
+    let f = fixture_with_selection(&pool, false, 1).await;
     let experiment = experiment_support::propose(
         &pool,
         &f.store,
@@ -622,7 +634,7 @@ async fn settled_native_mission_publishes_validation_then_returns_to_original_th
     ));
     assert!(!f
         .store
-        .complete_research_mission(f.lease.run.id, &before_feedback.fence)
+        .complete_mission(f.lease.run.id, &before_feedback.fence)
         .await
         .unwrap());
     visible(&f, &pool).await;
@@ -685,8 +697,10 @@ async fn settled_native_mission_publishes_validation_then_returns_to_original_th
         assert!(body.get(excluded).is_none());
         assert!(body["evaluation"].get(excluded).is_none());
     }
+    sqlx::raw_sql("CREATE FUNCTION public.reject_reviewer() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.role='INDEPENDENT_REVIEWER' THEN RAISE EXCEPTION 'controlled Reviewer admission failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_reviewer BEFORE INSERT ON app.run_missions FOR EACH ROW EXECUTE FUNCTION public.reject_reviewer();")
+        .execute(&pool).await.unwrap();
     visible(&f, &pool).await;
-    tokio::time::timeout(
+    let stopped_at_ack = tokio::time::timeout(
         std::time::Duration::from_secs(150),
         worker.process_mission_message(
             f.message.clone(),
@@ -695,12 +709,39 @@ async fn settled_native_mission_publishes_validation_then_returns_to_original_th
         ),
     )
     .await
-    .unwrap()
     .unwrap();
+    assert!(stopped_at_ack.is_err());
     assert_eq!(f.provider.request_count(), 2);
     assert!(f.provider.saw_previous_context());
-    // The daemon, not this test's direct acknowledgement replay, formed the
-    // snapshot without another native Turn or duplicated scientific execution.
+    assert_eq!(
+        f.store
+            .get_run(&f.actor, f.lease.run.id)
+            .await
+            .unwrap()
+            .state,
+        RunState::Succeeded
+    );
+    let partial:(i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM app.cycle_selections),(SELECT count(*) FROM app.run_missions WHERE role='INDEPENDENT_REVIEWER')")
+        .fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        partial,
+        (0, 0),
+        "failed Reviewer creation rolls back selection and its Run/queue reservation"
+    );
+    sqlx::raw_sql(
+        "DROP TRIGGER reject_reviewer ON app.run_missions; DROP FUNCTION public.reject_reviewer();",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (a, b) = tokio::join!(
+        f.store.acknowledge_run(&f.message),
+        f.store.acknowledge_run(&f.message)
+    );
+    a.unwrap();
+    b.unwrap();
+    // Two actual competing ACKs share the same original native completion and
+    // create one selection/Reviewer without another research model request.
     let cycle = f.lease.run.cycle_id.unwrap();
     let selection = f.store.cycle_selection(&f.actor, cycle).await.unwrap();
     assert_eq!(selection.research_run_id, f.lease.run.id);
@@ -714,7 +755,7 @@ async fn settled_native_mission_publishes_validation_then_returns_to_original_th
     );
     assert_eq!(
         selection.status,
-        contracts::cycles::SelectionStatus::Inconclusive
+        contracts::cycles::SelectionStatus::Complete
     );
     let trials = f
         .store
@@ -760,6 +801,126 @@ async fn settled_native_mission_publishes_validation_then_returns_to_original_th
         summaries, 2,
         "each settled native reply has one original producer-bound public report"
     );
+    let messages = f.store.read_mission_messages(60, 10).await.unwrap();
+    assert_eq!(
+        messages.len(),
+        1,
+        "Research ACK durably creates one independent Reviewer"
+    );
+    let review = &messages[0];
+    assert_ne!(review.run_id, f.lease.run.id);
+    let role: (String, uuid::Uuid) =
+        sqlx::query_as("SELECT role,profile_id FROM app.run_missions WHERE run_id=$1")
+            .bind(review.run_id.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        role,
+        (
+            "INDEPENDENT_REVIEWER".into(),
+            f.data.reviewer_profile.profile_id.as_uuid()
+        )
+    );
+    let original_tokens:i64=sqlx::query_scalar("SELECT sum(receipt.actual_tokens)::bigint FROM app.model_turn_reservations r JOIN app.model_turn_receipts receipt ON receipt.reservation_id=r.id WHERE r.run_id=$1")
+        .bind(f.lease.run.id.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert!(original_tokens > 0);
+    f.store.acknowledge_run(&f.message).await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.run_missions WHERE cycle_id=$1")
+            .bind(cycle.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        2
+    );
+    tokio::time::timeout(
+        std::time::Duration::from_secs(150),
+        worker.process_mission_message(
+            review.clone(),
+            "independent-native-review",
+            receiver.clone(),
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let reviewed_requests = f.provider.request_count();
+    assert!(
+        (4..=8).contains(&reviewed_requests),
+        "one independent Turn uses native input-file tools before its answer"
+    );
+    assert_eq!(
+        f.store
+            .get_run(&f.actor, review.run_id)
+            .await
+            .unwrap()
+            .state,
+        RunState::Succeeded
+    );
+    let reviewed:(String,String,uuid::Uuid)=sqlx::query_as("SELECT s.thread_id,r.decision,t.alpha_version_id FROM app.mission_reviews r JOIN app.mission_review_turns t ON t.reservation_id=r.reservation_id JOIN app.codex_sessions s ON s.run_id=t.run_id WHERE t.run_id=$1")
+        .bind(review.run_id.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_ne!(reviewed.0, facts.3);
+    assert_eq!(reviewed.1, "PASS");
+    assert_eq!(
+        Some(reviewed.2),
+        trials[0].review_alpha_version_id.map(Id::as_uuid)
+    );
+    let copied: serde_json::Value = serde_json::from_slice(
+        &fs::read(
+            f.root
+                .path()
+                .join("workspaces")
+                .join(review.run_id.to_string())
+                .join(format!("review-{experiment}"))
+                .join(reviewed.2.to_string()),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(copied["origin"], "FIXTURE");
+    assert_eq!(copied["signal_kind"], "SCORE");
+    assert_eq!(copied["qualification"], "NOT_GRANTED");
+    assert_eq!(
+        copied["review_policy"]["id"],
+        f.data.brief.content.evaluation_policy_id.to_string()
+    );
+    for excluded in [
+        "calibration",
+        "points",
+        "forecast",
+        "conversation",
+        "credentials",
+    ] {
+        assert!(copied.get(excluded).is_none());
+    }
+    let scopes:Vec<String>=sqlx::query_scalar("SELECT c.scope_codes FROM app.machine_credentials c JOIN app.machine_principals p ON p.id=c.principal_id WHERE p.run_id=$1 ORDER BY c.issued_at DESC LIMIT 1")
+        .bind(review.run_id.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert!(!scopes
+        .iter()
+        .any(|s| s == "ARTIFACT_SUBMIT" || s == "EXPERIMENT_SUBMIT"));
+    let accumulated:(i64,i64)=sqlx::query_as("SELECT (SELECT sum(used_tokens)::bigint FROM app.model_turn_accounting WHERE cycle_id=$1),(SELECT sum(receipt.actual_tokens)::bigint FROM app.model_turn_reservations r JOIN app.model_turn_receipts receipt ON receipt.reservation_id=r.id WHERE r.cycle_id=$1)")
+        .bind(cycle.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(accumulated.0, accumulated.1);
+    assert!(
+        accumulated.0 > original_tokens,
+        "Reviewer spending does not reset Researcher usage"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.qualifications")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0
+    );
+    f.store.acknowledge_run(review).await.unwrap();
+    // ACK itself is idempotent; a stale worker must not claim an archived
+    // message again. Both paths leave native model usage unchanged.
+    assert!(worker
+        .process_mission_message(review.clone(), "review-ack-replay", receiver)
+        .await
+        .is_err());
+    assert_eq!(f.provider.request_count(), reviewed_requests);
 }
 
 #[sqlx::test(migrations = "../../migrations")]

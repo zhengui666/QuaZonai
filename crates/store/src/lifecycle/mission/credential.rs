@@ -29,11 +29,11 @@ impl Store {
             .await?;
         let mut scopes = vec![
             MachineScope::ResearchRead,
-            MachineScope::ArtifactSubmit,
             MachineScope::EvidenceRead,
             MachineScope::RunRead,
         ];
         if role == "RESEARCHER" {
+            scopes.insert(1, MachineScope::ArtifactSubmit);
             scopes.push(MachineScope::ExperimentSubmit);
         }
         let scopes: Vec<_> = scopes.into_iter().map(MachineScope::code).collect();

@@ -26,6 +26,7 @@ use store::{
 };
 use tokio::sync::watch;
 
+mod review;
 mod turn;
 pub use turn::TurnProgress;
 
@@ -101,10 +102,13 @@ impl Worker {
     ) -> Result<bool, WorkerFailure> {
         let run = lease.run.id;
         let fence = &lease.fence;
-        if self.store.complete_research_mission(run, fence).await? {
+        if self.store.complete_mission(run, fence).await? {
             return Ok(true);
         }
         let job = self.store.mission_job(run, fence).await?;
+        if job.role == "INDEPENDENT_REVIEWER" {
+            return self.drive_review(launcher, lease, shutdown).await;
+        }
         if job.session.is_some()
             && self
                 .store
@@ -220,7 +224,7 @@ impl Worker {
     async fn advance_mission_experiment(&self, lease: &RunLease) -> Result<bool, WorkerFailure> {
         if self
             .store
-            .complete_research_mission(lease.run.id, &lease.fence)
+            .complete_mission(lease.run.id, &lease.fence)
             .await?
         {
             return Ok(true);

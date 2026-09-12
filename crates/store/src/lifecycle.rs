@@ -1159,6 +1159,26 @@ impl Store {
             return Err(StoreError::Conflict);
         }
         crate::selection::freeze(&mut tx, &locked.run).await?;
+        if locked.run.state == RunState::Succeeded
+            && locked.cycle_state.as_deref() == Some("RUNNING")
+        {
+            let startup = sqlx::query("SELECT startup.* FROM app.cycle_startups startup JOIN app.cycle_selections selection ON selection.cycle_id=startup.cycle_id WHERE selection.research_run_id=$1 AND selection.status='COMPLETE' AND EXISTS(SELECT 1 FROM app.cycle_selection_trials t WHERE t.cycle_id=selection.cycle_id AND t.review_alpha_version_id IS NOT NULL) AND NOT EXISTS(SELECT 1 FROM app.run_missions m WHERE m.cycle_id=selection.cycle_id AND m.role='INDEPENDENT_REVIEWER')")
+                .bind(locked.run.id.as_uuid()).fetch_optional(&mut *tx).await?;
+            if let Some(startup) = startup {
+                if !locked.admission_open() {
+                    return Err(DomainError::AdmissionClosed.into());
+                }
+                let (next, advanced) =
+                    mission::admit_role(tx, &locked, &startup, "INDEPENDENT_REVIEWER").await?;
+                tx = next;
+                if !advanced {
+                    // Persist the honest waiting reason, but retain this original
+                    // queue message as the continuation until account work ends.
+                    tx.commit().await?;
+                    return Err(StoreError::Conflict);
+                }
+            }
+        }
         match queue_matches(&mut tx, message).await {
             Ok(()) => {
                 let archived: bool = sqlx::query_scalar("SELECT pgmq.archive('runs',$1)")

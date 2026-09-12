@@ -363,99 +363,118 @@ impl Store {
             tx.commit().await?;
             return Ok(true);
         }
-        let choice = match (
-            db::optional_id(&startup, "researcher_profile_id")?,
-            startup.try_get::<Option<i64>, _>("researcher_profile_revision")?,
-        ) {
-            (Some(id), Some(revision)) => Some((id, db::revision(revision)?)),
-            (None, None) => None,
-            _ => return Err(StoreError::Integrity),
-        };
-        let Some((profile, revision)) = choice else {
-            waiting(&mut tx, cycle, "EXPLICIT_CODEX_PROFILE_REQUIRED").await?;
-            tx.commit().await?;
-            return Ok(true);
-        };
-        let selected = match crate::codex_profiles::snapshot(&mut tx, profile, revision).await {
-            Ok(selected) if selected.profile.home_binding.is_some() => selected,
-            Err(StoreError::Conflict) => {
-                // A human login/logout in flight is temporary, not a new Cycle
-                // decision. Retain the notification so completion can resume it.
-                sqlx::query("UPDATE app.research_cycles SET next_action='WAITING_FOR_CODEX_ACCOUNT' WHERE id=$1")
+        let (tx, advanced) = admit_role(tx, &locked, &startup, "RESEARCHER").await?;
+        tx.commit().await?;
+        Ok(advanced)
+    }
+}
+
+pub(super) async fn admit_role<'a>(
+    mut tx: Tx<'a>,
+    locked: &LockedRun,
+    startup: &PgRow,
+    role: &str,
+) -> Result<(Tx<'a>, bool), StoreError> {
+    let cycle = locked.run.cycle_id.ok_or(StoreError::Integrity)?;
+    let (profile_column, revision_column, key, next) = match role {
+        "RESEARCHER" => (
+            "researcher_profile_id",
+            "researcher_profile_revision",
+            "cycle/researcher",
+            "RESEARCH_MISSION",
+        ),
+        "INDEPENDENT_REVIEWER" => (
+            "reviewer_profile_id",
+            "reviewer_profile_revision",
+            "cycle/reviewer",
+            "INDEPENDENT_REVIEW",
+        ),
+        _ => return Err(StoreError::Integrity),
+    };
+    let choice = match (
+        db::optional_id(startup, profile_column)?,
+        startup.try_get::<Option<i64>, _>(revision_column)?,
+    ) {
+        (Some(id), Some(revision)) => Some((id, db::revision(revision)?)),
+        (None, None) => None,
+        _ => return Err(StoreError::Integrity),
+    };
+    let Some((profile, revision)) = choice else {
+        waiting(&mut tx, cycle, "EXPLICIT_CODEX_PROFILE_REQUIRED").await?;
+        return Ok((tx, true));
+    };
+    let selected = match crate::codex_profiles::snapshot(&mut tx, profile, revision).await {
+        Ok(selected) if selected.profile.home_binding.is_some() => selected,
+        Err(StoreError::Conflict) => {
+            // A human login/logout in flight is temporary, not a new Cycle
+            // decision. Retain the notification so completion can resume it.
+            sqlx::query("UPDATE app.research_cycles SET next_action='WAITING_FOR_CODEX_ACCOUNT' WHERE id=$1")
                     .bind(cycle.as_uuid()).execute(&mut *tx).await?;
-                tx.commit().await?;
-                return Ok(false);
-            }
-            Ok(_)
-            | Err(
-                StoreError::NotFound
-                | StoreError::RevisionConflict { .. }
-                | StoreError::Domain(DomainError::CapabilityUnavailable(_)),
-            ) => {
-                waiting(&mut tx, cycle, "CODEX_PROFILE_REQUIRES_ATTENTION").await?;
-                tx.commit().await?;
-                return Ok(true);
-            }
-            Err(error) => return Err(error),
-        };
-        let c = sqlx::query("SELECT brief_id,budget_snapshot FROM app.research_cycles WHERE id=$1")
-            .bind(cycle.as_uuid())
-            .fetch_one(&mut *tx)
-            .await?;
-        let context =
-            crate::cycles::execution_context(&mut tx, db::id(c.try_get("brief_id")?)?).await?;
-        let budget: BudgetV1 = serde_json::from_value(c.try_get("budget_snapshot")?)
-            .map_err(|_| StoreError::Integrity)?;
-        let request = RunSubmission {
-            cycle_id: cycle,
-            input_set_id: context.discovery_input_set_id,
-            runtime_id: context.runtime_id,
-            runtime_revision: context.runtime_revision,
-            kind: RunKind::AgentResearch,
-            limits: JobLimitsV1 {
-                schema_version: SchemaV1,
-                experiments: 0,
-                cpu_seconds: counter((budget.max_cpu_seconds.get() / 10).clamp(1, 300) as i64)?,
-                wall_seconds: budget.max_wall_seconds,
-                memory_mib: budget.max_memory_mib.min(4096),
-                output_bytes: counter(budget.max_output_bytes.get().min(64 * 1024 * 1024) as i64)?,
-            },
-        };
-        // A native savepoint permits a domain rejection to leave an honest Cycle
-        // status, while no partial reservation/Run/PGMQ can survive the rejection.
-        let admitted = async {
-            let (inner, admitted) =
-                Self::enqueue_run_in_transaction(tx.begin().await?, "cycle/researcher", &request)
-                    .await?;
-            inner.commit().await?;
-            Ok::<_, StoreError>(admitted)
+            return Ok((tx, false));
         }
-        .await;
-        match admitted {
-            Ok(admitted) => {
-                sqlx::query("INSERT INTO app.run_missions(run_id,project_id,cycle_id,role,profile_id,profile_revision,profile_snapshot,credential_ref) VALUES($1,$2,$3,'RESEARCHER',$4,$5,$6,$7)")
+        Ok(_)
+        | Err(
+            StoreError::NotFound
+            | StoreError::RevisionConflict { .. }
+            | StoreError::Domain(DomainError::CapabilityUnavailable(_)),
+        ) => {
+            waiting(&mut tx, cycle, "CODEX_PROFILE_REQUIRES_ATTENTION").await?;
+            return Ok((tx, true));
+        }
+        Err(error) => return Err(error),
+    };
+    let c = sqlx::query("SELECT brief_id,budget_snapshot FROM app.research_cycles WHERE id=$1")
+        .bind(cycle.as_uuid())
+        .fetch_one(&mut *tx)
+        .await?;
+    let context =
+        crate::cycles::execution_context(&mut tx, db::id(c.try_get("brief_id")?)?).await?;
+    let budget: BudgetV1 =
+        serde_json::from_value(c.try_get("budget_snapshot")?).map_err(|_| StoreError::Integrity)?;
+    let request = RunSubmission {
+        cycle_id: cycle,
+        input_set_id: context.discovery_input_set_id,
+        runtime_id: context.runtime_id,
+        runtime_revision: context.runtime_revision,
+        kind: RunKind::AgentResearch,
+        limits: JobLimitsV1 {
+            schema_version: SchemaV1,
+            experiments: 0,
+            cpu_seconds: counter((budget.max_cpu_seconds.get() / 10).clamp(1, 300) as i64)?,
+            wall_seconds: budget.max_wall_seconds,
+            memory_mib: budget.max_memory_mib.min(4096),
+            output_bytes: counter(budget.max_output_bytes.get().min(64 * 1024 * 1024) as i64)?,
+        },
+    };
+    // A native savepoint permits a domain rejection to leave an honest Cycle
+    // status, while no partial reservation/Run/PGMQ can survive the rejection.
+    let admitted = async {
+        let (inner, admitted) =
+            Store::enqueue_run_in_transaction(tx.begin().await?, key, &request).await?;
+        inner.commit().await?;
+        Ok::<_, StoreError>(admitted)
+    }
+    .await;
+    match admitted {
+        Ok(admitted) => {
+            sqlx::query("INSERT INTO app.run_missions(run_id,project_id,cycle_id,role,profile_id,profile_revision,profile_snapshot,credential_ref) VALUES($1,$2,$3,$8,$4,$5,$6,$7)")
                     .bind(admitted.resource.id.as_uuid()).bind(locked.run.project_id.as_uuid()).bind(cycle.as_uuid()).bind(profile.as_uuid()).bind(revision.get() as i64)
-                    .bind(json!({"schema_version":1,"profile":selected.profile})).bind(selected.credential_ref.map(Id::as_uuid))
+                    .bind(json!({"schema_version":1,"profile":selected.profile})).bind(selected.credential_ref.map(Id::as_uuid)).bind(role)
                     .execute(&mut *tx).await?;
-                sqlx::query(
-                    "UPDATE app.research_cycles SET next_action='RESEARCH_MISSION' WHERE id=$1",
-                )
+            sqlx::query("UPDATE app.research_cycles SET next_action=$2 WHERE id=$1")
                 .bind(cycle.as_uuid())
+                .bind(next)
                 .execute(&mut *tx)
                 .await?;
-            }
-            Err(StoreError::Domain(DomainError::BudgetExhausted(_))) => {
-                sqlx::query("UPDATE app.research_cycles SET state='COMPLETED',outcome='BUDGET_EXHAUSTED',ended_at=clock_timestamp(),next_action='REVIEW_CYCLE_BUDGET' WHERE id=$1")
-                    .bind(cycle.as_uuid()).execute(&mut *tx).await?;
-            }
-            Err(StoreError::Domain(
-                DomainError::Fields(_) | DomainError::CapabilityUnavailable(_),
-            )) => {
-                waiting(&mut tx, cycle, "RESEARCH_INPUTS_REQUIRE_ATTENTION").await?;
-            }
-            Err(error) => return Err(error),
         }
-        tx.commit().await?;
-        Ok(true)
+        Err(StoreError::Domain(DomainError::BudgetExhausted(_))) => {
+            sqlx::query("UPDATE app.research_cycles SET state='COMPLETED',outcome='BUDGET_EXHAUSTED',ended_at=clock_timestamp(),next_action='REVIEW_CYCLE_BUDGET' WHERE id=$1")
+                    .bind(cycle.as_uuid()).execute(&mut *tx).await?;
+        }
+        Err(StoreError::Domain(DomainError::Fields(_) | DomainError::CapabilityUnavailable(_))) => {
+            waiting(&mut tx, cycle, "RESEARCH_INPUTS_REQUIRE_ATTENTION").await?;
+        }
+        Err(error) => return Err(error),
     }
+    Ok((tx, true))
 }

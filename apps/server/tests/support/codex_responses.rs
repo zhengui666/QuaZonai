@@ -120,25 +120,81 @@ async fn respond(
         .transpose()
         .unwrap_or_default()
         .unwrap_or_default();
+    let review = input_text.contains("QZ_MISSION_REVIEW_V1");
+    let review_input_read = input.is_some_and(|items| {
+        items.iter().any(|item| {
+            item["type"] == "function_call_output"
+                && item["output"].to_string().contains("NOT_GRANTED")
+        })
+    });
+    // Native exec may yield a live process instead of its file output. Continue
+    // that exact session, never rerun the command or pretend the files were read.
+    let review_session = input
+        .and_then(|items| {
+            items
+                .iter()
+                .rev()
+                .find(|item| item["type"] == "function_call_output")
+        })
+        .and_then(|item| item["output"].as_str())
+        .and_then(|output| output.split("Process running with session ID ").nth(1))
+        .and_then(|suffix| suffix.split_whitespace().next())
+        .and_then(|id| id.parse::<u64>().ok());
     let valid = !headers.contains_key(header::AUTHORIZATION)
         && !headers.contains_key(header::COOKIE)
         && request["model"] == "gpt-5.4"
         && request["stream"] == true
-        && ordinal < 2
+        && (ordinal < 2 || (review && ordinal < 8))
         && input.is_some()
         && (!tool_continuation || ordinal == 0 || input_text.contains("QZ_NATIVE_TOOL_DONE"))
-        && input_text.contains(if seen.initial.load(Ordering::SeqCst) {
-            if ordinal == 0 {
-                "QZ_MISSION_INITIAL_V1"
-            } else {
-                "QZ_MISSION_RESULT_V1"
-            }
-        } else if ordinal == 0 || tool_continuation {
-            FIRST_PROMPT
+        && if review {
+            (ordinal == 2 || (ordinal > 2 && (review_input_read || review_session.is_some())))
+                && !input_text.contains("QZ_MISSION_INITIAL_V1")
+                && !input_text.contains(FIRST_REPLY)
         } else {
-            SECOND_PROMPT
-        });
+            input_text.contains(if seen.initial.load(Ordering::SeqCst) {
+                if ordinal == 0 {
+                    "QZ_MISSION_INITIAL_V1"
+                } else {
+                    "QZ_MISSION_RESULT_V1"
+                }
+            } else if ordinal == 0 || tool_continuation {
+                FIRST_PROMPT
+            } else {
+                SECOND_PROMPT
+            })
+        };
     if !valid {
+        // Shape-only fixture diagnostics. Never retain or print native input,
+        // headers, tool output contents, credential values or hidden reasoning.
+        let outputs: Vec<_> = input
+            .into_iter()
+            .flatten()
+            .filter(|item| item["type"] == "function_call_output")
+            .take(4)
+            .map(|item| {
+                (
+                    item["output"].is_string(),
+                    item["output"].is_array(),
+                    item["output"].to_string().contains("NOT_GRANTED"),
+                    [
+                        "No such file",
+                        "Permission denied",
+                        "Operation not permitted",
+                        "bwrap",
+                        "not found",
+                        "Process exited with code 0",
+                        "Process running",
+                        "failed",
+                        "denied",
+                    ]
+                    .into_iter()
+                    .filter(|marker| item["output"].to_string().contains(marker))
+                    .collect::<Vec<_>>(),
+                )
+            })
+            .collect();
+        eprintln!("native fixture rejected ordinal={ordinal} review={review} review_input_read={review_input_read} output_shapes={outputs:?} prior_research={}", input_text.contains("QZ_MISSION_INITIAL_V1") || input_text.contains(FIRST_REPLY));
         seen.invalid.store(true, Ordering::SeqCst);
         return (
             StatusCode::BAD_REQUEST,
@@ -175,22 +231,58 @@ async fn respond(
             ),
         );
     }
-    let item = if tool_continuation {
+    let item = if review && ordinal > 2 && !review_input_read {
+        assert!(request["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["name"] == "write_stdin"));
+        json!({"type":"function_call","name":"write_stdin","call_id":format!("qz-review-read-{ordinal}"),
+            "arguments":json!({"session_id":review_session.unwrap(),"chars":"","yield_time_ms":1000,"max_output_tokens":4000}).to_string()})
+    } else if tool_continuation || (review && ordinal == 2) {
         let tool = request["tools"]
             .as_array()
             .unwrap()
             .iter()
             .find(|tool| tool["name"] == "exec_command" || tool["name"] == "shell_command")
             .expect("native shell tool required");
-        let args = if tool["name"] == "exec_command" {
-            json!({"cmd":"printf QZ_NATIVE_TOOL_DONE","login":false,"yield_time_ms":1000,"max_output_tokens":100})
+        let command = if review {
+            let experiment = input_text
+                .split("review-")
+                .nth(1)
+                .unwrap()
+                .chars()
+                .take(36)
+                .collect::<String>();
+            let _: contracts::Id = experiment.clone().try_into().unwrap();
+            format!("find review-{experiment} -maxdepth 1 -type f -exec cat {{}} +")
         } else {
-            json!({"command":"printf QZ_NATIVE_TOOL_DONE","login":false,"timeout_ms":10000})
+            "printf QZ_NATIVE_TOOL_DONE".into()
+        };
+        let args = if tool["name"] == "exec_command" {
+            json!({"cmd":command,"login":false,"yield_time_ms":1000,"max_output_tokens":4000})
+        } else {
+            json!({"command":command,"login":false,"timeout_ms":10000})
         };
         json!({"type":"function_call","name":tool["name"],"call_id":"qz-partial-usage-tool","arguments":args.to_string()})
     } else {
+        let reply = if review {
+            let target = input_text
+                .split("Independent Reviewer for frozen Alpha ")
+                .nth(1)
+                .unwrap()
+                .chars()
+                .take(36)
+                .collect::<String>();
+            let target: contracts::Id = target.try_into().unwrap();
+            json!({"schema_version":1,"alpha_version_id":target,"decision":"PASS","reasons":["Controlled native file-tool review; not market qualification."]}).to_string()
+        } else if ordinal == 0 {
+            FIRST_REPLY.into()
+        } else {
+            SECOND_REPLY.into()
+        };
         json!({"type":"message","role":"assistant","id":format!("qz-local-message-{ordinal}"),
-            "content":[{"type":"output_text","text":if ordinal==0 {FIRST_REPLY} else {SECOND_REPLY}}]})
+            "content":[{"type":"output_text","text":reply}]})
     };
     let events = [
         json!({"type":"response.created","response":{"id":id}}),
