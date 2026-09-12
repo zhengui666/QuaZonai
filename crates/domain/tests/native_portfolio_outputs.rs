@@ -1,5 +1,7 @@
 //! Synthetic structural counterexamples, not native numerical or market evidence.
 //! Genuine solver/account output is independently exercised by job/tests/managed.
+#[path = "../../../tests/support/execution_models.rs"]
+mod execution_models;
 #[path = "../../../tests/support/portfolio.rs"]
 mod portfolio_config;
 use chrono::{DateTime, Utc};
@@ -221,7 +223,9 @@ fn simulation() -> (NativeTaskParametersV1, NativeSimulationResultV1) {
             starting_capital: "1000".parse().unwrap(),
             account_kind: NativeAccountKind::Cash,
             leverage: "1".parse().unwrap(),
-            insert_latency_ns: count(1),
+            fill_model: execution_models::fill(),
+            fee_model: execution_models::fee(),
+            latency_model: execution_models::latency(1),
             snapshot_interval_ms: 1000,
             exposure_tolerance: "0.000001".parse().unwrap(),
             fee_rates: vec![NativeFeeRateV1 {
@@ -281,7 +285,7 @@ fn simulation() -> (NativeTaskParametersV1, NativeSimulationResultV1) {
         NativeTaskParametersV1::SimulatePortfolio {
             schema_version: SchemaV1,
             dataset_revision_id: Id::new(),
-            request,
+            request: Box::new(request),
         },
         result,
     )

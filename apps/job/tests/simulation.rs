@@ -191,6 +191,80 @@ fn frozen_native_fees_change_the_same_shared_capital_simulation() {
 }
 
 #[test]
+fn frozen_fill_and_latency_models_reach_the_actual_native_venue() {
+    use contracts::portfolio::NativeModelRefV1;
+    let (directory, request) = market("0", 20);
+    let balance = |result: NativeSimulationResultV1| {
+        Money::from_str(result.summary.get("account.SIM.balance.USD.total").unwrap())
+            .unwrap()
+            .as_decimal()
+    };
+    let baseline = balance(simulate(directory.path(), &request).unwrap());
+    let mut changed = request.clone();
+    if let NativeModelRefV1::NautilusDefaultFill { parameters, .. } =
+        &mut changed.settings.fill_model
+    {
+        parameters.prob_slippage = "1".parse().unwrap();
+    } else {
+        panic!("original fill model");
+    }
+    assert!(balance(simulate(directory.path(), &changed).unwrap()) < baseline);
+    if let NativeModelRefV1::NautilusDefaultFill { parameters, .. } =
+        &mut changed.settings.fill_model
+    {
+        parameters.prob_slippage = "0.5".parse().unwrap();
+    }
+    assert_eq!(
+        balance(simulate(directory.path(), &changed).unwrap()),
+        balance(simulate(directory.path(), &changed).unwrap())
+    );
+    let mut base_delay = request.clone();
+    if let NativeModelRefV1::NautilusStaticLatency { parameters, .. } =
+        &mut base_delay.settings.latency_model
+    {
+        parameters.base_latency_ns = parameters.insert_latency_ns;
+        parameters.insert_latency_ns = count(0);
+    }
+    assert_eq!(
+        balance(simulate(directory.path(), &base_delay).unwrap()),
+        baseline
+    );
+    for mutation in 0..5 {
+        let mut invalid = request.clone();
+        match mutation {
+            0 => invalid.settings.fee_model = invalid.settings.fill_model.clone(),
+            1 => invalid.settings.fill_model = invalid.settings.latency_model.clone(),
+            2 => {
+                if let NativeModelRefV1::NautilusMakerTaker {
+                    upstream_version, ..
+                } = &mut invalid.settings.fee_model
+                {
+                    *upstream_version = "0".into();
+                }
+            }
+            3 => {
+                if let NativeModelRefV1::NautilusDefaultFill { parameters, .. } =
+                    &mut invalid.settings.fill_model
+                {
+                    parameters.prob_slippage = "1.01".parse().unwrap();
+                }
+            }
+            _ => {
+                if let NativeModelRefV1::NautilusStaticLatency { upstream_class, .. } =
+                    &mut invalid.settings.latency_model
+                {
+                    *upstream_class = "unknown".into();
+                }
+            }
+        }
+        assert!(
+            simulate(directory.path(), &invalid).is_err(),
+            "mutation {mutation}"
+        );
+    }
+}
+
+#[test]
 fn invalid_expired_future_or_coalesced_targets_do_not_become_success() {
     let (directory, request) = market("0", 20);
     let mut invalid = request.clone();
@@ -211,7 +285,7 @@ fn invalid_expired_future_or_coalesced_targets_do_not_become_success() {
     invalid.target_points[1].asof_ns = count(2);
     assert!(simulate(directory.path(), &invalid).is_err());
     invalid = request;
-    invalid.settings.insert_latency_ns = count(0);
+    invalid.settings.latency_model = market::execution_models::latency(0);
     assert!(simulate(directory.path(), &invalid).is_err());
 }
 

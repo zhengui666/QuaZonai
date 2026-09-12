@@ -115,7 +115,9 @@ pub struct NativeSimulationSettingsV1 {
     pub starting_capital: DecimalValue,
     pub account_kind: NativeAccountKind,
     pub leverage: DecimalValue,
-    pub insert_latency_ns: DbCounter,
+    pub fee_model: crate::portfolio::NativeModelRefV1,
+    pub fill_model: crate::portfolio::NativeModelRefV1,
+    pub latency_model: crate::portfolio::NativeModelRefV1,
     #[schema(minimum = 1, maximum = 86400000)]
     pub snapshot_interval_ms: u32,
     pub exposure_tolerance: DecimalValue,

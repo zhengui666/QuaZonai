@@ -1,7 +1,7 @@
 //! Replay frozen targets in one native Nautilus account. This is never live execution.
 use crate::catalog::{load_catalog, NativeMarketData};
 use anyhow::{ensure, Result};
-use bigdecimal::BigDecimal;
+use bigdecimal::{BigDecimal, ToPrimitive};
 use contracts::{science::*, DbCounter, DecimalValue, SchemaV1};
 use nautilus_analysis::analyzer::PortfolioAnalyzer;
 use nautilus_backtest::{
@@ -11,6 +11,7 @@ use nautilus_backtest::{
 use nautilus_common::{actor::DataActor, logging::logger::LoggerConfig};
 use nautilus_execution::models::{
     fee::{FeeModelHandle, MakerTakerFeeModel},
+    fill::{DefaultFillModel, FillModelHandle},
     latency::{LatencyModelHandle, StaticLatencyModel},
 };
 use nautilus_model::{
@@ -330,7 +331,6 @@ fn validate_settings(
             && settings.exposure_tolerance.is_positive()
             && settings.exposure_tolerance.as_decimal() <= &BigDecimal::new(1.into(), 3)
             && settings.leverage.as_decimal() <= &BigDecimal::from(100)
-            && settings.insert_latency_ns.get() > 0
             && (1..=86_400_000).contains(&settings.snapshot_interval_ms),
         "SIMULATION_SETTINGS_INVALID"
     );
@@ -457,6 +457,7 @@ pub fn simulate(
     root: &Path,
     request: &NativeSimulationRequestV1,
 ) -> Result<NativeSimulationResultV1> {
+    let (fill, latency) = domain::portfolio::simulation_models(&request.settings)?;
     let market = load_catalog(root, &request.selection)?;
     let currency = validate_settings(&market, request)?;
     let venue = market.series[0].instrument.venue();
@@ -478,7 +479,7 @@ pub fn simulate(
         currency,
         venue,
         tolerance: native_decimal(&request.settings.exposure_tolerance)?,
-        latency_ns: request.settings.insert_latency_ns.get(),
+        latency_ns: latency.base_latency_ns.get() + latency.insert_latency_ns.get(),
         reduction_ids: BTreeSet::new(),
         deferred_orders: Vec::new(),
         active_expiry_ns: 0,
@@ -522,11 +523,22 @@ pub fn simulate(
                 .map_err(anyhow::Error::msg)?])
                 .default_leverage(native_decimal(&settings.leverage)?)
                 .fee_model(FeeModelHandle::new(MakerTakerFeeModel))
+                .fill_model(FillModelHandle::new(DefaultFillModel::new(
+                    fill.prob_fill_on_limit
+                        .as_decimal()
+                        .to_f64()
+                        .ok_or_else(|| anyhow::anyhow!("FILL_PROBABILITY_RANGE"))?,
+                    fill.prob_slippage
+                        .as_decimal()
+                        .to_f64()
+                        .ok_or_else(|| anyhow::anyhow!("SLIPPAGE_PROBABILITY_RANGE"))?,
+                    Some(fill.random_seed.get()),
+                )?))
                 .latency_model(LatencyModelHandle::new(StaticLatencyModel::new(
-                    0_u64.into(),
-                    settings.insert_latency_ns.get().into(),
-                    0_u64.into(),
-                    0_u64.into(),
+                    latency.base_latency_ns.get().into(),
+                    latency.insert_latency_ns.get().into(),
+                    latency.update_latency_ns.get().into(),
+                    latency.cancel_latency_ns.get().into(),
                 )))
                 .bar_execution(true)
                 .liquidity_consumption(true)

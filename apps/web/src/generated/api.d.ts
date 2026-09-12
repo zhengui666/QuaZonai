@@ -3061,6 +3061,45 @@ export interface components {
         };
         NativeModelRefV1: {
             /** @enum {string} */
+            adapter_kind: "NAUTILUS_DEFAULT_FILL";
+            parameters: {
+                prob_fill_on_limit: components["schemas"]["DecimalValue"];
+                prob_slippage: components["schemas"]["DecimalValue"];
+                random_seed: components["schemas"]["DbCounter"];
+            };
+            /** @enum {integer} */
+            schema_version: 1;
+            /** @enum {string} */
+            upstream_class: "nautilus_execution::models::fill::DefaultFillModel";
+            /** @enum {string} */
+            upstream_version: "0.63.0";
+        } | {
+            /** @enum {string} */
+            adapter_kind: "NAUTILUS_MAKER_TAKER";
+            parameters: Record<string, never>;
+            /** @enum {integer} */
+            schema_version: 1;
+            /** @enum {string} */
+            upstream_class: "nautilus_execution::models::fee::MakerTakerFeeModel";
+            /** @enum {string} */
+            upstream_version: "0.63.0";
+        } | {
+            /** @enum {string} */
+            adapter_kind: "NAUTILUS_STATIC_LATENCY";
+            parameters: {
+                base_latency_ns: components["schemas"]["DbCounter"];
+                cancel_latency_ns: components["schemas"]["DbCounter"];
+                insert_latency_ns: components["schemas"]["DbCounter"];
+                update_latency_ns: components["schemas"]["DbCounter"];
+            };
+            /** @enum {integer} */
+            schema_version: 1;
+            /** @enum {string} */
+            upstream_class: "nautilus_execution::models::latency::StaticLatencyModel";
+            /** @enum {string} */
+            upstream_version: "0.63.0";
+        } | {
+            /** @enum {string} */
             adapter_kind: "CLARABEL_QP";
             parameters: {
                 accept_inaccurate: boolean;

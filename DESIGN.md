@@ -604,6 +604,18 @@ execution_assumptions [immutable]
   settlement_rule_ref: text
 ```
 
+原生模拟必须显式冻结费用、填充/滑点和延迟模型。NativeSimulationSettingsV1的
+fee_model、fill_model、latency_model均为NativeModelRefV1，不使用隐式默认模型或
+旧顶层insert_latency_ns。NAUTILUS_MAKER_TAKER对应MakerTakerFeeModel，参数为空；
+费率仍逐资产绑定原生instrument的maker/taker。NAUTILUS_DEFAULT_FILL对应
+DefaultFillModel，参数为prob_fill_on_limit、prob_slippage（Decimal [0,1]）及必填
+random_seed（DbCounter），滑点由这个原生填充模型拥有，不另造QZ滑点算法。
+NAUTILUS_STATIC_LATENCY对应StaticLatencyModel，参数为base/insert/update/cancel
+latency_ns；每个合计不得溢出，插入总延迟必须大于零。三者锁定nautilus-execution
+0.63.0及完整Rust类名，角色/版本/参数不匹配拒绝，不降级到默认值。
+这些冻结模型必须实际进入Nautilus venue配置；目标因果/到期检查使用同一插入总延迟。
+它们不证明原费用证据、许可或组合资格，正式执行假设创建仍须绑定原项目/产物。
+
 `event_start < event_end`；发布 snapshot 不原地覆盖，更新新目录/版本；许可与用途匹配。PIT 报告证明 available_at 来源，不用 ingest_at 替代。Universe 含退市/到期；静态今日成分明确有偏，不能称完整历史池。
 
 `NativeModelRefV1={schema_version,adapter_kind,upstream_class,upstream_version,parameters}`。class/adapter 来自服务端 allowlist 和实际 capability；parameters 为对应锁定适配器的严格 schema。未知项拒绝，不映成 GENERIC/DEFAULT；禁止任意 Python import/path/exec 越界。

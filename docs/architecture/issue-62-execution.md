@@ -3,6 +3,47 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Explicit native execution models, 2026-09-13
+
+Working source over `ced7fcadbcef1fb8019d3a9119e54e7fb8cac174` removes implicit
+venue fill selection and the standalone insert-latency setting. Simulation now
+requires exact fee/fill/latency NativeModelRefV1 roles, classes and 0.63.0 versions.
+Closed parameters require explicit fill/slippage probabilities and RNG seed,
+base/insert/update/cancel latency; aggregate insert delay is positive and sums are
+checked before calling upstream. Native DefaultFillModel, MakerTakerFeeModel and
+StaticLatencyModel receive these values in actual SimulatedVenueConfig. Target
+causality/expiry uses the same aggregate insert delay. No new dependency, model
+fallback, compatibility field or handwritten fill/fee/RNG algorithm was added.
+Runtime and image declare simulation-models/1; producer requests and independent
+output bindings validate the model roles. Original catalog fee matching remains.
+
+Direct actual `job --test simulation` passed all 9 tests in 3.34s, including
+slippage changing the same shared account, fixed seed repeating the result,
+equivalent base delay and rejected roles/classes/versions/probabilities. These are
+controlled synthetic market inputs, not REAL provenance or qualification.
+Initial `verify-x5um5q` found a large enum variant and the old three-model schema
+assertion. SimulatePortfolio request now uses the existing boxed-request pattern;
+all six native identities and closed parameter schemas remain asserted, no lint
+suppression. Final `verify-78PYyY` exited 0: check/format/strict Clippy, 153 contracts/
+domain/runtime, 8 managed subprocess, 31 native Codex and 90 Job tests passed,
+zero failed/ignored (overlapping subsets), source unchanged.
+
+`web-verify-RtwvqJ` exited 0: six native outputs reproduced byte-for-byte, handwritten
+source unchanged, typecheck/build/wires/CLI help, 505 Vitest/5 Node, 36 dedicated
+and 198 full browser tests passed. No HTTP route changed; model/request schemas
+changed in domain/API/runtime OpenAPI, TypeScript and Ajv JavaScript outputs.
+`owner-oci-ryyW3Y` built actual image
+`sha256:944a190112ab011f6eeea75ca9315d33f0f31e3487dce5322fefbefddff93e30`;
+9 existing native OCI regressions passed in 14.53s, zero failed/ignored, source
+unchanged and new model capability verified. The new execution-model numerical
+counterfactuals run in actual local Job subprocesses, not those OCI regressions.
+Only this entry and the reuse-source note changed after verification.
+
+This is a prerequisite, not formal execution-assumption authoring or trusted
+portfolio admission. Original fee/weight sources, qualified member assembly,
+Candidate simulation/publication, Release and all remaining acceptance gates
+still require implementation. No push/review/merge/Issue closure occurred.
+
 ## Original qualification history, 2026-09-13
 
 Working source over `80428ea256e3ad9a76b7cafc2890e175bc6c3a7b` exposes original

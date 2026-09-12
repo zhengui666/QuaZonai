@@ -1,6 +1,8 @@
 //! Real SQLite parameters with explicit synthetic source metadata. No network/OCI claim.
 #[path = "../../../tests/support/catalog_metadata.rs"]
 mod catalog_fixture;
+#[path = "../../../tests/support/execution_models.rs"]
+mod execution_models;
 #[path = "../../../tests/support/portfolio.rs"]
 mod portfolio_config;
 use catalog_fixture::count;
@@ -107,7 +109,7 @@ fn operation(
         _ => NativeTaskParametersV1::SimulatePortfolio {
             schema_version: SchemaV1,
             dataset_revision_id: dataset,
-            request: NativeSimulationRequestV1 {
+            request: Box::new(NativeSimulationRequestV1 {
                 schema_version: SchemaV1,
                 selection,
                 settings: NativeSimulationSettingsV1 {
@@ -116,7 +118,9 @@ fn operation(
                     starting_capital: "1000".parse().unwrap(),
                     account_kind: NativeAccountKind::Margin,
                     leverage: "1".parse().unwrap(),
-                    insert_latency_ns: count(1),
+                    fill_model: execution_models::fill(),
+                    fee_model: execution_models::fee(),
+                    latency_model: execution_models::latency(1),
                     snapshot_interval_ms: 1000,
                     exposure_tolerance: "0.00001".parse().unwrap(),
                     fee_rates: vec![NativeFeeRateV1 {
@@ -136,7 +140,7 @@ fn operation(
                     }],
                     cash_weight: "0".parse().unwrap(),
                 }],
-            },
+            }),
         },
     }
 }

@@ -170,6 +170,7 @@ async fn real_native_portfolio_aggregates_original_forecasts_before_optimizing()
         .unwrap();
     assert_eq!(manifest.engine_versions["portfolio-ensemble"], "1");
     assert_eq!(manifest.engine_versions["portfolio-models"], "4");
+    assert_eq!(manifest.engine_versions["simulation-models"], "1");
     assert_eq!(manifest.engine_versions["ndarray"], "0.17.1");
     let [output] = manifest.artifacts.as_slice() else {
         panic!("one original allocation report");

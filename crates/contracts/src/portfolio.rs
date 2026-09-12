@@ -13,6 +13,31 @@ pub const FIXED_ENSEMBLE_CLASS: &str = "ndarray::ArrayBase::dot";
 pub const FIXED_ENSEMBLE_VERSION: &str = "0.17.1";
 pub const SAMPLE_COVARIANCE_CLASS: &str = "ndarray_stats::CorrelationExt::cov";
 pub const SAMPLE_COVARIANCE_VERSION: &str = "0.7.0";
+pub const NAUTILUS_EXECUTION_VERSION: &str = "0.63.0";
+pub const NAUTILUS_FILL_CLASS: &str = "nautilus_execution::models::fill::DefaultFillModel";
+pub const NAUTILUS_FEE_CLASS: &str = "nautilus_execution::models::fee::MakerTakerFeeModel";
+pub const NAUTILUS_LATENCY_CLASS: &str = "nautilus_execution::models::latency::StaticLatencyModel";
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NautilusFillParametersV1 {
+    pub prob_fill_on_limit: DecimalValue,
+    pub prob_slippage: DecimalValue,
+    pub random_seed: crate::DbCounter,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NautilusFeeParametersV1 {}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NautilusLatencyParametersV1 {
+    pub base_latency_ns: crate::DbCounter,
+    pub insert_latency_ns: crate::DbCounter,
+    pub update_latency_ns: crate::DbCounter,
+    pub cancel_latency_ns: crate::DbCounter,
+}
 
 /// Original forecast metadata; these identifiers alone never prove qualification.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -215,6 +240,24 @@ pub struct MandateViewV1 {
     deny_unknown_fields
 )]
 pub enum NativeModelRefV1 {
+    NautilusDefaultFill {
+        schema_version: SchemaV1,
+        upstream_class: String,
+        upstream_version: String,
+        parameters: NautilusFillParametersV1,
+    },
+    NautilusMakerTaker {
+        schema_version: SchemaV1,
+        upstream_class: String,
+        upstream_version: String,
+        parameters: NautilusFeeParametersV1,
+    },
+    NautilusStaticLatency {
+        schema_version: SchemaV1,
+        upstream_class: String,
+        upstream_version: String,
+        parameters: NautilusLatencyParametersV1,
+    },
     SampleCovariance {
         schema_version: SchemaV1,
         upstream_class: String,
@@ -245,6 +288,24 @@ impl utoipa::PartialSchema for NativeModelRefV1 {
         };
         let mut schema = OneOfBuilder::new();
         for (kind, class, version, parameters) in [
+            (
+                "NAUTILUS_DEFAULT_FILL",
+                NAUTILUS_FILL_CLASS,
+                NAUTILUS_EXECUTION_VERSION,
+                NautilusFillParametersV1::schema(),
+            ),
+            (
+                "NAUTILUS_MAKER_TAKER",
+                NAUTILUS_FEE_CLASS,
+                NAUTILUS_EXECUTION_VERSION,
+                NautilusFeeParametersV1::schema(),
+            ),
+            (
+                "NAUTILUS_STATIC_LATENCY",
+                NAUTILUS_LATENCY_CLASS,
+                NAUTILUS_EXECUTION_VERSION,
+                NautilusLatencyParametersV1::schema(),
+            ),
             (
                 "CLARABEL_QP",
                 CLARABEL_CLASS,

@@ -10,6 +10,14 @@
 
 ## 已核查并实际运行的 Rust 能力
 
+2026-09-13补充：复用已锁定的nautilus-execution 0.63.0（其原Cargo清单许可为
+LGPL-3.0-only，不更改LICENSE/NOTICE）。直接核查原crate的src/models/fill.rs、
+fee.rs、latency.rs和nautilus-backtest的SimulatedVenueConfig：DefaultFillModel
+接收两项概率及显式种子，MakerTakerFeeModel使用原instrument费率，StaticLatencyModel
+原生将base加到insert/update/delete。QZ只绑定这三种角色的类名、版本和严格参数。
+真实job simulate回归确认滑点改变共享账户结果、固定种子可重复、基础延迟生效及
+错误引用拒绝；不写填充、随机数、费用或延迟算法。具体版本绑定证据见execution文档。
+
 2026-09-13补充：固定混合预测直接复用已锁定`ndarray 0.17.1`的`ArrayView1::dot`
 （上游`src/linalg/impl_linalg.rs`行向量/矩阵乘法实现），不新增依赖或自建ensemble
 引擎。权重由既有BigDecimal精确检查，进入原生数值边界才转换f64。实际两组预测

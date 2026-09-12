@@ -140,6 +140,9 @@ SCORE沿原校准确定，不读取active指针推断，REJECT/未入选/缺证�
 无可用拟合不回退，文件/事务失败保留原Run重试，不重新运行模型或读取Sealed。
 附加校准创建同Alpha的新不可变版本，原实验/账本/源评估不变；不能把源版本PASS
 当作新版本资格。人工alpha calibration只读元数据/源Validation，不向Mission开放。
+原生simulate显式冻结fee_model、fill_model、latency_model（nautilus-execution
+0.63.0，simulation-models/1），旧顶层insert_latency_ns拒绝，不补默认模型或种子；
+模型运行与费用证据、正式执行假设及组合资格是不同边界，不能由成功模拟推定后者。
 人工alpha qualifications分页读取原资格及最早撤销（包含未来生效），不读取Sealed
 报告/指标。grant_window_open仅核对服务端观察时刻的授予/撤销时间窗，不能替代
 当前政策、生命周期、许可证与组合准入检查，不向Mission授予资格或交付权限。

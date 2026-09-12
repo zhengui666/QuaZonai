@@ -233,6 +233,7 @@ pub fn task(spec: &JobSpecV1, parameters: &NativeTaskParametersV1) -> Result<(),
             request,
             ..
         } => {
+            crate::portfolio::simulation_models(&request.settings)?;
             selection(&request.selection)?;
             if !dataset(spec, *dataset_revision_id)
                 || spec.inputs.iter().any(|input| matches!(input, RuntimeInputV1::Dataset { revision_id, .. } if *revision_id != *dataset_revision_id))

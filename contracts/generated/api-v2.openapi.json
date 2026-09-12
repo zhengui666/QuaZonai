@@ -10651,6 +10651,171 @@
             "properties": {
               "adapter_kind": {
                 "enum": [
+                  "NAUTILUS_DEFAULT_FILL"
+                ],
+                "type": "string"
+              },
+              "parameters": {
+                "additionalProperties": false,
+                "properties": {
+                  "prob_fill_on_limit": {
+                    "$ref": "#/components/schemas/DecimalValue"
+                  },
+                  "prob_slippage": {
+                    "$ref": "#/components/schemas/DecimalValue"
+                  },
+                  "random_seed": {
+                    "$ref": "#/components/schemas/DbCounter"
+                  }
+                },
+                "required": [
+                  "prob_fill_on_limit",
+                  "prob_slippage",
+                  "random_seed"
+                ],
+                "type": "object"
+              },
+              "schema_version": {
+                "enum": [
+                  1
+                ],
+                "maximum": 1,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "upstream_class": {
+                "enum": [
+                  "nautilus_execution::models::fill::DefaultFillModel"
+                ],
+                "type": "string"
+              },
+              "upstream_version": {
+                "enum": [
+                  "0.63.0"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "schema_version",
+              "adapter_kind",
+              "upstream_class",
+              "upstream_version",
+              "parameters"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "adapter_kind": {
+                "enum": [
+                  "NAUTILUS_MAKER_TAKER"
+                ],
+                "type": "string"
+              },
+              "parameters": {
+                "additionalProperties": false,
+                "type": "object"
+              },
+              "schema_version": {
+                "enum": [
+                  1
+                ],
+                "maximum": 1,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "upstream_class": {
+                "enum": [
+                  "nautilus_execution::models::fee::MakerTakerFeeModel"
+                ],
+                "type": "string"
+              },
+              "upstream_version": {
+                "enum": [
+                  "0.63.0"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "schema_version",
+              "adapter_kind",
+              "upstream_class",
+              "upstream_version",
+              "parameters"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "adapter_kind": {
+                "enum": [
+                  "NAUTILUS_STATIC_LATENCY"
+                ],
+                "type": "string"
+              },
+              "parameters": {
+                "additionalProperties": false,
+                "properties": {
+                  "base_latency_ns": {
+                    "$ref": "#/components/schemas/DbCounter"
+                  },
+                  "cancel_latency_ns": {
+                    "$ref": "#/components/schemas/DbCounter"
+                  },
+                  "insert_latency_ns": {
+                    "$ref": "#/components/schemas/DbCounter"
+                  },
+                  "update_latency_ns": {
+                    "$ref": "#/components/schemas/DbCounter"
+                  }
+                },
+                "required": [
+                  "base_latency_ns",
+                  "insert_latency_ns",
+                  "update_latency_ns",
+                  "cancel_latency_ns"
+                ],
+                "type": "object"
+              },
+              "schema_version": {
+                "enum": [
+                  1
+                ],
+                "maximum": 1,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "upstream_class": {
+                "enum": [
+                  "nautilus_execution::models::latency::StaticLatencyModel"
+                ],
+                "type": "string"
+              },
+              "upstream_version": {
+                "enum": [
+                  "0.63.0"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "schema_version",
+              "adapter_kind",
+              "upstream_class",
+              "upstream_version",
+              "parameters"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "adapter_kind": {
+                "enum": [
                   "CLARABEL_QP"
                 ],
                 "type": "string"

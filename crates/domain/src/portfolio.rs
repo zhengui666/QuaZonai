@@ -7,6 +7,68 @@ use std::collections::{BTreeMap, BTreeSet};
 fn invalid() -> DomainError {
     DomainError::Invalid("portfolio_allocation")
 }
+
+/// Freeze the actual native execution models; no fallback, RNG or fee algorithm here.
+pub fn simulation_models(
+    settings: &contracts::science::NativeSimulationSettingsV1,
+) -> Result<(&NautilusFillParametersV1, &NautilusLatencyParametersV1), DomainError> {
+    let unavailable = || DomainError::CapabilityUnavailable("native_simulation_models");
+    let fill = match &settings.fill_model {
+        NativeModelRefV1::NautilusDefaultFill {
+            upstream_class,
+            upstream_version,
+            parameters,
+            ..
+        } if upstream_class == NAUTILUS_FILL_CLASS
+            && upstream_version == NAUTILUS_EXECUTION_VERSION =>
+        {
+            parameters
+        }
+        _ => return Err(unavailable()),
+    };
+    match &settings.fee_model {
+        NativeModelRefV1::NautilusMakerTaker {
+            upstream_class,
+            upstream_version,
+            ..
+        } if upstream_class == NAUTILUS_FEE_CLASS
+            && upstream_version == NAUTILUS_EXECUTION_VERSION => {}
+        _ => return Err(unavailable()),
+    }
+    let latency = match &settings.latency_model {
+        NativeModelRefV1::NautilusStaticLatency {
+            upstream_class,
+            upstream_version,
+            parameters,
+            ..
+        } if upstream_class == NAUTILUS_LATENCY_CLASS
+            && upstream_version == NAUTILUS_EXECUTION_VERSION =>
+        {
+            parameters
+        }
+        _ => return Err(unavailable()),
+    };
+    if !fill.prob_fill_on_limit.is_fraction()
+        || !fill.prob_slippage.is_fraction()
+        || [
+            latency.insert_latency_ns,
+            latency.update_latency_ns,
+            latency.cancel_latency_ns,
+        ]
+        .iter()
+        .any(|value| {
+            latency
+                .base_latency_ns
+                .get()
+                .checked_add(value.get())
+                .is_none()
+        })
+        || latency.base_latency_ns.get() + latency.insert_latency_ns.get() == 0
+    {
+        return Err(DomainError::Invalid("native_simulation_parameters"));
+    }
+    Ok((fill, latency))
+}
 fn ordered(low: &DecimalValue, high: &DecimalValue) -> Result<(), DomainError> {
     if low.as_decimal() > high.as_decimal() {
         return Err(invalid());

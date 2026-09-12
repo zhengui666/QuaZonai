@@ -61,7 +61,7 @@ pub enum NativeTaskParametersV1 {
     SimulatePortfolio {
         schema_version: SchemaV1,
         dataset_revision_id: Id,
-        request: NativeSimulationRequestV1,
+        request: Box<NativeSimulationRequestV1>,
     },
 }
 

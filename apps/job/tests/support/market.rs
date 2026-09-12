@@ -1,5 +1,7 @@
 //! Native synthetic catalog fixture. Never REAL data or a production initialization path.
 #![allow(dead_code)]
+#[path = "../../../../tests/support/execution_models.rs"]
+pub mod execution_models;
 #[path = "../../../../tests/support/portfolio.rs"]
 mod portfolio_config;
 use contracts::{portfolio::AllocationTargetV1, science::*, DbCounter, SchemaV1};
@@ -108,7 +110,9 @@ pub fn market(fee: &str, rows_per_asset: u32) -> (tempfile::TempDir, NativeSimul
             starting_capital: "1000000".parse().unwrap(),
             account_kind: NativeAccountKind::Margin,
             leverage: "1".parse().unwrap(),
-            insert_latency_ns: count(1_000_000),
+            fill_model: execution_models::fill(),
+            fee_model: execution_models::fee(),
+            latency_model: execution_models::latency(1_000_000),
             snapshot_interval_ms: 60_000,
             exposure_tolerance: "0.00001".parse().unwrap(),
             fee_rates: rates,

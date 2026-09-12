@@ -15,6 +15,11 @@ Runtime 是受信任的计算网关：只接受已登记镜像、不可变输入
 
 ## 构建
 
+原生模拟要求simulation-models/1，显式fee_model/fill_model/latency_model引用
+进入Nautilus0.63.0配置；滑点及固定随机种子由DefaultFillModel执行，费用由
+MakerTakerFeeModel执行，延迟由StaticLatencyModel执行。旧单项insert_latency_ns
+请求不兼容，不在运行时替调用者补模型或种子。
+
 支持 Linux x86_64、原生 Docker Engine、cgroup v2、Rust 1.98.1。构建机需有该 Rust 工具链、`wasm32-unknown-unknown` 标准目标、GNU coreutils 的 `timeout`、`ldd` 和 Node.js。Docker socket 由操作者正常授权；不要给公共 HTTP 或研究 Agent 暴露 socket，也不要以放开 socket 为匿名写入来解决权限错误。
 
 先从本次要部署的源码构建，再装配新的镜像目录。构建入口不会替用户选择依赖版本或执行 `cargo update`。

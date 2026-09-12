@@ -437,7 +437,7 @@ fn native_managed_simulation_is_a_separate_process_and_does_not_invent_daily_ret
         NativeTaskParametersV1::SimulatePortfolio {
             schema_version: SchemaV1,
             dataset_revision_id: id,
-            request,
+            request: Box::new(request),
         },
         vec![dataset(id)],
     );

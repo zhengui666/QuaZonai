@@ -239,6 +239,15 @@ grant_window_open仅表示服务端checked_at处于授予时间窗且撤销未�
 
 `forecast` 保留未完成标签与指标预热的 null+reason，Wasm没有宿主导入且受fuel/内存/栈限制。`simulate` 在一个原生账户执行全部资产的冻结目标，先确认减仓成交再提交增仓，保留原生费用、数量步长及独立结果。公开 `returns_kind=PORTFOLIO_DAILY` 仅含原生权益快照的UTC日收益，绝不使用单仓收益回退；日内数据不足时 `returns_status=INSUFFICIENT_DATA`、`returns_reason=PORTFOLIO_DAILY_RETURNS_UNAVAILABLE`，不是0收益。跨日全现金的真实0收益可以为OK，但仍须符合评估最小样本要求。
 
+`simulate`的settings必须显式带fee_model、fill_model、latency_model原生引用，
+分别为NAUTILUS_MAKER_TAKER、NAUTILUS_DEFAULT_FILL、NAUTILUS_STATIC_LATENCY，
+完整类名及参数见DESIGN A2/生成合同，版本均为0.63.0。费用参数为空对象；填充参数
+为prob_fill_on_limit、prob_slippage及random_seed；延迟参数为base_latency_ns、
+insert_latency_ns、update_latency_ns、cancel_latency_ns。概率用Decimal字符串，
+种子/纳秒用DbCounter字符串，插入总延迟必须大于零。旧settings.insert_latency_ns
+和缺失模型不兼容；不使用随机默认种子、默认填充或默认零费用。费率仍必须逐资产
+匹配目录原生定义。新镜像声明simulation-models/1，旧镜像不能冒充这一执行合同。
+
 `evaluate-sealed-alpha`仅为可信本机数值入口，输入NativeAlphaSealedRequestV1，
 显式绑定forecast、target_kind和research_available_through_ns；SCORE必需原冻结
 校准JSON（最多8MiB），EXPECTED_RETURN省略--calibration。Wasm仍最多2MiB，

@@ -144,6 +144,7 @@ pub(super) fn binding(
     value: &NativeSimulationResultV1,
 ) -> Result<(), DomainError> {
     shape(value)?;
+    crate::portfolio::simulation_models(&request.settings)?;
     let ids = instruments(&request.selection)?;
     if request.target_points.is_empty()
         || request.target_points.len() > 10_000
