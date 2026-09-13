@@ -17,7 +17,10 @@ pub use output::{
     alpha_validation_policy, check_alpha_calibration, check_alpha_sealed, freeze_alpha_calibration,
     output_bindings, output_shape,
 };
-pub use portfolio::{portfolio_build_liquidity, portfolio_build_request, portfolio_build_result};
+pub use portfolio::{
+    portfolio_build_liquidity, portfolio_build_request, portfolio_build_result,
+    portfolio_execution_costs,
+};
 
 fn bad(field: &str) -> DomainError {
     invalid(field, "NATIVE_TASK_BINDING_INVALID")

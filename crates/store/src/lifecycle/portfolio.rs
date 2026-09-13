@@ -219,9 +219,16 @@ impl Store {
         else {
             return Err(StoreError::Integrity);
         };
-        if fill.prob_slippage.as_decimal() != &bigdecimal::BigDecimal::from(0)
-            || assumption.try_get::<String, _>("cost_assumption_status")?
-                != "CONSERVATIVE_ASSUMPTION"
+        if fill.prob_slippage.is_positive()
+            && cap
+                .engine_versions
+                .get("portfolio-slippage")
+                .map(String::as_str)
+                != Some("1")
+        {
+            return Err(DomainError::CapabilityUnavailable("portfolio_slippage").into());
+        }
+        if assumption.try_get::<String, _>("cost_assumption_status")? != "CONSERVATIVE_ASSUMPTION"
             || settings.base_currency != mandate.content.base_currency
             || settings.starting_capital != mandate.content.capital_assumption
         {

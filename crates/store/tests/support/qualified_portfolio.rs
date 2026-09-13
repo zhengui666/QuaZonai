@@ -424,16 +424,18 @@ async fn qualified_chain(pool: PgPool, with_liquidity: bool) {
             }
         }
     };
-    assert!(store
-        .start_portfolio_build(
-            &actor,
-            "changed-group-source",
-            &request,
-            changed_groups("foreign-group"),
-            |_| async { panic!("invalid group source publishes nothing") },
-        )
-        .await
-        .is_err());
+    if with_liquidity {
+        assert!(store
+            .start_portfolio_build(
+                &actor,
+                "changed-group-source",
+                &request,
+                changed_groups("foreign-group"),
+                |_| async { panic!("invalid group source publishes nothing") },
+            )
+            .await
+            .is_err());
+    }
     let admitted = store
         .start_portfolio_build(
             &actor,
@@ -487,6 +489,31 @@ async fn qualified_chain(pool: PgPool, with_liquidity: bool) {
         }
     }
     result::complete(&pool, &store, &f, &lease, &job).await;
+    if with_liquidity {
+        assert!(matches!(
+            store
+                .publish_scientific_result(
+                    admitted.id,
+                    |id: Id, size: DbCounter| async move {
+                        let bytes = fixture.read(id, size).await?;
+                        if id.as_uuid() != metadata_id {
+                            return Ok(bytes);
+                        }
+                        let text = String::from_utf8(bytes).unwrap();
+                        let from = "\"price_increment\":\"0.00001\"";
+                        assert!(text.contains(from));
+                        let changed = text
+                            .replace(from, "\"price_increment\":\"0.00002\"")
+                            .into_bytes();
+                        assert_eq!(changed.len() as u64, size.get());
+                        Ok(changed)
+                    },
+                    |_| async { panic!("changed native tick publishes no Candidate") },
+                )
+                .await,
+            Err(StoreError::Integrity)
+        ));
+    }
     assert!(matches!(
         store
             .publish_scientific_result(admitted.id, changed_forward_fees, |_| async {
@@ -517,7 +544,11 @@ async fn qualified_chain(pool: PgPool, with_liquidity: bool) {
             ));
         }
     }
-    for replacement in ["foreign-group", "             "] {
+    for replacement in if with_liquidity {
+        vec!["foreign-group", "             "]
+    } else {
+        Vec::new()
+    } {
         assert!(matches!(
             store
                 .publish_scientific_result(admitted.id, changed_groups(replacement), |_| async {

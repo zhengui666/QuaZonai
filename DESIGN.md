@@ -680,7 +680,7 @@ Store在Build准入及Candidate发布时重新读取执行假设原来源，核�
 独立有效期及原数值；原配置/字节不一致为可重试Integrity，真实到期不再具备资格。
 最终无文件回调的数据库期限快照同时检查该原有效期。报告origin按已有规则合并，
 不能提升FIXTURE/SYNTHETIC；绑定消费需要portfolio-liquidity/1镜像能力。
-非零滑点和DATA_BACKED仍需完整成本适配。
+非零滑点规划适配见A5.2；DATA_BACKED仍需完整来源适配，不因模型概率或历史量升级。
 
 原生Universe membership每条带可选groups（最多64个唯一、1..120字符的组标识）。
 null/未提供表示分类未知，[]表示来源明确声明没有组；不自动按名称、币种或证券
@@ -1936,15 +1936,23 @@ HTTP入口为POST /api/v2/portfolio-builds，原生CLI为client portfolio build�
 Operator或目标为mandate_id、内容完全相同的PORTFOLIO_BUILD单次grant及幂等键。
 返回202和原Run回执，不以内存任务句柄冒充已执行。失败清理沿用Operator事务锁。
 
-当前保守BAR适配的市场目标交易只在原假设明确零滑点概率时，采用原费用文档的
-逐资产taker费率作为费用项；文档字节必须与不可变来源相等。组成员沿上述原Universe
-时态记录绑定；历史流动性/参与率沿A2原报告及独立期限核验。非零滑点及DATA_BACKED
-总成本尚须原生来源适配，未实现时明确拒绝，
-不能用taker费用冒充完整含滑点成本，也不能把此初始范围当作Issue62完成范围。
+保守BAR适配使用原费用文档及上述原Universe、历史流动性来源。
+DefaultFillModel非零滑点规划仅覆盖原生支持的线性CurrencyPair/Equity，需要
+portfolio-slippage/1。原生L1撮合以概率p在买价加一个tick、卖价减一个tick。
+job从本次Forward最后已完成BAR提取价格P、event_ns、available_ns及原Instrument
+的tick δ，输出逐资产slippage_references；p=0时列表为空，费用仍为原taker费率f。
+p>0时规划费率为f+p·δ/P·(1+f)：参考价P下、舍入前买入手续费与不利价差的
+期望比例；f≥0时不低于同参考价的卖出期望比例。只换算上游模型，不抽样或另写
+填充模型。系数向上舍入到18位小数，超[0,1]拒绝、不截断。必须0<δ<P；原事件
+在选择内、已可用且与预测asof一致；资产顺序、币种及tick与原Forward定义绑定，
+发布重读核验。价格来自受信任job读取的原目录，不接收Operator手填系数。
+这不是未来成本上界、盘口冲击、逐笔精确费用或DATA_BACKED资格；不含未知深度
+效应，不外推历史价到未来。实际成交、费用舍入及共享资金结果仍由同一Nautilus
+模拟产生，不从净收益再扣规划系数。DATA_BACKED仍待完整来源适配，不能称Issue62完成。
 NativePortfolioBuildRequestV1另冻结完整execution_settings；原transaction_costs_ref
 文档以PARAMETERS角色进入job，job重读其原字节并核对完整副本。币种、资本和
 逐资产taker费率必须分别匹配Mandate及assets.transaction_cost_rate，缺项或额外
-资产拒绝。当前仅允许原DefaultFillModel明确零滑点概率；非零值不能借副本绕过。
+资产拒绝。请求assets仍冻结原taker费率；结果assets仅可按上述参考换算规划费率。
 准入与原结果必须声明portfolio-cost-source/1能力；Candidate发布再次读取原文档，
 与冻结副本及原保存配置完整相等。这是原费用/模型来源绑定，不是新增滑点算法或DATA_BACKED资格。
 费用绑定还必须重验本次Forward目录的原instrument definitions：资产集合、币种及

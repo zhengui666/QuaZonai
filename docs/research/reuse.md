@@ -10,6 +10,13 @@
 
 ## 已核查并实际运行的 Rust 能力
 
+2026-09-13：非零滑点规划直接映射锁定nautilus-execution0.63.0的
+[L1原生单tick规则](https://github.com/nautechsystems/nautilus_trader/blob/a0400251110653b6d8ae6a9b5b89c4543fa85a2d/crates/execution/src/matching_engine/mod.rs)：
+DefaultFillModel按原概率决定是否买加tick/卖减tick，原MakerTaker费用依赖成交价。
+QZ只将原最后BAR价格和tick换算为DESIGN A5.2定义的舍入前比例期望，保留原参考
+并用已有BigDecimal向上舍入到18位；不抽样、不重写撮合或费用算法，不新增依赖。
+该规划系数不是实际费用/未来上界/数据支持资格；实际成交和Money舍入仍归Nautilus。
+
 2026-09-13：原生DATA_VALIDATE的最后BAR名义金额复用已锁定nautilus-model 0.63.0
 `Instrument::try_calculate_notional_value(quantity, price, Some(false))`。已读取本机
 锁定源码`instruments/mod.rs`的原生实现：线性使用quote currency，反向在该参数下

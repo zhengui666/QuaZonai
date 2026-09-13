@@ -467,6 +467,38 @@ fn portfolio_fixture(
 }
 
 #[test]
+fn managed_portfolio_plans_from_original_native_one_tick_references() {
+    let mut previous = contracts::DecimalValue::zero();
+    for probability in ["0", "0.5", "1"] {
+        let f = portfolio_fixture(false, |request| {
+            let contracts::portfolio::NativeModelRefV1::NautilusDefaultFill { parameters, .. } =
+                &mut request.execution_settings.fill_model
+            else {
+                unreachable!()
+            };
+            parameters.prob_slippage = probability.parse().unwrap();
+        });
+        assert!(execute(&f));
+        let report: contracts::science::NativePortfolioBuildResultV1 =
+            result(&f, "qz.native_portfolio");
+        assert_eq!(report.slippage_references.is_empty(), probability == "0");
+        let cost = &report.input.assets[0].transaction_cost_rate;
+        if probability != "0" {
+            assert!(cost.as_decimal() > previous.as_decimal());
+            assert_eq!(
+                report.slippage_references[0].close_price,
+                "1.02".parse().unwrap()
+            );
+            assert_eq!(
+                report.slippage_references[0].event_ns,
+                report.input.forecasts.forecast_asof_ns
+            );
+        }
+        previous = cost.clone();
+    }
+}
+
+#[test]
 fn portfolio_requires_unchanged_original_execution_settings() {
     for case in 0..5 {
         let mut f = portfolio_fixture(false, |request| {

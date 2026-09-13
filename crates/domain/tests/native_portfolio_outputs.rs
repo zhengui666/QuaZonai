@@ -24,25 +24,77 @@ fn native_portfolio_refuses_unbound_execution_costs() {
     .unwrap();
     let original = portfolio_config::request(&input);
     domain::execution::portfolio_build_request(&original).unwrap();
-    for case in 0..5 {
+    for case in 0..4 {
         let mut request = original.clone();
         match case {
             0 => request.execution_settings.base_currency = "EUR".into(),
             1 => request.execution_settings.starting_capital = "1".parse().unwrap(),
             2 => request.execution_settings.fee_rates[0].taker = "0.25".parse().unwrap(),
-            3 => request.execution_settings.fee_rates.clear(),
-            _ => {
-                let NativeModelRefV1::NautilusDefaultFill { parameters, .. } =
-                    &mut request.execution_settings.fill_model
-                else {
-                    unreachable!()
-                };
-                parameters.prob_slippage = "0.1".parse().unwrap();
-            }
+            _ => request.execution_settings.fee_rates.clear(),
         }
         assert!(
             domain::execution::portfolio_build_request(&request).is_err(),
             "cost case {case}"
+        );
+    }
+}
+
+#[test]
+fn native_one_tick_cost_planning_is_explicit_and_bound() {
+    let input: AllocationInputV1 = serde_json::from_str(include_str!(
+        "../../../tests/contracts/allocation-input.json"
+    ))
+    .unwrap();
+    let mut request = portfolio_config::request(&input);
+    for asset in &mut request.assets {
+        asset.transaction_cost_rate = "0.01".parse().unwrap();
+    }
+    for fee in &mut request.execution_settings.fee_rates {
+        fee.taker = "0.01".parse().unwrap();
+    }
+    let NativeModelRefV1::NautilusDefaultFill { parameters, .. } =
+        &mut request.execution_settings.fill_model
+    else {
+        unreachable!()
+    };
+    parameters.prob_slippage = "0.5".parse().unwrap();
+    let references = request
+        .assets
+        .iter()
+        .map(|asset| NativePortfolioSlippageReferenceV1 {
+            instrument_id: asset.instrument_id.clone(),
+            currency: asset.currency.clone(),
+            event_ns: input.forecasts.forecast_asof_ns,
+            available_ns: input.forecasts.forecast_asof_ns,
+            close_price: "10".parse().unwrap(),
+            price_increment: "0.01".parse().unwrap(),
+        })
+        .collect::<Vec<_>>();
+    let costs = domain::execution::portfolio_execution_costs(&request, &references).unwrap();
+    assert_eq!(costs[0].transaction_cost_rate, "0.010505".parse().unwrap());
+    let mut thirds = references.clone();
+    thirds[0].close_price = "3".parse().unwrap();
+    assert_eq!(
+        domain::execution::portfolio_execution_costs(&request, &thirds).unwrap()[0]
+            .transaction_cost_rate,
+        "0.011683333333333334".parse().unwrap()
+    );
+    for case in 0..6 {
+        let mut invalid = references.clone();
+        match case {
+            0 => invalid.clear(),
+            1 => invalid[0].price_increment = "0".parse().unwrap(),
+            2 => invalid[0].price_increment = "10".parse().unwrap(),
+            3 => invalid[0].currency = "EUR".into(),
+            4 => invalid[0].instrument_id = "foreign".into(),
+            _ => {
+                invalid[0].available_ns =
+                    DbCounter::new(request.selection.decision_cutoff_ns.get() + 1).unwrap()
+            }
+        }
+        assert!(
+            domain::execution::portfolio_execution_costs(&request, &invalid).is_err(),
+            "reference case {case}"
         );
     }
 }
@@ -171,6 +223,7 @@ fn allocation_success_requires_exact_instruments_currency_weights_and_solver_con
             "qz.native_portfolio",
             &NativePortfolioBuildResultV1 {
                 schema_version: SchemaV1,
+                slippage_references: Vec::new(),
                 input: request.clone(),
                 allocation: allocation.clone(),
                 consumed_fuel: DbCounter::new(1).unwrap(),

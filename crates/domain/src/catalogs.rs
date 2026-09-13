@@ -35,6 +35,7 @@ pub fn execution_fees(
     settings: &contracts::science::NativeSimulationSettingsV1,
 ) -> Result<(), DomainError> {
     crate::portfolio::simulation_settings(settings)?;
+    let (fill, _) = crate::portfolio::simulation_models(settings)?;
     let ids = &metadata
         .quality
         .datasets
@@ -71,12 +72,45 @@ pub fn execution_fees(
             .map_err(|_| bad("execution_fees.maker"))?;
         let taker: contracts::DecimalValue = serde_json::from_value(value["taker_fee"].clone())
             .map_err(|_| bad("execution_fees.taker"))?;
+        if fill.prob_slippage.is_positive() {
+            let tick: contracts::DecimalValue =
+                serde_json::from_value(value["price_increment"].clone())
+                    .map_err(|_| bad("slippage.price_increment"))?;
+            if !tick.is_positive() {
+                return Err(bad("slippage.price_increment"));
+            }
+        }
         if !ids.contains(&rate.instrument_id)
             || currency.as_str() != Some(&settings.base_currency)
             || maker != rate.maker
             || taker != rate.taker
         {
             return Err(bad("execution_fees.source"));
+        }
+    }
+    Ok(())
+}
+
+pub fn portfolio_slippage_sources(
+    metadata: &RuntimeCatalogMetadataV1,
+    references: &[contracts::science::NativePortfolioSlippageReferenceV1],
+) -> Result<(), DomainError> {
+    for reference in references {
+        let mut found = false;
+        for value in &metadata.universe.instrument_definitions {
+            let (_, instrument) = instrument_definition(value)?;
+            if instrument["id"].as_str() == Some(&reference.instrument_id) {
+                let tick: contracts::DecimalValue =
+                    serde_json::from_value(instrument["price_increment"].clone())
+                        .map_err(|_| bad("slippage.price_increment"))?;
+                if found || tick != reference.price_increment {
+                    return Err(bad("slippage.price_increment"));
+                }
+                found = true;
+            }
+        }
+        if !found {
+            return Err(bad("slippage.instrument"));
         }
     }
     Ok(())

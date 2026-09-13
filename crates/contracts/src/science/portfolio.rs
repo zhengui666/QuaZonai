@@ -71,8 +71,22 @@ pub struct NativePortfolioBuildRequestV1 {
 #[serde(deny_unknown_fields)]
 pub struct NativePortfolioBuildResultV1 {
     pub schema_version: SchemaV1,
+    #[schema(max_items = 256)]
+    pub slippage_references: Vec<NativePortfolioSlippageReferenceV1>,
     /// Observable original numerical inputs generated inside the fixed native job.
     pub input: AllocationInputV1,
     pub allocation: AllocationResultV1,
     pub consumed_fuel: DbCounter,
+}
+
+/// Original last-known native BAR and tick, used only for proportional cost planning.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativePortfolioSlippageReferenceV1 {
+    pub instrument_id: String,
+    pub currency: String,
+    pub event_ns: DbCounter,
+    pub available_ns: DbCounter,
+    pub close_price: DecimalValue,
+    pub price_increment: DecimalValue,
 }

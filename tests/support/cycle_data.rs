@@ -138,6 +138,7 @@ pub async fn register(
             definition["quote_currency"] = "USD".into();
             definition["maker_fee"] = "0.001".into();
             definition["taker_fee"] = "0.002".into();
+            definition["price_increment"] = "0.00001".into();
         }
         metadata.universe.membership[0].valid_from = metadata.universe.coverage_start;
         metadata.universe.membership[0].available_at = metadata.universe.coverage_start;

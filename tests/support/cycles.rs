@@ -186,6 +186,12 @@ pub async fn setup_with_policy(
             },
         };
         if with_liquidity {
+            let contracts::portfolio::NativeModelRefV1::NautilusDefaultFill { parameters, .. } =
+                &mut assumption_request.settings.fill_model
+            else {
+                unreachable!()
+            };
+            parameters.prob_slippage = "0.5".parse().unwrap();
             let report = native_liquidity::measured_report(
                 pool,
                 store,

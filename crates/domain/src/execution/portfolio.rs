@@ -2,20 +2,64 @@
 use super::*;
 use contracts::{brief::TargetKind, science::*};
 
+/// Thin proportional expectation of the frozen native one-tick model, not a fill simulator.
+pub fn portfolio_execution_costs(
+    request: &NativePortfolioBuildRequestV1,
+    references: &[NativePortfolioSlippageReferenceV1],
+) -> Result<Vec<contracts::portfolio::AllocationAssetV1>, DomainError> {
+    let (fill, _) = crate::portfolio::simulation_models(&request.execution_settings)?;
+    let mut assets = request.assets.clone();
+    if !fill.prob_slippage.is_positive() {
+        if !references.is_empty() {
+            return Err(bad("portfolio.slippage_reference"));
+        }
+        return Ok(assets);
+    }
+    if references.len() != assets.len() {
+        return Err(bad("portfolio.slippage_reference"));
+    }
+    for (asset, reference) in assets.iter_mut().zip(references) {
+        if reference.instrument_id != asset.instrument_id
+            || reference.currency != asset.currency
+            || !reference.close_price.is_positive()
+            || !reference.price_increment.is_positive()
+            || reference.price_increment.as_decimal() >= reference.close_price.as_decimal()
+            || reference.event_ns < request.selection.event_start_ns
+            || reference.event_ns >= request.selection.event_end_ns
+            || reference.available_ns < reference.event_ns
+            || reference.available_ns > request.selection.decision_cutoff_ns
+            || request.selection.decision_cutoff_ns.get() - reference.event_ns.get()
+                > u64::from(request.mandate.rebalance_schedule.max_input_age_seconds)
+                    * 1_000_000_000
+            || !asset.transaction_cost_rate.is_fraction()
+        {
+            return Err(bad("portfolio.slippage_reference"));
+        }
+        let fee = asset.transaction_cost_rate.as_decimal();
+        let rate = fee
+            + fill.prob_slippage.as_decimal()
+                * reference.price_increment.as_decimal()
+                * (bigdecimal::BigDecimal::from(1) + fee)
+                / reference.close_price.as_decimal();
+        asset.transaction_cost_rate = rate
+            .with_scale_round(18, bigdecimal::RoundingMode::Ceiling)
+            .to_plain_string()
+            .parse()
+            .map_err(|_| bad("portfolio.slippage_rate"))?;
+        if !asset.transaction_cost_rate.is_fraction() {
+            return Err(bad("portfolio.slippage_rate"));
+        }
+    }
+    Ok(assets)
+}
+
 pub fn portfolio_build_request(request: &NativePortfolioBuildRequestV1) -> Result<(), DomainError> {
     selection(&request.selection)?;
     crate::portfolio::mandate(&request.mandate)?;
     crate::portfolio::simulation_settings(&request.execution_settings)?;
     let costs = &request.execution_settings;
-    let contracts::portfolio::NativeModelRefV1::NautilusDefaultFill {
-        parameters: fill, ..
-    } = &costs.fill_model
-    else {
-        return Err(bad("portfolio.execution_settings"));
-    };
     if costs.base_currency != request.mandate.base_currency
         || costs.starting_capital != request.mandate.capital_assumption
-        || fill.prob_slippage.is_positive()
         || costs.fee_rates.len() != request.assets.len()
         || request.assets.iter().any(|asset| {
             !costs.fee_rates.iter().any(|fee| {
@@ -178,7 +222,11 @@ pub fn portfolio_build_result(
         || input.optimizer != m.optimizer
         || input.alpha_ensemble != m.alpha_ensemble
         || input.covariance_estimator != m.covariance_estimator
-        || input.assets != request.assets
+        || input.assets != portfolio_execution_costs(request, &result.slippage_references)?
+        || result
+            .slippage_references
+            .iter()
+            .any(|r| r.event_ns != forecasts.forecast_asof_ns)
         || forecasts.bar_types != request.selection.bar_types
         || forecasts.decision_asof_ns != request.selection.decision_cutoff_ns
         || forecasts.forecast_asof_ns < request.selection.event_start_ns

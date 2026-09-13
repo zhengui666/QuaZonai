@@ -30,11 +30,18 @@ pub(super) async fn complete(
     else {
         panic!("original portfolio task");
     };
-    assert!(!request.mandate.constraints.group_bounds.is_empty());
+    assert_eq!(
+        request.mandate.constraints.group_bounds.is_empty(),
+        request.bar_liquidity.is_none()
+    );
     assert!(request
         .assets
         .iter()
-        .all(|asset| asset.groups == ["fixture-group"]));
+        .all(|asset| if request.bar_liquidity.is_some() {
+            asset.groups == ["fixture-group"]
+        } else {
+            asset.groups.is_empty()
+        }));
     let mut input: AllocationInputV1 = serde_json::from_str(include_str!(
         "../../../../tests/contracts/allocation-input.json"
     ))
@@ -90,8 +97,28 @@ pub(super) async fn complete(
         .collect();
     history.available_ns = history.end_ns.clone();
     history.asset_returns = vec![vec![0.01, -0.01, 0.02, -0.02, 0.01]; request.assets.len()];
+    let (fill, _) = domain::portfolio::simulation_models(&request.execution_settings).unwrap();
+    let slippage_references = if fill.prob_slippage.is_positive() {
+        request
+            .assets
+            .iter()
+            .map(|a| NativePortfolioSlippageReferenceV1 {
+                instrument_id: a.instrument_id.clone(),
+                currency: a.currency.clone(),
+                event_ns: input.forecasts.forecast_asof_ns,
+                available_ns: input.forecasts.forecast_asof_ns,
+                close_price: "1".parse().unwrap(),
+                price_increment: "0.00001".parse().unwrap(),
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    input.assets =
+        domain::execution::portfolio_execution_costs(&request, &slippage_references).unwrap();
     let report = NativePortfolioBuildResultV1 {
         schema_version: SchemaV1,
+        slippage_references,
         input,
         consumed_fuel: DbCounter::ZERO,
         allocation: AllocationResultV1 {
@@ -136,6 +163,7 @@ pub(super) async fn complete(
             ("controlled-protocol-response".into(), "1".into()),
             ("portfolio-liquidity".into(), "1".into()),
             ("portfolio-cost-source".into(), "1".into()),
+            ("portfolio-slippage".into(), "1".into()),
         ]
         .into(),
         started_at: Some(now),

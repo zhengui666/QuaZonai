@@ -277,6 +277,9 @@ pub(super) async fn request(
         min: "0.5".parse().unwrap(),
         max: "1".parse().unwrap(),
     }];
+    if assumption.bar_liquidity.is_none() {
+        constraints.group_bounds.clear();
+    }
     let mandate = store
         .create_mandate(
             actor,

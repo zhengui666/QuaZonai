@@ -31,7 +31,7 @@ Operator可通过`client portfolio assumptions create/list/show`管理新的不�
 匹配同一冻结输入、数据版本和Runtime，且未过期。详情返回原失效时刻，到期不能
 自动续期或改写旧政策；历史成交量估值不是未来可成交保证。Store在Build准入和
 Candidate发布时重读原来源并核对原期限，job核对原质量报告与逐资产量；需要
-portfolio-liquidity/1镜像。来源损坏保留重试，到期不授新目标。非零滑点、
+portfolio-liquidity/1镜像。来源损坏保留重试，到期不授新目标。
 DATA_BACKED及完整独立组合验证/交付尚未完成，不能手填绑定冒充可交付证据。
 Build还要求portfolio-cost-source/1镜像：原费用文档随任务挂载，与冻结执行设置
 完整匹配，发布再次核对原保存配置；修改副本不能绕过原费用来源。
@@ -49,7 +49,9 @@ target-only权重，不收账户或NAV；PAPER为SYNTHETIC，LIVE不自动获得
 
 `client portfolio build`使用原Mandate、运行中Cycle、原资格和下游快照引用，需
 精确人工授权，参数见CLI。202仅表示Run入队；尚未完成成功准入到Candidate的
-完整验收。当前仅接通保守零滑点BAR费用来源，不自动放宽其他成本或流动性约束。
+完整验收。保守BAR非零滑点需portfolio-slippage/1，按原概率与最后BAR/tick换算
+规划期望成本（公式及向上舍入见DESIGN A5.2）；不是未来成本上界或DATA_BACKED。
+实际模拟继续使用原模型和原费率，不二次扣规划成本，不放宽其他来源/流动性约束。
 
 `apps/runtime` 的配置、实际原生镜像装配和启动说明集中在 [runtimes/native/README.md](runtimes/native/README.md)，由 `runtime doctor/serve --config` 读取受信任本机文件。网关独占自己的0700状态目录与SQLite日志，以原生OS文件锁防止两个监督者同时使用同一目录。它使用操作者正常授权的Docker Unix socket；无权访问时明确不可用，不修改sudo、用户组、socket权限或改用无隔离执行。
 

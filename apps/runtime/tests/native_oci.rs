@@ -51,6 +51,14 @@ async fn native_portfolio(cvar: bool, risk_budget: bool) {
         market::portfolio()
     };
     let second = market::module("f64.const 0.03");
+    if !cvar && !risk_budget {
+        let NativeModelRefV1::NautilusDefaultFill { parameters, .. } =
+            &mut request.execution_settings.fill_model
+        else {
+            unreachable!()
+        };
+        parameters.prob_slippage = "0.5".parse().unwrap();
+    }
     request.mandate.objective = AllocationObjective::MaxUtility;
     request.mandate.constraints.max_ex_ante_risk = Some("1".parse().unwrap());
     if cvar {
@@ -290,6 +298,19 @@ async fn native_portfolio(cvar: bool, risk_budget: bool) {
     )
     .unwrap();
     let result: NativePortfolioBuildResultV1 = serde_json::from_slice(&bytes).unwrap();
+    if !cvar && !risk_budget {
+        assert_eq!(manifest.engine_versions["portfolio-slippage"], "1");
+        assert_eq!(result.slippage_references.len(), result.input.assets.len());
+        assert!(result
+            .input
+            .assets
+            .iter()
+            .all(|a| a.transaction_cost_rate.is_positive()));
+        assert_eq!(
+            result.slippage_references[0].close_price,
+            "1.02".parse().unwrap()
+        );
+    }
     assert!(result
         .input
         .assets

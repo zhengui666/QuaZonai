@@ -141,6 +141,15 @@ where
             serde_json::from_slice(&raw).map_err(|_| StoreError::Integrity)?;
         domain::execution::portfolio_build_result(frozen, &report)
             .map_err(|_| StoreError::Integrity)?;
+        if !report.slippage_references.is_empty()
+            && manifest
+                .engine_versions
+                .get("portfolio-slippage")
+                .map(String::as_str)
+                != Some("1")
+        {
+            return Err(StoreError::Integrity);
+        }
         native_report = Some(id);
         result = Some(report);
     }
@@ -169,7 +178,7 @@ where
             &mut tx,
             run.project_id,
             &request,
-            frozen,
+            (frozen, report),
             binding.try_get("image_ref")?,
             until,
             &mut read,
@@ -200,11 +209,12 @@ where
     document(&mut tx,run,diagnostics,"qz.portfolio_candidate",binding.try_get("origin")?,
         json!({"schema_version":1,"candidate_id":candidate,"run_id":run.id,"execution_status":run.state,"solver_status":solver,"evidence_status":status,"reason_code":reason,"native_report_artifact_id":native_report,"native_manifest_artifact_id":manifest_id,"target_artifact_id":target_artifact}),&mut publish).await?;
     if targets.is_some() {
+        let report = result.as_ref().ok_or(StoreError::Integrity)?;
         eligibility(
             &mut tx,
             run.project_id,
             &request,
-            frozen,
+            (frozen, report),
             binding.try_get("image_ref")?,
             until,
             &mut read,
@@ -271,7 +281,10 @@ async fn eligibility<R, Read>(
     tx: &mut Tx<'_>,
     project: Id,
     request: &PortfolioBuildRequestV1,
-    frozen: &NativePortfolioBuildRequestV1,
+    result: (
+        &NativePortfolioBuildRequestV1,
+        &NativePortfolioBuildResultV1,
+    ),
     image: &str,
     until: DateTime<Utc>,
     read: &mut R,
@@ -280,6 +293,7 @@ where
     R: FnMut(Id, DbCounter) -> Read,
     Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
 {
+    let (frozen, report) = result;
     let now = now(tx).await?;
     if until <= now
         || frozen.current_weights.valid_until_ns.get()
@@ -299,7 +313,7 @@ where
         request.runtime_id,
     )
     .await?;
-    if !frozen.mandate.constraints.group_bounds.is_empty() {
+    {
         let bindings = crate::data_validation::dataset_bindings(
             tx,
             request.input_set_id,
@@ -319,6 +333,11 @@ where
         // Corruption is retryable, not a newly ineligible final Candidate.
         domain::catalogs::execution_fees(&binding.metadata, &frozen.execution_settings)
             .map_err(|_| StoreError::Integrity)?;
+        domain::catalogs::portfolio_slippage_sources(
+            &binding.metadata,
+            &report.slippage_references,
+        )
+        .map_err(|_| StoreError::Integrity)?;
         let groups = domain::catalogs::portfolio_groups(
             &binding.metadata.universe,
             &frozen

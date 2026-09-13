@@ -163,6 +163,31 @@ pub fn build(
         });
     }
     let m = &request.mandate;
+    let (fill, _) = domain::portfolio::simulation_models(&request.execution_settings)?;
+    let slippage_references = if fill.prob_slippage.is_positive() {
+        market
+            .series
+            .iter()
+            .map(|series| {
+                let bar = &series.bars[rows - 1];
+                Ok(NativePortfolioSlippageReferenceV1 {
+                    instrument_id: series.instrument.id().to_string(),
+                    currency: series.instrument.quote_currency().to_string(),
+                    event_ns: count(bar.ts_event.as_u64())?,
+                    available_ns: count(bar.ts_init.as_u64())?,
+                    close_price: bar.close.to_string().parse().map_err(anyhow::Error::msg)?,
+                    price_increment: series
+                        .instrument
+                        .price_increment()
+                        .to_string()
+                        .parse()
+                        .map_err(anyhow::Error::msg)?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?
+    } else {
+        Vec::new()
+    };
     let input = AllocationInputV1 {
         schema_version: SchemaV1,
         forecasts: PortfolioForecastInputV1 {
@@ -187,7 +212,7 @@ pub fn build(
         optimizer: m.optimizer.clone(),
         alpha_ensemble: m.alpha_ensemble.clone(),
         covariance_estimator: m.covariance_estimator.clone(),
-        assets: request.assets.clone(),
+        assets: domain::execution::portfolio_execution_costs(request, &slippage_references)?,
         return_history: PortfolioReturnHistoryV1 {
             schema_version: SchemaV1,
             base_currency: m.base_currency.clone(),
@@ -203,6 +228,7 @@ pub fn build(
     let allocation = crate::allocate(&input)?;
     let result = NativePortfolioBuildResultV1 {
         schema_version: SchemaV1,
+        slippage_references,
         input,
         allocation,
         consumed_fuel: count(consumed)?,

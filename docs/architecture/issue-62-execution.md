@@ -3,6 +3,55 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Native nonzero-slippage planning, 2026-09-13
+
+The patch over `4591056d` maps the frozen Nautilus DefaultFillModel L1 one-tick
+rule into the explicit proportional expectation in DESIGN A5.2. Native Build
+reads the original last BAR and Instrument tick, records slippage_references and
+uses the resulting planning coefficient in the existing solver. No RNG, fill,
+fee engine or new dependency. Request asset rates remain original taker rates;
+result rates must equal the reference-derived mapping, rounded upward to 18
+decimal places. Zero probability has no slippage references. Actual simulation
+still uses original models/rates and native Money rounding, without deducting
+the planning coefficient again. This is not a future cost bound or DATA_BACKED.
+
+Runtime/image and nonzero admission/results require portfolio-slippage/1. Native
+tick presence is checked at source admission; publication rereads original tick
+and fees. Publication fee checks were found inside the old group-constraint
+branch; all portfolios now reread Forward metadata, including no-group mandates.
+Existing group semantics remain unchanged: unused group classifications are not
+frozen as constraints. Both source corruption and recovery remain covered.
+
+- Domain independent values include 0.010505 and upward-rounded
+  0.011683333333333334, plus invalid reference/time/currency/tick cases.
+  Managed native p=0,0.5,1 checks use actual last price 1.02 and native event times.
+- The two original qualified Store chains now cover zero/no-group and
+  nonzero/historical-liquidity/group configurations. Both reject changed Forward
+  fees; the latter rejects changed tick, then recovers Candidate/LAST_TARGET.
+  First evidence/chain runs failed obsolete fixture assumptions that every
+  mandate had groups; those expectations were made configuration-specific,
+  without weakening production fees or actual constrained-group checks.
+  Final verify-nH2x9o passed both chains.
+- Final verify-audUEn passed static gates and 222 checks: 134 contracts/domain,
+  50 native, 13 Store, 1 source SQL, 1 expiry, 2 windows and 21 HTTP/CLI.
+- Final verify-SBhp7s passed 202 checks: 4 unit, 37 native, 137 Store and
+  24 HTTP/CLI. Both verifiers recorded unchanged source and stopped temporary PG.
+- web-verify-J3rWhF generated all six outputs twice identically; only Runtime
+  JSON changed. Typecheck, wire checks, build, 505 unit, 36 settings and 219
+  browser checks passed, handwritten source unchanged.
+- owner-oci-PWdozz rebuilt image
+  `sha256:d28831c016df1c0639aa4c664ce34b22332925683fa3ce4272aeb176e3ad7c98`;
+  all 12 actual OCI tests passed in 22.40 seconds, source unchanged. The first
+  portfolio and its subsequent liquidity run use p=0.5, actual original BAR/tick,
+  positive planning coefficients and the new manifest capability.
+- Locked job simulation test target passed all 10 actual Nautilus checks,
+  including original fees, slippage/seed, latency and shared-capital accounting.
+
+Controlled Store declarations and synthetic native/OCI markets are not REAL/PIT
+or full T42 proof. DATA_BACKED sources, independent Candidate evaluation and all
+remaining delivery contracts are outstanding. No push, review request, merge or
+Issue closure occurred in this slice.
+
 ## Forward instrument fees agree with original settings, 2026-09-13
 
 The patch over `8ce40c06` closes a concrete cost mismatch: Build previously

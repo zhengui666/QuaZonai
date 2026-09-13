@@ -1,10 +1,13 @@
 # 原生 Runtime 与 job 镜像
 
 portfolio-cost-source/1要求Build挂载原transaction_costs_ref的PARAMETERS字节，
-与冻结execution_settings完整一致；发布再次核对保存配置。仅支持明确零滑点，
+与冻结execution_settings完整一致；发布再次核对保存配置。
 不把费用副本或模型参数当DATA_BACKED证明。
 Build与模拟共用原生市场/费用检查：Forward实际Instrument的币种和maker/taker
 须匹配同一执行设置；不能等模拟才发现Build已用错费率。
+portfolio-slippage/1从原最后BAR及Instrument tick产生slippage_references，按
+DESIGN A5.2换算参考价下的模型期望规划费率，向上舍入18位。零概率引用列表为空；
+这不是未来费用上界、盘口冲击或DATA_BACKED；实际Nautilus费用不被二次扣除。
 
 portfolio-liquidity/1消费冻结的原DATA_QUALITY报告，核对原Dataset/选择、币种、
 年龄与资产量，再应用已有参与率约束；不是实时深度或DATA_BACKED证明。

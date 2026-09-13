@@ -256,10 +256,10 @@ cargo run --locked -p server -- client --origin https://qz.example --credential-
 ```
 
 Store核对当前资格、独立Reviewer/原REAL报告、许可、原模型、Forward目录及下游
-原权重，不接收手填预测/持仓/费用。当前费用适配仅原保守BAR、明确零滑点概率的
-taker费用；组约束使用原Forward Universe在决策时有效且已可用的唯一成员记录。
+原权重，不接收手填预测/持仓/费用。保守BAR使用原taker费用及显式原生滑点规划；
+组约束使用原Forward Universe在决策时有效且已可用的唯一成员记录。
 成员groups未提供/null表示未知，[]表示明确无组；有组约束时未知、歧义或组无参与
-资产均拒绝，Candidate发布重读原来源。流动性/参与率和其他全成本来源尚未接通。
+资产均拒绝，Candidate发布重读原来源。历史流动性/参与率见下文，DATA_BACKED仍未接通。
 成功准入的完整原生链及Candidate发布仍待验收，不能将此命令当作交付入口。
 
 执行假设入口为`POST /api/v2/execution-assumptions`，请求ExecutionAssumptionsCreateV1
@@ -290,12 +290,17 @@ Store在Build准入与Candidate发布时重读原报告/配置、核对当前许
 （原Dataset/选择）；报告必须以DATA_QUALITY角色提供原字节。job逐项核对原报告
 与assets.available_notional、原选择、币种、年龄及Mandate参与率，不接受无绑定
 的数值。需portfolio-liquidity/1镜像能力及原结果版本声明；不得把原生检查替代
-Store来源采纳与当前期限检查。非零滑点、DATA_BACKED和完整独立组合验证仍待完成。
+Store来源采纳与当前期限检查。DATA_BACKED和完整独立组合验证仍待完成。
 原生Build还必须冻结完整execution_settings，并以PARAMETERS角色传入原
 transaction_costs_ref文档；job核对完整原字节解析值、币种、本金及逐资产taker费用。
 准入与结果均要求portfolio-cost-source/1，Candidate发布重读原文档与保存配置。
 同一配置还须匹配本次Forward原instrument definitions的币种及maker/taker费率；
 Build复用模拟的原生市场检查，发布重验原目录，拒绝同名资产沿用另一版本费率。
+非零prob_slippage需portfolio-slippage/1，结果必带slippage_references：逐资产原
+instrument_id/currency/event_ns/available_ns/close_price/price_increment。job提取
+原最后BAR，规划比例为f+p·tick/close·(1+f)，向上舍入18位；发布核对原tick和
+结果系数。零概率时引用列表为空。仅为参考价下舍入前的模型期望，不是未来上界、
+逐笔实付费用或DATA_BACKED；实际模拟不再扣一次规划成本，详见DESIGN A5.2。
 原数据不改写；没有此原生来源关系的历史行不投影成新接口版本。
 
 `POST /api/v2/portfolio-mandates`接受MandateCreateV1：schema_version、project_id、
