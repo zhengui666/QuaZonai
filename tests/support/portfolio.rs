@@ -1,9 +1,32 @@
 //! Synthetic numerical configuration only; no ownership or qualification evidence.
+#[path = "execution_models.rs"]
+pub mod execution_models;
 use contracts::{brief::TargetKind, portfolio::*, science::*, Id, SchemaV1};
 
 pub fn request(input: &AllocationInputV1) -> NativePortfolioBuildRequestV1 {
     NativePortfolioBuildRequestV1 {
         schema_version: SchemaV1,
+        execution_settings: NativeSimulationSettingsV1 {
+            schema_version: SchemaV1,
+            base_currency: input.base_currency.clone(),
+            starting_capital: input.capital_assumption.clone(),
+            account_kind: NativeAccountKind::Cash,
+            leverage: "1".parse().unwrap(),
+            fee_model: execution_models::fee(),
+            fill_model: execution_models::fill(),
+            latency_model: execution_models::latency(1),
+            snapshot_interval_ms: 1000,
+            exposure_tolerance: input.exposure_tolerance.clone(),
+            fee_rates: input
+                .assets
+                .iter()
+                .map(|a| NativeFeeRateV1 {
+                    instrument_id: a.instrument_id.clone(),
+                    maker: "0".parse().unwrap(),
+                    taker: a.transaction_cost_rate.clone(),
+                })
+                .collect(),
+        },
         selection: NativeBarSelectionV1 {
             schema_version: SchemaV1,
             bar_types: input.forecasts.bar_types.clone(),

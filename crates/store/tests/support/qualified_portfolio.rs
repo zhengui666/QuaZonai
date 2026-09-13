@@ -325,12 +325,36 @@ async fn qualified_chain(pool: PgPool, with_liquidity: bool) {
     // Same-size corrupted reads must fail at admission and publication.
     // The original immutable files are never changed.
     let fixture = &f;
-    let liquidity_id = store
+    let assumption = store
         .execution_assumption(&actor, f.data.assumptions)
         .await
-        .unwrap()
-        .bar_liquidity
-        .map(|s| s.report_artifact_id);
+        .unwrap();
+    let costs_id = assumption.fee_schedule_artifact_id;
+    let liquidity_id = assumption.bar_liquidity.map(|s| s.report_artifact_id);
+    let changed_costs = |id: Id, size: DbCounter| async move {
+        let bytes = fixture.read(id, size).await?;
+        if id != costs_id {
+            return Ok(bytes);
+        }
+        let text = String::from_utf8(bytes).unwrap();
+        let from = "\"random_seed\":\"7\"";
+        assert!(text.contains(from));
+        let changed = text.replace(from, "\"random_seed\":\"8\"").into_bytes();
+        assert_eq!(changed.len() as u64, size.get());
+        Ok(changed)
+    };
+    assert!(matches!(
+        store
+            .start_portfolio_build(
+                &actor,
+                "changed-cost-source",
+                &request,
+                changed_costs,
+                |_| async { panic!("corrupt cost source publishes nothing") },
+            )
+            .await,
+        Err(StoreError::Integrity)
+    ));
     assert_eq!(liquidity_id.is_some(), with_liquidity);
     let changed_liquidity = |currency: bool| {
         move |id: Id, size: DbCounter| async move {
@@ -441,6 +465,14 @@ async fn qualified_chain(pool: PgPool, with_liquidity: bool) {
         }
     }
     result::complete(&pool, &store, &f, &lease, &job).await;
+    assert!(matches!(
+        store
+            .publish_scientific_result(admitted.id, changed_costs, |_| async {
+                panic!("changed costs publish no Candidate")
+            },)
+            .await,
+        Err(StoreError::Integrity)
+    ));
     if with_liquidity {
         for currency in [false, true] {
             assert!(matches!(

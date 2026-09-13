@@ -11497,6 +11497,9 @@
           "current_weights_artifact_id": {
             "$ref": "#/components/schemas/Id"
           },
+          "execution_settings": {
+            "$ref": "#/components/schemas/NativeSimulationSettingsV1"
+          },
           "mandate": {
             "$ref": "#/components/schemas/MandateContentV1"
           },
@@ -11521,6 +11524,7 @@
           "mandate",
           "current_weights_artifact_id",
           "current_weights",
+          "execution_settings",
           "assets",
           "members"
         ],

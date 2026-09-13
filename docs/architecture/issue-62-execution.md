@@ -3,6 +3,45 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Original execution settings through portfolio Build, 2026-09-13
+
+The patch over `4f0c09aa` binds the complete original execution settings to the
+native Build request, mounts transaction_costs_ref as PARAMETERS and compares
+its parsed original document with the frozen copy before numerical execution.
+The domain checks currency, capital, exact per-asset taker fees and the existing
+explicit zero-slippage restriction. Candidate publication rereads the document
+and compares both the frozen request and immutable saved settings. Admission,
+Runtime image label/capabilities and result publication require
+portfolio-cost-source/1. Existing readers/types are reused; no new dependency,
+cost formula, nonzero-slippage support or DATA_BACKED claim.
+
+Managed native tests cover the original document, changed seed, wrong role and
+missing file, with no output index on failure. Domain counterexamples cover
+currency, capital, fees, missing assets and nonzero slippage. Both original Store
+qualified chains reject same-size cost-document corruption at admission and
+publication, then recover the original Candidate/LAST_TARGET flow. Qualifications
+are not authored with SQL; scientific declarations remain controlled fixtures.
+
+- Initial verify-BZkM0q failed strict Clippy because a shared fixture module was
+  loaded twice. Callers now reuse the same module, without suppressing the lint.
+- verify-yrbJrv passed both qualified chains. Final verify-JS0HfD passed static
+  gates and 220 checks: 133 contracts/domain, 49 native, 13 Store, 1 source SQL,
+  1 liquidity source/expiry, 2 publication windows and 21 HTTP/CLI.
+- verify-L11ffg passed 201 cross-boundary checks: 4 unit, 36 native, 137 Store
+  and 24 HTTP/CLI. Source remained unchanged and temporary PostgreSQL stopped.
+- web-verify-9GWm9V generated all six outputs twice identically; only domain JSON
+  changed. Typecheck, wire checks, build, 505 unit, 36 settings and 219 full-site
+  browser checks passed, handwritten source unchanged.
+- owner-oci-86XKav rebuilt image
+  `sha256:b0103bb9d1b6f3143028011514fcece03f4ade6795faddafc2a9900e5356c41e`;
+  all 12 actual OCI tests passed in 22.39 seconds, source unchanged, including
+  original cost document mounting/consumption and the declared capability.
+
+Actual OCI inputs are synthetic, not REAL/PIT or full T42 evidence. Nonzero
+slippage, DATA_BACKED cost adaptation, independent shared-capital Candidate
+validation and remaining delivery contracts are still outstanding. No push,
+GitHub review request, merge or Issue closure occurred for this slice.
+
 ## Store admission and publication of historical liquidity, 2026-09-13
 
 The patch over `534ebf78` connects the original historical source to Build

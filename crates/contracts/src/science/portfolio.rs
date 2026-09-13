@@ -59,6 +59,7 @@ pub struct NativePortfolioBuildRequestV1 {
     pub mandate: MandateContentV1,
     pub current_weights_artifact_id: Id,
     pub current_weights: PortfolioCurrentWeightsV1,
+    pub execution_settings: super::NativeSimulationSettingsV1,
     pub bar_liquidity: Option<NativePortfolioLiquidityV1>,
     #[schema(min_items = 1, max_items = 256)]
     pub assets: Vec<AllocationAssetV1>,

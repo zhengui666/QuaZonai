@@ -1938,8 +1938,15 @@ Operator或目标为mandate_id、内容完全相同的PORTFOLIO_BUILD单次grant
 
 当前保守BAR适配的市场目标交易只在原假设明确零滑点概率时，采用原费用文档的
 逐资产taker费率作为费用项；文档字节必须与不可变来源相等。组成员沿上述原Universe
-时态记录绑定；非零滑点、流动性/参与率及DATA_BACKED总成本尚须各自原生来源适配，未实现时明确拒绝，
+时态记录绑定；历史流动性/参与率沿A2原报告及独立期限核验。非零滑点及DATA_BACKED
+总成本尚须原生来源适配，未实现时明确拒绝，
 不能用taker费用冒充完整含滑点成本，也不能把此初始范围当作Issue62完成范围。
+NativePortfolioBuildRequestV1另冻结完整execution_settings；原transaction_costs_ref
+文档以PARAMETERS角色进入job，job重读其原字节并核对完整副本。币种、资本和
+逐资产taker费率必须分别匹配Mandate及assets.transaction_cost_rate，缺项或额外
+资产拒绝。当前仅允许原DefaultFillModel明确零滑点概率；非零值不能借副本绕过。
+准入与原结果必须声明portfolio-cost-source/1能力；Candidate发布再次读取原文档，
+与冻结副本及原保存配置完整相等。这是原费用/模型来源绑定，不是新增滑点算法或DATA_BACKED资格。
 
 组合求解复用已有 Clarabel 0.11.1，不另写优化算法。原生 job 接受固定资产顺序的预测、同顺序协方差、明确的当前目标/现金、资本与数据支持的费用/流动性，不从两个独立 NAV 的平均值构造组合。资产集合上限256；重复或缺失身份、矩阵尺寸/对称性/正定性问题、非有限数、缺当前权重或费用、无真实来源的流动性均明确失败，不补零。协方差必须来自冻结输入的原生估计，单位为每决策周期收益协方差；年化只在明确参数下用于报告，不隐式乘252。
 

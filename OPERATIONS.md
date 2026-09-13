@@ -33,6 +33,8 @@ Operator可通过`client portfolio assumptions create/list/show`管理新的不�
 Candidate发布时重读原来源并核对原期限，job核对原质量报告与逐资产量；需要
 portfolio-liquidity/1镜像。来源损坏保留重试，到期不授新目标。非零滑点、
 DATA_BACKED及完整独立组合验证/交付尚未完成，不能手填绑定冒充可交付证据。
+Build还要求portfolio-cost-source/1镜像：原费用文档随任务挂载，与冻结执行设置
+完整匹配，发布再次核对原保存配置；修改副本不能绕过原费用来源。
 原资产定义使用Rust InstrumentAny的外部标签Serde结构，不是Python式顶层type。
 组约束从原Forward Universe成员记录的groups读取，按原决策时点核对生效与可用
 时间，发布Candidate前再次读取原证据；不从资产名称猜分类。未提供/null是未知，

@@ -1,7 +1,6 @@
 //! Native synthetic catalog fixture. Never REAL data or a production initialization path.
 #![allow(dead_code)]
-#[path = "../../../../tests/support/execution_models.rs"]
-pub mod execution_models;
+pub use portfolio_config::execution_models;
 #[path = "../../../../tests/support/portfolio.rs"]
 mod portfolio_config;
 use contracts::{portfolio::AllocationTargetV1, science::*, DbCounter, SchemaV1};
@@ -217,6 +216,14 @@ fn portfolio_from_market(
         .zip(&request.assets)
     {
         weight.instrument_id = asset.instrument_id.clone();
+    }
+    for (fee, asset) in request
+        .execution_settings
+        .fee_rates
+        .iter_mut()
+        .zip(&request.assets)
+    {
+        fee.instrument_id = asset.instrument_id.clone();
     }
     for member in &mut request.members {
         member.parameters.label_horizon_observations = 2;

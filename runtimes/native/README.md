@@ -1,5 +1,9 @@
 # 原生 Runtime 与 job 镜像
 
+portfolio-cost-source/1要求Build挂载原transaction_costs_ref的PARAMETERS字节，
+与冻结execution_settings完整一致；发布再次核对保存配置。仅支持明确零滑点，
+不把费用副本或模型参数当DATA_BACKED证明。
+
 portfolio-liquidity/1消费冻结的原DATA_QUALITY报告，核对原Dataset/选择、币种、
 年龄与资产量，再应用已有参与率约束；不是实时深度或DATA_BACKED证明。
 Store仍负责原来源采纳、许可和发布期限，不能直接提交原生任务冒充资格。

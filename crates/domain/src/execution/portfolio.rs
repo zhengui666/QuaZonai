@@ -5,6 +5,26 @@ use contracts::{brief::TargetKind, science::*};
 pub fn portfolio_build_request(request: &NativePortfolioBuildRequestV1) -> Result<(), DomainError> {
     selection(&request.selection)?;
     crate::portfolio::mandate(&request.mandate)?;
+    crate::portfolio::simulation_settings(&request.execution_settings)?;
+    let costs = &request.execution_settings;
+    let contracts::portfolio::NativeModelRefV1::NautilusDefaultFill {
+        parameters: fill, ..
+    } = &costs.fill_model
+    else {
+        return Err(bad("portfolio.execution_settings"));
+    };
+    if costs.base_currency != request.mandate.base_currency
+        || costs.starting_capital != request.mandate.capital_assumption
+        || fill.prob_slippage.is_positive()
+        || costs.fee_rates.len() != request.assets.len()
+        || request.assets.iter().any(|asset| {
+            !costs.fee_rates.iter().any(|fee| {
+                fee.instrument_id == asset.instrument_id && fee.taker == asset.transaction_cost_rate
+            })
+        })
+    {
+        return Err(bad("portfolio.execution_settings"));
+    }
     let constraints = &request.mandate.constraints;
     if let Some(liquidity) = &request.bar_liquidity {
         crate::portfolio::bar_liquidity_assumption(&liquidity.assumption)?;

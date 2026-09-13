@@ -85,6 +85,7 @@ impl Store {
         for (name, version) in [
             ("portfolio-models", "4"),
             ("portfolio-weights", "1"),
+            ("portfolio-cost-source", "1"),
             ("clarabel", CLARABEL_VERSION),
             ("ndarray", FIXED_ENSEMBLE_VERSION),
             ("ndarray-stats", SAMPLE_COVARIANCE_VERSION),
@@ -289,11 +290,18 @@ impl Store {
             mandate: mandate.content,
             current_weights_artifact_id: weights_id,
             current_weights: weights,
+            execution_settings: settings,
             assets,
             bar_liquidity: liquidity.as_ref().map(|s| s.binding.clone()),
             members,
         };
         domain::execution::portfolio_build_request(&native)?;
+        inputs.push(RuntimeInputV1::Artifact {
+            artifact_id: costs,
+            storage_version: "1".into(),
+            byte_count: cost_bytes,
+            role: ArtifactInputRole::Parameters,
+        });
         if let Some(source) = &liquidity {
             domain::execution::portfolio_build_liquidity(&native, &source.report)?;
         }

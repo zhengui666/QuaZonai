@@ -64,7 +64,12 @@ async fn prepared(pool: &PgPool, objects: &ArtifactStore, cancel: bool) -> (stor
     native.mandate.universe_version_id = universe.to_string().try_into().unwrap();
     native.mandate.required_evaluation_policy_id = policy.to_string().try_into().unwrap();
     native.mandate.execution_assumptions_id = assumptions.to_string().try_into().unwrap();
-    native.mandate.constraints.transaction_costs_ref = f.artifact;
+    let costs_id = Id::new();
+    native.mandate.constraints.transaction_costs_ref = costs_id;
+    let costs = serde_json::to_vec(&native.execution_settings).unwrap();
+    objects.put(costs_id, &costs).unwrap();
+    sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,'PARAMETERS','application/json','qz.native_simulation_settings','1','LOCAL',$3,'1',$4,'RESEARCH','SYNTHETIC','IMPORT','REFERENCED')")
+        .bind(costs_id.as_uuid()).bind(f.project.as_uuid()).bind(costs_id.to_string()).bind(costs.len() as i64).execute(pool).await.unwrap();
     for (member, source) in native.members.iter_mut().zip([&first, &second]) {
         let alpha: uuid::Uuid =
             sqlx::query_scalar("SELECT alpha_id FROM app.alpha_versions WHERE id=$1")
@@ -147,6 +152,12 @@ async fn prepared(pool: &PgPool, objects: &ArtifactStore, cancel: bool) -> (stor
             unreachable!()
         };
         inputs.extend([
+            contracts::runtime_jobs::RuntimeInputV1::Artifact {
+                artifact_id: costs_id,
+                storage_version: "1".into(),
+                byte_count: DbCounter::new(costs.len() as u64).unwrap(),
+                role: contracts::research::ArtifactInputRole::Parameters,
+            },
             contracts::runtime_jobs::RuntimeInputV1::Dataset {
                 revision_id: *dataset_revision_id,
                 registered_ref: "controlled-not-dispatched".into(),
@@ -445,7 +456,11 @@ async fn successful_original_report_with_expired_target_retains_solver_but_canno
         external_job_id: spec.external_job_id.clone(),
         input_set_id: spec.input_set_id,
         state: RuntimeResultState::Succeeded,
-        engine_versions: [("controlled-fixture".into(), "1".into())].into(),
+        engine_versions: [
+            ("controlled-fixture".into(), "1".into()),
+            ("portfolio-cost-source".into(), "1".into()),
+        ]
+        .into(),
         started_at: Some(now),
         finished_at: now,
         resource_usage: RuntimeResourceUsageV1 {

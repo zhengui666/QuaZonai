@@ -1,7 +1,6 @@
 //! Synthetic structural counterexamples, not native numerical or market evidence.
 //! Genuine solver/account output is independently exercised by job/tests/managed.
-#[path = "../../../tests/support/execution_models.rs"]
-mod execution_models;
+use portfolio_config::execution_models;
 #[path = "../../../tests/support/portfolio.rs"]
 mod portfolio_config;
 use chrono::{DateTime, Utc};
@@ -16,6 +15,37 @@ use contracts::{
 use domain::execution::output_bindings;
 use serde_json::json;
 use std::collections::BTreeMap;
+
+#[test]
+fn native_portfolio_refuses_unbound_execution_costs() {
+    let input: AllocationInputV1 = serde_json::from_str(include_str!(
+        "../../../tests/contracts/allocation-input.json"
+    ))
+    .unwrap();
+    let original = portfolio_config::request(&input);
+    domain::execution::portfolio_build_request(&original).unwrap();
+    for case in 0..5 {
+        let mut request = original.clone();
+        match case {
+            0 => request.execution_settings.base_currency = "EUR".into(),
+            1 => request.execution_settings.starting_capital = "1".parse().unwrap(),
+            2 => request.execution_settings.fee_rates[0].taker = "0.25".parse().unwrap(),
+            3 => request.execution_settings.fee_rates.clear(),
+            _ => {
+                let NativeModelRefV1::NautilusDefaultFill { parameters, .. } =
+                    &mut request.execution_settings.fill_model
+                else {
+                    unreachable!()
+                };
+                parameters.prob_slippage = "0.1".parse().unwrap();
+            }
+        }
+        assert!(
+            domain::execution::portfolio_build_request(&request).is_err(),
+            "cost case {case}"
+        );
+    }
+}
 
 #[test]
 fn native_portfolio_refuses_unbound_liquidity_numbers_or_references() {

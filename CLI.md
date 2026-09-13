@@ -291,6 +291,9 @@ Store在Build准入与Candidate发布时重读原报告/配置、核对当前许
 与assets.available_notional、原选择、币种、年龄及Mandate参与率，不接受无绑定
 的数值。需portfolio-liquidity/1镜像能力及原结果版本声明；不得把原生检查替代
 Store来源采纳与当前期限检查。非零滑点、DATA_BACKED和完整独立组合验证仍待完成。
+原生Build还必须冻结完整execution_settings，并以PARAMETERS角色传入原
+transaction_costs_ref文档；job核对完整原字节解析值、币种、本金及逐资产taker费用。
+准入与结果均要求portfolio-cost-source/1，Candidate发布重读原文档与保存配置。
 原数据不改写；没有此原生来源关系的历史行不投影成新接口版本。
 
 `POST /api/v2/portfolio-mandates`接受MandateCreateV1：schema_version、project_id、

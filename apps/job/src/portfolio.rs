@@ -16,6 +16,12 @@ pub fn build(
     mut read: impl FnMut(Id) -> Result<Vec<u8>>,
 ) -> Result<NativePortfolioBuildResultV1> {
     domain::execution::portfolio_build_request(request)?;
+    let costs: NativeSimulationSettingsV1 =
+        serde_json::from_slice(&read(request.mandate.constraints.transaction_costs_ref)?)?;
+    ensure!(
+        serde_json::to_value(&costs)? == serde_json::to_value(&request.execution_settings)?,
+        "PORTFOLIO_EXECUTION_SETTINGS_SOURCE_MISMATCH"
+    );
     if let Some(binding) = &request.bar_liquidity {
         let report = serde_json::from_slice(&read(binding.assumption.report_artifact_id)?)?;
         domain::execution::portfolio_build_liquidity(request, &report)?;

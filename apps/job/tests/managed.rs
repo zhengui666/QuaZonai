@@ -386,6 +386,7 @@ fn portfolio_fixture(
         )
     });
     let weights = serde_json::to_vec(&request.current_weights).unwrap();
+    let costs = serde_json::to_vec(&request.execution_settings).unwrap();
     let id = Id::new();
     let mut inputs = vec![RuntimeInputV1::Dataset {
         revision_id: id,
@@ -406,6 +407,12 @@ fn portfolio_fixture(
         storage_version: "1".into(),
         byte_count: market::count(weights.len() as u64),
         role: ArtifactInputRole::Report,
+    });
+    inputs.push(RuntimeInputV1::Artifact {
+        artifact_id: request.mandate.constraints.transaction_costs_ref,
+        storage_version: "1".into(),
+        byte_count: market::count(costs.len() as u64),
+        role: ArtifactInputRole::Parameters,
     });
     let f = fixture(
         NativeTaskParametersV1::BuildPortfolio {
@@ -429,6 +436,17 @@ fn portfolio_fixture(
         fs::write(f.input.join("objects").join(id.to_string()), bytes).unwrap();
     }
     fs::write(
+        f.input.join("objects").join(
+            request
+                .mandate
+                .constraints
+                .transaction_costs_ref
+                .to_string(),
+        ),
+        costs,
+    )
+    .unwrap();
+    fs::write(
         f.input
             .join("objects")
             .join(request.current_weights_artifact_id.to_string()),
@@ -446,6 +464,76 @@ fn portfolio_fixture(
     }
     attach_catalog(&f, id, catalog.path());
     f
+}
+
+#[test]
+fn portfolio_requires_unchanged_original_execution_settings() {
+    for case in 0..4 {
+        let mut f = portfolio_fixture(false, |_| {});
+        let task: NativeTaskParametersV1 = serde_json::from_slice(
+            &fs::read(
+                f.input
+                    .join("objects")
+                    .join(f.spec.parameters_artifact_id.to_string()),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let NativeTaskParametersV1::BuildPortfolio { request, .. } = task else {
+            unreachable!()
+        };
+        let costs_id = request.mandate.constraints.transaction_costs_ref;
+        let path = f.input.join("objects").join(costs_id.to_string());
+        match case {
+            0 => {}
+            1 => {
+                let mut costs = request.execution_settings;
+                let contracts::portfolio::NativeModelRefV1::NautilusDefaultFill {
+                    parameters, ..
+                } = &mut costs.fill_model
+                else {
+                    unreachable!()
+                };
+                parameters.random_seed = market::count(8);
+                let bytes = serde_json::to_vec(&costs).unwrap();
+                fs::write(&path, &bytes).unwrap();
+                for input in &mut f.spec.inputs {
+                    if let RuntimeInputV1::Artifact {
+                        artifact_id,
+                        byte_count,
+                        ..
+                    } = input
+                    {
+                        if *artifact_id == costs_id {
+                            *byte_count = market::count(bytes.len() as u64);
+                        }
+                    }
+                }
+            }
+            2 => {
+                for input in &mut f.spec.inputs {
+                    if let RuntimeInputV1::Artifact {
+                        artifact_id, role, ..
+                    } = input
+                    {
+                        if *artifact_id == costs_id {
+                            *role = ArtifactInputRole::Report;
+                        }
+                    }
+                }
+            }
+            _ => fs::remove_file(&path).unwrap(),
+        }
+        fs::write(
+            f.input.join("spec.json"),
+            serde_json::to_vec(&f.spec).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(execute(&f), case == 0, "cost source case {case}");
+        if case != 0 {
+            assert!(!f.output.join("index.json").exists());
+        }
+    }
 }
 
 #[test]

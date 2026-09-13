@@ -28,7 +28,7 @@ pub(crate) fn expiry(
         .ok_or(StoreError::Invalid("bar_liquidity_expiry"))
 }
 
-async fn document<R, Read>(
+pub(crate) async fn document<R, Read>(
     tx: &mut Transaction<'_, Postgres>,
     project: Id,
     id: Id,

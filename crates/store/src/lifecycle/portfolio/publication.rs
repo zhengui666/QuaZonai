@@ -98,6 +98,14 @@ where
         let manifest: ResultManifestV1 =
             serde_json::from_slice(&raw).map_err(|_| StoreError::Integrity)?;
         let checked_at = now(&mut tx).await?;
+        if manifest
+            .engine_versions
+            .get("portfolio-cost-source")
+            .map(String::as_str)
+            != Some("1")
+        {
+            return Err(StoreError::Integrity);
+        }
         if frozen.bar_liquidity.is_some()
             && manifest
                 .engine_versions
@@ -329,8 +337,25 @@ where
             return Err(StoreError::Integrity);
         }
     }
-    let costs: uuid::Uuid = sqlx::query_scalar("SELECT input_set_id FROM app.execution_assumption_sources WHERE assumptions_id=$1 AND project_id=$2 AND runtime_id=$3")
-        .bind(frozen.mandate.execution_assumptions_id.as_uuid()).bind(project.as_uuid()).bind(request.runtime_id.as_uuid()).fetch_one(&mut **tx).await?;
+    let cost_row = sqlx::query("SELECT s.input_set_id,s.settings FROM app.execution_assumption_sources s JOIN app.execution_assumptions e ON e.id=s.assumptions_id WHERE s.assumptions_id=$1 AND s.project_id=$2 AND s.runtime_id=$3 AND e.fee_schedule_artifact_id=$4")
+        .bind(frozen.mandate.execution_assumptions_id.as_uuid()).bind(project.as_uuid()).bind(request.runtime_id.as_uuid()).bind(frozen.mandate.constraints.transaction_costs_ref.as_uuid()).fetch_optional(&mut **tx).await?.ok_or(StoreError::Integrity)?;
+    let costs: uuid::Uuid = cost_row.try_get("input_set_id")?;
+    let original = crate::execution_assumptions::liquidity::document(
+        tx,
+        project,
+        frozen.mandate.constraints.transaction_costs_ref,
+        "qz.native_simulation_settings",
+        1024 * 1024,
+        read,
+    )
+    .await?;
+    let settings: NativeSimulationSettingsV1 =
+        serde_json::from_slice(&original).map_err(|_| StoreError::Integrity)?;
+    if db::json(&settings)? != db::json(&frozen.execution_settings)?
+        || db::json(&settings)? != cost_row.try_get::<serde_json::Value, _>("settings")?
+    {
+        return Err(StoreError::Integrity);
+    }
     crate::research::revalidate_frozen_inputs(tx, db::id(costs)?, project, request.runtime_id)
         .await?;
     let liquidity = crate::execution_assumptions::liquidity::frozen(

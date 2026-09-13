@@ -1,8 +1,7 @@
 //! Real SQLite parameters with explicit synthetic source metadata. No network/OCI claim.
 #[path = "../../../tests/support/catalog_metadata.rs"]
 mod catalog_fixture;
-#[path = "../../../tests/support/execution_models.rs"]
-mod execution_models;
+use portfolio_config::execution_models;
 #[path = "../../../tests/support/portfolio.rs"]
 mod portfolio_config;
 use catalog_fixture::count;

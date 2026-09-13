@@ -179,6 +179,9 @@ async fn native_portfolio(cvar: bool, risk_budget: bool) {
     let weights_id = request.current_weights_artifact_id;
     let weights = serde_json::to_vec(&request.current_weights).unwrap();
     f.object(weights_id, &weights).await;
+    let cost_id = request.mandate.constraints.transaction_costs_ref;
+    let costs = serde_json::to_vec(&request.execution_settings).unwrap();
+    f.object(cost_id, &costs).await;
     let operation = NativeTaskParametersV1::BuildPortfolio {
         schema_version: SchemaV1,
         dataset_revision_id: dataset,
@@ -199,6 +202,12 @@ async fn native_portfolio(cvar: bool, risk_budget: bool) {
         image_ref: support::image(),
         input_set_id: Id::new(),
         inputs: vec![
+            RuntimeInputV1::Artifact {
+                artifact_id: cost_id,
+                storage_version: "1".into(),
+                byte_count: count(costs.len() as u64),
+                role: ArtifactInputRole::Parameters,
+            },
             RuntimeInputV1::Artifact {
                 artifact_id: weights_id,
                 storage_version: "1".into(),
@@ -508,6 +517,7 @@ async fn native_portfolio(cvar: bool, risk_budget: bool) {
         )
         .unwrap();
         assert_eq!(manifest.engine_versions["portfolio-liquidity"], "1");
+        assert_eq!(manifest.engine_versions["portfolio-cost-source"], "1");
         let [output] = manifest.artifacts.as_slice() else {
             panic!("one liquidity Build report")
         };

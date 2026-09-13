@@ -135,6 +135,7 @@ pub(super) async fn complete(
         engine_versions: [
             ("controlled-protocol-response".into(), "1".into()),
             ("portfolio-liquidity".into(), "1".into()),
+            ("portfolio-cost-source".into(), "1".into()),
         ]
         .into(),
         started_at: Some(now),

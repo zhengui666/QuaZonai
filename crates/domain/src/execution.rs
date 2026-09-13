@@ -226,10 +226,11 @@ pub fn task(spec: &JobSpecV1, parameters: &NativeTaskParametersV1) -> Result<(),
             if !spec.inputs.iter().any(|input| matches!(input, RuntimeInputV1::Dataset { revision_id, role: contracts::research::DataPartition::Forward, .. } if revision_id == dataset_revision_id))
                 || objects.iter().any(|id| !artifact(spec, *id, ArtifactInputRole::Model))
                 || !artifact(spec, request.current_weights_artifact_id, ArtifactInputRole::Report)
+                || !artifact(spec, request.mandate.constraints.transaction_costs_ref, ArtifactInputRole::Parameters)
                 || liquidity.is_some_and(|id| !artifact(spec, id, ArtifactInputRole::DataQuality))
                 || spec.inputs.iter().any(|input| match input {
                     RuntimeInputV1::Dataset { revision_id, role, .. } => revision_id != dataset_revision_id || *role != contracts::research::DataPartition::Forward,
-                    RuntimeInputV1::Artifact { artifact_id, role, .. } => !(*role == ArtifactInputRole::Model && objects.contains(artifact_id) || *artifact_id == spec.parameters_artifact_id && *role == ArtifactInputRole::Parameters || *artifact_id == request.current_weights_artifact_id && *role == ArtifactInputRole::Report || Some(*artifact_id) == liquidity && *role == ArtifactInputRole::DataQuality),
+                    RuntimeInputV1::Artifact { artifact_id, role, .. } => !(*role == ArtifactInputRole::Model && objects.contains(artifact_id) || (*artifact_id == spec.parameters_artifact_id || *artifact_id == request.mandate.constraints.transaction_costs_ref) && *role == ArtifactInputRole::Parameters || *artifact_id == request.current_weights_artifact_id && *role == ArtifactInputRole::Report || Some(*artifact_id) == liquidity && *role == ArtifactInputRole::DataQuality),
                 }) {
                 return Err(bad("allocation_inputs"));
             }
