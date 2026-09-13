@@ -147,6 +147,11 @@ pub enum Candidate {
     Show {
         id: String,
     },
+    Evaluations {
+        id: String,
+        #[command(flatten)]
+        page: List,
+    },
 }
 #[derive(Subcommand)]
 pub enum ExecutionAssumptions {
@@ -536,6 +541,10 @@ impl Command {
                 Candidate::Show { id } => {
                     Request::get::<CandidateDetailV1>(item("/api/v2/portfolio-candidates", id)?)
                 }
+                Candidate::Evaluations { id, page } => Request::get::<Page<EvaluationView>>(
+                    action("/api/v2/portfolio-candidates", id, "evaluations")?,
+                )
+                .page(page)?,
             },
             Self::Portfolio(Portfolio::Mandate(command)) => {
                 match command {

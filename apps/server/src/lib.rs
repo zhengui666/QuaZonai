@@ -345,6 +345,10 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
             get(portfolio::candidate),
         )
         .route(
+            "/api/v2/portfolio-candidates/{id}/evaluations",
+            get(evidence::candidate_evaluations),
+        )
+        .route(
             "/api/v2/projects/{id}/portfolio-candidates",
             get(portfolio::candidates),
         )
@@ -511,7 +515,7 @@ execution_assumptions::list,execution_assumptions::get,execution_assumptions::cr
 forward::weights,
 cycles::freeze,cycles::frozen,cycles::start,cycles::list,cycles::get,cycles::selection,cycles::trials,
 experiments::propose,experiments::list,experiments::get,
-evidence::alphas,evidence::versions,evidence::version,evidence::calibration,evidence::qualifications,evidence::evaluations,evidence::evaluate,evidence::evaluation,evidence::metrics,
+evidence::alphas,evidence::versions,evidence::version,evidence::calibration,evidence::qualifications,evidence::evaluations,evidence::candidate_evaluations,evidence::evaluate,evidence::evaluation,evidence::metrics,
 settings::register_secret,settings::runtimes,settings::runtime,settings::create_runtime,settings::update_runtime,
 settings::downstreams,settings::downstream,settings::create_downstream,settings::update_downstream,
 runtime::probe,runtime::readiness,

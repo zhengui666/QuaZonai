@@ -30,6 +30,20 @@ pub(crate) const EVALUATION: &str = "SELECT ev.*,report.origin,clock_timestamp()
    AND report.schema_name='qz.alpha_evaluation' AND report.schema_version='1' AND report.access_class='EVALUATOR_ONLY'
  WHERE ev.evaluation_kind='WALK_FORWARD'";
 
+const CANDIDATE_EVALUATION: &str = "SELECT ev.*,report.origin,clock_timestamp() AS checked_at
+ FROM app.evaluations ev
+ JOIN app.evaluation_publications p ON p.evaluation_id=ev.id
+ JOIN app.candidate_simulation_tasks s ON s.run_id=ev.run_id AND s.candidate_id=ev.subject_candidate_id AND s.policy_id=ev.policy_id
+ JOIN app.portfolio_candidates c ON c.id=s.candidate_id AND c.project_id=ev.project_id
+ JOIN app.candidate_publications cp ON cp.candidate_id=c.id
+ JOIN app.runs r ON r.id=s.run_id AND r.project_id=ev.project_id AND r.input_set_id=ev.input_set_id AND r.state=ev.execution_status AND r.kind='PORTFOLIO_SIMULATE'
+ JOIN app.input_sets i ON i.id=r.input_set_id AND i.project_id=ev.project_id AND i.purpose='FORWARD' AND i.frozen_at IS NOT NULL
+ JOIN app.run_terminal_receipts receipt ON receipt.run_id=r.id AND receipt.terminal_state=r.state AND receipt.attempt_id IS NOT DISTINCT FROM r.active_attempt_id
+ JOIN app.artifacts report ON report.id=ev.report_artifact_id AND report.id=ev.method_versions_artifact_id AND report.project_id=ev.project_id
+   AND report.producer_run_id=r.id AND report.producer_attempt_id IS NOT DISTINCT FROM r.active_attempt_id
+   AND report.schema_name='qz.candidate_evaluation' AND report.schema_version='1' AND report.access_class='EVALUATOR_ONLY'
+ WHERE ev.evaluation_kind='FORWARD'";
+
 pub(crate) async fn authorize(
     tx: &mut Tx<'_>,
     actor: &Actor,
@@ -177,15 +191,38 @@ async fn read_evaluation(
             .await?
             .ok_or(StoreError::NotFound)?;
     authorize(tx, actor, db::id(project)?).await?;
-    let row = sqlx::query(&format!("{EVALUATION} AND ev.id=$1"))
-        .bind(id.as_uuid())
-        .fetch_optional(&mut **tx)
-        .await?
-        .ok_or(StoreError::NotFound)?;
+    let row = sqlx::query(&format!(
+        "{EVALUATION} AND ev.id=$1 UNION ALL {CANDIDATE_EVALUATION} AND ev.id=$1"
+    ))
+    .bind(id.as_uuid())
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(StoreError::NotFound)?;
     evaluation(&row)
 }
 
 impl Store {
+    pub async fn candidate_evaluations(
+        &self,
+        actor: &Actor,
+        candidate: Id,
+        query: &ListQuery,
+    ) -> Result<Page<EvaluationView>, StoreError> {
+        domain::control::list(query)?;
+        let mut tx = self.pool.begin().await?;
+        let project:uuid::Uuid=sqlx::query_scalar("SELECT c.project_id FROM app.portfolio_candidates c JOIN app.candidate_publications p ON p.candidate_id=c.id WHERE c.id=$1")
+            .bind(candidate.as_uuid()).fetch_optional(&mut *tx).await?.ok_or(StoreError::NotFound)?;
+        authorize(&mut tx, actor, db::id(project)?).await?;
+        let rows=sqlx::query(&format!("{CANDIDATE_EVALUATION} AND ev.subject_candidate_id=$1 AND ($2::uuid IS NULL OR ev.id<$2) ORDER BY ev.id DESC LIMIT $3"))
+            .bind(candidate.as_uuid()).bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit)+1).fetch_all(&mut *tx).await?;
+        let result = page(
+            rows.iter().map(evaluation).collect::<Result<Vec<_>, _>>()?,
+            query.limit,
+            |v| v.id,
+        );
+        tx.commit().await?;
+        Ok(result)
+    }
     pub async fn alpha_qualifications(
         &self,
         actor: &Actor,

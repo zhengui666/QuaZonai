@@ -3,6 +3,43 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Candidate Evaluation read projections, 2026-09-14
+
+Published Candidate HOLD evaluations now have a paginated Operator/same-project
+RESEARCH_READ CLI projection at GET /api/v2/portfolio-candidates/{id}/evaluations.
+The existing Evaluation detail/metrics endpoints accept only the original sealed
+Candidate simulation binding, terminal receipt, frozen Forward input and original
+producer report. Alpha Validation selection remains unchanged; Sealed and unbound
+historical reports remain excluded. No report bytes or storage locators are read.
+
+CLI portfolio candidate evaluations and the React Candidate drawer use this same
+projection. The existing Evaluation detail component is reused with exact subject
+checks. Original metric zero, missing reasons, method/version, units, frequency,
+annualization and expiry remain distinct. Pagination can return after a failed
+read; neither the page nor a historical decision grants qualification or delivery.
+
+Verified on 32c98dfe plus the frozen implementation patches:
+
+- verify-LarMSm passed all 203 evidence checks, workspace compilation, formatting
+  and strict Clippy. Both original qualified chains read their actual cancelled
+  and insufficient-data publications, exact subjects, metrics and keyset pages.
+  Real HTTP/CLI checks include the new command and cross-project rejection;
+  existing Sealed/unbound exclusions remain passing. Source unchanged and isolated
+  PostgreSQL stopped. This is controlled publication evidence, not native market PASS.
+- Extending the long-chain test exposed async stack exhaustion. Boxing the two
+  test entry futures fixed it without host/test stack settings or production changes.
+  The extra inner box was removed before the final 203-check run.
+- web-verify-R05PFM completed reproducible native generation of the six contract/
+  client outputs, typecheck, 505 unit tests, five PWA file checks, numeric wire
+  checks, production build, 36 settings-browser checks and all 225 browser checks
+  across desktop/tablet/mobile. Handwritten sources remained unchanged. The prior
+  web-verify-o3xCPy was interrupted without a final browser receipt and is not PASS.
+
+No new dependency, numerical engine, mutable Candidate field or raw-report route
+was introduced. Genuine cross-day Store-to-native PASS, formal portfolio science,
+full cost sources, Release/Package/delivery/recovery and complete T42 remain open;
+these read projections do not satisfy the PR merge boundary by themselves.
+
 ## Candidate HOLD Evaluation publication and ACK, 2026-09-14
 
 The trusted scientific continuation now consumes the original immutable Candidate

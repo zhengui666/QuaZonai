@@ -101,12 +101,12 @@ async fn answer(store: &Store, f: &cycle_support::Fixture, lease: &RunLease, tex
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn original_reviewed_alphas_publish_candidates_and_retry_last_target(pool: PgPool) {
-    qualified_chain(pool, false).await;
+    Box::pin(qualified_chain(pool, false)).await;
 }
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn historical_liquidity_remains_bound_through_original_qualified_chain(pool: PgPool) {
-    qualified_chain(pool, true).await;
+    Box::pin(qualified_chain(pool, true)).await;
 }
 
 async fn qualified_chain(pool: PgPool, with_liquidity: bool) {
@@ -1005,6 +1005,61 @@ async fn qualified_chain(pool: PgPool, with_liquidity: bool) {
     let facts:(String,String,i64,bool)=sqlx::query_as("SELECT e.execution_status,e.decision,(SELECT count(*) FROM app.metric_values v WHERE v.evaluation_id=e.id AND v.status='INSUFFICIENT_DATA' AND v.value IS NULL AND v.reason_code='PORTFOLIO_DAILY_RETURNS_UNAVAILABLE'),e.valid_until IS NOT NULL FROM app.evaluations e JOIN app.evaluation_publications p ON p.evaluation_id=e.id WHERE e.id=$1")
         .bind(evaluated.resource.as_uuid()).fetch_one(&pool).await.unwrap();
     assert_eq!(facts, ("SUCCEEDED".into(), "INCONCLUSIVE".into(), 3, true));
+    let first = store
+        .candidate_evaluations(
+            &actor,
+            candidate,
+            &contracts::control::ListQuery {
+                cursor: None,
+                limit: 1,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.items.len(), 1);
+    let second = store
+        .candidate_evaluations(
+            &actor,
+            candidate,
+            &contracts::control::ListQuery {
+                cursor: first.next_cursor,
+                limit: 1,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.items.len(), 1);
+    assert!(second.next_cursor.is_none());
+    let mut ids = vec![first.items[0].id, second.items[0].id];
+    ids.sort();
+    let mut expected = vec![left.resource, evaluated.resource];
+    expected.sort();
+    assert_eq!(
+        ids, expected,
+        "only original Candidate publications, not Alpha or Sealed"
+    );
+    for id in ids {
+        let detail = store.evaluation(&actor, id).await.unwrap();
+        assert_eq!(detail.subject_candidate_id, Some(candidate));
+        assert!(detail.subject_alpha_version_id.is_none());
+        let metrics = store
+            .evaluation_metrics(&actor, id, &Default::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            metrics.items.len(),
+            if id == evaluated.resource { 3 } else { 0 }
+        );
+        assert!(metrics.items.iter().all(|metric| metric.evaluation_id == id
+            && metric.value.is_none()
+            && metric.reason_code.as_deref() == Some("PORTFOLIO_DAILY_RETURNS_UNAVAILABLE")));
+    }
+    assert!(matches!(
+        store
+            .candidate_evaluations(&actor, Id::new(), &Default::default())
+            .await,
+        Err(StoreError::NotFound)
+    ));
     store.acknowledge_run(&message).await.unwrap();
     let snapshot="SELECT (SELECT count(*) FROM app.portfolio_build_tasks),(SELECT count(*) FROM app.runs),(SELECT count(*) FROM app.artifacts),reserved_cpu_seconds FROM app.research_cycles WHERE id=$1";
     let before: (i64, i64, i64, i64) = sqlx::query_as(snapshot)

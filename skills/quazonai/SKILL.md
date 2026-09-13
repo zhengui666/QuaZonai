@@ -200,6 +200,9 @@ PORTFOLIO_SIMULATE人工授权；不授Mission权限，202只表示Run，不是E
 这不授Mission写入来源或自行申请资格的权限，也不替代Store准入/发布复核。
 `client portfolio candidate list PROJECT_UUID` / `show CANDIDATE_UUID`读取已发布
 原始快照；不是当前资格或交付授权，不向Mission开放报告字节。
+`client portfolio candidate evaluations CANDIDATE_UUID`分页读取原绑定的已发表评估，
+`client evidence show/metrics EVALUATION_UUID`与浏览器候选详情复用同一投影；
+缺值不补0、有效期不刷新，不披露Sealed或原报告字节，不自动模拟或授予资格。
 `client portfolio build`以原资格、Mandate、Cycle、Forward输入申请Run；
 current_weights_source选择下游快照或LAST_TARGET原Candidate目标假设。
 CLI需目标Mandate的精确PORTFOLIO_BUILD人工grant。不得手填预测、持仓、费用

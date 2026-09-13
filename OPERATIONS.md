@@ -4,6 +4,10 @@
 Candidate原始头、成员和目标快照。需要Operator或精确项目RESEARCH_READ的CLI；
 执行、求解和证据状态分别保留，历史VALID不表示当前资格或交付授权，空目标不补权重。
 浏览器“组合”选择项目后打开“候选快照”，可分页、刷新和查看同一原始详情。
+详情中的候选评估列表对应`client portfolio candidate evaluations CANDIDATE_UUID`；
+评估详情和指标复用`client evidence show/metrics EVALUATION_UUID`。只展示原始关联的
+已发表保持研究证据，不读取报告字节；缺值原因、方法、单位、年化因子与原有效期保留，
+缺值不是0，历史科学决策不是资格或交付批准，也不会自动启动模拟。
 构建请求的current_weights_source可明确选择FORWARD_SNAPSHOT或LAST_TARGET。
 后者使用同项目原Candidate的目标文件与子项，不延长期限、不冒称账户仓位。
 

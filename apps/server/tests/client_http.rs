@@ -66,6 +66,29 @@ async fn candidate_cli_reads_original_snapshots_with_project_scope(pool: PgPool)
     let page: contracts::control::Page<contracts::portfolio::CandidateViewV1> =
         serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(page.items[0].id, candidate);
+    let result = invoke(
+        &origin,
+        &file,
+        &[
+            "portfolio",
+            "candidate",
+            "evaluations",
+            &candidate.to_string(),
+            "--limit",
+            "1",
+        ],
+        Value::Null,
+    )
+    .await;
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let page: contracts::control::Page<contracts::evidence::EvaluationView> =
+        serde_json::from_slice(&result.stdout).unwrap();
+    assert!(page.items.is_empty());
+    assert!(page.next_cursor.is_none());
     let foreign = candidate_fixture::fixture(&pool, candidate_fixture::budget()).await;
     let (_, foreign_candidate, _) = candidate_fixture::portfolio(&pool, &foreign).await;
     let foreign_candidate = foreign_candidate.to_string();
@@ -73,6 +96,7 @@ async fn candidate_cli_reads_original_snapshots_with_project_scope(pool: PgPool)
     for args in [
         ["portfolio", "candidate", "show", &foreign_candidate],
         ["portfolio", "candidate", "list", &foreign_project],
+        ["portfolio", "candidate", "evaluations", &foreign_candidate],
     ] {
         let result = invoke(&origin, &file, &args, Value::Null).await;
         assert!(!result.status.success());

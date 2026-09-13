@@ -340,6 +340,9 @@ cargo run --locked -p server -- client portfolio mandate list PROJECT_UUID
 cargo run --locked -p server -- client portfolio mandate show MANDATE_UUID
 cargo run --locked -p server -- client portfolio candidate list PROJECT_UUID --limit 50
 cargo run --locked -p server -- client portfolio candidate show CANDIDATE_UUID
+cargo run --locked -p server -- client portfolio candidate evaluations CANDIDATE_UUID --limit 25
+cargo run --locked -p server -- client evidence show EVALUATION_UUID
+cargo run --locked -p server -- client evidence metrics EVALUATION_UUID --limit 25
 ```
 
 写入仍按CLI全局选项携带同一幂等键和精确人工grant，不把TOTP或凭据写入请求文件。

@@ -1997,6 +1997,16 @@ subject为原Candidate，原Forward InputSet及原政策不变。FORWARD在此�
 INCONCLUSIVE且无指标，不能声称远端已停止。Evaluation、MetricValue、静态原因及
 原报告引用在同一事务封口；只有精确关联的已封口Evaluation才允许ACK。
 
+Operator及同项目RESEARCH_READ CLI可分页查询
+GET /api/v2/portfolio-candidates/{id}/evaluations；详情与指标复用
+GET /api/v2/evaluations/{id}及/{id}/metrics。只读取有原Candidate模拟绑定、
+终态回执、Forward冻结输入和qz.candidate_evaluation原生产者报告的已封口评估。
+既有Alpha Validation规则不放宽，Sealed及无绑定旧记录仍不在此披露。
+CLI为portfolio candidate evaluations，详情/指标沿用evidence show/metrics。
+React候选详情展示保持研究评估分页和原指标；缺值保留原因，零值不隐去，方法、
+单位、UTC_DAY频率、年化和原有效期分别显示。只有元数据及指标，不下载原报告，
+不自动模拟/审批/交付；历史PASS或未过期不等于当前Release授权。
+
 `unique(candidate_alphas.candidate_id,alpha_version_id)`、`unique(candidate_targets.candidate_id,instrument_id)` 是数据库约束，不是普通索引。重复相同请求幂等，冲突409；至少两个不同alpha_id的合格版本才满足多Alpha，不以同Alpha多个版本或重复条目凑数。发布验证每资产唯一权重，再校验sum/gross/net/cash/约束。
 
 ### A5.2 原生组合求解的可执行合同

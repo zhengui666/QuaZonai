@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { api, dataOf, displayTime } from './api';
 import type { Schema } from './api';
 import { NoData, Pager, QueryPanel } from './ui';
+import { EvaluationDetail } from './alphas';
 
 type Candidate = Schema['CandidateViewV1'];
 const snapshotNotice = '这是原发布时的不可变记录。历史 VALID 和目标权重不表示当前资格或 Release 授权；不得当成真实账户仓位。';
@@ -56,7 +57,33 @@ function Detail({ id, project, close }: { id: string; project: string; close: ()
           { title: '资产', dataIndex: 'instrument_id' }, { title: '目标权重', dataIndex: 'target_weight' }, { title: '币种', dataIndex: 'currency' },
           { title: '起始', dataIndex: 'asof', render: displayTime }, { title: '截止', dataIndex: 'valid_until', render: displayTime },
         ]} />
+        {!query.isError && <CandidateEvaluations id={id} project={project} />}
       </>}
     </QueryPanel>
   </Drawer>;
+}
+
+function CandidateEvaluations({ id, project }: { id: string; project: string }) {
+  const [history, setHistory] = useState<(string | undefined)[]>([undefined]);
+  const [selected, setSelected] = useState<string>();
+  const cursor = history.at(-1);
+  const query = useQuery({ queryKey: ['candidate-evaluations', project, id, cursor], queryFn: async ({ signal }) => {
+    const page = dataOf(await api.GET('/api/v2/portfolio-candidates/{id}/evaluations', { params: { path: { id }, query: { cursor, limit: 25 } }, signal }));
+    if (page.items.some(item => item.project_id !== project || item.subject_candidate_id !== id || item.subject_alpha_version_id !== null || item.evaluation_kind !== 'FORWARD')) throw new Error('评估不属于当前候选。');
+    return page;
+  } });
+  return <Space orientation="vertical" className="full-width">
+    <Typography.Title level={2}>已发表的候选保持研究评估</Typography.Title>
+    <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新候选评估</Button>
+    <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
+      <Table<Schema['EvaluationView']> rowKey="id" dataSource={query.data?.items} pagination={false} onHeaderRow={() => ({ tabIndex: 0 })} scroll={{ x: 850 }} locale={{ emptyText: <NoData text="尚无已发表的候选评估；不代表通过，也不会自动运行模拟。" /> }} columns={[
+        { title: '评估', key: 'id', render: (_, item) => <Button type="link" disabled={query.isError} onClick={() => setSelected(item.id)}>评估 {item.id.slice(-8)}</Button> },
+        { title: '执行状态', dataIndex: 'execution_status' }, { title: '证据状态', dataIndex: 'evidence_status' },
+        { title: '科学决策（非资格）', dataIndex: 'decision' }, { title: '来源', dataIndex: 'origin' },
+        { title: '原有效期', key: 'validity', render: (_, item) => item.valid_until ? `${displayTime(item.valid_until)} · ${item.unexpired_at_read ? '读取时未过期' : '读取时已过期'}` : '未授予有效期' },
+      ]} />
+    </QueryPanel>
+    <Pager history={history} next={query.isError ? undefined : query.data?.next_cursor} loading={query.isFetching} move={setHistory} />
+    {selected && <EvaluationDetail key={selected} id={selected} candidate={{ id, project }} close={() => setSelected(undefined)} />}
+  </Space>;
 }
