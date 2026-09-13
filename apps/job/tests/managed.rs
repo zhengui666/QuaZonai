@@ -468,8 +468,13 @@ fn portfolio_fixture(
 
 #[test]
 fn portfolio_requires_unchanged_original_execution_settings() {
-    for case in 0..4 {
-        let mut f = portfolio_fixture(false, |_| {});
+    for case in 0..5 {
+        let mut f = portfolio_fixture(false, |request| {
+            if case == 4 {
+                request.execution_settings.fee_rates[0].taker = "0.01".parse().unwrap();
+                request.assets[0].transaction_cost_rate = "0.01".parse().unwrap();
+            }
+        });
         let task: NativeTaskParametersV1 = serde_json::from_slice(
             &fs::read(
                 f.input
@@ -522,7 +527,8 @@ fn portfolio_requires_unchanged_original_execution_settings() {
                     }
                 }
             }
-            _ => fs::remove_file(&path).unwrap(),
+            3 => fs::remove_file(&path).unwrap(),
+            _ => {}
         }
         fs::write(
             f.input.join("spec.json"),

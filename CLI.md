@@ -294,6 +294,8 @@ Store来源采纳与当前期限检查。非零滑点、DATA_BACKED和完整独�
 原生Build还必须冻结完整execution_settings，并以PARAMETERS角色传入原
 transaction_costs_ref文档；job核对完整原字节解析值、币种、本金及逐资产taker费用。
 准入与结果均要求portfolio-cost-source/1，Candidate发布重读原文档与保存配置。
+同一配置还须匹配本次Forward原instrument definitions的币种及maker/taker费率；
+Build复用模拟的原生市场检查，发布重验原目录，拒绝同名资产沿用另一版本费率。
 原数据不改写；没有此原生来源关系的历史行不投影成新接口版本。
 
 `POST /api/v2/portfolio-mandates`接受MandateCreateV1：schema_version、project_id、

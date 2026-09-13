@@ -29,6 +29,59 @@ pub fn instrument_definition(
     Ok((class, payload))
 }
 
+/// Bind declared execution fees to this catalog's original instrument definitions.
+pub fn execution_fees(
+    metadata: &RuntimeCatalogMetadataV1,
+    settings: &contracts::science::NativeSimulationSettingsV1,
+) -> Result<(), DomainError> {
+    crate::portfolio::simulation_settings(settings)?;
+    let ids = &metadata
+        .quality
+        .datasets
+        .first()
+        .ok_or_else(|| bad("quality"))?
+        .instrument_ids;
+    if ids.len() != settings.fee_rates.len() {
+        return Err(bad("execution_fees"));
+    }
+    let definitions = metadata
+        .universe
+        .instrument_definitions
+        .iter()
+        .map(instrument_definition)
+        .collect::<Result<Vec<_>, _>>()?;
+    for rate in &settings.fee_rates {
+        let matches = definitions
+            .iter()
+            .filter(|(_, v)| v["id"].as_str() == Some(&rate.instrument_id))
+            .collect::<Vec<_>>();
+        let [(class, value)] = matches.as_slice() else {
+            return Err(bad("execution_fees.identity"));
+        };
+        let currency = match *class {
+            "CurrencyPair" => &value["quote_currency"],
+            "Equity" => &value["currency"],
+            _ => {
+                return Err(DomainError::CapabilityUnavailable(
+                    "execution_assumption_instrument",
+                ))
+            }
+        };
+        let maker: contracts::DecimalValue = serde_json::from_value(value["maker_fee"].clone())
+            .map_err(|_| bad("execution_fees.maker"))?;
+        let taker: contracts::DecimalValue = serde_json::from_value(value["taker_fee"].clone())
+            .map_err(|_| bad("execution_fees.taker"))?;
+        if !ids.contains(&rate.instrument_id)
+            || currency.as_str() != Some(&settings.base_currency)
+            || maker != rate.maker
+            || taker != rate.taker
+        {
+            return Err(bad("execution_fees.source"));
+        }
+    }
+    Ok(())
+}
+
 pub fn metadata(
     value: &RuntimeCatalogMetadataV1,
     observed_at: DateTime<Utc>,

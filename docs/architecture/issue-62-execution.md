@@ -3,6 +3,39 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Forward instrument fees agree with original settings, 2026-09-13
+
+The patch over `8ce40c06` closes a concrete cost mismatch: Build previously
+validated its original settings document but not the current Forward instruments'
+fees, while simulation rejected the mismatch later. Native Build now reuses
+simulation's existing market/fee validation. A shared domain check binds original
+catalog instrument identities, currency and maker/taker rates during assumption
+creation, Build admission and Candidate publication. No new dependency or fee
+algorithm. The native fixture now takes its fee values from its actual catalog.
+
+The managed counterexample changes both the original cost document and frozen
+copy consistently, and still rejects their disagreement with the native catalog.
+Both full Store qualified chains reject same-size Forward taker-fee corruption
+at admission and publication, then recover original Candidate/LAST_TARGET flow.
+These remain controlled scientific declarations, not SQL-authored qualifications
+or REAL market evidence.
+
+- Initial verify-GRKcqz passed functional tests but failed strict Clippy on one
+  needless borrow. The reference was removed without suppressing the lint.
+- Final verify-VZSo26 passed static gates and all 220 selected backend checks.
+- verify-3VQ2mb passed static gates and 201 cross-boundary checks: 4 unit,
+  36 native, 137 Store and 24 HTTP/CLI. Source unchanged; temporary PG stopped.
+- Locked `cargo test -p job --test simulation --locked` passed all 10 actual
+  Nautilus simulation tests, including native fees, slippage/seed/latency,
+  shared-capital rebalance, daily returns and independent concurrent accounts.
+- owner-oci-tl2nZq rebuilt image
+  `sha256:a8620bc439f3efc71564b4ffd5a330a261b4670b19642225dbb9b1e948722163`;
+  all 12 actual OCI tests passed in 21.75 seconds, source unchanged.
+
+No HTTP/schema or frontend changes; no new generated outputs. Nonzero-slippage
+planning, DATA_BACKED cost sources, independent Candidate validation and remaining
+delivery contracts are not complete. No push, GitHub review, merge or Issue close.
+
 ## Original execution settings through portfolio Build, 2026-09-13
 
 The patch over `4f0c09aa` binds the complete original execution settings to the

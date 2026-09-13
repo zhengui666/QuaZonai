@@ -178,6 +178,7 @@ Operator的`client portfolio assumptions create/list/show`保存/读取原生来
 原期限，需portfolio-liquidity/1镜像；损坏保留重试，到期不授目标，不提升来源等级。
 Build还需portfolio-cost-source/1及原PARAMETERS费用文档，完整绑定execution_settings；
 发布重读保存配置。零滑点限制未放宽，不声明DATA_BACKED。
+Forward原目录的资产币种、maker/taker费率也须与原设置匹配；Build/模拟共用原生校验。
 原生Build读取已绑定DATA_QUALITY原字节并核对选择、币种、年龄与逐资产量；
 这不授Mission写入来源或自行申请资格的权限，也不替代Store准入/发布复核。
 `client portfolio candidate list PROJECT_UUID` / `show CANDIDATE_UUID`读取已发布

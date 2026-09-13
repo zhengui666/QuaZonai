@@ -33,6 +33,7 @@ pub fn build(
         "PORTFOLIO_CURRENT_WEIGHTS_SOURCE_MISMATCH"
     );
     let market = crate::catalog::load_catalog(catalog, &request.selection)?;
+    crate::simulation::execution_market(&market, &request.execution_settings)?;
     let horizon = request.members[0].parameters.label_horizon_observations as usize;
     let first = &market.series[0];
     let rows = first.bars.len();

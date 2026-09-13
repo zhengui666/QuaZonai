@@ -320,26 +320,11 @@ impl DataActor for TargetReplay {
     }
 }
 
-fn validate_settings(
+pub(crate) fn execution_market(
     data: &NativeMarketData,
-    request: &NativeSimulationRequestV1,
+    settings: &NativeSimulationSettingsV1,
 ) -> Result<Currency> {
-    let settings = &request.settings;
     domain::portfolio::simulation_settings(settings)?;
-    ensure!(
-        (1..=10_000).contains(&request.target_points.len())
-            && request
-                .target_points
-                .len()
-                .checked_mul(data.series.len())
-                .is_some_and(|n| n <= MAX_TARGET_ORDERS),
-        "SIMULATION_TARGET_COUNT_LIMIT"
-    );
-    let span = request.selection.event_end_ns.get() - request.selection.event_start_ns.get();
-    ensure!(
-        span / (u64::from(settings.snapshot_interval_ms) * 1_000_000) <= 1_000_000,
-        "SIMULATION_SNAPSHOT_COUNT_LIMIT"
-    );
     let currency = Currency::from_str(&settings.base_currency)?;
     ensure!(
         settings.fee_rates.len() == data.series.len(),
@@ -375,6 +360,29 @@ fn validate_settings(
             "SIMULATION_FEE_SOURCE_MISMATCH"
         );
     }
+    Ok(currency)
+}
+
+fn validate_settings(
+    data: &NativeMarketData,
+    request: &NativeSimulationRequestV1,
+) -> Result<Currency> {
+    let settings = &request.settings;
+    let currency = execution_market(data, settings)?;
+    ensure!(
+        (1..=10_000).contains(&request.target_points.len())
+            && request
+                .target_points
+                .len()
+                .checked_mul(data.series.len())
+                .is_some_and(|n| n <= MAX_TARGET_ORDERS),
+        "SIMULATION_TARGET_COUNT_LIMIT"
+    );
+    let span = request.selection.event_end_ns.get() - request.selection.event_start_ns.get();
+    ensure!(
+        span / (u64::from(settings.snapshot_interval_ms) * 1_000_000) <= 1_000_000,
+        "SIMULATION_SNAPSHOT_COUNT_LIMIT"
+    );
     for (index, point) in request.target_points.iter().enumerate() {
         ensure!(
             point.asof_ns < point.valid_until_ns

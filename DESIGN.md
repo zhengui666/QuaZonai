@@ -1947,6 +1947,10 @@ NativePortfolioBuildRequestV1另冻结完整execution_settings；原transaction_
 资产拒绝。当前仅允许原DefaultFillModel明确零滑点概率；非零值不能借副本绕过。
 准入与原结果必须声明portfolio-cost-source/1能力；Candidate发布再次读取原文档，
 与冻结副本及原保存配置完整相等。这是原费用/模型来源绑定，不是新增滑点算法或DATA_BACKED资格。
+费用绑定还必须重验本次Forward目录的原instrument definitions：资产集合、币种及
+maker/taker费率均匹配冻结execution_settings。同名资产在Forward中改变费用不能
+沿用旧费率求解；Store准入拒绝、发布重新读取原目录核验，job复用模拟的原生市场
+与费用校验。不能等到独立模拟时才发现Build使用了另一套费用。
 
 组合求解复用已有 Clarabel 0.11.1，不另写优化算法。原生 job 接受固定资产顺序的预测、同顺序协方差、明确的当前目标/现金、资本与数据支持的费用/流动性，不从两个独立 NAV 的平均值构造组合。资产集合上限256；重复或缺失身份、矩阵尺寸/对称性/正定性问题、非有限数、缺当前权重或费用、无真实来源的流动性均明确失败，不补零。协方差必须来自冻结输入的原生估计，单位为每决策周期收益协方差；年化只在明确参数下用于报告，不隐式乘252。
 

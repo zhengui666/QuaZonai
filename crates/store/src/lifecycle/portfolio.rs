@@ -212,6 +212,7 @@ impl Store {
         )
         .await?;
         domain::portfolio::simulation_settings(&settings)?;
+        domain::catalogs::execution_fees(&dataset.metadata, &settings)?;
         let NativeModelRefV1::NautilusDefaultFill {
             parameters: fill, ..
         } = &settings.fill_model

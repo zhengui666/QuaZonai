@@ -206,8 +206,13 @@ fn portfolio_from_market(
     request.current_weights.available_ns = request.selection.decision_cutoff_ns;
     request.current_weights.valid_until_ns = count(request.selection.decision_cutoff_ns.get() + 1);
     request.mandate.rebalance_schedule.max_input_age_seconds = 60;
-    for (asset, fee) in request.assets.iter_mut().zip(simulation.settings.fee_rates) {
-        asset.instrument_id = fee.instrument_id;
+    for (asset, fee) in request
+        .assets
+        .iter_mut()
+        .zip(&simulation.settings.fee_rates)
+    {
+        asset.instrument_id = fee.instrument_id.clone();
+        asset.transaction_cost_rate = fee.taker.clone();
     }
     for (weight, asset) in request
         .current_weights
@@ -217,14 +222,7 @@ fn portfolio_from_market(
     {
         weight.instrument_id = asset.instrument_id.clone();
     }
-    for (fee, asset) in request
-        .execution_settings
-        .fee_rates
-        .iter_mut()
-        .zip(&request.assets)
-    {
-        fee.instrument_id = asset.instrument_id.clone();
-    }
+    request.execution_settings.fee_rates = simulation.settings.fee_rates;
     for member in &mut request.members {
         member.parameters.label_horizon_observations = 2;
     }

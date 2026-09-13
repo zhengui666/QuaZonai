@@ -317,6 +317,8 @@ where
         }
         // These immutable inputs already passed admission at this same cutoff.
         // Corruption is retryable, not a newly ineligible final Candidate.
+        domain::catalogs::execution_fees(&binding.metadata, &frozen.execution_settings)
+            .map_err(|_| StoreError::Integrity)?;
         let groups = domain::catalogs::portfolio_groups(
             &binding.metadata.universe,
             &frozen

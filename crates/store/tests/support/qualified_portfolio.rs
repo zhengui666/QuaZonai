@@ -325,6 +325,28 @@ async fn qualified_chain(pool: PgPool, with_liquidity: bool) {
     // Same-size corrupted reads must fail at admission and publication.
     // The original immutable files are never changed.
     let fixture = &f;
+    let changed_forward_fees = |id: Id, size: DbCounter| async move {
+        let bytes = fixture.read(id, size).await?;
+        if id.as_uuid() != metadata_id {
+            return Ok(bytes);
+        }
+        let text = String::from_utf8(bytes).unwrap();
+        let from = "\"taker_fee\":\"0.002\"";
+        assert!(text.contains(from));
+        let changed = text.replace(from, "\"taker_fee\":\"0.003\"").into_bytes();
+        assert_eq!(changed.len() as u64, size.get());
+        Ok(changed)
+    };
+    assert!(store
+        .start_portfolio_build(
+            &actor,
+            "changed-forward-fees",
+            &request,
+            changed_forward_fees,
+            |_| async { panic!("wrong Forward fees publish nothing") },
+        )
+        .await
+        .is_err());
     let assumption = store
         .execution_assumption(&actor, f.data.assumptions)
         .await
@@ -465,6 +487,14 @@ async fn qualified_chain(pool: PgPool, with_liquidity: bool) {
         }
     }
     result::complete(&pool, &store, &f, &lease, &job).await;
+    assert!(matches!(
+        store
+            .publish_scientific_result(admitted.id, changed_forward_fees, |_| async {
+                panic!("wrong Forward fees publish no Candidate")
+            },)
+            .await,
+        Err(StoreError::Integrity)
+    ));
     assert!(matches!(
         store
             .publish_scientific_result(admitted.id, changed_costs, |_| async {

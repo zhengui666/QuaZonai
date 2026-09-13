@@ -8,7 +8,7 @@ use contracts::{
     portfolio::NAUTILUS_EXECUTION_VERSION,
     research::DataPartition,
     runs::RunKind,
-    DbCounter, DecimalValue, Id,
+    DbCounter, Id,
 };
 use sqlx::{postgres::PgRow, Row};
 pub(crate) mod liquidity;
@@ -214,10 +214,7 @@ impl Store {
         } else {
             None
         };
-        let ids = &metadata.quality.datasets[0].instrument_ids;
-        if ids.len() != request.settings.fee_rates.len() {
-            return Err(StoreError::Invalid("execution_assumptions_fees"));
-        }
+        domain::catalogs::execution_fees(metadata, &request.settings)?;
         let mut venue = None;
         let definitions = metadata
             .universe
@@ -226,37 +223,17 @@ impl Store {
             .map(domain::catalogs::instrument_definition)
             .collect::<Result<Vec<_>, _>>()?;
         for rate in &request.settings.fee_rates {
-            if !ids.contains(&rate.instrument_id) {
-                return Err(StoreError::Invalid("execution_assumptions_fee_identity"));
-            }
-            let (class, definition) = definitions
+            let (class, _) = definitions
                 .iter()
                 .copied()
                 .find(|(_, v)| v["id"].as_str() == Some(&rate.instrument_id))
                 .ok_or(StoreError::Integrity)?;
-            let currency = match class {
-                "CurrencyPair" => &definition["quote_currency"],
-                "Equity" => &definition["currency"],
-                _ => {
-                    return Err(domain::DomainError::CapabilityUnavailable(
-                        "execution_assumption_instrument",
-                    )
-                    .into())
-                }
-            };
-            let maker: DecimalValue = serde_json::from_value(definition["maker_fee"].clone())
-                .map_err(|_| StoreError::Integrity)?;
-            let taker: DecimalValue = serde_json::from_value(definition["taker_fee"].clone())
-                .map_err(|_| StoreError::Integrity)?;
             let native_venue = rate
                 .instrument_id
                 .rsplit_once('.')
                 .map(|(_, v)| v)
                 .ok_or(StoreError::Integrity)?;
-            if currency.as_str() != Some(&request.settings.base_currency)
-                || maker != rate.maker
-                || taker != rate.taker
-                || venue.is_some_and(|v| v != native_venue)
+            if venue.is_some_and(|v| v != native_venue)
                 || !cap.venues.iter().any(|v| {
                     v.venue == native_venue && v.instrument_classes.iter().any(|c| c == class)
                 })
