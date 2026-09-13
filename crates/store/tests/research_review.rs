@@ -256,14 +256,16 @@ async fn native_upgrade_preserves_valid_existing_policy_facts_and_adds_deferred_
             .unwrap();
     Store::from_pool(pool.clone()).migrate().await.unwrap();
     let mut after:serde_json::Value=sqlx::query_scalar("SELECT to_jsonb(p)-'family_id'-'root_lineage_id' FROM app.evaluation_policies p WHERE id=$1").bind(id.as_uuid()).fetch_one(&pool).await.unwrap();
-    assert_eq!(
-        after
-            .as_object_mut()
-            .unwrap()
-            .remove("sealed_metric_requirements"),
-        Some(serde_json::Value::Null),
-        "upgrade must not invent historical Sealed thresholds"
-    );
+    for field in [
+        "sealed_metric_requirements",
+        "portfolio_metric_requirements",
+    ] {
+        assert_eq!(
+            after.as_object_mut().unwrap().remove(field),
+            Some(serde_json::Value::Null),
+            "upgrade must not invent historical {field}"
+        );
+    }
     assert_eq!(before, after);
     let constraints:Vec<(bool,bool)>=sqlx::query_as("SELECT condeferrable,condeferred FROM pg_constraint WHERE conname IN ('policy_exact_family','family_exact_policy') AND connamespace='app'::regnamespace").fetch_all(&pool).await.unwrap();
     assert_eq!(constraints, vec![(true, true), (true, true)]);

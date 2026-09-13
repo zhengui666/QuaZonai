@@ -4253,6 +4253,7 @@ export interface components {
         };
         Page_UniverseView: {
             items: {
+                calendar_artifact_id?: null | components["schemas"]["Id"];
                 calendar_ref: string;
                 calendar_version: string;
                 /** Format: date-time */
@@ -4823,6 +4824,7 @@ export interface components {
         /** @enum {string} */
         UniverseRegistrationState: "NATIVE_METADATA" | "LEGACY_UNVERIFIED";
         UniverseView: {
+            calendar_artifact_id?: null | components["schemas"]["Id"];
             calendar_ref: string;
             calendar_version: string;
             /** Format: date-time */

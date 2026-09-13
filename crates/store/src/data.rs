@@ -90,6 +90,7 @@ fn universe(row: &PgRow) -> Result<UniverseView, StoreError> {
             row.try_get("instrument_definition_artifact_id")?,
         )?,
         calendar_ref: row.try_get("calendar_ref")?,
+        calendar_artifact_id: db::optional_id(row, "calendar_artifact_id")?,
         calendar_version: row.try_get("calendar_version")?,
         selection_asof: row.try_get("selection_asof")?,
         has_historical_membership: row.try_get("has_historical_membership")?,

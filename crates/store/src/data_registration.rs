@@ -205,6 +205,16 @@ where
     if membership != member_document(native) || definitions != instrument_document(native) {
         return Err(StoreError::NativeIdentityConflict);
     }
+    match (stored.calendar_artifact_id, &native.calendar_sessions) {
+        (Some(id), Some(calendar)) => {
+            let original = read_metadata(tx, id, "qz.calendar_sessions", origin, reader).await?;
+            if original != db::json(calendar)? {
+                return Err(StoreError::NativeIdentityConflict);
+            }
+        }
+        (None, None) => {}
+        _ => return Err(StoreError::NativeIdentityConflict),
+    }
     Ok(stored)
 }
 
@@ -344,6 +354,13 @@ impl Store {
             )?;
             objects.push(membership);
             objects.push(definitions);
+            if let Some(calendar) = &native.universe.calendar_sessions {
+                objects.push(publication(
+                    "qz.calendar_sessions",
+                    "PARAMETERS",
+                    serde_json::to_vec(calendar).map_err(|_| StoreError::Integrity)?,
+                )?);
+            }
             Id::new()
         };
         let metadata = publication("qz.native_catalog_metadata", "REPORT", raw_metadata)?;
@@ -389,10 +406,14 @@ impl Store {
                 .ok_or(StoreError::Integrity)?
                 .0;
             let universe = &native.universe;
-            sqlx::query("INSERT INTO app.universe_versions(id,name,membership_artifact_id,instrument_definition_artifact_id,calendar_ref,calendar_version,selection_asof,has_historical_membership,coverage_start,coverage_end) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)")
+            let calendar = descriptors
+                .iter()
+                .find(|d| d.1 == "qz.calendar_sessions")
+                .map(|d| d.0.as_uuid());
+            sqlx::query("INSERT INTO app.universe_versions(id,name,membership_artifact_id,instrument_definition_artifact_id,calendar_ref,calendar_version,selection_asof,has_historical_membership,coverage_start,coverage_end,calendar_artifact_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)")
                 .bind(universe_id.as_uuid()).bind(&universe.name).bind(membership.as_uuid()).bind(definitions.as_uuid())
                 .bind(&universe.calendar_ref).bind(&universe.calendar_version).bind(universe.selection_asof)
-                .bind(universe.has_historical_membership).bind(universe.coverage_start).bind(universe.coverage_end)
+                .bind(universe.has_historical_membership).bind(universe.coverage_start).bind(universe.coverage_end).bind(calendar)
                 .execute(&mut *tx).await?;
         }
         let id = Id::new();

@@ -414,15 +414,11 @@ fn calendar_cutoffs(
         .ok_or_else(|| bad("portfolio_study.calendar_missing"))?
         .calendar;
     let schedule = &request.mandate.rebalance_schedule;
-    crate::control::text(&calendar.calendar_ref, 1, 120, false)?;
-    crate::control::text(&calendar.calendar_version, 1, 120, false)?;
-    crate::control::text(&calendar.source_reference, 1, 2000, false)?;
+    crate::catalogs::calendar_sessions(calendar)?;
     if request.manual_cutoffs_ns.is_some()
         || schedule.calendar_ref.as_ref() != Some(&calendar.calendar_ref)
         || schedule.timezone != calendar.timezone
         || calendar.available_at_ns > request.evaluation_start_ns
-        || calendar.coverage_start_ns >= calendar.coverage_end_ns
-        || !(1..=4096).contains(&calendar.sessions.len())
     {
         return Err(bad("portfolio_study.calendar_binding"));
     }
@@ -446,16 +442,7 @@ fn calendar_cutoffs(
         return Err(bad("portfolio_study.calendar_coverage"));
     }
     let mut cutoffs = Vec::new();
-    let mut previous_close = None;
     for session in &calendar.sessions {
-        if session.open_ns >= session.close_ns
-            || previous_close.is_some_and(|close| session.open_ns < close)
-            || session.close_ns < calendar.coverage_start_ns
-            || session.close_ns >= calendar.coverage_end_ns
-        {
-            return Err(bad("portfolio_study.calendar_sessions"));
-        }
-        previous_close = Some(session.close_ns);
         if session.close_ns.get() >= start && session.close_ns.get() < end {
             cutoffs.push(
                 contracts::DbCounter::new(

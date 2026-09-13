@@ -189,6 +189,40 @@ fn registered_sealed_metadata_rejects_bar_values_but_preserves_unknown_observati
 }
 
 #[test]
+fn original_calendar_metadata_requires_bound_coverage_order_and_observed_availability() {
+    let original = catalog_fixture::calendar_metadata();
+    let observed = catalog_fixture::instant(600);
+    domain::catalogs::metadata(&original, observed).unwrap();
+    for case in 0..9 {
+        let mut changed = original.clone();
+        let calendar = changed.universe.calendar_sessions.as_mut().unwrap();
+        match case {
+            0 => calendar.calendar_ref = "foreign".into(),
+            1 => calendar.calendar_version = "foreign".into(),
+            2 => calendar.timezone = "not-a-timezone".into(),
+            3 => calendar.available_at_ns = count(600_000_000_001),
+            4 => calendar.coverage_start_ns = count(1),
+            5 => calendar.coverage_end_ns = count(599_999_999_999),
+            6 => calendar.sessions.clear(),
+            7 => calendar.sessions.push(calendar.sessions[0].clone()),
+            _ => calendar.sessions[0].open_ns = calendar.sessions[0].close_ns,
+        }
+        assert!(
+            domain::catalogs::metadata(&changed, observed).is_err(),
+            "case {case}"
+        );
+    }
+    let mut at_boundary = original;
+    at_boundary
+        .universe
+        .calendar_sessions
+        .as_mut()
+        .unwrap()
+        .available_at_ns = count(600_000_000_000);
+    domain::catalogs::metadata(&at_boundary, observed).unwrap();
+}
+
+#[test]
 fn historical_bar_liquidity_has_its_own_explicit_exclusive_age_bound() {
     use contracts::execution_assumptions::BarLiquidityAssumptionV1;
     let (_, mut report) = quality();

@@ -18,7 +18,7 @@ async fn concurrent_native_registration_publishes_one_dataset_universe_batch_and
 ) {
     let f = setup(&pool, None).await;
     let request = request(&f);
-    let metadata = catalog_fixture::metadata();
+    let metadata = catalog_fixture::calendar_metadata();
     let bytes = serde_json::to_vec_pretty(&metadata).unwrap();
     let a = ticket(&f, "register", &request).await;
     let b = ticket(&f, "register", &request).await;
@@ -48,7 +48,29 @@ async fn concurrent_native_registration_publishes_one_dataset_universe_batch_and
         std::fs::read_dir(f.directory.path().join("objects"))
             .unwrap()
             .count(),
-        5
+        6
+    );
+    let universe = f
+        .store
+        .get_universe_version(&f.actor, a.resource.universe_version_id)
+        .await
+        .unwrap();
+    let calendar = universe.calendar_artifact_id.unwrap();
+    let size: i64 = sqlx::query_scalar("SELECT byte_count FROM app.artifacts WHERE id=$1 AND schema_name='qz.calendar_sessions' AND kind='PARAMETERS' AND access_class='OPERATOR' AND created_by='RUNTIME' AND origin='FIXTURE'")
+        .bind(calendar.as_uuid()).fetch_one(&pool).await.unwrap();
+    let original: contracts::science::NativeCalendarSessionsV1 = serde_json::from_slice(
+        &f.objects
+            .read(calendar, size.to_string().try_into().unwrap())
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(Some(original), metadata.universe.calendar_sessions);
+    assert!(
+        sqlx::query("UPDATE app.universe_versions SET calendar_artifact_id=NULL WHERE id=$1")
+            .bind(universe.id.as_uuid())
+            .execute(&pool)
+            .await
+            .is_err()
     );
     let raw: (Id, i64) = {
         let stored: (uuid::Uuid, i64) = sqlx::query_as("SELECT a.id,a.byte_count FROM app.artifacts a JOIN app.dataset_registration_evidence e ON e.native_metadata_artifact_id=a.id WHERE e.dataset_revision_id=$1")
@@ -285,7 +307,7 @@ async fn optional_existing_universe_requires_exact_native_membership_and_origina
 ) {
     let f = setup(&pool, None).await;
     let mut request = request(&f);
-    let mut metadata = catalog_fixture::metadata();
+    let mut metadata = catalog_fixture::calendar_metadata();
     let first = complete(
         &f,
         ticket(&f, "original", &request).await,
@@ -315,6 +337,40 @@ async fn optional_existing_universe_requires_exact_native_membership_and_origina
         .await
         .unwrap();
     assert_eq!(universe.calendar_ref, metadata.universe.calendar_ref);
+    assert!(universe.calendar_artifact_id.is_some());
+    for case in 0..3 {
+        let mut changed = metadata.clone();
+        changed.native_snapshot_ref = format!("calendar-conflict-{case}");
+        match case {
+            0 => changed.universe.calendar_sessions = None,
+            1 => {
+                changed
+                    .universe
+                    .calendar_sessions
+                    .as_mut()
+                    .unwrap()
+                    .source_reference = "other source".into()
+            }
+            _ => {
+                changed
+                    .universe
+                    .calendar_sessions
+                    .as_mut()
+                    .unwrap()
+                    .sessions[0]
+                    .close_ns = catalog_fixture::count(539_000_000_000)
+            }
+        }
+        assert!(matches!(
+            complete(
+                &f,
+                ticket(&f, &format!("calendar-{case}"), &request).await,
+                serde_json::to_vec(&changed).unwrap()
+            )
+            .await,
+            Err(StoreError::NativeIdentityConflict)
+        ));
+    }
     metadata.storage_version = "fixture-v3".into();
     request.native_storage_version = metadata.storage_version.clone();
     metadata.universe.membership[0].valid_until = Some(catalog_fixture::instant(550));
@@ -349,7 +405,7 @@ async fn native_publication_failure_rolls_back_metadata_and_receipt_and_same_key
 ) {
     let f = setup(&pool, None).await;
     let request = request(&f);
-    let metadata = catalog_fixture::metadata();
+    let metadata = catalog_fixture::calendar_metadata();
     let reader = |id, size| read(f.objects.clone(), id, size);
     let result = f
         .store

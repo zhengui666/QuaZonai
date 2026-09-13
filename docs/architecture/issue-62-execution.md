@@ -3,6 +3,44 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Original calendar source registration, 2026-09-14
+
+Dataset registration now consumes optional original Runtime calendar_sessions in
+the existing immutable Universe metadata batch. Migration 057 adds a nullable
+calendar_artifact_id; absent historical calendars remain absent. The existing
+transaction, receipt, source license checks and unreferenced-file cleanup handle
+the additional qz.calendar_sessions/1 PARAMETERS object. Universe reuse requires
+identical presence and all original calendar values. Runtime portfolio-calendar/2
+also compares the full registered table, rejecting substituted sessions even when
+name and version match. Shared structural validation replaces duplicate checks;
+no calendar service, holiday rules, dependency or Python runtime was introduced.
+
+On d731a83a plus the frozen patch, verify-qC2Cz3 ran the full Store/server suite.
+The new calendar tests passed; its sole failing target was research_review, whose
+historical-policy assertion omitted the previously added nullable portfolio metric
+column. The assertion now explicitly requires both new threshold columns to be
+null and compares all original facts unchanged; no production gate was weakened.
+Final verify-tyG9xr passed workspace check/fmt/strict Clippy and 274 tests: 164
+contracts/domain/Runtime, 19 managed, 31 native Codex, 3 native studies, 36 Store
+and 21 HTTP/CLI. These include real PG/file concurrent publication, immutable
+calendar binding, injected post-file database failure with exact cleanup and
+same-key retry, original-value conflict and the corrected upgrade test. Source
+remained unchanged and the isolated PostgreSQL cluster was confirmed stopped.
+
+web-verify-3gLTdB reproduced the six generated outputs twice, with handwritten
+source unchanged. Typecheck, 505 unit tests, wire checks, build, 36 settings-browser
+tests and 234 full-browser tests passed. owner-oci-rX2wPd rebuilt the native image
+and passed all 15 actual OCI tests in 39.45 seconds, including original calendar
+file consumption and substituted-session rejection. Source remained unchanged.
+Image: sha256:9ea9cc73120a8012407f2c522efae37928f77554696610757f18d3faa3cbfd91.
+
+Controlled source metadata and market fixtures do not certify exchange accuracy,
+REAL/PIT eligibility or scientific PASS. This adds source registration, not formal
+independent PORTFOLIO admission/publication, Release/delivery or complete recovery.
+The full suite was not rerun after the test-only correction; the affected migration
+target and calendar chain were rerun successfully. No push, review, merge or Issue
+closure occurred in this stage.
+
 ## Original calendar session consumption, 2026-09-14
 
 portfolio-study/5 and portfolio-calendar/1 consume an original complete session

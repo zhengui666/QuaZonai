@@ -15999,6 +15999,16 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "calendar_artifact_id": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  ]
+                },
                 "calendar_ref": {
                   "type": "string"
                 },
@@ -18484,6 +18494,16 @@
       "UniverseView": {
         "additionalProperties": false,
         "properties": {
+          "calendar_artifact_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
           "calendar_ref": {
             "type": "string"
           },

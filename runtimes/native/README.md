@@ -8,8 +8,8 @@ Arrow合同共同用于job写入/回读与采纳；全部行/列/元数据必须
 portfolio-rolling-liquidity/1从原PARAMETERS政策和每截止目录前缀测量BAR估值，
 复用DATA_VALIDATE的原生估值，按实际模拟权益和参与率约束调仓并再次检查年龄。
 不复用过期单次快照，不声称真实深度。支持固定间隔或原参数manual_cutoffs_ns手动截止，
-共用原帧数/fuel/范围/TTL覆盖检查。portfolio-calendar/1另绑定原完整会话PARAMETERS
-文件，目录日历名称/版本一致，截止取原收盘加偏移；不自造节假日规则或抓取URL。
+共用原帧数/fuel/范围/TTL覆盖检查。portfolio-calendar/2另绑定原完整会话PARAMETERS
+文件，逐值匹配目录原元数据登记的完整会话表，截止取原收盘加偏移；不自造节假日规则或抓取URL。
 原文件解析成功不是完整来源准入、正式PORTFOLIO发布或PASS。
 本机实际链验证：`cargo test --locked -p job --test study`。
 

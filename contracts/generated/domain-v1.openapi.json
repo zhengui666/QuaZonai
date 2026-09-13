@@ -12874,6 +12874,16 @@
             "minLength": 1,
             "type": "string"
           },
+          "calendar_sessions": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NativeCalendarSessionsV1"
+              }
+            ]
+          },
           "calendar_version": {
             "maxLength": 120,
             "minLength": 1,
@@ -17717,6 +17727,16 @@
       "UniverseView": {
         "additionalProperties": false,
         "properties": {
+          "calendar_artifact_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
           "calendar_ref": {
             "type": "string"
           },

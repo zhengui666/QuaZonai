@@ -17,6 +17,24 @@ pub fn instant(seconds: i64) -> DateTime<Utc> {
 pub fn count(value: u64) -> DbCounter {
     DbCounter::new(value).unwrap()
 }
+pub fn calendar_metadata() -> RuntimeCatalogMetadataV1 {
+    let mut value = metadata();
+    value.universe.calendar_sessions = Some(contracts::science::NativeCalendarSessionsV1 {
+        schema_version: SchemaV1,
+        calendar_ref: value.universe.calendar_ref.clone(),
+        calendar_version: value.universe.calendar_version.clone(),
+        timezone: "UTC".into(),
+        source_reference: "controlled original calendar data; not exchange evidence".into(),
+        available_at_ns: DbCounter::ZERO,
+        coverage_start_ns: DbCounter::ZERO,
+        coverage_end_ns: count(600_000_000_000),
+        sessions: vec![contracts::science::NativeCalendarSessionV1 {
+            open_ns: count(60_000_000_000),
+            close_ns: count(540_000_000_000),
+        }],
+    });
+    value
+}
 pub fn metadata() -> RuntimeCatalogMetadataV1 {
     let instrument = "EUR/USD.SIM".to_owned();
     let selection = NativeBarSelectionV1 {
@@ -48,6 +66,7 @@ pub fn metadata() -> RuntimeCatalogMetadataV1 {
             name: "Controlled universe".into(),
             calendar_ref: "fixture-calendar".into(),
             calendar_version: "1".into(),
+            calendar_sessions: None,
             selection_asof: instant(0),
             has_historical_membership: false,
             coverage_start: instant(0),

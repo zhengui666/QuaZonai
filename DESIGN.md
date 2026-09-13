@@ -1976,6 +1976,17 @@ Job重读原文件并逐值核对冻结副本。非日历模式不得附带日�
 2..256帧、fuel、原目标TTL及末尾覆盖检查。原表UTC时间表达DST与半日市；此适配
 不计算节假日、不自建日历引擎，不授予正式PORTFOLIO/PASS或下游调仓权限。
 
+日历来源沿用Dataset登记，不新增手填日历命令。Runtime原Universe元数据可携带
+calendar_sessions:NativeCalendarSessionsV1|null；名称/版本匹配原Universe，UTC覆盖
+包含Universe覆盖区间，原可用时间不晚于登记观察时间，结构检查与原生Study共用。
+登记在原批次保存qz.calendar_sessions/1 PARAMETERS原文件，access_class=OPERATOR、
+created_by=RUNTIME、origin继承原目录，universe_versions.calendar_artifact_id引用它。
+缺失保持null，不回填旧Universe或生成默认表。复用Universe时缺失/存在状态及原表
+全部字段必须一致；换会话或出处不得沿用相同Universe。批次、命令回执与外键同事务，
+失败沿用原发表回滚和未引用对象清理。Universe只读投影显示可选文件ID，不暴露字节。
+Runtime的日历Study还必须逐值匹配注册Universe中的原表，不只比较名称/版本。
+此登记绑定来源与许可授权，不自行认证交易所日历准确性，不授予REAL/PIT/PASS。
+
 ### A5.1 候选子对象唯一性
 
 Operator及精确项目RESEARCH_READ的CLI可读取

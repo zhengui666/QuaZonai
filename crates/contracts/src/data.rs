@@ -187,6 +187,7 @@ pub struct UniverseView {
     pub registration_state: UniverseRegistrationState,
     pub membership_artifact_id: Id,
     pub instrument_definitions_artifact_id: Id,
+    pub calendar_artifact_id: Option<Id>,
     pub calendar_ref: String,
     pub calendar_version: String,
     pub selection_asof: DateTime<Utc>,

@@ -315,6 +315,7 @@ function Universes() {
       { key: 'id', label: 'Universe 编号', children: <Identity value={item.id} /> },
       { key: 'members', label: '成员证据', children: <Identity value={item.membership_artifact_id} /> },
       { key: 'instruments', label: '原生资产定义证据', children: <Identity value={item.instrument_definitions_artifact_id} /> },
+      { key: 'calendar', label: '原日历会话证据', children: item.calendar_artifact_id ? <Identity value={item.calendar_artifact_id} /> : '未登记，不推断会话' },
     ]} /> }} />
     <Pager history={history} next={query.data?.next_cursor} loading={query.isFetching} move={setHistory} />
   </QueryPanel>;

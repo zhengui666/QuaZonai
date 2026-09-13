@@ -44,6 +44,7 @@ async fn real_native_rolling_study_uses_original_models_in_one_account() {
     let calendar = request.calendar.as_ref().unwrap();
     metadata.universe.calendar_ref = calendar.calendar.calendar_ref.clone();
     metadata.universe.calendar_version = calendar.calendar.calendar_version.clone();
+    metadata.universe.calendar_sessions = Some(calendar.calendar.clone());
     metadata.partition = DataPartition::Forward;
     metadata.event_start =
         chrono::DateTime::from_timestamp_nanos(selection.event_start_ns.get() as i64);
@@ -166,7 +167,7 @@ async fn real_native_rolling_study_uses_original_models_in_one_account() {
         deadline_at: runtime::now() + chrono::Duration::seconds(50),
         requested_output_schemas: operation.output_schemas(),
     };
-    for field in ["calendar_ref", "calendar_version"] {
+    for field in ["calendar_ref", "calendar_version", "sessions"] {
         let mut changed = operation.clone();
         let NativeTaskParametersV1::StudyPortfolio { request, .. } = &mut changed else {
             unreachable!()
@@ -175,8 +176,10 @@ async fn real_native_rolling_study_uses_original_models_in_one_account() {
         if field == "calendar_ref" {
             calendar.calendar_ref = "FOREIGN".into();
             request.mandate.rebalance_schedule.calendar_ref = Some("FOREIGN".into());
-        } else {
+        } else if field == "calendar_version" {
             calendar.calendar_version = "foreign-version".into();
+        } else {
+            calendar.sessions[1].close_ns = market::count(calendar.sessions[1].close_ns.get() + 1);
         }
         let id = Id::new();
         f.object(id, &serde_json::to_vec(&changed).unwrap()).await;
@@ -202,7 +205,7 @@ async fn real_native_rolling_study_uses_original_models_in_one_account() {
     domain::runtime_jobs::manifest(&manifest, &spec, accepted.submitted_at, runtime::now())
         .unwrap();
     assert_eq!(manifest.engine_versions["portfolio-study"], "5");
-    assert_eq!(manifest.engine_versions["portfolio-calendar"], "1");
+    assert_eq!(manifest.engine_versions["portfolio-calendar"], "2");
     assert_eq!(manifest.engine_versions["portfolio-rolling-liquidity"], "1");
     assert_eq!(manifest.engine_versions["portfolio-history"], "1");
     assert_eq!(manifest.artifacts.len(), 3);

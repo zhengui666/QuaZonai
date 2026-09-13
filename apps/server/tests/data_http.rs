@@ -66,7 +66,7 @@ async fn setup(
     pool: PgPool,
     pause: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
 ) -> (Fixture, String, native::NativeTls, Value) {
-    let document = metadata_fixture::metadata();
+    let document = metadata_fixture::calendar_metadata();
     let endpoint = format!(
         "/runtime/v1/catalogs/{}/metadata?storage_version={}",
         document.registered_ref, document.storage_version
@@ -207,6 +207,54 @@ async fn authentic_http_registration_publishes_native_metadata_and_replay_does_n
             .await
             .unwrap();
     assert_eq!(evidence, 1);
+    assert!(read.body["calendar_artifact_id"].is_string());
+    assert!(read.body.get("calendar_sessions").is_none());
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn calendar_registration_database_failure_reclaims_only_its_batch_and_retries(pool: PgPool) {
+    let (f, cookie, _tls, intent) = setup(pool.clone(), None).await;
+    let files = || {
+        std::fs::read_dir(f._state.path().join("artifacts"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    let before = files();
+    sqlx::raw_sql("CREATE FUNCTION app.calendar_test_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.calendar_artifact_id IS NOT NULL THEN RAISE EXCEPTION 'calendar-registration-test-failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER calendar_test_failure BEFORE INSERT ON app.universe_versions FOR EACH ROW EXECUTE FUNCTION app.calendar_test_failure()")
+        .execute(&pool).await.unwrap();
+    let failed = command(
+        &f,
+        &cookie,
+        "calendar-retry",
+        "POST",
+        "/api/v2/data/revisions",
+        intent.clone(),
+    )
+    .await;
+    assert!(failed.status.is_server_error());
+    assert_eq!(files(), before);
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM app.universe_versions")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+    sqlx::query("DROP TRIGGER calendar_test_failure ON app.universe_versions")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let retry = command(
+        &f,
+        &cookie,
+        "calendar-retry",
+        "POST",
+        "/api/v2/data/revisions",
+        intent,
+    )
+    .await;
+    assert_eq!(retry.status, StatusCode::OK);
+    assert_eq!(retry.body["replayed"], false);
+    assert_eq!(files().len(), before.len() + 5);
 }
 
 #[sqlx::test(migrations = "../../migrations")]

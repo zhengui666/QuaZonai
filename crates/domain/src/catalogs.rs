@@ -210,6 +210,28 @@ pub fn metadata(
     text(&universe.name, 1, 120, false)?;
     text(&universe.calendar_ref, 1, 120, false)?;
     text(&universe.calendar_version, 1, 120, false)?;
+    if let Some(calendar) = &universe.calendar_sessions {
+        calendar_sessions(calendar)?;
+        let start = universe
+            .coverage_start
+            .timestamp_nanos_opt()
+            .and_then(|n| u64::try_from(n).ok())
+            .ok_or_else(|| bad("universe.calendar_coverage"))?;
+        let end = universe
+            .coverage_end
+            .timestamp_nanos_opt()
+            .and_then(|n| u64::try_from(n).ok())
+            .ok_or_else(|| bad("universe.calendar_coverage"))?;
+        if calendar.calendar_ref != universe.calendar_ref
+            || calendar.calendar_version != universe.calendar_version
+            || calendar.coverage_start_ns.get() > start
+            || calendar.coverage_end_ns.get() < end
+            || chrono::DateTime::from_timestamp_nanos(calendar.available_at_ns.get() as i64)
+                > observed_at
+        {
+            return Err(bad("universe.calendar_binding"));
+        }
+    }
     if universe.coverage_start > value.event_start
         || universe.coverage_end < value.event_end
         || universe.coverage_start >= universe.coverage_end
@@ -267,6 +289,33 @@ pub fn metadata(
         .any(|id| !definitions.contains(id.as_str()))
     {
         return Err(bad("universe.instrument_definitions"));
+    }
+    Ok(())
+}
+
+/// Shared original session structure; no holiday inference or source qualification.
+pub fn calendar_sessions(
+    value: &contracts::science::NativeCalendarSessionsV1,
+) -> Result<(), DomainError> {
+    text(&value.calendar_ref, 1, 120, false)?;
+    text(&value.calendar_version, 1, 120, false)?;
+    text(&value.source_reference, 1, 2000, false)?;
+    if value.timezone.parse::<chrono_tz::Tz>().is_err()
+        || value.coverage_start_ns >= value.coverage_end_ns
+        || !(1..=4096).contains(&value.sessions.len())
+    {
+        return Err(bad("calendar_sessions"));
+    }
+    let mut previous_close = None;
+    for session in &value.sessions {
+        if session.open_ns >= session.close_ns
+            || previous_close.is_some_and(|close| session.open_ns < close)
+            || session.close_ns < value.coverage_start_ns
+            || session.close_ns >= value.coverage_end_ns
+        {
+            return Err(bad("calendar_sessions.order_or_coverage"));
+        }
+        previous_close = Some(session.close_ns);
     }
     Ok(())
 }

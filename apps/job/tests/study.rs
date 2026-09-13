@@ -214,7 +214,10 @@ fn rolling_original_models_use_one_native_account_and_observed_weights() {
         let data = &mut changed.calendar.as_mut().unwrap().calendar;
         match case {
             0 => data.available_at_ns = market::count(changed.evaluation_start_ns.get() + 1),
-            1 => data.coverage_start_ns = market::count(data.coverage_start_ns.get() + 1),
+            1 => {
+                data.coverage_start_ns =
+                    market::count(changed.evaluation_start_ns.get() + market::INTERVAL_NS + 1)
+            }
             2 => data.coverage_end_ns = market::count(data.coverage_end_ns.get() - 1),
             3 => data.sessions[1] = data.sessions[0].clone(),
             4 => data.sessions[1].open_ns = data.sessions[0].open_ns,

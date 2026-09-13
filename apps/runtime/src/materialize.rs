@@ -138,6 +138,8 @@ pub async fn parameters(
                 binding.calendar.calendar_ref != catalog.metadata.universe.calendar_ref
                     || binding.calendar.calendar_version
                         != catalog.metadata.universe.calendar_version
+                    || catalog.metadata.universe.calendar_sessions.as_ref()
+                        != Some(&binding.calendar)
             }) {
                 return Err(Failure::Invalid("catalog_calendar_binding"));
             }

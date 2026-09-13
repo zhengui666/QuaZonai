@@ -38,6 +38,7 @@ pub struct NativeUniverseV1 {
     pub calendar_ref: String,
     #[schema(min_length = 1, max_length = 120)]
     pub calendar_version: String,
+    pub calendar_sessions: Option<crate::science::NativeCalendarSessionsV1>,
     pub selection_asof: DateTime<Utc>,
     pub has_historical_membership: bool,
     pub coverage_start: DateTime<Utc>,

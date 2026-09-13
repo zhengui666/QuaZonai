@@ -269,7 +269,7 @@ pub fn calendar_schedule(request: &mut NativePortfolioStudyRequestV1) {
             source_reference: "explicit synthetic calendar fixture; not an exchange calendar"
                 .into(),
             available_at_ns: request.research_available_through_ns,
-            coverage_start_ns: count(request.evaluation_start_ns.get() + INTERVAL_NS),
+            coverage_start_ns: request.source_selection.event_start_ns,
             coverage_end_ns: count(request.source_selection.event_end_ns.get() + INTERVAL_NS),
             sessions: cutoffs
                 .into_iter()

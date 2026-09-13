@@ -281,8 +281,9 @@ PARAMETERS政策文件，字段见DESIGN；不复用单次BAR快照的过期量�
 固定间隔或MANUAL原参数manual_cutoffs_ns的2–256次截止分别重算原模型与历史前缀，
 手动截止严格递增、首项匹配评估开始且TTL覆盖下一项/评估末尾；不排序或补点。
 在同一个Nautilus账户中按实际权益/权重调用Clarabel；不可行只保留诊断，不生成模拟。
-CALENDAR_SESSION需portfolio-calendar/1，calendar字段绑定原PARAMETERS会话表及artifact_id；
-字段/覆盖/原可用时间见DESIGN，目录原日历名称/版本必须匹配。截止取原close_ns加
+CALENDAR_SESSION需portfolio-calendar/2，calendar字段绑定原PARAMETERS会话表及artifact_id；
+字段/覆盖/原可用时间见DESIGN，必须逐值匹配原Runtime元数据登记的完整会话表。
+Universe读取返回可空calendar_artifact_id，不返回会话内容或补默认表。截止取原close_ns加
 显式秒偏移；不推断节假日、不排序、不补点，也不接受手动覆盖。
 正式PORTFOLIO准入/发布仍待实现，不能授予PASS。
 SIMULATE_PORTFOLIO_SEQUENCE使用portfolio-sequence/1，sources逐项绑定原Candidate、
