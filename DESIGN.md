@@ -1865,7 +1865,7 @@ RETURN_PER_HORIZON，不把原score或缺少共同基准定义的residual收益�
 
 本机allocate使用AllocationInputV1作为数值入口，不授予来源或交付资格。受管
 PORTFOLIO_BUILD则接收dataset_revision_id与NativePortfolioBuildRequestV1：冻结
-selection、完整mandate、current_cash_weight、assets及原members。每个成员保留
+selection、完整mandate、current_weights_artifact_id/current_weights、assets及原members。每个成员保留
 alpha_id/version_id、model_artifact_id、可选calibration_artifact_id、target_kind、
 ensemble_weight与原NativeForecastParametersV1；不接受调用方填写的预测或收益。
 目录只来自原FORWARD挂载，模型/校准只来自显式MODEL产物；原生job按同序资产与
@@ -1875,6 +1875,18 @@ qz.native_portfolio/1保存原数值input、allocation及真实consumed_fuel，�
 原Mandate、成员、selection、预算和目标合同。Store仍须在准入/发布事务核验原
 Alpha资格、政策、REAL/PIT、许可、资金/费用来源；运行成功本身不授予这些权利。
 旧受管矩阵/手填预测输入不保留兼容路径，原有单次allocate数值检查仍保留。
+
+受管组合的当前权重必须有独立原产物：NativePortfolioBuildRequestV1使用
+current_weights_artifact_id及完整current_weights（PortfolioCurrentWeightsV1），
+替代单独current_cash_weight。文档包含schema_version、source、asof_ns、available_ns、
+valid_until_ns、base_currency、cash_weight和同序weights[{instrument_id,weight,currency}]。
+source为FORWARD_SNAPSHOT{downstream_id,external_message_id}或LAST_TARGET{candidate_id}；
+NONE不能执行依赖换手的求解，不补零。快照不包含账号、NAV、持仓数量或凭据。
+原生job必须从明确REPORT输入读取该JSON并逐字段匹配冻结副本，再核对币种、
+资产顺序/唯一性、时点/新鲜度、到期以及原资产当前权重；cash与资产合计在Mandate
+容差内为1。LAST_TARGET保留假设身份，不能冒称下游真实快照。独立输出绑定使用同一
+冻结副本。该计算合同不证明发送者或来源真实性；Store正式准入/发布仍须重验
+下游身份/原Candidate、不可变产物及有效资格。单次allocate仍为无资格数值入口。
 
 原生输出保留OPTIMAL/ACCEPTABLE_INACCURATE/INFEASIBLE/UNBOUNDED/FAILED，只有策略明确接受的成功状态且全部发布约束在冻结容差内再次通过时，才带targets与cash。无解、数值失败、迭代上限、后验约束不通过时，两者均为空，不生成100%单资产或平滑修正的备用权重。权重只在求解器数值边界转换，公开存储继续使用DecimalValue；转换后的权重必须重新验证总和及全部限额。求解成功本身不是Qualification/Release批准。
 

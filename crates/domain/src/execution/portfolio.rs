@@ -5,6 +5,44 @@ use contracts::{brief::TargetKind, science::*};
 pub fn portfolio_build_request(request: &NativePortfolioBuildRequestV1) -> Result<(), DomainError> {
     selection(&request.selection)?;
     crate::portfolio::mandate(&request.mandate)?;
+    let weights = &request.current_weights;
+    let cutoff = request.selection.decision_cutoff_ns;
+    if weights.asof_ns > weights.available_ns
+        || weights.available_ns > cutoff
+        || weights.valid_until_ns <= cutoff
+        || weights.asof_ns > cutoff
+        || cutoff.get() - weights.asof_ns.get()
+            > u64::from(request.mandate.rebalance_schedule.max_input_age_seconds) * 1_000_000_000
+        || weights.base_currency != request.mandate.base_currency
+        || weights.weights.len() != request.assets.len()
+    {
+        return Err(bad("portfolio.current_weights"));
+    }
+    if let PortfolioWeightsSourceV1::ForwardSnapshot {
+        external_message_id,
+        ..
+    } = &weights.source
+    {
+        crate::control::text(external_message_id, 1, 200, false)?;
+    }
+    let mut total = weights.cash_weight.as_decimal().clone();
+    let mut instruments = BTreeSet::new();
+    for (weight, asset) in weights.weights.iter().zip(&request.assets) {
+        if weight.instrument_id != asset.instrument_id
+            || weight.currency != weights.base_currency
+            || asset.currency != weights.base_currency
+            || weight.weight != asset.current_weight
+            || !instruments.insert(&weight.instrument_id)
+        {
+            return Err(bad("portfolio.current_weights"));
+        }
+        total += weight.weight.as_decimal();
+    }
+    if (total - bigdecimal::BigDecimal::from(1)).abs()
+        > *request.mandate.exposure_tolerance.as_decimal()
+    {
+        return Err(bad("portfolio.current_weights"));
+    }
     if !(2..=256).contains(&request.members.len())
         || request.assets.len() != request.selection.bar_types.len()
     {
@@ -53,7 +91,7 @@ pub fn portfolio_build_result(
         || input.risk != m.risk_measure
         || input.base_currency != m.base_currency
         || input.capital_assumption != m.capital_assumption
-        || input.current_cash_weight != request.current_cash_weight
+        || input.current_cash_weight != request.current_weights.cash_weight
         || input.exposure_tolerance != m.exposure_tolerance
         || input.constraints != m.constraints
         || input.optimizer != m.optimizer

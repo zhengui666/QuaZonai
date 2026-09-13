@@ -3,6 +3,40 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Original current-weight inputs for native portfolios, 2026-09-13
+
+Working source over `c4367087245e6c154e8cbbc34a29c1e6d165f791` replaces managed
+portfolio's standalone current_cash_weight with an explicit current-weight REPORT
+identity and frozen PortfolioCurrentWeightsV1. The native job reads that exact
+object and compares its typed document before catalog/model execution. Source
+is FORWARD_SNAPSHOT or LAST_TARGET, never an implicit all-cash fallback; original
+timestamps, currency, ordered asset weights and cash must match the request and
+Mandate's freshness/tolerance. Domain output adoption binds the same frozen cash
+and asset values. This is input consistency, not downstream identity verification
+or a claim that LAST_TARGET represents actual positions. No account/NAV/credential
+fields or new numerical dependency were added. Single allocate stays numerical.
+
+Managed subprocess regression passes 9/9 (1.85s): missing REPORT, equal-length
+original-document substitution, future/expired snapshot, wrong currency and
+mismatched weights are rejected while original catalog/model allocation works.
+An initial test modified only in-memory spec; corrected to write the subprocess's
+actual spec. Broader Runtime catalog-scope tests then required their own explicit
+weight report; fixtures were updated, with all original six-operation rejection
+cases retained. Final `verify-W3mFvO` exited 0 with source unchanged: all-target
+native-feature check/fmt/strict Clippy, 153 contracts/domain/runtime, 9 managed,
+31 native Codex and 92 Job tests passed (overlapping subsets).
+
+`web-verify-tuHPTz` exited 0: six generated outputs reproduced byte-for-byte
+(only domain OpenAPI changed), handwritten sources unchanged; type/build/wires/
+help, 505 Vitest/5 Node, 36 dedicated and 201 full browser tests passed.
+`owner-oci-8nfObR` built portfolio-weights/1 image
+`sha256:c1975242cd381a40957251bc9c138cc54f11d960e9f040f65a607bbcbd71be59`;
+9 real OCI tests passed in 14.66s, including the original weight REPORT in the
+portfolio job. The fixtures do not prove real downstream ownership or qualified
+portfolio admission. Store-side original snapshot/last-Candidate resolution,
+current qualification/policy/license checks and Candidate publication remain
+required, alongside the other outstanding Issue #62 work. No merge or closure.
+
 ## Explicit native execution models, 2026-09-13
 
 ### Source-bound execution assumptions authoring, 2026-09-13

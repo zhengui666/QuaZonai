@@ -15,6 +15,10 @@ Runtime 是受信任的计算网关：只接受已登记镜像、不可变输入
 
 ## 构建
 
+受管组合要求portfolio-weights/1，显式current_weights_artifact_id及current_weights，
+以REPORT挂载原权重JSON；原生job读取并逐字段核对，不从资产权重猜测来源。
+来源标签只是冻结计算输入，Store还须核验下游快照或原Candidate及当前资格。
+
 原生模拟要求simulation-models/1，显式fee_model/fill_model/latency_model引用
 进入Nautilus0.63.0配置；滑点及固定随机种子由DefaultFillModel执行，费用由
 MakerTakerFeeModel执行，延迟由StaticLatencyModel执行。旧单项insert_latency_ns

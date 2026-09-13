@@ -300,6 +300,7 @@ fn portfolio_fixture(
 ) -> Fixture {
     let (catalog, mut request, wasm) = market::portfolio();
     change(&mut request);
+    let weights = serde_json::to_vec(&request.current_weights).unwrap();
     let id = Id::new();
     let mut inputs = vec![RuntimeInputV1::Dataset {
         revision_id: id,
@@ -315,6 +316,12 @@ fn portfolio_fixture(
             role: ArtifactInputRole::Model,
         });
     }
+    inputs.push(RuntimeInputV1::Artifact {
+        artifact_id: request.current_weights_artifact_id,
+        storage_version: "1".into(),
+        byte_count: market::count(weights.len() as u64),
+        role: ArtifactInputRole::Report,
+    });
     let f = fixture(
         NativeTaskParametersV1::BuildPortfolio {
             schema_version: SchemaV1,
@@ -323,6 +330,13 @@ fn portfolio_fixture(
         },
         inputs,
     );
+    fs::write(
+        f.input
+            .join("objects")
+            .join(request.current_weights_artifact_id.to_string()),
+        weights,
+    )
+    .unwrap();
     for member in &request.members {
         fs::write(
             f.input
@@ -369,6 +383,70 @@ fn actual_managed_allocation_reads_original_catalog_models_and_preserves_infeasi
     );
     assert!(report.allocation.targets.is_none());
     assert!(report.allocation.cash_weight.is_none());
+}
+
+#[test]
+fn portfolio_requires_original_current_weights_and_rejects_future_expired_or_mismatched_values() {
+    for case in 0..4 {
+        let f = portfolio_fixture(|r| match case {
+            0 => {
+                r.current_weights.available_ns =
+                    market::count(r.selection.decision_cutoff_ns.get() + 1)
+            }
+            1 => r.current_weights.valid_until_ns = r.selection.decision_cutoff_ns,
+            2 => r.current_weights.weights[0].weight = "0.99".parse().unwrap(),
+            _ => r.current_weights.base_currency = "EUR".into(),
+        });
+        assert!(!execute(&f), "invalid frozen weights case {case}");
+    }
+    let mut f = portfolio_fixture(|_| {});
+    let id = f
+        .spec
+        .inputs
+        .iter()
+        .find_map(|i| match i {
+            RuntimeInputV1::Artifact {
+                artifact_id,
+                role: ArtifactInputRole::Report,
+                ..
+            } => Some(*artifact_id),
+            _ => None,
+        })
+        .unwrap();
+    // Same declared object identity cannot omit the required original REPORT binding.
+    f.spec.inputs.retain(
+        |i| !matches!(i, RuntimeInputV1::Artifact { artifact_id, .. } if *artifact_id == id),
+    );
+    fs::write(
+        f.input.join("spec.json"),
+        serde_json::to_vec(&f.spec).unwrap(),
+    )
+    .unwrap();
+    assert!(!execute(&f));
+    let f = portfolio_fixture(|_| {});
+    let id = f
+        .spec
+        .inputs
+        .iter()
+        .find_map(|i| match i {
+            RuntimeInputV1::Artifact {
+                artifact_id,
+                role: ArtifactInputRole::Report,
+                ..
+            } => Some(*artifact_id),
+            _ => None,
+        })
+        .unwrap();
+    let path = f.input.join("objects").join(id.to_string());
+    let raw = fs::read_to_string(&path).unwrap();
+    let changed = raw.replace("USD", "EUR");
+    assert_ne!(raw, changed);
+    assert_eq!(raw.len(), changed.len());
+    fs::write(path, changed).unwrap();
+    assert!(
+        !execute(&f),
+        "same-length original snapshot substitution must fail"
+    );
 }
 
 #[test]

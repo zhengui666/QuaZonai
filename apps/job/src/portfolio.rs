@@ -16,6 +16,12 @@ pub fn build(
     mut read: impl FnMut(Id) -> Result<Vec<u8>>,
 ) -> Result<NativePortfolioBuildResultV1> {
     domain::execution::portfolio_build_request(request)?;
+    let original: PortfolioCurrentWeightsV1 =
+        serde_json::from_slice(&read(request.current_weights_artifact_id)?)?;
+    ensure!(
+        original == request.current_weights,
+        "PORTFOLIO_CURRENT_WEIGHTS_SOURCE_MISMATCH"
+    );
     let market = crate::catalog::load_catalog(catalog, &request.selection)?;
     let horizon = request.members[0].parameters.label_horizon_observations as usize;
     let first = &market.series[0];
@@ -164,7 +170,7 @@ pub fn build(
         risk: m.risk_measure,
         base_currency: m.base_currency.clone(),
         capital_assumption: m.capital_assumption.clone(),
-        current_cash_weight: request.current_cash_weight.clone(),
+        current_cash_weight: original.cash_weight,
         exposure_tolerance: m.exposure_tolerance.clone(),
         constraints: m.constraints.clone(),
         optimizer: m.optimizer.clone(),

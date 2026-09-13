@@ -107,6 +107,9 @@ async fn real_native_portfolio_aggregates_original_forecasts_before_optimizing()
     f.restart().await;
     f.object(model_ids[0], &wasm).await;
     f.object(model_ids[1], &second).await;
+    let weights_id = request.current_weights_artifact_id;
+    let weights = serde_json::to_vec(&request.current_weights).unwrap();
+    f.object(weights_id, &weights).await;
     let operation = NativeTaskParametersV1::BuildPortfolio {
         schema_version: SchemaV1,
         dataset_revision_id: dataset,
@@ -127,6 +130,12 @@ async fn real_native_portfolio_aggregates_original_forecasts_before_optimizing()
         image_ref: support::image(),
         input_set_id: Id::new(),
         inputs: vec![
+            RuntimeInputV1::Artifact {
+                artifact_id: weights_id,
+                storage_version: "1".into(),
+                byte_count: count(weights.len() as u64),
+                role: ArtifactInputRole::Report,
+            },
             RuntimeInputV1::Dataset {
                 revision_id: dataset,
                 registered_ref: metadata.registered_ref,
@@ -171,6 +180,7 @@ async fn real_native_portfolio_aggregates_original_forecasts_before_optimizing()
     assert_eq!(manifest.engine_versions["portfolio-ensemble"], "1");
     assert_eq!(manifest.engine_versions["portfolio-models"], "4");
     assert_eq!(manifest.engine_versions["simulation-models"], "1");
+    assert_eq!(manifest.engine_versions["portfolio-weights"], "1");
     assert_eq!(manifest.engine_versions["ndarray"], "0.17.1");
     let [output] = manifest.artifacts.as_slice() else {
         panic!("one original allocation report");

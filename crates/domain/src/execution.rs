@@ -221,9 +221,10 @@ pub fn task(spec: &JobSpecV1, parameters: &NativeTaskParametersV1) -> Result<(),
                 .collect::<BTreeSet<_>>();
             if !spec.inputs.iter().any(|input| matches!(input, RuntimeInputV1::Dataset { revision_id, role: contracts::research::DataPartition::Forward, .. } if revision_id == dataset_revision_id))
                 || objects.iter().any(|id| !artifact(spec, *id, ArtifactInputRole::Model))
+                || !artifact(spec, request.current_weights_artifact_id, ArtifactInputRole::Report)
                 || spec.inputs.iter().any(|input| match input {
                     RuntimeInputV1::Dataset { revision_id, role, .. } => revision_id != dataset_revision_id || *role != contracts::research::DataPartition::Forward,
-                    RuntimeInputV1::Artifact { artifact_id, role, .. } => !(*role == ArtifactInputRole::Model && objects.contains(artifact_id) || *artifact_id == spec.parameters_artifact_id && *role == ArtifactInputRole::Parameters),
+                    RuntimeInputV1::Artifact { artifact_id, role, .. } => !(*role == ArtifactInputRole::Model && objects.contains(artifact_id) || *artifact_id == spec.parameters_artifact_id && *role == ArtifactInputRole::Parameters || *artifact_id == request.current_weights_artifact_id && *role == ArtifactInputRole::Report),
                 }) {
                 return Err(bad("allocation_inputs"));
             }

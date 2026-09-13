@@ -11034,8 +11034,11 @@
             "minItems": 1,
             "type": "array"
           },
-          "current_cash_weight": {
-            "$ref": "#/components/schemas/DecimalValue"
+          "current_weights": {
+            "$ref": "#/components/schemas/PortfolioCurrentWeightsV1"
+          },
+          "current_weights_artifact_id": {
+            "$ref": "#/components/schemas/Id"
           },
           "mandate": {
             "$ref": "#/components/schemas/MandateContentV1"
@@ -11059,7 +11062,8 @@
           "schema_version",
           "selection",
           "mandate",
-          "current_cash_weight",
+          "current_weights_artifact_id",
+          "current_weights",
           "assets",
           "members"
         ],
@@ -12799,6 +12803,52 @@
         ],
         "type": "object"
       },
+      "PortfolioCurrentWeightsV1": {
+        "additionalProperties": false,
+        "description": "Observable target-only weights. Source identity is verified by Store, not by the numerical job.",
+        "properties": {
+          "asof_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "available_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "base_currency": {
+            "type": "string"
+          },
+          "cash_weight": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "source": {
+            "$ref": "#/components/schemas/PortfolioWeightsSourceV1"
+          },
+          "valid_until_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "weights": {
+            "items": {
+              "$ref": "#/components/schemas/AllocationTargetV1"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "schema_version",
+          "source",
+          "asof_ns",
+          "available_ns",
+          "valid_until_ns",
+          "base_currency",
+          "cash_weight",
+          "weights"
+        ],
+        "type": "object"
+      },
       "PortfolioForecastInputV1": {
         "additionalProperties": false,
         "properties": {
@@ -12940,6 +12990,50 @@
           "asset_returns"
         ],
         "type": "object"
+      },
+      "PortfolioWeightsSourceV1": {
+        "oneOf": [
+          {
+            "properties": {
+              "downstream_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "external_message_id": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "FORWARD_SNAPSHOT"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "downstream_id",
+              "external_message_id",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "candidate_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "kind": {
+                "enum": [
+                  "LAST_TARGET"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "candidate_id",
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "PrincipalCreate": {
         "additionalProperties": false,

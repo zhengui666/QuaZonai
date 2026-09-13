@@ -31,6 +31,22 @@ fn operation(
             let mut request = portfolio_config::request(&input);
             request.assets.truncate(selection.bar_types.len());
             request.selection = selection;
+            request
+                .current_weights
+                .weights
+                .truncate(request.assets.len());
+            let one: contracts::DecimalValue = "1".parse().unwrap();
+            let cash = request
+                .assets
+                .iter()
+                .fold(one.as_decimal().clone(), |cash, a| {
+                    cash - a.current_weight.as_decimal()
+                });
+            request.current_weights.cash_weight = cash.to_plain_string().parse().unwrap();
+            request.current_weights.asof_ns = request.selection.decision_cutoff_ns;
+            request.current_weights.available_ns = request.selection.decision_cutoff_ns;
+            request.current_weights.valid_until_ns =
+                count(request.selection.decision_cutoff_ns.get() + 1);
             for member in &mut request.members {
                 member.model_artifact_id = model;
             }
@@ -166,6 +182,19 @@ async fn accepts(
         storage_version: metadata.storage_version.clone(),
         role: metadata.partition,
     }];
+    if let NativeTaskParametersV1::BuildPortfolio { request, .. } = &parameters {
+        let bytes = serde_json::to_vec(&request.current_weights).unwrap();
+        journal
+            .put_object(request.current_weights_artifact_id, "1", &bytes)
+            .await
+            .unwrap();
+        inputs.push(RuntimeInputV1::Artifact {
+            artifact_id: request.current_weights_artifact_id,
+            storage_version: "1".into(),
+            byte_count: count(bytes.len() as u64),
+            role: ArtifactInputRole::Report,
+        });
+    }
     if matches!(kind, 1 | 3 | 4 | 5) {
         journal
             .put_object(model, "1", b"controlled-model-fixture")

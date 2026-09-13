@@ -143,6 +143,9 @@ SCORE沿原校准确定，不读取active指针推断，REJECT/未入选/缺证�
 原生simulate显式冻结fee_model、fill_model、latency_model（nautilus-execution
 0.63.0，simulation-models/1），旧顶层insert_latency_ns拒绝，不补默认模型或种子；
 模型运行与费用证据、正式执行假设及组合资格是不同边界，不能由成功模拟推定后者。
+受管组合当前权重必须提供独立REPORT原产物和PortfolioCurrentWeightsV1冻结副本，
+镜像portfolio-weights/1核对来源种类、内容、时间、币种与资产权重，不补NONE为现金。
+来源身份与资格仍由Store核验；Agent不得自报下游身份来绕过该边界。
 Operator的`client portfolio assumptions create/list/show`保存/读取原生来源绑定的
 不可变假设（字段见CLI）；创建需要冻结非Sealed输入、原登记费率和近期Runtime探测。
 当前入口仅保守BAR，不自动获得DATA_BACKED、资格或交付权限；不修改历史假设。

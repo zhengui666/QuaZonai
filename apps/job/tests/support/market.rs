@@ -186,9 +186,20 @@ pub fn portfolio() -> (tempfile::TempDir, NativePortfolioBuildRequestV1, Vec<u8>
     .unwrap();
     let mut request = portfolio_config::request(&input);
     request.selection = simulation.selection;
+    request.current_weights.asof_ns = request.selection.decision_cutoff_ns;
+    request.current_weights.available_ns = request.selection.decision_cutoff_ns;
+    request.current_weights.valid_until_ns = count(request.selection.decision_cutoff_ns.get() + 1);
     request.mandate.rebalance_schedule.max_input_age_seconds = 60;
     for (asset, fee) in request.assets.iter_mut().zip(simulation.settings.fee_rates) {
         asset.instrument_id = fee.instrument_id;
+    }
+    for (weight, asset) in request
+        .current_weights
+        .weights
+        .iter_mut()
+        .zip(&request.assets)
+    {
+        weight.instrument_id = asset.instrument_id.clone();
     }
     for member in &mut request.members {
         member.parameters.label_horizon_observations = 2;

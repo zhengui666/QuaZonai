@@ -36,7 +36,28 @@ pub fn request(input: &AllocationInputV1) -> NativePortfolioBuildRequestV1 {
             execution_assumptions_id: Id::new(),
             exposure_tolerance: input.exposure_tolerance.clone(),
         },
-        current_cash_weight: input.current_cash_weight.clone(),
+        current_weights_artifact_id: Id::new(),
+        current_weights: PortfolioCurrentWeightsV1 {
+            schema_version: SchemaV1,
+            source: PortfolioWeightsSourceV1::LastTarget {
+                candidate_id: Id::new(),
+            },
+            asof_ns: input.forecasts.decision_asof_ns,
+            available_ns: input.forecasts.decision_asof_ns,
+            valid_until_ns: contracts::DbCounter::new(input.forecasts.decision_asof_ns.get() + 1)
+                .unwrap(),
+            base_currency: input.base_currency.clone(),
+            cash_weight: input.current_cash_weight.clone(),
+            weights: input
+                .assets
+                .iter()
+                .map(|a| AllocationTargetV1 {
+                    instrument_id: a.instrument_id.clone(),
+                    currency: a.currency.clone(),
+                    weight: a.current_weight.clone(),
+                })
+                .collect(),
+        },
         assets: input.assets.clone(),
         members: input
             .forecasts

@@ -179,10 +179,17 @@ AllocatorSettingsV1）及FIXED_WEIGHTED_FORECAST / ndarray::ArrayBase::dot / 0.1
 格式见合成输入文件和DESIGN A5.2；历史来源的可信目录/产物/许可绑定仍待完整编排。
 
 受管PORTFOLIO_BUILD不接受上述手填数值输入；必须使用dataset_revision_id与
-NativePortfolioBuildRequestV1，包含selection、mandate、current_cash_weight、
+NativePortfolioBuildRequestV1，包含selection、mandate、current_weights_artifact_id、current_weights、
 assets与原Alpha/model/calibration成员。仅挂载明确FORWARD目录和MODEL产物，
 原生运行生成预测与历史收益，输出qz.native_portfolio/1。模型数值执行不代替
 Store的当前资格、许可、政策与资金来源检查，完整Candidate编排仍待完成。
+
+current_weights是PortfolioCurrentWeightsV1的原冻结副本，独立REPORT输入必须提供
+同一current_weights_artifact_id的原JSON。source严格区分FORWARD_SNAPSHOT
+（downstream_id/external_message_id）和LAST_TARGET（candidate_id），后者是目标假设。
+asof_ns/available_ns/valid_until_ns、base_currency、cash_weight、同序weights必须
+匹配Mandate、决策时点与assets.current_weight；缺失、过期、未来或同长度替换均失败。
+新镜像声明portfolio-weights/1。不接受NONE或隐式全现金；本机allocate仍只是数值入口。
 
 ### 不可变 Portfolio Mandate
 
