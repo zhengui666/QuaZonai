@@ -1,5 +1,10 @@
 # 运行与部署
 
+“组合”选择项目后，“评估政策”可分页查看原版本或填写新不可变政策。
+Validation、Sealed、组合阈值分别填写；未定义组合要求时保持null。所有数值、
+方法和来源由操作者明确指定，保存不启动研究、不审批交付。网络结果未知时
+保留原表单重试；关闭不撤销已发送命令，旧政策没有原地编辑入口。
+
 `client portfolio candidate list PROJECT_UUID` / `show CANDIDATE_UUID`查询已发布
 Candidate原始头、成员和目标快照。需要Operator或精确项目RESEARCH_READ的CLI；
 执行、求解和证据状态分别保留，历史VALID不表示当前资格或交付授权，空目标不补权重。

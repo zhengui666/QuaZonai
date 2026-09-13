@@ -3,6 +3,38 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Immutable EvaluationPolicy browser authoring, 2026-09-14
+
+The Portfolio page now exposes the existing project-scoped EvaluationPolicy
+list/detail/create APIs. The Ant Design form explicitly authors Selection, both
+native split shapes, original source references, independent Validation/Sealed
+requirements, optional portfolio requirements and common evidence limits. Decimal
+and DbCounter values remain strings. Disabling portfolio criteria sends null,
+never an inherited threshold. No policy engine, backend API, dependency, database
+change or generated contract change was added.
+
+The existing Intent, authentication, error and unsaved-work handling are reused.
+Unknown write outcomes retain the original input/key for explicit retry. Original
+versions are read-only; no data-derived thresholds, raw Sealed access, experiment
+start, qualification or delivery authority are introduced. Project/record identity
+checks reject unrelated read responses; pagination can recover to the prior page.
+
+Verified on b5ad52c0 plus frozen UI patches: the final targeted browser run passed
+all nine desktop/tablet/mobile cases in 33.9 seconds, including actual form fills,
+exact large integers/decimal endpoints, both split kinds, independent criteria,
+null portfolio criteria, same-key lost-response retry, foreign-project rejection
+and Axe checks for editor/detail. Earlier test locator/fixture errors were fixed;
+the actual read-only drawer keyboard-scroll finding was fixed with a focusable
+policy text region, not by disabling accessibility checks.
+
+web-verify-aHIvj3 then passed full native generation reproducibility, typecheck,
+505 unit tests, five PWA file checks, numeric wire checks, production build,
+36 settings-browser checks and all 234 browser checks (4.5 minutes). Handwritten
+sources remained unchanged. These are controlled browser contract tests, not a
+new claim of native policy admission, real market science or full T42 completion.
+Input preparation, complete research/portfolio science, cost sources and the
+Release/Package/delivery/recovery workflow still require the remaining development.
+
 ## Candidate Evaluation read projections, 2026-09-14
 
 Published Candidate HOLD evaluations now have a paginated Operator/same-project

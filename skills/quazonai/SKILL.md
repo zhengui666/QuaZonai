@@ -198,6 +198,8 @@ SIMULATE_CANDIDATE以原目标REPORT及费用PARAMETERS绑定唯一FORWARD目录
 PORTFOLIO_SIMULATE人工授权；不授Mission权限，202只表示Run，不是Evaluation。
 原生Build读取已绑定DATA_QUALITY原字节并核对选择、币种、年龄与逐资产量；
 这不授Mission写入来源或自行申请资格的权限，也不替代Store准入/发布复核。
+浏览器“组合/评估政策”使用已有政策创建/列表/详情API；三组指标独立填写，
+组合未定义为null，原版本只读；未知结果保留完整请求及幂等键，不自动启动研究。
 `client portfolio candidate list PROJECT_UUID` / `show CANDIDATE_UUID`读取已发布
 原始快照；不是当前资格或交付授权，不向Mission开放报告字节。
 `client portfolio candidate evaluations CANDIDATE_UUID`分页读取原绑定的已发表评估，

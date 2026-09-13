@@ -17,7 +17,7 @@
 | 领域基础 | 精确UUIDv7/bigint/Decimal、预算、租约/终态、Codex覆盖及required指标判定；不是完整数据库权限证明 |
 | 认证 API | Axum + PostgreSQL 原生会话、一次性本机初始化、六位 TOTP 登录、防重放、持久注销/设备撤销；普通服务使用非 owner 数据库角色 |
 | Project 与机器身份 | 真正的项目分页/创建/更新、乐观并发、不可变命令回执、机器 token 一次性签发与撤销；机器只读授权项目，人工 CLI 管理操作另需原生 TOTP 单次授权 |
-| 研究准备 | 同事务冻结输入集合、不可变评估政策与实验族登记；Validation/Sealed指标要求分别显式冻结，历史未定义要求保留null。严格分区/许可/项目关联和分页授权；登记意图不代表实际Sealed执行、PIT或PASS |
+| 研究准备 | 同事务冻结输入集合、不可变评估政策与实验族登记；Validation/Sealed及可选组合指标独立冻结，未定义要求保留null。浏览器“组合/评估政策”可查看原版本、填写新政策并原键重试；登记意图不代表实际Sealed执行、PIT或PASS |
 | 集成配置与探测 | 只写加密凭据、Runtime／Downstream 管理；Runtime 经部署允许列表和真实 TLS 探测，观察绑定配置版本与有效期。保存配置不等于连接成功 |
 | 原生 Runtime | 已编写 SQLite 持久任务身份、固定 Docker 原生执行、不可变输入/输出、独立墙钟限制、取消屏障及恢复服务；普通 SQLite/HTTP/数值回归和独立必跑 OCI 验收明确分离。部署与实际验证入口见 [原生 Runtime](runtimes/native/README.md)，完整 Worker/研究资格链仍未完成 |
 | Brief 与 Cycle 启动 | 正式冻结执行上下文和三个分区输入；启动时重验许可、当前 Runtime 能力与预算，在同一事务创建 Cycle、首个数据验证 Run、事件和 PGMQ 消息。不代表 Worker 已执行该任务 |

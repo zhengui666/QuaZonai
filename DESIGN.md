@@ -1369,6 +1369,14 @@ WALK_FORWARD要求正step_size，group_count/test_group_count均null；可空lab
 comparison input；SEALED选择则comparison input必须包含这一精确sealed_revision，不能
 以另一个SEALED引用代替。任何超出原生能力的split在实际准入仍失败。
 
+浏览器“组合”的“评估政策”按所选项目分页读取、查看原完整政策并创建新不可变版本。
+结构化表单分别填写selection、split、Validation/Sealed指标要求、可选独立组合要求及
+样本/缺失/许可能力/有效期限制，不根据数据生成阈值或方法。组合要求未启用时提交null，
+不继承另外两组。Decimal与DbCounter保留原字符串；空可选端点提交null，比较器与精确
+端点关系仍由既有领域校验。保存复用近期浏览器认证和完整原请求的幂等键；结果未知时
+保留输入并原键重试，关闭编辑器不宣称撤销。页面不编辑原政策、不读取Sealed字节、
+不启动实验或授予资格，原生方法是否可运行仍须实际准入核查。
+
 required metric至少一项；(metric_code,scope)不重复；code/scope/method_allowlist元素
 1..120，allowlist非空不重复且最多64项。比较器和Decimal端点复用A4.2精确规则。
 selection须对应required项，其method_id在该项allowlist中。没有根据候选数据自动
