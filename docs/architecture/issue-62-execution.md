@@ -3,6 +3,41 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Immutable historical BAR liquidity source, 2026-09-13
+
+The patch over `9ccc2054` adds optional explicit historical liquidity assumptions:
+original accepted DATA_VALIDATE report, maximum age and exact participation limit.
+Creation verifies the original Run/Attempt/task/manifest/output mapping and bytes,
+same project/Runtime/frozen input/Dataset/selection, current license, non-Sealed
+use, measured asset values and base currency. Same-schema registration is not an
+adopted native result. The independent exclusive expiry uses the earliest original
+event plus explicit age, floored to PostgreSQL microseconds. Creation rechecks
+expiry after object publication; configuration and expiry cannot be changed.
+This remains CONSERVATIVE_ASSUMPTION, never future depth or DATA_BACKED evidence.
+
+The existing HTTP/CLI request and read response carry the optional configuration
+and original expiry. React uses existing Ant Design fields and original retry
+intent; disabling the option clears it and sends null, re-enabling requires fresh
+explicit values. Detail shows original report/ratio/age/expiry, not eligibility.
+No new dependency, alternate transaction engine or default age/ratio.
+
+`verify-4m1zPg` first caught missing schema_version for app.document and a
+Store-only fixture helper included by HTTP tests. The configuration now uses
+SchemaV1 and the helper lives with its sole Store consumer; constraints were not
+weakened. `verify-JVFELC` then passed check/fmt/strict Clippy and 213 tests:
+131 contracts/domain, 47 native, 13 real PostgreSQL/file Store, 1 SQL and 21
+HTTP/CLI. The new test rejects registration-only and expired sources, adopts a
+controlled original native receipt, and checks replay and immutable expiry.
+It does not claim actual numerical computation or REAL/PIT qualification.
+`web-verify-xYgbEF` passed six twice-byte-identical generated outputs, typecheck,
+505 unit, wire/build, 36 settings-browser and 219 full-browser tests. Handwritten
+sources remained unchanged during each verifier.
+
+Build consumption, native source binding and Candidate publication revalidation
+are still required; existing participation refusal remains. Full cost adapters,
+independent Candidate validation, delivery, REAL/PIT acceptance and the final
+current-head GitHub review/CI/merge gates are not complete.
+
 ## Native last-bar notional observations, 2026-09-13
 
 The patch over `8825d0b6` adds optional last_bar_notionals to original native

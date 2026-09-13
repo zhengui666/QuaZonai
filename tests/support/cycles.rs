@@ -151,6 +151,7 @@ pub async fn setup_with_policy(
                 actor,
                 "original-cycle-assumptions",
                 &ExecutionAssumptionsCreateV1 {
+                    bar_liquidity: None,
                     schema_version: SchemaV1,
                     project_id: data.project,
                     runtime_id: data.runtime,

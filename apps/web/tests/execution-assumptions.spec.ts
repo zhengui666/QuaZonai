@@ -4,7 +4,7 @@ import AxeBuilder from '@axe-core/playwright';
 import type { Schema } from '../src/api';
 import { fixture, id, navigate, project, reply } from './fixtures';
 
-test('execution assumptions keep explicit native models, exact values and original retry intent', async ({ page, context }) => {
+for (const liquidity of [false, true]) test(`execution assumptions preserve models, exact retry and liquidity=${liquidity}`, async ({ page, context }) => {
   await fixture(page);
   const writes: { body: Schema['ExecutionAssumptionsCreateV1']; key: string | null }[] = [];
   let saved: Schema['ExecutionAssumptionsViewV1'] | undefined;
@@ -17,7 +17,8 @@ test('execution assumptions keep explicit native models, exact values and origin
       writes.push({ body, key: await request.headerValue('Idempotency-Key') });
       saved = { id: id(80), project_id: project.id, input_set_id: body.input_set_id, dataset_revision_id: body.dataset_revision_id, runtime_id: body.runtime_id,
         capability_snapshot_artifact_id: id(81), fee_schedule_artifact_id: id(82), engine_image_ref: 'fixture-native-image', venue_capability_ref: 'SIM',
-        calendar_version: '1', settlement_rule_ref: body.settlement_rule_ref, cost_assumption_status: 'CONSERVATIVE_ASSUMPTION', settings: body.settings, created_at: '2026-09-13T00:00:00Z' };
+        calendar_version: '1', settlement_rule_ref: body.settlement_rule_ref, cost_assumption_status: 'CONSERVATIVE_ASSUMPTION', settings: body.settings,
+        bar_liquidity: body.bar_liquidity, bar_liquidity_valid_until: body.bar_liquidity ? '2026-09-14T00:00:00Z' : null, created_at: '2026-09-13T00:00:00Z' };
       if (writes.length === 1) return route.abort('failed');
       return reply(route, { schema_version: 1, replayed: true, resource: saved }, 201);
     }
@@ -42,6 +43,23 @@ test('execution assumptions keep explicit native models, exact values and origin
   ] as const) await drawer.getByLabel(label, { exact: true }).fill(value);
   await drawer.getByLabel('模拟账户模型', { exact: true }).click();
   await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').getByText('现金', { exact: true }).click();
+  const liquidityToggle = drawer.getByRole('checkbox', { name: '绑定历史单 BAR 流动性假设', exact: true });
+  await liquidityToggle.check();
+  await drawer.getByLabel('原生历史流动性报告编号', { exact: true }).fill(id(83));
+  await drawer.getByLabel('历史量最长年龄（秒）', { exact: true }).fill('86400');
+  await drawer.getByLabel('单 BAR 参与率上限（大于 0 且不超过 1）', { exact: true }).fill('0.123456789012345678');
+  await liquidityToggle.uncheck();
+  await expect(drawer.getByLabel('原生历史流动性报告编号', { exact: true })).toHaveCount(0);
+  if (liquidity) {
+    await liquidityToggle.check();
+    for (const label of ['原生历史流动性报告编号', '历史量最长年龄（秒）', '单 BAR 参与率上限（大于 0 且不超过 1）']) await expect(drawer.getByLabel(label, { exact: true })).toHaveValue('');
+    await drawer.getByRole('button', { name: '保存不可变执行假设', exact: true }).click();
+    await expect(drawer.getByText('请填写此项。', { exact: true }).first()).toBeVisible();
+    expect(writes).toHaveLength(0);
+    await drawer.getByLabel('原生历史流动性报告编号', { exact: true }).fill(id(83));
+    await drawer.getByLabel('历史量最长年龄（秒）', { exact: true }).fill('86400');
+    await drawer.getByLabel('单 BAR 参与率上限（大于 0 且不超过 1）', { exact: true }).fill('0.123456789012345678');
+  }
   await drawer.getByRole('button', { name: '取消', exact: true }).click();
   await page.getByRole('dialog', { name: '放弃未保存的执行假设？', exact: true }).getByRole('button', { name: '继续编辑', exact: true }).click();
   await expect(page.getByRole('combobox', { name: '选择组合所属项目', exact: true })).toBeDisabled();
@@ -55,6 +73,8 @@ test('execution assumptions keep explicit native models, exact values and origin
   await expect(drawer).not.toBeVisible();
   await expect(page.getByRole('combobox', { name: '选择组合所属项目', exact: true })).toBeEnabled();
   expect(writes).toHaveLength(2); expect(writes[1]).toEqual(writes[0]); expect(writes[0]?.key).toBeTruthy();
+  expect(writes[0]?.body.bar_liquidity).toEqual(liquidity ? { schema_version: 1, report_artifact_id: id(83), maximum_age_seconds: 86400, participation_limit: '0.123456789012345678' } : null);
+  expect(writes[0]?.body).not.toHaveProperty('use_bar_liquidity');
   expect(writes[0]?.body).toMatchObject({ schema_version: 1, project_id: project.id, expected_runtime_revision: '9007199254740993', settings: {
     starting_capital: '12345678901234567890.123456789012345678', account_kind: 'CASH', snapshot_interval_ms: 1000,
     fill_model: { adapter_kind: 'NAUTILUS_DEFAULT_FILL', upstream_version: '0.63.0', parameters: { random_seed: '9007199254740993', prob_slippage: '0.125' } },
@@ -66,5 +86,10 @@ test('execution assumptions keep explicit native models, exact values and origin
   const detail = page.getByRole('dialog', { name: '不可变执行假设', exact: true });
   await expect(detail.getByText(id(81), { exact: true })).toBeVisible();
   await expect(detail.locator('pre')).toContainText('9007199254740993');
+  if (liquidity) {
+    await expect(detail.getByText(id(83), { exact: true })).toBeVisible();
+    await expect(detail.getByText('0.123456789012345678', { exact: true })).toBeVisible();
+    await expect(detail.getByText('原假设失效时刻（不含）', { exact: true })).toBeVisible();
+  } else await expect(detail.getByText('原生历史流动性报告', { exact: true })).toHaveCount(0);
   expect((await new AxeBuilder({ page }).include('[role="dialog"]').analyze()).violations).toEqual([]);
 });

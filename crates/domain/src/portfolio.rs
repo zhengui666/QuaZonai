@@ -7,6 +7,8 @@ mod covariance;
 pub use covariance::sample_covariance;
 mod risk;
 pub use risk::{cvar_confidence, cvar_tail_coefficient, risk_budgeting};
+mod liquidity;
+pub use liquidity::{bar_liquidity_assumption, bar_liquidity_values};
 
 fn invalid() -> DomainError {
     DomainError::Invalid("portfolio_allocation")

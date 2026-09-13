@@ -11,10 +11,30 @@ use contracts::{
     DbCounter, DecimalValue, Id,
 };
 use sqlx::{postgres::PgRow, Row};
+pub(crate) mod liquidity;
 
-const VIEW: &str = "SELECT e.*,s.project_id,s.input_set_id,s.dataset_revision_id,s.runtime_id,s.capability_snapshot_artifact_id,s.settings FROM app.execution_assumptions e JOIN app.execution_assumption_sources s ON s.assumptions_id=e.id";
+const VIEW: &str = "SELECT e.*,s.project_id,s.input_set_id,s.dataset_revision_id,s.runtime_id,s.capability_snapshot_artifact_id,s.settings,s.bar_liquidity,s.bar_liquidity_valid_until FROM app.execution_assumptions e JOIN app.execution_assumption_sources s ON s.assumptions_id=e.id";
 
 fn view(row: &PgRow) -> Result<ExecutionAssumptionsViewV1, StoreError> {
+    let bar_liquidity: Option<BarLiquidityAssumptionV1> = row
+        .try_get::<Option<serde_json::Value>, _>("bar_liquidity")?
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|_| StoreError::Integrity)?;
+    if db::optional_id(row, "liquidity_artifact_id")?
+        != bar_liquidity.as_ref().map(|v| v.report_artifact_id)
+        || row
+            .try_get::<Option<bigdecimal::BigDecimal>, _>("participation_limit")?
+            .as_ref()
+            != bar_liquidity
+                .as_ref()
+                .map(|v| v.participation_limit.as_decimal())
+    {
+        return Err(StoreError::Integrity);
+    }
+    if let Some(value) = &bar_liquidity {
+        domain::portfolio::bar_liquidity_assumption(value).map_err(|_| StoreError::Integrity)?;
+    }
     if row.try_get::<String, _>("cost_assumption_status")? != "CONSERVATIVE_ASSUMPTION" {
         return Err(StoreError::Integrity);
     }
@@ -33,6 +53,8 @@ fn view(row: &PgRow) -> Result<ExecutionAssumptionsViewV1, StoreError> {
         cost_assumption_status: ConservativeAssumption::Conservative,
         settings: serde_json::from_value(row.try_get("settings")?)
             .map_err(|_| StoreError::Integrity)?,
+        bar_liquidity,
+        bar_liquidity_valid_until: row.try_get("bar_liquidity_valid_until")?,
         created_at: row.try_get("created_at")?,
     })
 }
@@ -92,6 +114,9 @@ impl Store {
     {
         domain::control::text(&request.settlement_rule_ref, 1, 200, false)?;
         domain::portfolio::simulation_settings(&request.settings)?;
+        if let Some(value) = &request.bar_liquidity {
+            domain::portfolio::bar_liquidity_assumption(value)?;
+        }
         let mut tx = self.pool.begin().await?;
         let prepared = commands::operator(
             &mut tx,
@@ -151,6 +176,39 @@ impl Store {
             .image_ref
             .clone();
         let metadata = &binding.metadata;
+        let liquidity_report = if let Some(value) = &request.bar_liquidity {
+            let (report, _, _) = liquidity::original(
+                &mut tx,
+                request.project_id,
+                request.runtime_id,
+                request.input_set_id,
+                &binding.selection,
+                value.report_artifact_id,
+                &mut read,
+            )
+            .await?;
+            let now: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+                .fetch_one(&mut *tx)
+                .await?;
+            let at = DbCounter::new(
+                u64::try_from(now.timestamp_nanos_opt().ok_or(StoreError::Integrity)?)
+                    .map_err(|_| StoreError::Integrity)?,
+            )
+            .map_err(|_| StoreError::Integrity)?;
+            let values = domain::portfolio::bar_liquidity_values(
+                value,
+                &report,
+                &request.settings.base_currency,
+                at,
+            )?;
+            let until = liquidity::expiry(values, value.maximum_age_seconds)?;
+            if until <= now {
+                return Err(StoreError::Invalid("bar_liquidity_expired"));
+            }
+            Some((report, until))
+        } else {
+            None
+        };
         let ids = &metadata.quality.datasets[0].instrument_ids;
         if ids.len() != request.settings.fee_rates.len() {
             return Err(StoreError::Invalid("execution_assumptions_fees"));
@@ -220,10 +278,12 @@ impl Store {
         sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,'PARAMETERS','application/json','qz.native_simulation_settings','1','LOCAL',$3,'1',$4,'RESEARCH','SYNTHETIC','OPERATOR','REFERENCED')")
             .bind(artifact.as_uuid()).bind(request.project_id.as_uuid()).bind(artifact.to_string()).bind(size).execute(&mut *tx).await?;
         let s = &request.settings;
-        sqlx::query("INSERT INTO app.execution_assumptions(id,venue_capability_ref,engine_image_ref,price_type,starting_capital,base_currency,fee_schedule_artifact_id,slippage_model,fill_model,latency_model,cost_assumption_status,calendar_version,settlement_rule_ref) VALUES($1,$2,$3,'BAR',$4,$5,$6,$7,$7,$8,'CONSERVATIVE_ASSUMPTION',$9,$10)")
-            .bind(id.as_uuid()).bind(venue.ok_or(StoreError::Integrity)?).bind(image).bind(s.starting_capital.as_decimal()).bind(&s.base_currency).bind(artifact.as_uuid()).bind(db::json(&s.fill_model)?).bind(db::json(&s.latency_model)?).bind(&metadata.universe.calendar_version).bind(&request.settlement_rule_ref).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO app.execution_assumption_sources(assumptions_id,project_id,input_set_id,dataset_revision_id,runtime_id,capability_snapshot_artifact_id,settings) VALUES($1,$2,$3,$4,$5,$6,$7)")
-            .bind(id.as_uuid()).bind(request.project_id.as_uuid()).bind(request.input_set_id.as_uuid()).bind(request.dataset_revision_id.as_uuid()).bind(request.runtime_id.as_uuid()).bind(capability).bind(db::json(s)?).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO app.execution_assumptions(id,venue_capability_ref,engine_image_ref,price_type,starting_capital,base_currency,fee_schedule_artifact_id,slippage_model,fill_model,latency_model,cost_assumption_status,calendar_version,settlement_rule_ref,liquidity_artifact_id,participation_limit) VALUES($1,$2,$3,'BAR',$4,$5,$6,$7,$7,$8,'CONSERVATIVE_ASSUMPTION',$9,$10,$11,$12)")
+            .bind(id.as_uuid()).bind(venue.ok_or(StoreError::Integrity)?).bind(image).bind(s.starting_capital.as_decimal()).bind(&s.base_currency).bind(artifact.as_uuid()).bind(db::json(&s.fill_model)?).bind(db::json(&s.latency_model)?).bind(&metadata.universe.calendar_version).bind(&request.settlement_rule_ref)
+            .bind(request.bar_liquidity.as_ref().map(|v|v.report_artifact_id.as_uuid())).bind(request.bar_liquidity.as_ref().map(|v|v.participation_limit.as_decimal())).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO app.execution_assumption_sources(assumptions_id,project_id,input_set_id,dataset_revision_id,runtime_id,capability_snapshot_artifact_id,settings,bar_liquidity,bar_liquidity_valid_until) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)")
+            .bind(id.as_uuid()).bind(request.project_id.as_uuid()).bind(request.input_set_id.as_uuid()).bind(request.dataset_revision_id.as_uuid()).bind(request.runtime_id.as_uuid()).bind(capability).bind(db::json(s)?)
+            .bind(request.bar_liquidity.as_ref().map(db::json).transpose()?).bind(liquidity_report.as_ref().map(|(_,until)|*until)).execute(&mut *tx).await?;
         commands::recheck_authority(&mut tx, actor, &prepared).await?;
         crate::research::revalidate_frozen_inputs(
             &mut tx,
@@ -239,6 +299,20 @@ impl Store {
             RunKind::PortfolioSimulate,
         )
         .await?;
+        if let (Some(value), Some((report, until))) = (&request.bar_liquidity, &liquidity_report) {
+            let now: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+                .fetch_one(&mut *tx)
+                .await?;
+            let at = DbCounter::new(
+                u64::try_from(now.timestamp_nanos_opt().ok_or(StoreError::Integrity)?)
+                    .map_err(|_| StoreError::Integrity)?,
+            )
+            .map_err(|_| StoreError::Integrity)?;
+            domain::portfolio::bar_liquidity_values(value, report, &s.base_currency, at)?;
+            if *until <= now {
+                return Err(StoreError::Invalid("bar_liquidity_expired"));
+            }
+        }
         let row = sqlx::query(&format!("{VIEW} WHERE e.id=$1"))
             .bind(id.as_uuid())
             .fetch_one(&mut *tx)

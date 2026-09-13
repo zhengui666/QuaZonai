@@ -632,7 +632,8 @@ instrument definitions保留锁定Rust Nautilus InstrumentAny的原生Serde结�
 声明参数的Artifact origin为SYNTHETIC，不是市场数据来源。组合准入按该原始类型
 读取原始字节并验证settings及来源关系，不能要求声明参数冒充REAL；Forward市场数据
 与Alpha资格各自的REAL/PIT和授权要求保持不变。
-当前这个声明式入口只产生CONSERVATIVE_ASSUMPTION、BAR、无参与率/流动性声称；
+当前这个声明式入口只产生CONSERVATIVE_ASSUMPTION、BAR；可选的历史参与率假设
+仅使用下述原生来源，不声称实时流动性；
 DATA_BACKED等完整来源能力仍须单独接通，不能由请求标签冒充。旧数据保持原值，
 未绑定原生来源的历史行不能伪装成此入口的新版本。原请求/原响应支持精确重放，
 创建失败回滚数据库并回收本次未发布对象；不授予Alpha资格或交付权限。
@@ -651,6 +652,23 @@ close_price必须正，数量与名义金额非负，真实零成交量允许为
 决策时可用性、币种与明确期限；未接通这一来源链前不能解除现有参与率准入拒绝。
 SEALED分区不输出此明细，原生job按冻结Dataset输入角色返回null；Sealed目录元数据
 也拒绝携带此明细，不能借质量报告向研究侧暴露封存价格或成交量。
+
+ExecutionAssumptionsCreateV1可带bar_liquidity:{schema_version:1,report_artifact_id:Id,
+maximum_age_seconds:u32>0,participation_limit:Decimal in (0,1]}。这是明确的历史
+单BAR、每次再平衡的规划上限，不按预测horizon、经过时间或资金规模放大历史量。
+报告必须是同项目/Runtime、同原InputSet中该Dataset的已成功采纳原生DATA_VALIDATE
+产物；原任务/Attempt/manifest/输出映射、原选择、当前许可和非Sealed用途都要核验。
+仅有qz.data_quality schema、目录登记副本或手填数值不能作为该原生来源。
+全部资产必须有原last_bar_notionals，币种等于settings.base_currency；每资产事件
+时点到决策时点的年龄均必须小于maximum_age_seconds，available不得晚于决策。
+创建时也按数据库当前时刻核对年龄。此期限专属该历史假设，不修改Mandate的预测/
+权重max_input_age_seconds；有效期内可复用原假设，过期必须重新创建完整假设/政策，
+不能改写旧政策或通过复制资格恢复有效性。不存在自动刷新或默许无期限使用。
+源配置与执行假设不可变保存，liquidity_artifact_id与participation_limit绑定原值；
+bar_liquidity_valid_until取最早原事件加该期限，向下截至数据库微秒精度；到期边界
+不再有效，不能向未来舍入延长。读取返回此原期限，历史行不补造来源或有效期。
+该来源不自动提升cost_assumption_status。Build与Candidate发布仍须完成原报告
+复核，原生求解以每资产原notional_value/capital乘参与率约束绝对权重变动。
 
 原生Universe membership每条带可选groups（最多64个唯一、1..120字符的组标识）。
 null/未提供表示分类未知，[]表示来源明确声明没有组；不自动按名称、币种或证券

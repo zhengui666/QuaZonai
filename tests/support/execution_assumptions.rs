@@ -46,13 +46,20 @@ pub async fn prepare(
         .await
         .unwrap()
         .resource;
-    sqlx::query("UPDATE app.runtime_integrations SET allowed_capabilities=ARRAY['PORTFOLIO_SIMULATE'] WHERE id=$1")
+    sqlx::query("UPDATE app.runtime_integrations SET allowed_capabilities=ARRAY['PORTFOLIO_SIMULATE','DATA_VALIDATE'] WHERE id=$1")
         .bind(f.runtime.id.as_uuid()).execute(pool).await.unwrap();
     let mut cap = observation::configured_capabilities(pool, f.runtime.id).await;
     cap.engine_versions
         .insert("simulation-models".into(), "1".into());
     cap.engine_versions
         .insert("nautilus".into(), "0.63.0".into());
+    cap.engine_versions
+        .insert("bar-notional".into(), "1".into());
+    cap.artifact_schemas
+        .push(contracts::runtime::RuntimeArtifactSchemaV1 {
+            name: "qz.data_quality".into(),
+            version: "1".into(),
+        });
     cap.venues = vec![RuntimeVenueV1 {
         venue: "SIM".into(),
         instrument_classes: vec!["CurrencyPair".into()],
@@ -76,6 +83,7 @@ pub async fn prepare(
         input_set_id: input.header.id,
         dataset_revision_id: dataset.id,
         settlement_rule_ref: "controlled-spot-settlement".into(),
+        bar_liquidity: None,
         settings: NativeSimulationSettingsV1 {
             schema_version: SchemaV1,
             base_currency: "USD".into(),

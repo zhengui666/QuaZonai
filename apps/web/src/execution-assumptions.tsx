@@ -1,4 +1,4 @@
-import { Alert, App, Button, Descriptions, Drawer, Form, Input, InputNumber, Select, Space, Table, Typography } from 'antd';
+import { Alert, App, Button, Checkbox, Descriptions, Drawer, Form, Input, InputNumber, Select, Space, Table, Typography } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { api, dataOf, displayTime, Intent, isCounter, isDecimal } from './api';
@@ -12,6 +12,7 @@ type Settings = Schema['NativeSimulationSettingsV1'];
 type Fill = Extract<Schema['NativeModelRefV1'], { adapter_kind: 'NAUTILUS_DEFAULT_FILL' }>['parameters'];
 type Latency = Extract<Schema['NativeModelRefV1'], { adapter_kind: 'NAUTILUS_STATIC_LATENCY' }>['parameters'];
 type Fields = Omit<Schema['ExecutionAssumptionsCreateV1'], 'schema_version' | 'project_id' | 'settings'> & {
+  use_bar_liquidity?: boolean;
   settings: Omit<Settings, 'schema_version' | 'fee_model' | 'fill_model' | 'latency_model'>; fill: Fill; latency: Latency;
 };
 const required = { required: true, message: '请填写此项。' };
@@ -49,6 +50,12 @@ function Detail({ id, close }: { id: string; close: () => void }) {
         ['venue_capability_ref', '市场'], ['calendar_version', '日历版本'], ['settlement_rule_ref', '结算规则'],
       ] as const).map(([key, label]) => ({ key, label, children: <Typography.Text className="break-word" copyable>{query.data![key]}</Typography.Text> }))} />
       <Alert type="info" showIcon title="CONSERVATIVE_ASSUMPTION · 保守假设，不是数据支持成本证明" />
+      {query.data.bar_liquidity && <Descriptions column={1} items={[
+        { key: 'report', label: '原生历史流动性报告', children: query.data.bar_liquidity.report_artifact_id },
+        { key: 'age', label: '历史量最长年龄（秒）', children: query.data.bar_liquidity.maximum_age_seconds },
+        { key: 'participation', label: '单 BAR 参与率上限', children: query.data.bar_liquidity.participation_limit },
+        { key: 'expiry', label: '原假设失效时刻（不含）', children: displayTime(query.data.bar_liquidity_valid_until) },
+      ]} />}
       <Typography.Title level={2}>服务器保存的原生模型配置</Typography.Title><pre className="break-word" style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(query.data.settings, null, 2)}</pre></>}
     </QueryPanel>
   </Drawer>;
@@ -56,10 +63,13 @@ function Detail({ id, close }: { id: string; close: () => void }) {
 
 function Editor({ project, close }: { project: string; close: () => void }) {
   const [form] = Form.useForm<Fields>(); const [dirty, setDirty] = useState(false); const intent = useRef(new Intent());
+  const useBarLiquidity = Form.useWatch('use_bar_liquidity', form);
   const client = useQueryClient(); const online = useOnline(); const { modal, message } = App.useApp();
   const mutation = useMutation({ mutationFn: async (values: Fields) => {
-    const { fill, latency, ...source } = values;
-    const body: Schema['ExecutionAssumptionsCreateV1'] = { ...source, schema_version: 1, project_id: project, settings: { ...source.settings, schema_version: 1,
+    const { fill, latency, use_bar_liquidity, bar_liquidity, ...source } = values;
+    const body: Schema['ExecutionAssumptionsCreateV1'] = { ...source, schema_version: 1, project_id: project,
+      bar_liquidity: use_bar_liquidity && bar_liquidity ? { ...bar_liquidity, schema_version: 1 } : null,
+      settings: { ...source.settings, schema_version: 1,
       fee_model: { schema_version: 1, adapter_kind: 'NAUTILUS_MAKER_TAKER', upstream_class: 'nautilus_execution::models::fee::MakerTakerFeeModel', upstream_version: '0.63.0', parameters: {} },
       fill_model: { schema_version: 1, adapter_kind: 'NAUTILUS_DEFAULT_FILL', upstream_class: 'nautilus_execution::models::fill::DefaultFillModel', upstream_version: '0.63.0', parameters: fill },
       latency_model: { schema_version: 1, adapter_kind: 'NAUTILUS_STATIC_LATENCY', upstream_class: 'nautilus_execution::models::latency::StaticLatencyModel', upstream_version: '0.63.0', parameters: latency },
@@ -82,6 +92,13 @@ function Editor({ project, close }: { project: string; close: () => void }) {
       {([['runtime_id', 'Runtime 编号'], ['input_set_id', '冻结输入编号'], ['dataset_revision_id', '数据版本编号']] as const).map(([name, label]) => <Form.Item key={name} name={name} label={label} rules={ids}><Input /></Form.Item>)}
       <Form.Item name="expected_runtime_revision" label="Runtime 配置版本" rules={counterRules}><Input inputMode="numeric" /></Form.Item>
       <Form.Item name="settlement_rule_ref" label="结算规则引用" rules={[required, { max: 200, whitespace: true }]}><Input /></Form.Item>
+      <Form.Item name="use_bar_liquidity" valuePropName="checked"><Checkbox>绑定历史单 BAR 流动性假设</Checkbox></Form.Item>
+      {useBarLiquidity && <>
+        <Alert type="info" showIcon title="历史量不是未来可成交保证" description="只接受同一冻结输入、数据版本和 Runtime 的原生 DATA_VALIDATE 报告。明确填写有效年龄与每次再平衡参与率；到期需创建新假设，不会自动刷新或提升 DATA_BACKED 资格。" />
+        <Form.Item name={['bar_liquidity', 'report_artifact_id']} preserve={false} label="原生历史流动性报告编号" rules={ids}><Input /></Form.Item>
+        <Form.Item name={['bar_liquidity', 'maximum_age_seconds']} preserve={false} label="历史量最长年龄（秒）" rules={[required, { type: 'integer', min: 1, max: 4294967295 }]}><InputNumber min={1} max={4294967295} precision={0} /></Form.Item>
+        <Form.Item name={['bar_liquidity', 'participation_limit']} preserve={false} label="单 BAR 参与率上限（大于 0 且不超过 1）" rules={decimals}><Input inputMode="decimal" /></Form.Item>
+      </>}
       <Form.Item name={['settings', 'base_currency']} label="基础币种" rules={[required, { pattern: /^[A-Z]{3}$/, message: '请输入 ISO 币种代码。' }]}><Input maxLength={3} /></Form.Item>
       <Form.Item name={['settings', 'account_kind']} label="模拟账户模型" rules={[required]}><Select options={[{ value: 'CASH', label: '现金' }, { value: 'MARGIN', label: '保证金' }]} /></Form.Item>
       {([['starting_capital', '资本假设'], ['leverage', '杠杆上限'], ['exposure_tolerance', '敞口容差']] as const).map(([name, label]) => <Form.Item key={name} name={['settings', name]} label={label} rules={decimals}><Input inputMode="decimal" /></Form.Item>)}

@@ -1317,6 +1317,32 @@
         ],
         "type": "string"
       },
+      "BarLiquidityAssumptionV1": {
+        "additionalProperties": false,
+        "properties": {
+          "maximum_age_seconds": {
+            "format": "int32",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "participation_limit": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "report_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "report_artifact_id",
+          "maximum_age_seconds",
+          "participation_limit"
+        ],
+        "type": "object"
+      },
       "BootstrapConfirm": {
         "additionalProperties": false,
         "properties": {
@@ -8735,6 +8761,16 @@
       "ExecutionAssumptionsCreateV1": {
         "additionalProperties": false,
         "properties": {
+          "bar_liquidity": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BarLiquidityAssumptionV1"
+              }
+            ]
+          },
           "dataset_revision_id": {
             "$ref": "#/components/schemas/Id"
           },
@@ -8777,6 +8813,23 @@
       "ExecutionAssumptionsViewV1": {
         "additionalProperties": false,
         "properties": {
+          "bar_liquidity": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BarLiquidityAssumptionV1"
+              }
+            ]
+          },
+          "bar_liquidity_valid_until": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "calendar_version": {
             "type": "string"
           },

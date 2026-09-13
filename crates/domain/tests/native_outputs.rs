@@ -189,6 +189,45 @@ fn registered_sealed_metadata_rejects_bar_values_but_preserves_unknown_observati
 }
 
 #[test]
+fn historical_bar_liquidity_has_its_own_explicit_exclusive_age_bound() {
+    use contracts::execution_assumptions::BarLiquidityAssumptionV1;
+    let (_, mut report) = quality();
+    let q = &mut report.datasets[0];
+    q.last_bar_notionals = Some(vec![NativeBarNotionalV1 {
+        instrument_id: q.instrument_ids[0].clone(),
+        currency: "USD".into(),
+        event_ns: count(2),
+        available_ns: count(3),
+        close_price: "1".parse().unwrap(),
+        traded_volume: "0".parse().unwrap(),
+        notional_value: "0".parse().unwrap(),
+    }]);
+    let mut assumption = BarLiquidityAssumptionV1 {
+        schema_version: contracts::SchemaV1,
+        report_artifact_id: Id::new(),
+        maximum_age_seconds: 1,
+        participation_limit: "0.1".parse().unwrap(),
+    };
+    assert!(
+        domain::portfolio::bar_liquidity_values(&assumption, q, "USD", count(1_000_000_001))
+            .is_ok()
+    );
+    assert!(
+        domain::portfolio::bar_liquidity_values(&assumption, q, "USD", count(1_000_000_002))
+            .is_err()
+    );
+    assert!(domain::portfolio::bar_liquidity_values(&assumption, q, "EUR", count(100)).is_err());
+    assert!(domain::portfolio::bar_liquidity_values(&assumption, q, "USD", count(2)).is_err());
+    for limit in ["0", "-0.1", "1.1"] {
+        assumption.participation_limit = limit.parse().unwrap();
+        assert!(domain::portfolio::bar_liquidity_assumption(&assumption).is_err());
+    }
+    assumption.participation_limit = "1".parse().unwrap();
+    assumption.maximum_age_seconds = 0;
+    assert!(domain::portfolio::bar_liquidity_assumption(&assumption).is_err());
+}
+
+#[test]
 fn compiler_report_cannot_borrow_another_code_or_model_object() {
     let code = Id::new();
     let parameters = NativeTaskParametersV1::CompileModel {

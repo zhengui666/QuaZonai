@@ -277,7 +277,14 @@ cargo run --locked -p server -- client portfolio assumptions show ASSUMPTIONS_UU
 
 读取对应`GET /api/v2/projects/{id}/execution-assumptions`和
 `GET /api/v2/execution-assumptions/{id}`，分页/身份边界同Mandate，无修改或删除入口。
-当前声明式入口仅支持BAR/CONSERVATIVE_ASSUMPTION，不填造流动性/参与率证据。
+当前声明式入口仅支持BAR/CONSERVATIVE_ASSUMPTION。可选bar_liquidity为
+{schema_version:1,report_artifact_id:Id,maximum_age_seconds:正u32,
+participation_limit:大于0且不超过1的Decimal字符串}；不使用时传null或省略。
+必须引用同项目/Runtime/冻结输入中该Dataset已采纳的原生DATA_VALIDATE报告，
+不是同schema的目录登记副本。全部原测量币种须匹配基础币种，创建时仍在明确期限内。
+读取返回原配置与bar_liquidity_valid_until（到期边界不含）；过期不自动刷新，
+需新建假设。该单BAR历史规划上限不保证未来成交，不授DATA_BACKED或组合资格；
+完整Build消费与Candidate发布复核仍待接通，不能以保存成功代替它们。
 原数据不改写；没有此原生来源关系的历史行不投影成新接口版本。
 
 `POST /api/v2/portfolio-mandates`接受MandateCreateV1：schema_version、project_id、

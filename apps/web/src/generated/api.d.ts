@@ -1465,6 +1465,13 @@ export interface components {
         };
         /** @enum {string} */
         AssignablePrincipalKind: "CLI" | "DOWNSTREAM" | "AUTOMATION";
+        BarLiquidityAssumptionV1: {
+            /** Format: int32 */
+            maximum_age_seconds: number;
+            participation_limit: components["schemas"]["DecimalValue"];
+            report_artifact_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         BootstrapConfirm: {
             code: string;
             device_label?: string | null;
@@ -2350,6 +2357,9 @@ export interface components {
         CommandResult_ExecutionAssumptionsViewV1: {
             replayed: boolean;
             resource: {
+                bar_liquidity?: null | components["schemas"]["BarLiquidityAssumptionV1"];
+                /** Format: date-time */
+                bar_liquidity_valid_until?: string | null;
                 calendar_version: string;
                 capability_snapshot_artifact_id: components["schemas"]["Id"];
                 /** @description This entrypoint freezes declared models, never self-asserted DATA_BACKED. */
@@ -3000,6 +3010,7 @@ export interface components {
         /** @enum {string} */
         EvidenceStatus: "VALID" | "INVALID" | "INCOMPLETE" | "UNSUPPORTED";
         ExecutionAssumptionsCreateV1: {
+            bar_liquidity?: null | components["schemas"]["BarLiquidityAssumptionV1"];
             dataset_revision_id: components["schemas"]["Id"];
             expected_runtime_revision: components["schemas"]["Revision"];
             input_set_id: components["schemas"]["Id"];
@@ -3010,6 +3021,9 @@ export interface components {
             settlement_rule_ref: string;
         };
         ExecutionAssumptionsViewV1: {
+            bar_liquidity?: null | components["schemas"]["BarLiquidityAssumptionV1"];
+            /** Format: date-time */
+            bar_liquidity_valid_until?: string | null;
             calendar_version: string;
             capability_snapshot_artifact_id: components["schemas"]["Id"];
             /** @description This entrypoint freezes declared models, never self-asserted DATA_BACKED. */
@@ -3947,6 +3961,9 @@ export interface components {
         };
         Page_ExecutionAssumptionsViewV1: {
             items: {
+                bar_liquidity?: null | components["schemas"]["BarLiquidityAssumptionV1"];
+                /** Format: date-time */
+                bar_liquidity_valid_until?: string | null;
                 calendar_version: string;
                 capability_snapshot_artifact_id: components["schemas"]["Id"];
                 /** @description This entrypoint freezes declared models, never self-asserted DATA_BACKED. */

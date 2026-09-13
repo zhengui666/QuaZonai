@@ -1,10 +1,101 @@
 //! Real PostgreSQL/file transactions; controlled sources, never REAL qualification.
+#[path = "support/bar_liquidity.rs"]
+mod bar_liquidity;
 #[path = "../../../tests/support/execution_assumptions.rs"]
 mod support;
 use contracts::{control::ListQuery, Id};
 use sqlx::PgPool;
 use store::StoreError;
 use support::{data, prepare};
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn bar_liquidity_requires_original_native_output_and_freezes_its_expiry(pool: PgPool) {
+    use contracts::execution_assumptions::BarLiquidityAssumptionV1;
+    let (f, mut request) = prepare(&pool, data::setup(&pool, None).await).await;
+    let dataset = f
+        .store
+        .get_dataset_revision(&f.actor, request.dataset_revision_id)
+        .await
+        .unwrap();
+    request.bar_liquidity = Some(BarLiquidityAssumptionV1 {
+        schema_version: contracts::SchemaV1,
+        report_artifact_id: dataset.quality_artifact_id,
+        maximum_age_seconds: u32::MAX,
+        participation_limit: "0.1".parse().unwrap(),
+    });
+    let forged = f
+        .store
+        .create_execution_assumptions(
+            &f.actor,
+            "registration-is-not-measurement",
+            &request,
+            |id, size| data::read(f.objects.clone(), id, size),
+            |_| async { panic!("unmeasured source publishes nothing") },
+        )
+        .await;
+    assert!(matches!(
+        forged,
+        Err(StoreError::Invalid("bar_liquidity_native_source"))
+    ));
+    let report = bar_liquidity::measured_report(&pool, &f, &request).await;
+    request.bar_liquidity.as_mut().unwrap().report_artifact_id = report;
+    let mut expired = request.clone();
+    expired.bar_liquidity.as_mut().unwrap().maximum_age_seconds = 1;
+    assert!(f
+        .store
+        .create_execution_assumptions(
+            &f.actor,
+            "expired",
+            &expired,
+            |id, size| data::read(f.objects.clone(), id, size),
+            |_| async { panic!("expired source publishes nothing") }
+        )
+        .await
+        .is_err());
+    let created = f
+        .store
+        .create_execution_assumptions(
+            &f.actor,
+            "measured",
+            &request,
+            |id, size| data::read(f.objects.clone(), id, size),
+            |object| {
+                std::future::ready(
+                    f.objects
+                        .put(object.id, &object.bytes)
+                        .map_err(|_| StoreError::Integrity),
+                )
+            },
+        )
+        .await
+        .unwrap()
+        .resource;
+    assert_eq!(created.bar_liquidity, request.bar_liquidity);
+    let expected = data::catalog_fixture::instant(180 + i64::from(u32::MAX));
+    assert_eq!(created.bar_liquidity_valid_until, Some(expected));
+    assert_eq!(
+        f.store
+            .execution_assumption(&f.actor, created.id)
+            .await
+            .unwrap()
+            .bar_liquidity_valid_until,
+        Some(expected)
+    );
+    let replay = f
+        .store
+        .create_execution_assumptions(
+            &f.actor,
+            "measured",
+            &request,
+            |_, _| async { panic!("replay reads nothing") },
+            |_| async { panic!("replay writes nothing") },
+        )
+        .await
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.resource.bar_liquidity, created.bar_liquidity);
+    assert!(sqlx::query("UPDATE app.execution_assumption_sources SET bar_liquidity_valid_until=clock_timestamp() WHERE assumptions_id=$1").bind(created.id.as_uuid()).execute(&pool).await.is_err());
+}
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn original_sources_models_receipts_and_immutable_settings_are_bound(pool: PgPool) {
