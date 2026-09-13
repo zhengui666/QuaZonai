@@ -3,6 +3,42 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Original calendar session consumption, 2026-09-14
+
+portfolio-study/5 and portfolio-calendar/1 consume an original complete session
+PARAMETERS file. Job rereads its exact structured values; Runtime binds calendar
+name/version to the registered Universe. The thin Rust adapter applies the explicit
+signed seconds offset to original UTC closes, with no holiday rules, URL fetching,
+new dependency or Python runtime. It checks original availability at the first
+evaluation cutoff, shifted coverage, strict nonoverlapping sessions and original
+Mandate timezone, then reuses all study frame/fuel/TTL/output-binding checks.
+Manual overrides and unrelated calendar files are rejected. Source completeness
+and licensing remain the source owner's separate formal admission responsibility.
+
+Three study tests passed, including actual subprocess file consumption, missing or
+changed originals, coverage edges, duplicate/overlapping sessions, future availability,
+wrong calendar/timezone and manual mixing. Explicit UTC DST/early-close fixtures
+verify positive, zero and negative offsets without claiming native holiday generation.
+Review corrected an unnecessarily early calendar-availability boundary: calendars
+may be published after model research, provided they are known by evaluation start;
+the exact cutoff is accepted and one nanosecond later rejected. Final study tests
+passed again after that correction (11.87 seconds).
+
+On 6874f11b plus frozen patches, final verify-j4VCXo passed 229 mandate tests with
+workspace check/fmt/strict Clippy, unchanged source and isolated PostgreSQL stopped.
+Runtime's final 27 tests passed. web-verify-PlaLkF reproduced all six generated
+outputs twice without handwritten changes; later availability correction changed
+no contract shape. Final owner-oci-shkTER rebuilt the image and passed all 15 actual
+Docker tests, including original calendar/liquidity consumption, rejection of
+foreign registered calendar name/version, one account and all three bound artifacts.
+Source remained unchanged. Image identity:
+sha256:5fe27ea316545092c7900ecd83394615fc73021127e85ad7ed8db24ba1eb8b44.
+
+This completes native session-table consumption, not authentic source registration,
+REAL/PIT qualification or formal PORTFOLIO admission/publication. Independent policy,
+Release/delivery and recovery remain required. No push, review, merge or Issue
+closure occurred in this stage.
+
 ## Frozen manual study cutoffs, 2026-09-14
 
 portfolio-study/4 adds MANUAL study schedules through manual_cutoffs_ns in the

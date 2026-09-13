@@ -10779,6 +10779,73 @@
         ],
         "type": "object"
       },
+      "NativeCalendarSessionV1": {
+        "additionalProperties": false,
+        "description": "Original UTC session boundaries, including native early closes.",
+        "properties": {
+          "close_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "open_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          }
+        },
+        "required": [
+          "open_ns",
+          "close_ns"
+        ],
+        "type": "object"
+      },
+      "NativeCalendarSessionsV1": {
+        "additionalProperties": false,
+        "description": "Original complete session data, not QZ-generated holiday rules.",
+        "properties": {
+          "available_at_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "calendar_ref": {
+            "type": "string"
+          },
+          "calendar_version": {
+            "type": "string"
+          },
+          "coverage_end_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "coverage_start_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/NativeCalendarSessionV1"
+            },
+            "maxItems": 4096,
+            "minItems": 1,
+            "type": "array"
+          },
+          "source_reference": {
+            "type": "string"
+          },
+          "timezone": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "calendar_ref",
+          "calendar_version",
+          "timezone",
+          "source_reference",
+          "available_at_ns",
+          "coverage_start_ns",
+          "coverage_end_ns",
+          "sessions"
+        ],
+        "type": "object"
+      },
       "NativeCalibrationV1": {
         "additionalProperties": false,
         "properties": {
@@ -11669,6 +11736,22 @@
         ],
         "type": "object"
       },
+      "NativePortfolioCalendarV1": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "calendar": {
+            "$ref": "#/components/schemas/NativeCalendarSessionsV1"
+          }
+        },
+        "required": [
+          "artifact_id",
+          "calendar"
+        ],
+        "type": "object"
+      },
       "NativePortfolioLiquidityV1": {
         "additionalProperties": false,
         "properties": {
@@ -11767,6 +11850,16 @@
             "maxItems": 256,
             "minItems": 1,
             "type": "array"
+          },
+          "calendar": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NativePortfolioCalendarV1"
+              }
+            ]
           },
           "evaluation_start_ns": {
             "$ref": "#/components/schemas/DbCounter"

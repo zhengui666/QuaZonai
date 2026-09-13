@@ -1960,6 +1960,22 @@ CALENDAR_SESSION仅带非空calendar_ref与显式offset（可为零或负）。�
 有效不表示真实日历版本已可用，准入仍须核对冻结原生能力。组合约束的结构检查由
 Mandate与实际求解共用；具体资产/组成员和数值可行性仍由冻结输入及原生求解核验。
 
+原生离线CALENDAR_SESSION消费原PARAMETERS会话表，不从周历推断交易所休市。
+NativePortfolioStudyRequestV1.calendar绑定artifact_id及原NativeCalendarSessionsV1：
+schema_version=1、calendar_ref/calendar_version/timezone、source_reference、
+available_at_ns、coverage_start_ns/coverage_end_ns、sessions[{open_ns,close_ns}]。
+表的覆盖区间按原收盘时间定义为半开区间，必须包含该范围全部原会话；1..4096项
+按时间严格递增、不重叠，不排序、补点或过滤异常。source_reference只作出处记录，
+不允许Job访问URL；完整性与许可证由原数据所有者准入负责，结构有效不等于真实来源。
+available_at_ns不晚于原evaluation_start_ns，不用后见日历冒充当时已知；不要求
+日历早于模型研究结束，二者是独立来源的可用时间。
+日历名称及IANA时区必须匹配Mandate，名称/版本还须匹配注册目录的原Universe。
+Job重读原文件并逐值核对冻结副本。非日历模式不得附带日历，日历模式不接收手动截止。
+每项截止=原close_ns加session_offset_seconds（真实秒，允许负值），仅取评估窗口内
+全部截止；覆盖范围先按相反偏移核对，防止边缘漏会话。首项等于评估开始，复用
+2..256帧、fuel、原目标TTL及末尾覆盖检查。原表UTC时间表达DST与半日市；此适配
+不计算节假日、不自建日历引擎，不授予正式PORTFOLIO/PASS或下游调仓权限。
+
 ### A5.1 候选子对象唯一性
 
 Operator及精确项目RESEARCH_READ的CLI可读取

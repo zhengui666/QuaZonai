@@ -112,6 +112,37 @@ pub struct NativeRollingBarLiquidityPolicyV1 {
     pub participation_limit: DecimalValue,
 }
 
+/// Original UTC session boundaries, including native early closes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeCalendarSessionV1 {
+    pub open_ns: DbCounter,
+    pub close_ns: DbCounter,
+}
+
+/// Original complete session data, not QZ-generated holiday rules.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeCalendarSessionsV1 {
+    pub schema_version: SchemaV1,
+    pub calendar_ref: String,
+    pub calendar_version: String,
+    pub timezone: String,
+    pub source_reference: String,
+    pub available_at_ns: DbCounter,
+    pub coverage_start_ns: DbCounter,
+    pub coverage_end_ns: DbCounter,
+    #[schema(min_items = 1, max_items = 4096)]
+    pub sessions: Vec<NativeCalendarSessionV1>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativePortfolioCalendarV1 {
+    pub artifact_id: Id,
+    pub calendar: NativeCalendarSessionsV1,
+}
+
 /// Offline model-driven research. The simulated account, not the caller, owns weights.
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -121,6 +152,7 @@ pub struct NativePortfolioStudyRequestV1 {
     pub evaluation_start_ns: DbCounter,
     #[schema(min_items = 2, max_items = 256)]
     pub manual_cutoffs_ns: Option<Vec<DbCounter>>,
+    pub calendar: Option<NativePortfolioCalendarV1>,
     pub research_available_through_ns: DbCounter,
     pub mandate: MandateContentV1,
     pub execution_settings: super::NativeSimulationSettingsV1,

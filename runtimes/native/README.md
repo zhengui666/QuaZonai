@@ -1,6 +1,6 @@
 # 原生 Runtime 与 job 镜像
 
-portfolio-study/4及portfolio-history/1支持STUDY_PORTFOLIO：原模型/校准与费用字节绑定，固定截止
+portfolio-study/5及portfolio-history/1支持STUDY_PORTFOLIO：原模型/校准与费用字节绑定，固定截止
 历史前缀驱动Wasm/Clarabel，在单个Nautilus账户按实际权益/权重调仓。
 输出原源质量和逐帧原输入/求解/模拟报告；不可行不输出模拟结果。
 另输出原manifest绑定的qz.portfolio_history/1 Arrow IPC文件。contracts中的薄
@@ -8,7 +8,9 @@ Arrow合同共同用于job写入/回读与采纳；全部行/列/元数据必须
 portfolio-rolling-liquidity/1从原PARAMETERS政策和每截止目录前缀测量BAR估值，
 复用DATA_VALIDATE的原生估值，按实际模拟权益和参与率约束调仓并再次检查年龄。
 不复用过期单次快照，不声称真实深度。支持固定间隔或原参数manual_cutoffs_ns手动截止，
-共用原帧数/fuel/范围/TTL覆盖检查；当前不支持日历调仓，不是正式PORTFOLIO发布或PASS。
+共用原帧数/fuel/范围/TTL覆盖检查。portfolio-calendar/1另绑定原完整会话PARAMETERS
+文件，目录日历名称/版本一致，截止取原收盘加偏移；不自造节假日规则或抓取URL。
+原文件解析成功不是完整来源准入、正式PORTFOLIO发布或PASS。
 本机实际链验证：`cargo test --locked -p job --test study`。
 
 portfolio-sequence/1支持SIMULATE_PORTFOLIO_SEQUENCE：原Candidate目标文件序列、

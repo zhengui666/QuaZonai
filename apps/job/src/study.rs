@@ -22,6 +22,7 @@ pub fn evaluate(
             request.mandate.constraints.transaction_costs_ref,
         ))
         .chain(request.mandate.constraints.liquidity_ref)
+        .chain(request.calendar.as_ref().map(|c| c.artifact_id))
     {
         if let std::collections::btree_map::Entry::Vacant(entry) = objects.entry(id) {
             entry.insert(read(id)?);
@@ -44,6 +45,14 @@ pub fn evaluate(
         ensure!(original == *policy, "STUDY_LIQUIDITY_POLICY_MISMATCH");
     }
     let mut models = request.members.clone();
+    if let Some(binding) = &request.calendar {
+        let original: NativeCalendarSessionsV1 =
+            serde_json::from_slice(&objects[&binding.artifact_id])?;
+        ensure!(
+            original == binding.calendar,
+            "STUDY_CALENDAR_SOURCE_MISMATCH"
+        );
+    }
     for member in &models {
         if let Some(id) = member.calibration_artifact_id {
             let model: NativeFrozenCalibrationV1 = serde_json::from_slice(&objects[&id])?;

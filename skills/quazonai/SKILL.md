@@ -11,8 +11,10 @@ candidate-simulation/2复用DATA_VALIDATE输出原source_selection的qz.data_qua
 另输出实际窗口qz.native_simulation；完整原manifest必须同时绑定两份报告。
 portfolio-sequence/1另支持原Candidate目标序列逐项绑定并进入同一个原生账户；
 不将该计算入口称为已发表PORTFOLIO/PASS，不手填目标绕过正式准入。
-portfolio-study/4执行原模型驱动、固定间隔或原参数手动截止的单账户滚动研究，验证命令为
-`cargo test --locked -p job --test study`；当前拒绝日历调仓。手动截止不排序、不补点，
+portfolio-study/5执行原模型驱动、固定间隔或原参数手动截止的单账户滚动研究，验证命令为
+`cargo test --locked -p job --test study`。portfolio-calendar/1绑定原完整会话文件及
+目录日历名称/版本，只作原收盘时间加偏移；不能拿默认周历或手动子集冒充完整源。
+手动截止不排序、不补点，
 原TTL必须覆盖下一截止与评估末尾，固定间隔不允许手动覆盖。
 portfolio-rolling-liquidity/1要求原测量政策文件，每截止重新测量本目录前缀，
 执行时复核专属年龄；不复用过期BAR快照、不手填成交额或升级DATA_BACKED。

@@ -131,7 +131,17 @@ pub async fn parameters(
                 _ => None,
             })
             .ok_or(Failure::Invalid("catalog_binding"))?;
-        selection_scope(registered(catalogs, catalog.0, catalog.1)?, selection)?;
+        let catalog = registered(catalogs, catalog.0, catalog.1)?;
+        selection_scope(catalog, selection)?;
+        if let NativeTaskParametersV1::StudyPortfolio { request, .. } = &parameters {
+            if request.calendar.as_ref().is_some_and(|binding| {
+                binding.calendar.calendar_ref != catalog.metadata.universe.calendar_ref
+                    || binding.calendar.calendar_version
+                        != catalog.metadata.universe.calendar_version
+            }) {
+                return Err(Failure::Invalid("catalog_calendar_binding"));
+            }
+        }
     }
     Ok(parameters)
 }

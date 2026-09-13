@@ -348,6 +348,9 @@ fn rolling_portfolio_managed_binds_original_objects_and_reports_infeasibility() 
         } else {
             market::study()
         };
+        if liquidity {
+            market::calendar_schedule(&mut request);
+        }
         if infeasible {
             request.mandate.constraints.max_asset_weight = "0.4".parse().unwrap();
         }
@@ -372,6 +375,13 @@ fn rolling_portfolio_managed_binds_original_objects_and_reports_infeasibility() 
             objects.push((
                 request.mandate.constraints.liquidity_ref.unwrap(),
                 serde_json::to_vec(policy).unwrap(),
+                ArtifactInputRole::Parameters,
+            ));
+        }
+        if let Some(binding) = &request.calendar {
+            objects.push((
+                binding.artifact_id,
+                serde_json::to_vec(&binding.calendar).unwrap(),
                 ArtifactInputRole::Parameters,
             ));
         }
@@ -420,6 +430,12 @@ fn rolling_portfolio_managed_binds_original_objects_and_reports_infeasibility() 
                 if Some(*artifact_id) == request.mandate.constraints.liquidity_ref)
             });
             assert!(domain::execution::task(&missing, &parameters).is_err());
+            let mut missing_calendar = f.spec.clone();
+            missing_calendar.inputs.retain(|i| {
+                !matches!(i, RuntimeInputV1::Artifact { artifact_id, .. }
+                if *artifact_id == request.calendar.as_ref().unwrap().artifact_id)
+            });
+            assert!(domain::execution::task(&missing_calendar, &parameters).is_err());
         }
         assert!(execute(&f));
         let report: NativePortfolioStudyResultV1 = result(&f, "qz.portfolio_study");

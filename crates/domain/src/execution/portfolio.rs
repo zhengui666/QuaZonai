@@ -311,6 +311,11 @@ pub fn portfolio_study_cutoffs(
     )?;
     portfolio_members(&request.source_selection, &request.assets, &request.members)?;
     let schedule = &request.mandate.rebalance_schedule;
+    if schedule.kind != contracts::portfolio::RebalanceKind::CalendarSession
+        && request.calendar.is_some()
+    {
+        return Err(bad("portfolio_study.unbound_calendar"));
+    }
     let constraints = &request.mandate.constraints;
     if request
         .assets
@@ -369,11 +374,7 @@ pub fn portfolio_study_cutoffs(
                 })
                 .collect::<Result<Vec<_>, _>>()?
         }
-        contracts::portfolio::RebalanceKind::CalendarSession => {
-            return Err(DomainError::CapabilityUnavailable(
-                "portfolio_study_schedule",
-            ))
-        }
+        contracts::portfolio::RebalanceKind::CalendarSession => calendar_cutoffs(request)?,
     };
     let ttl = u64::from(schedule.target_ttl_seconds) * 1_000_000_000;
     let n = cutoffs.len() as u64;
@@ -399,6 +400,73 @@ pub fn portfolio_study_cutoffs(
             .unwrap_or(&request.source_selection.event_end_ns);
         if cutoff >= next || until < next.get() {
             return Err(bad("portfolio_study.schedule_coverage"));
+        }
+    }
+    Ok(cutoffs)
+}
+
+fn calendar_cutoffs(
+    request: &NativePortfolioStudyRequestV1,
+) -> Result<Vec<contracts::DbCounter>, DomainError> {
+    let calendar = &request
+        .calendar
+        .as_ref()
+        .ok_or_else(|| bad("portfolio_study.calendar_missing"))?
+        .calendar;
+    let schedule = &request.mandate.rebalance_schedule;
+    crate::control::text(&calendar.calendar_ref, 1, 120, false)?;
+    crate::control::text(&calendar.calendar_version, 1, 120, false)?;
+    crate::control::text(&calendar.source_reference, 1, 2000, false)?;
+    if request.manual_cutoffs_ns.is_some()
+        || schedule.calendar_ref.as_ref() != Some(&calendar.calendar_ref)
+        || schedule.timezone != calendar.timezone
+        || calendar.available_at_ns > request.evaluation_start_ns
+        || calendar.coverage_start_ns >= calendar.coverage_end_ns
+        || !(1..=4096).contains(&calendar.sessions.len())
+    {
+        return Err(bad("portfolio_study.calendar_binding"));
+    }
+    let offset = i64::from(
+        schedule
+            .session_offset_seconds
+            .ok_or_else(|| bad("portfolio_study.calendar_offset"))?,
+    ) * 1_000_000_000;
+    let start = request
+        .evaluation_start_ns
+        .get()
+        .checked_add_signed(-offset)
+        .ok_or_else(|| bad("portfolio_study.calendar_time"))?;
+    let end = request
+        .source_selection
+        .event_end_ns
+        .get()
+        .checked_add_signed(-offset)
+        .ok_or_else(|| bad("portfolio_study.calendar_time"))?;
+    if calendar.coverage_start_ns.get() > start || calendar.coverage_end_ns.get() < end {
+        return Err(bad("portfolio_study.calendar_coverage"));
+    }
+    let mut cutoffs = Vec::new();
+    let mut previous_close = None;
+    for session in &calendar.sessions {
+        if session.open_ns >= session.close_ns
+            || previous_close.is_some_and(|close| session.open_ns < close)
+            || session.close_ns < calendar.coverage_start_ns
+            || session.close_ns >= calendar.coverage_end_ns
+        {
+            return Err(bad("portfolio_study.calendar_sessions"));
+        }
+        previous_close = Some(session.close_ns);
+        if session.close_ns.get() >= start && session.close_ns.get() < end {
+            cutoffs.push(
+                contracts::DbCounter::new(
+                    session
+                        .close_ns
+                        .get()
+                        .checked_add_signed(offset)
+                        .ok_or_else(|| bad("portfolio_study.calendar_time"))?,
+                )
+                .map_err(|_| bad("portfolio_study.calendar_time"))?,
+            );
         }
     }
     Ok(cutoffs)

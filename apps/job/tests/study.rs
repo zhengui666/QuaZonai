@@ -7,6 +7,65 @@ use contracts::science::*;
 use std::fs;
 
 #[test]
+fn original_calendar_preserves_utc_dst_and_early_close_without_weekday_inference() {
+    let (_catalog, mut request, _) = market::study();
+    market::calendar_schedule(&mut request);
+    let ns = |s: &str| {
+        market::count(
+            s.parse::<chrono::DateTime<chrono::Utc>>()
+                .unwrap()
+                .timestamp_nanos_opt()
+                .unwrap() as u64,
+        )
+    };
+    for dates in [
+        [
+            ("2025-03-07T14:30:00Z", "2025-03-07T21:00:00Z"),
+            ("2025-03-10T13:30:00Z", "2025-03-10T20:00:00Z"),
+        ],
+        [
+            ("2025-11-26T14:30:00Z", "2025-11-26T21:00:00Z"),
+            ("2025-11-28T14:30:00Z", "2025-11-28T18:00:00Z"),
+        ],
+    ] {
+        for offset in [-3600_i32, 0, 3600] {
+            let seconds = i64::from(offset) * 1_000_000_000;
+            request.evaluation_start_ns =
+                market::count(ns(dates[0].1).get().checked_add_signed(seconds).unwrap());
+            request.source_selection.event_start_ns = ns(dates[0].0);
+            request.research_available_through_ns = ns(dates[0].0);
+            request.source_selection.event_end_ns =
+                market::count(ns(dates[1].1).get().checked_add_signed(seconds).unwrap() + 1);
+            request.source_selection.decision_cutoff_ns = request.source_selection.event_end_ns;
+            request.mandate.rebalance_schedule.timezone = "America/New_York".into();
+            request.mandate.rebalance_schedule.session_offset_seconds = Some(offset);
+            request.mandate.rebalance_schedule.target_ttl_seconds = 4 * 86400;
+            let calendar = &mut request.calendar.as_mut().unwrap().calendar;
+            calendar.timezone = "America/New_York".into();
+            calendar.available_at_ns = request.research_available_through_ns;
+            calendar.coverage_start_ns = ns(dates[0].1);
+            calendar.coverage_end_ns = market::count(ns(dates[1].1).get() + 1);
+            calendar.sessions = dates
+                .iter()
+                .map(|(open, close)| NativeCalendarSessionV1 {
+                    open_ns: ns(open),
+                    close_ns: ns(close),
+                })
+                .collect();
+            assert_eq!(
+                domain::execution::portfolio_study_cutoffs(&request).unwrap(),
+                dates
+                    .iter()
+                    .map(|(_, close)| market::count(
+                        ns(close).get().checked_add_signed(seconds).unwrap()
+                    ))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+}
+
+#[test]
 fn rolling_original_models_use_one_native_account_and_observed_weights() {
     let (catalog, request, model) = market::study();
     let objects = tempfile::tempdir().unwrap();
@@ -118,6 +177,56 @@ fn rolling_original_models_use_one_native_account_and_observed_weights() {
     let mut uncovered_end = manual.clone();
     uncovered_end.manual_cutoffs_ns.as_mut().unwrap().pop();
     assert!(domain::execution::portfolio_study_cutoffs(&uncovered_end).is_err());
+    let mut calendar = request.clone();
+    market::calendar_schedule(&mut calendar);
+    let binding = calendar.calendar.as_ref().unwrap();
+    assert!(!execute(&calendar).status.success());
+    fs::write(
+        objects.path().join(binding.artifact_id.to_string()),
+        serde_json::to_vec(&binding.calendar).unwrap(),
+    )
+    .unwrap();
+    let output = execute(&calendar);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let calendar_result: NativePortfolioStudyResultV1 =
+        serde_json::from_slice(&output.stdout).unwrap();
+    domain::execution::check_portfolio_study(&calendar, &calendar_result).unwrap();
+    assert_eq!(
+        calendar_result
+            .frames
+            .iter()
+            .map(|f| f.cutoff_ns)
+            .collect::<Vec<_>>(),
+        cutoffs
+    );
+    let mut changed = calendar.clone();
+    changed.calendar.as_mut().unwrap().calendar.available_at_ns = changed.evaluation_start_ns;
+    assert!(domain::execution::portfolio_study_cutoffs(&changed).is_ok());
+    let mut changed = calendar.clone();
+    changed.calendar.as_mut().unwrap().calendar.source_reference = "changed source".into();
+    assert!(!execute(&changed).status.success());
+    for case in 0..8 {
+        let mut changed = calendar.clone();
+        let data = &mut changed.calendar.as_mut().unwrap().calendar;
+        match case {
+            0 => data.available_at_ns = market::count(changed.evaluation_start_ns.get() + 1),
+            1 => data.coverage_start_ns = market::count(data.coverage_start_ns.get() + 1),
+            2 => data.coverage_end_ns = market::count(data.coverage_end_ns.get() - 1),
+            3 => data.sessions[1] = data.sessions[0].clone(),
+            4 => data.sessions[1].open_ns = data.sessions[0].open_ns,
+            5 => data.calendar_ref = "OTHER".into(),
+            6 => data.timezone = "America/New_York".into(),
+            _ => changed.manual_cutoffs_ns = Some(cutoffs.clone()),
+        }
+        assert!(
+            domain::execution::portfolio_study_cutoffs(&changed).is_err(),
+            "calendar case {case}"
+        );
+    }
     let rejects = |changed: NativePortfolioStudyResultV1| {
         assert!(domain::execution::check_portfolio_study(&request, &changed).is_err());
     };

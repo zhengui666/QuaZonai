@@ -69,6 +69,7 @@ fn operation(
                         source_selection: request.selection,
                         evaluation_start_ns: count(120_000_000_000),
                         manual_cutoffs_ns: None,
+                        calendar: None,
                         rolling_liquidity: None,
                         research_available_through_ns: count(119_000_000_000),
                         mandate: request.mandate,

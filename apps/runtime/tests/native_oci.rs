@@ -36,16 +36,14 @@ async fn real_native_rolling_study_uses_original_models_in_one_account() {
         Revision,
     };
     let (catalog, mut request, wasm) = market::study_liquidity("10000000", "0.4");
-    let mut cutoffs = domain::execution::portfolio_study_cutoffs(&request).unwrap();
-    cutoffs[1] = market::count(cutoffs[1].get() - 60_000_000_000);
-    request.manual_cutoffs_ns = Some(cutoffs);
-    request.mandate.rebalance_schedule.kind = contracts::portfolio::RebalanceKind::Manual;
-    request.mandate.rebalance_schedule.interval_seconds = None;
-    request.mandate.rebalance_schedule.target_ttl_seconds = 86_460;
+    market::calendar_schedule(&mut request);
     let dataset = Id::new();
     let selection = &request.source_selection;
     let observed = job::catalog::load_catalog(catalog.path(), selection).unwrap();
     let mut metadata = catalog_fixture::metadata();
+    let calendar = request.calendar.as_ref().unwrap();
+    metadata.universe.calendar_ref = calendar.calendar.calendar_ref.clone();
+    metadata.universe.calendar_version = calendar.calendar.calendar_version.clone();
     metadata.partition = DataPartition::Forward;
     metadata.event_start =
         chrono::DateTime::from_timestamp_nanos(selection.event_start_ns.get() as i64);
@@ -118,6 +116,12 @@ async fn real_native_rolling_study_uses_original_models_in_one_account() {
         serde_json::to_vec(request.rolling_liquidity.as_ref().unwrap()).unwrap(),
         ArtifactInputRole::Parameters,
     ));
+    let calendar = request.calendar.as_ref().unwrap();
+    objects.push((
+        calendar.artifact_id,
+        serde_json::to_vec(&calendar.calendar).unwrap(),
+        ArtifactInputRole::Parameters,
+    ));
     let parameters_id = Id::new();
     objects.push((
         parameters_id,
@@ -162,12 +166,43 @@ async fn real_native_rolling_study_uses_original_models_in_one_account() {
         deadline_at: runtime::now() + chrono::Duration::seconds(50),
         requested_output_schemas: operation.output_schemas(),
     };
+    for field in ["calendar_ref", "calendar_version"] {
+        let mut changed = operation.clone();
+        let NativeTaskParametersV1::StudyPortfolio { request, .. } = &mut changed else {
+            unreachable!()
+        };
+        let calendar = &mut request.calendar.as_mut().unwrap().calendar;
+        if field == "calendar_ref" {
+            calendar.calendar_ref = "FOREIGN".into();
+            request.mandate.rebalance_schedule.calendar_ref = Some("FOREIGN".into());
+        } else {
+            calendar.calendar_version = "foreign-version".into();
+        }
+        let id = Id::new();
+        f.object(id, &serde_json::to_vec(&changed).unwrap()).await;
+        let mut changed_spec = spec.clone();
+        changed_spec.parameters_artifact_id = id;
+        changed_spec.inputs.retain(|i| !matches!(i, RuntimeInputV1::Artifact { artifact_id, .. } if *artifact_id == parameters_id));
+        domain::execution::task(&changed_spec, &changed).unwrap();
+        let response = f
+            .client
+            .post(f.url(&["jobs"]))
+            .json(&changed_spec)
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            response.status().is_client_error(),
+            "foreign {field} admitted"
+        );
+    }
     let accepted = f.submit(&spec).await;
     assert_eq!(f.terminal(&spec).await.state, RuntimeJobState::Succeeded);
     let manifest = f.manifest(&spec).await;
     domain::runtime_jobs::manifest(&manifest, &spec, accepted.submitted_at, runtime::now())
         .unwrap();
-    assert_eq!(manifest.engine_versions["portfolio-study"], "4");
+    assert_eq!(manifest.engine_versions["portfolio-study"], "5");
+    assert_eq!(manifest.engine_versions["portfolio-calendar"], "1");
     assert_eq!(manifest.engine_versions["portfolio-rolling-liquidity"], "1");
     assert_eq!(manifest.engine_versions["portfolio-history"], "1");
     assert_eq!(manifest.artifacts.len(), 3);

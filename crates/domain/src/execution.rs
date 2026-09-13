@@ -225,14 +225,16 @@ pub fn task(spec: &JobSpecV1, parameters: &NativeTaskParametersV1) -> Result<(),
                 .collect::<BTreeSet<_>>();
             let costs = request.mandate.constraints.transaction_costs_ref;
             let liquidity = request.mandate.constraints.liquidity_ref;
+            let calendar = request.calendar.as_ref().map(|c| c.artifact_id);
             if !spec.inputs.iter().any(|i| matches!(i, RuntimeInputV1::Dataset { revision_id, role: contracts::research::DataPartition::Forward, .. } if revision_id == dataset_revision_id))
                 || objects.iter().any(|id| !artifact(spec, *id, ArtifactInputRole::Model))
                 || !artifact(spec, costs, ArtifactInputRole::Parameters)
                 || liquidity.is_some_and(|id| !artifact(spec, id, ArtifactInputRole::Parameters))
+                || calendar.is_some_and(|id| !artifact(spec, id, ArtifactInputRole::Parameters))
                 || spec.inputs.iter().any(|i| match i {
                     RuntimeInputV1::Dataset { revision_id, role, .. } => revision_id != dataset_revision_id || *role != contracts::research::DataPartition::Forward,
                     RuntimeInputV1::Artifact { artifact_id, role, .. } => !(*role == ArtifactInputRole::Model && objects.contains(artifact_id)
-                        || *role == ArtifactInputRole::Parameters && (*artifact_id == costs || *artifact_id == spec.parameters_artifact_id || Some(*artifact_id) == liquidity)),
+                        || *role == ArtifactInputRole::Parameters && (*artifact_id == costs || *artifact_id == spec.parameters_artifact_id || Some(*artifact_id) == liquidity || Some(*artifact_id) == calendar)),
                 }) { return Err(bad("portfolio_study.inputs")); }
         }
         NativeTaskParametersV1::BuildPortfolio {
