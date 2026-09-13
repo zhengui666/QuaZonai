@@ -14,6 +14,8 @@ FIXTURE、PIT_UNVERIFIED、未核验方法和政策登记成功均不是 PASS，
 新政策分别冻结metric_requirements与sealed_metric_requirements，不能复制分折要求
 冒充封存阈值；历史null不补写，需人工新建完整政策和研究周期。
 冻结/启动检查Sealed的`asset:N`与登记资产/bar顺序；不允许折scope或借元数据检查读取封存市场行。
+portfolio_metric_requirements是独立组合条件；null不能授予组合PASS，不能复制
+Alpha/Sealed阈值或原地补写历史政策。保存条件不是原生指标/Evaluation验收。
 EVALUATE_SEALED_ALPHA是内部受管操作，不是Agent工具；不得自行提交任务、读取校准或封存报告来冒充独立评估。
 Sealed机会绑定原Attempt并按根血缘累计，失败和取消不退款；不得换UUID或请求补写历史预约。
 可信Worker须在ACK前发表原封存评估及全部指标；Agent不得调用发布器、读取报告或把源Validation的PASS当作封存结果。

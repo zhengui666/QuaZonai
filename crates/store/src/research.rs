@@ -16,7 +16,7 @@ use sqlx::{postgres::PgRow, Postgres, Row, Transaction};
 use std::collections::BTreeSet;
 
 const INPUT: &str = "id,project_id,purpose,decision_cutoff,frozen_at,revision,created_at";
-const POLICY: &str = "p.id,p.project_id,p.version,p.created_at,p.selection_rule,p.split_policy,p.metric_requirements,p.sealed_metric_requirements,p.minimum_observations,p.maximum_missing_fraction,p.require_real_data,p.required_capabilities,p.maximum_sealed_uses_per_lineage,p.validity_seconds,f.question,f.project_id AS family_project_id,f.root_lineage_id AS family_root_id,f.selection_policy_id AS family_policy_id";
+const POLICY: &str = "p.id,p.project_id,p.version,p.created_at,p.selection_rule,p.split_policy,p.metric_requirements,p.sealed_metric_requirements,p.portfolio_metric_requirements,p.minimum_observations,p.maximum_missing_fraction,p.require_real_data,p.required_capabilities,p.maximum_sealed_uses_per_lineage,p.validity_seconds,f.question,f.project_id AS family_project_id,f.root_lineage_id AS family_root_id,f.selection_policy_id AS family_policy_id";
 const FAMILY: &str =
     "JOIN app.experiment_families f ON f.id=p.family_id AND f.project_id=p.project_id AND f.selection_policy_id=p.id AND f.root_lineage_id=p.root_lineage_id";
 
@@ -62,6 +62,11 @@ fn policy(r: &PgRow) -> Result<EvaluationPolicyView, StoreError> {
             .map_err(|_| StoreError::Integrity)?,
         sealed_metric_requirements: r
             .try_get::<Option<serde_json::Value>, _>("sealed_metric_requirements")?
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|_| StoreError::Integrity)?,
+        portfolio_metric_requirements: r
+            .try_get::<Option<serde_json::Value>, _>("portfolio_metric_requirements")?
             .map(serde_json::from_value)
             .transpose()
             .map_err(|_| StoreError::Integrity)?,
@@ -566,10 +571,10 @@ impl Store {
             tie_break: SelectionTieBreak::ExperimentIdAsc,
             missing_required_metric: MissingSelectionMetric::Inconclusive,
         };
-        sqlx::query("INSERT INTO app.evaluation_policies(id,project_id,version,selection_rule,split_policy,metric_requirements,minimum_observations,maximum_missing_fraction,require_real_data,required_capabilities,maximum_sealed_uses_per_lineage,validity_seconds,sealed_metric_requirements) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)")
+        sqlx::query("INSERT INTO app.evaluation_policies(id,project_id,version,selection_rule,split_policy,metric_requirements,minimum_observations,maximum_missing_fraction,require_real_data,required_capabilities,maximum_sealed_uses_per_lineage,validity_seconds,sealed_metric_requirements,portfolio_metric_requirements) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)")
             .bind(id.as_uuid()).bind(request.project_id.as_uuid()).bind(version).bind(db::json(&selection)?).bind(db::json(&request.split_policy)?).bind(db::json(&request.metric_requirements)?)
             .bind(request.minimum_observations as i32).bind(request.maximum_missing_fraction.as_decimal()).bind(request.require_real_data).bind(&request.required_capabilities)
-            .bind(request.maximum_sealed_uses_per_lineage as i32).bind(request.validity_seconds.get() as i64).bind(db::json(&request.sealed_metric_requirements)?).execute(&mut *tx).await?;
+            .bind(request.maximum_sealed_uses_per_lineage as i32).bind(request.validity_seconds.get() as i64).bind(db::json(&request.sealed_metric_requirements)?).bind(request.portfolio_metric_requirements.as_ref().map(db::json).transpose()?).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO app.experiment_families(id,project_id,root_lineage_id,question,selection_policy_id) VALUES($1,$2,$3,$4,$5)")
             .bind(family.as_uuid()).bind(request.project_id.as_uuid()).bind(root.as_uuid()).bind(&request.question).bind(id.as_uuid()).execute(&mut *tx).await?;
         let row = sqlx::query(&format!(

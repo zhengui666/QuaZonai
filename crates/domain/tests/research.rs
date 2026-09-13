@@ -7,6 +7,33 @@ fn base() -> Value {
     ))
     .unwrap()
 }
+
+#[test]
+fn portfolio_requirements_are_independent_optional_and_never_vacuously_pass() {
+    let mut request = base();
+    let parsed: EvaluationPolicyCreate = serde_json::from_value(request.clone()).unwrap();
+    assert!(parsed.portfolio_metric_requirements.is_none());
+    let mut requirement = request["metric_requirements"][0].clone();
+    requirement["metric_code"] = json!("PORTFOLIO_DAILY_RETURN_MEAN");
+    requirement["scope"] = json!("portfolio");
+    requirement["method_allowlist"] = json!(["nautilus-analysis.ReturnsAverage"]);
+    request["portfolio_metric_requirements"] = json!([requirement.clone()]);
+    assert!(evaluation_policy(&serde_json::from_value(request.clone()).unwrap()).is_ok());
+    for (criteria, code) in [
+        (json!([]), "METRIC_COUNT"),
+        (
+            json!([requirement.clone(), requirement.clone()]),
+            "DUPLICATE_METRIC",
+        ),
+    ] {
+        let mut invalid_request = request.clone();
+        invalid_request["portfolio_metric_requirements"] = criteria;
+        invalid(invalid_request, code);
+    }
+    requirement["required"] = json!(false);
+    request["portfolio_metric_requirements"] = json!([requirement]);
+    invalid(request, "REQUIRED_ALLOWED_METRIC");
+}
 fn invalid(r: Value, expected: &str) {
     let r: EvaluationPolicyCreate = serde_json::from_value(r).unwrap();
     let Err(DomainError::Fields(fields)) = evaluation_policy(&r) else {

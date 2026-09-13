@@ -1128,6 +1128,7 @@ evaluation_policies [immutable]
   split_policy: SplitPolicyV1
   metric_requirements: MetricRequirementV1[]
   sealed_metric_requirements: MetricRequirementV1[]? # null only for historical policies without frozen Sealed criteria
+  portfolio_metric_requirements: MetricRequirementV1[]? # null means no portfolio criteria; never inherit Alpha/Sealed thresholds
   minimum_observations: int > 0
   maximum_missing_fraction: Decimal in [0,1]
   require_real_data: bool default true
@@ -1941,6 +1942,13 @@ PORTFOLIO_SIMULATE操作。Store从同项目已封口成功VALID Candidate重读
 操作面为POST /api/v2/candidate-simulations与client portfolio simulate，使用同一
 严格请求及Idempotency-Key，成功202返回原Run。CLI grant绑定原Candidate及完整
 意图；没有模拟权限的身份不能借Build权限调用。请求失败清理仅未引用的新对象。
+
+独立组合指标要求在原EvaluationPolicy的portfolio_metric_requirements冻结，不能
+使用metric_requirements或sealed_metric_requirements替代。可空以支持纯Alpha研究；
+为空时没有组合PASS条件，不能据此准入正式组合评估或授予Release。非空必须有
+1..64项、至少一个required指标，并沿用精确阈值、唯一code/scope、样本数要求及
+原方法allowlist校验。历史已冻结政策不回填或复制条件；要改变条件必须新建政策。
+保存条件本身不证明原生方法支持、样本足够或评估通过；原生指标适配与发布须另行核验。
 
 `unique(candidate_alphas.candidate_id,alpha_version_id)`、`unique(candidate_targets.candidate_id,instrument_id)` 是数据库约束，不是普通索引。重复相同请求幂等，冲突409；至少两个不同alpha_id的合格版本才满足多Alpha，不以同Alpha多个版本或重复条目凑数。发布验证每资产唯一权重，再校验sum/gross/net/cash/约束。
 

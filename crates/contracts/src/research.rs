@@ -290,6 +290,9 @@ pub struct EvaluationPolicyCreate {
     pub metric_requirements: Vec<MetricRequirementV1>,
     #[schema(min_items = 1, max_items = 64)]
     pub sealed_metric_requirements: Vec<MetricRequirementV1>,
+    /// Independent portfolio criteria; None cannot authorize portfolio PASS.
+    #[schema(min_items = 1, max_items = 64)]
+    pub portfolio_metric_requirements: Option<Vec<MetricRequirementV1>>,
     #[schema(minimum = 1, maximum = 2147483647)]
     pub minimum_observations: u32,
     #[schema(schema_with = crate::scalars::fraction_schema)]
@@ -317,6 +320,8 @@ pub struct EvaluationPolicyView {
     pub metric_requirements: Vec<MetricRequirementV1>,
     #[schema(min_items = 1, max_items = 64)]
     pub sealed_metric_requirements: Option<Vec<MetricRequirementV1>>,
+    #[schema(required = true, min_items = 1, max_items = 64)]
+    pub portfolio_metric_requirements: Option<Vec<MetricRequirementV1>>,
     #[schema(minimum = 1, maximum = 2147483647)]
     pub minimum_observations: u32,
     #[schema(schema_with = crate::scalars::fraction_schema)]

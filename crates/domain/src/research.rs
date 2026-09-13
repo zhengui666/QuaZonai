@@ -186,6 +186,9 @@ pub fn evaluation_policy(request: &EvaluationPolicyCreate) -> Result<(), DomainE
         &request.sealed_metric_requirements,
         "sealed_metric_requirements",
     )?;
+    if let Some(requirements) = &request.portfolio_metric_requirements {
+        metric_requirements(requirements, "portfolio_metric_requirements")?;
+    }
     let requirements = match s.evaluation_kind {
         SelectionEvaluationKind::WalkForward => &request.metric_requirements,
         SelectionEvaluationKind::Sealed => &request.sealed_metric_requirements,

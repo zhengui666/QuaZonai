@@ -136,7 +136,12 @@ async fn real_browser_prepares_input_and_policy_with_exact_public_retries_and_me
     .await;
     assert_eq!(get.status, StatusCode::OK);
     assert_eq!(get.body, first.body["resource"]);
-    let request = serde_json::to_value(data.policy(input.header.id)).unwrap();
+    let mut request = serde_json::to_value(data.policy(input.header.id)).unwrap();
+    let mut portfolio_requirement = request["metric_requirements"][0].clone();
+    portfolio_requirement["metric_code"] = json!("PORTFOLIO_DAILY_RETURN_MEAN");
+    portfolio_requirement["scope"] = json!("portfolio");
+    portfolio_requirement["method_allowlist"] = json!(["nautilus-analysis.ReturnsAverage"]);
+    request["portfolio_metric_requirements"] = json!([portfolio_requirement]);
     let policy = browser(
         &f,
         &cookie,
@@ -147,6 +152,10 @@ async fn real_browser_prepares_input_and_policy_with_exact_public_retries_and_me
     )
     .await;
     assert_eq!(policy.status, StatusCode::CREATED, "{}", policy.body);
+    assert_eq!(
+        policy.body["resource"]["portfolio_metric_requirements"],
+        request["portfolio_metric_requirements"]
+    );
     let replay = browser(
         &f,
         &cookie,

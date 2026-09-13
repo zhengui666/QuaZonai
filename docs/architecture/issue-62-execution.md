@@ -3,6 +3,37 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Independent portfolio policy criteria, 2026-09-13
+
+EvaluationPolicy now freezes optional portfolio_metric_requirements separately
+from Alpha validation and Sealed criteria. Null means no portfolio PASS criteria,
+not permission to inherit another group's thresholds. Non-null lists use the
+existing exact threshold/duplicate/method/required-metric validator. Migration055
+adds the nullable column without backfilling immutable historical policies; native
+policy immutability covers this field. Create/read/replay preserve the original
+intent and exact decimal values through the existing policy API/CLI.
+
+Verified on b996b57f plus frozen patches:
+
+- verify-HkDo2n passed 203 evidence tests and check/fmt/strict Clippy, source
+  unchanged. Actual HTTP policy creation/readback/replay includes independent
+  portfolio conditions; scientific execution is not implied by this metadata test.
+- Locked domain research target passed all 5 tests, including absent criteria,
+  independent conditions, empty list, duplicate code/scope and no-required rejection.
+- web-verify-0qmb2P generated six native outputs twice identically; handwritten
+  source unchanged. Typecheck, wire checks, build, 505 unit, 36 settings-browser
+  and 219 full-browser tests passed. Domain/API JSON, TypeScript and Ajv JS changed.
+- Final verify-3zoPjT passed all 203 evidence tests and strict checks after adding
+  direct database immutability coverage. Changing only portfolio conditions under
+  the same key conflicts; a new policy version preserves them while the old version
+  remains null. Attempted direct backfill is rejected by the original trigger.
+  Source unchanged; isolated PostgreSQL stopped.
+
+No policy editor currently exists in the React UI; this is not a claimed UI feature.
+Native portfolio metric adaptation and immutable Evaluation publication/ACK are
+still unfinished. No estimator/formula/dependency was added, no native scientific
+qualification or Release was granted, and no GitHub write/merge/Issue closure occurred.
+
 ## Original Candidate simulation admission and HTTP/CLI, 2026-09-13
 
 POST /api/v2/candidate-simulations and client portfolio simulate now accept only

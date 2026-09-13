@@ -8593,6 +8593,18 @@
             "minimum": 1,
             "type": "integer"
           },
+          "portfolio_metric_requirements": {
+            "description": "Independent portfolio criteria; None cannot authorize portfolio PASS.",
+            "items": {
+              "$ref": "#/components/schemas/MetricRequirementV1"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "project_id": {
             "$ref": "#/components/schemas/Id"
           },
@@ -8700,6 +8712,17 @@
             "minimum": 1,
             "type": "integer"
           },
+          "portfolio_metric_requirements": {
+            "items": {
+              "$ref": "#/components/schemas/MetricRequirementV1"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "project_id": {
             "$ref": "#/components/schemas/Id"
           },
@@ -8758,6 +8781,7 @@
           "selection_rule",
           "split_policy",
           "metric_requirements",
+          "portfolio_metric_requirements",
           "minimum_observations",
           "maximum_missing_fraction",
           "require_real_data",

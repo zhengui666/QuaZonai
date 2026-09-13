@@ -257,6 +257,8 @@ async fn policies_allocate_one_immutable_family_and_keep_exact_intent_on_replay(
     assert_eq!(a.resource.id, b.resource.id);
     assert_ne!(a.replayed, b.replayed);
     assert_eq!(a.resource.version, 1);
+    assert!(a.resource.portfolio_metric_requirements.is_none());
+    assert!(b.resource.portfolio_metric_requirements.is_none());
     assert_eq!(
         serde_json::to_value(&a.resource.sealed_metric_requirements).unwrap(),
         serde_json::to_value(&request.sealed_metric_requirements).unwrap()
@@ -295,17 +297,19 @@ async fn policies_allocate_one_immutable_family_and_keep_exact_intent_on_replay(
     )
     .unwrap();
     assert_eq!(body, serde_json::to_value(&a.resource).unwrap());
-    let err = sqlx::query("UPDATE app.evaluation_policies SET require_real_data=false WHERE id=$1")
-        .bind(a.resource.id.as_uuid())
-        .execute(&pool)
-        .await
-        .unwrap_err();
-    assert_eq!(
-        err.as_database_error().unwrap().code().as_deref(),
-        Some("23000")
-    );
+    for statement in [
+        "UPDATE app.evaluation_policies SET require_real_data=false WHERE id=$1",
+        "UPDATE app.evaluation_policies SET portfolio_metric_requirements=metric_requirements WHERE id=$1",
+    ] {
+        let err = sqlx::query(statement).bind(a.resource.id.as_uuid()).execute(&pool).await.unwrap_err();
+        assert_eq!(err.as_database_error().unwrap().code().as_deref(),Some("23000"));
+    }
     let mut r = request.clone();
-    r.question.push('!');
+    let mut portfolio = request.metric_requirements[0].clone();
+    portfolio.metric_code = "PORTFOLIO_DAILY_RETURN_MEAN".into();
+    portfolio.scope = "portfolio".into();
+    portfolio.method_allowlist = vec!["nautilus-analysis.ReturnsAverage".into()];
+    r.portfolio_metric_requirements = Some(vec![portfolio]);
     assert!(matches!(
         store.create_evaluation_policy(&actor, "policy", &r).await,
         Err(StoreError::IdempotencyConflict)
@@ -315,6 +319,16 @@ async fn policies_allocate_one_immutable_family_and_keep_exact_intent_on_replay(
         .await
         .unwrap();
     assert_eq!(second.resource.version, 2);
+    assert_eq!(
+        second.resource.portfolio_metric_requirements,
+        r.portfolio_metric_requirements
+    );
+    assert!(store
+        .evaluation_policy(&actor, a.resource.id)
+        .await
+        .unwrap()
+        .portfolio_metric_requirements
+        .is_none());
     assert_ne!(
         second.resource.selection_rule.family_id,
         a.resource.selection_rule.family_id

@@ -2389,6 +2389,7 @@ export interface components {
                 metric_requirements: components["schemas"]["MetricRequirementV1"][];
                 /** Format: int32 */
                 minimum_observations: number;
+                portfolio_metric_requirements: components["schemas"]["MetricRequirementV1"][] | null;
                 project_id: components["schemas"]["Id"];
                 question: string;
                 require_real_data: boolean;
@@ -3001,6 +3002,8 @@ export interface components {
             metric_requirements: components["schemas"]["MetricRequirementV1"][];
             /** Format: int32 */
             minimum_observations: number;
+            /** @description Independent portfolio criteria; None cannot authorize portfolio PASS. */
+            portfolio_metric_requirements?: components["schemas"]["MetricRequirementV1"][] | null;
             project_id: components["schemas"]["Id"];
             question: string;
             require_real_data: boolean;
@@ -3021,6 +3024,7 @@ export interface components {
             metric_requirements: components["schemas"]["MetricRequirementV1"][];
             /** Format: int32 */
             minimum_observations: number;
+            portfolio_metric_requirements: components["schemas"]["MetricRequirementV1"][] | null;
             project_id: components["schemas"]["Id"];
             question: string;
             require_real_data: boolean;
@@ -3970,6 +3974,7 @@ export interface components {
                 metric_requirements: components["schemas"]["MetricRequirementV1"][];
                 /** Format: int32 */
                 minimum_observations: number;
+                portfolio_metric_requirements: components["schemas"]["MetricRequirementV1"][] | null;
                 project_id: components["schemas"]["Id"];
                 question: string;
                 require_real_data: boolean;
