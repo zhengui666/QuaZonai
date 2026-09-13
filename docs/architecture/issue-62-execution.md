@@ -3,6 +3,40 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Native Arrow portfolio target history, 2026-09-14
+
+STUDY_PORTFOLIO now requires portfolio-study/2 and portfolio-history/1. The original
+quality report and study JSON share one manifest with qz.portfolio_history/1 TARGETS,
+an actual Apache Arrow IPC File. A thin contracts module owns its exact schema and
+native read/write, reused by the job and final output adoption. It preserves UTC
+nanoseconds, decimal128(38,18), separate cash, original frame/asset order and null
+weights for infeasible frames. No fake cash instrument, f64 conversion, hash identity,
+scientific engine or new upstream package was added. Native Cargo only added the
+three already-locked Arrow 56.2.0 dependency edges to contracts.
+
+The existing bounded immutable publisher now writes JSON and Arrow through the same
+file limit/freeze path. Arrow is read back before the index is sealed; final adoption
+compares every row, column and metadata value against the original request/report.
+Tests cover full decimal precision, nanoseconds, zero versus null, truncated files,
+foreign schema/metadata, multiple batches, missing history, altered time, altered
+exact weights and wrong media type. Both successful and infeasible genuine managed
+jobs emit and bind their history. The Runtime HTTP contract declares binary Arrow,
+and actual OCI downloads check their returned content type.
+
+Verified on eb6f9963 plus frozen patches: verify-HfOfo4 passed 229 mandate checks;
+verify-9dNijo passed 206 evidence checks, with workspace check/fmt/strict Clippy,
+unchanged source and isolated PostgreSQL stopped. Runtime's 27 tests passed.
+web-verify-WsifEV reproduced all six generated outputs twice without handwritten
+changes. owner-oci-sUtuCV rebuilt the native image and passed all 15 real Docker
+tests, including the three original rolling-study artifacts and their full binding.
+Image identity:
+sha256:71bd5d668411c742687f9f6b45e1b54c0bef26ac971c67c07aba9c95fa84737f.
+
+These are controlled format and execution proofs, not REAL/PIT qualification or
+formal PORTFOLIO publication. Rolling liquidity, complete schedules, Store admission,
+independent policy/publication, Release and delivery/recovery remain required.
+No GitHub review or merge gate is satisfied by this stage.
+
 ## Original model-driven fixed-interval portfolio study, 2026-09-14
 
 STUDY_PORTFOLIO and the trusted local `job study-portfolio` command now share the

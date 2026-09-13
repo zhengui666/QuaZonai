@@ -86,6 +86,12 @@ America/New_York、Asia/Shanghai及未知时区拒绝。锁文件仅为domain增
 | ISO币种 | [iso_currency Rust API](https://docs.rs/iso_currency/0.7.0/iso_currency/)，0.7.0 | 实际编译；用Currency::from_code验证成员，而不是只验三个大写字母 | 上游是版本化代码表，不是在线ISO服务；不把ZZZ/USDT等形似值当ISO货币。货币用途、是否可计费仍属于产品校验。 |
 | 精确标量及生成合同 | uuid、chrono、BigDecimal、Serde、utoipa | 当前Rust基础测试验证UUIDv7、PostgreSQL bigint JSON字符串、NUMERIC(38,18)、必需nullable字段、原生OpenAPI生成 | 不使用f64保存资金/权重，不自写UUID/时间/十进制库。JSON Schema不是数据库权限或业务Gate的替代。 |
 
+组合历史目标复用同一已锁定Arrow 56.2.0（Apache-2.0），无新上游包或版本升级。
+共享contracts适配仅定义QZ列/元数据及IPC读写，供job与采纳边界复用，不载入数值
+引擎。核查该版本原生FileWriter/FileReader、TimestampNanosecondArray::with_timezone
+和Decimal128Array::with_precision_and_scale；实测38位精确小数、纳秒、零/null及
+错误schema/截断/多batch拒绝。不得将独立原生格式测试冒充正式研究资格。
+
 Nautilus [发布版 Cargo.toml](https://github.com/nautechsystems/nautilus_trader/blob/v2.0.0rc4/Cargo.toml) 指定 Rust 1.98.0、edition2024、LGPL-3.0-only。因此升级工具链，而不是因为旧1.90不够就保留Python桥接。运行33952789894最初失败是我方anyhow=1.0.99与上游^1.0.104冲突，修正为发布版要求后33952841460成功；该失败不是Rust能力缺口。
 
 Nautilus示例复用保留原版权/LGPL声明；QZ原有AGPL/NOTICE不修改。Cargo.lock/npm lock/OCI digest属于原生供应链完整性，不用于业务ID、审批或证据资格。

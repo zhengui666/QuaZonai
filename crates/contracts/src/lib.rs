@@ -21,6 +21,7 @@ pub mod forward;
 pub mod http;
 pub mod lifecycle;
 pub mod portfolio;
+pub mod portfolio_history;
 pub mod research;
 pub mod runs;
 pub mod runtime;

@@ -113,7 +113,11 @@ impl NativeTaskParametersV1 {
             Self::EvaluateSealedAlpha { .. } => &["qz.alpha_sealed"],
             Self::BuildPortfolio { .. } => &["qz.native_portfolio"],
             Self::SimulatePortfolio { .. } => &["qz.native_simulation"],
-            Self::StudyPortfolio { .. } => &["qz.data_quality", "qz.portfolio_study"],
+            Self::StudyPortfolio { .. } => &[
+                "qz.data_quality",
+                "qz.portfolio_study",
+                "qz.portfolio_history",
+            ],
             Self::SimulateCandidate { .. } | Self::SimulatePortfolioSequence { .. } => {
                 &["qz.data_quality", "qz.native_simulation"]
             }

@@ -1873,6 +1873,19 @@ PASS 都不能借用。另以 `(candidate_id,mandate_id)` 绑定 Candidate 的�
 
 历史目标序列存 Arrow/Parquet，不每 bar 建业务对象。不可行 cash/targets 均 null；LAST_TARGET 是假设，真实权重输入来自下游签发 snapshot，QZ 不建真实账户账本。`sum(asset_weights)+cash_weight=1` 在 mandate tolerance 内，现金字段/保留代码明确；gross/net、组、成本、参与率原生计算，领域层独立合同/容差验证。
 
+原生滚动研究同时输出`qz.portfolio_history/1` TARGETS，媒体类型
+`application/vnd.apache.arrow.file`。采用Apache Arrow IPC File，一个RecordBatch，
+按原帧、原资产顺序逐行保存：cutoff_ns/asof_ns/valid_until_ns为非空
+timestamp(ns,UTC)，instrument_id/currency/solver_status为非空UTF-8，
+weight/cash_weight为nullable decimal128(38,18)，单位fraction。现金使用独立列，
+在同帧各资产行保持相同，不伪造现金Instrument或经f64转换。失败帧仍逐资产保留
+身份/时间/原求解状态，两个权重列均null；不输出未执行后续帧。
+schema元数据固定name=qz.portfolio_history、version=1、semantics=SIMULATED_TARGETS、
+weight_unit=fraction。帧1..256、每帧资产1..256，单文件最多65536行；受原任务总
+输出字节限额约束。发布与采纳用同一Arrow合同核对schema/元数据、全部列值、
+顺序与行数，且必须与原请求及qz.portfolio_study逐项一致。三个原生输出（完整
+源质量、研究报告、历史目标）同属原manifest；文件本身不授予PASS或Release。
+
 离线组合研究从冻结原模型和目录逐个cutoff重新生成预测、共同收益窗口及原生求解
 输入，不要求先有历史Candidate，不伪造LAST_TARGET或下游快照。模拟仅初始化一次
 原生现金账户；每次调仓从该账户读取当时equity/net_position及共同已到达价格，

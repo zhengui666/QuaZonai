@@ -194,6 +194,9 @@ pub fn output_shape(output: &RuntimeOutputV1, bytes: &[u8]) -> Result<(), Domain
         }
         "qz.native_simulation" => simulation::shape(&decode::<NativeSimulationResultV1>(bytes)?),
         "qz.portfolio_study" => study::shape(&decode(bytes)?),
+        "qz.portfolio_history" => contracts::portfolio_history::read(bytes)
+            .map(|_| ())
+            .map_err(|_| bad("portfolio_history")),
         _ => Err(bad("native_output.schema")),
     }
 }
@@ -278,7 +281,15 @@ pub fn output_bindings(
     match parameters {
         NativeTaskParametersV1::ValidateData { .. } => {}
         NativeTaskParametersV1::StudyPortfolio { request, .. } => {
-            study::binding(request, &decode(body("qz.portfolio_study")?.1)?)?
+            let result = decode(body("qz.portfolio_study")?.1)?;
+            study::binding(request, &result)?;
+            let original = contracts::portfolio_history::batch(request, &result)
+                .map_err(|_| bad("portfolio_history.source"))?;
+            let actual = contracts::portfolio_history::read(body("qz.portfolio_history")?.1)
+                .map_err(|_| bad("portfolio_history.body"))?;
+            if actual != original {
+                return Err(bad("portfolio_history.binding"));
+            }
         }
         NativeTaskParametersV1::CompileModel {
             code_artifact_id, ..

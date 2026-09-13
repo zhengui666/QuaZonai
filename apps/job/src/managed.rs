@@ -105,13 +105,24 @@ struct Outputs {
 }
 impl Outputs {
     fn json(&mut self, name: &str, kind: RuntimeOutputKind, value: &impl Serialize) -> Result<Id> {
+        self.document(name, kind, "application/json", |stream| {
+            Ok(serde_json::to_writer(stream, value)?)
+        })
+    }
+    fn document(
+        &mut self,
+        name: &str,
+        kind: RuntimeOutputKind,
+        media: &str,
+        write: impl FnOnce(&mut LimitedFile) -> Result<()>,
+    ) -> Result<Id> {
         let id = Id::new();
         let mut stream = LimitedFile {
             file: create(&self.root.join(id.to_string()))?,
             remaining: self.remaining,
             written: 0,
         };
-        serde_json::to_writer(&mut stream, value)?;
+        write(&mut stream)?;
         stream.flush()?;
         ensure!(stream.written > 0, "NATIVE_EMPTY_OUTPUT");
         frozen(&stream.file)?;
@@ -125,9 +136,32 @@ impl Outputs {
             storage_ref: id,
             storage_version: Revision::INITIAL,
             byte_count: counter(stream.written)?,
-            media_type: "application/json".into(),
+            media_type: media.into(),
         });
         Ok(id)
+    }
+    fn history(
+        &mut self,
+        request: &contracts::science::NativePortfolioStudyRequestV1,
+        result: &contracts::science::NativePortfolioStudyResultV1,
+    ) -> Result<()> {
+        use contracts::portfolio_history as history;
+        let expected = history::batch(request, result)?;
+        let id = self.document(
+            history::NAME,
+            RuntimeOutputKind::Targets,
+            history::MEDIA_TYPE,
+            |stream| Ok(history::write(stream, &expected)?),
+        )?;
+        let bytes = read(
+            &self.root.join(id.to_string()),
+            contracts::runtime_jobs::MAX_JOB_OUTPUT_BYTES as usize,
+        )?;
+        ensure!(
+            history::read(&bytes)? == expected,
+            "PORTFOLIO_HISTORY_ROUNDTRIP"
+        );
+        Ok(())
     }
     fn compiled_model(&mut self, id: Id, bytes: &[u8]) -> Result<()> {
         ensure!(bytes.len() as u64 <= self.remaining, "NATIVE_OUTPUT_LIMIT");
@@ -476,6 +510,7 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
                 },
             )?;
             outputs.json("qz.portfolio_study", RuntimeOutputKind::Report, &result)?;
+            outputs.history(&request, &result)?;
         }
         NativeTaskParametersV1::BuildPortfolio {
             dataset_revision_id,

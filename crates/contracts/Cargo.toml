@@ -15,3 +15,6 @@ uuid = { version = "=1.26.0", features = ["v7", "serde"] }
 chrono = { version = "=0.4.45", features = ["serde"] }
 bigdecimal = { version = "=0.4.8", features = ["serde"] }
 utoipa = { version = "=5.4.0", features = ["chrono", "uuid"] }
+arrow-array = "=56.2.0"
+arrow-schema = "=56.2.0"
+arrow-ipc = "=56.2.0"

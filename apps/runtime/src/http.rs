@@ -349,6 +349,7 @@ async fn object(
     params(("external_job_id" = String, Path), ("storage_ref" = Id, Path)),
     responses((status=200, content(
         (inline(RuntimeBytes) = "application/wasm"),
+        (inline(RuntimeBytes) = "application/vnd.apache.arrow.file"),
         (contracts::execution::NativeJsonOutputV1 = "application/json")
     )), (status=404, body=RuntimeProblem), (status=409, body=RuntimeProblem)))]
 async fn artifact(

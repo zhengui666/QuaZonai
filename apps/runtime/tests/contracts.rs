@@ -8,7 +8,11 @@ fn generated_download_contract_declares_the_actual_native_media_and_payloads() {
     let document = serde_json::to_value(runtime::http::RuntimeApi::openapi()).unwrap();
     let content = &document["paths"]["/runtime/v1/jobs/{external_job_id}/artifacts/{storage_ref}"]
         ["get"]["responses"]["200"]["content"];
-    assert_eq!(content.as_object().unwrap().len(), 2);
+    assert_eq!(content.as_object().unwrap().len(), 3);
+    assert_eq!(
+        content["application/vnd.apache.arrow.file"]["schema"]["format"],
+        "binary"
+    );
     assert_eq!(content["application/wasm"]["schema"]["type"], "string");
     assert_eq!(content["application/wasm"]["schema"]["format"], "binary");
     assert_eq!(

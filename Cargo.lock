@@ -1150,6 +1150,9 @@ checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 name = "contracts"
 version = "2.0.0-dev.1"
 dependencies = [
+ "arrow-array 56.2.0",
+ "arrow-ipc 56.2.0",
+ "arrow-schema 56.2.0",
  "bigdecimal",
  "chrono",
  "iso_currency",

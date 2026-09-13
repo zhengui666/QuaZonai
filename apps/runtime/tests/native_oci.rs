@@ -153,8 +153,9 @@ async fn real_native_rolling_study_uses_original_models_in_one_account() {
     let manifest = f.manifest(&spec).await;
     domain::runtime_jobs::manifest(&manifest, &spec, accepted.submitted_at, runtime::now())
         .unwrap();
-    assert_eq!(manifest.engine_versions["portfolio-study"], "1");
-    assert_eq!(manifest.artifacts.len(), 2);
+    assert_eq!(manifest.engine_versions["portfolio-study"], "2");
+    assert_eq!(manifest.engine_versions["portfolio-history"], "1");
+    assert_eq!(manifest.artifacts.len(), 3);
     let mut outputs = Vec::new();
     for artifact in &manifest.artifacts {
         let response = f
@@ -169,6 +170,7 @@ async fn real_native_rolling_study_uses_original_models_in_one_account() {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["content-type"], artifact.media_type);
         outputs.push((artifact.clone(), response.bytes().await.unwrap().to_vec()));
     }
     domain::execution::output_bindings(

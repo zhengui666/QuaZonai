@@ -116,9 +116,19 @@ fn execute(f: &Fixture) -> bool {
     }
     status.success()
 }
-fn result<T: serde::de::DeserializeOwned>(f: &Fixture, schema: &str) -> T {
+fn output_bytes(f: &Fixture) -> Vec<(RuntimeOutputV1, Vec<u8>)> {
     let index: NativeJobOutputIndexV1 =
         serde_json::from_slice(&fs::read(f.output.join("index.json")).unwrap()).unwrap();
+    index
+        .artifacts
+        .into_iter()
+        .map(|item| {
+            let bytes = fs::read(f.output.join(item.storage_ref.to_string())).unwrap();
+            (item, bytes)
+        })
+        .collect()
+}
+fn result<T: serde::de::DeserializeOwned>(f: &Fixture, schema: &str) -> T {
     let parameters: NativeTaskParametersV1 = serde_json::from_slice(
         &fs::read(
             f.input
@@ -128,16 +138,7 @@ fn result<T: serde::de::DeserializeOwned>(f: &Fixture, schema: &str) -> T {
         .unwrap(),
     )
     .unwrap();
-    let outputs = index
-        .artifacts
-        .iter()
-        .map(|item| {
-            (
-                item.clone(),
-                fs::read(f.output.join(item.storage_ref.to_string())).unwrap(),
-            )
-        })
-        .collect::<Vec<_>>();
+    let outputs = output_bytes(f);
     // This validator is also used at the independent Store adoption boundary.
     // Exercise it against genuine compiler/engine output, not JSON-shaped mocks.
     let calibration = match &parameters {
@@ -160,15 +161,13 @@ fn result<T: serde::de::DeserializeOwned>(f: &Fixture, schema: &str) -> T {
         &outputs,
     )
     .unwrap();
-    let descriptor = index
-        .artifacts
+    let (descriptor, bytes) = outputs
         .iter()
-        .find(|item| item.schema.name == schema)
+        .find(|(item, _)| item.schema.name == schema)
         .unwrap();
-    let bytes = fs::read(f.output.join(descriptor.storage_ref.to_string())).unwrap();
     assert_eq!(bytes.len() as u64, descriptor.byte_count.get());
     assert_eq!(descriptor.storage_version, Revision::INITIAL);
-    serde_json::from_slice(&bytes).unwrap()
+    serde_json::from_slice(bytes).unwrap()
 }
 
 #[test]
@@ -402,6 +401,67 @@ fn rolling_portfolio_managed_binds_original_objects_and_reports_infeasibility() 
         assert!(domain::execution::task(&missing_model, &parameters).is_err());
         assert!(execute(&f));
         let report: NativePortfolioStudyResultV1 = result(&f, "qz.portfolio_study");
+        let outputs = output_bytes(&f);
+        let index = outputs
+            .iter()
+            .position(|(a, _)| a.schema.name == contracts::portfolio_history::NAME)
+            .unwrap();
+        let batch = contracts::portfolio_history::read(&outputs[index].1).unwrap();
+        assert_eq!(batch.num_rows(), report.frames.len() * 2);
+        assert_eq!(
+            batch.column(6).null_count(),
+            if infeasible { batch.num_rows() } else { 0 }
+        );
+        assert_eq!(
+            batch.column(7).null_count(),
+            if infeasible { batch.num_rows() } else { 0 }
+        );
+        let rejects = |outputs: &[(RuntimeOutputV1, Vec<u8>)]| {
+            assert!(domain::execution::output_bindings(
+                &parameters,
+                None,
+                f.spec.deadline_at - chrono::Duration::seconds(60),
+                chrono::Utc::now(),
+                outputs
+            )
+            .is_err());
+        };
+        let mut missing = outputs.clone();
+        missing.remove(index);
+        rejects(&missing);
+        let mut columns = batch.columns().to_vec();
+        columns[6] = std::sync::Arc::new(
+            arrow_array::Decimal128Array::from(vec![
+                Some(123_456_789_012_345_678_i128);
+                batch.num_rows()
+            ])
+            .with_precision_and_scale(38, 18)
+            .unwrap(),
+        );
+        let changed_weights = arrow_array::RecordBatch::try_new(batch.schema(), columns).unwrap();
+        let mut wrong_weights = outputs.clone();
+        wrong_weights[index].1.clear();
+        contracts::portfolio_history::write(&mut wrong_weights[index].1, &changed_weights).unwrap();
+        wrong_weights[index].0.byte_count = market::count(wrong_weights[index].1.len() as u64);
+        rejects(&wrong_weights);
+        let NativeTaskParametersV1::StudyPortfolio { request, .. } = &parameters else {
+            unreachable!()
+        };
+        let mut changed = report.clone();
+        changed.frames[0].cutoff_ns = market::count(changed.frames[0].cutoff_ns.get() + 1);
+        let batch = contracts::portfolio_history::batch(request, &changed).unwrap();
+        let mut wrong = outputs.clone();
+        wrong[index].1.clear();
+        contracts::portfolio_history::write(&mut wrong[index].1, &batch).unwrap();
+        wrong[index].0.byte_count = market::count(wrong[index].1.len() as u64);
+        rejects(&wrong);
+        let mut truncated = outputs.clone();
+        truncated[index].1.pop();
+        truncated[index].0.byte_count = market::count(truncated[index].1.len() as u64);
+        rejects(&truncated);
+        let mut wrong_media = outputs.clone();
+        wrong_media[index].0.media_type = "application/json".into();
+        rejects(&wrong_media);
         assert_eq!(report.frames.len(), if infeasible { 1 } else { 3 });
         assert_eq!(report.simulation.is_none(), infeasible);
         assert_eq!(report.simulation_request.is_none(), infeasible);
