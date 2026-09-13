@@ -449,7 +449,15 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
                     |id| {
                         read(
                             &input.join("objects").join(id.to_string()),
-                            PARAMETERS_LIMIT,
+                            if request
+                                .bar_liquidity
+                                .as_ref()
+                                .is_some_and(|b| b.assumption.report_artifact_id == id)
+                            {
+                                contracts::runtime_jobs::MAX_JOB_OUTPUT_BYTES as usize
+                            } else {
+                                PARAMETERS_LIMIT
+                            },
                         )
                     },
                 )?,

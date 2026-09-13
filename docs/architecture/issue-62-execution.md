@@ -3,6 +3,36 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Native Build consumption of original historical liquidity, 2026-09-13
+
+The patch over `3270eabe` freezes optional NativePortfolioLiquidityV1 in the
+native Build request. Mandate report/participation and every numerical notional
+must be bound; no source means no unbound reference, ratio or available_notional.
+The job reads the original DATA_QUALITY artifact, reuses the complete native
+quality validator and checks original Dataset/selection, currency, age, asset
+order and exact measured values before the existing Clarabel solve. Only that
+bound report uses the native quality-output size allowance; other object limits
+are unchanged. No new solver, valuation formula or dependencies.
+
+The managed native regression actually runs DATA_VALIDATE on synthetic Parquet,
+then consumes its output in an actual Build. A constrained solve passes; changed
+frozen numbers, wrong Dataset, expired age, wrong input role, changed original
+report values and missing observations all fail without a published index.
+Additional domain checks reject unbound references, participation and numbers.
+`verify-S5tY8u` passed initially; after the extra original-byte and unbound tests,
+`verify-aXG7Pq` passed check/fmt/strict Clippy and 215 checks: 132 contracts/domain,
+48 native science, 13 Store, 1 SQL and 21 HTTP/CLI. `web-verify-D1zVCR` passed six
+twice-identical generated outputs, typecheck, 505 unit, wire/build, 36 settings
+and 219 full-browser checks. Only generated domain JSON changed. Handwritten
+sources remained unchanged within each verifier.
+
+This is native consumption, not complete Store admission or Candidate publication
+revalidation. Store still constructs no binding and keeps its participation
+refusal gate. Runtime capability gating, actual OCI consumer evidence and the
+original-source/current-expiry checks at admission and publication remain required.
+These synthetic numerical tests are not REAL/PIT, complete cost support, independent
+Candidate validation or delivery, and do not satisfy final review/CI/merge gates.
+
 ## Immutable historical BAR liquidity source, 2026-09-13
 
 The patch over `9ccc2054` adds optional explicit historical liquidity assumptions:

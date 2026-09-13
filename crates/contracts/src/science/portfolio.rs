@@ -45,12 +45,21 @@ pub struct NativePortfolioAlphaV1 {
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
+pub struct NativePortfolioLiquidityV1 {
+    pub schema_version: SchemaV1,
+    pub assumption: crate::execution_assumptions::BarLiquidityAssumptionV1,
+    pub source: crate::execution::NativeDatasetSelectionV1,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct NativePortfolioBuildRequestV1 {
     pub schema_version: SchemaV1,
     pub selection: NativeBarSelectionV1,
     pub mandate: MandateContentV1,
     pub current_weights_artifact_id: Id,
     pub current_weights: PortfolioCurrentWeightsV1,
+    pub bar_liquidity: Option<NativePortfolioLiquidityV1>,
     #[schema(min_items = 1, max_items = 256)]
     pub assets: Vec<AllocationAssetV1>,
     #[schema(min_items = 2, max_items = 256)]

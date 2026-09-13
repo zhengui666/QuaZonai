@@ -17,7 +17,7 @@ pub use output::{
     alpha_validation_policy, check_alpha_calibration, check_alpha_sealed, freeze_alpha_calibration,
     output_bindings, output_shape,
 };
-pub use portfolio::{portfolio_build_request, portfolio_build_result};
+pub use portfolio::{portfolio_build_liquidity, portfolio_build_request, portfolio_build_result};
 
 fn bad(field: &str) -> DomainError {
     invalid(field, "NATIVE_TASK_BINDING_INVALID")
@@ -214,6 +214,10 @@ pub fn task(spec: &JobSpecV1, parameters: &NativeTaskParametersV1) -> Result<(),
             ..
         } => {
             portfolio_build_request(request)?;
+            let liquidity = request
+                .bar_liquidity
+                .as_ref()
+                .map(|b| b.assumption.report_artifact_id);
             let objects = request
                 .members
                 .iter()
@@ -222,9 +226,10 @@ pub fn task(spec: &JobSpecV1, parameters: &NativeTaskParametersV1) -> Result<(),
             if !spec.inputs.iter().any(|input| matches!(input, RuntimeInputV1::Dataset { revision_id, role: contracts::research::DataPartition::Forward, .. } if revision_id == dataset_revision_id))
                 || objects.iter().any(|id| !artifact(spec, *id, ArtifactInputRole::Model))
                 || !artifact(spec, request.current_weights_artifact_id, ArtifactInputRole::Report)
+                || liquidity.is_some_and(|id| !artifact(spec, id, ArtifactInputRole::DataQuality))
                 || spec.inputs.iter().any(|input| match input {
                     RuntimeInputV1::Dataset { revision_id, role, .. } => revision_id != dataset_revision_id || *role != contracts::research::DataPartition::Forward,
-                    RuntimeInputV1::Artifact { artifact_id, role, .. } => !(*role == ArtifactInputRole::Model && objects.contains(artifact_id) || *artifact_id == spec.parameters_artifact_id && *role == ArtifactInputRole::Parameters || *artifact_id == request.current_weights_artifact_id && *role == ArtifactInputRole::Report),
+                    RuntimeInputV1::Artifact { artifact_id, role, .. } => !(*role == ArtifactInputRole::Model && objects.contains(artifact_id) || *artifact_id == spec.parameters_artifact_id && *role == ArtifactInputRole::Parameters || *artifact_id == request.current_weights_artifact_id && *role == ArtifactInputRole::Report || Some(*artifact_id) == liquidity && *role == ArtifactInputRole::DataQuality),
                 }) {
                 return Err(bad("allocation_inputs"));
             }

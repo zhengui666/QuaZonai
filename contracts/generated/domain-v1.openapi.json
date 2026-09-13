@@ -11481,6 +11481,16 @@
             "minItems": 1,
             "type": "array"
           },
+          "bar_liquidity": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NativePortfolioLiquidityV1"
+              }
+            ]
+          },
           "current_weights": {
             "$ref": "#/components/schemas/PortfolioCurrentWeightsV1"
           },
@@ -11513,6 +11523,26 @@
           "current_weights",
           "assets",
           "members"
+        ],
+        "type": "object"
+      },
+      "NativePortfolioLiquidityV1": {
+        "additionalProperties": false,
+        "properties": {
+          "assumption": {
+            "$ref": "#/components/schemas/BarLiquidityAssumptionV1"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "source": {
+            "$ref": "#/components/schemas/NativeDatasetSelectionV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "assumption",
+          "source"
         ],
         "type": "object"
       },

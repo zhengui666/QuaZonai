@@ -18,6 +18,25 @@ use serde_json::json;
 use std::collections::BTreeMap;
 
 #[test]
+fn native_portfolio_refuses_unbound_liquidity_numbers_or_references() {
+    let input: AllocationInputV1 = serde_json::from_str(include_str!(
+        "../../../tests/contracts/allocation-input.json"
+    ))
+    .unwrap();
+    let original = portfolio_config::request(&input);
+    domain::execution::portfolio_build_request(&original).unwrap();
+    for case in 0..3 {
+        let mut request = original.clone();
+        match case {
+            0 => request.assets[0].available_notional = Some("100".parse().unwrap()),
+            1 => request.mandate.constraints.liquidity_ref = Some(Id::new()),
+            _ => request.mandate.constraints.max_participation = Some("0.1".parse().unwrap()),
+        }
+        assert!(domain::execution::portfolio_build_request(&request).is_err());
+    }
+}
+
+#[test]
 fn mandate_constraints_use_the_same_checks_as_native_allocation() {
     let mut request: AllocationInputV1 = serde_json::from_str(include_str!(
         "../../../tests/contracts/allocation-input.json"

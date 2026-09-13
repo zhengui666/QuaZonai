@@ -669,6 +669,13 @@ bar_liquidity_valid_until取最早原事件加该期限，向下截至数据库�
 不再有效，不能向未来舍入延长。读取返回此原期限，历史行不补造来源或有效期。
 该来源不自动提升cost_assumption_status。Build与Candidate发布仍须完成原报告
 复核，原生求解以每资产原notional_value/capital乘参与率约束绝对权重变动。
+NativePortfolioBuildRequestV1.bar_liquidity可选冻结{schema_version:1,assumption:
+BarLiquidityAssumptionV1,source:NativeDatasetSelectionV1}。来源Dataset可不同于
+本次Forward Dataset，但必须是执行假设的原Dataset/选择。有绑定时Mandate的
+liquidity_ref/最大参与率必须与原配置相等；全部assets.available_notional精确等于
+原报告对应资产的notional_value，无绑定时三者均为空。报告作为唯一该用途的
+DATA_QUALITY原产物输入，job读取原字节核对完整报告、选择、币种、年龄和数值，
+不能只信任冻结副本或提供手填数组。来源校验不替代Store的采纳/许可/资格检查。
 
 原生Universe membership每条带可选groups（最多64个唯一、1..120字符的组标识）。
 null/未提供表示分类未知，[]表示来源明确声明没有组；不自动按名称、币种或证券

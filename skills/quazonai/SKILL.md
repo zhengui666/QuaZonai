@@ -175,6 +175,8 @@ Operator的`client portfolio assumptions create/list/show`保存/读取原生来
 可选bar_liquidity绑定同Runtime/冻结输入/Dataset的原生DATA_VALIDATE报告，
 必须明确最大年龄和参与率。目录登记副本不是原生测量；读取原失效时刻不代表
 当前可用，到期须新建假设/政策，不延长旧资格。完整Build消费与发布复核仍待接通。
+原生Build读取已绑定DATA_QUALITY原字节并核对选择、币种、年龄与逐资产量；
+这不授Mission写入来源或自行申请资格的权限，也不替代Store准入/发布复核。
 `client portfolio candidate list PROJECT_UUID` / `show CANDIDATE_UUID`读取已发布
 原始快照；不是当前资格或交付授权，不向Mission开放报告字节。
 `client portfolio build`以原资格、Mandate、Cycle、Forward输入申请Run；

@@ -16,6 +16,10 @@ pub fn build(
     mut read: impl FnMut(Id) -> Result<Vec<u8>>,
 ) -> Result<NativePortfolioBuildResultV1> {
     domain::execution::portfolio_build_request(request)?;
+    if let Some(binding) = &request.bar_liquidity {
+        let report = serde_json::from_slice(&read(binding.assumption.report_artifact_id)?)?;
+        domain::execution::portfolio_build_liquidity(request, &report)?;
+    }
     let original: PortfolioCurrentWeightsV1 =
         serde_json::from_slice(&read(request.current_weights_artifact_id)?)?;
     ensure!(

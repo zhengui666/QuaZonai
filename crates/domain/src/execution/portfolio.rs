@@ -5,6 +5,30 @@ use contracts::{brief::TargetKind, science::*};
 pub fn portfolio_build_request(request: &NativePortfolioBuildRequestV1) -> Result<(), DomainError> {
     selection(&request.selection)?;
     crate::portfolio::mandate(&request.mandate)?;
+    let constraints = &request.mandate.constraints;
+    if let Some(liquidity) = &request.bar_liquidity {
+        crate::portfolio::bar_liquidity_assumption(&liquidity.assumption)?;
+        selection(&liquidity.source.selection)?;
+        if constraints.liquidity_ref != Some(liquidity.assumption.report_artifact_id)
+            || constraints.max_participation.as_ref()
+                != Some(&liquidity.assumption.participation_limit)
+            || request.assets.iter().any(|a| {
+                a.available_notional
+                    .as_ref()
+                    .is_none_or(|n| !n.is_nonnegative())
+            })
+        {
+            return Err(bad("portfolio.liquidity_binding"));
+        }
+    } else if constraints.liquidity_ref.is_some()
+        || constraints.max_participation.is_some()
+        || request
+            .assets
+            .iter()
+            .any(|a| a.available_notional.is_some())
+    {
+        return Err(bad("portfolio.liquidity_binding"));
+    }
     let weights = &request.current_weights;
     let cutoff = request.selection.decision_cutoff_ns;
     if weights.asof_ns > weights.available_ns
@@ -70,6 +94,43 @@ pub fn portfolio_build_request(request: &NativePortfolioBuildRequestV1) -> Resul
     }
     if alphas.len() < 2 {
         return Err(bad("portfolio.distinct_alphas"));
+    }
+    Ok(())
+}
+
+/// Verify original report bytes before using the frozen numerical copy.
+pub fn portfolio_build_liquidity(
+    request: &NativePortfolioBuildRequestV1,
+    report: &contracts::execution::NativeDataQualityReportV1,
+) -> Result<(), DomainError> {
+    portfolio_build_request(request)?;
+    super::output::quality(report)?;
+    let binding = request
+        .bar_liquidity
+        .as_ref()
+        .ok_or_else(|| bad("portfolio.liquidity_binding"))?;
+    let quality = report
+        .datasets
+        .iter()
+        .find(|q| q.dataset_revision_id == binding.source.dataset_revision_id)
+        .ok_or_else(|| bad("portfolio.liquidity_source"))?;
+    if quality.selection != binding.source.selection {
+        return Err(bad("portfolio.liquidity_source"));
+    }
+    let values = crate::portfolio::bar_liquidity_values(
+        &binding.assumption,
+        quality,
+        &request.mandate.base_currency,
+        request.selection.decision_cutoff_ns,
+    )?;
+    if values.len() != request.assets.len()
+        || values.iter().zip(&request.assets).any(|(value, asset)| {
+            value.instrument_id != asset.instrument_id
+                || value.currency != asset.currency
+                || asset.available_notional.as_ref() != Some(&value.notional_value)
+        })
+    {
+        return Err(bad("portfolio.liquidity_values"));
     }
     Ok(())
 }

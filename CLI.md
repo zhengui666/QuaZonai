@@ -285,6 +285,10 @@ participation_limit:大于0且不超过1的Decimal字符串}；不使用时传nu
 读取返回原配置与bar_liquidity_valid_until（到期边界不含）；过期不自动刷新，
 需新建假设。该单BAR历史规划上限不保证未来成交，不授DATA_BACKED或组合资格；
 完整Build消费与Candidate发布复核仍待接通，不能以保存成功代替它们。
+原生Build请求的可选bar_liquidity冻结schema_version=1、assumption和source
+（原Dataset/选择）；报告必须以DATA_QUALITY角色提供原字节。job逐项核对原报告
+与assets.available_notional、原选择、币种、年龄及Mandate参与率，不接受无绑定
+的数值。该原生检查不替代Store来源采纳与当前期限检查，正式准入仍保留拒绝门禁。
 原数据不改写；没有此原生来源关系的历史行不投影成新接口版本。
 
 `POST /api/v2/portfolio-mandates`接受MandateCreateV1：schema_version、project_id、

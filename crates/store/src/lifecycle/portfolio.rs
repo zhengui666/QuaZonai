@@ -260,6 +260,7 @@ impl Store {
             current_weights_artifact_id: weights_id,
             current_weights: weights,
             assets,
+            bar_liquidity: None,
             members,
         };
         domain::execution::portfolio_build_request(&native)?;

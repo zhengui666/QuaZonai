@@ -66,7 +66,7 @@ fn same_selection(a: &NativeBarSelectionV1, b: &NativeBarSelectionV1) -> bool {
         && a.decision_cutoff_ns == b.decision_cutoff_ns
         && a.maximum_rows == b.maximum_rows
 }
-fn quality(value: &NativeDataQualityReportV1) -> Result<(), DomainError> {
+pub fn quality(value: &NativeDataQualityReportV1) -> Result<(), DomainError> {
     let checked = value
         .checked_at
         .timestamp_nanos_opt()

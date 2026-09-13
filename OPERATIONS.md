@@ -30,6 +30,8 @@ Operator可通过`client portfolio assumptions create/list/show`管理新的不�
 可选绑定原生DATA_VALIDATE历史单BAR报告，明确填写最长年龄与参与率；来源必须
 匹配同一冻结输入、数据版本和Runtime，且未过期。详情返回原失效时刻，到期不能
 自动续期或改写旧政策；历史成交量估值不是未来可成交保证。完整Build消费仍待接通。
+原生job已核对绑定的原质量报告字节和逐资产历史量；这不是Store正式Build准入
+或Candidate发布复核已完成，不能手填原生绑定冒充可交付证据。
 原资产定义使用Rust InstrumentAny的外部标签Serde结构，不是Python式顶层type。
 组约束从原Forward Universe成员记录的groups读取，按原决策时点核对生效与可用
 时间，发布Candidate前再次读取原证据；不从资产名称猜分类。未提供/null是未知，

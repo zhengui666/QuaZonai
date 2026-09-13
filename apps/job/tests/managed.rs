@@ -350,6 +350,41 @@ fn portfolio_fixture(
         market::portfolio()
     };
     change(&mut request);
+    let liquidity = request.bar_liquidity.as_ref().map(|binding| {
+        let measurement = fixture(
+            NativeTaskParametersV1::ValidateData {
+                schema_version: SchemaV1,
+                selections: vec![binding.source.clone()],
+            },
+            vec![dataset(binding.source.dataset_revision_id)],
+        );
+        attach_catalog(
+            &measurement,
+            binding.source.dataset_revision_id,
+            catalog.path(),
+        );
+        assert!(execute(&measurement));
+        let report: NativeDataQualityReportV1 = result(&measurement, "qz.data_quality");
+        fs::rename(
+            measurement
+                .input
+                .join("catalogs")
+                .join(binding.source.dataset_revision_id.to_string()),
+            catalog.path(),
+        )
+        .unwrap();
+        for (asset, value) in request
+            .assets
+            .iter_mut()
+            .zip(report.datasets[0].last_bar_notionals.as_ref().unwrap())
+        {
+            asset.available_notional = Some(value.notional_value.clone());
+        }
+        (
+            binding.assumption.report_artifact_id,
+            serde_json::to_vec(&report).unwrap(),
+        )
+    });
     let weights = serde_json::to_vec(&request.current_weights).unwrap();
     let id = Id::new();
     let mut inputs = vec![RuntimeInputV1::Dataset {
@@ -378,8 +413,21 @@ fn portfolio_fixture(
             dataset_revision_id: id,
             request: Box::new(request.clone()),
         },
-        inputs,
+        {
+            if let Some((id, bytes)) = &liquidity {
+                inputs.push(RuntimeInputV1::Artifact {
+                    artifact_id: *id,
+                    storage_version: "1".into(),
+                    byte_count: market::count(bytes.len() as u64),
+                    role: ArtifactInputRole::DataQuality,
+                });
+            }
+            inputs
+        },
     );
+    if let Some((id, bytes)) = liquidity {
+        fs::write(f.input.join("objects").join(id.to_string()), bytes).unwrap();
+    }
     fs::write(
         f.input
             .join("objects")
@@ -398,6 +446,121 @@ fn portfolio_fixture(
     }
     attach_catalog(&f, id, catalog.path());
     f
+}
+
+#[test]
+fn managed_portfolio_uses_original_measured_liquidity_and_rejects_changed_copies() {
+    for case in 0..7 {
+        let mut f = portfolio_fixture(false, |request| {
+            let assumption = contracts::execution_assumptions::BarLiquidityAssumptionV1 {
+                schema_version: SchemaV1,
+                report_artifact_id: Id::new(),
+                maximum_age_seconds: 86400,
+                participation_limit: "0.00001".parse().unwrap(),
+            };
+            request.mandate.constraints.liquidity_ref = Some(assumption.report_artifact_id);
+            request.mandate.constraints.max_participation =
+                Some(assumption.participation_limit.clone());
+            request.bar_liquidity = Some(contracts::science::NativePortfolioLiquidityV1 {
+                schema_version: SchemaV1,
+                assumption,
+                source: NativeDatasetSelectionV1 {
+                    dataset_revision_id: Id::new(),
+                    selection: request.selection.clone(),
+                },
+            });
+        });
+        let path = f
+            .input
+            .join("objects")
+            .join(f.spec.parameters_artifact_id.to_string());
+        let mut task: NativeTaskParametersV1 =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let NativeTaskParametersV1::BuildPortfolio { request, .. } = &mut task else {
+            unreachable!()
+        };
+        let binding = request.bar_liquidity.as_mut().unwrap();
+        match case {
+            0 => {}
+            1 => request.assets[0].available_notional = Some("1".parse().unwrap()),
+            2 => binding.source.dataset_revision_id = Id::new(),
+            3 => binding.assumption.maximum_age_seconds = 1,
+            4 => {
+                let report = binding.assumption.report_artifact_id;
+                for input in &mut f.spec.inputs {
+                    if let RuntimeInputV1::Artifact {
+                        artifact_id, role, ..
+                    } = input
+                    {
+                        if *artifact_id == report {
+                            *role = ArtifactInputRole::Report;
+                        }
+                    }
+                }
+            }
+            _ => {
+                let report_path = f
+                    .input
+                    .join("objects")
+                    .join(binding.assumption.report_artifact_id.to_string());
+                let mut report: NativeDataQualityReportV1 =
+                    serde_json::from_slice(&fs::read(&report_path).unwrap()).unwrap();
+                if case == 5 {
+                    report.datasets[0].last_bar_notionals.as_mut().unwrap()[0].notional_value =
+                        "1".parse().unwrap();
+                } else {
+                    report.datasets[0].last_bar_notionals = None;
+                }
+                let bytes = serde_json::to_vec(&report).unwrap();
+                fs::write(report_path, &bytes).unwrap();
+                for input in &mut f.spec.inputs {
+                    if let RuntimeInputV1::Artifact {
+                        artifact_id,
+                        byte_count,
+                        ..
+                    } = input
+                    {
+                        if *artifact_id == binding.assumption.report_artifact_id {
+                            *byte_count = market::count(bytes.len() as u64);
+                        }
+                    }
+                }
+            }
+        }
+        let bytes = serde_json::to_vec(&task).unwrap();
+        fs::write(&path, &bytes).unwrap();
+        for input in &mut f.spec.inputs {
+            if let RuntimeInputV1::Artifact {
+                artifact_id,
+                byte_count,
+                ..
+            } = input
+            {
+                if *artifact_id == f.spec.parameters_artifact_id {
+                    *byte_count = market::count(bytes.len() as u64);
+                }
+            }
+        }
+        fs::write(
+            f.input.join("spec.json"),
+            serde_json::to_vec(&f.spec).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(execute(&f), case == 0, "liquidity case {case}");
+        if case == 0 {
+            let report: contracts::science::NativePortfolioBuildResultV1 =
+                result(&f, "qz.native_portfolio");
+            assert!(report.allocation.targets.is_some());
+            domain::portfolio::allocation_result(&report.input, &report.allocation).unwrap();
+            assert!(report
+                .input
+                .assets
+                .iter()
+                .all(|a| a.available_notional.is_some()));
+        } else {
+            assert!(!f.output.join("index.json").exists());
+        }
+    }
 }
 
 #[test]
