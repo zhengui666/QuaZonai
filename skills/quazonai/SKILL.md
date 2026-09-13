@@ -19,7 +19,8 @@ portfolio-study/5执行原模型驱动、固定间隔或原参数手动截止的
 portfolio-rolling-liquidity/1要求原测量政策文件，每截止重新测量本目录前缀，
 执行时复核专属年龄；不复用过期BAR快照、不手填成交额或升级DATA_BACKED。
 portfolio-build-rolling/1在原生Build使用相同政策及BAR来源校验，保留原测量报告；
-不能以该原生能力宣称正式Store滚动准入/发布已完成。
+Store Build准入冻结原政策输入，Candidate发布重读政策并在文件发布后复核原BAR期限；
+过期保留求解结果但无可用目标，不代表正式PORTFOLIO Study或Release资格。
 portfolio-history/1输出原manifest绑定的Arrow历史目标；失败帧仍保留null权重。
 逐帧原输入、实际模拟及Arrow报告不是正式PORTFOLIO发布或PASS。
 Candidate保持研究的可信发布器从原双报告、独立政策与来源复核发表FORWARD

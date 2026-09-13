@@ -101,15 +101,30 @@ async fn answer(store: &Store, f: &cycle_support::Fixture, lease: &RunLease, tex
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn original_reviewed_alphas_publish_candidates_and_retry_last_target(pool: PgPool) {
-    Box::pin(qualified_chain(pool, false)).await;
+    Box::pin(qualified_chain(pool, cycle_support::Liquidity::None)).await;
 }
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn historical_liquidity_remains_bound_through_original_qualified_chain(pool: PgPool) {
-    Box::pin(qualified_chain(pool, true)).await;
+    Box::pin(qualified_chain(pool, cycle_support::Liquidity::Snapshot)).await;
 }
 
-async fn qualified_chain(pool: PgPool, with_liquidity: bool) {
+#[sqlx::test(migrations = "../../migrations")]
+async fn rolling_liquidity_remains_bound_through_original_qualified_chain(pool: PgPool) {
+    Box::pin(qualified_chain(
+        pool,
+        cycle_support::Liquidity::Rolling(u32::MAX),
+    ))
+    .await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn rolling_expiry_during_publication_rolls_back_targets_and_retries_invalid(pool: PgPool) {
+    Box::pin(qualified_chain(pool, cycle_support::Liquidity::Rolling(10))).await;
+}
+
+async fn qualified_chain(pool: PgPool, liquidity: cycle_support::Liquidity) {
+    let with_liquidity = liquidity == cycle_support::Liquidity::Snapshot;
     let directory = tempfile::tempdir().unwrap();
     let objects = std::sync::Arc::new(
         integrations::artifacts::ArtifactStore::open(&directory.path().join("objects")).unwrap(),
@@ -121,7 +136,7 @@ async fn qualified_chain(pool: PgPool, with_liquidity: bool) {
         &actor,
         objects,
         DataOrigin::Real,
-        with_liquidity,
+        liquidity,
         |policy| {
             policy.selection.candidate_count = 2;
             policy.maximum_sealed_uses_per_lineage = 2;
@@ -359,7 +374,38 @@ async fn qualified_chain(pool: PgPool, with_liquidity: bool) {
         .await
         .unwrap();
     let costs_id = assumption.fee_schedule_artifact_id;
-    let liquidity_id = assumption.bar_liquidity.map(|s| s.report_artifact_id);
+    let liquidity_id = assumption
+        .bar_liquidity
+        .map(|s| s.report_artifact_id)
+        .or(assumption.rolling_liquidity_artifact_id);
+    let changed_policy = |id: Id, size: DbCounter| async move {
+        let bytes = fixture.read(id, size).await?;
+        if Some(id) != assumption.rolling_liquidity_artifact_id {
+            return Ok(bytes);
+        }
+        let text = String::from_utf8(bytes).unwrap();
+        let from = "\"participation_limit\":\"1\"";
+        assert!(text.contains(from));
+        let changed = text
+            .replace(from, "\"participation_limit\":\"0\"")
+            .into_bytes();
+        assert_eq!(changed.len() as u64, size.get());
+        Ok(changed)
+    };
+    if assumption.rolling_liquidity_artifact_id.is_some() {
+        assert!(matches!(
+            store
+                .start_portfolio_build(
+                    &actor,
+                    "changed-rolling-policy",
+                    &request,
+                    changed_policy,
+                    |_| async { panic!("changed policy admits no Build") },
+                )
+                .await,
+            Err(StoreError::Integrity)
+        ));
+    }
     let changed_costs = |id: Id, size: DbCounter| async move {
         let bytes = fixture.read(id, size).await?;
         if id != costs_id {
@@ -384,7 +430,10 @@ async fn qualified_chain(pool: PgPool, with_liquidity: bool) {
             .await,
         Err(StoreError::Integrity)
     ));
-    assert_eq!(liquidity_id.is_some(), with_liquidity);
+    assert_eq!(
+        liquidity_id.is_some(),
+        liquidity != cycle_support::Liquidity::None
+    );
     let changed_liquidity = |currency: bool| {
         move |id: Id, size: DbCounter| async move {
             let bytes = fixture.read(id, size).await?;
@@ -496,6 +545,16 @@ async fn qualified_chain(pool: PgPool, with_liquidity: bool) {
         }
     }
     result::complete(&pool, &store, &f, &lease, &job).await;
+    if assumption.rolling_liquidity_artifact_id.is_some() {
+        assert!(matches!(
+            store
+                .publish_scientific_result(admitted.id, changed_policy, |_| async {
+                    panic!("changed policy publishes no Candidate")
+                },)
+                .await,
+            Err(StoreError::Integrity)
+        ));
+    }
     if with_liquidity {
         assert!(matches!(
             store
@@ -569,6 +628,80 @@ async fn qualified_chain(pool: PgPool, with_liquidity: bool) {
         store.acknowledge_run(&message).await,
         Err(StoreError::Conflict)
     ));
+    if liquidity == cycle_support::Liquidity::Rolling(10) {
+        let written = std::sync::Mutex::new(Vec::new());
+        let recorded = &written;
+        let publication = store
+            .publish_scientific_result(
+                admitted.id,
+                |id, size| f.read(id, size),
+                |object| async move {
+                    let first = {
+                        let mut ids = recorded.lock().unwrap();
+                        ids.push(object.id);
+                        ids.len() == 1
+                    };
+                    if first {
+                        let value: serde_json::Value =
+                            serde_json::from_slice(&object.bytes).unwrap();
+                        assert!(
+                            value.get("targets").is_some(),
+                            "source must be current before writing targets"
+                        );
+                    }
+                    fixture
+                        .objects
+                        .put(object.id, &object.bytes)
+                        .map_err(|_| StoreError::Integrity)?;
+                    if first {
+                        tokio::time::sleep(std::time::Duration::from_secs(11)).await;
+                    }
+                    Ok(())
+                },
+            )
+            .await;
+        assert!(matches!(publication, Err(StoreError::Conflict)));
+        let count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM app.portfolio_candidates WHERE run_id=$1")
+                .bind(admitted.id.as_uuid())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 0);
+        let written = written.into_inner().unwrap();
+        assert_eq!(written.len(), 2);
+        for id in written {
+            assert!(store
+                .discard_unpublished_operator_artifact(id, |id| async move {
+                    fixture
+                        .objects
+                        .discard_unpublished(id)
+                        .map_err(|_| StoreError::Integrity)
+                })
+                .await
+                .unwrap());
+        }
+        let candidate = validation_publication::publish(&store, &f, admitted.id)
+            .await
+            .unwrap()
+            .resource;
+        let facts: (String, String, bool, bool, i64) = sqlx::query_as("SELECT solver_status,evidence_status,target_artifact_id IS NULL,cash_weight IS NULL,(SELECT count(*) FROM app.candidate_targets WHERE candidate_id=c.id) FROM app.portfolio_candidates c WHERE id=$1")
+            .bind(candidate.as_uuid()).fetch_one(&pool).await.unwrap();
+        assert_eq!(facts, ("OPTIMAL".into(), "INVALID".into(), true, true, 0));
+        let replay = store
+            .publish_scientific_result(
+                admitted.id,
+                |_, _| async { panic!("expired replay reads nothing") },
+                |_| async { panic!("expired replay writes nothing") },
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(replay.replayed);
+        assert_eq!(replay.resource, candidate);
+        store.acknowledge_run(&message).await.unwrap();
+        return;
+    }
     let candidate = validation_publication::publish(&store, &f, admitted.id)
         .await
         .unwrap()

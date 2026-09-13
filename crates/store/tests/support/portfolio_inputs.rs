@@ -267,11 +267,18 @@ pub(super) async fn request(
     constraints.liquidity_ref = assumption
         .bar_liquidity
         .as_ref()
-        .map(|s| s.report_artifact_id);
+        .map(|s| s.report_artifact_id)
+        .or(assumption.rolling_liquidity_artifact_id);
     constraints.max_participation = assumption
         .bar_liquidity
         .as_ref()
-        .map(|s| s.participation_limit.clone());
+        .map(|s| s.participation_limit.clone())
+        .or_else(|| {
+            assumption
+                .rolling_liquidity
+                .as_ref()
+                .map(|s| s.participation_limit.clone())
+        });
     constraints.group_bounds = vec![GroupBoundV1 {
         group_id: "fixture-group".into(),
         min: "0.5".parse().unwrap(),

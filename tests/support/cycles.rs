@@ -54,10 +54,17 @@ pub async fn setup_with_objects(
         actor,
         objects,
         DataOrigin::Fixture,
-        false,
+        Liquidity::None,
         |_| {},
     )
     .await
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Liquidity {
+    None,
+    Snapshot,
+    Rolling(u32),
 }
 
 pub async fn setup_with_policy(
@@ -66,7 +73,7 @@ pub async fn setup_with_policy(
     actor: &Actor,
     objects: Arc<ArtifactStore>,
     origin: DataOrigin,
-    with_liquidity: bool,
+    liquidity: Liquidity,
     customize: impl FnOnce(&mut EvaluationPolicyCreate),
 ) -> Fixture {
     let mut data = research_support::setup(pool, store, actor).await;
@@ -187,7 +194,15 @@ pub async fn setup_with_policy(
                 }],
             },
         };
-        if with_liquidity {
+        if let Liquidity::Rolling(maximum_age_seconds) = liquidity {
+            assumption_request.rolling_liquidity =
+                Some(contracts::science::NativeRollingBarLiquidityPolicyV1 {
+                    schema_version: SchemaV1,
+                    maximum_age_seconds,
+                    participation_limit: "1".parse().unwrap(),
+                });
+        }
+        if liquidity == Liquidity::Snapshot {
             let contracts::portfolio::NativeModelRefV1::NautilusDefaultFill { parameters, .. } =
                 &mut assumption_request.settings.fill_model
             else {

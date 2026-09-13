@@ -114,11 +114,44 @@ pub(super) async fn complete(
     } else {
         Vec::new()
     };
-    input.assets =
-        domain::execution::portfolio_execution_costs(&request, &slippage_references).unwrap();
+    let bar_notionals = if request.rolling_liquidity.is_some() {
+        request
+            .assets
+            .iter()
+            .map(|asset| contracts::execution::NativeBarNotionalV1 {
+                instrument_id: asset.instrument_id.clone(),
+                currency: asset.currency.clone(),
+                event_ns: input.forecasts.forecast_asof_ns,
+                available_ns: input.forecasts.forecast_asof_ns,
+                close_price: "1".parse().unwrap(),
+                traded_volume: "1000".parse().unwrap(),
+                notional_value: "1000".parse().unwrap(),
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let assets = domain::execution::portfolio_rolling_liquidity_assets(
+        &request.selection,
+        &request.assets,
+        request.rolling_liquidity.as_ref(),
+        &mandate.base_currency,
+        input.forecasts.forecast_asof_ns,
+        request.selection.decision_cutoff_ns,
+        &bar_notionals,
+    )
+    .unwrap();
+    input.assets = domain::execution::portfolio_costs(
+        &request.selection,
+        mandate,
+        &request.execution_settings,
+        &assets,
+        &slippage_references,
+    )
+    .unwrap();
     let report = NativePortfolioBuildResultV1 {
         schema_version: SchemaV1,
-        bar_notionals: Vec::new(),
+        bar_notionals,
         slippage_references,
         input,
         consumed_fuel: DbCounter::ZERO,
@@ -163,6 +196,7 @@ pub(super) async fn complete(
         engine_versions: [
             ("controlled-protocol-response".into(), "1".into()),
             ("portfolio-liquidity".into(), "1".into()),
+            ("portfolio-build-rolling".into(), "1".into()),
             ("portfolio-cost-source".into(), "1".into()),
             ("portfolio-slippage".into(), "1".into()),
         ]

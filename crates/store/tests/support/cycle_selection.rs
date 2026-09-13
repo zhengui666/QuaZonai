@@ -384,7 +384,7 @@ async fn ranked(pool: PgPool, direction: SelectionDirection) {
         &actor,
         objects,
         contracts::research::DataOrigin::Fixture,
-        false,
+        cycle_support::Liquidity::None,
         |policy| {
             policy.selection.direction = direction;
             policy.selection.candidate_count = 2;

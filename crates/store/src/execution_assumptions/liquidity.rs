@@ -197,6 +197,72 @@ pub(crate) struct FrozenLiquidity {
     pub origin: DataOrigin,
 }
 
+/// Declared policy bytes, not a measured snapshot or a market-origin contribution.
+pub(crate) async fn rolling<R, Read>(
+    tx: &mut Transaction<'_, Postgres>,
+    project: Id,
+    runtime: Id,
+    assumptions: Id,
+    read: &mut R,
+) -> Result<
+    Option<(
+        contracts::science::NativeRollingBarLiquidityPolicyV1,
+        RuntimeInputV1,
+    )>,
+    StoreError,
+>
+where
+    R: FnMut(Id, DbCounter) -> Read,
+    Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
+{
+    let row = sqlx::query(&format!(
+        "{} WHERE e.id=$1 AND s.project_id=$2 AND s.runtime_id=$3",
+        super::VIEW
+    ))
+    .bind(assumptions.as_uuid())
+    .bind(project.as_uuid())
+    .bind(runtime.as_uuid())
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(StoreError::Integrity)?;
+    let saved = super::view(&row)?;
+    let Some(policy) = saved.rolling_liquidity else {
+        return Ok(None);
+    };
+    let id = saved
+        .rolling_liquidity_artifact_id
+        .ok_or(StoreError::Integrity)?;
+    let declared: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.artifacts WHERE id=$1 AND kind='PARAMETERS' AND origin='SYNTHETIC' AND created_by='OPERATOR')")
+        .bind(id.as_uuid()).fetch_one(&mut **tx).await?;
+    if !declared {
+        return Err(StoreError::Integrity);
+    }
+    let bytes = document(
+        tx,
+        project,
+        id,
+        "qz.rolling_bar_liquidity",
+        1024 * 1024,
+        read,
+    )
+    .await?;
+    let original: contracts::science::NativeRollingBarLiquidityPolicyV1 =
+        serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?;
+    if original != policy {
+        return Err(StoreError::Integrity);
+    }
+    crate::research::revalidate_frozen_inputs(tx, saved.input_set_id, project, runtime).await?;
+    Ok(Some((
+        policy,
+        RuntimeInputV1::Artifact {
+            artifact_id: id,
+            storage_version: "1".into(),
+            byte_count: DbCounter::new(bytes.len() as u64).map_err(|_| StoreError::Integrity)?,
+            role: ArtifactInputRole::Parameters,
+        },
+    )))
+}
+
 /// Reread immutable source facts; current expiry is separate from corruption.
 pub(crate) async fn frozen<R, Read>(
     tx: &mut Transaction<'_, Postgres>,

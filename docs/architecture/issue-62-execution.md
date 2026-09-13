@@ -3,6 +3,44 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Store rolling Build admission and publication expiry, 2026-09-14
+
+Build now rereads the original registered rolling policy through the existing
+artifact/InputSet/Runtime/license checks, freezes its PARAMETERS input and requires
+portfolio-build-rolling/1. Declared SYNTHETIC policy bytes do not become market
+origin evidence. Historical snapshot handling remains unchanged. Publication
+requires the original manifest capability and policy, binds the original report
+measurements and checks their expiry against database time. The earliest BAR
+event plus maximum age is rounded down to PostgreSQL microseconds and bounds the
+existing final window query, without changing weights or target TTL contracts.
+Corruption remains retryable Integrity; genuine expiry retains the solver status
+but publishes INVALID with no usable target. Expiry across file publication rolls
+back the transaction; a retry seals the expired result without targets.
+
+On 65580f2a plus frozen patches, verify-bXpZVx passed workspace check/fmt/strict
+Clippy and all four original qualified-portfolio database chains in 36.85 seconds.
+The new rolling chain uses actual registration, review, qualifications, admission,
+publication and ACK APIs with explicitly controlled numerical report bytes.
+Changed policy files fail admission and publication. The expiry test writes a
+target while current, waits across its age boundary, verifies transaction rollback,
+reclaims both unreferenced callback objects and retries to OPTIMAL/INVALID with
+no target/cash/target rows; replay reads and writes nothing. Existing no-liquidity
+and snapshot chains pass. Initial runs exposed two incomplete test adaptations:
+the policy-ID projection and the controlled report's capability map; both were
+corrected before the final passing run, without relaxing production checks.
+
+verify-HhmJ4t passed all 232 Mandate/domain/science/Store/HTTP/CLI checks;
+verify-WFnFkL passed 209 research/publication/native-validation/HTTP/CLI checks.
+Both also passed workspace check/fmt/strict Clippy with source unchanged. These
+families overlap and are not a count of unique acceptance cases. No HTTP contract,
+frontend, native Job or Runtime source changed in this stage, so generated assets,
+browser tests and OCI were not rerun. Prior native OCI evidence remains separately
+version-bound below, not a claim of a new end-to-end OCI Store acceptance run.
+
+Ponytail reuse adds no dependency, migration, generic service or qualification
+shortcut. Independent PORTFOLIO Study/Evaluation, REAL/PIT, release/delivery,
+recovery and full T42 remain unfinished. No push, review, merge or Issue closure.
+
 ## Native Build consumption of rolling BAR policies, 2026-09-14
 
 portfolio-build-rolling/1 adds the original rolling policy to native Build requests,

@@ -46,6 +46,8 @@ pub fn portfolio_capabilities(now: DateTime<Utc>) -> RuntimeCapabilitiesV1 {
         ("portfolio-models", "4"),
         ("portfolio-weights", "1"),
         ("portfolio-liquidity", "1"),
+        ("portfolio-rolling-liquidity", "1"),
+        ("portfolio-build-rolling", "1"),
         ("portfolio-cost-source", "1"),
         ("portfolio-slippage", "1"),
         ("bar-notional", "1"),

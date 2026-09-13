@@ -125,16 +125,23 @@ async fn fixture_with_selection(
         integrations::artifacts::ArtifactStore::open(&root.path().join("objects")).unwrap(),
     );
     let (store, actor) = research_support::operator(pool).await;
-    let mut data =
-        cycle_support::setup_with_policy(pool, &store, &actor, objects, origin, false, |policy| {
+    let mut data = cycle_support::setup_with_policy(
+        pool,
+        &store,
+        &actor,
+        objects,
+        origin,
+        cycle_support::Liquidity::None,
+        |policy| {
             policy.selection.candidate_count = candidates;
             if candidates == 1 {
                 // Both controlled origins use the same passing scientific criterion.
                 // Only REAL/PIT declarations may reach qualification registration.
                 policy.sealed_metric_requirements[0].threshold_low = Some("0.1".parse().unwrap());
             }
-        })
-        .await;
+        },
+    )
+    .await;
     if candidates == 1 {
         // Explicit same Profile is allowed; independent native Thread is still
         // mandatory and checked below. No second HOME or account is invented.

@@ -115,6 +115,15 @@ where
         {
             return Err(StoreError::Integrity);
         }
+        if frozen.rolling_liquidity.is_some()
+            && manifest
+                .engine_versions
+                .get("portfolio-build-rolling")
+                .map(String::as_str)
+                != Some("1")
+        {
+            return Err(StoreError::Integrity);
+        }
         domain::runtime_jobs::manifest(
             &manifest,
             &spec,
@@ -379,7 +388,7 @@ where
     }
     crate::research::revalidate_frozen_inputs(tx, db::id(costs)?, project, request.runtime_id)
         .await?;
-    let liquidity = crate::execution_assumptions::liquidity::frozen(
+    let rolling = crate::execution_assumptions::liquidity::rolling(
         tx,
         project,
         request.runtime_id,
@@ -387,6 +396,37 @@ where
         read,
     )
     .await?;
+    if rolling.as_ref().map(|(policy, _)| policy) != frozen.rolling_liquidity.as_ref() {
+        return Err(StoreError::Integrity);
+    }
+    let mut source_until = until;
+    if let Some((policy, input)) = &rolling {
+        if !matches!(input, RuntimeInputV1::Artifact {artifact_id,..} if Some(*artifact_id) == frozen.mandate.constraints.liquidity_ref)
+        {
+            return Err(StoreError::Integrity);
+        }
+        let expiry = crate::execution_assumptions::liquidity::expiry(
+            &report.bar_notionals,
+            policy.maximum_age_seconds,
+        )
+        .map_err(|_| StoreError::Integrity)?;
+        source_until = source_until.min(expiry);
+        if expiry <= now {
+            return Err(StoreError::Invalid("rolling_liquidity_expired"));
+        }
+    }
+    let liquidity = if rolling.is_none() {
+        crate::execution_assumptions::liquidity::frozen(
+            tx,
+            project,
+            request.runtime_id,
+            frozen.mandate.execution_assumptions_id,
+            read,
+        )
+        .await?
+    } else {
+        None
+    };
     if db::json(&liquidity.as_ref().map(|s| &s.binding))? != db::json(&frozen.bar_liquidity)? {
         return Err(StoreError::Integrity);
     }
@@ -414,7 +454,7 @@ where
         request,
         &[db::id(costs)?],
         frozen.current_weights.valid_until_ns,
-        until,
+        source_until,
     )
     .await?
     {

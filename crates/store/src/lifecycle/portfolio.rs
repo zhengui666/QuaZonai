@@ -237,7 +237,7 @@ impl Store {
         {
             return Err(DomainError::CapabilityUnavailable("portfolio_all_in_cost_source").into());
         }
-        let liquidity = crate::execution_assumptions::liquidity::frozen(
+        let rolling = crate::execution_assumptions::liquidity::rolling(
             &mut tx,
             project,
             request.runtime_id,
@@ -245,6 +245,29 @@ impl Store {
             &mut read,
         )
         .await?;
+        if let Some((_, input)) = &rolling {
+            if cap
+                .engine_versions
+                .get("portfolio-build-rolling")
+                .map(String::as_str)
+                != Some("1")
+            {
+                return Err(DomainError::CapabilityUnavailable("portfolio_build_rolling").into());
+            }
+            inputs.push(input.clone());
+        }
+        let liquidity = if rolling.is_none() {
+            crate::execution_assumptions::liquidity::frozen(
+                &mut tx,
+                project,
+                request.runtime_id,
+                mandate.content.execution_assumptions_id,
+                &mut read,
+            )
+            .await?
+        } else {
+            None
+        };
         if let Some(source) = &liquidity {
             if cap
                 .engine_versions
@@ -304,7 +327,7 @@ impl Store {
             execution_settings: settings,
             assets,
             bar_liquidity: liquidity.as_ref().map(|s| s.binding.clone()),
-            rolling_liquidity: None,
+            rolling_liquidity: rolling.as_ref().map(|(policy, _)| policy.clone()),
             members,
         };
         domain::execution::portfolio_build_request(&native)?;

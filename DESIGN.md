@@ -707,9 +707,8 @@ SYNTHETIC声明来源；execution_assumptions.liquidity_artifact_id及participat
 引用原政策，execution_assumption_sources.rolling_liquidity保存原内容。原政策没有
 bar_liquidity_valid_until，因为它不是某根历史BAR的观测；年龄仍在每个实际cutoff
 检查。读取返回原政策及rolling_liquidity_artifact_id，旧行保持null。发表失败沿用
-原对象清理与同键回执重试，不允许留下半个执行假设；不授予科学PASS。只支持单次
-快照的Build来源读取必须明确拒绝滚动政策，不能把它当作无参与率限制。正式Study
-准入及Build的滚动政策消费仍需独立实现和验证，不由登记成功推定可用。
+原对象清理与同键回执重试，不允许留下半个执行假设；不授予科学PASS。正式Study
+准入仍须独立实现和验证，不由登记成功推定可用。
 
 原生Build的rolling_liquidity与单快照bar_liquidity互斥，绑定Mandate原政策PARAMETERS
 文件，输入assets.available_notional必须为空。Job重读原政策并逐值比较，从原selection
@@ -717,9 +716,15 @@ bar_liquidity_valid_until，因为它不是某根历史BAR的观测；年龄仍�
 qz.native_portfolio报告。原事件必须等于本次forecast_asof，位于原选择内且当时已可用；
 按原政策年龄与币种核对，再将原名义量赋予同一资产输入，与原费用/滑点适配合并后
 交既有求解器。结果采纳重建相同资产并逐值核对；无政策时测量数组为空，不能混入
-手填额度、别的时点或币种。需要portfolio-build-rolling/1原生能力。本段是原生执行
-合同；正式Store准入、当前年龄及Candidate发布重验仍须接通，不能仅凭原生成功
-发表可交付Candidate或Release。
+手填额度、别的时点或币种。需要portfolio-build-rolling/1原生能力。
+Store在原Build事务重读已登记政策PARAMETERS、原InputSet/Runtime/当前许可并逐值
+核对保存配置，原政策作为唯一该用途输入冻结，不把声明SYNTHETIC合并成市场来源。
+原生成功后仍须按原manifest能力、完整报告、政策原文件和所有资格/费用/权重来源
+重验；按数据库当前时间核对原BAR年龄，最早event+maximum_age向下取整到微秒。
+此截止与权重/目标期限共同进入发表文件后最后一个无文件回调的数据库时限快照，
+不能因为发表耗时跨过失效边界。政策或报告损坏为可重试Integrity；真实过期保留
+原solver_status但Candidate标INVALID且无目标；发表中途过期回滚并允许重试封口。
+该发布不创建PORTFOLIO Evaluation或Release，独立组合评估仍不可省略。
 
 原生Universe membership每条带可选groups（最多64个唯一、1..120字符的组标识）。
 null/未提供表示分类未知，[]表示来源明确声明没有组；不自动按名称、币种或证券
