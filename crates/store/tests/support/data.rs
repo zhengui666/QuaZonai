@@ -40,6 +40,17 @@ pub async fn setup(pool: &PgPool, valid_until: Option<DateTime<Utc>>) -> Fixture
     let (store, actor) = auth_fixture::operator(pool).await;
     let directory = tempfile::tempdir().unwrap();
     let objects = Arc::new(ArtifactStore::open(&directory.path().join("objects")).unwrap());
+    prepare(pool, store, actor, valid_until, directory, objects).await
+}
+
+pub async fn prepare(
+    pool: &PgPool,
+    store: Store,
+    actor: Actor,
+    valid_until: Option<DateTime<Utc>>,
+    directory: tempfile::TempDir,
+    objects: Arc<ArtifactStore>,
+) -> Fixture {
     let project = store
         .create_project(
             &actor,

@@ -8,6 +8,27 @@ fn bad(field: &str) -> DomainError {
     invalid(field, "NATIVE_CATALOG_METADATA_INVALID")
 }
 
+/// Inspect the original externally tagged Rust InstrumentAny payload, without rewriting it.
+pub fn instrument_definition(
+    value: &serde_json::Value,
+) -> Result<(&str, &serde_json::Value), DomainError> {
+    let object = value
+        .as_object()
+        .filter(|v| v.len() == 1)
+        .ok_or_else(|| bad("instrument_definition"))?;
+    let (class, payload) = object
+        .iter()
+        .next()
+        .ok_or_else(|| bad("instrument_definition"))?;
+    text(class, 1, 120, false)?;
+    let id = payload
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| bad("instrument_definition.id"))?;
+    text(id, 1, 200, false)?;
+    Ok((class, payload))
+}
+
 pub fn metadata(
     value: &RuntimeCatalogMetadataV1,
     observed_at: DateTime<Utc>,
@@ -110,10 +131,20 @@ pub fn metadata(
             return Err(bad("quality.instrument_ids"));
         }
     }
-    if universe
-        .instrument_definitions
+    let mut definitions = BTreeSet::new();
+    for definition in &universe.instrument_definitions {
+        let (_, payload) = instrument_definition(definition)?;
+        let id = payload["id"]
+            .as_str()
+            .ok_or_else(|| bad("instrument_definition.id"))?;
+        if !definitions.insert(id) {
+            return Err(bad("universe.instrument_definitions"));
+        }
+    }
+    if quality
+        .instrument_ids
         .iter()
-        .any(|definition| !definition.is_object())
+        .any(|id| !definitions.contains(id.as_str()))
     {
         return Err(bad("universe.instrument_definitions"));
     }

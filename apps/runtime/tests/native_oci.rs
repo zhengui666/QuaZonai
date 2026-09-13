@@ -56,7 +56,7 @@ async fn real_native_portfolio_aggregates_original_forecasts_before_optimizing()
             member
         })
         .collect();
-    metadata.universe.instrument_definitions = request.assets.iter().map(|asset| serde_json::json!({"type":"CurrencyPair","id":asset.instrument_id,"fixture_only":true})).collect();
+    metadata.universe.instrument_definitions = request.assets.iter().map(|asset| serde_json::json!({"CurrencyPair":{"id":asset.instrument_id,"fixture_only":true}})).collect();
     metadata.quality.checked_at = runtime::now();
     let quality = &mut metadata.quality.datasets[0];
     quality.dataset_revision_id = dataset;
@@ -265,7 +265,7 @@ async fn real_native_sealed_job_reads_the_frozen_model_and_registered_parquet() 
         .iter()
         .map(|asset| {
             serde_json::json!({
-                "type":"CurrencyPair","id":asset.instrument_id,"fixture_only":true,
+                "CurrencyPair":{"id":asset.instrument_id,"fixture_only":true},
             })
         })
         .collect();

@@ -616,6 +616,24 @@ latency_ns；每个合计不得溢出，插入总延迟必须大于零。三者�
 这些冻结模型必须实际进入Nautilus venue配置；目标因果/到期检查使用同一插入总延迟。
 它们不证明原费用证据、许可或组合资格，正式执行假设创建仍须绑定原项目/产物。
 
+ExecutionAssumptionsCreateV1通过原Operator命令创建不可变执行假设，包含project_id、
+runtime_id/expected_runtime_revision、input_set_id、dataset_revision_id、完整settings
+及settlement_rule_ref。InputSet必须已冻结且属于项目，不读取Sealed；原目录登记、
+许可、Runtime探测/PORTFOLIO_SIMULATE镜像与simulation-models/1须在创建事务重验。
+settings费率和币种必须逐资产精确匹配原登记instrument definitions，不能手填替代。
+instrument definitions保留锁定Rust Nautilus InstrumentAny的原生Serde结构
+（例如{"CurrencyPair":{"id":...,"quote_currency":...,"maker_fee":...}}），
+不转换为Python式顶层type字段。登记、能力探测和费用绑定共用此结构；类别唯一、
+原生id唯一且覆盖质量报告资产，未知/缺失费用拒绝，旧数据不重写或补默认值。
+完整settings保存为同项目不可变PARAMETERS（qz.native_simulation_settings/1），
+也是fee_schedule_artifact_id的确切内容；原生来源关系另以execution_assumption_sources
+绑定原InputSet、Dataset、Runtime探测、project和settings。模型fill/slippage字段
+同时引用同一原生DefaultFillModel配置，不生成另一套滑点算法。
+当前这个声明式入口只产生CONSERVATIVE_ASSUMPTION、BAR、无参与率/流动性声称；
+DATA_BACKED等完整来源能力仍须单独接通，不能由请求标签冒充。旧数据保持原值，
+未绑定原生来源的历史行不能伪装成此入口的新版本。原请求/原响应支持精确重放，
+创建失败回滚数据库并回收本次未发布对象；不授予Alpha资格或交付权限。
+
 `event_start < event_end`；发布 snapshot 不原地覆盖，更新新目录/版本；许可与用途匹配。PIT 报告证明 available_at 来源，不用 ingest_at 替代。Universe 含退市/到期；静态今日成分明确有偏，不能称完整历史池。
 
 `NativeModelRefV1={schema_version,adapter_kind,upstream_class,upstream_version,parameters}`。class/adapter 来自服务端 allowlist 和实际 capability；parameters 为对应锁定适配器的严格 schema。未知项拒绝，不映成 GENERIC/DEFAULT；禁止任意 Python import/path/exec 越界。

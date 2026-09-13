@@ -5,6 +5,50 @@ version-bound evidence, not a second design or a claim that Issue #62 is complet
 
 ## Explicit native execution models, 2026-09-13
 
+### Source-bound execution assumptions authoring, 2026-09-13
+
+Working source over `c440135c128eeb83b8faa5d44822d60ddbd71854` adds immutable
+Operator execution-assumption creation, project pagination and original reads.
+The transaction binds frozen non-Sealed inputs, registered Dataset metadata,
+current Runtime/image/model capabilities and exact native currency/maker/taker
+fees. Original settings are published as PARAMETERS, linked by migration 048's
+immutable source relation. Publication failure rolls back; original command
+receipts replay without re-reading/re-publishing. Historical data is not rewritten.
+This declarative path records conservative BAR assumptions only, not DATA_BACKED,
+liquidity/participation evidence, qualification or a deliverable Candidate.
+
+A real native serialization regression first disproved the old flat type/id
+assumption. Registration checks, Runtime venue discovery and fee binding now read
+the original externally tagged Rust InstrumentAny structure through one domain
+helper. Actual CurrencyPair serialization and simulation tests passed 10/10 in
+3.65s. No Python conversion, fallback fee, RNG or matching algorithm was added.
+
+Final `verify-hUiruG` exited 0 with unchanged handwritten sources: all-target
+native-feature compilation, formatting and strict Clippy; contracts/domain,
+34 native science, 4 Store and 18 HTTP/CLI tests passed. New cases include actual
+PG immutable source/settings/receipt behavior, forged fees/source rejection and
+failed publication, real authenticated HTTP creation/reads/replay/empty/missing,
+and CLI subprocess -> TCP -> exact human grant -> PG creation/replay/reads.
+Catalog/probe observations in these relational tests are controlled fixtures,
+not REAL-market evidence. Shared CLI transport helpers avoid duplicate modules.
+
+`web-verify-lgjFjA` exited 0: six native outputs reproduced byte-for-byte,
+typecheck/build/wires/help, 505 Vitest/5 Node, 36 dedicated and 201 full browser
+tests passed. The Ant Design execution-assumptions tab preserves exact decimal
+values and integer strings, explicit model parameters/seed, offline and dirty
+input handling, original retry keys and original artifact details. Its new
+contract tests pass on desktop/tablet/mobile including accessibility. Subsequent
+changes were Rust test organization and documentation, not frontend source.
+
+`owner-oci-w9JEEa` rebuilt image
+`sha256:8ac35f36fd1e6b4745fc4c20f23bc0453c0195e7a56f0e53e5cc2e01c0e44458`;
+all 9 existing real OCI tests passed in 15.01s, source unchanged. This validates
+the updated Runtime catalog handling, not complete assumptions-to-Candidate
+publication. Full DATA_BACKED/other price modes, liquidity/participation,
+authoritative qualified portfolio admission, Candidate/Release/Claim/Forward,
+positive REAL qualification and remaining W0-W8/T01-T42 still require delivery.
+No final GitHub review, merge, Issue closure or release-ready claim was made.
+
 Working source over `ced7fcadbcef1fb8019d3a9119e54e7fb8cac174` removes implicit
 venue fill selection and the standalone insert-latency setting. Simulation now
 requires exact fee/fill/latency NativeModelRefV1 roles, classes and 0.63.0 versions.

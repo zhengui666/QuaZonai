@@ -22,6 +22,7 @@ use contracts::{
         AlphaEvaluateRequestV1, AlphaVersionView, AlphaView, CalibrationView, EvaluationView,
         MetricValueV1, QualificationView,
     },
+    execution_assumptions::{ExecutionAssumptionsCreateV1, ExecutionAssumptionsViewV1},
     experiments::{ExperimentProposalV1, ExperimentView},
     lifecycle::{RunCancelV1, RunListQuery},
     portfolio::{MandateCreateV1, MandateViewV1},
@@ -124,6 +125,20 @@ pub enum Alpha {
 pub enum Portfolio {
     #[command(subcommand)]
     Mandate(Mandate),
+    #[command(subcommand)]
+    Assumptions(ExecutionAssumptions),
+}
+#[derive(Subcommand)]
+pub enum ExecutionAssumptions {
+    Create,
+    List {
+        project_id: String,
+        #[command(flatten)]
+        page: List,
+    },
+    Show {
+        id: String,
+    },
 }
 #[derive(Subcommand)]
 pub enum Mandate {
@@ -494,6 +509,25 @@ impl Command {
                     }
                 }
             }
+            Self::Portfolio(Portfolio::Assumptions(command)) => match command {
+                ExecutionAssumptions::Create => {
+                    Request::write::<
+                        ExecutionAssumptionsCreateV1,
+                        CommandResult<ExecutionAssumptionsViewV1>,
+                    >(POST, "/api/v2/execution-assumptions", 201, true)?
+                }
+                ExecutionAssumptions::List { project_id, page } => {
+                    Request::get::<Page<ExecutionAssumptionsViewV1>>(action(
+                        "/api/v2/projects",
+                        project_id,
+                        "execution-assumptions",
+                    )?)
+                    .page(page)?
+                }
+                ExecutionAssumptions::Show { id } => Request::get::<ExecutionAssumptionsViewV1>(
+                    item("/api/v2/execution-assumptions", id)?,
+                ),
+            },
             Self::Brief(command) => match command {
                 Brief::List { project_id, page } => Request::get::<Page<BriefView>>(action(
                     "/api/v2/projects",

@@ -41,7 +41,7 @@ pub struct NativeUniverseV1 {
     pub coverage_end: DateTime<Utc>,
     #[schema(min_items = 1, max_items = 4096)]
     pub membership: Vec<NativeUniverseMemberV1>,
-    /// Original native serialized definitions, checked by the native catalog job.
+    /// Original Rust InstrumentAny externally tagged Serde definitions, e.g. {"CurrencyPair":{...}}.
     /// This document is metadata, not a second instrument or matching engine.
     #[schema(min_items = 1, max_items = 256)]
     pub instrument_definitions: Vec<serde_json::Value>,

@@ -788,6 +788,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/execution-assumptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["create_execution_assumptions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/execution-assumptions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_execution_assumptions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/experiments": {
         parameters: {
             query?: never;
@@ -1102,6 +1134,22 @@ export interface paths {
         get: operations["listProjectResearchCycles"];
         put?: never;
         post: operations["startResearchCycle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/projects/{id}/execution-assumptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_execution_assumptions"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2166,6 +2214,28 @@ export interface components {
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
+        CommandResult_ExecutionAssumptionsViewV1: {
+            replayed: boolean;
+            resource: {
+                calendar_version: string;
+                capability_snapshot_artifact_id: components["schemas"]["Id"];
+                /** @description This entrypoint freezes declared models, never self-asserted DATA_BACKED. */
+                cost_assumption_status: components["schemas"]["ConservativeAssumption"];
+                /** Format: date-time */
+                created_at: string;
+                dataset_revision_id: components["schemas"]["Id"];
+                engine_image_ref: string;
+                fee_schedule_artifact_id: components["schemas"]["Id"];
+                id: components["schemas"]["Id"];
+                input_set_id: components["schemas"]["Id"];
+                project_id: components["schemas"]["Id"];
+                runtime_id: components["schemas"]["Id"];
+                settings: components["schemas"]["NativeSimulationSettingsV1"];
+                settlement_rule_ref: string;
+                venue_capability_ref: string;
+            };
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         CommandResult_ExperimentView: {
             replayed: boolean;
             resource: {
@@ -2361,6 +2431,8 @@ export interface components {
         Comparator: "GT" | "GE" | "LT" | "LE" | "BETWEEN";
         /** @enum {string} */
         ConnectionMode: "SYSTEM" | "CUSTOM_PROVIDER";
+        /** @enum {string} */
+        ConservativeAssumption: "CONSERVATIVE_ASSUMPTION";
         /** @enum {string} */
         CostEnforcement: "UNAVAILABLE" | "ESTIMATED" | "EXACT";
         CredentialCreated: {
@@ -2771,6 +2843,34 @@ export interface components {
         };
         /** @enum {string} */
         EvidenceStatus: "VALID" | "INVALID" | "INCOMPLETE" | "UNSUPPORTED";
+        ExecutionAssumptionsCreateV1: {
+            dataset_revision_id: components["schemas"]["Id"];
+            expected_runtime_revision: components["schemas"]["Revision"];
+            input_set_id: components["schemas"]["Id"];
+            project_id: components["schemas"]["Id"];
+            runtime_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+            settings: components["schemas"]["NativeSimulationSettingsV1"];
+            settlement_rule_ref: string;
+        };
+        ExecutionAssumptionsViewV1: {
+            calendar_version: string;
+            capability_snapshot_artifact_id: components["schemas"]["Id"];
+            /** @description This entrypoint freezes declared models, never self-asserted DATA_BACKED. */
+            cost_assumption_status: components["schemas"]["ConservativeAssumption"];
+            /** Format: date-time */
+            created_at: string;
+            dataset_revision_id: components["schemas"]["Id"];
+            engine_image_ref: string;
+            fee_schedule_artifact_id: components["schemas"]["Id"];
+            id: components["schemas"]["Id"];
+            input_set_id: components["schemas"]["Id"];
+            project_id: components["schemas"]["Id"];
+            runtime_id: components["schemas"]["Id"];
+            settings: components["schemas"]["NativeSimulationSettingsV1"];
+            settlement_rule_ref: string;
+            venue_capability_ref: string;
+        };
         /** @enum {string} */
         ExperimentOutcome: "PENDING" | "SUPPORTED" | "REJECTED" | "INVALID" | "INCONCLUSIVE";
         ExperimentProposalV1: {
@@ -3059,6 +3159,13 @@ export interface components {
             schema_version: components["schemas"]["SchemaV1"];
             supported_reasoning_efforts: components["schemas"]["ReasoningEffortCapability"][];
         };
+        /** @enum {string} */
+        NativeAccountKind: "CASH" | "MARGIN";
+        NativeFeeRateV1: {
+            instrument_id: string;
+            maker: components["schemas"]["DecimalValue"];
+            taker: components["schemas"]["DecimalValue"];
+        };
         NativeModelRefV1: {
             /** @enum {string} */
             adapter_kind: "NAUTILUS_DEFAULT_FILL";
@@ -3139,6 +3246,21 @@ export interface components {
             upstream_class: "ndarray_stats::CorrelationExt::cov";
             /** @enum {string} */
             upstream_version: "0.7.0";
+        };
+        NativeSimulationSettingsV1: {
+            account_kind: components["schemas"]["NativeAccountKind"];
+            /** @enum {string} */
+            base_currency: "AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL";
+            exposure_tolerance: components["schemas"]["DecimalValue"];
+            fee_model: components["schemas"]["NativeModelRefV1"];
+            fee_rates: components["schemas"]["NativeFeeRateV1"][];
+            fill_model: components["schemas"]["NativeModelRefV1"];
+            latency_model: components["schemas"]["NativeModelRefV1"];
+            leverage: components["schemas"]["DecimalValue"];
+            schema_version: components["schemas"]["SchemaV1"];
+            /** Format: int32 */
+            snapshot_interval_ms: number;
+            starting_capital: components["schemas"]["DecimalValue"];
         };
         OperatorCommand: {
             /** @enum {string} */
@@ -3234,6 +3356,10 @@ export interface components {
             request: components["schemas"]["MandateCreateV1"];
         } | {
             /** @enum {string} */
+            operation: "EXECUTION_ASSUMPTIONS_CREATE";
+            request: components["schemas"]["ExecutionAssumptionsCreateV1"];
+        } | {
+            /** @enum {string} */
             operation: "BRIEF_UPDATE";
             request: components["schemas"]["BriefUpdate"];
         } | {
@@ -3287,7 +3413,7 @@ export interface components {
             target_id: components["schemas"]["Id"];
         };
         /** @enum {string} */
-        OperatorOperation: "CODEX_PROFILE_CREATE" | "CODEX_PROFILE_UPDATE" | "CODEX_PROBE" | "CODEX_LOGIN_START" | "CODEX_LOGIN_CANCEL" | "CODEX_LOGOUT" | "DATA_SOURCE_CREATE" | "DATA_SOURCE_UPDATE" | "DATA_GRANT_CREATE" | "DATA_GRANT_REVOKE" | "DATASET_REGISTER" | "DATA_VALIDATE" | "ALPHA_EVALUATE" | "BRIEF_FREEZE" | "CYCLE_START" | "INTEGRATION_SECRET_REGISTER" | "RUNTIME_PROBE" | "RUNTIME_CREATE" | "RUNTIME_UPDATE" | "DOWNSTREAM_CREATE" | "DOWNSTREAM_UPDATE" | "BRIEF_CREATE" | "MANDATE_CREATE" | "BRIEF_UPDATE" | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PRINCIPAL_CREATE" | "PRINCIPAL_UPDATE" | "CREDENTIAL_ISSUE" | "CREDENTIAL_REVOKE" | "INPUT_SET_CREATE" | "EVALUATION_POLICY_CREATE";
+        OperatorOperation: "CODEX_PROFILE_CREATE" | "CODEX_PROFILE_UPDATE" | "CODEX_PROBE" | "CODEX_LOGIN_START" | "CODEX_LOGIN_CANCEL" | "CODEX_LOGOUT" | "DATA_SOURCE_CREATE" | "DATA_SOURCE_UPDATE" | "DATA_GRANT_CREATE" | "DATA_GRANT_REVOKE" | "DATASET_REGISTER" | "DATA_VALIDATE" | "ALPHA_EVALUATE" | "BRIEF_FREEZE" | "CYCLE_START" | "INTEGRATION_SECRET_REGISTER" | "RUNTIME_PROBE" | "RUNTIME_CREATE" | "RUNTIME_UPDATE" | "DOWNSTREAM_CREATE" | "DOWNSTREAM_UPDATE" | "BRIEF_CREATE" | "MANDATE_CREATE" | "EXECUTION_ASSUMPTIONS_CREATE" | "BRIEF_UPDATE" | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PRINCIPAL_CREATE" | "PRINCIPAL_UPDATE" | "CREDENTIAL_ISSUE" | "CREDENTIAL_REVOKE" | "INPUT_SET_CREATE" | "EVALUATION_POLICY_CREATE";
         /** @enum {string} */
         PackageSchemaVersion: "1";
         Page_AlphaVersionView: {
@@ -3623,6 +3749,28 @@ export interface components {
                 unexpired_at_read: boolean;
                 /** Format: date-time */
                 valid_until?: string | null;
+            }[];
+            next_cursor?: null | components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        Page_ExecutionAssumptionsViewV1: {
+            items: {
+                calendar_version: string;
+                capability_snapshot_artifact_id: components["schemas"]["Id"];
+                /** @description This entrypoint freezes declared models, never self-asserted DATA_BACKED. */
+                cost_assumption_status: components["schemas"]["ConservativeAssumption"];
+                /** Format: date-time */
+                created_at: string;
+                dataset_revision_id: components["schemas"]["Id"];
+                engine_image_ref: string;
+                fee_schedule_artifact_id: components["schemas"]["Id"];
+                id: components["schemas"]["Id"];
+                input_set_id: components["schemas"]["Id"];
+                project_id: components["schemas"]["Id"];
+                runtime_id: components["schemas"]["Id"];
+                settings: components["schemas"]["NativeSimulationSettingsV1"];
+                settlement_rule_ref: string;
+                venue_capability_ref: string;
             }[];
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
@@ -8151,6 +8299,153 @@ export interface operations {
             };
         };
     };
+    create_execution_assumptions: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExecutionAssumptionsCreateV1"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_ExecutionAssumptionsViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_execution_assumptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionAssumptionsViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     list_experiments: {
         parameters: {
             query: {
@@ -10394,6 +10689,72 @@ export interface operations {
             };
             503: {
                 headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_execution_assumptions: {
+        parameters: {
+            query?: {
+                cursor?: components["schemas"]["Id"];
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_ExecutionAssumptionsViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
                     [name: string]: unknown;
                 };
                 content: {

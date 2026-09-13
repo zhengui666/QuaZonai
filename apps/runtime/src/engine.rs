@@ -260,7 +260,8 @@ impl NativeEngine {
             // Unrecognized definitions advertise no venue, never implicit market readiness.
             for catalog in catalogs {
                 for definition in &catalog.metadata.universe.instrument_definitions {
-                    let Some(class) = definition.get("type").and_then(serde_json::Value::as_str)
+                    let Ok((class, definition)) =
+                        domain::catalogs::instrument_definition(definition)
                     else {
                         continue;
                     };

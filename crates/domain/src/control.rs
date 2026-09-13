@@ -76,6 +76,10 @@ pub fn command(request: &OperatorCommand) -> Result<(), DomainError> {
             crate::brief::content(&r.request.content, &r.request.bindings)
         }
         OperatorCommand::MandateCreate(r) => crate::portfolio::mandate(&r.content),
+        OperatorCommand::ExecutionAssumptionsCreate(r) => {
+            text(&r.settlement_rule_ref, 1, 200, false)?;
+            crate::portfolio::simulation_settings(&r.settings)
+        }
         OperatorCommand::BriefUpdate(r) => crate::brief::content(&r.content, &r.bindings),
         OperatorCommand::ProjectCreate(r) => {
             name(&r.name)?;

@@ -15,6 +15,7 @@ pub mod cycles;
 pub mod data;
 pub mod evidence;
 pub mod execution;
+pub mod execution_assumptions;
 pub mod experiments;
 pub mod http;
 pub mod lifecycle;
@@ -83,6 +84,8 @@ use utoipa::OpenApi;
     evidence::AlphaVersionView,
     evidence::CalibrationView,
     evidence::QualificationView,
+    execution_assumptions::ExecutionAssumptionsCreateV1,
+    execution_assumptions::ExecutionAssumptionsViewV1,
     evidence::EvaluationView,
     brief::BriefCreate,
     brief::BriefCreateIntent,

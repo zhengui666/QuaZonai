@@ -13,6 +13,7 @@ pub mod cycles;
 pub mod data;
 pub mod error;
 pub mod evidence;
+pub mod execution_assumptions;
 pub mod experiments;
 #[cfg(test)]
 mod header_tests;
@@ -339,6 +340,18 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         )
         .route("/api/v2/portfolio-mandates/{id}", get(portfolio::get))
         .route(
+            "/api/v2/execution-assumptions",
+            post(execution_assumptions::create).layer(DefaultBodyLimit::max(1024 * 1024)),
+        )
+        .route(
+            "/api/v2/execution-assumptions/{id}",
+            get(execution_assumptions::get),
+        )
+        .route(
+            "/api/v2/projects/{id}/execution-assumptions",
+            get(execution_assumptions::list),
+        )
+        .route(
             "/api/v2/projects/{id}/portfolio-mandates",
             get(portfolio::list),
         )
@@ -473,6 +486,7 @@ research::input_sets,research::input_set,research::create_input_set,
 research::evaluation_policies,research::evaluation_policy,research::create_evaluation_policy,
 brief::list,brief::get,brief::create,brief::update,
 portfolio::list,portfolio::get,portfolio::create,
+execution_assumptions::list,execution_assumptions::get,execution_assumptions::create,
 cycles::freeze,cycles::frozen,cycles::start,cycles::list,cycles::get,cycles::selection,cycles::trials,
 experiments::propose,experiments::list,experiments::get,
 evidence::alphas,evidence::versions,evidence::version,evidence::calibration,evidence::qualifications,evidence::evaluations,evidence::evaluate,evidence::evaluation,evidence::metrics,

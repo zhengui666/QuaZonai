@@ -6649,6 +6649,12 @@
         ],
         "type": "string"
       },
+      "ConservativeAssumption": {
+        "enum": [
+          "CONSERVATIVE_ASSUMPTION"
+        ],
+        "type": "string"
+      },
       "CostEnforcement": {
         "enum": [
           "UNAVAILABLE",
@@ -8413,6 +8419,114 @@
           "UNSUPPORTED"
         ],
         "type": "string"
+      },
+      "ExecutionAssumptionsCreateV1": {
+        "additionalProperties": false,
+        "properties": {
+          "dataset_revision_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "expected_runtime_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "input_set_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "runtime_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/NativeSimulationSettingsV1"
+          },
+          "settlement_rule_ref": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "project_id",
+          "runtime_id",
+          "expected_runtime_revision",
+          "input_set_id",
+          "dataset_revision_id",
+          "settings",
+          "settlement_rule_ref"
+        ],
+        "type": "object"
+      },
+      "ExecutionAssumptionsViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "calendar_version": {
+            "type": "string"
+          },
+          "capability_snapshot_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "cost_assumption_status": {
+            "$ref": "#/components/schemas/ConservativeAssumption",
+            "description": "This entrypoint freezes declared models, never self-asserted DATA_BACKED."
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "dataset_revision_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "engine_image_ref": {
+            "type": "string"
+          },
+          "fee_schedule_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "input_set_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "runtime_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/NativeSimulationSettingsV1"
+          },
+          "settlement_rule_ref": {
+            "type": "string"
+          },
+          "venue_capability_ref": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "input_set_id",
+          "dataset_revision_id",
+          "runtime_id",
+          "capability_snapshot_artifact_id",
+          "fee_schedule_artifact_id",
+          "engine_image_ref",
+          "venue_capability_ref",
+          "calendar_version",
+          "settlement_rule_ref",
+          "cost_assumption_status",
+          "settings",
+          "created_at"
+        ],
+        "type": "object"
       },
       "ExperimentOutcome": {
         "enum": [
@@ -11706,7 +11820,7 @@
             "type": "boolean"
           },
           "instrument_definitions": {
-            "description": "Original native serialized definitions, checked by the native catalog job.\nThis document is metadata, not a second instrument or matching engine.",
+            "description": "Original Rust InstrumentAny externally tagged Serde definitions, e.g. {\"CurrencyPair\":{...}}.\nThis document is metadata, not a second instrument or matching engine.",
             "items": {},
             "maxItems": 256,
             "minItems": 1,
@@ -12285,6 +12399,24 @@
             "properties": {
               "operation": {
                 "enum": [
+                  "EXECUTION_ASSUMPTIONS_CREATE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/ExecutionAssumptionsCreateV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
                   "BRIEF_UPDATE"
                 ],
                 "type": "string"
@@ -12541,6 +12673,7 @@
           "DOWNSTREAM_UPDATE",
           "BRIEF_CREATE",
           "MANDATE_CREATE",
+          "EXECUTION_ASSUMPTIONS_CREATE",
           "BRIEF_UPDATE",
           "PROJECT_CREATE",
           "PROJECT_UPDATE",

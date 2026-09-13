@@ -45,6 +45,7 @@ pub(crate) struct DatasetBinding {
     pub input: RuntimeInputV1,
     pub origin: DataOrigin,
     pub available_through_ns: DbCounter,
+    pub metadata: RuntimeCatalogMetadataV1,
 }
 
 /// Revalidate metadata only, never read market rows or grant Sealed access. The
@@ -149,6 +150,7 @@ where
             },
             origin: row_origin,
             available_through_ns: quality.available_through_ns,
+            metadata: native,
         });
     }
     Ok(bindings)

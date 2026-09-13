@@ -8,6 +8,33 @@ fn invalid() -> DomainError {
     DomainError::Invalid("portfolio_allocation")
 }
 
+pub fn simulation_settings(
+    settings: &contracts::science::NativeSimulationSettingsV1,
+) -> Result<(), DomainError> {
+    simulation_models(settings)?;
+    if !settings.starting_capital.is_positive()
+        || !settings.leverage.is_positive()
+        || settings.leverage.as_decimal() > &BigDecimal::from(100)
+        || !settings.exposure_tolerance.is_positive()
+        || settings.exposure_tolerance.as_decimal() > &BigDecimal::new(1.into(), 3)
+        || !(1..=86_400_000).contains(&settings.snapshot_interval_ms)
+        || iso_currency::Currency::from_code(&settings.base_currency).is_none()
+        || !(1..=256).contains(&settings.fee_rates.len())
+        || (settings.account_kind == contracts::science::NativeAccountKind::Cash
+            && settings.leverage.as_decimal() != &BigDecimal::from(1))
+    {
+        return Err(DomainError::Invalid("simulation_settings"));
+    }
+    let mut instruments = BTreeSet::new();
+    for rate in &settings.fee_rates {
+        control::text(&rate.instrument_id, 1, 200, false)?;
+        if !instruments.insert(&rate.instrument_id) {
+            return Err(DomainError::Invalid("simulation_fee_identity"));
+        }
+    }
+    Ok(())
+}
+
 /// Freeze the actual native execution models; no fallback, RNG or fee algorithm here.
 pub fn simulation_models(
     settings: &contracts::science::NativeSimulationSettingsV1,

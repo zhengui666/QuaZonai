@@ -59,7 +59,7 @@ pub fn metadata() -> RuntimeCatalogMetadataV1 {
                 available_at: instant(0),
             }],
             instrument_definitions: vec![serde_json::json!({
-                "type": "CurrencyPair", "id": instrument, "fixture_only": true
+                "CurrencyPair": {"id": instrument, "fixture_only": true}
             })],
         },
         quality: NativeDataQualityReportV1 {

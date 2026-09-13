@@ -234,6 +234,7 @@ pub enum OperatorOperation {
     DownstreamUpdate,
     BriefCreate,
     MandateCreate,
+    ExecutionAssumptionsCreate,
     BriefUpdate,
     ProjectCreate,
     ProjectUpdate,
@@ -270,6 +271,7 @@ impl OperatorOperation {
             Self::DownstreamUpdate => "DOWNSTREAM_UPDATE",
             Self::BriefCreate => "BRIEF_CREATE",
             Self::MandateCreate => "MANDATE_CREATE",
+            Self::ExecutionAssumptionsCreate => "EXECUTION_ASSUMPTIONS_CREATE",
             Self::BriefUpdate => "BRIEF_UPDATE",
             Self::ProjectCreate => "PROJECT_CREATE",
             Self::ProjectUpdate => "PROJECT_UPDATE",
@@ -295,6 +297,7 @@ impl OperatorOperation {
                 | Self::DownstreamCreate
                 | Self::BriefCreate
                 | Self::MandateCreate
+                | Self::ExecutionAssumptionsCreate
                 | Self::ProjectCreate
                 | Self::PrincipalCreate
                 | Self::CredentialIssue
@@ -334,6 +337,7 @@ pub enum OperatorCommand {
     DownstreamUpdate(crate::settings::DownstreamUpdate),
     BriefCreate(Box<crate::brief::BriefCreateIntent>),
     MandateCreate(Box<crate::portfolio::MandateCreateV1>),
+    ExecutionAssumptionsCreate(Box<crate::execution_assumptions::ExecutionAssumptionsCreateV1>),
     BriefUpdate(Box<crate::brief::BriefUpdate>),
     ProjectCreate(ProjectCreate),
     ProjectUpdate(ProjectUpdate),
@@ -370,6 +374,7 @@ impl OperatorCommand {
             Self::DownstreamUpdate(_) => OperatorOperation::DownstreamUpdate,
             Self::BriefCreate(_) => OperatorOperation::BriefCreate,
             Self::MandateCreate(_) => OperatorOperation::MandateCreate,
+            Self::ExecutionAssumptionsCreate(_) => OperatorOperation::ExecutionAssumptionsCreate,
             Self::BriefUpdate(_) => OperatorOperation::BriefUpdate,
             Self::ProjectCreate(_) => OperatorOperation::ProjectCreate,
             Self::ProjectUpdate(_) => OperatorOperation::ProjectUpdate,
@@ -406,6 +411,7 @@ impl OperatorCommand {
             Self::DownstreamUpdate(v) => serde_json::to_value(v),
             Self::BriefCreate(v) => serde_json::to_value(v),
             Self::MandateCreate(v) => serde_json::to_value(v),
+            Self::ExecutionAssumptionsCreate(v) => serde_json::to_value(v),
             Self::BriefUpdate(v) => serde_json::to_value(v),
             Self::ProjectCreate(v) => serde_json::to_value(v),
             Self::ProjectUpdate(v) => serde_json::to_value(v),

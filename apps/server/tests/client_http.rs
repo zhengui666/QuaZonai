@@ -1,104 +1,16 @@
 //! Actual CLI -> TCP -> native Axum/Bearer/TOTP/PostgreSQL data administration.
-//! Every credential and service here is disposable; no authority is injected into a route.
+//! Every credential and service here is disposable.
+#[path = "support/client.rs"]
+mod client;
 #[path = "../../../tests/support/mandate.rs"]
 mod mandate_support;
 mod support;
-use axum::{
-    body::Body,
-    http::{header, Request, StatusCode},
-};
+use axum::http::StatusCode;
+use client::{browser, invoke, listen};
 use contracts::Id;
-use integrations::secrets::SecretVault;
 use serde_json::{json, Value};
 use sqlx::PgPool;
-use std::{fs, os::unix::fs::PermissionsExt, path::Path, time::Duration};
-use tokio::{io::AsyncWriteExt, net::TcpListener, process::Command, task::JoinHandle};
-
-struct Listener(JoinHandle<()>);
-impl Drop for Listener {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
-}
-
-async fn listen(f: &support::Fixture) -> (String, Listener) {
-    let socket = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = socket.local_addr().unwrap();
-    let origin = format!("http://{address}");
-    let state = server::AppState::new(
-        f.store.clone(),
-        SecretVault::open(
-            &f._state.path().join("secrets"),
-            &f._state.path().join("master.key"),
-        )
-        .unwrap(),
-        server::WebPolicy::new(&origin, address, true).unwrap(),
-    );
-    let app = server::router(state, tower_sessions::cookie::Key::generate());
-    (
-        origin,
-        Listener(tokio::spawn(async move {
-            axum::serve(socket, app).await.unwrap();
-        })),
-    )
-}
-
-async fn browser(
-    f: &support::Fixture,
-    cookie: &str,
-    key: &str,
-    path: &str,
-    body: Value,
-) -> support::Reply {
-    support::exchange(
-        &f.app,
-        Request::builder()
-            .method("POST")
-            .uri(path)
-            .header(header::HOST, "research.example")
-            .header(header::ORIGIN, "https://research.example")
-            .header(header::COOKIE, cookie)
-            .header(header::CONTENT_TYPE, "application/json")
-            .header("Idempotency-Key", key)
-            .body(Body::from(serde_json::to_vec(&body).unwrap()))
-            .unwrap(),
-    )
-    .await
-}
-async fn invoke(
-    origin: &str,
-    credential: &Path,
-    arguments: &[&str],
-    body: Value,
-) -> std::process::Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_server"))
-        .arg("client")
-        .arg("--origin")
-        .arg(origin)
-        .arg("--credential-file")
-        .arg(credential)
-        .arg("--development-http")
-        .args(arguments)
-        .env_clear()
-        .kill_on_drop(true)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
-    let mut input = child.stdin.take().unwrap();
-    if !body.is_null() {
-        input
-            .write_all(&serde_json::to_vec(&body).unwrap())
-            .await
-            .unwrap();
-    }
-    drop(input);
-    tokio::time::timeout(Duration::from_secs(25), child.wait_with_output())
-        .await
-        .expect("native CLI transaction deadline")
-        .unwrap()
-}
+use std::{fs, os::unix::fs::PermissionsExt};
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn native_cli_human_grant_source_creation_replay_and_intent_binding_are_real_transactions(

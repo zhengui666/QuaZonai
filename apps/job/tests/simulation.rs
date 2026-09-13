@@ -27,6 +27,35 @@ fn simulate(
 }
 
 #[test]
+fn assumptions_read_original_native_instrument_fees_and_shared_settings_bounds() {
+    let (directory, request) = market("0.001", 20);
+    let data = job::catalog::load_catalog(directory.path(), &request.selection).unwrap();
+    for (series, fee) in data.series.iter().zip(&request.settings.fee_rates) {
+        let original = serde_json::to_value(&series.instrument).unwrap();
+        let (class, definition) = domain::catalogs::instrument_definition(&original).unwrap();
+        assert_eq!(class, "CurrencyPair");
+        assert_eq!(definition["id"], fee.instrument_id);
+        assert_eq!(definition["quote_currency"], request.settings.base_currency);
+        for (field, expected) in [("maker_fee", &fee.maker), ("taker_fee", &fee.taker)] {
+            let actual: contracts::DecimalValue =
+                serde_json::from_value(definition[field].clone()).unwrap();
+            assert_eq!(&actual, expected);
+        }
+    }
+    assert!(domain::portfolio::simulation_settings(&request.settings).is_ok());
+    let mut invalid = request.settings.clone();
+    invalid.fee_rates.push(invalid.fee_rates[0].clone());
+    assert!(domain::portfolio::simulation_settings(&invalid).is_err());
+    let mut invalid = request.settings.clone();
+    invalid.snapshot_interval_ms = 0;
+    assert!(domain::portfolio::simulation_settings(&invalid).is_err());
+    let mut invalid = request.settings;
+    invalid.account_kind = contracts::science::NativeAccountKind::Cash;
+    invalid.leverage = "2".parse().unwrap();
+    assert!(domain::portfolio::simulation_settings(&invalid).is_err());
+}
+
+#[test]
 fn two_assets_rebalance_inside_one_native_account_with_real_positions() {
     // Daily account returns require snapshots across UTC dates, not 20 minutes.
     let (directory, request) = market("0", 2 * 1440 + 20);

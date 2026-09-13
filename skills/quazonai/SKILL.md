@@ -143,6 +143,11 @@ SCORE沿原校准确定，不读取active指针推断，REJECT/未入选/缺证�
 原生simulate显式冻结fee_model、fill_model、latency_model（nautilus-execution
 0.63.0，simulation-models/1），旧顶层insert_latency_ns拒绝，不补默认模型或种子；
 模型运行与费用证据、正式执行假设及组合资格是不同边界，不能由成功模拟推定后者。
+Operator的`client portfolio assumptions create/list/show`保存/读取原生来源绑定的
+不可变假设（字段见CLI）；创建需要冻结非Sealed输入、原登记费率和近期Runtime探测。
+当前入口仅保守BAR，不自动获得DATA_BACKED、资格或交付权限；不修改历史假设。
+浏览器在“组合”选择项目后切到“执行假设”，使用同一创建/列表/详情API；未知响应
+保留原输入重试，不重新生成费用或种子，也不把关闭编辑器当成撤销。
 人工alpha qualifications分页读取原资格及最早撤销（包含未来生效），不读取Sealed
 报告/指标。grant_window_open仅核对服务端观察时刻的授予/撤销时间窗，不能替代
 当前政策、生命周期、许可证与组合准入检查，不向Mission授予资格或交付权限。

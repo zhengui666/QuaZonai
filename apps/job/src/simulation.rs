@@ -325,21 +325,7 @@ fn validate_settings(
     request: &NativeSimulationRequestV1,
 ) -> Result<Currency> {
     let settings = &request.settings;
-    ensure!(
-        settings.starting_capital.is_positive()
-            && settings.leverage.is_positive()
-            && settings.exposure_tolerance.is_positive()
-            && settings.exposure_tolerance.as_decimal() <= &BigDecimal::new(1.into(), 3)
-            && settings.leverage.as_decimal() <= &BigDecimal::from(100)
-            && (1..=86_400_000).contains(&settings.snapshot_interval_ms),
-        "SIMULATION_SETTINGS_INVALID"
-    );
-    if settings.account_kind == NativeAccountKind::Cash {
-        ensure!(
-            settings.leverage.as_decimal() == &BigDecimal::from(1),
-            "CASH_LEVERAGE_UNSUPPORTED"
-        );
-    }
+    domain::portfolio::simulation_settings(settings)?;
     ensure!(
         (1..=10_000).contains(&request.target_points.len())
             && request
@@ -355,10 +341,6 @@ fn validate_settings(
         "SIMULATION_SNAPSHOT_COUNT_LIMIT"
     );
     let currency = Currency::from_str(&settings.base_currency)?;
-    ensure!(
-        iso_currency_valid(&settings.base_currency),
-        "SIMULATION_BASE_CURRENCY_INVALID"
-    );
     ensure!(
         settings.fee_rates.len() == data.series.len(),
         "SIMULATION_FEE_COUNT_MISMATCH"
@@ -427,10 +409,6 @@ fn validate_settings(
         );
     }
     Ok(currency)
-}
-
-fn iso_currency_valid(code: &str) -> bool {
-    iso_currency::Currency::from_code(code).is_some()
 }
 
 // The engine's preferred returns may fall back to per-position returns. Build

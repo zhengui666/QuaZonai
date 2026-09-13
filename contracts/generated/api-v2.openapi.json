@@ -6780,6 +6780,89 @@
         ],
         "type": "object"
       },
+      "CommandResult_ExecutionAssumptionsViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "replayed": {
+            "type": "boolean"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "calendar_version": {
+                "type": "string"
+              },
+              "capability_snapshot_artifact_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "cost_assumption_status": {
+                "$ref": "#/components/schemas/ConservativeAssumption",
+                "description": "This entrypoint freezes declared models, never self-asserted DATA_BACKED."
+              },
+              "created_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "dataset_revision_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "engine_image_ref": {
+                "type": "string"
+              },
+              "fee_schedule_artifact_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "input_set_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "project_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "runtime_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "settings": {
+                "$ref": "#/components/schemas/NativeSimulationSettingsV1"
+              },
+              "settlement_rule_ref": {
+                "type": "string"
+              },
+              "venue_capability_ref": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "project_id",
+              "input_set_id",
+              "dataset_revision_id",
+              "runtime_id",
+              "capability_snapshot_artifact_id",
+              "fee_schedule_artifact_id",
+              "engine_image_ref",
+              "venue_capability_ref",
+              "calendar_version",
+              "settlement_rule_ref",
+              "cost_assumption_status",
+              "settings",
+              "created_at"
+            ],
+            "type": "object"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "replayed",
+          "resource"
+        ],
+        "type": "object"
+      },
       "CommandResult_ExperimentView": {
         "additionalProperties": false,
         "properties": {
@@ -7615,6 +7698,12 @@
         "enum": [
           "SYSTEM",
           "CUSTOM_PROVIDER"
+        ],
+        "type": "string"
+      },
+      "ConservativeAssumption": {
+        "enum": [
+          "CONSERVATIVE_ASSUMPTION"
         ],
         "type": "string"
       },
@@ -9340,6 +9429,114 @@
         ],
         "type": "string"
       },
+      "ExecutionAssumptionsCreateV1": {
+        "additionalProperties": false,
+        "properties": {
+          "dataset_revision_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "expected_runtime_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "input_set_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "runtime_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/NativeSimulationSettingsV1"
+          },
+          "settlement_rule_ref": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "project_id",
+          "runtime_id",
+          "expected_runtime_revision",
+          "input_set_id",
+          "dataset_revision_id",
+          "settings",
+          "settlement_rule_ref"
+        ],
+        "type": "object"
+      },
+      "ExecutionAssumptionsViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "calendar_version": {
+            "type": "string"
+          },
+          "capability_snapshot_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "cost_assumption_status": {
+            "$ref": "#/components/schemas/ConservativeAssumption",
+            "description": "This entrypoint freezes declared models, never self-asserted DATA_BACKED."
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "dataset_revision_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "engine_image_ref": {
+            "type": "string"
+          },
+          "fee_schedule_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "input_set_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "runtime_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/NativeSimulationSettingsV1"
+          },
+          "settlement_rule_ref": {
+            "type": "string"
+          },
+          "venue_capability_ref": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "input_set_id",
+          "dataset_revision_id",
+          "runtime_id",
+          "capability_snapshot_artifact_id",
+          "fee_schedule_artifact_id",
+          "engine_image_ref",
+          "venue_capability_ref",
+          "calendar_version",
+          "settlement_rule_ref",
+          "cost_assumption_status",
+          "settings",
+          "created_at"
+        ],
+        "type": "object"
+      },
       "ExperimentOutcome": {
         "enum": [
           "PENDING",
@@ -10644,6 +10841,35 @@
         ],
         "type": "object"
       },
+      "NativeAccountKind": {
+        "enum": [
+          "CASH",
+          "MARGIN"
+        ],
+        "type": "string"
+      },
+      "NativeFeeRateV1": {
+        "additionalProperties": false,
+        "properties": {
+          "instrument_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maker": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "taker": {
+            "$ref": "#/components/schemas/DecimalValue"
+          }
+        },
+        "required": [
+          "instrument_id",
+          "maker",
+          "taker"
+        ],
+        "type": "object"
+      },
       "NativeModelRefV1": {
         "oneOf": [
           {
@@ -10980,6 +11206,253 @@
             "type": "object"
           }
         ]
+      },
+      "NativeSimulationSettingsV1": {
+        "additionalProperties": false,
+        "properties": {
+          "account_kind": {
+            "$ref": "#/components/schemas/NativeAccountKind"
+          },
+          "base_currency": {
+            "enum": [
+              "AED",
+              "AFN",
+              "ALL",
+              "AMD",
+              "AOA",
+              "ARS",
+              "AUD",
+              "AWG",
+              "AZN",
+              "BAM",
+              "BBD",
+              "BDT",
+              "BGN",
+              "BHD",
+              "BIF",
+              "BMD",
+              "BND",
+              "BOB",
+              "BOV",
+              "BRL",
+              "BSD",
+              "BTN",
+              "BWP",
+              "BYN",
+              "BZD",
+              "CAD",
+              "CDF",
+              "CHE",
+              "CHF",
+              "CHW",
+              "CLF",
+              "CLP",
+              "CNY",
+              "COP",
+              "COU",
+              "CRC",
+              "CUC",
+              "CUP",
+              "CVE",
+              "CZK",
+              "DJF",
+              "DKK",
+              "DOP",
+              "DZD",
+              "EGP",
+              "ERN",
+              "ETB",
+              "EUR",
+              "FJD",
+              "FKP",
+              "GBP",
+              "GEL",
+              "GHS",
+              "GIP",
+              "GMD",
+              "GNF",
+              "GTQ",
+              "GYD",
+              "HKD",
+              "HNL",
+              "HRK",
+              "HTG",
+              "HUF",
+              "IDR",
+              "ILS",
+              "INR",
+              "IQD",
+              "IRR",
+              "ISK",
+              "JMD",
+              "JOD",
+              "JPY",
+              "KES",
+              "KGS",
+              "KHR",
+              "KMF",
+              "KPW",
+              "KRW",
+              "KWD",
+              "KYD",
+              "KZT",
+              "LAK",
+              "LBP",
+              "LKR",
+              "LRD",
+              "LSL",
+              "LYD",
+              "MAD",
+              "MDL",
+              "MGA",
+              "MKD",
+              "MMK",
+              "MNT",
+              "MOP",
+              "MRU",
+              "MUR",
+              "MVR",
+              "MWK",
+              "MXN",
+              "MXV",
+              "MYR",
+              "MZN",
+              "NAD",
+              "NGN",
+              "NIO",
+              "NOK",
+              "NPR",
+              "NZD",
+              "OMR",
+              "PAB",
+              "PEN",
+              "PGK",
+              "PHP",
+              "PKR",
+              "PLN",
+              "PYG",
+              "QAR",
+              "RON",
+              "RSD",
+              "RUB",
+              "RWF",
+              "SAR",
+              "SBD",
+              "SCR",
+              "SDG",
+              "SEK",
+              "SGD",
+              "SHP",
+              "SLE",
+              "SLL",
+              "SOS",
+              "SRD",
+              "SSP",
+              "STN",
+              "SVC",
+              "SYP",
+              "SZL",
+              "THB",
+              "TJS",
+              "TMT",
+              "TND",
+              "TOP",
+              "TRY",
+              "TTD",
+              "TWD",
+              "TZS",
+              "UAH",
+              "UGX",
+              "USD",
+              "USN",
+              "UYI",
+              "UYU",
+              "UYW",
+              "UZS",
+              "VED",
+              "VES",
+              "VND",
+              "VUV",
+              "WST",
+              "XAD",
+              "XAF",
+              "XAG",
+              "XAU",
+              "XBA",
+              "XBB",
+              "XBC",
+              "XBD",
+              "XCD",
+              "XCG",
+              "XDR",
+              "XOF",
+              "XPD",
+              "XPF",
+              "XPT",
+              "XSU",
+              "XTS",
+              "XUA",
+              "XXX",
+              "YER",
+              "ZAR",
+              "ZMW",
+              "ZWG",
+              "ZWL"
+            ],
+            "maxLength": 3,
+            "minLength": 3,
+            "type": "string"
+          },
+          "exposure_tolerance": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "fee_model": {
+            "$ref": "#/components/schemas/NativeModelRefV1"
+          },
+          "fee_rates": {
+            "items": {
+              "$ref": "#/components/schemas/NativeFeeRateV1"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "fill_model": {
+            "$ref": "#/components/schemas/NativeModelRefV1"
+          },
+          "latency_model": {
+            "$ref": "#/components/schemas/NativeModelRefV1"
+          },
+          "leverage": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "snapshot_interval_ms": {
+            "format": "int32",
+            "maximum": 86400000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "starting_capital": {
+            "$ref": "#/components/schemas/DecimalValue"
+          }
+        },
+        "required": [
+          "schema_version",
+          "base_currency",
+          "starting_capital",
+          "account_kind",
+          "leverage",
+          "fee_model",
+          "fill_model",
+          "latency_model",
+          "snapshot_interval_ms",
+          "exposure_tolerance",
+          "fee_rates"
+        ],
+        "type": "object"
       },
       "OperatorCommand": {
         "oneOf": [
@@ -11401,6 +11874,24 @@
             "properties": {
               "operation": {
                 "enum": [
+                  "EXECUTION_ASSUMPTIONS_CREATE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/ExecutionAssumptionsCreateV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
                   "BRIEF_UPDATE"
                 ],
                 "type": "string"
@@ -11657,6 +12148,7 @@
           "DOWNSTREAM_UPDATE",
           "BRIEF_CREATE",
           "MANDATE_CREATE",
+          "EXECUTION_ASSUMPTIONS_CREATE",
           "BRIEF_UPDATE",
           "PROJECT_CREATE",
           "PROJECT_UPDATE",
@@ -13229,6 +13721,98 @@
                 "concluded_at",
                 "checked_at",
                 "unexpired_at_read"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "items"
+        ],
+        "type": "object"
+      },
+      "Page_ExecutionAssumptionsViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "calendar_version": {
+                  "type": "string"
+                },
+                "capability_snapshot_artifact_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "cost_assumption_status": {
+                  "$ref": "#/components/schemas/ConservativeAssumption",
+                  "description": "This entrypoint freezes declared models, never self-asserted DATA_BACKED."
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "dataset_revision_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "engine_image_ref": {
+                  "type": "string"
+                },
+                "fee_schedule_artifact_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "input_set_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "project_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "runtime_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "settings": {
+                  "$ref": "#/components/schemas/NativeSimulationSettingsV1"
+                },
+                "settlement_rule_ref": {
+                  "type": "string"
+                },
+                "venue_capability_ref": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "project_id",
+                "input_set_id",
+                "dataset_revision_id",
+                "runtime_id",
+                "capability_snapshot_artifact_id",
+                "fee_schedule_artifact_id",
+                "engine_image_ref",
+                "venue_capability_ref",
+                "calendar_version",
+                "settlement_rule_ref",
+                "cost_assumption_status",
+                "settings",
+                "created_at"
               ],
               "type": "object"
             },
@@ -22326,6 +22910,231 @@
         ]
       }
     },
+    "/api/v2/execution-assumptions": {
+      "post": {
+        "operationId": "create_execution_assumptions",
+        "parameters": [
+          {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExecutionAssumptionsCreateV1"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult_ExecutionAssumptionsViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": [],
+            "OperatorCommandGrant": []
+          }
+        ],
+        "tags": [
+          "Execution assumptions"
+        ]
+      }
+    },
+    "/api/v2/execution-assumptions/{id}": {
+      "get": {
+        "operationId": "get_execution_assumptions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionAssumptionsViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Execution assumptions"
+        ]
+      }
+    },
     "/api/v2/experiments": {
       "get": {
         "operationId": "list_experiments",
@@ -25933,6 +26742,120 @@
         ],
         "tags": [
           "Research startup"
+        ]
+      }
+    },
+    "/api/v2/projects/{id}/execution-assumptions": {
+      "get": {
+        "operationId": "list_execution_assumptions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_ExecutionAssumptionsViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Execution assumptions"
         ]
       }
     },

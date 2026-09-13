@@ -186,6 +186,24 @@ Store的当前资格、许可、政策与资金来源检查，完整Candidate编
 
 ### 不可变 Portfolio Mandate
 
+执行假设入口为`POST /api/v2/execution-assumptions`，请求ExecutionAssumptionsCreateV1
+（schema_version、project_id、runtime_id、expected_runtime_revision、input_set_id、
+dataset_revision_id、完整NativeSimulationSettingsV1、settlement_rule_ref）。
+需相同的Operator/精确CLI grant及幂等键；来源必须为已冻结非Sealed输入，费率和
+币种匹配原登记Rust InstrumentAny，近期探测须支持PORTFOLIO_SIMULATE和锁定模型。
+保存不可变原模型配置及来源，不启动模拟，也不证明DATA_BACKED或组合资格。
+
+```sh
+cargo run --locked -p server -- client portfolio assumptions create < assumptions-create.json
+cargo run --locked -p server -- client portfolio assumptions list PROJECT_UUID
+cargo run --locked -p server -- client portfolio assumptions show ASSUMPTIONS_UUID
+```
+
+读取对应`GET /api/v2/projects/{id}/execution-assumptions`和
+`GET /api/v2/execution-assumptions/{id}`，分页/身份边界同Mandate，无修改或删除入口。
+当前声明式入口仅支持BAR/CONSERVATIVE_ASSUMPTION，不填造流动性/参与率证据。
+原数据不改写；没有此原生来源关系的历史行不投影成新接口版本。
+
 `POST /api/v2/portfolio-mandates`接受MandateCreateV1：schema_version、project_id、
 runtime_id、expected_runtime_revision与完整content（DESIGN A5）。需要近期Operator
 或该完整意图的单次CLI grant及Idempotency-Key，返回201/CommandResult_MandateViewV1。
@@ -416,7 +434,8 @@ HTTP；PINNED_CA必须绑定原生CA证书，缺失时不回退到SYSTEM_CA。me
 类型化引用；id、连续 ordinal、冻结时间由服务端生成。结果只含元数据，
 不会返回 Sealed 原始字节、宿主路径或原生存储位置。数据源停用、许可过期或
 撤销、跨项目产物和分区不匹配会拒绝新登记；不要手工写 SQL 创建引用来绕过。
-目前数据源/数据版本和执行假设的可信登记入口仍须在后续工作包接通。
+数据源/数据版本使用本文原生登记入口；执行假设使用`portfolio assumptions`。
+这些入口保存来源与配置，不替代完整Candidate与交付资格验收。
 
 评估政策创建须显式提供 `sealed_metric_requirements`（1..64项，至少一项required），
 与Validation的`metric_requirements`分别冻结；selection按evaluation_kind绑定对应组。

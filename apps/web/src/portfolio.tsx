@@ -1,4 +1,5 @@
-import { Alert, App, Button, Card, Descriptions, Drawer, Form, Input, InputNumber, Select, Space, Switch, Table, Typography } from 'antd';
+import { Alert, App, Button, Card, Descriptions, Drawer, Form, Input, InputNumber, Select, Space, Switch, Table, Tabs, Typography } from 'antd';
+import { ExecutionAssumptions } from './execution-assumptions';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { api, dataOf, displayTime, Intent, isDecimal } from './api';
@@ -42,7 +43,7 @@ export function Portfolios() {
       const page = dataOf(await api.GET('/api/v2/projects', { params: { query: { cursor, limit: 50 } }, signal }));
       return { next_cursor: page.next_cursor, items: page.items.map(item => ({ value: item.id, label: `${item.name} · ${item.id}` })) };
     }} />
-    {project ? <Mandates key={project} project={project} /> : <NoData text="请选择项目后查看配置，不会自动创建或启动组合。" />}
+    {project ? <Tabs key={project} items={[{ key: 'mandates', label: '组合配置', children: <Mandates project={project} /> }, { key: 'assumptions', label: '执行假设', children: <ExecutionAssumptions project={project} /> }]} /> : <NoData text="请选择项目后查看配置，不会自动创建或启动组合。" />}
   </Space>;
 }
 
