@@ -28,9 +28,16 @@ async fn freeze_rejects_validation_fold_in_sealed_policy_without_admission(pool:
     let objects = std::sync::Arc::new(
         integrations::artifacts::ArtifactStore::open(&directory.path().join("objects")).unwrap(),
     );
-    let f = cycle_support::setup_with_policy(&pool, &store, &actor, objects, |policy| {
-        policy.sealed_metric_requirements[0].scope = "asset:0/fold:0".into();
-    })
+    let f = cycle_support::setup_with_policy(
+        &pool,
+        &store,
+        &actor,
+        objects,
+        contracts::research::DataOrigin::Fixture,
+        |policy| {
+            policy.sealed_metric_requirements[0].scope = "asset:0/fold:0".into();
+        },
+    )
     .await;
     let before = counts(&pool).await;
     let error = store

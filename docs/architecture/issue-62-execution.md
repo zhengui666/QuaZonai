@@ -3,6 +3,26 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Original reviewed qualification transaction, 2026-09-13
+
+The test patch over `8f9fbc3b` reuses the original Mission/Validation/independent
+Reviewer/Sealed flow for two controlled runtime declarations. The existing FIXTURE
+case still receives no qualification. The REAL/PIT declaration is supplied before
+immutable registration, never by rewriting a stored fixture. Its original reviewed
+Sealed PASS registers one qualification despite ACK replay, keeps the original
+calibrated active version, and does not extend either scientific evidence deadline.
+Provider responses and scientific bytes remain controlled: this tests actual
+PostgreSQL/PGMQ, artifact files and native App Server control flow, NOT genuine
+market provenance, native scientific computation, paid-account acceptance or T42.
+
+`verify-geOCmt` exited 0: check/fmt/strict Clippy and all 26 Mission/profile/MCP
+tests passed, including both origin branches. The shared-fixture regression
+`verify-7k08Gf` also exited 0 for check/fmt/Clippy and evidence-related native,
+Store and HTTP/CLI tests. Handwritten source stayed unchanged during each run.
+No production gate, interface, dependency or native ABI changed. Positive complete
+Portfolio Build admission, actual REAL/PIT scientific acceptance and all remaining
+Issue #62 work are still required; this checkpoint authorizes no merge or closure.
+
 ## Original LAST_TARGET weight source, 2026-09-13
 
 Working source over `022ece07` replaces the build intent's snapshot-only field

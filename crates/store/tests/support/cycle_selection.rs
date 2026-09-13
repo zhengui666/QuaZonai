@@ -378,10 +378,17 @@ async fn ranked(pool: PgPool, direction: SelectionDirection) {
     let objects = std::sync::Arc::new(
         integrations::artifacts::ArtifactStore::open(&directory.path().join("objects")).unwrap(),
     );
-    let f = cycle_support::setup_with_policy(&pool, &store, &actor, objects, |policy| {
-        policy.selection.direction = direction;
-        policy.selection.candidate_count = 2;
-    })
+    let f = cycle_support::setup_with_policy(
+        &pool,
+        &store,
+        &actor,
+        objects,
+        contracts::research::DataOrigin::Fixture,
+        |policy| {
+            policy.selection.direction = direction;
+            policy.selection.candidate_count = 2;
+        },
+    )
     .await;
     let (store, actor, f, cycle, preparation) =
         mission_support::start(store, actor, f, false).await;

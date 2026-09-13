@@ -1,5 +1,5 @@
-//! Register explicit FIXTURE metadata through the actual immutable data service.
-//! This is controlled provenance input, never a real catalog/PIT/market attestation.
+//! Register controlled runtime declarations through the immutable data service.
+//! Even the REAL/PIT branch is protocol test input, NOT a market/PIT attestation.
 use super::research_support;
 #[path = "catalog_metadata.rs"]
 mod catalog;
@@ -7,7 +7,7 @@ use chrono::{DateTime, Duration, Utc};
 use contracts::{
     artifacts::{ArtifactCreate, ResearchArtifactKind},
     data::{DataGrantCreate, DataProviderKind, DataSourceCreate, DatasetRegister},
-    research::{DataPartition, DataUse},
+    research::{DataOrigin, DataPartition, DataUse, PitStatus},
     DbCounter, Id, Revision, SchemaV1,
 };
 use integrations::artifacts::ArtifactStore;
@@ -31,6 +31,7 @@ pub async fn register(
     data: &mut research_support::ResearchFixture,
     revision: Revision,
     objects: Arc<ArtifactStore>,
+    origin: DataOrigin,
 ) {
     let license = ArtifactCreate {
         schema_version: SchemaV1,
@@ -108,6 +109,12 @@ pub async fn register(
         ),
     ] {
         let mut metadata = catalog::metadata();
+        // Exercise trusted-runtime declarations at registration, never rewrite
+        // immutable fixture provenance or claim these bytes came from a market.
+        metadata.origin = origin;
+        if origin == DataOrigin::Real {
+            metadata.pit_status = PitStatus::Verified;
+        }
         metadata.registered_ref = source.native_catalog_ref.clone();
         metadata.native_snapshot_ref = format!("cycle-fixture/{}/{name}", data.project);
         metadata.storage_version = format!("{name}-fixture-v1");

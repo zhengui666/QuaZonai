@@ -44,7 +44,7 @@ pub async fn setup_with_objects(
     actor: &Actor,
     objects: Arc<ArtifactStore>,
 ) -> Fixture {
-    setup_with_policy(pool, store, actor, objects, |_| {}).await
+    setup_with_policy(pool, store, actor, objects, DataOrigin::Fixture, |_| {}).await
 }
 
 pub async fn setup_with_policy(
@@ -52,6 +52,7 @@ pub async fn setup_with_policy(
     store: &Store,
     actor: &Actor,
     objects: Arc<ArtifactStore>,
+    origin: DataOrigin,
     customize: impl FnOnce(&mut EvaluationPolicyCreate),
 ) -> Fixture {
     let mut data = research_support::setup(pool, store, actor).await;
@@ -65,7 +66,16 @@ pub async fn setup_with_policy(
     let revision: i64 = sqlx::query_scalar("UPDATE app.runtime_integrations SET allowed_capabilities=ARRAY['DATA_VALIDATE','ALPHA_EVALUATE'] WHERE id=$1 RETURNING revision")
         .bind(data.runtime.as_uuid()).fetch_one(pool).await.unwrap();
     let revision = revision.to_string().try_into().unwrap();
-    cycle_data::register(pool, store, actor, &mut data, revision, objects.clone()).await;
+    cycle_data::register(
+        pool,
+        store,
+        actor,
+        &mut data,
+        revision,
+        objects.clone(),
+        origin,
+    )
+    .await;
     let ProbePreparation::Pending(ticket) = store
         .prepare_runtime_probe(
             actor,

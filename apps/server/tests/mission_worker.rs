@@ -13,7 +13,7 @@ mod research_support;
 mod responses;
 #[path = "../../../tests/support/runtime.rs"]
 mod runtime_support;
-use contracts::{runs::RunState, DbCounter, Id, SchemaV1};
+use contracts::{research::DataOrigin, runs::RunState, DbCounter, Id, SchemaV1};
 use integrations::secrets::SecretVault;
 use server::{
     codex_profiles::{CodexDeployment, CodexDeploymentBinding, CodexDeploymentConfig},
@@ -62,10 +62,15 @@ async fn fixture(pool: &PgPool) -> Fixture {
 }
 
 async fn fixture_with_cost(pool: &PgPool, priced: bool) -> Fixture {
-    fixture_with_selection(pool, priced, 2).await
+    fixture_with_selection(pool, priced, 2, DataOrigin::Fixture).await
 }
 
-async fn fixture_with_selection(pool: &PgPool, priced: bool, candidates: u16) -> Fixture {
+async fn fixture_with_selection(
+    pool: &PgPool,
+    priced: bool,
+    candidates: u16,
+    origin: DataOrigin,
+) -> Fixture {
     let root = tempfile::tempdir().unwrap();
     for name in ["native", "workspaces", "secrets"] {
         fs::DirBuilder::new()
@@ -120,15 +125,16 @@ async fn fixture_with_selection(pool: &PgPool, priced: bool, candidates: u16) ->
         integrations::artifacts::ArtifactStore::open(&root.path().join("objects")).unwrap(),
     );
     let (store, actor) = research_support::operator(pool).await;
-    let mut data = cycle_support::setup_with_policy(pool, &store, &actor, objects, |policy| {
-        policy.selection.candidate_count = candidates;
-        if candidates == 1 {
-            // A scientific PASS on explicitly FIXTURE data must still never
-            // become a qualification. Other tests retain the rejecting policy.
-            policy.sealed_metric_requirements[0].threshold_low = Some("0.1".parse().unwrap());
-        }
-    })
-    .await;
+    let mut data =
+        cycle_support::setup_with_policy(pool, &store, &actor, objects, origin, |policy| {
+            policy.selection.candidate_count = candidates;
+            if candidates == 1 {
+                // Both controlled origins use the same passing scientific criterion.
+                // Only REAL/PIT declarations may reach qualification registration.
+                policy.sealed_metric_requirements[0].threshold_low = Some("0.1".parse().unwrap());
+            }
+        })
+        .await;
     if candidates == 1 {
         // Explicit same Profile is allowed; independent native Thread is still
         // mandatory and checked below. No second HOME or account is invented.
@@ -389,7 +395,19 @@ async fn daemon_cancellation_settles_unsent_turn_without_reopening_original_thre
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn settled_native_mission_publishes_validation_then_returns_to_original_thread(pool: PgPool) {
-    let f = fixture_with_selection(&pool, false, 1).await;
+    settled_scientific_protocol(pool, DataOrigin::Fixture).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn controlled_real_declaration_registers_original_reviewed_qualification(pool: PgPool) {
+    // Real PG/files/App Server protocol, controlled market/model results. This
+    // proves original association and transaction gates, NOT REAL acceptance.
+    settled_scientific_protocol(pool, DataOrigin::Real).await;
+}
+
+async fn settled_scientific_protocol(pool: PgPool, origin: DataOrigin) {
+    let declared_origin = serde_json::to_value(origin).unwrap();
+    let f = fixture_with_selection(&pool, false, 1, origin).await;
     let experiment = experiment_support::propose(
         &pool,
         &f.store,
@@ -581,8 +599,8 @@ async fn settled_native_mission_publishes_validation_then_returns_to_original_th
         .unwrap();
     // PGMQ cannot redeliver an archived message. The ACK entry point, not a
     // fresh claim of that removed queue row, owns acknowledgement replay.
-    assert_eq!(sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.calibrations c JOIN app.evaluations e ON e.id=c.validation_evaluation_id JOIN app.artifacts a ON a.id=c.model_artifact_id WHERE e.run_id=$1 AND a.producer_run_id=e.run_id AND a.access_class='EVALUATOR_ONLY' AND a.origin='FIXTURE'")
-        .bind(validation.as_uuid()).fetch_one(&pool).await.unwrap(), 1);
+    assert_eq!(sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.calibrations c JOIN app.evaluations e ON e.id=c.validation_evaluation_id JOIN app.artifacts a ON a.id=c.model_artifact_id WHERE e.run_id=$1 AND a.producer_run_id=e.run_id AND a.access_class='EVALUATOR_ONLY' AND a.origin=$2")
+        .bind(validation.as_uuid()).bind(declared_origin.as_str().unwrap()).fetch_one(&pool).await.unwrap(), 1);
     f.store.acknowledge_run(&native_message).await.unwrap();
     let (evaluation, report): (uuid::Uuid, uuid::Uuid) =
         sqlx::query_as("SELECT id,report_artifact_id FROM app.evaluations WHERE run_id=$1")
@@ -683,7 +701,7 @@ async fn settled_native_mission_publishes_validation_then_returns_to_original_th
     let body: serde_json::Value = serde_json::from_str(prompt.lines().nth(1).unwrap()).unwrap();
     assert_eq!(body["run_id"], validation.to_string());
     assert_eq!(body["stage"], "VALIDATION");
-    assert_eq!(body["origin"], "FIXTURE");
+    assert_eq!(body["origin"], declared_origin);
     assert_eq!(body["formal_evaluation"], "PUBLISHED");
     assert_eq!(body["evaluation"]["id"], evaluation.to_string());
     assert_eq!(body["evaluation"]["report_artifact_id"], report.to_string());
@@ -987,7 +1005,7 @@ async fn settled_native_mission_publishes_validation_then_returns_to_original_th
         .unwrap(),
     )
     .unwrap();
-    assert_eq!(copied["origin"], "FIXTURE");
+    assert_eq!(copied["origin"], declared_origin);
     assert_eq!(copied["signal_kind"], "SCORE");
     assert_eq!(copied["qualification"], "NOT_GRANTED");
     assert_eq!(
@@ -1070,7 +1088,10 @@ async fn settled_native_mission_publishes_validation_then_returns_to_original_th
         .resource;
     let result: (String, String) = sqlx::query_as("SELECT e.decision,a.origin FROM app.evaluations e JOIN app.artifacts a ON a.id=e.report_artifact_id WHERE e.id=$1")
         .bind(sealed_evaluation.as_uuid()).fetch_one(&pool).await.unwrap();
-    assert_eq!((result.0.as_str(), result.1.as_str()), ("PASS", "FIXTURE"));
+    assert_eq!(
+        (result.0.as_str(), result.1.as_str()),
+        ("PASS", declared_origin.as_str().unwrap())
+    );
     f.store.acknowledge_run(&message).await.unwrap();
     f.store.acknowledge_run(&message).await.unwrap();
     assert_eq!(
@@ -1078,9 +1099,22 @@ async fn settled_native_mission_publishes_validation_then_returns_to_original_th
             .fetch_one(&pool)
             .await
             .unwrap(),
-        0,
-        "independent Reviewer PASS and fixture Sealed PASS never confer REAL qualification"
+        i64::from(origin == DataOrigin::Real),
+        "only original reviewed REAL/PIT declarations may register a qualification"
     );
+    if origin == DataOrigin::Real {
+        let original: (uuid::Uuid, uuid::Uuid, String, bool) = sqlx::query_as("SELECT q.qualifying_evaluation_id,a.active_version_id,a.lifecycle,q.valid_until<=e.valid_until AND q.valid_until<=v.valid_until FROM app.qualifications q JOIN app.alpha_versions av ON av.id=q.alpha_version_id JOIN app.alphas a ON a.id=av.alpha_id JOIN app.evaluations e ON e.id=q.qualifying_evaluation_id JOIN app.sealed_evaluation_tasks t ON t.run_id=e.run_id JOIN app.evaluations v ON v.id=t.validation_evaluation_id")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(
+            original,
+            (
+                sealed_evaluation.as_uuid(),
+                derived,
+                "QUALIFIED".into(),
+                true
+            )
+        );
+    }
     assert_eq!(f.provider.request_count(), reviewed_requests);
 }
 
