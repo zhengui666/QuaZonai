@@ -3,6 +3,36 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Source-bound portfolio admission, 2026-09-13
+
+The patch over `c4f58614` extends the two-qualified-source test through actual
+Forward registration, frozen input, original downstream PAPER weights submission,
+Mandate creation, Portfolio Build admission/replay, native claim and JobSpec.
+Every referenced artifact is read from the original local object store. The fee
+assumption is created through its real Store API before freezing the original
+policy; no policy/qualification/source rows are rewritten to fit a later Mandate.
+
+This exposed a production defect: the execution-assumption API stores declared
+settings as SYNTHETIC parameters, while Build required that artifact to be REAL.
+Build now consumes the original declared parameter type, still checks exact
+settings, original immutable source relationships and license, and retains the
+separate REAL/PIT requirements for Forward data and Alpha qualifications. The
+test explicitly checks the fee parameters remain SYNTHETIC. No market-origin
+upgrade, new dependency, API or native ABI was introduced.
+
+`verify-sL6MlR` first rejected a Research-only test grant for Forward; the original
+controlled grant now explicitly allows Research + Paper. `verify-Vx6zo2` then
+reproduced the incompatible cost-origin rejection before the production fix.
+Final `verify-YWmssJ` exited 0: check/fmt/strict Clippy, 4 portfolio unit, 31 native
+validation, 136 Store and 24 HTTP/CLI tests (195 total). `verify-vieWae` also exited
+0 for the actual App Server independent-Reviewer qualification regression, with
+the new original source-bound assumptions. Source stayed unchanged during both.
+
+Runtime declarations, market bytes and model answers remain controlled protocol
+input; this is not genuine REAL/PIT, full native science/OCI or T42 acceptance.
+Positive Candidate publication on this complete source chain and the remaining
+Issue #62 functionality/acceptance are still required. No GitHub write or merge.
+
 ## Two original qualified sources, 2026-09-13
 
 The test patch over `cf50a166` prepares two original trials in one project/Cycle

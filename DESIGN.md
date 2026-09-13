@@ -629,6 +629,9 @@ instrument definitions保留锁定Rust Nautilus InstrumentAny的原生Serde结�
 也是fee_schedule_artifact_id的确切内容；原生来源关系另以execution_assumption_sources
 绑定原InputSet、Dataset、Runtime探测、project和settings。模型fill/slippage字段
 同时引用同一原生DefaultFillModel配置，不生成另一套滑点算法。
+声明参数的Artifact origin为SYNTHETIC，不是市场数据来源。组合准入按该原始类型
+读取原始字节并验证settings及来源关系，不能要求声明参数冒充REAL；Forward市场数据
+与Alpha资格各自的REAL/PIT和授权要求保持不变。
 当前这个声明式入口只产生CONSERVATIVE_ASSUMPTION、BAR、无参与率/流动性声称；
 DATA_BACKED等完整来源能力仍须单独接通，不能由请求标签冒充。旧数据保持原值，
 未绑定原生来源的历史行不能伪装成此入口的新版本。原请求/原响应支持精确重放，

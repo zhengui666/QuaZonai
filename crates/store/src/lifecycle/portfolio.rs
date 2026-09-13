@@ -186,7 +186,9 @@ impl Store {
             serde_json::from_value(assumption.try_get("settings")?)
                 .map_err(|_| StoreError::Integrity)?;
         let costs = mandate.content.constraints.transaction_costs_ref;
-        let cost_bytes: i64 = sqlx::query_scalar("SELECT byte_count FROM app.artifacts WHERE id=$1 AND project_id=$2 AND kind='PARAMETERS' AND schema_name='qz.native_simulation_settings' AND schema_version='1' AND storage_backend='LOCAL' AND storage_object_ref=id::text AND storage_version='1' AND access_class='RESEARCH' AND origin='REAL'")
+        // These are declared native model parameters, not market observations.
+        // Their original fee/data bindings are owned by execution_assumption_sources.
+        let cost_bytes: i64 = sqlx::query_scalar("SELECT byte_count FROM app.artifacts WHERE id=$1 AND project_id=$2 AND kind='PARAMETERS' AND schema_name='qz.native_simulation_settings' AND schema_version='1' AND storage_backend='LOCAL' AND storage_object_ref=id::text AND storage_version='1' AND access_class='RESEARCH' AND origin='SYNTHETIC'")
             .bind(costs.as_uuid()).bind(project.as_uuid()).fetch_optional(&mut *tx).await?.ok_or(StoreError::Integrity)?;
         let cost_bytes = counter(cost_bytes)?;
         if cost_bytes == DbCounter::ZERO || cost_bytes.get() > 1024 * 1024 {

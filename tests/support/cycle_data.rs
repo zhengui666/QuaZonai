@@ -77,7 +77,11 @@ pub async fn register(
                 license_reference: "Only synthetic regression data, not an investment license"
                     .into(),
                 evidence_artifact_id: proof,
-                allowed_uses: DataUse::Research,
+                allowed_uses: if origin == DataOrigin::Real {
+                    DataUse::ResearchAndPaper
+                } else {
+                    DataUse::Research
+                },
                 valid_from: observed - Duration::hours(1),
                 valid_until: Some(observed + Duration::days(1)),
             },
@@ -126,6 +130,15 @@ pub async fn register(
         metadata.universe.selection_asof = time("2010-01-01T00:00:00Z");
         metadata.universe.coverage_start = time("2010-01-01T00:00:00Z");
         metadata.universe.coverage_end = time("2021-01-01T00:00:00Z");
+        if origin == DataOrigin::Real {
+            // Controlled original declarations also support a current Forward
+            // snapshot and native fee binding; never patch the stored universe.
+            metadata.universe.coverage_end = observed + Duration::days(365);
+            let definition = &mut metadata.universe.instrument_definitions[0]["CurrencyPair"];
+            definition["quote_currency"] = "USD".into();
+            definition["maker_fee"] = "0.001".into();
+            definition["taker_fee"] = "0.002".into();
+        }
         metadata.universe.membership[0].valid_from = metadata.universe.coverage_start;
         metadata.universe.membership[0].available_at = metadata.universe.coverage_start;
         metadata.quality.checked_at = observed;

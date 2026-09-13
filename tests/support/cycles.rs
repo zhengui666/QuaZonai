@@ -4,6 +4,8 @@
 use super::{research_support, runtime_support};
 #[path = "cycle_data.rs"]
 mod cycle_data;
+#[path = "execution_models.rs"]
+mod execution_models;
 use chrono::{DateTime, Utc};
 use contracts::{
     brief::*,
@@ -63,8 +65,12 @@ pub async fn setup_with_policy(
         .bind(assumptions.as_uuid()).bind(image).bind(data.assumptions.as_uuid())
         .execute(pool).await.unwrap();
     data.assumptions = assumptions;
-    let revision: i64 = sqlx::query_scalar("UPDATE app.runtime_integrations SET allowed_capabilities=ARRAY['DATA_VALIDATE','ALPHA_EVALUATE'] WHERE id=$1 RETURNING revision")
-        .bind(data.runtime.as_uuid()).fetch_one(pool).await.unwrap();
+    let mut allowed = vec!["DATA_VALIDATE", "ALPHA_EVALUATE"];
+    if origin == DataOrigin::Real {
+        allowed.extend(["PORTFOLIO_BUILD", "PORTFOLIO_SIMULATE"]);
+    }
+    let revision: i64 = sqlx::query_scalar("UPDATE app.runtime_integrations SET allowed_capabilities=$2 WHERE id=$1 RETURNING revision")
+        .bind(data.runtime.as_uuid()).bind(allowed).fetch_one(pool).await.unwrap();
     let revision = revision.to_string().try_into().unwrap();
     cycle_data::register(
         pool,
@@ -91,7 +97,11 @@ pub async fn setup_with_policy(
     else {
         panic!("native fixture ticket expected")
     };
-    let mut observed = runtime_support::capabilities(Utc::now());
+    let mut observed = if origin == DataOrigin::Real {
+        runtime_support::portfolio_capabilities(Utc::now())
+    } else {
+        runtime_support::capabilities(Utc::now())
+    };
     observed
         .artifact_schemas
         .push(contracts::runtime::RuntimeArtifactSchemaV1 {
@@ -133,6 +143,58 @@ pub async fn setup_with_policy(
                 .header
                 .id,
         );
+    }
+    if origin == DataOrigin::Real {
+        use contracts::{execution_assumptions::ExecutionAssumptionsCreateV1, science::*};
+        data.assumptions = store
+            .create_execution_assumptions(
+                actor,
+                "original-cycle-assumptions",
+                &ExecutionAssumptionsCreateV1 {
+                    schema_version: SchemaV1,
+                    project_id: data.project,
+                    runtime_id: data.runtime,
+                    expected_runtime_revision: revision,
+                    input_set_id: inputs[0],
+                    dataset_revision_id: data.discovery,
+                    settlement_rule_ref: "controlled-spot-settlement".into(),
+                    settings: NativeSimulationSettingsV1 {
+                        schema_version: SchemaV1,
+                        base_currency: "USD".into(),
+                        starting_capital: "1000".parse().unwrap(),
+                        account_kind: NativeAccountKind::Cash,
+                        leverage: "1".parse().unwrap(),
+                        fill_model: execution_models::fill(),
+                        fee_model: execution_models::fee(),
+                        latency_model: execution_models::latency(1),
+                        snapshot_interval_ms: 1000,
+                        exposure_tolerance: "0.000001".parse().unwrap(),
+                        fee_rates: vec![NativeFeeRateV1 {
+                            instrument_id: "EUR/USD.SIM".into(),
+                            maker: "0.001".parse().unwrap(),
+                            taker: "0.002".parse().unwrap(),
+                        }],
+                    },
+                },
+                |id, size| {
+                    std::future::ready(
+                        objects
+                            .read(id, size)
+                            .map_err(|_| store::StoreError::Integrity),
+                    )
+                },
+                |object| {
+                    std::future::ready(
+                        objects
+                            .put(object.id, &object.bytes)
+                            .map_err(|_| store::StoreError::Integrity),
+                    )
+                },
+            )
+            .await
+            .unwrap()
+            .resource
+            .id;
     }
     let mut policy_request = data.policy(inputs[1]);
     policy_request.require_real_data = false;

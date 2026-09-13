@@ -4,6 +4,9 @@ use super::*;
 use contracts::{experiments::ExperimentProposalV1, research::DataOrigin};
 use store::turns::{NativePublicSummary, TurnOutcome, UsageReceipt};
 
+#[path = "portfolio_inputs.rs"]
+mod inputs;
+
 async fn begin(store: &Store, lease: &RunLease) {
     store
         .begin_run_dispatch(lease.run.id, &lease.fence)
@@ -93,7 +96,7 @@ async fn answer(store: &Store, f: &cycle_support::Fixture, lease: &RunLease, tex
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn two_original_review_targets_keep_separate_qualifications(pool: PgPool) {
+async fn original_reviewed_alphas_admit_one_replayable_portfolio_build(pool: PgPool) {
     let directory = tempfile::tempdir().unwrap();
     let objects = std::sync::Arc::new(
         integrations::artifacts::ArtifactStore::open(&directory.path().join("objects")).unwrap(),
@@ -298,4 +301,63 @@ async fn two_original_review_targets_keep_separate_qualifications(pool: PgPool) 
     let counts: (i64,i64,i64) = sqlx::query_as("SELECT count(*),count(DISTINCT q.alpha_version_id),count(DISTINCT q.qualifying_evaluation_id) FROM app.qualifications q JOIN app.alpha_versions v ON v.id=q.alpha_version_id JOIN app.alphas a ON a.id=v.alpha_id AND a.active_version_id=v.id AND a.lifecycle='QUALIFIED' WHERE v.project_id=$1")
         .bind(f.data.project.as_uuid()).fetch_one(&pool).await.unwrap();
     assert_eq!(counts, (2, 2, 2));
+    let request = inputs::request(&pool, &store, &actor, &f, cycle).await;
+    let origin:String=sqlx::query_scalar("SELECT a.origin FROM app.execution_assumptions e JOIN app.artifacts a ON a.id=e.fee_schedule_artifact_id WHERE e.id=$1")
+        .bind(f.data.assumptions.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        origin, "SYNTHETIC",
+        "declared parameters must not masquerade as market data"
+    );
+    let admitted = store
+        .start_portfolio_build(
+            &actor,
+            "original-qualified-build",
+            &request,
+            |id, size| f.read(id, size),
+            |object| {
+                std::future::ready(
+                    f.objects
+                        .put(object.id, &object.bytes)
+                        .map_err(|_| StoreError::Integrity),
+                )
+            },
+        )
+        .await
+        .unwrap()
+        .resource;
+    let replay = store
+        .start_portfolio_build(
+            &actor,
+            "original-qualified-build",
+            &request,
+            |_, _| async { panic!("replay reads no source") },
+            |_| async { panic!("replay publishes no object") },
+        )
+        .await
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.resource.id, admitted.id);
+    let message = validation_publication::message(&pool, admitted.id).await;
+    let Some(ClaimResult::Leased(lease)) = store
+        .claim_native_run(&message, "original-qualified-build", 60)
+        .await
+        .unwrap()
+    else {
+        panic!("original Build admission");
+    };
+    let job = store.native_job(admitted.id, &lease.fence).await.unwrap();
+    assert_eq!(job.spec.job_kind, contracts::runs::RunKind::PortfolioBuild);
+    for input in &job.spec.inputs {
+        if let RuntimeInputV1::Artifact {
+            artifact_id,
+            byte_count,
+            ..
+        } = input
+        {
+            assert_eq!(
+                f.read(*artifact_id, *byte_count).await.unwrap().len() as u64,
+                byte_count.get()
+            );
+        }
+    }
 }
