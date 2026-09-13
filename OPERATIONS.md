@@ -60,6 +60,8 @@ target-only权重，不收账户或NAV；PAPER为SYNTHETIC，LIVE不自动获得
 完整科学/评估发布及交付链仍待验收。
 组合评估条件需在新政策的portfolio_metric_requirements单独冻结；null不含组合
 PASS条件，不能借用Alpha/Sealed阈值。保存条件本身不是组合评估通过。
+原生指标适配保留日均收益、252日年化波动率和Sharpe原值及来源；全现金的真实
+零收益与日内不足样本分别处理。方法口径见CLI/DESIGN，尚非自动评估发布或交付。
 
 `apps/runtime` 的配置、实际原生镜像装配和启动说明集中在 [runtimes/native/README.md](runtimes/native/README.md)，由 `runtime doctor/serve --config` 读取受信任本机文件。网关独占自己的0700状态目录与SQLite日志，以原生OS文件锁防止两个监督者同时使用同一目录。它使用操作者正常授权的Docker Unix socket；无权访问时明确不可用，不修改sudo、用户组、socket权限或改用无隔离执行。
 

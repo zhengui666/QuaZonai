@@ -1950,6 +1950,23 @@ PORTFOLIO_SIMULATE操作。Store从同项目已封口成功VALID Candidate重读
 原方法allowlist校验。历史已冻结政策不回填或复制条件；要改变条件必须新建政策。
 保存条件本身不证明原生方法支持、样本足够或评估通过；原生指标适配与发布须另行核验。
 
+组合指标薄适配先核对原模拟请求/结果的账户、时窗与目标绑定，只读取原
+Returns统计组（不读canonical的position fallback），scope固定portfolio：
+PORTFOLIO_DAILY_RETURN_MEAN对应Average (Return)/nautilus-analysis.ReturnsAverage，
+unit=RETURN_PER_DAY，annualization_factor=null；PORTFOLIO_RETURN_VOLATILITY对应
+Returns Volatility (252 days)/nautilus-analysis.ReturnsVolatility，
+unit=ANNUALIZED_RETURN_STDDEV，annualization_factor=252；PORTFOLIO_SHARPE_RATIO对应
+Sharpe Ratio (252 days)/nautilus-analysis.SharpeRatio，unit=RATIO，
+annualization_factor=252。三者method_version=0.63.0、frequency=UTC_DAY；
+252表示原生每年日数，不是再次乘到原值的系数。波动率/Sharpe由原生按UTC日
+复利分箱、样本标准差(ddof=1)计算；Sharpe该路径不扣无风险利率。
+适配不重算统计、不补日历空档，observation_count是原日收益条数；period是
+原canonical实际模拟起止（纳秒向外取整到微秒），不是声明的更大输入窗口。
+原收益不可用时沿用其状态/原因；原统计缺值保留NATIVE_STATISTIC_UNAVAILABLE
+及FAILED，不猜测原因；应有统计键缺失则拒绝结果。真实零值保持OK。
+所有指标绑定原产物和Evaluation身份，再交既有精确政策比较器；适配本身不创建
+Evaluation、不批准Release，保持目标模拟也不冒充策略滚动评估。
+
 `unique(candidate_alphas.candidate_id,alpha_version_id)`、`unique(candidate_targets.candidate_id,instrument_id)` 是数据库约束，不是普通索引。重复相同请求幂等，冲突409；至少两个不同alpha_id的合格版本才满足多Alpha，不以同Alpha多个版本或重复条目凑数。发布验证每资产唯一权重，再校验sum/gross/net/cash/约束。
 
 ### A5.2 原生组合求解的可执行合同

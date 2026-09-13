@@ -15,7 +15,7 @@ pub mod validation;
 pub use output::{
     alpha_sealed_metrics, alpha_sealed_policy, alpha_sealed_request, alpha_validation_metrics,
     alpha_validation_policy, check_alpha_calibration, check_alpha_sealed, freeze_alpha_calibration,
-    output_bindings, output_shape,
+    output_bindings, output_shape, portfolio_simulation_metrics,
 };
 pub use portfolio::{
     candidate_simulation, portfolio_build_liquidity, portfolio_build_request,

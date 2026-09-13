@@ -19,6 +19,7 @@ pub use sealed::{
     request as alpha_sealed_request,
 };
 mod simulation;
+pub use simulation::metrics as portfolio_simulation_metrics;
 mod validation;
 pub use validation::metrics as alpha_validation_metrics;
 pub use validation::policy as alpha_validation_policy;

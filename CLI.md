@@ -561,6 +561,11 @@ HTTP；PINNED_CA必须绑定原生CA证书，缺失时不回退到SYSTEM_CA。me
 授予组合PASS；非空为1..64项且至少一项required，沿用精确阈值/code/scope/方法
 allowlist校验。不得从Alpha或Sealed组自动复制；历史政策保持null，不原地补写。
 保存条件不表示原生方法支持或Evaluation发布已接通。
+原生组合指标适配支持portfolio范围的PORTFOLIO_DAILY_RETURN_MEAN、
+PORTFOLIO_RETURN_VOLATILITY、PORTFOLIO_SHARPE_RATIO；方法分别为
+nautilus-analysis.ReturnsAverage/ReturnsVolatility/SharpeRatio，版本0.63.0、
+频率UTC_DAY，后两项保留原生252日年化。单位与缺值合同见DESIGN A5；不把
+日内不足样本补零，不借指标映射授予Evaluation或Release。
 评估政策创建需要同项目已冻结 comparison 输入、执行假设和完整 selection、
 split、required 指标等意图。policy 版本和 experiment_family/root_lineage
 由服务端同事务分配，客户端不能挑选新谱系来清除暴露。WALK_FORWARD 使用

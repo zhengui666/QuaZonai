@@ -27,6 +27,97 @@ fn simulate(
 }
 
 #[test]
+fn portfolio_metrics_preserve_native_values_missingness_and_frozen_gate() {
+    use contracts::evidence::{Comparator, Decision, MetricRequirementV1};
+    use domain::execution::portfolio_simulation_metrics;
+    let evaluation = contracts::Id::new();
+    let artifact = contracts::Id::new();
+    for (minutes, cash) in [(20, false), (2 * 1440 + 20, false), (2 * 1440 + 20, true)] {
+        let (directory, mut request) = market("0", minutes);
+        if cash {
+            request.target_points.truncate(1);
+            request.target_points[0].cash_weight = "1".parse().unwrap();
+            for target in &mut request.target_points[0].targets {
+                target.weight = "0".parse().unwrap();
+            }
+        }
+        let result = simulate(directory.path(), &request).unwrap();
+        let (metrics, capabilities) =
+            portfolio_simulation_metrics(evaluation, artifact, &request, &result).unwrap();
+        assert_eq!(metrics.len(), 3);
+        for (metric, key) in metrics.iter().zip([
+            "Average (Return)",
+            "Returns Volatility (252 days)",
+            "Sharpe Ratio (252 days)",
+        ]) {
+            let original = result
+                .statistics
+                .iter()
+                .find(|stat| stat.group == NativeStatisticGroup::Returns && stat.native_key == key)
+                .unwrap();
+            assert_eq!(metric.value, original.value);
+            assert_eq!(metric.evaluation_id, evaluation);
+            assert_eq!(metric.source_artifact_id, artifact);
+            assert_eq!(metric.observation_count.get(), result.returns.len() as u64);
+            assert_eq!(metric.frequency, "UTC_DAY");
+            assert_eq!(metric.method_version, "0.63.0");
+            assert_eq!(metric.scope, "portfolio");
+            assert!(metric.period_start < metric.period_end);
+        }
+        assert_eq!(metrics[0].annualization_factor, None);
+        assert_eq!(metrics[1].annualization_factor, Some(252.0));
+        assert_eq!(metrics[2].annualization_factor, Some(252.0));
+        if minutes == 20 {
+            assert!(metrics
+                .iter()
+                .all(|metric| metric.status == MetricStatus::InsufficientData
+                    && metric.reason_code.as_deref()
+                        == Some("PORTFOLIO_DAILY_RETURNS_UNAVAILABLE")));
+        } else if cash {
+            assert_eq!(metrics[0].value, Some(0.0));
+            assert_eq!(metrics[0].status, MetricStatus::Ok);
+            assert_eq!(metrics[1].value, Some(0.0));
+            assert_eq!(metrics[2].value, None);
+            assert_eq!(metrics[2].status, MetricStatus::Failed);
+            assert_eq!(
+                metrics[2].reason_code.as_deref(),
+                Some("NATIVE_STATISTIC_UNAVAILABLE")
+            );
+        }
+        let mut requirements = vec![MetricRequirementV1 {
+            schema_version: contracts::SchemaV1,
+            metric_code: metrics[0].metric_code.clone(),
+            scope: "portfolio".into(),
+            comparator: Comparator::Ge,
+            threshold_low: Some("-1000".parse().unwrap()),
+            threshold_high: None,
+            required: true,
+            minimum_observations: count(2),
+            method_allowlist: vec![metrics[0].method_id.clone()],
+        }];
+        let gate =
+            domain::evidence::evaluate_metrics(evaluation, &requirements, &metrics, &capabilities)
+                .unwrap();
+        assert_eq!(gate.decision == Decision::Pass, minutes > 20);
+        requirements[0].minimum_observations = count(1000);
+        assert_ne!(
+            domain::evidence::evaluate_metrics(evaluation, &requirements, &metrics, &capabilities)
+                .unwrap()
+                .decision,
+            Decision::Pass
+        );
+        let mut missing = result.clone();
+        missing.statistics.retain(|stat| {
+            stat.group != NativeStatisticGroup::Returns || stat.native_key != "Average (Return)"
+        });
+        assert!(portfolio_simulation_metrics(evaluation, artifact, &request, &missing).is_err());
+        let mut wrong = request.clone();
+        wrong.settings.starting_capital = "1".parse().unwrap();
+        assert!(portfolio_simulation_metrics(evaluation, artifact, &wrong, &result).is_err());
+    }
+}
+
+#[test]
 fn assumptions_read_original_native_instrument_fees_and_shared_settings_bounds() {
     let (directory, request) = market("0.001", 20);
     let data = job::catalog::load_catalog(directory.path(), &request.selection).unwrap();

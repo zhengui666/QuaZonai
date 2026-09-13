@@ -3,9 +3,101 @@
 use super::{bad, instruments};
 use crate::{control::text, DomainError};
 use bigdecimal::BigDecimal;
-use contracts::{evidence::MetricStatus, science::*};
+use contracts::{
+    evidence::{MetricStatus, MetricValueV1},
+    science::*,
+    DbCounter, Id, SchemaV1,
+};
 use serde_json::Value;
 use std::collections::BTreeSet;
+
+/// Preserve native daily-account statistics, not canonical position fallbacks.
+/// This maps evidence only; publication and qualification remain Store duties.
+pub fn metrics(
+    evaluation: Id,
+    artifact: Id,
+    request: &NativeSimulationRequestV1,
+    result: &NativeSimulationResultV1,
+) -> Result<(Vec<MetricValueV1>, Vec<crate::evidence::MetricCapability>), DomainError> {
+    binding(request, result)?;
+    let start = native_count(&result.canonical_result["run"]["backtest_start_ns"])? / 1000;
+    let end = native_count(&result.canonical_result["run"]["backtest_end_ns"])?.div_ceil(1000);
+    let period_start = chrono::DateTime::from_timestamp_micros(start as i64)
+        .ok_or_else(|| bad("native_output.simulation_period"))?;
+    let period_end = chrono::DateTime::from_timestamp_micros(end as i64)
+        .ok_or_else(|| bad("native_output.simulation_period"))?;
+    let mut records = Vec::with_capacity(3);
+    let mut capabilities = Vec::with_capacity(3);
+    for (code, key, method, unit, annualization, higher) in [
+        (
+            "PORTFOLIO_DAILY_RETURN_MEAN",
+            "Average (Return)",
+            "nautilus-analysis.ReturnsAverage",
+            "RETURN_PER_DAY",
+            None,
+            true,
+        ),
+        (
+            "PORTFOLIO_RETURN_VOLATILITY",
+            "Returns Volatility (252 days)",
+            "nautilus-analysis.ReturnsVolatility",
+            "ANNUALIZED_RETURN_STDDEV",
+            Some(252.0),
+            false,
+        ),
+        (
+            "PORTFOLIO_SHARPE_RATIO",
+            "Sharpe Ratio (252 days)",
+            "nautilus-analysis.SharpeRatio",
+            "RATIO",
+            Some(252.0),
+            true,
+        ),
+    ] {
+        let native = result
+            .statistics
+            .iter()
+            .find(|stat| stat.group == NativeStatisticGroup::Returns && stat.native_key == key)
+            .ok_or_else(|| bad("native_output.portfolio_statistic_missing"))?;
+        let (value, status, reason_code) = if result.returns_status != MetricStatus::Ok {
+            (None, result.returns_status, result.returns_reason.clone())
+        } else if native.value.is_none() {
+            (None, MetricStatus::Failed, native.reason_code.clone())
+        } else {
+            (native.value, MetricStatus::Ok, None)
+        };
+        let record = MetricValueV1 {
+            schema_version: SchemaV1,
+            evaluation_id: evaluation,
+            metric_code: code.into(),
+            scope: "portfolio".into(),
+            value,
+            status,
+            reason_code,
+            unit: unit.into(),
+            period_start,
+            period_end,
+            observation_count: DbCounter::new(result.returns.len() as u64)
+                .map_err(|_| bad("native_output.simulation_counts"))?,
+            frequency: "UTC_DAY".into(),
+            annualization_factor: annualization,
+            method_id: method.into(),
+            method_version: result.native_version.clone(),
+            source_artifact_id: artifact,
+            higher_is_better: Some(higher),
+        };
+        crate::evidence::validate_metric(&record)?;
+        capabilities.push(crate::evidence::MetricCapability {
+            metric_code: record.metric_code.clone(),
+            method_id: record.method_id.clone(),
+            method_version: record.method_version.clone(),
+            unit: record.unit.clone(),
+            frequency: record.frequency.clone(),
+        });
+        records.push(record);
+    }
+    Ok((records, capabilities))
+}
 
 fn native_count(value: &Value) -> Result<u64, DomainError> {
     let value = value

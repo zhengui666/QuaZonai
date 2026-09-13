@@ -3,6 +3,31 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Native portfolio metric mapping, 2026-09-13
+
+The domain adapter binds the original simulation request and canonical account/time
+identities, then copies three original Nautilus 0.63.0 Returns-group statistics:
+daily mean, annualized volatility and Sharpe. Daily frequency, units, sample count,
+actual simulation period, source artifact and evaluation identity are retained.
+Volatility/Sharpe retain native 252-day annualization; no formula, dependency,
+calendar filling or position-return fallback was added. Unavailable returns keep
+their original state; unavailable statistics remain null/FAILED with native reason.
+
+Verified on af976ea0 plus frozen patches:
+
+- Locked job simulation target passed all 11 tests (3.40 seconds), including actual
+  native subprocesses for intraday, two-day held positions and two-day all-cash.
+  Mapped values equal native statistics exactly; real zero and undefined Sharpe
+  remain distinct. The existing exact policy comparator rejects insufficient
+  samples; missing native keys and wrong starting-account binding are rejected.
+- Strict Clippy passed domain/job all targets. verify-8J28Jv also passed workspace
+  check/fmt/strict Clippy and the mandate domain/science/Store/source/window/HTTP/CLI
+  checks, with no failures and unchanged source. Isolated PostgreSQL was stopped.
+
+These are synthetic-market adapter checks, not REAL/PIT qualification or full T42.
+No immutable Candidate Evaluation publisher, Release authority, new API or UI is
+claimed by this slice. It maps native results for the existing policy gate only.
+
 ## Independent portfolio policy criteria, 2026-09-13
 
 EvaluationPolicy now freezes optional portfolio_metric_requirements separately
