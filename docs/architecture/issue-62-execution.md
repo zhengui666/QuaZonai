@@ -3,6 +3,26 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Candidate adapter native daily-return acceptance, 2026-09-13
+
+The earlier Candidate adapter tests proved only intraday INSUFFICIENT_DATA.
+Extended the same managed test to 16 scenarios: two UTC days of held targets
+must produce finite, nonzero native portfolio daily returns; two days of all-cash
+targets must produce actual zero returns with no orders or positions. The
+intraday cases still require empty returns and INSUFFICIENT_DATA. No numerical
+code, model, dependency, source contract or qualification rule changed.
+
+On 3967b70a plus the frozen test patch, the targeted managed test passed all
+scenarios in 8.22 seconds, and strict Clippy for managed/native_oci passed.
+owner-oci-3WHi16 passed all 13 actual OCI tests in 26.76 seconds with unchanged
+source and the same native image
+`sha256:95285da1667ffef52b7a3a398f106cbbc90b77dd9252e6fee6ee99269d133e76`.
+Its Candidate test now executes the two-day held-target input through Runtime
+and validates the original daily-return output. This is synthetic numerical
+acceptance, not proof of sufficient evaluation samples, REAL/PIT, strategy
+walk-forward, formal Candidate admission or Evaluation publication. Those remain
+unfinished; no push, review request, merge or Issue closure.
+
 ## Original Candidate hold simulation adapter, 2026-09-13
 
 SIMULATE_CANDIDATE reuses the existing native shared-capital simulation, reading

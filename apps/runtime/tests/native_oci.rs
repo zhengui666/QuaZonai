@@ -26,7 +26,7 @@ async fn real_native_candidate_simulation_consumes_original_target_and_settings_
         Revision,
     };
     // Controlled target declaration, not a Store Candidate or qualification claim.
-    let (catalog, mut request) = market::market("0.001", 20);
+    let (catalog, mut request) = market::market("0.001", 2 * 1440 + 20);
     request.target_points.truncate(1);
     request.target_points[0].targets.truncate(1);
     request.target_points[0].cash_weight = "0.6".parse().unwrap();
@@ -165,10 +165,18 @@ async fn real_native_candidate_simulation_consumes_original_target_and_settings_
     let result: NativeSimulationResultV1 = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(result.consumed_target_points.get(), 1);
     assert!(result.orders.get() > 0);
-    assert_eq!(
-        result.returns_status,
-        contracts::evidence::MetricStatus::InsufficientData
-    );
+    assert_eq!(result.returns_kind, NativeReturnsKind::PortfolioDaily);
+    assert_eq!(result.returns_status, contracts::evidence::MetricStatus::Ok);
+    assert!(result.returns_reason.is_none());
+    assert!(result.returns.len() >= 2);
+    assert!(result
+        .returns
+        .iter()
+        .all(|r| r.value.is_some_and(f64::is_finite)));
+    assert!(result
+        .returns
+        .iter()
+        .any(|r| r.value.is_some_and(|v| v != 0.0)));
     assert_eq!(
         f.submit(&spec).await.external_job_id,
         accepted.external_job_id

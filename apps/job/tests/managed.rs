@@ -897,9 +897,16 @@ fn actual_managed_alpha_validation_seals_all_folds_and_never_trains_sealed_or_di
 
 #[test]
 fn candidate_simulation_requires_original_targets_settings_and_causal_window() {
-    for case in 0..14 {
-        let (catalog, mut request) = market::market("0.001", 20);
+    for case in 0..16 {
+        let (catalog, mut request) =
+            market::market("0.001", if case >= 14 { 2 * 1440 + 20 } else { 20 });
         request.target_points.truncate(1);
+        if case == 15 {
+            request.target_points[0].cash_weight = "1".parse().unwrap();
+            for target in &mut request.target_points[0].targets {
+                target.weight = "0".parse().unwrap();
+            }
+        }
         request.selection.event_start_ns = request.target_points[0].asof_ns;
         let candidate = Id::new();
         let targets_id = Id::new();
@@ -992,18 +999,42 @@ fn candidate_simulation_requires_original_targets_settings_and_causal_window() {
         attach_catalog(&f, dataset_id, catalog.path());
         assert_eq!(
             execute(&f),
-            matches!(case, 0 | 12),
+            matches!(case, 0 | 12 | 14 | 15),
             "Candidate simulation case {case}"
         );
-        if matches!(case, 0 | 12) {
+        if matches!(case, 0 | 12 | 14 | 15) {
             let report: contracts::science::NativeSimulationResultV1 =
                 result(&f, "qz.native_simulation");
             assert_eq!(report.consumed_target_points.get(), 1);
-            assert!(report.orders.get() > 0);
+            assert_eq!(report.orders.get() == 0, case == 15);
             assert_eq!(
-                report.returns_status,
-                contracts::evidence::MetricStatus::InsufficientData
+                report.returns_kind,
+                contracts::science::NativeReturnsKind::PortfolioDaily
             );
+            if case >= 14 {
+                assert_eq!(report.returns_status, contracts::evidence::MetricStatus::Ok);
+                assert!(report.returns_reason.is_none());
+                assert!(report.returns.len() >= 2);
+                assert!(report
+                    .returns
+                    .iter()
+                    .all(|r| r.value.is_some_and(f64::is_finite)));
+                if case == 15 {
+                    assert!(report.returns.iter().all(|r| r.value == Some(0.0)));
+                    assert_eq!(report.positions.get(), 0);
+                } else {
+                    assert!(report
+                        .returns
+                        .iter()
+                        .any(|r| r.value.is_some_and(|v| v != 0.0)));
+                }
+            } else {
+                assert_eq!(
+                    report.returns_status,
+                    contracts::evidence::MetricStatus::InsufficientData
+                );
+                assert!(report.returns.is_empty());
+            }
         } else {
             assert!(!f.output.join("index.json").exists());
         }
