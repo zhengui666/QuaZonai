@@ -45,7 +45,7 @@ async fn real_native_rolling_study_uses_original_models_in_one_account() {
     metadata.universe.calendar_ref = calendar.calendar.calendar_ref.clone();
     metadata.universe.calendar_version = calendar.calendar.calendar_version.clone();
     metadata.universe.calendar_sessions = Some(calendar.calendar.clone());
-    metadata.partition = DataPartition::Forward;
+    metadata.partition = DataPartition::Validation;
     metadata.event_start =
         chrono::DateTime::from_timestamp_nanos(selection.event_start_ns.get() as i64);
     metadata.event_end =
@@ -133,7 +133,7 @@ async fn real_native_rolling_study_uses_original_models_in_one_account() {
         revision_id: dataset,
         registered_ref: metadata.registered_ref,
         storage_version: metadata.storage_version,
-        role: DataPartition::Forward,
+        role: DataPartition::Validation,
     }];
     for (id, bytes, role) in objects {
         f.object(id, &bytes).await;
@@ -204,7 +204,7 @@ async fn real_native_rolling_study_uses_original_models_in_one_account() {
     let manifest = f.manifest(&spec).await;
     domain::runtime_jobs::manifest(&manifest, &spec, accepted.submitted_at, runtime::now())
         .unwrap();
-    assert_eq!(manifest.engine_versions["portfolio-study"], "5");
+    assert_eq!(manifest.engine_versions["portfolio-study"], "6");
     assert_eq!(manifest.engine_versions["portfolio-calendar"], "2");
     assert_eq!(manifest.engine_versions["portfolio-rolling-liquidity"], "1");
     assert_eq!(manifest.engine_versions["portfolio-build-rolling"], "1");

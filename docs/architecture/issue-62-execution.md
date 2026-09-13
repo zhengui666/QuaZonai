@@ -3,6 +3,38 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Native Study research-partition binding, 2026-09-14
+
+portfolio-study/6 corrects the native Study-only dataset role to DISCOVERY or
+VALIDATION, matching the normative PORTFOLIO InputSet contract. FORWARD and SEALED
+are rejected; existing Build, sequence and Candidate HOLD role checks are unchanged.
+Runtime still compares the task role with the registered immutable partition and
+checks the original catalog selection. No directory is relabeled at runtime and
+no shared data-use license rule was weakened. Capability map, native stack/image
+label and command documentation now identify version 6 rather than accepting an
+old role contract as the new behavior. Ponytail reuse changes the existing task
+branch; no new source adapter, dependency or compatibility mode.
+
+On de9de6b0 plus frozen patches, initial verify-aU8ACV exposed two catalog-scope
+tests still assigning FORWARD to Study; they failed their valid baseline before
+reaching the intended range checks. Those fixtures now use VALIDATION for Study
+while preserving other operations and every original cutoff/instrument/range
+counterexample. Final verify-Is2ox4 passed workspace check/fmt/strict Clippy,
+164 contracts/domain/Runtime tests, 20 managed tests, 31 native Codex tests and
+118 Job science tests (the managed tests are included in the Job total).
+The managed Study fixture executes both permitted research partitions and checks
+that FORWARD and SEALED are rejected without changing the other source bindings.
+
+owner-oci-jKBVGR built the new image and passed all 15 actual OCI tests in 39.93
+seconds with source unchanged. The rolling Study scenario registers its original
+catalog as VALIDATION, uses the matching task role and observes portfolio-study/6
+in the resulting manifest; original model/calendar/liquidity/report assertions
+remain in place. Image:
+sha256:fcd7984c00a2b1b2b5bd086715002fcb6c7caef1c86159d7bb043028a6234f9c.
+This verifies the native prerequisite, not a formal Store Study admission,
+independent PORTFOLIO Evaluation/PASS, REAL/PIT or complete T42 delivery. No schema
+or UI change, no generated/browser rerun, no push/review/merge/Issue closure.
+
 ## Store rolling Build admission and publication expiry, 2026-09-14
 
 Build now rereads the original registered rolling policy through the existing

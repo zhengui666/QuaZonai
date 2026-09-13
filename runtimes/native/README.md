@@ -1,6 +1,6 @@
 # 原生 Runtime 与 job 镜像
 
-portfolio-study/5及portfolio-history/1支持STUDY_PORTFOLIO：原模型/校准与费用字节绑定，固定截止
+portfolio-study/6及portfolio-history/1支持STUDY_PORTFOLIO：原模型/校准与费用字节绑定，固定截止
 历史前缀驱动Wasm/Clarabel，在单个Nautilus账户按实际权益/权重调仓。
 输出原源质量和逐帧原输入/求解/模拟报告；不可行不输出模拟结果。
 另输出原manifest绑定的qz.portfolio_history/1 Arrow IPC文件。contracts中的薄

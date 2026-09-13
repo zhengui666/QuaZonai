@@ -389,7 +389,11 @@ fn rolling_portfolio_managed_binds_original_objects_and_reports_infeasibility() 
             revision_id: dataset,
             registered_ref: "synthetic-native-regression".into(),
             storage_version: "1".into(),
-            role: DataPartition::Forward,
+            role: if liquidity {
+                DataPartition::Validation
+            } else {
+                DataPartition::Discovery
+            },
         }];
         inputs.extend(
             objects
@@ -411,12 +415,14 @@ fn rolling_portfolio_managed_binds_original_objects_and_reports_infeasibility() 
             fs::write(f.input.join("objects").join(id.to_string()), bytes).unwrap();
         }
         attach_catalog(&f, dataset, catalog.path());
-        let mut wrong_role = f.spec.clone();
-        let RuntimeInputV1::Dataset { role, .. } = &mut wrong_role.inputs[0] else {
-            unreachable!()
-        };
-        *role = DataPartition::Sealed;
-        assert!(domain::execution::task(&wrong_role, &parameters).is_err());
+        for rejected in [DataPartition::Sealed, DataPartition::Forward] {
+            let mut wrong_role = f.spec.clone();
+            let RuntimeInputV1::Dataset { role, .. } = &mut wrong_role.inputs[0] else {
+                unreachable!()
+            };
+            *role = rejected;
+            assert!(domain::execution::task(&wrong_role, &parameters).is_err());
+        }
         let mut missing_model = f.spec.clone();
         missing_model.inputs.remove(1);
         assert!(domain::execution::task(&missing_model, &parameters).is_err());

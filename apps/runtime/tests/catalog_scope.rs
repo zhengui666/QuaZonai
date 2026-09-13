@@ -376,13 +376,13 @@ async fn accepts(
 async fn all_data_operations_cannot_widen_the_registered_visibility_cutoff() {
     for kind in 0..9 {
         let mut metadata = catalog_fixture::metadata();
-        if kind == 3 {
+        if matches!(kind, 3 | 8) {
             metadata.partition = DataPartition::Validation;
         }
         if kind == 4 {
             metadata.partition = DataPartition::Sealed;
         }
-        if kind >= 5 {
+        if (5..8).contains(&kind) {
             metadata.partition = DataPartition::Forward;
         }
         let selected = metadata.quality.datasets[0].selection.clone();
@@ -403,13 +403,13 @@ async fn all_data_operations_cannot_widen_the_registered_visibility_cutoff() {
 async fn all_data_operations_reject_unregistered_types_instruments_and_event_ranges() {
     for kind in 0..9 {
         let mut metadata = catalog_fixture::metadata();
-        if kind == 3 {
+        if matches!(kind, 3 | 8) {
             metadata.partition = DataPartition::Validation;
         }
         if kind == 4 {
             metadata.partition = DataPartition::Sealed;
         }
-        if kind >= 5 {
+        if (5..8).contains(&kind) {
             metadata.partition = DataPartition::Forward;
         }
         domain::catalogs::metadata(&metadata, now()).unwrap();

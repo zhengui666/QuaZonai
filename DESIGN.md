@@ -1358,7 +1358,11 @@ EXACT_THRESHOLD_BOUNDS：GT/GE缺low或意外high分别定位对应字段；LT/L
 
 非归档项目才能登记。DATASET 的 role 必须等于 immutable partition_role，purpose
 必须匹配该 role；PORTFOLIO 只允许 DISCOVERY/VALIDATION。SEALED 原始数据不能进入
-其他目的的输入。登记时 data source/runtime 仍启用，数据许可在数据库当前时间生效
+其他目的的输入。托管STUDY_PORTFOLIO的portfolio-study/6同样仅接受原登记
+DISCOVERY或VALIDATION目录，明确拒绝FORWARD和SEALED；原目录partition与任务role
+仍须相同，不重标目录来满足用途。Build及候选HOLD保持其独立FORWARD限制。
+这是原生输入绑定，不替代正式PORTFOLIO准入的许可、模型可用时间和政策检查。
+登记时 data source/runtime 仍启用，数据许可在数据库当前时间生效
 且未被已生效撤销；dataset.available_through 不晚于 decision_cutoff。cutoff 不能是
 未来时间，非零亚微秒部分拒绝，不能先截断改变point-in-time边界。INVALID PIT 拒绝；UNVERIFIED/PIT 和非 REAL 来源可作为明确标记的研究准备
 输入，但不授予投产/资格，`require_real_data` 或验证政策在后续准入强制落实。

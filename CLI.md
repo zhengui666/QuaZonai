@@ -270,8 +270,9 @@ Store核对当前资格、独立Reviewer/原REAL报告、许可、原模型、Fo
 settings_artifact_id、原登记source_selection和原NativeSimulationRequestV1；需candidate-simulation/2。
 原生`job study-portfolio --catalog PATH --objects PATH`从stdin读取
 NativePortfolioStudyRequestV1，stdout输出NativePortfolioStudyResultV1；仅本机可信验证，
-不是Operator/Agent准入接口。托管STUDY_PORTFOLIO需portfolio-study/5，只挂载原
-FORWARD目录、模型/校准MODEL和费用PARAMETERS，输出qz.data_quality、qz.portfolio_study
+不是Operator/Agent准入接口。托管STUDY_PORTFOLIO需portfolio-study/6，只挂载原
+DISCOVERY/VALIDATION目录、模型/校准MODEL和费用PARAMETERS；拒绝FORWARD/SEALED，
+不改变目录原用途。输出qz.data_quality、qz.portfolio_study
 及qz.portfolio_history/1 TARGETS（Apache Arrow IPC File）。后者按原帧/资产顺序
 保存纳秒时间、decimal128(38,18)权重/独立现金列及求解状态；失败帧权重为null。
 同manifest采纳逐项核对报告/请求与Arrow值，不接受缺失或换成JSON；完整列合同见DESIGN A5。
