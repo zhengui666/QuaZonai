@@ -78,6 +78,39 @@ Cargo声明的Rust1.65最低版本及MIT/Apache-2.0许可；实际Rust1.98.1下�
 America/New_York、Asia/Shanghai及未知时区拒绝。锁文件仅为domain增加已有组件
 依赖边，不升级组件。这是IANA名称检查，不是交易日历版本或DST调度执行验收。
 
+2026-09-14交易会话候选核查：需要版本化的真实会话、特别休市、半日市与DST，
+不能把普通工作日或规则计算成功当作完整交易所日历。实际下载并检查
+[trading-calendar 0.2.3](https://docs.rs/trading-calendar/0.2.3/trading_calendar/)
+（MIT/Apache-2.0）、[nyse-holiday-cal 0.2.5](https://docs.rs/nyse-holiday-cal/0.2.5/nyse_holiday_cal/)
+（MIT）、[usec 0.3.6](https://docs.rs/usec/0.3.6/usec/calendar/)
+（MIT）的发布源码，随后在仓库外独立Cargo工作区、Rust1.98.1实际编译运行。
+三个原生默认日历都把2025-01-09返回为交易日；这与
+[NYSE所有权益/期权市场特别休市公告](https://ir.theice.com/press/news-details/2024/The-New-York-Stock-Exchange-Will-Close-Markets-on-January-9-to-Honor-the-Passing-of-Former-President-Jimmy-Carter-on-National-Day-of-Mourning/default.aspx)
+矛盾。不能直接选其中任何默认日历作为完整CALENDAR_SESSION事实源。
+
+探针calendar-probe-LPhPxx的最终执行退出0（复现缺陷，不是正确性通过），
+四日的is_trading_day/is_busday/is_business_day原返回分别为：
+
+| 日期 | trading-calendar | nyse-holiday-cal | usec |
+|---|---|---|---|
+| 2025-01-09 | true | true | true |
+| 2021-12-24 | true | false | false |
+| 2022-01-03 | false | true | true |
+| 2021-06-21 | false | true | true |
+
+最小复现为chrono::NaiveDate解析上述日期，分别调用
+TradingCalendar::new(Market::NYSE)?.is_trading_day(date)、
+HolidayCal::is_busday(&date)与UsExchangeCalendar::with_default_range(true)
+.get_cal().is_business_day(date)。直接依赖精确锁定为上述三版本与chrono0.4.45，
+usec运行显式移除ADDITIONAL_RULES环境变量，避免环境补丁伪装原生默认行为。
+trading-calendar的src/markets/us/holidays.rs还把周六圣诞移到周一；
+nyse-holiday-cal仅有节假日/工作日API，没有会话开闭和半日市输出；usec允许
+add_holiday_rule，但缺失特别休市不能由QZ暗补后仍冒称完整原默认日历。
+
+这次核查没有新增产品依赖、改写交易所规则或启用Python例外。后续必须绑定可追溯
+的完整原日历数据，或验证能覆盖这些缺口的原生组件，再接入会话调度。
+当前原生研究仍明确拒绝CALENDAR_SESSION；这不是完成该合同的证据。
+
 | 能力 | 选择及来源 | 实际证据 | 边界与风险 |
 |---|---|---|---|
 | 回测与原生策略生命周期 | [Nautilus 官方 Rust 概念文档](https://nautilustrader.io/docs/latest/concepts/rust/)；[发布族 v2.0.0rc4](https://github.com/nautechsystems/nautilus_trader/releases/tag/v2.0.0rc4)；Rust backtest/model/trading 0.63.0 | [源码中的原生 EMA 示例](https://github.com/nautechsystems/nautilus_trader/blob/v2.0.0rc4/crates/backtest/examples/engine_ema_cross.rs)；[实际运行 33952841460](https://github.com/zhengui666/QuaZonai/actions/runs/33952841460) | 明确启用 examples/test-support，关闭默认及 Python 特性；native Cargo tree 无 PyO3。运行得到745 iterations、12 orders、24 events。只是synthetic兼容性，不是正式目标权重/共享资金/隔离验收。上游2.0发布族为RC，不能声称稳定版。 |
