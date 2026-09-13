@@ -149,9 +149,18 @@ impl Fixture {
 
 pub async fn candidate(pool: &PgPool, f: &Fixture, mandate: Id) -> Id {
     let id = Id::new();
+    let run = candidate_run(&mut pool.acquire().await.unwrap(), f).await;
     sqlx::query("INSERT INTO app.portfolio_candidates(id,project_id,mandate_id,input_set_id,decision_asof,run_id,solver_status,evidence_status,diagnostics_artifact_id,current_weights_source) VALUES($1,$2,$3,$4,clock_timestamp(),$5,'OPTIMAL','VALID',$6,'NONE')")
-        .bind(id.as_uuid()).bind(f.project.as_uuid()).bind(mandate.as_uuid()).bind(f.input_set.as_uuid()).bind(f.run.as_uuid()).bind(f.artifact.as_uuid()).execute(pool).await.unwrap();
+        .bind(id.as_uuid()).bind(f.project.as_uuid()).bind(mandate.as_uuid()).bind(f.input_set.as_uuid()).bind(run.as_uuid()).bind(f.artifact.as_uuid()).execute(pool).await.unwrap();
     id
+}
+
+/// Relationship metadata only, not execution evidence. Each example owns its Run.
+pub async fn candidate_run(connection: &mut sqlx::PgConnection, f: &Fixture) -> Id {
+    let run = Id::new();
+    sqlx::query("INSERT INTO app.runs(id,project_id,cycle_id,kind,input_set_id,state,deadline_at,queued_at,finished_at) VALUES($1,$2,$3,'PORTFOLIO_BUILD',$4,'SUCCEEDED',clock_timestamp()+interval '1 hour',clock_timestamp()-interval '1 minute',clock_timestamp())")
+        .bind(run.as_uuid()).bind(f.project.as_uuid()).bind(f.cycle.as_uuid()).bind(f.input_set.as_uuid()).execute(connection).await.unwrap();
+    run
 }
 pub async fn portfolio(pool: &PgPool, f: &Fixture) -> (Id, Id, Id) {
     let mandate = Id::new();

@@ -217,7 +217,7 @@ impl Worker {
         let mut allocated = Vec::new();
         let result = self
             .store
-            .publish_alpha_evaluation(
+            .publish_scientific_result(
                 message.run_id,
                 move |id, size| {
                     let objects = reading.clone();

@@ -1833,6 +1833,15 @@ Mandate与实际求解共用；具体资产/组成员和数值可行性仍由冻
 
 ### A5.1 候选子对象唯一性
 
+每个正式PORTFOLIO_BUILD Run只发布一个不可变Candidate；Worker在原Run锁内读取
+原参数、终态回执、Attempt/manifest和原生组合报告，核对完整输出绑定后同事务
+发布Candidate及成员/目标。ACK丢失重放原Candidate，不重新运行或追加子项。
+原Run虽已终态，但Candidate未完成不可变发布时仍拒绝ACK；对象写入失败回滚
+发布事务并保留原队列消息，清理未引用对象后重试，不能提前归档丢失后续处理。
+取消/原生失败保留真实Run状态与无目标诊断；求解成功但当前资格、许可或目标期限
+失效时保留solver_status，evidence_status标INVALID并去除可交付目标，不能伪称
+求解失败。原生成功并不生成Qualification/Release；共享资金验证仍是独立后续任务。
+
 `unique(candidate_alphas.candidate_id,alpha_version_id)`、`unique(candidate_targets.candidate_id,instrument_id)` 是数据库约束，不是普通索引。重复相同请求幂等，冲突409；至少两个不同alpha_id的合格版本才满足多Alpha，不以同Alpha多个版本或重复条目凑数。发布验证每资产唯一权重，再校验sum/gross/net/cash/约束。
 
 ### A5.2 原生组合求解的可执行合同

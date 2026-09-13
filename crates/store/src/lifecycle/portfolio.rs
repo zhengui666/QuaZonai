@@ -12,6 +12,9 @@ use contracts::{
 use native::{bind_task, NativeObjectPublication, NativeTaskDefinition};
 use std::collections::BTreeSet;
 
+mod publication;
+pub(super) use publication::publish;
+
 // FOR UPDATE also conflicts with the revocation insert's native FK key-share
 // lock. FOR SHARE alone would not serialize a new revocation against admission.
 
@@ -252,6 +255,11 @@ impl Store {
             members,
         };
         domain::execution::portfolio_build_request(&native)?;
+        let target_until = publication::target_window(
+            native.selection.decision_cutoff_ns.get(),
+            native.mandate.rebalance_schedule.target_ttl_seconds,
+        )?
+        .1;
         let task = NativeTaskParametersV1::BuildPortfolio {
             schema_version: SchemaV1,
             dataset_revision_id: dataset.selection.dataset_revision_id,
@@ -365,6 +373,17 @@ impl Store {
         sqlx::query("INSERT INTO app.portfolio_build_tasks(run_id,mandate_id,snapshot_id,request) VALUES($1,$2,$3,$4)")
             .bind(run.resource.id.as_uuid()).bind(request.mandate_id.as_uuid()).bind(request.current_weights_snapshot_id.as_uuid()).bind(db::json(request)?).execute(&mut *tx).await?;
         commands::recheck_authority(&mut tx, actor, &prepared).await?;
+        if !publication::windows_current(
+            &mut tx,
+            request,
+            db::id(assumption.try_get("input_set_id")?)?,
+            weights_deadline,
+            target_until,
+        )
+        .await?
+        {
+            return Err(StoreError::Invalid("portfolio_source_expired"));
+        }
         let result = commands::finish(&mut tx, prepared, run.resource, 202).await?;
         tx.commit().await?;
         Ok(result)

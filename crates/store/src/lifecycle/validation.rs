@@ -13,7 +13,7 @@ use native::NativeObjectPublication;
 impl Store {
     /// Trusted Worker continuation, also used after a crash between terminal
     /// adoption and ACK. No caller supplies metrics, a policy or a verdict.
-    pub async fn publish_alpha_evaluation<R, Read, P, Published>(
+    pub async fn publish_scientific_result<R, Read, P, Published>(
         &self,
         run: Id,
         mut read: R,
@@ -27,6 +27,9 @@ impl Store {
     {
         let mut tx = self.pool.begin().await?;
         let locked = lock_run(&mut tx, run).await?;
+        if locked.run.kind == RunKind::PortfolioBuild {
+            return super::portfolio::publish(tx, locked, read, publish).await;
+        }
         let held_out: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM app.sealed_evaluation_tasks WHERE run_id=$1)",
         )

@@ -1,5 +1,7 @@
 //! Real PostgreSQL publication, exact ownership and cursor-atomicity regressions.
 //! Fixture PASS rows are relationship tests, not scientific qualification.
+#[path = "support/portfolio_publication.rs"]
+mod portfolio_publication;
 #[path = "../../../tests/support/research.rs"]
 mod research_support;
 mod support;
@@ -58,10 +60,20 @@ async fn alpha(pool: &PgPool, f: &Fixture) -> Alpha {
 
 async fn candidate_header(connection: &mut PgConnection, f: &Fixture, mandate: Id) -> Id {
     let id = Id::new();
+    let run = candidate_run(connection, f).await;
     sqlx::query("INSERT INTO app.portfolio_candidates(id,project_id,mandate_id,input_set_id,decision_asof,run_id,solver_status,evidence_status,diagnostics_artifact_id,current_weights_source) VALUES($1,$2,$3,$4,statement_timestamp(),$5,'OPTIMAL','VALID',$6,'NONE')")
         .bind(id.as_uuid()).bind(f.project.as_uuid()).bind(mandate.as_uuid()).bind(f.input_set.as_uuid())
-        .bind(f.run.as_uuid()).bind(f.artifact.as_uuid()).execute(connection).await.unwrap();
+        .bind(run.as_uuid()).bind(f.artifact.as_uuid()).execute(connection).await.unwrap();
     id
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn one_original_build_cannot_publish_two_candidates(pool: PgPool) {
+    let f = fixture(&pool, budget()).await;
+    let (_, candidate, _) = portfolio(&pool, &f).await;
+    let error = sqlx::query("INSERT INTO app.portfolio_candidates(project_id,mandate_id,input_set_id,decision_asof,run_id,solver_status,evidence_status,diagnostics_artifact_id,current_weights_source) SELECT project_id,mandate_id,input_set_id,decision_asof,run_id,solver_status,evidence_status,diagnostics_artifact_id,current_weights_source FROM app.portfolio_candidates WHERE id=$1")
+        .bind(candidate.as_uuid()).execute(&pool).await.unwrap_err();
+    sqlstate(error, "23505");
 }
 async fn member(
     connection: &mut PgConnection,

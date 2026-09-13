@@ -192,7 +192,7 @@ async fn cancelled_sealed_publication_is_atomic_replayable_and_required_before_a
         Err(StoreError::Conflict)
     ));
     let failed = store
-        .publish_alpha_evaluation(
+        .publish_scientific_result(
             lease.run.id,
             |_, _| async { panic!("cancelled task has no native report to read") },
             |_| async { Err(StoreError::Integrity) },
@@ -227,7 +227,7 @@ async fn cancelled_sealed_publication_is_atomic_replayable_and_required_before_a
     assert!(report["exposure_id"].is_string());
     assert!(report["native_report_artifact_id"].is_null());
     let replay = store
-        .publish_alpha_evaluation(
+        .publish_scientific_result(
             lease.run.id,
             |_, _| async { panic!("replay must not read") },
             |_| async { panic!("replay must not publish") },

@@ -1052,7 +1052,7 @@ async fn settled_native_mission_publishes_validation_then_returns_to_original_th
     let objects = f.data.objects.clone();
     let sealed_evaluation = f
         .store
-        .publish_alpha_evaluation(
+        .publish_scientific_result(
             sealed_run,
             |id, size| f.data.read(id, size),
             move |object| {

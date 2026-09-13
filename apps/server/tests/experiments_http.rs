@@ -148,7 +148,7 @@ async fn operator_http_admits_original_calibrated_sealed_run_without_another_tri
         .await;
     let evaluation = f
         .store
-        .publish_alpha_evaluation(validation, |id, size| data.read(id, size), publish)
+        .publish_scientific_result(validation, |id, size| data.read(id, size), publish)
         .await
         .unwrap()
         .unwrap()
@@ -253,7 +253,7 @@ async fn operator_http_admits_original_calibrated_sealed_run_without_another_tri
     };
     native_experiment_support::complete_sealed(&pool, &f.store, &data, *lease).await;
     f.store
-        .publish_alpha_evaluation(
+        .publish_scientific_result(
             accepted.resource.id,
             |id, size| data.read(id, size),
             publish,
