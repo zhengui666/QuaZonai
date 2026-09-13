@@ -83,6 +83,7 @@ pub fn request(input: &AllocationInputV1) -> NativePortfolioBuildRequestV1 {
         },
         assets: input.assets.clone(),
         bar_liquidity: None,
+        rolling_liquidity: None,
         members: input
             .forecasts
             .members

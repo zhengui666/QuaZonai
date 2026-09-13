@@ -118,6 +118,7 @@ pub(super) async fn complete(
         domain::execution::portfolio_execution_costs(&request, &slippage_references).unwrap();
     let report = NativePortfolioBuildResultV1 {
         schema_version: SchemaV1,
+        bar_notionals: Vec::new(),
         slippage_references,
         input,
         consumed_fuel: DbCounter::ZERO,

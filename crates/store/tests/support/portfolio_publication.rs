@@ -419,6 +419,7 @@ async fn successful_original_report_with_expired_target_retains_solver_but_canno
     }
     let report = NativePortfolioBuildResultV1 {
         schema_version: SchemaV1,
+        bar_notionals: Vec::new(),
         slippage_references: Vec::new(),
         allocation: AllocationResultV1 {
             schema_version: SchemaV1,

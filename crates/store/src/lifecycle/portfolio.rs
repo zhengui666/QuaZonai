@@ -304,6 +304,7 @@ impl Store {
             execution_settings: settings,
             assets,
             bar_liquidity: liquidity.as_ref().map(|s| s.binding.clone()),
+            rolling_liquidity: None,
             members,
         };
         domain::execution::portfolio_build_request(&native)?;

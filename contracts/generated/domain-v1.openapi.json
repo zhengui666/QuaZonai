@@ -11747,6 +11747,16 @@
             "minItems": 2,
             "type": "array"
           },
+          "rolling_liquidity": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NativeRollingBarLiquidityPolicyV1"
+              }
+            ]
+          },
           "schema_version": {
             "$ref": "#/components/schemas/SchemaV1"
           },

@@ -19,8 +19,9 @@ pub use output::{
 };
 pub use portfolio::{
     candidate_simulation, portfolio_build_liquidity, portfolio_build_request,
-    portfolio_build_result, portfolio_costs, portfolio_execution_costs, portfolio_sequence,
-    portfolio_study_cutoffs, portfolio_study_liquidity_assets,
+    portfolio_build_result, portfolio_costs, portfolio_execution_costs,
+    portfolio_rolling_liquidity_assets, portfolio_sequence, portfolio_study_cutoffs,
+    portfolio_study_liquidity_assets,
 };
 
 fn bad(field: &str) -> DomainError {
@@ -247,6 +248,10 @@ pub fn task(spec: &JobSpecV1, parameters: &NativeTaskParametersV1) -> Result<(),
                 .bar_liquidity
                 .as_ref()
                 .map(|b| b.assumption.report_artifact_id);
+            let rolling = request
+                .rolling_liquidity
+                .as_ref()
+                .and(request.mandate.constraints.liquidity_ref);
             let objects = request
                 .members
                 .iter()
@@ -257,9 +262,10 @@ pub fn task(spec: &JobSpecV1, parameters: &NativeTaskParametersV1) -> Result<(),
                 || !artifact(spec, request.current_weights_artifact_id, ArtifactInputRole::Report)
                 || !artifact(spec, request.mandate.constraints.transaction_costs_ref, ArtifactInputRole::Parameters)
                 || liquidity.is_some_and(|id| !artifact(spec, id, ArtifactInputRole::DataQuality))
+                || rolling.is_some_and(|id| !artifact(spec, id, ArtifactInputRole::Parameters))
                 || spec.inputs.iter().any(|input| match input {
                     RuntimeInputV1::Dataset { revision_id, role, .. } => revision_id != dataset_revision_id || *role != contracts::research::DataPartition::Forward,
-                    RuntimeInputV1::Artifact { artifact_id, role, .. } => !(*role == ArtifactInputRole::Model && objects.contains(artifact_id) || (*artifact_id == spec.parameters_artifact_id || *artifact_id == request.mandate.constraints.transaction_costs_ref) && *role == ArtifactInputRole::Parameters || *artifact_id == request.current_weights_artifact_id && *role == ArtifactInputRole::Report || Some(*artifact_id) == liquidity && *role == ArtifactInputRole::DataQuality),
+                    RuntimeInputV1::Artifact { artifact_id, role, .. } => !(*role == ArtifactInputRole::Model && objects.contains(artifact_id) || (*artifact_id == spec.parameters_artifact_id || *artifact_id == request.mandate.constraints.transaction_costs_ref || Some(*artifact_id) == rolling) && *role == ArtifactInputRole::Parameters || *artifact_id == request.current_weights_artifact_id && *role == ArtifactInputRole::Report || Some(*artifact_id) == liquidity && *role == ArtifactInputRole::DataQuality),
                 }) {
                 return Err(bad("allocation_inputs"));
             }

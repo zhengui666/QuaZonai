@@ -207,6 +207,7 @@ async fn real_native_rolling_study_uses_original_models_in_one_account() {
     assert_eq!(manifest.engine_versions["portfolio-study"], "5");
     assert_eq!(manifest.engine_versions["portfolio-calendar"], "2");
     assert_eq!(manifest.engine_versions["portfolio-rolling-liquidity"], "1");
+    assert_eq!(manifest.engine_versions["portfolio-build-rolling"], "1");
     assert_eq!(manifest.engine_versions["portfolio-history"], "1");
     assert_eq!(manifest.artifacts.len(), 3);
     let mut outputs = Vec::new();
@@ -544,6 +545,14 @@ async fn native_portfolio(cvar: bool, risk_budget: bool) {
     };
     let second = market::module("f64.const 0.03");
     if !cvar && !risk_budget {
+        let policy = contracts::science::NativeRollingBarLiquidityPolicyV1 {
+            schema_version: SchemaV1,
+            maximum_age_seconds: 3600,
+            participation_limit: "0.4".parse().unwrap(),
+        };
+        request.mandate.constraints.liquidity_ref = Some(Id::new());
+        request.mandate.constraints.max_participation = Some(policy.participation_limit.clone());
+        request.rolling_liquidity = Some(policy);
         let NativeModelRefV1::NautilusDefaultFill { parameters, .. } =
             &mut request.execution_settings.fill_model
         else {
@@ -682,6 +691,19 @@ async fn native_portfolio(cvar: bool, risk_budget: bool) {
     let cost_id = request.mandate.constraints.transaction_costs_ref;
     let costs = serde_json::to_vec(&request.execution_settings).unwrap();
     f.object(cost_id, &costs).await;
+    let rolling_input = if let Some(policy) = &request.rolling_liquidity {
+        let id = request.mandate.constraints.liquidity_ref.unwrap();
+        let bytes = serde_json::to_vec(policy).unwrap();
+        f.object(id, &bytes).await;
+        Some(RuntimeInputV1::Artifact {
+            artifact_id: id,
+            storage_version: "1".into(),
+            byte_count: count(bytes.len() as u64),
+            role: ArtifactInputRole::Parameters,
+        })
+    } else {
+        None
+    };
     let operation = NativeTaskParametersV1::BuildPortfolio {
         schema_version: SchemaV1,
         dataset_revision_id: dataset,
@@ -738,7 +760,10 @@ async fn native_portfolio(cvar: bool, risk_budget: bool) {
                 byte_count: count(bytes.len() as u64),
                 role: ArtifactInputRole::Parameters,
             },
-        ],
+        ]
+        .into_iter()
+        .chain(rolling_input)
+        .collect(),
         parameters_artifact_id: parameters,
         limits: RuntimeJobLimitsV1 {
             cpu: 1,
@@ -802,6 +827,14 @@ async fn native_portfolio(cvar: bool, risk_budget: bool) {
             result.slippage_references[0].close_price,
             "1.02".parse().unwrap()
         );
+        assert_eq!(result.bar_notionals.len(), 2);
+        assert_eq!(manifest.engine_versions["portfolio-build-rolling"], "1");
+        for (asset, value) in result.input.assets.iter().zip(&result.bar_notionals) {
+            assert_eq!(
+                asset.available_notional.as_ref(),
+                Some(&value.notional_value)
+            );
+        }
     }
     assert!(result
         .input
@@ -952,6 +985,10 @@ async fn native_portfolio(cvar: bool, risk_budget: bool) {
         let report: NativeDataQualityReportV1 = serde_json::from_slice(&bytes).unwrap();
         let observations = report.datasets[0].last_bar_notionals.as_ref().unwrap();
         assert_eq!(observations.len(), 2);
+        assert_eq!(
+            serde_json::to_value(&result.bar_notionals).unwrap(),
+            serde_json::to_value(observations).unwrap()
+        );
         for (index, value) in observations.iter().enumerate() {
             assert_eq!(value.instrument_id, request.assets[index].instrument_id);
             assert_eq!(value.currency, "USD");
@@ -966,6 +1003,7 @@ async fn native_portfolio(cvar: bool, risk_budget: bool) {
         let report_id = Id::new();
         f.object(report_id, &bytes).await;
         let mut liquidity_request = request.clone();
+        liquidity_request.rolling_liquidity = None;
         liquidity_request.mandate.constraints.liquidity_ref = Some(report_id);
         liquidity_request.mandate.constraints.max_participation = Some("0.00001".parse().unwrap());
         liquidity_request.bar_liquidity = Some(contracts::science::NativePortfolioLiquidityV1 {
@@ -995,7 +1033,7 @@ async fn native_portfolio(cvar: bool, risk_budget: bool) {
         liquidity_spec.run_id = Id::new();
         liquidity_spec.external_job_id =
             domain::runtime_jobs::external_id(liquidity_spec.run_id, 1).unwrap();
-        liquidity_spec.inputs.retain(|input| !matches!(input, RuntimeInputV1::Artifact {artifact_id,..} if *artifact_id == spec.parameters_artifact_id));
+        liquidity_spec.inputs.retain(|input| !matches!(input, RuntimeInputV1::Artifact {artifact_id,..} if *artifact_id == spec.parameters_artifact_id || Some(*artifact_id) == request.mandate.constraints.liquidity_ref));
         liquidity_spec.parameters_artifact_id = Id::new();
         liquidity_spec.deadline_at = runtime::now() + chrono::Duration::seconds(50);
         f.object(liquidity_spec.parameters_artifact_id, &parameters)

@@ -223,6 +223,7 @@ fn allocation_success_requires_exact_instruments_currency_weights_and_solver_con
             "qz.native_portfolio",
             &NativePortfolioBuildResultV1 {
                 schema_version: SchemaV1,
+                bar_notionals: Vec::new(),
                 slippage_references: Vec::new(),
                 input: request.clone(),
                 allocation: allocation.clone(),

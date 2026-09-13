@@ -326,6 +326,8 @@ cargo run --locked -p server -- client portfolio assumptions show ASSUMPTIONS_UU
 与bar_liquidity互斥。需portfolio-rolling-liquidity/1能力；返回原政策及
 rolling_liquidity_artifact_id。没有历史快照期限，不表示跳过每步年龄校验；
 登记不启动Study或赋予Build滚动消费能力。
+原生Build的同名字段需portfolio-build-rolling/1，重读原政策PARAMETERS，在原选择
+测量最后BAR；报告bar_notionals与求解资产逐值绑定。Store入口仍拒绝未接通的滚动消费。
 当前声明式入口仅支持BAR/CONSERVATIVE_ASSUMPTION。可选bar_liquidity为
 {schema_version:1,report_artifact_id:Id,maximum_age_seconds:正u32,
 participation_limit:大于0且不超过1的Decimal字符串}；不使用时传null或省略。

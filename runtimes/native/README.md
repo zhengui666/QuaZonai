@@ -7,6 +7,8 @@ portfolio-study/5及portfolio-history/1支持STUDY_PORTFOLIO：原模型/校准�
 Arrow合同共同用于job写入/回读与采纳；全部行/列/元数据必须匹配原请求与报告。
 portfolio-rolling-liquidity/1从原PARAMETERS政策和每截止目录前缀测量BAR估值，
 复用DATA_VALIDATE的原生估值，按实际模拟权益和参与率约束调仓并再次检查年龄。
+portfolio-build-rolling/1将同一原政策/原生测量用于单截止Build，报告保留bar_notionals，
+结果核对原资产、时点、币种、年龄与精确名义量；正式Store消费尚未接通。
 不复用过期单次快照，不声称真实深度。支持固定间隔或原参数manual_cutoffs_ns手动截止，
 共用原帧数/fuel/范围/TTL覆盖检查。portfolio-calendar/2另绑定原完整会话PARAMETERS
 文件，逐值匹配目录原元数据登记的完整会话表，截止取原收盘加偏移；不自造节假日规则或抓取URL。

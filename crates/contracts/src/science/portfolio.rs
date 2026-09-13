@@ -84,6 +84,7 @@ pub struct NativePortfolioBuildRequestV1 {
     pub current_weights: PortfolioCurrentWeightsV1,
     pub execution_settings: super::NativeSimulationSettingsV1,
     pub bar_liquidity: Option<NativePortfolioLiquidityV1>,
+    pub rolling_liquidity: Option<NativeRollingBarLiquidityPolicyV1>,
     #[schema(min_items = 1, max_items = 256)]
     pub assets: Vec<AllocationAssetV1>,
     #[schema(min_items = 2, max_items = 256)]
@@ -94,6 +95,8 @@ pub struct NativePortfolioBuildRequestV1 {
 #[serde(deny_unknown_fields)]
 pub struct NativePortfolioBuildResultV1 {
     pub schema_version: SchemaV1,
+    #[schema(max_items = 256)]
+    pub bar_notionals: Vec<crate::execution::NativeBarNotionalV1>,
     #[schema(max_items = 256)]
     pub slippage_references: Vec<NativePortfolioSlippageReferenceV1>,
     /// Observable original numerical inputs generated inside the fixed native job.

@@ -18,6 +18,8 @@ portfolio-study/5执行原模型驱动、固定间隔或原参数手动截止的
 原TTL必须覆盖下一截止与评估末尾，固定间隔不允许手动覆盖。
 portfolio-rolling-liquidity/1要求原测量政策文件，每截止重新测量本目录前缀，
 执行时复核专属年龄；不复用过期BAR快照、不手填成交额或升级DATA_BACKED。
+portfolio-build-rolling/1在原生Build使用相同政策及BAR来源校验，保留原测量报告；
+不能以该原生能力宣称正式Store滚动准入/发布已完成。
 portfolio-history/1输出原manifest绑定的Arrow历史目标；失败帧仍保留null权重。
 逐帧原输入、实际模拟及Arrow报告不是正式PORTFOLIO发布或PASS。
 Candidate保持研究的可信发布器从原双报告、独立政策与来源复核发表FORWARD

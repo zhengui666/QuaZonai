@@ -26,6 +26,16 @@ pub fn build(
         let report = serde_json::from_slice(&read(binding.assumption.report_artifact_id)?)?;
         domain::execution::portfolio_build_liquidity(request, &report)?;
     }
+    if let Some(policy) = &request.rolling_liquidity {
+        let original: NativeRollingBarLiquidityPolicyV1 = serde_json::from_slice(&read(
+            request
+                .mandate
+                .constraints
+                .liquidity_ref
+                .ok_or_else(|| anyhow::anyhow!("PORTFOLIO_ROLLING_POLICY_MISSING"))?,
+        )?)?;
+        ensure!(original == *policy, "PORTFOLIO_ROLLING_POLICY_MISMATCH");
+    }
     let original: PortfolioCurrentWeightsV1 =
         serde_json::from_slice(&read(request.current_weights_artifact_id)?)?;
     ensure!(
@@ -41,11 +51,35 @@ pub fn build(
         &request.members,
         &mut read,
     )?;
-    let assets = domain::execution::portfolio_execution_costs(request, &prepared.slippage)?;
+    let bar_notionals = if request.rolling_liquidity.is_some() {
+        crate::catalog::last_bar_notionals(&crate::catalog::load_catalog(
+            catalog,
+            &request.selection,
+        )?)?
+    } else {
+        Vec::new()
+    };
+    let source_assets = domain::execution::portfolio_rolling_liquidity_assets(
+        &request.selection,
+        &request.assets,
+        request.rolling_liquidity.as_ref(),
+        &request.mandate.base_currency,
+        prepared.forecasts.forecast_asof_ns,
+        request.selection.decision_cutoff_ns,
+        &bar_notionals,
+    )?;
+    let assets = domain::execution::portfolio_costs(
+        &request.selection,
+        &request.mandate,
+        &request.execution_settings,
+        &source_assets,
+        &prepared.slippage,
+    )?;
     let input = allocation_input(&request.mandate, assets, original.cash_weight, &prepared);
     let allocation = crate::allocate(&input)?;
     let result = NativePortfolioBuildResultV1 {
         schema_version: SchemaV1,
+        bar_notionals,
         slippage_references: prepared.slippage,
         input,
         allocation,

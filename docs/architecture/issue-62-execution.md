@@ -3,6 +3,46 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Native Build consumption of rolling BAR policies, 2026-09-14
+
+portfolio-build-rolling/1 adds the original rolling policy to native Build requests,
+mutually exclusive with a historical report snapshot. The original PARAMETERS file
+is reread; hand-supplied asset notionals are rejected. Build measures the original
+selection with the same Nautilus BAR valuation used by Study/DATA_VALIDATE, records
+bar_notionals and derives allocation assets through their shared identity/currency/
+availability/age check. The existing cost adapter then applies original fees and
+slippage. Result validation reconstructs those same assets and checks all original
+input/solver bindings. No new numerical engine, dependency or per-BAR business rows.
+The task whitelist only grants the bound policy's PARAMETERS role. Store continues
+to refuse rolling-policy admission until formal source/publication handling is wired.
+
+On 22ca2f75 plus frozen patches, verify-NCndbh passed workspace check/fmt/strict
+Clippy, 164 contracts/domain/Runtime tests, 31 native Codex tests and all 118 Job
+science tests. Its separate managed target passed 20 tests (also in the Job suite).
+The new real subprocess test covers original file consumption, missing/replaced
+policy, wrong input role, expired BAR, hand-supplied notional and changed report
+values/currency/time. Study regression tests passed through the shared validator.
+verify-PQNLAT passed both existing full qualified-portfolio chains in 14.85 seconds,
+with unchanged source and isolated PostgreSQL stopped. web-verify-OpKS2e reproduced
+the six allowed generated outputs twice with handwritten source unchanged; only
+domain/runtime JSON changed, no HTTP schema or handwritten frontend change.
+
+The first actual OCI run found the test's later snapshot scenario retained its
+new rolling policy. The fixture now removes that policy and input when switching
+modes, preserving production exclusivity. An added direct comparison initially
+failed compilation because the report type lacks PartialEq; the existing serialized
+value comparison was used without changing production types. Final owner-oci-fV3dqt
+passed all 15 actual OCI tests in 39.82 seconds. Rolling Build measurements match
+an independent DATA_VALIDATE container's original values, and the same scenario
+also exercises slippage and historical-snapshot Build. Source remained unchanged.
+Final verify-AMixOA passed workspace check/fmt/strict Clippy after these test fixes.
+Image: sha256:aec50a3008877dad028c10b3af93a9987e719308cb32dc8215e48ccd3765dd66.
+
+This proves native consumption with controlled market fixtures, not formal Store
+rolling admission, current-age Candidate publication, independent PORTFOLIO PASS,
+REAL/PIT or T42. Those and delivery/recovery remain required. No push, review,
+merge or Issue closure occurred in this stage.
+
 ## Frozen rolling BAR liquidity policy registration, 2026-09-14
 
 The existing execution-assumptions command accepts optional rolling_liquidity,

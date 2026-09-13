@@ -563,6 +563,12 @@ fn portfolio_fixture(
         )
     });
     let weights = serde_json::to_vec(&request.current_weights).unwrap();
+    let rolling = request.rolling_liquidity.as_ref().map(|policy| {
+        (
+            request.mandate.constraints.liquidity_ref.unwrap(),
+            serde_json::to_vec(policy).unwrap(),
+        )
+    });
     let costs = serde_json::to_vec(&request.execution_settings).unwrap();
     let id = Id::new();
     let mut inputs = vec![RuntimeInputV1::Dataset {
@@ -606,10 +612,21 @@ fn portfolio_fixture(
                     role: ArtifactInputRole::DataQuality,
                 });
             }
+            if let Some((id, bytes)) = &rolling {
+                inputs.push(RuntimeInputV1::Artifact {
+                    artifact_id: *id,
+                    storage_version: "1".into(),
+                    byte_count: market::count(bytes.len() as u64),
+                    role: ArtifactInputRole::Parameters,
+                });
+            }
             inputs
         },
     );
     if let Some((id, bytes)) = liquidity {
+        fs::write(f.input.join("objects").join(id.to_string()), bytes).unwrap();
+    }
+    if let Some((id, bytes)) = rolling {
         fs::write(f.input.join("objects").join(id.to_string()), bytes).unwrap();
     }
     fs::write(
@@ -862,6 +879,93 @@ fn managed_portfolio_uses_original_measured_liquidity_and_rejects_changed_copies
                 .all(|a| a.available_notional.is_some()));
         } else {
             assert!(!f.output.join("index.json").exists());
+        }
+    }
+}
+
+#[test]
+fn managed_build_measures_rolling_policy_and_rejects_unbound_or_expired_inputs() {
+    use contracts::science::{NativePortfolioBuildResultV1, NativeRollingBarLiquidityPolicyV1};
+    for case in 0..6 {
+        let mut f = portfolio_fixture(false, |request| {
+            let policy = NativeRollingBarLiquidityPolicyV1 {
+                schema_version: SchemaV1,
+                maximum_age_seconds: if case == 3 { 1 } else { 3600 },
+                participation_limit: "0.00001".parse().unwrap(),
+            };
+            request.mandate.constraints.liquidity_ref = Some(Id::new());
+            request.mandate.constraints.max_participation =
+                Some(policy.participation_limit.clone());
+            request.rolling_liquidity = Some(policy);
+        });
+        let path = f
+            .input
+            .join("objects")
+            .join(f.spec.parameters_artifact_id.to_string());
+        let mut task: NativeTaskParametersV1 =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let NativeTaskParametersV1::BuildPortfolio { request, .. } = &mut task else {
+            unreachable!()
+        };
+        let id = request.mandate.constraints.liquidity_ref.unwrap();
+        let policy_path = f.input.join("objects").join(id.to_string());
+        match case {
+            1 => fs::remove_file(&policy_path).unwrap(),
+            2 => {
+                for input in &mut f.spec.inputs {
+                    if let RuntimeInputV1::Artifact {
+                        artifact_id, role, ..
+                    } = input
+                    {
+                        if *artifact_id == id {
+                            *role = ArtifactInputRole::DataQuality;
+                        }
+                    }
+                }
+            }
+            4 => request.assets[0].available_notional = Some("1".parse().unwrap()),
+            5 => {
+                let mut original = request.rolling_liquidity.clone().unwrap();
+                original.participation_limit = "0.00002".parse().unwrap();
+                fs::write(&policy_path, serde_json::to_vec(&original).unwrap()).unwrap();
+            }
+            _ => {}
+        }
+        if case == 4 {
+            assert!(domain::execution::portfolio_build_request(request).is_err());
+        }
+        fs::write(&path, serde_json::to_vec(&task).unwrap()).unwrap();
+        fs::write(
+            f.input.join("spec.json"),
+            serde_json::to_vec(&f.spec).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(execute(&f), case == 0, "rolling Build case {case}");
+        if case != 0 {
+            assert!(!f.output.join("index.json").exists());
+            continue;
+        }
+        let report: NativePortfolioBuildResultV1 = result(&f, "qz.native_portfolio");
+        assert_eq!(report.bar_notionals.len(), 2);
+        let NativeTaskParametersV1::BuildPortfolio { request, .. } = &task else {
+            unreachable!()
+        };
+        for (asset, value) in report.input.assets.iter().zip(&report.bar_notionals) {
+            assert_eq!(
+                asset.available_notional.as_ref(),
+                Some(&value.notional_value)
+            );
+            assert!(value.notional_value.is_positive());
+        }
+        for changed_field in 0..4 {
+            let mut changed = report.clone();
+            match changed_field {
+                0 => changed.bar_notionals.clear(),
+                1 => changed.bar_notionals[0].notional_value = "0".parse().unwrap(),
+                2 => changed.bar_notionals[0].currency = "EUR".into(),
+                _ => changed.bar_notionals[0].event_ns = DbCounter::ZERO,
+            }
+            assert!(domain::execution::portfolio_build_result(request, &changed).is_err());
         }
     }
 }

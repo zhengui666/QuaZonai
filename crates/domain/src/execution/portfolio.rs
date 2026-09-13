@@ -184,7 +184,8 @@ pub fn portfolio_build_request(request: &NativePortfolioBuildRequestV1) -> Resul
     if let Some(liquidity) = &request.bar_liquidity {
         crate::portfolio::bar_liquidity_assumption(&liquidity.assumption)?;
         selection(&liquidity.source.selection)?;
-        if constraints.liquidity_ref != Some(liquidity.assumption.report_artifact_id)
+        if request.rolling_liquidity.is_some()
+            || constraints.liquidity_ref != Some(liquidity.assumption.report_artifact_id)
             || constraints.max_participation.as_ref()
                 != Some(&liquidity.assumption.participation_limit)
             || request.assets.iter().any(|a| {
@@ -194,6 +195,17 @@ pub fn portfolio_build_request(request: &NativePortfolioBuildRequestV1) -> Resul
             })
         {
             return Err(bad("portfolio.liquidity_binding"));
+        }
+    } else if let Some(policy) = &request.rolling_liquidity {
+        crate::portfolio::rolling_liquidity_policy(policy)?;
+        if constraints.liquidity_ref.is_none()
+            || constraints.max_participation.as_ref() != Some(&policy.participation_limit)
+            || request
+                .assets
+                .iter()
+                .any(|a| a.available_notional.is_some())
+        {
+            return Err(bad("portfolio.rolling_liquidity_binding"));
         }
     } else if constraints.liquidity_ref.is_some()
         || constraints.max_participation.is_some()
@@ -466,30 +478,50 @@ pub fn portfolio_study_liquidity_assets(
     decision: contracts::DbCounter,
     values: &[contracts::execution::NativeBarNotionalV1],
 ) -> Result<Vec<contracts::portfolio::AllocationAssetV1>, DomainError> {
-    let mut assets = request.assets.clone();
-    let Some(policy) = &request.rolling_liquidity else {
+    let mut selection = request.source_selection.clone();
+    selection.event_end_ns = cutoff;
+    selection.decision_cutoff_ns = cutoff;
+    portfolio_rolling_liquidity_assets(
+        &selection,
+        &request.assets,
+        request.rolling_liquidity.as_ref(),
+        &request.mandate.base_currency,
+        forecast_asof,
+        decision,
+        values,
+    )
+}
+
+/// The same original BAR facts bind single-cutoff Build and rolling Study inputs.
+pub fn portfolio_rolling_liquidity_assets(
+    selection: &NativeBarSelectionV1,
+    assets: &[contracts::portfolio::AllocationAssetV1],
+    policy: Option<&NativeRollingBarLiquidityPolicyV1>,
+    currency: &str,
+    forecast_asof: contracts::DbCounter,
+    decision: contracts::DbCounter,
+    values: &[contracts::execution::NativeBarNotionalV1],
+) -> Result<Vec<contracts::portfolio::AllocationAssetV1>, DomainError> {
+    let mut assets = assets.to_vec();
+    let Some(policy) = policy else {
         if !values.is_empty() {
             return Err(bad("portfolio_study.unbound_liquidity"));
         }
         return Ok(assets);
     };
+    crate::portfolio::rolling_liquidity_policy(policy)?;
     if values.len() != assets.len() {
         return Err(bad("portfolio_study.liquidity_assets"));
     }
-    crate::portfolio::bar_liquidity_age(
-        values,
-        &request.mandate.base_currency,
-        policy.maximum_age_seconds,
-        decision,
-    )?;
+    crate::portfolio::bar_liquidity_age(values, currency, policy.maximum_age_seconds, decision)?;
     for (value, asset) in values.iter().zip(&mut assets) {
         crate::catalogs::bar_notional(value)?;
         if value.instrument_id != asset.instrument_id
             || value.currency != asset.currency
             || value.event_ns != forecast_asof
-            || value.event_ns < request.source_selection.event_start_ns
-            || value.event_ns >= cutoff
-            || value.available_ns > cutoff
+            || value.event_ns < selection.event_start_ns
+            || value.event_ns >= selection.event_end_ns
+            || value.available_ns > selection.decision_cutoff_ns
         {
             return Err(bad("portfolio_study.liquidity_source"));
         }
@@ -543,6 +575,15 @@ pub fn portfolio_build_result(
     let input = &result.input;
     let m = &request.mandate;
     let forecasts = &input.forecasts;
+    let source_assets = portfolio_rolling_liquidity_assets(
+        &request.selection,
+        &request.assets,
+        request.rolling_liquidity.as_ref(),
+        &m.base_currency,
+        forecasts.forecast_asof_ns,
+        request.selection.decision_cutoff_ns,
+        &result.bar_notionals,
+    )?;
     let maximum_fuel = request
         .members
         .iter()
@@ -558,7 +599,14 @@ pub fn portfolio_build_result(
         || input.optimizer != m.optimizer
         || input.alpha_ensemble != m.alpha_ensemble
         || input.covariance_estimator != m.covariance_estimator
-        || input.assets != portfolio_execution_costs(request, &result.slippage_references)?
+        || input.assets
+            != portfolio_costs(
+                &request.selection,
+                m,
+                &request.execution_settings,
+                &source_assets,
+                &result.slippage_references,
+            )?
         || result
             .slippage_references
             .iter()
