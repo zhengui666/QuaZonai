@@ -19,6 +19,15 @@ use support::{count, docker, Fixture, SIGNAL, SLOW_SIGNAL};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn real_native_candidate_simulation_consumes_original_target_and_settings_files() {
+    native_candidate_simulation(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn real_native_portfolio_sequence_consumes_all_original_target_files() {
+    native_candidate_simulation(true).await;
+}
+
+async fn native_candidate_simulation(sequence: bool) {
     use contracts::{
         execution::NativeTaskParametersV1,
         research::{ArtifactInputRole, DataPartition},
@@ -27,9 +36,17 @@ async fn real_native_candidate_simulation_consumes_original_target_and_settings_
     };
     // Controlled target declaration, not a Store Candidate or qualification claim.
     let (catalog, mut request) = market::market("0.001", 2 * 1440 + 20);
-    request.target_points.truncate(1);
-    request.target_points[0].targets.truncate(1);
-    request.target_points[0].cash_weight = "0.6".parse().unwrap();
+    if !sequence {
+        request.target_points.truncate(1);
+    }
+    let one: contracts::DecimalValue = "1".parse().unwrap();
+    for point in &mut request.target_points {
+        point.targets.truncate(1);
+        point.cash_weight = (one.as_decimal() - point.targets[0].weight.as_decimal())
+            .to_plain_string()
+            .parse()
+            .unwrap();
+    }
     request.settings.fee_rates.truncate(1);
     request.selection.bar_types.truncate(1);
     request.selection.event_start_ns = request.target_points[0].asof_ns;
@@ -80,15 +97,46 @@ async fn real_native_candidate_simulation_consumes_original_target_and_settings_
     let parameters_id = Id::new();
     let targets = serde_json::to_vec(&target).unwrap();
     let settings = serde_json::to_vec(&request.settings).unwrap();
-    let operation = NativeTaskParametersV1::SimulateCandidate {
-        schema_version: SchemaV1,
-        candidate_id: candidate,
-        candidate_available_ns: request.target_points[0].asof_ns,
-        dataset_revision_id: dataset,
-        target_artifact_id: target_id,
-        settings_artifact_id: settings_id,
-        source_selection: request.selection.clone(),
-        request: Box::new(request),
+    let mut target_objects = vec![(target_id, targets)];
+    let operation = if sequence {
+        let mut later = target.clone();
+        let point = &request.target_points[1];
+        later.candidate_id = Id::new();
+        later.asof = chrono::DateTime::from_timestamp_nanos(point.asof_ns.get() as i64);
+        later.targets = point.targets.clone();
+        later.cash_weight = point.cash_weight.clone();
+        let later_id = Id::new();
+        target_objects.push((later_id, serde_json::to_vec(&later).unwrap()));
+        NativeTaskParametersV1::SimulatePortfolioSequence {
+            schema_version: SchemaV1,
+            dataset_revision_id: dataset,
+            source_selection: request.selection.clone(),
+            settings_artifact_id: settings_id,
+            sources: vec![
+                NativePortfolioTargetSourceV1 {
+                    candidate_id: candidate,
+                    candidate_available_ns: request.target_points[0].asof_ns,
+                    target_artifact_id: target_id,
+                },
+                NativePortfolioTargetSourceV1 {
+                    candidate_id: later.candidate_id,
+                    candidate_available_ns: point.asof_ns,
+                    target_artifact_id: later_id,
+                },
+            ],
+            request: Box::new(request),
+        }
+    } else {
+        NativeTaskParametersV1::SimulateCandidate {
+            schema_version: SchemaV1,
+            candidate_id: candidate,
+            candidate_available_ns: request.target_points[0].asof_ns,
+            dataset_revision_id: dataset,
+            target_artifact_id: target_id,
+            settings_artifact_id: settings_id,
+            source_selection: request.selection.clone(),
+            request: Box::new(request),
+        }
     };
     let parameters = serde_json::to_vec(&operation).unwrap();
     let mut inputs = vec![RuntimeInputV1::Dataset {
@@ -97,11 +145,14 @@ async fn real_native_candidate_simulation_consumes_original_target_and_settings_
         storage_version: metadata.storage_version,
         role: DataPartition::Forward,
     }];
-    for (id, bytes, role) in [
-        (target_id, &targets, ArtifactInputRole::Report),
-        (settings_id, &settings, ArtifactInputRole::Parameters),
-        (parameters_id, &parameters, ArtifactInputRole::Parameters),
-    ] {
+    for (id, bytes, role) in target_objects
+        .iter()
+        .map(|(id, bytes)| (*id, bytes, ArtifactInputRole::Report))
+        .chain([
+            (settings_id, &settings, ArtifactInputRole::Parameters),
+            (parameters_id, &parameters, ArtifactInputRole::Parameters),
+        ])
+    {
         f.object(id, bytes).await;
         inputs.push(RuntimeInputV1::Artifact {
             artifact_id: id,
@@ -139,6 +190,9 @@ async fn real_native_candidate_simulation_consumes_original_target_and_settings_
     domain::runtime_jobs::manifest(&manifest, &spec, accepted.submitted_at, runtime::now())
         .unwrap();
     assert_eq!(manifest.engine_versions["candidate-simulation"], "2");
+    if sequence {
+        assert_eq!(manifest.engine_versions["portfolio-sequence"], "1");
+    }
     assert_eq!(manifest.artifacts.len(), 2);
     let output = manifest
         .artifacts
@@ -188,7 +242,17 @@ async fn real_native_candidate_simulation_consumes_original_target_and_settings_
     )
     .unwrap();
     let result: NativeSimulationResultV1 = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(result.consumed_target_points.get(), 1);
+    assert_eq!(
+        result.consumed_target_points.get(),
+        if sequence { 2 } else { 1 }
+    );
+    assert_eq!(
+        result.canonical_result["accounts"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
     assert!(result.orders.get() > 0);
     assert_eq!(result.returns_kind, NativeReturnsKind::PortfolioDaily);
     assert_eq!(result.returns_status, contracts::evidence::MetricStatus::Ok);

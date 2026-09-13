@@ -236,6 +236,11 @@ pub fn output_bindings(
             dataset_revision_id,
             source_selection,
             ..
+        }
+        | NativeTaskParametersV1::SimulatePortfolioSequence {
+            dataset_revision_id,
+            source_selection,
+            ..
         } => vec![contracts::execution::NativeDatasetSelectionV1 {
             dataset_revision_id: *dataset_revision_id,
             selection: source_selection.clone(),
@@ -293,7 +298,8 @@ pub fn output_bindings(
             super::portfolio_build_result(request, &decode(body("qz.native_portfolio")?.1)?)?;
         }
         NativeTaskParametersV1::SimulatePortfolio { request, .. }
-        | NativeTaskParametersV1::SimulateCandidate { request, .. } => {
+        | NativeTaskParametersV1::SimulateCandidate { request, .. }
+        | NativeTaskParametersV1::SimulatePortfolioSequence { request, .. } => {
             simulation::binding(request, &decode(body("qz.native_simulation")?.1)?)?;
         }
     }

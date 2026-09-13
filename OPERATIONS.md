@@ -66,7 +66,9 @@ target-only权重，不收账户或NAV；PAPER为SYNTHETIC，LIVE不自动获得
 规划期望成本（公式及向上舍入见DESIGN A5.2）；不是未来成本上界或DATA_BACKED。
 实际模拟继续使用原模型和原费率，不二次扣规划成本，不放宽其他来源/流动性约束。
 原生candidate-simulation/2可在原目标有效区间内保持该目标模拟，读取原目标与费用
-文件，不将最终权重放回产生之前。它不是恢复真实持仓，也不是已交付的Evaluation
+文件，不将最终权重放回产生之前。portfolio-sequence/1另支持原目标文件序列，
+按每项原可用时间进入同一原生账户；不代表独立PORTFOLIO评估或Release已通过。
+它不是恢复真实持仓，也不是已交付的Evaluation
 或Release入口；可信Worker的保持研究评估与正式策略滚动评估/交付分开，后者仍待验收。
 `client portfolio simulate`通过原来源准入申请保持模拟Run（参数见CLI），需
 精确Candidate的人工授权。不要手工提交原生任务、回填可用时间或把202当作评估；

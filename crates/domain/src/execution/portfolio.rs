@@ -10,6 +10,31 @@ pub fn candidate_simulation(
 ) -> Result<(), DomainError> {
     selection(&request.selection)?;
     crate::portfolio::simulation_settings(&request.settings)?;
+    let [point] = request.target_points.as_slice() else {
+        return Err(bad("candidate_simulation.targets"));
+    };
+    target_source(
+        candidate,
+        available_ns,
+        target,
+        point,
+        &request.settings.base_currency,
+    )?;
+    if request.selection.event_start_ns != point.asof_ns
+        || request.selection.event_end_ns > point.valid_until_ns
+    {
+        return Err(bad("candidate_simulation.source"));
+    }
+    Ok(())
+}
+
+fn target_source(
+    candidate: Id,
+    available_ns: contracts::DbCounter,
+    target: &PortfolioTargetsV1,
+    point: &NativeTargetPointV1,
+    currency: &str,
+) -> Result<(), DomainError> {
     let nanos = |time: chrono::DateTime<chrono::Utc>| {
         time.timestamp_nanos_opt()
             .and_then(|n| u64::try_from(n).ok())
@@ -23,13 +48,9 @@ pub fn candidate_simulation(
         asof
     };
     let until = nanos(target.valid_until)?;
-    let [point] = request.target_points.as_slice() else {
-        return Err(bad("candidate_simulation.targets"));
-    };
     if target.candidate_id != candidate
-        || target.base_currency != request.settings.base_currency
-        || request.selection.event_start_ns != effective
-        || request.selection.event_end_ns > until
+        || target.base_currency != currency
+        || effective >= until
         || point.asof_ns != effective
         || point.valid_until_ns != until
         || point.targets != target.targets
@@ -41,6 +62,46 @@ pub fn candidate_simulation(
             .any(|t| t.currency != target.base_currency)
     {
         return Err(bad("candidate_simulation.source"));
+    }
+    Ok(())
+}
+
+pub fn portfolio_sequence(
+    sources: &[NativePortfolioTargetSourceV1],
+    targets: &[PortfolioTargetsV1],
+    request: &NativeSimulationRequestV1,
+) -> Result<(), DomainError> {
+    selection(&request.selection)?;
+    crate::portfolio::simulation_settings(&request.settings)?;
+    if !(2..=253).contains(&sources.len())
+        || sources.len() != targets.len()
+        || sources.len() != request.target_points.len()
+    {
+        return Err(bad("portfolio_sequence.sources"));
+    }
+    let mut candidates = BTreeSet::new();
+    let mut artifacts = BTreeSet::new();
+    for ((source, target), point) in sources.iter().zip(targets).zip(&request.target_points) {
+        if !candidates.insert(source.candidate_id) || !artifacts.insert(source.target_artifact_id) {
+            return Err(bad("portfolio_sequence.duplicate"));
+        }
+        target_source(
+            source.candidate_id,
+            source.candidate_available_ns,
+            target,
+            point,
+            &request.settings.base_currency,
+        )?;
+    }
+    let points = &request.target_points;
+    if request.selection.event_start_ns != points[0].asof_ns
+        || request.selection.event_end_ns > points[points.len() - 1].valid_until_ns
+        || request.selection.event_end_ns <= points[points.len() - 1].asof_ns
+        || points.windows(2).any(|pair| {
+            pair[0].asof_ns >= pair[1].asof_ns || pair[0].valid_until_ns < pair[1].asof_ns
+        })
+    {
+        return Err(bad("portfolio_sequence.window"));
     }
     Ok(())
 }

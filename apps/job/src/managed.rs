@@ -286,6 +286,11 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             dataset_revision_id,
             source_selection,
             ..
+        }
+        | NativeTaskParametersV1::SimulatePortfolioSequence {
+            dataset_revision_id,
+            source_selection,
+            ..
         } => vec![contracts::execution::NativeDatasetSelectionV1 {
             dataset_revision_id: *dataset_revision_id,
             selection: source_selection.clone(),
@@ -515,6 +520,39 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
                 &target,
                 &request,
             )?;
+            let result = crate::simulation::simulate(
+                &input.join("catalogs").join(dataset_revision_id.to_string()),
+                &request,
+            )?;
+            outputs.json("qz.native_simulation", RuntimeOutputKind::Report, &result)?;
+        }
+        NativeTaskParametersV1::SimulatePortfolioSequence {
+            dataset_revision_id,
+            sources,
+            settings_artifact_id,
+            request,
+            ..
+        } => {
+            let settings: contracts::science::NativeSimulationSettingsV1 = document(
+                &input.join("objects").join(settings_artifact_id.to_string()),
+                PARAMETERS_LIMIT,
+            )?;
+            ensure!(
+                serde_json::to_value(&settings)? == serde_json::to_value(&request.settings)?,
+                "PORTFOLIO_SEQUENCE_SETTINGS_SOURCE_MISMATCH"
+            );
+            let targets = sources
+                .iter()
+                .map(|source| {
+                    document(
+                        &input
+                            .join("objects")
+                            .join(source.target_artifact_id.to_string()),
+                        PARAMETERS_LIMIT,
+                    )
+                })
+                .collect::<Result<Vec<contracts::science::PortfolioTargetsV1>>>()?;
+            domain::execution::portfolio_sequence(&sources, &targets, &request)?;
             let result = crate::simulation::simulate(
                 &input.join("catalogs").join(dataset_revision_id.to_string()),
                 &request,

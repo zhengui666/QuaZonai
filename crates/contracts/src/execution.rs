@@ -73,6 +73,15 @@ pub enum NativeTaskParametersV1 {
         settings_artifact_id: Id,
         request: Box<NativeSimulationRequestV1>,
     },
+    SimulatePortfolioSequence {
+        schema_version: SchemaV1,
+        dataset_revision_id: Id,
+        source_selection: NativeBarSelectionV1,
+        #[schema(min_items = 2, max_items = 253)]
+        sources: Vec<crate::science::NativePortfolioTargetSourceV1>,
+        settings_artifact_id: Id,
+        request: Box<NativeSimulationRequestV1>,
+    },
 }
 
 impl NativeTaskParametersV1 {
@@ -84,9 +93,9 @@ impl NativeTaskParametersV1 {
             | Self::ValidateAlpha { .. }
             | Self::EvaluateSealedAlpha { .. } => RunKind::AlphaEvaluate,
             Self::BuildPortfolio { .. } => RunKind::PortfolioBuild,
-            Self::SimulatePortfolio { .. } | Self::SimulateCandidate { .. } => {
-                RunKind::PortfolioSimulate
-            }
+            Self::SimulatePortfolio { .. }
+            | Self::SimulateCandidate { .. }
+            | Self::SimulatePortfolioSequence { .. } => RunKind::PortfolioSimulate,
         }
     }
     pub fn output_schemas(&self) -> Vec<RuntimeArtifactSchemaV1> {
@@ -98,7 +107,9 @@ impl NativeTaskParametersV1 {
             Self::EvaluateSealedAlpha { .. } => &["qz.alpha_sealed"],
             Self::BuildPortfolio { .. } => &["qz.native_portfolio"],
             Self::SimulatePortfolio { .. } => &["qz.native_simulation"],
-            Self::SimulateCandidate { .. } => &["qz.data_quality", "qz.native_simulation"],
+            Self::SimulateCandidate { .. } | Self::SimulatePortfolioSequence { .. } => {
+                &["qz.data_quality", "qz.native_simulation"]
+            }
         };
         names
             .iter()

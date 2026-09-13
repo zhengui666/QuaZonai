@@ -1873,6 +1873,17 @@ PASS 都不能借用。另以 `(candidate_id,mandate_id)` 绑定 Candidate 的�
 
 历史目标序列存 Arrow/Parquet，不每 bar 建业务对象。不可行 cash/targets 均 null；LAST_TARGET 是假设，真实权重输入来自下游签发 snapshot，QZ 不建真实账户账本。`sum(asset_weights)+cash_weight=1` 在 mandate tolerance 内，现金字段/保留代码明确；gross/net、组、成本、参与率原生计算，领域层独立合同/容差验证。
 
+原生SIMULATE_PORTFOLIO_SEQUENCE复用同一个Nautilus账户，按时序消费2..253个
+已冻结Candidate目标文件；每项仅绑定candidate_id、可信candidate_available_ns及
+target_artifact_id，并重读原文件核对目标/现金/币种/原有效期。253给既有256项
+输入上限保留目录、原费用与任务参数三个位置，不提高原Run限制。每个实际生效点取
+原asof与可信可用时间的较晚者，严格递增且不能跨越前一个目标的有效期；不得
+回填最后一个目标到历史、跳过中间失败或把费用文件改成临时设置。源目录质量
+仍按完整source_selection计算，实际模拟窗口不得超出它或最后目标的有效期。
+该入口只是原始序列的独立共享资金执行，不自动发表PORTFOLIO/PASS：正式Store
+准入还须冻结政策指定的完整序列、同Mandate/Alpha版本/费用来源及数据用途，
+防止事后挑选有利片段；历史目标序列文件、指标、发布与Release资格仍单独验收。
+
 ```text
 PortfolioConstraintsV1:
   schema_version: 1

@@ -29,6 +29,10 @@ fn operation(
             .unwrap();
             let mut request = portfolio_config::request(&input);
             request.assets.truncate(selection.bar_types.len());
+            request
+                .execution_settings
+                .fee_rates
+                .truncate(request.assets.len());
             request.selection = selection;
             request
                 .current_weights
@@ -171,7 +175,49 @@ async fn accepts(
         .unwrap();
     let dataset = Id::new();
     let model = Id::new();
-    let parameters = operation(kind, dataset, model, selection);
+    let parameters = if kind >= 6 {
+        let mut actual = metadata.quality.datasets[0].selection.clone();
+        actual.decision_cutoff_ns = actual.event_end_ns;
+        let NativeTaskParametersV1::SimulatePortfolio { mut request, .. } =
+            operation(2, dataset, model, actual)
+        else {
+            unreachable!()
+        };
+        if kind == 6 {
+            NativeTaskParametersV1::SimulateCandidate {
+                schema_version: SchemaV1,
+                candidate_id: Id::new(),
+                candidate_available_ns: request.target_points[0].asof_ns,
+                dataset_revision_id: dataset,
+                source_selection: selection,
+                target_artifact_id: model,
+                settings_artifact_id: Id::new(),
+                request,
+            }
+        } else {
+            let mut later = request.target_points[0].clone();
+            later.asof_ns = count(later.asof_ns.get() + 1);
+            request.target_points.push(later);
+            NativeTaskParametersV1::SimulatePortfolioSequence {
+                schema_version: SchemaV1,
+                dataset_revision_id: dataset,
+                source_selection: selection,
+                sources: request
+                    .target_points
+                    .iter()
+                    .map(|point| NativePortfolioTargetSourceV1 {
+                        candidate_id: Id::new(),
+                        candidate_available_ns: point.asof_ns,
+                        target_artifact_id: Id::new(),
+                    })
+                    .collect(),
+                settings_artifact_id: Id::new(),
+                request,
+            }
+        }
+    } else {
+        operation(kind, dataset, model, selection)
+    };
     let parameter = Id::new();
     let encoded = serde_json::to_vec(&parameters).unwrap();
     journal.put_object(parameter, "1", &encoded).await.unwrap();
@@ -181,6 +227,38 @@ async fn accepts(
         storage_version: metadata.storage_version.clone(),
         role: metadata.partition,
     }];
+    let source_objects = match &parameters {
+        NativeTaskParametersV1::SimulateCandidate {
+            target_artifact_id,
+            settings_artifact_id,
+            ..
+        } => vec![
+            (*target_artifact_id, ArtifactInputRole::Report),
+            (*settings_artifact_id, ArtifactInputRole::Parameters),
+        ],
+        NativeTaskParametersV1::SimulatePortfolioSequence {
+            sources,
+            settings_artifact_id,
+            ..
+        } => sources
+            .iter()
+            .map(|s| (s.target_artifact_id, ArtifactInputRole::Report))
+            .chain(std::iter::once((
+                *settings_artifact_id,
+                ArtifactInputRole::Parameters,
+            )))
+            .collect(),
+        _ => Vec::new(),
+    };
+    for (id, role) in source_objects {
+        journal.put_object(id, "1", b"{}").await.unwrap();
+        inputs.push(RuntimeInputV1::Artifact {
+            artifact_id: id,
+            storage_version: "1".into(),
+            byte_count: count(2),
+            role,
+        });
+    }
     if let NativeTaskParametersV1::BuildPortfolio { request, .. } = &parameters {
         let bytes = serde_json::to_vec(&request.current_weights).unwrap();
         journal
@@ -192,6 +270,15 @@ async fn accepts(
             storage_version: "1".into(),
             byte_count: count(bytes.len() as u64),
             role: ArtifactInputRole::Report,
+        });
+        let bytes = serde_json::to_vec(&request.execution_settings).unwrap();
+        let id = request.mandate.constraints.transaction_costs_ref;
+        journal.put_object(id, "1", &bytes).await.unwrap();
+        inputs.push(RuntimeInputV1::Artifact {
+            artifact_id: id,
+            storage_version: "1".into(),
+            byte_count: count(bytes.len() as u64),
+            role: ArtifactInputRole::Parameters,
         });
     }
     if matches!(kind, 1 | 3 | 4 | 5) {
@@ -249,8 +336,8 @@ async fn accepts(
 }
 
 #[tokio::test]
-async fn all_six_data_operations_cannot_widen_the_registered_visibility_cutoff() {
-    for kind in 0..6 {
+async fn all_data_operations_cannot_widen_the_registered_visibility_cutoff() {
+    for kind in 0..8 {
         let mut metadata = catalog_fixture::metadata();
         if kind == 3 {
             metadata.partition = DataPartition::Validation;
@@ -258,11 +345,14 @@ async fn all_six_data_operations_cannot_widen_the_registered_visibility_cutoff()
         if kind == 4 {
             metadata.partition = DataPartition::Sealed;
         }
-        if kind == 5 {
+        if kind >= 5 {
             metadata.partition = DataPartition::Forward;
         }
         let selected = metadata.quality.datasets[0].selection.clone();
-        assert!(accepts(kind, metadata.clone(), selected.clone()).await);
+        assert!(
+            accepts(kind, metadata.clone(), selected.clone()).await,
+            "kind {kind}"
+        );
         let mut narrower = selected.clone();
         narrower.decision_cutoff_ns = narrower.event_end_ns;
         assert!(accepts(kind, metadata.clone(), narrower).await);
@@ -273,8 +363,8 @@ async fn all_six_data_operations_cannot_widen_the_registered_visibility_cutoff()
 }
 
 #[tokio::test]
-async fn all_six_data_operations_reject_unregistered_types_instruments_and_event_ranges() {
-    for kind in 0..6 {
+async fn all_data_operations_reject_unregistered_types_instruments_and_event_ranges() {
+    for kind in 0..8 {
         let mut metadata = catalog_fixture::metadata();
         if kind == 3 {
             metadata.partition = DataPartition::Validation;
@@ -282,12 +372,15 @@ async fn all_six_data_operations_reject_unregistered_types_instruments_and_event
         if kind == 4 {
             metadata.partition = DataPartition::Sealed;
         }
-        if kind == 5 {
+        if kind >= 5 {
             metadata.partition = DataPartition::Forward;
         }
         domain::catalogs::metadata(&metadata, now()).unwrap();
         let selection = metadata.quality.datasets[0].selection.clone();
-        assert!(accepts(kind, metadata.clone(), selection.clone()).await);
+        assert!(
+            accepts(kind, metadata.clone(), selection.clone()).await,
+            "kind {kind}"
+        );
         let mut foreign = selection.clone();
         foreign.bar_types = vec!["GBP/USD.SIM-1-MINUTE-LAST-EXTERNAL".into()];
         assert!(!accepts(kind, metadata.clone(), foreign).await);

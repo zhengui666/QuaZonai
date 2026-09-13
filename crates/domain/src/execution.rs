@@ -19,7 +19,7 @@ pub use output::{
 };
 pub use portfolio::{
     candidate_simulation, portfolio_build_liquidity, portfolio_build_request,
-    portfolio_build_result, portfolio_execution_costs,
+    portfolio_build_result, portfolio_execution_costs, portfolio_sequence,
 };
 
 fn bad(field: &str) -> DomainError {
@@ -247,6 +247,11 @@ pub fn task(spec: &JobSpecV1, parameters: &NativeTaskParametersV1) -> Result<(),
             dataset_revision_id,
             request,
             ..
+        }
+        | NativeTaskParametersV1::SimulatePortfolioSequence {
+            dataset_revision_id,
+            request,
+            ..
         } => {
             crate::portfolio::simulation_models(&request.settings)?;
             selection(&request.selection)?;
@@ -254,21 +259,61 @@ pub fn task(spec: &JobSpecV1, parameters: &NativeTaskParametersV1) -> Result<(),
                 || spec.inputs.iter().any(|input| matches!(input, RuntimeInputV1::Dataset { revision_id, .. } if *revision_id != *dataset_revision_id))
                 || !(1..=10_000).contains(&request.target_points.len())
             { return Err(bad("simulation_inputs")); }
-            if let NativeTaskParametersV1::SimulateCandidate {
-                target_artifact_id,
-                settings_artifact_id,
-                source_selection,
-                ..
-            } = parameters
-            {
+            let bound = match parameters {
+                NativeTaskParametersV1::SimulateCandidate {
+                    target_artifact_id,
+                    settings_artifact_id,
+                    source_selection,
+                    ..
+                } => {
+                    if request.target_points.len() != 1 {
+                        return Err(bad("candidate_simulation.inputs"));
+                    }
+                    Some((
+                        vec![*target_artifact_id],
+                        settings_artifact_id,
+                        source_selection,
+                    ))
+                }
+                NativeTaskParametersV1::SimulatePortfolioSequence {
+                    sources,
+                    settings_artifact_id,
+                    source_selection,
+                    ..
+                } => {
+                    let ids = sources
+                        .iter()
+                        .map(|s| s.target_artifact_id)
+                        .collect::<BTreeSet<_>>();
+                    let candidates = sources
+                        .iter()
+                        .map(|s| s.candidate_id)
+                        .collect::<BTreeSet<_>>();
+                    if !(2..=253).contains(&sources.len())
+                        || sources.len() != request.target_points.len()
+                        || ids.len() != sources.len()
+                        || candidates.len() != sources.len()
+                    {
+                        return Err(bad("portfolio_sequence.inputs"));
+                    }
+                    Some((
+                        ids.into_iter().collect(),
+                        settings_artifact_id,
+                        source_selection,
+                    ))
+                }
+                _ => None,
+            };
+            if let Some((target_artifact_ids, settings_artifact_id, source_selection)) = bound {
                 selection(source_selection)?;
                 if source_selection.bar_types != request.selection.bar_types
                     || source_selection.maximum_rows != request.selection.maximum_rows
                     || source_selection.event_start_ns > request.selection.event_start_ns
                     || source_selection.event_end_ns < request.selection.event_end_ns
                     || source_selection.decision_cutoff_ns < request.selection.decision_cutoff_ns
-                    || request.target_points.len() != 1
-                    || !artifact(spec, *target_artifact_id, ArtifactInputRole::Report)
+                    || target_artifact_ids
+                        .iter()
+                        .any(|id| !artifact(spec, *id, ArtifactInputRole::Report))
                     || !artifact(spec, *settings_artifact_id, ArtifactInputRole::Parameters)
                     || spec.inputs.iter().any(|input| match input {
                         RuntimeInputV1::Dataset { role, .. } => {
@@ -278,7 +323,7 @@ pub fn task(spec: &JobSpecV1, parameters: &NativeTaskParametersV1) -> Result<(),
                             artifact_id, role, ..
                         } => {
                             !(*role == ArtifactInputRole::Report
-                                && artifact_id == target_artifact_id
+                                && target_artifact_ids.contains(artifact_id)
                                 || *role == ArtifactInputRole::Parameters
                                     && (*artifact_id == spec.parameters_artifact_id
                                         || artifact_id == settings_artifact_id))

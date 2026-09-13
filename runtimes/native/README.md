@@ -1,5 +1,9 @@
 # 原生 Runtime 与 job 镜像
 
+portfolio-sequence/1支持SIMULATE_PORTFOLIO_SEQUENCE：原Candidate目标文件序列、
+可信可用时间和原费用文件逐项绑定，再进入同一个原生账户。完整源质量与实际
+模拟窗口分别报告。不是正式PORTFOLIO评估发布；完整序列准入及政策仍待接入。
+
 candidate-simulation/2支持SIMULATE_CANDIDATE：重读原Candidate目标和执行设置，
 复用原生DATA_VALIDATE检查原source_selection并输出qz.data_quality；保持模拟
 另输出qz.native_simulation，两个窗口不混算缺失比例。

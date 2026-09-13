@@ -18,6 +18,15 @@ pub struct PortfolioTargetsV1 {
     pub targets: Vec<AllocationTargetV1>,
 }
 
+/// Trusted original availability and object identity, not operator-authored weights.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativePortfolioTargetSourceV1 {
+    pub candidate_id: Id,
+    pub candidate_available_ns: DbCounter,
+    pub target_artifact_id: Id,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
 pub enum PortfolioWeightsSourceV1 {

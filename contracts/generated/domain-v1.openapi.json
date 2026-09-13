@@ -11689,6 +11689,27 @@
         ],
         "type": "object"
       },
+      "NativePortfolioTargetSourceV1": {
+        "additionalProperties": false,
+        "description": "Trusted original availability and object identity, not operator-authored weights.",
+        "properties": {
+          "candidate_available_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "candidate_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "target_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "candidate_available_ns",
+          "target_artifact_id"
+        ],
+        "type": "object"
+      },
       "NativeReturnV1": {
         "additionalProperties": false,
         "properties": {
@@ -12426,6 +12447,49 @@
               "dataset_revision_id",
               "source_selection",
               "target_artifact_id",
+              "settings_artifact_id",
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "dataset_revision_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "operation": {
+                "enum": [
+                  "SIMULATE_PORTFOLIO_SEQUENCE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/NativeSimulationRequestV1"
+              },
+              "schema_version": {
+                "$ref": "#/components/schemas/SchemaV1"
+              },
+              "settings_artifact_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "source_selection": {
+                "$ref": "#/components/schemas/NativeBarSelectionV1"
+              },
+              "sources": {
+                "items": {
+                  "$ref": "#/components/schemas/NativePortfolioTargetSourceV1"
+                },
+                "maxItems": 253,
+                "minItems": 2,
+                "type": "array"
+              }
+            },
+            "required": [
+              "schema_version",
+              "dataset_revision_id",
+              "source_selection",
+              "sources",
               "settings_artifact_id",
               "request",
               "operation"

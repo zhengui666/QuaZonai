@@ -80,14 +80,17 @@ pub async fn parameters(
             dataset_revision_id,
             request,
             ..
-        }
-        | NativeTaskParametersV1::SimulateCandidate {
+        } => vec![(*dataset_revision_id, &request.selection)],
+        NativeTaskParametersV1::SimulateCandidate {
             dataset_revision_id,
-            request,
+            source_selection,
             ..
-        } => {
-            vec![(*dataset_revision_id, &request.selection)]
         }
+        | NativeTaskParametersV1::SimulatePortfolioSequence {
+            dataset_revision_id,
+            source_selection,
+            ..
+        } => vec![(*dataset_revision_id, source_selection)],
         NativeTaskParametersV1::ValidateAlpha {
             dataset_revision_id,
             request,

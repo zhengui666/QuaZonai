@@ -3,6 +3,41 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Original target sequence native binding, 2026-09-14
+
+SIMULATE_PORTFOLIO_SEQUENCE binds 2..253 original Candidate target files and their
+trusted availability to one frozen simulation request and original fee file. It
+reuses the existing Nautilus shared account, quality report, output adoption and
+HOLD target-source check. Duplicate sources, changed targets/settings, noncausal
+order, expiry gaps, missing objects and non-Forward inputs are rejected. The 253
+limit leaves the catalog, settings and task parameters within the existing 256
+input limit; no dependency, account ledger or simulation engine was added.
+
+Runtime materialization now checks the original quality source_selection for both
+HOLD and sequence tasks, not merely the narrower replay window. Real SQLite scope
+regressions cover all eight data operations. This exposed an older Build fixture's
+stale fee count and missing original settings object; the fixture was corrected,
+not the production admission checks. The existing native OCI HOLD acceptance is
+reused for a separate sequence case through the actual gateway and Docker image.
+
+Verified on f1cf8acd plus frozen patches: verify-pWOi46 passed 227 mandate checks,
+workspace check/fmt/strict Clippy; verify-TKykGq passed 205 evidence checks. Both
+database verifiers kept source unchanged and stopped their isolated PostgreSQL.
+Runtime's 27 default tests passed. owner-oci-mgN34I passed all 14 native tests in
+32.08 seconds, including two original target files, one actual account and native
+cross-day returns. Image identity:
+sha256:fe15b1dce45f885b2ebe217272f94504b5e489fd23848f248db4fa5dfcb3add8.
+web-verify-aeOzOV reproduced all six native-generated outputs twice without changing
+handwritten sources; only the domain OpenAPI changed. No frontend source changed,
+and browser tests were not rerun for this native-only slice.
+
+These are controlled original-target replay results, not original Store Candidate
+publication or REAL/PIT qualification proof. Offline rolling model/allocation
+generation, Arrow target history, complete cohort/policy admission, independent
+PORTFOLIO publication and Release/delivery/recovery remain open. Creating a business
+Candidate per historical bar or backfilling availability is not an acceptable
+substitute for that missing offline study. No GitHub review or merge gate is met.
+
 ## Native allocation to shared-account replay, 2026-09-14
 
 A controlled managed-job check now feeds original native Wasm/Clarabel allocation
