@@ -356,6 +356,91 @@ async fn native_portfolio(cvar: bool, risk_budget: bool) {
         Some(0)
     );
     assert_eq!(f.submit(&spec).await.submitted_at, admitted.submitted_at);
+    if !cvar && !risk_budget {
+        use contracts::execution::{NativeDataQualityReportV1, NativeDatasetSelectionV1};
+        let NativeTaskParametersV1::BuildPortfolio { request, .. } = &operation else {
+            unreachable!()
+        };
+        let quality_operation = NativeTaskParametersV1::ValidateData {
+            schema_version: SchemaV1,
+            selections: vec![NativeDatasetSelectionV1 {
+                dataset_revision_id: dataset,
+                selection: request.selection.clone(),
+            }],
+        };
+        let mut quality_spec = spec.clone();
+        quality_spec.run_id = Id::new();
+        quality_spec.external_job_id =
+            domain::runtime_jobs::external_id(quality_spec.run_id, 1).unwrap();
+        quality_spec.job_kind = quality_operation.job_kind();
+        quality_spec.parameters_artifact_id = Id::new();
+        quality_spec.requested_output_schemas = quality_operation.output_schemas();
+        quality_spec.deadline_at = runtime::now() + chrono::Duration::seconds(50);
+        quality_spec
+            .inputs
+            .retain(|input| matches!(input, RuntimeInputV1::Dataset { .. }));
+        let parameters = serde_json::to_vec(&quality_operation).unwrap();
+        f.object(quality_spec.parameters_artifact_id, &parameters)
+            .await;
+        quality_spec.inputs.push(RuntimeInputV1::Artifact {
+            artifact_id: quality_spec.parameters_artifact_id,
+            storage_version: "1".into(),
+            byte_count: count(parameters.len() as u64),
+            role: ArtifactInputRole::Parameters,
+        });
+        f.runs.push(quality_spec.run_id);
+        let accepted = f.submit(&quality_spec).await;
+        assert_eq!(
+            f.terminal(&quality_spec).await.state,
+            RuntimeJobState::Succeeded
+        );
+        let manifest = f.manifest(&quality_spec).await;
+        domain::runtime_jobs::manifest(
+            &manifest,
+            &quality_spec,
+            accepted.submitted_at,
+            runtime::now(),
+        )
+        .unwrap();
+        assert_eq!(manifest.engine_versions["bar-notional"], "1");
+        let [output] = manifest.artifacts.as_slice() else {
+            panic!("one native quality report")
+        };
+        let response = f
+            .client
+            .get(f.url(&[
+                "jobs",
+                &quality_spec.external_job_id,
+                "artifacts",
+                &output.storage_ref.to_string(),
+            ]))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = response.bytes().await.unwrap().to_vec();
+        domain::execution::output_bindings(
+            &quality_operation,
+            None,
+            manifest.started_at.unwrap(),
+            manifest.finished_at,
+            &[(output.clone(), bytes.clone())],
+        )
+        .unwrap();
+        let report: NativeDataQualityReportV1 = serde_json::from_slice(&bytes).unwrap();
+        let observations = report.datasets[0].last_bar_notionals.as_ref().unwrap();
+        assert_eq!(observations.len(), 2);
+        for (index, value) in observations.iter().enumerate() {
+            assert_eq!(value.instrument_id, request.assets[index].instrument_id);
+            assert_eq!(value.currency, "USD");
+            assert_eq!(value.close_price, ["1.02", "2.02"][index].parse().unwrap());
+            assert_eq!(value.traded_volume, "10000000".parse().unwrap());
+            assert_eq!(
+                value.notional_value,
+                ["10200000", "20200000"][index].parse().unwrap()
+            );
+        }
+    }
     f.assert_private_logs();
 }
 

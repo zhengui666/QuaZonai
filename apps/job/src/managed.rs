@@ -287,6 +287,13 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
         NativeTaskParametersV1::ValidateData { selections, .. } => {
             let mut datasets = Vec::with_capacity(selections.len());
             for selected in selections {
+                let measure_notionals = spec.inputs.iter().any(|input| {
+                    matches!(input,
+                        contracts::runtime_jobs::RuntimeInputV1::Dataset { revision_id, role, .. }
+                        if *revision_id == selected.dataset_revision_id
+                            && *role != contracts::research::DataPartition::Sealed
+                    )
+                });
                 let data = crate::catalog::load_catalog(
                     &input
                         .join("catalogs")
@@ -297,12 +304,47 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
                 let mut last = 0;
                 let mut available = 0;
                 let mut instrument_ids = Vec::with_capacity(data.series.len());
+                let mut last_bar_notionals = Vec::with_capacity(data.series.len());
                 for series in &data.series {
                     instrument_ids.push(series.instrument.id().to_string());
                     for bar in &series.bars {
                         first = first.min(bar.ts_event.as_u64());
                         last = last.max(bar.ts_event.as_u64());
                         available = available.max(bar.ts_init.as_u64());
+                    }
+                    if measure_notionals {
+                        let bar = series
+                            .bars
+                            .last()
+                            .ok_or_else(|| anyhow::anyhow!("CATALOG_EMPTY_SELECTION"))?;
+                        let notional = series.instrument.try_calculate_notional_value(
+                            bar.volume,
+                            bar.close,
+                            Some(false),
+                        )?;
+                        last_bar_notionals.push(NativeBarNotionalV1 {
+                            instrument_id: series.instrument.id().to_string(),
+                            currency: notional.currency.to_string(),
+                            event_ns: counter(bar.ts_event.as_u64())?,
+                            available_ns: counter(bar.ts_init.as_u64())?,
+                            close_price: bar
+                                .close
+                                .as_decimal()
+                                .to_string()
+                                .parse()
+                                .map_err(anyhow::Error::msg)?,
+                            traded_volume: bar
+                                .volume
+                                .as_decimal()
+                                .to_string()
+                                .parse()
+                                .map_err(anyhow::Error::msg)?,
+                            notional_value: notional
+                                .as_decimal()
+                                .to_string()
+                                .parse()
+                                .map_err(anyhow::Error::msg)?,
+                        });
                     }
                 }
                 datasets.push(NativeDatasetQualityV1 {
@@ -313,6 +355,7 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
                     first_event_ns: counter(first)?,
                     last_event_ns: counter(last)?,
                     available_through_ns: counter(available)?,
+                    last_bar_notionals: measure_notionals.then_some(last_bar_notionals),
                 });
             }
             outputs.json(

@@ -637,6 +637,21 @@ DATA_BACKED等完整来源能力仍须单独接通，不能由请求标签冒充
 未绑定原生来源的历史行不能伪装成此入口的新版本。原请求/原响应支持精确重放，
 创建失败回滚数据库并回收本次未发布对象；不授予Alpha资格或交付权限。
 
+原生DATA_VALIDATE的每份Dataset质量结果可带last_bar_notionals；null/缺省表示
+没有测量该项，不表示零成交额。支持bar-notional/1的job从本次原目录选择中逐资产
+读取最后一根已完成、已可用的BAR，保持selection资产顺序，记录instrument_id、
+currency、event_ns、available_ns、close_price、traded_volume、notional_value。
+名义金额复用Nautilus 0.63.0 Instrument::try_calculate_notional_value，使用原数量、
+收盘价、合约乘数与原生币种/舍入，不自行重写线性、反向或quanto合约公式；
+明确use_quote_for_inverse=false，数值溢出或原生计算失败不补零。
+close_price必须正，数量与名义金额非负，真实零成交量允许为零；资产、顺序与时间
+必须绑定原质量结果及原始selection。此值是“最后一根历史BAR按收盘价估值的成交量”，
+不是该BAR真实逐笔成交金额、未来可用盘口、可成交保证或精准冲击模型，不能因测量
+存在自动把执行假设改成DATA_BACKED。后续参与率适配必须绑定原生结果产物、原选择、
+决策时可用性、币种与明确期限；未接通这一来源链前不能解除现有参与率准入拒绝。
+SEALED分区不输出此明细，原生job按冻结Dataset输入角色返回null；Sealed目录元数据
+也拒绝携带此明细，不能借质量报告向研究侧暴露封存价格或成交量。
+
 原生Universe membership每条带可选groups（最多64个唯一、1..120字符的组标识）。
 null/未提供表示分类未知，[]表示来源明确声明没有组；不自动按名称、币种或证券
 类型猜分类。组集合随该条valid_from/valid_until/available_at生效与可用，沿原

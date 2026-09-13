@@ -71,6 +71,12 @@ pub fn metadata(
         return Err(bad("snapshot"));
     }
     let quality = &value.quality.datasets[0];
+    if value.partition == contracts::research::DataPartition::Sealed
+        && quality.last_bar_notionals.is_some()
+    {
+        return Err(bad("quality.sealed_bar_values"));
+    }
+    bar_notionals(quality)?;
     if quality.row_count != value.row_count
         || quality.first_event_ns > quality.last_event_ns
         || quality.last_event_ns > quality.available_through_ns
@@ -159,6 +165,42 @@ pub fn metadata(
         .any(|id| !definitions.contains(id.as_str()))
     {
         return Err(bad("universe.instrument_definitions"));
+    }
+    Ok(())
+}
+
+/// Validate measured last-bar facts without inventing unobserved market capacity.
+pub fn bar_notionals(
+    quality: &contracts::execution::NativeDatasetQualityV1,
+) -> Result<(), DomainError> {
+    let Some(values) = &quality.last_bar_notionals else {
+        return Ok(());
+    };
+    if values.is_empty() || values.len() != quality.instrument_ids.len() || values.len() > 256 {
+        return Err(bad("quality.last_bar_notionals"));
+    }
+    for (value, instrument) in values.iter().zip(&quality.instrument_ids) {
+        text(&value.currency, 1, 16, false)?;
+        if &value.instrument_id != instrument
+            || value.event_ns < quality.first_event_ns
+            || value.event_ns > quality.last_event_ns
+            || value.event_ns < quality.selection.event_start_ns
+            || value.event_ns >= quality.selection.event_end_ns
+            || value.available_ns < value.event_ns
+            || value.available_ns > quality.available_through_ns
+            || value.available_ns > quality.selection.decision_cutoff_ns
+            || !value.close_price.is_positive()
+            || !value.traded_volume.is_nonnegative()
+            || !value.notional_value.is_nonnegative()
+            || (!value.traded_volume.is_positive() && value.notional_value.is_positive())
+        {
+            return Err(bad("quality.last_bar_notionals"));
+        }
+    }
+    if values.iter().map(|v| v.event_ns).max() != Some(quality.last_event_ns)
+        || values.iter().map(|v| v.available_ns).max() != Some(quality.available_through_ns)
+    {
+        return Err(bad("quality.last_bar_notionals"));
     }
     Ok(())
 }

@@ -1,5 +1,9 @@
 # 原生 Runtime 与 job 镜像
 
+bar-notional/1通过原生DATA_VALIDATE输出非Sealed最后已知BAR的价格、成交量和
+Instrument::try_calculate_notional_value收盘估值，保持原币种与时间。没有自研合约
+估值公式，不将历史观察冒充未来流动性或完整成本资格；Sealed明细保持不输出。
+
 本目录维护 `apps/runtime` 的原生镜像装配入口，不包含开发用 Codex 执行器、模型账号、数据库、应用密钥或整个工作区。产品字段与验收边界以 `DESIGN.md` B4 为准。
 
 Runtime 是受信任的计算网关：只接受已登记镜像、不可变输入引用和固定类型任务，复用 Docker 的进程、文件系统与 cgroup 隔离。研究预算、数据许可、Alpha 资格、审批、真实交易仍不由 Runtime 拥有。任务成功不等于科学结论通过。

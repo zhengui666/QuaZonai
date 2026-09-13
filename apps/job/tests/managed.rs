@@ -192,10 +192,55 @@ fn actual_managed_catalog_validation_publishes_native_counts_and_no_pit_claim() 
     assert_eq!(report.datasets[0].row_count.get(), 40);
     assert_eq!(report.datasets[0].instrument_ids.len(), 2);
     assert_eq!(report.datasets[0].dataset_revision_id, id);
+    let measured = report.datasets[0].last_bar_notionals.as_ref().unwrap();
+    assert_eq!(measured.len(), 2);
+    for (index, observation) in measured.iter().enumerate() {
+        assert_eq!(
+            observation.instrument_id,
+            report.datasets[0].instrument_ids[index]
+        );
+        assert_eq!(observation.currency, "USD");
+        assert_eq!(observation.event_ns.get(), 20 * market::INTERVAL_NS);
+        assert_eq!(observation.available_ns.get(), 20 * market::INTERVAL_NS + 1);
+        assert_eq!(observation.traded_volume, "10000000".parse().unwrap());
+        assert_eq!(
+            observation.close_price,
+            ["1.02", "2.02"][index].parse().unwrap()
+        );
+        assert_eq!(
+            observation.notional_value,
+            ["10200000", "20200000"][index].parse().unwrap()
+        );
+    }
     let value = serde_json::to_value(report).unwrap();
     assert!(value.get("pit_status").is_none());
     assert!(value.get("origin").is_none());
     assert!(value.get("qualification").is_none());
+}
+
+#[test]
+fn sealed_quality_does_not_publish_last_bar_values() {
+    let (catalog, request) = market::market("0.001", 20);
+    let id = Id::new();
+    let mut input = dataset(id);
+    let RuntimeInputV1::Dataset { role, .. } = &mut input else {
+        unreachable!()
+    };
+    *role = DataPartition::Sealed;
+    let f = fixture(
+        NativeTaskParametersV1::ValidateData {
+            schema_version: SchemaV1,
+            selections: vec![NativeDatasetSelectionV1 {
+                dataset_revision_id: id,
+                selection: request.selection,
+            }],
+        },
+        vec![input],
+    );
+    attach_catalog(&f, id, catalog.path());
+    assert!(execute(&f));
+    let report: NativeDataQualityReportV1 = result(&f, "qz.data_quality");
+    assert!(report.datasets[0].last_bar_notionals.is_none());
 }
 
 #[test]

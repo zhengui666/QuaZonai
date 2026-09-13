@@ -3,6 +3,46 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Native last-bar notional observations, 2026-09-13
+
+The patch over `8825d0b6` adds optional last_bar_notionals to original native
+DATA_VALIDATE results. For each non-Sealed asset, the job takes its last selected
+bar and calls locked Nautilus Instrument::try_calculate_notional_value with the
+original volume, close and use_quote_for_inverse=false. Native contract multipliers,
+currency, Money rounding and arithmetic errors remain upstream-owned. The report
+retains instrument ID, event/availability times, close, volume, notional and currency.
+No new dependency or custom valuation formula. Runtime/image capability is
+bar-notional/1. Unmeasured is null, not zero; Sealed jobs omit the detail and
+Sealed metadata registration rejects it.
+
+Domain checks bind ordering, identity and causal times to the original quality
+report, reject malformed/negative values and retain actual zero volume. Native
+managed Parquet checks observe USD 10.2m/20.2m for 10m volume at 1.02/2.02, while
+a separate actual managed Sealed task emits no bar detail. This is historical
+volume valued at the closing price, not actual trade-by-trade turnover, future
+liquidity, an impact model or DATA_BACKED cost eligibility.
+
+`verify-HdC300` passed check/fmt/strict Clippy and 210 checks: 129 contracts/domain,
+47 native science, 12 Store, 1 source SQL and 21 HTTP/CLI. After adding the explicit
+Sealed-metadata regression, all 6 native_outputs tests passed. `web-verify-7lKGaV`
+passed six twice-identical generated outputs, typecheck, 505 unit, wire/build,
+36 settings-browser and 216 full-browser checks. `owner-oci-akszvs` built image
+`sha256:79d8c613ee5c34e9601db35857961e3d7aab48772365e0ee360343e5035f31d0`;
+all 12 actual OCI tests passed. The original catalog-backed portfolio test also
+submits a separate native DATA_VALIDATE task, downloads its original manifest/body,
+checks task binding and verifies the native observations. `verify-VhQt4r` then
+passed static gates and 198 checks: 4 portfolio unit, 34 native validation,
+136 Store and 24 HTTP/CLI. Sources stayed unchanged within each verifier.
+
+This implements the native observation producer, NOT the complete liquidity
+adapter. ExecutionAssumptions/Mandate/Build still need adopted original report
+consumption, source/decision/currency/validity checks and publication revalidation.
+Metadata registration also creates same-schema quality artifacts without a native
+producer; schema names alone must not qualify them as measured native evidence.
+Existing participation/cost refusal gates remain intact. Complete cost adapters,
+independent Candidate validation, delivery, full REAL/PIT acceptance and final
+current-head review/CI/merge gates remain required.
+
 ## Original temporal Universe groups in portfolio builds, 2026-09-13
 
 The patch over `5c7fd0f2` binds existing native group constraints to original

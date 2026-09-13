@@ -10504,6 +10504,47 @@
         ],
         "type": "object"
       },
+      "NativeBarNotionalV1": {
+        "additionalProperties": false,
+        "properties": {
+          "available_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "close_price": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "currency": {
+            "maxLength": 16,
+            "minLength": 1,
+            "type": "string"
+          },
+          "event_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "instrument_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "notional_value": {
+            "$ref": "#/components/schemas/DecimalValue",
+            "description": "Native instrument valuation of this last bar's volume at its close."
+          },
+          "traded_volume": {
+            "$ref": "#/components/schemas/DecimalValue"
+          }
+        },
+        "required": [
+          "instrument_id",
+          "currency",
+          "event_ns",
+          "available_ns",
+          "close_price",
+          "traded_volume",
+          "notional_value"
+        ],
+        "type": "object"
+      },
       "NativeBarSelectionV1": {
         "additionalProperties": false,
         "properties": {
@@ -10633,6 +10674,18 @@
             "maxItems": 256,
             "minItems": 1,
             "type": "array"
+          },
+          "last_bar_notionals": {
+            "description": "None means not measured, never zero liquidity or a future capacity claim.",
+            "items": {
+              "$ref": "#/components/schemas/NativeBarNotionalV1"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": [
+              "array",
+              "null"
+            ]
           },
           "last_event_ns": {
             "$ref": "#/components/schemas/DbCounter"

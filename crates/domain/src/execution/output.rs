@@ -83,6 +83,7 @@ fn quality(value: &NativeDataQualityReportV1) -> Result<(), DomainError> {
     }
     let mut datasets = BTreeSet::new();
     for item in &value.datasets {
+        crate::catalogs::bar_notionals(item)?;
         let ids = instruments(&item.selection)?;
         if !datasets.insert(item.dataset_revision_id)
             || item

@@ -75,6 +75,7 @@ pub fn metadata() -> RuntimeCatalogMetadataV1 {
                 first_event_ns: count(60_000_000_000),
                 last_event_ns: count(180_000_000_000),
                 available_through_ns: count(220_000_000_000),
+                last_bar_notionals: None,
             }],
         },
     }

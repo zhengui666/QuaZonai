@@ -116,6 +116,24 @@ pub struct NativeDatasetQualityV1 {
     pub first_event_ns: DbCounter,
     pub last_event_ns: DbCounter,
     pub available_through_ns: DbCounter,
+    /// None means not measured, never zero liquidity or a future capacity claim.
+    #[schema(min_items = 1, max_items = 256)]
+    pub last_bar_notionals: Option<Vec<NativeBarNotionalV1>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeBarNotionalV1 {
+    #[schema(min_length = 1, max_length = 200)]
+    pub instrument_id: String,
+    #[schema(min_length = 1, max_length = 16)]
+    pub currency: String,
+    pub event_ns: DbCounter,
+    pub available_ns: DbCounter,
+    pub close_price: crate::DecimalValue,
+    pub traded_volume: crate::DecimalValue,
+    /// Native instrument valuation of this last bar's volume at its close.
+    pub notional_value: crate::DecimalValue,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]

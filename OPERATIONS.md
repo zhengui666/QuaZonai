@@ -11,6 +11,11 @@ Candidate原始头、成员和目标快照。需要Operator或精确项目RESEAR
 
 ## 原生计算 Runtime 的独立运行边界
 
+bar-notional/1镜像在非Sealed DATA_VALIDATE中记录最后一根已知BAR的原价格、
+成交量和Nautilus原生名义金额；未测量为null，零成交量不补常数。Sealed不输出
+这些明细。历史收盘估值不等于未来盘口、完整成本或DATA_BACKED资格；当前参与率
+入口仍须完成原生来源消费链，不因质量任务成功自动放开。
+
 受管组合镜像新增portfolio-weights/1：当前权重必须以独立REPORT产物与冻结副本
 一起提供，原生任务核对内容、币种、资产顺序、总和和有效时间。LAST_TARGET不能
 冒称下游快照；缺来源不补全现金。当前这条原生检查不替代Store正式资格与下游来源准入。

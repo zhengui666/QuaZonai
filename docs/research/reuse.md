@@ -10,6 +10,14 @@
 
 ## 已核查并实际运行的 Rust 能力
 
+2026-09-13：原生DATA_VALIDATE的最后BAR名义金额复用已锁定nautilus-model 0.63.0
+`Instrument::try_calculate_notional_value(quantity, price, Some(false))`。已读取本机
+锁定源码`instruments/mod.rs`的原生实现：线性使用quote currency，反向在该参数下
+使用base currency，quanto使用settlement currency，并复用原乘数与Money精度及
+溢出检查。QZ只保留原返回值、币种和时间，不另写估值公式或增加依赖。受管真实
+Parquet CurrencyPair回归核对10m数量、1.02/2.02价格对应USD 10.2m/20.2m；其他
+合约类型的上游API存在不代表已完成QZ逐市场组合验收。该观察不是未来盘口或成本资格。
+
 2026-09-13补充：CVaR风险预算复用Clarabel0.11.1 PowerConeT与原生线性规划，
 已核查锁定crate examples/rust/example_powcone.rs及Apache-2.0许可。
 [风险预算/Expected Shortfall原论文](https://arxiv.org/pdf/2302.01196)提供

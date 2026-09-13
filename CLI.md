@@ -102,6 +102,10 @@ server client --origin https://research.example --credential-file /private/cli.t
 该操作的人工 `OperatorCommand` 为 `DATA_VALIDATE`，grant 的 `target_id` 必须为既有冻结 InputSet。只接受同项目正式登记的 DISCOVERY/VALIDATION 数据，拒绝 SEALED、任意原始报告和artifact-only输入；最多两个并行无Cycle数据验证任务。202返回唯一QUEUED Run，不代表已完成；同一key必须保存相同正文及grant重放。用 `run show/watch` 读取真实状态，用 `run cancel` 申请取消。
 
 Worker在首次提交之前刷新必要的原生探测；提交结果未知时只查询同一远端任务，不能重发新任务。退出Worker只停止新驱动，不等于远端任务已停止，也不会提前archive未知结果。固定任务成功会把原始结果清单和生产者绑定产物原子登记后再确认队列；质量报告不是PIT或Alpha资格。当前该入口及故障回归不替代尚需完成的完整Mission/研究/评估/组合/交付验收。
+bar-notional/1镜像的原生质量报告新增last_bar_notionals：逐资产最后已知BAR的
+价格、数量及Nautilus原生收盘估值名义金额，保留原币种与事件/可用时间。null表示
+未测量；SEALED不输出这些明细。它不是真实逐笔成交额或未来流动性保证，也不会
+自动授予DATA_BACKED、参与率准入或组合资格；原生来源消费链仍须独立核验。
 
 启用原生Mission还须同时提供`--codex-deployment` / `CODEX_DEPLOYMENT`、
 `--mission-api-origin` / `MISSION_API_ORIGIN`、`--mission-workspaces` /

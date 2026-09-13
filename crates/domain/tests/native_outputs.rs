@@ -9,6 +9,8 @@ use contracts::{
 };
 use domain::execution::{output_bindings, output_shape};
 use std::collections::BTreeMap;
+#[path = "../../../tests/support/catalog_metadata.rs"]
+mod catalog_fixture;
 
 fn count(value: u64) -> DbCounter {
     DbCounter::new(value).unwrap()
@@ -77,6 +79,7 @@ fn quality() -> (NativeTaskParametersV1, NativeDataQualityReportV1) {
                 first_event_ns: count(1),
                 last_event_ns: count(2),
                 available_through_ns: count(3),
+                last_bar_notionals: None,
             }],
         },
     )
@@ -122,6 +125,67 @@ fn every_quality_dimension_and_exact_native_selection_are_checked() {
     let foreign = quality().0;
     assert!(!accepts(&foreign, &[output("qz.data_quality", &report)]));
     assert!(!accepts(&parameters, &[]));
+}
+
+#[test]
+fn measured_bar_notionals_preserve_identity_causality_and_zero_volume() {
+    let (parameters, mut report) = quality();
+    report.datasets[0].last_bar_notionals = Some(vec![NativeBarNotionalV1 {
+        instrument_id: "TEST-ASSET.SIM".into(),
+        currency: "USD".into(),
+        event_ns: count(2),
+        available_ns: count(3),
+        close_price: "2".parse().unwrap(),
+        traded_volume: "10".parse().unwrap(),
+        notional_value: "20".parse().unwrap(),
+    }]);
+    assert!(accepts(&parameters, &[output("qz.data_quality", &report)]));
+    for case in 0..12 {
+        let mut changed = report.clone();
+        let values = changed.datasets[0].last_bar_notionals.as_mut().unwrap();
+        match case {
+            0 => values.clear(),
+            1 => values.push(values[0].clone()),
+            2 => values[0].instrument_id = "FOREIGN.SIM".into(),
+            3 => values[0].currency.clear(),
+            4 => values[0].event_ns = count(1),
+            5 => values[0].event_ns = count(4),
+            6 => values[0].available_ns = count(2),
+            7 => values[0].available_ns = count(4),
+            8 => values[0].close_price = "0".parse().unwrap(),
+            9 => values[0].traded_volume = "-1".parse().unwrap(),
+            10 => values[0].notional_value = "-1".parse().unwrap(),
+            _ => values[0].traded_volume = "0".parse().unwrap(),
+        }
+        assert!(
+            !accepts(&parameters, &[output("qz.data_quality", &changed)]),
+            "case {case}"
+        );
+    }
+    let value = &mut report.datasets[0].last_bar_notionals.as_mut().unwrap()[0];
+    value.traded_volume = "0".parse().unwrap();
+    value.notional_value = "0".parse().unwrap();
+    assert!(accepts(&parameters, &[output("qz.data_quality", &report)]));
+}
+
+#[test]
+fn registered_sealed_metadata_rejects_bar_values_but_preserves_unknown_observation() {
+    let mut metadata = catalog_fixture::metadata();
+    let quality = &mut metadata.quality.datasets[0];
+    quality.last_bar_notionals = Some(vec![NativeBarNotionalV1 {
+        instrument_id: quality.instrument_ids[0].clone(),
+        currency: "USD".into(),
+        event_ns: quality.last_event_ns,
+        available_ns: quality.available_through_ns,
+        close_price: "1".parse().unwrap(),
+        traded_volume: "1".parse().unwrap(),
+        notional_value: "1".parse().unwrap(),
+    }]);
+    assert!(domain::catalogs::metadata(&metadata, catalog_fixture::instant(600)).is_ok());
+    metadata.partition = contracts::research::DataPartition::Sealed;
+    assert!(domain::catalogs::metadata(&metadata, catalog_fixture::instant(600)).is_err());
+    metadata.quality.datasets[0].last_bar_notionals = None;
+    assert!(domain::catalogs::metadata(&metadata, catalog_fixture::instant(600)).is_ok());
 }
 
 #[test]

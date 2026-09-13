@@ -69,6 +69,8 @@ Mission不借用它读取额外指标。原Thread反馈仍只披露冻结选择�
 训练索引按输入数据权限保留，不直接作为LLM工具输出或手工冒充Evaluation/资格。
 `job evaluate-sealed-alpha`同样只属可信本机数值入口，不授Sealed读取或预约权限，
 不得由Mission运行或把保留原始分数/标签的报告转交LLM。
+bar-notional/1的DATA_VALIDATE保留非Sealed最后已知BAR的原生收盘估值明细；
+null是未测量，Sealed不输出，不把该观察当作未来流动性、DATA_BACKED或组合资格。
 受管`VALIDATE_ALPHA`仅接受VALIDATION目录、原MODEL/PARAMETERS；同一原生切分器
 在执行与结果采纳侧核对全部折，不允许手工改索引/漏折或借旧镜像声明新能力。
 该受管操作仍非Agent自授Evaluation/Qualification入口。
