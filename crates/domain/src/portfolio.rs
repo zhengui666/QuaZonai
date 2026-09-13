@@ -8,6 +8,22 @@ fn invalid() -> DomainError {
     DomainError::Invalid("portfolio_allocation")
 }
 
+pub fn build_selection(request: &PortfolioBuildRequestV1) -> Result<(), DomainError> {
+    crate::data::bounded_native_limits(&request.limits)?;
+    if !(2..=MAX_ALLOCATION_ASSETS).contains(&request.members.len()) {
+        return Err(DomainError::Invalid("portfolio_members"));
+    }
+    let mut qualifications = BTreeSet::new();
+    if request
+        .members
+        .iter()
+        .any(|m| !qualifications.insert(m.qualification_id))
+    {
+        return Err(DomainError::Invalid("portfolio_duplicate_qualification"));
+    }
+    ensemble_weights(request.members.iter().map(|m| &m.ensemble_weight))
+}
+
 pub fn simulation_settings(
     settings: &contracts::science::NativeSimulationSettingsV1,
 ) -> Result<(), DomainError> {

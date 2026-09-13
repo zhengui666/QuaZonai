@@ -22,6 +22,10 @@ Operator可通过`client portfolio assumptions create/list/show`管理新的不�
 身份代报。保留external_message_id重试，改内容会冲突而非覆盖原报告。此入口只登记
 target-only权重，不收账户或NAV；PAPER为SYNTHETIC，LIVE不自动获得研究资格。
 
+`client portfolio build`使用原Mandate、运行中Cycle、原资格和下游快照引用，需
+精确人工授权，参数见CLI。202仅表示Run入队；尚未完成成功准入到Candidate的
+完整验收。当前仅接通保守零滑点BAR费用来源，不自动放宽其他成本或流动性约束。
+
 `apps/runtime` 的配置、实际原生镜像装配和启动说明集中在 [runtimes/native/README.md](runtimes/native/README.md)，由 `runtime doctor/serve --config` 读取受信任本机文件。网关独占自己的0700状态目录与SQLite日志，以原生OS文件锁防止两个监督者同时使用同一目录。它使用操作者正常授权的Docker Unix socket；无权访问时明确不可用，不修改sudo、用户组、socket权限或改用无隔离执行。
 
 已发送计算与网关进程分开：退出网关不表示任务停止，固定job入口中的GNU timeout仍约束该次原生墙钟。恢复必须保留原始JobSpec、native container ID、发送意图与取消tombstone，查询同一身份；不得清空journal、改ID或重新START已退出容器来伪造恢复。旧原生镜像/输入缺失、Docker不可用或提交结果未知时保留不可用/待对账事实。数据和资格的正式采用仍由控制面独立决定。

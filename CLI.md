@@ -211,6 +211,23 @@ PAPER标为SYNTHETIC；LIVE只证明认证下游提交，不等同独立研究�
 
 ### 不可变 Portfolio Mandate
 
+组合构建入口为`POST /api/v2/portfolio-builds` / `client portfolio build`，请求
+`PortfolioBuildRequestV1`仅引用cycle_id、mandate_id、input_set_id、runtime_id、
+expected_runtime_revision、current_weights_snapshot_id、environment、
+members[{qualification_id,ensemble_weight}]与limits（另含schema_version）。
+Runtime revision及有界大整数使用字符串，成员权重使用精确Decimal字符串。
+CLI需要目标为mandate_id、完整意图相同的PORTFOLIO_BUILD人工grant及原幂等键；
+返回202的原Run回执不代表Candidate已经生成或通过共享资金验证。
+
+```sh
+cargo run --locked -p server -- client --origin https://qz.example --credential-file cli-token --idempotency-key build-original --operator-grant GRANT_UUID portfolio build < build.json
+```
+
+Store核对当前资格、独立Reviewer/原REAL报告、许可、原模型、Forward目录及下游
+原权重，不接收手填预测/持仓/费用。当前费用适配仅原保守BAR、明确零滑点概率的
+taker费用；组/流动性/参与率和其他全成本来源尚未接通，明确报能力不可用。
+成功准入的完整原生链及Candidate发布仍待验收，不能将此命令当作交付入口。
+
 执行假设入口为`POST /api/v2/execution-assumptions`，请求ExecutionAssumptionsCreateV1
 （schema_version、project_id、runtime_id、expected_runtime_revision、input_set_id、
 dataset_revision_id、完整NativeSimulationSettingsV1、settlement_rule_ref）。

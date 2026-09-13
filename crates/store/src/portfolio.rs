@@ -9,7 +9,7 @@ use contracts::{
 };
 use sqlx::{postgres::PgRow, Row};
 
-fn view(r: &PgRow) -> Result<MandateViewV1, StoreError> {
+pub(crate) fn view(r: &PgRow) -> Result<MandateViewV1, StoreError> {
     Ok(MandateViewV1 {
         id: db::id(r.try_get("id")?)?,
         project_id: db::id(r.try_get("project_id")?)?,

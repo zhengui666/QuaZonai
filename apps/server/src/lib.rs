@@ -341,6 +341,10 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         )
         .route("/api/v2/portfolio-mandates/{id}", get(portfolio::get))
         .route(
+            "/api/v2/portfolio-builds",
+            post(portfolio::build).layer(DefaultBodyLimit::max(128 * 1024)),
+        )
+        .route(
             "/api/v2/execution-assumptions",
             post(execution_assumptions::create).layer(DefaultBodyLimit::max(1024 * 1024)),
         )
@@ -490,7 +494,7 @@ control::machine_session,control::issue_grant,runs::list,runs::get,runs::cancel,
 research::input_sets,research::input_set,research::create_input_set,
 research::evaluation_policies,research::evaluation_policy,research::create_evaluation_policy,
 brief::list,brief::get,brief::create,brief::update,
-portfolio::list,portfolio::get,portfolio::create,
+portfolio::list,portfolio::get,portfolio::create,portfolio::build,
 execution_assumptions::list,execution_assumptions::get,execution_assumptions::create,
 forward::weights,
 cycles::freeze,cycles::frozen,cycles::start,cycles::list,cycles::get,cycles::selection,cycles::trials,

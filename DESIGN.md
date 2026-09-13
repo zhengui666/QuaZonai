@@ -1837,6 +1837,24 @@ Mandate与实际求解共用；具体资产/组成员和数值可行性仍由冻
 
 ### A5.2 原生组合求解的可执行合同
 
+正式PORTFOLIO_BUILD命令的外部意图仅含schema_version、cycle_id、mandate_id、
+input_set_id、runtime_id、expected_runtime_revision、current_weights_snapshot_id、
+environment、members[{qualification_id,ensemble_weight}]及有界limits。不得传入
+预测值、模型路径、资产当前权重或费用。Store从原Mandate、已认证下游快照、原资格
+对应的原生评估任务及执行假设恢复这些内容；相同意图重放原Run，不重新选择版本。
+至少两个不同Alpha的当前有效资格，政策与Cycle/原Mandate一致；生命周期、撤销、
+时限、原REAL/PIT数据及当前许可须在准入与发布时重验。原任务参数只能由可信Worker
+读取，不能借组合任务向Mission暴露Sealed数据。首个快照入口不代替LAST_TARGET
+后续来源解析，也不删除完整交付合同。开始Run不是生成Candidate或授予交付资格。
+HTTP入口为POST /api/v2/portfolio-builds，原生CLI为client portfolio build；需要
+Operator或目标为mandate_id、内容完全相同的PORTFOLIO_BUILD单次grant及幂等键。
+返回202和原Run回执，不以内存任务句柄冒充已执行。失败清理沿用Operator事务锁。
+
+当前保守BAR适配的市场目标交易只在原假设明确零滑点概率时，采用原费用文档的
+逐资产taker费率作为费用项；文档字节必须与不可变来源相等。非零滑点、组成员来源、
+流动性/参与率及DATA_BACKED总成本尚须各自原生来源适配，未实现时明确拒绝，
+不能用taker费用冒充完整含滑点成本，也不能把此初始范围当作Issue62完成范围。
+
 组合求解复用已有 Clarabel 0.11.1，不另写优化算法。原生 job 接受固定资产顺序的预测、同顺序协方差、明确的当前目标/现金、资本与数据支持的费用/流动性，不从两个独立 NAV 的平均值构造组合。资产集合上限256；重复或缺失身份、矩阵尺寸/对称性/正定性问题、非有限数、缺当前权重或费用、无真实来源的流动性均明确失败，不补零。协方差必须来自冻结输入的原生估计，单位为每决策周期收益协方差；年化只在明确参数下用于报告，不隐式乘252。
 
 `PortfolioConstraintsV1` 的现金、全局资产上下界、逐资产覆盖、组上下界、gross/net、turnover及参与率都进入同一个原生问题。turnover明确为本次所有资产的绝对目标变动之和（买卖各计一次，现金是剩余资金，不重复计入交易费用）；当前权重及现金必须来自同一个有来源的快照并在容差内合计1。max_participation按每资产可用成交额除以冻结capital换算，缺流动性不放宽。费用为该资产每单位交易名义金额的明确费率，通过原生目标函数纳入；最终共享资金模拟仍使用同一冻结费用假设，不能二次从模拟净收益扣除。

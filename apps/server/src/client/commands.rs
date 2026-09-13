@@ -126,6 +126,8 @@ pub enum Alpha {
 
 #[derive(Subcommand)]
 pub enum Portfolio {
+    /// Queue a source-bound portfolio build, not an approval or delivery.
+    Build,
     #[command(subcommand)]
     Mandate(Mandate),
     #[command(subcommand)]
@@ -499,6 +501,12 @@ impl Command {
                     PATCH, item("/api/v2/projects", id)?, 200, true
                 )?,
             },
+            Self::Portfolio(Portfolio::Build) => {
+                Request::write::<
+                    contracts::portfolio::PortfolioBuildRequestV1,
+                    CommandResult<RunSnapshotV1>,
+                >(POST, "/api/v2/portfolio-builds", 202, true)?
+            }
             Self::Portfolio(Portfolio::Mandate(command)) => {
                 match command {
                     Mandate::Create => Request::write::<

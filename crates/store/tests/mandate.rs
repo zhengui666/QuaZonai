@@ -12,6 +12,59 @@ use store::StoreError;
 use support::research_support as research;
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn portfolio_admission_without_its_running_cycle_never_publishes_or_charges(pool: PgPool) {
+    let (store, actor) = research::operator(&pool).await;
+    let source = support::request(&pool, &store, &actor).await;
+    let mandate = store
+        .create_mandate(&actor, "mandate", &source)
+        .await
+        .unwrap()
+        .resource;
+    let request = PortfolioBuildRequestV1 {
+        schema_version: contracts::SchemaV1,
+        cycle_id: Id::new(),
+        mandate_id: mandate.id,
+        input_set_id: Id::new(),
+        runtime_id: source.runtime_id,
+        expected_runtime_revision: source.expected_runtime_revision,
+        current_weights_snapshot_id: Id::new(),
+        environment: contracts::forward::ForwardEnvironmentV1::Paper,
+        members: vec![
+            PortfolioMemberSelectionV1 {
+                qualification_id: Id::new(),
+                ensemble_weight: "0.5".parse().unwrap(),
+            },
+            PortfolioMemberSelectionV1 {
+                qualification_id: Id::new(),
+                ensemble_weight: "0.5".parse().unwrap(),
+            },
+        ],
+        limits: contracts::lifecycle::JobLimitsV1 {
+            schema_version: contracts::SchemaV1,
+            experiments: 0,
+            cpu_seconds: contracts::DbCounter::new(10).unwrap(),
+            wall_seconds: 10,
+            memory_mib: 64,
+            output_bytes: contracts::DbCounter::new(1024).unwrap(),
+        },
+    };
+    assert!(matches!(
+        store
+            .start_portfolio_build(
+                &actor,
+                "missing-cycle",
+                &request,
+                |_, _| async { panic!("no original source reads without admitted Cycle") },
+                |_| async { panic!("no files without admitted Cycle") }
+            )
+            .await,
+        Err(StoreError::Invalid("portfolio_cycle"))
+    ));
+    let counts: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.portfolio_build_tasks),(SELECT count(*) FROM app.runs WHERE kind='PORTFOLIO_BUILD'),(SELECT count(*) FROM app.command_receipts WHERE operation='PORTFOLIO_BUILD')").fetch_one(&pool).await.unwrap();
+    assert_eq!(counts, (0, 0, 0));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn mandate_versions_are_atomic_immutable_and_original_receipts_replay(pool: PgPool) {
     let (store, actor) = research::operator(&pool).await;
     let request = support::request(&pool, &store, &actor).await;

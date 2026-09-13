@@ -152,6 +152,9 @@ SCORE沿原校准确定，不读取active指针推断，REJECT/未入选/缺证�
 Operator的`client portfolio assumptions create/list/show`保存/读取原生来源绑定的
 不可变假设（字段见CLI）；创建需要冻结非Sealed输入、原登记费率和近期Runtime探测。
 当前入口仅保守BAR，不自动获得DATA_BACKED、资格或交付权限；不修改历史假设。
+`client portfolio build`以原资格、Mandate、Cycle、Forward输入和下游快照引用申请
+Run，CLI需目标Mandate的精确PORTFOLIO_BUILD人工grant。不得手填预测、持仓、费用
+或把202称为合格Candidate；当前完整成功准入/发布链及全成本来源仍待完成。
 浏览器在“组合”选择项目后切到“执行假设”，使用同一创建/列表/详情API；未知响应
 保留原输入重试，不重新生成费用或种子，也不把关闭编辑器当成撤销。
 人工alpha qualifications分页读取原资格及最早撤销（包含未来生效），不读取Sealed

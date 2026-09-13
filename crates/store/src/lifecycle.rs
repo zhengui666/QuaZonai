@@ -28,6 +28,7 @@ mod experiment;
 pub use experiment::ExperimentWork;
 pub mod mission;
 pub mod native;
+mod portfolio;
 mod queue;
 mod sealed;
 mod validation;

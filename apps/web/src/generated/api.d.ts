@@ -1060,6 +1060,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/portfolio-builds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["start_portfolio_build"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/portfolio-mandates": {
         parameters: {
             query?: never;
@@ -3381,6 +3397,10 @@ export interface components {
             request: components["schemas"]["AlphaEvaluateRequestV1"];
         } | {
             /** @enum {string} */
+            operation: "PORTFOLIO_BUILD";
+            request: components["schemas"]["PortfolioBuildRequestV1"];
+        } | {
+            /** @enum {string} */
             operation: "CYCLE_START";
             request: components["schemas"]["CycleStartIntent"];
         } | {
@@ -3474,7 +3494,7 @@ export interface components {
             target_id: components["schemas"]["Id"];
         };
         /** @enum {string} */
-        OperatorOperation: "CODEX_PROFILE_CREATE" | "CODEX_PROFILE_UPDATE" | "CODEX_PROBE" | "CODEX_LOGIN_START" | "CODEX_LOGIN_CANCEL" | "CODEX_LOGOUT" | "DATA_SOURCE_CREATE" | "DATA_SOURCE_UPDATE" | "DATA_GRANT_CREATE" | "DATA_GRANT_REVOKE" | "DATASET_REGISTER" | "DATA_VALIDATE" | "ALPHA_EVALUATE" | "BRIEF_FREEZE" | "CYCLE_START" | "INTEGRATION_SECRET_REGISTER" | "RUNTIME_PROBE" | "RUNTIME_CREATE" | "RUNTIME_UPDATE" | "DOWNSTREAM_CREATE" | "DOWNSTREAM_UPDATE" | "BRIEF_CREATE" | "MANDATE_CREATE" | "EXECUTION_ASSUMPTIONS_CREATE" | "BRIEF_UPDATE" | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PRINCIPAL_CREATE" | "PRINCIPAL_UPDATE" | "CREDENTIAL_ISSUE" | "CREDENTIAL_REVOKE" | "INPUT_SET_CREATE" | "EVALUATION_POLICY_CREATE";
+        OperatorOperation: "CODEX_PROFILE_CREATE" | "CODEX_PROFILE_UPDATE" | "CODEX_PROBE" | "CODEX_LOGIN_START" | "CODEX_LOGIN_CANCEL" | "CODEX_LOGOUT" | "DATA_SOURCE_CREATE" | "DATA_SOURCE_UPDATE" | "DATA_GRANT_CREATE" | "DATA_GRANT_REVOKE" | "DATASET_REGISTER" | "DATA_VALIDATE" | "ALPHA_EVALUATE" | "PORTFOLIO_BUILD" | "BRIEF_FREEZE" | "CYCLE_START" | "INTEGRATION_SECRET_REGISTER" | "RUNTIME_PROBE" | "RUNTIME_CREATE" | "RUNTIME_UPDATE" | "DOWNSTREAM_CREATE" | "DOWNSTREAM_UPDATE" | "BRIEF_CREATE" | "MANDATE_CREATE" | "EXECUTION_ASSUMPTIONS_CREATE" | "BRIEF_UPDATE" | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PRINCIPAL_CREATE" | "PRINCIPAL_UPDATE" | "CREDENTIAL_ISSUE" | "CREDENTIAL_REVOKE" | "INPUT_SET_CREATE" | "EVALUATION_POLICY_CREATE";
         /** @enum {string} */
         PackageSchemaVersion: "1";
         Page_AlphaVersionView: {
@@ -4058,6 +4078,41 @@ export interface components {
         };
         /** @enum {string} */
         PitStatus: "VERIFIED" | "UNVERIFIED" | "INVALID";
+        /** @description Source references only; trusted admission resolves the original native inputs. */
+        PortfolioBuildRequestV1: {
+            current_weights_snapshot_id: components["schemas"]["Id"];
+            cycle_id: components["schemas"]["Id"];
+            environment: components["schemas"]["ForwardEnvironmentV1"];
+            expected_runtime_revision: components["schemas"]["Revision"];
+            input_set_id: components["schemas"]["Id"];
+            limits: {
+                cpu_seconds: components["schemas"]["DbCounter"];
+                /**
+                 * Format: int64
+                 * @description Zero for trusted non-trial stages or Mission control; scientific trials are positive.
+                 */
+                experiments: number;
+                /** Format: int64 */
+                memory_mib: number;
+                output_bytes: components["schemas"]["DbCounter"];
+                schema_version: components["schemas"]["SchemaV1"];
+                /** Format: int64 */
+                wall_seconds: number;
+            } & {
+                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
+                cpu_seconds?: string;
+                /** @enum {integer} */
+                experiments?: 0;
+                memory_mib?: number;
+                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
+                output_bytes?: string;
+                wall_seconds?: number;
+            };
+            mandate_id: components["schemas"]["Id"];
+            members: components["schemas"]["PortfolioMemberSelectionV1"][];
+            runtime_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         PortfolioConstraintsV1: {
             asset_overrides: components["schemas"]["AssetBoundV1"][];
             group_bounds: components["schemas"]["GroupBoundV1"][];
@@ -4087,6 +4142,10 @@ export interface components {
             source: components["schemas"]["PortfolioWeightsSourceV1"];
             valid_until_ns: components["schemas"]["DbCounter"];
             weights: components["schemas"]["AllocationTargetV1"][];
+        };
+        PortfolioMemberSelectionV1: {
+            ensemble_weight: components["schemas"]["DecimalValue"];
+            qualification_id: components["schemas"]["Id"];
         };
         PortfolioWeightsSourceV1: {
             downstream_id: components["schemas"]["Id"];
@@ -10168,6 +10227,90 @@ export interface operations {
             429: {
                 headers: {
                     "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    start_portfolio_build: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PortfolioBuildRequestV1"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_RunSnapshotV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
                     [name: string]: unknown;
                 };
                 content: {

@@ -3,6 +3,40 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Portfolio build admission and command boundary, 2026-09-13
+
+Working source over `22c4d123093edae586583130ca462097139d2711` adds source-reference
+PortfolioBuildRequestV1, Operator command/grant, migration 050 and the Store
+transaction on the existing Cycle budget/PGMQ/native task binding. HTTP
+`POST /api/v2/portfolio-builds` and native `client portfolio build` use the existing
+bounded object read/publication and Operator-lock cleanup. The request cannot supply
+forecasts, current positions, model paths or costs. Original Mandate, Forward data,
+downstream weights, qualifications, independent Reviewer PASS, REAL evaluation
+report/Attempt, native parameters/image and current licenses are checked in code.
+Qualification rows use FOR UPDATE, including conflict with revocation FK key-share;
+checks after file publication repeat eligibility and expiration. Cost document bytes
+must equal immutable original settings. Current adapter only accepts conservative
+BAR with explicit zero slippage and original taker fees; remaining full-cost/group/
+liquidity/participation adapters are not implemented or silently relaxed.
+
+`verify-JFADjl` exited 0 with source unchanged: all-target check/fmt/strict Clippy,
+contracts/domain, 34 numerical/native, 8 Store, one original qualification SQL
+preparation and 20 HTTP/CLI tests passed. New domain cases reject duplicate
+qualifications, non-unit/negative weights, unbounded limits and caller-invented
+weights. Real PostgreSQL verifies missing-Cycle admission publishes no file, Run or
+receipt. The real TCP/native CLI test verifies exact human grant, failure retry
+without consuming it, changed-intent rejection and no admitted Run. An earlier
+test used numeric Runtime revision instead of its string contract; corrected.
+The SQL preparation check proves PostgreSQL accepts the actual source query,
+not that a valid REAL qualification was created or successfully admitted.
+
+`web-verify-gymnbK` full verification exited 0, six generated outputs reproduced,
+handwritten sources unchanged: type/unit/build/wire/native help and both browser
+suites passed. This phase does NOT prove successful original qualification-to-build
+admission, concurrent revocation behavior end to end, Candidate publication, shared
+capital evaluation, Release or T42. Those are required next, alongside the remaining
+full Issue #62 scope. No GitHub CI/review/merge or Issue closure is claimed.
+
 ## Authenticated downstream current-weight ingestion, 2026-09-13
 
 Working source over `623f033aa6537659291b1cf4a1883ed2a31b99c1` adds the strict
