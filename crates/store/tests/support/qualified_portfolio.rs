@@ -708,6 +708,17 @@ async fn qualified_chain(pool: PgPool, with_liquidity: bool) {
             .await,
         Err(StoreError::Integrity)
     ));
+    let pending: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM app.candidate_simulation_tasks WHERE candidate_id=$1",
+    )
+    .bind(candidate.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        pending, 0,
+        "failed parameter publication leaves no simulation binding"
+    );
     let simulated = store
         .start_candidate_simulation(
             &actor,
@@ -738,6 +749,29 @@ async fn qualified_chain(pool: PgPool, with_liquidity: bool) {
         .unwrap();
     assert!(replay.replayed);
     assert_eq!(replay.resource.id, simulated.id);
+    let bindings: Vec<(uuid::Uuid, uuid::Uuid, uuid::Uuid, serde_json::Value)> = sqlx::query_as("SELECT candidate_id,policy_id,dataset_revision_id,request FROM app.candidate_simulation_tasks WHERE run_id=$1")
+        .bind(simulated.id.as_uuid()).fetch_all(&pool).await.unwrap();
+    assert_eq!(bindings.len(), 1, "replay preserves one original binding");
+    assert_eq!(bindings[0].0, candidate.as_uuid());
+    assert_eq!(bindings[0].2, dataset.as_uuid());
+    assert_eq!(bindings[0].3, serde_json::to_value(&simulate).unwrap());
+    let original_policy: uuid::Uuid = sqlx::query_scalar("SELECT m.required_evaluation_policy_id FROM app.portfolio_candidates c JOIN app.portfolio_mandates m ON m.id=c.mandate_id WHERE c.id=$1")
+        .bind(candidate.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(bindings[0].1, original_policy);
+    for statement in [
+        "UPDATE app.candidate_simulation_tasks SET request=request WHERE run_id=$1",
+        "DELETE FROM app.candidate_simulation_tasks WHERE run_id=$1",
+    ] {
+        let error = sqlx::query(statement)
+            .bind(simulated.id.as_uuid())
+            .execute(&pool)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.as_database_error().unwrap().code().as_deref(),
+            Some("23000")
+        );
+    }
     let (parameter,size):(uuid::Uuid,i64)=sqlx::query_as("SELECT t.parameters_artifact_id,a.byte_count FROM app.run_native_tasks t JOIN app.artifacts a ON a.id=t.parameters_artifact_id WHERE t.run_id=$1")
         .bind(simulated.id.as_uuid()).fetch_one(&pool).await.unwrap();
     let bytes = f

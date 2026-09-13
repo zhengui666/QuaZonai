@@ -1967,6 +1967,13 @@ annualization_factor=252。三者method_version=0.63.0、frequency=UTC_DAY；
 所有指标绑定原产物和Evaluation身份，再交既有精确政策比较器；适配本身不创建
 Evaluation、不批准Release，保持目标模拟也不冒充策略滚动评估。
 
+Candidate模拟准入在同一原Run/PGMQ事务冻结candidate_simulation_tasks：run_id主键、
+candidate_id、policy_id、dataset_revision_id及完整原请求request。政策必须是原
+Candidate/Mandate所需政策并与原Cycle一致；数据是原冻结Forward输入的精确成员。
+数据库外键与不可变触发器保留这些原身份，不因重试、政策新版本或后续Candidate
+替换而改写。原参数发表失败或入队失败不留下该绑定；同意图重放返回原Run。
+此关联供终态评估发布/ACK恢复消费，本身不创建评估或授予PASS。
+
 `unique(candidate_alphas.candidate_id,alpha_version_id)`、`unique(candidate_targets.candidate_id,instrument_id)` 是数据库约束，不是普通索引。重复相同请求幂等，冲突409；至少两个不同alpha_id的合格版本才满足多Alpha，不以同Alpha多个版本或重复条目凑数。发布验证每资产唯一权重，再校验sum/gross/net/cash/约束。
 
 ### A5.2 原生组合求解的可执行合同

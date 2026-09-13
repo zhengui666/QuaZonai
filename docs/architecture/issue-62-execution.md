@@ -3,6 +3,20 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Durable original Candidate simulation admission, 2026-09-13
+
+Migration056 adds immutable candidate_simulation_tasks with original Run, Candidate,
+policy, Forward dataset revision and complete request. Admission saves it in the
+existing Run/native-task/PGMQ transaction after parameter publication; no new queue
+or mutable result state. Replay returns the original Run and binding.
+
+verify-3aWy9R passed both original qualified portfolio chains on a89a11f4 plus frozen
+patches, including parameter-publication rollback (no binding), exact Candidate/
+policy/dataset/request readback, one binding after replay, and database UPDATE/DELETE
+rejection. Workspace check/fmt/strict Clippy passed; source unchanged and isolated
+PostgreSQL stopped. These controlled scientific declarations are not REAL/PIT/T42.
+This durable relation does not yet publish a Candidate Evaluation or change ACK.
+
 ## Native portfolio metric mapping, 2026-09-13
 
 The domain adapter binds the original simulation request and canonical account/time

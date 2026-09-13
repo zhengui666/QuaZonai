@@ -306,6 +306,10 @@ impl Store {
             },
         )
         .await?;
+        sqlx::query("INSERT INTO app.candidate_simulation_tasks(run_id,candidate_id,policy_id,dataset_revision_id,request) VALUES($1,$2,$3,$4,$5)")
+            .bind(run.resource.id.as_uuid()).bind(request.candidate_id.as_uuid()).bind(policy)
+            .bind(dataset.selection.dataset_revision_id.as_uuid()).bind(db::json(request)?)
+            .execute(&mut *tx).await?;
         commands::recheck_authority(&mut tx, actor, &prepared).await?;
         if !publication::windows_current(
             &mut tx,

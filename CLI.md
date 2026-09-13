@@ -566,6 +566,8 @@ PORTFOLIO_RETURN_VOLATILITY、PORTFOLIO_SHARPE_RATIO；方法分别为
 nautilus-analysis.ReturnsAverage/ReturnsVolatility/SharpeRatio，版本0.63.0、
 频率UTC_DAY，后两项保留原生252日年化。单位与缺值合同见DESIGN A5；不把
 日内不足样本补零，不借指标映射授予Evaluation或Release。
+Candidate模拟Run同事务冻结原Candidate、政策、Forward数据版本及完整请求；
+相同Idempotency-Key重放不重新选择来源，失败不遗留任务绑定。
 评估政策创建需要同项目已冻结 comparison 输入、执行假设和完整 selection、
 split、required 指标等意图。policy 版本和 experiment_family/root_lineage
 由服务端同事务分配，客户端不能挑选新谱系来清除暴露。WALK_FORWARD 使用
