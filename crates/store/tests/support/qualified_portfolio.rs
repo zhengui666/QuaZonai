@@ -8,6 +8,8 @@ use store::turns::{NativePublicSummary, TurnOutcome, UsageReceipt};
 mod inputs;
 #[path = "portfolio_result.rs"]
 mod result;
+#[path = "candidate_simulation_result.rs"]
+mod simulation_result;
 
 async fn begin(store: &Store, lease: &RunLease) {
     store
@@ -124,6 +126,11 @@ async fn qualified_chain(pool: PgPool, with_liquidity: bool) {
             policy.selection.candidate_count = 2;
             policy.maximum_sealed_uses_per_lineage = 2;
             policy.sealed_metric_requirements[0].threshold_low = Some("0.1".parse().unwrap());
+            let mut portfolio = policy.metric_requirements[0].clone();
+            portfolio.metric_code = "PORTFOLIO_DAILY_RETURN_MEAN".into();
+            portfolio.scope = "portfolio".into();
+            portfolio.method_allowlist = vec!["nautilus-analysis.ReturnsAverage".into()];
+            policy.portfolio_metric_requirements = Some(vec![portfolio]);
         },
     )
     .await;
@@ -803,6 +810,202 @@ async fn qualified_chain(pool: PgPool, with_liquidity: bool) {
             .await
             .unwrap();
     assert_eq!(evaluations, 0, "admission never invents Evaluation");
+    let message = store
+        .read_run_messages(60, 100)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|message| message.run_id == simulated.id)
+        .unwrap();
+    store
+        .cancel_run(
+            &actor,
+            "cancel-original-candidate-simulation",
+            simulated.id,
+            &contracts::lifecycle::RunCancelV1 {
+                schema_version: SchemaV1,
+                expected_revision: simulated.revision,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(
+            store.acknowledge_run(&message).await,
+            Err(StoreError::Conflict)
+        ),
+        "terminal receipt alone cannot ACK before Candidate Evaluation"
+    );
+    assert!(matches!(
+        store
+            .publish_scientific_result(
+                simulated.id,
+                |_, _| async { panic!("cancelled task has no native output") },
+                |_| async { Err(StoreError::Integrity) }
+            )
+            .await,
+        Err(StoreError::Integrity)
+    ));
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM app.evaluations WHERE run_id=$1")
+        .bind(simulated.id.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0, "failed report publication rolls back evaluation");
+    let publish = || {
+        store.publish_scientific_result(
+            simulated.id,
+            |_, _| async { panic!("cancelled task has no native output") },
+            |object| {
+                std::future::ready(
+                    f.objects
+                        .put(object.id, &object.bytes)
+                        .map_err(|_| StoreError::Integrity),
+                )
+            },
+        )
+    };
+    let (left, right) = tokio::join!(publish(), publish());
+    let left = left.unwrap().unwrap();
+    let right = right.unwrap().unwrap();
+    assert_eq!(left.resource, right.resource);
+    assert_ne!(
+        left.replayed, right.replayed,
+        "only one original publication"
+    );
+    let facts:(uuid::Uuid,String,String,String,i64)=sqlx::query_as("SELECT e.subject_candidate_id,e.evaluation_kind,e.execution_status,e.decision,(SELECT count(*) FROM app.metric_values v WHERE v.evaluation_id=e.id) FROM app.evaluations e JOIN app.evaluation_publications p ON p.evaluation_id=e.id WHERE e.id=$1")
+        .bind(left.resource.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        facts,
+        (
+            candidate.as_uuid(),
+            "FORWARD".into(),
+            "CANCELLED".into(),
+            "INCONCLUSIVE".into(),
+            0
+        )
+    );
+    let replay = store
+        .publish_scientific_result(
+            simulated.id,
+            |_, _| async { panic!("replay cannot reread native objects") },
+            |_| async { panic!("replay cannot republish") },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.resource, left.resource);
+    store.acknowledge_run(&message).await.unwrap();
+    let successful = store
+        .start_candidate_simulation(
+            &actor,
+            "intraday-original-candidate-simulation",
+            &simulate,
+            |id, size| f.read(id, size),
+            |object| {
+                std::future::ready(
+                    f.objects
+                        .put(object.id, &object.bytes)
+                        .map_err(|_| StoreError::Integrity),
+                )
+            },
+        )
+        .await
+        .unwrap()
+        .resource;
+    let message = validation_publication::message(&pool, successful.id).await;
+    let Some(ClaimResult::Leased(lease)) = store
+        .claim_native_run(&message, "original-candidate-hold", 60)
+        .await
+        .unwrap()
+    else {
+        panic!("native Candidate simulation lease");
+    };
+    let job = store.native_job(successful.id, &lease.fence).await.unwrap();
+    simulation_result::complete(&pool, &store, &f, &lease, &job).await;
+    assert!(matches!(
+        store.acknowledge_run(&message).await,
+        Err(StoreError::Conflict)
+    ));
+    assert!(matches!(
+        store
+            .publish_scientific_result(
+                successful.id,
+                |id, size| f.read(id, size),
+                |_| async { Err(StoreError::Integrity) }
+            )
+            .await,
+        Err(StoreError::Integrity)
+    ));
+    assert!(matches!(
+        store
+            .publish_scientific_result(successful.id, changed_costs, |_| async {
+                panic!("changed original settings cannot publish Evaluation")
+            })
+            .await,
+        Err(StoreError::Integrity)
+    ));
+    let published = std::cell::Cell::new(false);
+    let changed_during_publication = store
+        .publish_scientific_result(
+            successful.id,
+            |id, size| {
+                let published = &published;
+                async move {
+                    if published.get() {
+                        changed_costs(id, size).await
+                    } else {
+                        fixture.read(id, size).await
+                    }
+                }
+            },
+            |object| {
+                let result = f
+                    .objects
+                    .put(object.id, &object.bytes)
+                    .map_err(|_| StoreError::Integrity);
+                published.set(true);
+                std::future::ready(result)
+            },
+        )
+        .await;
+    assert!(matches!(
+        changed_during_publication,
+        Err(StoreError::Integrity)
+    ));
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM app.evaluations WHERE run_id=$1")
+        .bind(successful.id.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        count, 0,
+        "post-publication source change rolls back Evaluation"
+    );
+    assert!(matches!(
+        store.acknowledge_run(&message).await,
+        Err(StoreError::Conflict)
+    ));
+    let evaluated = store
+        .publish_scientific_result(
+            successful.id,
+            |id, size| f.read(id, size),
+            |object| {
+                std::future::ready(
+                    f.objects
+                        .put(object.id, &object.bytes)
+                        .map_err(|_| StoreError::Integrity),
+                )
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let facts:(String,String,i64,bool)=sqlx::query_as("SELECT e.execution_status,e.decision,(SELECT count(*) FROM app.metric_values v WHERE v.evaluation_id=e.id AND v.status='INSUFFICIENT_DATA' AND v.value IS NULL AND v.reason_code='PORTFOLIO_DAILY_RETURNS_UNAVAILABLE'),e.valid_until IS NOT NULL FROM app.evaluations e JOIN app.evaluation_publications p ON p.evaluation_id=e.id WHERE e.id=$1")
+        .bind(evaluated.resource.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(facts, ("SUCCEEDED".into(), "INCONCLUSIVE".into(), 3, true));
+    store.acknowledge_run(&message).await.unwrap();
     let snapshot="SELECT (SELECT count(*) FROM app.portfolio_build_tasks),(SELECT count(*) FROM app.runs),(SELECT count(*) FROM app.artifacts),reserved_cpu_seconds FROM app.research_cycles WHERE id=$1";
     let before: (i64, i64, i64, i64) = sqlx::query_as(snapshot)
         .bind(cycle.as_uuid())

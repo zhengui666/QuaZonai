@@ -54,7 +54,7 @@ target-only权重，不收账户或NAV；PAPER为SYNTHETIC，LIVE不自动获得
 实际模拟继续使用原模型和原费率，不二次扣规划成本，不放宽其他来源/流动性约束。
 原生candidate-simulation/2可在原目标有效区间内保持该目标模拟，读取原目标与费用
 文件，不将最终权重放回产生之前。它不是恢复真实持仓，也不是已交付的Evaluation
-或Release入口；独立政策/指标和正式评估发布仍待接通。
+或Release入口；可信Worker的保持研究评估与正式策略滚动评估/交付分开，后者仍待验收。
 `client portfolio simulate`通过原来源准入申请保持模拟Run（参数见CLI），需
 精确Candidate的人工授权。不要手工提交原生任务、回填可用时间或把202当作评估；
 完整科学/评估发布及交付链仍待验收。
@@ -66,6 +66,9 @@ PASS条件，不能借用Alpha/Sealed阈值。保存条件本身不是组合评�
 自动换成新政策或新目标。这是恢复关联，不表示评估已经通过。
 candidate-simulation/2分别输出完整原登记窗口的数据质量报告和实际保持窗口的
 模拟报告；前者核对载入覆盖，后者提供日收益，不混用两种计数。
+Worker现从原模拟任务发表不可变FORWARD保持研究评估，再确认原队列消息；
+发表或来源复核失败会重试。该评估不是Release监控窗口，不自动审批或交付。
+成功进程仍可能因缺条件或日样本不足得到INCONCLUSIVE。
 
 `apps/runtime` 的配置、实际原生镜像装配和启动说明集中在 [runtimes/native/README.md](runtimes/native/README.md)，由 `runtime doctor/serve --config` 读取受信任本机文件。网关独占自己的0700状态目录与SQLite日志，以原生OS文件锁防止两个监督者同时使用同一目录。它使用操作者正常授权的Docker Unix socket；无权访问时明确不可用，不修改sudo、用户组、socket权限或改用无隔离执行。
 

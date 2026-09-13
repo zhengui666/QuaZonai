@@ -315,7 +315,7 @@ impl Store {
         if !publication::windows_current(
             &mut tx,
             &original,
-            db::id(assumption_inputs)?,
+            &[db::id(assumption_inputs)?, request.input_set_id],
             until,
             source.document.valid_until,
         )

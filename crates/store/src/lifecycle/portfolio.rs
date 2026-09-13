@@ -12,9 +12,11 @@ use contracts::{
 use native::{bind_task, NativeObjectPublication, NativeTaskDefinition};
 use std::collections::BTreeSet;
 
+mod evaluation;
 mod publication;
 mod simulation;
 mod weights;
+pub(super) use evaluation::publish as publish_evaluation;
 pub(super) use publication::publish;
 
 // FOR UPDATE also conflicts with the revocation insert's native FK key-share
@@ -445,7 +447,7 @@ impl Store {
         if !publication::windows_current(
             &mut tx,
             request,
-            db::id(assumption.try_get("input_set_id")?)?,
+            &[db::id(assumption.try_get("input_set_id")?)?],
             weights_deadline,
             target_until,
         )

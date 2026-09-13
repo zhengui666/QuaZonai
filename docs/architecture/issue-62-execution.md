@@ -3,6 +3,46 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Candidate HOLD Evaluation publication and ACK, 2026-09-14
+
+The trusted scientific continuation now consumes the original immutable Candidate
+simulation binding, terminal receipt, Attempt/spec, parameters and both original
+manifest outputs. It publishes one sealed FORWARD/HOLD Evaluation and native
+MetricValues using the separate frozen portfolio requirements, original-window
+registered-row coverage, actual daily samples, source eligibility and validity.
+No criteria means INCONCLUSIVE. Failed/cancelled execution has no invented metrics.
+This is not a Release forward-evidence window, strategy walk-forward or approval.
+
+The original Run lock and existing evaluation publication trigger own idempotency
+and metric membership. ACK requires this exact Run/Candidate/policy publication.
+The existing report writer is reused. Original target/settings/metadata/fees/member
+and input eligibility are checked before and after report publication. The shared
+final SQL window now includes the current Forward input as well as the original
+Build and assumptions inputs. Report/transaction failure leaves the original
+message for recovery; replay does not republish or refresh expiry.
+
+Verified on 3b3249db plus frozen patches:
+
+- verify-78DZwU passed both original qualified chains with cancelled-run ACK
+  blocking, failed report rollback, concurrent one-publication/replay and final ACK.
+- verify-Fe0EN7 added successful-process, insufficient-daily-data publication from
+  a controlled original double-output protocol receipt. No SQL qualifications were
+  authored; this controlled receipt is not a native numerical execution claim.
+- Additional pre/post-publication cost-file mutation checks exposed caller-future
+  stack exhaustion; the shared continuation now uses standard Box::pin, without
+  changing test/host stack configuration. verify-tAzoxC passed both chains after
+  that fix, including original independent criteria, three missing-value metrics,
+  retained validity, source-change rollback, concurrent replay and ACK recovery.
+- verify-bRNrAr passed all 203 evidence regressions and strict checks. After the
+  final all-input expiry check, verify-S3W4Tg again passed both original chains and
+  verify-6Ojl3X passed all 225 mandate/native/Store/source/window/HTTP/CLI checks.
+  All final verifiers reported unchanged source; isolated PostgreSQL was stopped.
+
+No contract/native-job/API/UI change was made in this slice. Candidate Evaluation
+read projections, genuine cross-day Store-to-native PASS, formal portfolio science,
+Release/delivery and complete T42 remain outstanding. Do not claim them from these
+controlled protocol tests or merge PR #63 on this partial evidence.
+
 ## Original-source coverage beside Candidate simulation, 2026-09-13
 
 candidate-simulation/2 freezes source_selection from the original registered

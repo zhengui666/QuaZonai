@@ -412,7 +412,7 @@ where
     if !windows_current(
         tx,
         request,
-        db::id(costs)?,
+        &[db::id(costs)?],
         frozen.current_weights.valid_until_ns,
         until,
     )
@@ -428,7 +428,7 @@ where
 pub(super) async fn windows_current(
     tx: &mut Tx<'_>,
     request: &PortfolioBuildRequestV1,
-    costs: Id,
+    additional_inputs: &[Id],
     weights_until: DbCounter,
     target_until: DateTime<Utc>,
 ) -> Result<bool, StoreError> {
@@ -437,7 +437,10 @@ pub(super) async fn windows_current(
         .iter()
         .map(|m| m.qualification_id.as_uuid())
         .collect();
-    let inputs = [request.input_set_id.as_uuid(), costs.as_uuid()];
+    let inputs: Vec<_> = std::iter::once(request.input_set_id)
+        .chain(additional_inputs.iter().copied())
+        .map(Id::as_uuid)
+        .collect();
     Ok(sqlx::query_scalar(WINDOWS_CURRENT)
         .bind(qualifications)
         .bind(inputs.as_slice())
@@ -448,7 +451,7 @@ pub(super) async fn windows_current(
         .await?)
 }
 
-async fn document<P, Published>(
+pub(super) async fn document<P, Published>(
     tx: &mut Tx<'_>,
     run: &RunSnapshotV1,
     id: Id,

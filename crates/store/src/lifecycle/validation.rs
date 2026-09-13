@@ -30,6 +30,13 @@ impl Store {
         if locked.run.kind == RunKind::PortfolioBuild {
             return super::portfolio::publish(tx, locked, read, publish).await;
         }
+        if locked.run.kind == RunKind::PortfolioSimulate {
+            // Keep the scientific continuation off the Worker/caller future's stack.
+            return Box::pin(super::portfolio::publish_evaluation(
+                tx, locked, read, publish,
+            ))
+            .await;
+        }
         let held_out: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM app.sealed_evaluation_tasks WHERE run_id=$1)",
         )

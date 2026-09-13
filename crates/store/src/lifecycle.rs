@@ -1158,7 +1158,9 @@ impl Store {
             .bind(message.run_id.as_uuid()).fetch_one(&mut *tx).await?;
         let candidate_pending: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.portfolio_build_tasks b WHERE b.run_id=$1 AND NOT EXISTS(SELECT 1 FROM app.portfolio_candidates c JOIN app.candidate_publications p ON p.candidate_id=c.id WHERE c.run_id=b.run_id))")
             .bind(message.run_id.as_uuid()).fetch_one(&mut *tx).await?;
-        if evaluation_pending || sealed_pending || candidate_pending {
+        let simulation_pending: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.candidate_simulation_tasks s WHERE s.run_id=$1 AND NOT EXISTS(SELECT 1 FROM app.evaluations e JOIN app.evaluation_publications p ON p.evaluation_id=e.id WHERE e.run_id=s.run_id AND e.subject_candidate_id=s.candidate_id AND e.policy_id=s.policy_id AND e.evaluation_kind='FORWARD'))")
+            .bind(message.run_id.as_uuid()).fetch_one(&mut *tx).await?;
+        if evaluation_pending || sealed_pending || candidate_pending || simulation_pending {
             return Err(StoreError::Conflict);
         }
         if locked.run.state == RunState::Succeeded

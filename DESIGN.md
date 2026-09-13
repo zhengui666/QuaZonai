@@ -1982,6 +1982,21 @@ source_selection覆盖实际选择且bar_types/maximum_rows一致，不能借此
 原登记cutoff不因项目cutoff变晚而扩张。后续缺失比例核对原窗口载入行数与登记行数，
 日收益样本数仍只来自实际模拟；质量检查不是收益、PIT认证或策略滚动评估。
 
+可信Worker在原消息ACK前为candidate_simulation_tasks发布不可变FORWARD Evaluation：
+subject为原Candidate，原Forward InputSet及原政策不变。FORWARD在此表示该候选
+发布后的保持目标研究，不是已执行Release的Forward evidence window，不自动触发
+退化、审批或交付。原Run锁、终态回执、Attempt/spec、参数和双报告manifest必须吻合。
+指标使用独立portfolio_metric_requirements；null为INCONCLUSIVE，不复制Alpha条件。
+实际日收益数检查minimum_observations；原完整登记窗口质量行数与登记行数以
+整数/Decimal核对maximum_missing_fraction，超出登记数量INVALID，缺失超限或样本
+不足INCOMPLETE。REAL要求原任务来源与登记REAL/VERIFIED/AS_KNOWN_THEN同时成立。
+原目标、执行假设、费用、成员资格、许可及期限在报告发表前后重验；原Build、
+执行假设和本次Forward输入的全部许可期限在同一最终SQL时点核对。
+损坏或发表失败回滚并保留原消息。已不合资格或到期只保留不通过证据，不伪造指标。有效期不晚于
+原生完成时间加政策TTL及原目标期限；重放不刷新。取消/失败以原终态发表
+INCONCLUSIVE且无指标，不能声称远端已停止。Evaluation、MetricValue、静态原因及
+原报告引用在同一事务封口；只有精确关联的已封口Evaluation才允许ACK。
+
 `unique(candidate_alphas.candidate_id,alpha_version_id)`、`unique(candidate_targets.candidate_id,instrument_id)` 是数据库约束，不是普通索引。重复相同请求幂等，冲突409；至少两个不同alpha_id的合格版本才满足多Alpha，不以同Alpha多个版本或重复条目凑数。发布验证每资产唯一权重，再校验sum/gross/net/cash/约束。
 
 ### A5.2 原生组合求解的可执行合同

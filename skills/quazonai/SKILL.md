@@ -9,6 +9,8 @@ Read ../../DESIGN.md and ../../AGENTS.md before changes. Actual commands are in 
 Evaluation或Release。实际子进程验证使用cargo test -p job --test simulation --locked。
 candidate-simulation/2复用DATA_VALIDATE输出原source_selection的qz.data_quality，
 另输出实际窗口qz.native_simulation；完整原manifest必须同时绑定两份报告。
+Candidate保持研究的可信发布器从原双报告、独立政策与来源复核发表FORWARD
+Evaluation，封口后才ACK；不授Release或下游权限。成功进程不等于指标PASS。
 
 机器 Bearer 校验出现429时遵守 Retry-After，不用并发重试占用计算槽；不要索取或执行本机 SecretVault 回收命令。人工授权的准确重试只读取原回执，不延长授权或重新消费TOTP。
 

@@ -271,7 +271,10 @@ qz.native_simulation；两者随原manifest绑定，不能把缩窄窗口行数�
 一个原目标点，生效/选择起点取原asof与原Candidate可用时间较晚者，终点不超过
 原valid_until；可用时间须由可信准入绑定，不允许人工回填。job重读两份文件，
 拒绝身份、权重/现金、时间或设置不同。不回放到Candidate产生前，不恢复实际账户，
-不因原生成功生成Evaluation/PASS/Release；评估发布尚待完成。
+成功进程不等于PASS或Release。可信Worker从原任务双报告发布Candidate的FORWARD
+保持研究Evaluation，并在封口后才ACK；完整策略滚动评估及交付链仍待验收。
+原政策portfolio_metric_requirements、日收益样本数、原目录载入覆盖及当前来源
+分别核对；取消/失败和证据不足保留INCONCLUSIVE，重放不刷新有效期。
 
 `POST /api/v2/candidate-simulations`与`client portfolio simulate`使用
 CandidateSimulationRequestV1，只有schema_version、
