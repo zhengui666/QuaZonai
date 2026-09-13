@@ -440,6 +440,137 @@ fn invalid_or_unsupported_inputs_are_not_silently_repaired() {
 }
 
 #[test]
+fn native_variance_risk_budgeting_is_not_minimum_variance_or_capital_weighting() {
+    let mut request = input();
+    request.objective = AllocationObjective::RiskBudgeting;
+    let assets = request
+        .assets
+        .iter()
+        .map(|a| RiskBudgetAssetV1 {
+            instrument_id: a.instrument_id.clone(),
+            share: decimal("0.5"),
+            sign: RiskBudgetSign::Long,
+        })
+        .collect();
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    parameters.risk_budgeting = Some(RiskBudgetSettingsV1 {
+        schema_version: contracts::SchemaV1,
+        risky_gross_exposure: decimal("1"),
+        assets,
+    });
+    let actual = weights(&request);
+    near(actual[0], 2.0 / 3.0);
+    near(actual[1], 1.0 / 3.0);
+    for mutation in 0..5 {
+        let mut bad = request.clone();
+        let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut bad.optimizer else {
+            unreachable!()
+        };
+        let budget = parameters.risk_budgeting.as_mut().unwrap();
+        match mutation {
+            0 => budget.assets[1].instrument_id = budget.assets[0].instrument_id.clone(),
+            1 => {
+                budget.assets.pop();
+            }
+            2 => budget.assets[0].share = decimal("0.49"),
+            3 => budget.risky_gross_exposure = decimal("0"),
+            _ => budget.assets[0].instrument_id = "UNKNOWN.EXAMPLE".into(),
+        }
+        assert!(job::allocate(&bad).is_err());
+    }
+    request.assets[0].transaction_cost_rate = decimal("0.3");
+    let with_cost = weights(&request);
+    near(with_cost[0], 2.0 / 3.0);
+    near(with_cost[1], 1.0 / 3.0);
+    let mut corrupt = job::allocate(&request).unwrap();
+    corrupt.targets.as_mut().unwrap()[0].weight = decimal("0.8");
+    corrupt.targets.as_mut().unwrap()[1].weight = decimal("0.2");
+    assert!(domain::portfolio::allocation_result(&request, &corrupt).is_err());
+    request.constraints.asset_overrides = vec![AssetBoundV1 {
+        instrument_id: request.assets[0].instrument_id.clone(),
+        min: decimal("0"),
+        max: decimal("0.5"),
+    }];
+    let impossible = job::allocate(&request).unwrap();
+    assert_eq!(impossible.solver_status, SolverStatus::Infeasible);
+    assert!(impossible.targets.is_none() && impossible.cash_weight.is_none());
+    request.constraints.asset_overrides.clear();
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    let budget = parameters.risk_budgeting.as_mut().unwrap();
+    budget.assets[0].share = decimal("0.2");
+    budget.assets[1].share = decimal("0.8");
+    budget.assets.reverse();
+    let actual = weights(&request);
+    near(actual[0], 0.5);
+    near(actual[1], 0.5);
+    request.return_history.asset_returns[1] = vec![0.0, 2.0, 4.0, 6.0, 3.0];
+    let correlated = weights(&request);
+    let ratio = (89.0_f64.sqrt() - 3.0) / 8.0;
+    near(correlated[0], ratio / (1.0 + ratio));
+    near(correlated[1], 1.0 / (1.0 + ratio));
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    parameters.max_iterations = 1;
+    let exhausted = job::allocate(&request).unwrap();
+    assert_eq!(exhausted.solver_status, SolverStatus::Failed);
+    assert!(exhausted.targets.is_none() && exhausted.iterations <= 1);
+}
+
+#[test]
+fn native_risk_budgeting_preserves_explicit_short_direction_and_zero_share() {
+    let mut request = input();
+    request.objective = AllocationObjective::RiskBudgeting;
+    request.constraints.long_only = false;
+    request.constraints.min_asset_weight = decimal("-1");
+    request.constraints.min_net_exposure = decimal("-1");
+    request.constraints.max_cash_weight = decimal("1");
+    let assets = request
+        .assets
+        .iter()
+        .enumerate()
+        .map(|(i, a)| RiskBudgetAssetV1 {
+            instrument_id: a.instrument_id.clone(),
+            share: decimal("0.5"),
+            sign: if i == 0 {
+                RiskBudgetSign::Long
+            } else {
+                RiskBudgetSign::Short
+            },
+        })
+        .collect();
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    parameters.risk_budgeting = Some(RiskBudgetSettingsV1 {
+        schema_version: contracts::SchemaV1,
+        risky_gross_exposure: decimal("1"),
+        assets,
+    });
+    let actual = weights(&request);
+    near(actual[0], 2.0 / 3.0);
+    near(actual[1], -1.0 / 3.0);
+    request.constraints.min_asset_weight = decimal("0");
+    request.constraints.long_only = true;
+    assert!(job::allocate(&request).is_err());
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    let budget = parameters.risk_budgeting.as_mut().unwrap();
+    budget.assets[0].share = decimal("1");
+    budget.assets[1].share = decimal("0");
+    let actual = weights(&request);
+    near(actual[0], 1.0);
+    near(actual[1], 0.0);
+    request.objective = AllocationObjective::MinRisk;
+    assert!(job::allocate(&request).is_err());
+}
+
+#[test]
 fn native_cvar_uses_tail_mass_and_changes_with_confidence() {
     let mut request = input();
     request.risk = AllocationRisk::Cvar;

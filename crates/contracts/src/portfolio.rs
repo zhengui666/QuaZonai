@@ -174,11 +174,38 @@ pub struct PortfolioConstraintsV1 {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
+pub struct RiskBudgetAssetV1 {
+    #[schema(min_length = 1, max_length = 200)]
+    pub instrument_id: String,
+    pub share: DecimalValue,
+    pub sign: RiskBudgetSign,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum RiskBudgetSign {
+    Long,
+    Short,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RiskBudgetSettingsV1 {
+    pub schema_version: SchemaV1,
+    pub risky_gross_exposure: DecimalValue,
+    #[schema(min_items = 1, max_items = 256)]
+    pub assets: Vec<RiskBudgetAssetV1>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct AllocatorSettingsV1 {
     pub schema_version: SchemaV1,
     pub risk_aversion: DecimalValue,
     /// Required for CVAR, absent/null for VARIANCE. Strictly between zero and one.
     pub cvar_confidence: Option<DecimalValue>,
+    /// Required only for RISK_BUDGETING; explicit asset identity, share, sign and scale.
+    pub risk_budgeting: Option<RiskBudgetSettingsV1>,
     #[schema(minimum = 1, maximum = 100000)]
     pub max_iterations: u32,
     /// Numerical stopping tolerance, not permission to violate the mandate.

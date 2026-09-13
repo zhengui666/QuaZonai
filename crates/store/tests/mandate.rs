@@ -13,25 +13,60 @@ use support::research_support as research;
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn variance_bound_requires_both_native_adapter_and_cone_without_partial_writes(pool: PgPool) {
-    risk_capability_gate(pool, false).await;
+    risk_capability_gate(pool, 0).await;
 }
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn cvar_requires_both_native_adapter_and_linear_program_without_partial_writes(pool: PgPool) {
-    risk_capability_gate(pool, true).await;
+    risk_capability_gate(pool, 1).await;
 }
 
-async fn risk_capability_gate(pool: PgPool, cvar: bool) {
+#[sqlx::test(migrations = "../../migrations")]
+async fn risk_budget_requires_both_native_adapter_and_second_order_cone_without_partial_writes(
+    pool: PgPool,
+) {
+    risk_capability_gate(pool, 2).await;
+}
+
+async fn risk_capability_gate(pool: PgPool, mode: u8) {
     let (store, actor) = research::operator(&pool).await;
     let mut request = support::request(&pool, &store, &actor).await;
     request.content.constraints.max_ex_ante_risk = Some("0.0001".parse().unwrap());
-    let (adapter, cone, error) = if cvar {
+    let (adapter, cone, error) = if mode == 1 {
         request.content.risk_measure = AllocationRisk::Cvar;
         let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.content.optimizer else {
             unreachable!()
         };
         parameters.cvar_confidence = Some("0.95".parse().unwrap());
         ("portfolio-cvar", "LINEAR_PROGRAM", "portfolio_cvar")
+    } else if mode == 2 {
+        request.content.objective = AllocationObjective::RiskBudgeting;
+        request.content.constraints.max_ex_ante_risk = None;
+        let allocation: AllocationInputV1 = serde_json::from_str(include_str!(
+            "../../../tests/contracts/allocation-input.json"
+        ))
+        .unwrap();
+        let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.content.optimizer else {
+            unreachable!()
+        };
+        parameters.risk_budgeting = Some(RiskBudgetSettingsV1 {
+            schema_version: contracts::SchemaV1,
+            risky_gross_exposure: "1".parse().unwrap(),
+            assets: allocation
+                .assets
+                .iter()
+                .map(|a| RiskBudgetAssetV1 {
+                    instrument_id: a.instrument_id.clone(),
+                    share: "0.5".parse().unwrap(),
+                    sign: RiskBudgetSign::Long,
+                })
+                .collect(),
+        });
+        (
+            "portfolio-risk-budget",
+            "SECOND_ORDER_CONE",
+            "portfolio_risk_budgeting",
+        )
     } else {
         (
             "portfolio-variance-bound",

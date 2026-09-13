@@ -351,6 +351,41 @@ fn portfolio_fixture(
 }
 
 #[test]
+fn actual_managed_risk_budgeting_preserves_catalog_risk_contributions() {
+    use contracts::portfolio::*;
+    let f = portfolio_fixture(|r| {
+        r.mandate.objective = AllocationObjective::RiskBudgeting;
+        r.mandate.constraints.max_ex_ante_risk = Some("1".parse().unwrap());
+        let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut r.mandate.optimizer else {
+            unreachable!()
+        };
+        parameters.risk_budgeting = Some(RiskBudgetSettingsV1 {
+            schema_version: SchemaV1,
+            risky_gross_exposure: "1".parse().unwrap(),
+            assets: r
+                .assets
+                .iter()
+                .map(|a| RiskBudgetAssetV1 {
+                    instrument_id: a.instrument_id.clone(),
+                    share: "0.5".parse().unwrap(),
+                    sign: RiskBudgetSign::Long,
+                })
+                .collect(),
+        });
+    });
+    assert!(execute(&f));
+    let report: contracts::science::NativePortfolioBuildResultV1 =
+        result(&f, "qz.native_portfolio");
+    assert_eq!(
+        report.allocation.solver_status,
+        SolverStatus::Optimal,
+        "{:?}",
+        report.allocation
+    );
+    domain::portfolio::allocation_result(&report.input, &report.allocation).unwrap();
+}
+
+#[test]
 fn actual_managed_allocation_reads_original_catalog_models_and_preserves_infeasibility() {
     let f = portfolio_fixture(|_| {});
     assert!(execute(&f));

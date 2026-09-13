@@ -15,6 +15,21 @@ pub(crate) fn risk_capability(
     content: &MandateContentV1,
     cap: &contracts::runtime::RuntimeCapabilitiesV1,
 ) -> Result<(), domain::DomainError> {
+    if content.objective == AllocationObjective::RiskBudgeting
+        && (cap
+            .engine_versions
+            .get("portfolio-risk-budget")
+            .map(String::as_str)
+            != Some("1")
+            || !cap
+                .solver_capabilities
+                .iter()
+                .any(|v| v == "SECOND_ORDER_CONE"))
+    {
+        return Err(domain::DomainError::CapabilityUnavailable(
+            "portfolio_risk_budgeting",
+        ));
+    }
     let required = match content.risk_measure {
         AllocationRisk::Cvar => Some(("portfolio-cvar", "LINEAR_PROGRAM", "portfolio_cvar")),
         AllocationRisk::Variance if content.constraints.max_ex_ante_risk.is_some() => Some((

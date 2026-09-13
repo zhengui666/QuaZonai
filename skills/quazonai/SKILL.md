@@ -87,7 +87,11 @@ VARIANCE 可冻结正的每决策周期方差上限 max_ex_ante_risk（不用为
 CVAR 必须冻结 optimizer.parameters.cvar_confidence 为(0,1)内Decimal；VARIANCE
 时此字段为空。不默认95%，不将尾部场景筛成另一份历史。原生LP使用完整等权
 损失场景；此时风险上限为每周期预期损失收益率，不是方差或VaR。需portfolio-cvar/1
-与LINEAR_PROGRAM镜像能力；不新增Agent权限，风险预算仍未实现。
+与LINEAR_PROGRAM镜像能力；不新增Agent权限。
+方差RISK_BUDGETING明确冻结risk_budgeting中的资产身份、非负share、LONG/SHORT及
+risky_gross_exposure；share合计1，其他目标为空。需portfolio-risk-budget/1与
+SECOND_ORDER_CONE。原生两阶段共用迭代/资源预算，发布核对实际风险贡献，不能把
+最小方差、资本等权、全现金或约束后的近似比例当风险预算。CVaR风险预算仍待实现。
 人工Mandate API/CLI创建与读取见CLI，原配置不可修改；同键重试保留原完整请求。
 Mission没有这些配置操作权，版本存在不表示Alpha资格、组合通过或允许交付。
 提交响应未知时保留同一 key 和原始文件/请求重放；不同内容409不能改键绕过预算。

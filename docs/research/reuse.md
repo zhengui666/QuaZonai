@@ -10,6 +10,16 @@
 
 ## 已核查并实际运行的 Rust 能力
 
+2026-09-13补充：方差风险预算复用Clarabel0.11.1的SecondOrderConeT，沿用已核查
+原生二次锥API及Apache-2.0许可。
+[原生风险预算参考](https://docs.mosek.com/portfolio-cookbook/risk_parity.html)
+提供贡献乘积的旋转二次锥形式。QZ采用等价的标准二次锥、固定单位风险尺度并
+最大化共同贡献下界（DESIGN给出等价式及求和证明）；不采用不稳定的指数锥路径。
+按明确总敞口规范化，再用原Clarabel组合问题验证固定权重的可行性；不另写优化器。
+发布复用原ndarray协方差/矩阵乘法核对贡献。实际原生小例验证等风险2/3、1/3，
+非等额份额对应1/2、1/2，多空方向、零份额、约束冲突与共享迭代上限。
+此为数值复用证据，不是REAL/PIT/资格/完整交付；CVaR风险预算另需原生适配。
+
 2026-09-13补充：CVaR复用锁定Clarabel0.11.1的DefaultSolver线性规划入口
 （Apache-2.0；已核对原crate examples/rust/example_lp.rs），无新求解器依赖。
 QZ只将冻结等权损失场景装配为标准Rockafellar–Uryasev的eta/excess线性约束；

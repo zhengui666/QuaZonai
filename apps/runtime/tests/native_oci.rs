@@ -19,15 +19,20 @@ use support::{count, docker, Fixture, SIGNAL, SLOW_SIGNAL};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn real_native_portfolio_aggregates_original_forecasts_before_optimizing() {
-    native_portfolio(false).await;
+    native_portfolio(false, false).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn real_native_cvar_portfolio_preserves_original_scenarios_and_confidence() {
-    native_portfolio(true).await;
+    native_portfolio(true, false).await;
 }
 
-async fn native_portfolio(cvar: bool) {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn real_native_risk_budget_portfolio_rechecks_original_risk_contributions() {
+    native_portfolio(false, true).await;
+}
+
+async fn native_portfolio(cvar: bool, risk_budget: bool) {
     use contracts::{
         execution::NativeTaskParametersV1,
         portfolio::*,
@@ -47,6 +52,25 @@ async fn native_portfolio(cvar: bool) {
         parameters.cvar_confidence = Some("0.95".parse().unwrap());
     }
     request.members[0].ensemble_weight = "0.25".parse().unwrap();
+    if risk_budget {
+        request.mandate.objective = AllocationObjective::RiskBudgeting;
+        let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.mandate.optimizer else {
+            unreachable!()
+        };
+        parameters.risk_budgeting = Some(RiskBudgetSettingsV1 {
+            schema_version: SchemaV1,
+            risky_gross_exposure: "1".parse().unwrap(),
+            assets: request
+                .assets
+                .iter()
+                .map(|a| RiskBudgetAssetV1 {
+                    instrument_id: a.instrument_id.clone(),
+                    share: "0.5".parse().unwrap(),
+                    sign: RiskBudgetSign::Long,
+                })
+                .collect(),
+        });
+    }
     request.members[1].ensemble_weight = "0.75".parse().unwrap();
     let model_ids = request
         .members
@@ -200,6 +224,7 @@ async fn native_portfolio(cvar: bool) {
     assert_eq!(manifest.engine_versions["portfolio-weights"], "1");
     assert_eq!(manifest.engine_versions["portfolio-variance-bound"], "1");
     assert_eq!(manifest.engine_versions["portfolio-cvar"], "1");
+    assert_eq!(manifest.engine_versions["portfolio-risk-budget"], "1");
     assert_eq!(manifest.engine_versions["ndarray"], "0.17.1");
     let [output] = manifest.artifacts.as_slice() else {
         panic!("one original allocation report");
@@ -228,6 +253,14 @@ async fn native_portfolio(cvar: bool) {
     .unwrap();
     let result: NativePortfolioBuildResultV1 = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(
+        result.input.objective,
+        if risk_budget {
+            AllocationObjective::RiskBudgeting
+        } else {
+            AllocationObjective::MaxUtility
+        }
+    );
+    assert_eq!(
         result.input.risk,
         if cvar {
             AllocationRisk::Cvar
@@ -245,7 +278,12 @@ async fn native_portfolio(cvar: bool) {
             None
         }
     );
-    assert_eq!(result.allocation.solver_status, SolverStatus::Optimal);
+    assert_eq!(
+        result.allocation.solver_status,
+        SolverStatus::Optimal,
+        "{:?}",
+        result.allocation
+    );
     assert_eq!(
         result.input.constraints.max_ex_ante_risk,
         Some("1".parse().unwrap())

@@ -3372,6 +3372,7 @@ export interface components {
                 /** Format: int32 */
                 max_iterations: number;
                 risk_aversion: components["schemas"]["DecimalValue"];
+                risk_budgeting?: null | components["schemas"]["RiskBudgetSettingsV1"];
                 schema_version: components["schemas"]["SchemaV1"];
                 /** @description Numerical stopping tolerance, not permission to violate the mandate. */
                 solver_tolerance: components["schemas"]["DecimalValue"];
@@ -4406,6 +4407,18 @@ export interface components {
         ResearchArtifactKind: "CODE" | "PARAMETERS" | "REPORT";
         /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
         Revision: string;
+        RiskBudgetAssetV1: {
+            instrument_id: string;
+            share: components["schemas"]["DecimalValue"];
+            sign: components["schemas"]["RiskBudgetSign"];
+        };
+        RiskBudgetSettingsV1: {
+            assets: components["schemas"]["RiskBudgetAssetV1"][];
+            risky_gross_exposure: components["schemas"]["DecimalValue"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        /** @enum {string} */
+        RiskBudgetSign: "LONG" | "SHORT";
         RunCancelV1: {
             expected_revision: components["schemas"]["Revision"];
             schema_version: components["schemas"]["SchemaV1"];

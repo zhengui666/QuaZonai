@@ -28,7 +28,7 @@ function mandateRequest(project: string, values: Fields): Schema['MandateCreateV
     content: { ...c,
       covariance_estimator: { schema_version: 1, adapter_kind: 'SAMPLE_COVARIANCE', upstream_class: 'ndarray_stats::CorrelationExt::cov', upstream_version: '0.7.0', parameters: { ddof: 1 } },
       alpha_ensemble: { schema_version: 1, adapter_kind: 'FIXED_WEIGHTED_FORECAST', upstream_class: 'ndarray::ArrayBase::dot', upstream_version: '0.17.1', parameters: {} },
-      optimizer: { schema_version: 1, adapter_kind: 'CLARABEL_QP', upstream_class: 'clarabel::solver::DefaultSolver', upstream_version: '0.11.1', parameters: { ...values.parameters, cvar_confidence: blank(values.parameters.cvar_confidence), schema_version: 1 } },
+      optimizer: { schema_version: 1, adapter_kind: 'CLARABEL_QP', upstream_class: 'clarabel::solver::DefaultSolver', upstream_version: '0.11.1', parameters: { ...values.parameters, cvar_confidence: blank(values.parameters.cvar_confidence), risk_budgeting: values.parameters.risk_budgeting ? { ...values.parameters.risk_budgeting, schema_version: 1 } : null, schema_version: 1 } },
       constraints: { ...c.constraints, schema_version: 1, max_ex_ante_risk: blank(c.constraints.max_ex_ante_risk), max_participation: blank(c.constraints.max_participation), liquidity_ref: blank(c.constraints.liquidity_ref) },
       rebalance_schedule: { ...schedule, schema_version: 1, interval_seconds: schedule.kind === 'FIXED_INTERVAL' ? schedule.interval_seconds : null,
         calendar_ref: schedule.kind === 'CALENDAR_SESSION' ? schedule.calendar_ref : null, session_offset_seconds: schedule.kind === 'CALENDAR_SESSION' ? schedule.session_offset_seconds : null },
@@ -89,6 +89,7 @@ function MandateEditor({ project, close }: { project: string; close: () => void 
   const client = useQueryClient(); const online = useOnline(); const { modal, message } = App.useApp();
   const kind = Form.useWatch(['content', 'rebalance_schedule', 'kind'], form);
   const risk = Form.useWatch(['content', 'risk_measure'], form);
+  const objective = Form.useWatch(['content', 'objective'], form);
   const mutation = useMutation({ mutationFn: async (values: Fields) => {
     const body = mandateRequest(project, values);
     return dataOf(await api.POST('/api/v2/portfolio-mandates', { body, params: { header: intent.current.headers('POST', '/api/v2/portfolio-mandates', body) } }));
@@ -122,14 +123,27 @@ function MandateEditor({ project, close }: { project: string; close: () => void 
       </Card>
       <Card title="原生模型与目标">
         <Typography.Paragraph>样本协方差 ndarray-stats 0.7.0（ddof=1）；固定预测聚合 ndarray 0.17.1；优化器 Clarabel 0.11.1。需要 portfolio-models/4 镜像能力。</Typography.Paragraph>
-        <Form.Item name={['content', 'objective']} label="优化目标" rules={[required]}><Select options={[{ value: 'MIN_RISK', label: '最小风险' }, { value: 'MAX_UTILITY', label: '最大效用' }, { value: 'RISK_BUDGETING', label: '风险预算（当前原生未支持）', disabled: true }]} /></Form.Item>
-        <Form.Item name={['content', 'risk_measure']} label="风险度量" rules={[required]}><Select options={[{ value: 'VARIANCE', label: '方差' }, { value: 'CVAR', label: 'CVaR（预期短缺）' }]} /></Form.Item>
+        <Form.Item name={['content', 'objective']} label="优化目标" rules={[required]}><Select onChange={value => { if (value !== 'RISK_BUDGETING') form.setFieldValue(['parameters', 'risk_budgeting'], null); }} options={[{ value: 'MIN_RISK', label: '最小风险' }, { value: 'MAX_UTILITY', label: '最大效用' }, { value: 'RISK_BUDGETING', label: '方差风险预算', disabled: risk === 'CVAR' }]} /></Form.Item>
+        <Form.Item name={['content', 'risk_measure']} label="风险度量" rules={[required]}><Select options={[{ value: 'VARIANCE', label: '方差' }, { value: 'CVAR', label: 'CVaR（预期短缺）', disabled: objective === 'RISK_BUDGETING' }]} /></Form.Item>
         {risk === 'CVAR' && <Form.Item name={['parameters', 'cvar_confidence']} label="CVaR 置信水平（大于0且小于1）" preserve={false} rules={decimalRules}><Input inputMode="decimal" /></Form.Item>}
         <Form.Item name={['parameters', 'risk_aversion']} label="风险厌恶系数" rules={decimalRules}><Input inputMode="decimal" /></Form.Item>
         <Form.Item name={['parameters', 'solver_tolerance']} label="求解停止容差" rules={decimalRules}><Input inputMode="decimal" /></Form.Item>
         <Form.Item name={['parameters', 'max_iterations']} label="最大迭代次数" rules={[required, { type: 'integer', min: 1, max: 100000 }]}><InputNumber min={1} max={100000} precision={0} /></Form.Item>
         <Form.Item name={['parameters', 'accept_inaccurate']} label="允许原生非精确成功状态" valuePropName="checked"><Switch /></Form.Item>
       </Card>
+      {objective === 'RISK_BUDGETING' && <Card title="明确的资产风险预算">
+        <Typography.Paragraph>覆盖原资产集合，份额合计1；LONG/SHORT是目标方向，不是订单。需 portfolio-risk-budget/1 与二次锥能力。约束冲突不会改成近似比例；CVaR 风险预算尚未支持。</Typography.Paragraph>
+        <Form.Item name={['parameters', 'risk_budgeting', 'risky_gross_exposure']} label="风险资产总敞口" rules={decimalRules}><Input inputMode="decimal" /></Form.Item>
+        <Form.List name={['parameters', 'risk_budgeting', 'assets']} rules={[{ validator: async (_, value) => { if (!Array.isArray(value) || value.length < 1 || value.length > 256) throw new Error('请明确填写1至256项资产风险预算。'); } }]}>{(fields, { add, remove }, { errors }) => <>
+          {fields.map(field => <Card key={field.key} size="small" title={`预算资产 ${field.name + 1}`}>
+            <Form.Item name={[field.name, 'instrument_id']} label="预算资产标识" rules={[required, { max: 200, whitespace: true }]}><Input /></Form.Item>
+            <Form.Item name={[field.name, 'share']} label="风险份额" rules={decimalRules}><Input inputMode="decimal" /></Form.Item>
+            <Form.Item name={[field.name, 'sign']} label="目标方向" rules={[required]}><Select options={[{ value: 'LONG', label: 'LONG' }, { value: 'SHORT', label: 'SHORT' }]} /></Form.Item>
+            <Button onClick={() => remove(field.name)}>删除预算资产</Button>
+          </Card>)}
+          <Form.ErrorList errors={errors} /><Button disabled={fields.length >= 256 || mutation.isPending || !online} onClick={() => add()}>添加预算资产</Button>
+        </>}</Form.List>
+      </Card>}
       <Card title="完整组合约束">
         <Form.Item name={['content', 'constraints', 'long_only']} label="仅做多" valuePropName="checked"><Switch /></Form.Item>
         {exposures.map(([name, label]) => <Form.Item key={name} name={['content', 'constraints', name]} label={label} rules={decimalRules}><Input inputMode="decimal" /></Form.Item>)}

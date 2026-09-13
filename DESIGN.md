@@ -1902,7 +1902,34 @@ max_ex_ante_risk 是同周期损失收益率的预期短缺上限，不是方差
 置信水平与场景数的乘积/尾部质量先用 Decimal 计算，避免接近1时被浮点舍入抹去。
 上限容差同样是上限乘 exposure_tolerance；风险可为负，不能截成0。CVAR不调用
 方差估计/Cholesky，其原协方差引用保留为明确的Mandate模型配置但不影响该风险。
-需要 portfolio-cvar/1 与 LINEAR_PROGRAM 镜像能力；RISK_BUDGETING仍明确不可用。
+需要 portfolio-cvar/1 与 LINEAR_PROGRAM 镜像能力。
+
+RISK_BUDGETING 的 VARIANCE 形式须明确 optimizer.parameters.risk_budgeting：
+schema_version=1、正 risky_gross_exposure，以及覆盖原资产集合的 assets，每项为
+instrument_id、非负 share 与 sign=LONG|SHORT；share精确合计1，不能按列表位置
+猜身份或默认等风险。非风险预算目标必须为空；CVAR风险预算仍须后续独立原生适配。
+正share的SHORT不能用于long_only配置；零share资产固定零权重。risky_gross_exposure
+明确风险资产总敞口，现金仍为剩余资本，不从真实账户推定。不得用全现金的零风险
+冒充预算比例成立。方差风险贡献比例定义为 w_i*(Σw)_i/(wᵀΣw)，须与share一致。
+
+复用Clarabel二次锥风险预算公式。令C=Σ/max(diag(Σ))=LLᵀ，在指定多空方向
+最大化共同贡献尺度t，约束||Lᵀw||≤1；正预算资产以二次锥表示
+||(2*sqrt(share_i)*t, sign_i*w_i-sign_i*(Cw)_i)||≤sign_i*w_i+sign_i*(Cw)_i。
+它等价于w_i*(Cw)_i≥share_i*t²及显式方向；零预算资产固定w_i=0。
+贡献求和及总风险上限给出t≤1；正定协方差下原风险预算解达到t=1，各项贡献
+不等式均取等，再按显式总敞口规范化。指定方向/尺度的风险预算权重唯一。
+统一方差尺度换元不改变规范化权重或相关结构，不是正则化、截断或替换协方差。
+发布仍核对原始Σ。不能把敞口/换手/费用等额外项放入第一阶段后宣称仍满足预算。
+规范化的
+原生权重随后作为等式进入原有Clarabel组合问题，核对全部现金、资产、组、gross/net、
+turnover、参与率及风险上限约束并计原费用；冲突返回不可行，不裁剪或换目标。
+两阶段均使用冻结solver_tolerance；原生收敛不能替代贡献检查或授权低精度状态。
+两次原生求解共享max_iterations和外层资源期限；任何未授权低精度、失败或预算
+耗尽都不返回目标。公开iterations合计，残差取两阶段较大值，objective_value为
+最终约束/费用阶段原生目标，不冒充风险预算误差。发布以保存后的Decimal权重、
+原生协方差/矩阵乘法复核方向、总敞口、非零总风险和每项贡献；贡献误差上限为
+总方差乘exposure_tolerance，不能仅信任求解成功。需要portfolio-risk-budget/1
+与SECOND_ORDER_CONE镜像能力；此能力及CVAR风险预算均须各自原生数值证据。
 
 固定权重预测聚合使用ndarray 0.17.1的原生矩阵乘法：行是已对齐Alpha预测，列是
 冻结资产顺序，不拟合权重、不补缺值、不把score当收益。首个固定组合适配接受

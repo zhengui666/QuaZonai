@@ -1,6 +1,9 @@
 //! Native Clarabel compatibility golden; no handwritten optimization algorithm.
 use anyhow::{ensure, Result};
 use clarabel::{algebra::CscMatrix, solver::*};
+mod risk_budgeting;
+#[cfg(test)]
+mod risk_budgeting_test;
 
 fn verify_weights(weights: &[f64]) -> Result<()> {
     ensure!(weights.len() == 2, "NATIVE_RESULT_DIMENSION");
@@ -40,7 +43,7 @@ pub(crate) fn native_minimum_variance() -> Result<Vec<f64>> {
     Ok(solver.solution.x)
 }
 
-// The production adapter constructs one native convex program. It does not
+// The production adapter constructs native convex programs. It does not
 // duplicate Clarabel's optimization algorithm or silently regularize bad inputs.
 use bigdecimal::{BigDecimal, RoundingMode, ToPrimitive};
 use contracts::{
@@ -77,6 +80,39 @@ fn finite(value: f64) -> Option<f64> {
     value.is_finite().then_some(value)
 }
 
+fn native_outcome(native: &DefaultSolution<f64>, accept_inaccurate: bool) -> AllocationResultV1 {
+    let (status, reason) = match native.status {
+        SolverStatus::Solved => (AllocationStatus::Optimal, None),
+        SolverStatus::AlmostSolved if accept_inaccurate => {
+            (AllocationStatus::AcceptableInaccurate, None)
+        }
+        SolverStatus::PrimalInfeasible | SolverStatus::AlmostPrimalInfeasible => (
+            AllocationStatus::Infeasible,
+            Some("NATIVE_PRIMAL_INFEASIBLE"),
+        ),
+        SolverStatus::DualInfeasible | SolverStatus::AlmostDualInfeasible => {
+            (AllocationStatus::Unbounded, Some("NATIVE_DUAL_INFEASIBLE"))
+        }
+        SolverStatus::AlmostSolved => (
+            AllocationStatus::Failed,
+            Some("INACCURATE_RESULT_NOT_AUTHORIZED"),
+        ),
+        SolverStatus::MaxIterations => (AllocationStatus::Failed, Some("NATIVE_ITERATION_LIMIT")),
+        SolverStatus::MaxTime => (AllocationStatus::Failed, Some("NATIVE_TIME_LIMIT")),
+        _ => (AllocationStatus::Failed, Some("NATIVE_SOLVER_FAILED")),
+    };
+    AllocationResultV1 {
+        schema_version: SchemaV1,
+        solver_status: status,
+        reason_code: reason.map(str::to_owned),
+        targets: None,
+        cash_weight: None,
+        iterations: native.iterations,
+        objective_value: finite(native.obj_val),
+        primal_residual: finite(native.r_prim),
+        dual_residual: finite(native.r_dual),
+    }
+}
 /// Execute a frozen input using the same Clarabel linked by the compatibility probe.
 /// The caller still owns provenance, qualification, independent simulation and approval.
 pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
@@ -84,10 +120,6 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
     let parameters = domain::portfolio::optimizer_settings(&input.optimizer)?;
     let confidence = domain::portfolio::cvar_confidence(input.risk, &input.optimizer)?;
     let forecasts = crate::validation::aligned_portfolio_forecast(&input.forecasts)?;
-    ensure!(
-        input.objective != AllocationObjective::RiskBudgeting,
-        "UNSUPPORTED_ALLOCATION_OBJECTIVE"
-    );
     let n = input.assets.len();
     let estimated = if input.risk == AllocationRisk::Variance {
         domain::portfolio::sample_covariance(
@@ -112,6 +144,53 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
     } else {
         None
     };
+    let risk_budget = domain::portfolio::risk_budgeting(
+        input.objective,
+        input.risk,
+        &input.optimizer,
+        &input.constraints,
+    )?;
+    let first = risk_budget
+        .map(|budget| {
+            risk_budgeting::solve(
+                input,
+                &estimated,
+                &cholesky.as_ref().unwrap().l(),
+                budget,
+                parameters,
+            )
+        })
+        .transpose()?;
+    if let Some(first) = &first {
+        let mut outcome = native_outcome(first, parameters.accept_inaccurate);
+        let invalid_native = outcome.objective_value.is_none()
+            || outcome.primal_residual.is_none()
+            || outcome.dual_residual.is_none();
+        outcome.objective_value = None;
+        if outcome.reason_code.is_none()
+            && (first.iterations >= parameters.max_iterations || invalid_native)
+        {
+            outcome.solver_status = AllocationStatus::Failed;
+            outcome.reason_code = Some("RISK_BUDGET_STAGE_BUDGET_OR_RESULT".into());
+        }
+        if outcome.reason_code.is_some() {
+            domain::portfolio::allocation_result(input, &outcome)?;
+            return Ok(outcome);
+        }
+    }
+    let fixed = first
+        .as_ref()
+        .map(|first| -> Result<Vec<f64>> {
+            ensure!(
+                first.x.len() == n + 1 && first.x.iter().all(|v| v.is_finite()),
+                "RISK_BUDGET_RESULT_INVALID"
+            );
+            let gross: f64 = first.x[..n].iter().map(|v| v.abs()).sum();
+            ensure!(gross.is_finite() && gross > 0.0, "RISK_BUDGET_ZERO_RISK");
+            let scale = native_number(&risk_budget.unwrap().risky_gross_exposure)? / gross;
+            Ok(first.x[..n].iter().map(|v| v * scale).collect())
+        })
+        .transpose()?;
     let observations = input.return_history.end_ns.len();
     let eta = 3 * n + 1;
     let excess = eta + 1;
@@ -164,7 +243,7 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
         q[traded + i] = native_number(&asset.transaction_cost_rate)?;
     }
     let constraints = &input.constraints;
-    // Each row is a linear bound A*x <= b; only the first row is equality.
+    // Capital and optional frozen risk-budget weights precede inequality rows.
     let mut a_rows = Vec::new();
     let mut a_cols = Vec::new();
     let mut a_values = Vec::new();
@@ -182,6 +261,11 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
     };
     let capital_terms: Vec<_> = (0..=cash).map(|i| (i, 1.0)).collect();
     add(&capital_terms, 1.0);
+    if let Some(weights) = &fixed {
+        for (i, weight) in weights.iter().enumerate() {
+            add(&[(i, 1.0)], *weight);
+        }
+    }
     add(&[(cash, 1.0)], native_number(&constraints.max_cash_weight)?);
     add(
         &[(cash, -1.0)],
@@ -272,7 +356,11 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
             add(&terms, native_number(bound)?);
         }
     }
-    let mut cones = vec![ZeroConeT(1), NonnegativeConeT(b.len() - 1)];
+    let equalities = 1 + fixed.as_ref().map_or(0, Vec::len);
+    let mut cones = vec![
+        ZeroConeT(equalities),
+        NonnegativeConeT(b.len() - equalities),
+    ];
     if let (Some(bound), Some(cholesky)) = (&constraints.max_ex_ante_risk, cholesky) {
         // Sigma = L L^T, so the cone constrains ||L^T w|| <= sqrt(bound).
         b.push(native_number(bound)?.sqrt());
@@ -295,7 +383,7 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
     let tolerance = native_number(&parameters.solver_tolerance)?;
     let settings = DefaultSettingsBuilder::default()
         .verbose(false)
-        .max_iter(parameters.max_iterations)
+        .max_iter(parameters.max_iterations - first.as_ref().map_or(0, |v| v.iterations))
         .tol_gap_abs(tolerance)
         .tol_gap_rel(tolerance)
         .tol_feas(tolerance)
@@ -303,38 +391,16 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
     let mut solver = DefaultSolver::new(&p, &q, &a, &b, &cones, settings)?;
     solver.solve();
     let native = &solver.solution;
-    let (status, reason) = match native.status {
-        SolverStatus::Solved => (AllocationStatus::Optimal, None),
-        SolverStatus::AlmostSolved if parameters.accept_inaccurate => {
-            (AllocationStatus::AcceptableInaccurate, None)
+    let mut result = native_outcome(native, parameters.accept_inaccurate);
+    if let Some(first) = &first {
+        result.iterations += first.iterations;
+        result.primal_residual = finite(native.r_prim.max(first.r_prim));
+        result.dual_residual = finite(native.r_dual.max(first.r_dual));
+        if result.reason_code.is_none() && first.status == SolverStatus::AlmostSolved {
+            result.solver_status = AllocationStatus::AcceptableInaccurate;
         }
-        SolverStatus::PrimalInfeasible | SolverStatus::AlmostPrimalInfeasible => (
-            AllocationStatus::Infeasible,
-            Some("NATIVE_PRIMAL_INFEASIBLE"),
-        ),
-        SolverStatus::DualInfeasible | SolverStatus::AlmostDualInfeasible => {
-            (AllocationStatus::Unbounded, Some("NATIVE_DUAL_INFEASIBLE"))
-        }
-        SolverStatus::AlmostSolved => (
-            AllocationStatus::Failed,
-            Some("INACCURATE_RESULT_NOT_AUTHORIZED"),
-        ),
-        SolverStatus::MaxIterations => (AllocationStatus::Failed, Some("NATIVE_ITERATION_LIMIT")),
-        SolverStatus::MaxTime => (AllocationStatus::Failed, Some("NATIVE_TIME_LIMIT")),
-        _ => (AllocationStatus::Failed, Some("NATIVE_SOLVER_FAILED")),
-    };
-    let mut result = AllocationResultV1 {
-        schema_version: SchemaV1,
-        solver_status: status,
-        reason_code: reason.map(str::to_owned),
-        targets: None,
-        cash_weight: None,
-        iterations: native.iterations,
-        objective_value: finite(native.obj_val),
-        primal_residual: finite(native.r_prim),
-        dual_residual: finite(native.r_dual),
-    };
-    if reason.is_none() {
+    }
+    if result.reason_code.is_none() {
         let converted = (|| -> Result<()> {
             ensure!(native.x.len() == variables, "NATIVE_RESULT_DIMENSION");
             result.targets = Some(

@@ -178,7 +178,15 @@ CVAR 支持相同 MIN_RISK/MAX_UTILITY，必须明确 optimizer.parameters.cvar_
 为大于0、小于1的Decimal（VARIANCE必须为空）；不默认95%。它用原 return_history
 的等权损失场景进入原生LP，不使用协方差。此时 max_ex_ante_risk 为同周期的预期
 损失收益率上限，含分数尾部质量；不是方差、VaR或年化值。要求 portfolio-cvar/1
-与 LINEAR_PROGRAM 镜像能力。RISK_BUDGETING 仍明确拒绝。
+与 LINEAR_PROGRAM 镜像能力。
+RISK_BUDGETING/VARIANCE 必须填写 optimizer.parameters.risk_budgeting：schema_version=1、
+正 risky_gross_exposure、覆盖原资产的 assets（instrument_id/share/sign=LONG或SHORT）。
+非负share精确合计1；零份额资产固定零，不默认预算、方向或总敞口。其他目标此字段
+为空；CVAR风险预算尚未支持。原生二次锥先求指定方向预算，再按总敞口规范化并进入
+原组合约束问题；冲突不可行，不裁剪。两阶段共用max_iterations，发布复核真实贡献
+比例。原生两阶段均使用冻结solver_tolerance，不改变低精度授权或发布要求。
+需portfolio-risk-budget/1与SECOND_ORDER_CONE能力；
+有方差上限还需其原能力。
 
 协方差数值适配的引用为SAMPLE_COVARIANCE / ndarray_stats::CorrelationExt::cov /
 0.7.0，parameters仅为`{"ddof":1}`，不能传年化、补值或另一估计器参数。

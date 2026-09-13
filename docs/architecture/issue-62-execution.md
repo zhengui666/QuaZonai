@@ -3,6 +3,48 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Native variance risk budgeting, 2026-09-13
+
+The patch over `734fbe44` implements explicit VARIANCE risk budgets: original
+asset IDs, nonnegative shares totaling exactly one, LONG/SHORT directions and
+positive risky gross exposure. No equal-budget or gross defaults. Clarabel's
+native second-order cones maximize a shared contribution lower bound under a
+unit-risk gauge; DESIGN records the equivalent product constraints and proof.
+The existing nalgebra Cholesky factor and one common covariance scale are reused.
+Normalized native weights become equalities in the original constrained portfolio
+problem, retaining cash/exposure/groups/turnover/participation/risk bounds and
+fees. Both stages share the frozen iteration budget and original solver tolerance.
+Publication checks stored Decimal weights against original covariance, actual
+contributions, direction and gross; incompatible constraints do not get clipped.
+
+The initial exponential-cone implementation failed correlated-contribution
+checks; tighter stopping tolerances then produced unauthorized AlmostSolved.
+`owner-oci-LDN9qy` caught the small-covariance catalog failure (10 of 11 passed).
+That implementation and its special gap tolerances were removed, not kept as
+a fallback. The native quadratic-cone replacement passed 54 direct checks:
+11 job unit, 23 allocation, 10 managed and 10 validation. Numerical cases include
+diagonal and correlated analytical solutions, unequal shares, original ID order,
+fees, short directions, zero shares, impossible constraints, iteration exhaustion
+and the actual small-variance catalog regression.
+
+`web-verify-PXoMK5` passed two byte-identical generations, typecheck, 505 unit,
+wire/build, 36 settings-browser and 213 full-browser checks. AntD preserves exact
+Decimal budgets through unknown-response retry and clears old budgets on objective
+switch without defaults. `verify-JVEyRZ` found one Clippy indexed-loop warning;
+after the standard iterator change, `verify-XMVN01` passed check/fmt/strict Clippy
+and 203 tests: 127 contracts/domain, 43 native, 11 Store, 1 SQL and 21 HTTP/CLI.
+Real PG tests reject either missing portfolio-risk-budget/1 or SECOND_ORDER_CONE
+without partial writes, then save/reread the original budget when both exist.
+
+`owner-oci-aSojeY` built and verified
+`sha256:3d17269c2cff561267dd506053adfa68e9a2d7372b446e9403fe60f6389c4fb8`;
+all 11 actual OCI tests passed with unchanged source, including the original
+catalog/Wasm risk-budget task and domain contribution recheck. These remain
+SYNTHETIC numerical/protocol inputs, not REAL/PIT/qualification/full acceptance.
+CVaR risk budgeting, complete cost/source adapters, independent Candidate
+validation, delivery and remaining Issue #62 work are still required. No merge
+or closure claim; latest-head review/CI gates apply after all development.
+
 ## Native scenario CVaR, 2026-09-13
 
 The patch over `c17edbd2` adds CVAR MIN_RISK/MAX_UTILITY through the existing
