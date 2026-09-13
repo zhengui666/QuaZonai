@@ -91,7 +91,11 @@ CVAR 必须冻结 optimizer.parameters.cvar_confidence 为(0,1)内Decimal；VARI
 方差RISK_BUDGETING明确冻结risk_budgeting中的资产身份、非负share、LONG/SHORT及
 risky_gross_exposure；share合计1，其他目标为空。需portfolio-risk-budget/1与
 SECOND_ORDER_CONE。原生两阶段共用迭代/资源预算，发布核对实际风险贡献，不能把
-最小方差、资本等权、全现金或约束后的近似比例当风险预算。CVaR风险预算仍待实现。
+最小方差、资本等权、全现金或约束后的近似比例当风险预算。
+CVaR预算沿用同一份额/方向/总敞口配置及明确置信水平，另需portfolio-cvar-risk-budget/1
+与POWER_CONE及原CVAR能力。原生场景对偶见证由可信发布器验证尾部最优性与
+每项贡献；不可由Agent填写、挑选场景或归一化。只接受正总风险，失败/无界无目标，
+不增加Mission工具、资格或交付权限。
 人工Mandate API/CLI创建与读取见CLI，原配置不可修改；同键重试保留原完整请求。
 Mission没有这些配置操作权，版本存在不表示Alpha资格、组合通过或允许交付。
 提交响应未知时保留同一 key 和原始文件/请求重放；不同内容409不能改键绕过预算。

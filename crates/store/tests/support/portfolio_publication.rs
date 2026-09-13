@@ -415,6 +415,7 @@ async fn successful_original_report_with_expired_target_retains_solver_but_canno
             targets: Some(request.current_weights.weights.clone()),
             cash_weight: Some(request.current_weights.cash_weight.clone()),
             iterations: 1,
+            cvar_risk_budget_witness: None,
             objective_value: Some(0.625),
             primal_residual: Some(0.0),
             dual_residual: Some(0.0),

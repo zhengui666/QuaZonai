@@ -96,6 +96,7 @@ pub(super) async fn complete(
             targets: Some(request.current_weights.weights.clone()),
             cash_weight: Some(request.current_weights.cash_weight.clone()),
             iterations: 1,
+            cvar_risk_budget_witness: None,
             objective_value: Some(0.0001),
             primal_residual: Some(0.0),
             dual_residual: Some(0.0),

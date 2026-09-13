@@ -564,6 +564,7 @@ pub struct AllocationResultV1 {
     /// A failed solve has no targets, not an empty or fallback allocation.
     pub targets: Option<Vec<AllocationTargetV1>>,
     pub cash_weight: Option<DecimalValue>,
+    pub cvar_risk_budget_witness: Option<CvarRiskBudgetWitnessV1>,
     #[schema(minimum = 0, maximum = 4294967295u64)]
     pub iterations: u32,
     #[serde(
@@ -584,6 +585,16 @@ pub struct AllocationResultV1 {
     )]
     #[schema(required = true)]
     pub dual_residual: Option<f64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CvarRiskBudgetWitnessV1 {
+    pub schema_version: SchemaV1,
+    /// Native dual weights in the original return-history scenario order.
+    #[serde(serialize_with = "serialize_finite_values")]
+    #[schema(min_items = 2, max_items = 100000)]
+    pub scenario_weights: Vec<f64>,
 }
 
 fn serialize_finite_matrix<S: serde::Serializer>(

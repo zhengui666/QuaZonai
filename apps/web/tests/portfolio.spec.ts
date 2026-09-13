@@ -4,8 +4,9 @@ import AxeBuilder from '@axe-core/playwright';
 import type { Schema } from '../src/api';
 import { fixture, id, navigate, project, reply } from './fixtures';
 
-for (const riskBudget of [false, true]) {
-test(`immutable ${riskBudget ? 'risk-budget' : 'CVaR'} Mandate preserves exact inputs and retries the original receipt without starting a build`, async ({ page }) => {
+for (const mode of ['CVAR', 'VARIANCE_BUDGET', 'CVAR_BUDGET'] as const) {
+const riskBudget = mode !== 'CVAR'; const cvar = mode !== 'VARIANCE_BUDGET';
+test(`immutable ${mode} Mandate preserves exact inputs and retries the original receipt without starting a build`, async ({ page }) => {
   await fixture(page);
   const writes: { body: Schema['MandateCreateV1']; key: string | null }[] = [];
   let saved: Schema['MandateViewV1'] | undefined;
@@ -32,7 +33,7 @@ test(`immutable ${riskBudget ? 'risk-budget' : 'CVaR'} Mandate preserves exact i
   }
   if (riskBudget) {
     await drawer.getByLabel('优化目标', { exact: true }).click();
-    await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').getByText('方差风险预算', { exact: true }).click();
+    await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').getByText('风险预算', { exact: true }).click();
     await drawer.getByLabel('风险资产总敞口', { exact: true }).fill('1');
     for (const [i, [instrument, share]] of [['ALPHA.EXAMPLE', '0.200000000000000001'], ['BETA.EXAMPLE', '0.799999999999999999']].entries()) {
       await drawer.getByRole('button', { name: '添加预算资产', exact: true }).click();
@@ -41,7 +42,8 @@ test(`immutable ${riskBudget ? 'risk-budget' : 'CVaR'} Mandate preserves exact i
       await drawer.getByLabel('目标方向', { exact: true }).nth(i).click();
       await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').getByText('LONG', { exact: true }).click();
     }
-  } else {
+  }
+  if (cvar) {
     await drawer.getByLabel('风险度量', { exact: true }).click();
     await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').getByText('CVaR（预期短缺）', { exact: true }).click();
     await drawer.getByLabel('CVaR 置信水平（大于0且小于1）', { exact: true }).fill('0.950000000000000001');
@@ -61,8 +63,8 @@ test(`immutable ${riskBudget ? 'risk-budget' : 'CVaR'} Mandate preserves exact i
   expect(writes[1]).toEqual(first); expect(first.key).toBeTruthy();
   expect(first.body).toMatchObject({ schema_version: 1, project_id: project.id, runtime_id: id(20), expected_runtime_revision: '9007199254740993', content: {
     capital_assumption: '12345678901234567890.123456789012345678',
-    risk_measure: riskBudget ? 'VARIANCE' : 'CVAR', objective: riskBudget ? 'RISK_BUDGETING' : 'MIN_RISK',
-    optimizer: { adapter_kind: 'CLARABEL_QP', parameters: { schema_version: 1, risk_aversion: '1', cvar_confidence: riskBudget ? null : '0.950000000000000001', risk_budgeting: riskBudget ? {
+    risk_measure: cvar ? 'CVAR' : 'VARIANCE', objective: riskBudget ? 'RISK_BUDGETING' : 'MIN_RISK',
+    optimizer: { adapter_kind: 'CLARABEL_QP', parameters: { schema_version: 1, risk_aversion: '1', cvar_confidence: cvar ? '0.950000000000000001' : null, risk_budgeting: riskBudget ? {
       schema_version: 1, risky_gross_exposure: '1', assets: [{ instrument_id: 'ALPHA.EXAMPLE', share: '0.200000000000000001', sign: 'LONG' }, { instrument_id: 'BETA.EXAMPLE', share: '0.799999999999999999', sign: 'LONG' }],
     } : null } },
     covariance_estimator: { adapter_kind: 'SAMPLE_COVARIANCE', parameters: { ddof: 1 } },
@@ -103,7 +105,7 @@ test('Mandate authoring protects dirty input and cannot write offline or with mi
   await drawer.getByLabel('风险度量', { exact: true }).click();
   await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').getByText('方差', { exact: true }).click();
   await drawer.getByLabel('优化目标', { exact: true }).click();
-  await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').getByText('方差风险预算', { exact: true }).click();
+  await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').getByText('风险预算', { exact: true }).click();
   const gross = drawer.getByLabel('风险资产总敞口', { exact: true });
   await expect(gross).toHaveValue('');
   await gross.fill('0.8');
@@ -113,7 +115,7 @@ test('Mandate authoring protects dirty input and cannot write offline or with mi
   await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').getByText('最小风险', { exact: true }).click();
   await expect(gross).not.toBeVisible();
   await drawer.getByLabel('优化目标', { exact: true }).click();
-  await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').getByText('方差风险预算', { exact: true }).click();
+  await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').getByText('风险预算', { exact: true }).click();
   await expect(gross).toHaveValue('');
   await expect(drawer.getByLabel('预算资产标识', { exact: true })).toHaveCount(0);
   await drawer.getByRole('button', { name: '取消', exact: true }).click();

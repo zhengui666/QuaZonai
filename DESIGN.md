@@ -1907,7 +1907,7 @@ max_ex_ante_risk 是同周期损失收益率的预期短缺上限，不是方差
 RISK_BUDGETING 的 VARIANCE 形式须明确 optimizer.parameters.risk_budgeting：
 schema_version=1、正 risky_gross_exposure，以及覆盖原资产集合的 assets，每项为
 instrument_id、非负 share 与 sign=LONG|SHORT；share精确合计1，不能按列表位置
-猜身份或默认等风险。非风险预算目标必须为空；CVAR风险预算仍须后续独立原生适配。
+猜身份或默认等风险。非风险预算目标必须为空；CVAR沿用同一份显式预算配置。
 正share的SHORT不能用于long_only配置；零share资产固定零权重。risky_gross_exposure
 明确风险资产总敞口，现金仍为剩余资本，不从真实账户推定。不得用全现金的零风险
 冒充预算比例成立。方差风险贡献比例定义为 w_i*(Σw)_i/(wᵀΣw)，须与share一致。
@@ -1929,7 +1929,32 @@ turnover、参与率及风险上限约束并计原费用；冲突返回不可行
 最终约束/费用阶段原生目标，不冒充风险预算误差。发布以保存后的Decimal权重、
 原生协方差/矩阵乘法复核方向、总敞口、非零总风险和每项贡献；贡献误差上限为
 总方差乘exposure_tolerance，不能仅信任求解成功。需要portfolio-risk-budget/1
-与SECOND_ORDER_CONE镜像能力；此能力及CVAR风险预算均须各自原生数值证据。
+与SECOND_ORDER_CONE镜像能力。
+
+CVAR风险预算使用原置信水平及全部等权损失场景，不以方差近似。原生Clarabel
+线性/幂锥最小化 CVaR(-R*w/s)，约束加权几何平均prod((sign_i*w_i)^share_i)≥1，
+等价于sum(share_i*log(sign_i*w_i))≥0。依原资产顺序将几何平均拆成三维PowerCone，
+每步指数为前缀份额/本次累计份额（Decimal计算后只在原生边界转浮点）。其中s为原收益
+绝对值的最大值，仅作统一变量换元；零预算资产固定零，s=0明确失败。
+一阶最优条件给出各项w_i*g_i=share_i*CVaR；先规范化显式总敞口，再进入上述
+同一固定权重约束阶段，不把费用、收益或敞口附加到风险预算目标。这里要求有限
+正总风险；零/负风险或非强制正风险的方向可能使原生问题无界，保留实际失败/无界
+且无目标，不裁剪收益、不伪造正风险。这不改变普通CVAR目标允许负风险的合同。
+
+成功CVAR风险预算结果必须携带cvar_risk_budget_witness（schema_version=1及
+scenario_weights），顺序严格对应原return_history时间列；直接取第一阶段原生
+场景不等式的对偶权重p，不排序、截断或归一化。其他目标/风险及所有失败结果
+此字段为空。可信发布器独立核对长度、有限非负、sum(p)=1、
+p_j≤1/(N*(1-confidence))；概率和及上界使用exposure_tolerance的相对容差。
+再以原始收益计算g=-R*p，核对-wᵀR*p与独立经验CVaR相等、
+w_i*g_i=share_i*CVaR（风险值和贡献误差均≤正CVaR*exposure_tolerance）。
+这验证原CVaR的合法次梯度，允许并列尾部不同的合法分配，不手选有利场景。
+原Decimal权重的方向/总敞口检查和两阶段迭代/低精度策略仍有效。
+CVAR第一阶段原生gap容差取min(solver_tolerance, exposure_tolerance²)，因为目标
+误差的二阶收敛不能直接保证贡献的一阶精度；原可行性容差及最终贡献检查不变。
+该更紧停止上限不是成功保证；原生低精度、无解或发布复核失败仍不得变成成功。
+需要portfolio-cvar-risk-budget/1、portfolio-cvar/1、POWER_CONE及LINEAR_PROGRAM
+能力，并提供独立解析、并列/分数尾部、对偶篡改和真实受管任务证据。
 
 固定权重预测聚合使用ndarray 0.17.1的原生矩阵乘法：行是已对齐Alpha预测，列是
 冻结资产顺序，不拟合权重、不补缺值、不把score当收益。首个固定组合适配接受

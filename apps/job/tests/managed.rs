@@ -296,9 +296,14 @@ fn actual_managed_sealed_uses_original_fit_and_rejects_other_partitions() {
 }
 
 fn portfolio_fixture(
+    losses: bool,
     change: impl FnOnce(&mut contracts::science::NativePortfolioBuildRequestV1),
 ) -> Fixture {
-    let (catalog, mut request, wasm) = market::portfolio();
+    let (catalog, mut request, wasm) = if losses {
+        market::portfolio_with_losses()
+    } else {
+        market::portfolio()
+    };
     change(&mut request);
     let weights = serde_json::to_vec(&request.current_weights).unwrap();
     let id = Id::new();
@@ -352,13 +357,26 @@ fn portfolio_fixture(
 
 #[test]
 fn actual_managed_risk_budgeting_preserves_catalog_risk_contributions() {
+    managed_risk_budget(false);
+}
+
+#[test]
+fn actual_managed_cvar_risk_budget_preserves_catalog_and_tail_witness() {
+    managed_risk_budget(true);
+}
+
+fn managed_risk_budget(cvar: bool) {
     use contracts::portfolio::*;
-    let f = portfolio_fixture(|r| {
+    let f = portfolio_fixture(cvar, |r| {
         r.mandate.objective = AllocationObjective::RiskBudgeting;
         r.mandate.constraints.max_ex_ante_risk = Some("1".parse().unwrap());
         let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut r.mandate.optimizer else {
             unreachable!()
         };
+        if cvar {
+            r.mandate.risk_measure = AllocationRisk::Cvar;
+            parameters.cvar_confidence = Some("0.95".parse().unwrap());
+        }
         parameters.risk_budgeting = Some(RiskBudgetSettingsV1 {
             schema_version: SchemaV1,
             risky_gross_exposure: "1".parse().unwrap(),
@@ -383,11 +401,12 @@ fn actual_managed_risk_budgeting_preserves_catalog_risk_contributions() {
         report.allocation
     );
     domain::portfolio::allocation_result(&report.input, &report.allocation).unwrap();
+    assert_eq!(report.allocation.cvar_risk_budget_witness.is_some(), cvar);
 }
 
 #[test]
 fn actual_managed_allocation_reads_original_catalog_models_and_preserves_infeasibility() {
-    let f = portfolio_fixture(|_| {});
+    let f = portfolio_fixture(false, |_| {});
     assert!(execute(&f));
     let report: contracts::science::NativePortfolioBuildResultV1 =
         result(&f, "qz.native_portfolio");
@@ -403,9 +422,9 @@ fn actual_managed_allocation_reads_original_catalog_models_and_preserves_infeasi
     assert_eq!(report.input.return_history.end_ns.len(), 18);
     let expected = 1.003_f64 / 1.001_f64 - 1.0;
     assert!((report.input.return_history.asset_returns[0][0] - expected).abs() < 1e-14);
-    let incompatible = portfolio_fixture(|r| r.members[1].alpha_id = r.members[0].alpha_id);
+    let incompatible = portfolio_fixture(false, |r| r.members[1].alpha_id = r.members[0].alpha_id);
     assert!(!execute(&incompatible));
-    let bad = portfolio_fixture(|r| {
+    let bad = portfolio_fixture(false, |r| {
         r.mandate.constraints.min_cash_weight = "1".parse().unwrap();
         r.mandate.constraints.max_cash_weight = "1".parse().unwrap();
     });
@@ -423,7 +442,7 @@ fn actual_managed_allocation_reads_original_catalog_models_and_preserves_infeasi
 #[test]
 fn portfolio_requires_original_current_weights_and_rejects_future_expired_or_mismatched_values() {
     for case in 0..4 {
-        let f = portfolio_fixture(|r| match case {
+        let f = portfolio_fixture(false, |r| match case {
             0 => {
                 r.current_weights.available_ns =
                     market::count(r.selection.decision_cutoff_ns.get() + 1)
@@ -434,7 +453,7 @@ fn portfolio_requires_original_current_weights_and_rejects_future_expired_or_mis
         });
         assert!(!execute(&f), "invalid frozen weights case {case}");
     }
-    let mut f = portfolio_fixture(|_| {});
+    let mut f = portfolio_fixture(false, |_| {});
     let id = f
         .spec
         .inputs
@@ -458,7 +477,7 @@ fn portfolio_requires_original_current_weights_and_rejects_future_expired_or_mis
     )
     .unwrap();
     assert!(!execute(&f));
-    let f = portfolio_fixture(|_| {});
+    let f = portfolio_fixture(false, |_| {});
     let id = f
         .spec
         .inputs
@@ -565,7 +584,7 @@ fn native_managed_simulation_is_a_separate_process_and_does_not_invent_daily_ret
 
 #[test]
 fn native_managed_output_limit_fails_without_a_published_index() {
-    let mut f = portfolio_fixture(|_| {});
+    let mut f = portfolio_fixture(false, |_| {});
     f.spec.limits.output_bytes = DbCounter::new(1).unwrap();
     fs::write(
         f.input.join("spec.json"),

@@ -123,8 +123,8 @@ function MandateEditor({ project, close }: { project: string; close: () => void 
       </Card>
       <Card title="原生模型与目标">
         <Typography.Paragraph>样本协方差 ndarray-stats 0.7.0（ddof=1）；固定预测聚合 ndarray 0.17.1；优化器 Clarabel 0.11.1。需要 portfolio-models/4 镜像能力。</Typography.Paragraph>
-        <Form.Item name={['content', 'objective']} label="优化目标" rules={[required]}><Select onChange={value => { if (value !== 'RISK_BUDGETING') form.setFieldValue(['parameters', 'risk_budgeting'], null); }} options={[{ value: 'MIN_RISK', label: '最小风险' }, { value: 'MAX_UTILITY', label: '最大效用' }, { value: 'RISK_BUDGETING', label: '方差风险预算', disabled: risk === 'CVAR' }]} /></Form.Item>
-        <Form.Item name={['content', 'risk_measure']} label="风险度量" rules={[required]}><Select options={[{ value: 'VARIANCE', label: '方差' }, { value: 'CVAR', label: 'CVaR（预期短缺）', disabled: objective === 'RISK_BUDGETING' }]} /></Form.Item>
+        <Form.Item name={['content', 'objective']} label="优化目标" rules={[required]}><Select onChange={value => { if (value !== 'RISK_BUDGETING') form.setFieldValue(['parameters', 'risk_budgeting'], null); }} options={[{ value: 'MIN_RISK', label: '最小风险' }, { value: 'MAX_UTILITY', label: '最大效用' }, { value: 'RISK_BUDGETING', label: '风险预算' }]} /></Form.Item>
+        <Form.Item name={['content', 'risk_measure']} label="风险度量" rules={[required]}><Select options={[{ value: 'VARIANCE', label: '方差' }, { value: 'CVAR', label: 'CVaR（预期短缺）' }]} /></Form.Item>
         {risk === 'CVAR' && <Form.Item name={['parameters', 'cvar_confidence']} label="CVaR 置信水平（大于0且小于1）" preserve={false} rules={decimalRules}><Input inputMode="decimal" /></Form.Item>}
         <Form.Item name={['parameters', 'risk_aversion']} label="风险厌恶系数" rules={decimalRules}><Input inputMode="decimal" /></Form.Item>
         <Form.Item name={['parameters', 'solver_tolerance']} label="求解停止容差" rules={decimalRules}><Input inputMode="decimal" /></Form.Item>
@@ -132,7 +132,7 @@ function MandateEditor({ project, close }: { project: string; close: () => void 
         <Form.Item name={['parameters', 'accept_inaccurate']} label="允许原生非精确成功状态" valuePropName="checked"><Switch /></Form.Item>
       </Card>
       {objective === 'RISK_BUDGETING' && <Card title="明确的资产风险预算">
-        <Typography.Paragraph>覆盖原资产集合，份额合计1；LONG/SHORT是目标方向，不是订单。需 portfolio-risk-budget/1 与二次锥能力。约束冲突不会改成近似比例；CVaR 风险预算尚未支持。</Typography.Paragraph>
+        <Typography.Paragraph>覆盖原资产集合，份额合计1；LONG/SHORT是目标方向，不是订单。方差需 portfolio-risk-budget/1 与二次锥，CVaR 需 portfolio-cvar-risk-budget/1 与幂锥能力及明确置信水平。只接受正总风险预算；约束冲突不会改成近似比例。</Typography.Paragraph>
         <Form.Item name={['parameters', 'risk_budgeting', 'risky_gross_exposure']} label="风险资产总敞口" rules={decimalRules}><Input inputMode="decimal" /></Form.Item>
         <Form.List name={['parameters', 'risk_budgeting', 'assets']} rules={[{ validator: async (_, value) => { if (!Array.isArray(value) || value.length < 1 || value.length > 256) throw new Error('请明确填写1至256项资产风险预算。'); } }]}>{(fields, { add, remove }, { errors }) => <>
           {fields.map(field => <Card key={field.key} size="small" title={`预算资产 ${field.name + 1}`}>

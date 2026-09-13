@@ -1,6 +1,7 @@
 //! Native Clarabel compatibility golden; no handwritten optimization algorithm.
 use anyhow::{ensure, Result};
 use clarabel::{algebra::CscMatrix, solver::*};
+mod cvar_risk_budgeting;
 mod risk_budgeting;
 #[cfg(test)]
 mod risk_budgeting_test;
@@ -107,6 +108,7 @@ fn native_outcome(native: &DefaultSolution<f64>, accept_inaccurate: bool) -> All
         reason_code: reason.map(str::to_owned),
         targets: None,
         cash_weight: None,
+        cvar_risk_budget_witness: None,
         iterations: native.iterations,
         objective_value: finite(native.obj_val),
         primal_residual: finite(native.r_prim),
@@ -144,14 +146,13 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
     } else {
         None
     };
-    let risk_budget = domain::portfolio::risk_budgeting(
-        input.objective,
-        input.risk,
-        &input.optimizer,
-        &input.constraints,
-    )?;
+    let risk_budget =
+        domain::portfolio::risk_budgeting(input.objective, &input.optimizer, &input.constraints)?;
     let first = risk_budget
         .map(|budget| {
+            if let Some(confidence) = confidence {
+                return cvar_risk_budgeting::solve(input, budget, parameters, confidence);
+            }
             risk_budgeting::solve(
                 input,
                 &estimated,
@@ -182,7 +183,19 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
         .as_ref()
         .map(|first| -> Result<Vec<f64>> {
             ensure!(
-                first.x.len() == n + 1 && first.x.iter().all(|v| v.is_finite()),
+                first.x.len()
+                    == if confidence.is_some() {
+                        n + risk_budget
+                            .unwrap()
+                            .assets
+                            .iter()
+                            .filter(|a| a.share.is_positive())
+                            .count()
+                            + input.return_history.end_ns.len()
+                    } else {
+                        n + 1
+                    }
+                    && first.x.iter().all(|v| v.is_finite()),
                 "RISK_BUDGET_RESULT_INVALID"
             );
             let gross: f64 = first.x[..n].iter().map(|v| v.abs()).sum();
@@ -201,16 +214,7 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
             0
         };
     let tail_coefficient = confidence
-        .map(|confidence| -> Result<f64> {
-            let tail = ((BigDecimal::from(1) - confidence.as_decimal())
-                * BigDecimal::from(observations as u64))
-            .to_f64()
-            .filter(|v| v.is_finite() && *v > 0.0)
-            .ok_or_else(|| anyhow::anyhow!("CVAR_TAIL_RANGE"))?;
-            let coefficient = 1.0 / tail;
-            ensure!(coefficient.is_finite(), "CVAR_TAIL_RANGE");
-            Ok(coefficient)
-        })
+        .map(|confidence| domain::portfolio::cvar_tail_coefficient(observations, confidence))
         .transpose()?;
     let cash = n;
     let gross = n + 1;
@@ -418,6 +422,19 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
                     .collect::<Result<Vec<_>>>()?,
             );
             result.cash_weight = Some(public_weight(native.x[cash])?);
+            if confidence.is_some() {
+                if let Some(first) = &first {
+                    result.cvar_risk_budget_witness =
+                        Some(contracts::portfolio::CvarRiskBudgetWitnessV1 {
+                            schema_version: SchemaV1,
+                            scenario_weights: first
+                                .z
+                                .get(..observations)
+                                .ok_or_else(|| anyhow::anyhow!("CVAR_DUAL_DIMENSION"))?
+                                .to_vec(),
+                        });
+                }
+            }
             domain::portfolio::allocation_result(input, &result)?;
             Ok(())
         })();
@@ -426,6 +443,7 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
             result.reason_code = Some("POST_SOLVE_CONSTRAINT_REJECTED".into());
             result.targets = None;
             result.cash_weight = None;
+            result.cvar_risk_budget_witness = None;
         }
     }
     domain::portfolio::allocation_result(input, &result)?;

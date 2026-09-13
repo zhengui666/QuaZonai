@@ -28,6 +28,13 @@ async fn risk_budget_requires_both_native_adapter_and_second_order_cone_without_
     risk_capability_gate(pool, 2).await;
 }
 
+#[sqlx::test(migrations = "../../migrations")]
+async fn cvar_risk_budget_requires_native_adapter_and_power_cone_without_partial_writes(
+    pool: PgPool,
+) {
+    risk_capability_gate(pool, 3).await;
+}
+
 async fn risk_capability_gate(pool: PgPool, mode: u8) {
     let (store, actor) = research::operator(&pool).await;
     let mut request = support::request(&pool, &store, &actor).await;
@@ -39,7 +46,7 @@ async fn risk_capability_gate(pool: PgPool, mode: u8) {
         };
         parameters.cvar_confidence = Some("0.95".parse().unwrap());
         ("portfolio-cvar", "LINEAR_PROGRAM", "portfolio_cvar")
-    } else if mode == 2 {
+    } else if mode >= 2 {
         request.content.objective = AllocationObjective::RiskBudgeting;
         request.content.constraints.max_ex_ante_risk = None;
         let allocation: AllocationInputV1 = serde_json::from_str(include_str!(
@@ -49,6 +56,10 @@ async fn risk_capability_gate(pool: PgPool, mode: u8) {
         let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.content.optimizer else {
             unreachable!()
         };
+        if mode == 3 {
+            request.content.risk_measure = AllocationRisk::Cvar;
+            parameters.cvar_confidence = Some("0.95".parse().unwrap());
+        }
         parameters.risk_budgeting = Some(RiskBudgetSettingsV1 {
             schema_version: contracts::SchemaV1,
             risky_gross_exposure: "1".parse().unwrap(),
@@ -63,8 +74,16 @@ async fn risk_capability_gate(pool: PgPool, mode: u8) {
                 .collect(),
         });
         (
-            "portfolio-risk-budget",
-            "SECOND_ORDER_CONE",
+            if mode == 3 {
+                "portfolio-cvar-risk-budget"
+            } else {
+                "portfolio-risk-budget"
+            },
+            if mode == 3 {
+                "POWER_CONE"
+            } else {
+                "SECOND_ORDER_CONE"
+            },
             "portfolio_risk_budgeting",
         )
     } else {
@@ -83,6 +102,11 @@ async fn risk_capability_gate(pool: PgPool, mode: u8) {
     };
     for mutation in 0..3 {
         let mut cap = capabilities.clone();
+        if mode == 3 {
+            cap.engine_versions
+                .insert("portfolio-cvar".into(), "1".into());
+            cap.solver_capabilities.push("LINEAR_PROGRAM".into());
+        }
         if mutation != 0 {
             cap.engine_versions.insert(adapter.into(), "1".into());
         }

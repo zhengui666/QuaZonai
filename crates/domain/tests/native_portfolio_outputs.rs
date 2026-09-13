@@ -146,6 +146,7 @@ fn allocation_success_requires_exact_instruments_currency_weights_and_solver_con
         ]),
         cash_weight: Some("0".parse().unwrap()),
         iterations: 10,
+        cvar_risk_budget_witness: None,
         objective_value: Some(0.8),
         primal_residual: Some(0.0),
         dual_residual: Some(0.0),

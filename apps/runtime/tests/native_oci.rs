@@ -32,6 +32,11 @@ async fn real_native_risk_budget_portfolio_rechecks_original_risk_contributions(
     native_portfolio(false, true).await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn real_native_cvar_risk_budget_retains_original_tail_dual_witness() {
+    native_portfolio(true, true).await;
+}
+
 async fn native_portfolio(cvar: bool, risk_budget: bool) {
     use contracts::{
         execution::NativeTaskParametersV1,
@@ -40,7 +45,11 @@ async fn native_portfolio(cvar: bool, risk_budget: bool) {
         science::NativePortfolioBuildResultV1,
         Revision,
     };
-    let (catalog, mut request, wasm) = market::portfolio();
+    let (catalog, mut request, wasm) = if cvar && risk_budget {
+        market::portfolio_with_losses()
+    } else {
+        market::portfolio()
+    };
     let second = market::module("f64.const 0.03");
     request.mandate.objective = AllocationObjective::MaxUtility;
     request.mandate.constraints.max_ex_ante_risk = Some("1".parse().unwrap());
@@ -225,6 +234,7 @@ async fn native_portfolio(cvar: bool, risk_budget: bool) {
     assert_eq!(manifest.engine_versions["portfolio-variance-bound"], "1");
     assert_eq!(manifest.engine_versions["portfolio-cvar"], "1");
     assert_eq!(manifest.engine_versions["portfolio-risk-budget"], "1");
+    assert_eq!(manifest.engine_versions["portfolio-cvar-risk-budget"], "1");
     assert_eq!(manifest.engine_versions["ndarray"], "0.17.1");
     let [output] = manifest.artifacts.as_slice() else {
         panic!("one original allocation report");
@@ -305,8 +315,15 @@ async fn native_portfolio(cvar: bool, risk_budget: bool) {
     let aggregate = job::validation::aligned_portfolio_forecast(&result.input.forecasts).unwrap();
     assert!(aggregate.iter().all(|v| (*v - 0.025).abs() < 1e-14));
     assert_eq!(result.input.return_history.end_ns.len(), 18);
-    assert!(
-        (result.input.return_history.asset_returns[0][0] - (1.003 / 1.001 - 1.0)).abs() < 1e-14
+    let expected_return = if cvar && risk_budget {
+        0.997 / 0.999 - 1.0
+    } else {
+        1.003 / 1.001 - 1.0
+    };
+    assert!((result.input.return_history.asset_returns[0][0] - expected_return).abs() < 1e-14);
+    assert_eq!(
+        result.allocation.cvar_risk_budget_witness.is_some(),
+        cvar && risk_budget
     );
     assert!(result.consumed_fuel.get() > 0);
     assert_eq!(

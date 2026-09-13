@@ -10,6 +10,18 @@
 
 ## 已核查并实际运行的 Rust 能力
 
+2026-09-13补充：CVaR风险预算复用Clarabel0.11.1 PowerConeT与原生线性规划，
+已核查锁定crate examples/rust/example_powcone.rs及Apache-2.0许可。
+[风险预算/Expected Shortfall原论文](https://arxiv.org/pdf/2302.01196)提供
+对数预算约束与原始场景CVaR问题；[原生幂锥建模](https://docs.mosek.com/modeling-cookbook/powo.html)
+给出等价加权几何平均的三维锥拆分。QZ只装配这些原生行，不实现论文的
+切平面/随机梯度算法。原指数锥尝试在分数尾部贡献检查失败后删除，不保留回退。
+最终幂锥采用更紧gap停止上限，原发布贡献容差和低精度授权不变。成功结果保留
+原场景对偶，ndarray核对合法概率、尾部最优值及贡献；不手选并列尾部。
+原生解析回归覆盖0.6/0.7/0.8置信水平、三资产幂锥组合、多空、零份额、
+对偶篡改、无界/零风险、费用、小收益与不可行上限；受管任务实际读取下跌
+合成目录/Wasm并复核原报告。不是REAL/PIT或完整组合资格/交付证据。
+
 2026-09-13补充：方差风险预算复用Clarabel0.11.1的SecondOrderConeT，沿用已核查
 原生二次锥API及Apache-2.0许可。
 [原生风险预算参考](https://docs.mosek.com/portfolio-cookbook/risk_parity.html)
@@ -18,7 +30,7 @@
 按明确总敞口规范化，再用原Clarabel组合问题验证固定权重的可行性；不另写优化器。
 发布复用原ndarray协方差/矩阵乘法核对贡献。实际原生小例验证等风险2/3、1/3，
 非等额份额对应1/2、1/2，多空方向、零份额、约束冲突与共享迭代上限。
-此为数值复用证据，不是REAL/PIT/资格/完整交付；CVaR风险预算另需原生适配。
+此为方差数值复用证据，不是REAL/PIT/资格/完整交付；CVaR使用上述独立幂锥适配。
 
 2026-09-13补充：CVaR复用锁定Clarabel0.11.1的DefaultSolver线性规划入口
 （Apache-2.0；已核对原crate examples/rust/example_lp.rs），无新求解器依赖。

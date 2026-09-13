@@ -514,6 +514,16 @@
               }
             ]
           },
+          "cvar_risk_budget_witness": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CvarRiskBudgetWitnessV1"
+              }
+            ]
+          },
           "dual_residual": {
             "format": "double",
             "type": [
@@ -6800,6 +6810,29 @@
           "scope_codes",
           "issued_at",
           "expires_at"
+        ],
+        "type": "object"
+      },
+      "CvarRiskBudgetWitnessV1": {
+        "additionalProperties": false,
+        "properties": {
+          "scenario_weights": {
+            "description": "Native dual weights in the original return-history scenario order.",
+            "items": {
+              "format": "double",
+              "type": "number"
+            },
+            "maxItems": 100000,
+            "minItems": 2,
+            "type": "array"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "scenario_weights"
         ],
         "type": "object"
       },

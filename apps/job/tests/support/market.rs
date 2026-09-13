@@ -24,6 +24,14 @@ pub fn instant(n: u64) -> DbCounter {
 }
 
 pub fn market(fee: &str, rows_per_asset: u32) -> (tempfile::TempDir, NativeSimulationRequestV1) {
+    market_direction(fee, rows_per_asset, 1.0)
+}
+
+fn market_direction(
+    fee: &str,
+    rows_per_asset: u32,
+    direction: f64,
+) -> (tempfile::TempDir, NativeSimulationRequestV1) {
     let directory = tempfile::tempdir().unwrap();
     let catalog = ParquetDataCatalog::from_uri(
         directory.path().to_str().unwrap(),
@@ -63,7 +71,7 @@ pub fn market(fee: &str, rows_per_asset: u32) -> (tempfile::TempDir, NativeSimul
         types.push(kind.to_string());
         let bars = (1..=rows_per_asset)
             .map(|i| {
-                let price = multiplier + f64::from(i) * 0.001;
+                let price = multiplier + direction * f64::from(i) * 0.001;
                 Bar::new_checked(
                     kind,
                     Price::from(format!("{price:.5}").as_str()),
@@ -179,7 +187,16 @@ pub fn module(body: &str) -> Vec<u8> {
 }
 
 pub fn portfolio() -> (tempfile::TempDir, NativePortfolioBuildRequestV1, Vec<u8>) {
-    let (directory, simulation) = market("0", 20);
+    portfolio_from_market(market("0", 20))
+}
+
+pub fn portfolio_with_losses() -> (tempfile::TempDir, NativePortfolioBuildRequestV1, Vec<u8>) {
+    portfolio_from_market(market_direction("0", 20, -1.0))
+}
+
+fn portfolio_from_market(
+    (directory, simulation): (tempfile::TempDir, NativeSimulationRequestV1),
+) -> (tempfile::TempDir, NativePortfolioBuildRequestV1, Vec<u8>) {
     let input = serde_json::from_str(include_str!(
         "../../../../tests/contracts/allocation-input.json"
     ))

@@ -5,7 +5,6 @@ use contracts::{portfolio::*, DecimalValue};
 
 pub fn risk_budgeting<'a>(
     objective: AllocationObjective,
-    risk: AllocationRisk,
     model: &'a NativeModelRefV1,
     constraints: &PortfolioConstraintsV1,
 ) -> Result<Option<&'a RiskBudgetSettingsV1>, DomainError> {
@@ -16,11 +15,6 @@ pub fn risk_budgeting<'a>(
         } else {
             Err(DomainError::Invalid("portfolio_risk_budgeting"))
         };
-    }
-    if risk != AllocationRisk::Variance {
-        return Err(DomainError::CapabilityUnavailable(
-            "portfolio_risk_budgeting_measure",
-        ));
     }
     let settings = settings.ok_or(DomainError::Invalid("portfolio_risk_budgeting"))?;
     if !(1..=MAX_ALLOCATION_ASSETS).contains(&settings.assets.len())
@@ -66,6 +60,56 @@ pub fn cvar_confidence(
 }
 
 // Called only after allocation_input validates the original aligned, finite history.
+pub fn cvar_tail_coefficient(count: usize, confidence: &DecimalValue) -> Result<f64, DomainError> {
+    let tail = ((BigDecimal::from(1) - confidence.as_decimal()) * BigDecimal::from(count as u64))
+        .to_f64()
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .ok_or(DomainError::Invalid("portfolio_cvar_number_range"))?;
+    let coefficient = 1.0 / tail;
+    if !coefficient.is_finite() {
+        return Err(DomainError::Invalid("portfolio_cvar_number_range"));
+    }
+    Ok(coefficient)
+}
+
+// Verifies the original empirical CVaR dual optimum, including nonunique tail ties.
+pub(super) fn cvar_marginal(
+    history: &[Vec<f64>],
+    weights: &ndarray::Array1<f64>,
+    confidence: &DecimalValue,
+    witness: &CvarRiskBudgetWitnessV1,
+    risk: f64,
+    tolerance: f64,
+) -> Result<ndarray::Array1<f64>, DomainError> {
+    let invalid = || DomainError::Invalid("allocation_cvar_risk_witness");
+    let count = history[0].len();
+    let p = &witness.scenario_weights;
+    let cap = cvar_tail_coefficient(count, confidence)?;
+    if p.len() != count
+        || !risk.is_finite()
+        || risk <= 0.0
+        || p.iter()
+            .any(|v| !v.is_finite() || *v < 0.0 || *v > cap * (1.0 + tolerance))
+        || (p.iter().sum::<f64>() - 1.0).abs() > tolerance
+    {
+        return Err(invalid());
+    }
+    let matrix = ndarray::Array2::from_shape_vec(
+        (weights.len(), count),
+        history.iter().flatten().copied().collect(),
+    )
+    .map_err(|_| invalid())?;
+    let marginal = -matrix.dot(&ndarray::ArrayView1::from(p.as_slice()));
+    let witnessed = weights.dot(&marginal);
+    if marginal.iter().any(|v| !v.is_finite())
+        || !witnessed.is_finite()
+        || (witnessed - risk).abs() > risk * tolerance
+    {
+        return Err(invalid());
+    }
+    Ok(marginal)
+}
+
 pub(super) fn expected_shortfall(
     history: &[Vec<f64>],
     weights: &ndarray::Array1<f64>,
@@ -86,15 +130,12 @@ pub(super) fn expected_shortfall(
         .to_usize()
         .filter(|v| *v < count)
         .ok_or_else(invalid)?;
-    let tail = ((BigDecimal::from(1) - confidence.as_decimal()) * BigDecimal::from(count as u64))
-        .to_f64()
-        .filter(|v| v.is_finite() && *v > 0.0)
-        .ok_or_else(invalid)?;
+    let coefficient = cvar_tail_coefficient(count, confidence)?;
     let eta = *losses.select_nth_unstable_by(index, f64::total_cmp).1;
     let risk = eta
         + losses
             .iter()
-            .map(|loss| (loss - eta).max(0.0) / tail)
+            .map(|loss| (loss - eta).max(0.0) * coefficient)
             .sum::<f64>();
     if !risk.is_finite() {
         return Err(invalid());

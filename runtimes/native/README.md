@@ -15,7 +15,10 @@ CVAR还要求portfolio-cvar/1及LINEAR_PROGRAM，显式冻结cvar_confidence为(
 收益率，发布含分数尾部/重复损失复核，不把原生数值结果当资格。
 方差风险预算需portfolio-risk-budget/1与SECOND_ORDER_CONE，冻结risk_budgeting的
 资产份额/方向/总敞口。原生二次锥问题求预算后，再由原组合问题核对全部约束与费用；
-迭代预算合计，不能为了满足另一约束改变预算比例。CVaR风险预算尚未支持。
+迭代预算合计，不能为了满足另一约束改变预算比例。
+CVaR预算另需portfolio-cvar-risk-budget/1与POWER_CONE（及原CVAR能力），原生
+加权几何平均/场景LP保留对偶见证。发布复核原尾部概率约束、正CVaR及各贡献，
+不挑选并列场景、不归一化对偶或改动预算。无界/零风险/失败不返回目标。
 当前要求portfolio-models/4，绑定原optimizer/alpha_ensemble的类名、版本及严格
 参数；risk_aversion冻结在optimizer.parameters，不接收顶层settings/risk_aversion
 或默认模型。VARIANCE从目录生成的return_history经covariance_estimator原生估计协方差，

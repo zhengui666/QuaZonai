@@ -615,6 +615,195 @@ fn native_cvar_uses_tail_mass_and_changes_with_confidence() {
 }
 
 #[test]
+fn native_cvar_risk_budgeting_preserves_tail_duals_and_fractional_contributions() {
+    let mut request = input();
+    request.risk = AllocationRisk::Cvar;
+    request.objective = AllocationObjective::RiskBudgeting;
+    request.return_history.asset_returns = vec![
+        vec![-0.1, 0.0, 0.0, 0.0, 0.0],
+        vec![0.0, -0.2, 0.0, 0.0, 0.0],
+    ];
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    parameters.risk_budgeting = Some(RiskBudgetSettingsV1 {
+        schema_version: contracts::SchemaV1,
+        risky_gross_exposure: decimal("1"),
+        assets: request
+            .assets
+            .iter()
+            .zip(["0.2", "0.8"])
+            .map(|(a, b)| RiskBudgetAssetV1 {
+                instrument_id: a.instrument_id.clone(),
+                share: decimal(b),
+                sign: RiskBudgetSign::Long,
+            })
+            .collect(),
+    });
+    for (confidence, expected) in [("0.6", 1.0 / 3.0), ("0.7", 0.5), ("0.8", 2.0 / 3.0)] {
+        let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+            unreachable!()
+        };
+        parameters.cvar_confidence = Some(decimal(confidence));
+        let actual = weights(&request);
+        near(actual[0], expected);
+        near(actual[1], 1.0 - expected);
+    }
+    let solved = job::allocate(&request).unwrap();
+    let p = &solved
+        .cvar_risk_budget_witness
+        .as_ref()
+        .unwrap()
+        .scenario_weights;
+    near(p[0], 0.2);
+    near(p[1], 0.8);
+    for case in 0..7 {
+        let mut invalid = solved.clone();
+        let p = &mut invalid
+            .cvar_risk_budget_witness
+            .as_mut()
+            .unwrap()
+            .scenario_weights;
+        match case {
+            0 => {
+                p.pop();
+            }
+            1 => p[0] = -0.1,
+            2 => p[0] = f64::NAN,
+            3 => p[0] += 0.1,
+            4 => {
+                p[0] = 0.5;
+                p[1] = 0.5;
+            } // valid CVaR dual at tie, wrong original budget
+            5 => {
+                p[0] = 0.0;
+                p[1] = 0.0;
+                p[2] = 1.0;
+            } // not a tail optimum
+            _ => invalid.cvar_risk_budget_witness = None,
+        }
+        assert!(domain::portfolio::allocation_result(&request, &invalid).is_err());
+    }
+    request.assets[0].transaction_cost_rate = decimal("0.3");
+    near(weights(&request)[0], 2.0 / 3.0);
+    request.constraints.max_ex_ante_risk = Some(decimal("0.01"));
+    let impossible = job::allocate(&request).unwrap();
+    assert_eq!(impossible.solver_status, SolverStatus::Infeasible);
+    assert!(impossible.targets.is_none() && impossible.cvar_risk_budget_witness.is_none());
+    request.constraints.max_ex_ante_risk = None;
+    for row in &mut request.return_history.asset_returns {
+        for value in row {
+            *value *= 1e-6;
+        }
+    }
+    near(weights(&request)[0], 2.0 / 3.0);
+    request.constraints.max_ex_ante_risk = Some(decimal("0.00000001"));
+    let tiny = job::allocate(&request).unwrap();
+    assert!(matches!(
+        tiny.solver_status,
+        SolverStatus::Infeasible | SolverStatus::Failed
+    ));
+    assert!(tiny.targets.is_none() && tiny.cvar_risk_budget_witness.is_none());
+    request.constraints.max_ex_ante_risk = None;
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    parameters.max_iterations = 1;
+    let exhausted = job::allocate(&request).unwrap();
+    assert_eq!(exhausted.solver_status, SolverStatus::Failed);
+    assert!(exhausted.targets.is_none() && exhausted.cvar_risk_budget_witness.is_none());
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    parameters.max_iterations = 200;
+    request.return_history.asset_returns = vec![vec![0.1; 5], vec![0.2; 5]];
+    let unbounded = job::allocate(&request).unwrap();
+    assert_eq!(unbounded.solver_status, SolverStatus::Unbounded);
+    assert!(unbounded.targets.is_none() && unbounded.cvar_risk_budget_witness.is_none());
+    request.return_history.asset_returns = vec![vec![0.0; 5]; 2];
+    assert!(job::allocate(&request).is_err());
+    request.return_history.asset_returns = vec![
+        vec![-0.1, 0.0, 0.0, 0.0, 0.0],
+        vec![0.0, 0.2, 0.0, 0.0, 0.0],
+    ];
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    let budget = parameters.risk_budgeting.as_mut().unwrap();
+    budget.assets[0].share = decimal("1");
+    budget.assets[1].share = decimal("0");
+    budget.assets[1].sign = RiskBudgetSign::Short;
+    near(weights(&request)[0], 1.0);
+    request.constraints.long_only = false;
+    request.constraints.min_asset_weight = decimal("-1");
+    request.constraints.min_net_exposure = decimal("-1");
+    request.constraints.max_cash_weight = decimal("1");
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    let budget = parameters.risk_budgeting.as_mut().unwrap();
+    budget.assets[0].share = decimal("0.5");
+    budget.assets[1].share = decimal("0.5");
+    let signed = weights(&request);
+    near(signed[0], 2.0 / 3.0);
+    near(signed[1], -1.0 / 3.0);
+}
+
+#[test]
+fn native_cvar_risk_budgeting_composes_three_original_asset_power_cones() {
+    let mut request = input();
+    let mut third = request.assets[0].clone();
+    third.instrument_id = "THIRD.EXAMPLE".into();
+    third.current_weight = decimal("0");
+    request.assets.push(third);
+    request
+        .forecasts
+        .instrument_ids
+        .push("THIRD.EXAMPLE".into());
+    request
+        .forecasts
+        .bar_types
+        .push("THIRD.EXAMPLE-1-MINUTE-LAST-EXTERNAL".into());
+    for member in &mut request.forecasts.members {
+        member.instrument_ids = request.forecasts.instrument_ids.clone();
+        member.bar_types = request.forecasts.bar_types.clone();
+        member.forecasts.push(0.0);
+    }
+    request.return_history.instrument_ids = request.forecasts.instrument_ids.clone();
+    request.return_history.bar_types = request.forecasts.bar_types.clone();
+    request.return_history.asset_returns = vec![
+        vec![-0.1, 0.0, 0.0, 0.0, 0.0],
+        vec![0.0, -0.2, 0.0, 0.0, 0.0],
+        vec![0.0, 0.0, -0.4, 0.0, 0.0],
+    ];
+    request.risk = AllocationRisk::Cvar;
+    request.objective = AllocationObjective::RiskBudgeting;
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    parameters.cvar_confidence = Some(decimal("0.4"));
+    parameters.risk_budgeting = Some(RiskBudgetSettingsV1 {
+        schema_version: contracts::SchemaV1,
+        risky_gross_exposure: decimal("1"),
+        assets: request
+            .assets
+            .iter()
+            .zip(["0.2", "0.3", "0.5"])
+            .map(|(a, b)| RiskBudgetAssetV1 {
+                instrument_id: a.instrument_id.clone(),
+                share: decimal(b),
+                sign: RiskBudgetSign::Long,
+            })
+            .collect(),
+    });
+    parameters.risk_budgeting.as_mut().unwrap().assets.reverse();
+    let actual = weights(&request);
+    for (actual, expected) in actual.iter().zip([8.0 / 19.0, 6.0 / 19.0, 5.0 / 19.0]) {
+        near(*actual, expected);
+    }
+}
+
+#[test]
 fn cvar_publication_accounts_for_fractional_tail_ties_and_near_one_confidence() {
     let mut request = input();
     let mut result = job::allocate(&request).unwrap();

@@ -3,6 +3,54 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Native CVaR risk budgeting and original dual witness, 2026-09-13
+
+The patch over `37305c7d` extends the existing explicit risk-budget settings to
+CVAR, preserving the original confidence and complete equal-weight scenarios.
+The native Clarabel LP minimizes empirical CVaR with a weighted-geometric-mean
+budget constraint assembled from native three-dimensional PowerConeT objects.
+Original asset order and Decimal prefix shares determine the cone coefficients;
+zero shares fix zero weights. A common return scale does not change normalized
+targets. No new dependency, numerical optimizer or scenario selection algorithm.
+First-stage gap uses min(solver_tolerance, exposure_tolerance squared); this does
+not relax feasibility, publication or inaccurate-status authorization. The second
+stage retains the existing fixed-weight constraints/fees and shared iterations.
+
+Successful CVAR budgets preserve the first native scenario duals in
+cvar_risk_budget_witness. Publication checks finite nonnegative probability mass,
+sum, original tail cap, empirical CVaR optimality and Euler contributions using
+the original returns and stored Decimal weights. Tail ties permit valid dual
+choices, not arbitrary chosen scenarios or normalized/clipped witnesses. Other
+objectives and failed results cannot carry the witness. Nonpositive risk does
+not become a budget; actual unbounded/zero-risk failures have no targets. Ordinary
+MIN_RISK/MAX_UTILITY CVaR continues to permit negative risk.
+
+Initial exponential-cone and coarse-gap attempts failed the contribution check;
+they were removed. Native tests now cover confidence 0.6/0.7/0.8 with analytical
+weights [1/3,2/3], [1/2,1/2], [2/3,1/3] for shares [0.2,0.8], original dual weights
+at a tail tie, fraction/tail/dual corruption, costs, tiny returns, normal and tiny
+infeasible bounds, iteration exhaustion, unbounded gains, zero risk, zero shares
+and SHORT direction. A three-asset power-cone chain independently gives
+[8/19,6/19,5/19], including reordered budget IDs. The managed task reads actual
+synthetic falling Parquet bars and Wasm and republishes the original witness.
+
+`verify-nfXgbv` passed check/fmt/strict Clippy and 207 checks with unchanged source:
+127 contracts/domain, 46 native science, 12 Store, 1 source SQL, 21 HTTP/CLI.
+Real PG cases reject missing portfolio-cvar-risk-budget/1 or POWER_CONE without
+partial writes; the existing portfolio-cvar/1 and LINEAR_PROGRAM gate remains.
+`web-verify-zh5k9m` passed two byte-identical generations, typecheck, 505 unit,
+wire/build, 36 settings-browser and 216 full-browser checks. The AntD form keeps
+exact budgets/confidence across unknown-response retries and preserves clearing
+rules when switching away from a budget objective.
+
+`owner-oci-e8TuZm` built image
+`sha256:30c55038fe75f5f950ef08af26d587047af6eda7a22ee881eaedf14e85820b6c`;
+all 12 actual OCI tests passed with unchanged source, including original falling
+catalog/Wasm CVaR risk budgeting and independent domain witness verification.
+These are SYNTHETIC numerical/protocol fixtures, not REAL/PIT, qualification or
+full Issue #62 acceptance. Complete cost/source adapters, independent Candidate
+validation, delivery and remaining acceptance/review/CI gates are still required.
+
 ## Native variance risk budgeting, 2026-09-13
 
 The patch over `734fbe44` implements explicit VARIANCE risk budgets: original

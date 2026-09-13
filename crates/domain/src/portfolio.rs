@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 mod covariance;
 pub use covariance::sample_covariance;
 mod risk;
-pub use risk::{cvar_confidence, risk_budgeting};
+pub use risk::{cvar_confidence, cvar_tail_coefficient, risk_budgeting};
 
 fn invalid() -> DomainError {
     DomainError::Invalid("portfolio_allocation")
@@ -319,12 +319,7 @@ pub fn mandate(content: &MandateContentV1) -> Result<(), DomainError> {
     {
         return Err(DomainError::Invalid("portfolio_mandate"));
     }
-    risk_budgeting(
-        content.objective,
-        content.risk_measure,
-        &content.optimizer,
-        &content.constraints,
-    )?;
+    risk_budgeting(content.objective, &content.optimizer, &content.constraints)?;
     Ok(())
 }
 
@@ -337,9 +332,7 @@ pub fn allocation_input(input: &AllocationInputV1) -> Result<(), DomainError> {
     portfolio_return_history(&input.return_history, &input.forecasts)?;
     let count = input.assets.len();
     let constraints = &input.constraints;
-    if let Some(budget) =
-        risk_budgeting(input.objective, input.risk, &input.optimizer, constraints)?
-    {
+    if let Some(budget) = risk_budgeting(input.objective, &input.optimizer, constraints)? {
         if budget.assets.len() != input.assets.len()
             || budget.assets.iter().any(|b| {
                 !input
@@ -542,11 +535,18 @@ pub fn allocation_result(
     if !successful {
         if result.targets.is_some()
             || result.cash_weight.is_some()
+            || result.cvar_risk_budget_witness.is_some()
             || result.reason_code.as_ref().is_none_or(|v| v.is_empty())
         {
             return Err(invalid());
         }
         return Ok(());
+    }
+    if result.cvar_risk_budget_witness.is_some()
+        != (input.objective == AllocationObjective::RiskBudgeting
+            && input.risk == AllocationRisk::Cvar)
+    {
+        return Err(DomainError::Invalid("allocation_cvar_risk_witness"));
     }
     if result.reason_code.is_some()
         || (result.solver_status == SolverStatus::AcceptableInaccurate
@@ -654,7 +654,7 @@ pub fn allocation_result(
             return Err(DomainError::Invalid("portfolio_group_bound"));
         }
     }
-    let budget = risk_budgeting(input.objective, input.risk, &input.optimizer, constraints)?;
+    let budget = risk_budgeting(input.objective, &input.optimizer, constraints)?;
     if constraints.max_ex_ante_risk.is_some() || budget.is_some() {
         let native = |value: &BigDecimal| {
             value
@@ -668,8 +668,29 @@ pub fn allocation_result(
                 .map(|t| native(t.weight.as_decimal()))
                 .collect::<Result<Vec<_>, _>>()?,
         );
-        let measured = if let Some(confidence) = cvar_confidence(input.risk, &input.optimizer)? {
-            risk::expected_shortfall(&input.return_history.asset_returns, &weights, confidence)?
+        let (measured, marginal) = if let Some(confidence) =
+            cvar_confidence(input.risk, &input.optimizer)?
+        {
+            let measured = risk::expected_shortfall(
+                &input.return_history.asset_returns,
+                &weights,
+                confidence,
+            )?;
+            let marginal = result
+                .cvar_risk_budget_witness
+                .as_ref()
+                .map(|witness| {
+                    risk::cvar_marginal(
+                        &input.return_history.asset_returns,
+                        &weights,
+                        confidence,
+                        witness,
+                        measured,
+                        native(tolerance)?,
+                    )
+                })
+                .transpose()?;
+            (measured, marginal)
         } else {
             let covariance = sample_covariance(
                 &input.covariance_estimator,
@@ -685,39 +706,39 @@ pub fn allocation_result(
             if variance < 0.0 {
                 return Err(DomainError::Invalid("allocation_risk_covariance"));
             }
-            if let Some(budget) = budget {
-                if !variance.is_finite()
-                    || variance <= 0.0
-                    || (&gross - budget.risky_gross_exposure.as_decimal()).abs() > *tolerance
+            (variance, Some(marginal))
+        };
+        if let Some(budget) = budget {
+            if !measured.is_finite()
+                || measured <= 0.0
+                || (&gross - budget.risky_gross_exposure.as_decimal()).abs() > *tolerance
+            {
+                return Err(DomainError::Invalid("allocation_risk_budget"));
+            }
+            let marginal = marginal.ok_or_else(invalid)?;
+            let allowed = native(tolerance)? * measured;
+            for (i, target) in targets.iter().enumerate() {
+                let config = budget
+                    .assets
+                    .iter()
+                    .find(|b| b.instrument_id == target.instrument_id)
+                    .ok_or_else(invalid)?;
+                let sign = if config.sign == RiskBudgetSign::Long {
+                    1.0
+                } else {
+                    -1.0
+                };
+                if (config.share.is_positive() && sign * weights[i] <= 0.0)
+                    || (!config.share.is_positive()
+                        && target.weight.as_decimal().abs() > *tolerance)
+                    || (weights[i] * marginal[i] - native(config.share.as_decimal())? * measured)
+                        .abs()
+                        > allowed
                 {
                     return Err(DomainError::Invalid("allocation_risk_budget"));
                 }
-                let allowed = native(tolerance)? * variance;
-                for (i, target) in targets.iter().enumerate() {
-                    let config = budget
-                        .assets
-                        .iter()
-                        .find(|b| b.instrument_id == target.instrument_id)
-                        .ok_or_else(invalid)?;
-                    let sign = if config.sign == RiskBudgetSign::Long {
-                        1.0
-                    } else {
-                        -1.0
-                    };
-                    if (config.share.is_positive() && sign * weights[i] <= 0.0)
-                        || (!config.share.is_positive()
-                            && target.weight.as_decimal().abs() > *tolerance)
-                        || (weights[i] * marginal[i]
-                            - native(config.share.as_decimal())? * variance)
-                            .abs()
-                            > allowed
-                    {
-                        return Err(DomainError::Invalid("allocation_risk_budget"));
-                    }
-                }
             }
-            variance
-        };
+        }
         let above_bound = constraints
             .max_ex_ante_risk
             .as_ref()
