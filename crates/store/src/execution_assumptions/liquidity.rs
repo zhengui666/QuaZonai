@@ -220,6 +220,9 @@ where
     .await?
     .ok_or(StoreError::Integrity)?;
     let saved = super::view(&row)?;
+    if saved.rolling_liquidity.is_some() {
+        return Err(StoreError::Invalid("rolling_liquidity_requires_study"));
+    }
     let Some(assumption) = saved.bar_liquidity else {
         return if saved.bar_liquidity_valid_until.is_none() {
             Ok(None)

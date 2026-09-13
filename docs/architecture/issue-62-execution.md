@@ -3,6 +3,49 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Frozen rolling BAR liquidity policy registration, 2026-09-14
+
+The existing execution-assumptions command accepts optional rolling_liquidity,
+mutually exclusive with the original single-snapshot bar_liquidity. Migration 058
+stores the declared policy without backfilling old rows; the existing immutable
+liquidity artifact/participation fields bind its exact PARAMETERS file. It remains
+SYNTHETIC/CONSERVATIVE_ASSUMPTION, not measured volume or DATA_BACKED. The command
+requires current portfolio-rolling-liquidity/1 capability and preserves original
+dataset/input/Runtime/fee/license binding. No expiry is invented for the policy:
+each actual native cutoff still checks the age of its own historical observation.
+The single-snapshot Build reader explicitly refuses rolling policies instead of
+treating them as absent participation constraints. Formal Study admission and Build
+rolling consumption remain separate required work, not implied by registration.
+
+Ponytail reuse kept the existing command, transaction, native policy validator,
+artifact storage and receipt. The callback can publish the fee and policy files;
+HTTP cleanup now reclaims every allocated unreferenced file on failure. Original
+CLI and Ant Design forms expose the same mutually exclusive modes and exact
+decimal policy values. Neither mode switch is enabled offline or during submission.
+
+On e3870bfa plus frozen patches, verify-XjMeXA passed workspace check/fmt/strict
+Clippy and 231 tests (137 contracts/domain, 54 native science, 14 Store, 4 source/
+publication units, 22 HTTP/CLI). New checks cover invalid/mixed policies, two-file
+publication, exact original bytes, immutable rows, original receipt replay and an
+actual PG failure after file writes with exact cleanup and same-key HTTP retry.
+The native CLI consumed the rolling-policy request through real HTTP/PG. Source
+remained unchanged and the isolated PostgreSQL cluster was confirmed stopped.
+
+web-verify-JTBKl0 initially passed. Review then corrected explicit Checkbox disabled
+props to retain offline/in-flight disabling and added browser assertions. Final
+web-verify-z5B8dz reproduced all six generated outputs twice without handwritten
+changes; typecheck, 505 unit tests, wire/build/help checks, 36 settings-browser and
+237 full-browser tests passed, including no-policy/snapshot/rolling modes at three
+viewports. owner-oci-9vADmB rebuilt and passed 15 actual OCI tests in 39.74 seconds
+with unchanged source. Its subsequent changes were only the two web files above;
+native source did not change. Image:
+sha256:94040ad0a5ba9a05700ec0461ed4ef203b666ca1958b50910c68c02e6ac69eda.
+
+Controlled catalog, provider and market fixtures do not establish REAL/PIT,
+scientific PASS, full independent PORTFOLIO evaluation or T42. No push, review,
+merge or Issue closure occurred; Build rolling consumption, formal Study, delivery
+and recovery contracts remain required.
+
 ## Original calendar source registration, 2026-09-14
 
 Dataset registration now consumes optional original Runtime calendar_sessions in

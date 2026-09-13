@@ -13,7 +13,7 @@ use contracts::{
 use sqlx::{postgres::PgRow, Row};
 pub(crate) mod liquidity;
 
-const VIEW: &str = "SELECT e.*,s.project_id,s.input_set_id,s.dataset_revision_id,s.runtime_id,s.capability_snapshot_artifact_id,s.settings,s.bar_liquidity,s.bar_liquidity_valid_until FROM app.execution_assumptions e JOIN app.execution_assumption_sources s ON s.assumptions_id=e.id";
+const VIEW: &str = "SELECT e.*,s.project_id,s.input_set_id,s.dataset_revision_id,s.runtime_id,s.capability_snapshot_artifact_id,s.settings,s.bar_liquidity,s.bar_liquidity_valid_until,s.rolling_liquidity FROM app.execution_assumptions e JOIN app.execution_assumption_sources s ON s.assumptions_id=e.id";
 
 fn view(row: &PgRow) -> Result<ExecutionAssumptionsViewV1, StoreError> {
     let bar_liquidity: Option<BarLiquidityAssumptionV1> = row
@@ -21,14 +21,32 @@ fn view(row: &PgRow) -> Result<ExecutionAssumptionsViewV1, StoreError> {
         .map(serde_json::from_value)
         .transpose()
         .map_err(|_| StoreError::Integrity)?;
-    if db::optional_id(row, "liquidity_artifact_id")?
-        != bar_liquidity.as_ref().map(|v| v.report_artifact_id)
+    let rolling_liquidity: Option<contracts::science::NativeRollingBarLiquidityPolicyV1> = row
+        .try_get::<Option<serde_json::Value>, _>("rolling_liquidity")?
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|_| StoreError::Integrity)?;
+    let liquidity_id = db::optional_id(row, "liquidity_artifact_id")?;
+    if rolling_liquidity.is_some() && (bar_liquidity.is_some() || liquidity_id.is_none()) {
+        return Err(StoreError::Integrity);
+    }
+    if let Some(value) = &rolling_liquidity {
+        domain::portfolio::rolling_liquidity_policy(value).map_err(|_| StoreError::Integrity)?;
+    }
+    if liquidity_id
+        != bar_liquidity
+            .as_ref()
+            .map(|v| v.report_artifact_id)
+            .or(rolling_liquidity.as_ref().and(liquidity_id))
         || row
             .try_get::<Option<bigdecimal::BigDecimal>, _>("participation_limit")?
             .as_ref()
             != bar_liquidity
                 .as_ref()
                 .map(|v| v.participation_limit.as_decimal())
+                .or(rolling_liquidity
+                    .as_ref()
+                    .map(|v| v.participation_limit.as_decimal()))
     {
         return Err(StoreError::Integrity);
     }
@@ -55,6 +73,8 @@ fn view(row: &PgRow) -> Result<ExecutionAssumptionsViewV1, StoreError> {
             .map_err(|_| StoreError::Integrity)?,
         bar_liquidity,
         bar_liquidity_valid_until: row.try_get("bar_liquidity_valid_until")?,
+        rolling_liquidity_artifact_id: rolling_liquidity.as_ref().and(liquidity_id),
+        rolling_liquidity,
         created_at: row.try_get("created_at")?,
     })
 }
@@ -104,18 +124,24 @@ impl Store {
         key: &str,
         request: &ExecutionAssumptionsCreateV1,
         mut read: R,
-        publish: P,
+        mut publish: P,
     ) -> Result<CommandResult<ExecutionAssumptionsViewV1>, StoreError>
     where
         R: FnMut(Id, DbCounter) -> Read,
         Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
-        P: FnOnce(NativeObjectPublication) -> Published,
+        P: FnMut(NativeObjectPublication) -> Published,
         Published: std::future::Future<Output = Result<(), StoreError>>,
     {
         domain::control::text(&request.settlement_rule_ref, 1, 200, false)?;
         domain::portfolio::simulation_settings(&request.settings)?;
         if let Some(value) = &request.bar_liquidity {
             domain::portfolio::bar_liquidity_assumption(value)?;
+        }
+        if let Some(value) = &request.rolling_liquidity {
+            domain::portfolio::rolling_liquidity_policy(value)?;
+            if request.bar_liquidity.is_some() {
+                return Err(StoreError::Invalid("exclusive_liquidity_policy"));
+            }
         }
         let mut tx = self.pool.begin().await?;
         let prepared = commands::operator(
@@ -175,6 +201,17 @@ impl Store {
             .ok_or(StoreError::Integrity)?
             .image_ref
             .clone();
+        if request.rolling_liquidity.is_some()
+            && cap
+                .engine_versions
+                .get("portfolio-rolling-liquidity")
+                .map(String::as_str)
+                != Some("1")
+        {
+            return Err(
+                domain::DomainError::CapabilityUnavailable("portfolio_rolling_liquidity").into(),
+            );
+        }
         let metadata = &binding.metadata;
         let liquidity_report = if let Some(value) = &request.bar_liquidity {
             let (report, _, _) = liquidity::original(
@@ -259,13 +296,24 @@ impl Store {
         .await?;
         sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,'PARAMETERS','application/json','qz.native_simulation_settings','1','LOCAL',$3,'1',$4,'RESEARCH','SYNTHETIC','OPERATOR','REFERENCED')")
             .bind(artifact.as_uuid()).bind(request.project_id.as_uuid()).bind(artifact.to_string()).bind(size).execute(&mut *tx).await?;
+        let rolling_artifact = if let Some(policy) = &request.rolling_liquidity {
+            let id = Id::new();
+            let bytes = serde_json::to_vec(policy).map_err(|_| StoreError::Integrity)?;
+            let size = i64::try_from(bytes.len()).map_err(|_| StoreError::Integrity)?;
+            publish(NativeObjectPublication { id, bytes }).await?;
+            sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,'PARAMETERS','application/json','qz.rolling_bar_liquidity','1','LOCAL',$3,'1',$4,'RESEARCH','SYNTHETIC','OPERATOR','REFERENCED')")
+                .bind(id.as_uuid()).bind(request.project_id.as_uuid()).bind(id.to_string()).bind(size).execute(&mut *tx).await?;
+            Some(id)
+        } else {
+            None
+        };
         let s = &request.settings;
         sqlx::query("INSERT INTO app.execution_assumptions(id,venue_capability_ref,engine_image_ref,price_type,starting_capital,base_currency,fee_schedule_artifact_id,slippage_model,fill_model,latency_model,cost_assumption_status,calendar_version,settlement_rule_ref,liquidity_artifact_id,participation_limit) VALUES($1,$2,$3,'BAR',$4,$5,$6,$7,$7,$8,'CONSERVATIVE_ASSUMPTION',$9,$10,$11,$12)")
             .bind(id.as_uuid()).bind(venue.ok_or(StoreError::Integrity)?).bind(image).bind(s.starting_capital.as_decimal()).bind(&s.base_currency).bind(artifact.as_uuid()).bind(db::json(&s.fill_model)?).bind(db::json(&s.latency_model)?).bind(&metadata.universe.calendar_version).bind(&request.settlement_rule_ref)
-            .bind(request.bar_liquidity.as_ref().map(|v|v.report_artifact_id.as_uuid())).bind(request.bar_liquidity.as_ref().map(|v|v.participation_limit.as_decimal())).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO app.execution_assumption_sources(assumptions_id,project_id,input_set_id,dataset_revision_id,runtime_id,capability_snapshot_artifact_id,settings,bar_liquidity,bar_liquidity_valid_until) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)")
+            .bind(request.bar_liquidity.as_ref().map(|v|v.report_artifact_id).or(rolling_artifact).map(Id::as_uuid)).bind(request.bar_liquidity.as_ref().map(|v|v.participation_limit.as_decimal()).or(request.rolling_liquidity.as_ref().map(|v|v.participation_limit.as_decimal()))).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO app.execution_assumption_sources(assumptions_id,project_id,input_set_id,dataset_revision_id,runtime_id,capability_snapshot_artifact_id,settings,bar_liquidity,bar_liquidity_valid_until,rolling_liquidity) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)")
             .bind(id.as_uuid()).bind(request.project_id.as_uuid()).bind(request.input_set_id.as_uuid()).bind(request.dataset_revision_id.as_uuid()).bind(request.runtime_id.as_uuid()).bind(capability).bind(db::json(s)?)
-            .bind(request.bar_liquidity.as_ref().map(db::json).transpose()?).bind(liquidity_report.as_ref().map(|(_,until)|*until)).execute(&mut *tx).await?;
+            .bind(request.bar_liquidity.as_ref().map(db::json).transpose()?).bind(liquidity_report.as_ref().map(|(_,until)|*until)).bind(request.rolling_liquidity.as_ref().map(db::json).transpose()?).execute(&mut *tx).await?;
         commands::recheck_authority(&mut tx, actor, &prepared).await?;
         crate::research::revalidate_frozen_inputs(
             &mut tx,

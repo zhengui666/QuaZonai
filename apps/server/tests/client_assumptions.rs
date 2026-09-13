@@ -39,7 +39,12 @@ async fn native_assumptions_cli_preserves_operator_intent_sources_and_original_r
         objects,
     )
     .await;
-    let (_data, request) = assumptions_support::prepare(&pool, data).await;
+    let (_data, mut request) = assumptions_support::prepare(&pool, data).await;
+    request.rolling_liquidity = Some(contracts::science::NativeRollingBarLiquidityPolicyV1 {
+        schema_version: contracts::SchemaV1,
+        maximum_age_seconds: 3600,
+        participation_limit: "0.123456789012345678".parse().unwrap(),
+    });
     let body = serde_json::to_value(&request).unwrap();
     let principal = browser(&f, &cookie, "assumptions-cli", "/api/v2/machine-principals", json!({"schema_version":1,"name":"Assumptions CLI","kind":"CLI","project_id":request.project_id,"downstream_id":null,"enabled":true})).await;
     assert_eq!(principal.status, StatusCode::CREATED);

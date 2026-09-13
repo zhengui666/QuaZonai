@@ -699,6 +699,18 @@ DATA_VALIDATE的Nautilus try_calculate_notional_value，不输入手填available
 天数或horizon放大量，不二次扣成本或推断未来深度。无政策时引用/参与率/测量均空。
 真实零量是零约束，缺值、未来、过期或不一致必须失败，不补常数或提升DATA_BACKED。
 
+滚动政策登记复用ExecutionAssumptionsCreateV1.rolling_liquidity，可空且与
+bar_liquidity互斥；两者都为空表示没有参与率假设，不补默认政策。登记要求当前
+portfolio-rolling-liquidity/1原生能力，沿用原InputSet/Dataset/Runtime/费用/许可
+绑定。与费用同事务发表qz.rolling_bar_liquidity/1 PARAMETERS，RESEARCH访问、
+SYNTHETIC声明来源；execution_assumptions.liquidity_artifact_id及participation_limit
+引用原政策，execution_assumption_sources.rolling_liquidity保存原内容。原政策没有
+bar_liquidity_valid_until，因为它不是某根历史BAR的观测；年龄仍在每个实际cutoff
+检查。读取返回原政策及rolling_liquidity_artifact_id，旧行保持null。发表失败沿用
+原对象清理与同键回执重试，不允许留下半个执行假设；不授予科学PASS。只支持单次
+快照的Build来源读取必须明确拒绝滚动政策，不能把它当作无参与率限制。正式Study
+准入及Build的滚动政策消费仍需独立实现和验证，不由登记成功推定可用。
+
 原生Universe membership每条带可选groups（最多64个唯一、1..120字符的组标识）。
 null/未提供表示分类未知，[]表示来源明确声明没有组；不自动按名称、币种或证券
 类型猜分类。组集合随该条valid_from/valid_until/available_at生效与可用，沿原

@@ -7485,6 +7485,26 @@
               "project_id": {
                 "$ref": "#/components/schemas/Id"
               },
+              "rolling_liquidity": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/NativeRollingBarLiquidityPolicyV1"
+                  }
+                ]
+              },
+              "rolling_liquidity_artifact_id": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Id"
+                  }
+                ]
+              },
               "runtime_id": {
                 "$ref": "#/components/schemas/Id"
               },
@@ -10421,6 +10441,16 @@
           "project_id": {
             "$ref": "#/components/schemas/Id"
           },
+          "rolling_liquidity": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NativeRollingBarLiquidityPolicyV1"
+              }
+            ]
+          },
           "runtime_id": {
             "$ref": "#/components/schemas/Id"
           },
@@ -10499,6 +10529,26 @@
           },
           "project_id": {
             "$ref": "#/components/schemas/Id"
+          },
+          "rolling_liquidity": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NativeRollingBarLiquidityPolicyV1"
+              }
+            ]
+          },
+          "rolling_liquidity_artifact_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
           },
           "runtime_id": {
             "$ref": "#/components/schemas/Id"
@@ -12229,6 +12279,29 @@
             "type": "object"
           }
         ]
+      },
+      "NativeRollingBarLiquidityPolicyV1": {
+        "additionalProperties": false,
+        "description": "Original per-rebalance measurement policy, not a previously measured snapshot.",
+        "properties": {
+          "maximum_age_seconds": {
+            "format": "int32",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "participation_limit": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "maximum_age_seconds",
+          "participation_limit"
+        ],
+        "type": "object"
       },
       "NativeSimulationSettingsV1": {
         "additionalProperties": false,
@@ -15029,6 +15102,26 @@
                 },
                 "project_id": {
                   "$ref": "#/components/schemas/Id"
+                },
+                "rolling_liquidity": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/NativeRollingBarLiquidityPolicyV1"
+                    }
+                  ]
+                },
+                "rolling_liquidity_artifact_id": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  ]
                 },
                 "runtime_id": {
                   "$ref": "#/components/schemas/Id"

@@ -100,11 +100,44 @@ async fn original_assumptions_http_creates_reads_replays_and_rejects_changed_int
         objects.clone(),
     )
     .await;
-    let (_data, request) = assumptions::prepare(&pool, data).await;
+    let (_data, mut request) = assumptions::prepare(&pool, data).await;
+    request.rolling_liquidity = Some(contracts::science::NativeRollingBarLiquidityPolicyV1 {
+        schema_version: contracts::SchemaV1,
+        maximum_age_seconds: 3600,
+        participation_limit: "0.123456789012345678".parse().unwrap(),
+    });
     let body = serde_json::to_value(&request).unwrap();
     let path = "/api/v2/execution-assumptions";
+    let files = || {
+        std::fs::read_dir(f._state.path().join("artifacts"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    let before = files();
+    sqlx::raw_sql("CREATE FUNCTION app.rolling_test_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'rolling-policy-test-failure'; END $$; CREATE TRIGGER rolling_test_failure BEFORE INSERT ON app.execution_assumption_sources FOR EACH ROW EXECUTE FUNCTION app.rolling_test_failure()")
+        .execute(&pool).await.unwrap();
+    let failed = send(&f, &cookie, "POST", path, body.clone()).await;
+    assert!(failed.status.is_server_error());
+    assert_eq!(files(), before);
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM app.execution_assumptions")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+    sqlx::query("DROP TRIGGER rolling_test_failure ON app.execution_assumption_sources")
+        .execute(&pool)
+        .await
+        .unwrap();
     let created = send(&f, &cookie, "POST", path, body.clone()).await;
     assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    assert_eq!(files().len(), before.len() + 2);
+    assert_eq!(created.body["replayed"], false);
+    assert_eq!(
+        created.body["resource"]["rolling_liquidity"],
+        body["rolling_liquidity"]
+    );
+    assert!(created.body["resource"]["rolling_liquidity_artifact_id"].is_string());
     let item = format!(
         "{path}/{}",
         created.body["resource"]["id"].as_str().unwrap()

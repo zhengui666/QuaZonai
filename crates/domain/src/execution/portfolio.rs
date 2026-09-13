@@ -326,11 +326,11 @@ pub fn portfolio_study_cutoffs(
     }
     match &request.rolling_liquidity {
         Some(policy)
-            if policy.maximum_age_seconds > 0
-                && policy.participation_limit.is_positive()
-                && policy.participation_limit.is_fraction()
-                && constraints.liquidity_ref.is_some()
-                && constraints.max_participation.as_ref() == Some(&policy.participation_limit) => {}
+            if constraints.liquidity_ref.is_some()
+                && constraints.max_participation.as_ref() == Some(&policy.participation_limit) =>
+        {
+            crate::portfolio::rolling_liquidity_policy(policy)?;
+        }
         None if constraints.liquidity_ref.is_none() && constraints.max_participation.is_none() => {}
         _ => return Err(bad("portfolio_study.liquidity_policy")),
     }

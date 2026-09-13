@@ -55,6 +55,8 @@ pub async fn prepare(
         .insert("nautilus".into(), "0.63.0".into());
     cap.engine_versions
         .insert("bar-notional".into(), "1".into());
+    cap.engine_versions
+        .insert("portfolio-rolling-liquidity".into(), "1".into());
     cap.artifact_schemas
         .push(contracts::runtime::RuntimeArtifactSchemaV1 {
             name: "qz.data_quality".into(),
@@ -84,6 +86,7 @@ pub async fn prepare(
         dataset_revision_id: dataset.id,
         settlement_rule_ref: "controlled-spot-settlement".into(),
         bar_liquidity: None,
+        rolling_liquidity: None,
         settings: NativeSimulationSettingsV1 {
             schema_version: SchemaV1,
             base_currency: "USD".into(),

@@ -13,6 +13,7 @@ type Fill = Extract<Schema['NativeModelRefV1'], { adapter_kind: 'NAUTILUS_DEFAUL
 type Latency = Extract<Schema['NativeModelRefV1'], { adapter_kind: 'NAUTILUS_STATIC_LATENCY' }>['parameters'];
 type Fields = Omit<Schema['ExecutionAssumptionsCreateV1'], 'schema_version' | 'project_id' | 'settings'> & {
   use_bar_liquidity?: boolean;
+  use_rolling_liquidity?: boolean;
   settings: Omit<Settings, 'schema_version' | 'fee_model' | 'fill_model' | 'latency_model'>; fill: Fill; latency: Latency;
 };
 const required = { required: true, message: '请填写此项。' };
@@ -56,6 +57,11 @@ function Detail({ id, close }: { id: string; close: () => void }) {
         { key: 'participation', label: '单 BAR 参与率上限', children: query.data.bar_liquidity.participation_limit },
         { key: 'expiry', label: '原假设失效时刻（不含）', children: displayTime(query.data.bar_liquidity_valid_until) },
       ]} />}
+      {query.data.rolling_liquidity && <Descriptions column={1} items={[
+        { key: 'policy', label: '原滚动流动性政策', children: query.data.rolling_liquidity_artifact_id },
+        { key: 'age', label: '每步历史 BAR 最长年龄（秒）', children: query.data.rolling_liquidity.maximum_age_seconds },
+        { key: 'participation', label: '滚动单 BAR 参与率上限', children: query.data.rolling_liquidity.participation_limit },
+      ]} />}
       <Typography.Title level={2}>服务器保存的原生模型配置</Typography.Title><pre className="break-word" style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(query.data.settings, null, 2)}</pre></>}
     </QueryPanel>
   </Drawer>;
@@ -64,11 +70,13 @@ function Detail({ id, close }: { id: string; close: () => void }) {
 function Editor({ project, close }: { project: string; close: () => void }) {
   const [form] = Form.useForm<Fields>(); const [dirty, setDirty] = useState(false); const intent = useRef(new Intent());
   const useBarLiquidity = Form.useWatch('use_bar_liquidity', form);
+  const useRollingLiquidity = Form.useWatch('use_rolling_liquidity', form);
   const client = useQueryClient(); const online = useOnline(); const { modal, message } = App.useApp();
   const mutation = useMutation({ mutationFn: async (values: Fields) => {
-    const { fill, latency, use_bar_liquidity, bar_liquidity, ...source } = values;
+    const { fill, latency, use_bar_liquidity, bar_liquidity, use_rolling_liquidity, rolling_liquidity, ...source } = values;
     const body: Schema['ExecutionAssumptionsCreateV1'] = { ...source, schema_version: 1, project_id: project,
       bar_liquidity: use_bar_liquidity && bar_liquidity ? { ...bar_liquidity, schema_version: 1 } : null,
+      rolling_liquidity: use_rolling_liquidity && rolling_liquidity ? { ...rolling_liquidity, schema_version: 1 } : null,
       settings: { ...source.settings, schema_version: 1,
       fee_model: { schema_version: 1, adapter_kind: 'NAUTILUS_MAKER_TAKER', upstream_class: 'nautilus_execution::models::fee::MakerTakerFeeModel', upstream_version: '0.63.0', parameters: {} },
       fill_model: { schema_version: 1, adapter_kind: 'NAUTILUS_DEFAULT_FILL', upstream_class: 'nautilus_execution::models::fill::DefaultFillModel', upstream_version: '0.63.0', parameters: fill },
@@ -92,7 +100,13 @@ function Editor({ project, close }: { project: string; close: () => void }) {
       {([['runtime_id', 'Runtime 编号'], ['input_set_id', '冻结输入编号'], ['dataset_revision_id', '数据版本编号']] as const).map(([name, label]) => <Form.Item key={name} name={name} label={label} rules={ids}><Input /></Form.Item>)}
       <Form.Item name="expected_runtime_revision" label="Runtime 配置版本" rules={counterRules}><Input inputMode="numeric" /></Form.Item>
       <Form.Item name="settlement_rule_ref" label="结算规则引用" rules={[required, { max: 200, whitespace: true }]}><Input /></Form.Item>
-      <Form.Item name="use_bar_liquidity" valuePropName="checked"><Checkbox>绑定历史单 BAR 流动性假设</Checkbox></Form.Item>
+      <Form.Item name="use_bar_liquidity" valuePropName="checked"><Checkbox disabled={!online || mutation.isPending || !!useRollingLiquidity}>绑定历史单 BAR 流动性假设</Checkbox></Form.Item>
+      <Form.Item name="use_rolling_liquidity" valuePropName="checked"><Checkbox disabled={!online || mutation.isPending || !!useBarLiquidity}>登记滚动 BAR 流动性政策</Checkbox></Form.Item>
+      {useRollingLiquidity && <>
+        <Alert type="info" showIcon title="逐步测量政策，不是延长历史快照" description="每个研究截止从原目录测量当时已知 BAR，并重新检查年龄；不手填市场量、不证明 DATA_BACKED，也不启动研究。" />
+        <Form.Item name={['rolling_liquidity', 'maximum_age_seconds']} preserve={false} label="每步历史 BAR 最长年龄（秒）" rules={[required, { type: 'integer', min: 1, max: 4294967295 }]}><InputNumber min={1} max={4294967295} precision={0} /></Form.Item>
+        <Form.Item name={['rolling_liquidity', 'participation_limit']} preserve={false} label="滚动单 BAR 参与率上限（大于 0 且不超过 1）" rules={decimals}><Input inputMode="decimal" /></Form.Item>
+      </>}
       {useBarLiquidity && <>
         <Alert type="info" showIcon title="历史量不是未来可成交保证" description="只接受同一冻结输入、数据版本和 Runtime 的原生 DATA_VALIDATE 报告。明确填写有效年龄与每次再平衡参与率；到期需创建新假设，不会自动刷新或提升 DATA_BACKED 资格。" />
         <Form.Item name={['bar_liquidity', 'report_artifact_id']} preserve={false} label="原生历史流动性报告编号" rules={ids}><Input /></Form.Item>

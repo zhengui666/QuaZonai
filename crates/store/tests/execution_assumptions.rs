@@ -9,6 +9,97 @@ use store::StoreError;
 use support::{data, prepare};
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn rolling_policy_freezes_original_file_without_inventing_snapshot_or_expiry(pool: PgPool) {
+    let (f, mut request) = prepare(&pool, data::setup(&pool, None).await).await;
+    request.rolling_liquidity = Some(contracts::science::NativeRollingBarLiquidityPolicyV1 {
+        schema_version: contracts::SchemaV1,
+        maximum_age_seconds: 3600,
+        participation_limit: "0.123456789012345678".parse().unwrap(),
+    });
+    for case in 0..4 {
+        let mut invalid = request.clone();
+        let policy = invalid.rolling_liquidity.as_mut().unwrap();
+        match case {
+            0 => policy.maximum_age_seconds = 0,
+            1 => policy.participation_limit = "0".parse().unwrap(),
+            2 => policy.participation_limit = "1.000000000000000001".parse().unwrap(),
+            _ => {
+                invalid.bar_liquidity =
+                    Some(contracts::execution_assumptions::BarLiquidityAssumptionV1 {
+                        schema_version: contracts::SchemaV1,
+                        report_artifact_id: Id::new(),
+                        maximum_age_seconds: 3600,
+                        participation_limit: "0.1".parse().unwrap(),
+                    })
+            }
+        }
+        assert!(f
+            .store
+            .create_execution_assumptions(
+                &f.actor,
+                "invalid",
+                &invalid,
+                |id, size| data::read(f.objects.clone(), id, size),
+                |_| async { panic!("invalid policy cannot publish") }
+            )
+            .await
+            .is_err());
+    }
+    let mut publications = 0;
+    let created = f
+        .store
+        .create_execution_assumptions(
+            &f.actor,
+            "rolling",
+            &request,
+            |id, size| data::read(f.objects.clone(), id, size),
+            |object| {
+                publications += 1;
+                let objects = f.objects.clone();
+                async move {
+                    objects
+                        .put(object.id, &object.bytes)
+                        .map_err(|_| StoreError::Integrity)
+                }
+            },
+        )
+        .await
+        .unwrap()
+        .resource;
+    assert_eq!(publications, 2);
+    assert!(created.bar_liquidity.is_none());
+    assert!(created.bar_liquidity_valid_until.is_none());
+    assert_eq!(created.rolling_liquidity, request.rolling_liquidity);
+    let artifact = created.rolling_liquidity_artifact_id.unwrap();
+    let size: i64 = sqlx::query_scalar("SELECT byte_count FROM app.artifacts WHERE id=$1 AND kind='PARAMETERS' AND schema_name='qz.rolling_bar_liquidity' AND schema_version='1' AND origin='SYNTHETIC' AND access_class='RESEARCH'")
+        .bind(artifact.as_uuid()).fetch_one(&pool).await.unwrap();
+    let original: contracts::science::NativeRollingBarLiquidityPolicyV1 = serde_json::from_slice(
+        &f.objects
+            .read(artifact, size.to_string().try_into().unwrap())
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(Some(original), request.rolling_liquidity);
+    let replay = f
+        .store
+        .create_execution_assumptions(
+            &f.actor,
+            "rolling",
+            &request,
+            |_, _| async { panic!("replay must not read") },
+            |_| async { panic!("replay must not publish") },
+        )
+        .await
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(
+        replay.resource.rolling_liquidity_artifact_id,
+        Some(artifact)
+    );
+    assert!(sqlx::query("UPDATE app.execution_assumption_sources SET rolling_liquidity=NULL WHERE assumptions_id=$1").bind(created.id.as_uuid()).execute(&pool).await.is_err());
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn bar_liquidity_requires_original_native_output_and_freezes_its_expiry(pool: PgPool) {
     use contracts::execution_assumptions::BarLiquidityAssumptionV1;
     let (f, mut request) = prepare(&pool, data::setup(&pool, None).await).await;

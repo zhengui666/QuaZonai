@@ -197,6 +197,9 @@ Operator的`client portfolio assumptions create/list/show`保存/读取原生来
 必须明确最大年龄和参与率。目录登记副本不是原生测量；读取原失效时刻不代表
 当前可用，到期须新建假设/政策，不延长旧资格。Store准入/发布重读原来源并检查
 原期限，需portfolio-liquidity/1镜像；损坏保留重试，到期不授目标，不提升来源等级。
+或使用互斥rolling_liquidity冻结每步年龄和参与率，沿用原执行假设事务及文件清理。
+需portfolio-rolling-liquidity/1能力；滚动政策为声明参数而非市场量，没有快照失效
+时刻。读取原政策文件ID，不授予Study/Build或PASS资格。
 Build还需portfolio-cost-source/1及原PARAMETERS费用文档，完整绑定execution_settings；
 发布重读保存配置。非零滑点需portfolio-slippage/1、原BAR/tick参考和A5.2规划
 系数复核；不是未来成本上界，不二次扣原生模拟净收益，不声明DATA_BACKED。

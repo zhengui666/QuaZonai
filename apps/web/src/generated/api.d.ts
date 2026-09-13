@@ -2437,6 +2437,8 @@ export interface components {
                 id: components["schemas"]["Id"];
                 input_set_id: components["schemas"]["Id"];
                 project_id: components["schemas"]["Id"];
+                rolling_liquidity?: null | components["schemas"]["NativeRollingBarLiquidityPolicyV1"];
+                rolling_liquidity_artifact_id?: null | components["schemas"]["Id"];
                 runtime_id: components["schemas"]["Id"];
                 settings: components["schemas"]["NativeSimulationSettingsV1"];
                 settlement_rule_ref: string;
@@ -3083,6 +3085,7 @@ export interface components {
             expected_runtime_revision: components["schemas"]["Revision"];
             input_set_id: components["schemas"]["Id"];
             project_id: components["schemas"]["Id"];
+            rolling_liquidity?: null | components["schemas"]["NativeRollingBarLiquidityPolicyV1"];
             runtime_id: components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
             settings: components["schemas"]["NativeSimulationSettingsV1"];
@@ -3104,6 +3107,8 @@ export interface components {
             id: components["schemas"]["Id"];
             input_set_id: components["schemas"]["Id"];
             project_id: components["schemas"]["Id"];
+            rolling_liquidity?: null | components["schemas"]["NativeRollingBarLiquidityPolicyV1"];
+            rolling_liquidity_artifact_id?: null | components["schemas"]["Id"];
             runtime_id: components["schemas"]["Id"];
             settings: components["schemas"]["NativeSimulationSettingsV1"];
             settlement_rule_ref: string;
@@ -3488,6 +3493,13 @@ export interface components {
             upstream_class: "ndarray_stats::CorrelationExt::cov";
             /** @enum {string} */
             upstream_version: "0.7.0";
+        };
+        /** @description Original per-rebalance measurement policy, not a previously measured snapshot. */
+        NativeRollingBarLiquidityPolicyV1: {
+            /** Format: int32 */
+            maximum_age_seconds: number;
+            participation_limit: components["schemas"]["DecimalValue"];
+            schema_version: components["schemas"]["SchemaV1"];
         };
         NativeSimulationSettingsV1: {
             account_kind: components["schemas"]["NativeAccountKind"];
@@ -4049,6 +4061,8 @@ export interface components {
                 id: components["schemas"]["Id"];
                 input_set_id: components["schemas"]["Id"];
                 project_id: components["schemas"]["Id"];
+                rolling_liquidity?: null | components["schemas"]["NativeRollingBarLiquidityPolicyV1"];
+                rolling_liquidity_artifact_id?: null | components["schemas"]["Id"];
                 runtime_id: components["schemas"]["Id"];
                 settings: components["schemas"]["NativeSimulationSettingsV1"];
                 settlement_rule_ref: string;

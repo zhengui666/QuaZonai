@@ -15,6 +15,18 @@ pub fn bar_liquidity_assumption(value: &BarLiquidityAssumptionV1) -> Result<(), 
     Ok(())
 }
 
+pub fn rolling_liquidity_policy(
+    value: &contracts::science::NativeRollingBarLiquidityPolicyV1,
+) -> Result<(), DomainError> {
+    if value.maximum_age_seconds == 0
+        || !value.participation_limit.is_positive()
+        || !value.participation_limit.is_fraction()
+    {
+        return Err(DomainError::Invalid("rolling_liquidity_policy"));
+    }
+    Ok(())
+}
+
 /// A frozen historical per-rebalance ceiling, never an estimate of future depth.
 pub fn bar_liquidity_values<'a>(
     assumption: &BarLiquidityAssumptionV1,

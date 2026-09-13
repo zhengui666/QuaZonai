@@ -161,6 +161,7 @@ pub async fn setup_with_policy(
         use contracts::{execution_assumptions::ExecutionAssumptionsCreateV1, science::*};
         let mut assumption_request = ExecutionAssumptionsCreateV1 {
             bar_liquidity: None,
+            rolling_liquidity: None,
             schema_version: SchemaV1,
             project_id: data.project,
             runtime_id: data.runtime,

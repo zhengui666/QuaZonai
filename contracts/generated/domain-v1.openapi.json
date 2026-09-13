@@ -8922,6 +8922,16 @@
           "project_id": {
             "$ref": "#/components/schemas/Id"
           },
+          "rolling_liquidity": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NativeRollingBarLiquidityPolicyV1"
+              }
+            ]
+          },
           "runtime_id": {
             "$ref": "#/components/schemas/Id"
           },
@@ -9000,6 +9010,26 @@
           },
           "project_id": {
             "$ref": "#/components/schemas/Id"
+          },
+          "rolling_liquidity": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NativeRollingBarLiquidityPolicyV1"
+              }
+            ]
+          },
+          "rolling_liquidity_artifact_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
           },
           "runtime_id": {
             "$ref": "#/components/schemas/Id"

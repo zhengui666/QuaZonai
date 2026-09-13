@@ -24,6 +24,7 @@ pub struct ExecutionAssumptionsCreateV1 {
     pub dataset_revision_id: Id,
     pub settings: NativeSimulationSettingsV1,
     pub bar_liquidity: Option<BarLiquidityAssumptionV1>,
+    pub rolling_liquidity: Option<crate::science::NativeRollingBarLiquidityPolicyV1>,
     #[schema(min_length = 1, max_length = 200)]
     pub settlement_rule_ref: String,
 }
@@ -47,6 +48,8 @@ pub struct ExecutionAssumptionsViewV1 {
     pub settings: NativeSimulationSettingsV1,
     pub bar_liquidity: Option<BarLiquidityAssumptionV1>,
     pub bar_liquidity_valid_until: Option<chrono::DateTime<chrono::Utc>>,
+    pub rolling_liquidity: Option<crate::science::NativeRollingBarLiquidityPolicyV1>,
+    pub rolling_liquidity_artifact_id: Option<Id>,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
