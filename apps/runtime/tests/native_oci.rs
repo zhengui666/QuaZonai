@@ -440,6 +440,106 @@ async fn native_portfolio(cvar: bool, risk_budget: bool) {
                 ["10200000", "20200000"][index].parse().unwrap()
             );
         }
+        // Consume these exact OCI-produced bytes in a separate native Build.
+        let report_id = Id::new();
+        f.object(report_id, &bytes).await;
+        let mut liquidity_request = request.clone();
+        liquidity_request.mandate.constraints.liquidity_ref = Some(report_id);
+        liquidity_request.mandate.constraints.max_participation = Some("0.00001".parse().unwrap());
+        liquidity_request.bar_liquidity = Some(contracts::science::NativePortfolioLiquidityV1 {
+            schema_version: SchemaV1,
+            assumption: contracts::execution_assumptions::BarLiquidityAssumptionV1 {
+                schema_version: SchemaV1,
+                report_artifact_id: report_id,
+                maximum_age_seconds: 86400,
+                participation_limit: "0.00001".parse().unwrap(),
+            },
+            source: NativeDatasetSelectionV1 {
+                dataset_revision_id: dataset,
+                selection: request.selection.clone(),
+            },
+        });
+        for (asset, value) in liquidity_request.assets.iter_mut().zip(observations) {
+            asset.available_notional = Some(value.notional_value.clone());
+        }
+        domain::execution::portfolio_build_liquidity(&liquidity_request, &report).unwrap();
+        let liquidity_operation = NativeTaskParametersV1::BuildPortfolio {
+            schema_version: SchemaV1,
+            dataset_revision_id: dataset,
+            request: liquidity_request,
+        };
+        let parameters = serde_json::to_vec(&liquidity_operation).unwrap();
+        let mut liquidity_spec = spec.clone();
+        liquidity_spec.run_id = Id::new();
+        liquidity_spec.external_job_id =
+            domain::runtime_jobs::external_id(liquidity_spec.run_id, 1).unwrap();
+        liquidity_spec.inputs.retain(|input| !matches!(input, RuntimeInputV1::Artifact {artifact_id,..} if *artifact_id == spec.parameters_artifact_id));
+        liquidity_spec.parameters_artifact_id = Id::new();
+        liquidity_spec.deadline_at = runtime::now() + chrono::Duration::seconds(50);
+        f.object(liquidity_spec.parameters_artifact_id, &parameters)
+            .await;
+        for (id, size, role) in [
+            (
+                liquidity_spec.parameters_artifact_id,
+                parameters.len(),
+                ArtifactInputRole::Parameters,
+            ),
+            (report_id, bytes.len(), ArtifactInputRole::DataQuality),
+        ] {
+            liquidity_spec.inputs.push(RuntimeInputV1::Artifact {
+                artifact_id: id,
+                storage_version: "1".into(),
+                byte_count: count(size as u64),
+                role,
+            });
+        }
+        f.runs.push(liquidity_spec.run_id);
+        let accepted = f.submit(&liquidity_spec).await;
+        assert_eq!(
+            f.terminal(&liquidity_spec).await.state,
+            RuntimeJobState::Succeeded
+        );
+        let manifest = f.manifest(&liquidity_spec).await;
+        domain::runtime_jobs::manifest(
+            &manifest,
+            &liquidity_spec,
+            accepted.submitted_at,
+            runtime::now(),
+        )
+        .unwrap();
+        assert_eq!(manifest.engine_versions["portfolio-liquidity"], "1");
+        let [output] = manifest.artifacts.as_slice() else {
+            panic!("one liquidity Build report")
+        };
+        let response = f
+            .client
+            .get(f.url(&[
+                "jobs",
+                &liquidity_spec.external_job_id,
+                "artifacts",
+                &output.storage_ref.to_string(),
+            ]))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = response.bytes().await.unwrap().to_vec();
+        domain::execution::output_bindings(
+            &liquidity_operation,
+            None,
+            manifest.started_at.unwrap(),
+            manifest.finished_at,
+            &[(output.clone(), bytes.clone())],
+        )
+        .unwrap();
+        let result: NativePortfolioBuildResultV1 = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(result.allocation.solver_status, SolverStatus::Optimal);
+        assert!(result
+            .input
+            .assets
+            .iter()
+            .all(|a| a.available_notional.is_some()));
+        domain::portfolio::allocation_result(&result.input, &result.allocation).unwrap();
     }
     f.assert_private_logs();
 }

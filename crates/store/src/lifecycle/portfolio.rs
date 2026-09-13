@@ -124,7 +124,7 @@ impl Store {
         }
 
         let resolved = weights::resolve(&mut tx, project, request, &mut read).await?;
-        let origin = resolved.origin;
+        let mut origin = resolved.origin;
         let weights = resolved.content;
         let weights_deadline = weights.valid_until_ns;
         let mut derived = None;
@@ -180,14 +180,6 @@ impl Store {
             &mandate.content.constraints.group_bounds,
             dataset.selection.selection.decision_cutoff_ns,
         )?;
-        // Liquidity still requires its own original numerical source adapter.
-        if mandate.content.constraints.liquidity_ref.is_some()
-            || mandate.content.constraints.max_participation.is_some()
-        {
-            return Err(
-                DomainError::CapabilityUnavailable("portfolio_cost_liquidity_sources").into(),
-            );
-        }
         let assumption = sqlx::query("SELECT s.settings,s.input_set_id,e.engine_image_ref,e.cost_assumption_status FROM app.execution_assumption_sources s JOIN app.execution_assumptions e ON e.id=s.assumptions_id WHERE s.assumptions_id=$1 AND s.project_id=$2 AND s.runtime_id=$3 AND e.fee_schedule_artifact_id=$4")
             .bind(mandate.content.execution_assumptions_id.as_uuid()).bind(project.as_uuid()).bind(request.runtime_id.as_uuid())
             .bind(mandate.content.constraints.transaction_costs_ref.as_uuid()).fetch_optional(&mut *tx).await?.ok_or(StoreError::Invalid("portfolio_execution_source"))?;
@@ -233,6 +225,26 @@ impl Store {
         {
             return Err(DomainError::CapabilityUnavailable("portfolio_all_in_cost_source").into());
         }
+        let liquidity = crate::execution_assumptions::liquidity::frozen(
+            &mut tx,
+            project,
+            request.runtime_id,
+            mandate.content.execution_assumptions_id,
+            &mut read,
+        )
+        .await?;
+        if let Some(source) = &liquidity {
+            if cap
+                .engine_versions
+                .get("portfolio-liquidity")
+                .map(String::as_str)
+                != Some("1")
+            {
+                return Err(DomainError::CapabilityUnavailable("portfolio_liquidity").into());
+            }
+            origin = crate::data_validation::combine_origin(origin, source.origin);
+            inputs.push(source.input.clone());
+        }
         let assets = weights
             .weights
             .iter()
@@ -248,7 +260,25 @@ impl Store {
                     currency: w.currency.clone(),
                     current_weight: w.weight.clone(),
                     transaction_cost_rate: rate.taker.clone(),
-                    available_notional: None,
+                    available_notional: liquidity
+                        .as_ref()
+                        .map(|source| {
+                            source
+                                .report
+                                .datasets
+                                .iter()
+                                .find(|q| {
+                                    q.dataset_revision_id
+                                        == source.binding.source.dataset_revision_id
+                                })
+                                .and_then(|q| q.last_bar_notionals.as_ref())
+                                .and_then(|values| {
+                                    values.iter().find(|v| v.instrument_id == w.instrument_id)
+                                })
+                                .map(|v| v.notional_value.clone())
+                                .ok_or(StoreError::Invalid("portfolio_liquidity_asset"))
+                        })
+                        .transpose()?,
                     groups,
                 })
             })
@@ -260,10 +290,13 @@ impl Store {
             current_weights_artifact_id: weights_id,
             current_weights: weights,
             assets,
-            bar_liquidity: None,
+            bar_liquidity: liquidity.as_ref().map(|s| s.binding.clone()),
             members,
         };
         domain::execution::portfolio_build_request(&native)?;
+        if let Some(source) = &liquidity {
+            domain::execution::portfolio_build_liquidity(&native, &source.report)?;
+        }
         let target_until = publication::target_window(
             native.selection.decision_cutoff_ns.get(),
             native.mandate.rebalance_schedule.target_ttl_seconds,

@@ -45,6 +45,8 @@ pub fn portfolio_capabilities(now: DateTime<Utc>) -> RuntimeCapabilitiesV1 {
     for (name, version) in [
         ("portfolio-models", "4"),
         ("portfolio-weights", "1"),
+        ("portfolio-liquidity", "1"),
+        ("bar-notional", "1"),
         ("simulation-models", "1"),
         ("nautilus", NAUTILUS_EXECUTION_VERSION),
         ("clarabel", CLARABEL_VERSION),

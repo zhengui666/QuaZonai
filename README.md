@@ -9,7 +9,7 @@
 | 内容 | 当前事实 |
 |---|---|
 | 原生回测 | Nautilus Rust 0.63.0 的原生不可变 Catalog 读取、受限预测和共享资金目标序列模拟；另保留明确标记 FIXTURE 的原生兼容探针。模拟结果不自动成为资格或交付证据 |
-| 原生求解 | 本机与受管 OCI 入口绑定原优化器/聚合器类名、版本及严格参数，检查原多 Alpha 预测并由 ndarray 固定聚合后送入 Clarabel Rust 0.11.1，检查现金、敞口、分组、换手、成本与参与率；不可行时不提供备用权重。尚非数据库资格绑定或完整 Portfolio Candidate 交付流程 |
+| 原生求解 | 本机与受管 OCI 入口绑定原优化器/聚合器和多 Alpha 预测，由 ndarray 聚合后送入 Clarabel Rust 0.11.1；Store 绑定原资格、来源与期限。历史单 BAR 参与率沿原 DATA_VALIDATE 报告进入求解及 Candidate 发布复核；不可行不补备用权重。完整成本、独立组合验证与交付尚未验收 |
 | Arrow | Rust IPC RecordBatch写入/回读，明确FIXTURE不可交付 |
 | Portfolio Mandate | 真实 API/CLI 与 Ant Design 配置创建、列表及不可变详情；原 Operator 事务/项目版本锁及 Runtime 模型、镜像、政策和执行引用检查；不是完整 Candidate/Release 交付 |
 | Candidate 快照 | Store／API／CLI／Ant Design 查询已封口的原始头、成员和目标；保留执行、求解、证据状态与精确 Decimal，取消/失效候选不补目标。历史快照不授予当前资格，完整正向构建、独立验证与 Release 仍待验收 |

@@ -1,7 +1,7 @@
 //! One immutable Candidate per original terminal Run; never an approval.
 use super::*;
 
-const WINDOWS_CURRENT: &str = "SELECT (SELECT count(*)=cardinality($1::uuid[]) AND coalesce(bool_and(valid_until>statement_timestamp()),false) FROM app.qualifications WHERE id=ANY($1)) AND NOT EXISTS(SELECT 1 FROM app.input_set_items i JOIN app.dataset_revisions d ON d.id=i.dataset_revision_id JOIN app.data_use_grants g ON g.id=d.data_use_grant_id WHERE i.input_set_id=ANY($2::uuid[]) AND g.valid_until<=statement_timestamp()) AND $3::timestamptz>statement_timestamp() AND $4::numeric>extract(epoch FROM statement_timestamp())*1000000000";
+const WINDOWS_CURRENT: &str = "SELECT (SELECT count(*)=cardinality($1::uuid[]) AND coalesce(bool_and(valid_until>statement_timestamp()),false) FROM app.qualifications WHERE id=ANY($1)) AND NOT EXISTS(SELECT 1 FROM app.input_set_items i JOIN app.dataset_revisions d ON d.id=i.dataset_revision_id JOIN app.data_use_grants g ON g.id=d.data_use_grant_id WHERE i.input_set_id=ANY($2::uuid[]) AND g.valid_until<=statement_timestamp()) AND $3::timestamptz>statement_timestamp() AND $4::numeric>extract(epoch FROM statement_timestamp())*1000000000 AND EXISTS(SELECT 1 FROM app.portfolio_mandates m JOIN app.execution_assumption_sources s ON s.assumptions_id=m.execution_assumptions_id WHERE m.id=$5 AND (s.bar_liquidity_valid_until IS NULL OR s.bar_liquidity_valid_until>statement_timestamp()))";
 use contracts::{
     evidence::EvidenceStatus,
     runtime_jobs::{JobSpecV1, ResultManifestV1},
@@ -98,6 +98,15 @@ where
         let manifest: ResultManifestV1 =
             serde_json::from_slice(&raw).map_err(|_| StoreError::Integrity)?;
         let checked_at = now(&mut tx).await?;
+        if frozen.bar_liquidity.is_some()
+            && manifest
+                .engine_versions
+                .get("portfolio-liquidity")
+                .map(String::as_str)
+                != Some("1")
+        {
+            return Err(StoreError::Integrity);
+        }
         domain::runtime_jobs::manifest(
             &manifest,
             &spec,
@@ -324,6 +333,21 @@ where
         .bind(frozen.mandate.execution_assumptions_id.as_uuid()).bind(project.as_uuid()).bind(request.runtime_id.as_uuid()).fetch_one(&mut **tx).await?;
     crate::research::revalidate_frozen_inputs(tx, db::id(costs)?, project, request.runtime_id)
         .await?;
+    let liquidity = crate::execution_assumptions::liquidity::frozen(
+        tx,
+        project,
+        request.runtime_id,
+        frozen.mandate.execution_assumptions_id,
+        read,
+    )
+    .await?;
+    if db::json(&liquidity.as_ref().map(|s| &s.binding))? != db::json(&frozen.bar_liquidity)? {
+        return Err(StoreError::Integrity);
+    }
+    if let Some(source) = &liquidity {
+        domain::execution::portfolio_build_liquidity(frozen, &source.report)
+            .map_err(|_| StoreError::Integrity)?;
+    }
     for (chosen, original) in request.members.iter().zip(&frozen.members) {
         let (current, _) = member_source(
             tx,
@@ -373,6 +397,7 @@ pub(super) async fn windows_current(
         .bind(inputs.as_slice())
         .bind(target_until)
         .bind(weights_until.get() as i64)
+        .bind(request.mandate_id.as_uuid())
         .fetch_one(&mut **tx)
         .await?)
 }
@@ -409,6 +434,7 @@ mod tests {
             .bind(Vec::<uuid::Uuid>::new())
             .bind(future)
             .bind(future.timestamp_nanos_opt().unwrap())
+            .bind(Id::new().as_uuid())
             .fetch_one(&pool)
             .await
             .unwrap();

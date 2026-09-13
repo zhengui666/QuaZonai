@@ -6,6 +6,8 @@ use super::{research_support, runtime_support};
 mod cycle_data;
 #[path = "execution_models.rs"]
 mod execution_models;
+#[path = "native_liquidity.rs"]
+mod native_liquidity;
 use chrono::{DateTime, Utc};
 use contracts::{
     brief::*,
@@ -46,7 +48,16 @@ pub async fn setup_with_objects(
     actor: &Actor,
     objects: Arc<ArtifactStore>,
 ) -> Fixture {
-    setup_with_policy(pool, store, actor, objects, DataOrigin::Fixture, |_| {}).await
+    setup_with_policy(
+        pool,
+        store,
+        actor,
+        objects,
+        DataOrigin::Fixture,
+        false,
+        |_| {},
+    )
+    .await
 }
 
 pub async fn setup_with_policy(
@@ -55,6 +66,7 @@ pub async fn setup_with_policy(
     actor: &Actor,
     objects: Arc<ArtifactStore>,
     origin: DataOrigin,
+    with_liquidity: bool,
     customize: impl FnOnce(&mut EvaluationPolicyCreate),
 ) -> Fixture {
     let mut data = research_support::setup(pool, store, actor).await;
@@ -146,37 +158,55 @@ pub async fn setup_with_policy(
     }
     if origin == DataOrigin::Real {
         use contracts::{execution_assumptions::ExecutionAssumptionsCreateV1, science::*};
+        let mut assumption_request = ExecutionAssumptionsCreateV1 {
+            bar_liquidity: None,
+            schema_version: SchemaV1,
+            project_id: data.project,
+            runtime_id: data.runtime,
+            expected_runtime_revision: revision,
+            input_set_id: inputs[0],
+            dataset_revision_id: data.discovery,
+            settlement_rule_ref: "controlled-spot-settlement".into(),
+            settings: NativeSimulationSettingsV1 {
+                schema_version: SchemaV1,
+                base_currency: "USD".into(),
+                starting_capital: "1000".parse().unwrap(),
+                account_kind: NativeAccountKind::Cash,
+                leverage: "1".parse().unwrap(),
+                fill_model: execution_models::fill(),
+                fee_model: execution_models::fee(),
+                latency_model: execution_models::latency(1),
+                snapshot_interval_ms: 1000,
+                exposure_tolerance: "0.000001".parse().unwrap(),
+                fee_rates: vec![NativeFeeRateV1 {
+                    instrument_id: "EUR/USD.SIM".into(),
+                    maker: "0.001".parse().unwrap(),
+                    taker: "0.002".parse().unwrap(),
+                }],
+            },
+        };
+        if with_liquidity {
+            let report = native_liquidity::measured_report(
+                pool,
+                store,
+                actor,
+                &objects,
+                &assumption_request,
+            )
+            .await;
+            assumption_request.bar_liquidity =
+                Some(contracts::execution_assumptions::BarLiquidityAssumptionV1 {
+                    schema_version: SchemaV1,
+                    report_artifact_id: report,
+                    maximum_age_seconds: u32::MAX,
+                    participation_limit: "1".parse().unwrap(),
+                });
+        }
         data.assumptions = store
             .create_execution_assumptions(
                 actor,
                 "original-cycle-assumptions",
-                &ExecutionAssumptionsCreateV1 {
-                    bar_liquidity: None,
-                    schema_version: SchemaV1,
-                    project_id: data.project,
-                    runtime_id: data.runtime,
-                    expected_runtime_revision: revision,
-                    input_set_id: inputs[0],
-                    dataset_revision_id: data.discovery,
-                    settlement_rule_ref: "controlled-spot-settlement".into(),
-                    settings: NativeSimulationSettingsV1 {
-                        schema_version: SchemaV1,
-                        base_currency: "USD".into(),
-                        starting_capital: "1000".parse().unwrap(),
-                        account_kind: NativeAccountKind::Cash,
-                        leverage: "1".parse().unwrap(),
-                        fill_model: execution_models::fill(),
-                        fee_model: execution_models::fee(),
-                        latency_model: execution_models::latency(1),
-                        snapshot_interval_ms: 1000,
-                        exposure_tolerance: "0.000001".parse().unwrap(),
-                        fee_rates: vec![NativeFeeRateV1 {
-                            instrument_id: "EUR/USD.SIM".into(),
-                            maker: "0.001".parse().unwrap(),
-                            taker: "0.002".parse().unwrap(),
-                        }],
-                    },
-                },
+                &assumption_request,
                 |id, size| {
                     std::future::ready(
                         objects

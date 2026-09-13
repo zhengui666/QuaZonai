@@ -1,5 +1,5 @@
 //! Real PostgreSQL/file transactions; controlled sources, never REAL qualification.
-#[path = "support/bar_liquidity.rs"]
+#[path = "../../../tests/support/native_liquidity.rs"]
 mod bar_liquidity;
 #[path = "../../../tests/support/execution_assumptions.rs"]
 mod support;
@@ -37,7 +37,8 @@ async fn bar_liquidity_requires_original_native_output_and_freezes_its_expiry(po
         forged,
         Err(StoreError::Invalid("bar_liquidity_native_source"))
     ));
-    let report = bar_liquidity::measured_report(&pool, &f, &request).await;
+    let report =
+        bar_liquidity::measured_report(&pool, &f.store, &f.actor, &f.objects, &request).await;
     request.bar_liquidity.as_mut().unwrap().report_artifact_id = report;
     let mut expired = request.clone();
     expired.bar_liquidity.as_mut().unwrap().maximum_age_seconds = 1;

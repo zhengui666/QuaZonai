@@ -3,6 +3,55 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Store admission and publication of historical liquidity, 2026-09-13
+
+The patch over `534ebf78` connects the original historical source to Build
+admission and Candidate publication. The shared frozen-source reader revalidates
+the original assumption, Dataset/selection, accepted native report and current
+licenses, checks the unchanged derived expiry, and distinguishes immutable-source
+corruption from genuine expiration. Admission freezes original per-asset notionals,
+report input and configuration; source origin uses the existing downgrade rules.
+Publication rereads the same original bytes and compares the frozen binding and
+values. Corruption preserves retry; expiration cannot grant a new target. The
+final database-only eligibility snapshot includes the original assumption expiry.
+No new cost formula, qualification shortcut or origin upgrade.
+
+Runtime and its image label expose portfolio-liquidity/1; admission requires it
+and a bound result must declare it. The existing controlled qualified-chain test
+now runs both without and with liquidity created before the original policy.
+Both follow actual Store admissions/reviews/qualifications, Build, Candidate and
+LAST_TARGET, with idempotent replay. Original report currency corruption fails
+admission; same-size changed numbers or currency fail publication, then original
+bytes recover successfully. No SQL-authored qualifications or substituted policy.
+A separate real PostgreSQL/file test observes the actual expiry clock, rejects
+the expired source and retains its historical timestamp.
+
+`verify-zqM5KR` passed both qualified chains. `verify-DF3aEY` passed static
+gates and 218 checks: 132 contracts/domain, 48 native science, 13 Store, 1 existing
+SQL, 1 original-source/expiry test, 2 publication-window tests and 21 HTTP/CLI.
+The external verifier now explicitly selects the new library tests.
+`verify-PcTnig` passed check/fmt/strict Clippy and 200 wider checks: 4 unit,
+35 native, 137 Store and 24 HTTP/CLI.
+
+OCI initially stopped before build because its development inventory could not
+record a deleted/moved helper; it now records deletion and still checks the exact
+before/after snapshot. The next run rejected every submission because the image
+label lacked the new stack entry; synchronizing the label fixed the cause without
+relaxing the gateway check. `owner-oci-9hYhrr` then passed all 12 actual tests on
+`sha256:6d33d72c92687839ebda3df3cb7c097578754e1e925cde61277b6e976753e2fa`.
+The first portfolio test submits actual DATA_VALIDATE and passes its downloaded
+original bytes to another OCI Build, checking the manifest version, original
+output binding and optimal constrained result. `web-verify-7yeHLc` passed six
+twice-identical generated outputs, typecheck, 505 unit, wire/build, 36 settings
+and 219 full-browser checks; no generated file changed. Source remained unchanged
+within successful verifiers.
+
+The Store scientific responses and market data remain explicitly controlled;
+the OCI data are synthetic. These prove this historical-assumption adapter,
+not REAL/PIT, DATA_BACKED, nonzero-slippage support, independent Candidate
+evaluation, Release/Package/delivery or complete T42. Remaining development and
+current-head review/CI/merge/main verification gates are still required.
+
 ## Native Build consumption of original historical liquidity, 2026-09-13
 
 The patch over `3270eabe` freezes optional NativePortfolioLiquidityV1 in the

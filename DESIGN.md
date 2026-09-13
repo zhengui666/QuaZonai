@@ -676,6 +676,11 @@ liquidity_ref/最大参与率必须与原配置相等；全部assets.available_n
 原报告对应资产的notional_value，无绑定时三者均为空。报告作为唯一该用途的
 DATA_QUALITY原产物输入，job读取原字节核对完整报告、选择、币种、年龄和数值，
 不能只信任冻结副本或提供手填数组。来源校验不替代Store的采纳/许可/资格检查。
+Store在Build准入及Candidate发布时重新读取执行假设原来源，核对当前许可、
+独立有效期及原数值；原配置/字节不一致为可重试Integrity，真实到期不再具备资格。
+最终无文件回调的数据库期限快照同时检查该原有效期。报告origin按已有规则合并，
+不能提升FIXTURE/SYNTHETIC；绑定消费需要portfolio-liquidity/1镜像能力。
+非零滑点和DATA_BACKED仍需完整成本适配。
 
 原生Universe membership每条带可选groups（最多64个唯一、1..120字符的组标识）。
 null/未提供表示分类未知，[]表示来源明确声明没有组；不自动按名称、币种或证券

@@ -1,15 +1,15 @@
 //! Only original accepted native quality output can back this historical assumption.
 use crate::{db, StoreError};
 use contracts::{
-    execution::{
-        NativeDataQualityReportV1, NativeDatasetQualityV1, NativeDatasetSelectionV1,
-        NativeTaskParametersV1,
-    },
+    execution::{NativeDataQualityReportV1, NativeDatasetSelectionV1, NativeTaskParametersV1},
     research::{ArtifactInputRole, DataOrigin, DataPartition},
     runtime_jobs::{JobSpecV1, ResultManifestV1, RuntimeInputV1},
     DbCounter, Id,
 };
 use sqlx::{Postgres, Row, Transaction};
+#[cfg(test)]
+#[path = "../../tests/support/bar_liquidity_source.rs"]
+mod tests;
 
 pub(crate) fn expiry(
     values: &[contracts::execution::NativeBarNotionalV1],
@@ -64,7 +64,7 @@ pub(crate) async fn original<R, Read>(
     selection: &NativeDatasetSelectionV1,
     report: Id,
     read: &mut R,
-) -> Result<(NativeDatasetQualityV1, RuntimeInputV1, DataOrigin), StoreError>
+) -> Result<(NativeDataQualityReportV1, RuntimeInputV1, DataOrigin), StoreError>
 where
     R: FnMut(Id, DbCounter) -> Read,
     Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
@@ -178,13 +178,8 @@ where
     .map_err(|_| StoreError::Integrity)?;
     let value: NativeDataQualityReportV1 =
         serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?;
-    let selected = value
-        .datasets
-        .into_iter()
-        .find(|v| v.dataset_revision_id == selection.dataset_revision_id)
-        .ok_or(StoreError::Integrity)?;
     Ok((
-        selected,
+        value,
         RuntimeInputV1::Artifact {
             artifact_id: report,
             storage_version: "1".into(),
@@ -193,4 +188,107 @@ where
         },
         db::enum_value(&row, "origin")?,
     ))
+}
+
+pub(crate) struct FrozenLiquidity {
+    pub binding: contracts::science::NativePortfolioLiquidityV1,
+    pub report: NativeDataQualityReportV1,
+    pub input: RuntimeInputV1,
+    pub origin: DataOrigin,
+}
+
+/// Reread immutable source facts; current expiry is separate from corruption.
+pub(crate) async fn frozen<R, Read>(
+    tx: &mut Transaction<'_, Postgres>,
+    project: Id,
+    runtime: Id,
+    assumptions: Id,
+    read: &mut R,
+) -> Result<Option<FrozenLiquidity>, StoreError>
+where
+    R: FnMut(Id, DbCounter) -> Read,
+    Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
+{
+    let row = sqlx::query(&format!(
+        "{} WHERE e.id=$1 AND s.project_id=$2 AND s.runtime_id=$3",
+        super::VIEW
+    ))
+    .bind(assumptions.as_uuid())
+    .bind(project.as_uuid())
+    .bind(runtime.as_uuid())
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(StoreError::Integrity)?;
+    let saved = super::view(&row)?;
+    let Some(assumption) = saved.bar_liquidity else {
+        return if saved.bar_liquidity_valid_until.is_none() {
+            Ok(None)
+        } else {
+            Err(StoreError::Integrity)
+        };
+    };
+    let source = crate::data_validation::dataset_bindings(
+        tx,
+        saved.input_set_id,
+        project,
+        runtime,
+        &[DataPartition::Discovery, DataPartition::Validation],
+        read,
+    )
+    .await?
+    .into_iter()
+    .find(|b| b.selection.dataset_revision_id == saved.dataset_revision_id)
+    .ok_or(StoreError::Integrity)?;
+    let (report, input, origin) = original(
+        tx,
+        project,
+        runtime,
+        saved.input_set_id,
+        &source.selection,
+        assumption.report_artifact_id,
+        read,
+    )
+    .await
+    .map_err(|error| match error {
+        StoreError::Invalid(
+            "bar_liquidity_native_source" | "bar_liquidity_runtime" | "bar_liquidity_selection",
+        )
+        | StoreError::Domain(domain::DomainError::CapabilityUnavailable(
+            "bar_liquidity_native_source",
+        )) => StoreError::Integrity,
+        other => other,
+    })?;
+    let quality = report
+        .datasets
+        .iter()
+        .find(|q| q.dataset_revision_id == saved.dataset_revision_id)
+        .ok_or(StoreError::Integrity)?;
+    let values = domain::portfolio::bar_liquidity_values(
+        &assumption,
+        quality,
+        &saved.settings.base_currency,
+        source.selection.selection.decision_cutoff_ns,
+    )
+    .map_err(|_| StoreError::Integrity)?;
+    let until =
+        expiry(values, assumption.maximum_age_seconds).map_err(|_| StoreError::Integrity)?;
+    if saved.bar_liquidity_valid_until != Some(until) {
+        return Err(StoreError::Integrity);
+    }
+    let now: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&mut **tx)
+        .await?;
+    if until <= now {
+        return Err(StoreError::Invalid("bar_liquidity_expired"));
+    }
+    Ok(Some(FrozenLiquidity {
+        binding: contracts::science::NativePortfolioLiquidityV1 {
+            schema_version: contracts::SchemaV1,
+            assumption,
+            source: source.selection,
+        },
+        report,
+        input,
+        origin: crate::data_validation::combine_origin(origin, source.origin),
+    }))
 }

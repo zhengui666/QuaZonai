@@ -1,5 +1,9 @@
 # 原生 Runtime 与 job 镜像
 
+portfolio-liquidity/1消费冻结的原DATA_QUALITY报告，核对原Dataset/选择、币种、
+年龄与资产量，再应用已有参与率约束；不是实时深度或DATA_BACKED证明。
+Store仍负责原来源采纳、许可和发布期限，不能直接提交原生任务冒充资格。
+
 bar-notional/1通过原生DATA_VALIDATE输出非Sealed最后已知BAR的价格、成交量和
 Instrument::try_calculate_notional_value收盘估值，保持原币种与时间。没有自研合约
 估值公式，不将历史观察冒充未来流动性或完整成本资格；Sealed明细保持不输出。

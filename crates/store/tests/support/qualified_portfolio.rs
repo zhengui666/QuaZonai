@@ -99,6 +99,15 @@ async fn answer(store: &Store, f: &cycle_support::Fixture, lease: &RunLease, tex
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn original_reviewed_alphas_publish_candidates_and_retry_last_target(pool: PgPool) {
+    qualified_chain(pool, false).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn historical_liquidity_remains_bound_through_original_qualified_chain(pool: PgPool) {
+    qualified_chain(pool, true).await;
+}
+
+async fn qualified_chain(pool: PgPool, with_liquidity: bool) {
     let directory = tempfile::tempdir().unwrap();
     let objects = std::sync::Arc::new(
         integrations::artifacts::ArtifactStore::open(&directory.path().join("objects")).unwrap(),
@@ -110,6 +119,7 @@ async fn original_reviewed_alphas_publish_candidates_and_retry_last_target(pool:
         &actor,
         objects,
         DataOrigin::Real,
+        with_liquidity,
         |policy| {
             policy.selection.candidate_count = 2;
             policy.maximum_sealed_uses_per_lineage = 2;
@@ -315,6 +325,45 @@ async fn original_reviewed_alphas_publish_candidates_and_retry_last_target(pool:
     // Same-size corrupted reads must fail at admission and publication.
     // The original immutable files are never changed.
     let fixture = &f;
+    let liquidity_id = store
+        .execution_assumption(&actor, f.data.assumptions)
+        .await
+        .unwrap()
+        .bar_liquidity
+        .map(|s| s.report_artifact_id);
+    assert_eq!(liquidity_id.is_some(), with_liquidity);
+    let changed_liquidity = |currency: bool| {
+        move |id: Id, size: DbCounter| async move {
+            let bytes = fixture.read(id, size).await?;
+            if Some(id) != liquidity_id {
+                return Ok(bytes);
+            }
+            let text = String::from_utf8(bytes).unwrap();
+            let (from, to) = if currency {
+                ("\"currency\":\"USD\"", "\"currency\":\"EUR\"")
+            } else {
+                ("\"notional_value\":\"1000\"", "\"notional_value\":\"1001\"")
+            };
+            assert!(text.contains(from));
+            let changed = text.replace(from, to).into_bytes();
+            assert_eq!(changed.len() as u64, size.get());
+            Ok(changed)
+        }
+    };
+    if with_liquidity {
+        assert!(matches!(
+            store
+                .start_portfolio_build(
+                    &actor,
+                    "changed-liquidity-source",
+                    &request,
+                    changed_liquidity(true),
+                    |_| async { panic!("corrupt liquidity publishes nothing") },
+                )
+                .await,
+            Err(StoreError::Integrity)
+        ));
+    }
     let changed_groups = |replacement: &'static str| {
         move |id: Id, size: DbCounter| async move {
             let bytes = fixture.read(id, size).await?;
@@ -392,6 +441,20 @@ async fn original_reviewed_alphas_publish_candidates_and_retry_last_target(pool:
         }
     }
     result::complete(&pool, &store, &f, &lease, &job).await;
+    if with_liquidity {
+        for currency in [false, true] {
+            assert!(matches!(
+                store
+                    .publish_scientific_result(
+                        admitted.id,
+                        changed_liquidity(currency),
+                        |_| async { panic!("changed liquidity publishes no Candidate") },
+                    )
+                    .await,
+                Err(StoreError::Integrity)
+            ));
+        }
+    }
     for replacement in ["foreign-group", "             "] {
         assert!(matches!(
             store

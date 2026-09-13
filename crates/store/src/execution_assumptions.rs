@@ -187,6 +187,11 @@ impl Store {
                 &mut read,
             )
             .await?;
+            let report = report
+                .datasets
+                .into_iter()
+                .find(|q| q.dataset_revision_id == request.dataset_revision_id)
+                .ok_or(StoreError::Integrity)?;
             let now: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
                 .fetch_one(&mut *tx)
                 .await?;

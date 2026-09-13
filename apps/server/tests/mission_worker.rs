@@ -126,7 +126,7 @@ async fn fixture_with_selection(
     );
     let (store, actor) = research_support::operator(pool).await;
     let mut data =
-        cycle_support::setup_with_policy(pool, &store, &actor, objects, origin, |policy| {
+        cycle_support::setup_with_policy(pool, &store, &actor, objects, origin, false, |policy| {
             policy.selection.candidate_count = candidates;
             if candidates == 1 {
                 // Both controlled origins use the same passing scientific criterion.

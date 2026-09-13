@@ -1,4 +1,3 @@
-use super::support::data;
 use contracts::{execution_assumptions::ExecutionAssumptionsCreateV1, SchemaV1};
 use sqlx::PgPool;
 
@@ -6,7 +5,9 @@ use sqlx::PgPool;
 /// This is not actual numerical computation, market provenance or qualification.
 pub async fn measured_report(
     pool: &PgPool,
-    f: &data::Fixture,
+    store: &store::Store,
+    actor: &store::authority::Actor,
+    objects: &std::sync::Arc<integrations::artifacts::ArtifactStore>,
     request: &ExecutionAssumptionsCreateV1,
 ) -> contracts::Id {
     use contracts::{
@@ -16,14 +17,13 @@ pub async fn measured_report(
         lifecycle::{native::NativePayloads, ClaimResult},
         StoreError,
     };
-    let run = f
-        .store
+    let run = store
         .start_data_validation(
-            &f.actor,
+            actor,
             "measure-liquidity",
             &contracts::data::DataValidateRequest {
                 schema_version: SchemaV1,
-                project_id: f.project,
+                project_id: request.project_id,
                 input_set_id: request.input_set_id,
                 runtime_id: request.runtime_id,
                 expected_runtime_revision: request.expected_runtime_revision,
@@ -36,10 +36,12 @@ pub async fn measured_report(
                     output_bytes: DbCounter::new(65536).unwrap(),
                 },
             },
-            |id, size| data::read(f.objects.clone(), id, size),
+            |id, size| {
+                std::future::ready(objects.read(id, size).map_err(|_| StoreError::Integrity))
+            },
             |object| {
                 std::future::ready(
-                    f.objects
+                    objects
                         .put(object.id, &object.bytes)
                         .map_err(|_| StoreError::Integrity),
                 )
@@ -48,23 +50,21 @@ pub async fn measured_report(
         .await
         .unwrap()
         .resource;
-    let message = f
-        .store
+    let message = store
         .read_run_messages(1, 100)
         .await
         .unwrap()
         .into_iter()
         .find(|m| m.run_id == run.id)
         .unwrap();
-    let ClaimResult::Leased(lease) = f
-        .store
+    let ClaimResult::Leased(lease) = store
         .claim_run(&message, "liquidity-measurement", 60)
         .await
         .unwrap()
     else {
         panic!("native measurement lease")
     };
-    let job = f.store.native_job(run.id, &lease.fence).await.unwrap();
+    let job = store.native_job(run.id, &lease.fence).await.unwrap();
     let size = job
         .spec
         .inputs
@@ -78,16 +78,13 @@ pub async fn measured_report(
             _ => None,
         })
         .unwrap();
-    let NativeTaskParametersV1::ValidateData { selections, .. } = serde_json::from_slice(
-        &f.objects
-            .read(job.spec.parameters_artifact_id, size)
-            .unwrap(),
-    )
-    .unwrap() else {
+    let NativeTaskParametersV1::ValidateData { selections, .. } =
+        serde_json::from_slice(&objects.read(job.spec.parameters_artifact_id, size).unwrap())
+            .unwrap()
+    else {
         panic!("native validation task")
     };
-    assert!(f
-        .store
+    assert!(store
         .begin_run_dispatch(run.id, &lease.fence)
         .await
         .unwrap());
@@ -95,7 +92,18 @@ pub async fn measured_report(
         .fetch_one(pool)
         .await
         .unwrap();
-    let mut quality = data::catalog_fixture::metadata().quality;
+    let (metadata_id, size): (uuid::Uuid, i64) = sqlx::query_as("SELECT e.native_metadata_artifact_id,a.byte_count FROM app.dataset_registration_evidence e JOIN app.artifacts a ON a.id=e.native_metadata_artifact_id WHERE e.dataset_revision_id=$1")
+        .bind(request.dataset_revision_id.as_uuid()).fetch_one(pool).await.unwrap();
+    let metadata: contracts::catalogs::RuntimeCatalogMetadataV1 = serde_json::from_slice(
+        &objects
+            .read(
+                metadata_id.to_string().try_into().unwrap(),
+                DbCounter::new(size as u64).unwrap(),
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    let mut quality = metadata.quality;
     quality.checked_at = now;
     quality.datasets[0].dataset_revision_id = request.dataset_revision_id;
     quality.datasets[0].selection = selections[0].selection.clone();
@@ -137,16 +145,18 @@ pub async fn measured_report(
         artifacts: vec![output.clone()],
         error: None,
     };
-    f.store
+    store
         .publish_native_result(
             run.id,
             &lease.fence,
             serde_json::to_vec(&manifest).unwrap(),
             NativePayloads::Verified(vec![(output, bytes)]),
-            |id, size| data::read(f.objects.clone(), id, size),
-            |objects| {
-                std::future::ready(objects.into_iter().try_for_each(|o| {
-                    f.objects
+            |id, size| {
+                std::future::ready(objects.read(id, size).map_err(|_| StoreError::Integrity))
+            },
+            |published| {
+                std::future::ready(published.into_iter().try_for_each(|o| {
+                    objects
                         .put(o.id, &o.bytes)
                         .map_err(|_| StoreError::Integrity)
                 }))

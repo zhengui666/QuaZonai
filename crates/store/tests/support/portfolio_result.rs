@@ -132,7 +132,11 @@ pub(super) async fn complete(
         external_job_id: job.spec.external_job_id.clone(),
         input_set_id: job.spec.input_set_id,
         state: RuntimeResultState::Succeeded,
-        engine_versions: [("controlled-protocol-response".into(), "1".into())].into(),
+        engine_versions: [
+            ("controlled-protocol-response".into(), "1".into()),
+            ("portfolio-liquidity".into(), "1".into()),
+        ]
+        .into(),
         started_at: Some(now),
         finished_at: now,
         resource_usage: RuntimeResourceUsageV1 {
