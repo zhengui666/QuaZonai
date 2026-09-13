@@ -52,6 +52,9 @@ target-only权重，不收账户或NAV；PAPER为SYNTHETIC，LIVE不自动获得
 完整验收。保守BAR非零滑点需portfolio-slippage/1，按原概率与最后BAR/tick换算
 规划期望成本（公式及向上舍入见DESIGN A5.2）；不是未来成本上界或DATA_BACKED。
 实际模拟继续使用原模型和原费率，不二次扣规划成本，不放宽其他来源/流动性约束。
+原生candidate-simulation/1可在原目标有效区间内保持该目标模拟，读取原目标与费用
+文件，不将最终权重放回产生之前。它不是恢复真实持仓，也不是已交付的Evaluation
+或Release入口；独立政策/指标和正式评估发布仍待接通。
 
 `apps/runtime` 的配置、实际原生镜像装配和启动说明集中在 [runtimes/native/README.md](runtimes/native/README.md)，由 `runtime doctor/serve --config` 读取受信任本机文件。网关独占自己的0700状态目录与SQLite日志，以原生OS文件锁防止两个监督者同时使用同一目录。它使用操作者正常授权的Docker Unix socket；无权访问时明确不可用，不修改sudo、用户组、socket权限或改用无隔离执行。
 

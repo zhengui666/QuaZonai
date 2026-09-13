@@ -262,6 +262,15 @@ Store核对当前资格、独立Reviewer/原REAL报告、许可、原模型、Fo
 资产均拒绝，Candidate发布重读原来源。历史流动性/参与率见下文，DATA_BACKED仍未接通。
 成功准入的完整原生链及Candidate发布仍待验收，不能将此命令当作交付入口。
 
+原生SIMULATE_CANDIDATE仅为保持原目标的模拟适配，尚不是Operator评估命令。
+参数含schema_version、candidate_id、candidate_available_ns、dataset_revision_id、target_artifact_id、
+settings_artifact_id和原NativeSimulationRequestV1；需candidate-simulation/1。
+唯一FORWARD目录搭配原qz.portfolio_targets/1 REPORT与执行设置PARAMETERS。
+一个原目标点，生效/选择起点取原asof与原Candidate可用时间较晚者，终点不超过
+原valid_until；可用时间须由可信准入绑定，不允许人工回填。job重读两份文件，
+拒绝身份、权重/现金、时间或设置不同。不回放到Candidate产生前，不恢复实际账户，
+不因原生成功生成Evaluation/PASS/Release；正式准入与评估发布尚待完成。
+
 执行假设入口为`POST /api/v2/execution-assumptions`，请求ExecutionAssumptionsCreateV1
 （schema_version、project_id、runtime_id、expected_runtime_revision、input_set_id、
 dataset_revision_id、完整NativeSimulationSettingsV1、settlement_rule_ref）。

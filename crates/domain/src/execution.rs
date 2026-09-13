@@ -18,8 +18,8 @@ pub use output::{
     output_bindings, output_shape,
 };
 pub use portfolio::{
-    portfolio_build_liquidity, portfolio_build_request, portfolio_build_result,
-    portfolio_execution_costs,
+    candidate_simulation, portfolio_build_liquidity, portfolio_build_request,
+    portfolio_build_result, portfolio_execution_costs,
 };
 
 fn bad(field: &str) -> DomainError {
@@ -242,6 +242,11 @@ pub fn task(spec: &JobSpecV1, parameters: &NativeTaskParametersV1) -> Result<(),
             dataset_revision_id,
             request,
             ..
+        }
+        | NativeTaskParametersV1::SimulateCandidate {
+            dataset_revision_id,
+            request,
+            ..
         } => {
             crate::portfolio::simulation_models(&request.settings)?;
             selection(&request.selection)?;
@@ -249,6 +254,33 @@ pub fn task(spec: &JobSpecV1, parameters: &NativeTaskParametersV1) -> Result<(),
                 || spec.inputs.iter().any(|input| matches!(input, RuntimeInputV1::Dataset { revision_id, .. } if *revision_id != *dataset_revision_id))
                 || !(1..=10_000).contains(&request.target_points.len())
             { return Err(bad("simulation_inputs")); }
+            if let NativeTaskParametersV1::SimulateCandidate {
+                target_artifact_id,
+                settings_artifact_id,
+                ..
+            } = parameters
+            {
+                if request.target_points.len() != 1
+                    || !artifact(spec, *target_artifact_id, ArtifactInputRole::Report)
+                    || !artifact(spec, *settings_artifact_id, ArtifactInputRole::Parameters)
+                    || spec.inputs.iter().any(|input| match input {
+                        RuntimeInputV1::Dataset { role, .. } => {
+                            *role != contracts::research::DataPartition::Forward
+                        }
+                        RuntimeInputV1::Artifact {
+                            artifact_id, role, ..
+                        } => {
+                            !(*role == ArtifactInputRole::Report
+                                && artifact_id == target_artifact_id
+                                || *role == ArtifactInputRole::Parameters
+                                    && (*artifact_id == spec.parameters_artifact_id
+                                        || artifact_id == settings_artifact_id))
+                        }
+                    })
+                {
+                    return Err(bad("candidate_simulation.inputs"));
+                }
+            }
         }
     }
     Ok(())

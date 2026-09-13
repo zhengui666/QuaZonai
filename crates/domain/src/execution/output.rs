@@ -278,7 +278,8 @@ pub fn output_bindings(
         NativeTaskParametersV1::BuildPortfolio { request, .. } => {
             super::portfolio_build_result(request, &decode(body("qz.native_portfolio")?.1)?)?;
         }
-        NativeTaskParametersV1::SimulatePortfolio { request, .. } => {
+        NativeTaskParametersV1::SimulatePortfolio { request, .. }
+        | NativeTaskParametersV1::SimulateCandidate { request, .. } => {
             simulation::binding(request, &decode(body("qz.native_simulation")?.1)?)?;
         }
     }

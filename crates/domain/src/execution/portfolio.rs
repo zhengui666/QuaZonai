@@ -2,6 +2,49 @@
 use super::*;
 use contracts::{brief::TargetKind, science::*};
 
+pub fn candidate_simulation(
+    candidate: Id,
+    available_ns: contracts::DbCounter,
+    target: &PortfolioTargetsV1,
+    request: &NativeSimulationRequestV1,
+) -> Result<(), DomainError> {
+    selection(&request.selection)?;
+    crate::portfolio::simulation_settings(&request.settings)?;
+    let nanos = |time: chrono::DateTime<chrono::Utc>| {
+        time.timestamp_nanos_opt()
+            .and_then(|n| u64::try_from(n).ok())
+            .and_then(|n| contracts::DbCounter::new(n).ok())
+            .ok_or_else(|| bad("candidate_simulation.time"))
+    };
+    let asof = nanos(target.asof)?;
+    let effective = if available_ns > asof {
+        available_ns
+    } else {
+        asof
+    };
+    let until = nanos(target.valid_until)?;
+    let [point] = request.target_points.as_slice() else {
+        return Err(bad("candidate_simulation.targets"));
+    };
+    if target.candidate_id != candidate
+        || target.base_currency != request.settings.base_currency
+        || request.selection.event_start_ns != effective
+        || request.selection.event_end_ns > until
+        || point.asof_ns != effective
+        || point.valid_until_ns != until
+        || point.targets != target.targets
+        || point.cash_weight != target.cash_weight
+        || !(1..=256).contains(&target.targets.len())
+        || target
+            .targets
+            .iter()
+            .any(|t| t.currency != target.base_currency)
+    {
+        return Err(bad("candidate_simulation.source"));
+    }
+    Ok(())
+}
+
 /// Thin proportional expectation of the frozen native one-tick model, not a fill simulator.
 pub fn portfolio_execution_costs(
     request: &NativePortfolioBuildRequestV1,

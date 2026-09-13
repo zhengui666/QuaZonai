@@ -4,6 +4,20 @@ use crate::{brief::TargetKind, portfolio::*, DbCounter, DecimalValue, Id, Schema
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+/// Exact immutable qz.portfolio_targets/1 document, not an account snapshot.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PortfolioTargetsV1 {
+    pub schema_version: SchemaV1,
+    pub candidate_id: Id,
+    pub base_currency: String,
+    pub asof: chrono::DateTime<chrono::Utc>,
+    pub valid_until: chrono::DateTime<chrono::Utc>,
+    pub cash_weight: DecimalValue,
+    #[schema(min_items = 1, max_items = 256)]
+    pub targets: Vec<AllocationTargetV1>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
 pub enum PortfolioWeightsSourceV1 {

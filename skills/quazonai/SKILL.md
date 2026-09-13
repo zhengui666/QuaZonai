@@ -180,6 +180,9 @@ Build还需portfolio-cost-source/1及原PARAMETERS费用文档，完整绑定exe
 发布重读保存配置。非零滑点需portfolio-slippage/1、原BAR/tick参考和A5.2规划
 系数复核；不是未来成本上界，不二次扣原生模拟净收益，不声明DATA_BACKED。
 Forward原目录的资产币种、maker/taker费率也须与原设置匹配；Build/模拟共用原生校验。
+SIMULATE_CANDIDATE以原目标REPORT及费用PARAMETERS绑定唯一FORWARD目录，只在
+原asof与原Candidate可用时间较晚者起至有效期内保持原目标；需candidate-simulation/1。原生结果不是PASS，
+不得当作已接通Store评估或Release，更不能回填历史目标或恢复实际账户。
 原生Build读取已绑定DATA_QUALITY原字节并核对选择、币种、年龄与逐资产量；
 这不授Mission写入来源或自行申请资格的权限，也不替代Store准入/发布复核。
 `client portfolio candidate list PROJECT_UUID` / `show CANDIDATE_UUID`读取已发布

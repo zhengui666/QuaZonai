@@ -12246,6 +12246,48 @@
               "operation"
             ],
             "type": "object"
+          },
+          {
+            "properties": {
+              "candidate_available_ns": {
+                "$ref": "#/components/schemas/DbCounter"
+              },
+              "candidate_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "dataset_revision_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "operation": {
+                "enum": [
+                  "SIMULATE_CANDIDATE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/NativeSimulationRequestV1"
+              },
+              "schema_version": {
+                "$ref": "#/components/schemas/SchemaV1"
+              },
+              "settings_artifact_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "target_artifact_id": {
+                "$ref": "#/components/schemas/Id"
+              }
+            },
+            "required": [
+              "schema_version",
+              "candidate_id",
+              "candidate_available_ns",
+              "dataset_revision_id",
+              "target_artifact_id",
+              "settings_artifact_id",
+              "request",
+              "operation"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -13688,6 +13730,50 @@
           "end_ns",
           "available_ns",
           "asset_returns"
+        ],
+        "type": "object"
+      },
+      "PortfolioTargetsV1": {
+        "additionalProperties": false,
+        "description": "Exact immutable qz.portfolio_targets/1 document, not an account snapshot.",
+        "properties": {
+          "asof": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "base_currency": {
+            "type": "string"
+          },
+          "candidate_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "cash_weight": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "targets": {
+            "items": {
+              "$ref": "#/components/schemas/AllocationTargetV1"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "candidate_id",
+          "base_currency",
+          "asof",
+          "valid_until",
+          "cash_weight",
+          "targets"
         ],
         "type": "object"
       },

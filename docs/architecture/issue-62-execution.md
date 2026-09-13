@@ -3,6 +3,46 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Original Candidate hold simulation adapter, 2026-09-13
+
+SIMULATE_CANDIDATE reuses the existing native shared-capital simulation, reading
+the original qz.portfolio_targets/1 REPORT and execution-settings PARAMETERS.
+Identity, currency, weights/cash, original validity and complete settings must
+match the frozen request. Only one FORWARD catalog and one target point are
+accepted. Start is max(original asof, Candidate availability); end cannot exceed
+the original validity. This prevents applying final weights before availability.
+The shared target document replaces the private LAST_TARGET decoding type;
+existing Store behavior is unchanged. No new engine or dependency was added.
+
+Verification of c9e8249b plus the frozen source patch:
+
+- verify-rG5DpQ: check/fmt/strict Clippy and 223 tests passed (134 domain,
+  51 native, 13 Store, 1 original-source SQL, 1 liquidity source, 2 publication
+  windows, 21 HTTP/CLI); source unchanged and isolated PG stopped.
+- verify-5OryWW: check/fmt/strict Clippy and 203 tests passed (4 publication/source
+  unit, 38 native, 137 Store, 24 HTTP/CLI); source unchanged and isolated PG stopped.
+  This includes the original LAST_TARGET reader and controlled qualified chains.
+- Managed Candidate test covers original success, delayed-availability success,
+  changed identity/cash/weights/settings, missing source files, wrong input role,
+  Sealed input, early start, excess validity and duplicate target points.
+- web-verify-l81dVL regenerated all six named native outputs twice identically;
+  handwritten source unchanged. Only domain JSON changed. This final generation
+  did not rerun browser tests; the earlier web-verify-7TMpcJ full run passed
+  505 unit, 36 settings and 219 browser tests before the availability-field change.
+- owner-oci-ennKAN rebuilt native image
+  `sha256:95285da1667ffef52b7a3a398f106cbbc90b77dd9252e6fee6ee99269d133e76`;
+  all 13 actual OCI tests passed, source unchanged. New test uploads original
+  documents through Runtime, runs the native job, reads/binds its report and
+  replays the same job. Runtime/image advertise candidate-simulation/1.
+
+This is a hold adapter, not strategy walk-forward or formal independent portfolio
+Evaluation. Trusted Store admission must still bind original availability and
+sources, policy/metrics/expiry and immutable Evaluation publication. Native fixtures
+use synthetic markets; intraday results remain INSUFFICIENT_DATA, never PASS.
+No REAL/PIT/T42, DATA_BACKED, actual-account restoration or Release claim. No push,
+GitHub review request, merge or Issue closure in this slice; all remaining work
+and final exact-head gates remain required.
+
 ## Native nonzero-slippage planning, 2026-09-13
 
 The patch over `4591056d` maps the frozen Nautilus DefaultFillModel L1 one-tick

@@ -59,6 +59,7 @@ use utoipa::OpenApi;
     catalogs::CatalogVersionQuery,
     runtime::RuntimeCapabilitiesV1,
     execution::NativeTaskParametersV1,
+    science::PortfolioTargetsV1,
     execution::NativeJobOutputIndexV1,
     execution::NativeDatasetQualityV1,
     execution::NativeDataQualityReportV1,

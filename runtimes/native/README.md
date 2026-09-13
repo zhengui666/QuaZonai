@@ -1,5 +1,9 @@
 # 原生 Runtime 与 job 镜像
 
+candidate-simulation/1支持SIMULATE_CANDIDATE：重读原Candidate目标和执行设置，
+核对唯一目标及其因果有效区间，再调用既有共享资金模拟。只允许唯一FORWARD目录
+及原目标REPORT/费用PARAMETERS；不读取真实账户，不创建Evaluation或交付资格。
+
 portfolio-cost-source/1要求Build挂载原transaction_costs_ref的PARAMETERS字节，
 与冻结execution_settings完整一致；发布再次核对保存配置。
 不把费用副本或模型参数当DATA_BACKED证明。

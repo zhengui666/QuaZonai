@@ -1913,6 +1913,21 @@ React/Ant Design“组合 → 候选快照”使用同一分页和详情接口�
 失效时保留solver_status，evidence_status标INVALID并去除可交付目标，不能伪称
 求解失败。原生成功并不生成Qualification/Release；共享资金验证仍是独立后续任务。
 
+原生SIMULATE_CANDIDATE是该后续链的原目标保持模拟入口，不是Eval/PASS发布接口。
+任务冻结candidate_id、candidate_available_ns、dataset_revision_id、target_artifact_id、settings_artifact_id
+及NativeSimulationRequestV1。目标使用原qz.portfolio_targets/1完整文档，费用使用
+原qz.native_simulation_settings/1，不接受临时手填目标替代原文件。job重读并核对
+原Candidate身份、币种、目标/现金、asof/valid_until及完整费用设置；只挂载一个
+FORWARD目录、原目标REPORT及费用PARAMETERS，不能借此读取Sealed或其他对象。
+candidate_available_ns须由可信准入从原Candidate可用记录取得，不是Operator可选的
+回填时间。保持模拟恰含一个原权重/现金点；该点asof和selection.event_start_ns均
+取原目标asof与candidate_available_ns的较晚值，结束不晚于原valid_until，不改写
+原目标文件、不把最终权重放回可用前。目标从原模拟初始现金资本开始应用，
+原Nautilus根据首个因果已知价格调仓；不是恢复真实账户或假造原实际仓位。缺未来
+区间、超出原目标时间窗口、缺原文件或改写副本均不授予结果。保持模拟不是策略walk-forward，
+不把它冒充完整独立组合评估；正式Store准入、政策/指标/期限与不可变Evaluation
+发布另行绑定后才可供Release使用。需要candidate-simulation/1原生镜像能力。
+
 `unique(candidate_alphas.candidate_id,alpha_version_id)`、`unique(candidate_targets.candidate_id,instrument_id)` 是数据库约束，不是普通索引。重复相同请求幂等，冲突409；至少两个不同alpha_id的合格版本才满足多Alpha，不以同Alpha多个版本或重复条目凑数。发布验证每资产唯一权重，再校验sum/gross/net/cash/约束。
 
 ### A5.2 原生组合求解的可执行合同

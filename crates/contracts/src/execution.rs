@@ -63,6 +63,15 @@ pub enum NativeTaskParametersV1 {
         dataset_revision_id: Id,
         request: Box<NativeSimulationRequestV1>,
     },
+    SimulateCandidate {
+        schema_version: SchemaV1,
+        candidate_id: Id,
+        candidate_available_ns: DbCounter,
+        dataset_revision_id: Id,
+        target_artifact_id: Id,
+        settings_artifact_id: Id,
+        request: Box<NativeSimulationRequestV1>,
+    },
 }
 
 impl NativeTaskParametersV1 {
@@ -74,7 +83,9 @@ impl NativeTaskParametersV1 {
             | Self::ValidateAlpha { .. }
             | Self::EvaluateSealedAlpha { .. } => RunKind::AlphaEvaluate,
             Self::BuildPortfolio { .. } => RunKind::PortfolioBuild,
-            Self::SimulatePortfolio { .. } => RunKind::PortfolioSimulate,
+            Self::SimulatePortfolio { .. } | Self::SimulateCandidate { .. } => {
+                RunKind::PortfolioSimulate
+            }
         }
     }
     pub fn output_schemas(&self) -> Vec<RuntimeArtifactSchemaV1> {
@@ -85,7 +96,9 @@ impl NativeTaskParametersV1 {
             Self::ValidateAlpha { .. } => &["qz.alpha_validation"],
             Self::EvaluateSealedAlpha { .. } => &["qz.alpha_sealed"],
             Self::BuildPortfolio { .. } => &["qz.native_portfolio"],
-            Self::SimulatePortfolio { .. } => &["qz.native_simulation"],
+            Self::SimulatePortfolio { .. } | Self::SimulateCandidate { .. } => {
+                &["qz.native_simulation"]
+            }
         };
         names
             .iter()

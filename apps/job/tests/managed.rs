@@ -896,6 +896,121 @@ fn actual_managed_alpha_validation_seals_all_folds_and_never_trains_sealed_or_di
 }
 
 #[test]
+fn candidate_simulation_requires_original_targets_settings_and_causal_window() {
+    for case in 0..14 {
+        let (catalog, mut request) = market::market("0.001", 20);
+        request.target_points.truncate(1);
+        request.selection.event_start_ns = request.target_points[0].asof_ns;
+        let candidate = Id::new();
+        let targets_id = Id::new();
+        let settings_id = Id::new();
+        let dataset_id = Id::new();
+        let point = &request.target_points[0];
+        let time = |n: DbCounter| chrono::DateTime::from_timestamp_nanos(n.get() as i64);
+        let mut target = contracts::science::PortfolioTargetsV1 {
+            schema_version: SchemaV1,
+            candidate_id: candidate,
+            base_currency: request.settings.base_currency.clone(),
+            asof: time(point.asof_ns),
+            valid_until: time(point.valid_until_ns),
+            cash_weight: point.cash_weight.clone(),
+            targets: point.targets.clone(),
+        };
+        let mut settings = request.settings.clone();
+        let mut available = request.target_points[0].asof_ns;
+        match case {
+            1 => target.candidate_id = Id::new(),
+            2 => target.cash_weight = "0.3".parse().unwrap(),
+            3 => request.selection.event_start_ns = DbCounter::ZERO,
+            4 => settings.starting_capital = "2000000".parse().unwrap(),
+            9 => {
+                request.selection.event_end_ns =
+                    market::count(request.selection.event_end_ns.get() + 1);
+                request.selection.decision_cutoff_ns = request.selection.event_end_ns;
+            }
+            10 => target.targets[0].weight = "0.5".parse().unwrap(),
+            11 => request.target_points.push(request.target_points[0].clone()),
+            12 | 13 => {
+                available = market::count(available.get() + market::INTERVAL_NS);
+                if case == 12 {
+                    request.target_points[0].asof_ns = available;
+                    request.selection.event_start_ns = available;
+                }
+            }
+            _ => {}
+        }
+        let targets = serde_json::to_vec(&target).unwrap();
+        let costs = serde_json::to_vec(&settings).unwrap();
+        let mut data = dataset(dataset_id);
+        if let RuntimeInputV1::Dataset { role, .. } = &mut data {
+            *role = if case == 8 {
+                DataPartition::Sealed
+            } else {
+                DataPartition::Forward
+            };
+        }
+        let f = fixture(
+            NativeTaskParametersV1::SimulateCandidate {
+                schema_version: SchemaV1,
+                candidate_id: candidate,
+                candidate_available_ns: available,
+                dataset_revision_id: dataset_id,
+                target_artifact_id: targets_id,
+                settings_artifact_id: settings_id,
+                request: Box::new(request),
+            },
+            vec![
+                data,
+                RuntimeInputV1::Artifact {
+                    artifact_id: targets_id,
+                    storage_version: "1".into(),
+                    byte_count: market::count(targets.len() as u64),
+                    role: if case == 7 {
+                        ArtifactInputRole::Model
+                    } else {
+                        ArtifactInputRole::Report
+                    },
+                },
+                RuntimeInputV1::Artifact {
+                    artifact_id: settings_id,
+                    storage_version: "1".into(),
+                    byte_count: market::count(costs.len() as u64),
+                    role: ArtifactInputRole::Parameters,
+                },
+            ],
+        );
+        if case != 5 {
+            fs::write(
+                f.input.join("objects").join(targets_id.to_string()),
+                targets,
+            )
+            .unwrap();
+        }
+        if case != 6 {
+            fs::write(f.input.join("objects").join(settings_id.to_string()), costs).unwrap();
+        }
+        attach_catalog(&f, dataset_id, catalog.path());
+        assert_eq!(
+            execute(&f),
+            matches!(case, 0 | 12),
+            "Candidate simulation case {case}"
+        );
+        if matches!(case, 0 | 12) {
+            let report: contracts::science::NativeSimulationResultV1 =
+                result(&f, "qz.native_simulation");
+            assert_eq!(report.consumed_target_points.get(), 1);
+            assert!(report.orders.get() > 0);
+            assert_eq!(
+                report.returns_status,
+                contracts::evidence::MetricStatus::InsufficientData
+            );
+        } else {
+            assert!(!f.output.join("index.json").exists());
+        }
+    }
+}
+
+#[test]
 fn native_managed_simulation_is_a_separate_process_and_does_not_invent_daily_returns() {
     let (catalog, request) = market::market("0.001", 20);
     let id = Id::new();

@@ -80,6 +80,11 @@ pub async fn parameters(
             dataset_revision_id,
             request,
             ..
+        }
+        | NativeTaskParametersV1::SimulateCandidate {
+            dataset_revision_id,
+            request,
+            ..
         } => {
             vec![(*dataset_revision_id, &request.selection)]
         }

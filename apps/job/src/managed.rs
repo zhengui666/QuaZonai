@@ -474,6 +474,40 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             )?;
             outputs.json("qz.native_simulation", RuntimeOutputKind::Report, &result)?;
         }
+        NativeTaskParametersV1::SimulateCandidate {
+            candidate_id,
+            candidate_available_ns,
+            dataset_revision_id,
+            target_artifact_id,
+            settings_artifact_id,
+            request,
+            ..
+        } => {
+            let target: contracts::science::PortfolioTargetsV1 = serde_json::from_slice(&read(
+                &input.join("objects").join(target_artifact_id.to_string()),
+                PARAMETERS_LIMIT,
+            )?)?;
+            let settings: contracts::science::NativeSimulationSettingsV1 =
+                serde_json::from_slice(&read(
+                    &input.join("objects").join(settings_artifact_id.to_string()),
+                    PARAMETERS_LIMIT,
+                )?)?;
+            ensure!(
+                serde_json::to_value(&settings)? == serde_json::to_value(&request.settings)?,
+                "CANDIDATE_SIMULATION_SETTINGS_SOURCE_MISMATCH"
+            );
+            domain::execution::candidate_simulation(
+                candidate_id,
+                candidate_available_ns,
+                &target,
+                &request,
+            )?;
+            let result = crate::simulation::simulate(
+                &input.join("catalogs").join(dataset_revision_id.to_string()),
+                &request,
+            )?;
+            outputs.json("qz.native_simulation", RuntimeOutputKind::Report, &result)?;
+        }
     }
     ensure!(chrono::Utc::now() < spec.deadline_at, "NATIVE_JOB_DEADLINE");
     outputs.seal()

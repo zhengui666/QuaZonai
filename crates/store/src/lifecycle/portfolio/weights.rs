@@ -1,5 +1,6 @@
 //! Original weights sources, not a position ledger or a new eligibility engine.
 use super::*;
+use contracts::science::PortfolioTargetsV1 as TargetDocument;
 
 #[cfg(test)]
 #[path = "../../../tests/support/mod.rs"]
@@ -9,116 +10,6 @@ pub(super) struct Resolved {
     pub content: PortfolioCurrentWeightsV1,
     pub artifact: Option<RuntimeInputV1>,
     pub origin: DataOrigin,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[sqlx::test(migrations = "../../migrations")]
-    async fn last_target_reads_original_file_and_rows_without_upgrading_synthetic_sources(
-        pool: sqlx::PgPool,
-    ) {
-        // Controlled relationship metadata and real PG/files only. This is not
-        // native execution, scientific qualification or production delivery proof.
-        let f = relational::fixture(&pool, relational::budget()).await;
-        let (mandate, _, _) = relational::portfolio(&pool, &f).await;
-        let mut tx = pool.begin().await.unwrap();
-        let run = relational::candidate_run(&mut tx, &f).await;
-        let id = Id::new();
-        let artifact = Id::new();
-        let time = now(&mut tx).await.unwrap();
-        let asof = time - Duration::seconds(1);
-        let until = time + Duration::hours(1);
-        let targets = vec![
-            AllocationTargetV1 {
-                instrument_id: "Z.EXAMPLE".into(),
-                currency: "USD".into(),
-                weight: "0.6".parse().unwrap(),
-            },
-            AllocationTargetV1 {
-                instrument_id: "A.EXAMPLE".into(),
-                currency: "USD".into(),
-                weight: "0.4".parse().unwrap(),
-            },
-        ];
-        let document = json!({"schema_version":1,"candidate_id":id,"base_currency":"USD","asof":asof,"valid_until":until,"cash_weight":"0","targets":targets});
-        let bytes = serde_json::to_vec(&document).unwrap();
-        let directory = tempfile::tempdir().unwrap();
-        let objects =
-            integrations::artifacts::ArtifactStore::open(&directory.path().join("objects"))
-                .unwrap();
-        objects.put(artifact, &bytes).unwrap();
-        sqlx::query("INSERT INTO app.artifacts(id,project_id,producer_run_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,$3,'REPORT','application/json','qz.portfolio_targets','1','LOCAL',$4,'1',$5,'EVALUATOR_ONLY','SYNTHETIC','RUNTIME','REFERENCED')")
-            .bind(artifact.as_uuid()).bind(f.project.as_uuid()).bind(run.as_uuid()).bind(artifact.to_string()).bind(bytes.len() as i64).execute(&mut *tx).await.unwrap();
-        sqlx::query("INSERT INTO app.portfolio_candidates(id,project_id,mandate_id,input_set_id,decision_asof,created_at,run_id,solver_status,evidence_status,diagnostics_artifact_id,target_artifact_id,cash_weight,current_weights_source) VALUES($1,$2,$3,$4,$5,$6,$7,'OPTIMAL','VALID',$8,$9,0,'NONE')")
-            .bind(id.as_uuid()).bind(f.project.as_uuid()).bind(mandate.as_uuid()).bind(f.input_set.as_uuid()).bind(asof).bind(time).bind(run.as_uuid()).bind(f.artifact.as_uuid()).bind(artifact.as_uuid()).execute(&mut *tx).await.unwrap();
-        for target in &targets {
-            sqlx::query("INSERT INTO app.candidate_targets(candidate_id,instrument_id,target_weight,currency,asof,valid_until) VALUES($1,$2,$3,$4,$5,$6)")
-                .bind(id.as_uuid()).bind(&target.instrument_id).bind(target.weight.as_decimal()).bind(&target.currency).bind(asof).bind(until).execute(&mut *tx).await.unwrap();
-        }
-        let request: PortfolioBuildRequestV1 = serde_json::from_value(json!({"schema_version":1,"cycle_id":f.cycle,"mandate_id":mandate,"input_set_id":f.input_set,"runtime_id":Id::new(),"expected_runtime_revision":"1","current_weights_source":{"kind":"LAST_TARGET","candidate_id":id},"environment":"LIVE","members":[{"qualification_id":Id::new(),"ensemble_weight":"0.5"},{"qualification_id":Id::new(),"ensemble_weight":"0.5"}],"limits":{"schema_version":1,"experiments":0,"cpu_seconds":"10","wall_seconds":10,"memory_mib":64,"output_bytes":"1024"}})).unwrap();
-        let mut read = |id, size| {
-            std::future::ready(objects.read(id, size).map_err(|_| StoreError::Integrity))
-        };
-        assert!(matches!(
-            resolve(&mut tx, f.project, &request, &mut read).await,
-            Err(StoreError::Invalid("portfolio_last_target"))
-        ));
-        tx.commit().await.unwrap();
-        let mut tx = pool.begin().await.unwrap();
-        let resolved = resolve(&mut tx, f.project, &request, &mut read)
-            .await
-            .unwrap();
-        assert!(resolved.artifact.is_none());
-        assert_eq!(resolved.origin, DataOrigin::Synthetic);
-        assert_eq!(
-            resolved.content.source,
-            PortfolioWeightsSourceV1::LastTarget { candidate_id: id }
-        );
-        assert_eq!(resolved.content.weights, targets);
-        assert_eq!(resolved.content.asof_ns, nanos(asof).unwrap());
-        assert_eq!(resolved.content.available_ns, nanos(time).unwrap());
-        assert_eq!(resolved.content.valid_until_ns, nanos(until).unwrap());
-        assert!(matches!(
-            resolve(&mut tx, Id::new(), &request, &mut read).await,
-            Err(StoreError::Invalid("portfolio_last_target"))
-        ));
-        let mut bad = document;
-        bad["targets"][0]["weight"] = json!("0.7");
-        let bytes = serde_json::to_vec(&bad).unwrap();
-        let mut corrupt = |_, _| std::future::ready(Ok(bytes.clone()));
-        assert!(matches!(
-            resolve(&mut tx, f.project, &request, &mut corrupt).await,
-            Err(StoreError::Integrity)
-        ));
-        tx.rollback().await.unwrap();
-        let error = sqlx::query(
-            "INSERT INTO app.portfolio_build_tasks(run_id,mandate_id,request) VALUES($1,$2,$3)",
-        )
-        .bind(f.run.as_uuid())
-        .bind(mandate.as_uuid())
-        .bind(json!(request))
-        .execute(&pool)
-        .await
-        .unwrap_err();
-        assert_eq!(
-            error.as_database_error().and_then(|e| e.code()).as_deref(),
-            Some("23514")
-        );
-    }
-}
-
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct TargetDocument {
-    schema_version: SchemaV1,
-    candidate_id: Id,
-    base_currency: String,
-    asof: DateTime<Utc>,
-    valid_until: DateTime<Utc>,
-    cash_weight: contracts::DecimalValue,
-    targets: Vec<AllocationTargetV1>,
 }
 
 fn nanos(time: DateTime<Utc>) -> Result<DbCounter, StoreError> {
@@ -245,5 +136,103 @@ where
                 },
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn last_target_reads_original_file_and_rows_without_upgrading_synthetic_sources(
+        pool: sqlx::PgPool,
+    ) {
+        // Controlled relationship metadata and real PG/files only. This is not
+        // native execution, scientific qualification or production delivery proof.
+        let f = relational::fixture(&pool, relational::budget()).await;
+        let (mandate, _, _) = relational::portfolio(&pool, &f).await;
+        let mut tx = pool.begin().await.unwrap();
+        let run = relational::candidate_run(&mut tx, &f).await;
+        let id = Id::new();
+        let artifact = Id::new();
+        let time = now(&mut tx).await.unwrap();
+        let asof = time - Duration::seconds(1);
+        let until = time + Duration::hours(1);
+        let targets = vec![
+            AllocationTargetV1 {
+                instrument_id: "Z.EXAMPLE".into(),
+                currency: "USD".into(),
+                weight: "0.6".parse().unwrap(),
+            },
+            AllocationTargetV1 {
+                instrument_id: "A.EXAMPLE".into(),
+                currency: "USD".into(),
+                weight: "0.4".parse().unwrap(),
+            },
+        ];
+        let document = json!({"schema_version":1,"candidate_id":id,"base_currency":"USD","asof":asof,"valid_until":until,"cash_weight":"0","targets":targets});
+        let bytes = serde_json::to_vec(&document).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let objects =
+            integrations::artifacts::ArtifactStore::open(&directory.path().join("objects"))
+                .unwrap();
+        objects.put(artifact, &bytes).unwrap();
+        sqlx::query("INSERT INTO app.artifacts(id,project_id,producer_run_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,$3,'REPORT','application/json','qz.portfolio_targets','1','LOCAL',$4,'1',$5,'EVALUATOR_ONLY','SYNTHETIC','RUNTIME','REFERENCED')")
+            .bind(artifact.as_uuid()).bind(f.project.as_uuid()).bind(run.as_uuid()).bind(artifact.to_string()).bind(bytes.len() as i64).execute(&mut *tx).await.unwrap();
+        sqlx::query("INSERT INTO app.portfolio_candidates(id,project_id,mandate_id,input_set_id,decision_asof,created_at,run_id,solver_status,evidence_status,diagnostics_artifact_id,target_artifact_id,cash_weight,current_weights_source) VALUES($1,$2,$3,$4,$5,$6,$7,'OPTIMAL','VALID',$8,$9,0,'NONE')")
+            .bind(id.as_uuid()).bind(f.project.as_uuid()).bind(mandate.as_uuid()).bind(f.input_set.as_uuid()).bind(asof).bind(time).bind(run.as_uuid()).bind(f.artifact.as_uuid()).bind(artifact.as_uuid()).execute(&mut *tx).await.unwrap();
+        for target in &targets {
+            sqlx::query("INSERT INTO app.candidate_targets(candidate_id,instrument_id,target_weight,currency,asof,valid_until) VALUES($1,$2,$3,$4,$5,$6)")
+                .bind(id.as_uuid()).bind(&target.instrument_id).bind(target.weight.as_decimal()).bind(&target.currency).bind(asof).bind(until).execute(&mut *tx).await.unwrap();
+        }
+        let request: PortfolioBuildRequestV1 = serde_json::from_value(json!({"schema_version":1,"cycle_id":f.cycle,"mandate_id":mandate,"input_set_id":f.input_set,"runtime_id":Id::new(),"expected_runtime_revision":"1","current_weights_source":{"kind":"LAST_TARGET","candidate_id":id},"environment":"LIVE","members":[{"qualification_id":Id::new(),"ensemble_weight":"0.5"},{"qualification_id":Id::new(),"ensemble_weight":"0.5"}],"limits":{"schema_version":1,"experiments":0,"cpu_seconds":"10","wall_seconds":10,"memory_mib":64,"output_bytes":"1024"}})).unwrap();
+        let mut read = |id, size| {
+            std::future::ready(objects.read(id, size).map_err(|_| StoreError::Integrity))
+        };
+        assert!(matches!(
+            resolve(&mut tx, f.project, &request, &mut read).await,
+            Err(StoreError::Invalid("portfolio_last_target"))
+        ));
+        tx.commit().await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        let resolved = resolve(&mut tx, f.project, &request, &mut read)
+            .await
+            .unwrap();
+        assert!(resolved.artifact.is_none());
+        assert_eq!(resolved.origin, DataOrigin::Synthetic);
+        assert_eq!(
+            resolved.content.source,
+            PortfolioWeightsSourceV1::LastTarget { candidate_id: id }
+        );
+        assert_eq!(resolved.content.weights, targets);
+        assert_eq!(resolved.content.asof_ns, nanos(asof).unwrap());
+        assert_eq!(resolved.content.available_ns, nanos(time).unwrap());
+        assert_eq!(resolved.content.valid_until_ns, nanos(until).unwrap());
+        assert!(matches!(
+            resolve(&mut tx, Id::new(), &request, &mut read).await,
+            Err(StoreError::Invalid("portfolio_last_target"))
+        ));
+        let mut bad = document;
+        bad["targets"][0]["weight"] = json!("0.7");
+        let bytes = serde_json::to_vec(&bad).unwrap();
+        let mut corrupt = |_, _| std::future::ready(Ok(bytes.clone()));
+        assert!(matches!(
+            resolve(&mut tx, f.project, &request, &mut corrupt).await,
+            Err(StoreError::Integrity)
+        ));
+        tx.rollback().await.unwrap();
+        let error = sqlx::query(
+            "INSERT INTO app.portfolio_build_tasks(run_id,mandate_id,request) VALUES($1,$2,$3)",
+        )
+        .bind(f.run.as_uuid())
+        .bind(mandate.as_uuid())
+        .bind(json!(request))
+        .execute(&pool)
+        .await
+        .unwrap_err();
+        assert_eq!(
+            error.as_database_error().and_then(|e| e.code()).as_deref(),
+            Some("23514")
+        );
     }
 }
