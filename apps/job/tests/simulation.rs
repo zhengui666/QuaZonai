@@ -125,6 +125,16 @@ fn assumptions_read_original_native_instrument_fees_and_shared_settings_bounds()
         let original = serde_json::to_value(&series.instrument).unwrap();
         let (class, definition) = domain::catalogs::instrument_definition(&original).unwrap();
         assert_eq!(class, "CurrencyPair");
+        assert!(domain::catalogs::execution_account(
+            class,
+            contracts::science::NativeAccountKind::Cash
+        )
+        .is_err());
+        assert!(domain::catalogs::execution_account(
+            class,
+            contracts::science::NativeAccountKind::Margin
+        )
+        .is_ok());
         assert_eq!(definition["id"], fee.instrument_id);
         assert_eq!(definition["quote_currency"], request.settings.base_currency);
         for (field, expected) in [("maker_fee", &fee.maker), ("taker_fee", &fee.taker)] {
@@ -134,6 +144,16 @@ fn assumptions_read_original_native_instrument_fees_and_shared_settings_bounds()
         }
     }
     assert!(domain::portfolio::simulation_settings(&request.settings).is_ok());
+    assert!(domain::catalogs::execution_account(
+        "Equity",
+        contracts::science::NativeAccountKind::Cash
+    )
+    .is_ok());
+    assert!(domain::catalogs::execution_account(
+        "Equity",
+        contracts::science::NativeAccountKind::Margin
+    )
+    .is_ok());
     let mut invalid = request.settings.clone();
     invalid.fee_rates.push(invalid.fee_rates[0].clone());
     assert!(domain::portfolio::simulation_settings(&invalid).is_err());

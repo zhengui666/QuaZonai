@@ -209,6 +209,7 @@ PORTFOLIO_SIMULATE人工授权；不授Mission权限，202只表示Run，不是E
 current_weights_source选择下游快照或LAST_TARGET原Candidate目标假设。
 CLI需目标Mandate的精确PORTFOLIO_BUILD人工grant。不得手填预测、持仓、费用
 或把202称为合格Candidate；当前完整成功准入/发布链及全成本来源仍待完成。
+单基础币种CurrencyPair必须显式MARGIN，Equity可用CASH/MARGIN；不改写旧假设。
 浏览器在“组合”选择项目后切到“执行假设”，使用同一创建/列表/详情API；未知响应
 保留原输入重试，不重新生成费用或种子，也不把关闭编辑器当成撤销。
 人工alpha qualifications分页读取原资格及最早撤销（包含未来生效），不读取Sealed

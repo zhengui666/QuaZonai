@@ -172,7 +172,7 @@ pub async fn setup_with_policy(
                 schema_version: SchemaV1,
                 base_currency: "USD".into(),
                 starting_capital: "1000".parse().unwrap(),
-                account_kind: NativeAccountKind::Cash,
+                account_kind: NativeAccountKind::Margin,
                 leverage: "1".parse().unwrap(),
                 fill_model: execution_models::fill(),
                 fee_model: execution_models::fee(),

@@ -1,5 +1,8 @@
 # CLI 命令
 
+原生单币种模拟中 CurrencyPair 仅支持 MARGIN，Equity 支持 CASH/MARGIN；
+执行假设和实际运行共用锁定 Nautilus 0.63.0 的该限制，不自动转换旧配置。
+
 完整产品合同在 DESIGN。原生 `server client` 复用已实现 HTTP 控制面的同一 Rust 请求/响应合同；原生任务、认证、数据许可、研究准备与运行命令见下文。完整研究/组合/交付闭环仍须逐项验收，不提供绕过 API 的手工 SQL 业务路径。
 
 ## 面向用户的原生 HTTP CLI

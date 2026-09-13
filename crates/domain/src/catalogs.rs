@@ -29,6 +29,20 @@ pub fn instrument_definition(
     Ok((class, payload))
 }
 
+/// Match the supported single-base-currency venue to Nautilus 0.63.0 add_instrument.
+pub fn execution_account(
+    class: &str,
+    account: contracts::science::NativeAccountKind,
+) -> Result<(), DomainError> {
+    use contracts::science::NativeAccountKind;
+    match (class, account) {
+        ("CurrencyPair", NativeAccountKind::Margin) | ("Equity", _) => Ok(()),
+        _ => Err(DomainError::CapabilityUnavailable(
+            "execution_assumption_account_instrument",
+        )),
+    }
+}
+
 /// Bind declared execution fees to this catalog's original instrument definitions.
 pub fn execution_fees(
     metadata: &RuntimeCatalogMetadataV1,
@@ -59,6 +73,7 @@ pub fn execution_fees(
         let [(class, value)] = matches.as_slice() else {
             return Err(bad("execution_fees.identity"));
         };
+        execution_account(class, settings.account_kind)?;
         let currency = match *class {
             "CurrencyPair" => &value["quote_currency"],
             "Equity" => &value["currency"],

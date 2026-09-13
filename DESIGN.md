@@ -614,6 +614,10 @@ NAUTILUS_STATIC_LATENCY对应StaticLatencyModel，参数为base/insert/update/ca
 latency_ns；每个合计不得溢出，插入总延迟必须大于零。三者锁定nautilus-execution
 0.63.0及完整Rust类名，角色/版本/参数不匹配拒绝，不降级到默认值。
 这些冻结模型必须实际进入Nautilus venue配置；目标因果/到期检查使用同一插入总延迟。
+锁定Nautilus 0.63.0的单基础币种账户中，CurrencyPair只支持MARGIN，Equity可用
+CASH或MARGIN。执行假设登记、原来源重验、原生组合构建和模拟共用此账户/资产类
+约束；不自动改写CASH配置、不声称支持多币种现金账户。旧不可变假设保留原值，
+不受支持的组合在新消费时明确拒绝。
 它们不证明原费用证据、许可或组合资格，正式执行假设创建仍须绑定原项目/产物。
 
 ExecutionAssumptionsCreateV1通过原Operator命令创建不可变执行假设，包含project_id、
@@ -1864,6 +1868,8 @@ Release 必须以复合 FK `(evaluation_id,candidate_id)` 引用
 PASS 都不能借用。另以 `(candidate_id,mandate_id)` 绑定 Candidate 的精确 Mandate。
 非空关联不足以授权：服务仍须验证独立组合模拟类型、VALID/PASS、有效期、数据用途、
 资格及不可变 Package；复合 FK 不替代这些 Gate。
+这里的独立组合评估必须为evaluation_kind=PORTFOLIO；候选发布后的FORWARD/HOLD
+评估只能用于其原保持研究，不因结果PASS而替代Release的PORTFOLIO评估。
 
 历史目标序列存 Arrow/Parquet，不每 bar 建业务对象。不可行 cash/targets 均 null；LAST_TARGET 是假设，真实权重输入来自下游签发 snapshot，QZ 不建真实账户账本。`sum(asset_weights)+cash_weight=1` 在 mandate tolerance 内，现金字段/保留代码明确；gross/net、组、成本、参与率原生计算，领域层独立合同/容差验证。
 

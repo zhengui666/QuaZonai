@@ -205,12 +205,13 @@ async fn original_sources_models_receipts_and_immutable_settings_are_bound(pool:
 #[sqlx::test(migrations = "../../migrations")]
 async fn forged_fees_wrong_sources_and_failed_object_publication_leave_no_assumption(pool: PgPool) {
     let (f, request) = prepare(&pool, data::setup(&pool, None).await).await;
-    for change in 0..3 {
+    for change in 0..4 {
         let mut invalid = request.clone();
         match change {
             0 => invalid.settings.fee_rates[0].maker = "0".parse().unwrap(),
             1 => invalid.dataset_revision_id = Id::new(),
-            _ => invalid.settings.base_currency = "EUR".into(),
+            2 => invalid.settings.base_currency = "EUR".into(),
+            _ => invalid.settings.account_kind = contracts::science::NativeAccountKind::Cash,
         }
         assert!(f
             .store

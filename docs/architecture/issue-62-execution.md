@@ -3,6 +3,37 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Native allocation to shared-account replay, 2026-09-14
+
+A controlled managed-job check now feeds original native Wasm/Clarabel allocation
+output into the actual Nautilus single-account replay. The build consumes only
+the original cutoff prefix despite later rows being present in the catalog;
+replay uses the resulting targets, original settings and original Mandate TTL.
+Two distinct Alpha inputs produce actual orders in one account. Intraday returns
+remain INSUFFICIENT_DATA, not invented daily observations or scientific PASS.
+
+This exposed a real compatibility gap: pinned Nautilus 0.63.0 rejects CurrencyPair
+in a single-base-currency CASH venue. One domain check now serves original fee
+admission/rechecks and both native build/replay market checks. CurrencyPair requires
+MARGIN; Equity retains CASH/MARGIN. Unsupported immutable settings are rejected,
+not converted or rewritten. Controlled FX fixtures now explicitly declare MARGIN.
+The positive fixture explicitly freezes sufficient capital for native lot rounding;
+production tolerances and capital defaults remain unchanged. Temporary diagnostic
+prints were removed before final verification.
+
+Verified on e989bc92 plus frozen patches: verify-8EaopY passed 226 mandate checks;
+the simulation binary passed all 11 tests; verify-DsZzgL passed 204 evidence checks.
+Workspace compilation, formatting and strict Clippy passed, both isolated database
+runs stopped their PostgreSQL, and source snapshots stayed unchanged. Native OCI
+verification owner-oci-BVhiP1 rebuilt the real image and passed all 13 tests with
+unchanged source. Image identity:
+sha256:a743cb8b3799e4868d72b074312089ebd35c84aaa3d16529215aa6ba7aeec226.
+
+This is actual controlled native execution, not REAL/PIT proof, formal independent
+PORTFOLIO evaluation, Release eligibility or T42 completion. FORWARD/HOLD evidence
+cannot substitute for the Release's PORTFOLIO evaluation. Full portfolio science,
+Release/Package/delivery/recovery and the remaining acceptance work are still open.
+
 ## Immutable EvaluationPolicy browser authoring, 2026-09-14
 
 The Portfolio page now exposes the existing project-scoped EvaluationPolicy

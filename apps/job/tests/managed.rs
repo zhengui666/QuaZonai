@@ -1082,6 +1082,140 @@ fn native_managed_simulation_is_a_separate_process_and_does_not_invent_daily_ret
 }
 
 #[test]
+fn original_native_allocation_enters_one_shared_account_without_future_build_rows() {
+    use contracts::science::*;
+    let unsupported = portfolio_fixture(false, |request| {
+        request.execution_settings.account_kind = NativeAccountKind::Cash
+    });
+    assert!(!execute(&unsupported));
+    assert!(!unsupported.output.join("index.json").exists());
+    let cutoff = market::instant(10);
+    let build = portfolio_fixture(false, |request| {
+        // This explicit capital keeps one native lot below the original exposure tolerance.
+        request.mandate.capital_assumption = "10000000".parse().unwrap();
+        request.execution_settings.starting_capital = request.mandate.capital_assumption.clone();
+        request.selection.event_end_ns = cutoff;
+        request.selection.decision_cutoff_ns = cutoff;
+        request.current_weights.asof_ns = cutoff;
+        request.current_weights.available_ns = cutoff;
+        request.current_weights.valid_until_ns = market::count(cutoff.get() + 1);
+        // The declared initial hypothesis matches the native account's all-cash start.
+        request.current_weights.cash_weight = "1".parse().unwrap();
+        for (asset, weight) in request
+            .assets
+            .iter_mut()
+            .zip(&mut request.current_weights.weights)
+        {
+            asset.current_weight = "0".parse().unwrap();
+            weight.weight = "0".parse().unwrap();
+        }
+    });
+    assert!(execute(&build));
+    let report: NativePortfolioBuildResultV1 = result(&build, "qz.native_portfolio");
+    assert_eq!(report.input.forecasts.members.len(), 2);
+    assert_ne!(
+        report.input.forecasts.members[0].alpha_id,
+        report.input.forecasts.members[1].alpha_id
+    );
+    assert!(report
+        .input
+        .return_history
+        .available_ns
+        .iter()
+        .all(|time| *time <= cutoff));
+    assert!(report
+        .input
+        .forecasts
+        .members
+        .iter()
+        .all(|member| member.available_ns <= cutoff));
+    let task: NativeTaskParametersV1 = serde_json::from_slice(
+        &fs::read(
+            build
+                .input
+                .join("objects")
+                .join(build.spec.parameters_artifact_id.to_string()),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let NativeTaskParametersV1::BuildPortfolio {
+        dataset_revision_id,
+        request,
+        ..
+    } = task
+    else {
+        unreachable!()
+    };
+    let until = market::count(
+        cutoff.get()
+            + u64::from(request.mandate.rebalance_schedule.target_ttl_seconds) * 1_000_000_000,
+    );
+    let simulation = NativeSimulationRequestV1 {
+        schema_version: SchemaV1,
+        selection: NativeBarSelectionV1 {
+            event_start_ns: cutoff,
+            event_end_ns: until,
+            decision_cutoff_ns: until,
+            ..request.selection.clone()
+        },
+        settings: request.execution_settings.clone(),
+        target_points: vec![NativeTargetPointV1 {
+            schema_version: SchemaV1,
+            asof_ns: cutoff,
+            valid_until_ns: until,
+            targets: report.allocation.targets.unwrap(),
+            cash_weight: report.allocation.cash_weight.unwrap(),
+        }],
+    };
+    let mut unsupported = simulation.clone();
+    unsupported.settings.account_kind = NativeAccountKind::Cash;
+    let catalog = build
+        .input
+        .join("catalogs")
+        .join(dataset_revision_id.to_string());
+    let error = job::simulation::simulate(&catalog, &unsupported).unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("execution_assumption_account_instrument"));
+    let f = fixture(
+        NativeTaskParametersV1::SimulatePortfolio {
+            schema_version: SchemaV1,
+            dataset_revision_id,
+            request: Box::new(simulation),
+        },
+        vec![dataset(dataset_revision_id)],
+    );
+    attach_catalog(
+        &f,
+        dataset_revision_id,
+        &build
+            .input
+            .join("catalogs")
+            .join(dataset_revision_id.to_string()),
+    );
+    assert!(execute(&f));
+    let outcome: NativeSimulationResultV1 = result(&f, "qz.native_simulation");
+    assert_eq!(outcome.consumed_target_points.get(), 1);
+    assert!(outcome.orders.get() > 0);
+    assert_eq!(
+        outcome.canonical_result["accounts"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        outcome.returns_status,
+        contracts::evidence::MetricStatus::InsufficientData
+    );
+    assert!(
+        outcome.returns.is_empty(),
+        "intraday execution is not daily scientific PASS"
+    );
+}
+
+#[test]
 fn native_managed_output_limit_fails_without_a_published_index() {
     let mut f = portfolio_fixture(false, |_| {});
     f.spec.limits.output_bytes = DbCounter::new(1).unwrap();

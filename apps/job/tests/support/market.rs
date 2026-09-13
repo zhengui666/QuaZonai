@@ -201,6 +201,7 @@ fn portfolio_from_market(
     ))
     .unwrap();
     let mut request = portfolio_config::request(&input);
+    request.execution_settings.account_kind = simulation.settings.account_kind;
     request.selection = simulation.selection;
     request.current_weights.asof_ns = request.selection.decision_cutoff_ns;
     request.current_weights.available_ns = request.selection.decision_cutoff_ns;

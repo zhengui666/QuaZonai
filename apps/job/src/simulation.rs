@@ -351,6 +351,14 @@ pub(crate) fn execution_market(
                 && !instrument.has_expiration(),
             "SIMULATION_MARKET_UNSUPPORTED"
         );
+        domain::catalogs::execution_account(
+            if matches!(instrument, InstrumentAny::CurrencyPair(_)) {
+                "CurrencyPair"
+            } else {
+                "Equity"
+            },
+            settings.account_kind,
+        )?;
         let rate = fees
             .remove(instrument.id().to_string().as_str())
             .ok_or_else(|| anyhow::anyhow!("SIMULATION_FEE_MISSING"))?;

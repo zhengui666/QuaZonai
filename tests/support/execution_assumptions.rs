@@ -88,7 +88,7 @@ pub async fn prepare(
             schema_version: SchemaV1,
             base_currency: "USD".into(),
             starting_capital: "1000".parse().unwrap(),
-            account_kind: NativeAccountKind::Cash,
+            account_kind: NativeAccountKind::Margin,
             leverage: "1".parse().unwrap(),
             fill_model: models::fill(),
             fee_model: models::fee(),
