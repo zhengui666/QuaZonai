@@ -18,6 +18,7 @@ mod db;
 pub mod evidence;
 pub mod execution_assumptions;
 pub mod experiments;
+pub mod forward;
 pub mod lifecycle;
 pub mod machine_auth;
 mod migration;

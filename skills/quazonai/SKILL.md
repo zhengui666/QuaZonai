@@ -146,6 +146,9 @@ SCORE沿原校准确定，不读取active指针推断，REJECT/未入选/缺证�
 受管组合当前权重必须提供独立REPORT原产物和PortfolioCurrentWeightsV1冻结副本，
 镜像portfolio-weights/1核对来源种类、内容、时间、币种与资产权重，不补NONE为现金。
 来源身份与资格仍由Store核验；Agent不得自报下游身份来绕过该边界。
+`client forward-weights`仅限真实DOWNSTREAM/FORWARD_SUBMIT机器身份登记当前权重，
+不是Mission工具或Operator代报入口。保留原external_message_id重试，不以新CLI键
+覆盖旧消息；原报告不可变，PAPER为SYNTHETIC，LIVE也不自动获得资格（字段见CLI）。
 Operator的`client portfolio assumptions create/list/show`保存/读取原生来源绑定的
 不可变假设（字段见CLI）；创建需要冻结非Sealed输入、原登记费率和近期Runtime探测。
 当前入口仅保守BAR，不自动获得DATA_BACKED、资格或交付权限；不修改历史假设。

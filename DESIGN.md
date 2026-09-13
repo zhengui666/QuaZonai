@@ -2093,6 +2093,20 @@ Session 冻结 `profile_revision`，预约引用相同 (session_id,profile_revis
 
 ## A7. 自动化、审批、交付、Forward 与 Wake
 
+下游当前权重登记为POST /api/v2/forward/weights（DownstreamWeightsSubmitV1）。
+只接受现有DOWNSTREAM机器身份的FORWARD_SUBMIT范围，并绑定其精确project/downstream；
+Operator、CLI、Mission和Automation不能冒充下游。请求只含project_id、environment
+（PAPER或LIVE）、external_message_id、asof_ns、available_ns、valid_until_ns、base_currency、
+cash_weight和weights；source中的downstream_id由认证身份生成。环境须被启用的
+DownstreamIntegration允许。时点不得在数据库当前时间之后，期限须尚未结束；
+币种/资产唯一性/有限精确十进制及完整现金加权重合计由领域检查，组合消费另用Mandate容差。
+external_message_id在精确project/downstream/environment内标识不可变原消息；相同内容
+重放原回执，不同内容409。回执与REPORT（qz.portfolio_current_weights/1）及
+forward_weight_snapshots来源关系同事务提交；报告source固定FORWARD_SNAPSHOT，
+不含凭据、账号、NAV或持仓数量。PAPER产物标为SYNTHETIC；LIVE为认证下游原始报告，
+不等于QZ独立核验或研究资格。跨环境不得替换、重标签或更新旧行，失败回滚并回收未发布对象。
+该入口不授予审批、交付或下游执行权限；后续组合准入还须绑定环境、Mandate与当前有效资格。
+
 ```text
 automation_policies [immutable, operator only]
   project_id: Id FK projects

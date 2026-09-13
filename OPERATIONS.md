@@ -17,6 +17,11 @@ Operator可通过`client portfolio assumptions create/list/show`管理新的不�
 必须与原资产定义一致。当前保存为保守BAR假设，不等同数据支持成本或可交付组合。
 原资产定义使用Rust InstrumentAny的外部标签Serde结构，不是Python式顶层type。
 
+下游可用自己的DOWNSTREAM/FORWARD_SUBMIT凭据通过`client forward-weights`
+登记当前权重（字段和参数见CLI），项目/下游/环境由服务端核对；不能使用Operator
+身份代报。保留external_message_id重试，改内容会冲突而非覆盖原报告。此入口只登记
+target-only权重，不收账户或NAV；PAPER为SYNTHETIC，LIVE不自动获得研究资格。
+
 `apps/runtime` 的配置、实际原生镜像装配和启动说明集中在 [runtimes/native/README.md](runtimes/native/README.md)，由 `runtime doctor/serve --config` 读取受信任本机文件。网关独占自己的0700状态目录与SQLite日志，以原生OS文件锁防止两个监督者同时使用同一目录。它使用操作者正常授权的Docker Unix socket；无权访问时明确不可用，不修改sudo、用户组、socket权限或改用无隔离执行。
 
 已发送计算与网关进程分开：退出网关不表示任务停止，固定job入口中的GNU timeout仍约束该次原生墙钟。恢复必须保留原始JobSpec、native container ID、发送意图与取消tombstone，查询同一身份；不得清空journal、改ID或重新START已退出容器来伪造恢复。旧原生镜像/输入缺失、Docker不可用或提交结果未知时保留不可用/待对账事实。数据和资格的正式采用仍由控制面独立决定。

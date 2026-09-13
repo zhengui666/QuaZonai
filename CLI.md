@@ -191,6 +191,24 @@ asof_ns/available_ns/valid_until_ns、base_currency、cash_weight、同序weight
 匹配Mandate、决策时点与assets.current_weight；缺失、过期、未来或同长度替换均失败。
 新镜像声明portfolio-weights/1。不接受NONE或隐式全现金；本机allocate仍只是数值入口。
 
+### 下游原始当前权重
+
+`POST /api/v2/forward/weights`接受`DownstreamWeightsSubmitV1`：schema_version、
+project_id、environment（PAPER/LIVE）、external_message_id、asof_ns、available_ns、
+valid_until_ns、base_currency、cash_weight、weights。时间使用纳秒整数字符串，
+权重使用精确十进制字符串，现金加资产权重必须合计1；不传账户、NAV或持仓数量。
+仅限精确项目/下游的DOWNSTREAM身份和FORWARD_SUBMIT范围，环境须被集成允许。
+原生CLI复用统一写命令参数，但服务端按external_message_id重放，不按传输键另建消息：
+
+```sh
+cargo run --locked -p server -- client --origin https://qz.example --credential-file downstream-token --idempotency-key original-message forward-weights < weights.json
+```
+
+返回201/CommandResult_DownstreamWeightsViewV1及不可变报告身份。同一项目、下游、
+环境内相同原消息重放原回执；改内容返回409。Operator grant不能代替下游身份。
+PAPER标为SYNTHETIC；LIVE只证明认证下游提交，不等同独立研究资格或交付许可。
+此入口登记FORWARD_SNAPSHOT，不接收自称LAST_TARGET的报告。
+
 ### 不可变 Portfolio Mandate
 
 执行假设入口为`POST /api/v2/execution-assumptions`，请求ExecutionAssumptionsCreateV1

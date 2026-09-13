@@ -17,6 +17,7 @@ pub mod evidence;
 pub mod execution;
 pub mod execution_assumptions;
 pub mod experiments;
+pub mod forward;
 pub mod http;
 pub mod lifecycle;
 pub mod portfolio;
@@ -85,6 +86,8 @@ use utoipa::OpenApi;
     evidence::CalibrationView,
     evidence::QualificationView,
     execution_assumptions::ExecutionAssumptionsCreateV1,
+    forward::DownstreamWeightsSubmitV1,
+    forward::DownstreamWeightsViewV1,
     execution_assumptions::ExecutionAssumptionsViewV1,
     evidence::EvaluationView,
     brief::BriefCreate,

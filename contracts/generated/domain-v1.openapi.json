@@ -8086,6 +8086,285 @@
         ],
         "type": "object"
       },
+      "DownstreamWeightsSubmitV1": {
+        "additionalProperties": false,
+        "properties": {
+          "asof_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "available_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "base_currency": {
+            "enum": [
+              "AED",
+              "AFN",
+              "ALL",
+              "AMD",
+              "AOA",
+              "ARS",
+              "AUD",
+              "AWG",
+              "AZN",
+              "BAM",
+              "BBD",
+              "BDT",
+              "BGN",
+              "BHD",
+              "BIF",
+              "BMD",
+              "BND",
+              "BOB",
+              "BOV",
+              "BRL",
+              "BSD",
+              "BTN",
+              "BWP",
+              "BYN",
+              "BZD",
+              "CAD",
+              "CDF",
+              "CHE",
+              "CHF",
+              "CHW",
+              "CLF",
+              "CLP",
+              "CNY",
+              "COP",
+              "COU",
+              "CRC",
+              "CUC",
+              "CUP",
+              "CVE",
+              "CZK",
+              "DJF",
+              "DKK",
+              "DOP",
+              "DZD",
+              "EGP",
+              "ERN",
+              "ETB",
+              "EUR",
+              "FJD",
+              "FKP",
+              "GBP",
+              "GEL",
+              "GHS",
+              "GIP",
+              "GMD",
+              "GNF",
+              "GTQ",
+              "GYD",
+              "HKD",
+              "HNL",
+              "HRK",
+              "HTG",
+              "HUF",
+              "IDR",
+              "ILS",
+              "INR",
+              "IQD",
+              "IRR",
+              "ISK",
+              "JMD",
+              "JOD",
+              "JPY",
+              "KES",
+              "KGS",
+              "KHR",
+              "KMF",
+              "KPW",
+              "KRW",
+              "KWD",
+              "KYD",
+              "KZT",
+              "LAK",
+              "LBP",
+              "LKR",
+              "LRD",
+              "LSL",
+              "LYD",
+              "MAD",
+              "MDL",
+              "MGA",
+              "MKD",
+              "MMK",
+              "MNT",
+              "MOP",
+              "MRU",
+              "MUR",
+              "MVR",
+              "MWK",
+              "MXN",
+              "MXV",
+              "MYR",
+              "MZN",
+              "NAD",
+              "NGN",
+              "NIO",
+              "NOK",
+              "NPR",
+              "NZD",
+              "OMR",
+              "PAB",
+              "PEN",
+              "PGK",
+              "PHP",
+              "PKR",
+              "PLN",
+              "PYG",
+              "QAR",
+              "RON",
+              "RSD",
+              "RUB",
+              "RWF",
+              "SAR",
+              "SBD",
+              "SCR",
+              "SDG",
+              "SEK",
+              "SGD",
+              "SHP",
+              "SLE",
+              "SLL",
+              "SOS",
+              "SRD",
+              "SSP",
+              "STN",
+              "SVC",
+              "SYP",
+              "SZL",
+              "THB",
+              "TJS",
+              "TMT",
+              "TND",
+              "TOP",
+              "TRY",
+              "TTD",
+              "TWD",
+              "TZS",
+              "UAH",
+              "UGX",
+              "USD",
+              "USN",
+              "UYI",
+              "UYU",
+              "UYW",
+              "UZS",
+              "VED",
+              "VES",
+              "VND",
+              "VUV",
+              "WST",
+              "XAD",
+              "XAF",
+              "XAG",
+              "XAU",
+              "XBA",
+              "XBB",
+              "XBC",
+              "XBD",
+              "XCD",
+              "XCG",
+              "XDR",
+              "XOF",
+              "XPD",
+              "XPF",
+              "XPT",
+              "XSU",
+              "XTS",
+              "XUA",
+              "XXX",
+              "YER",
+              "ZAR",
+              "ZMW",
+              "ZWG",
+              "ZWL"
+            ],
+            "maxLength": 3,
+            "minLength": 3,
+            "type": "string"
+          },
+          "cash_weight": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "environment": {
+            "$ref": "#/components/schemas/ForwardEnvironmentV1"
+          },
+          "external_message_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "valid_until_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "weights": {
+            "items": {
+              "$ref": "#/components/schemas/AllocationTargetV1"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "schema_version",
+          "project_id",
+          "environment",
+          "external_message_id",
+          "asof_ns",
+          "available_ns",
+          "valid_until_ns",
+          "base_currency",
+          "cash_weight",
+          "weights"
+        ],
+        "type": "object"
+      },
+      "DownstreamWeightsViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/PortfolioCurrentWeightsV1"
+          },
+          "downstream_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "environment": {
+            "$ref": "#/components/schemas/ForwardEnvironmentV1"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "received_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "report_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "downstream_id",
+          "environment",
+          "report_artifact_id",
+          "content",
+          "received_at"
+        ],
+        "type": "object"
+      },
       "EvaluationKind": {
         "enum": [
           "DISCOVERY",
@@ -8836,6 +9115,13 @@
           "RETURN_PER_HORIZON",
           "RESIDUAL_RETURN_PER_HORIZON",
           "UNITLESS_SCORE"
+        ],
+        "type": "string"
+      },
+      "ForwardEnvironmentV1": {
+        "enum": [
+          "PAPER",
+          "LIVE"
         ],
         "type": "string"
       },

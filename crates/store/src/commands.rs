@@ -362,6 +362,26 @@ pub(crate) async fn artifact_submit(
     })
 }
 
+/// Authenticated downstream/project locks serialize original external message receipts.
+pub(crate) async fn forward_weights(
+    tx: &mut Transaction<'_, Postgres>,
+    scope: String,
+    message: &str,
+    request: Value,
+) -> Result<Prepared, StoreError> {
+    key(message)?;
+    let previous = prior(tx, &scope, "FORWARD_WEIGHTS", message, &request).await?;
+    Ok(Prepared {
+        target: previous.as_ref().map(|p| p.target).unwrap_or_default(),
+        scope,
+        operation: "FORWARD_WEIGHTS",
+        key: message.into(),
+        request,
+        grant: None,
+        replay: previous.map(|p| p.response),
+    })
+}
+
 /// Proposal writes already hold the authenticated project barrier. Preserve the
 /// same original-result semantics without granting policy/approval authority.
 pub(crate) async fn experiment_propose(

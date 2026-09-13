@@ -852,6 +852,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/forward/weights": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["submit_downstream_weights"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/input-sets": {
         parameters: {
             query?: never;
@@ -1292,6 +1308,12 @@ export interface components {
         AllocationObjective: "MIN_RISK" | "MAX_UTILITY" | "RISK_BUDGETING";
         /** @enum {string} */
         AllocationRisk: "VARIANCE" | "CVAR";
+        AllocationTargetV1: {
+            /** @enum {string} */
+            currency: "AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL";
+            instrument_id: string;
+            weight: components["schemas"]["DecimalValue"];
+        };
         /** @description Explicit Cycle-funded evaluation of an existing immutable Alpha, not a new trial. */
         AlphaEvaluateRequestV1: {
             cycle_id: components["schemas"]["Id"];
@@ -2189,6 +2211,20 @@ export interface components {
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
+        CommandResult_DownstreamWeightsViewV1: {
+            replayed: boolean;
+            resource: {
+                content: components["schemas"]["PortfolioCurrentWeightsV1"];
+                downstream_id: components["schemas"]["Id"];
+                environment: components["schemas"]["ForwardEnvironmentV1"];
+                id: components["schemas"]["Id"];
+                project_id: components["schemas"]["Id"];
+                /** Format: date-time */
+                received_at: string;
+                report_artifact_id: components["schemas"]["Id"];
+            };
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         CommandResult_EvaluationPolicyView: {
             replayed: boolean;
             resource: {
@@ -2776,6 +2812,29 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        DownstreamWeightsSubmitV1: {
+            asof_ns: components["schemas"]["DbCounter"];
+            available_ns: components["schemas"]["DbCounter"];
+            /** @enum {string} */
+            base_currency: "AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL";
+            cash_weight: components["schemas"]["DecimalValue"];
+            environment: components["schemas"]["ForwardEnvironmentV1"];
+            external_message_id: string;
+            project_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+            valid_until_ns: components["schemas"]["DbCounter"];
+            weights: components["schemas"]["AllocationTargetV1"][];
+        };
+        DownstreamWeightsViewV1: {
+            content: components["schemas"]["PortfolioCurrentWeightsV1"];
+            downstream_id: components["schemas"]["Id"];
+            environment: components["schemas"]["ForwardEnvironmentV1"];
+            id: components["schemas"]["Id"];
+            project_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            received_at: string;
+            report_artifact_id: components["schemas"]["Id"];
+        };
         /** @enum {string} */
         EvaluationKind: "DISCOVERY" | "WALK_FORWARD" | "SEALED" | "PORTFOLIO" | "FORWARD";
         EvaluationPolicyCreate: {
@@ -2927,6 +2986,8 @@ export interface components {
         };
         /** @enum {string} */
         ForecastUnit: "RETURN_PER_HORIZON" | "RESIDUAL_RETURN_PER_HORIZON" | "UNITLESS_SCORE";
+        /** @enum {string} */
+        ForwardEnvironmentV1: "PAPER" | "LIVE";
         FrozenBriefV1: {
             brief: components["schemas"]["BriefView"];
             execution_context: components["schemas"]["BriefExecutionContextV1"];
@@ -4015,6 +4076,27 @@ export interface components {
             min_net_exposure: components["schemas"]["DecimalValue"];
             schema_version: components["schemas"]["SchemaV1"];
             transaction_costs_ref: components["schemas"]["Id"];
+        };
+        /** @description Observable target-only weights. Source identity is verified by Store, not by the numerical job. */
+        PortfolioCurrentWeightsV1: {
+            asof_ns: components["schemas"]["DbCounter"];
+            available_ns: components["schemas"]["DbCounter"];
+            base_currency: string;
+            cash_weight: components["schemas"]["DecimalValue"];
+            schema_version: components["schemas"]["SchemaV1"];
+            source: components["schemas"]["PortfolioWeightsSourceV1"];
+            valid_until_ns: components["schemas"]["DbCounter"];
+            weights: components["schemas"]["AllocationTargetV1"][];
+        };
+        PortfolioWeightsSourceV1: {
+            downstream_id: components["schemas"]["Id"];
+            external_message_id: string;
+            /** @enum {string} */
+            kind: "FORWARD_SNAPSHOT";
+        } | {
+            candidate_id: components["schemas"]["Id"];
+            /** @enum {string} */
+            kind: "LAST_TARGET";
         };
         PrincipalCreate: {
             downstream_id?: null | components["schemas"]["Id"];
@@ -8639,6 +8721,87 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    submit_downstream_weights: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DownstreamWeightsSubmitV1"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_DownstreamWeightsViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

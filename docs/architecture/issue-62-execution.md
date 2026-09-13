@@ -3,6 +3,39 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Authenticated downstream current-weight ingestion, 2026-09-13
+
+Working source over `623f033aa6537659291b1cf4a1883ed2a31b99c1` adds the strict
+Forward weights HTTP/native CLI contract and migration 049. Store uses the existing
+DOWNSTREAM/FORWARD_SUBMIT identity, exact project/integration/environment, original
+external message receipt and project transaction lock. It publishes the immutable
+REPORT bytes and source relationship atomically, rejecting changed-message replay,
+invalid exact weight totals and unavailable/expired observations. Failed or unknown
+publication cleanup takes the same project lock before inspecting committed object
+references. No new dependency, queue, account ledger or execution control is added.
+PAPER is SYNTHETIC; LIVE records an authenticated external source, not independent
+research evidence or portfolio qualification. Existing rows are not rewritten.
+
+`verify-gRSpuO` exited 0 with unchanged sources: all-target check, formatting and
+strict Clippy; contracts/domain, 34 numerical/native tests, 7 Store tests and 19
+HTTP/CLI tests passed. The three new real PostgreSQL tests cover concurrent original
+message replay, changed content, project/environment rejection, immutable rows,
+rollback, and cleanup waiting for both committed and failed producers. The new real
+TCP/native CLI test uses native authentication, actual object files and PostgreSQL;
+it verifies original bytes, source identity, PAPER provenance and changed-message
+409 even with a different transport key. Integration registration is controlled,
+not proof that an external downstream service was contacted. An initial test-only
+Id conversion compilation failure was fixed before this final verification.
+
+`web-verify-c5wBPM` full verification exited 0 with handwritten sources unchanged
+and six generated outputs reproduced byte-for-byte. Typecheck, unit, build, wire,
+native CLI help and both browser suites passed. Existing HTTP schemas are unchanged;
+the new route and its reachable types are added by the native generator. Native job
+and OCI image sources did not change in this phase. Formal source resolution into
+Portfolio admission, current qualification/policy/license checks, last-Candidate
+resolution and Candidate publication still remain, along with the other full
+Issue #62 requirements. No GitHub review, merge or Issue closure is claimed.
+
 ## Original current-weight inputs for native portfolios, 2026-09-13
 
 Working source over `c4367087245e6c154e8cbbc34a29c1e6d165f791` replaces managed

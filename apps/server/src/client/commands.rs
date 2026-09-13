@@ -24,6 +24,7 @@ use contracts::{
     },
     execution_assumptions::{ExecutionAssumptionsCreateV1, ExecutionAssumptionsViewV1},
     experiments::{ExperimentProposalV1, ExperimentView},
+    forward::{DownstreamWeightsSubmitV1, DownstreamWeightsViewV1},
     lifecycle::{RunCancelV1, RunListQuery},
     portfolio::{MandateCreateV1, MandateViewV1},
     research::{
@@ -55,6 +56,8 @@ pub struct ProjectList {
 }
 #[derive(Subcommand)]
 pub enum Command {
+    /// Submit target-only weights using the authenticated downstream identity.
+    ForwardWeights,
     #[command(subcommand)]
     Project(Project),
     #[command(subcommand)]
@@ -474,6 +477,10 @@ impl Command {
         const PATCH: Method = Method::PATCH;
         const POST: Method = Method::POST;
         let result = match self {
+            Self::ForwardWeights => Request::write::<
+                DownstreamWeightsSubmitV1,
+                CommandResult<DownstreamWeightsViewV1>,
+            >(POST, "/api/v2/forward/weights", 201, false)?,
             Self::Project(command) => match command {
                 Project::List(page) => {
                     Request::get::<Page<ProjectView>>("/api/v2/projects").page(page)?

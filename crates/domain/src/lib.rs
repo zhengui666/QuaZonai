@@ -15,6 +15,7 @@ pub mod data;
 pub mod evidence;
 pub mod execution;
 pub mod experiments;
+pub mod forward;
 pub mod portfolio;
 pub mod research;
 pub mod runs;
