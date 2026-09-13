@@ -11777,6 +11777,17 @@
           "mandate": {
             "$ref": "#/components/schemas/MandateContentV1"
           },
+          "manual_cutoffs_ns": {
+            "items": {
+              "$ref": "#/components/schemas/DbCounter"
+            },
+            "maxItems": 256,
+            "minItems": 2,
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "members": {
             "items": {
               "$ref": "#/components/schemas/NativePortfolioAlphaV1"

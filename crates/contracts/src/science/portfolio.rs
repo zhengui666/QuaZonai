@@ -119,6 +119,8 @@ pub struct NativePortfolioStudyRequestV1 {
     pub schema_version: SchemaV1,
     pub source_selection: NativeBarSelectionV1,
     pub evaluation_start_ns: DbCounter,
+    #[schema(min_items = 2, max_items = 256)]
+    pub manual_cutoffs_ns: Option<Vec<DbCounter>>,
     pub research_available_through_ns: DbCounter,
     pub mandate: MandateContentV1,
     pub execution_settings: super::NativeSimulationSettingsV1,

@@ -61,6 +61,63 @@ fn rolling_original_models_use_one_native_account_and_observed_weights() {
     assert_eq!(result.frames.len(), 3);
     assert!(result.consumed_fuel.get() > 0 && result.consumed_fuel.get() <= 200_000_000);
     domain::execution::check_portfolio_study(&request, &result).unwrap();
+    let mut manual = request.clone();
+    let mut cutoffs = domain::execution::portfolio_study_cutoffs(&request).unwrap();
+    cutoffs[1] = market::count(cutoffs[1].get() - 60_000_000_000);
+    manual.manual_cutoffs_ns = Some(cutoffs.clone());
+    assert!(domain::execution::portfolio_study_cutoffs(&manual).is_err());
+    manual.mandate.rebalance_schedule.kind = contracts::portfolio::RebalanceKind::Manual;
+    manual.mandate.rebalance_schedule.interval_seconds = None;
+    // The irregular second gap requires its own explicit, frozen longer TTL.
+    assert!(domain::execution::portfolio_study_cutoffs(&manual).is_err());
+    manual.mandate.rebalance_schedule.target_ttl_seconds = 86_460;
+    assert_eq!(
+        domain::execution::portfolio_study_cutoffs(&manual).unwrap(),
+        cutoffs
+    );
+    let output = execute(&manual);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let manual_result: NativePortfolioStudyResultV1 =
+        serde_json::from_slice(&output.stdout).unwrap();
+    domain::execution::check_portfolio_study(&manual, &manual_result).unwrap();
+    assert_eq!(
+        manual_result
+            .frames
+            .iter()
+            .map(|f| f.cutoff_ns)
+            .collect::<Vec<_>>(),
+        cutoffs
+    );
+    assert_eq!(
+        manual_result
+            .simulation
+            .as_ref()
+            .unwrap()
+            .consumed_target_points
+            .get(),
+        3
+    );
+    assert!(domain::execution::check_portfolio_study(&manual, &result).is_err());
+    for invalid in [
+        None,
+        Some(vec![]),
+        Some(vec![cutoffs[0]]),
+        Some(vec![cutoffs[0], cutoffs[0]]),
+        Some(vec![cutoffs[1], cutoffs[2]]),
+        Some(vec![cutoffs[0], request.source_selection.event_end_ns]),
+        Some(vec![cutoffs[0]; 257]),
+    ] {
+        let mut changed = manual.clone();
+        changed.manual_cutoffs_ns = invalid;
+        assert!(domain::execution::portfolio_study_cutoffs(&changed).is_err());
+    }
+    let mut uncovered_end = manual.clone();
+    uncovered_end.manual_cutoffs_ns.as_mut().unwrap().pop();
+    assert!(domain::execution::portfolio_study_cutoffs(&uncovered_end).is_err());
     let rejects = |changed: NativePortfolioStudyResultV1| {
         assert!(domain::execution::check_portfolio_study(&request, &changed).is_err());
     };

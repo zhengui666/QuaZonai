@@ -311,11 +311,6 @@ pub fn portfolio_study_cutoffs(
     )?;
     portfolio_members(&request.source_selection, &request.assets, &request.members)?;
     let schedule = &request.mandate.rebalance_schedule;
-    if schedule.kind != contracts::portfolio::RebalanceKind::FixedInterval {
-        return Err(DomainError::CapabilityUnavailable(
-            "portfolio_study_schedule",
-        ));
-    }
     let constraints = &request.mandate.constraints;
     if request
         .assets
@@ -345,17 +340,45 @@ pub fn portfolio_study_cutoffs(
     {
         return Err(bad("portfolio_study.initial_state"));
     }
-    let step = u64::from(
-        schedule
-            .interval_seconds
-            .ok_or_else(|| bad("portfolio_study.schedule"))?,
-    ) * 1_000_000_000;
+    let cutoffs = match schedule.kind {
+        contracts::portfolio::RebalanceKind::Manual => request
+            .manual_cutoffs_ns
+            .clone()
+            .ok_or_else(|| bad("portfolio_study.manual_cutoffs"))?,
+        contracts::portfolio::RebalanceKind::FixedInterval => {
+            if request.manual_cutoffs_ns.is_some() {
+                return Err(bad("portfolio_study.manual_cutoffs"));
+            }
+            let step = u64::from(
+                schedule
+                    .interval_seconds
+                    .ok_or_else(|| bad("portfolio_study.schedule"))?,
+            ) * 1_000_000_000;
+            let n = (request.source_selection.event_end_ns.get()
+                - request.evaluation_start_ns.get()
+                - 1)
+                / step
+                + 1;
+            if !(2..=256).contains(&n) {
+                return Err(bad("portfolio_study.limits"));
+            }
+            (0..n)
+                .map(|i| {
+                    contracts::DbCounter::new(request.evaluation_start_ns.get() + i * step)
+                        .map_err(|_| bad("portfolio_study.time"))
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        }
+        contracts::portfolio::RebalanceKind::CalendarSession => {
+            return Err(DomainError::CapabilityUnavailable(
+                "portfolio_study_schedule",
+            ))
+        }
+    };
     let ttl = u64::from(schedule.target_ttl_seconds) * 1_000_000_000;
-    let n = (request.source_selection.event_end_ns.get() - request.evaluation_start_ns.get() - 1)
-        / step
-        + 1;
+    let n = cutoffs.len() as u64;
     if !(2..=256).contains(&n)
-        || ttl < step
+        || cutoffs.first() != Some(&request.evaluation_start_ns)
         || request
             .members
             .iter()
@@ -365,16 +388,20 @@ pub fn portfolio_study_cutoffs(
     {
         return Err(bad("portfolio_study.limits"));
     }
-    (0..n)
-        .map(|i| {
-            let cutoff = request.evaluation_start_ns.get() + i * step;
-            cutoff
-                .checked_add(ttl)
-                .filter(|until| *until <= i64::MAX as u64)
-                .ok_or_else(|| bad("portfolio_study.time"))?;
-            contracts::DbCounter::new(cutoff).map_err(|_| bad("portfolio_study.time"))
-        })
-        .collect()
+    for (i, cutoff) in cutoffs.iter().enumerate() {
+        let until = cutoff
+            .get()
+            .checked_add(ttl)
+            .filter(|until| *until <= i64::MAX as u64)
+            .ok_or_else(|| bad("portfolio_study.time"))?;
+        let next = cutoffs
+            .get(i + 1)
+            .unwrap_or(&request.source_selection.event_end_ns);
+        if cutoff >= next || until < next.get() {
+            return Err(bad("portfolio_study.schedule_coverage"));
+        }
+    }
+    Ok(cutoffs)
 }
 
 pub fn portfolio_study_liquidity_assets(

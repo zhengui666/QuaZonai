@@ -3,6 +3,33 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Frozen manual study cutoffs, 2026-09-14
+
+portfolio-study/4 adds MANUAL study schedules through manual_cutoffs_ns in the
+original task parameters. The existing cutoff preparation, one-account execution
+and report binding are reused, without a scheduler, dependency or inferred calendar.
+Both supported schedule kinds share frame/fuel/range and target-coverage checks:
+manual cutoffs must start at evaluation_start_ns and strictly increase inside the
+original window; each target must cover the next cutoff and the last the window end.
+Fixed intervals reject manual overrides. No sorting, deduplication or repair occurs.
+
+On b3838210 plus frozen patches, the two actual study CLI tests passed, including
+three irregular manual cutoffs, original report rejection after a schedule change,
+missing/empty/duplicate/oversized/out-of-range cutoffs and inadequate TTL coverage.
+verify-gBCQNc passed 229 mandate tests with workspace check/fmt/strict Clippy,
+unchanged source and isolated PostgreSQL stopped. Runtime's 27 tests passed.
+web-verify-GJSXH3 reproduced the six generated outputs twice without handwritten
+changes. owner-oci-SGzTtp rebuilt the native image and passed all 15 actual Docker
+tests; the rolling study used both the original liquidity policy and irregular
+manual cutoffs, with full three-artifact adoption. Source remained unchanged.
+Image identity:
+sha256:663142d65b4b28515a543ae286b5642dbc412a99493517b820d73b04e4ec82a8.
+
+No calendar capability, formal Store study admission/publication or scientific
+qualification is established by these controlled fixtures. Calendar sessions,
+independent policy/publication, Release/delivery and recovery remain required.
+This stage did not push, request review, merge or close the Issue.
+
 ## Original per-cutoff BAR liquidity, 2026-09-14
 
 STUDY_PORTFOLIO now requires portfolio-study/3 and portfolio-rolling-liquidity/1.

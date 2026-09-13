@@ -221,6 +221,7 @@ fn study_with_volume(volume: &str) -> (tempfile::TempDir, NativePortfolioStudyRe
         schema_version: SchemaV1,
         source_selection: original.selection,
         evaluation_start_ns: instant(10),
+        manual_cutoffs_ns: None,
         rolling_liquidity: None,
         research_available_through_ns: instant(9),
         mandate: original.mandate,

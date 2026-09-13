@@ -35,7 +35,13 @@ async fn real_native_rolling_study_uses_original_models_in_one_account() {
         science::NativePortfolioStudyResultV1,
         Revision,
     };
-    let (catalog, request, wasm) = market::study_liquidity("10000000", "0.4");
+    let (catalog, mut request, wasm) = market::study_liquidity("10000000", "0.4");
+    let mut cutoffs = domain::execution::portfolio_study_cutoffs(&request).unwrap();
+    cutoffs[1] = market::count(cutoffs[1].get() - 60_000_000_000);
+    request.manual_cutoffs_ns = Some(cutoffs);
+    request.mandate.rebalance_schedule.kind = contracts::portfolio::RebalanceKind::Manual;
+    request.mandate.rebalance_schedule.interval_seconds = None;
+    request.mandate.rebalance_schedule.target_ttl_seconds = 86_460;
     let dataset = Id::new();
     let selection = &request.source_selection;
     let observed = job::catalog::load_catalog(catalog.path(), selection).unwrap();
@@ -161,7 +167,7 @@ async fn real_native_rolling_study_uses_original_models_in_one_account() {
     let manifest = f.manifest(&spec).await;
     domain::runtime_jobs::manifest(&manifest, &spec, accepted.submitted_at, runtime::now())
         .unwrap();
-    assert_eq!(manifest.engine_versions["portfolio-study"], "3");
+    assert_eq!(manifest.engine_versions["portfolio-study"], "4");
     assert_eq!(manifest.engine_versions["portfolio-rolling-liquidity"], "1");
     assert_eq!(manifest.engine_versions["portfolio-history"], "1");
     assert_eq!(manifest.artifacts.len(), 3);

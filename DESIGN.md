@@ -1950,6 +1950,11 @@ RebalanceScheduleV1:
 不用的约束明确 null/empty，不能默认放宽；min<=max，与 long_only/现金/净敞口一致；原生 solver 实际不支持就报 capability 错误。日历/定时复用库不另造 Cron 平台。新 cutoff 必须新 Candidate/Release；ACCEPTABLE_INACCURATE 不能冒充 OPTIMAL。
 
 调仓计划的MANUAL不带interval/calendar/offset；FIXED_INTERVAL仅带正interval；
+离线原生研究的MANUAL在原任务参数中冻结manual_cutoffs_ns（2..256个UTC纳秒）；
+首项等于evaluation_start_ns，严格递增且全部位于原评估窗口内。不得排序、去重、
+补点或运行后选择有利子集；每项原目标TTL必须覆盖下一截止，末项覆盖评估结束。
+FIXED_INTERVAL不接受手工截止覆盖，同样核对目标覆盖与统一帧数/fuel/时间上限。
+MANUAL只表达离线研究预先冻结的时点，不授予Agent调仓或下游执行权限。
 CALENDAR_SESSION仅带非空calendar_ref与显式offset（可为零或负）。输入最大年龄与
 目标TTL均为正秒数，timezone须由原生IANA库识别，不默默替换UTC。日历引用的语法
 有效不表示真实日历版本已可用，准入仍须核对冻结原生能力。组合约束的结构检查由

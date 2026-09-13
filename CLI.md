@@ -270,7 +270,7 @@ Store核对当前资格、独立Reviewer/原REAL报告、许可、原模型、Fo
 settings_artifact_id、原登记source_selection和原NativeSimulationRequestV1；需candidate-simulation/2。
 原生`job study-portfolio --catalog PATH --objects PATH`从stdin读取
 NativePortfolioStudyRequestV1，stdout输出NativePortfolioStudyResultV1；仅本机可信验证，
-不是Operator/Agent准入接口。托管STUDY_PORTFOLIO需portfolio-study/3，只挂载原
+不是Operator/Agent准入接口。托管STUDY_PORTFOLIO需portfolio-study/4，只挂载原
 FORWARD目录、模型/校准MODEL和费用PARAMETERS，输出qz.data_quality、qz.portfolio_study
 及qz.portfolio_history/1 TARGETS（Apache Arrow IPC File）。后者按原帧/资产顺序
 保存纳秒时间、decimal128(38,18)权重/独立现金列及求解状态；失败帧权重为null。
@@ -278,8 +278,9 @@ FORWARD目录、模型/校准MODEL和费用PARAMETERS，输出qz.data_quality、
 可选rolling_liquidity需portfolio-rolling-liquidity/1及Mandate.liquidity_ref的原
 PARAMETERS政策文件，字段见DESIGN；不复用单次BAR快照的过期量。每帧使用本目录
 前缀的原生BAR估值，原参与率约束实际权益下的权重变动；执行时再次检查年龄。
-固定间隔2–256次截止分别重算原模型与历史前缀，在同一个Nautilus账户中按实际
-权益/权重调用Clarabel；不可行只保留诊断，不生成模拟。当前拒绝日历/手动调仓；
+固定间隔或MANUAL原参数manual_cutoffs_ns的2–256次截止分别重算原模型与历史前缀，
+手动截止严格递增、首项匹配评估开始且TTL覆盖下一项/评估末尾；不排序或补点。
+在同一个Nautilus账户中按实际权益/权重调用Clarabel；不可行只保留诊断，不生成模拟。当前拒绝日历调仓；
 正式PORTFOLIO准入/发布仍待实现，不能授予PASS。
 SIMULATE_PORTFOLIO_SEQUENCE使用portfolio-sequence/1，sources逐项绑定原Candidate、
 可信可用时间和目标文件，同一settings_artifact_id重读核验；完整源质量与实际
