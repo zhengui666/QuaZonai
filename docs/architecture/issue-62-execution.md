@@ -3,6 +3,49 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Original Candidate simulation admission and HTTP/CLI, 2026-09-13
+
+POST /api/v2/candidate-simulations and client portfolio simulate now accept only
+Candidate/Cycle/InputSet/Runtime references, exact runtime revision and bounded
+limits. PORTFOLIO_SIMULATE has its own exact human intent/grant (migration054).
+The Store resolves original published Candidate targets with the same reader
+as LAST_TARGET, freezes original availability, checks original Build/Mandate,
+policy, image and execution settings, and binds one same-Universe REAL/PIT Forward
+catalog. The requested window is narrowed to original availability/target validity.
+Original target/settings files are reread after object publication; original
+member eligibility and input grants are rechecked. The existing final database
+window check runs after Run/task binding and authority recheck. Original budget,
+command replay, PGMQ and native task binding are reused, not a second scheduler.
+HTTP Build and Simulate share their object publication/failure-cleanup facade.
+
+Verification on 2ab3fbfe plus frozen source snapshots:
+
+- Initial verify-VUxMYT correctly rejected both controlled qualification chains:
+  their Runtime fixture omitted qz.native_simulation output capability. Added the
+  missing fixture declaration; production checks were not relaxed.
+- verify-F85Val passed both original-source chains. verify-dvqQRb subsequently
+  passed all 203 evidence tests and strict checks, including stale Forward,
+  changed settings, publication failure/retry, original availability, same-key
+  no-I/O replay and absence of fabricated Evaluation.
+- Final HTTP/CLI/source patch: verify-8jDNMx passed check/fmt/strict Clippy and
+  224 tests (134 domain, 51 native, 13 Store, 1 original-source SQL, 1 liquidity,
+  2 window checks, 22 HTTP/CLI). Actual CLI/TCP/PG tests exercise missing authority,
+  exact simulation grant, missing Candidate, altered intent and zero admitted Runs.
+- web-verify-KCecxz regenerated six native outputs twice identically, with no
+  handwritten changes. Domain/API JSON, TypeScript and Ajv JavaScript changed.
+  Typecheck, wire checks, build, 505 unit, 36 settings-browser and 219 full-browser
+  tests passed. No new browser simulation form is claimed.
+- Final verify-3pU0h1 repeated check/fmt/strict Clippy and both qualified chains
+  after the last database window check and generated contract changes; passed,
+  source unchanged, isolated PostgreSQL stopped.
+
+Store qualification tests use controlled scientific declarations and real PG/files;
+they do not prove actual Store-to-OCI market execution. Separate native synthetic
+daily-return/OCI acceptance is recorded below. This admission returns a Run, never
+Evaluation/PASS/Release. Immutable portfolio Evaluation publication, complete
+scientific/qualification/delivery acceptance and all remaining Issue62 work are
+unfinished. No push, GitHub review request, merge or Issue closure in this slice.
+
 ## Candidate adapter native daily-return acceptance, 2026-09-13
 
 The earlier Candidate adapter tests proved only intraday INSUFFICIENT_DATA.

@@ -55,7 +55,49 @@ pub async fn build(
     ),
     ApiError,
 > {
-    let request = json(body)?;
+    run_portfolio(
+        state,
+        actor,
+        headers,
+        contracts::control::OperatorCommand::PortfolioBuild(Box::new(json(body)?)),
+    )
+    .await
+}
+
+#[utoipa::path(post,path="/api/v2/candidate-simulations",operation_id="start_candidate_simulation",tag="Portfolio",request_body=CandidateSimulationRequestV1,params(("Idempotency-Key"=String,Header)),responses((status=202,body=CommandResult<contracts::runs::RunSnapshotV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
+pub async fn simulate(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    headers: HeaderMap,
+    body: Result<Json<CandidateSimulationRequestV1>, JsonRejection>,
+) -> Result<
+    (
+        StatusCode,
+        Json<CommandResult<contracts::runs::RunSnapshotV1>>,
+    ),
+    ApiError,
+> {
+    run_portfolio(
+        state,
+        actor,
+        headers,
+        contracts::control::OperatorCommand::PortfolioSimulate(json(body)?),
+    )
+    .await
+}
+
+async fn run_portfolio(
+    state: AppState,
+    actor: store::authority::Actor,
+    headers: HeaderMap,
+    command: contracts::control::OperatorCommand,
+) -> Result<
+    (
+        StatusCode,
+        Json<CommandResult<contracts::runs::RunSnapshotV1>>,
+    ),
+    ApiError,
+> {
     let key = idempotency_key(&headers)?.to_owned();
     let objects = state
         .artifact_store
@@ -66,34 +108,38 @@ pub async fn build(
         let reading = objects.clone();
         let publishing = objects.clone();
         let mut allocated = Vec::new();
-        let result = store
-            .start_portfolio_build(
-                &actor,
-                &key,
-                &request,
-                move |id, size| {
-                    let objects = reading.clone();
-                    async move {
-                        tokio::task::spawn_blocking(move || objects.read(id, size))
-                            .await
-                            .map_err(|_| StoreError::Integrity)?
-                            .map_err(|_| StoreError::Integrity)
-                    }
-                },
-                |object| {
-                    allocated.push(object.id);
-                    let publishing = publishing.clone();
-                    async move {
-                        tokio::task::spawn_blocking(move || {
-                            publishing.put(object.id, &object.bytes)
-                        })
-                        .await
-                        .map_err(|_| StoreError::Integrity)?
-                        .map_err(|_| StoreError::Integrity)
-                    }
-                },
-            )
-            .await;
+        let read = move |id, size| {
+            let objects = reading.clone();
+            async move {
+                tokio::task::spawn_blocking(move || objects.read(id, size))
+                    .await
+                    .map_err(|_| StoreError::Integrity)?
+                    .map_err(|_| StoreError::Integrity)
+            }
+        };
+        let publish = |object: store::lifecycle::native::NativeObjectPublication| {
+            allocated.push(object.id);
+            let publishing = publishing.clone();
+            async move {
+                tokio::task::spawn_blocking(move || publishing.put(object.id, &object.bytes))
+                    .await
+                    .map_err(|_| StoreError::Integrity)?
+                    .map_err(|_| StoreError::Integrity)
+            }
+        };
+        let result = match command {
+            contracts::control::OperatorCommand::PortfolioBuild(request) => {
+                store
+                    .start_portfolio_build(&actor, &key, &request, read, publish)
+                    .await
+            }
+            contracts::control::OperatorCommand::PortfolioSimulate(request) => {
+                store
+                    .start_candidate_simulation(&actor, &key, &request, read, publish)
+                    .await
+            }
+            _ => Err(StoreError::Invalid("portfolio_operation")),
+        };
         for id in allocated.into_iter().filter(|_| result.is_err()) {
             let objects = objects.clone();
             if store

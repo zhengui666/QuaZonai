@@ -128,6 +128,8 @@ pub enum Alpha {
 pub enum Portfolio {
     /// Queue a source-bound portfolio build, not an approval or delivery.
     Build,
+    /// Hold original Candidate targets in one simulated account; not Evaluation approval.
+    Simulate,
     #[command(subcommand)]
     Candidate(Candidate),
     #[command(subcommand)]
@@ -519,6 +521,12 @@ impl Command {
                     contracts::portfolio::PortfolioBuildRequestV1,
                     CommandResult<RunSnapshotV1>,
                 >(POST, "/api/v2/portfolio-builds", 202, true)?
+            }
+            Self::Portfolio(Portfolio::Simulate) => {
+                Request::write::<
+                    contracts::portfolio::CandidateSimulationRequestV1,
+                    CommandResult<RunSnapshotV1>,
+                >(POST, "/api/v2/candidate-simulations", 202, true)?
             }
             Self::Portfolio(Portfolio::Candidate(command)) => match command {
                 Candidate::List { project_id, page } => Request::get::<Page<CandidateViewV1>>(

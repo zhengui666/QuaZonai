@@ -12,6 +12,21 @@ use std::{fs, os::unix::fs::PermissionsExt};
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn portfolio_cli_requires_exact_human_intent_and_never_admits_a_missing_cycle(pool: PgPool) {
+    check_intent(pool, false).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn candidate_simulation_cli_requires_its_own_exact_human_intent(pool: PgPool) {
+    check_intent(pool, true).await;
+}
+
+async fn check_intent(pool: PgPool, simulation: bool) {
+    let command = if simulation { "simulate" } else { "build" };
+    let operation = if simulation {
+        "PORTFOLIO_SIMULATE"
+    } else {
+        "PORTFOLIO_BUILD"
+    };
     let f = support::fixture(pool.clone()).await;
     let (enrollment, initial, totp) = support::start(&f).await;
     let (login, _) = support::confirm(&f, &enrollment, &initial, &totp, false).await;
@@ -40,16 +55,28 @@ async fn portfolio_cli_requires_exact_human_intent_and_never_admits_a_missing_cy
     let file = f._state.path().join("portfolio-cli-token");
     fs::write(&file, token).unwrap();
     fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
-    let body = json!({"schema_version":1,"cycle_id":contracts::Id::new(),"mandate_id":mandate.id,
+    let mut body = json!({"schema_version":1,"cycle_id":contracts::Id::new(),"mandate_id":mandate.id,
         "input_set_id":contracts::Id::new(),"runtime_id":source.runtime_id,"expected_runtime_revision":source.expected_runtime_revision,
         "current_weights_source":{"kind":"FORWARD_SNAPSHOT","snapshot_id":contracts::Id::new()},"environment":"PAPER",
         "members":[{"qualification_id":contracts::Id::new(),"ensemble_weight":"0.5"},{"qualification_id":contracts::Id::new(),"ensemble_weight":"0.5"}],
         "limits":{"schema_version":1,"experiments":0,"cpu_seconds":"10","wall_seconds":10,"memory_mib":64,"output_bytes":"1024"}});
+    if simulation {
+        let object = body.as_object_mut().unwrap();
+        for key in [
+            "mandate_id",
+            "current_weights_source",
+            "environment",
+            "members",
+        ] {
+            object.remove(key);
+        }
+        object.insert("candidate_id".into(), json!(mandate.id));
+    }
     let (origin, _listener) = listen(&f).await;
     let denied = invoke(
         &origin,
         &file,
-        &["--idempotency-key", "build", "portfolio", "build"],
+        &["--idempotency-key", "build", "portfolio", command],
         body.clone(),
     )
     .await;
@@ -62,7 +89,7 @@ async fn portfolio_cli_requires_exact_human_intent_and_never_admits_a_missing_cy
         .unwrap()
         .database_now
         .timestamp() as u64;
-    let human = invoke(&origin, &file, &["--idempotency-key","build-human","operator-grant"], json!({"schema_version":1,"command":{"operation":"PORTFOLIO_BUILD","request":body},"target_id":mandate.id,"code":totp.generate((now/30+1)*30)})).await;
+    let human = invoke(&origin, &file, &["--idempotency-key","build-human","operator-grant"], json!({"schema_version":1,"command":{"operation":operation,"request":body},"target_id":mandate.id,"code":totp.generate((now/30+1)*30)})).await;
     assert!(human.status.success(), "portfolio human intent failed");
     let grant: Value = serde_json::from_slice(&human.stdout).unwrap();
     let arguments = [
@@ -71,7 +98,7 @@ async fn portfolio_cli_requires_exact_human_intent_and_never_admits_a_missing_cy
         "--operator-grant",
         grant["resource"]["id"].as_str().unwrap(),
         "portfolio",
-        "build",
+        command,
     ];
     for _ in 0..2 {
         let rejected = invoke(&origin, &file, &arguments, body.clone()).await;
@@ -80,7 +107,7 @@ async fn portfolio_cli_requires_exact_human_intent_and_never_admits_a_missing_cy
         assert!(!String::from_utf8_lossy(&rejected.stderr).contains(token));
         assert_eq!(
             serde_json::from_slice::<Value>(&rejected.stderr).unwrap()["status"],
-            422
+            if simulation { 404 } else { 422 }
         );
     }
     let mut changed = body;
@@ -90,10 +117,11 @@ async fn portfolio_cli_requires_exact_human_intent_and_never_admits_a_missing_cy
         serde_json::from_slice::<Value>(&rejected.stderr).unwrap()["status"],
         403
     );
-    let count: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM app.runs WHERE kind='PORTFOLIO_BUILD'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM app.runs WHERE kind IN ('PORTFOLIO_BUILD','PORTFOLIO_SIMULATE')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
     assert_eq!(count, 0);
 }

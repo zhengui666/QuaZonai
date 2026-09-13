@@ -16,6 +16,84 @@ fn nanos(time: DateTime<Utc>) -> Result<DbCounter, StoreError> {
     counter(time.timestamp_nanos_opt().ok_or(StoreError::Integrity)?)
 }
 
+pub(super) struct TargetSource {
+    pub document: TargetDocument,
+    pub available_ns: DbCounter,
+    pub input: RuntimeInputV1,
+    pub origin: DataOrigin,
+}
+
+pub(super) async fn target<R, Read>(
+    tx: &mut Tx<'_>,
+    project: Id,
+    candidate_id: Id,
+    read: &mut R,
+) -> Result<TargetSource, StoreError>
+where
+    R: FnMut(Id, DbCounter) -> Read,
+    Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
+{
+    let row = sqlx::query("SELECT c.*,a.byte_count,a.origin,m.base_currency FROM app.portfolio_candidates c JOIN app.candidate_publications p ON p.candidate_id=c.id JOIN app.runs r ON r.id=c.run_id AND r.project_id=c.project_id AND r.state='SUCCEEDED' JOIN app.portfolio_mandates m ON m.id=c.mandate_id JOIN app.artifacts a ON a.id=c.target_artifact_id AND a.project_id=c.project_id AND a.producer_run_id=c.run_id AND a.producer_attempt_id IS NOT DISTINCT FROM r.active_attempt_id AND a.kind='REPORT' AND a.schema_name='qz.portfolio_targets' AND a.schema_version='1' AND a.storage_backend='LOCAL' AND a.storage_object_ref=a.id::text AND a.storage_version='1' AND a.access_class='EVALUATOR_ONLY' AND a.origin IN ('REAL','SYNTHETIC') WHERE c.id=$1 AND c.project_id=$2 AND c.evidence_status='VALID' AND c.solver_status IN ('OPTIMAL','ACCEPTABLE_INACCURATE') AND c.cash_weight IS NOT NULL")
+        .bind(candidate_id.as_uuid()).bind(project.as_uuid()).fetch_optional(&mut **tx).await?.ok_or(StoreError::Invalid("portfolio_last_target"))?;
+    let id = db::id(row.try_get("target_artifact_id")?)?;
+    let size = counter(row.try_get("byte_count")?)?;
+    if size == DbCounter::ZERO || size.get() > 1024 * 1024 {
+        return Err(StoreError::Integrity);
+    }
+    let bytes = read(id, size).await?;
+    let document: TargetDocument =
+        serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?;
+    let _version = document.schema_version;
+    if bytes.len() as u64 != size.get()
+        || document.candidate_id != candidate_id
+        || document.base_currency != row.try_get::<String, _>("base_currency")?
+        || document.asof != row.try_get::<DateTime<Utc>, _>("decision_asof")?
+        || *document.cash_weight.as_decimal()
+            != row.try_get::<bigdecimal::BigDecimal, _>("cash_weight")?
+    {
+        return Err(StoreError::Integrity);
+    }
+    let targets = sqlx::query(
+        "SELECT * FROM app.candidate_targets WHERE candidate_id=$1 ORDER BY instrument_id",
+    )
+    .bind(candidate_id.as_uuid())
+    .fetch_all(&mut **tx)
+    .await?;
+    let mut sorted = document.targets.clone();
+    sorted.sort_by(|a, b| a.instrument_id.cmp(&b.instrument_id));
+    if targets.is_empty() || targets.len() != sorted.len() || targets.len() > MAX_ALLOCATION_ASSETS
+    {
+        return Err(StoreError::Integrity);
+    }
+    for (target, original) in targets.iter().zip(&sorted) {
+        if target.try_get::<String, _>("instrument_id")? != original.instrument_id
+            || target.try_get::<String, _>("currency")? != original.currency
+            || target.try_get::<bigdecimal::BigDecimal, _>("target_weight")?
+                != *original.weight.as_decimal()
+            || target.try_get::<DateTime<Utc>, _>("asof")? != document.asof
+            || target.try_get::<DateTime<Utc>, _>("valid_until")? != document.valid_until
+        {
+            return Err(StoreError::Integrity);
+        }
+    }
+    let created: DateTime<Utc> = row.try_get("created_at")?;
+    let available_ns = nanos(created.max(document.asof))?;
+    if available_ns >= nanos(document.valid_until)? {
+        return Err(StoreError::Invalid("portfolio_last_target_expired"));
+    }
+    Ok(TargetSource {
+        document,
+        available_ns,
+        input: RuntimeInputV1::Artifact {
+            artifact_id: id,
+            storage_version: "1".into(),
+            byte_count: size,
+            role: ArtifactInputRole::Report,
+        },
+        origin: db::enum_value(&row, "origin")?,
+    })
+}
+
 pub(super) async fn resolve<R, Read>(
     tx: &mut Tx<'_>,
     project: Id,
@@ -67,57 +145,13 @@ where
             })
         }
         PortfolioBuildWeightsV1::LastTarget { candidate_id } => {
-            let row = sqlx::query("SELECT c.*,a.byte_count,a.origin,m.base_currency FROM app.portfolio_candidates c JOIN app.candidate_publications p ON p.candidate_id=c.id JOIN app.runs r ON r.id=c.run_id AND r.project_id=c.project_id AND r.state='SUCCEEDED' JOIN app.portfolio_mandates m ON m.id=c.mandate_id JOIN app.artifacts a ON a.id=c.target_artifact_id AND a.project_id=c.project_id AND a.producer_run_id=c.run_id AND a.producer_attempt_id IS NOT DISTINCT FROM r.active_attempt_id AND a.kind='REPORT' AND a.schema_name='qz.portfolio_targets' AND a.schema_version='1' AND a.storage_backend='LOCAL' AND a.storage_object_ref=a.id::text AND a.storage_version='1' AND a.access_class='EVALUATOR_ONLY' AND a.origin IN ('REAL','SYNTHETIC') WHERE c.id=$1 AND c.project_id=$2 AND c.evidence_status='VALID' AND c.solver_status IN ('OPTIMAL','ACCEPTABLE_INACCURATE') AND c.cash_weight IS NOT NULL")
-                .bind(candidate_id.as_uuid()).bind(project.as_uuid()).fetch_optional(&mut **tx).await?.ok_or(StoreError::Invalid("portfolio_last_target"))?;
-            let id = db::id(row.try_get("target_artifact_id")?)?;
-            let size = counter(row.try_get("byte_count")?)?;
-            if size == DbCounter::ZERO || size.get() > 1024 * 1024 {
-                return Err(StoreError::Integrity);
-            }
-            let bytes = read(id, size).await?;
-            let document: TargetDocument =
-                serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?;
-            let _version = document.schema_version;
-            if bytes.len() as u64 != size.get()
-                || document.candidate_id != candidate_id
-                || document.base_currency != row.try_get::<String, _>("base_currency")?
-                || document.asof != row.try_get::<DateTime<Utc>, _>("decision_asof")?
-                || *document.cash_weight.as_decimal()
-                    != row.try_get::<bigdecimal::BigDecimal, _>("cash_weight")?
-            {
-                return Err(StoreError::Integrity);
-            }
-            let targets = sqlx::query(
-                "SELECT * FROM app.candidate_targets WHERE candidate_id=$1 ORDER BY instrument_id",
-            )
-            .bind(candidate_id.as_uuid())
-            .fetch_all(&mut **tx)
-            .await?;
-            let mut sorted = document.targets.clone();
-            sorted.sort_by(|a, b| a.instrument_id.cmp(&b.instrument_id));
-            if targets.is_empty()
-                || targets.len() != sorted.len()
-                || targets.len() > MAX_ALLOCATION_ASSETS
-            {
-                return Err(StoreError::Integrity);
-            }
-            for (target, original) in targets.iter().zip(&sorted) {
-                if target.try_get::<String, _>("instrument_id")? != original.instrument_id
-                    || target.try_get::<String, _>("currency")? != original.currency
-                    || target.try_get::<bigdecimal::BigDecimal, _>("target_weight")?
-                        != *original.weight.as_decimal()
-                    || target.try_get::<DateTime<Utc>, _>("asof")? != document.asof
-                    || target.try_get::<DateTime<Utc>, _>("valid_until")? != document.valid_until
-                {
-                    return Err(StoreError::Integrity);
-                }
-            }
-            let created: DateTime<Utc> = row.try_get("created_at")?;
+            let source = target(tx, project, candidate_id, read).await?;
+            let document = source.document;
             let content = PortfolioCurrentWeightsV1 {
                 schema_version: SchemaV1,
                 source: PortfolioWeightsSourceV1::LastTarget { candidate_id },
                 asof_ns: nanos(document.asof)?,
-                available_ns: nanos(created.max(document.asof))?,
+                available_ns: source.available_ns,
                 valid_until_ns: nanos(document.valid_until)?,
                 base_currency: document.base_currency,
                 cash_weight: document.cash_weight,
@@ -132,7 +166,7 @@ where
                 origin: if request.environment == contracts::forward::ForwardEnvironmentV1::Paper {
                     DataOrigin::Synthetic
                 } else {
-                    db::enum_value(&row, "origin")?
+                    source.origin
                 },
             })
         }

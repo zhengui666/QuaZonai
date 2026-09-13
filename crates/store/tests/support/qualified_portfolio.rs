@@ -665,6 +665,107 @@ async fn qualified_chain(pool: PgPool, with_liquidity: bool) {
         .resource
         .header
         .id;
+    let simulate = contracts::portfolio::CandidateSimulationRequestV1 {
+        schema_version: SchemaV1,
+        cycle_id: cycle,
+        candidate_id: candidate,
+        input_set_id: next.input_set_id,
+        runtime_id: next.runtime_id,
+        expected_runtime_revision: next.expected_runtime_revision,
+        limits: next.limits.clone(),
+    };
+    let mut stale_simulation = simulate.clone();
+    stale_simulation.input_set_id = input;
+    assert!(store
+        .start_candidate_simulation(
+            &actor,
+            "stale-candidate-simulate",
+            &stale_simulation,
+            |id, size| f.read(id, size),
+            |_| async { panic!("old Forward window cannot publish") }
+        )
+        .await
+        .is_err());
+    assert!(store
+        .start_candidate_simulation(
+            &actor,
+            "changed-candidate-costs",
+            &simulate,
+            changed_costs,
+            |_| async { panic!("changed original settings cannot publish") }
+        )
+        .await
+        .is_err());
+    assert!(matches!(
+        store
+            .start_candidate_simulation(
+                &actor,
+                "original-candidate-simulate",
+                &simulate,
+                |id, size| f.read(id, size),
+                |_| async { Err(StoreError::Integrity) }
+            )
+            .await,
+        Err(StoreError::Integrity)
+    ));
+    let simulated = store
+        .start_candidate_simulation(
+            &actor,
+            "original-candidate-simulate",
+            &simulate,
+            |id, size| f.read(id, size),
+            |object| {
+                std::future::ready(
+                    f.objects
+                        .put(object.id, &object.bytes)
+                        .map_err(|_| StoreError::Integrity),
+                )
+            },
+        )
+        .await
+        .unwrap()
+        .resource;
+    assert_eq!(simulated.kind, contracts::runs::RunKind::PortfolioSimulate);
+    let replay = store
+        .start_candidate_simulation(
+            &actor,
+            "original-candidate-simulate",
+            &simulate,
+            |_, _| async { panic!("replay must not reread mutable availability") },
+            |_| async { panic!("replay must not republish") },
+        )
+        .await
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.resource.id, simulated.id);
+    let (parameter,size):(uuid::Uuid,i64)=sqlx::query_as("SELECT t.parameters_artifact_id,a.byte_count FROM app.run_native_tasks t JOIN app.artifacts a ON a.id=t.parameters_artifact_id WHERE t.run_id=$1")
+        .bind(simulated.id.as_uuid()).fetch_one(&pool).await.unwrap();
+    let bytes = f
+        .read(
+            parameter.to_string().try_into().unwrap(),
+            DbCounter::new(size as u64).unwrap(),
+        )
+        .await
+        .unwrap();
+    let contracts::execution::NativeTaskParametersV1::SimulateCandidate {
+        candidate_id,
+        candidate_available_ns,
+        request: frozen,
+        ..
+    } = serde_json::from_slice(&bytes).unwrap()
+    else {
+        panic!("original Candidate adapter");
+    };
+    assert_eq!(candidate_id, candidate);
+    assert_eq!(frozen.selection.event_start_ns, candidate_available_ns);
+    assert_eq!(frozen.target_points.len(), 1);
+    let evaluations: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM app.evaluations WHERE run_id=$1")
+            .bind(simulated.id.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(evaluations, 0, "admission never invents Evaluation");
     let snapshot="SELECT (SELECT count(*) FROM app.portfolio_build_tasks),(SELECT count(*) FROM app.runs),(SELECT count(*) FROM app.artifacts),reserved_cpu_seconds FROM app.research_cycles WHERE id=$1";
     let before: (i64, i64, i64, i64) = sqlx::query_as(snapshot)
         .bind(cycle.as_uuid())

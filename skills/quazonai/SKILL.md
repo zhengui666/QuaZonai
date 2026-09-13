@@ -183,6 +183,9 @@ Forward原目录的资产币种、maker/taker费率也须与原设置匹配；Bu
 SIMULATE_CANDIDATE以原目标REPORT及费用PARAMETERS绑定唯一FORWARD目录，只在
 原asof与原Candidate可用时间较晚者起至有效期内保持原目标；需candidate-simulation/1。原生结果不是PASS，
 不得当作已接通Store评估或Release，更不能回填历史目标或恢复实际账户。
+保持模拟的人工准入意图仅选Candidate、Cycle、Forward输入、Runtime版本和预算，
+`client portfolio simulate`及POST /api/v2/candidate-simulations需精确Candidate的
+PORTFOLIO_SIMULATE人工授权；不授Mission权限，202只表示Run，不是Evaluation。
 原生Build读取已绑定DATA_QUALITY原字节并核对选择、币种、年龄与逐资产量；
 这不授Mission写入来源或自行申请资格的权限，也不替代Store准入/发布复核。
 `client portfolio candidate list PROJECT_UUID` / `show CANDIDATE_UUID`读取已发布

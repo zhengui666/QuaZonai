@@ -284,6 +284,20 @@ pub enum PortfolioBuildWeightsV1 {
     LastTarget { candidate_id: crate::Id },
 }
 
+/// Original-source hold simulation intent; never accepts replacement targets or settings.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CandidateSimulationRequestV1 {
+    pub schema_version: crate::SchemaV1,
+    pub cycle_id: crate::Id,
+    pub candidate_id: crate::Id,
+    pub input_set_id: crate::Id,
+    pub runtime_id: crate::Id,
+    pub expected_runtime_revision: crate::Revision,
+    #[schema(schema_with = crate::data::bounded_native_limits_schema)]
+    pub limits: crate::lifecycle::JobLimitsV1,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MandateViewV1 {

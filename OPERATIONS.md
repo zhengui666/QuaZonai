@@ -55,6 +55,9 @@ target-only权重，不收账户或NAV；PAPER为SYNTHETIC，LIVE不自动获得
 原生candidate-simulation/1可在原目标有效区间内保持该目标模拟，读取原目标与费用
 文件，不将最终权重放回产生之前。它不是恢复真实持仓，也不是已交付的Evaluation
 或Release入口；独立政策/指标和正式评估发布仍待接通。
+`client portfolio simulate`通过原来源准入申请保持模拟Run（参数见CLI），需
+精确Candidate的人工授权。不要手工提交原生任务、回填可用时间或把202当作评估；
+完整科学/评估发布及交付链仍待验收。
 
 `apps/runtime` 的配置、实际原生镜像装配和启动说明集中在 [runtimes/native/README.md](runtimes/native/README.md)，由 `runtime doctor/serve --config` 读取受信任本机文件。网关独占自己的0700状态目录与SQLite日志，以原生OS文件锁防止两个监督者同时使用同一目录。它使用操作者正常授权的Docker Unix socket；无权访问时明确不可用，不修改sudo、用户组、socket权限或改用无隔离执行。
 

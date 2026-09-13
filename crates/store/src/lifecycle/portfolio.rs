@@ -13,6 +13,7 @@ use native::{bind_task, NativeObjectPublication, NativeTaskDefinition};
 use std::collections::BTreeSet;
 
 mod publication;
+mod simulation;
 mod weights;
 pub(super) use publication::publish;
 

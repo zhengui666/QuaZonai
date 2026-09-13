@@ -1928,6 +1928,20 @@ candidate_available_ns须由可信准入从原Candidate可用记录取得，不�
 不把它冒充完整独立组合评估；正式Store准入、政策/指标/期限与不可变Evaluation
 发布另行绑定后才可供Release使用。需要candidate-simulation/1原生镜像能力。
 
+保持模拟的正式准入意图CandidateSimulationRequestV1仅含schema_version、cycle_id、
+candidate_id、input_set_id、runtime_id、expected_runtime_revision及有界limits；
+不接收目标、费用、可用时间、政策或结果。Operator/精确CLI grant使用独立
+PORTFOLIO_SIMULATE操作。Store从同项目已封口成功VALID Candidate重读原目标，
+复用LAST_TARGET原文件/行核对；原created_at与asof较晚者是最早模拟起点。
+费用及镜像绑定原Build任务与执行假设，Forward窗口只能缩窄到原有效期内且
+不能使用尚未可用的数据。运行中Cycle必须使用原Mandate政策；复用原预算、
+幂等命令、Run/PGMQ及不可变原生任务绑定，不建立第二队列。
+准入返回Run而非Evaluation，不能因保持模拟成功批准Release。正式评估发布仍须
+按独立政策、样本数、来源和期限验收；本段合同不表示入口已实现或验收通过。
+操作面为POST /api/v2/candidate-simulations与client portfolio simulate，使用同一
+严格请求及Idempotency-Key，成功202返回原Run。CLI grant绑定原Candidate及完整
+意图；没有模拟权限的身份不能借Build权限调用。请求失败清理仅未引用的新对象。
+
 `unique(candidate_alphas.candidate_id,alpha_version_id)`、`unique(candidate_targets.candidate_id,instrument_id)` 是数据库约束，不是普通索引。重复相同请求幂等，冲突409；至少两个不同alpha_id的合格版本才满足多Alpha，不以同Alpha多个版本或重复条目凑数。发布验证每资产唯一权重，再校验sum/gross/net/cash/约束。
 
 ### A5.2 原生组合求解的可执行合同

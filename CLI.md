@@ -269,7 +269,14 @@ settings_artifact_id和原NativeSimulationRequestV1；需candidate-simulation/1�
 一个原目标点，生效/选择起点取原asof与原Candidate可用时间较晚者，终点不超过
 原valid_until；可用时间须由可信准入绑定，不允许人工回填。job重读两份文件，
 拒绝身份、权重/现金、时间或设置不同。不回放到Candidate产生前，不恢复实际账户，
-不因原生成功生成Evaluation/PASS/Release；正式准入与评估发布尚待完成。
+不因原生成功生成Evaluation/PASS/Release；评估发布尚待完成。
+
+`POST /api/v2/candidate-simulations`与`client portfolio simulate`使用
+CandidateSimulationRequestV1，只有schema_version、
+cycle_id、candidate_id、input_set_id、runtime_id、expected_runtime_revision、limits，
+人工操作标识PORTFOLIO_SIMULATE，CLI grant的target_id为candidate_id，绑定完整
+请求与Idempotency-Key。202返回原Run，不是评估通过；同键同内容重放原Run。
+不自行构造原生任务代替准入；完整科学/评估发布与交付链仍待验收。
 
 执行假设入口为`POST /api/v2/execution-assumptions`，请求ExecutionAssumptionsCreateV1
 （schema_version、project_id、runtime_id、expected_runtime_revision、input_set_id、
