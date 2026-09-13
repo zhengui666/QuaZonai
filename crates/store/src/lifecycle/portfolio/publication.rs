@@ -282,6 +282,44 @@ where
         request.runtime_id,
     )
     .await?;
+    if !frozen.mandate.constraints.group_bounds.is_empty() {
+        let bindings = crate::data_validation::dataset_bindings(
+            tx,
+            request.input_set_id,
+            project,
+            request.runtime_id,
+            &[contracts::research::DataPartition::Forward],
+            read,
+        )
+        .await?;
+        let [binding] = bindings.as_slice() else {
+            return Err(StoreError::Integrity);
+        };
+        if binding.selection.selection != frozen.selection {
+            return Err(StoreError::Integrity);
+        }
+        // These immutable inputs already passed admission at this same cutoff.
+        // Corruption is retryable, not a newly ineligible final Candidate.
+        let groups = domain::catalogs::portfolio_groups(
+            &binding.metadata.universe,
+            &frozen
+                .assets
+                .iter()
+                .map(|a| a.instrument_id.clone())
+                .collect::<Vec<_>>(),
+            &frozen.mandate.constraints.group_bounds,
+            frozen.selection.decision_cutoff_ns,
+        )
+        .map_err(|_| StoreError::Integrity)?;
+        if frozen
+            .assets
+            .iter()
+            .zip(groups)
+            .any(|(asset, groups)| asset.groups != groups)
+        {
+            return Err(StoreError::Integrity);
+        }
+    }
     let costs: uuid::Uuid = sqlx::query_scalar("SELECT input_set_id FROM app.execution_assumption_sources WHERE assumptions_id=$1 AND project_id=$2 AND runtime_id=$3")
         .bind(frozen.mandate.execution_assumptions_id.as_uuid()).bind(project.as_uuid()).bind(request.runtime_id.as_uuid()).fetch_one(&mut **tx).await?;
     crate::research::revalidate_frozen_inputs(tx, db::id(costs)?, project, request.runtime_id)

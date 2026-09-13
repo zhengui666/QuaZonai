@@ -253,7 +253,9 @@ cargo run --locked -p server -- client --origin https://qz.example --credential-
 
 Store核对当前资格、独立Reviewer/原REAL报告、许可、原模型、Forward目录及下游
 原权重，不接收手填预测/持仓/费用。当前费用适配仅原保守BAR、明确零滑点概率的
-taker费用；组/流动性/参与率和其他全成本来源尚未接通，明确报能力不可用。
+taker费用；组约束使用原Forward Universe在决策时有效且已可用的唯一成员记录。
+成员groups未提供/null表示未知，[]表示明确无组；有组约束时未知、歧义或组无参与
+资产均拒绝，Candidate发布重读原来源。流动性/参与率和其他全成本来源尚未接通。
 成功准入的完整原生链及Candidate发布仍待验收，不能将此命令当作交付入口。
 
 执行假设入口为`POST /api/v2/execution-assumptions`，请求ExecutionAssumptionsCreateV1

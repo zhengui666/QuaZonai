@@ -6,6 +6,8 @@ Runtime 是受信任的计算网关：只接受已登记镜像、不可变输入
 
 当前PORTFOLIO_BUILD要求原FORWARD目录和MODEL/校准产物，经原生预测与收益
 生成、ndarray聚合/样本估计后进入同一Clarabel问题；不再接受手填预测数组。
+资产groups由Store从原Forward Universe决策时有效且可用的唯一成员记录冻结，
+沿既有组约束进入求解与原结果绑定；Runtime不猜分类，不提升原数据资格。
 真实OCI回归须覆盖原参数/模型上传、目录挂载、原结果下载/绑定及幂等重放。
 合成数值不是REAL资格或完整交付。更新源码后必须重建并登记新镜像。
 方差上限还要求portfolio-variance-bound/1，使用原生Cholesky/Clarabel二阶锥；

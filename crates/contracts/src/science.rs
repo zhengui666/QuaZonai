@@ -11,7 +11,7 @@ pub use sealed::*;
 mod portfolio;
 pub use portfolio::*;
 
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NativeBarSelectionV1 {
     pub schema_version: SchemaV1,

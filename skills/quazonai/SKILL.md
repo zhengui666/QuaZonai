@@ -161,6 +161,9 @@ SCORE沿原校准确定，不读取active指针推断，REJECT/未入选/缺证�
 受管组合当前权重必须提供独立REPORT原产物和PortfolioCurrentWeightsV1冻结副本，
 镜像portfolio-weights/1核对来源种类、内容、时间、币种与资产权重，不补NONE为现金。
 来源身份与资格仍由Store核验；Agent不得自报下游身份来绕过该边界。
+组约束沿原Forward Universe时态成员groups绑定；null/缺省表示未知，[]表示明确
+无组。有约束时拒绝未知、非决策时可用、重叠成员及无参与资产的组，Candidate发布
+重读原来源；不新增分类引擎或把分类当作数据/费用资格。
 `client forward-weights`仅限真实DOWNSTREAM/FORWARD_SUBMIT机器身份登记当前权重，
 不是Mission工具或Operator代报入口。保留原external_message_id重试，不以新CLI键
 覆盖旧消息；原报告不可变，PAPER为SYNTHETIC，LIVE也不自动获得资格（字段见CLI）。

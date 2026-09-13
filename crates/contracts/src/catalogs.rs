@@ -24,6 +24,9 @@ pub struct NativeUniverseMemberV1 {
     pub valid_from: DateTime<Utc>,
     pub valid_until: Option<DateTime<Utc>>,
     pub available_at: DateTime<Utc>,
+    /// None means unknown classification; Some([]) is explicitly ungrouped.
+    #[schema(max_items = 64)]
+    pub groups: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]

@@ -264,6 +264,11 @@ pub(super) async fn request(
     .unwrap();
     let mut constraints = allocation.constraints;
     constraints.transaction_costs_ref = assumption.fee_schedule_artifact_id;
+    constraints.group_bounds = vec![GroupBoundV1 {
+        group_id: "fixture-group".into(),
+        min: "0.5".parse().unwrap(),
+        max: "1".parse().unwrap(),
+    }];
     let mandate = store
         .create_mandate(
             actor,

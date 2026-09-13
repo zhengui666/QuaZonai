@@ -170,10 +170,18 @@ impl Store {
             members.push(original);
             inputs.append(&mut artifacts);
         }
-        // The installed adapter has no source-backed group/liquidity catalog yet.
-        // Reject those requests rather than silently relaxing their constraints.
-        if !mandate.content.constraints.group_bounds.is_empty()
-            || mandate.content.constraints.liquidity_ref.is_some()
+        let groups = domain::catalogs::portfolio_groups(
+            &dataset.metadata.universe,
+            &weights
+                .weights
+                .iter()
+                .map(|w| w.instrument_id.clone())
+                .collect::<Vec<_>>(),
+            &mandate.content.constraints.group_bounds,
+            dataset.selection.selection.decision_cutoff_ns,
+        )?;
+        // Liquidity still requires its own original numerical source adapter.
+        if mandate.content.constraints.liquidity_ref.is_some()
             || mandate.content.constraints.max_participation.is_some()
         {
             return Err(
@@ -228,7 +236,8 @@ impl Store {
         let assets = weights
             .weights
             .iter()
-            .map(|w| {
+            .zip(groups)
+            .map(|(w, groups)| {
                 let rate = settings
                     .fee_rates
                     .iter()
@@ -240,7 +249,7 @@ impl Store {
                     current_weight: w.weight.clone(),
                     transaction_cost_rate: rate.taker.clone(),
                     available_notional: None,
-                    groups: vec![],
+                    groups,
                 })
             })
             .collect::<Result<Vec<_>, StoreError>>()?;

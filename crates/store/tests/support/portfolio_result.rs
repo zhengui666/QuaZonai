@@ -30,6 +30,11 @@ pub(super) async fn complete(
     else {
         panic!("original portfolio task");
     };
+    assert!(!request.mandate.constraints.group_bounds.is_empty());
+    assert!(request
+        .assets
+        .iter()
+        .all(|asset| asset.groups == ["fixture-group"]));
     let mut input: AllocationInputV1 = serde_json::from_str(include_str!(
         "../../../../tests/contracts/allocation-input.json"
     ))

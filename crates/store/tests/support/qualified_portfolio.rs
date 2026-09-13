@@ -310,6 +310,35 @@ async fn original_reviewed_alphas_publish_candidates_and_retry_last_target(pool:
         origin, "SYNTHETIC",
         "declared parameters must not masquerade as market data"
     );
+    let metadata_id: uuid::Uuid = sqlx::query_scalar("SELECT e.native_metadata_artifact_id FROM app.input_set_items i JOIN app.dataset_registration_evidence e ON e.dataset_revision_id=i.dataset_revision_id WHERE i.input_set_id=$1")
+        .bind(request.input_set_id.as_uuid()).fetch_one(&pool).await.unwrap();
+    // Same-size corrupted reads must fail at admission and publication.
+    // The original immutable files are never changed.
+    let fixture = &f;
+    let changed_groups = |replacement: &'static str| {
+        move |id: Id, size: DbCounter| async move {
+            let bytes = fixture.read(id, size).await?;
+            if id.as_uuid() == metadata_id {
+                let text = String::from_utf8(bytes).unwrap();
+                assert!(text.contains("fixture-group"));
+                let changed = text.replace("fixture-group", replacement).into_bytes();
+                assert_eq!(changed.len() as u64, size.get());
+                Ok(changed)
+            } else {
+                Ok(bytes)
+            }
+        }
+    };
+    assert!(store
+        .start_portfolio_build(
+            &actor,
+            "changed-group-source",
+            &request,
+            changed_groups("foreign-group"),
+            |_| async { panic!("invalid group source publishes nothing") },
+        )
+        .await
+        .is_err());
     let admitted = store
         .start_portfolio_build(
             &actor,
@@ -363,6 +392,16 @@ async fn original_reviewed_alphas_publish_candidates_and_retry_last_target(pool:
         }
     }
     result::complete(&pool, &store, &f, &lease, &job).await;
+    for replacement in ["foreign-group", "             "] {
+        assert!(matches!(
+            store
+                .publish_scientific_result(admitted.id, changed_groups(replacement), |_| async {
+                    panic!("changed group source publishes no Candidate")
+                })
+                .await,
+            Err(StoreError::Integrity)
+        ));
+    }
     assert!(matches!(
         store.acknowledge_run(&message).await,
         Err(StoreError::Conflict)

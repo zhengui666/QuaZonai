@@ -3,6 +3,44 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Original temporal Universe groups in portfolio builds, 2026-09-13
+
+The patch over `5c7fd0f2` binds existing native group constraints to original
+Forward Universe membership. Optional groups distinguish unknown classification
+from an explicitly empty set. Grouped builds resolve each asset's unique active,
+already-available member at the original decision cutoff, within Universe coverage
+and selection time. Missing, future, expired, overlapping or unknown classification
+and requested groups without participating assets fail admission. Ungrouped builds
+do not require classification. No classification engine, new optimizer or dependency.
+
+Frozen assets retain these groups through the existing Clarabel constraints and
+native result binding. Candidate publication rereads the original registration at
+the same cutoff. Immutable selection/group mismatch is an Integrity failure that
+preserves retry, not a final INVALID Candidate. The shared registered-metadata
+reader likewise treats malformed original bytes as corruption; current eligibility
+and permission checks retain their existing separate behavior.
+
+`catalog_groups` covers temporal boundaries, ambiguity, unknown/explicitly empty
+classification and group bounds validation. `verify-R39AAI` passed the original
+qualified Build/Candidate/LAST_TARGET PostgreSQL chain. The expanded negative case
+in `verify-8oxxKV` rejects both same-size changed group IDs and malformed group text,
+without modifying original files, then publishes successfully with the original
+source. That evidence run passed check/fmt/strict Clippy and 197 checks: 4 portfolio
+unit, 33 native validation, 136 Store and 24 HTTP/CLI. `verify-bfpZuB` passed the same
+static gates and 208 checks: 128 contracts/domain, 46 native science, 12 Store,
+1 source SQL and 21 HTTP/CLI, with unchanged source during each run.
+
+`web-verify-v2ZhGq` regenerated six outputs twice byte-identically and passed
+typecheck, 505 unit, decimal/counter/fraction wire, build, 36 settings-browser and
+216 full-browser checks. `owner-oci-kaEdwR` built image
+`sha256:77f9c6823fd15cc5b90ccf5756dddc71cc84d023be9bd1c33cedf5c4318a2d2d`;
+all 12 actual OCI tests passed. The four portfolio modes resolve synthetic original
+metadata groups before submitting the real catalog/Wasm task and verify retained
+groups/bounds in its native output. These are controlled SYNTHETIC numerical and
+protocol checks, not REAL/PIT or complete qualification/Issue #62 acceptance.
+Data-backed costs, liquidity/participation, independent Candidate validation,
+delivery and remaining development/acceptance/review/CI gates remain required.
+
 ## Native CVaR risk budgeting and original dual witness, 2026-09-13
 
 The patch over `37305c7d` extends the existing explicit risk-budget settings to

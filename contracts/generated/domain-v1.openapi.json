@@ -12116,6 +12116,17 @@
             "format": "date-time",
             "type": "string"
           },
+          "groups": {
+            "description": "None means unknown classification; Some([]) is explicitly ungrouped.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "instrument_id": {
             "maxLength": 200,
             "minLength": 1,

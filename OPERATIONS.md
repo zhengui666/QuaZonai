@@ -23,6 +23,10 @@ Operator可通过`client portfolio assumptions create/list/show`管理新的不�
 （请求与HTTP路径见CLI）。先登记原生目录并冻结输入，再选择已探测Runtime；费用
 必须与原资产定义一致。当前保存为保守BAR假设，不等同数据支持成本或可交付组合。
 原资产定义使用Rust InstrumentAny的外部标签Serde结构，不是Python式顶层type。
+组约束从原Forward Universe成员记录的groups读取，按原决策时点核对生效与可用
+时间，发布Candidate前再次读取原证据；不从资产名称猜分类。未提供/null是未知，
+[]才是明确无组。有组约束时，每项资产必须有唯一且分类已知的成员记录，每个约束
+组必须有参与资产；无组约束不强求分类。这不提升原数据或费用的资格。
 
 下游可用自己的DOWNSTREAM/FORWARD_SUBMIT凭据通过`client forward-weights`
 登记当前权重（字段和参数见CLI），项目/下游/环境由服务端核对；不能使用Operator

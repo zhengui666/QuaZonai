@@ -637,6 +637,19 @@ DATA_BACKED等完整来源能力仍须单独接通，不能由请求标签冒充
 未绑定原生来源的历史行不能伪装成此入口的新版本。原请求/原响应支持精确重放，
 创建失败回滚数据库并回收本次未发布对象；不授予Alpha资格或交付权限。
 
+原生Universe membership每条带可选groups（最多64个唯一、1..120字符的组标识）。
+null/未提供表示分类未知，[]表示来源明确声明没有组；不自动按名称、币种或证券
+类型猜分类。组集合随该条valid_from/valid_until/available_at生效与可用，沿原
+不可变qz.native_catalog_metadata和qz.universe_membership发表，不新增分类引擎。
+组合有group_bounds时，必须从本次原Forward Dataset/Universe来源解析：决策时点
+在Universe覆盖范围内且不早于selection_asof；每个资产恰有一条valid_from≤决策、
+决策<valid_until（或无终点）且available_at≤决策的记录，groups必须已知。
+未知、缺失、重叠歧义或请求的组不属于任何参与资产，均在Run准入前拒绝。
+源组集合进入冻结assets.groups；原生求解与结果绑定不得删改，Candidate发表前
+按原决策时点重新读取原InputSet登记证据复核集合；原不可变分类不一致报完整性
+错误并保留发布重试，不把来源损坏封口成最终INVALID候选。无组约束时不要求组分类，
+不把未读取分类当作来源已声明空集合。组来源不提升数据origin/PIT或成本状态。
+
 `event_start < event_end`；发布 snapshot 不原地覆盖，更新新目录/版本；许可与用途匹配。PIT 报告证明 available_at 来源，不用 ingest_at 替代。Universe 含退市/到期；静态今日成分明确有偏，不能称完整历史池。
 
 `NativeModelRefV1={schema_version,adapter_kind,upstream_class,upstream_version,parameters}`。class/adapter 来自服务端 allowlist 和实际 capability；parameters 为对应锁定适配器的严格 schema。未知项拒绝，不映成 GENERIC/DEFAULT；禁止任意 Python import/path/exec 越界。
@@ -1879,8 +1892,8 @@ Operator或目标为mandate_id、内容完全相同的PORTFOLIO_BUILD单次grant
 返回202和原Run回执，不以内存任务句柄冒充已执行。失败清理沿用Operator事务锁。
 
 当前保守BAR适配的市场目标交易只在原假设明确零滑点概率时，采用原费用文档的
-逐资产taker费率作为费用项；文档字节必须与不可变来源相等。非零滑点、组成员来源、
-流动性/参与率及DATA_BACKED总成本尚须各自原生来源适配，未实现时明确拒绝，
+逐资产taker费率作为费用项；文档字节必须与不可变来源相等。组成员沿上述原Universe
+时态记录绑定；非零滑点、流动性/参与率及DATA_BACKED总成本尚须各自原生来源适配，未实现时明确拒绝，
 不能用taker费用冒充完整含滑点成本，也不能把此初始范围当作Issue62完成范围。
 
 组合求解复用已有 Clarabel 0.11.1，不另写优化算法。原生 job 接受固定资产顺序的预测、同顺序协方差、明确的当前目标/现金、资本与数据支持的费用/流动性，不从两个独立 NAV 的平均值构造组合。资产集合上限256；重复或缺失身份、矩阵尺寸/对称性/正定性问题、非有限数、缺当前权重或费用、无真实来源的流动性均明确失败，不补零。协方差必须来自冻结输入的原生估计，单位为每决策周期收益协方差；年化只在明确参数下用于报告，不隐式乘252。

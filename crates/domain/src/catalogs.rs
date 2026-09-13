@@ -115,6 +115,18 @@ pub fn metadata(
     let mut unique_members = BTreeSet::new();
     for member in &universe.membership {
         text(&member.instrument_id, 1, 200, false)?;
+        if let Some(groups) = &member.groups {
+            let mut unique = BTreeSet::new();
+            if groups.len() > contracts::portfolio::MAX_ALLOCATION_GROUPS {
+                return Err(bad("universe.groups"));
+            }
+            for group in groups {
+                text(group, 1, 120, false)?;
+                if !unique.insert(group) {
+                    return Err(bad("universe.groups"));
+                }
+            }
+        }
         if member
             .valid_until
             .is_some_and(|until| until <= member.valid_from)
@@ -149,4 +161,49 @@ pub fn metadata(
         return Err(bad("universe.instrument_definitions"));
     }
     Ok(())
+}
+
+/// Resolve only requested grouping, from original membership known at the decision.
+pub fn portfolio_groups(
+    universe: &NativeUniverseV1,
+    instruments: &[String],
+    required: &[contracts::portfolio::GroupBoundV1],
+    cutoff: contracts::DbCounter,
+) -> Result<Vec<Vec<String>>, DomainError> {
+    if required.is_empty() {
+        return Ok(vec![Vec::new(); instruments.len()]);
+    }
+    let bad_source = || bad("portfolio.group_source");
+    let ns = cutoff.get();
+    let at =
+        DateTime::<Utc>::from_timestamp((ns / 1_000_000_000) as i64, (ns % 1_000_000_000) as u32)
+            .ok_or_else(bad_source)?;
+    if at < universe.coverage_start || at > universe.coverage_end || at < universe.selection_asof {
+        return Err(bad_source());
+    }
+    let groups = instruments
+        .iter()
+        .map(|id| {
+            let mut matches = universe.membership.iter().filter(|m| {
+                &m.instrument_id == id
+                    && m.valid_from <= at
+                    && m.valid_until.is_none_or(|until| at < until)
+                    && m.available_at <= at
+            });
+            let member = matches.next().ok_or_else(bad_source)?;
+            if matches.next().is_some() {
+                return Err(bad_source());
+            }
+            member.groups.clone().ok_or_else(bad_source)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if required.iter().any(|bound| {
+        !groups
+            .iter()
+            .flatten()
+            .any(|group| group == &bound.group_id)
+    }) {
+        return Err(bad_source());
+    }
+    Ok(groups)
 }

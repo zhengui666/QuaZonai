@@ -145,6 +145,25 @@ async fn native_portfolio(cvar: bool, risk_budget: bool) {
             .unwrap(),
     );
     domain::catalogs::metadata(&metadata, runtime::now()).unwrap();
+    request.mandate.constraints.group_bounds = vec![GroupBoundV1 {
+        group_id: "fixture-group".into(),
+        min: "0".parse().unwrap(),
+        max: "1".parse().unwrap(),
+    }];
+    let groups = domain::catalogs::portfolio_groups(
+        &metadata.universe,
+        &request
+            .assets
+            .iter()
+            .map(|asset| asset.instrument_id.clone())
+            .collect::<Vec<_>>(),
+        &request.mandate.constraints.group_bounds,
+        request.selection.decision_cutoff_ns,
+    )
+    .unwrap();
+    for (asset, groups) in request.assets.iter_mut().zip(groups) {
+        asset.groups = groups;
+    }
     fs::set_permissions(catalog.path(), fs::Permissions::from_mode(0o755)).unwrap();
     let mut f = Fixture::open().await;
     f.crash();
@@ -262,6 +281,12 @@ async fn native_portfolio(cvar: bool, risk_budget: bool) {
     )
     .unwrap();
     let result: NativePortfolioBuildResultV1 = serde_json::from_slice(&bytes).unwrap();
+    assert!(result
+        .input
+        .assets
+        .iter()
+        .all(|asset| asset.groups == ["fixture-group"]));
+    assert_eq!(result.input.constraints.group_bounds.len(), 1);
     assert_eq!(
         result.input.objective,
         if risk_budget {

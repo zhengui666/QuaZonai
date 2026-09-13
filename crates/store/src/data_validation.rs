@@ -108,7 +108,9 @@ where
         let now: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
             .fetch_one(&mut **tx)
             .await?;
-        domain::catalogs::metadata(&native, now)?;
+        // These bytes were validated before immutable registration. A malformed
+        // reread is corruption, not a new user request or expired qualification.
+        domain::catalogs::metadata(&native, now).map_err(|_| StoreError::Integrity)?;
         let role: DataPartition = db::enum_value(&row, "role")?;
         let registered_ref: String = row.try_get("native_catalog_ref")?;
         let version: String = row.try_get("native_storage_version")?;

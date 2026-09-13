@@ -57,6 +57,7 @@ pub fn metadata() -> RuntimeCatalogMetadataV1 {
                 valid_from: instant(0),
                 valid_until: None,
                 available_at: instant(0),
+                groups: Some(vec!["fixture-group".into()]),
             }],
             instrument_definitions: vec![serde_json::json!({
                 "CurrencyPair": {"id": instrument, "fixture_only": true}
