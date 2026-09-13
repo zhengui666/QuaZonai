@@ -378,6 +378,9 @@ Mandate的真实API/CLI已支持新建不可变版本和读取，创建前须有
 DATA_BACKED、流动性与参与率的完整证据入口仍待完成。
 离线不可提交；响应丢失时保留原输入重试，使用原幂等回执，不能将关闭窗口当作撤销。
 当前仅支持方差下的最小风险/最大效用；完整Candidate交付尚未验收。
+可填写正的“每决策周期方差上限”，不用时留空；不是标准差或年化波动率。
+这要求重建并登记 portfolio-variance-bound/1、SECOND_ORDER_CONE 镜像能力，
+不沿用不支持该约束的旧探测。发布复核误差最多为上限乘敞口容差。
 
 研究/组合/交付 UI、Worker/MCP/Codex 真闭环、受信任 runtime 与 job 隔离、多 Alpha/共享资金、Paper/Live/Forward/Wake，以及完整恢复/迁移仍未完成。普通 PR CI 不携带生产秘密，真实受保护验收只运行经过审查的固定 Head。QZ 不持有 Broker 凭据或真实执行控制权。
 

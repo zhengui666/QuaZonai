@@ -8,6 +8,8 @@ Runtime 是受信任的计算网关：只接受已登记镜像、不可变输入
 生成、ndarray聚合/样本估计后进入同一Clarabel问题；不再接受手填预测数组。
 真实OCI回归须覆盖原参数/模型上传、目录挂载、原结果下载/绑定及幂等重放。
 合成数值不是REAL资格或完整交付。更新源码后必须重建并登记新镜像。
+方差上限还要求portfolio-variance-bound/1，使用原生Cholesky/Clarabel二阶锥；
+上限是每决策周期收益方差，发布按冻结历史与保存权重重新计算，不是年化波动率。
 当前要求portfolio-models/4，绑定原optimizer/alpha_ensemble的类名、版本及严格
 参数；risk_aversion冻结在optimizer.parameters，不接收顶层settings/risk_aversion
 或默认模型。必须从目录生成的return_history经covariance_estimator原生估计协方差，

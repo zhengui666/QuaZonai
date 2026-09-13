@@ -81,6 +81,9 @@ optimizer/alpha_ensemble须保留原NativeModelRefV1，不能改类名/版本或
 估计协方差，受管任务则绑定selection/mandate/members并输出qz.native_portfolio/1。
 SAMPLE_COVARIANCE仅绑定ndarray-stats0.7.0的原生cov与ddof=1，不授予数据访问，
 也不新增Mission工具；不能把数值矩阵存在当作原数据资格。
+VARIANCE 可冻结正的每决策周期方差上限 max_ex_ante_risk（不用为 null），不是
+标准差/年化值；需要 portfolio-variance-bound/1 与 SECOND_ORDER_CONE 能力。
+发布以保存后的权重重新估计核对，容差为上限乘 exposure_tolerance；不替换风险度量。
 人工Mandate API/CLI创建与读取见CLI，原配置不可修改；同键重试保留原完整请求。
 Mission没有这些配置操作权，版本存在不表示Alpha资格、组合通过或允许交付。
 提交响应未知时保留同一 key 和原始文件/请求重放；不同内容409不能改键绕过预算。

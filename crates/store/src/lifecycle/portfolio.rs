@@ -93,6 +93,7 @@ impl Store {
                 return Err(DomainError::CapabilityUnavailable("portfolio_native_models").into());
             }
         }
+        crate::portfolio::variance_bound_capability(&mandate.content.constraints, &cap)?;
         let mut datasets = crate::data_validation::dataset_bindings(
             &mut tx,
             request.input_set_id,

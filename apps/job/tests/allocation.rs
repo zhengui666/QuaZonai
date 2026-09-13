@@ -435,8 +435,46 @@ fn invalid_or_unsupported_inputs_are_not_silently_repaired() {
     request.objective = AllocationObjective::RiskBudgeting;
     assert!(job::allocate(&request).is_err());
     request = input();
-    request.constraints.max_ex_ante_risk = Some(decimal("0.1"));
+    request.constraints.max_ex_ante_risk = Some(decimal("0"));
     assert!(job::allocate(&request).is_err());
+}
+
+#[test]
+fn native_variance_cone_binds_correlated_assets_and_publication_rechecks_it() {
+    let mut request = input();
+    // Native sample covariance [[1,1],[1,5]]. With sum(w)=1, variance=1+4*w2^2.
+    request.return_history.asset_returns[1] = vec![0.0, 2.0, 4.0, 6.0, 3.0];
+    request.objective = AllocationObjective::MaxUtility;
+    for member in &mut request.forecasts.members {
+        member.forecasts = vec![0.0, 10.0];
+    }
+    request.constraints.max_ex_ante_risk = Some(decimal("1.25"));
+    let actual = weights(&request);
+    near(actual[0], 0.75);
+    near(actual[1], 0.25);
+    let mut corrupt = job::allocate(&request).unwrap();
+    corrupt.targets.as_mut().unwrap()[0].weight = decimal("0.7");
+    corrupt.targets.as_mut().unwrap()[1].weight = decimal("0.3");
+    assert!(domain::portfolio::allocation_result(&request, &corrupt).is_err());
+    request.constraints.max_ex_ante_risk = Some(decimal("0.9"));
+    let impossible = job::allocate(&request).unwrap();
+    assert_eq!(impossible.solver_status, SolverStatus::Infeasible);
+    assert!(impossible.targets.is_none() && impossible.cash_weight.is_none());
+}
+
+#[test]
+fn variance_publication_tolerance_scales_with_bound_not_absolute_exposure() {
+    let mut request = input();
+    let result = job::allocate(&request).unwrap();
+    for row in &mut request.return_history.asset_returns {
+        for value in row {
+            *value *= 0.000001;
+        }
+    }
+    request.constraints.max_ex_ante_risk = Some(decimal("0.0000000000008"));
+    domain::portfolio::allocation_result(&request, &result).unwrap();
+    request.constraints.max_ex_ante_risk = Some(decimal("0.0000000000007"));
+    assert!(domain::portfolio::allocation_result(&request, &result).is_err());
 }
 
 #[test]

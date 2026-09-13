@@ -162,6 +162,8 @@ pub struct PortfolioConstraintsV1 {
     /// Gross traded asset notional divided by capital; cash is not charged twice.
     pub max_turnover_per_rebalance: DecimalValue,
     pub max_participation: Option<DecimalValue>,
+    /// Positive per-decision-horizon return variance bound, not volatility or annualized risk.
+    /// Publication allows only bound * exposure_tolerance additional variance.
     pub max_ex_ante_risk: Option<DecimalValue>,
     #[schema(max_items = 64)]
     pub group_bounds: Vec<GroupBoundV1>,

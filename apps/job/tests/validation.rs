@@ -4,7 +4,8 @@ use contracts::{
     research::{SplitKind, SplitPolicyV1},
     DbCounter, Id, SchemaV1,
 };
-use job::validation::{sample_covariance, validation_folds, ScoreCalibration};
+use domain::portfolio::sample_covariance;
+use job::validation::{validation_folds, ScoreCalibration};
 
 fn count(value: u64) -> DbCounter {
     DbCounter::new(value).unwrap()

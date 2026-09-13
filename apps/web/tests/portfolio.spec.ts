@@ -29,6 +29,7 @@ test('immutable Mandate preserves exact inputs and retries the original receipt 
   for (const [label, value] of [['Runtime 编号', id(20)], ['Runtime 配置版本', '9007199254740993'], ['投资域版本编号', id(21)], ['评估政策编号', id(22)], ['执行假设编号', id(23)], ['基础币种', 'USD'], ['资本假设', '12345678901234567890.123456789012345678'], ['费用依据产物编号', id(24)]] as const) {
     await drawer.getByLabel(label, { exact: true }).fill(value);
   }
+  await drawer.getByLabel('每决策周期方差上限（不用时留空）', { exact: true }).fill('0.000123456789012345');
   await drawer.getByLabel('调仓方式', { exact: true }).click();
   await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').getByText('固定间隔', { exact: true }).click();
   await drawer.getByLabel('间隔秒数', { exact: true }).fill('123');
@@ -46,7 +47,7 @@ test('immutable Mandate preserves exact inputs and retries the original receipt 
     optimizer: { adapter_kind: 'CLARABEL_QP', parameters: { schema_version: 1, risk_aversion: '1' } },
     covariance_estimator: { adapter_kind: 'SAMPLE_COVARIANCE', parameters: { ddof: 1 } },
     alpha_ensemble: { adapter_kind: 'FIXED_WEIGHTED_FORECAST', parameters: {} },
-    constraints: { schema_version: 1, group_bounds: [], asset_overrides: [], max_ex_ante_risk: null, max_participation: null, liquidity_ref: null },
+    constraints: { schema_version: 1, group_bounds: [], asset_overrides: [], max_ex_ante_risk: '0.000123456789012345', max_participation: null, liquidity_ref: null },
     rebalance_schedule: { schema_version: 1, kind: 'MANUAL', interval_seconds: null, calendar_ref: null, session_offset_seconds: null },
   } });
   await page.getByRole('button', { name: '配置 v1', exact: true }).click();

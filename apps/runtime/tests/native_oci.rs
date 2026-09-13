@@ -29,6 +29,7 @@ async fn real_native_portfolio_aggregates_original_forecasts_before_optimizing()
     let (catalog, mut request, wasm) = market::portfolio();
     let second = market::module("f64.const 0.03");
     request.mandate.objective = AllocationObjective::MaxUtility;
+    request.mandate.constraints.max_ex_ante_risk = Some("1".parse().unwrap());
     request.members[0].ensemble_weight = "0.25".parse().unwrap();
     request.members[1].ensemble_weight = "0.75".parse().unwrap();
     let model_ids = request
@@ -181,6 +182,7 @@ async fn real_native_portfolio_aggregates_original_forecasts_before_optimizing()
     assert_eq!(manifest.engine_versions["portfolio-models"], "4");
     assert_eq!(manifest.engine_versions["simulation-models"], "1");
     assert_eq!(manifest.engine_versions["portfolio-weights"], "1");
+    assert_eq!(manifest.engine_versions["portfolio-variance-bound"], "1");
     assert_eq!(manifest.engine_versions["ndarray"], "0.17.1");
     let [output] = manifest.artifacts.as_slice() else {
         panic!("one original allocation report");
@@ -209,6 +211,11 @@ async fn real_native_portfolio_aggregates_original_forecasts_before_optimizing()
     .unwrap();
     let result: NativePortfolioBuildResultV1 = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(result.allocation.solver_status, SolverStatus::Optimal);
+    assert_eq!(
+        result.input.constraints.max_ex_ante_risk,
+        Some("1".parse().unwrap())
+    );
+    domain::portfolio::allocation_result(&result.input, &result.allocation).unwrap();
     assert!(result
         .allocation
         .targets

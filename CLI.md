@@ -170,6 +170,10 @@ AllocatorSettingsV1）及FIXED_WEIGHTED_FORECAST / ndarray::ArrayBase::dot / 0.1
 （参数为空对象，混合权重在原forecasts中）。顶层settings已删除；未知类/版本、
 错误角色、额外参数均拒绝，不默认选择模型。新镜像还需portfolio-models/4能力。
 正Decimal的risk_aversion现在冻结在optimizer.parameters中，顶层同名字段已删除。
+VARIANCE 的 constraints.max_ex_ante_risk 可为正的每决策周期收益方差上限，或 null；
+不是标准差/年化波动率。CLARABEL_QP 原生适配可带二阶锥约束，镜像还须
+portfolio-variance-bound/1 与 SECOND_ORDER_CONE；发布复核允许上限乘 exposure_tolerance
+的相对误差，不允许同数值的绝对方差误差。CVAR、RISK_BUDGETING 仍明确拒绝。
 
 协方差数值适配的引用为SAMPLE_COVARIANCE / ndarray_stats::CorrelationExt::cov /
 0.7.0，parameters仅为`{"ddof":1}`，不能传年化、补值或另一估计器参数。

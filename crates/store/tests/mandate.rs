@@ -12,6 +12,60 @@ use store::StoreError;
 use support::research_support as research;
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn variance_bound_requires_both_native_adapter_and_cone_without_partial_writes(pool: PgPool) {
+    let (store, actor) = research::operator(&pool).await;
+    let mut request = support::request(&pool, &store, &actor).await;
+    request.content.constraints.max_ex_ante_risk = Some("0.0001".parse().unwrap());
+    let original: serde_json::Value = sqlx::query_scalar("SELECT o.outcome FROM app.runtime_probe_observations o JOIN app.runtime_integrations r ON r.last_capability_snapshot_artifact_id=o.snapshot_artifact_id WHERE r.id=$1")
+        .bind(request.runtime_id.as_uuid()).fetch_one(&pool).await.unwrap();
+    let RuntimeProbeOutcomeV1::Available { capabilities } =
+        serde_json::from_value(original["result"].clone()).unwrap()
+    else {
+        panic!("original controlled observation")
+    };
+    for mutation in 0..3 {
+        let mut cap = capabilities.clone();
+        if mutation != 0 {
+            cap.engine_versions
+                .insert("portfolio-variance-bound".into(), "1".into());
+        }
+        if mutation != 1 {
+            cap.solver_capabilities.push("SECOND_ORDER_CONE".into());
+        }
+        request.expected_runtime_revision = support::observation::publish(
+            &pool,
+            request.runtime_id,
+            RuntimeProbeOutcomeV1::Available { capabilities: cap },
+            chrono::Duration::seconds(60),
+        )
+        .await;
+        let result = store
+            .create_mandate(&actor, "variance-bound", &request)
+            .await;
+        if mutation < 2 {
+            assert!(matches!(
+                result,
+                Err(StoreError::Domain(
+                    domain::DomainError::CapabilityUnavailable("portfolio_variance_bound")
+                ))
+            ));
+            let count: i64 = sqlx::query_scalar("SELECT count(*) FROM app.portfolio_mandates")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(count, 0);
+        } else {
+            let saved = result.unwrap().resource;
+            assert_eq!(saved.version, 1);
+            assert_eq!(
+                store.mandate(&actor, saved.id).await.unwrap().content,
+                request.content
+            );
+        }
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn portfolio_admission_without_its_running_cycle_never_publishes_or_charges(pool: PgPool) {
     let (store, actor) = research::operator(&pool).await;
     let source = support::request(&pool, &store, &actor).await;

@@ -2201,6 +2201,8 @@ dependencies = [
  "chrono-tz",
  "contracts",
  "iso_currency",
+ "ndarray 0.17.1",
+ "ndarray-stats",
  "oci-spec",
  "proptest",
  "serde",

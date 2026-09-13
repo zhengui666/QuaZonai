@@ -13223,7 +13223,8 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/DecimalValue"
+                "$ref": "#/components/schemas/DecimalValue",
+                "description": "Positive per-decision-horizon return variance bound, not volatility or annualized risk.\nPublication allows only bound * exposure_tolerance additional variance."
               }
             ]
           },

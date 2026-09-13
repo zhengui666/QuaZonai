@@ -11,6 +11,28 @@ use sqlx::{postgres::PgRow, Row};
 
 mod candidates;
 
+pub(crate) fn variance_bound_capability(
+    constraints: &PortfolioConstraintsV1,
+    cap: &contracts::runtime::RuntimeCapabilitiesV1,
+) -> Result<(), domain::DomainError> {
+    if constraints.max_ex_ante_risk.is_some()
+        && (cap
+            .engine_versions
+            .get("portfolio-variance-bound")
+            .map(String::as_str)
+            != Some("1")
+            || !cap
+                .solver_capabilities
+                .iter()
+                .any(|v| v == "SECOND_ORDER_CONE"))
+    {
+        return Err(domain::DomainError::CapabilityUnavailable(
+            "portfolio_variance_bound",
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn view(r: &PgRow) -> Result<MandateViewV1, StoreError> {
     Ok(MandateViewV1 {
         id: db::id(r.try_get("id")?)?,
@@ -132,6 +154,7 @@ impl Store {
         if !cap.solver_capabilities.iter().any(|v| v == "CONVEX_QP") {
             return Err(domain::DomainError::CapabilityUnavailable("mandate_native_solver").into());
         }
+        variance_bound_capability(&c.constraints, &cap)?;
         let r = sqlx::query("SELECT e.*,u.calendar_ref AS universe_calendar,u.calendar_version AS universe_calendar_version,p.selection_rule FROM app.execution_assumptions e JOIN app.universe_versions u ON u.id=$2 JOIN app.evaluation_policies p ON p.id=$3 AND p.project_id=$4 WHERE e.id=$1")
             .bind(c.execution_assumptions_id.as_uuid()).bind(c.universe_version_id.as_uuid()).bind(c.required_evaluation_policy_id.as_uuid()).bind(request.project_id.as_uuid()).fetch_optional(&mut *tx).await?.ok_or(StoreError::NotFound)?;
         let selection: SelectionRuleV1 = serde_json::from_value(r.try_get("selection_rule")?)

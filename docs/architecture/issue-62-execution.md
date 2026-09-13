@@ -3,6 +3,38 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Native per-horizon variance bound, 2026-09-13
+
+The patch over `a510ba0c` implements the optional positive VARIANCE bound with
+the installed nalgebra Cholesky factor and Clarabel 0.11.1 second-order cone.
+The existing ndarray-stats covariance adapter moves to domain ownership; solver
+and publication reuse it, without a second covariance implementation or wrapper.
+Publication recomputes variance from stored Decimal targets and frozen returns;
+its allowance is bound times exposure_tolerance, not absolute variance tolerance.
+Mandate creation and Build admission share the capability gate requiring both
+portfolio-variance-bound/1 and SECOND_ORDER_CONE. The AntD form preserves the
+optional exact Decimal through failed-response retry; API descriptions and user
+instructions specify per-decision-horizon variance, not annualized volatility.
+
+Native analytical cases check correlated covariance [[1,1],[1,5]], binding
+weights [0.75,0.25] at variance 1.25, rejection of corrupted weights, an infeasible
+0.9 bound with no targets, and relative publication tolerance at tiny variance.
+`verify-ohXuq4` exited 0 with unchanged source: check/fmt/strict Clippy and 195
+tests (127 contracts/domain, 37 native science, 9 Store, 1 source SQL, 21 HTTP/CLI).
+The controlled PostgreSQL test rejects either missing capability without saving
+a partial Mandate, then saves and rereads the original constraint when both exist.
+`web-verify-bQCE0G` exited 0: reproducible generated artifacts, typecheck, 505 unit
+tests, wire checks, build, 36 settings browser checks and 210 full browser checks.
+
+`owner-oci-pslvBN` built and tested image
+`sha256:73f23e90d905aaca4d5cadeab5a43e83b02fb95df6f2c9b542ab6c355702ff79`:
+all 9 actual OCI tests passed with unchanged source. Its original catalog/Wasm
+portfolio test now executes with a variance bound, checks the new manifest
+capability and reapplies domain validation to the actual result. Market/model
+fixtures remain SYNTHETIC, not real market acceptance or qualification evidence.
+CVAR, Risk Budgeting, complete cost/source adapters, independent Candidate
+validation and delivery remain required; this patch is not Issue #62 completion.
+
 ## Original Candidate and LAST_TARGET recovery, 2026-09-13
 
 The test patch over `0c1b268b` extends the same two-original-qualification chain

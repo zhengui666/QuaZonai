@@ -88,12 +88,8 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
             && input.objective != AllocationObjective::RiskBudgeting,
         "UNSUPPORTED_ALLOCATION_OBJECTIVE"
     );
-    ensure!(
-        input.constraints.max_ex_ante_risk.is_none(),
-        "UNSUPPORTED_EX_ANTE_RISK_BOUND"
-    );
     let n = input.assets.len();
-    let estimated = crate::validation::sample_covariance(
+    let estimated = domain::portfolio::sample_covariance(
         &input.covariance_estimator,
         &input.return_history.asset_returns,
     )?;
@@ -104,10 +100,8 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
         (0..n).all(|i| (0..n).all(|j| covariance[(i, j)] == covariance[(j, i)])),
         "ASYMMETRIC_COVARIANCE"
     );
-    ensure!(
-        Cholesky::new(covariance).is_some(),
-        "NONPOSITIVE_DEFINITE_COVARIANCE"
-    );
+    let cholesky = Cholesky::new(covariance)
+        .ok_or_else(|| anyhow::anyhow!("NONPOSITIVE_DEFINITE_COVARIANCE"))?;
     let variables = 3 * n + 1;
     let cash = n;
     let gross = n + 1;
@@ -223,12 +217,26 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
             -native_number(&group.min)?,
         );
     }
+    let mut cones = vec![ZeroConeT(1), NonnegativeConeT(b.len() - 1)];
+    if let Some(bound) = &constraints.max_ex_ante_risk {
+        // Sigma = L L^T, so the cone constrains ||L^T w|| <= sqrt(bound).
+        b.push(native_number(bound)?.sqrt());
+        let lower = cholesky.l();
+        for i in 0..n {
+            for j in i..n {
+                a_rows.push(b.len());
+                a_cols.push(j);
+                a_values.push(-lower[(j, i)]);
+            }
+            b.push(0.0);
+        }
+        cones.push(SecondOrderConeT(n + 1));
+    }
     ensure!(
         b.iter().chain(&a_values).chain(&q).all(|v| v.is_finite()),
         "NONFINITE_CONSTRAINT_MATRIX"
     );
     let a = CscMatrix::new_from_triplets(b.len(), variables, a_rows, a_cols, a_values);
-    let cones = [ZeroConeT(1), NonnegativeConeT(b.len() - 1)];
     let tolerance = native_number(&parameters.solver_tolerance)?;
     let settings = DefaultSettingsBuilder::default()
         .verbose(false)

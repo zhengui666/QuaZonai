@@ -1,8 +1,10 @@
 //! Allocation ownership and publication bounds, independent of the numerical solver.
 use crate::{control, DomainError};
-use bigdecimal::BigDecimal;
+use bigdecimal::{BigDecimal, ToPrimitive};
 use contracts::{portfolio::*, DecimalValue};
 use std::collections::{BTreeMap, BTreeSet};
+mod covariance;
+pub use covariance::sample_covariance;
 
 fn invalid() -> DomainError {
     DomainError::Invalid("portfolio_allocation")
@@ -316,7 +318,6 @@ pub fn mandate(content: &MandateContentV1) -> Result<(), DomainError> {
     }
     if content.objective == AllocationObjective::RiskBudgeting
         || content.risk_measure != AllocationRisk::Variance
-        || content.constraints.max_ex_ante_risk.is_some()
     {
         return Err(DomainError::CapabilityUnavailable(
             "portfolio_mandate_objective",
@@ -640,11 +641,33 @@ pub fn allocation_result(
             return Err(DomainError::Invalid("portfolio_group_bound"));
         }
     }
-    // A caller must never claim a currently unsupported nonlinear constraint was checked.
-    if constraints.max_ex_ante_risk.is_some() {
-        return Err(DomainError::CapabilityUnavailable(
-            "allocation_ex_ante_risk",
-        ));
+    if let Some(bound) = &constraints.max_ex_ante_risk {
+        let native = |value: &BigDecimal| {
+            value
+                .to_f64()
+                .filter(|v| v.is_finite() && (*v != 0.0 || value == &BigDecimal::from(0)))
+                .ok_or(DomainError::Invalid("allocation_risk_number_range"))
+        };
+        let covariance = sample_covariance(
+            &input.covariance_estimator,
+            &input.return_history.asset_returns,
+        )
+        .map_err(|_| DomainError::Invalid("allocation_risk_covariance"))?;
+        let n = targets.len();
+        let matrix =
+            ndarray::Array2::from_shape_vec((n, n), covariance.into_iter().flatten().collect())
+                .map_err(|_| invalid())?;
+        let weights = ndarray::Array1::from_vec(
+            targets
+                .iter()
+                .map(|t| native(t.weight.as_decimal()))
+                .collect::<Result<Vec<_>, _>>()?,
+        );
+        let variance = weights.dot(&matrix.dot(&weights));
+        let upper = native(&(bound.as_decimal() * (BigDecimal::from(1) + tolerance)))?;
+        if !variance.is_finite() || variance < 0.0 || variance > upper {
+            return Err(DomainError::Invalid("allocation_ex_ante_risk_bound"));
+        }
     }
     Ok(())
 }
