@@ -71,6 +71,7 @@ test('Mandate authoring protects dirty input and cannot write offline or with mi
   const confirm = page.getByRole('dialog', { name: '放弃未保存的组合配置？', exact: true });
   await confirm.getByRole('button', { name: '继续编辑', exact: true }).click();
   await expect(drawer.getByLabel('资本假设', { exact: true })).toHaveValue('123.456');
+  await expect(page.getByRole('combobox', { name: '选择组合所属项目', exact: true })).toBeDisabled();
   await context.setOffline(true);
   await expect(drawer.getByRole('button', { name: '保存不可变配置', exact: true })).toBeDisabled();
   await context.setOffline(false);
@@ -79,4 +80,5 @@ test('Mandate authoring protects dirty input and cannot write offline or with mi
   await drawer.getByRole('button', { name: '取消', exact: true }).click();
   await page.getByRole('dialog', { name: '放弃未保存的组合配置？', exact: true }).getByRole('button', { name: '放弃修改', exact: true }).click();
   await expect(drawer).not.toBeVisible();
+  await expect(page.getByRole('combobox', { name: '选择组合所属项目', exact: true })).toBeEnabled();
 });

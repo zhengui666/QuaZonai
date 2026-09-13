@@ -44,6 +44,7 @@ test('execution assumptions keep explicit native models, exact values and origin
   await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').getByText('现金', { exact: true }).click();
   await drawer.getByRole('button', { name: '取消', exact: true }).click();
   await page.getByRole('dialog', { name: '放弃未保存的执行假设？', exact: true }).getByRole('button', { name: '继续编辑', exact: true }).click();
+  await expect(page.getByRole('combobox', { name: '选择组合所属项目', exact: true })).toBeDisabled();
   await context.setOffline(true);
   await expect(drawer.getByRole('button', { name: '保存不可变执行假设', exact: true })).toBeDisabled();
   await context.setOffline(false);
@@ -52,6 +53,7 @@ test('execution assumptions keep explicit native models, exact values and origin
   await expect(drawer.getByRole('button', { name: '保存不可变执行假设', exact: true })).toBeEnabled();
   await drawer.getByRole('button', { name: '保存不可变执行假设', exact: true }).click();
   await expect(drawer).not.toBeVisible();
+  await expect(page.getByRole('combobox', { name: '选择组合所属项目', exact: true })).toBeEnabled();
   expect(writes).toHaveLength(2); expect(writes[1]).toEqual(writes[0]); expect(writes[0]?.key).toBeTruthy();
   expect(writes[0]?.body).toMatchObject({ schema_version: 1, project_id: project.id, expected_runtime_revision: '9007199254740993', settings: {
     starting_capital: '12345678901234567890.123456789012345678', account_kind: 'CASH', snapshot_interval_ms: 1000,

@@ -1,13 +1,13 @@
 import { Alert, App, Button, Card, Descriptions, Drawer, Form, Input, InputNumber, Select, Space, Switch, Table, Tabs, Typography } from 'antd';
 import { ExecutionAssumptions } from './execution-assumptions';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useRef, useState } from 'react';
+import { useContext, useRef, useState } from 'react';
 import { api, dataOf, displayTime, Intent, isDecimal } from './api';
 import type { Schema } from './api';
 import { uuidPattern } from './auth';
 import { counterRules } from './budget-fields';
 import { ResourceSelect } from './resource-select';
-import { ErrorNotice, NoData, Pager, QueryPanel, useGuard, useOnline } from './ui';
+import { ErrorNotice, GuardContext, NoData, Pager, QueryPanel, useGuard, useOnline } from './ui';
 import { validateBaseCurrency } from './generated/responses.cjs';
 
 type Mandate = Schema['MandateViewV1'];
@@ -36,10 +36,11 @@ function mandateRequest(project: string, values: Fields): Schema['MandateCreateV
 
 export function Portfolios() {
   const [project, setProject] = useState<string>();
+  const { blocked } = useContext(GuardContext);
   return <Space orientation="vertical" size="large" className="full-width">
     <Typography.Title level={1}>组合</Typography.Title>
     <Alert showIcon type="info" title="先保存不可变的组合配置（Mandate）" description="配置保存不是 Alpha 资格、科学 PASS 或可交付目标。组合构建、独立回测与 Release 交付尚未接通，不会填充示例收益。" />
-    <ResourceSelect label="选择组合所属项目" value={project} onChange={setProject} queryKey={['portfolio-projects']} load={async (cursor, signal) => {
+    <ResourceSelect label="选择组合所属项目" value={project} onChange={setProject} disabled={blocked} queryKey={['portfolio-projects']} load={async (cursor, signal) => {
       const page = dataOf(await api.GET('/api/v2/projects', { params: { query: { cursor, limit: 50 } }, signal }));
       return { next_cursor: page.next_cursor, items: page.items.map(item => ({ value: item.id, label: `${item.name} · ${item.id}` })) };
     }} />
