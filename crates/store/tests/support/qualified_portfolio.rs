@@ -6,6 +6,8 @@ use store::turns::{NativePublicSummary, TurnOutcome, UsageReceipt};
 
 #[path = "portfolio_inputs.rs"]
 mod inputs;
+#[path = "portfolio_result.rs"]
+mod result;
 
 async fn begin(store: &Store, lease: &RunLease) {
     store
@@ -96,7 +98,7 @@ async fn answer(store: &Store, f: &cycle_support::Fixture, lease: &RunLease, tex
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn original_reviewed_alphas_admit_one_replayable_portfolio_build(pool: PgPool) {
+async fn original_reviewed_alphas_publish_candidates_and_retry_last_target(pool: PgPool) {
     let directory = tempfile::tempdir().unwrap();
     let objects = std::sync::Arc::new(
         integrations::artifacts::ArtifactStore::open(&directory.path().join("objects")).unwrap(),
@@ -360,4 +362,212 @@ async fn original_reviewed_alphas_admit_one_replayable_portfolio_build(pool: PgP
             );
         }
     }
+    result::complete(&pool, &store, &f, &lease, &job).await;
+    assert!(matches!(
+        store.acknowledge_run(&message).await,
+        Err(StoreError::Conflict)
+    ));
+    let candidate = validation_publication::publish(&store, &f, admitted.id)
+        .await
+        .unwrap()
+        .resource;
+    let facts:(String,String,String,i64,i64)=sqlx::query_as("SELECT c.solver_status,c.evidence_status,a.origin,(SELECT count(*) FROM app.candidate_alphas WHERE candidate_id=c.id),(SELECT count(*) FROM app.candidate_targets WHERE candidate_id=c.id) FROM app.portfolio_candidates c JOIN app.candidate_publications p ON p.candidate_id=c.id JOIN app.artifacts a ON a.id=c.target_artifact_id WHERE c.id=$1")
+        .bind(candidate.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        facts,
+        ("OPTIMAL".into(), "VALID".into(), "SYNTHETIC".into(), 2, 1)
+    );
+    let replay = store
+        .publish_scientific_result(
+            admitted.id,
+            |_, _| async { panic!("Candidate replay reads nothing") },
+            |_| async { panic!("Candidate replay publishes nothing") },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.resource, candidate);
+    store.acknowledge_run(&message).await.unwrap();
+
+    // A later decision consumes the original published target, not an account
+    // snapshot and not a copied qualification. It needs its own frozen cutoff.
+    use contracts::{
+        portfolio::PortfolioBuildWeightsV1,
+        research::{DataPartition, InputItemV1, InputPurpose, InputSetCreate},
+    };
+    let dataset: uuid::Uuid = sqlx::query_scalar(
+        "SELECT dataset_revision_id FROM app.input_set_items WHERE input_set_id=$1",
+    )
+    .bind(request.input_set_id.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let cutoff = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let input = store
+        .create_input_set(
+            &actor,
+            "last-target-input",
+            &InputSetCreate {
+                schema_version: SchemaV1,
+                project_id: f.data.project,
+                purpose: InputPurpose::Forward,
+                decision_cutoff: cutoff,
+                items: vec![InputItemV1::Dataset {
+                    dataset_revision_id: dataset.to_string().try_into().unwrap(),
+                    role: DataPartition::Forward,
+                }],
+            },
+        )
+        .await
+        .unwrap()
+        .resource
+        .header
+        .id;
+    let mut next = request;
+    next.input_set_id = input;
+    next.current_weights_source = PortfolioBuildWeightsV1::LastTarget {
+        candidate_id: candidate,
+    };
+    let stale = store
+        .start_portfolio_build(
+            &actor,
+            "stale-last-target",
+            &next,
+            |id, size| f.read(id, size),
+            |_| async { panic!("old catalog cutoff cannot admit a newer target") },
+        )
+        .await;
+    assert!(
+        matches!(stale,Err(StoreError::Domain(domain::DomainError::Fields(ref fields))) if fields.iter().any(|issue|issue.field=="portfolio.current_weights")),
+        "{stale:?}"
+    );
+    let dataset = inputs::forward(&pool, &store, &actor, &f).await;
+    let cutoff = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    next.input_set_id = store
+        .create_input_set(
+            &actor,
+            "current-last-target-input",
+            &InputSetCreate {
+                schema_version: SchemaV1,
+                project_id: f.data.project,
+                purpose: InputPurpose::Forward,
+                decision_cutoff: cutoff,
+                items: vec![InputItemV1::Dataset {
+                    dataset_revision_id: dataset,
+                    role: DataPartition::Forward,
+                }],
+            },
+        )
+        .await
+        .unwrap()
+        .resource
+        .header
+        .id;
+    let snapshot="SELECT (SELECT count(*) FROM app.portfolio_build_tasks),(SELECT count(*) FROM app.runs),(SELECT count(*) FROM app.artifacts),reserved_cpu_seconds FROM app.research_cycles WHERE id=$1";
+    let before: (i64, i64, i64, i64) = sqlx::query_as(snapshot)
+        .bind(cycle.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let mut allocated = Vec::new();
+    let failed = store
+        .start_portfolio_build(
+            &actor,
+            "last-target-build",
+            &next,
+            |id, size| f.read(id, size),
+            |object| {
+                allocated.push((
+                    object.id,
+                    DbCounter::new(object.bytes.len() as u64).unwrap(),
+                ));
+                std::future::ready(if allocated.len() == 2 {
+                    Err(StoreError::Integrity)
+                } else {
+                    f.objects
+                        .put(object.id, &object.bytes)
+                        .map_err(|_| StoreError::Integrity)
+                })
+            },
+        )
+        .await;
+    assert!(matches!(failed, Err(StoreError::Integrity)), "{failed:?}");
+    assert_eq!(allocated.len(), 2, "derived weights then native parameters");
+    let after: (i64, i64, i64, i64) = sqlx::query_as(snapshot)
+        .bind(cycle.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        before, after,
+        "no artifact rows, Run or CPU charge after the second publication fails"
+    );
+    for (id, size) in allocated {
+        store
+            .discard_unpublished_operator_artifact(id, |id| {
+                std::future::ready(
+                    f.objects
+                        .discard_unpublished(id)
+                        .map_err(|_| StoreError::Integrity),
+                )
+            })
+            .await
+            .unwrap();
+        assert!(f.read(id, size).await.is_err());
+    }
+    let mut published = 0;
+    let next_run = store
+        .start_portfolio_build(
+            &actor,
+            "last-target-build",
+            &next,
+            |id, size| f.read(id, size),
+            |object| {
+                published += 1;
+                std::future::ready(
+                    f.objects
+                        .put(object.id, &object.bytes)
+                        .map_err(|_| StoreError::Integrity),
+                )
+            },
+        )
+        .await
+        .unwrap()
+        .resource;
+    assert_eq!(published, 2);
+    let message = validation_publication::message(&pool, next_run.id).await;
+    let Some(ClaimResult::Leased(lease)) = store
+        .claim_native_run(&message, "last-target-build", 60)
+        .await
+        .unwrap()
+    else {
+        panic!("original LastTarget admission");
+    };
+    let job = store.native_job(next_run.id, &lease.fence).await.unwrap();
+    result::complete(&pool, &store, &f, &lease, &job).await;
+    let next_candidate = validation_publication::publish(&store, &f, next_run.id)
+        .await
+        .unwrap()
+        .resource;
+    assert_ne!(next_candidate, candidate);
+    let facts:(String,String,String,uuid::Uuid,Option<uuid::Uuid>)=sqlx::query_as("SELECT c.evidence_status,c.current_weights_source,a.origin,t.last_target_candidate_id,t.snapshot_id FROM app.portfolio_candidates c JOIN app.artifacts a ON a.id=c.target_artifact_id JOIN app.portfolio_build_tasks t ON t.run_id=c.run_id WHERE c.id=$1")
+        .bind(next_candidate.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        facts,
+        (
+            "VALID".into(),
+            "LAST_TARGET".into(),
+            "SYNTHETIC".into(),
+            candidate.as_uuid(),
+            None
+        )
+    );
+    store.acknowledge_run(&message).await.unwrap();
 }

@@ -3,6 +3,32 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Original Candidate and LAST_TARGET recovery, 2026-09-13
+
+The test patch over `0c1b268b` extends the same two-original-qualification chain
+through native-result adoption and Candidate publication. It verifies original
+members, one target, VALID/OPTIMAL with SYNTHETIC Paper provenance, refusal to ACK
+before publication, and exact Candidate replay without reads or writes. Native
+result values are explicitly controlled, not claimed solver or market execution.
+
+A second Build consumes this published Candidate as LAST_TARGET. Reusing the old
+catalog snapshot correctly fails: a later InputSet cutoff cannot expand its
+attested visibility to include the newer Candidate. A newly registered Forward
+snapshot permits the new decision without modifying the old snapshot or target.
+Failure at the second publication (derived weights then parameters) leaves Run,
+task, artifact-row and reserved-CPU counts unchanged. The original cleanup API
+removes only those newly allocated, unpublished files. Retrying the same command
+publishes both objects and a new VALID Candidate retaining the original source
+Candidate ID, LAST_TARGET marker and SYNTHETIC origin, with no snapshot-source FK.
+
+`verify-GHVGVv` / `verify-YW4mVS` exposed the old-snapshot cutoff rejection; it is
+now an explicit negative case, not a weakened production gate. The focused retry
+`verify-tDDXCG` passed. Final `verify-R3Zfuq` exited 0 with unchanged source:
+check/fmt/strict Clippy and 195 tests (4 portfolio unit, 31 native-validation,
+136 Store, 24 HTTP/CLI). No product code, API or native ABI changed in this patch.
+Actual full native science/market acceptance, remaining product functionality,
+review/CI gates and main verification remain required; no merge/closure claim.
+
 ## Source-bound portfolio admission, 2026-09-13
 
 The patch over `c4f58614` extends the two-qualified-source test through actual

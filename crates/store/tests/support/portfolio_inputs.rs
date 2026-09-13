@@ -13,6 +13,86 @@ fn nanos(time: chrono::DateTime<Utc>) -> DbCounter {
     DbCounter::new(time.timestamp_nanos_opt().unwrap().try_into().unwrap()).unwrap()
 }
 
+pub(super) async fn forward(
+    pool: &PgPool,
+    store: &Store,
+    actor: &Actor,
+    f: &cycle_support::Fixture,
+) -> Id {
+    let context = &f.freeze.execution_context;
+    let (artifact,size): (uuid::Uuid,i64) = sqlx::query_as("SELECT e.native_metadata_artifact_id,a.byte_count FROM app.dataset_registration_evidence e JOIN app.artifacts a ON a.id=e.native_metadata_artifact_id WHERE e.dataset_revision_id=$1")
+        .bind(f.data.discovery.as_uuid()).fetch_one(pool).await.unwrap();
+    let mut metadata: RuntimeCatalogMetadataV1 = serde_json::from_slice(
+        &f.read(
+            artifact.to_string().try_into().unwrap(),
+            DbCounter::new(size as u64).unwrap(),
+        )
+        .await
+        .unwrap(),
+    )
+    .unwrap();
+    let now: chrono::DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    metadata.native_snapshot_ref = format!("controlled-forward/{}", Id::new());
+    metadata.storage_version = Id::new().to_string();
+    metadata.partition = DataPartition::Forward;
+    metadata.event_start = now - Duration::minutes(1000);
+    metadata.event_end = now;
+    metadata.available_through = now;
+    metadata.quality.checked_at = now;
+    let quality = &mut metadata.quality.datasets[0];
+    quality.first_event_ns = nanos(metadata.event_start);
+    quality.last_event_ns = nanos(now - Duration::minutes(1));
+    quality.available_through_ns = nanos(now - Duration::seconds(59));
+    quality.selection.event_start_ns = nanos(metadata.event_start);
+    quality.selection.event_end_ns = nanos(now);
+    quality.selection.decision_cutoff_ns = nanos(now);
+    let revision: i64 = sqlx::query_scalar("SELECT revision FROM app.data_sources WHERE id=$1")
+        .bind(f.data.source.as_uuid())
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let RegistrationPreparation::Execute(ticket) = store
+        .prepare_dataset_registration(
+            actor,
+            &Id::new().to_string(),
+            &DatasetRegister {
+                schema_version: SchemaV1,
+                source_id: f.data.source,
+                grant_id: f.data.grant,
+                expected_source_revision: revision.to_string().try_into().unwrap(),
+                expected_runtime_revision: context.runtime_revision,
+                native_storage_version: metadata.storage_version.clone(),
+                existing_universe_version_id: Some(f.data.universe),
+            },
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("new Forward registration");
+    };
+    let dataset = store
+        .complete_dataset_registration(
+            *ticket,
+            serde_json::to_vec(&metadata).unwrap(),
+            |id, size| f.read(id, size),
+            |objects| {
+                std::future::ready(objects.into_iter().try_for_each(|object| {
+                    f.objects
+                        .put(object.id, &object.bytes)
+                        .map_err(|_| StoreError::Integrity)
+                }))
+            },
+        )
+        .await
+        .unwrap()
+        .resource;
+
+    dataset.id
+}
+
 pub(super) async fn request(
     pool: &PgPool,
     store: &Store,
@@ -49,76 +129,11 @@ pub(super) async fn request(
         .await
         .unwrap();
 
-    let (artifact,size): (uuid::Uuid,i64) = sqlx::query_as("SELECT e.native_metadata_artifact_id,a.byte_count FROM app.dataset_registration_evidence e JOIN app.artifacts a ON a.id=e.native_metadata_artifact_id WHERE e.dataset_revision_id=$1")
-        .bind(f.data.discovery.as_uuid()).fetch_one(pool).await.unwrap();
-    let mut metadata: RuntimeCatalogMetadataV1 = serde_json::from_slice(
-        &f.read(
-            artifact.to_string().try_into().unwrap(),
-            DbCounter::new(size as u64).unwrap(),
-        )
-        .await
-        .unwrap(),
-    )
-    .unwrap();
     let now: chrono::DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
         .fetch_one(pool)
         .await
         .unwrap();
-    metadata.native_snapshot_ref = format!("controlled-forward/{}", Id::new());
-    metadata.storage_version = "forward-controlled-v1".into();
-    metadata.partition = DataPartition::Forward;
-    metadata.event_start = now - Duration::minutes(1000);
-    metadata.event_end = now;
-    metadata.available_through = now;
-    metadata.quality.checked_at = now;
-    let quality = &mut metadata.quality.datasets[0];
-    quality.first_event_ns = nanos(metadata.event_start);
-    quality.last_event_ns = nanos(now - Duration::minutes(1));
-    quality.available_through_ns = nanos(now - Duration::seconds(59));
-    quality.selection.event_start_ns = nanos(metadata.event_start);
-    quality.selection.event_end_ns = nanos(now);
-    quality.selection.decision_cutoff_ns = nanos(now);
-    let revision: i64 = sqlx::query_scalar("SELECT revision FROM app.data_sources WHERE id=$1")
-        .bind(f.data.source.as_uuid())
-        .fetch_one(pool)
-        .await
-        .unwrap();
-    let RegistrationPreparation::Execute(ticket) = store
-        .prepare_dataset_registration(
-            actor,
-            "portfolio-forward",
-            &DatasetRegister {
-                schema_version: SchemaV1,
-                source_id: f.data.source,
-                grant_id: f.data.grant,
-                expected_source_revision: revision.to_string().try_into().unwrap(),
-                expected_runtime_revision: context.runtime_revision,
-                native_storage_version: metadata.storage_version.clone(),
-                existing_universe_version_id: Some(f.data.universe),
-            },
-        )
-        .await
-        .unwrap()
-    else {
-        panic!("new Forward registration");
-    };
-    let dataset = store
-        .complete_dataset_registration(
-            *ticket,
-            serde_json::to_vec(&metadata).unwrap(),
-            |id, size| f.read(id, size),
-            |objects| {
-                std::future::ready(objects.into_iter().try_for_each(|object| {
-                    f.objects
-                        .put(object.id, &object.bytes)
-                        .map_err(|_| StoreError::Integrity)
-                }))
-            },
-        )
-        .await
-        .unwrap()
-        .resource;
-
+    let dataset = forward(pool, store, actor, f).await;
     let downstream = store
         .create_downstream(
             actor,
@@ -229,7 +244,7 @@ pub(super) async fn request(
                 purpose: InputPurpose::Forward,
                 decision_cutoff: cutoff,
                 items: vec![InputItemV1::Dataset {
-                    dataset_revision_id: dataset.id,
+                    dataset_revision_id: dataset,
                     role: DataPartition::Forward,
                 }],
             },
