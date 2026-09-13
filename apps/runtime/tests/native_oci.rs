@@ -35,7 +35,7 @@ async fn real_native_rolling_study_uses_original_models_in_one_account() {
         science::NativePortfolioStudyResultV1,
         Revision,
     };
-    let (catalog, request, wasm) = market::study();
+    let (catalog, request, wasm) = market::study_liquidity("10000000", "0.4");
     let dataset = Id::new();
     let selection = &request.source_selection;
     let observed = job::catalog::load_catalog(catalog.path(), selection).unwrap();
@@ -104,6 +104,14 @@ async fn real_native_rolling_study_uses_original_models_in_one_account() {
         dataset_revision_id: dataset,
         request: Box::new(request),
     };
+    let NativeTaskParametersV1::StudyPortfolio { request, .. } = &operation else {
+        unreachable!()
+    };
+    objects.push((
+        request.mandate.constraints.liquidity_ref.unwrap(),
+        serde_json::to_vec(request.rolling_liquidity.as_ref().unwrap()).unwrap(),
+        ArtifactInputRole::Parameters,
+    ));
     let parameters_id = Id::new();
     objects.push((
         parameters_id,
@@ -153,7 +161,8 @@ async fn real_native_rolling_study_uses_original_models_in_one_account() {
     let manifest = f.manifest(&spec).await;
     domain::runtime_jobs::manifest(&manifest, &spec, accepted.submitted_at, runtime::now())
         .unwrap();
-    assert_eq!(manifest.engine_versions["portfolio-study"], "2");
+    assert_eq!(manifest.engine_versions["portfolio-study"], "3");
+    assert_eq!(manifest.engine_versions["portfolio-rolling-liquidity"], "1");
     assert_eq!(manifest.engine_versions["portfolio-history"], "1");
     assert_eq!(manifest.artifacts.len(), 3);
     let mut outputs = Vec::new();
@@ -190,6 +199,7 @@ async fn real_native_rolling_study_uses_original_models_in_one_account() {
     )
     .unwrap();
     assert_eq!(report.frames.len(), 3);
+    assert!(report.frames.iter().all(|f| f.bar_notionals.len() == 2));
     assert_ne!(
         report.frames[0].input.capital_assumption,
         report.frames[1].input.capital_assumption

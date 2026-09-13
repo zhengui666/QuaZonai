@@ -342,8 +342,12 @@ fn actual_managed_sealed_uses_original_fit_and_rejects_other_partitions() {
 #[test]
 fn rolling_portfolio_managed_binds_original_objects_and_reports_infeasibility() {
     use contracts::science::NativePortfolioStudyResultV1;
-    for infeasible in [false, true] {
-        let (catalog, mut request, wasm) = market::study();
+    for (liquidity, infeasible) in [(false, false), (false, true), (true, false), (true, true)] {
+        let (catalog, mut request, wasm) = if liquidity {
+            market::study_liquidity("10000000", "0.4")
+        } else {
+            market::study()
+        };
         if infeasible {
             request.mandate.constraints.max_asset_weight = "0.4".parse().unwrap();
         }
@@ -364,6 +368,13 @@ fn rolling_portfolio_managed_binds_original_objects_and_reports_infeasibility() 
             serde_json::to_vec(&request.execution_settings).unwrap(),
             ArtifactInputRole::Parameters,
         ));
+        if let Some(policy) = &request.rolling_liquidity {
+            objects.push((
+                request.mandate.constraints.liquidity_ref.unwrap(),
+                serde_json::to_vec(policy).unwrap(),
+                ArtifactInputRole::Parameters,
+            ));
+        }
         let mut inputs = vec![RuntimeInputV1::Dataset {
             revision_id: dataset,
             registered_ref: "synthetic-native-regression".into(),
@@ -399,8 +410,23 @@ fn rolling_portfolio_managed_binds_original_objects_and_reports_infeasibility() 
         let mut missing_model = f.spec.clone();
         missing_model.inputs.remove(1);
         assert!(domain::execution::task(&missing_model, &parameters).is_err());
+        if liquidity {
+            let NativeTaskParametersV1::StudyPortfolio { request, .. } = &parameters else {
+                unreachable!()
+            };
+            let mut missing = f.spec.clone();
+            missing.inputs.retain(|i| {
+                !matches!(i, RuntimeInputV1::Artifact { artifact_id, .. }
+                if Some(*artifact_id) == request.mandate.constraints.liquidity_ref)
+            });
+            assert!(domain::execution::task(&missing, &parameters).is_err());
+        }
         assert!(execute(&f));
         let report: NativePortfolioStudyResultV1 = result(&f, "qz.portfolio_study");
+        assert!(report
+            .frames
+            .iter()
+            .all(|frame| frame.bar_notionals.len() == if liquidity { 2 } else { 0 }));
         let outputs = output_bytes(&f);
         let index = outputs
             .iter()

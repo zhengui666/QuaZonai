@@ -23,13 +23,14 @@ pub fn instant(n: u64) -> DbCounter {
 }
 
 pub fn market(fee: &str, rows_per_asset: u32) -> (tempfile::TempDir, NativeSimulationRequestV1) {
-    market_direction(fee, rows_per_asset, 1.0)
+    market_direction(fee, rows_per_asset, 1.0, "10000000")
 }
 
 fn market_direction(
     fee: &str,
     rows_per_asset: u32,
     direction: f64,
+    volume: &str,
 ) -> (tempfile::TempDir, NativeSimulationRequestV1) {
     let directory = tempfile::tempdir().unwrap();
     let catalog = ParquetDataCatalog::from_uri(
@@ -77,7 +78,7 @@ fn market_direction(
                     Price::from(format!("{:.5}", price + 0.0002).as_str()),
                     Price::from(format!("{:.5}", price - 0.0002).as_str()),
                     Price::from(format!("{price:.5}").as_str()),
-                    Quantity::from("10000000"),
+                    Quantity::from(volume),
                     (u64::from(i) * INTERVAL_NS).into(),
                     (u64::from(i) * INTERVAL_NS + 1).into(),
                 )
@@ -190,15 +191,37 @@ pub fn portfolio() -> (tempfile::TempDir, NativePortfolioBuildRequestV1, Vec<u8>
 }
 
 pub fn portfolio_with_losses() -> (tempfile::TempDir, NativePortfolioBuildRequestV1, Vec<u8>) {
-    portfolio_from_market(market_direction("0", 20, -1.0))
+    portfolio_from_market(market_direction("0", 20, -1.0, "10000000"))
 }
 
 pub fn study() -> (tempfile::TempDir, NativePortfolioStudyRequestV1, Vec<u8>) {
-    let (catalog, original, model) = portfolio_from_market(market("0", 2900));
+    study_with_volume("10000000")
+}
+
+pub fn study_liquidity(
+    volume: &str,
+    participation: &str,
+) -> (tempfile::TempDir, NativePortfolioStudyRequestV1, Vec<u8>) {
+    let (catalog, mut request, model) = study_with_volume(volume);
+    let policy = NativeRollingBarLiquidityPolicyV1 {
+        schema_version: SchemaV1,
+        maximum_age_seconds: 120,
+        participation_limit: participation.parse().unwrap(),
+    };
+    request.mandate.constraints.liquidity_ref = Some(contracts::Id::new());
+    request.mandate.constraints.max_participation = Some(policy.participation_limit.clone());
+    request.rolling_liquidity = Some(policy);
+    (catalog, request, model)
+}
+
+fn study_with_volume(volume: &str) -> (tempfile::TempDir, NativePortfolioStudyRequestV1, Vec<u8>) {
+    let (catalog, original, model) =
+        portfolio_from_market(market_direction("0", 2900, 1.0, volume));
     let mut request = NativePortfolioStudyRequestV1 {
         schema_version: SchemaV1,
         source_selection: original.selection,
         evaluation_start_ns: instant(10),
+        rolling_liquidity: None,
         research_available_through_ns: instant(9),
         mandate: original.mandate,
         execution_settings: original.execution_settings,

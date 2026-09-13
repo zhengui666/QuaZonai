@@ -21,6 +21,7 @@ pub fn evaluate(
         .chain(std::iter::once(
             request.mandate.constraints.transaction_costs_ref,
         ))
+        .chain(request.mandate.constraints.liquidity_ref)
     {
         if let std::collections::btree_map::Entry::Vacant(entry) = objects.entry(id) {
             entry.insert(read(id)?);
@@ -32,6 +33,16 @@ pub fn evaluate(
         serde_json::to_value(&costs)? == serde_json::to_value(&request.execution_settings)?,
         "PORTFOLIO_EXECUTION_SETTINGS_SOURCE_MISMATCH"
     );
+    if let Some(policy) = &request.rolling_liquidity {
+        let original: NativeRollingBarLiquidityPolicyV1 = serde_json::from_slice(
+            &objects[&request
+                .mandate
+                .constraints
+                .liquidity_ref
+                .ok_or_else(|| anyhow::anyhow!("STUDY_LIQUIDITY_POLICY_MISSING"))?],
+        )?;
+        ensure!(original == *policy, "STUDY_LIQUIDITY_POLICY_MISMATCH");
+    }
     let mut models = request.members.clone();
     for member in &models {
         if let Some(id) = member.calibration_artifact_id {
@@ -78,11 +89,23 @@ pub fn evaluate(
         consumed = consumed
             .checked_add(prepared.consumed_fuel.get())
             .ok_or_else(|| anyhow::anyhow!("PORTFOLIO_FUEL_OVERFLOW"))?;
+        let bar_notionals = if request.rolling_liquidity.is_some() {
+            crate::catalog::last_bar_notionals(&crate::catalog::load_catalog(catalog, &selection)?)?
+        } else {
+            Vec::new()
+        };
+        let source_assets = domain::execution::portfolio_study_liquidity_assets(
+            request,
+            cutoff,
+            prepared.forecasts.forecast_asof_ns,
+            cutoff,
+            &bar_notionals,
+        )?;
         let assets = domain::execution::portfolio_costs(
             &selection,
             &request.mandate,
             &request.execution_settings,
-            &request.assets,
+            &source_assets,
             &prepared.slippage,
         )?;
         let input = crate::portfolio::allocation_input(
@@ -95,6 +118,11 @@ pub fn evaluate(
             cutoff_ns: cutoff,
             input,
             slippage: prepared.slippage,
+            bar_notionals,
+            liquidity_maximum_age: request
+                .rolling_liquidity
+                .as_ref()
+                .map(|p| p.maximum_age_seconds),
         });
         // Schedule only. Actual weights are produced inside the native account before any order.
         points.push(NativeTargetPointV1 {

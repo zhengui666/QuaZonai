@@ -20,7 +20,7 @@ pub use output::{
 pub use portfolio::{
     candidate_simulation, portfolio_build_liquidity, portfolio_build_request,
     portfolio_build_result, portfolio_costs, portfolio_execution_costs, portfolio_sequence,
-    portfolio_study_cutoffs,
+    portfolio_study_cutoffs, portfolio_study_liquidity_assets,
 };
 
 fn bad(field: &str) -> DomainError {
@@ -224,13 +224,15 @@ pub fn task(spec: &JobSpecV1, parameters: &NativeTaskParametersV1) -> Result<(),
                 .flat_map(|m| std::iter::once(m.model_artifact_id).chain(m.calibration_artifact_id))
                 .collect::<BTreeSet<_>>();
             let costs = request.mandate.constraints.transaction_costs_ref;
+            let liquidity = request.mandate.constraints.liquidity_ref;
             if !spec.inputs.iter().any(|i| matches!(i, RuntimeInputV1::Dataset { revision_id, role: contracts::research::DataPartition::Forward, .. } if revision_id == dataset_revision_id))
                 || objects.iter().any(|id| !artifact(spec, *id, ArtifactInputRole::Model))
                 || !artifact(spec, costs, ArtifactInputRole::Parameters)
+                || liquidity.is_some_and(|id| !artifact(spec, id, ArtifactInputRole::Parameters))
                 || spec.inputs.iter().any(|i| match i {
                     RuntimeInputV1::Dataset { revision_id, role, .. } => revision_id != dataset_revision_id || *role != contracts::research::DataPartition::Forward,
                     RuntimeInputV1::Artifact { artifact_id, role, .. } => !(*role == ArtifactInputRole::Model && objects.contains(artifact_id)
-                        || *role == ArtifactInputRole::Parameters && (*artifact_id == costs || *artifact_id == spec.parameters_artifact_id)),
+                        || *role == ArtifactInputRole::Parameters && (*artifact_id == costs || *artifact_id == spec.parameters_artifact_id || Some(*artifact_id) == liquidity)),
                 }) { return Err(bad("portfolio_study.inputs")); }
         }
         NativeTaskParametersV1::BuildPortfolio {

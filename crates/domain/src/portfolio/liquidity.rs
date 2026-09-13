@@ -28,15 +28,30 @@ pub fn bar_liquidity_values<'a>(
         .last_bar_notionals
         .as_deref()
         .ok_or(DomainError::Invalid("bar_liquidity_not_measured"))?;
-    let age = u64::from(assumption.maximum_age_seconds) * 1_000_000_000;
-    if quality.selection.decision_cutoff_ns > at
+    if quality.selection.decision_cutoff_ns > at {
+        return Err(DomainError::Invalid("bar_liquidity_expired_or_mismatched"));
+    }
+    bar_liquidity_age(values, currency, assumption.maximum_age_seconds, at)?;
+    Ok(values)
+}
+
+pub fn bar_liquidity_age(
+    values: &[NativeBarNotionalV1],
+    currency: &str,
+    maximum_age_seconds: u32,
+    at: DbCounter,
+) -> Result<(), DomainError> {
+    let age = u64::from(maximum_age_seconds) * 1_000_000_000;
+    if maximum_age_seconds == 0
+        || values.is_empty()
         || values.iter().any(|value| {
             value.currency != currency
                 || value.available_ns > at
+                || value.event_ns > at
                 || at.get().saturating_sub(value.event_ns.get()) >= age
         })
     {
         return Err(DomainError::Invalid("bar_liquidity_expired_or_mismatched"));
     }
-    Ok(values)
+    Ok(())
 }

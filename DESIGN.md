@@ -686,6 +686,19 @@ Store在Build准入及Candidate发布时重新读取执行假设原来源，核�
 不能提升FIXTURE/SYNTHETIC；绑定消费需要portfolio-liquidity/1镜像能力。
 非零滑点规划适配见A5.2；DATA_BACKED仍需完整来源适配，不因模型概率或历史量升级。
 
+离线STUDY_PORTFOLIO的滚动BAR政策与上述有期限的单次快照是不同输入，不延长或
+复用已过期快照。可选rolling_liquidity冻结NativeRollingBarLiquidityPolicyV1
+{schema_version:1,maximum_age_seconds:u32>0,participation_limit:Decimal in (0,1]}；
+Mandate.liquidity_ref引用该政策的原PARAMETERS产物，max_participation必须等于
+政策原值，job重读字节核对。此原生计算合同不替代正式Store政策登记/准入。
+只测量研究本身的原FORWARD目录；逐cutoff读取同一原选择的已知前缀，复用
+DATA_VALIDATE的Nautilus try_calculate_notional_value，不输入手填available_notional、
+不创建每BAR业务对象、不借最后全样本量回填历史。每帧报告保留原NativeBarNotional
+值及时间，资产顺序/币种/截止/零量均核对；在实际引擎调仓时再次检查专属年龄。
+原生优化使用该历史notional/当时模拟权益乘原参与率限制绝对权重变化，不按经过
+天数或horizon放大量，不二次扣成本或推断未来深度。无政策时引用/参与率/测量均空。
+真实零量是零约束，缺值、未来、过期或不一致必须失败，不补常数或提升DATA_BACKED。
+
 原生Universe membership每条带可选groups（最多64个唯一、1..120字符的组标识）。
 null/未提供表示分类未知，[]表示来源明确声明没有组；不自动按名称、币种或证券
 类型猜分类。组集合随该条valid_from/valid_until/available_at生效与可用，沿原

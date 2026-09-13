@@ -3,6 +3,36 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Original per-cutoff BAR liquidity, 2026-09-14
+
+STUDY_PORTFOLIO now requires portfolio-study/3 and portfolio-rolling-liquidity/1.
+An original PARAMETERS policy freezes BAR maximum age and participation; the
+Mandate references that exact file and matching participation. Each study prefix
+uses the same native Nautilus notional calculation as DATA_VALIDATE. No caller
+supplied available-notional values, expired snapshot reuse, synthetic quality
+report, new numerical engine or dependency was added. Actual account execution
+rechecks age before allocation, and participation uses actual simulated equity.
+Original frame values, identities, cutoff and execution times are bound on adoption.
+
+The two actual study CLI tests passed, including changing per-cutoff notionals,
+future availability, altered values/policy, zero volume, tiny participation and
+an original 60-second policy which is fresh at cutoff but expired at execution.
+The managed study test passed all four liquidity/no-liquidity and feasible/
+infeasible variants, including missing original policy and exact artifact binding.
+Runtime's 27 tests passed. On f8f76320 plus frozen patches, verify-I1DLWv passed
+229 mandate checks and verify-TUlkYU passed 206 evidence checks, with workspace
+check/fmt/strict Clippy, unchanged source and isolated PostgreSQL stopped.
+web-verify-jB6oxh reproduced all six generated outputs twice without handwritten
+changes. owner-oci-FkPfDu rebuilt the image and passed all 15 actual Docker tests
+in 39.84 seconds; its rolling study consumed the original policy and downloaded
+all three bound artifacts. Source remained unchanged. Image identity:
+sha256:82bbbdefaaba1da540e482da7ff9a0eeda1fb2586f641fed9e11de2450ea39af.
+
+These controlled native execution proofs do not establish DATA_BACKED, REAL/PIT,
+scientific PASS or formal PORTFOLIO publication. Complete schedules, Store policy
+admission, independent publication, Release/delivery and recovery remain required.
+No push, GitHub review, merge or Issue closure occurred in this stage.
+
 ## Native Arrow portfolio target history, 2026-09-14
 
 STUDY_PORTFOLIO now requires portfolio-study/2 and portfolio-history/1. The original

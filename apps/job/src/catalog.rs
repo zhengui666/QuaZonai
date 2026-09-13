@@ -22,6 +22,51 @@ pub struct NativeMarketData {
     pub rows: usize,
 }
 
+/// Same last-known native BAR valuation for quality reports and rolling research.
+pub(crate) fn last_bar_notionals(
+    data: &NativeMarketData,
+) -> Result<Vec<contracts::execution::NativeBarNotionalV1>> {
+    data.series
+        .iter()
+        .map(|series| {
+            let bar = series
+                .bars
+                .last()
+                .ok_or_else(|| anyhow::anyhow!("CATALOG_EMPTY_SELECTION"))?;
+            let notional = series.instrument.try_calculate_notional_value(
+                bar.volume,
+                bar.close,
+                Some(false),
+            )?;
+            Ok(contracts::execution::NativeBarNotionalV1 {
+                instrument_id: series.instrument.id().to_string(),
+                currency: notional.currency.to_string(),
+                event_ns: contracts::DbCounter::new(bar.ts_event.as_u64())
+                    .map_err(anyhow::Error::msg)?,
+                available_ns: contracts::DbCounter::new(bar.ts_init.as_u64())
+                    .map_err(anyhow::Error::msg)?,
+                close_price: bar
+                    .close
+                    .as_decimal()
+                    .to_string()
+                    .parse()
+                    .map_err(anyhow::Error::msg)?,
+                traded_volume: bar
+                    .volume
+                    .as_decimal()
+                    .to_string()
+                    .parse()
+                    .map_err(anyhow::Error::msg)?,
+                notional_value: notional
+                    .as_decimal()
+                    .to_string()
+                    .parse()
+                    .map_err(anyhow::Error::msg)?,
+            })
+        })
+        .collect()
+}
+
 fn selected_types(selection: &NativeBarSelectionV1) -> Result<Vec<BarType>> {
     ensure!(
         (1..=256).contains(&selection.bar_types.len())

@@ -316,16 +316,23 @@ pub fn portfolio_study_cutoffs(
             "portfolio_study_schedule",
         ));
     }
-    if request.mandate.constraints.liquidity_ref.is_some()
-        || request.mandate.constraints.max_participation.is_some()
-        || request
-            .assets
-            .iter()
-            .any(|a| a.available_notional.is_some())
+    let constraints = &request.mandate.constraints;
+    if request
+        .assets
+        .iter()
+        .any(|a| a.available_notional.is_some())
     {
-        return Err(DomainError::CapabilityUnavailable(
-            "portfolio_study_liquidity",
-        ));
+        return Err(bad("portfolio_study.handwritten_liquidity"));
+    }
+    match &request.rolling_liquidity {
+        Some(policy)
+            if policy.maximum_age_seconds > 0
+                && policy.participation_limit.is_positive()
+                && policy.participation_limit.is_fraction()
+                && constraints.liquidity_ref.is_some()
+                && constraints.max_participation.as_ref() == Some(&policy.participation_limit) => {}
+        None if constraints.liquidity_ref.is_none() && constraints.max_participation.is_none() => {}
+        _ => return Err(bad("portfolio_study.liquidity_policy")),
     }
     if request.assets.iter().any(|a| {
         !a.current_weight
@@ -368,6 +375,45 @@ pub fn portfolio_study_cutoffs(
             contracts::DbCounter::new(cutoff).map_err(|_| bad("portfolio_study.time"))
         })
         .collect()
+}
+
+pub fn portfolio_study_liquidity_assets(
+    request: &NativePortfolioStudyRequestV1,
+    cutoff: contracts::DbCounter,
+    forecast_asof: contracts::DbCounter,
+    decision: contracts::DbCounter,
+    values: &[contracts::execution::NativeBarNotionalV1],
+) -> Result<Vec<contracts::portfolio::AllocationAssetV1>, DomainError> {
+    let mut assets = request.assets.clone();
+    let Some(policy) = &request.rolling_liquidity else {
+        if !values.is_empty() {
+            return Err(bad("portfolio_study.unbound_liquidity"));
+        }
+        return Ok(assets);
+    };
+    if values.len() != assets.len() {
+        return Err(bad("portfolio_study.liquidity_assets"));
+    }
+    crate::portfolio::bar_liquidity_age(
+        values,
+        &request.mandate.base_currency,
+        policy.maximum_age_seconds,
+        decision,
+    )?;
+    for (value, asset) in values.iter().zip(&mut assets) {
+        crate::catalogs::bar_notional(value)?;
+        if value.instrument_id != asset.instrument_id
+            || value.currency != asset.currency
+            || value.event_ns != forecast_asof
+            || value.event_ns < request.source_selection.event_start_ns
+            || value.event_ns >= cutoff
+            || value.available_ns > cutoff
+        {
+            return Err(bad("portfolio_study.liquidity_source"));
+        }
+        asset.available_notional = Some(value.notional_value.clone());
+    }
+    Ok(assets)
 }
 
 /// Verify original report bytes before using the frozen numerical copy.

@@ -282,25 +282,33 @@ pub fn bar_notionals(
         return Err(bad("quality.last_bar_notionals"));
     }
     for (value, instrument) in values.iter().zip(&quality.instrument_ids) {
-        text(&value.currency, 1, 16, false)?;
+        bar_notional(value)?;
         if &value.instrument_id != instrument
             || value.event_ns < quality.first_event_ns
             || value.event_ns > quality.last_event_ns
             || value.event_ns < quality.selection.event_start_ns
             || value.event_ns >= quality.selection.event_end_ns
-            || value.available_ns < value.event_ns
             || value.available_ns > quality.available_through_ns
             || value.available_ns > quality.selection.decision_cutoff_ns
-            || !value.close_price.is_positive()
-            || !value.traded_volume.is_nonnegative()
-            || !value.notional_value.is_nonnegative()
-            || (!value.traded_volume.is_positive() && value.notional_value.is_positive())
         {
             return Err(bad("quality.last_bar_notionals"));
         }
     }
     if values.iter().map(|v| v.event_ns).max() != Some(quality.last_event_ns)
         || values.iter().map(|v| v.available_ns).max() != Some(quality.available_through_ns)
+    {
+        return Err(bad("quality.last_bar_notionals"));
+    }
+    Ok(())
+}
+
+pub fn bar_notional(value: &contracts::execution::NativeBarNotionalV1) -> Result<(), DomainError> {
+    text(&value.currency, 1, 16, false)?;
+    if value.available_ns < value.event_ns
+        || !value.close_price.is_positive()
+        || !value.traded_volume.is_nonnegative()
+        || !value.notional_value.is_nonnegative()
+        || (!value.traded_volume.is_positive() && value.notional_value.is_positive())
     {
         return Err(bad("quality.last_bar_notionals"));
     }

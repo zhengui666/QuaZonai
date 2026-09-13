@@ -55,11 +55,18 @@ pub fn binding(
         let mut selection = request.source_selection.clone();
         selection.event_end_ns = cutoff;
         selection.decision_cutoff_ns = cutoff;
+        let source_assets = crate::execution::portfolio_study_liquidity_assets(
+            request,
+            cutoff,
+            forecasts.forecast_asof_ns,
+            forecasts.decision_asof_ns,
+            &frame.bar_notionals,
+        )?;
         let mut expected = crate::execution::portfolio_costs(
             &selection,
             mandate,
             &request.execution_settings,
-            &request.assets,
+            &source_assets,
             &frame.slippage_references,
         )?;
         if expected.len() != input.assets.len() {

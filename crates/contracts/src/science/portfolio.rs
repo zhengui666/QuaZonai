@@ -102,6 +102,16 @@ pub struct NativePortfolioBuildResultV1 {
     pub consumed_fuel: DbCounter,
 }
 
+/// Original per-rebalance measurement policy, not a previously measured snapshot.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeRollingBarLiquidityPolicyV1 {
+    pub schema_version: SchemaV1,
+    #[schema(minimum = 1)]
+    pub maximum_age_seconds: u32,
+    pub participation_limit: DecimalValue,
+}
+
 /// Offline model-driven research. The simulated account, not the caller, owns weights.
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -112,6 +122,7 @@ pub struct NativePortfolioStudyRequestV1 {
     pub research_available_through_ns: DbCounter,
     pub mandate: MandateContentV1,
     pub execution_settings: super::NativeSimulationSettingsV1,
+    pub rolling_liquidity: Option<NativeRollingBarLiquidityPolicyV1>,
     #[schema(min_items = 1, max_items = 256)]
     pub assets: Vec<AllocationAssetV1>,
     #[schema(min_items = 2, max_items = 256)]
@@ -125,6 +136,7 @@ pub struct NativePortfolioStudyFrameV1 {
     pub input: AllocationInputV1,
     pub allocation: AllocationResultV1,
     pub slippage_references: Vec<NativePortfolioSlippageReferenceV1>,
+    pub bar_notionals: Vec<crate::execution::NativeBarNotionalV1>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]

@@ -165,3 +165,143 @@ fn rolling_original_models_use_one_native_account_and_observed_weights() {
             && failed.frames[0].allocation.cash_weight.is_none()
     );
 }
+
+#[test]
+fn rolling_liquidity_uses_original_policy_and_each_known_native_bar() {
+    let run = |catalog: &std::path::Path,
+               request: &NativePortfolioStudyRequestV1,
+               model: &[u8],
+               policy: &NativeRollingBarLiquidityPolicyV1| {
+        let objects = tempfile::tempdir().unwrap();
+        for member in &request.members {
+            fs::write(
+                objects.path().join(member.model_artifact_id.to_string()),
+                model,
+            )
+            .unwrap();
+        }
+        fs::write(
+            objects.path().join(
+                request
+                    .mandate
+                    .constraints
+                    .transaction_costs_ref
+                    .to_string(),
+            ),
+            serde_json::to_vec(&request.execution_settings).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            objects.path().join(
+                request
+                    .mandate
+                    .constraints
+                    .liquidity_ref
+                    .unwrap()
+                    .to_string(),
+            ),
+            serde_json::to_vec(policy).unwrap(),
+        )
+        .unwrap();
+        native::command(
+            &[
+                "study-portfolio".as_ref(),
+                "--catalog".as_ref(),
+                catalog.as_os_str(),
+                "--objects".as_ref(),
+                objects.path().as_os_str(),
+            ],
+            request,
+        )
+    };
+    let (catalog, request, model) = market::study_liquidity("10000000", "0.4");
+    let policy = request.rolling_liquidity.as_ref().unwrap();
+    let output = run(catalog.path(), &request, &model, policy);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: NativePortfolioStudyResultV1 = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(result.simulation.is_some());
+    assert_eq!(result.frames.len(), 3);
+    assert_ne!(
+        result.frames[0].bar_notionals[0].notional_value,
+        result.frames[1].bar_notionals[0].notional_value
+    );
+    for frame in &result.frames {
+        assert_eq!(frame.bar_notionals.len(), request.assets.len());
+        for (value, asset) in frame.bar_notionals.iter().zip(&frame.input.assets) {
+            assert_eq!(
+                Some(&value.notional_value),
+                asset.available_notional.as_ref()
+            );
+            assert!(value.available_ns <= frame.cutoff_ns && value.event_ns < frame.cutoff_ns);
+        }
+    }
+    let mut changed = result.clone();
+    changed.frames[0].bar_notionals[0].available_ns = request.source_selection.event_end_ns;
+    assert!(domain::execution::check_portfolio_study(&request, &changed).is_err());
+    let mut changed = result.clone();
+    changed.frames[0].bar_notionals[0].notional_value = "1".parse().unwrap();
+    assert!(domain::execution::check_portfolio_study(&request, &changed).is_err());
+    let mut expired = request.clone();
+    expired
+        .rolling_liquidity
+        .as_mut()
+        .unwrap()
+        .maximum_age_seconds = 60;
+    let first = &result.frames[0];
+    domain::execution::portfolio_study_liquidity_assets(
+        &expired,
+        first.cutoff_ns,
+        first.input.forecasts.forecast_asof_ns,
+        first.cutoff_ns,
+        &first.bar_notionals,
+    )
+    .unwrap();
+    assert!(domain::execution::portfolio_study_liquidity_assets(
+        &expired,
+        first.cutoff_ns,
+        first.input.forecasts.forecast_asof_ns,
+        first.input.forecasts.decision_asof_ns,
+        &first.bar_notionals
+    )
+    .is_err());
+    // Same original file does not authorize changing the policy's frozen copy.
+    assert!(!run(catalog.path(), &expired, &model, policy)
+        .status
+        .success());
+    // This distinct original policy is fresh at cutoff, but expires before the native bar executes.
+    assert!(!run(
+        catalog.path(),
+        &expired,
+        &model,
+        expired.rolling_liquidity.as_ref().unwrap()
+    )
+    .status
+    .success());
+    for (volume, participation) in [("0", "0.4"), ("10000000", "0.000001")] {
+        let (catalog, request, model) = market::study_liquidity(volume, participation);
+        let output = run(
+            catalog.path(),
+            &request,
+            &model,
+            request.rolling_liquidity.as_ref().unwrap(),
+        );
+        assert!(output.status.success());
+        let result: NativePortfolioStudyResultV1 = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result.frames.len(), 1);
+        assert_eq!(
+            result.frames[0].allocation.solver_status,
+            contracts::portfolio::SolverStatus::Infeasible
+        );
+        assert!(result.simulation.is_none() && result.frames[0].allocation.targets.is_none());
+        if volume == "0" {
+            assert!(result.frames[0]
+                .bar_notionals
+                .iter()
+                .all(|v| v.notional_value == contracts::DecimalValue::zero()));
+        }
+    }
+}

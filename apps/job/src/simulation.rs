@@ -64,6 +64,8 @@ pub(crate) struct StudyInput {
     pub cutoff_ns: DbCounter,
     pub input: contracts::portfolio::AllocationInputV1,
     pub slippage: Vec<NativePortfolioSlippageReferenceV1>,
+    pub bar_notionals: Vec<contracts::execution::NativeBarNotionalV1>,
+    pub liquidity_maximum_age: Option<u32>,
 }
 
 struct TargetReplay {
@@ -216,6 +218,14 @@ impl TargetReplay {
         if let Some(planned) = self.study_inputs.get(next) {
             let mut input = planned.input.clone();
             input.forecasts.decision_asof_ns = DbCounter::new(now).map_err(anyhow::Error::msg)?;
+            if let Some(age) = planned.liquidity_maximum_age {
+                domain::portfolio::bar_liquidity_age(
+                    &planned.bar_notionals,
+                    &input.base_currency,
+                    age,
+                    input.forecasts.decision_asof_ns,
+                )?;
+            }
             input.capital_assumption = equity.to_string().parse().map_err(anyhow::Error::msg)?;
             let mut cash = Decimal::ONE;
             for (asset, instrument) in input.assets.iter_mut().zip(&self.instruments) {
@@ -245,6 +255,7 @@ impl TargetReplay {
                     input,
                     allocation,
                     slippage_references: planned.slippage.clone(),
+                    bar_notionals: planned.bar_notionals.clone(),
                 });
             let (Some(targets), Some(cash)) = (targets, cash) else {
                 self.status.borrow_mut().study_infeasible = true;

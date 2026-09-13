@@ -11728,6 +11728,12 @@
           "allocation": {
             "$ref": "#/components/schemas/AllocationResultV1"
           },
+          "bar_notionals": {
+            "items": {
+              "$ref": "#/components/schemas/NativeBarNotionalV1"
+            },
+            "type": "array"
+          },
           "cutoff_ns": {
             "$ref": "#/components/schemas/DbCounter"
           },
@@ -11745,7 +11751,8 @@
           "cutoff_ns",
           "input",
           "allocation",
-          "slippage_references"
+          "slippage_references",
+          "bar_notionals"
         ],
         "type": "object"
       },
@@ -11780,6 +11787,16 @@
           },
           "research_available_through_ns": {
             "$ref": "#/components/schemas/DbCounter"
+          },
+          "rolling_liquidity": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NativeRollingBarLiquidityPolicyV1"
+              }
+            ]
           },
           "schema_version": {
             "$ref": "#/components/schemas/SchemaV1"
@@ -11897,6 +11914,29 @@
           "PORTFOLIO_DAILY"
         ],
         "type": "string"
+      },
+      "NativeRollingBarLiquidityPolicyV1": {
+        "additionalProperties": false,
+        "description": "Original per-rebalance measurement policy, not a previously measured snapshot.",
+        "properties": {
+          "maximum_age_seconds": {
+            "format": "int32",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "participation_limit": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "maximum_age_seconds",
+          "participation_limit"
+        ],
+        "type": "object"
       },
       "NativeSealedAssetMetricsV1": {
         "additionalProperties": false,
