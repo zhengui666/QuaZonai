@@ -440,6 +440,106 @@ fn invalid_or_unsupported_inputs_are_not_silently_repaired() {
 }
 
 #[test]
+fn native_cvar_uses_tail_mass_and_changes_with_confidence() {
+    let mut request = input();
+    request.risk = AllocationRisk::Cvar;
+    request.return_history.asset_returns = vec![
+        vec![-0.1, 0.0, 0.0, 0.0, 0.0],
+        vec![0.0, -0.2, 0.0, 0.0, 0.0],
+    ];
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    parameters.cvar_confidence = Some(decimal("0.8"));
+    let actual = weights(&request);
+    near(actual[0], 2.0 / 3.0);
+    near(actual[1], 1.0 / 3.0);
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    parameters.cvar_confidence = Some(decimal("0.6"));
+    let actual = weights(&request);
+    near(actual[0], 1.0);
+    near(actual[1], 0.0);
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    parameters.cvar_confidence = Some(decimal("0.8"));
+    request.objective = AllocationObjective::MaxUtility;
+    for member in &mut request.forecasts.members {
+        member.forecasts = vec![0.0, 1.0];
+    }
+    request.constraints.max_ex_ante_risk = Some(decimal("0.08"));
+    let actual = weights(&request);
+    near(actual[0], 0.6);
+    near(actual[1], 0.4);
+    let mut corrupt = job::allocate(&request).unwrap();
+    corrupt.targets.as_mut().unwrap()[0].weight = decimal("0.5");
+    corrupt.targets.as_mut().unwrap()[1].weight = decimal("0.5");
+    assert!(domain::portfolio::allocation_result(&request, &corrupt).is_err());
+    request.constraints.max_ex_ante_risk = Some(decimal("0.06"));
+    let impossible = job::allocate(&request).unwrap();
+    assert_eq!(impossible.solver_status, SolverStatus::Infeasible);
+    assert!(impossible.targets.is_none() && impossible.cash_weight.is_none());
+}
+
+#[test]
+fn cvar_publication_accounts_for_fractional_tail_ties_and_near_one_confidence() {
+    let mut request = input();
+    let mut result = job::allocate(&request).unwrap();
+    result.targets.as_mut().unwrap()[0].weight = decimal("1");
+    result.targets.as_mut().unwrap()[1].weight = decimal("0");
+    request.risk = AllocationRisk::Cvar;
+    for (returns, confidence, passing, failing) in [
+        (vec![-0.1, 0.0, 0.0, 0.0, 0.0], "0.7", "0.067", "0.066"),
+        (vec![-0.1, -0.1, 0.0, 0.0, 0.0], "0.7", "0.101", "0.099"),
+        (
+            vec![-0.1, 0.0, 0.0, 0.0, 0.0],
+            "0.999999999999999999",
+            "0.101",
+            "0.099",
+        ),
+    ] {
+        request.return_history.asset_returns[0] = returns;
+        let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+            unreachable!()
+        };
+        parameters.cvar_confidence = Some(decimal(confidence));
+        request.constraints.max_ex_ante_risk = Some(decimal(passing));
+        domain::portfolio::allocation_result(&request, &result).unwrap();
+        request.constraints.max_ex_ante_risk = Some(decimal(failing));
+        assert!(domain::portfolio::allocation_result(&request, &result).is_err());
+    }
+}
+
+#[test]
+fn cvar_does_not_require_positive_definite_covariance_or_clip_negative_risk() {
+    let mut request = input();
+    request.risk = AllocationRisk::Cvar;
+    request.return_history.asset_returns = vec![vec![0.1; 5], vec![0.1; 5]];
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    parameters.cvar_confidence = Some(decimal("0.8"));
+    let result = job::allocate(&request).unwrap();
+    assert_eq!(result.solver_status, SolverStatus::Optimal);
+    near(result.objective_value.unwrap(), -0.1);
+    for bad in ["0", "1", "-0.1", "1.1"] {
+        let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+            unreachable!()
+        };
+        parameters.cvar_confidence = Some(decimal(bad));
+        assert!(job::allocate(&request).is_err());
+    }
+    request.risk = AllocationRisk::Variance;
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    parameters.cvar_confidence = Some(decimal("0.8"));
+    assert!(job::allocate(&request).is_err());
+}
+
+#[test]
 fn native_variance_cone_binds_correlated_assets_and_publication_rechecks_it() {
     let mut request = input();
     // Native sample covariance [[1,1],[1,5]]. With sum(w)=1, variance=1+4*w2^2.

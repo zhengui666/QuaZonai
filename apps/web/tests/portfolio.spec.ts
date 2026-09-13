@@ -29,7 +29,10 @@ test('immutable Mandate preserves exact inputs and retries the original receipt 
   for (const [label, value] of [['Runtime 编号', id(20)], ['Runtime 配置版本', '9007199254740993'], ['投资域版本编号', id(21)], ['评估政策编号', id(22)], ['执行假设编号', id(23)], ['基础币种', 'USD'], ['资本假设', '12345678901234567890.123456789012345678'], ['费用依据产物编号', id(24)]] as const) {
     await drawer.getByLabel(label, { exact: true }).fill(value);
   }
-  await drawer.getByLabel('每决策周期方差上限（不用时留空）', { exact: true }).fill('0.000123456789012345');
+  await drawer.getByLabel('风险度量', { exact: true }).click();
+  await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').getByText('CVaR（预期短缺）', { exact: true }).click();
+  await drawer.getByLabel('CVaR 置信水平（大于0且小于1）', { exact: true }).fill('0.950000000000000001');
+  await drawer.getByLabel('每决策周期风险上限（不用时留空）', { exact: true }).fill('0.000123456789012345');
   await drawer.getByLabel('调仓方式', { exact: true }).click();
   await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').getByText('固定间隔', { exact: true }).click();
   await drawer.getByLabel('间隔秒数', { exact: true }).fill('123');
@@ -44,7 +47,8 @@ test('immutable Mandate preserves exact inputs and retries the original receipt 
   expect(writes[1]).toEqual(first); expect(first.key).toBeTruthy();
   expect(first.body).toMatchObject({ schema_version: 1, project_id: project.id, runtime_id: id(20), expected_runtime_revision: '9007199254740993', content: {
     capital_assumption: '12345678901234567890.123456789012345678',
-    optimizer: { adapter_kind: 'CLARABEL_QP', parameters: { schema_version: 1, risk_aversion: '1' } },
+    risk_measure: 'CVAR',
+    optimizer: { adapter_kind: 'CLARABEL_QP', parameters: { schema_version: 1, risk_aversion: '1', cvar_confidence: '0.950000000000000001' } },
     covariance_estimator: { adapter_kind: 'SAMPLE_COVARIANCE', parameters: { ddof: 1 } },
     alpha_ensemble: { adapter_kind: 'FIXED_WEIGHTED_FORECAST', parameters: {} },
     constraints: { schema_version: 1, group_bounds: [], asset_overrides: [], max_ex_ante_risk: '0.000123456789012345', max_participation: null, liquidity_ref: null },
@@ -67,6 +71,17 @@ test('Mandate authoring protects dirty input and cannot write offline or with mi
   const drawer = page.getByRole('dialog', { name: '新建不可变组合配置', exact: true });
   await drawer.getByRole('button', { name: '保存不可变配置', exact: true }).click();
   await expect(drawer.getByText('请填写此项。', { exact: true }).first()).toBeVisible();
+  await drawer.getByLabel('风险度量', { exact: true }).click();
+  await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').getByText('CVaR（预期短缺）', { exact: true }).click();
+  const confidence = drawer.getByLabel('CVaR 置信水平（大于0且小于1）', { exact: true });
+  await expect(confidence).toHaveValue('');
+  await confidence.fill('0.9');
+  await drawer.getByLabel('风险度量', { exact: true }).click();
+  await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').getByText('方差', { exact: true }).click();
+  await expect(confidence).not.toBeVisible();
+  await drawer.getByLabel('风险度量', { exact: true }).click();
+  await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').getByText('CVaR（预期短缺）', { exact: true }).click();
+  await expect(confidence).toHaveValue('');
   await drawer.getByLabel('资本假设', { exact: true }).fill('123.456');
   await drawer.getByRole('button', { name: '取消', exact: true }).click();
   const confirm = page.getByRole('dialog', { name: '放弃未保存的组合配置？', exact: true });

@@ -5,6 +5,8 @@ use contracts::{portfolio::*, DecimalValue};
 use std::collections::{BTreeMap, BTreeSet};
 mod covariance;
 pub use covariance::sample_covariance;
+mod risk;
+pub use risk::cvar_confidence;
 
 fn invalid() -> DomainError {
     DomainError::Invalid("portfolio_allocation")
@@ -305,6 +307,7 @@ pub fn fixed_ensemble(model: &NativeModelRefV1) -> Result<(), DomainError> {
 
 pub fn mandate(content: &MandateContentV1) -> Result<(), DomainError> {
     optimizer_settings(&content.optimizer)?;
+    cvar_confidence(content.risk_measure, &content.optimizer)?;
     fixed_ensemble(&content.alpha_ensemble)?;
     sample_covariance_parameters(&content.covariance_estimator)?;
     portfolio_constraints(&content.constraints)?;
@@ -316,9 +319,7 @@ pub fn mandate(content: &MandateContentV1) -> Result<(), DomainError> {
     {
         return Err(DomainError::Invalid("portfolio_mandate"));
     }
-    if content.objective == AllocationObjective::RiskBudgeting
-        || content.risk_measure != AllocationRisk::Variance
-    {
+    if content.objective == AllocationObjective::RiskBudgeting {
         return Err(DomainError::CapabilityUnavailable(
             "portfolio_mandate_objective",
         ));
@@ -329,6 +330,7 @@ pub fn mandate(content: &MandateContentV1) -> Result<(), DomainError> {
 /// Does not authorize an Alpha, infer a quote, or fit an estimator.
 pub fn allocation_input(input: &AllocationInputV1) -> Result<(), DomainError> {
     optimizer_settings(&input.optimizer)?;
+    cvar_confidence(input.risk, &input.optimizer)?;
     fixed_ensemble(&input.alpha_ensemble)?;
     sample_covariance_parameters(&input.covariance_estimator)?;
     portfolio_return_history(&input.return_history, &input.forecasts)?;
@@ -530,9 +532,7 @@ pub fn allocation_result(
         }
         return Ok(());
     }
-    if input.risk != AllocationRisk::Variance
-        || input.objective == AllocationObjective::RiskBudgeting
-    {
+    if input.objective == AllocationObjective::RiskBudgeting {
         return Err(DomainError::CapabilityUnavailable("allocation_objective"));
     }
     if result.reason_code.is_some()
@@ -648,24 +648,32 @@ pub fn allocation_result(
                 .filter(|v| v.is_finite() && (*v != 0.0 || value == &BigDecimal::from(0)))
                 .ok_or(DomainError::Invalid("allocation_risk_number_range"))
         };
-        let covariance = sample_covariance(
-            &input.covariance_estimator,
-            &input.return_history.asset_returns,
-        )
-        .map_err(|_| DomainError::Invalid("allocation_risk_covariance"))?;
-        let n = targets.len();
-        let matrix =
-            ndarray::Array2::from_shape_vec((n, n), covariance.into_iter().flatten().collect())
-                .map_err(|_| invalid())?;
         let weights = ndarray::Array1::from_vec(
             targets
                 .iter()
                 .map(|t| native(t.weight.as_decimal()))
                 .collect::<Result<Vec<_>, _>>()?,
         );
-        let variance = weights.dot(&matrix.dot(&weights));
+        let measured = if let Some(confidence) = cvar_confidence(input.risk, &input.optimizer)? {
+            risk::expected_shortfall(&input.return_history.asset_returns, &weights, confidence)?
+        } else {
+            let covariance = sample_covariance(
+                &input.covariance_estimator,
+                &input.return_history.asset_returns,
+            )
+            .map_err(|_| DomainError::Invalid("allocation_risk_covariance"))?;
+            let n = targets.len();
+            let matrix =
+                ndarray::Array2::from_shape_vec((n, n), covariance.into_iter().flatten().collect())
+                    .map_err(|_| invalid())?;
+            let variance = weights.dot(&matrix.dot(&weights));
+            if variance < 0.0 {
+                return Err(DomainError::Invalid("allocation_risk_covariance"));
+            }
+            variance
+        };
         let upper = native(&(bound.as_decimal() * (BigDecimal::from(1) + tolerance)))?;
-        if !variance.is_finite() || variance < 0.0 || variance > upper {
+        if !measured.is_finite() || measured > upper {
             return Err(DomainError::Invalid("allocation_ex_ante_risk_bound"));
         }
     }

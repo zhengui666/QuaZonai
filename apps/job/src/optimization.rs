@@ -82,27 +82,57 @@ fn finite(value: f64) -> Option<f64> {
 pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
     domain::portfolio::allocation_input(input)?;
     let parameters = domain::portfolio::optimizer_settings(&input.optimizer)?;
+    let confidence = domain::portfolio::cvar_confidence(input.risk, &input.optimizer)?;
     let forecasts = crate::validation::aligned_portfolio_forecast(&input.forecasts)?;
     ensure!(
-        input.risk == AllocationRisk::Variance
-            && input.objective != AllocationObjective::RiskBudgeting,
+        input.objective != AllocationObjective::RiskBudgeting,
         "UNSUPPORTED_ALLOCATION_OBJECTIVE"
     );
     let n = input.assets.len();
-    let estimated = domain::portfolio::sample_covariance(
-        &input.covariance_estimator,
-        &input.return_history.asset_returns,
-    )?;
-    let covariance = DMatrix::from_fn(n, n, |row, col| estimated[row][col]);
-    // Exact symmetry is part of the native estimator output contract. Do not use
-    // one triangle of an inconsistent matrix or hide it with averaging/jitter.
-    ensure!(
-        (0..n).all(|i| (0..n).all(|j| covariance[(i, j)] == covariance[(j, i)])),
-        "ASYMMETRIC_COVARIANCE"
-    );
-    let cholesky = Cholesky::new(covariance)
-        .ok_or_else(|| anyhow::anyhow!("NONPOSITIVE_DEFINITE_COVARIANCE"))?;
-    let variables = 3 * n + 1;
+    let estimated = if input.risk == AllocationRisk::Variance {
+        domain::portfolio::sample_covariance(
+            &input.covariance_estimator,
+            &input.return_history.asset_returns,
+        )?
+    } else {
+        Vec::new()
+    };
+    let cholesky = if input.risk == AllocationRisk::Variance {
+        let covariance = DMatrix::from_fn(n, n, |row, col| estimated[row][col]);
+        // Exact symmetry is part of the native estimator output contract. Do not use
+        // one triangle of an inconsistent matrix or hide it with averaging/jitter.
+        ensure!(
+            (0..n).all(|i| (0..n).all(|j| covariance[(i, j)] == covariance[(j, i)])),
+            "ASYMMETRIC_COVARIANCE"
+        );
+        Some(
+            Cholesky::new(covariance)
+                .ok_or_else(|| anyhow::anyhow!("NONPOSITIVE_DEFINITE_COVARIANCE"))?,
+        )
+    } else {
+        None
+    };
+    let observations = input.return_history.end_ns.len();
+    let eta = 3 * n + 1;
+    let excess = eta + 1;
+    let variables = eta
+        + if confidence.is_some() {
+            observations + 1
+        } else {
+            0
+        };
+    let tail_coefficient = confidence
+        .map(|confidence| -> Result<f64> {
+            let tail = ((BigDecimal::from(1) - confidence.as_decimal())
+                * BigDecimal::from(observations as u64))
+            .to_f64()
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .ok_or_else(|| anyhow::anyhow!("CVAR_TAIL_RANGE"))?;
+            let coefficient = 1.0 / tail;
+            ensure!(coefficient.is_finite(), "CVAR_TAIL_RANGE");
+            Ok(coefficient)
+        })
+        .transpose()?;
     let cash = n;
     let gross = n + 1;
     let traded = 2 * n + 1;
@@ -123,6 +153,10 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
     }
     let p = CscMatrix::new_from_triplets(variables, variables, p_rows, p_cols, p_values);
     let mut q = vec![0.0; variables];
+    if let Some(coefficient) = tail_coefficient {
+        q[eta] = aversion;
+        q[excess..].fill(aversion * coefficient);
+    }
     for (i, asset) in input.assets.iter().enumerate() {
         if input.objective == AllocationObjective::MaxUtility {
             q[i] = -forecasts[i];
@@ -217,8 +251,29 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
             -native_number(&group.min)?,
         );
     }
+    if let Some(coefficient) = tail_coefficient {
+        for scenario in 0..observations {
+            let mut terms: Vec<_> = input
+                .return_history
+                .asset_returns
+                .iter()
+                .enumerate()
+                .map(|(asset, returns)| (asset, -returns[scenario]))
+                .collect();
+            terms.extend([(eta, -1.0), (excess + scenario, -1.0)]);
+            add(&terms, 0.0);
+            add(&[(excess + scenario, -1.0)], 0.0);
+        }
+        if let Some(bound) = &constraints.max_ex_ante_risk {
+            let mut terms: Vec<_> = (excess..variables)
+                .map(|index| (index, coefficient))
+                .collect();
+            terms.push((eta, 1.0));
+            add(&terms, native_number(bound)?);
+        }
+    }
     let mut cones = vec![ZeroConeT(1), NonnegativeConeT(b.len() - 1)];
-    if let Some(bound) = &constraints.max_ex_ante_risk {
+    if let (Some(bound), Some(cholesky)) = (&constraints.max_ex_ante_risk, cholesky) {
         // Sigma = L L^T, so the cone constrains ||L^T w|| <= sqrt(bound).
         b.push(native_number(bound)?.sqrt());
         let lower = cholesky.l();

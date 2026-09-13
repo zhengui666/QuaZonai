@@ -173,13 +173,19 @@ AllocatorSettingsV1）及FIXED_WEIGHTED_FORECAST / ndarray::ArrayBase::dot / 0.1
 VARIANCE 的 constraints.max_ex_ante_risk 可为正的每决策周期收益方差上限，或 null；
 不是标准差/年化波动率。CLARABEL_QP 原生适配可带二阶锥约束，镜像还须
 portfolio-variance-bound/1 与 SECOND_ORDER_CONE；发布复核允许上限乘 exposure_tolerance
-的相对误差，不允许同数值的绝对方差误差。CVAR、RISK_BUDGETING 仍明确拒绝。
+的相对误差，不允许同数值的绝对方差误差。
+CVAR 支持相同 MIN_RISK/MAX_UTILITY，必须明确 optimizer.parameters.cvar_confidence
+为大于0、小于1的Decimal（VARIANCE必须为空）；不默认95%。它用原 return_history
+的等权损失场景进入原生LP，不使用协方差。此时 max_ex_ante_risk 为同周期的预期
+损失收益率上限，含分数尾部质量；不是方差、VaR或年化值。要求 portfolio-cvar/1
+与 LINEAR_PROGRAM 镜像能力。RISK_BUDGETING 仍明确拒绝。
 
 协方差数值适配的引用为SAMPLE_COVARIANCE / ndarray_stats::CorrelationExt::cov /
 0.7.0，parameters仅为`{"ddof":1}`，不能传年化、补值或另一估计器参数。
 本机allocate必须带covariance_estimator和return_history，
 不再接收covariance矩阵。历史收益须保留与forecasts相同资产/bar/期限/币种、
-严格递增窗口结束和不晚于决策的可用时点；由原生样本估计直接进入Clarabel。
+严格递增窗口结束和不晚于决策的可用时点；VARIANCE由原生样本估计进入Clarabel，
+CVAR直接使用完整场景，不能预先挑选极端收益或把未知历史补零。
 格式见合成输入文件和DESIGN A5.2；历史来源的可信目录/产物/许可绑定仍待完整编排。
 
 受管PORTFOLIO_BUILD不接受上述手填数值输入；必须使用dataset_revision_id与

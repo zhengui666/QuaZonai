@@ -84,6 +84,10 @@ SAMPLE_COVARIANCE仅绑定ndarray-stats0.7.0的原生cov与ddof=1，不授予数
 VARIANCE 可冻结正的每决策周期方差上限 max_ex_ante_risk（不用为 null），不是
 标准差/年化值；需要 portfolio-variance-bound/1 与 SECOND_ORDER_CONE 能力。
 发布以保存后的权重重新估计核对，容差为上限乘 exposure_tolerance；不替换风险度量。
+CVAR 必须冻结 optimizer.parameters.cvar_confidence 为(0,1)内Decimal；VARIANCE
+时此字段为空。不默认95%，不将尾部场景筛成另一份历史。原生LP使用完整等权
+损失场景；此时风险上限为每周期预期损失收益率，不是方差或VaR。需portfolio-cvar/1
+与LINEAR_PROGRAM镜像能力；不新增Agent权限，风险预算仍未实现。
 人工Mandate API/CLI创建与读取见CLI，原配置不可修改；同键重试保留原完整请求。
 Mission没有这些配置操作权，版本存在不表示Alpha资格、组合通过或允许交付。
 提交响应未知时保留同一 key 和原始文件/请求重放；不同内容409不能改键绕过预算。

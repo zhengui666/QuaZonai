@@ -10,6 +10,17 @@
 
 ## 已核查并实际运行的 Rust 能力
 
+2026-09-13补充：CVaR复用锁定Clarabel0.11.1的DefaultSolver线性规划入口
+（Apache-2.0；已核对原crate examples/rust/example_lp.rs），无新求解器依赖。
+QZ只将冻结等权损失场景装配为标准Rockafellar–Uryasev的eta/excess线性约束；
+参考[Clarabel原生LP能力](https://clarabel.org/)及
+[原作者CVaR组合问题](https://uryasev.ams.stonybrook.edu/research/testproblems/financial_engineering/basic-cvar-optimization-problem-beyond-black-litterman/)。
+发布复核复用现有ndarray内积与Rust标准库select_nth_unstable_by/total_cmp，
+不另写排序、分位数或优化算法；按冻结Decimal尾部质量计算同一经验风险公式。
+实际原生回归验证置信水平0.8/0.6分别产生2/3、1/3与1、0的独立解析解，
+也验证风险上限、不可行、分数尾部、重复损失、接近1的置信水平与负风险。
+这仅为数值复用证据，不是REAL/PIT、资格或完整组合交付验收。
+
 2026-09-13补充：复用已锁定的nautilus-execution 0.63.0（其原Cargo清单许可为
 LGPL-3.0-only，不更改LICENSE/NOTICE）。直接核查原crate的src/models/fill.rs、
 fee.rs、latency.rs和nautilus-backtest的SimulatedVenueConfig：DefaultFillModel

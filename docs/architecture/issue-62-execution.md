@@ -3,6 +3,45 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Native scenario CVaR, 2026-09-13
+
+The patch over `c17edbd2` adds CVAR MIN_RISK/MAX_UTILITY through the existing
+Clarabel LP solver, not a replacement optimization algorithm. Confidence is an
+explicit frozen Decimal in optimizer.parameters.cvar_confidence, required for
+CVAR and absent/null for VARIANCE. Every original aligned return-history column
+is one equal-probability loss scenario; covariance/Cholesky do not run for CVAR.
+The original shared-capital, exposure, turnover, group and participation rows
+remain, with the optional CVaR bound in the same native linear problem.
+Publication recomputes the empirical expected shortfall using native ndarray
+losses and standard-library order selection, retaining fractional tail mass,
+ties and negative risk. No Gaussian fit, annualization or default confidence.
+
+Direct native allocation/validation tests passed 31 cases. Independent examples
+yield [2/3,1/3] at confidence 0.8 versus [1,0] at 0.6; utility plus risk bound 0.08
+yields [0.6,0.4], while bound 0.06 is infeasible and targetless. Publication tests
+reject corrupted targets and cover fractional tails, ties and confidence
+0.999999999999999999. Constant positive-return scenarios solve with negative
+risk despite singular covariance. Invalid/missing/mismatched confidence rejects.
+
+`web-verify-6V9741` passed reproducible generation, typecheck, 505 unit tests,
+wire checks, build, 36 settings browser checks and 210 full browser checks.
+The AntD form requires explicit confidence, preserves exact decimal retry and
+clears it when changing risk measure. No Web/API source changed after this run.
+`verify-MyMy0X` caught an OCI-test temporary-reference lifetime error; after the
+test-only correction `verify-nyRA4q` passed check/fmt/strict Clippy and 199 tests:
+127 contracts/domain, 40 native science, 10 Store, 1 source SQL, 21 HTTP/CLI.
+The real PG capability cases require both portfolio-cvar/1 and LINEAR_PROGRAM,
+leave no partial Mandate on rejection, then save/reread the original constraint.
+
+`owner-oci-CkO1UU` built image
+`sha256:c7f6cb8d8449fc199f30e1bc8a7768334415cc2790436c324e620399f678fb08`;
+all 10 actual OCI tests passed with unchanged source, including the new original
+catalog/Wasm CVaR task and existing variance-bound task. Native results preserve
+risk/confidence and satisfy the domain publication check. Inputs remain explicit
+SYNTHETIC numerical/protocol fixtures, not REAL/PIT or full qualification evidence.
+Risk Budgeting, complete cost/source adapters, independent Candidate validation,
+delivery and remaining Issue #62 acceptance are still required. No merge claim.
+
 ## Native per-horizon variance bound, 2026-09-13
 
 The patch over `a510ba0c` implements the optional positive VARIANCE bound with

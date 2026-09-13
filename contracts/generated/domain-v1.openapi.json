@@ -11112,6 +11112,17 @@
                   "accept_inaccurate": {
                     "type": "boolean"
                   },
+                  "cvar_confidence": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "$ref": "#/components/schemas/DecimalValue",
+                        "description": "Required for CVAR, absent/null for VARIANCE. Strictly between zero and one."
+                      }
+                    ]
+                  },
                   "max_iterations": {
                     "format": "int32",
                     "maximum": 100000,
@@ -13224,7 +13235,7 @@
               },
               {
                 "$ref": "#/components/schemas/DecimalValue",
-                "description": "Positive per-decision-horizon return variance bound, not volatility or annualized risk.\nPublication allows only bound * exposure_tolerance additional variance."
+                "description": "Positive per-horizon variance (VARIANCE) or expected loss return (CVAR) bound.\nNot volatility or annualized risk; allowance is bound * exposure_tolerance."
               }
             ]
           },

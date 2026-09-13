@@ -28,7 +28,7 @@ function mandateRequest(project: string, values: Fields): Schema['MandateCreateV
     content: { ...c,
       covariance_estimator: { schema_version: 1, adapter_kind: 'SAMPLE_COVARIANCE', upstream_class: 'ndarray_stats::CorrelationExt::cov', upstream_version: '0.7.0', parameters: { ddof: 1 } },
       alpha_ensemble: { schema_version: 1, adapter_kind: 'FIXED_WEIGHTED_FORECAST', upstream_class: 'ndarray::ArrayBase::dot', upstream_version: '0.17.1', parameters: {} },
-      optimizer: { schema_version: 1, adapter_kind: 'CLARABEL_QP', upstream_class: 'clarabel::solver::DefaultSolver', upstream_version: '0.11.1', parameters: { ...values.parameters, schema_version: 1 } },
+      optimizer: { schema_version: 1, adapter_kind: 'CLARABEL_QP', upstream_class: 'clarabel::solver::DefaultSolver', upstream_version: '0.11.1', parameters: { ...values.parameters, cvar_confidence: blank(values.parameters.cvar_confidence), schema_version: 1 } },
       constraints: { ...c.constraints, schema_version: 1, max_ex_ante_risk: blank(c.constraints.max_ex_ante_risk), max_participation: blank(c.constraints.max_participation), liquidity_ref: blank(c.constraints.liquidity_ref) },
       rebalance_schedule: { ...schedule, schema_version: 1, interval_seconds: schedule.kind === 'FIXED_INTERVAL' ? schedule.interval_seconds : null,
         calendar_ref: schedule.kind === 'CALENDAR_SESSION' ? schedule.calendar_ref : null, session_offset_seconds: schedule.kind === 'CALENDAR_SESSION' ? schedule.session_offset_seconds : null },
@@ -88,6 +88,7 @@ function MandateEditor({ project, close }: { project: string; close: () => void 
   const [form] = Form.useForm<Fields>(); const [dirty, setDirty] = useState(false); const intent = useRef(new Intent());
   const client = useQueryClient(); const online = useOnline(); const { modal, message } = App.useApp();
   const kind = Form.useWatch(['content', 'rebalance_schedule', 'kind'], form);
+  const risk = Form.useWatch(['content', 'risk_measure'], form);
   const mutation = useMutation({ mutationFn: async (values: Fields) => {
     const body = mandateRequest(project, values);
     return dataOf(await api.POST('/api/v2/portfolio-mandates', { body, params: { header: intent.current.headers('POST', '/api/v2/portfolio-mandates', body) } }));
@@ -122,7 +123,8 @@ function MandateEditor({ project, close }: { project: string; close: () => void 
       <Card title="原生模型与目标">
         <Typography.Paragraph>样本协方差 ndarray-stats 0.7.0（ddof=1）；固定预测聚合 ndarray 0.17.1；优化器 Clarabel 0.11.1。需要 portfolio-models/4 镜像能力。</Typography.Paragraph>
         <Form.Item name={['content', 'objective']} label="优化目标" rules={[required]}><Select options={[{ value: 'MIN_RISK', label: '最小风险' }, { value: 'MAX_UTILITY', label: '最大效用' }, { value: 'RISK_BUDGETING', label: '风险预算（当前原生未支持）', disabled: true }]} /></Form.Item>
-        <Form.Item name={['content', 'risk_measure']} label="风险度量" rules={[required]}><Select options={[{ value: 'VARIANCE', label: '方差' }, { value: 'CVAR', label: 'CVaR（当前原生未支持）', disabled: true }]} /></Form.Item>
+        <Form.Item name={['content', 'risk_measure']} label="风险度量" rules={[required]}><Select options={[{ value: 'VARIANCE', label: '方差' }, { value: 'CVAR', label: 'CVaR（预期短缺）' }]} /></Form.Item>
+        {risk === 'CVAR' && <Form.Item name={['parameters', 'cvar_confidence']} label="CVaR 置信水平（大于0且小于1）" preserve={false} rules={decimalRules}><Input inputMode="decimal" /></Form.Item>}
         <Form.Item name={['parameters', 'risk_aversion']} label="风险厌恶系数" rules={decimalRules}><Input inputMode="decimal" /></Form.Item>
         <Form.Item name={['parameters', 'solver_tolerance']} label="求解停止容差" rules={decimalRules}><Input inputMode="decimal" /></Form.Item>
         <Form.Item name={['parameters', 'max_iterations']} label="最大迭代次数" rules={[required, { type: 'integer', min: 1, max: 100000 }]}><InputNumber min={1} max={100000} precision={0} /></Form.Item>
@@ -134,8 +136,8 @@ function MandateEditor({ project, close }: { project: string; close: () => void 
         <Form.Item name={['content', 'constraints', 'transaction_costs_ref']} label="费用依据产物编号" rules={uuidRules}><Input /></Form.Item>
         <Form.Item name={['content', 'constraints', 'liquidity_ref']} label="流动性产物编号（不用时留空）" rules={[{ pattern: uuidPattern, message: '请输入完整 UUIDv7。' }]}><Input /></Form.Item>
         <Form.Item name={['content', 'constraints', 'max_participation']} label="参与率上限（不用时留空）" rules={optionalDecimal}><Input inputMode="decimal" /></Form.Item>
-        <Form.Item name={['content', 'constraints', 'max_ex_ante_risk']} label="每决策周期方差上限（不用时留空）" rules={optionalDecimal}><Input inputMode="decimal" /></Form.Item>
-        <Typography.Paragraph type="secondary">方差上限须为正，不是波动率或年化值；需 portfolio-variance-bound/1 镜像及二阶锥能力。发布复核容差为上限乘敞口容差。空的组/资产覆盖列表仅使用默认约束。</Typography.Paragraph>
+        <Form.Item name={['content', 'constraints', 'max_ex_ante_risk']} label="每决策周期风险上限（不用时留空）" rules={optionalDecimal}><Input inputMode="decimal" /></Form.Item>
+        <Typography.Paragraph type="secondary">{risk === 'CVAR' ? 'CVaR 上限是预期损失收益率；需 portfolio-cvar/1 与线性规划能力，置信水平不设默认值。' : '方差上限需 portfolio-variance-bound/1 镜像与二阶锥能力。'}上限须为正，不是波动率或年化值；发布复核容差为上限乘敞口容差。空的组/资产覆盖列表仅使用默认约束。</Typography.Paragraph>
         {(['group_bounds', 'asset_overrides'] as const).map(name => <Form.List key={name} name={['content', 'constraints', name]}>{(fields, { add, remove }) => <>
           {fields.map(field => <Card key={field.key} size="small" title={`${name === 'group_bounds' ? '分组' : '资产覆盖'} ${field.name + 1}`}>
             <Form.Item name={[field.name, name === 'group_bounds' ? 'group_id' : 'instrument_id']} label={name === 'group_bounds' ? '组编号' : '资产标识'} rules={[required, { max: name === 'group_bounds' ? 120 : 200, whitespace: true }]}><Input /></Form.Item>

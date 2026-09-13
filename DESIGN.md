@@ -1887,7 +1887,22 @@ Operator或目标为mandate_id、内容完全相同的PORTFOLIO_BUILD单次grant
 
 `PortfolioConstraintsV1` 的现金、全局资产上下界、逐资产覆盖、组上下界、gross/net、turnover及参与率都进入同一个原生问题。turnover明确为本次所有资产的绝对目标变动之和（买卖各计一次，现金是剩余资金，不重复计入交易费用）；当前权重及现金必须来自同一个有来源的快照并在容差内合计1。max_participation按每资产可用成交额除以冻结capital换算，缺流动性不放宽。费用为该资产每单位交易名义金额的明确费率，通过原生目标函数纳入；最终共享资金模拟仍使用同一冻结费用假设，不能二次从模拟净收益扣除。
 
-第一条受支持的求解配置为 CLARABEL/0.11.1 的 MIN_RISK、VARIANCE，包含上述线性约束；MAX_UTILITY将有明确单位的预测及正risk_aversion加入相同QP。VARIANCE 的 max_ex_ante_risk 是每决策周期收益的组合方差上限（不是标准差或年化波动率），必须为正；通过原生 Cholesky 与 Clarabel 二阶锥约束实现 wᵀΣw ≤ 上限。发布时以保存后的 Decimal 权重及同一冻结收益历史重新调用原生协方差与矩阵乘法复核，允许误差仅为上限乘 exposure_tolerance，不是绝对方差容差；非有限、溢出或下溢明确失败。启用上限须有 portfolio-variance-bound/1 及 SECOND_ORDER_CONE 镜像能力。RISK_BUDGETING、CVAR仍必须以原生能力不可用拒绝，不能以另一目标静默替代。逐项扩展必须附原生数值与独立小例验证；这段受支持范围不删除Issue62的完整交付项。
+第一条受支持的求解配置为 CLARABEL/0.11.1 的 MIN_RISK、VARIANCE，包含上述线性约束；MAX_UTILITY将有明确单位的预测及正risk_aversion加入相同QP。VARIANCE 的 max_ex_ante_risk 是每决策周期收益的组合方差上限（不是标准差或年化波动率），必须为正；通过原生 Cholesky 与 Clarabel 二阶锥约束实现 wᵀΣw ≤ 上限。发布时以保存后的 Decimal 权重及同一冻结收益历史重新调用原生协方差与矩阵乘法复核，允许误差仅为上限乘 exposure_tolerance，不是绝对方差容差；非有限、溢出或下溢明确失败。启用方差上限须有 portfolio-variance-bound/1 及 SECOND_ORDER_CONE 镜像能力。逐项扩展必须附原生数值与独立小例验证；这段受支持范围不删除Issue62的完整交付项。
+
+CVAR 同样支持 MIN_RISK/MAX_UTILITY，明确冻结 optimizer.parameters.cvar_confidence
+为 (0,1) 内的 Decimal；CVAR 缺值或 VARIANCE 携带非空值均拒绝，不默认95%。
+每个原始 return_history 时间列是一项等概率场景，损失为资产权重与该周期收益的
+负内积（现金收益为0）；不拟合正态分布、不年化、不通过协方差替代尾部风险。
+采用 Rockafellar–Uryasev 场景形式 eta + sum(z)/(N*(1-confidence))，其中
+z>=loss-eta 且 z>=0，直接装配已有 Clarabel 原生线性规划；MAX_UTILITY 加入
+原预测，费用沿原换手项只计一次。risk_aversion 乘该风险目标。CVAR 的正
+max_ex_ante_risk 是同周期损失收益率的预期短缺上限，不是方差；进入同一线性问题。
+发布以保存权重重新做原生 ndarray 内积和标准库次序统计，按该经验分布的精确
+尾部概率质量复核（含分数个场景和重复损失，不能只平均严格超过VaR的场景）。
+置信水平与场景数的乘积/尾部质量先用 Decimal 计算，避免接近1时被浮点舍入抹去。
+上限容差同样是上限乘 exposure_tolerance；风险可为负，不能截成0。CVAR不调用
+方差估计/Cholesky，其原协方差引用保留为明确的Mandate模型配置但不影响该风险。
+需要 portfolio-cvar/1 与 LINEAR_PROGRAM 镜像能力；RISK_BUDGETING仍明确不可用。
 
 固定权重预测聚合使用ndarray 0.17.1的原生矩阵乘法：行是已对齐Alpha预测，列是
 冻结资产顺序，不拟合权重、不补缺值、不把score当收益。首个固定组合适配接受

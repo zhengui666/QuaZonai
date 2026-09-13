@@ -13,9 +13,32 @@ use support::research_support as research;
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn variance_bound_requires_both_native_adapter_and_cone_without_partial_writes(pool: PgPool) {
+    risk_capability_gate(pool, false).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn cvar_requires_both_native_adapter_and_linear_program_without_partial_writes(pool: PgPool) {
+    risk_capability_gate(pool, true).await;
+}
+
+async fn risk_capability_gate(pool: PgPool, cvar: bool) {
     let (store, actor) = research::operator(&pool).await;
     let mut request = support::request(&pool, &store, &actor).await;
     request.content.constraints.max_ex_ante_risk = Some("0.0001".parse().unwrap());
+    let (adapter, cone, error) = if cvar {
+        request.content.risk_measure = AllocationRisk::Cvar;
+        let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.content.optimizer else {
+            unreachable!()
+        };
+        parameters.cvar_confidence = Some("0.95".parse().unwrap());
+        ("portfolio-cvar", "LINEAR_PROGRAM", "portfolio_cvar")
+    } else {
+        (
+            "portfolio-variance-bound",
+            "SECOND_ORDER_CONE",
+            "portfolio_variance_bound",
+        )
+    };
     let original: serde_json::Value = sqlx::query_scalar("SELECT o.outcome FROM app.runtime_probe_observations o JOIN app.runtime_integrations r ON r.last_capability_snapshot_artifact_id=o.snapshot_artifact_id WHERE r.id=$1")
         .bind(request.runtime_id.as_uuid()).fetch_one(&pool).await.unwrap();
     let RuntimeProbeOutcomeV1::Available { capabilities } =
@@ -26,11 +49,10 @@ async fn variance_bound_requires_both_native_adapter_and_cone_without_partial_wr
     for mutation in 0..3 {
         let mut cap = capabilities.clone();
         if mutation != 0 {
-            cap.engine_versions
-                .insert("portfolio-variance-bound".into(), "1".into());
+            cap.engine_versions.insert(adapter.into(), "1".into());
         }
         if mutation != 1 {
-            cap.solver_capabilities.push("SECOND_ORDER_CONE".into());
+            cap.solver_capabilities.push(cone.into());
         }
         request.expected_runtime_revision = support::observation::publish(
             &pool,
@@ -46,8 +68,8 @@ async fn variance_bound_requires_both_native_adapter_and_cone_without_partial_wr
             assert!(matches!(
                 result,
                 Err(StoreError::Domain(
-                    domain::DomainError::CapabilityUnavailable("portfolio_variance_bound")
-                ))
+                    domain::DomainError::CapabilityUnavailable(actual)
+                )) if actual == error
             ));
             let count: i64 = sqlx::query_scalar("SELECT count(*) FROM app.portfolio_mandates")
                 .fetch_one(&pool)

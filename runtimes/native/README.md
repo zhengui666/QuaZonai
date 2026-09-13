@@ -10,9 +10,13 @@ Runtime 是受信任的计算网关：只接受已登记镜像、不可变输入
 合成数值不是REAL资格或完整交付。更新源码后必须重建并登记新镜像。
 方差上限还要求portfolio-variance-bound/1，使用原生Cholesky/Clarabel二阶锥；
 上限是每决策周期收益方差，发布按冻结历史与保存权重重新计算，不是年化波动率。
+CVAR还要求portfolio-cvar/1及LINEAR_PROGRAM，显式冻结cvar_confidence为(0,1)
+内Decimal。Clarabel原生LP消费全部等权损失场景；此时上限是同周期预期损失
+收益率，发布含分数尾部/重复损失复核，不把原生数值结果当资格。
 当前要求portfolio-models/4，绑定原optimizer/alpha_ensemble的类名、版本及严格
 参数；risk_aversion冻结在optimizer.parameters，不接收顶层settings/risk_aversion
-或默认模型。必须从目录生成的return_history经covariance_estimator原生估计协方差，
+或默认模型。VARIANCE从目录生成的return_history经covariance_estimator原生估计协方差，
+CVAR直接使用完整原收益场景，不以协方差或正态分布替代；
 不接受旧covariance矩阵。具体原生请求格式以CLI及生成合同为准。
 
 ## 构建

@@ -3368,6 +3368,7 @@ export interface components {
             adapter_kind: "CLARABEL_QP";
             parameters: {
                 accept_inaccurate: boolean;
+                cvar_confidence?: null | components["schemas"]["DecimalValue"];
                 /** Format: int32 */
                 max_iterations: number;
                 risk_aversion: components["schemas"]["DecimalValue"];
