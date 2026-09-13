@@ -96,6 +96,75 @@ async fn target(
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn candidate_views_preserve_published_children_decimal_values_and_page_identity(
+    pool: PgPool,
+) {
+    use contracts::control::ListQuery;
+    let (store, actor) = research_support::operator(&pool).await;
+    let f = fixture(&pool, budget()).await;
+    let (mandate, previous, _) = portfolio(&pool, &f).await;
+    let alpha = alpha(&pool, &f).await;
+    let mut tx = pool.begin().await.unwrap();
+    let id = candidate_header(&mut tx, &f, mandate).await;
+    member(&mut tx, id, &alpha).await.unwrap();
+    target(&mut tx, id, "B.EXAMPLE").await.unwrap();
+    target(&mut tx, id, "A.EXAMPLE").await.unwrap();
+    assert!(matches!(
+        store.candidate(&actor, id).await,
+        Err(store::StoreError::NotFound)
+    ));
+    tx.commit().await.unwrap();
+    let detail = store.candidate(&actor, id).await.unwrap();
+    assert_eq!(detail.header.id, id);
+    assert_eq!(detail.members[0].qualification_id, alpha.qualification);
+    assert_eq!(
+        serde_json::to_value(&detail.members[0].ensemble_weight).unwrap(),
+        "1"
+    );
+    assert_eq!(detail.targets.len(), 2);
+    assert_eq!(detail.targets[0].instrument_id, "A.EXAMPLE");
+    assert_eq!(
+        serde_json::to_value(&detail.targets[0].target_weight).unwrap(),
+        "0.5"
+    );
+    assert!(detail.targets[0].valid_until > detail.targets[0].asof);
+    let first = store
+        .candidates(
+            &actor,
+            f.project,
+            &ListQuery {
+                cursor: None,
+                limit: 1,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.items[0].id, id);
+    let second = store
+        .candidates(
+            &actor,
+            f.project,
+            &ListQuery {
+                cursor: first.next_cursor,
+                limit: 1,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.items[0].id, previous);
+    assert!(second.next_cursor.is_none());
+    let json = serde_json::to_string(&detail).unwrap();
+    for forbidden in [
+        "storage_object_ref",
+        "storage_backend",
+        "storage_version",
+        "secret_ref",
+    ] {
+        assert!(!json.contains(forbidden));
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn operation_views_never_disclose_sealed_or_unbound_published_evaluations(pool: PgPool) {
     let (store, operator) = research_support::operator(&pool).await;
     let f = fixture(&pool, budget()).await;

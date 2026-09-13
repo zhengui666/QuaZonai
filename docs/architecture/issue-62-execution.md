@@ -3,6 +3,33 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Candidate publication and read workflow, 2026-09-13
+
+Local commits `7dd87b75` and `27ac4787` bind one immutable Candidate to the original
+terminal Build Run, with original task/manifest/report checks and atomic members,
+targets and diagnostics. ACK is refused before publication. Real PG/files tests
+cover cancelled publication rollback/cleanup/concurrent replay and original
+controlled successful report adoption followed by expired-target INVALID without
+rewriting SUCCEEDED/OPTIMAL. Mismatched report Alpha identity fails before writes.
+Controlled source bindings are not positive scientific admission or native OCI proof.
+
+Working source over `27ac4787` adds original Candidate header/detail contracts,
+Store, GET list/detail HTTP endpoints, native `portfolio candidate list/show` and
+React/Ant Design candidate tab. Reads expose only sealed snapshots and original
+references, not evaluator bytes, storage locators or new authority. PG tests cover
+uncommitted invisibility, stable cursor identity and exact decimal/member/target
+reads; real CLI/TCP/HTTP tests cover scoped reads and foreign-project denial.
+Browser tests preserve decimal strings, keep invalid candidates targetless, check
+keyboard scrolling, and return to the original page after a next-page read failure.
+
+`verify-QVbOm6` exited 0: check/fmt/strict Clippy, 3 portfolio internal, 31 native,
+135 Store and 24 HTTP/CLI tests passed. `web-verify-v0BR7C` exited 0: all six native
+generated outputs reproduced, typecheck, 505 Vitest tests, Node/wire checks, build,
+36 dedicated browser and 210 full browser cases passed with handwritten source
+unchanged. Earlier new-table accessibility failures were fixed, not suppressed.
+This does not complete positive REAL qualification/build admission, source-change
+concurrency, independent shared-capital validation, Release or full Issue62 acceptance.
+
 ## Portfolio build admission and command boundary, 2026-09-13
 
 Working source over `22c4d123093edae586583130ca462097139d2711` adds source-reference

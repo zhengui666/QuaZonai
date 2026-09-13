@@ -1833,6 +1833,16 @@ Mandate与实际求解共用；具体资产/组成员和数值可行性仍由冻
 
 ### A5.1 候选子对象唯一性
 
+Operator及精确项目RESEARCH_READ的CLI可读取
+GET /api/v2/projects/{id}/portfolio-candidates 的原发布头分页和
+GET /api/v2/portfolio-candidates/{id} 的完整不可变头、成员、目标快照。
+CLI为portfolio candidate list/show。只返回已封口Candidate及原引用，不读报告字节、
+存储位置或Sealed指标，不新增Mission权限。执行状态、solver_status、evidence_status
+与原诊断来源分别返回；历史VALID/目标快照不表示当前资格或Release授权。
+取消/失败/过期候选仍可查，无目标保持空集合，不补造权重。
+React/Ant Design“组合 → 候选快照”使用同一分页和详情接口，项目切换重置游标与
+选中项，显示原Decimal字符串和时间，不提供基于历史状态的审批/交付捷径。
+
 每个正式PORTFOLIO_BUILD Run只发布一个不可变Candidate；Worker在原Run锁内读取
 原参数、终态回执、Attempt/manifest和原生组合报告，核对完整输出绑定后同事务
 发布Candidate及成员/目标。ACK丢失重放原Candidate，不重新运行或追加子项。

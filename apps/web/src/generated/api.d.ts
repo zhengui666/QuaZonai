@@ -1076,6 +1076,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/portfolio-candidates/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_candidate"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/portfolio-mandates": {
         parameters: {
             query?: never;
@@ -1180,6 +1196,22 @@ export interface paths {
             cookie?: never;
         };
         get: operations["list_execution_assumptions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/projects/{id}/portfolio-candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_candidates"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1801,6 +1833,55 @@ export interface components {
             train_input_set_id: components["schemas"]["Id"];
             validation: components["schemas"]["EvaluationView"];
         };
+        CandidateDetailV1: {
+            header: components["schemas"]["CandidateViewV1"];
+            members: components["schemas"]["CandidateMemberV1"][];
+            targets: components["schemas"]["CandidateTargetV1"][];
+        };
+        CandidateMemberV1: {
+            alpha_version_id: components["schemas"]["Id"];
+            calibration_id?: null | components["schemas"]["Id"];
+            coverage_fraction: components["schemas"]["DecimalValue"];
+            ensemble_weight: components["schemas"]["DecimalValue"];
+            forecast_unit: string;
+            qualification_id: components["schemas"]["Id"];
+        };
+        CandidateTargetV1: {
+            /** Format: date-time */
+            asof: string;
+            currency: string;
+            instrument_id: string;
+            target_weight: components["schemas"]["DecimalValue"];
+            /** Format: date-time */
+            valid_until: string;
+        };
+        /** @description Original publication facts, never a current eligibility or delivery verdict. */
+        CandidateViewV1: {
+            allocation_evaluation_id?: null | components["schemas"]["Id"];
+            cash_weight?: null | components["schemas"]["DecimalValue"];
+            covariance_artifact_id?: null | components["schemas"]["Id"];
+            /** Format: date-time */
+            created_at: string;
+            current_weights_artifact_id?: null | components["schemas"]["Id"];
+            current_weights_source: components["schemas"]["CandidateWeightsSourceV1"];
+            /** Format: date-time */
+            decision_asof: string;
+            diagnostics_artifact_id: components["schemas"]["Id"];
+            evidence_status: components["schemas"]["EvidenceStatus"];
+            execution_status: components["schemas"]["RunState"];
+            forecast_artifact_id?: null | components["schemas"]["Id"];
+            id: components["schemas"]["Id"];
+            input_set_id: components["schemas"]["Id"];
+            mandate_id: components["schemas"]["Id"];
+            origin: components["schemas"]["DataOrigin"];
+            project_id: components["schemas"]["Id"];
+            reason_code?: string | null;
+            run_id: components["schemas"]["Id"];
+            solver_status: components["schemas"]["SolverStatus"];
+            target_artifact_id?: null | components["schemas"]["Id"];
+        };
+        /** @enum {string} */
+        CandidateWeightsSourceV1: "FORWARD_SNAPSHOT" | "LAST_TARGET" | "NONE";
         /** @enum {string} */
         CodexAccountActionV1: "LOGIN" | "LOGOUT";
         /** @description Immutable acceptance reference; a receipt is never rewritten to track progress. */
@@ -3579,6 +3660,34 @@ export interface components {
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
+        Page_CandidateViewV1: {
+            items: {
+                allocation_evaluation_id?: null | components["schemas"]["Id"];
+                cash_weight?: null | components["schemas"]["DecimalValue"];
+                covariance_artifact_id?: null | components["schemas"]["Id"];
+                /** Format: date-time */
+                created_at: string;
+                current_weights_artifact_id?: null | components["schemas"]["Id"];
+                current_weights_source: components["schemas"]["CandidateWeightsSourceV1"];
+                /** Format: date-time */
+                decision_asof: string;
+                diagnostics_artifact_id: components["schemas"]["Id"];
+                evidence_status: components["schemas"]["EvidenceStatus"];
+                execution_status: components["schemas"]["RunState"];
+                forecast_artifact_id?: null | components["schemas"]["Id"];
+                id: components["schemas"]["Id"];
+                input_set_id: components["schemas"]["Id"];
+                mandate_id: components["schemas"]["Id"];
+                origin: components["schemas"]["DataOrigin"];
+                project_id: components["schemas"]["Id"];
+                reason_code?: string | null;
+                run_id: components["schemas"]["Id"];
+                solver_status: components["schemas"]["SolverStatus"];
+                target_artifact_id?: null | components["schemas"]["Id"];
+            }[];
+            next_cursor?: null | components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         Page_CodexProfileViewV1: {
             items: {
                 connection_mode: components["schemas"]["ConnectionMode"];
@@ -4552,6 +4661,8 @@ export interface components {
         SelectionStatus: "COMPLETE" | "INCONCLUSIVE";
         /** @enum {string} */
         SelectionTieBreak: "EXPERIMENT_ID_ASC";
+        /** @enum {string} */
+        SolverStatus: "OPTIMAL" | "ACCEPTABLE_INACCURATE" | "INFEASIBLE" | "UNBOUNDED" | "FAILED";
         /** @enum {string} */
         SplitKind: "WALK_FORWARD" | "CPCV_FIXED_HORIZON";
         SplitPolicyV1: {
@@ -10319,6 +10430,69 @@ export interface operations {
             };
         };
     };
+    get_candidate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CandidateDetailV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     create_mandate: {
         parameters: {
             query?: never;
@@ -11023,6 +11197,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Page_ExecutionAssumptionsViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_candidates: {
+        parameters: {
+            query?: {
+                cursor?: components["schemas"]["Id"];
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_CandidateViewV1"];
                 };
             };
             401: {

@@ -1,0 +1,62 @@
+import { Alert, Button, Descriptions, Drawer, Space, Table, Typography } from 'antd';
+import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
+import { api, dataOf, displayTime } from './api';
+import type { Schema } from './api';
+import { NoData, Pager, QueryPanel } from './ui';
+
+type Candidate = Schema['CandidateViewV1'];
+const snapshotNotice = '这是原发布时的不可变记录。历史 VALID 和目标权重不表示当前资格或 Release 授权；不得当成真实账户仓位。';
+
+export function Candidates({ project }: { project: string }) {
+  const [history, setHistory] = useState<(string | undefined)[]>([undefined]);
+  const [selected, setSelected] = useState<string>();
+  const query = useQuery({ queryKey: ['portfolio-candidates', project, history.at(-1)], queryFn: async ({ signal }) => {
+    const page = dataOf(await api.GET('/api/v2/projects/{id}/portfolio-candidates', { params: { path: { id: project }, query: { cursor: history.at(-1), limit: 25 } }, signal }));
+    if (page.items.some(item => item.project_id !== project)) throw new Error('候选记录不属于当前项目。');
+    return page;
+  } });
+  return <Space orientation="vertical" size="middle" className="full-width">
+    <Alert showIcon type="info" title="候选快照不是交付授权" description={snapshotNotice} />
+    <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新候选</Button>
+    <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
+      <Table<Candidate> rowKey="id" dataSource={query.data?.items} pagination={false} onHeaderRow={() => ({ tabIndex: 0 })} scroll={{ x: 850 }} locale={{ emptyText: <NoData text="尚无已发布候选，不会生成示例目标。" /> }} columns={[
+        { title: '候选编号', dataIndex: 'id', render: (id: string) => <Button type="link" disabled={query.isError} onClick={() => setSelected(id)}>{id}</Button> },
+        { title: '执行状态', dataIndex: 'execution_status' }, { title: '求解状态', dataIndex: 'solver_status' },
+        { title: '原证据状态', dataIndex: 'evidence_status' }, { title: '来源', dataIndex: 'origin' },
+        { title: '决策时点', dataIndex: 'decision_asof', render: displayTime },
+        { title: '原因', dataIndex: 'reason_code', render: (value: string | null) => value ?? '无' },
+      ]} />
+    </QueryPanel>
+    <Pager next={query.isError ? undefined : query.data?.next_cursor} history={history} loading={query.isFetching} move={setHistory} />
+    {selected && <Detail key={selected} id={selected} project={project} close={() => setSelected(undefined)} />}
+  </Space>;
+}
+
+function Detail({ id, project, close }: { id: string; project: string; close: () => void }) {
+  const query = useQuery({ queryKey: ['portfolio-candidate', project, id], queryFn: async ({ signal }) => {
+    const detail = dataOf(await api.GET('/api/v2/portfolio-candidates/{id}', { params: { path: { id } }, signal }));
+    if (detail.header.id !== id || detail.header.project_id !== project) throw new Error('服务器返回了其他候选记录。');
+    return detail;
+  } });
+  const header = query.data?.header;
+  return <Drawer title="不可变候选快照" open onClose={close} width={900}>
+    <Alert showIcon type="info" title="历史状态不授予当前资格" description={snapshotNotice} />
+    <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
+      {header && query.data && <>
+        <Descriptions column={1} items={Object.entries(header).map(([key, value]) => ({ key, label: key, children: <Typography.Text className="break-word">{value ?? '未生成'}</Typography.Text> }))} />
+        <Typography.Title level={2}>原始 Alpha 成员</Typography.Title>
+        <Table rowKey="alpha_version_id" dataSource={query.data.members} pagination={false} onHeaderRow={() => ({ tabIndex: 0 })} scroll={{ x: 800 }} columns={[
+          { title: 'Alpha 版本', dataIndex: 'alpha_version_id' }, { title: '原资格', dataIndex: 'qualification_id' },
+          { title: '混合权重', dataIndex: 'ensemble_weight' }, { title: '预测单位', dataIndex: 'forecast_unit' },
+          { title: '覆盖比例', dataIndex: 'coverage_fraction' }, { title: '原校准', dataIndex: 'calibration_id', render: (value: string | null) => value ?? '无' },
+        ]} />
+        <Typography.Title level={2}>原始目标快照</Typography.Title>
+        <Table rowKey="instrument_id" dataSource={query.data.targets} pagination={false} onHeaderRow={() => ({ tabIndex: 0 })} scroll={{ x: 700 }} locale={{ emptyText: <NoData text="无目标，不补造权重或现金。" /> }} columns={[
+          { title: '资产', dataIndex: 'instrument_id' }, { title: '目标权重', dataIndex: 'target_weight' }, { title: '币种', dataIndex: 'currency' },
+          { title: '起始', dataIndex: 'asof', render: displayTime }, { title: '截止', dataIndex: 'valid_until', render: displayTime },
+        ]} />
+      </>}
+    </QueryPanel>
+  </Drawer>;
+}

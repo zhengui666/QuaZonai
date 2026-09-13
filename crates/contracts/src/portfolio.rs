@@ -256,6 +256,69 @@ pub struct MandateViewV1 {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum CandidateWeightsSourceV1 {
+    ForwardSnapshot,
+    LastTarget,
+    None,
+}
+
+/// Original publication facts, never a current eligibility or delivery verdict.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CandidateViewV1 {
+    pub id: crate::Id,
+    pub project_id: crate::Id,
+    pub mandate_id: crate::Id,
+    pub input_set_id: crate::Id,
+    pub run_id: crate::Id,
+    pub decision_asof: chrono::DateTime<chrono::Utc>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub execution_status: crate::runs::RunState,
+    pub solver_status: SolverStatus,
+    pub evidence_status: crate::evidence::EvidenceStatus,
+    pub origin: crate::research::DataOrigin,
+    pub reason_code: Option<String>,
+    pub forecast_artifact_id: Option<crate::Id>,
+    pub covariance_artifact_id: Option<crate::Id>,
+    pub diagnostics_artifact_id: crate::Id,
+    pub target_artifact_id: Option<crate::Id>,
+    pub allocation_evaluation_id: Option<crate::Id>,
+    pub cash_weight: Option<DecimalValue>,
+    pub current_weights_source: CandidateWeightsSourceV1,
+    pub current_weights_artifact_id: Option<crate::Id>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CandidateMemberV1 {
+    pub alpha_version_id: crate::Id,
+    pub qualification_id: crate::Id,
+    pub ensemble_weight: DecimalValue,
+    pub calibration_id: Option<crate::Id>,
+    pub forecast_unit: String,
+    pub coverage_fraction: DecimalValue,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CandidateTargetV1 {
+    pub instrument_id: String,
+    pub target_weight: DecimalValue,
+    pub currency: String,
+    pub asof: chrono::DateTime<chrono::Utc>,
+    pub valid_until: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CandidateDetailV1 {
+    pub header: CandidateViewV1,
+    pub members: Vec<CandidateMemberV1>,
+    pub targets: Vec<CandidateTargetV1>,
+}
+
 /// Only implemented native adapters. Role and linked upstream identity are
 /// checked before execution; this reference does not authorize a model import.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

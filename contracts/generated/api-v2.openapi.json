@@ -5161,6 +5161,237 @@
         ],
         "type": "object"
       },
+      "CandidateDetailV1": {
+        "additionalProperties": false,
+        "properties": {
+          "header": {
+            "$ref": "#/components/schemas/CandidateViewV1"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateMemberV1"
+            },
+            "type": "array"
+          },
+          "targets": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateTargetV1"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "header",
+          "members",
+          "targets"
+        ],
+        "type": "object"
+      },
+      "CandidateMemberV1": {
+        "additionalProperties": false,
+        "properties": {
+          "alpha_version_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "calibration_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "coverage_fraction": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "ensemble_weight": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "forecast_unit": {
+            "type": "string"
+          },
+          "qualification_id": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "alpha_version_id",
+          "qualification_id",
+          "ensemble_weight",
+          "forecast_unit",
+          "coverage_fraction"
+        ],
+        "type": "object"
+      },
+      "CandidateTargetV1": {
+        "additionalProperties": false,
+        "properties": {
+          "asof": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "instrument_id": {
+            "type": "string"
+          },
+          "target_weight": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instrument_id",
+          "target_weight",
+          "currency",
+          "asof",
+          "valid_until"
+        ],
+        "type": "object"
+      },
+      "CandidateViewV1": {
+        "additionalProperties": false,
+        "description": "Original publication facts, never a current eligibility or delivery verdict.",
+        "properties": {
+          "allocation_evaluation_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "cash_weight": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DecimalValue"
+              }
+            ]
+          },
+          "covariance_artifact_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "current_weights_artifact_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "current_weights_source": {
+            "$ref": "#/components/schemas/CandidateWeightsSourceV1"
+          },
+          "decision_asof": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "diagnostics_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "evidence_status": {
+            "$ref": "#/components/schemas/EvidenceStatus"
+          },
+          "execution_status": {
+            "$ref": "#/components/schemas/RunState"
+          },
+          "forecast_artifact_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "input_set_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "mandate_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/DataOrigin"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "run_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "solver_status": {
+            "$ref": "#/components/schemas/SolverStatus"
+          },
+          "target_artifact_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "mandate_id",
+          "input_set_id",
+          "run_id",
+          "decision_asof",
+          "created_at",
+          "execution_status",
+          "solver_status",
+          "evidence_status",
+          "origin",
+          "diagnostics_artifact_id",
+          "current_weights_source"
+        ],
+        "type": "object"
+      },
+      "CandidateWeightsSourceV1": {
+        "enum": [
+          "FORWARD_SNAPSHOT",
+          "LAST_TARGET",
+          "NONE"
+        ],
+        "type": "string"
+      },
       "CodexAccountActionV1": {
         "enum": [
           "LOGIN",
@@ -13142,6 +13373,161 @@
         ],
         "type": "object"
       },
+      "Page_CandidateViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "description": "Original publication facts, never a current eligibility or delivery verdict.",
+              "properties": {
+                "allocation_evaluation_id": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  ]
+                },
+                "cash_weight": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DecimalValue"
+                    }
+                  ]
+                },
+                "covariance_artifact_id": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  ]
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "current_weights_artifact_id": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  ]
+                },
+                "current_weights_source": {
+                  "$ref": "#/components/schemas/CandidateWeightsSourceV1"
+                },
+                "decision_asof": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "diagnostics_artifact_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "evidence_status": {
+                  "$ref": "#/components/schemas/EvidenceStatus"
+                },
+                "execution_status": {
+                  "$ref": "#/components/schemas/RunState"
+                },
+                "forecast_artifact_id": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  ]
+                },
+                "id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "input_set_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "mandate_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "origin": {
+                  "$ref": "#/components/schemas/DataOrigin"
+                },
+                "project_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "reason_code": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "run_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "solver_status": {
+                  "$ref": "#/components/schemas/SolverStatus"
+                },
+                "target_artifact_id": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "project_id",
+                "mandate_id",
+                "input_set_id",
+                "run_id",
+                "decision_asof",
+                "created_at",
+                "execution_status",
+                "solver_status",
+                "evidence_status",
+                "origin",
+                "diagnostics_artifact_id",
+                "current_weights_source"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "items"
+        ],
+        "type": "object"
+      },
       "Page_CodexProfileViewV1": {
         "additionalProperties": false,
         "properties": {
@@ -17501,6 +17887,16 @@
       "SelectionTieBreak": {
         "enum": [
           "EXPERIMENT_ID_ASC"
+        ],
+        "type": "string"
+      },
+      "SolverStatus": {
+        "enum": [
+          "OPTIMAL",
+          "ACCEPTABLE_INACCURATE",
+          "INFEASIBLE",
+          "UNBOUNDED",
+          "FAILED"
         ],
         "type": "string"
       },
@@ -26687,6 +27083,101 @@
         ]
       }
     },
+    "/api/v2/portfolio-candidates/{id}": {
+      "get": {
+        "operationId": "get_candidate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateDetailV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Portfolio candidates"
+        ]
+      }
+    },
     "/api/v2/portfolio-mandates": {
       "post": {
         "operationId": "create_mandate",
@@ -27908,6 +28399,120 @@
         ],
         "tags": [
           "Execution assumptions"
+        ]
+      }
+    },
+    "/api/v2/projects/{id}/portfolio-candidates": {
+      "get": {
+        "operationId": "list_candidates",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_CandidateViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Portfolio candidates"
         ]
       }
     },

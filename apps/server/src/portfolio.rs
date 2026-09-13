@@ -20,6 +20,28 @@ use contracts::{
 };
 use store::StoreError;
 
+#[utoipa::path(get,path="/api/v2/projects/{id}/portfolio-candidates",operation_id="list_candidates",tag="Portfolio candidates",params(("id"=Id,Path),("cursor"=Option<Id>,Query),("limit"=Option<u16>,Query,minimum=1,maximum=100)),responses((status=200,body=Page<CandidateViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
+pub async fn candidates(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    id: Result<Path<Id>, PathRejection>,
+    query: Result<Query<ListQuery>, QueryRejection>,
+) -> Result<Json<Page<CandidateViewV1>>, ApiError> {
+    let Path(id) = id.map_err(|_| ApiError::validation())?;
+    let Query(query) = query.map_err(|_| ApiError::validation())?;
+    Ok(Json(state.store.candidates(&actor, id, &query).await?))
+}
+
+#[utoipa::path(get,path="/api/v2/portfolio-candidates/{id}",operation_id="get_candidate",tag="Portfolio candidates",params(("id"=Id,Path)),responses((status=200,body=CandidateDetailV1),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
+pub async fn candidate(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    id: Result<Path<Id>, PathRejection>,
+) -> Result<Json<CandidateDetailV1>, ApiError> {
+    let Path(id) = id.map_err(|_| ApiError::validation())?;
+    Ok(Json(state.store.candidate(&actor, id).await?))
+}
+
 #[utoipa::path(post,path="/api/v2/portfolio-builds",operation_id="start_portfolio_build",tag="Portfolio",request_body=PortfolioBuildRequestV1,params(("Idempotency-Key"=String,Header)),responses((status=202,body=CommandResult<contracts::runs::RunSnapshotV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
 pub async fn build(
     State(state): State<AppState>,

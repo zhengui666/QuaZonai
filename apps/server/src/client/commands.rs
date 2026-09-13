@@ -26,7 +26,7 @@ use contracts::{
     experiments::{ExperimentProposalV1, ExperimentView},
     forward::{DownstreamWeightsSubmitV1, DownstreamWeightsViewV1},
     lifecycle::{RunCancelV1, RunListQuery},
-    portfolio::{MandateCreateV1, MandateViewV1},
+    portfolio::{CandidateDetailV1, CandidateViewV1, MandateCreateV1, MandateViewV1},
     research::{
         EvaluationPolicyCreate, EvaluationPolicyView, InputSetCreate, InputSetSummary, InputSetView,
     },
@@ -129,9 +129,22 @@ pub enum Portfolio {
     /// Queue a source-bound portfolio build, not an approval or delivery.
     Build,
     #[command(subcommand)]
+    Candidate(Candidate),
+    #[command(subcommand)]
     Mandate(Mandate),
     #[command(subcommand)]
     Assumptions(ExecutionAssumptions),
+}
+#[derive(Subcommand)]
+pub enum Candidate {
+    List {
+        project_id: String,
+        #[command(flatten)]
+        page: List,
+    },
+    Show {
+        id: String,
+    },
 }
 #[derive(Subcommand)]
 pub enum ExecutionAssumptions {
@@ -507,6 +520,15 @@ impl Command {
                     CommandResult<RunSnapshotV1>,
                 >(POST, "/api/v2/portfolio-builds", 202, true)?
             }
+            Self::Portfolio(Portfolio::Candidate(command)) => match command {
+                Candidate::List { project_id, page } => Request::get::<Page<CandidateViewV1>>(
+                    action("/api/v2/projects", project_id, "portfolio-candidates")?,
+                )
+                .page(page)?,
+                Candidate::Show { id } => {
+                    Request::get::<CandidateDetailV1>(item("/api/v2/portfolio-candidates", id)?)
+                }
+            },
             Self::Portfolio(Portfolio::Mandate(command)) => {
                 match command {
                     Mandate::Create => Request::write::<

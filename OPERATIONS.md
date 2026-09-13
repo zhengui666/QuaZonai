@@ -1,5 +1,10 @@
 # 运行与部署
 
+`client portfolio candidate list PROJECT_UUID` / `show CANDIDATE_UUID`查询已发布
+Candidate原始头、成员和目标快照。需要Operator或精确项目RESEARCH_READ的CLI；
+执行、求解和证据状态分别保留，历史VALID不表示当前资格或交付授权，空目标不补权重。
+浏览器“组合”选择项目后打开“候选快照”，可分页、刷新和查看同一原始详情。
+
 本分支已实现 Rust 原生组件、逐轮 PostgreSQL Store 和可运行的浏览器认证 API，**尚非完整研究与交付产品**。旧实现已删除，无兼容服务；完整目标和完成条件在 DESIGN。
 
 ## 原生计算 Runtime 的独立运行边界

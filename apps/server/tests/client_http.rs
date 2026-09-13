@@ -1,5 +1,7 @@
 //! Actual CLI -> TCP -> native Axum/Bearer/TOTP/PostgreSQL data administration.
 //! Every credential and service here is disposable.
+#[path = "../../../crates/store/tests/support/mod.rs"]
+mod candidate_fixture;
 #[path = "support/client.rs"]
 mod client;
 #[path = "../../../tests/support/mandate.rs"]
@@ -11,6 +13,72 @@ use contracts::Id;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use std::{fs, os::unix::fs::PermissionsExt};
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn candidate_cli_reads_original_snapshots_with_project_scope(pool: PgPool) {
+    let f = support::fixture(pool.clone()).await;
+    let (enrollment, initial, totp) = support::start(&f).await;
+    let (confirmed, _) = support::confirm(&f, &enrollment, &initial, &totp, false).await;
+    assert_eq!(confirmed.status, StatusCode::OK);
+    let cookie = confirmed.cookie.unwrap_or(initial);
+    let data = candidate_fixture::fixture(&pool, candidate_fixture::budget()).await;
+    let (_, candidate, _) = candidate_fixture::portfolio(&pool, &data).await;
+    let principal = browser(&f,&cookie,"candidate-reader","/api/v2/machine-principals",json!({"schema_version":1,"name":"Candidate reader","kind":"CLI","project_id":data.project,"downstream_id":null,"enabled":true})).await;
+    assert_eq!(principal.status, StatusCode::CREATED);
+    let credential = browser(&f,&cookie,"candidate-token",&format!("/api/v2/machine-principals/{}/credentials",principal.body["resource"]["id"].as_str().unwrap()),json!({"schema_version":1,"scope_codes":["RESEARCH_READ"],"expires_at":chrono::Utc::now()+chrono::Duration::hours(1)})).await;
+    assert_eq!(credential.status, StatusCode::CREATED);
+    let file = f._state.path().join("candidate-reader-token");
+    fs::write(&file, credential.body["token"].as_str().unwrap()).unwrap();
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+    let (origin, _listener) = listen(&f).await;
+    let result = invoke(
+        &origin,
+        &file,
+        &["portfolio", "candidate", "show", &candidate.to_string()],
+        Value::Null,
+    )
+    .await;
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let detail: contracts::portfolio::CandidateDetailV1 =
+        serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(detail.header.id, candidate);
+    assert!(detail.members.is_empty());
+    assert!(detail.targets.is_empty());
+    let result = invoke(
+        &origin,
+        &file,
+        &[
+            "portfolio",
+            "candidate",
+            "list",
+            &data.project.to_string(),
+            "--limit",
+            "1",
+        ],
+        Value::Null,
+    )
+    .await;
+    assert!(result.status.success());
+    let page: contracts::control::Page<contracts::portfolio::CandidateViewV1> =
+        serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(page.items[0].id, candidate);
+    let foreign = candidate_fixture::fixture(&pool, candidate_fixture::budget()).await;
+    let (_, foreign_candidate, _) = candidate_fixture::portfolio(&pool, &foreign).await;
+    let foreign_candidate = foreign_candidate.to_string();
+    let foreign_project = foreign.project.to_string();
+    for args in [
+        ["portfolio", "candidate", "show", &foreign_candidate],
+        ["portfolio", "candidate", "list", &foreign_project],
+    ] {
+        let result = invoke(&origin, &file, &args, Value::Null).await;
+        assert!(!result.status.success());
+        assert!(result.stdout.is_empty());
+    }
+}
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn native_cli_human_grant_source_creation_replay_and_intent_binding_are_real_transactions(

@@ -152,6 +152,8 @@ SCORE沿原校准确定，不读取active指针推断，REJECT/未入选/缺证�
 Operator的`client portfolio assumptions create/list/show`保存/读取原生来源绑定的
 不可变假设（字段见CLI）；创建需要冻结非Sealed输入、原登记费率和近期Runtime探测。
 当前入口仅保守BAR，不自动获得DATA_BACKED、资格或交付权限；不修改历史假设。
+`client portfolio candidate list PROJECT_UUID` / `show CANDIDATE_UUID`读取已发布
+原始快照；不是当前资格或交付授权，不向Mission开放报告字节。
 `client portfolio build`以原资格、Mandate、Cycle、Forward输入和下游快照引用申请
 Run，CLI需目标Mandate的精确PORTFOLIO_BUILD人工grant。不得手填预测、持仓、费用
 或把202称为合格Candidate；当前完整成功准入/发布链及全成本来源仍待完成。

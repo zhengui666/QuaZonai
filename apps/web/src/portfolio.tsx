@@ -1,5 +1,6 @@
 import { Alert, App, Button, Card, Descriptions, Drawer, Form, Input, InputNumber, Select, Space, Switch, Table, Tabs, Typography } from 'antd';
 import { ExecutionAssumptions } from './execution-assumptions';
+import { Candidates } from './portfolio-candidates';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useContext, useRef, useState } from 'react';
 import { api, dataOf, displayTime, Intent, isDecimal } from './api';
@@ -39,12 +40,12 @@ export function Portfolios() {
   const { blocked } = useContext(GuardContext);
   return <Space orientation="vertical" size="large" className="full-width">
     <Typography.Title level={1}>组合</Typography.Title>
-    <Alert showIcon type="info" title="先保存不可变的组合配置（Mandate）" description="配置保存不是 Alpha 资格、科学 PASS 或可交付目标。组合构建、独立回测与 Release 交付尚未接通，不会填充示例收益。" />
+    <Alert showIcon type="info" title="不可变组合配置与原始候选快照" description="配置保存和候选查询不是 Alpha 资格、科学 PASS 或交付授权。网页构建、独立回测与 Release 交付尚未接通，不会填充示例收益。" />
     <ResourceSelect label="选择组合所属项目" value={project} onChange={setProject} disabled={blocked} queryKey={['portfolio-projects']} load={async (cursor, signal) => {
       const page = dataOf(await api.GET('/api/v2/projects', { params: { query: { cursor, limit: 50 } }, signal }));
       return { next_cursor: page.next_cursor, items: page.items.map(item => ({ value: item.id, label: `${item.name} · ${item.id}` })) };
     }} />
-    {project ? <Tabs key={project} items={[{ key: 'mandates', label: '组合配置', children: <Mandates project={project} /> }, { key: 'assumptions', label: '执行假设', children: <ExecutionAssumptions project={project} /> }]} /> : <NoData text="请选择项目后查看配置，不会自动创建或启动组合。" />}
+    {project ? <Tabs key={project} items={[{ key: 'mandates', label: '组合配置', children: <Mandates project={project} /> }, { key: 'assumptions', label: '执行假设', children: <ExecutionAssumptions project={project} /> }, { key: 'candidates', label: '候选快照', children: <Candidates project={project} /> }]} /> : <NoData text="请选择项目后查看配置，不会自动创建或启动组合。" />}
   </Space>;
 }
 
