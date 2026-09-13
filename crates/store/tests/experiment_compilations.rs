@@ -34,6 +34,9 @@ mod cycle_selection;
 #[path = "support/sealed_opportunities.rs"]
 mod sealed_opportunities;
 
+#[path = "support/qualified_portfolio.rs"]
+mod qualified_portfolio;
+
 fn limits() -> JobLimitsV1 {
     JobLimitsV1 {
         schema_version: SchemaV1,

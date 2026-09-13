@@ -3,6 +3,26 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Two original qualified sources, 2026-09-13
+
+The test patch over `cf50a166` prepares two original trials in one project/Cycle
+and frozen policy. Each uses actual Store compilation/forecast/Validation admission
+and result publication, then its own calibrated Alpha version and result feedback.
+Research ACK admits the independent Reviewer; both original review targets receive
+separate bounded turns before two Sealed jobs are queued together under the frozen
+parallel limit of two. Reviewer completion precedes those jobs' execution, matching
+the Worker order. Original Sealed result publication and competing ACKs produce
+exactly two distinct qualifications, versions and qualifying evaluations, with
+both active Alphas QUALIFIED. No qualification or evaluation rows are hand-authored.
+
+All native result bytes, session/turn receipts and REAL/PIT runtime declarations
+in this test are controlled protocol input. It exercises real PG/PGMQ and artifact
+files, not model inference, native numerical execution or genuine market evidence.
+`verify-A7bdzM` exited 0 with unchanged source: check/fmt/strict Clippy plus 4
+portfolio unit, 31 native-validation, 136 Store and 24 HTTP/CLI tests (195 total).
+Full positive Portfolio Build/Candidate acceptance and all remaining Issue #62
+development still remain; this evidence is not release, merge or closure approval.
+
 ## Original reviewed qualification transaction, 2026-09-13
 
 The test patch over `8f9fbc3b` reuses the original Mission/Validation/independent
