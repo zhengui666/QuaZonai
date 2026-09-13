@@ -32,9 +32,50 @@ pub fn build(
         original == request.current_weights,
         "PORTFOLIO_CURRENT_WEIGHTS_SOURCE_MISMATCH"
     );
-    let market = crate::catalog::load_catalog(catalog, &request.selection)?;
-    crate::simulation::execution_market(&market, &request.execution_settings)?;
-    let horizon = request.members[0].parameters.label_horizon_observations as usize;
+    let prepared = prepare(
+        catalog,
+        &request.selection,
+        &request.mandate,
+        &request.execution_settings,
+        &request.assets,
+        &request.members,
+        &mut read,
+    )?;
+    let assets = domain::execution::portfolio_execution_costs(request, &prepared.slippage)?;
+    let input = allocation_input(&request.mandate, assets, original.cash_weight, &prepared);
+    let allocation = crate::allocate(&input)?;
+    let result = NativePortfolioBuildResultV1 {
+        schema_version: SchemaV1,
+        slippage_references: prepared.slippage,
+        input,
+        allocation,
+        consumed_fuel: prepared.consumed_fuel,
+    };
+    domain::execution::portfolio_build_result(request, &result)?;
+    Ok(result)
+}
+
+pub(crate) struct Prepared {
+    pub forecasts: PortfolioForecastInputV1,
+    pub returns: PortfolioReturnHistoryV1,
+    pub slippage: Vec<NativePortfolioSlippageReferenceV1>,
+    pub consumed_fuel: DbCounter,
+}
+
+/// Pure model/catalog preparation, deliberately without any weights-source identity.
+pub(crate) fn prepare(
+    catalog: &Path,
+    selection: &NativeBarSelectionV1,
+    mandate: &MandateContentV1,
+    settings: &NativeSimulationSettingsV1,
+    assets: &[AllocationAssetV1],
+    models: &[NativePortfolioAlphaV1],
+    mut read: impl FnMut(Id) -> Result<Vec<u8>>,
+) -> Result<Prepared> {
+    ensure!((2..=256).contains(&models.len()), "PORTFOLIO_MEMBERS");
+    let market = crate::catalog::load_catalog(catalog, selection)?;
+    crate::simulation::execution_market(&market, settings)?;
+    let horizon = models[0].parameters.label_horizon_observations as usize;
     let first = &market.series[0];
     let rows = first.bars.len();
     ensure!(
@@ -55,10 +96,9 @@ pub fn build(
         .map(|s| s.instrument.id().to_string())
         .collect::<Vec<_>>();
     ensure!(
-        request
-            .assets
+        assets
             .iter()
-            .map(|a| &a.instrument_id)
+            .map(|asset| &asset.instrument_id)
             .eq(instruments.iter()),
         "PORTFOLIO_ASSET_ORDER"
     );
@@ -103,7 +143,7 @@ pub fn build(
         .collect();
     let mut members = Vec::new();
     let mut consumed = 0_u64;
-    for member in &request.members {
+    for member in models {
         let module = read(member.model_artifact_id)?;
         let calibration: Option<NativeFrozenCalibrationV1> = member
             .calibration_artifact_id
@@ -113,7 +153,7 @@ pub fn build(
             catalog,
             &NativeForecastRequestV1 {
                 schema_version: SchemaV1,
-                selection: request.selection.clone(),
+                selection: selection.clone(),
                 parameters: member.parameters.clone(),
             },
             &module,
@@ -123,7 +163,7 @@ pub fn build(
             .ok_or_else(|| anyhow::anyhow!("PORTFOLIO_FUEL_OVERFLOW"))?;
         let mut forecasts = Vec::new();
         let mut available = 0;
-        for (instrument, bar_type) in instruments.iter().zip(&request.selection.bar_types) {
+        for (instrument, bar_type) in instruments.iter().zip(&selection.bar_types) {
             let point = result
                 .points
                 .iter()
@@ -153,17 +193,16 @@ pub fn build(
             forecast_unit: ForecastUnit::ReturnPerHorizon,
             horizon_kind: HorizonKind::FixedBars,
             horizon_value: count(horizon as u64)?,
-            base_currency: request.mandate.base_currency.clone(),
+            base_currency: mandate.base_currency.clone(),
             asof_ns: asof,
             available_ns: count(available)?,
             ensemble_weight: member.ensemble_weight.clone(),
-            bar_types: request.selection.bar_types.clone(),
+            bar_types: selection.bar_types.clone(),
             instrument_ids: instruments.clone(),
             forecasts,
         });
     }
-    let m = &request.mandate;
-    let (fill, _) = domain::portfolio::simulation_models(&request.execution_settings)?;
+    let (fill, _) = domain::portfolio::simulation_models(settings)?;
     let slippage_references = if fill.prob_slippage.is_positive() {
         market
             .series
@@ -188,51 +227,55 @@ pub fn build(
     } else {
         Vec::new()
     };
-    let input = AllocationInputV1 {
-        schema_version: SchemaV1,
+    Ok(Prepared {
         forecasts: PortfolioForecastInputV1 {
             schema_version: SchemaV1,
-            decision_asof_ns: request.selection.decision_cutoff_ns,
+            decision_asof_ns: selection.decision_cutoff_ns,
             forecast_asof_ns: asof,
             horizon_kind: HorizonKind::FixedBars,
             horizon_value: count(horizon as u64)?,
-            base_currency: m.base_currency.clone(),
-            max_input_age_seconds: m.rebalance_schedule.max_input_age_seconds,
-            bar_types: request.selection.bar_types.clone(),
+            base_currency: mandate.base_currency.clone(),
+            max_input_age_seconds: mandate.rebalance_schedule.max_input_age_seconds,
+            bar_types: selection.bar_types.clone(),
             instrument_ids: instruments.clone(),
             members,
         },
-        objective: m.objective,
-        risk: m.risk_measure,
-        base_currency: m.base_currency.clone(),
-        capital_assumption: m.capital_assumption.clone(),
-        current_cash_weight: original.cash_weight,
-        exposure_tolerance: m.exposure_tolerance.clone(),
-        constraints: m.constraints.clone(),
-        optimizer: m.optimizer.clone(),
-        alpha_ensemble: m.alpha_ensemble.clone(),
-        covariance_estimator: m.covariance_estimator.clone(),
-        assets: domain::execution::portfolio_execution_costs(request, &slippage_references)?,
-        return_history: PortfolioReturnHistoryV1 {
+        returns: PortfolioReturnHistoryV1 {
             schema_version: SchemaV1,
-            base_currency: m.base_currency.clone(),
+            base_currency: mandate.base_currency.clone(),
             horizon_kind: HorizonKind::FixedBars,
             horizon_value: count(horizon as u64)?,
             instrument_ids: instruments,
-            bar_types: request.selection.bar_types.clone(),
+            bar_types: selection.bar_types.clone(),
             end_ns,
             available_ns,
             asset_returns,
         },
-    };
-    let allocation = crate::allocate(&input)?;
-    let result = NativePortfolioBuildResultV1 {
-        schema_version: SchemaV1,
-        slippage_references,
-        input,
-        allocation,
+        slippage: slippage_references,
         consumed_fuel: count(consumed)?,
-    };
-    domain::execution::portfolio_build_result(request, &result)?;
-    Ok(result)
+    })
+}
+
+pub(crate) fn allocation_input(
+    mandate: &MandateContentV1,
+    assets: Vec<AllocationAssetV1>,
+    cash: contracts::DecimalValue,
+    prepared: &Prepared,
+) -> AllocationInputV1 {
+    AllocationInputV1 {
+        schema_version: SchemaV1,
+        forecasts: prepared.forecasts.clone(),
+        objective: mandate.objective,
+        risk: mandate.risk_measure,
+        base_currency: mandate.base_currency.clone(),
+        capital_assumption: mandate.capital_assumption.clone(),
+        current_cash_weight: cash,
+        exposure_tolerance: mandate.exposure_tolerance.clone(),
+        constraints: mandate.constraints.clone(),
+        optimizer: mandate.optimizer.clone(),
+        alpha_ensemble: mandate.alpha_ensemble.clone(),
+        covariance_estimator: mandate.covariance_estimator.clone(),
+        assets,
+        return_history: prepared.returns.clone(),
+    }
 }

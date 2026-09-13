@@ -340,6 +340,81 @@ fn actual_managed_sealed_uses_original_fit_and_rejects_other_partitions() {
     }
 }
 
+#[test]
+fn rolling_portfolio_managed_binds_original_objects_and_reports_infeasibility() {
+    use contracts::science::NativePortfolioStudyResultV1;
+    for infeasible in [false, true] {
+        let (catalog, mut request, wasm) = market::study();
+        if infeasible {
+            request.mandate.constraints.max_asset_weight = "0.4".parse().unwrap();
+        }
+        let dataset = Id::new();
+        let mut objects = request
+            .members
+            .iter()
+            .map(|member| {
+                (
+                    member.model_artifact_id,
+                    wasm.clone(),
+                    ArtifactInputRole::Model,
+                )
+            })
+            .collect::<Vec<_>>();
+        objects.push((
+            request.mandate.constraints.transaction_costs_ref,
+            serde_json::to_vec(&request.execution_settings).unwrap(),
+            ArtifactInputRole::Parameters,
+        ));
+        let mut inputs = vec![RuntimeInputV1::Dataset {
+            revision_id: dataset,
+            registered_ref: "synthetic-native-regression".into(),
+            storage_version: "1".into(),
+            role: DataPartition::Forward,
+        }];
+        inputs.extend(
+            objects
+                .iter()
+                .map(|(id, bytes, role)| RuntimeInputV1::Artifact {
+                    artifact_id: *id,
+                    storage_version: "1".into(),
+                    byte_count: market::count(bytes.len() as u64),
+                    role: *role,
+                }),
+        );
+        let parameters = NativeTaskParametersV1::StudyPortfolio {
+            schema_version: SchemaV1,
+            dataset_revision_id: dataset,
+            request: Box::new(request),
+        };
+        let f = fixture(parameters.clone(), inputs);
+        for (id, bytes, _) in objects {
+            fs::write(f.input.join("objects").join(id.to_string()), bytes).unwrap();
+        }
+        attach_catalog(&f, dataset, catalog.path());
+        let mut wrong_role = f.spec.clone();
+        let RuntimeInputV1::Dataset { role, .. } = &mut wrong_role.inputs[0] else {
+            unreachable!()
+        };
+        *role = DataPartition::Sealed;
+        assert!(domain::execution::task(&wrong_role, &parameters).is_err());
+        let mut missing_model = f.spec.clone();
+        missing_model.inputs.remove(1);
+        assert!(domain::execution::task(&missing_model, &parameters).is_err());
+        assert!(execute(&f));
+        let report: NativePortfolioStudyResultV1 = result(&f, "qz.portfolio_study");
+        assert_eq!(report.frames.len(), if infeasible { 1 } else { 3 });
+        assert_eq!(report.simulation.is_none(), infeasible);
+        assert_eq!(report.simulation_request.is_none(), infeasible);
+        if let Some(simulation) = report.simulation {
+            assert_eq!(simulation.consumed_target_points.get(), 3);
+            assert_eq!(
+                simulation.returns_status,
+                contracts::evidence::MetricStatus::Ok
+            );
+        }
+    }
+}
+
 fn portfolio_fixture(
     losses: bool,
     change: impl FnOnce(&mut contracts::science::NativePortfolioBuildRequestV1),

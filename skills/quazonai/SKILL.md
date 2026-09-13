@@ -11,6 +11,9 @@ candidate-simulation/2复用DATA_VALIDATE输出原source_selection的qz.data_qua
 另输出实际窗口qz.native_simulation；完整原manifest必须同时绑定两份报告。
 portfolio-sequence/1另支持原Candidate目标序列逐项绑定并进入同一个原生账户；
 不将该计算入口称为已发表PORTFOLIO/PASS，不手填目标绕过正式准入。
+portfolio-study/1执行原模型驱动、固定间隔的单账户滚动研究，验证命令为
+`cargo test --locked -p job --test study`；当前拒绝流动性/参与率与日历/手动调仓。
+逐帧原输入和实际模拟报告不是正式PORTFOLIO发布、Arrow历史目标或PASS。
 Candidate保持研究的可信发布器从原双报告、独立政策与来源复核发表FORWARD
 Evaluation，封口后才ACK；不授Release或下游权限。成功进程不等于指标PASS。
 

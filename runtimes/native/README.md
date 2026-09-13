@@ -1,5 +1,11 @@
 # 原生 Runtime 与 job 镜像
 
+portfolio-study/1支持STUDY_PORTFOLIO：原模型/校准与费用字节绑定，固定截止
+历史前缀驱动Wasm/Clarabel，在单个Nautilus账户按实际权益/权重调仓。
+输出原源质量和逐帧原输入/求解/模拟报告；不可行不输出模拟结果。
+当前不支持日历/手动调仓或流动性/参与率输入；不是正式PORTFOLIO发布或PASS。
+本机实际链验证：`cargo test --locked -p job --test study`。
+
 portfolio-sequence/1支持SIMULATE_PORTFOLIO_SEQUENCE：原Candidate目标文件序列、
 可信可用时间和原费用文件逐项绑定，再进入同一个原生账户。完整源质量与实际
 模拟窗口分别报告。不是正式PORTFOLIO评估发布；完整序列准入及政策仍待接入。

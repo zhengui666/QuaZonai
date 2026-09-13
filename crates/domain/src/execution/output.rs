@@ -20,6 +20,8 @@ pub use sealed::{
 };
 mod simulation;
 pub use simulation::metrics as portfolio_simulation_metrics;
+mod study;
+pub use study::binding as check_portfolio_study;
 mod validation;
 pub use validation::metrics as alpha_validation_metrics;
 pub use validation::policy as alpha_validation_policy;
@@ -191,6 +193,7 @@ pub fn output_shape(output: &RuntimeOutputV1, bytes: &[u8]) -> Result<(), Domain
             crate::portfolio::allocation_result(&result.input, &result.allocation)
         }
         "qz.native_simulation" => simulation::shape(&decode::<NativeSimulationResultV1>(bytes)?),
+        "qz.portfolio_study" => study::shape(&decode(bytes)?),
         _ => Err(bad("native_output.schema")),
     }
 }
@@ -232,6 +235,14 @@ pub fn output_bindings(
     };
     let selections = match parameters {
         NativeTaskParametersV1::ValidateData { selections, .. } => selections.clone(),
+        NativeTaskParametersV1::StudyPortfolio {
+            dataset_revision_id,
+            request,
+            ..
+        } => vec![contracts::execution::NativeDatasetSelectionV1 {
+            dataset_revision_id: *dataset_revision_id,
+            selection: request.source_selection.clone(),
+        }],
         NativeTaskParametersV1::SimulateCandidate {
             dataset_revision_id,
             source_selection,
@@ -266,6 +277,9 @@ pub fn output_bindings(
     }
     match parameters {
         NativeTaskParametersV1::ValidateData { .. } => {}
+        NativeTaskParametersV1::StudyPortfolio { request, .. } => {
+            study::binding(request, &decode(body("qz.portfolio_study")?.1)?)?
+        }
         NativeTaskParametersV1::CompileModel {
             code_artifact_id, ..
         } => {

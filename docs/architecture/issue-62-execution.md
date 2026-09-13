@@ -3,6 +3,39 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Original model-driven fixed-interval portfolio study, 2026-09-14
+
+STUDY_PORTFOLIO and the trusted local `job study-portfolio` command now share the
+existing Build model/catalog preparation, Clarabel allocation and Nautilus account
+execution. Each original cutoff uses its own historical prefix and divided fuel
+budget. Rebalances read actual simulated equity, positions and current completed
+prices inside one account; they do not reuse target weights as observed holdings,
+restart the account or fabricate historical Candidate/snapshot identities.
+Original settings/model bytes and per-frame inputs/targets are bound. Infeasible
+allocation retains its diagnostic frame, stops further solves and emits neither
+simulation nor fabricated cash/targets. Fully invested native margin denial remains
+a failure; the positive fixture explicitly freezes a distinct 1% cash reserve.
+
+Actual CLI and managed subprocess tests cover three cross-day rebalances, changed
+equity/weights, original objects, missing/wrong-role inputs, seven report mutations
+and infeasibility. All job tests passed. Runtime's 27 tests passed, including nine
+catalog-scope operations and the complete generated download response references.
+On e96952b0 plus frozen patches, verify-XQgVlX passed 228 mandate checks and
+verify-PoKuiH passed 206 evidence checks, with workspace check/fmt/strict Clippy,
+unchanged source and isolated PostgreSQL stopped. web-verify-NIVcrc reproduced all
+six generated outputs twice without handwritten changes. The explicit domain
+request/frame/result exports are covered by the existing schema regression.
+Final owner-oci-LSKjSU rebuilt the image and passed all 15 real Docker tests,
+including original rolling models, three solves, one account and native daily
+returns. Image identity:
+sha256:e0084e56df9c71de78643c5dcfa99e5988cf6aaf6f1172eed8fc661fd2260139.
+
+This proves a controlled native execution slice, not REAL/PIT qualification or
+formal PORTFOLIO publication. Calendar/manual schedules, rolling liquidity,
+Arrow target history, complete Store admission/policy/publication and Release,
+delivery/recovery remain required. No dependency, additional account ledger or
+second simulation engine was added. No GitHub review/merge gate is satisfied.
+
 ## Original target sequence native binding, 2026-09-14
 
 SIMULATE_PORTFOLIO_SEQUENCE binds 2..253 original Candidate target files and their

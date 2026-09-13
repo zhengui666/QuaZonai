@@ -1873,6 +1873,17 @@ PASS 都不能借用。另以 `(candidate_id,mandate_id)` 绑定 Candidate 的�
 
 历史目标序列存 Arrow/Parquet，不每 bar 建业务对象。不可行 cash/targets 均 null；LAST_TARGET 是假设，真实权重输入来自下游签发 snapshot，QZ 不建真实账户账本。`sum(asset_weights)+cash_weight=1` 在 mandate tolerance 内，现金字段/保留代码明确；gross/net、组、成本、参与率原生计算，领域层独立合同/容差验证。
 
+离线组合研究从冻结原模型和目录逐个cutoff重新生成预测、共同收益窗口及原生求解
+输入，不要求先有历史Candidate，不伪造LAST_TARGET或下游快照。模拟仅初始化一次
+原生现金账户；每次调仓从该账户读取当时equity/net_position及共同已到达价格，
+将权益作为本步资本、净敞口权重及剩余现金假设交给同一优化器。实际求解与原生
+减仓/增仓成交仍在同一个引擎内执行，不能重启账户、拼独立收益或用上次目标冒充
+漂移后的当前权重。原始资本仍来自Mandate，过程观察只是模拟报告，不是真实账户。
+模型研究可用截止必须早于首个评估cutoff；每帧只读取截至自身cutoff的目录前缀，
+不能把全样本协方差或最后权重回填过去。冻结fuel在各帧均分为硬上限、累计实际
+消费；不让每个cutoff重新获得全任务额度。不可行保留原求解诊断、停止后续帧且
+不生成组合模拟PASS。完整政策/来源/独立性与Arrow历史、正式发表另行验收。
+
 原生SIMULATE_PORTFOLIO_SEQUENCE复用同一个Nautilus账户，按时序消费2..253个
 已冻结Candidate目标文件；每项仅绑定candidate_id、可信candidate_available_ns及
 target_artifact_id，并重读原文件核对目标/现金/币种/原有效期。253给既有256项

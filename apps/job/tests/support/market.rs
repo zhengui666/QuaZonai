@@ -193,7 +193,39 @@ pub fn portfolio_with_losses() -> (tempfile::TempDir, NativePortfolioBuildReques
     portfolio_from_market(market_direction("0", 20, -1.0))
 }
 
-fn portfolio_from_market(
+pub fn study() -> (tempfile::TempDir, NativePortfolioStudyRequestV1, Vec<u8>) {
+    let (catalog, original, model) = portfolio_from_market(market("0", 2900));
+    let mut request = NativePortfolioStudyRequestV1 {
+        schema_version: SchemaV1,
+        source_selection: original.selection,
+        evaluation_start_ns: instant(10),
+        research_available_through_ns: instant(9),
+        mandate: original.mandate,
+        execution_settings: original.execution_settings,
+        assets: original.assets,
+        members: original.members,
+    };
+    request.mandate.capital_assumption = "10000000".parse().unwrap();
+    request.execution_settings.starting_capital = request.mandate.capital_assumption.clone();
+    request.execution_settings.snapshot_interval_ms = 60_000;
+    request.mandate.rebalance_schedule.kind = contracts::portfolio::RebalanceKind::FixedInterval;
+    request.mandate.rebalance_schedule.interval_seconds = Some(86400);
+    request.mandate.rebalance_schedule.target_ttl_seconds = 86400;
+    request.mandate.rebalance_schedule.max_input_age_seconds = 120;
+    request.mandate.constraints.min_cash_weight = "0.01".parse().unwrap();
+    request.mandate.constraints.max_cash_weight = "0.01".parse().unwrap();
+    request.mandate.constraints.min_net_exposure = "0.99".parse().unwrap();
+    request.mandate.constraints.max_net_exposure = "0.99".parse().unwrap();
+    for asset in &mut request.assets {
+        asset.current_weight = "0".parse().unwrap();
+    }
+    for member in &mut request.members {
+        member.parameters.total_fuel = count(100_000_000);
+    }
+    (catalog, request, model)
+}
+
+pub fn portfolio_from_market(
     (directory, simulation): (tempfile::TempDir, NativeSimulationRequestV1),
 ) -> (tempfile::TempDir, NativePortfolioBuildRequestV1, Vec<u8>) {
     let input = serde_json::from_str(include_str!(

@@ -65,6 +65,13 @@ enum Operation {
         #[arg(long)]
         catalog: PathBuf,
     },
+    /// Recompute rolling portfolio targets inside one native simulated account.
+    StudyPortfolio {
+        #[arg(long)]
+        catalog: PathBuf,
+        #[arg(long)]
+        objects: PathBuf,
+    },
 }
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
@@ -163,6 +170,12 @@ fn run(operation: Operation) -> Result<()> {
             )?)
         }
         Operation::Simulate { catalog } => output(&job::simulation::simulate(&catalog, &input()?)?),
+        Operation::StudyPortfolio { catalog, objects } => {
+            output(&job::study::evaluate(&catalog, &input()?, |id| {
+                model_bytes(&objects.join(id.to_string()), 8 * 1024 * 1024)
+                    .map_err(|error| anyhow::anyhow!(error.to_string()))
+            })?)
+        }
         Operation::VerifyNative { output: directory } => {
             let mut builder = fs::DirBuilder::new();
             #[cfg(unix)]

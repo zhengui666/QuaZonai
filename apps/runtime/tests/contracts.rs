@@ -27,6 +27,7 @@ fn generated_download_contract_declares_the_actual_native_media_and_payloads() {
         "NativeAlphaValidationResultV1",
         "NativeAlphaSealedResultV1",
         "NativePortfolioBuildResultV1",
+        "NativePortfolioStudyResultV1",
         "NativeSimulationResultV1",
     ]
     .map(|name| serde_json::json!({"$ref":format!("#/components/schemas/{name}")}));

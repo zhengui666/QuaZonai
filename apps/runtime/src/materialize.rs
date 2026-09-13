@@ -111,6 +111,11 @@ pub async fn parameters(
             ..
         } => vec![(*dataset_revision_id, &request.selection)],
         NativeTaskParametersV1::CompileModel { .. } => Vec::new(),
+        NativeTaskParametersV1::StudyPortfolio {
+            dataset_revision_id,
+            request,
+            ..
+        } => vec![(*dataset_revision_id, &request.source_selection)],
     };
     for (revision, selection) in selections {
         let catalog = spec

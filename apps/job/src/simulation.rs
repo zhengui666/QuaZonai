@@ -56,6 +56,14 @@ struct ReplayStatus {
     consumed: usize,
     failure: Option<&'static str>,
     submitted_after_ns: u64,
+    study_infeasible: bool,
+    frames: Vec<NativePortfolioStudyFrameV1>,
+}
+
+pub(crate) struct StudyInput {
+    pub cutoff_ns: DbCounter,
+    pub input: contracts::portfolio::AllocationInputV1,
+    pub slippage: Vec<NativePortfolioSlippageReferenceV1>,
 }
 
 struct TargetReplay {
@@ -64,6 +72,8 @@ struct TargetReplay {
     bar_types: Vec<BarType>,
     latest: BTreeMap<InstrumentId, Bar>,
     points: Vec<NativeTargetPointV1>,
+    study_inputs: Vec<StudyInput>,
+    settings: NativeSimulationSettingsV1,
     currency: Currency,
     venue: Venue,
     tolerance: Decimal,
@@ -134,6 +144,9 @@ impl TargetReplay {
     }
 
     fn apply_bar(&mut self, bar: &Bar) -> Result<()> {
+        if self.status.borrow().study_infeasible {
+            return Ok(());
+        }
         ensure!(
             self.status.borrow().failure.is_none(),
             "SIMULATION_ALREADY_FAILED"
@@ -147,7 +160,7 @@ impl TargetReplay {
             return Ok(());
         }
         let next = self.status.borrow().consumed;
-        let Some(point) = self.points.get(next) else {
+        let Some(mut point) = self.points.get(next).cloned() else {
             return Ok(());
         };
         // Every asset must have a completed price for the same event time. No
@@ -200,6 +213,48 @@ impl TargetReplay {
             .ok_or_else(|| anyhow::anyhow!("SIMULATION_EQUITY_UNAVAILABLE"))?
             .as_decimal();
         ensure!(equity > Decimal::ZERO, "SIMULATION_NONPOSITIVE_EQUITY");
+        if let Some(planned) = self.study_inputs.get(next) {
+            let mut input = planned.input.clone();
+            input.forecasts.decision_asof_ns = DbCounter::new(now).map_err(anyhow::Error::msg)?;
+            input.capital_assumption = equity.to_string().parse().map_err(anyhow::Error::msg)?;
+            let mut cash = Decimal::ONE;
+            for (asset, instrument) in input.assets.iter_mut().zip(&self.instruments) {
+                let price = self.latest[&instrument.id()].close.as_decimal();
+                let notional = checked(
+                    checked(
+                        self.portfolio()
+                            .net_position(&instrument.id())
+                            .checked_mul(price),
+                    )?
+                    .checked_mul(instrument.multiplier().as_decimal()),
+                )?;
+                let weight = checked(notional.checked_div(equity))?.round_dp(18);
+                cash = checked(cash.checked_sub(weight))?;
+                asset.current_weight = weight.to_string().parse().map_err(anyhow::Error::msg)?;
+            }
+            input.current_cash_weight = cash.to_string().parse().map_err(anyhow::Error::msg)?;
+            let allocation = crate::allocate(&input)?;
+            domain::portfolio::allocation_result(&input, &allocation)?;
+            let targets = allocation.targets.clone();
+            let cash = allocation.cash_weight.clone();
+            self.status
+                .borrow_mut()
+                .frames
+                .push(NativePortfolioStudyFrameV1 {
+                    cutoff_ns: planned.cutoff_ns,
+                    input,
+                    allocation,
+                    slippage_references: planned.slippage.clone(),
+                });
+            let (Some(targets), Some(cash)) = (targets, cash) else {
+                self.status.borrow_mut().study_infeasible = true;
+                return Ok(());
+            };
+            point.targets = targets;
+            point.cash_weight = cash;
+            point.asof_ns = DbCounter::new(now).map_err(anyhow::Error::msg)?;
+            validate_point(&self.settings, &point, &self.instruments)?;
+        }
         let mut reductions = Vec::<OrderAny>::new();
         let mut increases = Vec::<OrderAny>::new();
         for (instrument, target) in self.instruments.iter().zip(&point.targets) {
@@ -377,6 +432,11 @@ fn validate_settings(
 ) -> Result<Currency> {
     let settings = &request.settings;
     let currency = execution_market(data, settings)?;
+    let instruments = data
+        .series
+        .iter()
+        .map(|s| s.instrument.clone())
+        .collect::<Vec<_>>();
     ensure!(
         (1..=10_000).contains(&request.target_points.len())
             && request
@@ -400,31 +460,43 @@ fn validate_settings(
                 && point.targets.len() == data.series.len(),
             "SIMULATION_TARGET_INVALID"
         );
-        let mut total = point.cash_weight.as_decimal().clone();
-        let mut gross = BigDecimal::from(0);
-        for (target, series) in point.targets.iter().zip(&data.series) {
-            ensure!(
-                target.instrument_id == series.instrument.id().to_string()
-                    && target.currency == settings.base_currency,
-                "SIMULATION_TARGET_IDENTITY"
-            );
-            if settings.account_kind == NativeAccountKind::Cash {
-                ensure!(
-                    target.weight.is_nonnegative() && point.cash_weight.is_nonnegative(),
-                    "CASH_SHORTING_UNSUPPORTED"
-                );
-            }
-            total += target.weight.as_decimal();
-            gross += target.weight.as_decimal().abs();
-        }
-        ensure!(
-            (total - BigDecimal::from(1)).abs() <= *settings.exposure_tolerance.as_decimal()
-                && gross
-                    <= settings.leverage.as_decimal() + settings.exposure_tolerance.as_decimal(),
-            "SIMULATION_CAPITAL_OR_LEVERAGE"
-        );
+        validate_point(settings, point, &instruments)?;
     }
     Ok(currency)
+}
+
+fn validate_point(
+    settings: &NativeSimulationSettingsV1,
+    point: &NativeTargetPointV1,
+    instruments: &[InstrumentAny],
+) -> Result<()> {
+    ensure!(
+        point.targets.len() == instruments.len(),
+        "SIMULATION_TARGET_IDENTITY"
+    );
+    let mut total = point.cash_weight.as_decimal().clone();
+    let mut gross = BigDecimal::from(0);
+    for (target, instrument) in point.targets.iter().zip(instruments) {
+        ensure!(
+            target.instrument_id == instrument.id().to_string()
+                && target.currency == settings.base_currency,
+            "SIMULATION_TARGET_IDENTITY"
+        );
+        if settings.account_kind == NativeAccountKind::Cash {
+            ensure!(
+                target.weight.is_nonnegative() && point.cash_weight.is_nonnegative(),
+                "CASH_SHORTING_UNSUPPORTED"
+            );
+        }
+        total += target.weight.as_decimal();
+        gross += target.weight.as_decimal().abs();
+    }
+    ensure!(
+        (total - BigDecimal::from(1)).abs() <= *settings.exposure_tolerance.as_decimal()
+            && gross <= settings.leverage.as_decimal() + settings.exposure_tolerance.as_decimal(),
+        "SIMULATION_CAPITAL_OR_LEVERAGE"
+    );
+    Ok(())
 }
 
 // The engine's preferred returns may fall back to per-position returns. Build
@@ -451,6 +523,23 @@ pub fn simulate(
     root: &Path,
     request: &NativeSimulationRequestV1,
 ) -> Result<NativeSimulationResultV1> {
+    run(root, request, Vec::new())?
+        .0
+        .ok_or_else(|| anyhow::anyhow!("SIMULATION_RESULT_MISSING"))
+}
+
+pub(crate) fn run(
+    root: &Path,
+    request: &NativeSimulationRequestV1,
+    study_inputs: Vec<StudyInput>,
+) -> Result<(
+    Option<NativeSimulationResultV1>,
+    Vec<NativePortfolioStudyFrameV1>,
+)> {
+    ensure!(
+        study_inputs.is_empty() || study_inputs.len() == request.target_points.len(),
+        "STUDY_FRAME_COUNT"
+    );
     let (fill, latency) = domain::portfolio::simulation_models(&request.settings)?;
     let market = load_catalog(root, &request.selection)?;
     let currency = validate_settings(&market, request)?;
@@ -470,6 +559,8 @@ pub fn simulate(
         bar_types: market.series.iter().map(|s| s.bar_type).collect(),
         latest: BTreeMap::new(),
         points: request.target_points.clone(),
+        study_inputs,
+        settings: request.settings.clone(),
         currency,
         venue,
         tolerance: native_decimal(&request.settings.exposure_tolerance)?,
@@ -497,7 +588,7 @@ pub fn simulate(
         ..BacktestEngineConfig::default()
     };
     let mut engine = BacktestEngine::new(config)?;
-    let result = (|| -> Result<NativeSimulationResultV1> {
+    let result = (|| -> Result<Option<NativeSimulationResultV1>> {
         let settings = &request.settings;
         engine.add_venue(
             SimulatedVenueConfig::builder()
@@ -548,6 +639,9 @@ pub fn simulate(
         engine.run(None, None, None, false)?;
         let observed = status.borrow();
         ensure!(observed.failure.is_none(), "NATIVE_TARGET_REPLAY_FAILED");
+        if observed.study_infeasible {
+            return Ok(None);
+        }
         ensure!(
             observed.consumed == request.target_points.len(),
             "NATIVE_TARGETS_NOT_CONSUMED"
@@ -613,7 +707,7 @@ pub fn simulate(
         } else {
             (contracts::evidence::MetricStatus::Ok, None)
         };
-        Ok(NativeSimulationResultV1 {
+        Ok(Some(NativeSimulationResultV1 {
             schema_version: SchemaV1,
             native_version: "0.63.0".into(),
             iterations: count(native.iterations)?,
@@ -628,8 +722,9 @@ pub fn simulate(
             returns_reason,
             returns,
             canonical_result: serde_json::from_slice(&engine.get_canonical_result()?.to_bytes()?)?,
-        })
+        }))
     })();
     engine.dispose();
-    result
+    let frames = std::mem::take(&mut status.borrow_mut().frames);
+    Ok((result?, frames))
 }

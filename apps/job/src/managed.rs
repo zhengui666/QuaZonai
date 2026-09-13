@@ -282,6 +282,14 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
     };
     let selections = match &parameters {
         NativeTaskParametersV1::ValidateData { selections, .. } => selections.clone(),
+        NativeTaskParametersV1::StudyPortfolio {
+            dataset_revision_id,
+            request,
+            ..
+        } => vec![contracts::execution::NativeDatasetSelectionV1 {
+            dataset_revision_id: *dataset_revision_id,
+            selection: request.source_selection.clone(),
+        }],
         NativeTaskParametersV1::SimulateCandidate {
             dataset_revision_id,
             source_selection,
@@ -451,6 +459,23 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
                 calibration.as_ref(),
             )?;
             outputs.json("qz.alpha_sealed", RuntimeOutputKind::Report, &result)?;
+        }
+        NativeTaskParametersV1::StudyPortfolio {
+            dataset_revision_id,
+            request,
+            ..
+        } => {
+            let result = crate::study::evaluate(
+                &input.join("catalogs").join(dataset_revision_id.to_string()),
+                &request,
+                |id| {
+                    read(
+                        &input.join("objects").join(id.to_string()),
+                        PARAMETERS_LIMIT,
+                    )
+                },
+            )?;
+            outputs.json("qz.portfolio_study", RuntimeOutputKind::Report, &result)?;
         }
         NativeTaskParametersV1::BuildPortfolio {
             dataset_revision_id,

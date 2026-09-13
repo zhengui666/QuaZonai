@@ -168,6 +168,13 @@ fn generated_schema_describes_initial_slice_not_nonexistent_http_routes() {
     assert_eq!(first, contracts::openapi_json().unwrap());
     let schema: serde_json::Value = serde_json::from_str(&first).unwrap();
     assert!(schema["paths"].as_object().unwrap().is_empty());
+    for name in [
+        "NativePortfolioStudyRequestV1",
+        "NativePortfolioStudyFrameV1",
+        "NativePortfolioStudyResultV1",
+    ] {
+        assert!(schema["components"]["schemas"][name].is_object(), "{name}");
+    }
     assert_eq!(
         schema["components"]["schemas"]["Revision"]["type"],
         "string"

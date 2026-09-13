@@ -11689,6 +11689,162 @@
         ],
         "type": "object"
       },
+      "NativePortfolioSlippageReferenceV1": {
+        "additionalProperties": false,
+        "description": "Original last-known native BAR and tick, used only for proportional cost planning.",
+        "properties": {
+          "available_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "close_price": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "event_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "instrument_id": {
+            "type": "string"
+          },
+          "price_increment": {
+            "$ref": "#/components/schemas/DecimalValue"
+          }
+        },
+        "required": [
+          "instrument_id",
+          "currency",
+          "event_ns",
+          "available_ns",
+          "close_price",
+          "price_increment"
+        ],
+        "type": "object"
+      },
+      "NativePortfolioStudyFrameV1": {
+        "additionalProperties": false,
+        "properties": {
+          "allocation": {
+            "$ref": "#/components/schemas/AllocationResultV1"
+          },
+          "cutoff_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "input": {
+            "$ref": "#/components/schemas/AllocationInputV1"
+          },
+          "slippage_references": {
+            "items": {
+              "$ref": "#/components/schemas/NativePortfolioSlippageReferenceV1"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "cutoff_ns",
+          "input",
+          "allocation",
+          "slippage_references"
+        ],
+        "type": "object"
+      },
+      "NativePortfolioStudyRequestV1": {
+        "additionalProperties": false,
+        "description": "Offline model-driven research. The simulated account, not the caller, owns weights.",
+        "properties": {
+          "assets": {
+            "items": {
+              "$ref": "#/components/schemas/AllocationAssetV1"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "evaluation_start_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "execution_settings": {
+            "$ref": "#/components/schemas/NativeSimulationSettingsV1"
+          },
+          "mandate": {
+            "$ref": "#/components/schemas/MandateContentV1"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/NativePortfolioAlphaV1"
+            },
+            "maxItems": 256,
+            "minItems": 2,
+            "type": "array"
+          },
+          "research_available_through_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "source_selection": {
+            "$ref": "#/components/schemas/NativeBarSelectionV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "source_selection",
+          "evaluation_start_ns",
+          "research_available_through_ns",
+          "mandate",
+          "execution_settings",
+          "assets",
+          "members"
+        ],
+        "type": "object"
+      },
+      "NativePortfolioStudyResultV1": {
+        "additionalProperties": false,
+        "properties": {
+          "consumed_fuel": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "frames": {
+            "items": {
+              "$ref": "#/components/schemas/NativePortfolioStudyFrameV1"
+            },
+            "maxItems": 256,
+            "type": "array"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "simulation": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NativeSimulationResultV1"
+              }
+            ]
+          },
+          "simulation_request": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NativeSimulationRequestV1",
+                "description": "Actual generated points, never the schedule's provisional all-cash placeholders."
+              }
+            ]
+          }
+        },
+        "required": [
+          "schema_version",
+          "consumed_fuel",
+          "frames"
+        ],
+        "type": "object"
+      },
       "NativePortfolioTargetSourceV1": {
         "additionalProperties": false,
         "description": "Trusted original availability and object identity, not operator-authored weights.",
@@ -12491,6 +12647,32 @@
               "source_selection",
               "sources",
               "settings_artifact_id",
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "dataset_revision_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "operation": {
+                "enum": [
+                  "STUDY_PORTFOLIO"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/NativePortfolioStudyRequestV1"
+              },
+              "schema_version": {
+                "$ref": "#/components/schemas/SchemaV1"
+              }
+            },
+            "required": [
+              "schema_version",
+              "dataset_revision_id",
               "request",
               "operation"
             ],
@@ -16294,6 +16476,72 @@
                   "name": {
                     "enum": [
                       "qz.native_portfolio"
+                    ],
+                    "type": "string"
+                  },
+                  "version": {
+                    "enum": [
+                      "1"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "version"
+                ],
+                "type": "object"
+              },
+              "storage_ref": {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              "storage_version": {
+                "enum": [
+                  "1"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "schema",
+              "storage_ref",
+              "storage_version",
+              "byte_count",
+              "media_type"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "byte_count": {
+                "description": "Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.",
+                "maxLength": 8,
+                "minLength": 1,
+                "pattern": "^(?:[1-9][0-9]{0,6}|[1-5][0-9]{7}|6[0-6][0-9]{6}|67[0-0][0-9]{5}|6710[0-7][0-9]{3}|67108[0-7][0-9]{2}|671088[0-5][0-9]{1}|6710886[0-3][0-9]{0}|67108864)(?![\\s\\S])",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "REPORT"
+                ],
+                "type": "string"
+              },
+              "media_type": {
+                "enum": [
+                  "application/json"
+                ],
+                "type": "string"
+              },
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "enum": [
+                      "qz.portfolio_study"
                     ],
                     "type": "string"
                   },

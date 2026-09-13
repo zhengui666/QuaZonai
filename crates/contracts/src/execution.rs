@@ -82,6 +82,11 @@ pub enum NativeTaskParametersV1 {
         settings_artifact_id: Id,
         request: Box<NativeSimulationRequestV1>,
     },
+    StudyPortfolio {
+        schema_version: SchemaV1,
+        dataset_revision_id: Id,
+        request: Box<crate::science::NativePortfolioStudyRequestV1>,
+    },
 }
 
 impl NativeTaskParametersV1 {
@@ -95,7 +100,8 @@ impl NativeTaskParametersV1 {
             Self::BuildPortfolio { .. } => RunKind::PortfolioBuild,
             Self::SimulatePortfolio { .. }
             | Self::SimulateCandidate { .. }
-            | Self::SimulatePortfolioSequence { .. } => RunKind::PortfolioSimulate,
+            | Self::SimulatePortfolioSequence { .. }
+            | Self::StudyPortfolio { .. } => RunKind::PortfolioSimulate,
         }
     }
     pub fn output_schemas(&self) -> Vec<RuntimeArtifactSchemaV1> {
@@ -107,6 +113,7 @@ impl NativeTaskParametersV1 {
             Self::EvaluateSealedAlpha { .. } => &["qz.alpha_sealed"],
             Self::BuildPortfolio { .. } => &["qz.native_portfolio"],
             Self::SimulatePortfolio { .. } => &["qz.native_simulation"],
+            Self::StudyPortfolio { .. } => &["qz.data_quality", "qz.portfolio_study"],
             Self::SimulateCandidate { .. } | Self::SimulatePortfolioSequence { .. } => {
                 &["qz.data_quality", "qz.native_simulation"]
             }
@@ -193,5 +200,6 @@ pub enum NativeJsonOutputV1 {
     AlphaValidation(Box<crate::science::NativeAlphaValidationResultV1>),
     AlphaSealed(Box<crate::science::NativeAlphaSealedResultV1>),
     Portfolio(Box<crate::science::NativePortfolioBuildResultV1>),
+    PortfolioStudy(Box<crate::science::NativePortfolioStudyResultV1>),
     Simulation(Box<crate::science::NativeSimulationResultV1>),
 }

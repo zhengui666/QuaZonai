@@ -14,12 +14,13 @@ mod portfolio;
 pub mod validation;
 pub use output::{
     alpha_sealed_metrics, alpha_sealed_policy, alpha_sealed_request, alpha_validation_metrics,
-    alpha_validation_policy, check_alpha_calibration, check_alpha_sealed, freeze_alpha_calibration,
-    output_bindings, output_shape, portfolio_simulation_metrics,
+    alpha_validation_policy, check_alpha_calibration, check_alpha_sealed, check_portfolio_study,
+    freeze_alpha_calibration, output_bindings, output_shape, portfolio_simulation_metrics,
 };
 pub use portfolio::{
     candidate_simulation, portfolio_build_liquidity, portfolio_build_request,
-    portfolio_build_result, portfolio_execution_costs, portfolio_sequence,
+    portfolio_build_result, portfolio_costs, portfolio_execution_costs, portfolio_sequence,
+    portfolio_study_cutoffs,
 };
 
 fn bad(field: &str) -> DomainError {
@@ -210,6 +211,27 @@ pub fn task(spec: &JobSpecV1, parameters: &NativeTaskParametersV1) -> Result<(),
                 || !spec.inputs.iter().any(|input| matches!(input, RuntimeInputV1::Dataset { revision_id, role: contracts::research::DataPartition::Sealed, .. } if *revision_id == *dataset_revision_id)) {
                 return Err(bad("sealed_inputs"));
             }
+        }
+        NativeTaskParametersV1::StudyPortfolio {
+            dataset_revision_id,
+            request,
+            ..
+        } => {
+            portfolio_study_cutoffs(request)?;
+            let objects = request
+                .members
+                .iter()
+                .flat_map(|m| std::iter::once(m.model_artifact_id).chain(m.calibration_artifact_id))
+                .collect::<BTreeSet<_>>();
+            let costs = request.mandate.constraints.transaction_costs_ref;
+            if !spec.inputs.iter().any(|i| matches!(i, RuntimeInputV1::Dataset { revision_id, role: contracts::research::DataPartition::Forward, .. } if revision_id == dataset_revision_id))
+                || objects.iter().any(|id| !artifact(spec, *id, ArtifactInputRole::Model))
+                || !artifact(spec, costs, ArtifactInputRole::Parameters)
+                || spec.inputs.iter().any(|i| match i {
+                    RuntimeInputV1::Dataset { revision_id, role, .. } => revision_id != dataset_revision_id || *role != contracts::research::DataPartition::Forward,
+                    RuntimeInputV1::Artifact { artifact_id, role, .. } => !(*role == ArtifactInputRole::Model && objects.contains(artifact_id)
+                        || *role == ArtifactInputRole::Parameters && (*artifact_id == costs || *artifact_id == spec.parameters_artifact_id)),
+                }) { return Err(bad("portfolio_study.inputs")); }
         }
         NativeTaskParametersV1::BuildPortfolio {
             dataset_revision_id,

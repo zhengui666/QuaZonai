@@ -111,8 +111,24 @@ pub fn portfolio_execution_costs(
     request: &NativePortfolioBuildRequestV1,
     references: &[NativePortfolioSlippageReferenceV1],
 ) -> Result<Vec<contracts::portfolio::AllocationAssetV1>, DomainError> {
-    let (fill, _) = crate::portfolio::simulation_models(&request.execution_settings)?;
-    let mut assets = request.assets.clone();
+    portfolio_costs(
+        &request.selection,
+        &request.mandate,
+        &request.execution_settings,
+        &request.assets,
+        references,
+    )
+}
+
+pub fn portfolio_costs(
+    selected: &NativeBarSelectionV1,
+    mandate: &contracts::portfolio::MandateContentV1,
+    settings: &NativeSimulationSettingsV1,
+    assets: &[contracts::portfolio::AllocationAssetV1],
+    references: &[NativePortfolioSlippageReferenceV1],
+) -> Result<Vec<contracts::portfolio::AllocationAssetV1>, DomainError> {
+    let (fill, _) = crate::portfolio::simulation_models(settings)?;
+    let mut assets = assets.to_vec();
     if !fill.prob_slippage.is_positive() {
         if !references.is_empty() {
             return Err(bad("portfolio.slippage_reference"));
@@ -128,13 +144,12 @@ pub fn portfolio_execution_costs(
             || !reference.close_price.is_positive()
             || !reference.price_increment.is_positive()
             || reference.price_increment.as_decimal() >= reference.close_price.as_decimal()
-            || reference.event_ns < request.selection.event_start_ns
-            || reference.event_ns >= request.selection.event_end_ns
+            || reference.event_ns < selected.event_start_ns
+            || reference.event_ns >= selected.event_end_ns
             || reference.available_ns < reference.event_ns
-            || reference.available_ns > request.selection.decision_cutoff_ns
-            || request.selection.decision_cutoff_ns.get() - reference.event_ns.get()
-                > u64::from(request.mandate.rebalance_schedule.max_input_age_seconds)
-                    * 1_000_000_000
+            || reference.available_ns > selected.decision_cutoff_ns
+            || selected.decision_cutoff_ns.get() - reference.event_ns.get()
+                > u64::from(mandate.rebalance_schedule.max_input_age_seconds) * 1_000_000_000
             || !asset.transaction_cost_rate.is_fraction()
         {
             return Err(bad("portfolio.slippage_reference"));
@@ -159,20 +174,12 @@ pub fn portfolio_execution_costs(
 
 pub fn portfolio_build_request(request: &NativePortfolioBuildRequestV1) -> Result<(), DomainError> {
     selection(&request.selection)?;
-    crate::portfolio::mandate(&request.mandate)?;
-    crate::portfolio::simulation_settings(&request.execution_settings)?;
-    let costs = &request.execution_settings;
-    if costs.base_currency != request.mandate.base_currency
-        || costs.starting_capital != request.mandate.capital_assumption
-        || costs.fee_rates.len() != request.assets.len()
-        || request.assets.iter().any(|asset| {
-            !costs.fee_rates.iter().any(|fee| {
-                fee.instrument_id == asset.instrument_id && fee.taker == asset.transaction_cost_rate
-            })
-        })
-    {
-        return Err(bad("portfolio.execution_settings"));
-    }
+    portfolio_settings(
+        &request.mandate,
+        &request.execution_settings,
+        &request.assets,
+    )?;
+    portfolio_members(&request.selection, &request.assets, &request.members)?;
     let constraints = &request.mandate.constraints;
     if let Some(liquidity) = &request.bar_liquidity {
         crate::portfolio::bar_liquidity_assumption(&liquidity.assumption)?;
@@ -235,19 +242,46 @@ pub fn portfolio_build_request(request: &NativePortfolioBuildRequestV1) -> Resul
     {
         return Err(bad("portfolio.current_weights"));
     }
-    if !(2..=256).contains(&request.members.len())
-        || request.assets.len() != request.selection.bar_types.len()
+    Ok(())
+}
+
+fn portfolio_settings(
+    mandate: &contracts::portfolio::MandateContentV1,
+    costs: &NativeSimulationSettingsV1,
+    assets: &[contracts::portfolio::AllocationAssetV1],
+) -> Result<(), DomainError> {
+    crate::portfolio::mandate(mandate)?;
+    crate::portfolio::simulation_settings(costs)?;
+    if costs.base_currency != mandate.base_currency
+        || costs.starting_capital != mandate.capital_assumption
+        || costs.fee_rates.len() != assets.len()
+        || assets.iter().any(|asset| {
+            !costs.fee_rates.iter().any(|fee| {
+                fee.instrument_id == asset.instrument_id && fee.taker == asset.transaction_cost_rate
+            })
+        })
     {
+        return Err(bad("portfolio.execution_settings"));
+    }
+    Ok(())
+}
+
+fn portfolio_members(
+    selected: &NativeBarSelectionV1,
+    assets: &[contracts::portfolio::AllocationAssetV1],
+    members: &[NativePortfolioAlphaV1],
+) -> Result<(), DomainError> {
+    if !(2..=256).contains(&members.len()) || assets.len() != selected.bar_types.len() {
         return Err(bad("portfolio.members"));
     }
-    crate::portfolio::ensemble_weights(request.members.iter().map(|v| &v.ensemble_weight))?;
+    crate::portfolio::ensemble_weights(members.iter().map(|v| &v.ensemble_weight))?;
     let mut versions = BTreeSet::new();
     let mut alphas = BTreeSet::new();
-    let horizon = request.members[0].parameters.label_horizon_observations;
-    for member in &request.members {
+    let horizon = members[0].parameters.label_horizon_observations;
+    for member in members {
         forecast_request(&NativeForecastRequestV1 {
             schema_version: contracts::SchemaV1,
-            selection: request.selection.clone(),
+            selection: selected.clone(),
             parameters: member.parameters.clone(),
         })?;
         if !versions.insert(member.alpha_version_id)
@@ -264,6 +298,76 @@ pub fn portfolio_build_request(request: &NativePortfolioBuildRequestV1) -> Resul
         return Err(bad("portfolio.distinct_alphas"));
     }
     Ok(())
+}
+
+pub fn portfolio_study_cutoffs(
+    request: &NativePortfolioStudyRequestV1,
+) -> Result<Vec<contracts::DbCounter>, DomainError> {
+    selection(&request.source_selection)?;
+    portfolio_settings(
+        &request.mandate,
+        &request.execution_settings,
+        &request.assets,
+    )?;
+    portfolio_members(&request.source_selection, &request.assets, &request.members)?;
+    let schedule = &request.mandate.rebalance_schedule;
+    if schedule.kind != contracts::portfolio::RebalanceKind::FixedInterval {
+        return Err(DomainError::CapabilityUnavailable(
+            "portfolio_study_schedule",
+        ));
+    }
+    if request.mandate.constraints.liquidity_ref.is_some()
+        || request.mandate.constraints.max_participation.is_some()
+        || request
+            .assets
+            .iter()
+            .any(|a| a.available_notional.is_some())
+    {
+        return Err(DomainError::CapabilityUnavailable(
+            "portfolio_study_liquidity",
+        ));
+    }
+    if request.assets.iter().any(|a| {
+        !a.current_weight
+            .as_decimal()
+            .eq(&bigdecimal::BigDecimal::from(0))
+            || a.currency != request.mandate.base_currency
+    }) || request.evaluation_start_ns <= request.source_selection.event_start_ns
+        || request.evaluation_start_ns <= request.research_available_through_ns
+        || request.evaluation_start_ns >= request.source_selection.event_end_ns
+    {
+        return Err(bad("portfolio_study.initial_state"));
+    }
+    let step = u64::from(
+        schedule
+            .interval_seconds
+            .ok_or_else(|| bad("portfolio_study.schedule"))?,
+    ) * 1_000_000_000;
+    let ttl = u64::from(schedule.target_ttl_seconds) * 1_000_000_000;
+    let n = (request.source_selection.event_end_ns.get() - request.evaluation_start_ns.get() - 1)
+        / step
+        + 1;
+    if !(2..=256).contains(&n)
+        || ttl < step
+        || request
+            .members
+            .iter()
+            .any(|m| m.parameters.total_fuel.get() < n)
+        || (request.assets.len() as u64) * (request.members.len() as u64) * n
+            > contracts::portfolio::MAX_RETURN_VALUES as u64
+    {
+        return Err(bad("portfolio_study.limits"));
+    }
+    (0..n)
+        .map(|i| {
+            let cutoff = request.evaluation_start_ns.get() + i * step;
+            cutoff
+                .checked_add(ttl)
+                .filter(|until| *until <= i64::MAX as u64)
+                .ok_or_else(|| bad("portfolio_study.time"))?;
+            contracts::DbCounter::new(cutoff).map_err(|_| bad("portfolio_study.time"))
+        })
+        .collect()
 }
 
 /// Verify original report bytes before using the frozen numerical copy.

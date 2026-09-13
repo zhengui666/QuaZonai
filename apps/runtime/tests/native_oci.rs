@@ -27,6 +27,187 @@ async fn real_native_portfolio_sequence_consumes_all_original_target_files() {
     native_candidate_simulation(true).await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn real_native_rolling_study_uses_original_models_in_one_account() {
+    use contracts::{
+        execution::NativeTaskParametersV1,
+        research::{ArtifactInputRole, DataPartition},
+        science::NativePortfolioStudyResultV1,
+        Revision,
+    };
+    let (catalog, request, wasm) = market::study();
+    let dataset = Id::new();
+    let selection = &request.source_selection;
+    let observed = job::catalog::load_catalog(catalog.path(), selection).unwrap();
+    let mut metadata = catalog_fixture::metadata();
+    metadata.partition = DataPartition::Forward;
+    metadata.event_start =
+        chrono::DateTime::from_timestamp_nanos(selection.event_start_ns.get() as i64);
+    metadata.event_end =
+        chrono::DateTime::from_timestamp_nanos(selection.event_end_ns.get() as i64);
+    metadata.available_through =
+        chrono::DateTime::from_timestamp_nanos(selection.decision_cutoff_ns.get() as i64);
+    metadata.row_count = count(observed.rows as u64);
+    metadata.universe.coverage_end = metadata.event_end;
+    metadata.universe.instrument_definitions = observed
+        .series
+        .iter()
+        .map(|s| serde_json::to_value(&s.instrument).unwrap())
+        .collect();
+    let member = metadata.universe.membership[0].clone();
+    metadata.universe.membership = request
+        .assets
+        .iter()
+        .map(|a| {
+            let mut member = member.clone();
+            member.instrument_id = a.instrument_id.clone();
+            member
+        })
+        .collect();
+    metadata.quality.checked_at = runtime::now();
+    let quality = &mut metadata.quality.datasets[0];
+    quality.dataset_revision_id = dataset;
+    quality.selection = selection.clone();
+    quality.row_count = metadata.row_count;
+    quality.instrument_ids = request
+        .assets
+        .iter()
+        .map(|a| a.instrument_id.clone())
+        .collect();
+    quality.first_event_ns = count(observed.series[0].bars[0].ts_event.as_u64());
+    let last = observed.series[0].bars.last().unwrap();
+    quality.last_event_ns = count(last.ts_event.as_u64());
+    quality.available_through_ns = count(last.ts_init.as_u64());
+    domain::catalogs::metadata(&metadata, runtime::now()).unwrap();
+    fs::set_permissions(catalog.path(), fs::Permissions::from_mode(0o755)).unwrap();
+    let mut f = Fixture::open().await;
+    f.crash();
+    let metadata_path = f.directory.path().join("study-metadata.json");
+    fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+    let mut config: serde_json::Value =
+        serde_json::from_slice(&fs::read(&f.config_path).unwrap()).unwrap();
+    config["catalogs"] = serde_json::json!([{"root":catalog.path(),"metadata_file":metadata_path}]);
+    fs::write(&f.config_path, serde_json::to_vec(&config).unwrap()).unwrap();
+    f.restart().await;
+    let mut objects = request
+        .members
+        .iter()
+        .map(|m| (m.model_artifact_id, wasm.clone(), ArtifactInputRole::Model))
+        .collect::<Vec<_>>();
+    objects.push((
+        request.mandate.constraints.transaction_costs_ref,
+        serde_json::to_vec(&request.execution_settings).unwrap(),
+        ArtifactInputRole::Parameters,
+    ));
+    let operation = NativeTaskParametersV1::StudyPortfolio {
+        schema_version: SchemaV1,
+        dataset_revision_id: dataset,
+        request: Box::new(request),
+    };
+    let parameters_id = Id::new();
+    objects.push((
+        parameters_id,
+        serde_json::to_vec(&operation).unwrap(),
+        ArtifactInputRole::Parameters,
+    ));
+    let mut inputs = vec![RuntimeInputV1::Dataset {
+        revision_id: dataset,
+        registered_ref: metadata.registered_ref,
+        storage_version: metadata.storage_version,
+        role: DataPartition::Forward,
+    }];
+    for (id, bytes, role) in objects {
+        f.object(id, &bytes).await;
+        inputs.push(RuntimeInputV1::Artifact {
+            artifact_id: id,
+            storage_version: "1".into(),
+            byte_count: count(bytes.len() as u64),
+            role,
+        });
+    }
+    let run = Id::new();
+    f.runs.push(run);
+    let spec = JobSpecV1 {
+        schema_version: SchemaV1,
+        run_id: run,
+        attempt_no: 1,
+        owner_epoch: Revision::INITIAL,
+        external_job_id: domain::runtime_jobs::external_id(run, 1).unwrap(),
+        job_kind: operation.job_kind(),
+        image_ref: support::image(),
+        input_set_id: Id::new(),
+        inputs,
+        parameters_artifact_id: parameters_id,
+        limits: RuntimeJobLimitsV1 {
+            cpu: 1,
+            cpu_seconds: count(30),
+            memory_mib: 512,
+            wall_seconds: 30,
+            output_bytes: count(8 * 1024 * 1024),
+        },
+        deadline_at: runtime::now() + chrono::Duration::seconds(50),
+        requested_output_schemas: operation.output_schemas(),
+    };
+    let accepted = f.submit(&spec).await;
+    assert_eq!(f.terminal(&spec).await.state, RuntimeJobState::Succeeded);
+    let manifest = f.manifest(&spec).await;
+    domain::runtime_jobs::manifest(&manifest, &spec, accepted.submitted_at, runtime::now())
+        .unwrap();
+    assert_eq!(manifest.engine_versions["portfolio-study"], "1");
+    assert_eq!(manifest.artifacts.len(), 2);
+    let mut outputs = Vec::new();
+    for artifact in &manifest.artifacts {
+        let response = f
+            .client
+            .get(f.url(&[
+                "jobs",
+                &spec.external_job_id,
+                "artifacts",
+                &artifact.storage_ref.to_string(),
+            ]))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        outputs.push((artifact.clone(), response.bytes().await.unwrap().to_vec()));
+    }
+    domain::execution::output_bindings(
+        &operation,
+        None,
+        manifest.started_at.unwrap(),
+        manifest.finished_at,
+        &outputs,
+    )
+    .unwrap();
+    let report: NativePortfolioStudyResultV1 = serde_json::from_slice(
+        &outputs
+            .iter()
+            .find(|(a, _)| a.schema.name == "qz.portfolio_study")
+            .unwrap()
+            .1,
+    )
+    .unwrap();
+    assert_eq!(report.frames.len(), 3);
+    assert_ne!(
+        report.frames[0].input.capital_assumption,
+        report.frames[1].input.capital_assumption
+    );
+    let simulation = report.simulation.unwrap();
+    assert_eq!(simulation.consumed_target_points.get(), 3);
+    assert_eq!(
+        simulation.canonical_result["accounts"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        simulation.returns_status,
+        contracts::evidence::MetricStatus::Ok
+    );
+    assert!(simulation.orders.get() > 0 && simulation.returns.len() >= 2);
+}
+
 async fn native_candidate_simulation(sequence: bool) {
     use contracts::{
         execution::NativeTaskParametersV1,

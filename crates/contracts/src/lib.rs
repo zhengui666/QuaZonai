@@ -173,7 +173,9 @@ use utoipa::OpenApi;
     science::NativeAlphaSealedResultV1,
     science::NativeFrozenCalibrationV1,
     science::NativeSimulationRequestV1,
-    science::NativeSimulationResultV1
+    science::NativeSimulationResultV1,
+    science::NativePortfolioStudyRequestV1,
+    science::NativePortfolioStudyResultV1
 )))]
 struct DomainContracts;
 

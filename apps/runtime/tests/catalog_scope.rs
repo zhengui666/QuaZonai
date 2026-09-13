@@ -22,7 +22,7 @@ fn operation(
     selection: NativeBarSelectionV1,
 ) -> NativeTaskParametersV1 {
     match kind {
-        5 => {
+        5 | 8 => {
             let input = serde_json::from_str(include_str!(
                 "../../../tests/contracts/allocation-input.json"
             ))
@@ -52,6 +52,29 @@ fn operation(
                 count(request.selection.decision_cutoff_ns.get() + 1);
             for member in &mut request.members {
                 member.model_artifact_id = model;
+            }
+            if kind == 8 {
+                request.mandate.rebalance_schedule.kind =
+                    contracts::portfolio::RebalanceKind::FixedInterval;
+                request.mandate.rebalance_schedule.interval_seconds = Some(60);
+                request.mandate.rebalance_schedule.target_ttl_seconds = 120;
+                for asset in &mut request.assets {
+                    asset.current_weight = "0".parse().unwrap();
+                }
+                return NativeTaskParametersV1::StudyPortfolio {
+                    schema_version: SchemaV1,
+                    dataset_revision_id: dataset,
+                    request: Box::new(NativePortfolioStudyRequestV1 {
+                        schema_version: SchemaV1,
+                        source_selection: request.selection,
+                        evaluation_start_ns: count(120_000_000_000),
+                        research_available_through_ns: count(119_000_000_000),
+                        mandate: request.mandate,
+                        execution_settings: request.execution_settings,
+                        assets: request.assets,
+                        members: request.members,
+                    }),
+                };
             }
             NativeTaskParametersV1::BuildPortfolio {
                 schema_version: SchemaV1,
@@ -175,7 +198,7 @@ async fn accepts(
         .unwrap();
     let dataset = Id::new();
     let model = Id::new();
-    let parameters = if kind >= 6 {
+    let parameters = if matches!(kind, 6 | 7) {
         let mut actual = metadata.quality.datasets[0].selection.clone();
         actual.decision_cutoff_ns = actual.event_end_ns;
         let NativeTaskParametersV1::SimulatePortfolio { mut request, .. } =
@@ -281,7 +304,18 @@ async fn accepts(
             role: ArtifactInputRole::Parameters,
         });
     }
-    if matches!(kind, 1 | 3 | 4 | 5) {
+    if let NativeTaskParametersV1::StudyPortfolio { request, .. } = &parameters {
+        let bytes = serde_json::to_vec(&request.execution_settings).unwrap();
+        let id = request.mandate.constraints.transaction_costs_ref;
+        journal.put_object(id, "1", &bytes).await.unwrap();
+        inputs.push(RuntimeInputV1::Artifact {
+            artifact_id: id,
+            storage_version: "1".into(),
+            byte_count: count(bytes.len() as u64),
+            role: ArtifactInputRole::Parameters,
+        });
+    }
+    if matches!(kind, 1 | 3 | 4 | 5 | 8) {
         journal
             .put_object(model, "1", b"controlled-model-fixture")
             .await
@@ -337,7 +371,7 @@ async fn accepts(
 
 #[tokio::test]
 async fn all_data_operations_cannot_widen_the_registered_visibility_cutoff() {
-    for kind in 0..8 {
+    for kind in 0..9 {
         let mut metadata = catalog_fixture::metadata();
         if kind == 3 {
             metadata.partition = DataPartition::Validation;
@@ -364,7 +398,7 @@ async fn all_data_operations_cannot_widen_the_registered_visibility_cutoff() {
 
 #[tokio::test]
 async fn all_data_operations_reject_unregistered_types_instruments_and_event_ranges() {
-    for kind in 0..8 {
+    for kind in 0..9 {
         let mut metadata = catalog_fixture::metadata();
         if kind == 3 {
             metadata.partition = DataPartition::Validation;

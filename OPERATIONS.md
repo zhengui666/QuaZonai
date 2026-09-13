@@ -68,6 +68,10 @@ target-only权重，不收账户或NAV；PAPER为SYNTHETIC，LIVE不自动获得
 原生candidate-simulation/2可在原目标有效区间内保持该目标模拟，读取原目标与费用
 文件，不将最终权重放回产生之前。portfolio-sequence/1另支持原目标文件序列，
 按每项原可用时间进入同一原生账户；不代表独立PORTFOLIO评估或Release已通过。
+portfolio-study/1另提供原模型驱动的离线滚动原生计算，不依赖历史Candidate：
+各截止使用历史前缀、实际模拟权益和权重，在同一个账户求解与执行。
+当前仅固定间隔且不支持流动性/参与率输入；正式准入、Arrow历史目标、组合评估
+发布仍未完成。该本机计算入口不可当作Operator操作或生产资格。
 它不是恢复真实持仓，也不是已交付的Evaluation
 或Release入口；可信Worker的保持研究评估与正式策略滚动评估/交付分开，后者仍待验收。
 `client portfolio simulate`通过原来源准入申请保持模拟Run（参数见CLI），需

@@ -268,6 +268,13 @@ Store核对当前资格、独立Reviewer/原REAL报告、许可、原模型、Fo
 原生SIMULATE_CANDIDATE仅为保持原目标的模拟适配，尚不是Operator评估命令。
 参数含schema_version、candidate_id、candidate_available_ns、dataset_revision_id、target_artifact_id、
 settings_artifact_id、原登记source_selection和原NativeSimulationRequestV1；需candidate-simulation/2。
+原生`job study-portfolio --catalog PATH --objects PATH`从stdin读取
+NativePortfolioStudyRequestV1，stdout输出NativePortfolioStudyResultV1；仅本机可信验证，
+不是Operator/Agent准入接口。托管STUDY_PORTFOLIO需portfolio-study/1，只挂载原
+FORWARD目录、模型/校准MODEL和费用PARAMETERS，输出qz.data_quality与qz.portfolio_study。
+固定间隔2–256次截止分别重算原模型与历史前缀，在同一个Nautilus账户中按实际
+权益/权重调用Clarabel；不可行只保留诊断，不生成模拟。当前拒绝日历/手动调仓与
+流动性/参与率输入；Arrow历史目标及正式PORTFOLIO准入/发布仍待实现，不能授予PASS。
 SIMULATE_PORTFOLIO_SEQUENCE使用portfolio-sequence/1，sources逐项绑定原Candidate、
 可信可用时间和目标文件，同一settings_artifact_id重读核验；完整源质量与实际
 模拟结果分别输出。不提供手填权重的正式评估API，Store序列准入/发布仍待接入。

@@ -102,6 +102,43 @@ pub struct NativePortfolioBuildResultV1 {
     pub consumed_fuel: DbCounter,
 }
 
+/// Offline model-driven research. The simulated account, not the caller, owns weights.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativePortfolioStudyRequestV1 {
+    pub schema_version: SchemaV1,
+    pub source_selection: NativeBarSelectionV1,
+    pub evaluation_start_ns: DbCounter,
+    pub research_available_through_ns: DbCounter,
+    pub mandate: MandateContentV1,
+    pub execution_settings: super::NativeSimulationSettingsV1,
+    #[schema(min_items = 1, max_items = 256)]
+    pub assets: Vec<AllocationAssetV1>,
+    #[schema(min_items = 2, max_items = 256)]
+    pub members: Vec<NativePortfolioAlphaV1>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativePortfolioStudyFrameV1 {
+    pub cutoff_ns: DbCounter,
+    pub input: AllocationInputV1,
+    pub allocation: AllocationResultV1,
+    pub slippage_references: Vec<NativePortfolioSlippageReferenceV1>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativePortfolioStudyResultV1 {
+    pub schema_version: SchemaV1,
+    pub consumed_fuel: DbCounter,
+    #[schema(max_items = 256)]
+    pub frames: Vec<NativePortfolioStudyFrameV1>,
+    /// Actual generated points, never the schedule's provisional all-cash placeholders.
+    pub simulation_request: Option<super::NativeSimulationRequestV1>,
+    pub simulation: Option<super::NativeSimulationResultV1>,
+}
+
 /// Original last-known native BAR and tick, used only for proportional cost planning.
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]

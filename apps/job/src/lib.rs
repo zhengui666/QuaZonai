@@ -16,6 +16,7 @@ mod report;
 pub use report::write_probe_report;
 pub mod signals;
 pub mod simulation;
+pub mod study;
 pub mod validation;
 
 #[derive(Serialize)]
