@@ -154,8 +154,9 @@ Operator的`client portfolio assumptions create/list/show`保存/读取原生来
 当前入口仅保守BAR，不自动获得DATA_BACKED、资格或交付权限；不修改历史假设。
 `client portfolio candidate list PROJECT_UUID` / `show CANDIDATE_UUID`读取已发布
 原始快照；不是当前资格或交付授权，不向Mission开放报告字节。
-`client portfolio build`以原资格、Mandate、Cycle、Forward输入和下游快照引用申请
-Run，CLI需目标Mandate的精确PORTFOLIO_BUILD人工grant。不得手填预测、持仓、费用
+`client portfolio build`以原资格、Mandate、Cycle、Forward输入申请Run；
+current_weights_source选择下游快照或LAST_TARGET原Candidate目标假设。
+CLI需目标Mandate的精确PORTFOLIO_BUILD人工grant。不得手填预测、持仓、费用
 或把202称为合格Candidate；当前完整成功准入/发布链及全成本来源仍待完成。
 浏览器在“组合”选择项目后切到“执行假设”，使用同一创建/列表/详情API；未知响应
 保留原输入重试，不重新生成费用或种子，也不把关闭编辑器当成撤销。

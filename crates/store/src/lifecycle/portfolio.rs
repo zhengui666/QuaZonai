@@ -13,6 +13,7 @@ use native::{bind_task, NativeObjectPublication, NativeTaskDefinition};
 use std::collections::BTreeSet;
 
 mod publication;
+mod weights;
 pub(super) use publication::publish;
 
 // FOR UPDATE also conflicts with the revocation insert's native FK key-share
@@ -27,12 +28,12 @@ impl Store {
         key: &str,
         request: &PortfolioBuildRequestV1,
         mut read: R,
-        publish: P,
+        mut publish: P,
     ) -> Result<CommandResult<RunSnapshotV1>, StoreError>
     where
         R: FnMut(Id, DbCounter) -> Read,
         Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
-        P: FnOnce(NativeObjectPublication) -> Published,
+        P: FnMut(NativeObjectPublication) -> Published,
         Published: std::future::Future<Output = Result<(), StoreError>>,
     {
         domain::portfolio::build_selection(request)?;
@@ -121,39 +122,34 @@ impl Store {
             return Err(StoreError::Invalid("portfolio_universe"));
         }
 
-        let snapshot = sqlx::query("SELECT s.*,a.byte_count,a.storage_version FROM app.forward_weight_snapshots s JOIN app.artifacts a ON a.id=s.report_artifact_id AND a.project_id=s.project_id AND a.kind='REPORT' AND a.schema_name='qz.portfolio_current_weights' AND a.schema_version='1' AND a.storage_backend='LOCAL' AND a.storage_object_ref=a.id::text AND a.access_class='RESEARCH' JOIN app.downstream_integrations d ON d.id=s.downstream_id AND d.enabled AND (d.environments='BOTH' OR d.environments=s.environment) WHERE s.id=$1 AND s.project_id=$2 AND s.environment=$3 FOR SHARE OF d")
-            .bind(request.current_weights_snapshot_id.as_uuid()).bind(project.as_uuid()).bind(db::code(&request.environment)?).fetch_optional(&mut *tx).await?.ok_or(StoreError::Invalid("portfolio_weights_source"))?;
-        let weights: PortfolioCurrentWeightsV1 =
-            serde_json::from_value(snapshot.try_get("content")?)
-                .map_err(|_| StoreError::Integrity)?;
+        let resolved = weights::resolve(&mut tx, project, request, &mut read).await?;
+        let origin = resolved.origin;
+        let weights = resolved.content;
         let weights_deadline = weights.valid_until_ns;
-        let weights_id = db::id(snapshot.try_get("report_artifact_id")?)?;
-        let size = counter(snapshot.try_get("byte_count")?)?;
-        if size == DbCounter::ZERO || size.get() > 1024 * 1024 {
-            return Err(StoreError::Integrity);
-        }
-        let bytes = read(weights_id, size).await?;
-        let original: PortfolioCurrentWeightsV1 =
-            serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?;
-        if bytes.len() as u64 != size.get()
-            || original != weights
-            || weights.source
-                != (PortfolioWeightsSourceV1::ForwardSnapshot {
-                    downstream_id: db::id(snapshot.try_get("downstream_id")?)?,
-                    external_message_id: snapshot.try_get("external_message_id")?,
-                })
-        {
-            return Err(StoreError::Integrity);
-        }
-        let mut inputs = vec![
-            dataset.input,
+        let mut derived = None;
+        let weights_input = if let Some(artifact) = resolved.artifact {
+            artifact
+        } else {
+            let id = Id::new();
+            let bytes = serde_json::to_vec(&weights).map_err(|_| StoreError::Integrity)?;
+            let size = counter(bytes.len() as i64)?;
+            derived = Some(NativeObjectPublication { id, bytes });
             RuntimeInputV1::Artifact {
-                artifact_id: weights_id,
-                storage_version: snapshot.try_get("storage_version")?,
+                artifact_id: id,
+                storage_version: "1".into(),
                 byte_count: size,
                 role: ArtifactInputRole::Report,
-            },
-        ];
+            }
+        };
+        let RuntimeInputV1::Artifact {
+            artifact_id: weights_id,
+            ..
+        } = &weights_input
+        else {
+            return Err(StoreError::Integrity);
+        };
+        let weights_id = *weights_id;
+        let mut inputs = vec![dataset.input, weights_input];
         let mut members = Vec::with_capacity(request.members.len());
         let mut selected = BTreeSet::new();
         for member in &request.members {
@@ -284,6 +280,13 @@ impl Store {
         .fetch_one(&mut *tx)
         .await?;
         let parameter = Id::new();
+        if let Some(object) = derived {
+            let id = object.id;
+            let size = counter(object.bytes.len() as i64)?;
+            publish(object).await?;
+            sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,'REPORT','application/json','qz.portfolio_current_weights','1','LOCAL',$3,'1',$4,'EVALUATOR_ONLY',$5,'OPERATOR','REFERENCED')")
+                .bind(id.as_uuid()).bind(project.as_uuid()).bind(id.to_string()).bind(size.get() as i64).bind(db::code(&origin)?).execute(&mut *tx).await?;
+        }
         let bytes = serde_json::to_vec(&task).map_err(|_| StoreError::Integrity)?;
         let size = counter(bytes.len() as i64)?;
         publish(NativeObjectPublication {
@@ -324,11 +327,6 @@ impl Store {
         if weights_deadline.get() <= checked_ns {
             return Err(StoreError::Invalid("portfolio_weights_expired"));
         }
-        let origin = if request.environment == contracts::forward::ForwardEnvironmentV1::Paper {
-            DataOrigin::Synthetic
-        } else {
-            DataOrigin::Real
-        };
         sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,'PARAMETERS','application/json','qz.native_task','1','LOCAL',$3,'1',$4,'EVALUATOR_ONLY',$5,'OPERATOR','REFERENCED')")
             .bind(parameter.as_uuid()).bind(project.as_uuid()).bind(parameter.to_string()).bind(size.get() as i64).bind(db::code(&origin)?).execute(&mut *tx).await?;
         inputs.push(RuntimeInputV1::Artifact {
@@ -370,8 +368,16 @@ impl Store {
             },
         )
         .await?;
-        sqlx::query("INSERT INTO app.portfolio_build_tasks(run_id,mandate_id,snapshot_id,request) VALUES($1,$2,$3,$4)")
-            .bind(run.resource.id.as_uuid()).bind(request.mandate_id.as_uuid()).bind(request.current_weights_snapshot_id.as_uuid()).bind(db::json(request)?).execute(&mut *tx).await?;
+        let (snapshot, candidate) = match request.current_weights_source {
+            PortfolioBuildWeightsV1::ForwardSnapshot { snapshot_id } => {
+                (Some(snapshot_id.as_uuid()), None)
+            }
+            PortfolioBuildWeightsV1::LastTarget { candidate_id } => {
+                (None, Some(candidate_id.as_uuid()))
+            }
+        };
+        sqlx::query("INSERT INTO app.portfolio_build_tasks(run_id,mandate_id,snapshot_id,last_target_candidate_id,request) VALUES($1,$2,$3,$4,$5)")
+            .bind(run.resource.id.as_uuid()).bind(request.mandate_id.as_uuid()).bind(snapshot).bind(candidate).bind(db::json(request)?).execute(&mut *tx).await?;
         commands::recheck_authority(&mut tx, actor, &prepared).await?;
         if !publication::windows_current(
             &mut tx,

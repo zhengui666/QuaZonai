@@ -3,6 +3,10 @@
 //! untrusted agents and workers executing research code never get this pool.
 #![forbid(unsafe_code)]
 
+// Share the same relational fixtures between internal and integration tests.
+#[cfg(test)]
+extern crate self as store;
+
 pub mod artifacts;
 pub mod auth;
 pub mod authority;

@@ -13013,8 +13013,8 @@
         "additionalProperties": false,
         "description": "Source references only; trusted admission resolves the original native inputs.",
         "properties": {
-          "current_weights_snapshot_id": {
-            "$ref": "#/components/schemas/Id"
+          "current_weights_source": {
+            "$ref": "#/components/schemas/PortfolioBuildWeightsV1"
           },
           "cycle_id": {
             "$ref": "#/components/schemas/Id"
@@ -13134,12 +13134,52 @@
           "input_set_id",
           "runtime_id",
           "expected_runtime_revision",
-          "current_weights_snapshot_id",
+          "current_weights_source",
           "environment",
           "members",
           "limits"
         ],
         "type": "object"
+      },
+      "PortfolioBuildWeightsV1": {
+        "oneOf": [
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "FORWARD_SNAPSHOT"
+                ],
+                "type": "string"
+              },
+              "snapshot_id": {
+                "$ref": "#/components/schemas/Id"
+              }
+            },
+            "required": [
+              "snapshot_id",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "candidate_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "kind": {
+                "enum": [
+                  "LAST_TARGET"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "candidate_id",
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "PortfolioConstraintsV1": {
         "additionalProperties": false,

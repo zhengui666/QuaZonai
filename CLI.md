@@ -213,9 +213,12 @@ PAPER标为SYNTHETIC；LIVE只证明认证下游提交，不等同独立研究�
 
 组合构建入口为`POST /api/v2/portfolio-builds` / `client portfolio build`，请求
 `PortfolioBuildRequestV1`仅引用cycle_id、mandate_id、input_set_id、runtime_id、
-expected_runtime_revision、current_weights_snapshot_id、environment、
+expected_runtime_revision、current_weights_source、environment、
 members[{qualification_id,ensemble_weight}]与limits（另含schema_version）。
 Runtime revision及有界大整数使用字符串，成员权重使用精确Decimal字符串。
+current_weights_source为`{"kind":"FORWARD_SNAPSHOT","snapshot_id":"UUID"}`或
+`{"kind":"LAST_TARGET","candidate_id":"UUID"}`，两种引用不能混用。LAST_TARGET
+保留原目标、发布时间与期限，派生权重标为假设；不会读取真实账户或升级原来源。
 CLI需要目标为mandate_id、完整意图相同的PORTFOLIO_BUILD人工grant及原幂等键；
 返回202的原Run回执不代表Candidate已经生成或通过共享资金验证。
 

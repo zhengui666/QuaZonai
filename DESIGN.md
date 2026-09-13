@@ -1857,14 +1857,20 @@ React/Ant Design“组合 → 候选快照”使用同一分页和详情接口�
 ### A5.2 原生组合求解的可执行合同
 
 正式PORTFOLIO_BUILD命令的外部意图仅含schema_version、cycle_id、mandate_id、
-input_set_id、runtime_id、expected_runtime_revision、current_weights_snapshot_id、
+input_set_id、runtime_id、expected_runtime_revision、current_weights_source、
 environment、members[{qualification_id,ensemble_weight}]及有界limits。不得传入
 预测值、模型路径、资产当前权重或费用。Store从原Mandate、已认证下游快照、原资格
 对应的原生评估任务及执行假设恢复这些内容；相同意图重放原Run，不重新选择版本。
 至少两个不同Alpha的当前有效资格，政策与Cycle/原Mandate一致；生命周期、撤销、
 时限、原REAL/PIT数据及当前许可须在准入与发布时重验。原任务参数只能由可信Worker
-读取，不能借组合任务向Mission暴露Sealed数据。首个快照入口不代替LAST_TARGET
-后续来源解析，也不删除完整交付合同。开始Run不是生成Candidate或授予交付资格。
+读取，不能借组合任务向Mission暴露Sealed数据。current_weights_source严格为
+FORWARD_SNAPSHOT{snapshot_id}或LAST_TARGET{candidate_id}（判别字段kind）。
+LAST_TARGET只读取同项目已封口、成功且VALID的原Candidate目标，核对原目标文件与
+数据库子项、币种和原时限；保留原决策时点，available为不早于原发布的时点，
+不延长期限。派生qz.portfolio_current_weights标明LAST_TARGET及原Candidate，
+与新Run参数同事务发布，失败统一清理未引用对象。PAPER降为SYNTHETIC，LIVE也不
+升级原SYNTHETIC来源；假设始终不冒充真实账户仓位。FIXTURE/未知来源不能准入。
+原Build来源FK与请求不变，发布前重新核对来源。开始Run不是生成Candidate或授予交付资格。
 HTTP入口为POST /api/v2/portfolio-builds，原生CLI为client portfolio build；需要
 Operator或目标为mandate_id、内容完全相同的PORTFOLIO_BUILD单次grant及幂等键。
 返回202和原Run回执，不以内存任务句柄冒充已执行。失败清理沿用Operator事务锁。

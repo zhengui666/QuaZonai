@@ -198,8 +198,12 @@ where
             other => other,
         })?;
     }
-    sqlx::query("INSERT INTO app.portfolio_candidates(id,project_id,mandate_id,input_set_id,decision_asof,run_id,solver_status,evidence_status,reason_code,forecast_artifact_id,diagnostics_artifact_id,target_artifact_id,cash_weight,current_weights_source,current_weights_artifact_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'FORWARD_SNAPSHOT',$14)")
-        .bind(candidate.as_uuid()).bind(run.project_id.as_uuid()).bind(request.mandate_id.as_uuid()).bind(run.input_set_id.as_uuid()).bind(asof).bind(run.id.as_uuid()).bind(db::code(&solver)?).bind(db::code(&status)?).bind(reason).bind(native_report.map(Id::as_uuid)).bind(diagnostics.as_uuid()).bind(target_artifact.map(Id::as_uuid)).bind(cash.as_ref().map(|v|v.as_decimal())).bind(frozen.current_weights_artifact_id.as_uuid()).execute(&mut *tx).await?;
+    let source = match frozen.current_weights.source {
+        PortfolioWeightsSourceV1::ForwardSnapshot { .. } => "FORWARD_SNAPSHOT",
+        PortfolioWeightsSourceV1::LastTarget { .. } => "LAST_TARGET",
+    };
+    sqlx::query("INSERT INTO app.portfolio_candidates(id,project_id,mandate_id,input_set_id,decision_asof,run_id,solver_status,evidence_status,reason_code,forecast_artifact_id,diagnostics_artifact_id,target_artifact_id,cash_weight,current_weights_source,current_weights_artifact_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$15,$14)")
+        .bind(candidate.as_uuid()).bind(run.project_id.as_uuid()).bind(request.mandate_id.as_uuid()).bind(run.input_set_id.as_uuid()).bind(asof).bind(run.id.as_uuid()).bind(db::code(&solver)?).bind(db::code(&status)?).bind(reason).bind(native_report.map(Id::as_uuid)).bind(diagnostics.as_uuid()).bind(target_artifact.map(Id::as_uuid)).bind(cash.as_ref().map(|v|v.as_decimal())).bind(frozen.current_weights_artifact_id.as_uuid()).bind(source).execute(&mut *tx).await?;
     for (chosen, member) in request.members.iter().zip(&frozen.members) {
         let calibration: Option<uuid::Uuid> = sqlx::query_scalar(
             "SELECT calibration_id FROM app.alpha_versions WHERE id=$1 AND project_id=$2",
@@ -267,9 +271,8 @@ where
     {
         return Err(StoreError::Invalid("portfolio_expired"));
     }
-    let source: Option<uuid::Uuid> = sqlx::query_scalar("SELECT d.id FROM app.forward_weight_snapshots s JOIN app.downstream_integrations d ON d.id=s.downstream_id WHERE s.id=$1 AND s.project_id=$2 AND s.report_artifact_id=$3 AND s.environment=$4 AND d.enabled AND (d.environments='BOTH' OR d.environments=s.environment) FOR SHARE OF d")
-        .bind(request.current_weights_snapshot_id.as_uuid()).bind(project.as_uuid()).bind(frozen.current_weights_artifact_id.as_uuid()).bind(db::code(&request.environment)?).fetch_optional(&mut **tx).await?;
-    if source.is_none() {
+    let source = weights::resolve(tx, project, request, read).await?;
+    if source.content != frozen.current_weights || source.artifact.as_ref().is_some_and(|input| !matches!(input, RuntimeInputV1::Artifact {artifact_id,..} if *artifact_id == frozen.current_weights_artifact_id)) {
         return Err(StoreError::Invalid("portfolio_weights_source"));
     }
     crate::research::revalidate_frozen_inputs(

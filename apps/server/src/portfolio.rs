@@ -65,7 +65,7 @@ pub async fn build(
     let result = crate::settings::command(&state, async move {
         let reading = objects.clone();
         let publishing = objects.clone();
-        let mut allocated = None;
+        let mut allocated = Vec::new();
         let result = store
             .start_portfolio_build(
                 &actor,
@@ -81,7 +81,8 @@ pub async fn build(
                     }
                 },
                 |object| {
-                    allocated = Some(object.id);
+                    allocated.push(object.id);
+                    let publishing = publishing.clone();
                     async move {
                         tokio::task::spawn_blocking(move || {
                             publishing.put(object.id, &object.bytes)
@@ -93,7 +94,8 @@ pub async fn build(
                 },
             )
             .await;
-        if let Some(id) = allocated.filter(|_| result.is_err()) {
+        for id in allocated.into_iter().filter(|_| result.is_err()) {
+            let objects = objects.clone();
             if store
                 .discard_unpublished_operator_artifact(id, move |id| async move {
                     tokio::task::spawn_blocking(move || objects.discard_unpublished(id))

@@ -6,7 +6,7 @@ use serde_json::json;
 fn build_selection_keeps_exact_qualifications_weights_and_bounded_limits() {
     let value = json!({"schema_version":1,"cycle_id":Id::new(),"mandate_id":Id::new(),
         "input_set_id":Id::new(),"runtime_id":Id::new(),"expected_runtime_revision":"1",
-        "current_weights_snapshot_id":Id::new(),"environment":"PAPER",
+        "current_weights_source":{"kind":"FORWARD_SNAPSHOT","snapshot_id":Id::new()},"environment":"PAPER",
         "members":[{"qualification_id":Id::new(),"ensemble_weight":"0.25"},
                    {"qualification_id":Id::new(),"ensemble_weight":"0.75"}],
         "limits":{"schema_version":1,"experiments":0,"cpu_seconds":"10","wall_seconds":10,"memory_mib":64,"output_bytes":"1024"}});
@@ -25,6 +25,11 @@ fn build_selection_keeps_exact_qualifications_weights_and_bounded_limits() {
         }
         assert!(domain::portfolio::build_selection(&bad).is_err());
     }
+    let mut last = value.clone();
+    last["current_weights_source"] = json!({"kind":"LAST_TARGET","candidate_id":Id::new()});
+    domain::portfolio::build_selection(&serde_json::from_value(last.clone()).unwrap()).unwrap();
+    last["current_weights_source"]["snapshot_id"] = json!(Id::new());
+    assert!(serde_json::from_value::<PortfolioBuildRequestV1>(last).is_err());
     let mut invented = value;
     invented["current_cash_weight"] = "1".into();
     assert!(serde_json::from_value::<PortfolioBuildRequestV1>(invented).is_err());

@@ -3,6 +3,29 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Original LAST_TARGET weight source, 2026-09-13
+
+Working source over `022ece07` replaces the build intent's snapshot-only field
+with the strict FORWARD_SNAPSHOT / LAST_TARGET reference union. Migration 052
+keeps original requests and references, adds the prior-Candidate FK and requires
+exactly one source. Admission and publication share the same source resolver.
+LAST_TARGET checks the published original Candidate, target file and every stored
+target/cash/currency/time value. The derived weights retain original file order,
+decision/publication availability and deadline; they never become account positions
+or upgrade a SYNTHETIC source to REAL. Derived weights and parameters share the
+original transaction and multi-object rollback cleanup; no new queue or native ABI.
+
+`verify-wDb0q3` exited 0 with check/fmt/Clippy and 194 evidence-related tests,
+including real PG/file LAST_TARGET tests for publication sealing, source/order/time
+preservation, foreign references, altered file weights and native source XOR.
+`verify-C7Rykr` also exited 0 for contracts/domain, native allocation, Store and
+HTTP/CLI command/grant coverage. `web-verify-cOSeGY` reproduced all six generated
+outputs and passed typecheck, 505 Vitest, Node/wire, build, 36 dedicated and 210
+full browser cases; handwritten source stayed unchanged during verification.
+The source fixture is explicitly SYNTHETIC relational evidence, not native execution
+or positive REAL qualification. Full successful Build admission and derived-file
+failure recovery through that full path still require acceptance; this is not T42.
+
 ## Candidate publication and read workflow, 2026-09-13
 
 Local commits `7dd87b75` and `27ac4787` bind one immutable Candidate to the original

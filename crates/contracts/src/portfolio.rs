@@ -238,12 +238,19 @@ pub struct PortfolioBuildRequestV1 {
     pub input_set_id: crate::Id,
     pub runtime_id: crate::Id,
     pub expected_runtime_revision: crate::Revision,
-    pub current_weights_snapshot_id: crate::Id,
+    pub current_weights_source: PortfolioBuildWeightsV1,
     pub environment: crate::forward::ForwardEnvironmentV1,
     #[schema(min_items = 2, max_items = 256)]
     pub members: Vec<PortfolioMemberSelectionV1>,
     #[schema(schema_with = crate::data::bounded_native_limits_schema)]
     pub limits: crate::lifecycle::JobLimitsV1,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
+pub enum PortfolioBuildWeightsV1 {
+    ForwardSnapshot { snapshot_id: crate::Id },
+    LastTarget { candidate_id: crate::Id },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]

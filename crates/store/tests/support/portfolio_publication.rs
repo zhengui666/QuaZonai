@@ -103,7 +103,9 @@ async fn prepared(pool: &PgPool, objects: &ArtifactStore, cancel: bool) -> (stor
         input_set_id: f.input_set,
         runtime_id: runtime,
         expected_runtime_revision: Revision::INITIAL,
-        current_weights_snapshot_id: snapshot,
+        current_weights_source: PortfolioBuildWeightsV1::ForwardSnapshot {
+            snapshot_id: snapshot,
+        },
         environment: ForwardEnvironmentV1::Paper,
         members: vec![
             PortfolioMemberSelectionV1 {

@@ -42,7 +42,7 @@ async fn portfolio_cli_requires_exact_human_intent_and_never_admits_a_missing_cy
     fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
     let body = json!({"schema_version":1,"cycle_id":contracts::Id::new(),"mandate_id":mandate.id,
         "input_set_id":contracts::Id::new(),"runtime_id":source.runtime_id,"expected_runtime_revision":source.expected_runtime_revision,
-        "current_weights_snapshot_id":contracts::Id::new(),"environment":"PAPER",
+        "current_weights_source":{"kind":"FORWARD_SNAPSHOT","snapshot_id":contracts::Id::new()},"environment":"PAPER",
         "members":[{"qualification_id":contracts::Id::new(),"ensemble_weight":"0.5"},{"qualification_id":contracts::Id::new(),"ensemble_weight":"0.5"}],
         "limits":{"schema_version":1,"experiments":0,"cpu_seconds":"10","wall_seconds":10,"memory_mib":64,"output_bytes":"1024"}});
     let (origin, _listener) = listen(&f).await;

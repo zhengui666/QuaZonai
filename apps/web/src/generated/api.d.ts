@@ -4189,7 +4189,7 @@ export interface components {
         PitStatus: "VERIFIED" | "UNVERIFIED" | "INVALID";
         /** @description Source references only; trusted admission resolves the original native inputs. */
         PortfolioBuildRequestV1: {
-            current_weights_snapshot_id: components["schemas"]["Id"];
+            current_weights_source: components["schemas"]["PortfolioBuildWeightsV1"];
             cycle_id: components["schemas"]["Id"];
             environment: components["schemas"]["ForwardEnvironmentV1"];
             expected_runtime_revision: components["schemas"]["Revision"];
@@ -4221,6 +4221,15 @@ export interface components {
             members: components["schemas"]["PortfolioMemberSelectionV1"][];
             runtime_id: components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
+        };
+        PortfolioBuildWeightsV1: {
+            /** @enum {string} */
+            kind: "FORWARD_SNAPSHOT";
+            snapshot_id: components["schemas"]["Id"];
+        } | {
+            candidate_id: components["schemas"]["Id"];
+            /** @enum {string} */
+            kind: "LAST_TARGET";
         };
         PortfolioConstraintsV1: {
             asset_overrides: components["schemas"]["AssetBoundV1"][];

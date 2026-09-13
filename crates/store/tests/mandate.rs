@@ -27,7 +27,9 @@ async fn portfolio_admission_without_its_running_cycle_never_publishes_or_charge
         input_set_id: Id::new(),
         runtime_id: source.runtime_id,
         expected_runtime_revision: source.expected_runtime_revision,
-        current_weights_snapshot_id: Id::new(),
+        current_weights_source: contracts::portfolio::PortfolioBuildWeightsV1::ForwardSnapshot {
+            snapshot_id: Id::new(),
+        },
         environment: contracts::forward::ForwardEnvironmentV1::Paper,
         members: vec![
             PortfolioMemberSelectionV1 {
