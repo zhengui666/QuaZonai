@@ -241,7 +241,7 @@ where
         context.validation_input_set_id,
         brief.project_id,
         context.runtime_id,
-        &[DataPartition::Validation],
+        &[contracts::research::InputPurpose::Validation],
         read,
     )
     .await?;
@@ -273,7 +273,7 @@ where
         context.sealed_input_set_id,
         brief.project_id,
         context.runtime_id,
-        &[DataPartition::Sealed],
+        &[contracts::research::InputPurpose::Sealed],
         read,
     )
     .await?;

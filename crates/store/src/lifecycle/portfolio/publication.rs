@@ -328,7 +328,7 @@ where
             request.input_set_id,
             project,
             request.runtime_id,
-            &[contracts::research::DataPartition::Forward],
+            &[contracts::research::InputPurpose::Forward],
             read,
         )
         .await?;

@@ -593,6 +593,9 @@ HTTP；PINNED_CA必须绑定原生CA证书，缺失时不回退到SYSTEM_CA。me
 撤销、跨项目产物和分区不匹配会拒绝新登记；不要手工写 SQL 创建引用来绕过。
 数据源/数据版本使用本文原生登记入口；执行假设使用`portfolio assumptions`。
 这些入口保存来源与配置，不替代完整Candidate与交付资格验收。
+PORTFOLIO是输入用途，不是数据分区；其成员保留DISCOVERY/VALIDATION，至少需
+RESEARCH_AND_PAPER许可。共用读取器仅按调用方明确允许的用途消费，DATA_VALIDATE
+仍仅接受DISCOVERY/VALIDATION用途，不能拿PORTFOLIO头替代它或据此启动正式Study。
 
 评估政策创建须显式提供 `sealed_metric_requirements`（1..64项，至少一项required），
 与Validation的`metric_requirements`分别冻结；selection按evaluation_kind绑定对应组。

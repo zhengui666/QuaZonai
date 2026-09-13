@@ -1362,6 +1362,10 @@ EXACT_THRESHOLD_BOUNDS：GT/GE缺low或意外high分别定位对应字段；LT/L
 DISCOVERY或VALIDATION目录，明确拒绝FORWARD和SEALED；原目录partition与任务role
 仍须相同，不重标目录来满足用途。Build及候选HOLD保持其独立FORWARD限制。
 这是原生输入绑定，不替代正式PORTFOLIO准入的许可、模型可用时间和政策检查。
+Store原目录读取器以InputPurpose检查调用方明确允许的用途，再按同一领域规则核对
+成员DataPartition；二者不是同一个枚举。PORTFOLIO头不改写其DISCOVERY/VALIDATION
+成员分区，其他调用方不因共用读取器自动接受PORTFOLIO。仍重读原元数据并核对
+版本、来源、事件/可用范围、行数及原分区，复用原许可重验，不增加另一个数据入口。
 登记时 data source/runtime 仍启用，数据许可在数据库当前时间生效
 且未被已生效撤销；dataset.available_through 不晚于 decision_cutoff。cutoff 不能是
 未来时间，非零亚微秒部分拒绝，不能先截断改变point-in-time边界。INVALID PIT 拒绝；UNVERIFIED/PIT 和非 REAL 来源可作为明确标记的研究准备

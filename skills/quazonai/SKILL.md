@@ -32,6 +32,8 @@ Evaluation，封口后才ACK；不授Release或下游权限。成功进程不等
 只读 Agent 必须使用精确项目 RESEARCH_READ，分页时保留 UUID cursor 和 bigint
 字符串。输入创建与政策发布需要人工 Operator 授权，技能本身不授予它。
 读取 InputSet/Policy 元数据不允许读取 Sealed 原始数据或原生存储位置。
+InputPurpose与DataPartition分别核对；PORTFOLIO只含原DISCOVERY/VALIDATION成员，
+不能替代旧任务要求的用途或绕过RESEARCH_AND_PAPER许可。
 FIXTURE、PIT_UNVERIFIED、未核验方法和政策登记成功均不是 PASS，不触发交付。
 新政策分别冻结metric_requirements与sealed_metric_requirements，不能复制分折要求
 冒充封存阈值；历史null不补写，需人工新建完整政策和研究周期。

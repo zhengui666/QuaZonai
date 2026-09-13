@@ -22,6 +22,18 @@ fn bounded_text(
 ) -> Result<(), DomainError> {
     text(value, 1, max, multiline).map_err(|_| invalid(field, "TEXT_RANGE"))
 }
+pub fn input_partition_allowed(purpose: InputPurpose, role: DataPartition) -> bool {
+    match purpose {
+        InputPurpose::Discovery => role == DataPartition::Discovery,
+        InputPurpose::Validation => role == DataPartition::Validation,
+        InputPurpose::Sealed => role == DataPartition::Sealed,
+        InputPurpose::Forward => role == DataPartition::Forward,
+        InputPurpose::Portfolio => {
+            matches!(role, DataPartition::Discovery | DataPartition::Validation)
+        }
+    }
+}
+
 pub fn input_set(request: &InputSetCreate) -> Result<(), DomainError> {
     if !request
         .decision_cutoff
@@ -40,15 +52,7 @@ pub fn input_set(request: &InputSetCreate) -> Result<(), DomainError> {
                 dataset_revision_id,
                 role,
             } => {
-                let allowed = match request.purpose {
-                    InputPurpose::Discovery => *role == DataPartition::Discovery,
-                    InputPurpose::Validation => *role == DataPartition::Validation,
-                    InputPurpose::Sealed => *role == DataPartition::Sealed,
-                    InputPurpose::Forward => *role == DataPartition::Forward,
-                    InputPurpose::Portfolio => {
-                        matches!(role, DataPartition::Discovery | DataPartition::Validation)
-                    }
-                };
+                let allowed = input_partition_allowed(request.purpose, *role);
                 if !allowed {
                     return Err(invalid(
                         format!("items.{index}.role"),

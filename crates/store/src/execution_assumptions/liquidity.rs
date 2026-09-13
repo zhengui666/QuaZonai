@@ -301,7 +301,10 @@ where
         saved.input_set_id,
         project,
         runtime,
-        &[DataPartition::Discovery, DataPartition::Validation],
+        &[
+            contracts::research::InputPurpose::Discovery,
+            contracts::research::InputPurpose::Validation,
+        ],
         read,
     )
     .await?

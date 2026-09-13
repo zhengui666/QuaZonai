@@ -16,7 +16,7 @@ use contracts::{
     control::{CommandResult, OperatorOperation},
     data::DataValidateRequest,
     execution::{NativeDatasetSelectionV1, NativeTaskParametersV1},
-    research::{ArtifactInputRole, DataOrigin, DataPartition},
+    research::{ArtifactInputRole, DataOrigin, DataPartition, InputPurpose},
     runs::{RunKind, RunSnapshotV1},
     runtime_jobs::RuntimeInputV1,
     DbCounter, Id, SchemaV1,
@@ -55,7 +55,7 @@ pub(crate) async fn dataset_bindings<R, Read>(
     input_set: Id,
     project: Id,
     runtime: Id,
-    partitions: &[DataPartition],
+    purposes: &[InputPurpose],
     read: &mut R,
 ) -> Result<Vec<DatasetBinding>, StoreError>
 where
@@ -66,8 +66,8 @@ where
     let header = sqlx::query("SELECT purpose,decision_cutoff FROM app.input_sets WHERE id=$1 AND project_id=$2 AND frozen_at IS NOT NULL")
         .bind(input_set.as_uuid()).bind(project.as_uuid())
         .fetch_optional(&mut **tx).await?.ok_or_else(|| input("input_set_id"))?;
-    let purpose: DataPartition = db::enum_value(&header, "purpose")?;
-    if !partitions.contains(&purpose) {
+    let purpose: InputPurpose = db::enum_value(&header, "purpose")?;
+    if !purposes.contains(&purpose) {
         return Err(input("input_set_id"));
     }
     let cutoff: DateTime<Utc> = header.try_get("decision_cutoff")?;
@@ -124,7 +124,7 @@ where
             || native.event_end != row.try_get::<DateTime<Utc>, _>("event_end")?
             || native.available_through != row.try_get::<DateTime<Utc>, _>("available_through")?
             || native.row_count != counter(row.try_get("row_count")?)?
-            || role != purpose
+            || !domain::research::input_partition_allowed(purpose, role)
         {
             return Err(StoreError::Integrity);
         }
@@ -178,7 +178,7 @@ where
         request.input_set_id,
         request.project_id,
         request.runtime_id,
-        &[DataPartition::Discovery, DataPartition::Validation],
+        &[InputPurpose::Discovery, InputPurpose::Validation],
         read,
     )
     .await?;

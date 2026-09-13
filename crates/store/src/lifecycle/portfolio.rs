@@ -5,7 +5,7 @@ use contracts::{
     control::OperatorOperation,
     execution::NativeTaskParametersV1,
     portfolio::*,
-    research::{ArtifactInputRole, DataOrigin, DataPartition},
+    research::{ArtifactInputRole, DataOrigin},
     runtime_jobs::RuntimeInputV1,
     science::*,
 };
@@ -103,7 +103,7 @@ impl Store {
             request.input_set_id,
             project,
             request.runtime_id,
-            &[DataPartition::Forward],
+            &[contracts::research::InputPurpose::Forward],
             &mut read,
         )
         .await?;

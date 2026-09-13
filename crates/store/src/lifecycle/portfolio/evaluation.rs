@@ -391,7 +391,7 @@ where
         intent.input_set_id,
         run.project_id,
         intent.runtime_id,
-        &[DataPartition::Forward],
+        &[contracts::research::InputPurpose::Forward],
         read,
     )
     .await?;

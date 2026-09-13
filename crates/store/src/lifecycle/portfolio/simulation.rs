@@ -107,7 +107,7 @@ impl Store {
             request.input_set_id,
             project,
             request.runtime_id,
-            &[DataPartition::Forward],
+            &[contracts::research::InputPurpose::Forward],
             &mut read,
         )
         .await?;

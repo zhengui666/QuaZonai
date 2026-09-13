@@ -6,7 +6,7 @@ use contracts::{
     control::{CommandResult, ListQuery, OperatorOperation, Page},
     execution_assumptions::*,
     portfolio::NAUTILUS_EXECUTION_VERSION,
-    research::DataPartition,
+    research::InputPurpose,
     runs::RunKind,
     DbCounter, Id,
 };
@@ -164,9 +164,9 @@ impl Store {
             request.project_id,
             request.runtime_id,
             &[
-                DataPartition::Discovery,
-                DataPartition::Validation,
-                DataPartition::Forward,
+                InputPurpose::Discovery,
+                InputPurpose::Validation,
+                InputPurpose::Forward,
             ],
             &mut read,
         )

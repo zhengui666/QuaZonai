@@ -9,6 +9,25 @@ fn base() -> Value {
 }
 
 #[test]
+fn input_purpose_and_partition_remain_distinct_exact_contracts() {
+    use DataPartition::{Discovery, Forward, Sealed, Validation};
+    for (purpose, allowed) in [
+        (InputPurpose::Discovery, vec![Discovery]),
+        (InputPurpose::Validation, vec![Validation]),
+        (InputPurpose::Sealed, vec![Sealed]),
+        (InputPurpose::Forward, vec![Forward]),
+        (InputPurpose::Portfolio, vec![Discovery, Validation]),
+    ] {
+        for role in [Discovery, Validation, Sealed, Forward] {
+            assert_eq!(
+                domain::research::input_partition_allowed(purpose, role),
+                allowed.contains(&role)
+            );
+        }
+    }
+}
+
+#[test]
 fn portfolio_requirements_are_independent_optional_and_never_vacuously_pass() {
     let mut request = base();
     let parsed: EvaluationPolicyCreate = serde_json::from_value(request.clone()).unwrap();

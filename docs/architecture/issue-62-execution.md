@@ -3,6 +3,41 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Store InputPurpose versus original dataset partition, 2026-09-14
+
+The shared dataset reader previously decoded InputSet.purpose as DataPartition,
+which cannot represent PORTFOLIO. It now reads InputPurpose, requires the caller's
+explicit purpose allowlist, then uses the same domain partition rule as InputSet
+creation. PORTFOLIO retains original DISCOVERY/VALIDATION members; it is neither
+a new partition nor an alias accepted by old callers. All existing callers were
+updated with their original allowed purposes. Source metadata, version, origin,
+event/available range, row count, immutable partition, frozen-input and license
+rechecks remain unchanged. This is required source plumbing, not Study admission.
+
+Ponytail reuse extracts the existing domain match and reuses the existing real
+registration/file fixture, rather than duplicating a data adapter or fixture tree.
+The new database case registers both research partitions under a research/paper
+grant, creates an actual PORTFOLIO InputSet, reads exact original identities/roles
+and cutoff, rejects research-only licensing, rejects unrequested purposes before
+file reads, rejects changed original row counts and confirms standalone
+DATA_VALIDATE cannot consume the new purpose or create a Run/Evaluation/qualification.
+A domain matrix checks all five purposes against all four partitions.
+
+On c4992e9b plus frozen patches, final verify-qAN5Ba passed 278 source/native/
+domain/Store/HTTP/CLI tests, including both real source-binding cases in 4.40s.
+verify-uXW9qF passed 209 research/publication/native-validation/HTTP/CLI tests;
+verify-M4XVWu passed 234 Mandate/domain/science/Store/HTTP/CLI tests. All three
+passed workspace check/fmt/strict Clippy with source unchanged; counts overlap.
+Earlier attempts exposed a test async capture, duplicate fixture-module loading,
+nanosecond rather than database-microsecond test time and stale fixture field
+paths. The test now reuses the original fixture and database clock; no lint was
+suppressed and no production validation was relaxed to make the test pass.
+
+No external schema/UI/native task behavior changed, so generation/browser/OCI
+were not rerun in this stage. Formal Study plan/admission and independent
+PORTFOLIO Evaluation, release/delivery/recovery and complete T42 remain unfinished.
+No push, review, merge or Issue closure occurred.
+
 ## Native Study research-partition binding, 2026-09-14
 
 portfolio-study/6 corrects the native Study-only dataset role to DISCOVERY or

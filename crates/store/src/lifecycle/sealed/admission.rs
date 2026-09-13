@@ -3,12 +3,8 @@ use super::*;
 use crate::data_validation::{combine_origin, dataset_bindings};
 use crate::lifecycle::experiment::native_cpu;
 use contracts::{
-    artifacts::ArtifactAccess,
-    control::OperatorOperation,
-    evidence::AlphaEvaluateRequestV1,
-    research::{ArtifactInputRole, DataPartition},
-    runtime_jobs::RuntimeInputV1,
-    science::NativeAlphaSealedRequestV1,
+    artifacts::ArtifactAccess, control::OperatorOperation, evidence::AlphaEvaluateRequestV1,
+    research::ArtifactInputRole, runtime_jobs::RuntimeInputV1, science::NativeAlphaSealedRequestV1,
 };
 use native::{bind_task, NativeTaskDefinition};
 
@@ -132,7 +128,7 @@ where
         db::id(source.try_get("training_input_set")?)?,
         project,
         request.runtime_id,
-        &[DataPartition::Validation],
+        &[contracts::research::InputPurpose::Validation],
         &mut read,
     )
     .await?;
@@ -152,7 +148,7 @@ where
         old_context.discovery_input_set_id,
         project,
         request.runtime_id,
-        &[DataPartition::Discovery],
+        &[contracts::research::InputPurpose::Discovery],
         &mut read,
     )
     .await?;
@@ -167,7 +163,7 @@ where
         request.input_set_id,
         project,
         request.runtime_id,
-        &[DataPartition::Sealed],
+        &[contracts::research::InputPurpose::Sealed],
         &mut read,
     )
     .await?;
