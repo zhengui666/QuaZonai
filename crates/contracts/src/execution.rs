@@ -68,6 +68,7 @@ pub enum NativeTaskParametersV1 {
         candidate_id: Id,
         candidate_available_ns: DbCounter,
         dataset_revision_id: Id,
+        source_selection: NativeBarSelectionV1,
         target_artifact_id: Id,
         settings_artifact_id: Id,
         request: Box<NativeSimulationRequestV1>,
@@ -96,9 +97,8 @@ impl NativeTaskParametersV1 {
             Self::ValidateAlpha { .. } => &["qz.alpha_validation"],
             Self::EvaluateSealedAlpha { .. } => &["qz.alpha_sealed"],
             Self::BuildPortfolio { .. } => &["qz.native_portfolio"],
-            Self::SimulatePortfolio { .. } | Self::SimulateCandidate { .. } => {
-                &["qz.native_simulation"]
-            }
+            Self::SimulatePortfolio { .. } => &["qz.native_simulation"],
+            Self::SimulateCandidate { .. } => &["qz.data_quality", "qz.native_simulation"],
         };
         names
             .iter()

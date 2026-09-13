@@ -1,6 +1,8 @@
 # 原生 Runtime 与 job 镜像
 
-candidate-simulation/1支持SIMULATE_CANDIDATE：重读原Candidate目标和执行设置，
+candidate-simulation/2支持SIMULATE_CANDIDATE：重读原Candidate目标和执行设置，
+复用原生DATA_VALIDATE检查原source_selection并输出qz.data_quality；保持模拟
+另输出qz.native_simulation，两个窗口不混算缺失比例。
 核对唯一目标及其因果有效区间，再调用既有共享资金模拟。只允许唯一FORWARD目录
 及原目标REPORT/费用PARAMETERS；不读取真实账户，不创建Evaluation或交付资格。
 

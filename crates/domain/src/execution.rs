@@ -257,10 +257,17 @@ pub fn task(spec: &JobSpecV1, parameters: &NativeTaskParametersV1) -> Result<(),
             if let NativeTaskParametersV1::SimulateCandidate {
                 target_artifact_id,
                 settings_artifact_id,
+                source_selection,
                 ..
             } = parameters
             {
-                if request.target_points.len() != 1
+                selection(source_selection)?;
+                if source_selection.bar_types != request.selection.bar_types
+                    || source_selection.maximum_rows != request.selection.maximum_rows
+                    || source_selection.event_start_ns > request.selection.event_start_ns
+                    || source_selection.event_end_ns < request.selection.event_end_ns
+                    || source_selection.decision_cutoff_ns < request.selection.decision_cutoff_ns
+                    || request.target_points.len() != 1
                     || !artifact(spec, *target_artifact_id, ArtifactInputRole::Report)
                     || !artifact(spec, *settings_artifact_id, ArtifactInputRole::Parameters)
                     || spec.inputs.iter().any(|input| match input {

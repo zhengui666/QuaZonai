@@ -93,7 +93,7 @@ impl Store {
                 .engine_versions
                 .get("candidate-simulation")
                 .map(String::as_str)
-                != Some("1")
+                != Some("2")
             || cap
                 .engine_versions
                 .get("simulation-models")
@@ -189,6 +189,7 @@ impl Store {
             candidate_id: request.candidate_id,
             candidate_available_ns: source.available_ns,
             dataset_revision_id: dataset.selection.dataset_revision_id,
+            source_selection: dataset.metadata.quality.datasets[0].selection.clone(),
             target_artifact_id: match &source.input {
                 RuntimeInputV1::Artifact { artifact_id, .. } => *artifact_id,
                 _ => return Err(StoreError::Integrity),

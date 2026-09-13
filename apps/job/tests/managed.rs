@@ -897,9 +897,10 @@ fn actual_managed_alpha_validation_seals_all_folds_and_never_trains_sealed_or_di
 
 #[test]
 fn candidate_simulation_requires_original_targets_settings_and_causal_window() {
-    for case in 0..16 {
+    for case in 0..18 {
         let (catalog, mut request) =
             market::market("0.001", if case >= 14 { 2 * 1440 + 20 } else { 20 });
+        let mut source_selection = request.selection.clone();
         request.target_points.truncate(1);
         if case == 15 {
             request.target_points[0].cash_weight = "1".parse().unwrap();
@@ -944,6 +945,8 @@ fn candidate_simulation_requires_original_targets_settings_and_causal_window() {
                     request.selection.event_start_ns = available;
                 }
             }
+            16 => source_selection.event_start_ns = source_selection.event_end_ns,
+            17 => source_selection.maximum_rows -= 1,
             _ => {}
         }
         let targets = serde_json::to_vec(&target).unwrap();
@@ -964,6 +967,7 @@ fn candidate_simulation_requires_original_targets_settings_and_causal_window() {
                 dataset_revision_id: dataset_id,
                 target_artifact_id: targets_id,
                 settings_artifact_id: settings_id,
+                source_selection: source_selection.clone(),
                 request: Box::new(request),
             },
             vec![
@@ -1003,6 +1007,21 @@ fn candidate_simulation_requires_original_targets_settings_and_causal_window() {
             "Candidate simulation case {case}"
         );
         if matches!(case, 0 | 12 | 14 | 15) {
+            let quality: contracts::execution::NativeDataQualityReportV1 =
+                result(&f, "qz.data_quality");
+            assert_eq!(quality.datasets.len(), 1);
+            assert_eq!(quality.datasets[0].dataset_revision_id, dataset_id);
+            assert_eq!(
+                serde_json::to_value(&quality.datasets[0].selection).unwrap(),
+                serde_json::to_value(&source_selection).unwrap()
+            );
+            if case == 12 {
+                assert_eq!(
+                    quality.datasets[0].row_count.get(),
+                    40,
+                    "original catalog window is not narrowed to Candidate availability"
+                );
+            }
             let report: contracts::science::NativeSimulationResultV1 =
                 result(&f, "qz.native_simulation");
             assert_eq!(report.consumed_target_points.get(), 1);

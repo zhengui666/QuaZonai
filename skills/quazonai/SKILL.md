@@ -7,6 +7,8 @@ Read ../../DESIGN.md and ../../AGENTS.md before changes. Actual commands are in 
 组合指标薄适配只消费原Nautilus Returns组；日均收益不年化，波动率/Sharpe保留
 252日原生约定。缺值不填零，不从canonical position收益回退；该映射不授予
 Evaluation或Release。实际子进程验证使用cargo test -p job --test simulation --locked。
+candidate-simulation/2复用DATA_VALIDATE输出原source_selection的qz.data_quality，
+另输出实际窗口qz.native_simulation；完整原manifest必须同时绑定两份报告。
 
 机器 Bearer 校验出现429时遵守 Retry-After，不用并发重试占用计算槽；不要索取或执行本机 SecretVault 回收命令。人工授权的准确重试只读取原回执，不延长授权或重新消费TOTP。
 
@@ -187,7 +189,7 @@ Build还需portfolio-cost-source/1及原PARAMETERS费用文档，完整绑定exe
 系数复核；不是未来成本上界，不二次扣原生模拟净收益，不声明DATA_BACKED。
 Forward原目录的资产币种、maker/taker费率也须与原设置匹配；Build/模拟共用原生校验。
 SIMULATE_CANDIDATE以原目标REPORT及费用PARAMETERS绑定唯一FORWARD目录，只在
-原asof与原Candidate可用时间较晚者起至有效期内保持原目标；需candidate-simulation/1。原生结果不是PASS，
+原asof与原Candidate可用时间较晚者起至有效期内保持原目标；需candidate-simulation/2。原生结果不是PASS，
 不得当作已接通Store评估或Release，更不能回填历史目标或恢复实际账户。
 保持模拟的人工准入意图仅选Candidate、Cycle、Forward输入、Runtime版本和预算，
 `client portfolio simulate`及POST /api/v2/candidate-simulations需精确Candidate的

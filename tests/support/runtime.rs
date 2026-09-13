@@ -50,7 +50,7 @@ pub fn portfolio_capabilities(now: DateTime<Utc>) -> RuntimeCapabilitiesV1 {
         ("portfolio-slippage", "1"),
         ("bar-notional", "1"),
         ("simulation-models", "1"),
-        ("candidate-simulation", "1"),
+        ("candidate-simulation", "2"),
         ("nautilus", NAUTILUS_EXECUTION_VERSION),
         ("clarabel", CLARABEL_VERSION),
         ("ndarray", FIXED_ENSEMBLE_VERSION),
@@ -63,6 +63,10 @@ pub fn portfolio_capabilities(now: DateTime<Utc>) -> RuntimeCapabilitiesV1 {
     });
     value.artifact_schemas.push(RuntimeArtifactSchemaV1 {
         name: "qz.native_simulation".into(),
+        version: "1".into(),
+    });
+    value.artifact_schemas.push(RuntimeArtifactSchemaV1 {
+        name: "qz.data_quality".into(),
         version: "1".into(),
     });
     value.solver_capabilities = vec!["CONVEX_QP".into()];

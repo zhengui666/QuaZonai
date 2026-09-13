@@ -109,17 +109,18 @@ pub async fn setup_with_policy(
     else {
         panic!("native fixture ticket expected")
     };
-    let mut observed = if origin == DataOrigin::Real {
+    let observed = if origin == DataOrigin::Real {
         runtime_support::portfolio_capabilities(Utc::now())
     } else {
-        runtime_support::capabilities(Utc::now())
+        let mut capabilities = runtime_support::capabilities(Utc::now());
+        capabilities
+            .artifact_schemas
+            .push(contracts::runtime::RuntimeArtifactSchemaV1 {
+                name: "qz.data_quality".into(),
+                version: "1".into(),
+            });
+        capabilities
     };
-    observed
-        .artifact_schemas
-        .push(contracts::runtime::RuntimeArtifactSchemaV1 {
-            name: "qz.data_quality".into(),
-            version: "1".into(),
-        });
     let outcome = RuntimeProbeOutcomeV1::Available {
         capabilities: Box::new(observed),
     };

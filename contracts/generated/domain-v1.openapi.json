@@ -12412,6 +12412,9 @@
               "settings_artifact_id": {
                 "$ref": "#/components/schemas/Id"
               },
+              "source_selection": {
+                "$ref": "#/components/schemas/NativeBarSelectionV1"
+              },
               "target_artifact_id": {
                 "$ref": "#/components/schemas/Id"
               }
@@ -12421,6 +12424,7 @@
               "candidate_id",
               "candidate_available_ns",
               "dataset_revision_id",
+              "source_selection",
               "target_artifact_id",
               "settings_artifact_id",
               "request",

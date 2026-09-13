@@ -87,6 +87,7 @@ async fn real_native_candidate_simulation_consumes_original_target_and_settings_
         dataset_revision_id: dataset,
         target_artifact_id: target_id,
         settings_artifact_id: settings_id,
+        source_selection: request.selection.clone(),
         request: Box::new(request),
     };
     let parameters = serde_json::to_vec(&operation).unwrap();
@@ -137,10 +138,13 @@ async fn real_native_candidate_simulation_consumes_original_target_and_settings_
     let manifest = f.manifest(&spec).await;
     domain::runtime_jobs::manifest(&manifest, &spec, accepted.submitted_at, runtime::now())
         .unwrap();
-    assert_eq!(manifest.engine_versions["candidate-simulation"], "1");
-    let [output] = manifest.artifacts.as_slice() else {
-        panic!("one simulation report")
-    };
+    assert_eq!(manifest.engine_versions["candidate-simulation"], "2");
+    assert_eq!(manifest.artifacts.len(), 2);
+    let output = manifest
+        .artifacts
+        .iter()
+        .find(|output| output.schema.name == "qz.native_simulation")
+        .unwrap();
     let response = f
         .client
         .get(f.url(&[
@@ -154,12 +158,33 @@ async fn real_native_candidate_simulation_consumes_original_target_and_settings_
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let bytes = response.bytes().await.unwrap().to_vec();
+    let quality = manifest
+        .artifacts
+        .iter()
+        .find(|output| output.schema.name == "qz.data_quality")
+        .unwrap();
+    let quality_response = f
+        .client
+        .get(f.url(&[
+            "jobs",
+            &spec.external_job_id,
+            "artifacts",
+            &quality.storage_ref.to_string(),
+        ]))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(quality_response.status(), StatusCode::OK);
+    let quality_bytes = quality_response.bytes().await.unwrap().to_vec();
     domain::execution::output_bindings(
         &operation,
         None,
         manifest.started_at.unwrap(),
         manifest.finished_at,
-        &[(output.clone(), bytes.clone())],
+        &[
+            (output.clone(), bytes.clone()),
+            (quality.clone(), quality_bytes),
+        ],
     )
     .unwrap();
     let result: NativeSimulationResultV1 = serde_json::from_slice(&bytes).unwrap();

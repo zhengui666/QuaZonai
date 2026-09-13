@@ -230,24 +230,37 @@ pub fn output_bindings(
             .copied()
             .ok_or_else(|| bad("native_output.membership"))
     };
-    match parameters {
-        NativeTaskParametersV1::ValidateData { selections, .. } => {
-            let value: NativeDataQualityReportV1 = decode(body("qz.data_quality")?.1)?;
-            if value.checked_at < started_at
-                || value.checked_at > finished_at
-                || value.datasets.len() != selections.len()
-                || value
-                    .datasets
-                    .iter()
-                    .zip(selections)
-                    .any(|(actual, expected)| {
-                        actual.dataset_revision_id != expected.dataset_revision_id
-                            || !same_selection(&actual.selection, &expected.selection)
-                    })
-            {
-                return Err(bad("native_output.quality_input"));
-            }
+    let selections = match parameters {
+        NativeTaskParametersV1::ValidateData { selections, .. } => selections.clone(),
+        NativeTaskParametersV1::SimulateCandidate {
+            dataset_revision_id,
+            source_selection,
+            ..
+        } => vec![contracts::execution::NativeDatasetSelectionV1 {
+            dataset_revision_id: *dataset_revision_id,
+            selection: source_selection.clone(),
+        }],
+        _ => Vec::new(),
+    };
+    if !selections.is_empty() {
+        let value: NativeDataQualityReportV1 = decode(body("qz.data_quality")?.1)?;
+        if value.checked_at < started_at
+            || value.checked_at > finished_at
+            || value.datasets.len() != selections.len()
+            || value
+                .datasets
+                .iter()
+                .zip(&selections)
+                .any(|(actual, expected)| {
+                    actual.dataset_revision_id != expected.dataset_revision_id
+                        || !same_selection(&actual.selection, &expected.selection)
+                })
+        {
+            return Err(bad("native_output.quality_input"));
         }
+    }
+    match parameters {
+        NativeTaskParametersV1::ValidateData { .. } => {}
         NativeTaskParametersV1::CompileModel {
             code_artifact_id, ..
         } => {

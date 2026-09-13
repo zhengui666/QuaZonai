@@ -3,6 +3,40 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Original-source coverage beside Candidate simulation, 2026-09-13
+
+candidate-simulation/2 freezes source_selection from the original registered
+metadata independently of the effective HOLD window. The managed job reuses the
+same DATA_VALIDATE loader and quality output path, then runs the existing shared
+account simulation. Its original manifest requires both qz.data_quality and
+qz.native_simulation; the existing quality binding check now also checks Candidate
+source identity, selection and check time. No estimator or calendar was added.
+
+Verified on aa58e82a plus frozen patches:
+
+- Actual managed Candidate test passed 18 scenarios (9.90 seconds), including
+  original 40-row coverage despite a later simulation start, mismatched source
+  selection rejection, daily positions, daily cash and intraday missing returns.
+- verify-T7Lvnz passed 225 mandate domain/native/Store/source/window/HTTP/CLI tests
+  and workspace check/fmt/strict Clippy, source unchanged.
+- web-verify-rTwxRH generated six outputs twice identically, handwritten source
+  unchanged. Only domain OpenAPI changed; this was generation-only, not a new
+  browser acceptance run or UI implementation.
+- owner-oci-YjDPjE passed all 13 actual OCI tests (27.99 seconds), including both
+  downloaded outputs and original manifest binding, with image
+  sha256:428822fa5fd1b1e4ec37427365a61210b74a8974a14d52833ec0b762146ad8cc.
+- Store chain verification first found a missing quality capability in a controlled
+  fixture, then its duplicate in the shared Cycle fixture. Fixed both fixture
+  construction paths without relaxing production admission. verify-uaYESg then
+  passed both original qualified chains and strict checks; original source window
+  remains wider than the effective simulation window. Final verify-lpClK6 passed
+  the evidence regression suite after those fixture-only changes. All verifier
+  processes ended, source checks passed and isolated PostgreSQL was stopped.
+
+Markets/scientific declarations remain controlled, not REAL/PIT/full T42 proof.
+Candidate Evaluation publication/ACK, formal portfolio science and delivery are
+still outstanding; source coverage is not itself a PASS or Release authority.
+
 ## Durable original Candidate simulation admission, 2026-09-13
 
 Migration056 adds immutable candidate_simulation_tasks with original Run, Candidate,

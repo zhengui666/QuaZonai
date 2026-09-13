@@ -784,6 +784,7 @@ async fn qualified_chain(pool: PgPool, with_liquidity: bool) {
     let contracts::execution::NativeTaskParametersV1::SimulateCandidate {
         candidate_id,
         candidate_available_ns,
+        source_selection,
         request: frozen,
         ..
     } = serde_json::from_slice(&bytes).unwrap()
@@ -792,6 +793,8 @@ async fn qualified_chain(pool: PgPool, with_liquidity: bool) {
     };
     assert_eq!(candidate_id, candidate);
     assert_eq!(frozen.selection.event_start_ns, candidate_available_ns);
+    assert!(source_selection.event_start_ns < frozen.selection.event_start_ns);
+    assert!(source_selection.event_end_ns >= frozen.selection.event_end_ns);
     assert_eq!(frozen.target_points.len(), 1);
     let evaluations: i64 =
         sqlx::query_scalar("SELECT count(*) FROM app.evaluations WHERE run_id=$1")

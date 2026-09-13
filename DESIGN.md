@@ -1927,7 +1927,7 @@ candidate_available_ns须由可信准入从原Candidate可用记录取得，不�
 原Nautilus根据首个因果已知价格调仓；不是恢复真实账户或假造原实际仓位。缺未来
 区间、超出原目标时间窗口、缺原文件或改写副本均不授予结果。保持模拟不是策略walk-forward，
 不把它冒充完整独立组合评估；正式Store准入、政策/指标/期限与不可变Evaluation
-发布另行绑定后才可供Release使用。需要candidate-simulation/1原生镜像能力。
+发布另行绑定后才可供Release使用。需要candidate-simulation/2原生镜像能力。
 
 保持模拟的正式准入意图CandidateSimulationRequestV1仅含schema_version、cycle_id、
 candidate_id、input_set_id、runtime_id、expected_runtime_revision及有界limits；
@@ -1973,6 +1973,14 @@ Candidate/Mandate所需政策并与原Cycle一致；数据是原冻结Forward输
 数据库外键与不可变触发器保留这些原身份，不因重试、政策新版本或后续Candidate
 替换而改写。原参数发表失败或入队失败不留下该绑定；同意图重放返回原Run。
 此关联供终态评估发布/ACK恢复消费，本身不创建评估或授予PASS。
+
+candidate-simulation/2在原参数另存source_selection，来自原登记metadata质量报告
+的完整选择，不是缩窄后的保持窗口。原生job复用DATA_VALIDATE同一目录检查路径，
+先输出该原窗口的qz.data_quality，再输出实际保持窗口的qz.native_simulation。
+两个报告随同一manifest核对schema、原数据版本、完整选择、检查时间与唯一成员。
+source_selection覆盖实际选择且bar_types/maximum_rows一致，不能借此读取其他目录；
+原登记cutoff不因项目cutoff变晚而扩张。后续缺失比例核对原窗口载入行数与登记行数，
+日收益样本数仍只来自实际模拟；质量检查不是收益、PIT认证或策略滚动评估。
 
 `unique(candidate_alphas.candidate_id,alpha_version_id)`、`unique(candidate_targets.candidate_id,instrument_id)` 是数据库约束，不是普通索引。重复相同请求幂等，冲突409；至少两个不同alpha_id的合格版本才满足多Alpha，不以同Alpha多个版本或重复条目凑数。发布验证每资产唯一权重，再校验sum/gross/net/cash/约束。
 
