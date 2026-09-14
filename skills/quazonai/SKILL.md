@@ -312,3 +312,6 @@ Forward可信准入仅供内部Worker调用：沿用原Candidate Runtime，完�
 
 
 本机旧产物导出：`cargo run --locked -p server -- export-historical-artifacts --source-root "$MIGRATION_ARTIFACT_ROOT" --selection "$MIGRATION_ARTIFACT_SELECTION" --output "$MIGRATION_ARTIFACT_EXPORT"`。仅部署者审查的私有清单和独立副本，全部绝对路径且输出新目录；公开确认项才复制，密封/未审查项不读取。见 [CLI](../../CLI.md#旧产物的实际字节导出) 的格式、限制和逐项结果；此命令不向 Agent 授予文件/导入权限，也不是全量迁移完成证据。
+
+
+本机旧行导出：`cargo run --locked -p server -- export-historical-rows --source-installation-id "$MIGRATION_SOURCE_INSTALLATION_ID" --output "$MIGRATION_ROW_EXPORT"`。受保护环境提供独立旧副本的 `MIGRATION_SOURCE_DATABASE_URL`，原安装ID与产物导出保持一致，输出全新绝对目录；参考 [CLI](../../CLI.md#旧库行数据的原生-csv-投影导出) 核对缺表/结构/逐列排除与原/投影行数。原生CSV保留实际被选字段，不等于完整迁移或业务资格，不提供Agent/HTTP路径或数据库能力。

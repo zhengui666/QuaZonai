@@ -1007,3 +1007,18 @@ cargo run --locked -p server -- export-historical-artifacts   --source-root "$MI
 使用绝对路径，清单至多4MiB/10000项，输出必须是不存在的新目录。命令复用原生目录句柄和不可变对象存储，拒绝越界、符号链接、硬链接、特殊文件、隐藏路径、空文件及超过64MiB的对象；不执行任何旧代码、不删除或改写原件。每个 `COPIED` 项已读取原字节、发布到 `objects/<UUID>` 并回读逐字节比较。`report.json` 只包含原身份、结果、对象引用和字节数，不包含原路径或内容。
 
 退出0表示选择清单报告已完成，应逐项核对 `COPIED`、`MISSING`、`UNSUPPORTED`、`UNREADABLE`、`SEALED_RETAINED` 和 `MANUAL_REVIEW_REQUIRED`。写入/回读失败会失败退出且不发布完整报告；该次新建的部分目录保留供本机操作者处理，重试使用另一个新目录，不能据部分对象认定成功。清单覆盖率不是数据库全部产物覆盖率；原库行数、关系、排除项及原子导入仍需分别验收。
+
+
+### 旧库行数据的原生 CSV 投影导出
+
+先保留完整一致性备份，再在独立旧库副本上运行。使用与产物导出相同且稳定的原安装 UUIDv7；不能每次重试重新分配原安装身份。源连接只通过受保护环境 `MIGRATION_SOURCE_DATABASE_URL` 传入，输出目录为新的绝对路径：
+
+```sh
+cargo run --locked -p server -- export-historical-rows --source-installation-id "$MIGRATION_SOURCE_INSTALLATION_ID" --output "$MIGRATION_ROW_EXPORT"
+```
+
+适配器在单一 REPEATABLE READ/READ ONLY 事务内检查0029版本、原行数、实际声明外键、字段结构并原生 COPY。固定清单来自旧实现最后的85张表/986列定义；每个受支持表必须匹配完整已知列集合、PostgreSQL类型及可空性，不能临时传入列白名单或SQL。只投影明确允许的列；JSON、未审查文本、凭据、聊天内部记录及受限科学中间值均有逐列排除原因，未知表或结构变化不导出行内容。清单及检查尚不证明所有旧约束/语义血缘等价。
+
+CSV 使用 PostgreSQL 原生 UTF-8、HEADER、FORCE_QUOTE、UTC与ISO时间编码，不把小数/大整数转成JSON浮点数。输出文件为 `<object_ref>.csv`，每文件最多512MiB、整个输出最多8GiB；超限或写入失败不发布完整报告，保留该次新目录供本机恢复处理。成功文件以0400持久化，已有目录不会覆盖；不创建任何新系统业务对象、队列、政策或资格。
+
+核对 `report.json` 的 `missing_tables`、各表 `unsupported_schema`、`source_rows`/`projected_rows`、`columns`/`excluded_columns`、CSV对象引用和字节数。原行数等于投影行数只表示被选择列覆盖这些行，不能掩盖被排除的字段。报告中的原外键检查只覆盖旧库实际声明的约束。退出0不等于全量迁移、原数据/密封沿袭验收或导入成功；完整原备份、排除项处理、身份映射、可信注册及原子导入仍需完成。

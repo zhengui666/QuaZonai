@@ -4978,3 +4978,41 @@ not needed to repeat for unchanged source. The owned PostgreSQL instance stopped
 Only disposable controlled files and databases were used. No real user's old
 snapshot or production credentials were read; no import, PR merge, or Issue closure
 is claimed by this evidence.
+
+
+### 2026-09-15 native historical row projection export
+
+Added deployment-only `export-historical-rows` using the existing source inspector
+and the same read-only repeatable-read transaction through native PostgreSQL COPY.
+The compiled JSON projection inventory records 85 tables/986 columns from Git
+`313b0e27^` domain_models.py, quant_runtime_models.py and runtime_models.py, including
+TimestampMixin fields. Tuple values are native PostgreSQL type, nullability and an
+optional exclusion reason. It contains schema facts, not old executable services.
+Full column-set/type/nullability drift prevents that table's row projection;
+unknown tables and missing expected tables remain explicit. Authentication/internal
+chat, restricted scientific intermediates and unreviewed columns are not selected.
+Public research text and reviewed typed fields are retained as native CSV bytes;
+no numeric JSON conversion, SQL request input, new dependency or source DB write.
+
+The CLI publishes only a completed private report after the projected CSV files
+have been synced and made read-only. Existing output directories cannot be reused;
+write failures/limits leave only that invocation's incomplete directory. Artifact
+and row export share the existing new-directory/report publication helpers in the
+renamed binary module historical_export.rs. The former artifact CLI is unchanged.
+
+Verifier `verify-0UhMqq` completed with failures=[] and source_unchanged=true:
+workspace/all-target check, formatting and strict Clippy passed; all 4 historical
+source tests passed (1.63s), and both artifact CLI tests passed (0.03s). The new
+actual row-export CLI test imports the CSV through native COPY into independent
+native temporary tables, preserving numeric(20,8), bigint above 2^53, NULL, empty
+strings, Unicode/quotes/newlines and timestamp microseconds/offset semantics.
+Excluded source text does not appear in the exported bytes. Added-column drift
+produces no table projection; a native /dev/full ENOSPC callback fails the export
+without modifying the source. The owned PostgreSQL instance stopped.
+
+These are controlled source-shaped tables, not a complete reconstructed or actual
+user 0029 backup. The inventory is not proof of all constraints or semantic lineage.
+Full-backup retention, excluded fields and sealed lineage, trusted registration,
+immutable original identity mapping, atomic import/report and real-snapshot
+acceptance remain outstanding. No qualifications, approvals or active jobs are
+created by CSV export. No PR merge or Issue closure is claimed.

@@ -60,6 +60,7 @@ pub struct HistoricalExclusionV1 {
 pub enum HistoricalExclusionReasonV1 {
     Credentials,
     InternalChat,
+    SealedEvidence,
     UnreviewedFields,
     UnsupportedSchema,
 }
@@ -168,4 +169,35 @@ pub enum HistoricalArtifactOutcomeV1 {
     Unreadable,
     SealedRetained,
     ManualReviewRequired,
+}
+
+/// Native CSV projections accompany the retained complete backup. Never an import result.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HistoricalRowExportV1 {
+    pub schema_version: SchemaV1,
+    pub source_installation_id: Id,
+    pub inspection: HistoricalSourceInspectionV1,
+    pub missing_tables: Vec<String>,
+    pub tables: Vec<HistoricalTableExportV1>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HistoricalTableExportV1 {
+    pub table: String,
+    pub source_rows: DbCounter,
+    pub projected_rows: DbCounter,
+    pub object_ref: Option<Id>,
+    pub byte_count: Option<DbCounter>,
+    pub columns: Vec<String>,
+    pub excluded_columns: Vec<HistoricalColumnExclusionV1>,
+    pub unsupported_schema: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HistoricalColumnExclusionV1 {
+    pub column: String,
+    pub reason: HistoricalExclusionReasonV1,
 }

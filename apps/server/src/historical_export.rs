@@ -37,7 +37,6 @@ fn invalid() -> std::io::Error {
 /// Caller must supply an independent, stable source copy and reviewed local selection.
 /// Failure leaves only this invocation's new output directory for operator recovery.
 pub fn export(source_root: &Path, selection: &Path, output: &Path) -> std::io::Result<()> {
-    use std::os::unix::fs::DirBuilderExt;
     if !output.is_absolute() {
         return Err(invalid());
     }
@@ -80,12 +79,7 @@ pub fn export(source_root: &Path, selection: &Path, output: &Path) -> std::io::R
         }
     }
     let source = MissionFiles::open(source_root).map_err(|_| invalid())?;
-    // This command owns only a new directory, never an existing export or user backup.
-    fs::DirBuilder::new()
-        .mode(0o700)
-        .create(output)
-        .map_err(|_| invalid())?;
-    fs::File::open(output.parent().ok_or_else(invalid)?)?.sync_all()?;
+    new_directory(output)?;
     let objects = ArtifactStore::open(&output.join("objects")).map_err(|_| invalid())?;
     let mut artifacts = Vec::with_capacity(selected.artifacts.len());
     for item in selected.artifacts {
@@ -135,15 +129,76 @@ pub fn export(source_root: &Path, selection: &Path, output: &Path) -> std::io::R
         artifacts,
     };
     let bytes = serde_json::to_vec_pretty(&report).map_err(|_| invalid())?;
+    save_report(output, &bytes)
+}
+
+fn new_directory(output: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    if !output.is_absolute() {
+        return Err(invalid());
+    }
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(output)
+        .map_err(|_| invalid())?;
+    fs::File::open(output.parent().ok_or_else(invalid)?)?.sync_all()
+}
+
+fn save_report(output: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
     let mut pending = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o600)
         .open(output.join("report.pending"))?;
-    pending.write_all(&bytes)?;
+    pending.write_all(bytes)?;
     pending.sync_all()?;
     fs::rename(output.join("report.pending"), output.join("report.json"))?;
     fs::File::open(output)?.sync_all()?;
     Ok(())
+}
+
+/// Native PostgreSQL projects only the compiled nonsecret columns. No CSV parser or
+/// floating-point/JSON conversion occurs in this path; native COPY owns the encoding.
+pub async fn export_rows(
+    source: &store::Store,
+    source_installation_id: contracts::Id,
+    output: &Path,
+) -> std::io::Result<()> {
+    use std::{
+        collections::{btree_map::Entry, BTreeMap},
+        os::unix::fs::{OpenOptionsExt, PermissionsExt},
+    };
+    new_directory(output)?;
+    let mut files: BTreeMap<contracts::Id, fs::File> = BTreeMap::new();
+    let mut total = 0u64;
+    let report = source
+        .export_historical_rows(source_installation_id, |id, chunk| {
+            total += chunk.len() as u64;
+            if total > 8 * 1024 * 1024 * 1024 {
+                return Err(store::StoreError::Invalid("historical_export_size"));
+            }
+            let file = match files.entry(id) {
+                Entry::Occupied(entry) => entry.into_mut(),
+                Entry::Vacant(entry) => entry.insert(
+                    fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .mode(0o600)
+                        .open(output.join(format!("{id}.csv")))
+                        .map_err(|_| store::StoreError::Invalid("historical_export_write"))?,
+                ),
+            };
+            file.write_all(chunk)
+                .map_err(|_| store::StoreError::Invalid("historical_export_write"))
+        })
+        .await
+        .map_err(|_| invalid())?;
+    for file in files.values() {
+        file.sync_all()?;
+        file.set_permissions(fs::Permissions::from_mode(0o400))?;
+        file.sync_all()?;
+    }
+    let bytes = serde_json::to_vec_pretty(&report).map_err(|_| invalid())?;
+    save_report(output, &bytes)
 }

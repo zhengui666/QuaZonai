@@ -1,4 +1,4 @@
-mod historical_artifacts;
+mod historical_export;
 use clap::{Args, Parser, Subcommand};
 use contracts::Id;
 use integrations::{
@@ -70,6 +70,15 @@ enum Command {
         source_root: PathBuf,
         #[arg(long)]
         selection: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Export reviewed old-schema column projections with PostgreSQL native COPY.
+    ExportHistoricalRows {
+        #[arg(long, env = "MIGRATION_SOURCE_DATABASE_URL", hide_env_values = true)]
+        source_database_url: String,
+        #[arg(long, value_parser = parse_id)]
+        source_installation_id: Id,
         #[arg(long)]
         output: PathBuf,
     },
@@ -357,9 +366,26 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             selection,
             output,
         } => {
-            historical_artifacts::export(&source_root, &selection, &output)
+            historical_export::export(&source_root, &selection, &output)
                 .map_err(|_| std::io::Error::other("historical artifact export failed; inspect the local source and new output directory"))?;
             println!("Historical artifact report saved. Review every outcome; selection coverage is not database coverage or import completion.");
+        }
+        Command::ExportHistoricalRows {
+            source_database_url,
+            source_installation_id,
+            output,
+        } => {
+            let source = Store::connect(&source_database_url)
+                .await
+                .map_err(|_| std::io::Error::other("historical source connection failed"))?;
+            historical_export::export_rows(&source, source_installation_id, &output)
+                .await
+                .map_err(|_| {
+                    std::io::Error::other(
+                        "historical row export failed; no complete report is available",
+                    )
+                })?;
+            println!("Historical row projection report saved. Review missing tables and excluded fields; this is not import completion.");
         }
         Command::PruneUnpublishedVerifiers {
             database,
