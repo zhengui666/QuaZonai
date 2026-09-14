@@ -4826,3 +4826,10 @@ TypeScript与Vite构建通过，automation-policies/delivery共42项三视口浏
 新增项目forward-weight-snapshots分页API及client forward weights，复用原DownstreamWeightsViewV1与研究读取授权，保留原精确内容/报告引用/期限，无文件读取或新资格判定；下游写入身份不获得该研究读取权限。为构建表单提供真实来源选择，Build仍重新验证原环境/资产/币种/有效期。
 
 verify-fFQRUg的domain144及HTTP25项通过、Store27通过1失败；唯一失败为新增第二条快照后旧全局回执计数仍要求1。调整测试顺序，在新增快照前保留原并发同消息唯一回执断言，再验证两页；verify-wkgDPw通过workspace/all-targets编译、格式、严格Clippy及全部3项forward_weights测试，源文件不变、隔离PG停止。web-verify-KWli6e真实Rust导出/客户端生成逐字节可复现、手写源不变。未将首次失败整轮标为通过，未更改产品幂等或权限。Build网页及完整T01–T42仍待完成，未push/review/merge/close。
+
+
+### 2026-09-15：网页原来源组合构建
+
+原Mandate详情接入PortfolioBuild，配置绑定所选项目；复用分页ResourceSelect、精确计数预算、Intent重放、关闭保护和RunDetail。显式选择Cycle/Runtime及原修订、Forward输入、环境、下游原快照或LAST_TARGET原候选，以及Alpha→版本→资格和十进制聚合权重；切换父引用清空子引用、重复Alpha不能提交。历史窗口不代替服务端资格重验，202只展示原Run回执。
+
+最终TypeScript/Vite通过，portfolio-build/portfolio/portfolio-candidates共51项三视口回归通过（1.5分钟），覆盖两种来源、第二页原快照、重复成员、父引用清空、离线、精确数值/Runtime修订、未知响应原内容/键重试及Modal无障碍。首次45通过6失败来自测试输入/权重空数组违反原生合同，修正fixture而未放宽产品校验；一次错误cwd未修改测试便启动的运行已主动中断，不计通过。浏览器受控响应不等于真实科学/构建运行或T42端到端验收，完整T01–T42及自动再平衡/部署仍须复核，未push/review/merge/close。

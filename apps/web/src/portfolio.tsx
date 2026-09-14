@@ -1,5 +1,6 @@
 import { Alert, App, Button, Card, Descriptions, Drawer, Form, Input, InputNumber, Select, Space, Switch, Table, Tabs, Typography } from 'antd';
 import { ExecutionAssumptions } from './execution-assumptions';
+import { PortfolioBuild } from './portfolio-build';
 import { Candidates } from './portfolio-candidates';
 import { EvaluationPolicies } from './evaluation-policies';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -41,7 +42,7 @@ export function Portfolios() {
   const { blocked } = useContext(GuardContext);
   return <Space orientation="vertical" size="large" className="full-width">
     <Typography.Title level={1}>组合</Typography.Title>
-    <Alert showIcon type="info" title="不可变组合配置与原始候选快照" description="配置保存和候选查询不是 Alpha 资格、科学 PASS 或交付授权。候选详情可请求原政策 Study，并从独立评估冻结目标包；冻结不是审批或交付。网页构建仍待接通，不会填充示例收益。" />
+    <Alert showIcon type="info" title="不可变组合配置与原始候选快照" description="配置保存和候选查询不是 Alpha 资格、科学 PASS 或交付授权。候选详情可请求原政策 Study，并从独立评估冻结目标包；冻结不是审批或交付。配置详情可从原资格与冻结输入请求构建。" />
     <ResourceSelect label="选择组合所属项目" value={project} onChange={setProject} disabled={blocked} queryKey={['portfolio-projects']} load={async (cursor, signal) => {
       const page = dataOf(await api.GET('/api/v2/projects', { params: { query: { cursor, limit: 50 } }, signal }));
       return { next_cursor: page.next_cursor, items: page.items.map(item => ({ value: item.id, label: `${item.name} · ${item.id}` })) };
@@ -65,23 +66,29 @@ function Mandates({ project }: { project: string }) {
       ]} />
       <Pager history={history} next={query.data?.next_cursor} loading={query.isFetching} move={setHistory} />
     </QueryPanel>
-    {selected && <MandateDetail id={selected} close={() => setSelected(undefined)} />}
+    {selected && <MandateDetail project={project} id={selected} close={() => setSelected(undefined)} />}
     {creating && <MandateEditor project={project} close={() => setCreating(false)} />}
   </Space>;
 }
 
-function MandateDetail({ id, close }: { id: string; close: () => void }) {
-  const query = useQuery({ queryKey: ['mandate', id], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/portfolio-mandates/{id}', { params: { path: { id } }, signal })) });
-  return <Drawer title="不可变组合配置" open onClose={close} width={760}>
+function MandateDetail({ id, project, close }: { id: string; project: string; close: () => void }) {
+  const [building, setBuilding] = useState(false); const online = useOnline();
+  const query = useQuery({ queryKey: ['mandate', id, project], queryFn: async ({ signal }) => {
+    const value = dataOf(await api.GET('/api/v2/portfolio-mandates/{id}', { params: { path: { id } }, signal }));
+    if (value.id !== id || value.project_id !== project) throw new Error('配置不属于所选项目。');
+    return value;
+  } });
+  return <Drawer title="不可变组合配置" open onClose={building ? undefined : close} closable={!building} maskClosable={!building} width={760}>
     <Alert showIcon type="info" title="此版本不可修改。变更需新建配置，不会覆盖原目标依赖。" />
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      {query.data && <><Descriptions column={1} items={[
+      {query.data && <><Button disabled={!online || query.isError || query.isFetching || building || query.data.id !== id} onClick={() => setBuilding(true)}>请求组合构建</Button><Descriptions column={1} items={[
         { key: 'id', label: '配置编号', children: <Typography.Text className="break-word" copyable>{query.data.id}</Typography.Text> },
         { key: 'version', label: '版本', children: query.data.version },
         { key: 'created', label: '创建于', children: displayTime(query.data.created_at) },
         { key: 'capital', label: '资本假设（非真实账户）', children: `${query.data.content.capital_assumption} ${query.data.content.base_currency}` },
       ]} /><Typography.Title level={2}>服务器保存的完整配置</Typography.Title><pre className="break-word" style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(query.data.content, null, 2)}</pre></>}
     </QueryPanel>
+    {building && query.data && <PortfolioBuild mandate={query.data} close={() => setBuilding(false)} />}
   </Drawer>;
 }
 
