@@ -4833,3 +4833,12 @@ verify-fFQRUg的domain144及HTTP25项通过、Store27通过1失败；唯一失�
 原Mandate详情接入PortfolioBuild，配置绑定所选项目；复用分页ResourceSelect、精确计数预算、Intent重放、关闭保护和RunDetail。显式选择Cycle/Runtime及原修订、Forward输入、环境、下游原快照或LAST_TARGET原候选，以及Alpha→版本→资格和十进制聚合权重；切换父引用清空子引用、重复Alpha不能提交。历史窗口不代替服务端资格重验，202只展示原Run回执。
 
 最终TypeScript/Vite通过，portfolio-build/portfolio/portfolio-candidates共51项三视口回归通过（1.5分钟），覆盖两种来源、第二页原快照、重复成员、父引用清空、离线、精确数值/Runtime修订、未知响应原内容/键重试及Modal无障碍。首次45通过6失败来自测试输入/权重空数组违反原生合同，修正fixture而未放宽产品校验；一次错误cwd未修改测试便启动的运行已主动中断，不计通过。浏览器受控响应不等于真实科学/构建运行或T42端到端验收，完整T01–T42及自动再平衡/部署仍须复核，未push/review/merge/close。
+
+
+### 2026-09-15：T33 新cutoff与独立目标包的事务验收
+
+实读Worker::process_automation仅调用automate_paper、automate_live、process_forward、process_wake；Build/Study/Release入口仍为Operator原意图，缺少按冻结调仓日程创建新候选/独立Study/Release的可信调度链。自动交付原Release不能替代这个缺口，OPERATIONS已明确标示。GitHub本轮读取PR63仍OPEN/Draft、远端Head37e5713ed6252e5935787201914d42f241582a4f，Issue62仍OPEN。
+
+新增原生Store/PGMQ链路用例rebalance_new_cutoff_requires_new_evaluation_and_preserves_original_package：使用已有真实命令产生的两个原资格，在新Forward cutoff发布新Candidate/LAST_TARGET来源，核对原cohort不变、输入与目标产物不同；旧Candidate的Evaluation以release_portfolio_evaluation拒绝新包，新Candidate需自己的PORTFOLIO Study/Evaluation；新Release/包/asof独立，旧包字节、旧Release和旧Candidate完整读取相等，未新增Mission、Approval或Offer。上游科学声明仍是受控fixture，证明事务与版本关联，不宣称真实市场科学或全自动T33/T42验收。
+
+verify-wy9PBE及verify-B47lle均通过编译/格式/Clippy，单项新测试栈溢出失败；将大型研究准备和双包断言分段Box::pin后，verify-eCG9RP通过相同workspace/all-targets编译、格式、严格Clippy及该单项原生数据库测试（7.82秒），未增加线程栈或削减业务断言。源文件在验证期间不变，隔离PostgreSQL已停止。当前仍未push/review/merge/close。

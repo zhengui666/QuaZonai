@@ -1917,6 +1917,168 @@ async fn release_freezes_original_package_and_replays_without_republishing(pool:
     .await;
 }
 
+// T33 transaction evidence only: upstream model responses remain controlled.
+#[sqlx::test(migrations = "../../migrations")]
+async fn rebalance_new_cutoff_requires_new_evaluation_and_preserves_original_package(pool: PgPool) {
+    Box::pin(rebalance_release_check(pool)).await;
+}
+
+async fn rebalance_release_check(pool: PgPool) {
+    let (store, actor, f, build, first, _directory) = Box::pin(qualified_chain_policy(
+        pool.clone(),
+        cycle_support::Liquidity::None,
+        contracts::forward::ForwardEnvironmentV1::Live,
+        contracts::research::DataUse::ResearchAndPaper,
+        release_policy,
+    ))
+    .await
+    .unwrap();
+    Box::pin(rebalance_packages(&pool, &store, &actor, &f, &build, first)).await;
+}
+
+async fn rebalance_packages(
+    pool: &PgPool,
+    store: &Store,
+    actor: &store::authority::Actor,
+    f: &cycle_support::Fixture,
+    build: &contracts::portfolio::PortfolioBuildRequestV1,
+    first: Id,
+) {
+    let second: uuid::Uuid = sqlx::query_scalar("SELECT c.id FROM app.portfolio_candidates c JOIN app.portfolio_build_tasks t ON t.run_id=c.run_id WHERE t.last_target_candidate_id=$1")
+        .bind(first.as_uuid()).fetch_one(pool).await.unwrap();
+    let second = second.to_string().try_into().unwrap();
+    let prior = store.candidate(actor, first).await.unwrap();
+    let next = store.candidate(actor, second).await.unwrap();
+    assert_ne!(first, second);
+    assert!(next.header.decision_asof > prior.header.decision_asof);
+    assert_ne!(next.header.input_set_id, prior.header.input_set_id);
+    assert_ne!(
+        next.header.target_artifact_id,
+        prior.header.target_artifact_id
+    );
+    assert_eq!(next.header.mandate_id, prior.header.mandate_id);
+    assert_eq!(
+        next.header.current_weights_source,
+        contracts::portfolio::CandidateWeightsSourceV1::LastTarget
+    );
+    let cohort = |candidate: &contracts::portfolio::CandidateDetailV1| {
+        candidate
+            .members
+            .iter()
+            .map(|member| {
+                (
+                    member.alpha_version_id,
+                    member.qualification_id,
+                    member.ensemble_weight.clone(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(cohort(&prior), cohort(&next));
+    let original = Box::pin(original_release_intent(pool, store, actor, f, build, first)).await;
+    let release = Box::pin(store.create_release(
+        actor,
+        "rebalance-first-release",
+        &original,
+        |id, size| f.read(id, size),
+        |object| {
+            std::future::ready(
+                f.objects
+                    .put(object.id, &object.bytes)
+                    .map_err(|_| StoreError::Integrity),
+            )
+        },
+    ))
+    .await
+    .unwrap()
+    .resource;
+    let size: i64 = sqlx::query_scalar("SELECT byte_count FROM app.artifacts WHERE id=$1")
+        .bind(release.package_artifact_id.as_uuid())
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let size = DbCounter::new(size as u64).unwrap();
+    let original_bytes = f.read(release.package_artifact_id, size).await.unwrap();
+    let wrong = contracts::delivery::ReleaseCreateV1 {
+        candidate_id: second,
+        ..original.clone()
+    };
+    assert!(matches!(
+        Box::pin(store.create_release(
+            actor,
+            "rebalance-old-evaluation",
+            &wrong,
+            |id, size| f.read(id, size),
+            |_| async { panic!("old Candidate evaluation cannot publish a new package") },
+        ))
+        .await,
+        Err(StoreError::Invalid("release_portfolio_evaluation"))
+    ));
+    let missions: i64 = sqlx::query_scalar("SELECT count(*) FROM app.runs WHERE kind='MISSION'")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let independent = Box::pin(original_release_intent(
+        pool, store, actor, f, build, second,
+    ))
+    .await;
+    assert_ne!(independent.evaluation_id, original.evaluation_id);
+    let newer = Box::pin(store.create_release(
+        actor,
+        "rebalance-next-release",
+        &independent,
+        |id, size| f.read(id, size),
+        |object| {
+            std::future::ready(
+                f.objects
+                    .put(object.id, &object.bytes)
+                    .map_err(|_| StoreError::Integrity),
+            )
+        },
+    ))
+    .await
+    .unwrap()
+    .resource;
+    assert_ne!(newer.id, release.id);
+    assert_ne!(newer.package_artifact_id, release.package_artifact_id);
+    assert_eq!(newer.candidate_id, second);
+    assert!(newer.asof > release.asof);
+    assert_eq!(
+        f.read(release.package_artifact_id, size).await.unwrap(),
+        original_bytes
+    );
+    assert_eq!(
+        serde_json::to_value(store.release(actor, release.id).await.unwrap()).unwrap(),
+        serde_json::to_value(&release).unwrap()
+    );
+    assert_eq!(
+        serde_json::to_value(store.candidate(actor, first).await.unwrap()).unwrap(),
+        serde_json::to_value(&prior).unwrap()
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.runs WHERE kind='MISSION'")
+            .fetch_one(pool)
+            .await
+            .unwrap(),
+        missions
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.approvals")
+            .fetch_one(pool)
+            .await
+            .unwrap(),
+        0,
+        "a new Release does not inherit delivery authority"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.handoff_offers")
+            .fetch_one(pool)
+            .await
+            .unwrap(),
+        0
+    );
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn synthetic_candidate_cannot_be_upgraded_to_real_release(pool: PgPool) {
     Box::pin(release_scenario(
