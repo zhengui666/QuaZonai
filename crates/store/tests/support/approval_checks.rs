@@ -253,6 +253,46 @@ pub(super) async fn check(
         .resource;
     assert_eq!(second.decision_ordinal, Some(reopened.ordinal));
     assert_ne!(second.id, approval.id);
+    let first = store
+        .release_approvals(
+            actor,
+            release.id,
+            &contracts::control::ListQuery {
+                cursor: None,
+                limit: 1,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.items[0].id, second.id);
+    assert_eq!(first.next_cursor, Some(second.id));
+    let previous = store
+        .release_approvals(
+            actor,
+            release.id,
+            &contracts::control::ListQuery {
+                cursor: first.next_cursor,
+                limit: 1,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(previous.items[0].id, approval.id);
+    assert_eq!(previous.items[0].decision_ordinal, Some(0));
+    assert_eq!(previous.next_cursor, None);
+    assert!(matches!(
+        store
+            .release_approvals(
+                actor,
+                Id::new(),
+                &contracts::control::ListQuery {
+                    cursor: None,
+                    limit: 1
+                }
+            )
+            .await,
+        Err(StoreError::NotFound)
+    ));
     assert_eq!(
         store
             .approval(actor, approval.id)

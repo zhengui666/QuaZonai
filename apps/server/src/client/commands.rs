@@ -192,6 +192,11 @@ pub enum Automation {
 }
 #[derive(Subcommand)]
 pub enum Approval {
+    List {
+        release_id: String,
+        #[command(flatten)]
+        page: List,
+    },
     Revoke {
         id: String,
     },
@@ -739,6 +744,14 @@ impl Command {
                     "/api/v2/approvals",
                     id,
                     "revocations",
+                )?)
+                .page(page)?
+            }
+            Self::Approval(Approval::List { release_id, page }) => {
+                Request::get::<Page<contracts::delivery::ApprovalViewV1>>(action(
+                    "/api/v2/releases",
+                    release_id,
+                    "approvals",
                 )?)
                 .page(page)?
             }

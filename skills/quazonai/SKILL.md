@@ -65,7 +65,7 @@ Sealed机会绑定原Attempt并按根血缘累计，失败和取消不退款；�
 
 ### 交付人工决定
 
-release approve / approval show见CLI；人工grant绑定精确Release和完整审批请求。
+release approve / approval show/list见CLI；list按原Release分页所有历史审批，不授当前交付资格；人工grant绑定精确Release和完整审批请求。
 服务端同事务冻结原评估报告引用，不允许指定evidence_set_id或复制私有报告为执行输入。
 审批绑定下游配置与Candidate决定序号；历史查询不是当前交付授权。handoff offer/show见CLI：精确审批人工grant、当前来源/撤销/readiness重验和最新前版CAS；原Release不能换键再发送。Claim使用精确下游/项目DOWNSTREAM_CLAIM机器凭据，幂等键=external_claim_id，返回原Package和唯一转移；不得借用Operator/Mission身份。Worker只补记未领取Offer的到期/有效撤销，原领取重放不刷新期限。ACK使用精确DOWNSTREAM_ACK及原领取编号，不能改写终态或重授交付。approval revoke需要绑定原审批/完整意图的APPROVAL_REVOKE人工grant；立即或未来撤销均追加，最早生效记录不可推迟。字段和历史分页见CLI，已领取事实保留。
 最窄原生PG回归：`cargo test --locked -p server --features native-codex --test portfolio_study_http release_freezes`；

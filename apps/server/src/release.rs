@@ -163,6 +163,20 @@ pub async fn decisions(
     ))
 }
 
+#[utoipa::path(get,path="/api/v2/releases/{id}/approvals",operation_id="list_release_approvals",tag="Release",params(("id"=Id,Path),("cursor"=Option<Id>,Query),("limit"=Option<u16>,Query,minimum=1,maximum=100)),responses((status=200,body=Page<ApprovalViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
+pub async fn approvals(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    id: Result<Path<Id>, PathRejection>,
+    query: Result<Query<ListQuery>, QueryRejection>,
+) -> Result<Json<Page<ApprovalViewV1>>, ApiError> {
+    let Path(id) = id.map_err(|_| ApiError::validation())?;
+    let Query(query) = query.map_err(|_| ApiError::validation())?;
+    Ok(Json(
+        state.store.release_approvals(&actor, id, &query).await?,
+    ))
+}
+
 #[utoipa::path(post,path="/api/v2/releases/{id}/approvals",operation_id="approve_release",tag="Release",request_body=ReleaseApproveV1,params(("id"=Id,Path),("Idempotency-Key"=String,Header)),responses((status=201,body=CommandResult<ApprovalViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
 pub async fn approve(
     State(state): State<AppState>,

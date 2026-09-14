@@ -4751,3 +4751,10 @@ web-verify-DyagBY：真实Rust合同导出及客户端生成逐字节可复现�
 交付页新增“交付记录”标签，复用既有项目Handoff分页和单条HTTP接口。表格及详情显示原环境、状态、原审批/Release/前版关联、精确字符串交付序号、期限与原Claim/ACK事实；未确认不补成功，跨项目响应拒绝呈现。没有增加写请求、改变原下游权限或把ACK当作成交。审批/Offer/政策操作表单仍待完成。
 
 web-verify-SvLLD1完整通过：真实Rust导出与客户端生成逐字节可复现，手写源不变；TypeScript、505项单元及5项静态文件检查、wire精度、构建、Codex浏览器子集和273项全浏览器测试通过。新增受控历史用例覆盖三视口分页、超过JS安全整数的原序号、原Claim/空ACK、错项目响应和无障碍；这些是界面证据，未替代原生交付或T01–T42部署验收。首次类型检查修正测试Revision必须为字符串，未改产品合同。GitHub回读仍为Draft/Open PR63、远端37e5713ed6252e5935787201914d42f241582a4f，Issue62开放；未push/review/merge/close。
+
+
+### 2026-09-14：原 Release 审批历史分页
+
+新增GET /api/v2/releases/{id}/approvals与client approval list RELEASE_UUID，复用原审批元数据映射和精确项目读取授权，按原ID倒序分页所有历史版本。不会将旧审批重新判为可用、刷新期限或读取Package/私有报告字节；为网页选择原审批提供服务端入口，网页审批/Offer操作尚待接通。
+
+verify-XKnWFS通过workspace/all-targets编译、格式、严格Clippy及两项原生定向测试（原CLI授权意图、原资格Release审批链）。扩展真实审批链核对两次审批的分页、旧决定序号保持0和不存在Release返回NotFound。该链中的原生事务不是浏览器fixture；本轮未新增完整HTTP身份矩阵或浏览器操作证据。web-verify-XUqZpb真实Rust合同与客户端生成逐字节可复现、手写源不变。未push/review/merge/close，完整#62仍待完成。

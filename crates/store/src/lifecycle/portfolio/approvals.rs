@@ -184,6 +184,24 @@ where
 }
 
 impl Store {
+    pub async fn release_approvals(
+        &self,
+        actor: &Actor,
+        release: Id,
+        query: &contracts::control::ListQuery,
+    ) -> Result<contracts::control::Page<ApprovalViewV1>, StoreError> {
+        domain::control::list(query)?;
+        let mut tx = self.pool.begin().await?;
+        let project: uuid::Uuid = sqlx::query_scalar("SELECT c.project_id FROM app.releases r JOIN app.portfolio_candidates c ON c.id=r.candidate_id WHERE r.id=$1")
+            .bind(release.as_uuid()).fetch_optional(&mut *tx).await?.ok_or(StoreError::NotFound)?;
+        crate::evidence::authorize(&mut tx, actor, db::id(project)?).await?;
+        let rows = sqlx::query("SELECT a.*,r.candidate_id,c.project_id FROM app.approvals a JOIN app.releases r ON r.id=a.release_id JOIN app.portfolio_candidates c ON c.id=r.candidate_id WHERE a.release_id=$1 AND ($2::uuid IS NULL OR a.id<$2) ORDER BY a.id DESC LIMIT $3")
+            .bind(release.as_uuid()).bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit)+1).fetch_all(&mut *tx).await?;
+        let items = rows.iter().map(view).collect::<Result<Vec<_>, _>>()?;
+        tx.commit().await?;
+        Ok(crate::control::page(items, query.limit, |v| v.id))
+    }
+
     pub async fn approval(&self, actor: &Actor, id: Id) -> Result<ApprovalViewV1, StoreError> {
         let mut tx = self.pool.begin().await?;
         let row=sqlx::query("SELECT a.*,r.candidate_id,c.project_id FROM app.approvals a JOIN app.releases r ON r.id=a.release_id JOIN app.portfolio_candidates c ON c.id=r.candidate_id WHERE a.id=$1")

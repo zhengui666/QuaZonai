@@ -1627,7 +1627,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        get: operations["list_release_approvals"];
         put?: never;
         post: operations["approve_release"];
         delete?: never;
@@ -4618,6 +4618,31 @@ export interface components {
                 id: components["schemas"]["Id"];
                 reason: string;
                 reason_code?: string | null;
+            }[];
+            next_cursor?: null | components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        Page_ApprovalViewV1: {
+            items: {
+                authority_kind: string;
+                automation_policy_id?: null | components["schemas"]["Id"];
+                candidate_id: components["schemas"]["Id"];
+                /** Format: date-time */
+                created_at: string;
+                /** Format: int32 */
+                decision_ordinal?: number | null;
+                downstream_id: components["schemas"]["Id"];
+                downstream_revision?: null | components["schemas"]["Revision"];
+                environment: components["schemas"]["ForwardEnvironmentV1"];
+                evidence_set_id: components["schemas"]["Id"];
+                /** Format: date-time */
+                granted_at: string;
+                id: components["schemas"]["Id"];
+                project_id: components["schemas"]["Id"];
+                readiness_observation_id?: null | components["schemas"]["Id"];
+                release_id: components["schemas"]["Id"];
+                /** Format: date-time */
+                valid_until: string;
             }[];
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
@@ -14521,6 +14546,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReleaseViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_release_approvals: {
+        parameters: {
+            query?: {
+                cursor?: components["schemas"]["Id"];
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_ApprovalViewV1"];
                 };
             };
             401: {

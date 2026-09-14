@@ -949,3 +949,7 @@ Forward可信准入仅供内部Worker调用：沿用原Candidate Runtime，完�
 同事务绑定唯一新 Cycle，不发放 Operator 身份或交付权限。无 Agent/HTTP 手动强制
 消费入口；可用 `cargo test --locked -p store --test forward_evaluation --test cycles`
 验证原生事务和受控协议，不能把该测试称为真实多日反馈/模型/OCI验收。
+
+`client approval list RELEASE_UUID --limit 20 [--cursor APPROVAL_UUID]`读取
+GET /api/v2/releases/{id}/approvals，按原ID倒序分页该Release全部历史审批。
+需精确项目RESEARCH_READ；历史审批不等于当前可交付，列表不刷新期限或隐藏已失效版本。
