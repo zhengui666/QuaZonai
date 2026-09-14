@@ -5083,3 +5083,31 @@ Trusted deployment registry, HTTP/CLI import and report/history views, artifact
 association, full semantic/sealed lineage, real old backup and recovery acceptance
 remain unfinished. No push, current-head remote CI/review, merge or Issue closure
 is claimed by these local checks.
+
+
+### 2026-09-15 trusted frozen exports and HTTP/CLI import
+
+Added startup-only HISTORICAL_EXPORTS registration, using existing native directory
+capabilities and Linux memfd seals. Limits are 32 exports, 512 MiB per table and
+8 GiB total backing; invalid or incomplete input fails startup. Requests never
+accept paths, DSNs or source reports. POST /api/v2/migrations/import uses the shared
+Operator transaction; GET reports permits browser Operator or the still-valid CLI
+credential owning the original import receipt. Native CLI migrate import/report
+uses generated contracts and exact request-bound Operator grants.
+
+Final verify-5ZC5Xr passed workspace/all-target compilation, formatting and strict
+Clippy, 25 integrations tests, 3 import Store tests, 8 source/artifact tests,
+1 browser/CLI migration test and 2 OpenAPI reference checks (39 total). The new
+flow uses actual row-export CLI, native sealed files, browser enrollment/TOTP,
+real TCP CLI, PostgreSQL grants and receipts. It checks frozen bytes after source
+replacement, dry-run, exact replay, field injection rejection, wrong dry-run
+grant rejection and own-credential report visibility. No active runs are created.
+Source unchanged, owned PostgreSQL stopped. Initial verify-nCrieQ failed unused
+shared test-helper warnings and a missing Origin in the anonymous test; these
+were corrected without bypassing Origin or authentication.
+
+web-verify-Ytgift generated reproducible OpenAPI/TypeScript/Ajv with handwritten
+source unchanged. Frontend npm --ignore-scripts run typecheck passed. No UI or
+full fresh-instance browser acceptance is claimed. Paginated identity/history
+views, artifact association, complete semantic/sealed lineage and actual old
+backup/recovery acceptance remain; no remote CI/review/merge or Issue closure.

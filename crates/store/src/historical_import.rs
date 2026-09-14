@@ -282,7 +282,20 @@ impl Store {
         id: Id,
     ) -> Result<HistoricalImportReportV1, StoreError> {
         let mut tx = self.pool.begin().await?;
-        authority::browser(&mut tx, actor, false, false).await?;
+        match actor {
+            Actor::Browser { .. } => authority::browser(&mut tx, actor, false, false).await?,
+            Actor::Machine { .. } => {
+                let machine = authority::machine(&mut tx, actor, false).await?;
+                if machine.kind != contracts::control::PrincipalKind::Cli {
+                    return Err(StoreError::Forbidden);
+                }
+                let owns: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.command_receipts WHERE principal_scope=$1 AND operation='MIGRATION_IMPORT' AND resource_id=$2)")
+                    .bind(format!("CREDENTIAL:{}", machine.credential_id)).bind(id.as_uuid()).fetch_one(&mut *tx).await?;
+                if !owns {
+                    return Err(StoreError::NotFound);
+                }
+            }
+        }
         let value: serde_json::Value =
             sqlx::query_scalar("SELECT result FROM app.historical_import_reports WHERE id=$1")
                 .bind(id.as_uuid())

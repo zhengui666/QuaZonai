@@ -56,6 +56,8 @@ pub struct ProjectList {
 }
 #[derive(Subcommand)]
 pub enum Command {
+    #[command(subcommand)]
+    Migrate(Migrate),
     /// Submit target-only weights using the authenticated downstream identity.
     ForwardWeights,
     #[command(subcommand)]
@@ -542,6 +544,18 @@ pub(super) enum Output {
         events: u32,
     },
 }
+#[derive(Subcommand)]
+pub enum Migrate {
+    /// Import a deployment-registered historical projection; requires exact Operator grant.
+    Import {
+        #[arg(long)]
+        export_ref: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Read an import report created by this CLI credential.
+    Report { id: String },
+}
 pub(super) struct Request {
     pub method: Method,
     pub route: String,
@@ -625,6 +639,35 @@ impl Command {
         const PATCH: Method = Method::PATCH;
         const POST: Method = Method::POST;
         let result = match self {
+            Self::Migrate(command) => match command {
+                Migrate::Import {
+                    export_ref,
+                    dry_run,
+                } => Request {
+                    method: POST,
+                    route: "/api/v2/migrations/import".into(),
+                    query: vec![],
+                    body: Some(
+                        serde_json::to_vec(&contracts::imports::HistoricalImportRequestV1 {
+                            schema_version: contracts::SchemaV1,
+                            export_ref: id(export_ref)?,
+                            dry_run,
+                        })
+                        .map_err(|_| Failure::Input)?,
+                    ),
+                    status: 202,
+                    operator: true,
+                    output: Output::Json(
+                        decode::<CommandResult<contracts::imports::HistoricalImportReportV1>>,
+                    ),
+                },
+                Migrate::Report { id } => {
+                    Request::get::<contracts::imports::HistoricalImportReportV1>(item(
+                        "/api/v2/migrations/reports",
+                        id,
+                    )?)
+                }
+            },
             Self::ForwardWeights => Request::write::<
                 DownstreamWeightsSubmitV1,
                 CommandResult<DownstreamWeightsViewV1>,

@@ -31,6 +31,13 @@ pub async fn fixture_with_runtime_targets(
     pool: PgPool,
     targets: Option<server::runtime_transport::RuntimeTargets>,
 ) -> Fixture {
+    fixture_with_deployment(pool, targets, None).await
+}
+pub async fn fixture_with_deployment(
+    pool: PgPool,
+    targets: Option<server::runtime_transport::RuntimeTargets>,
+    exports: Option<server::migrations::HistoricalExports>,
+) -> Fixture {
     PostgresStore::new(pool.clone()).migrate().await.unwrap();
     let root = tempfile::tempdir().unwrap();
     let secrets = root.path().join("secrets");
@@ -54,6 +61,9 @@ pub async fn fixture_with_runtime_targets(
         state = state.with_runtime_targets(targets).with_artifact_store(
             integrations::artifacts::ArtifactStore::open(&root.path().join("artifacts")).unwrap(),
         );
+    }
+    if let Some(exports) = exports {
+        state = state.with_historical_exports(exports);
     }
     let app = server::router(state, Key::generate());
     Fixture {

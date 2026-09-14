@@ -315,3 +315,5 @@ Forward可信准入仅供内部Worker调用：沿用原Candidate Runtime，完�
 
 
 本机旧行导出：`cargo run --locked -p server -- export-historical-rows --source-installation-id "$MIGRATION_SOURCE_INSTALLATION_ID" --output "$MIGRATION_ROW_EXPORT"`。受保护环境提供独立旧副本的 `MIGRATION_SOURCE_DATABASE_URL`，原安装ID与产物导出保持一致，输出全新绝对目录；参考 [CLI](../../CLI.md#旧库行数据的原生-csv-投影导出) 核对缺表/结构/逐列排除与原/投影行数。原生CSV保留实际被选字段，不等于完整迁移或业务资格，不提供Agent/HTTP路径或数据库能力。
+
+历史投影导入：部署者按 [CLI](../../CLI.md#历史投影注册和导入) 注册冻结原包，Operator 使用 `migrate import --export-ref UUID --dry-run` 或同一 HTTP 合同。实际导入省略 dry-run，需要独立精确授权；CLI 查询只允许本凭据导入报告。Agent 不提供注册路径或源报告，不据只读历史投影宣称完整迁移通过。

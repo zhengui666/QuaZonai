@@ -21,6 +21,7 @@ pub mod forward;
 #[cfg(test)]
 mod header_tests;
 pub mod mcp;
+pub mod migrations;
 pub mod portfolio;
 pub mod release;
 pub mod research;
@@ -115,6 +116,8 @@ pub struct AppState {
     pub run_stream_slots: Arc<Semaphore>,
     pub artifact_store: Option<Arc<integrations::artifacts::ArtifactStore>>,
     pub artifact_slots: Arc<Semaphore>,
+    pub historical_exports: Arc<migrations::HistoricalExports>,
+    pub historical_import_slots: Arc<Semaphore>,
     pub integration_slots: Arc<Semaphore>,
     pub downstream_targets: Arc<runtime_transport::RuntimeTargets>,
     pub runtime_targets: Arc<runtime_transport::RuntimeTargets>,
@@ -131,11 +134,17 @@ impl AppState {
             run_stream_slots: Arc::new(Semaphore::new(32)),
             artifact_store: None,
             artifact_slots: Arc::new(Semaphore::new(4)),
+            historical_exports: Arc::new(migrations::HistoricalExports::default()),
+            historical_import_slots: Arc::new(Semaphore::new(1)),
             integration_slots: Arc::new(Semaphore::new(4)),
             downstream_targets: Arc::new(runtime_transport::RuntimeTargets::default()),
             runtime_targets: Arc::new(runtime_transport::RuntimeTargets::default()),
             codex_deployment: Arc::new(codex_profiles::CodexDeployment::default()),
         }
+    }
+    pub fn with_historical_exports(mut self, exports: migrations::HistoricalExports) -> Self {
+        self.historical_exports = Arc::new(exports);
+        self
     }
     pub fn with_codex_deployment(mut self, deployment: codex_profiles::CodexDeployment) -> Self {
         self.codex_deployment = Arc::new(deployment);
@@ -171,6 +180,8 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         .with_private(cookie_key);
     Router::new()
         .route("/health/live", get(|| async { StatusCode::NO_CONTENT }))
+        .route("/api/v2/migrations/import", post(migrations::import))
+        .route("/api/v2/migrations/reports/{id}", get(migrations::report))
         .route("/api/v2/bootstrap/status", get(auth::bootstrap_status))
         .route("/api/v2/bootstrap/start", post(auth::bootstrap_start))
         .route("/api/v2/bootstrap/confirm", post(auth::bootstrap_confirm))
@@ -596,7 +607,7 @@ async fn browser_boundary(State(state): State<AppState>, request: Request, next:
 }
 
 #[derive(OpenApi)]
-#[openapi(paths(auth::bootstrap_status,auth::bootstrap_start,auth::bootstrap_confirm,auth::login,auth::logout,auth::session_status,auth::verify,auth::devices,auth::revoke_device,
+#[openapi(paths(migrations::import,migrations::report,auth::bootstrap_status,auth::bootstrap_start,auth::bootstrap_confirm,auth::login,auth::logout,auth::session_status,auth::verify,auth::devices,auth::revoke_device,
 control::projects,control::project,control::create_project,control::update_project,
 control::principals,control::create_principal,control::update_principal,
 control::credentials,control::issue_credential,control::revoke_credential,

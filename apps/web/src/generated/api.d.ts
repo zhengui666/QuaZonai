@@ -1300,6 +1300,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/migrations/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["import_historical_rows"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/migrations/reports/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_historical_import_report"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/portfolio-builds": {
         parameters: {
             query?: never;
@@ -3122,6 +3154,24 @@ export interface components {
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
+        CommandResult_HistoricalImportReportV1: {
+            replayed: boolean;
+            /** @description Import of reviewed projections is not approval of excluded or legacy evidence. */
+            resource: {
+                checked_relationships: components["schemas"]["DbCounter"];
+                dry_run: boolean;
+                existing_rows: components["schemas"]["DbCounter"];
+                export_ref: components["schemas"]["Id"];
+                id: components["schemas"]["Id"];
+                manual_review_required: boolean;
+                new_rows: components["schemas"]["DbCounter"];
+                projected_rows: components["schemas"]["DbCounter"];
+                schema_version: components["schemas"]["SchemaV1"];
+                source_installation_id: components["schemas"]["Id"];
+                unverified_relationships: string[];
+            };
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         CommandResult_InputSetView: {
             replayed: boolean;
             resource: {
@@ -4049,6 +4099,20 @@ export interface components {
             revision: components["schemas"]["Revision"];
             state: components["schemas"]["HandoffStateV1"];
             supersedes_handoff_id?: null | components["schemas"]["Id"];
+        };
+        /** @description Import of reviewed projections is not approval of excluded or legacy evidence. */
+        HistoricalImportReportV1: {
+            checked_relationships: components["schemas"]["DbCounter"];
+            dry_run: boolean;
+            existing_rows: components["schemas"]["DbCounter"];
+            export_ref: components["schemas"]["Id"];
+            id: components["schemas"]["Id"];
+            manual_review_required: boolean;
+            new_rows: components["schemas"]["DbCounter"];
+            projected_rows: components["schemas"]["DbCounter"];
+            schema_version: components["schemas"]["SchemaV1"];
+            source_installation_id: components["schemas"]["Id"];
+            unverified_relationships: string[];
         };
         HistoricalImportRequestV1: {
             dry_run: boolean;
@@ -12876,6 +12940,153 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    import_historical_rows: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HistoricalImportRequestV1"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_HistoricalImportReportV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_historical_import_report: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistoricalImportReportV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

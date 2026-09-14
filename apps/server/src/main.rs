@@ -125,6 +125,14 @@ enum Command {
         /// Deployment-owned JSON file of native Codex homes and executable bindings.
         #[arg(long, env = "CODEX_DEPLOYMENT", hide_env_values = true)]
         codex_deployment: Option<PathBuf>,
+        /// Deployment-only export references and absolute directories, frozen at startup.
+        #[arg(
+            long,
+            env = "HISTORICAL_EXPORTS",
+            default_value = "[]",
+            hide_env_values = true
+        )]
+        historical_exports: String,
     },
     /// Drive registered native jobs through PGMQ and their exact Runtime identities.
     Worker {
@@ -474,6 +482,7 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Command::Serve {
+            historical_exports,
             database,
             state_dir,
             bind,
@@ -484,6 +493,12 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             codex_deployment,
         } => {
             let codex = load_codex_deployment(codex_deployment.as_deref())?;
+            if historical_exports.len() > 65536 {
+                return Err("historical export registrations exceed limit".into());
+            }
+            let registrations = serde_json::from_str(&historical_exports)
+                .map_err(|_| "invalid historical export registrations")?;
+            let historical_exports = server::migrations::HistoricalExports::load(registrations)?;
             let policy = WebPolicy::new(&public_url, bind, development_http)?;
             let targets = parse_integration_targets(&runtime_targets, development_http)?;
             let downstream_targets =
@@ -505,6 +520,7 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             let objects = ArtifactStore::open(&state_dir.join("artifacts"))?;
             let app = server::router(
                 AppState::new(store, vault, policy)
+                    .with_historical_exports(historical_exports)
                     .with_artifact_store(objects)
                     .with_codex_deployment(codex)
                     .with_runtime_targets(targets)

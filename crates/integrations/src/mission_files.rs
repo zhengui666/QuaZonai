@@ -74,10 +74,15 @@ impl MissionFiles {
     /// The deployment-side historical exporter also uses this for binary objects.
     #[cfg(unix)]
     pub fn read_bytes(&self, relative: &str, limit: u64) -> std::io::Result<Vec<u8>> {
+        self.read_bounded(relative, limit, crate::artifacts::MAX_LOCAL_OBJECT_BYTES)
+    }
+
+    #[cfg(unix)]
+    fn read_bounded(&self, relative: &str, limit: u64, ceiling: u64) -> std::io::Result<Vec<u8>> {
         use rustix::fs::{openat, Mode, OFlags};
         use std::os::unix::fs::MetadataExt;
         let invalid = || std::io::Error::from(std::io::ErrorKind::InvalidInput);
-        if limit == 0 || limit > crate::artifacts::MAX_LOCAL_OBJECT_BYTES {
+        if limit == 0 || limit > ceiling {
             return Err(invalid());
         }
         let parts = components(relative).map_err(|_| invalid())?;
@@ -114,9 +119,73 @@ impl MissionFiles {
         Ok(bytes)
     }
 
+    /// Deployment-only immutable copy. Native Linux seals freeze bytes even if
+    /// the original export is later replaced. Each reader has its own position.
+    #[cfg(target_os = "linux")]
+    pub fn snapshot(&self, relative: &str, limit: u64) -> std::io::Result<FrozenFile> {
+        use rustix::fs::{fcntl_add_seals, memfd_create, MemfdFlags, SealFlags};
+        use std::io::Write;
+        let bytes = self.read_bounded(relative, limit, 512 * 1024 * 1024)?;
+        let mut file = fs::File::from(memfd_create(
+            "historical-export",
+            MemfdFlags::CLOEXEC | MemfdFlags::ALLOW_SEALING,
+        )?);
+        file.write_all(&bytes)?;
+        fcntl_add_seals(
+            &file,
+            SealFlags::WRITE | SealFlags::GROW | SealFlags::SHRINK | SealFlags::SEAL,
+        )?;
+        Ok(FrozenFile {
+            file: std::sync::Arc::new(file),
+            position: 0,
+        })
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn snapshot(&self, _: &str, _: u64) -> std::io::Result<FrozenFile> {
+        Err(std::io::ErrorKind::Unsupported.into())
+    }
+
     #[cfg(not(unix))]
     pub fn read_bytes(&self, _: &str, _: u64) -> std::io::Result<Vec<u8>> {
         Err(std::io::ErrorKind::Unsupported.into())
+    }
+}
+
+/// A sealed snapshot with an independent read cursor, never an exposed writer.
+#[derive(Clone)]
+pub struct FrozenFile {
+    file: std::sync::Arc<fs::File>,
+    position: u64,
+}
+impl std::io::Read for FrozenFile {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileExt;
+            let count = self.file.read_at(buffer, self.position)?;
+            self.position += count as u64;
+            Ok(count)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = buffer;
+            Err(std::io::ErrorKind::Unsupported.into())
+        }
+    }
+}
+impl std::io::Seek for FrozenFile {
+    fn seek(&mut self, from: std::io::SeekFrom) -> std::io::Result<u64> {
+        let offset = match from {
+            std::io::SeekFrom::Start(value) => i128::from(value),
+            std::io::SeekFrom::Current(value) => i128::from(self.position) + i128::from(value),
+            std::io::SeekFrom::End(value) => {
+                i128::from(self.file.metadata()?.len()) + i128::from(value)
+            }
+        };
+        self.position = u64::try_from(offset)
+            .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+        Ok(self.position)
     }
 }
 
@@ -124,6 +193,40 @@ impl MissionFiles {
 mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn snapshot_is_native_sealed_and_readers_are_independent() {
+        use std::io::{Read, Seek, SeekFrom, Write};
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("rows.csv"), "original").unwrap();
+        let mut first = MissionFiles::open(root.path())
+            .unwrap()
+            .snapshot("rows.csv", 512)
+            .unwrap();
+        let mut second = first.clone();
+        fs::write(root.path().join("rows.csv"), "replacement").unwrap();
+        assert!(first
+            .file
+            .try_clone()
+            .unwrap()
+            .write_all(b"changed")
+            .is_err());
+        assert!(first.file.set_len(0).is_err());
+        let mut bytes = [0; 3];
+        first.read_exact(&mut bytes).unwrap();
+        assert_eq!(&bytes, b"ori");
+        let mut original = String::new();
+        second.read_to_string(&mut original).unwrap();
+        assert_eq!(original, "original");
+        first.seek(SeekFrom::End(-3)).unwrap();
+        first.read_exact(&mut bytes).unwrap();
+        assert_eq!(&bytes, b"nal");
+        assert!(first.seek(SeekFrom::Start(u64::MAX)).is_ok());
+        assert!(first.seek(SeekFrom::Current(1)).is_err());
+        assert!(second.seek(SeekFrom::Start(0)).is_ok());
+        assert!(second.seek(SeekFrom::Current(-1)).is_err());
+    }
 
     #[test]
     fn exact_utf8_bytes_are_read_from_the_opened_root_after_rename() {
