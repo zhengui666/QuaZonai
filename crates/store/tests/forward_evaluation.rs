@@ -38,7 +38,7 @@ async fn original_forward_inputs_queue_once_and_revalidate_before_dispatch(pool:
         &pool,
         runtime,
         RuntimeProbeOutcomeV1::Available {
-            capabilities: Box::new(caps),
+            capabilities: Box::new(caps.clone()),
         },
         Duration::seconds(60),
     )
@@ -266,6 +266,218 @@ async fn original_forward_inputs_queue_once_and_revalidate_before_dispatch(pool:
         .unwrap();
     assert_eq!(job.spec.input_set_id, original_input);
     domain::execution::task(&job.spec, &definition).unwrap();
+    let future_revocation;
+    {
+        // A separate original stream preserves the unsent-correction assertion below.
+        let mut measurement_message = message.clone();
+        measurement_message.external_message_id = "measurement-original".into();
+        measurement_message.report.stream_id = "measurement".into();
+        store
+            .submit_forward_message(&actor, &measurement_message, read, publish)
+            .await
+            .unwrap();
+        let measured = store
+            .enqueue_forward_evaluation(handoff, "measurement", read, publish)
+            .await
+            .unwrap()
+            .resource;
+        let messages = store.read_run_messages(60, 100).await.unwrap();
+        let queued = messages.iter().find(|m| m.run_id == measured.id).unwrap();
+        let store::lifecycle::ClaimResult::Leased(lease) =
+            store.claim_run(queued, "measurement", 60).await.unwrap()
+        else {
+            panic!("measurement lease")
+        };
+        let job = store.native_job(measured.id, &lease.fence).await.unwrap();
+        let definition: contracts::execution::NativeTaskParametersV1 =
+            serde_json::from_slice(&objects.lock().unwrap()[&job.spec.parameters_artifact_id])
+                .unwrap();
+        // Controlled native result protocol, not a claim of numerical/OCI execution.
+        use contracts::runtime_jobs::*;
+        use contracts::science::{NativeStatisticGroup, NativeStatisticV1};
+        let contracts::execution::NativeTaskParametersV1::EvaluateForward { request, .. } =
+            &definition
+        else {
+            panic!("forward")
+        };
+        let result = NativeForwardResultV1 {
+            schema_version: SchemaV1,
+            native_version: "0.63.0".into(),
+            window: request.window.clone(),
+            statistics: [
+                "Average (Return)",
+                "Returns Volatility (365 days)",
+                "Sharpe Ratio (365 days)",
+            ]
+            .into_iter()
+            .map(|key| NativeStatisticV1 {
+                group: NativeStatisticGroup::Returns,
+                native_key: key.into(),
+                currency: None,
+                value: Some(0.1),
+                reason_code: None,
+            })
+            .collect(),
+        };
+        let bytes = serde_json::to_vec(&result).unwrap();
+        let output = RuntimeOutputV1 {
+            kind: RuntimeOutputKind::Report,
+            schema: job.spec.requested_output_schemas[0].clone(),
+            storage_ref: Id::new(),
+            storage_version: contracts::Revision::INITIAL,
+            byte_count: count(bytes.len() as u64),
+            media_type: "application/json".into(),
+        };
+        assert!(store
+            .begin_run_dispatch(job.run.id, &lease.fence)
+            .await
+            .unwrap());
+        let now: chrono::DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        store
+            .observe_native_accepted(
+                job.run.id,
+                &lease.fence,
+                &RuntimeJobStatusV1 {
+                    schema_version: SchemaV1,
+                    run_id: job.run.id,
+                    attempt_no: job.spec.attempt_no,
+                    external_job_id: job.spec.external_job_id.clone(),
+                    state: RuntimeJobState::Accepted,
+                    has_result: false,
+                    submitted_at: now,
+                    started_at: None,
+                    finished_at: None,
+                },
+            )
+            .await
+            .unwrap();
+        let finished: chrono::DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let manifest = ResultManifestV1 {
+            schema_version: SchemaV1,
+            run_id: job.run.id,
+            attempt_no: job.spec.attempt_no,
+            external_job_id: job.spec.external_job_id.clone(),
+            input_set_id: job.run.input_set_id,
+            state: RuntimeResultState::Succeeded,
+            engine_versions: caps.engine_versions.clone(),
+            started_at: Some(now),
+            finished_at: finished,
+            resource_usage: RuntimeResourceUsageV1 {
+                wall_milliseconds: count((finished - now).num_milliseconds().max(0) as u64),
+                cpu_nanoseconds: None,
+                peak_memory_bytes: None,
+                output_bytes: output.byte_count,
+            },
+            artifacts: vec![output.clone()],
+            error: None,
+        };
+        store
+            .publish_native_result(
+                job.run.id,
+                &lease.fence,
+                serde_json::to_vec(&manifest).unwrap(),
+                store::lifecycle::native::NativePayloads::Verified(vec![(output, bytes)]),
+                read,
+                |values| {
+                    for value in values {
+                        objects.lock().unwrap().insert(value.id, value.bytes);
+                    }
+                    async { Ok(()) }
+                },
+            )
+            .await
+            .unwrap();
+        let scheduled_at = finished + Duration::minutes(30);
+        future_revocation = store
+            .revoke_automation(
+                &operator,
+                "future-forward-revoke",
+                policy.id,
+                &PolicyRevokeV1 {
+                    schema_version: SchemaV1,
+                    expected_latest_revocation_id: None,
+                    effective_at: Some(scheduled_at),
+                    reason: "controlled future revoke".into(),
+                },
+            )
+            .await
+            .unwrap()
+            .resource
+            .id;
+        // Inject the final aggregate write failure, then retry the same terminal Run.
+        sqlx::query("CREATE FUNCTION app.test_forward_window_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'controlled forward window failure'; END $$").execute(&pool).await.unwrap();
+        sqlx::query("CREATE TRIGGER test_forward_window_failure BEFORE INSERT ON app.forward_evidence_windows FOR EACH ROW EXECUTE FUNCTION app.test_forward_window_failure()").execute(&pool).await.unwrap();
+        let mut allocated = Vec::new();
+        assert!(store
+            .publish_scientific_result(job.run.id, read, |value| {
+                allocated.push(value.id);
+                publish(value)
+            })
+            .await
+            .is_err());
+        let count_rows: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM app.evaluations WHERE run_id=$1")
+                .bind(job.run.id.as_uuid())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count_rows, 0);
+        for id in allocated {
+            store
+                .discard_unpublished_native_object(job.run.id, id, |id| {
+                    objects.lock().unwrap().remove(&id);
+                    async { Ok(()) }
+                })
+                .await
+                .unwrap();
+        }
+        sqlx::query("DROP TRIGGER test_forward_window_failure ON app.forward_evidence_windows")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (a, b) = tokio::join!(
+            store.publish_scientific_result(job.run.id, read, publish),
+            store.publish_scientific_result(job.run.id, read, publish)
+        );
+        let a = a.unwrap().unwrap();
+        let b = b.unwrap().unwrap();
+        assert_eq!(a.resource, b.resource);
+        assert_ne!(a.replayed, b.replayed);
+        let actual: (String,String,i64,bool,i64) = sqlx::query_as("SELECT e.evidence_status,e.decision,w.complete_observations,w.is_contiguous,(SELECT count(*) FROM app.metric_values WHERE evaluation_id=e.id) FROM app.evaluations e JOIN app.forward_evidence_windows w ON w.evaluation_id=e.id WHERE e.id=$1").bind(a.resource.as_uuid()).fetch_one(&pool).await.unwrap();
+        assert_eq!(actual, ("VALID".into(), "INCONCLUSIVE".into(), 2, true, 3));
+        let replay = store
+            .publish_scientific_result(
+                job.run.id,
+                |_, _| async { panic!("published replay must not read") },
+                |_| async { panic!("published replay must not write") },
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(replay.resource, a.resource);
+        assert!(replay.replayed);
+        let until: chrono::DateTime<Utc> =
+            sqlx::query_scalar("SELECT valid_until FROM app.evaluations WHERE id=$1")
+                .bind(a.resource.as_uuid())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(until, scheduled_at);
+        assert!(sqlx::query("UPDATE app.forward_evidence_windows SET complete_observations=3 WHERE evaluation_id=$1").bind(a.resource.as_uuid()).execute(&pool).await.is_err());
+        assert!(
+            sqlx::query("DELETE FROM app.metric_values WHERE evaluation_id=$1")
+                .bind(a.resource.as_uuid())
+                .execute(&pool)
+                .await
+                .is_err()
+        );
+    }
     message.external_message_id = "daily-correction".into();
     message.report.message_revision = 2;
     message.report.supersedes_message_id = Some(original.id);
@@ -305,7 +517,7 @@ async fn original_forward_inputs_queue_once_and_revalidate_before_dispatch(pool:
     }
     assert_eq!(objects.lock().unwrap().len(), before.len());
     let frozen: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM app.forward_evaluation_inputs WHERE project_id=$1",
+        "SELECT count(*) FROM app.forward_evaluation_inputs WHERE project_id=$1 AND request->'request'->'window'->>'stream_id'='daily'",
     )
     .bind(f.project.as_uuid())
     .fetch_one(&pool)
@@ -328,7 +540,7 @@ async fn original_forward_inputs_queue_once_and_revalidate_before_dispatch(pool:
             policy.id,
             &PolicyRevokeV1 {
                 schema_version: SchemaV1,
-                expected_latest_revocation_id: None,
+                expected_latest_revocation_id: Some(future_revocation),
                 effective_at: None,
                 reason: "controlled revoke".into(),
             },
@@ -366,6 +578,53 @@ async fn original_forward_inputs_queue_once_and_revalidate_before_dispatch(pool:
         .native_job(second.resource.id, &lease.fence)
         .await
         .is_err());
+    let snapshot = store.get_run(&operator, second.resource.id).await.unwrap();
+    store
+        .cancel_run(
+            &operator,
+            "cancel-revoked-forward",
+            second.resource.id,
+            &contracts::lifecycle::RunCancelV1 {
+                schema_version: SchemaV1,
+                expected_revision: snapshot.revision,
+            },
+        )
+        .await
+        .unwrap();
+    let at: chrono::DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    store
+        .accept_run_terminal(
+            second.resource.id,
+            &lease.fence,
+            &store::lifecycle::TerminalObservation {
+                schema_version: SchemaV1,
+                external_job_id: lease.external_job_id.clone(),
+                outcome: store::lifecycle::NativeOutcome::ConfirmedAbsent,
+                manifest_artifact_id: None,
+                failure_class: None,
+                failure_code: None,
+                observed_at: at,
+            },
+        )
+        .await
+        .unwrap();
+    let cancelled = store
+        .publish_scientific_result(
+            second.resource.id,
+            |_, _| async { panic!("cancel has no result bytes") },
+            publish,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let cancelled_facts:(String,String,Option<chrono::DateTime<Utc>>,i64,bool,i64)=sqlx::query_as("SELECT e.execution_status,e.evidence_status,e.valid_until,w.complete_observations,w.is_contiguous,(SELECT count(*) FROM app.metric_values WHERE evaluation_id=e.id) FROM app.evaluations e JOIN app.forward_evidence_windows w ON w.evaluation_id=e.id WHERE e.id=$1").bind(cancelled.resource.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        cancelled_facts,
+        ("CANCELLED".into(), "INCOMPLETE".into(), None, 0, false, 0)
+    );
     let generic = store::lifecycle::StandaloneRunSubmission {
         project_id: f.project,
         input_set_id: f.input_set,

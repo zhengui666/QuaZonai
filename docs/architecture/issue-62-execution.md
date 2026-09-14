@@ -4589,3 +4589,35 @@ Claim、Release、Candidate 及 Runtime 基础关联使用明确关系型 fixtur
 原生 Claim、模型或 OCI 生产验收。当前未接 Worker 自动调度和 Evaluation/
 forward_evidence_windows 发布；不代表 Live 准入完成。本阶段未 push、请求
 review、合并或关闭 Issue。没有合同变化，不重新生成前端产物。
+
+## 2026-09-14：原生 Forward 终态测量发布
+
+按 DESIGN A7.7 接入原 Worker 的 publish_scientific_result（终态采纳后、ACK 前）。
+复用 Project/Run 锁、精确原 Attempt/JobSpec/Manifest/输出与原对象发布/清理；
+Evaluation 保留原 Mandate 的 EvaluationPolicy 血缘，AutomationPolicy 单独引用。
+测量 decision 始终 INCONCLUSIVE；完整原生统计且原来源/授权仍有效才为 VALID。
+更正/撤权/过期或缺统计为 INCOMPLETE，失败/取消不补造指标。原冻结期限及
+已登记未来撤权限制有效期。先写指标再引用窗口封口，重放不读写对象。
+
+以 09ad79e5 及冻结补丁串行验证：
+
+- verify-A7kp2A 编译/Clippy/准入测试通过，格式检查失败（本机 rustup 不在 PATH）；
+  使用已安装工具链绝对路径格式化。verify-Sbwuxt 定向通过。
+- verify-LGfT36 捕获新独立测量流使旧全项目计数断言不成立；改为精确原 daily
+  流计数，保留原未发送任务被纠正阻断的测试。verify-1srepE/85zRt8 捕获新增
+  未来撤权测试的类型名及必需版本字段遗漏；改用原 PolicyRevokeV1 和原撤权 ID。
+- verify-wxN23F 的全部编译门禁、143 项合同/领域及 67 项 PG/PGMQ 测试通过；
+  HTTP/CLI 23 项通过、原交付链 1 项在并发刷新租约断言失败（两个 Some）。
+  根因为 LEFT JOIN 候选旧快照与无条件冲突更新允许覆盖新租约。原刷新 upsert
+  增加已有 lease_until/next_attempt_at 均到期的原子条件，失败返回无预约。
+- 最终 verify-wfrA1W：check、fmt、严格 Clippy、143 项合同/领域、67 项真实
+  PG/PGMQ、24 项 HTTP/CLI 全部通过，0 忽略；包含原刷新租约竞争和完整原交付
+  HTTP/CLI 回归（18 项组合测试耗时 207.47 秒）。源码保持不变，临时 PG 停止。
+
+Forward 扩展用例经原生准入、首次发送、接受回执、受控 Manifest/输出采纳到
+正式测量/指标/窗口发布；覆盖窗口写入故障整体回滚及未引用对象回收、并发
+唯一发布、无 IO 重放、有效期被未来撤权截短、不可改删、取消终态零指标/零
+有效观察。统计值和基础 Claim/Candidate/Runtime 仍是明确 fixture，不证明
+真实多日市场、完整原生 Claim 或 OCI 科学运行；前阶段原生数值测试不能拼成
+完整生产验收。本次无对外合同变化，不重新生成前端。尚待自动调度、Live/Wake
+消费与全部剩余合同；未 push、请求 review、合并或关闭 Issue。

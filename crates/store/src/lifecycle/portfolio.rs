@@ -23,7 +23,7 @@ mod simulation;
 mod study;
 mod weights;
 pub(super) use evaluation::publish as publish_evaluation;
-pub(super) use publication::publish;
+pub(super) use publication::{document, publish};
 
 // FOR UPDATE also conflicts with the revocation insert's native FK key-share
 // lock. FOR SHARE alone would not serialize a new revocation against admission.

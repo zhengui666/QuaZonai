@@ -37,6 +37,9 @@ impl Store {
             ))
             .await;
         }
+        if locked.run.kind == RunKind::ForwardEvaluate {
+            return Box::pin(super::forward::publish(tx, locked, read, publish)).await;
+        }
         let held_out: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM app.sealed_evaluation_tasks WHERE run_id=$1)",
         )

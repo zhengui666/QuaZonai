@@ -2814,6 +2814,14 @@ app.forward_evaluation_inputs追加记录原FORWARD InputSet、原政策、Hando
 
 反馈处理是固定已有数据的测量，不调用模型、不产生策略/试验，也不伪造新Cycle。使用原无Cycle Run队列/事件/Runtime/终态记账路径，experiments=0、1CPU、30CPU秒、60墙钟秒、512MiB、1MiB输出，项目无Cycle并发仍限2；只允许有精确可信登记的FORWARD_EVALUATE，泛型入口不能借kind绕过登记。每个原输入集至多一个Forward Run；同原Handoff与相同完整原消息ID集合只返回原Run，不重读受限原报告或重发参数，换政策/调用编号不重置任务。新冻结/任务/PGMQ/回执任一步失败整体回滚，未引用的本次参数文件沿用项目锁下原生清理。原始报告与已完成记录不覆盖或删除。
 
+下游刷新租约的冲突更新必须原子检查已有lease_until与next_attempt_at均已到期；不能仅凭候选SELECT的旧快照覆盖并发调用刚取得的租约。
+
+### A7.7 原生 Forward 终态发布
+
+原 Worker 在采纳原终态之后、ACK 之前发表 FORWARD Evaluation，复用 Run 锁、原终态回执、精确 Attempt/JobSpec/Manifest/输出 Artifact 和原生指标绑定。Evaluation.policy_id 保留原 Candidate 的 Mandate.required_evaluation_policy_id（EvaluationPolicy）；AutomationPolicy 仍由原 forward_evaluation_inputs.policy_id 单独记录，不能混用外键。此 Evaluation 是测量，decision 始终 INCONCLUSIVE；原生三项统计完整且来源/政策仍有效时 evidence_status=VALID，其余为 INCOMPLETE。晋级、劣化各自消费指标与冻结政策要求，不得把测量有效解释为策略通过。
+
+成功结果必须与冻结请求及原输出逐项一致。更正、新消息、撤权、替换政策或期限到达不删除已运行结果，而将其发表为 INCOMPLETE、无有效期；原指标仍可审计。失败/取消发表无指标的 INCOMPLETE，不假称远端成功。报告不包含收益原字节。每个原 Run 唯一发表；重放不再读写对象。先写 Evaluation 及全部 metric_values，再写 forward_evidence_windows 封口，原窗口范围保留，只有当前有效完整统计才记连续有效样本；其他为零样本、不连续。窗口 freshness_deadline 保留原冻结期限，Evaluation.valid_until 仅在当前有效时设置，且不得晚于已登记的未来撤权生效时间。对象写入、评估、指标和窗口同事务失败整体回滚，沿用原 Worker 未引用对象清理。此发布不创建新策略、Approval、Offer、Wake 或 Cycle。
+
 ## A8. 集成、身份与幂等
 
 ### A8.0 原生 Codex 连接与会话适配

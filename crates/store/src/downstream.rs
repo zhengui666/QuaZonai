@@ -333,8 +333,14 @@ impl Store {
             .fetch_one(&mut *tx)
             .await?;
         let lease_id = Id::new();
-        sqlx::query("INSERT INTO app.downstream_probe_refresh(downstream_id,lease_id,lease_until,next_attempt_at) VALUES($1,$2,$3,$4) ON CONFLICT(downstream_id) DO UPDATE SET lease_id=excluded.lease_id,lease_until=excluded.lease_until,next_attempt_at=excluded.next_attempt_at")
-            .bind(downstream_id.as_uuid()).bind(lease_id.as_uuid()).bind(started_at+Duration::seconds(20)).bind(started_at+Duration::seconds(30)).execute(&mut *tx).await?;
+        // The outer-join snapshot can predate a concurrent reservation even after
+        // its downstream lock is released. The conflicting row must arbitrate atomically.
+        let reserved: Option<uuid::Uuid> = sqlx::query_scalar("INSERT INTO app.downstream_probe_refresh(downstream_id,lease_id,lease_until,next_attempt_at) VALUES($1,$2,$3,$4) ON CONFLICT(downstream_id) DO UPDATE SET lease_id=excluded.lease_id,lease_until=excluded.lease_until,next_attempt_at=excluded.next_attempt_at WHERE app.downstream_probe_refresh.next_attempt_at<=clock_timestamp() AND app.downstream_probe_refresh.lease_until<=clock_timestamp() RETURNING downstream_id")
+            .bind(downstream_id.as_uuid()).bind(lease_id.as_uuid()).bind(started_at+Duration::seconds(20)).bind(started_at+Duration::seconds(30)).fetch_optional(&mut *tx).await?;
+        if reserved.is_none() {
+            tx.commit().await?;
+            return Ok(None);
+        }
         let ticket = RefreshTicket {
             snapshot: DownstreamSnapshot {
                 endpoint: row.try_get("endpoint")?,

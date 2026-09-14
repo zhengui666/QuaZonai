@@ -491,7 +491,7 @@ pub(super) async fn windows_current(
         .await?)
 }
 
-pub(super) async fn document<P, Published>(
+pub(in crate::lifecycle) async fn document<P, Published>(
     tx: &mut Tx<'_>,
     run: &RunSnapshotV1,
     id: Id,
