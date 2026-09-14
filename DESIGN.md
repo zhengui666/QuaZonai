@@ -264,6 +264,16 @@ Forward输入且cutoff已到，不覆盖它；有效调仓时点取InputSet上�
 Build成功仅产生候选；后续仍需原政策独立Study/PASS、新Release及各自Paper/Live审批，
 不能因自动来源跳过这些步骤。实现证据与尚未接通的阶段记在执行记录，不以此合同代替交付。
 
+自动Build成功并正式发布VALID候选后，可信Worker只为该原Build创建一次独立Study。
+Study绑定原自动记录的原政策及当前有效授权、原Candidate、Cycle、Runtime修订和
+原限额，仍从原Mandate的冻结科学政策读取完整Study窗口/成员。更换自动政策或最新
+来源Release后不继续旧后继；不得改成新政策UUID重新消费同Build。Study失败或
+INCONCLUSIVE保留原事实，不轮询重做同一研究；人工研究仍有独立明确入口。
+原自动Build到Study关联追加到不可变记录，与Run/PGMQ/预算同事务提交；不生成
+Operator回执。Study登记和执行成功均不能代替正式独立Evaluation/PASS及新Release。
+
+自动 Study 的正式 PORTFOLIO/VALID/PASS 发布后，只有仍为当前版本的原自动政策可以冻结其新 Release。复用手工 Release 的原始来源、许可、有效期和逐字节重验；Build→Study→Release 关系不可变且每个 Build 只登记一个自动 Release。新 Package 不改写旧 Package，也不等于审批或交付；Paper/Live 仍由既有审批和政策路径裁决。
+
 ## 9. Ant Design 产品面与浏览器合同
 
 主导航：研究 / Alpha / 组合 / 交付 / 运行 / 设置。React/TypeScript + 官方 antd，不是 Ant Design Vue，不保留 Radix/自制基础组件双体系。ConfigProvider + App 统一 locale/theme/token，官方 icons；默认 ECharts 单图表方案，表格替代、真实单位和证据下载依据。保留合适业务复合组件、React Query 和测试经验，不 fork 基础组件或另建 form/theme。

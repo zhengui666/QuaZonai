@@ -21,8 +21,8 @@ impl Store {
         actor: &Actor,
         key: &str,
         request: &PortfolioStudyRequestV1,
-        mut read: R,
-        mut publish: P,
+        read: R,
+        publish: P,
     ) -> Result<CommandResult<RunSnapshotV1>, StoreError>
     where
         R: FnMut(Id, DbCounter) -> Read,
@@ -45,81 +45,114 @@ impl Store {
             tx.commit().await?;
             return Ok(replay);
         }
-        let project: uuid::Uuid =
-            sqlx::query_scalar("SELECT project_id FROM app.portfolio_candidates WHERE id=$1")
-                .bind(request.candidate_id.as_uuid())
-                .fetch_optional(&mut *tx)
-                .await?
-                .ok_or(StoreError::NotFound)?;
-        let project = db::id(project)?;
-        crate::research::project_for_write(&mut tx, project).await?;
-        let original = sources(&mut tx, project, request, &mut read).await?;
-        let bytes = serde_json::to_vec(&original.task).map_err(|_| StoreError::Integrity)?;
-        let parameter = Id::new();
-        let size = counter(bytes.len() as i64)?;
-        publish(NativeObjectPublication {
-            id: parameter,
-            bytes,
-        })
-        .await?;
-        // A callback can outlive licenses/qualifications or expose changed files.
-        // Reread the same sources, not a newly selected cohort or a replacement plan.
-        let mut current = sources(&mut tx, project, request, &mut read).await?;
-        if db::json(&current.task)? != db::json(&original.task)?
-            || db::json(&current.inputs)? != db::json(&original.inputs)?
-            || current.capability != original.capability
-            || current.image != original.image
-        {
-            return Err(StoreError::Integrity);
-        }
-        sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,'PARAMETERS','application/json','qz.native_task','1','LOCAL',$3,'1',$4,'EVALUATOR_ONLY','REAL','OPERATOR','REFERENCED')")
-            .bind(parameter.as_uuid()).bind(project.as_uuid()).bind(parameter.to_string()).bind(size.get() as i64).execute(&mut *tx).await?;
-        current.inputs.push(RuntimeInputV1::Artifact {
-            artifact_id: parameter,
-            storage_version: "1".into(),
-            byte_count: size,
-            role: ArtifactInputRole::Parameters,
-        });
-        let (mut tx, run) = Store::enqueue_run_in_transaction(
-            tx,
-            &format!("portfolio-study/{}", Id::new()),
-            &RunSubmission {
-                cycle_id: request.cycle_id,
-                input_set_id: current.input_set,
-                runtime_id: request.runtime_id,
-                runtime_revision: request.expected_runtime_revision,
-                kind: RunKind::PortfolioSimulate,
-                limits: request.limits.clone(),
-            },
-        )
-        .await?;
-        bind_task(
-            &mut tx,
-            &run.resource,
-            NativeTaskDefinition {
-                parameters_artifact_id: parameter,
-                inputs: current.inputs,
-                image_ref: current.image,
-                cpu: current.cpu,
-                capability_snapshot_artifact_id: current.capability,
-                output_schemas: current.task.output_schemas(),
-                origin: DataOrigin::Real,
-                access: ArtifactAccess::EvaluatorOnly,
-            },
-        )
-        .await?;
-        sqlx::query("INSERT INTO app.portfolio_study_tasks(run_id,candidate_id,policy_id,dataset_revision_id,request) VALUES($1,$2,$3,$4,$5)")
-            .bind(run.resource.id.as_uuid()).bind(request.candidate_id.as_uuid())
-            .bind(current.policy.as_uuid()).bind(current.dataset.as_uuid()).bind(db::json(request)?)
-            .execute(&mut *tx).await?;
+        let (mut tx, run, window) =
+            Box::pin(admit_study(tx, request, read, publish, "OPERATOR")).await?;
         commands::recheck_authority(&mut tx, actor, &prepared).await?;
-        // All source/grant/qualification locks were acquired above. There are no
-        // file callbacks after this clock check, and no live-target TTL in Study.
-        source_until(&mut tx, &current.qualifications, &current.input_sets).await?;
-        let result = commands::finish(&mut tx, prepared, run.resource, 202).await?;
+        window.recheck(&mut tx).await?;
+        let result = commands::finish(&mut tx, prepared, run, 202).await?;
         tx.commit().await?;
         Ok(result)
     }
+}
+
+pub(super) struct StudyWindow {
+    qualifications: Vec<Id>,
+    input_sets: BTreeSet<Id>,
+}
+impl StudyWindow {
+    pub(super) async fn recheck(&self, tx: &mut Tx<'_>) -> Result<(), StoreError> {
+        source_until(tx, &self.qualifications, &self.input_sets).await?;
+        Ok(())
+    }
+}
+
+// The caller holds its own original authority; no scientific or delivery bypass.
+pub(super) async fn admit_study<'a, R, Read, P, Published>(
+    mut tx: Tx<'a>,
+    request: &PortfolioStudyRequestV1,
+    mut read: R,
+    mut publish: P,
+    created_by: &str,
+) -> Result<(Tx<'a>, RunSnapshotV1, StudyWindow), StoreError>
+where
+    R: FnMut(Id, DbCounter) -> Read,
+    Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
+    P: FnMut(NativeObjectPublication) -> Published,
+    Published: std::future::Future<Output = Result<(), StoreError>>,
+{
+    domain::data::bounded_native_limits(&request.limits)?;
+    let project: uuid::Uuid =
+        sqlx::query_scalar("SELECT project_id FROM app.portfolio_candidates WHERE id=$1")
+            .bind(request.candidate_id.as_uuid())
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(StoreError::NotFound)?;
+    let project = db::id(project)?;
+    crate::research::project_for_write(&mut tx, project).await?;
+    let original = sources(&mut tx, project, request, &mut read).await?;
+    let bytes = serde_json::to_vec(&original.task).map_err(|_| StoreError::Integrity)?;
+    let parameter = Id::new();
+    let size = counter(bytes.len() as i64)?;
+    publish(NativeObjectPublication {
+        id: parameter,
+        bytes,
+    })
+    .await?;
+    // A callback can outlive licenses/qualifications or expose changed files.
+    // Reread the same sources, not a newly selected cohort or a replacement plan.
+    let mut current = sources(&mut tx, project, request, &mut read).await?;
+    if db::json(&current.task)? != db::json(&original.task)?
+        || db::json(&current.inputs)? != db::json(&original.inputs)?
+        || current.capability != original.capability
+        || current.image != original.image
+    {
+        return Err(StoreError::Integrity);
+    }
+    sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,'PARAMETERS','application/json','qz.native_task','1','LOCAL',$3,'1',$4,'EVALUATOR_ONLY','REAL',$5,'REFERENCED')")
+            .bind(parameter.as_uuid()).bind(project.as_uuid()).bind(parameter.to_string()).bind(size.get() as i64).bind(created_by).execute(&mut *tx).await?;
+    current.inputs.push(RuntimeInputV1::Artifact {
+        artifact_id: parameter,
+        storage_version: "1".into(),
+        byte_count: size,
+        role: ArtifactInputRole::Parameters,
+    });
+    let (mut tx, run) = Store::enqueue_run_in_transaction(
+        tx,
+        &format!("portfolio-study/{}", Id::new()),
+        &RunSubmission {
+            cycle_id: request.cycle_id,
+            input_set_id: current.input_set,
+            runtime_id: request.runtime_id,
+            runtime_revision: request.expected_runtime_revision,
+            kind: RunKind::PortfolioSimulate,
+            limits: request.limits.clone(),
+        },
+    )
+    .await?;
+    bind_task(
+        &mut tx,
+        &run.resource,
+        NativeTaskDefinition {
+            parameters_artifact_id: parameter,
+            inputs: current.inputs,
+            image_ref: current.image,
+            cpu: current.cpu,
+            capability_snapshot_artifact_id: current.capability,
+            output_schemas: current.task.output_schemas(),
+            origin: DataOrigin::Real,
+            access: ArtifactAccess::EvaluatorOnly,
+        },
+    )
+    .await?;
+    sqlx::query("INSERT INTO app.portfolio_study_tasks(run_id,candidate_id,policy_id,dataset_revision_id,request) VALUES($1,$2,$3,$4,$5)")
+            .bind(run.resource.id.as_uuid()).bind(request.candidate_id.as_uuid())
+            .bind(current.policy.as_uuid()).bind(current.dataset.as_uuid()).bind(db::json(request)?)
+            .execute(&mut *tx).await?;
+    let window = StudyWindow {
+        qualifications: current.qualifications,
+        input_sets: current.input_sets,
+    };
+    Ok((tx, run.resource, window))
 }
 
 pub(super) async fn source_until(

@@ -59,8 +59,8 @@ impl Store {
         actor: &Actor,
         key: &str,
         request: &ReleaseCreateV1,
-        mut read: R,
-        mut publish: P,
+        read: R,
+        publish: P,
     ) -> Result<CommandResult<ReleaseViewV1>, StoreError>
     where
         R: FnMut(Id, DbCounter) -> Read,
@@ -82,60 +82,81 @@ impl Store {
             tx.commit().await?;
             return Ok(replay);
         }
-        let project: uuid::Uuid =
-            sqlx::query_scalar("SELECT project_id FROM app.portfolio_candidates WHERE id=$1")
-                .bind(request.candidate_id.as_uuid())
-                .fetch_optional(&mut *tx)
-                .await?
-                .ok_or(StoreError::NotFound)?;
-        let project = db::id(project)?;
-        crate::research::project_for_write(&mut tx, project).await?;
-        let release = Id::new();
-        let original = package(&mut tx, project, request, release, &mut read).await?;
-        let bytes = serde_json::to_vec(&original).map_err(|_| StoreError::Integrity)?;
-        let size = i64::try_from(bytes.len()).map_err(|_| StoreError::Integrity)?;
-        let artifact = Id::new();
-        publish(NativeObjectPublication {
-            id: artifact,
-            bytes,
-        })
-        .await?;
-        // Recheck files and all original authority/source windows after publication.
-        let mut current = package(&mut tx, project, request, release, &mut read).await?;
-        current.valid_from = original.valid_from;
-        if db::json(&current)? != db::json(&original)? {
-            return Err(StoreError::Conflict);
-        }
+        let (mut tx, view) =
+            Box::pin(freeze_release(tx, request, read, publish, "OPERATOR")).await?;
         commands::recheck_authority(&mut tx, actor, &prepared).await?;
-        if original.valid_until <= now(&mut tx).await? {
+        if view.valid_until <= now(&mut tx).await? {
             return Err(StoreError::Conflict);
         }
-        sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,'PACKAGE','application/json','qz.target_package','1','LOCAL',$3,'1',$4,'DELIVERY','REAL','OPERATOR','REFERENCED')")
-            .bind(artifact.as_uuid()).bind(project.as_uuid()).bind(artifact.to_string()).bind(size).execute(&mut *tx).await?;
-        let market = &original.compatible_market_capabilities[0];
-        let created_at = sqlx::query_scalar("INSERT INTO app.releases(id,candidate_id,package_artifact_id,package_schema_version,mandate_id,evaluation_id,market_capability_version,asof,valid_from,valid_until,environment) VALUES($1,$2,$3,'1',$4,$5,$6,$7,$8,$9,'REAL') RETURNING created_at")
-            .bind(release.as_uuid()).bind(request.candidate_id.as_uuid()).bind(artifact.as_uuid())
-            .bind(original.mandate_id.as_uuid()).bind(request.evaluation_id.as_uuid()).bind(market)
-            .bind(original.asof).bind(original.valid_from).bind(original.valid_until).fetch_one(&mut *tx).await?;
-        let view = ReleaseViewV1 {
-            id: release,
-            project_id: project,
-            candidate_id: request.candidate_id,
-            mandate_id: original.mandate_id,
-            evaluation_id: request.evaluation_id,
-            package_artifact_id: artifact,
-            package_schema_version: original.package_schema_version,
-            market_capability_version: market.clone(),
-            asof: original.asof,
-            valid_from: original.valid_from,
-            valid_until: original.valid_until,
-            environment: PackageOriginV1::Real,
-            created_at,
-        };
         let result = commands::finish(&mut tx, prepared, view, 201).await?;
         tx.commit().await?;
         Ok(result)
     }
+}
+
+pub(super) async fn freeze_release<'a, R, Read, P, Published>(
+    mut tx: Tx<'a>,
+    request: &ReleaseCreateV1,
+    mut read: R,
+    mut publish: P,
+    created_by: &str,
+) -> Result<(Tx<'a>, ReleaseViewV1), StoreError>
+where
+    R: FnMut(Id, DbCounter) -> Read,
+    Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
+    P: FnMut(NativeObjectPublication) -> Published,
+    Published: std::future::Future<Output = Result<(), StoreError>>,
+{
+    let project: uuid::Uuid =
+        sqlx::query_scalar("SELECT project_id FROM app.portfolio_candidates WHERE id=$1")
+            .bind(request.candidate_id.as_uuid())
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(StoreError::NotFound)?;
+    let project = db::id(project)?;
+    crate::research::project_for_write(&mut tx, project).await?;
+    let release = Id::new();
+    let original = package(&mut tx, project, request, release, &mut read).await?;
+    let bytes = serde_json::to_vec(&original).map_err(|_| StoreError::Integrity)?;
+    let size = i64::try_from(bytes.len()).map_err(|_| StoreError::Integrity)?;
+    let artifact = Id::new();
+    publish(NativeObjectPublication {
+        id: artifact,
+        bytes,
+    })
+    .await?;
+    // Recheck files and all original authority/source windows after publication.
+    let mut current = package(&mut tx, project, request, release, &mut read).await?;
+    current.valid_from = original.valid_from;
+    if db::json(&current)? != db::json(&original)? {
+        return Err(StoreError::Conflict);
+    }
+    if original.valid_until <= now(&mut tx).await? {
+        return Err(StoreError::Conflict);
+    }
+    sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,'PACKAGE','application/json','qz.target_package','1','LOCAL',$3,'1',$4,'DELIVERY','REAL',$5,'REFERENCED')")
+            .bind(artifact.as_uuid()).bind(project.as_uuid()).bind(artifact.to_string()).bind(size).bind(created_by).execute(&mut *tx).await?;
+    let market = &original.compatible_market_capabilities[0];
+    let created_at = sqlx::query_scalar("INSERT INTO app.releases(id,candidate_id,package_artifact_id,package_schema_version,mandate_id,evaluation_id,market_capability_version,asof,valid_from,valid_until,environment) VALUES($1,$2,$3,'1',$4,$5,$6,$7,$8,$9,'REAL') RETURNING created_at")
+            .bind(release.as_uuid()).bind(request.candidate_id.as_uuid()).bind(artifact.as_uuid())
+            .bind(original.mandate_id.as_uuid()).bind(request.evaluation_id.as_uuid()).bind(market)
+            .bind(original.asof).bind(original.valid_from).bind(original.valid_until).fetch_one(&mut *tx).await?;
+    let view = ReleaseViewV1 {
+        id: release,
+        project_id: project,
+        candidate_id: request.candidate_id,
+        mandate_id: original.mandate_id,
+        evaluation_id: request.evaluation_id,
+        package_artifact_id: artifact,
+        package_schema_version: original.package_schema_version,
+        market_capability_version: market.clone(),
+        asof: original.asof,
+        valid_from: original.valid_from,
+        valid_until: original.valid_until,
+        environment: PackageOriginV1::Real,
+        created_at,
+    };
+    Ok((tx, view))
 }
 
 pub(super) async fn package<R, Read>(

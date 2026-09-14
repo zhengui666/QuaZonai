@@ -4853,3 +4853,12 @@ DESIGN补充冻结政策下的确定性构建来源、日程、原Cycle/Runtime/
 compile verify-AaU3R3通过；verify-J3pPwH仅测试Cycle Option断言编译失败，修正测试类型；verify-g22syJ新场景被正确拒绝automation_downstream，改为原生命令登记PAPER/LIVE测试下游而未放宽产品Gate。verify-XhxVbv通过两项；实际cutoff修正后verify-1kZckX通过workspace/all-targets、格式、严格Clippy及2项原生数据库检查（23.10秒）。最终verify-f0NSng再次通过同样静态检查和原生组合HTTP/CLI/Worker回归31项（10+21），源不变、隔离PG均停止。
 
 固定间隔正向Store链已验证；实际Worker非MANUAL正向调用、Calendar调度原文件场景、政策失效/UTC配额更多竞态仍需补强。自动Study及自动新Release仍待接入；运行来源在Web/CLI的完整可见性也须随完整T33/T42验收补齐。没有push/review/merge/close，未将本阶段视为完整自动再平衡。
+
+
+### 2026-09-15：原自动Build的独立Study与新Release
+
+人工/自动Study复用原准入事务；自动入口固定原Candidate、Cycle、Runtime修订和限额，沿用冻结独立研究计划。原自动政策和来源Release必须仍有效/当前；不可变portfolio_rebalance_studies绑定单一后继。正式PORTFOLIO/VALID/PASS之后复用原Release冻结事务，发布后逐字节重读来源和期限，并登记不可变portfolio_rebalance_releases。Worker串行推进三阶段并清理回滚孤立产物，RUNTIME来源不生成Operator回执，也不绕过Paper/Live审批。
+
+扩展原生数据库/PGMQ场景，覆盖未完成阶段不发布、并发单一Study/Release、独立历史输入、原Cycle、发布失败回滚、旧包字节不变、无新Approval/Operator回执、关联不可改写。verify-RiLVyz仅测试传入字节数类型编译失败；改读原artifacts.byte_count后verify-0WHBRB通过workspace/all-targets编译、格式、严格Clippy及两项数据库测试（23.50秒），source_unchanged=true。受控上游数值响应仍不证明真实市场/模型或完整T42。实际非MANUAL Worker正向、日历与更多政策/额度竞态、运行来源可见性及完整验收仍待补齐；尚未push/review/merge/close。
+
+共享异步事务扩展后，verify-67o4Zs/VD9dbb/qd8trH的Live回归出现栈溢出，CLI十项通过但整轮失败。仅Worker分配边界不足以解决；verify-Zk06Bp临时阶段标记定位到资格准备、尚未进入Live Worker。共享Study/Release与Worker阶段使用Box::pin，大型Live测试入口分段后，verify-XnfmbD定向通过；未增加线程栈、未删业务断言，诊断输出已移除。最终同一源码verify-5CiBo1通过workspace/all-targets编译、格式、严格Clippy及31项HTTP/CLI/Worker回归（HTTP21项248.95秒）；verify-uBwbsJ再次通过全部静态检查及2项再平衡数据库用例（25.08秒）。两轮source_unchanged=true，隔离PostgreSQL停止。GitHub最新读取仍为PR63开放草稿、远端37e5713、Issue62开放。

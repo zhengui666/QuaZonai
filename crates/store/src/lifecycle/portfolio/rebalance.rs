@@ -129,6 +129,116 @@ impl Store {
     }
 }
 
+impl Store {
+    /// Advance only the successful original automatic Build, once per Build.
+    pub async fn automate_rebalance_study<R, Read, P, Published>(
+        &self,
+        project: Id,
+        read: R,
+        publish: P,
+    ) -> Result<Option<RunSnapshotV1>, StoreError>
+    where
+        R: FnMut(Id, DbCounter) -> Read,
+        Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
+        P: FnMut(NativeObjectPublication) -> Published,
+        Published: std::future::Future<Output = Result<(), StoreError>>,
+    {
+        let mut tx = self.pool.begin().await?;
+        let row = sqlx::query("SELECT current_automation_policy_id FROM app.projects WHERE id=$1 AND state='ACTIVE' FOR UPDATE SKIP LOCKED")
+            .bind(project.as_uuid()).fetch_optional(&mut *tx).await?;
+        let Some(row) = row else { return Ok(None) };
+        let Some(policy_id) = db::optional_id(&row, "current_automation_policy_id")? else {
+            return Ok(None);
+        };
+        let row = sqlx::query("SELECT b.run_id,b.mandate_id,b.downstream_id,c.id AS candidate_id,t.request FROM app.portfolio_rebalances b JOIN app.portfolio_build_tasks t ON t.run_id=b.run_id JOIN app.runs r ON r.id=b.run_id AND r.state='SUCCEEDED' JOIN app.portfolio_candidates c ON c.run_id=r.id AND c.project_id=b.project_id AND c.mandate_id=b.mandate_id AND c.evidence_status='VALID' JOIN app.candidate_publications published ON published.candidate_id=c.id WHERE b.project_id=$1 AND b.policy_id=$2 AND NOT EXISTS(SELECT 1 FROM app.portfolio_rebalance_studies s WHERE s.build_run_id=b.run_id) AND b.source_candidate_id=(SELECT seed.candidate_id FROM app.releases seed JOIN app.portfolio_candidates origin ON origin.id=seed.candidate_id WHERE origin.project_id=b.project_id AND origin.mandate_id=b.mandate_id ORDER BY seed.id DESC LIMIT 1) ORDER BY b.decision_cutoff DESC,b.run_id DESC LIMIT 1")
+            .bind(project.as_uuid()).bind(policy_id.as_uuid()).fetch_optional(&mut *tx).await?;
+        let Some(row) = row else { return Ok(None) };
+        let build_id = db::id(row.try_get("run_id")?)?;
+        let mandate = db::id(row.try_get("mandate_id")?)?;
+        let downstream = db::id(row.try_get("downstream_id")?)?;
+        crate::automation::active_policy(&mut tx, policy_id, project, mandate, downstream).await?;
+        let build: PortfolioBuildRequestV1 =
+            serde_json::from_value(row.try_get("request")?).map_err(|_| StoreError::Integrity)?;
+        if build.mandate_id != mandate {
+            return Err(StoreError::Integrity);
+        }
+        let request = PortfolioStudyRequestV1 {
+            schema_version: SchemaV1,
+            candidate_id: db::id(row.try_get("candidate_id")?)?,
+            cycle_id: build.cycle_id,
+            runtime_id: build.runtime_id,
+            expected_runtime_revision: build.expected_runtime_revision,
+            limits: build.limits,
+        };
+        let (mut tx, run, window) =
+            Box::pin(study::admit_study(tx, &request, read, publish, "RUNTIME")).await?;
+        crate::automation::active_policy(&mut tx, policy_id, project, mandate, downstream).await?;
+        window.recheck(&mut tx).await?;
+        sqlx::query(
+            "INSERT INTO app.portfolio_rebalance_studies(build_run_id,study_run_id) VALUES($1,$2)",
+        )
+        .bind(build_id.as_uuid())
+        .bind(run.id.as_uuid())
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(Some(run))
+    }
+}
+
+impl Store {
+    /// Freeze the original automatic Study's formal PASS, without approving delivery.
+    pub async fn automate_rebalance_release<R, Read, P, Published>(
+        &self,
+        project: Id,
+        read: R,
+        publish: P,
+    ) -> Result<Option<contracts::delivery::ReleaseViewV1>, StoreError>
+    where
+        R: FnMut(Id, DbCounter) -> Read,
+        Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
+        P: FnMut(NativeObjectPublication) -> Published,
+        Published: std::future::Future<Output = Result<(), StoreError>>,
+    {
+        let mut tx = self.pool.begin().await?;
+        let row = sqlx::query("SELECT current_automation_policy_id FROM app.projects WHERE id=$1 AND state='ACTIVE' FOR UPDATE SKIP LOCKED")
+            .bind(project.as_uuid()).fetch_optional(&mut *tx).await?;
+        let Some(row) = row else { return Ok(None) };
+        let Some(policy_id) = db::optional_id(&row, "current_automation_policy_id")? else {
+            return Ok(None);
+        };
+        let row = sqlx::query("SELECT b.run_id,b.mandate_id,b.downstream_id,s.candidate_id,e.id AS evaluation_id FROM app.portfolio_rebalances b JOIN app.portfolio_rebalance_studies child ON child.build_run_id=b.run_id JOIN app.portfolio_study_tasks s ON s.run_id=child.study_run_id JOIN app.evaluations e ON e.run_id=s.run_id AND e.subject_candidate_id=s.candidate_id AND e.project_id=b.project_id AND e.evaluation_kind='PORTFOLIO' AND e.execution_status='SUCCEEDED' AND e.evidence_status='VALID' AND e.decision='PASS' AND e.valid_until>clock_timestamp() JOIN app.evaluation_publications p ON p.evaluation_id=e.id WHERE b.project_id=$1 AND b.policy_id=$2 AND NOT EXISTS(SELECT 1 FROM app.portfolio_rebalance_releases done WHERE done.build_run_id=b.run_id) AND b.source_candidate_id=(SELECT seed.candidate_id FROM app.releases seed JOIN app.portfolio_candidates origin ON origin.id=seed.candidate_id WHERE origin.project_id=b.project_id AND origin.mandate_id=b.mandate_id ORDER BY seed.id DESC LIMIT 1) ORDER BY b.decision_cutoff DESC,b.run_id DESC LIMIT 1")
+            .bind(project.as_uuid()).bind(policy_id.as_uuid()).fetch_optional(&mut *tx).await?;
+        let Some(row) = row else { return Ok(None) };
+        let build_id = db::id(row.try_get("run_id")?)?;
+        let mandate = db::id(row.try_get("mandate_id")?)?;
+        let downstream = db::id(row.try_get("downstream_id")?)?;
+        crate::automation::active_policy(&mut tx, policy_id, project, mandate, downstream).await?;
+        let request = contracts::delivery::ReleaseCreateV1 {
+            schema_version: SchemaV1,
+            candidate_id: db::id(row.try_get("candidate_id")?)?,
+            evaluation_id: db::id(row.try_get("evaluation_id")?)?,
+        };
+        let (mut tx, released) = Box::pin(release::freeze_release(
+            tx, &request, read, publish, "RUNTIME",
+        ))
+        .await?;
+        crate::automation::active_policy(&mut tx, policy_id, project, mandate, downstream).await?;
+        if released.valid_until <= now(&mut tx).await? {
+            return Err(StoreError::Conflict);
+        }
+        sqlx::query(
+            "INSERT INTO app.portfolio_rebalance_releases(build_run_id,release_id) VALUES($1,$2)",
+        )
+        .bind(build_id.as_uuid())
+        .bind(released.id.as_uuid())
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(Some(released))
+    }
+}
+
 async fn due<R, Read>(
     tx: &mut Tx<'_>,
     mandate: &MandateViewV1,

@@ -259,12 +259,190 @@ async fn check(
             .unwrap(),
         0
     );
-    let message = validation_publication::message(pool, run.id).await;
+    Box::pin(continue_study(pool, store, actor, f, run, &release, before)).await;
+}
+
+async fn continue_study(
+    pool: &PgPool,
+    store: &Store,
+    actor: &store::authority::Actor,
+    f: &cycle_support::Fixture,
+    build: &contracts::runs::RunSnapshotV1,
+    seed: &ReleaseViewV1,
+    receipts: i64,
+) {
+    assert!(Box::pin(store.automate_rebalance_study(
+        seed.project_id,
+        |_, _| async { panic!("unfinished Build reads nothing") },
+        |_| async { panic!("unfinished Build publishes nothing") }
+    ))
+    .await
+    .unwrap()
+    .is_none());
+    let message = validation_publication::message(pool, build.id).await;
+    let Some(ClaimResult::Leased(lease)) = store
+        .claim_native_run(&message, "automatic-rebalance-native", 60)
+        .await
+        .unwrap()
+    else {
+        panic!("Build lease")
+    };
+    let job = store.native_job(build.id, &lease.fence).await.unwrap();
+    Box::pin(result::complete(pool, store, f, &lease, &job)).await;
+    let candidate = validation_publication::publish(store, f, build.id)
+        .await
+        .unwrap()
+        .resource;
+    store.acknowledge_run(&message).await.unwrap();
+    let publish = |object: store::lifecycle::native::NativeObjectPublication| {
+        std::future::ready(
+            f.objects
+                .put(object.id, &object.bytes)
+                .map_err(|_| StoreError::Integrity),
+        )
+    };
+    let (left, right) = tokio::join!(
+        Box::pin(store.automate_rebalance_study(
+            seed.project_id,
+            |id, size| f.read(id, size),
+            publish
+        )),
+        Box::pin(store.automate_rebalance_study(
+            seed.project_id,
+            |id, size| f.read(id, size),
+            publish
+        ))
+    );
+    let runs: Vec<_> = [left.unwrap(), right.unwrap()]
+        .into_iter()
+        .flatten()
+        .collect();
+    assert_eq!(runs.len(), 1);
+    let study = &runs[0];
+    assert_eq!(study.kind, contracts::runs::RunKind::PortfolioSimulate);
+    assert_eq!(study.cycle_id, build.cycle_id);
+    assert_ne!(
+        study.input_set_id, build.input_set_id,
+        "Study uses its frozen independent historical plan"
+    );
+    let bound: (uuid::Uuid,String) = sqlx::query_as("SELECT s.candidate_id,a.created_by FROM app.portfolio_rebalance_studies child JOIN app.portfolio_study_tasks s ON s.run_id=child.study_run_id JOIN app.run_native_tasks t ON t.run_id=s.run_id JOIN app.artifacts a ON a.id=t.parameters_artifact_id WHERE child.build_run_id=$1 AND child.study_run_id=$2")
+        .bind(build.id.as_uuid()).bind(study.id.as_uuid()).fetch_one(pool).await.unwrap();
+    assert_eq!(bound, (candidate.as_uuid(), "RUNTIME".into()));
+    assert!(Box::pin(store.automate_rebalance_study(
+        seed.project_id,
+        |_, _| async { panic!("existing Study reads nothing") },
+        |_| async { panic!("existing Study publishes nothing") }
+    ))
+    .await
+    .unwrap()
+    .is_none());
+    Box::pin(continue_release(
+        pool, store, actor, f, study, seed, receipts,
+    ))
+    .await;
+}
+
+async fn continue_release(
+    pool: &PgPool,
+    store: &Store,
+    actor: &store::authority::Actor,
+    f: &cycle_support::Fixture,
+    study: &contracts::runs::RunSnapshotV1,
+    seed: &ReleaseViewV1,
+    receipts: i64,
+) {
+    let size: i64 = sqlx::query_scalar("SELECT byte_count FROM app.artifacts WHERE id=$1")
+        .bind(seed.package_artifact_id.as_uuid())
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let size = DbCounter::new(size as u64).unwrap();
+    let old = f.read(seed.package_artifact_id, size).await.unwrap();
+    assert!(Box::pin(store.automate_rebalance_release(
+        seed.project_id,
+        |_, _| async { panic!("unpublished Study reads nothing") },
+        |_| async { panic!("unpublished Study publishes nothing") }
+    ))
+    .await
+    .unwrap()
+    .is_none());
+    let message = validation_publication::message(pool, study.id).await;
+    let Some(ClaimResult::Leased(lease)) = store
+        .claim_native_run(&message, "automatic-study-native", 60)
+        .await
+        .unwrap()
+    else {
+        panic!("Study lease")
+    };
+    let job = store.native_job(study.id, &lease.fence).await.unwrap();
+    Box::pin(study_result::complete(
+        pool, store, f, &lease, &job, false, true,
+    ))
+    .await;
+    let evaluation = validation_publication::publish(store, f, study.id)
+        .await
+        .unwrap()
+        .resource;
+    assert_eq!(
+        store.evaluation(actor, evaluation).await.unwrap().decision,
+        contracts::evidence::Decision::Pass
+    );
+    store.acknowledge_run(&message).await.unwrap();
     assert!(matches!(
-        store
-            .claim_native_run(&message, "automatic-rebalance-native", 60)
-            .await
-            .unwrap(),
-        Some(ClaimResult::Leased(_))
+        Box::pin(store.automate_rebalance_release(
+            seed.project_id,
+            |id, size| f.read(id, size),
+            |_| async { Err(StoreError::Integrity) }
+        ))
+        .await,
+        Err(StoreError::Integrity)
     ));
+    let publish = |object: store::lifecycle::native::NativeObjectPublication| {
+        std::future::ready(
+            f.objects
+                .put(object.id, &object.bytes)
+                .map_err(|_| StoreError::Integrity),
+        )
+    };
+    let (left, right) = tokio::join!(
+        Box::pin(store.automate_rebalance_release(
+            seed.project_id,
+            |id, size| f.read(id, size),
+            publish
+        )),
+        Box::pin(store.automate_rebalance_release(
+            seed.project_id,
+            |id, size| f.read(id, size),
+            publish
+        ))
+    );
+    let releases: Vec<_> = [left.unwrap(), right.unwrap()]
+        .into_iter()
+        .flatten()
+        .collect();
+    assert_eq!(releases.len(), 1);
+    let release = &releases[0];
+    assert_eq!(release.evaluation_id, evaluation);
+    assert_ne!(release.candidate_id, seed.candidate_id);
+    assert_ne!(release.id, seed.id);
+    assert_ne!(release.package_artifact_id, seed.package_artifact_id);
+    assert_eq!(f.read(seed.package_artifact_id, size).await.unwrap(), old);
+    let facts: (i64,i64,i64,String)=sqlx::query_as("SELECT (SELECT count(*) FROM app.command_receipts),(SELECT count(*) FROM app.approvals),(SELECT count(*) FROM app.portfolio_rebalance_releases),a.created_by FROM app.artifacts a WHERE a.id=$1")
+        .bind(release.package_artifact_id.as_uuid()).fetch_one(pool).await.unwrap();
+    assert_eq!(facts, (receipts, 0, 1, "RUNTIME".into()));
+    assert!(Box::pin(store.automate_rebalance_release(
+        seed.project_id,
+        |_, _| async { panic!("existing Release reads nothing") },
+        |_| async { panic!("existing Release publishes nothing") }
+    ))
+    .await
+    .unwrap()
+    .is_none());
+    assert!(
+        sqlx::query("DELETE FROM app.portfolio_rebalance_releases WHERE release_id=$1")
+            .bind(release.id.as_uuid())
+            .execute(pool)
+            .await
+            .is_err()
+    );
 }

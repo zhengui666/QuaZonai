@@ -16,6 +16,12 @@ use tokio::{sync::watch, task::JoinSet};
 
 pub mod mission;
 
+enum RebalanceStage {
+    Build,
+    Study,
+    Release,
+}
+
 #[derive(Clone)]
 pub struct Worker {
     store: Store,
@@ -265,7 +271,11 @@ impl Worker {
         if let Ok(Some(offer)) = &live {
             tracing::info!(handoff_id=%offer.id,"original Paper evidence produced a Live offer");
         }
-        let rebalance = self.process_rebalance_build(project).await;
+        let rebalance =
+            Box::pin(self.process_rebalance_stage(project, RebalanceStage::Build)).await;
+        let study = Box::pin(self.process_rebalance_stage(project, RebalanceStage::Study)).await;
+        let release =
+            Box::pin(self.process_rebalance_stage(project, RebalanceStage::Release)).await;
         let feedback = self.process_forward(project).await;
         let wake = self.process_wake(project).await;
         (
@@ -275,40 +285,57 @@ impl Worker {
                 .map_err(WorkerFailure::from)
                 .and(live.map(|_| ()).map_err(WorkerFailure::from))
                 .and(rebalance)
+                .and(study)
+                .and(release)
                 .and(feedback)
                 .and(wake),
         )
     }
 
-    async fn process_rebalance_build(&self, project: Id) -> Result<(), WorkerFailure> {
+    async fn process_rebalance_stage(
+        &self,
+        project: Id,
+        stage: RebalanceStage,
+    ) -> Result<(), WorkerFailure> {
         let reading = self.objects.clone();
         let publishing = self.objects.clone();
         let mut allocated = Vec::new();
-        let result = self
-            .store
-            .automate_rebalance_build(
-                project,
-                move |id, size| {
-                    let objects = reading.clone();
-                    async move {
-                        tokio::task::spawn_blocking(move || objects.read(id, size))
-                            .await
-                            .map_err(|_| StoreError::Integrity)?
-                            .map_err(|_| StoreError::Integrity)
-                    }
-                },
-                |object| {
-                    allocated.push(object.id);
-                    let objects = publishing.clone();
-                    async move {
-                        tokio::task::spawn_blocking(move || objects.put(object.id, &object.bytes))
-                            .await
-                            .map_err(|_| StoreError::Integrity)?
-                            .map_err(|_| StoreError::Integrity)
-                    }
-                },
-            )
-            .await;
+        let read = move |id, size| {
+            let objects = reading.clone();
+            async move {
+                tokio::task::spawn_blocking(move || objects.read(id, size))
+                    .await
+                    .map_err(|_| StoreError::Integrity)?
+                    .map_err(|_| StoreError::Integrity)
+            }
+        };
+        let publish = |object: store::lifecycle::native::NativeObjectPublication| {
+            allocated.push(object.id);
+            let objects = publishing.clone();
+            async move {
+                tokio::task::spawn_blocking(move || objects.put(object.id, &object.bytes))
+                    .await
+                    .map_err(|_| StoreError::Integrity)?
+                    .map_err(|_| StoreError::Integrity)
+            }
+        };
+        let result = match stage {
+            RebalanceStage::Build => self
+                .store
+                .automate_rebalance_build(project, read, publish)
+                .await
+                .map(|v| v.map(|run| run.id)),
+            RebalanceStage::Study => self
+                .store
+                .automate_rebalance_study(project, read, publish)
+                .await
+                .map(|v| v.map(|run| run.id)),
+            RebalanceStage::Release => self
+                .store
+                .automate_rebalance_release(project, read, publish)
+                .await
+                .map(|v| v.map(|release| release.id)),
+        };
         for id in allocated.into_iter().filter(|_| result.is_err()) {
             let objects = self.objects.clone();
             if self
@@ -322,11 +349,11 @@ impl Worker {
                 .await
                 .is_err()
             {
-                tracing::warn!(artifact_id=%id, "Rebalance parameter cleanup deferred");
+                tracing::warn!(artifact_id=%id, "Rebalance artifact cleanup deferred");
             }
         }
         if let Some(run) = result? {
-            tracing::info!(run_id=%run.id, "original frozen policy queued a bounded rebalance Build");
+            tracing::info!(resource_id=%run, "original frozen policy advanced a bounded rebalance stage");
         }
         Ok(())
     }

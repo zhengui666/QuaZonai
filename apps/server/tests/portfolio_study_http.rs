@@ -940,6 +940,10 @@ async fn original_frozen_policy_automates_paper_without_live_promotion(pool: PgP
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn original_healthy_paper_promotes_live_with_frozen_complete_evidence(pool: PgPool) {
+    Box::pin(healthy_paper_live_scenario(pool)).await;
+}
+
+async fn healthy_paper_live_scenario(pool: PgPool) {
     let (store, actor, f, build, candidate, directory) =
         Box::pin(qualified_portfolio::qualified_chain_policy(
             pool.clone(),
